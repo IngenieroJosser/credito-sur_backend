@@ -49,18 +49,57 @@ La arquitectura está diseñada para crecer de forma progresiva sin comprometer 
 ## Estructura del Proyecto
 
 ```txt
-src/
-├── auth/
-├── users/
-├── clients/
-├── loans/
-├── payments/
-├── routes/
-├── approvals/
-├── accounting/
-├── reports/
-├── audit/
-├── backup/
-├── common/
-├── config/
-└── prisma/
+├── src/
+│   ├── app.module.ts
+│   ├── main.ts
+│
+│   ├── config/                # Configuración global
+│   │   ├── env.config.ts
+│   │   ├── database.config.ts
+│   │   ├── jwt.config.ts
+│
+│   ├── common/                # Reutilizable y transversal
+│   │   ├── decorators/
+│   │   ├── guards/
+│   │   ├── interceptors/
+│   │   ├── filters/
+│   │   ├── pipes/
+│   │   └── constants/
+│
+│   ├── auth/                  # Autenticación y autorización
+│   │   ├── auth.module.ts
+│   │   ├── auth.service.ts
+│   │   ├── auth.controller.ts
+│   │   ├── strategies/
+│   │   └── dto/
+│
+│   ├── users/
+│   ├── roles/
+│   ├── permissions/
+│
+│   ├── clients/               # Clientes
+│   ├── loans/                 # Préstamos / créditos
+│   ├── payments/              # Pagos y cuotas
+│   ├── routes/                # Rutas de cobradores
+│   ├── approvals/             # Bandeja de aprobaciones
+│   ├── inventory/             # Artículos / precios
+│   ├── accounting/            # Caja, gastos, contabilidad
+│   ├── reports/               # Reportes financieros
+│   ├── audit/                 # Auditoría inmutable
+│   ├── backup/                # Backups locales y VPS
+│
+│   ├── prisma/
+│   │   ├── schema.prisma
+│   │   └── migrations/
+│
+│   └── shared/
+│       ├── enums/
+│       ├── interfaces/
+│       └── utils/
+│
+├── test/
+├── prisma/
+├── .env
+├── package.json
+└── tsconfig.json
+
