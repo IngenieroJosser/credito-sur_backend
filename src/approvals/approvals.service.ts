@@ -1,9 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { CreateApprovalDto } from './dto/create-approval.dto';
 import { UpdateApprovalDto } from './dto/update-approval.dto';
+import { PrismaService } from 'prisma/prisma.service';
 
 @Injectable()
 export class ApprovalsService {
+  constructor(private readonly prisma: PrismaService) {}
+
   create(createApprovalDto: CreateApprovalDto) {
     return 'This action adds a new approval';
   }

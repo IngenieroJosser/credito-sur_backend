@@ -13,6 +13,7 @@ import { AccountingModule } from './accounting/accounting.module';
 import { ReportsModule } from './reports/reports.module';
 import { AuditModule } from './audit/audit.module';
 import { BackupModule } from './backup/backup.module';
+import { PrismaModule } from 'prisma/prisma.module';
 
 @Module({
   imports: [
@@ -29,7 +30,8 @@ import { BackupModule } from './backup/backup.module';
     AccountingModule, 
     ReportsModule, 
     AuditModule, 
-    BackupModule
+    BackupModule,
+    PrismaModule
   ],
   controllers: [],
   providers: [],

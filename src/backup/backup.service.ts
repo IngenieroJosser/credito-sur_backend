@@ -1,9 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { CreateBackupDto } from './dto/create-backup.dto';
 import { UpdateBackupDto } from './dto/update-backup.dto';
+import { PrismaService } from 'prisma/prisma.service';
 
 @Injectable()
 export class BackupService {
+  constructor(private readonly prisma: PrismaService) {}
+
   create(createBackupDto: CreateBackupDto) {
     return 'This action adds a new backup';
   }

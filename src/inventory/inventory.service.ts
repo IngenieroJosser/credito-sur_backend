@@ -1,9 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { CreateInventoryDto } from './dto/create-inventory.dto';
 import { UpdateInventoryDto } from './dto/update-inventory.dto';
+import { PrismaService } from 'prisma/prisma.service';
 
 @Injectable()
 export class InventoryService {
+  constructor(private readonly prisma: PrismaService) {}
+
   create(createInventoryDto: CreateInventoryDto) {
     return 'This action adds a new inventory';
   }

@@ -1,9 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { CreatePermissionDto } from './dto/create-permission.dto';
 import { UpdatePermissionDto } from './dto/update-permission.dto';
+import { PrismaService } from 'prisma/prisma.service';
 
 @Injectable()
 export class PermissionsService {
+  constructor(private readonly prisma: PrismaService) {}
+
   create(createPermissionDto: CreatePermissionDto) {
     return 'This action adds a new permission';
   }

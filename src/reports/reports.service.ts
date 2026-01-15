@@ -1,9 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { CreateReportDto } from './dto/create-report.dto';
 import { UpdateReportDto } from './dto/update-report.dto';
+import { PrismaService } from 'prisma/prisma.service';
 
 @Injectable()
 export class ReportsService {
+  constructor(private readonly prisma: PrismaService) {}
+
   create(createReportDto: CreateReportDto) {
     return 'This action adds a new report';
   }
