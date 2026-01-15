@@ -10,820 +10,851 @@ datasource db {
 // ENUMS
 // ============================================
 
-enum UserStatus {
-  ACTIVE
-  INACTIVE
-  SUSPENDED
+enum EstadoUsuario {
+  ACTIVO
+  INACTIVO
+  SUSPENDIDO
 }
 
-enum UserRole {
-  SUPER_ADMIN
-  COORDINATOR
+enum RolUsuario {
+  SUPER_ADMINISTRADOR
+  COORDINADOR
   SUPERVISOR
-  COLLECTOR
-  ACCOUNTANT
+  COBRADOR
+  CONTADOR
 }
 
-enum RiskLevel {
-  GREEN
-  YELLOW
-  RED
-  BLACKLISTED
+enum NivelRiesgo {
+  VERDE
+  AMARILLO
+  ROJO
+  LISTA_NEGRA
 }
 
-enum LoanStatus {
-  DRAFT
-  PENDING_APPROVAL
-  ACTIVE
-  IN_ARREARS
-  PAID
-  DEFAULTED
-  LOSS
+enum EstadoPrestamo {
+  BORRADOR
+  PENDIENTE_APROBACION
+  ACTIVO
+  EN_MORA
+  PAGADO
+  INCUMPLIDO
+  PERDIDA
 }
 
-enum InstallmentStatus {
-  PENDING
-  PAID
-  PARTIAL
-  OVERDUE
-  EXTENDED
+enum EstadoCuota {
+  PENDIENTE
+  PAGADA
+  PARCIAL
+  VENCIDA
+  PRORROGADA
 }
 
-enum PaymentFrequency {
-  DAILY
-  WEEKLY
-  BIWEEKLY
-  MONTHLY
+enum FrecuenciaPago {
+  DIARIO
+  SEMANAL
+  QUINCENAL
+  MENSUAL
 }
 
-enum PaymentMethod {
-  CASH
-  TRANSFER
+enum MetodoPago {
+  EFECTIVO
+  TRANSFERENCIA
 }
 
-enum ApprovalStatus {
-  PENDING
-  APPROVED
-  REJECTED
-  CANCELLED
+enum EstadoAprobacion {
+  PENDIENTE
+  APROBADO
+  RECHAZADO
+  CANCELADO
 }
 
-enum ApprovalType {
-  NEW_CLIENT
-  NEW_LOAN
-  EXPENSE
-  CASH_BASE_REQUEST
-  PAYMENT_EXTENSION
-  WRITE_OFF
+enum TipoAprobacion {
+  NUEVO_CLIENTE
+  NUEVO_PRESTAMO
+  GASTO
+  SOLICITUD_BASE_EFECTIVO
+  PRORROGA_PAGO
+  BAJA_POR_PERDIDA
 }
 
-enum ExpenseType {
-  OPERATIONAL
-  TRANSPORT
-  OTHER
+enum TipoGasto {
+  OPERATIVO
+  TRANSPORTE
+  OTRO
 }
 
-enum CashRegisterType {
-  MAIN
-  ROUTE
+enum TipoCaja {
+  PRINCIPAL
+  RUTA
 }
 
-enum TransactionType {
-  INCOME
-  EXPENSE
-  TRANSFER
+enum TipoTransaccion {
+  INGRESO
+  EGRESO
+  TRANSFERENCIA
 }
 
-enum SyncStatus {
-  PENDING
-  SYNCED
-  CONFLICT
+enum EstadoSincronizacion {
+  PENDIENTE
+  SINCRONIZADO
+  CONFLICTO
   ERROR
 }
 
 // ============================================
-// MÓDULO AUTH / USUARIOS / ROLES
+// MÓDULO AUTENTICACIÓN / USUARIOS / ROLES
 // ============================================
 
-model User {
-  id                String      @id @default(uuid())
-  email             String      @unique @db.VarChar(255)
-  passwordHash      String      @db.VarChar(255)
-  firstName         String      @db.VarChar(100)
-  lastName          String      @db.VarChar(100)
-  phone             String?     @db.VarChar(20)
-  role              UserRole
-  status            UserStatus  @default(ACTIVE)
-  lastLoginAt       DateTime?
-  failedLoginAttempts Int       @default(0)
-  mustChangePassword Boolean   @default(false)
+model Usuario {
+  id                     String                @id @default(uuid())
+  correo                 String                @unique @db.VarChar(255)
+  hashContrasena         String                @db.VarChar(255)
+  nombres                String                @db.VarChar(100)
+  apellidos              String                @db.VarChar(100)
+  telefono               String?               @db.VarChar(20)
+  rol                    RolUsuario
+  estado                 EstadoUsuario         @default(ACTIVO)
+  ultimoIngreso          DateTime?
+  intentosFallidos       Int                   @default(0)
+  debeCambiarContrasena  Boolean               @default(false)
   
   // Auditoría
-  createdById       String?     // Self-reference para saber quién creó el usuario
-  createdBy         User?       @relation("UserCreatedBy", fields: [createdById], references: [id])
-  createdUsers      User[]      @relation("UserCreatedBy")
+  creadoPorId            String?     
+  creadoPor              Usuario?              @relation("UsuarioCreadoPor", fields: [creadoPorId], references: [id])
+  usuariosCreados        Usuario[]             @relation("UsuarioCreadoPor")
   
   // Relaciones
-  userRoles         UserRoleAssignment[]
-  auditLogs         AuditLog[]
-  createdClients    Client[]    @relation("ClientCreatedBy")
-  approvedClients   Client[]    @relation("ClientApprovedBy")
-  createdLoans      Loan[]      @relation("LoanCreatedBy")
-  approvedLoans     Loan[]      @relation("LoanApprovedBy")
-  payments          Payment[]
-  routeAssignments  RouteAssignment[]
-  approvals         Approval[]
-  expenses          Expense[]
-  cashRegisters     CashRegister[]
-  transactions      Transaction[]
+  asignacionesRoles      AsignacionRolUsuario[]
+  registrosAuditoria     RegistroAuditoria[]
+  
+  // Clientes (creados y aprobados)
+  clientesCreados        Cliente[]             @relation("ClienteCreadoPor")
+  clientesAprobados      Cliente[]             @relation("ClienteAprobadoPor")
+  clientesListaNegra     Cliente[]             @relation("ClienteListaNegraPor")
+  
+  // Préstamos (creados y aprobados)
+  prestamosCreados       Prestamo[]            @relation("PrestamoCreadoPor")
+  prestamosAprobados     Prestamo[]            @relation("PrestamoAprobadoPor")
+  
+  // Pagos
+  pagosRegistrados       Pago[]
+  
+  // Rutas
+  asignacionesRuta       AsignacionRuta[]
+  rutasComoCobrador      Ruta[]                @relation("RutaCobrador")
+  rutasComoSupervisor    Ruta[]                @relation("RutaSupervisor")
+  
+  // Aprobaciones
+  aprobacionesSolicitadas Aprobacion[]         @relation("AprobacionSolicitadaPor")
+  aprobacionesRevisadas  Aprobacion[]          @relation("AprobacionRevisadaPor")
+  
+  // Gastos
+  gastosReportados       Gasto[]               @relation("GastoReportadoPor")
+  gastosAprobados        Gasto[]               @relation("GastoAprobadoPor")
+  
+  // Cajas
+  cajasResponsable       Caja[]
+  
+  // Transacciones
+  transaccionesCreadas   Transaccion[]         @relation("TransaccionCreadaPor")
+  transaccionesAprobadas Transaccion[]         @relation("TransaccionAprobadaPor")
+  
+  // Extensiones de pago
+  extensionesPago        ExtensionPago[]
+  
+  // Cola de sincronización
+  itemsColaSincronizacion ColaSincronizacion[]
   
   // Timestamps
-  createdAt         DateTime    @default(now())
-  updatedAt         DateTime    @updatedAt
-  deletedAt         DateTime?
+  creadoEn               DateTime              @default(now())
+  actualizadoEn          DateTime              @updatedAt
+  eliminadoEn            DateTime?
   
-  // Sincronización (para Opción A/B)
-  syncStatus        SyncStatus  @default(PENDING)
-  lastSyncedAt      DateTime?
-  syncError         String?     @db.Text
+  // Sincronización
+  estadoSincronizacion   EstadoSincronizacion  @default(PENDIENTE)
+  ultimaSincronizacion   DateTime?
+  errorSincronizacion    String?               @db.Text
   
-  @@index([email])
-  @@index([role])
-  @@index([status])
-  @@index([syncStatus])
+  @@index([correo])
+  @@index([rol])
+  @@index([estado])
+  @@index([estadoSincronizacion])
 }
 
-model Role {
-  id          String    @id @default(uuid())
-  name        String    @unique @db.VarChar(50)
-  description String?   @db.VarChar(255)
-  isSystem    Boolean   @default(false) // Para proteger roles del sistema
+model Rol {
+  id                     String                @id @default(uuid())
+  nombre                 String                @unique @db.VarChar(50)
+  descripcion            String?               @db.VarChar(255)
+  esSistema              Boolean               @default(false)
   
   // Relaciones
-  permissions RolePermission[]
-  userRoles   UserRoleAssignment[]
+  permisos               RolPermiso[]
+  asignacionesUsuario    AsignacionRolUsuario[]
   
   // Timestamps
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  deletedAt   DateTime?
+  creadoEn               DateTime              @default(now())
+  actualizadoEn          DateTime              @updatedAt
+  eliminadoEn            DateTime?
   
-  @@index([name])
+  @@index([nombre])
   @@map("roles")
 }
 
-model Permission {
-  id          String    @id @default(uuid())
-  module      String    @db.VarChar(50)  // Ej: "clients", "loans", "payments"
-  action      String    @db.VarChar(50)  // Ej: "create", "read", "update", "delete", "approve"
-  description String?   @db.VarChar(255)
+model Permiso {
+  id                     String                @id @default(uuid())
+  modulo                 String                @db.VarChar(50)
+  accion                 String                @db.VarChar(50)
+  descripcion            String?               @db.VarChar(255)
   
   // Relaciones
-  rolePermissions RolePermission[]
+  rolesPermisos          RolPermiso[]
   
   // Timestamps
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  creadoEn               DateTime              @default(now())
+  actualizadoEn          DateTime              @updatedAt
   
-  @@unique([module, action])
-  @@index([module])
-  @@map("permissions")
+  @@unique([modulo, accion])
+  @@index([modulo])
+  @@map("permisos")
 }
 
-model RolePermission {
-  id           String     @id @default(uuid())
-  roleId       String
-  permissionId String
+model RolPermiso {
+  id                     String                @id @default(uuid())
+  rolId                  String
+  permisoId              String
   
   // Relaciones
-  role       Role       @relation(fields: [roleId], references: [id])
-  permission Permission @relation(fields: [permissionId], references: [id])
+  rol                    Rol                   @relation(fields: [rolId], references: [id])
+  permiso                Permiso               @relation(fields: [permisoId], references: [id])
   
   // Timestamps
-  createdAt    DateTime   @default(now())
+  creadoEn               DateTime              @default(now())
   
-  @@unique([roleId, permissionId])
-  @@map("role_permissions")
+  @@unique([rolId, permisoId])
+  @@map("roles_permisos")
 }
 
-model UserRoleAssignment {
-  id        String   @id @default(uuid())
-  userId    String
-  roleId    String
+model AsignacionRolUsuario {
+  id                     String                @id @default(uuid())
+  usuarioId              String
+  rolId                  String
   
   // Relaciones
-  user      User     @relation(fields: [userId], references: [id])
-  role      Role     @relation(fields: [roleId], references: [id])
+  usuario                Usuario               @relation(fields: [usuarioId], references: [id])
+  rol                    Rol                   @relation(fields: [rolId], references: [id])
   
   // Timestamps
-  createdAt DateTime @default(now())
-  expiresAt DateTime? // Para asignaciones temporales
+  creadoEn               DateTime              @default(now())
+  expiraEn               DateTime?
   
-  @@unique([userId, roleId])
-  @@index([userId])
-  @@map("user_role_assignments")
+  @@unique([usuarioId, rolId])
+  @@index([usuarioId])
+  @@map("asignaciones_roles_usuarios")
 }
 
 // ============================================
 // MÓDULO CLIENTES
 // ============================================
 
-model Client {
-  id              String      @id @default(uuid())
-  code            String      @unique @db.VarChar(20) // Código interno
-  dni             String      @unique @db.VarChar(20)
-  firstName       String      @db.VarChar(100)
-  lastName        String      @db.VarChar(100)
-  email           String?     @db.VarChar(255)
-  phone           String      @db.VarChar(20)
-  address         String?     @db.Text
-  reference       String?     @db.Text // Referencias personales
+model Cliente {
+  id                     String                @id @default(uuid())
+  codigo                 String                @unique @db.VarChar(20)
+  dni                    String                @unique @db.VarChar(20)
+  nombres                String                @db.VarChar(100)
+  apellidos              String                @db.VarChar(100)
+  correo                 String?               @db.VarChar(255)
+  telefono               String                @db.VarChar(20)
+  direccion              String?               @db.Text
+  referencia             String?               @db.Text
   
   // Semáforo de riesgo
-  riskLevel       RiskLevel   @default(GREEN)
-  score           Int         @default(100) // 0-100
-  lastRiskUpdate  DateTime?   // Cuándo se actualizó el riesgo
+  nivelRiesgo            NivelRiesgo           @default(VERDE)
+  puntaje                Int                   @default(100)
+  ultimaActualizacionRiesgo DateTime?
   
   // Lista negra
-  isBlacklisted   Boolean     @default(false)
-  blacklistReason String?     @db.Text
-  blacklistedAt   DateTime?
-  blacklistedById String?     // Quién lo blacklisteó
+  enListaNegra           Boolean               @default(false)
+  razonListaNegra        String?               @db.Text
+  fechaListaNegra        DateTime?
+  agregadoListaNegraPorId String?
   
   // Auditoría y aprobación
-  createdById     String      // Cobrador que lo creó
-  approvedById    String?     // Coordinador que lo aprobó
-  status          ApprovalStatus @default(PENDING)
+  creadoPorId            String
+  aprobadoPorId          String?
+  estadoAprobacion       EstadoAprobacion      @default(PENDIENTE)
   
   // Relaciones
-  createdBy       User        @relation("ClientCreatedBy", fields: [createdById], references: [id])
-  approvedBy      User?       @relation("ClientApprovedBy", fields: [approvedById], references: [id])
-  loans           Loan[]
-  routeAssignments RouteAssignment[]
-  payments        Payment[]
+  creadoPor              Usuario               @relation("ClienteCreadoPor", fields: [creadoPorId], references: [id])
+  aprobadoPor            Usuario?              @relation("ClienteAprobadoPor", fields: [aprobadoPorId], references: [id])
+  agregadoListaNegraPor  Usuario?              @relation("ClienteListaNegraPor", fields: [agregadoListaNegraPorId], references: [id])
+  prestamos              Prestamo[]
+  asignacionesRuta       AsignacionRuta[]
+  pagos                  Pago[]
   
   // Timestamps
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-  deletedAt       DateTime?
+  creadoEn               DateTime              @default(now())
+  actualizadoEn          DateTime              @updatedAt
+  eliminadoEn            DateTime?
   
   // Sincronización
-  syncStatus      SyncStatus  @default(PENDING)
-  lastSyncedAt    DateTime?
+  estadoSincronizacion   EstadoSincronizacion  @default(PENDIENTE)
+  ultimaSincronizacion   DateTime?
   
   @@index([dni])
-  @@index([riskLevel])
-  @@index([isBlacklisted])
-  @@index([status])
-  @@index([createdById])
-  @@index([syncStatus])
+  @@index([nivelRiesgo])
+  @@index([enListaNegra])
+  @@index([estadoAprobacion])
+  @@index([creadoPorId])
+  @@index([estadoSincronizacion])
 }
 
 // ============================================
 // MÓDULO INVENTARIO / ARTÍCULOS
 // ============================================
 
-model Product {
-  id            String      @id @default(uuid())
-  code          String      @unique @db.VarChar(50)
-  name          String      @db.VarChar(255)
-  description   String?     @db.Text
-  category      String      @db.VarChar(100)
-  brand         String?     @db.VarChar(100)
-  model         String?     @db.VarChar(100)
-  cost          Decimal     @db.Decimal(10, 2) // Costo de compra
-  stock         Int         @default(0)
-  minStock      Int         @default(0)
-  isActive      Boolean     @default(true)
+model Producto {
+  id                     String                @id @default(uuid())
+  codigo                 String                @unique @db.VarChar(50)
+  nombre                 String                @db.VarChar(255)
+  descripcion            String?               @db.Text
+  categoria              String                @db.VarChar(100)
+  marca                  String?               @db.VarChar(100)
+  modelo                 String?               @db.VarChar(100)
+  costo                  Decimal               @db.Decimal(10, 2)
+  stock                  Int                   @default(0)
+  stockMinimo            Int                   @default(0)
+  activo                 Boolean               @default(true)
   
   // Relaciones
-  prices        ProductPrice[]
-  loans         Loan[]
+  precios                PrecioProducto[]
+  prestamos              Prestamo[]
   
   // Timestamps
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
-  deletedAt     DateTime?
+  creadoEn               DateTime              @default(now())
+  actualizadoEn          DateTime              @updatedAt
+  eliminadoEn            DateTime?
   
-  @@index([code])
-  @@index([category])
-  @@index([isActive])
+  @@index([codigo])
+  @@index([categoria])
+  @@index([activo])
 }
 
-model ProductPrice {
-  id          String    @id @default(uuid())
-  productId   String
-  months      Int       // Plazo en meses
-  price       Decimal   @db.Decimal(10, 2) // Precio final a crédito
-  isActive    Boolean   @default(true)
+model PrecioProducto {
+  id                     String                @id @default(uuid())
+  productoId             String
+  meses                  Int
+  precio                 Decimal               @db.Decimal(10, 2)
+  activo                 Boolean               @default(true)
   
   // Relaciones
-  product     Product   @relation(fields: [productId], references: [id])
+  producto               Producto              @relation(fields: [productoId], references: [id])
+  prestamos              Prestamo[]            @relation("PrecioProductoPrestamos")
   
   // Timestamps
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  creadoEn               DateTime              @default(now())
+  actualizadoEn          DateTime              @updatedAt
   
-  @@unique([productId, months])
-  @@index([productId])
-  @@index([months])
-  @@map("product_prices")
+  @@unique([productoId, meses])
+  @@index([productoId])
+  @@index([meses])
+  @@map("precios_productos")
 }
 
 // ============================================
 // MÓDULO PRÉSTAMOS / CRÉDITOS
 // ============================================
 
-model Loan {
-  id                String            @id @default(uuid())
-  loanNumber        String            @unique @db.VarChar(50)
-  clientId          String
-  productId         String?           // Si es préstamo por artículo
-  productPriceId    String?           // Precio específico según plazo
+model Prestamo {
+  id                     String                @id @default(uuid())
+  numeroPrestamo         String                @unique @db.VarChar(50)
+  clienteId              String
+  productoId             String?
+  precioProductoId       String?
   
   // Tipo de préstamo
-  loanType          String            @db.VarChar(20) // "CASH", "APPLIANCE"
-  amount            Decimal           @db.Decimal(12, 2) // Monto total del préstamo
-  interestRate      Decimal           @db.Decimal(5, 2) // Tasa de interés mensual
-  lateInterestRate  Decimal           @db.Decimal(5, 2) // Tasa por mora
+  tipoPrestamo           String                @db.VarChar(20)
+  monto                  Decimal               @db.Decimal(12, 2)
+  tasaInteres            Decimal               @db.Decimal(5, 2)
+  tasaInteresMora        Decimal               @db.Decimal(5, 2)
   
   // Plazos y frecuencia
-  termMonths        Int               // Plazo en meses
-  paymentFrequency  PaymentFrequency
-  installmentsCount Int               // Número total de cuotas
-  startDate         DateTime
-  endDate           DateTime
+  plazoMeses             Int
+  frecuenciaPago         FrecuenciaPago
+  cantidadCuotas         Int
+  fechaInicio            DateTime
+  fechaFin               DateTime
   
   // Estado y aprobación
-  status            LoanStatus        @default(DRAFT)
-  createdById       String            // Cobrador que lo creó
-  approvedById      String?           // Coordinador que lo aprobó
-  approvalStatus    ApprovalStatus    @default(PENDING)
+  estado                 EstadoPrestamo        @default(BORRADOR)
+  creadoPorId            String
+  aprobadoPorId          String?
+  estadoAprobacion       EstadoAprobacion      @default(PENDIENTE)
   
   // Campos financieros calculados
-  totalInterest     Decimal           @db.Decimal(12, 2) @default(0)
-  totalPaid         Decimal           @db.Decimal(12, 2) @default(0)
-  totalCapitalPaid  Decimal           @db.Decimal(12, 2) @default(0)
-  totalInterestPaid Decimal           @db.Decimal(12, 2) @default(0)
-  totalLateInterest Decimal           @db.Decimal(12, 2) @default(0)
-  remainingBalance  Decimal           @db.Decimal(12, 2) @default(0)
+  interesTotal           Decimal               @db.Decimal(12, 2) @default(0)
+  totalPagado            Decimal               @db.Decimal(12, 2) @default(0)
+  capitalPagado          Decimal               @db.Decimal(12, 2) @default(0)
+  interesPagado          Decimal               @db.Decimal(12, 2) @default(0)
+  interesMoraPagado      Decimal               @db.Decimal(12, 2) @default(0)
+  saldoPendiente         Decimal               @db.Decimal(12, 2) @default(0)
   
   // Relaciones
-  client            Client            @relation(fields: [clientId], references: [id])
-  product           Product?          @relation(fields: [productId], references: [id])
-  productPrice      ProductPrice?     @relation(fields: [productPriceId], references: [id])
-  createdBy         User              @relation("LoanCreatedBy", fields: [createdById], references: [id])
-  approvedBy        User?             @relation("LoanApprovedBy", fields: [approvedById], references: [id])
-  installments      Installment[]
-  payments          Payment[]
-  extensions        PaymentExtension[]
+  cliente                Cliente               @relation(fields: [clienteId], references: [id])
+  producto               Producto?             @relation(fields: [productoId], references: [id])
+  precioProducto         PrecioProducto?       @relation("PrecioProductoPrestamos", fields: [precioProductoId], references: [id])
+  creadoPor              Usuario               @relation("PrestamoCreadoPor", fields: [creadoPorId], references: [id])
+  aprobadoPor            Usuario?              @relation("PrestamoAprobadoPor", fields: [aprobadoPorId], references: [id])
+  cuotas                 Cuota[]
+  pagos                  Pago[]
+  extensiones            ExtensionPago[]
   
   // Timestamps
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-  deletedAt         DateTime?
+  creadoEn               DateTime              @default(now())
+  actualizadoEn          DateTime              @updatedAt
+  eliminadoEn            DateTime?
   
   // Sincronización
-  syncStatus        SyncStatus        @default(PENDING)
-  lastSyncedAt      DateTime?
+  estadoSincronizacion   EstadoSincronizacion  @default(PENDIENTE)
+  ultimaSincronizacion   DateTime?
   
-  @@index([loanNumber])
-  @@index([clientId])
-  @@index([status])
-  @@index([approvalStatus])
-  @@index([createdById])
-  @@index([syncStatus])
-  @@index([startDate])
-  @@index([endDate])
+  @@index([numeroPrestamo])
+  @@index([clienteId])
+  @@index([estado])
+  @@index([estadoAprobacion])
+  @@index([creadoPorId])
+  @@index([estadoSincronizacion])
+  @@index([fechaInicio])
+  @@index([fechaFin])
 }
 
-model Installment {
-  id                String          @id @default(uuid())
-  loanId            String
-  installmentNumber Int             // Número de cuota (1, 2, 3...)
-  dueDate           DateTime
-  amount            Decimal         @db.Decimal(10, 2) // Monto total de la cuota
-  capitalAmount     Decimal         @db.Decimal(10, 2) // Parte de capital
-  interestAmount    Decimal         @db.Decimal(10, 2) // Parte de interés normal
-  lateInterestAmount Decimal        @db.Decimal(10, 2) @default(0) // Interés por mora
+model Cuota {
+  id                     String                @id @default(uuid())
+  prestamoId             String
+  numeroCuota            Int
+  fechaVencimiento       DateTime
+  monto                  Decimal               @db.Decimal(10, 2)
+  montoCapital           Decimal               @db.Decimal(10, 2)
+  montoInteres           Decimal               @db.Decimal(10, 2)
+  montoInteresMora       Decimal               @db.Decimal(10, 2) @default(0)
   
   // Estado de pago
-  status            InstallmentStatus @default(PENDING)
-  paidAmount        Decimal         @db.Decimal(10, 2) @default(0)
-  paidDate          DateTime?
+  estado                 EstadoCuota           @default(PENDIENTE)
+  montoPagado            Decimal               @db.Decimal(10, 2) @default(0)
+  fechaPago              DateTime?
   
   // Prórroga
-  extendedDueDate   DateTime?       // Nueva fecha si se extendió
-  extensionId       String?         // Relación a la extensión aprobada
+  fechaVencimientoProrroga DateTime?
+  extensionId            String?               @unique
   
   // Relaciones
-  loan              Loan            @relation(fields: [loanId], references: [id])
-  paymentDetails    PaymentDetail[]
-  extension         PaymentExtension? @relation(fields: [extensionId], references: [id])
+  prestamo               Prestamo              @relation(fields: [prestamoId], references: [id])
+  detallesPago           DetallePago[]
+  extension              ExtensionPago?        @relation(fields: [extensionId], references: [id])
   
   // Timestamps
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  creadoEn               DateTime              @default(now())
+  actualizadoEn          DateTime              @updatedAt
   
-  @@unique([loanId, installmentNumber])
-  @@index([loanId])
-  @@index([dueDate])
-  @@index([status])
-  @@index([extendedDueDate])
-  @@map("installments")
+  @@unique([prestamoId, numeroCuota])
+  @@index([prestamoId])
+  @@index([fechaVencimiento])
+  @@index([estado])
+  @@index([fechaVencimientoProrroga])
+  @@map("cuotas")
 }
 
-model PaymentExtension {
-  id                String          @id @default(uuid())
-  loanId            String
-  installmentId     String?         // Si es específica a una cuota
-  originalDueDate   DateTime
-  newDueDate        DateTime
-  reason            String?         @db.Text
-  approvedById      String          // Coordinador que aprobó
+model ExtensionPago {
+  id                     String                @id @default(uuid())
+  prestamoId             String
+  cuotaId                String?               @unique
+  fechaVencimientoOriginal DateTime
+  nuevaFechaVencimiento  DateTime
+  razon                  String?               @db.Text
+  aprobadoPorId          String
   
   // Relaciones
-  loan              Loan            @relation(fields: [loanId], references: [id])
-  installment       Installment?    @relation(fields: [installmentId], references: [id])
-  approvedBy        User            @relation(fields: [approvedById], references: [id])
-  approvals         Approval[]      // Para trazabilidad
+  prestamo               Prestamo              @relation(fields: [prestamoId], references: [id])
+  cuota                  Cuota?                
+  aprobadoPor            Usuario               @relation(fields: [aprobadoPorId], references: [id])
   
   // Timestamps
-  createdAt         DateTime        @default(now())
+  creadoEn               DateTime              @default(now())
+  actualizadoEn          DateTime              @updatedAt
   
-  @@index([loanId])
-  @@index([approvedById])
-  @@map("payment_extensions")
+  @@index([prestamoId])
+  @@index([aprobadoPorId])
+  @@map("extensiones_pago")
 }
 
 // ============================================
 // MÓDULO PAGOS
 // ============================================
 
-model Payment {
-  id                String          @id @default(uuid())
-  paymentNumber     String          @unique @db.VarChar(50)
-  clientId          String
-  loanId            String
-  collectorId       String          // Cobrador que registró el pago
+model Pago {
+  id                     String                @id @default(uuid())
+  numeroPago             String                @unique @db.VarChar(50)
+  clienteId              String
+  prestamoId             String
+  cobradorId             String
   
   // Información del pago
-  paymentDate       DateTime        @default(now())
-  totalAmount       Decimal         @db.Decimal(10, 2)
-  paymentMethod     PaymentMethod
-  referenceNumber   String?         @db.VarChar(100) // Para transferencias
-  notes             String?         @db.Text         // Comentarios de visita
+  fechaPago              DateTime              @default(now())
+  montoTotal             Decimal               @db.Decimal(10, 2)
+  metodoPago             MetodoPago
+  numeroReferencia       String?               @db.VarChar(100)
+  notas                  String?               @db.Text
   
   // Relaciones
-  client            Client          @relation(fields: [clientId], references: [id])
-  loan              Loan            @relation(fields: [loanId], references: [id])
-  collector         User            @relation(fields: [collectorId], references: [id])
-  paymentDetails    PaymentDetail[]
-  receipt           Receipt?
+  cliente                Cliente               @relation(fields: [clienteId], references: [id])
+  prestamo               Prestamo              @relation(fields: [prestamoId], references: [id])
+  cobrador               Usuario               @relation(fields: [cobradorId], references: [id])
+  detalles               DetallePago[]
+  recibo                 Recibo?
   
   // Timestamps
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  creadoEn               DateTime              @default(now())
+  actualizadoEn          DateTime              @updatedAt
   
   // Sincronización
-  syncStatus        SyncStatus      @default(PENDING)
-  lastSyncedAt      DateTime?
+  estadoSincronizacion   EstadoSincronizacion  @default(PENDIENTE)
+  ultimaSincronizacion   DateTime?
   
-  @@index([paymentNumber])
-  @@index([clientId])
-  @@index([loanId])
-  @@index([collectorId])
-  @@index([paymentDate])
-  @@index([syncStatus])
+  @@index([numeroPago])
+  @@index([clienteId])
+  @@index([prestamoId])
+  @@index([cobradorId])
+  @@index([fechaPago])
+  @@index([estadoSincronizacion])
 }
 
-model PaymentDetail {
-  id              String          @id @default(uuid())
-  paymentId       String
-  installmentId   String
-  amount          Decimal         @db.Decimal(10, 2)
-  capitalAmount   Decimal         @db.Decimal(10, 2) // Cuánto se abonó a capital
-  interestAmount  Decimal         @db.Decimal(10, 2) // Cuánto se abonó a interés normal
-  lateInterestAmount Decimal      @db.Decimal(10, 2) // Cuánto se abonó a interés por mora
+model DetallePago {
+  id                     String                @id @default(uuid())
+  pagoId                 String
+  cuotaId                String
+  monto                  Decimal               @db.Decimal(10, 2)
+  montoCapital           Decimal               @db.Decimal(10, 2)
+  montoInteres           Decimal               @db.Decimal(10, 2)
+  montoInteresMora       Decimal               @db.Decimal(10, 2)
   
   // Relaciones
-  payment         Payment         @relation(fields: [paymentId], references: [id])
-  installment     Installment     @relation(fields: [installmentId], references: [id])
+  pago                   Pago                  @relation(fields: [pagoId], references: [id])
+  cuota                  Cuota                 @relation(fields: [cuotaId], references: [id])
   
   // Timestamps
-  createdAt       DateTime        @default(now())
+  creadoEn               DateTime              @default(now())
   
-  @@unique([paymentId, installmentId])
-  @@index([paymentId])
-  @@index([installmentId])
-  @@map("payment_details")
+  @@unique([pagoId, cuotaId])
+  @@index([pagoId])
+  @@index([cuotaId])
+  @@map("detalles_pago")
 }
 
-model Receipt {
-  id              String          @id @default(uuid())
-  paymentId       String          @unique
-  receiptNumber   String          @unique @db.VarChar(50)
-  content         Json            // Datos del recibo en formato estructurado
-  pdfPath         String?         @db.VarChar(500) // Ruta al PDF generado
-  sharedVia       String?         @db.VarChar(50)  // Ej: "WHATSAPP", "EMAIL"
-  sharedAt        DateTime?
+model Recibo {
+  id                     String                @id @default(uuid())
+  pagoId                 String                @unique
+  numeroRecibo           String                @unique @db.VarChar(50)
+  contenido              Json
+  rutaPDF                String?               @db.VarChar(500)
+  compartidoVia          String?               @db.VarChar(50)
+  fechaCompartido        DateTime?
   
   // Relaciones
-  payment         Payment         @relation(fields: [paymentId], references: [id])
+  pago                   Pago                  @relation(fields: [pagoId], references: [id])
   
   // Timestamps
-  createdAt       DateTime        @default(now())
+  creadoEn               DateTime              @default(now())
+  actualizadoEn          DateTime              @updatedAt
   
-  @@index([receiptNumber])
-  @@index([paymentId])
-  @@map("receipts")
+  @@index([numeroRecibo])
+  @@index([pagoId])
+  @@map("recibos")
 }
 
 // ============================================
 // MÓDULO RUTAS
 // ============================================
 
-model Route {
-  id              String          @id @default(uuid())
-  code            String          @unique @db.VarChar(20)
-  name            String          @db.VarChar(255)
-  description     String?         @db.Text
-  zone            String          @db.VarChar(100)
-  isActive        Boolean         @default(true)
+model Ruta {
+  id                     String                @id @default(uuid())
+  codigo                 String                @unique @db.VarChar(20)
+  nombre                 String                @db.VarChar(255)
+  descripcion            String?               @db.Text
+  zona                   String                @db.VarChar(100)
+  activa                 Boolean               @default(true)
   
   // Asignación
-  collectorId     String          // Cobrador asignado
-  supervisorId    String?         // Supervisor responsable
+  cobradorId             String
+  supervisorId           String?
   
   // Relaciones
-  collector       User            @relation("RouteCollector", fields: [collectorId], references: [id])
-  supervisor      User?           @relation("RouteSupervisor", fields: [supervisorId], references: [id])
-  routeAssignments RouteAssignment[]
-  cashRegister    CashRegister[]  // Caja de ruta asociada
+  cobrador               Usuario               @relation("RutaCobrador", fields: [cobradorId], references: [id])
+  supervisor             Usuario?              @relation("RutaSupervisor", fields: [supervisorId], references: [id])
+  asignaciones           AsignacionRuta[]
+  cajas                  Caja[]
+  gastos                 Gasto[]
   
   // Timestamps
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  creadoEn               DateTime              @default(now())
+  actualizadoEn          DateTime              @updatedAt
   
-  @@index([code])
-  @@index([collectorId])
+  @@index([codigo])
+  @@index([cobradorId])
   @@index([supervisorId])
-  @@index([isActive])
-  @@map("routes")
+  @@index([activa])
+  @@map("rutas")
 }
 
-model RouteAssignment {
-  id              String          @id @default(uuid())
-  routeId         String
-  clientId        String
-  collectorId     String          // Duplicado para consultas rápidas
-  dayOfWeek       Int?            // 0-6 (Domingo=0) si es recurrente
-  specificDate    DateTime?       // Si es asignación específica
-  visitOrder      Int             @default(0) // Para ordenamiento Drag & Drop
-  isActive        Boolean         @default(true)
+model AsignacionRuta {
+  id                     String                @id @default(uuid())
+  rutaId                 String
+  clienteId              String
+  cobradorId             String
+  diaSemana              Int?
+  fechaEspecifica        DateTime?
+  ordenVisita            Int                   @default(0)
+  activa                 Boolean               @default(true)
   
   // Relaciones
-  route           Route           @relation(fields: [routeId], references: [id])
-  client          Client          @relation(fields: [clientId], references: [id])
-  collector       User            @relation(fields: [collectorId], references: [id])
+  ruta                   Ruta                  @relation(fields: [rutaId], references: [id])
+  cliente                Cliente               @relation(fields: [clienteId], references: [id])
+  cobrador               Usuario               @relation(fields: [cobradorId], references: [id])
   
   // Timestamps
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  creadoEn               DateTime              @default(now())
+  actualizadoEn          DateTime              @updatedAt
   
-  @@unique([routeId, clientId, specificDate])
-  @@index([routeId])
-  @@index([clientId])
-  @@index([collectorId])
-  @@index([dayOfWeek])
-  @@index([specificDate])
-  @@index([visitOrder])
-  @@map("route_assignments")
+  @@unique([rutaId, clienteId, fechaEspecifica])
+  @@index([rutaId])
+  @@index([clienteId])
+  @@index([cobradorId])
+  @@index([diaSemana])
+  @@index([fechaEspecifica])
+  @@index([ordenVisita])
+  @@map("asignaciones_rutas")
 }
 
 // ============================================
 // MÓDULO APROBACIONES
 // ============================================
 
-model Approval {
-  id              String          @id @default(uuid())
-  approvalType    ApprovalType
-  referenceId     String          // ID del registro a aprobar
-  referenceTable  String          @db.VarChar(50) // Nombre de la tabla
+model Aprobacion {
+  id                     String                @id @default(uuid())
+  tipoAprobacion         TipoAprobacion
+  referenciaId           String
+  tablaReferencia        String                @db.VarChar(50)
   
   // Solicitud
-  requestedById   String          // Quién lo solicitó
-  requestedData   Json            // Datos originales de la solicitud
+  solicitadoPorId        String
+  datosSolicitud         Json
   
   // Aprobación
-  approvedById    String?         // Quién lo aprobó/rechazó
-  approvalStatus  ApprovalStatus  @default(PENDING)
-  comments        String?         @db.Text
-  approvedData    Json?           // Datos aprobados (si hubo modificaciones)
+  aprobadoPorId          String?
+  estado                 EstadoAprobacion      @default(PENDIENTE)
+  comentarios            String?               @db.Text
+  datosAprobados         Json?
   
   // Relaciones
-  requestedBy     User            @relation("ApprovalRequestedBy", fields: [requestedById], references: [id])
-  approvedBy      User?           @relation("ApprovalApprovedBy", fields: [approvedById], references: [id])
+  solicitadoPor          Usuario               @relation("AprobacionSolicitadaPor", fields: [solicitadoPorId], references: [id])
+  aprobadoPor            Usuario?              @relation("AprobacionRevisadaPor", fields: [aprobadoPorId], references: [id])
   
   // Timestamps
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
-  reviewedAt      DateTime?
+  creadoEn               DateTime              @default(now())
+  actualizadoEn          DateTime              @updatedAt
+  revisadoEn             DateTime?
   
   // Sincronización
-  syncStatus      SyncStatus      @default(PENDING)
+  estadoSincronizacion   EstadoSincronizacion  @default(PENDIENTE)
   
-  @@index([approvalType])
-  @@index([referenceId, referenceTable])
-  @@index([requestedById])
-  @@index([approvedById])
-  @@index([approvalStatus])
-  @@index([createdAt])
-  @@index([syncStatus])
-  @@map("approvals")
+  @@index([tipoAprobacion])
+  @@index([referenciaId, tablaReferencia])
+  @@index([solicitadoPorId])
+  @@index([aprobadoPorId])
+  @@index([estado])
+  @@index([creadoEn])
+  @@index([estadoSincronizacion])
+  @@map("aprobaciones")
 }
 
 // ============================================
 // MÓDULO CONTABILIDAD / CAJAS
 // ============================================
 
-model CashRegister {
-  id              String          @id @default(uuid())
-  code            String          @unique @db.VarChar(20)
-  name            String          @db.VarChar(255)
-  type            CashRegisterType
-  routeId         String?         // Solo para cajas de ruta
-  currentBalance  Decimal         @db.Decimal(12, 2) @default(0)
-  minBalance      Decimal         @db.Decimal(12, 2) @default(0)
-  maxBalance      Decimal         @db.Decimal(12, 2) @default(0)
-  isActive        Boolean         @default(true)
+model Caja {
+  id                     String                @id @default(uuid())
+  codigo                 String                @unique @db.VarChar(20)
+  nombre                 String                @db.VarChar(255)
+  tipo                   TipoCaja
+  rutaId                 String?
+  saldoActual            Decimal               @db.Decimal(12, 2) @default(0)
+  saldoMinimo            Decimal               @db.Decimal(12, 2) @default(0)
+  saldoMaximo            Decimal               @db.Decimal(12, 2) @default(0)
+  activa                 Boolean               @default(true)
   
   // Responsable
-  responsibleId   String          // Usuario responsable
+  responsableId          String
   
   // Relaciones
-  route           Route?          @relation(fields: [routeId], references: [id])
-  responsible     User            @relation(fields: [responsibleId], references: [id])
-  transactions    Transaction[]
+  ruta                   Ruta?                 @relation(fields: [rutaId], references: [id])
+  responsable            Usuario               @relation(fields: [responsableId], references: [id])
+  transacciones          Transaccion[]
+  gastos                 Gasto[]
   
   // Timestamps
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  creadoEn               DateTime              @default(now())
+  actualizadoEn          DateTime              @updatedAt
   
-  @@index([code])
-  @@index([type])
-  @@index([routeId])
-  @@index([responsibleId])
-  @@map("cash_registers")
+  @@index([codigo])
+  @@index([tipo])
+  @@index([rutaId])
+  @@index([responsableId])
+  @@map("cajas")
 }
 
-model Transaction {
-  id                String          @id @default(uuid())
-  transactionNumber String          @unique @db.VarChar(50)
-  cashRegisterId    String
-  type              TransactionType
-  amount            Decimal         @db.Decimal(12, 2)
+model Transaccion {
+  id                     String                @id @default(uuid())
+  numeroTransaccion      String                @unique @db.VarChar(50)
+  cajaId                 String
+  tipo                   TipoTransaccion
+  monto                  Decimal               @db.Decimal(12, 2)
   
   // Referencia
-  referenceType     String?         @db.VarChar(50) // "PAYMENT", "EXPENSE", "TRANSFER"
-  referenceId       String?         // ID del registro relacionado
+  tipoReferencia         String?               @db.VarChar(50)
+  referenciaId           String?
   
   // Descripción
-  description       String          @db.Text
-  notes             String?         @db.Text
+  descripcion            String                @db.Text
+  notas                  String?               @db.Text
   
   // Auditoría
-  createdById       String
-  approvedById      String?         // Para gastos que requieren aprobación
+  creadoPorId            String
+  aprobadoPorId          String?
   
   // Relaciones
-  cashRegister      CashRegister    @relation(fields: [cashRegisterId], references: [id])
-  createdBy         User            @relation(fields: [createdById], references: [id])
-  approvedBy        User?           @relation(fields: [approvedById], references: [id])
+  caja                   Caja                  @relation(fields: [cajaId], references: [id])
+  creadoPor              Usuario               @relation("TransaccionCreadaPor", fields: [creadoPorId], references: [id])
+  aprobadoPor            Usuario?              @relation("TransaccionAprobadaPor", fields: [aprobadoPorId], references: [id])
   
   // Timestamps
-  transactionDate   DateTime        @default(now())
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  fechaTransaccion       DateTime              @default(now())
+  creadoEn               DateTime              @default(now())
+  actualizadoEn          DateTime              @updatedAt
   
   // Sincronización
-  syncStatus        SyncStatus      @default(PENDING)
+  estadoSincronizacion   EstadoSincronizacion  @default(PENDIENTE)
   
-  @@index([transactionNumber])
-  @@index([cashRegisterId])
-  @@index([type])
-  @@index([referenceType, referenceId])
-  @@index([createdById])
-  @@index([transactionDate])
-  @@index([syncStatus])
+  @@index([numeroTransaccion])
+  @@index([cajaId])
+  @@index([tipo])
+  @@index([tipoReferencia, referenciaId])
+  @@index([creadoPorId])
+  @@index([fechaTransaccion])
+  @@index([estadoSincronizacion])
 }
 
-model Expense {
-  id              String          @id @default(uuid())
-  expenseNumber   String          @unique @db.VarChar(50)
-  routeId         String?         // Si es gasto de ruta
-  collectorId     String          // Cobrador que reportó
-  cashRegisterId  String          // Caja de donde se descuenta
+model Gasto {
+  id                     String                @id @default(uuid())
+  numeroGasto            String                @unique @db.VarChar(50)
+  rutaId                 String?
+  cobradorId             String
+  cajaId                 String
   
   // Información del gasto
-  expenseType     ExpenseType
-  amount          Decimal         @db.Decimal(10, 2)
-  description     String          @db.Text
-  receiptPhoto    String?         @db.VarChar(500) // URL de foto de recibo
+  tipoGasto              TipoGasto
+  monto                  Decimal               @db.Decimal(10, 2)
+  descripcion            String                @db.Text
+  fotoRecibo             String?               @db.VarChar(500)
   
   // Aprobación
-  approvedById    String?         // Supervisor que aprobó
-  approvalStatus  ApprovalStatus  @default(PENDING)
+  aprobadoPorId          String?
+  estadoAprobacion       EstadoAprobacion      @default(PENDIENTE)
   
   // Relaciones
-  route           Route?          @relation(fields: [routeId], references: [id])
-  collector       User            @relation(fields: [collectorId], references: [id])
-  cashRegister    CashRegister    @relation(fields: [cashRegisterId], references: [id])
-  approvedBy      User?           @relation(fields: [approvedById], references: [id])
-  approvals       Approval[]
-  transaction     Transaction?    @relation(fields: [cashRegisterId], references: [cashRegisterId])
+  ruta                   Ruta?                 @relation(fields: [rutaId], references: [id])
+  cobrador               Usuario               @relation("GastoReportadoPor", fields: [cobradorId], references: [id])
+  caja                   Caja                  @relation(fields: [cajaId], references: [id])
+  aprobadoPor            Usuario?              @relation("GastoAprobadoPor", fields: [aprobadoPorId], references: [id])
   
   // Timestamps
-  expenseDate     DateTime        @default(now())
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  fechaGasto             DateTime              @default(now())
+  creadoEn               DateTime              @default(now())
+  actualizadoEn          DateTime              @updatedAt
   
   // Sincronización
-  syncStatus      SyncStatus      @default(PENDING)
+  estadoSincronizacion   EstadoSincronizacion  @default(PENDIENTE)
   
-  @@index([expenseNumber])
-  @@index([routeId])
-  @@index([collectorId])
-  @@index([approvalStatus])
-  @@index([expenseDate])
-  @@index([syncStatus])
+  @@index([numeroGasto])
+  @@index([rutaId])
+  @@index([cobradorId])
+  @@index([estadoAprobacion])
+  @@index([fechaGasto])
+  @@index([estadoSincronizacion])
 }
 
 // ============================================
 // MÓDULO AUDITORÍA
 // ============================================
 
-model AuditLog {
-  id              String          @id @default(uuid())
-  userId          String?
-  userRole        UserRole?
+model RegistroAuditoria {
+  id                     String                @id @default(uuid())
+  usuarioId              String?
+  rolUsuario             RolUsuario?
   
   // Acción
-  action          String          @db.VarChar(100) // "CREATE", "UPDATE", "DELETE", "APPROVE", etc.
-  entity          String          @db.VarChar(50)  // Nombre de la tabla
-  entityId        String?         // ID del registro afectado
+  accion                 String                @db.VarChar(100)
+  entidad                String                @db.VarChar(50)
+  entidadId              String?
   
   // Cambios
-  oldValues       Json?           // Valores anteriores
-  newValues       Json?           // Valores nuevos
-  changes         Json?           // Diferencias estructuradas
+  valoresAnteriores      Json?
+  valoresNuevos          Json?
+  cambios                Json?
   
   // Contexto
-  ipAddress       String?         @db.VarChar(45)
-  userAgent       String?         @db.Text
-  endpoint        String?         @db.VarChar(500)
+  direccionIP            String?               @db.VarChar(45)
+  agenteUsuario          String?               @db.Text
+  endpoint               String?               @db.VarChar(500)
   
   // Relaciones
-  user            User?           @relation(fields: [userId], references: [id])
+  usuario                Usuario?              @relation(fields: [usuarioId], references: [id])
   
   // Timestamps
-  createdAt       DateTime        @default(now())
+  creadoEn               DateTime              @default(now())
   
-  @@index([userId])
-  @@index([action])
-  @@index([entity, entityId])
-  @@index([createdAt])
-  @@map("audit_logs")
+  @@index([usuarioId])
+  @@index([accion])
+  @@index([entidad, entidadId])
+  @@index([creadoEn])
+  @@map("registros_auditoria")
 }
 
 // ============================================
 // MÓDULO SINCRONIZACIÓN (Para Opción B)
 // ============================================
 
-model SyncQueue {
-  id              String          @id @default(uuid())
-  tableName       String          @db.VarChar(50)
-  recordId        String
-  operation       String          @db.VarChar(10) // "CREATE", "UPDATE", "DELETE"
-  data            Json            // Datos completos del registro
-  status          SyncStatus      @default(PENDING)
-  attempts        Int             @default(0)
-  lastAttemptAt   DateTime?
-  errorMessage    String?         @db.Text
+model ColaSincronizacion {
+  id                     String                @id @default(uuid())
+  nombreTabla            String                @db.VarChar(50)
+  idRegistro             String
+  operacion              String                @db.VarChar(10)
+  datos                  Json
+  estado                 EstadoSincronizacion  @default(PENDIENTE)
+  intentos               Int                   @default(0)
+  ultimoIntento          DateTime?
+  mensajeError           String?               @db.Text
   
   // Contexto
-  createdByDevice String?         @db.VarChar(100) // Identificador del dispositivo
-  createdByUserId String?         // Usuario que realizó la acción
+  dispositivoCreador     String?               @db.VarChar(100)
+  usuarioCreadorId       String?
   
   // Relaciones
-  user            User?           @relation(fields: [createdByUserId], references: [id])
+  usuarioCreador         Usuario?              @relation(fields: [usuarioCreadorId], references: [id])
   
   // Timestamps
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  creadoEn               DateTime              @default(now())
+  actualizadoEn          DateTime              @updatedAt
   
-  @@index([tableName, recordId])
-  @@index([status])
-  @@index([createdAt])
-  @@map("sync_queue")
+  @@index([nombreTabla, idRegistro])
+  @@index([estado])
+  @@index([creadoEn])
+  @@map("cola_sincronizacion")
 }
