@@ -6,13 +6,13 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.enableCors({
-    origin: 'http://localhost:3000', 
+    origin: 'http://localhost:3000',
   });
 
   const config = new DocumentBuilder()
     .setTitle('Créditos del Sur – API REST')
     .setDescription(
-      'Sistema web para la gestión integral de créditos, préstamos y cobranzas de electrodomésticos, orientado a entornos empresariales. Soporta operación continua, control financiero riguroso, auditoría de transacciones y funcionamiento confiable en escenarios con conectividad limitada.'
+      'Sistema web para la gestión integral de créditos, préstamos y cobranzas de electrodomésticos, orientado a entornos empresariales. Soporta operación continua, control financiero riguroso, auditoría de transacciones y funcionamiento confiable en escenarios con conectividad limitada.',
     )
     .setVersion('1.0.0')
     .addBearerAuth(

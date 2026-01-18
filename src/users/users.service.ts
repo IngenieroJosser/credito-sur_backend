@@ -1,29 +1,145 @@
-import { Injectable } from '@nestjs/common';
+import {
+  Injectable,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { PrismaService } from 'prisma/prisma.service';
+import * as argon2 from 'argon2';
+import { EstadoUsuario } from '@prisma/client';
 
 @Injectable()
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  create(createUserDto: CreateUserDto) {
-    return 'This action adds a new user';
+  async crear(usuarioDto: CreateUserDto) {
+    const usuarioExistente = await this.prisma.usuario.findUnique({
+      where: { correo: usuarioDto.correo },
+    });
+
+    if (usuarioExistente) {
+      throw new ConflictException('El correo ya está registrado');
+    }
+
+    const { password, ...datosUsuario } = usuarioDto;
+
+    const hashContrasena = await argon2.hash(password);
+
+    return this.prisma.usuario.create({
+      data: {
+        ...datosUsuario,
+        hashContrasena,
+      },
+      select: {
+        id: true,
+        nombres: true,
+        apellidos: true,
+        correo: true,
+        rol: true,
+        estado: true,
+        telefono: true,
+        creadoEn: true,
+      },
+    });
   }
 
-  findAll() {
-    return `This action returns all users`;
+  obtenerTodos() {
+    return this.prisma.usuario.findMany({
+      where: {
+        eliminadoEn: null,
+      },
+      select: {
+        id: true,
+        nombres: true,
+        apellidos: true,
+        correo: true,
+        rol: true,
+        estado: true,
+        telefono: true,
+        creadoEn: true,
+        ultimoIngreso: true,
+      },
+    });
   }
 
-  findOne(id: number) {
-    return `This action returns a #${id} user`;
+  async obtenerPorId(id: string) {
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        nombres: true,
+        apellidos: true,
+        correo: true,
+        rol: true,
+        estado: true,
+        telefono: true,
+        creadoEn: true,
+        ultimoIngreso: true,
+      },
+    });
+
+    if (!usuario) {
+      throw new NotFoundException(`Usuario con ID ${id} no encontrado`);
+    }
+
+    return usuario;
   }
 
-  update(id: number, updateUserDto: UpdateUserDto) {
-    return `This action updates a #${id} user`;
+  async obtenerPorCorreo(correo: string) {
+    return this.prisma.usuario.findUnique({
+      where: { correo },
+    });
   }
 
-  remove(id: number) {
-    return `This action removes a #${id} user`;
+  async actualizar(id: string, usuarioDto: UpdateUserDto) {
+    const usuario = await this.prisma.usuario.findUnique({ where: { id } });
+    if (!usuario) {
+      throw new NotFoundException(`Usuario con ID ${id} no encontrado`);
+    }
+
+    const { password, ...restoDatos } = usuarioDto;
+
+    type DatosActualizadosUsuario = typeof restoDatos & {
+      hashContrasena?: string;
+    };
+
+    const datosActualizados: DatosActualizadosUsuario = { ...restoDatos };
+
+    if (password) {
+      datosActualizados.hashContrasena = await argon2.hash(password);
+    }
+
+    return this.prisma.usuario.update({
+      where: { id },
+      data: datosActualizados,
+      select: {
+        id: true,
+        nombres: true,
+        apellidos: true,
+        correo: true,
+        rol: true,
+        estado: true,
+        telefono: true,
+        creadoEn: true,
+        ultimoIngreso: true,
+        actualizadoEn: true,
+      },
+    });
+  }
+
+  async eliminar(id: string) {
+    const usuario = await this.prisma.usuario.findUnique({ where: { id } });
+    if (!usuario) {
+      throw new NotFoundException(`Usuario con ID ${id} no encontrado`);
+    }
+
+    return this.prisma.usuario.update({
+      where: { id },
+      data: {
+        estado: EstadoUsuario.INACTIVO,
+        eliminadoEn: new Date(),
+      },
+    });
   }
 }

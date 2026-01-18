@@ -1,34 +1,48 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  ParseUUIDPipe,
+} from '@nestjs/common';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { ApiTags } from '@nestjs/swagger';
 
-@Controller('users')
+@ApiTags('Usuarios')
+@Controller('usuarios')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Post()
-  create(@Body() createUserDto: CreateUserDto) {
-    return this.usersService.create(createUserDto);
+  crear(@Body() usuarioDto: CreateUserDto) {
+    return this.usersService.crear(usuarioDto);
   }
 
   @Get()
-  findAll() {
-    return this.usersService.findAll();
+  obtenerTodos() {
+    return this.usersService.obtenerTodos();
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.usersService.findOne(+id);
+  obtenerPorId(@Param('id', ParseUUIDPipe) id: string) {
+    return this.usersService.obtenerPorId(id);
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
-    return this.usersService.update(+id, updateUserDto);
+  actualizar(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() usuarioDto: UpdateUserDto,
+  ) {
+    return this.usersService.actualizar(id, usuarioDto);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.usersService.remove(+id);
+  eliminar(@Param('id', ParseUUIDPipe) id: string) {
+    return this.usersService.eliminar(id);
   }
 }
