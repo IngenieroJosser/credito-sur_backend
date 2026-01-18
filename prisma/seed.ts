@@ -4,6 +4,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import * as argon2 from 'argon2';
 
+//  CONFIGURACIÓN PRISMA
 const connectionString = process.env.DATABASE_URL;
 
 if (!connectionString) {
@@ -20,18 +21,17 @@ const prisma = new PrismaClient({
   adapter,
 });
 
+//  FUNCIONES DE CREACIÓN
 async function crearSuperadministradorInicial() {
-  const correo = 'superadmin@creditossur.com';
+  const correo = 'superadmin@creditosur.com';
 
   const usuarioExistente = await prisma.usuario.findUnique({
     where: { correo },
   });
 
   if (usuarioExistente) {
-    console.log(
-      'Ya existe un usuario con el correo configurado para el superadministrador',
-    );
-    return;
+    console.log('[SEED] Superadministrador ya existe');
+    return usuarioExistente;
   }
 
   const hashContrasena = await argon2.hash('SuperAdmin123!');
@@ -48,18 +48,95 @@ async function crearSuperadministradorInicial() {
   });
 
   console.log(
-    'Usuario superadministrador creado con id:',
+    '[SEED] Superadministrador creado con id:',
     superadministrador.id,
   );
+
+  return superadministrador;
 }
 
-async function main() {
-  await crearSuperadministradorInicial();
+async function crearUsuarioPorRol(
+  correo: string,
+  nombres: string,
+  apellidos: string,
+  rol: RolUsuario,
+  password?: string,
+) {
+  const existente = await prisma.usuario.findUnique({
+    where: { correo },
+  });
+
+  if (existente) {
+    console.log(
+      `[SEED] Usuario ${rol} ya existe (${correo})`,
+    );
+    return existente;
+  }
+
+  const hashContrasena = await argon2.hash(
+    password ?? `${rol}_1234`,
+  );
+
+  const usuario = await prisma.usuario.create({
+    data: {
+      correo,
+      hashContrasena,
+      nombres,
+      apellidos,
+      rol,
+      estado: EstadoUsuario.ACTIVO,
+    },
+  });
+
+  console.log(
+    `[SEED] Usuario ${rol} creado (${correo})`,
+  );
+
+  return usuario;
 }
+
+//  SEED PRINCIPAL
+async function main() {
+  console.log('Iniciando seed de usuarios...');
+
+  await crearSuperadministradorInicial();
+
+  await crearUsuarioPorRol(
+    'coordinador@creditosur.com',
+    'Coordinador',
+    'General',
+    RolUsuario.COORDINADOR,
+  );
+
+  await crearUsuarioPorRol(
+    'supervisor@creditosur.com',
+    'Supervisor',
+    'Operativo',
+    RolUsuario.SUPERVISOR,
+  );
+
+  await crearUsuarioPorRol(
+    'cobrador@creditosur.com',
+    'Cobrador',
+    'Principal',
+    RolUsuario.COBRADOR,
+  );
+
+  await crearUsuarioPorRol(
+    'contador@creditosur.com',
+    'Contador',
+    'General',
+    RolUsuario.CONTADOR,
+  );
+
+  console.log('Seed de usuarios finalizado correctamente');
+}
+
+//  EJECUCIÓN
 
 main()
   .catch((error) => {
-    console.error('Error al ejecutar el seed de superadministrador:', error);
+    console.error('Error ejecutando el seed:', error);
     process.exit(1);
   })
   .finally(async () => {
