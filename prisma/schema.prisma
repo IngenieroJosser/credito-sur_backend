@@ -101,6 +101,25 @@ enum EstadoSincronizacion {
   ERROR
 }
 
+enum TipoContenidoMultimedia {
+  FOTO_PERFIL
+  DOCUMENTO_IDENTIDAD_FRENTE
+  DOCUMENTO_IDENTIDAD_REVERSO
+  COMPROBANTE_DOMICILIO
+  FIRMA_DIGITAL
+  FOTO_PRODUCTO
+  RECIBO_PAGO
+  EVIDENCIA_GASTO
+  CONTRATO_PRESTAMO
+  OTRO_DOCUMENTO
+}
+
+enum EstadoMultimedia {
+  TEMPORAL
+  ACTIVO
+  ELIMINADO
+}
+
 // ============================================
 // MÓDULO AUTENTICACIÓN / USUARIOS / ROLES
 // ============================================
@@ -164,6 +183,10 @@ model Usuario {
   
   // Cola de sincronización
   itemsColaSincronizacion ColaSincronizacion[]
+  
+  // Multimedia
+  archivosSubidos        Multimedia[]          @relation("MultimediaSubidoPor")
+  archivosAsociados      Multimedia[]          @relation("MultimediaUsuario")
   
   // Timestamps
   creadoEn               DateTime              @default(now())
@@ -290,6 +313,7 @@ model Cliente {
   prestamos              Prestamo[]
   asignacionesRuta       AsignacionRuta[]
   pagos                  Pago[]
+  archivos               Multimedia[]          @relation("MultimediaCliente")
   
   // Timestamps
   creadoEn               DateTime              @default(now())
@@ -328,6 +352,7 @@ model Producto {
   // Relaciones
   precios                PrecioProducto[]
   prestamos              Prestamo[]
+  archivos               Multimedia[]          @relation("MultimediaProducto")
   
   // Timestamps
   creadoEn               DateTime              @default(now())
@@ -407,6 +432,7 @@ model Prestamo {
   cuotas                 Cuota[]
   pagos                  Pago[]
   extensiones            ExtensionPago[]
+  archivos               Multimedia[]          @relation("MultimediaPrestamo")
   
   // Timestamps
   creadoEn               DateTime              @default(now())
@@ -510,6 +536,7 @@ model Pago {
   cobrador               Usuario               @relation(fields: [cobradorId], references: [id])
   detalles               DetallePago[]
   recibo                 Recibo?
+  archivos               Multimedia[]          @relation("MultimediaPago")
   
   // Timestamps
   creadoEn               DateTime              @default(now())
@@ -560,6 +587,7 @@ model Recibo {
   
   // Relaciones
   pago                   Pago                  @relation(fields: [pagoId], references: [id])
+  archivos               Multimedia[]          @relation("MultimediaRecibo")
   
   // Timestamps
   creadoEn               DateTime              @default(now())
@@ -773,6 +801,7 @@ model Gasto {
   cobrador               Usuario               @relation("GastoReportadoPor", fields: [cobradorId], references: [id])
   caja                   Caja                  @relation(fields: [cajaId], references: [id])
   aprobadoPor            Usuario?              @relation("GastoAprobadoPor", fields: [aprobadoPorId], references: [id])
+  archivos               Multimedia[]          @relation("MultimediaGasto")
   
   // Timestamps
   fechaGasto             DateTime              @default(now())
@@ -857,4 +886,88 @@ model ColaSincronizacion {
   @@index([estado])
   @@index([creadoEn])
   @@map("cola_sincronizacion")
+}
+
+// ============================================
+// MÓDULO MULTIMEDIA / ARCHIVOS ADJUNTOS
+// ============================================
+
+model Multimedia {
+  id                     String                @id @default(uuid())
+  
+  // Entidad asociada (polimórfico - enfoque con campos separados)
+  clienteId              String?
+  prestamoId             String?
+  pagoId                 String?
+  gastoId                String?
+  usuarioId              String?
+  productoId             String?
+  reciboId               String?
+  
+  // Campo de entidad general para búsqueda (opcional)
+  entidad                String?               @db.VarChar(50)   // Ej: "cliente", "prestamo", "pago", "gasto", "usuario", "producto", "recibo"
+  
+  // Tipo de contenido
+  tipoContenido          TipoContenidoMultimedia
+  tipoArchivo            String                @db.VarChar(50)   // MIME type: "image/jpeg", "image/png", "video/mp4", "application/pdf"
+  formato                String                @db.VarChar(10)   // "jpg", "png", "pdf", "mp4"
+  
+  // Metadatos del archivo
+  nombreOriginal         String                @db.VarChar(255)
+  nombreAlmacenamiento   String                @db.VarChar(255)  // Nombre único en el sistema de almacenamiento
+  ruta                   String                @db.VarChar(500)  // Ruta relativa en el bucket/storage
+  url                    String?               @db.VarChar(500)  // URL completa para acceso
+  tamanoBytes            Int                   @default(0)       // Tamaño en bytes
+  
+  // Dimensiones para imágenes/videos
+  ancho                  Int?                  // Píxeles
+  alto                   Int?                  // Píxeles
+  duracion               Int?                  // Segundos (para videos)
+  
+  // Metadatos adicionales
+  descripcion            String?               @db.Text
+  etiquetas              String?               @db.VarChar(255)  // Etiquetas separadas por comas
+  
+  // Estado y visibilidad
+  esPublico              Boolean               @default(false)
+  esPrincipal            Boolean               @default(false)   // Para múltiples archivos de la misma entidad
+  estado                 EstadoMultimedia      @default(ACTIVO)
+  
+  // Auditoría
+  subidoPorId            String
+  subidoPor              Usuario               @relation("MultimediaSubidoPor", fields: [subidoPorId], references: [id])
+  
+  // Relaciones específicas
+  cliente                Cliente?              @relation("MultimediaCliente", fields: [clienteId], references: [id], onDelete: Cascade)
+  prestamo               Prestamo?             @relation("MultimediaPrestamo", fields: [prestamoId], references: [id], onDelete: Cascade)
+  pago                   Pago?                 @relation("MultimediaPago", fields: [pagoId], references: [id], onDelete: Cascade)
+  gasto                  Gasto?                @relation("MultimediaGasto", fields: [gastoId], references: [id], onDelete: Cascade)
+  usuario                Usuario?              @relation("MultimediaUsuario", fields: [usuarioId], references: [id], onDelete: Cascade)
+  producto               Producto?             @relation("MultimediaProducto", fields: [productoId], references: [id], onDelete: Cascade)
+  recibo                 Recibo?               @relation("MultimediaRecibo", fields: [reciboId], references: [id], onDelete: Cascade)
+  
+  // Timestamps
+  creadoEn               DateTime              @default(now())
+  actualizadoEn          DateTime              @updatedAt
+  eliminadoEn            DateTime?
+  
+  // Sincronización
+  estadoSincronizacion   EstadoSincronizacion  @default(PENDIENTE)
+  ultimaSincronizacion   DateTime?
+  hashArchivo            String?               @db.VarChar(64)   // SHA-256 para verificar integridad
+  
+  @@index([clienteId])
+  @@index([prestamoId])
+  @@index([pagoId])
+  @@index([gastoId])
+  @@index([usuarioId])
+  @@index([productoId])
+  @@index([reciboId])
+  @@index([tipoContenido])
+  @@index([subidoPorId])
+  @@index([esPrincipal])
+  @@index([estado])
+  @@index([creadoEn])
+  @@index([estadoSincronizacion])
+  @@map("multimedia")
 }
