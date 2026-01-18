@@ -1,34 +1,59 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  ParseUUIDPipe,
+  UseGuards,
+} from '@nestjs/common';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { RolUsuario } from '@prisma/client';
 
-@Controller('users')
+@ApiTags('Usuarios')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Controller('usuarios')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Post()
-  create(@Body() createUserDto: CreateUserDto) {
-    return this.usersService.create(createUserDto);
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR)
+  crear(@Body() usuarioDto: CreateUserDto) {
+    return this.usersService.crear(usuarioDto);
   }
 
   @Get()
-  findAll() {
-    return this.usersService.findAll();
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.COORDINADOR)
+  obtenerTodos() {
+    return this.usersService.obtenerTodos();
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.usersService.findOne(+id);
+  obtenerPorId(@Param('id', ParseUUIDPipe) id: string) {
+    return this.usersService.obtenerPorId(id);
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
-    return this.usersService.update(+id, updateUserDto);
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR)
+  actualizar(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() usuarioDto: UpdateUserDto,
+  ) {
+    return this.usersService.actualizar(id, usuarioDto);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.usersService.remove(+id);
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR)
+  eliminar(@Param('id', ParseUUIDPipe) id: string) {
+    return this.usersService.eliminar(id);
   }
 }

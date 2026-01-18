@@ -1,4 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import {
+  Injectable,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { PrismaService } from 'prisma/prisma.service';
@@ -7,23 +11,58 @@ import { PrismaService } from 'prisma/prisma.service';
 export class RolesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  create(createRoleDto: CreateRoleDto) {
-    return 'This action adds a new role';
+  async crear(rolDto: CreateRoleDto) {
+    const rolExistente = await this.prisma.rol.findUnique({
+      where: { nombre: rolDto.nombre },
+    });
+
+    if (rolExistente) {
+      throw new ConflictException(`El rol ${rolDto.nombre} ya existe`);
+    }
+
+    return this.prisma.rol.create({
+      data: rolDto,
+    });
   }
 
-  findAll() {
-    return `This action returns all roles`;
+  obtenerTodos() {
+    return this.prisma.rol.findMany({
+      where: { eliminadoEn: null },
+    });
   }
 
-  findOne(id: number) {
-    return `This action returns a #${id} role`;
+  async obtenerPorId(id: string) {
+    const rol = await this.prisma.rol.findUnique({
+      where: { id },
+    });
+
+    if (!rol) {
+      throw new NotFoundException(`Rol con ID ${id} no encontrado`);
+    }
+    return rol;
   }
 
-  update(id: number, updateRoleDto: UpdateRoleDto) {
-    return `This action updates a #${id} role`;
+  async actualizar(id: string, rolDto: UpdateRoleDto) {
+    const rol = await this.prisma.rol.findUnique({ where: { id } });
+    if (!rol) {
+      throw new NotFoundException(`Rol con ID ${id} no encontrado`);
+    }
+
+    return this.prisma.rol.update({
+      where: { id },
+      data: rolDto,
+    });
   }
 
-  remove(id: number) {
-    return `This action removes a #${id} role`;
+  async eliminar(id: string) {
+    const rol = await this.prisma.rol.findUnique({ where: { id } });
+    if (!rol) {
+      throw new NotFoundException(`Rol con ID ${id} no encontrado`);
+    }
+
+    return this.prisma.rol.update({
+      where: { id },
+      data: { eliminadoEn: new Date() },
+    });
   }
 }
