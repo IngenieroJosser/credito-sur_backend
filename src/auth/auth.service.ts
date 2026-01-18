@@ -1,29 +1,55 @@
-import { Injectable } from '@nestjs/common';
-import { CreateAuthDto } from './dto/create-auth.dto';
-import { UpdateAuthDto } from './dto/update-auth.dto';
-import { PrismaService } from 'prisma/prisma.service';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { UsersService } from '../users/users.service';
+import { JwtService } from '@nestjs/jwt';
+import * as argon2 from 'argon2';
+import { LoginAuthDto } from './dto/login-auth.dto';
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private usersService: UsersService,
+    private jwtService: JwtService,
+  ) {}
 
-  create(createAuthDto: CreateAuthDto) {
-    return 'This action adds a new auth';
+  async validarUsuario(correo: string, pass: string): Promise<any> {
+    const usuario = await this.usersService.obtenerPorCorreo(correo);
+    if (usuario && (await argon2.verify(usuario.hashContrasena, pass))) {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { hashContrasena, ...resultado } = usuario;
+      return resultado;
+    }
+    return null;
   }
 
-  findAll() {
-    return `This action returns all auth`;
-  }
+  async login(loginAuthDto: LoginAuthDto) {
+    const usuario = await this.validarUsuario(
+      loginAuthDto.correo,
+      loginAuthDto.password,
+    );
 
-  findOne(id: number) {
-    return `This action returns a #${id} auth`;
-  }
+    if (!usuario) {
+      throw new UnauthorizedException('Credenciales inválidas');
+    }
 
-  update(id: number, updateAuthDto: UpdateAuthDto) {
-    return `This action updates a #${id} auth`;
-  }
+    if (usuario.estado !== 'ACTIVO') {
+      throw new UnauthorizedException('Usuario inactivo o suspendido');
+    }
 
-  remove(id: number) {
-    return `This action removes a #${id} auth`;
+    const payload = {
+      email: usuario.correo,
+      sub: usuario.id,
+      rol: usuario.rol,
+    };
+
+    return {
+      access_token: this.jwtService.sign(payload),
+      usuario: {
+        id: usuario.id,
+        nombres: usuario.nombres,
+        apellidos: usuario.apellidos,
+        correo: usuario.correo,
+        rol: usuario.rol,
+      },
+    };
   }
 }

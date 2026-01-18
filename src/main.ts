@@ -1,18 +1,34 @@
 import { NestFactory } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { ValidationPipe } from '@nestjs/common';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+      transformOptions: {
+        enableImplicitConversion: true,
+      },
+      validationError: {
+        target: false,
+        value: false,
+      },
+    }),
+  );
+
   app.enableCors({
-    origin: 'http://localhost:3000', 
+    origin: 'http://localhost:3000',
   });
 
   const config = new DocumentBuilder()
     .setTitle('Créditos del Sur – API REST')
     .setDescription(
-      'Sistema web para la gestión integral de créditos, préstamos y cobranzas de electrodomésticos, orientado a entornos empresariales. Soporta operación continua, control financiero riguroso, auditoría de transacciones y funcionamiento confiable en escenarios con conectividad limitada.'
+      'Sistema web para la gestión integral de créditos, préstamos y cobranzas de electrodomésticos, orientado a entornos empresariales. Soporta operación continua, control financiero riguroso, auditoría de transacciones y funcionamiento confiable en escenarios con conectividad limitada.',
     )
     .setVersion('1.0.0')
     .addBearerAuth(
