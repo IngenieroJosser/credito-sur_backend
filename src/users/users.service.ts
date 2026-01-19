@@ -86,6 +86,15 @@ export class UsersService {
     return usuario;
   }
 
+  async obtenerPorNombres(nombres: string) {
+    return this.prisma.usuario.findFirst({
+      where: {
+        nombres,
+        eliminadoEn: null,
+      },
+    });
+  }  
+
   async obtenerPorCorreo(correo: string) {
     return this.prisma.usuario.findUnique({
       where: { correo },
