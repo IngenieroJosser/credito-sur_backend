@@ -3,28 +3,38 @@ import { UsersService } from '../users/users.service';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import { LoginAuthDto } from './dto/login-auth.dto';
+import { CreateAuthDto } from './dto/create-auth.dto';
+import { PrismaService } from 'prisma/prisma.service';
 
 @Injectable()
 export class AuthService {
   constructor(
     private usersService: UsersService,
     private jwtService: JwtService,
+    private readonly prisma: PrismaService
   ) {}
 
-  async validarUsuario(correo: string, pass: string): Promise<any> {
-    const usuario = await this.usersService.obtenerPorCorreo(correo);
-    if (usuario && (await argon2.verify(usuario.hashContrasena, pass))) {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async validarUsuario(
+    nombres: string,
+    contrasena: string,
+  ) {
+    const usuario = await this.usersService.obtenerPorNombres(nombres);
+
+    if (
+      usuario &&
+      (await argon2.verify(usuario.hashContrasena, contrasena))
+    ) {
       const { hashContrasena, ...resultado } = usuario;
       return resultado;
     }
+
     return null;
   }
 
   async login(loginAuthDto: LoginAuthDto) {
     const usuario = await this.validarUsuario(
-      loginAuthDto.correo,
-      loginAuthDto.password,
+      loginAuthDto.nombres,
+      loginAuthDto.contrasena,
     );
 
     if (!usuario) {
@@ -36,8 +46,8 @@ export class AuthService {
     }
 
     const payload = {
-      email: usuario.correo,
       sub: usuario.id,
+      nombres: usuario.nombres,
       rol: usuario.rol,
     };
 
@@ -47,9 +57,34 @@ export class AuthService {
         id: usuario.id,
         nombres: usuario.nombres,
         apellidos: usuario.apellidos,
-        correo: usuario.correo,
         rol: usuario.rol,
       },
     };
+  }
+
+  async registrarUsuario(dto: CreateAuthDto) {
+    const usuario = await this.usersService.crear({
+      nombres: dto.nombres,
+      apellidos: dto.apellidos,
+      correo: dto.correo,
+      password: dto.password,
+      rol: dto.rol,
+    });
+
+    const payload = {
+      sub: usuario.id,
+      nombres: usuario.nombres,
+      rol: usuario.rol,
+    };
+
+    return {
+      access_token: this.jwtService.sign(payload),
+      usuario,
+    };
+  }
+
+  async obtenerTodosLosUsuarios() {
+    const mostrarUsuarios = await this.prisma.usuario.findMany();
+    return mostrarUsuarios;
   }
 }
