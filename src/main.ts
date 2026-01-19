@@ -2,7 +2,6 @@ import { NestFactory } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -22,10 +21,6 @@ async function bootstrap() {
     }),
   );
 
-  ConfigModule.forRoot({
-    isGlobal: true,
-  });
-  
   app.enableCors({
     origin: 'http://localhost:3000',
   });
@@ -58,6 +53,10 @@ async function bootstrap() {
   });
 
   await app.listen(process.env.PORT ?? 3001);
+  console.log(`Application is running on: ${await app.getUrl()}`);
+  console.log(
+    `Swagger documentation available at: ${await app.getUrl()}/api-credisur`,
+  );
 }
 
 void bootstrap();

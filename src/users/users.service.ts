@@ -93,7 +93,7 @@ export class UsersService {
         eliminadoEn: null,
       },
     });
-  }  
+  }
 
   async obtenerPorCorreo(correo: string) {
     return this.prisma.usuario.findUnique({

@@ -11,19 +11,13 @@ export class AuthService {
   constructor(
     private usersService: UsersService,
     private jwtService: JwtService,
-    private readonly prisma: PrismaService
+    private readonly prisma: PrismaService,
   ) {}
 
-  async validarUsuario(
-    nombres: string,
-    contrasena: string,
-  ) {
+  async validarUsuario(nombres: string, contrasena: string) {
     const usuario = await this.usersService.obtenerPorNombres(nombres);
 
-    if (
-      usuario &&
-      (await argon2.verify(usuario.hashContrasena, contrasena))
-    ) {
+    if (usuario && (await argon2.verify(usuario.hashContrasena, contrasena))) {
       const { hashContrasena, ...resultado } = usuario;
       return resultado;
     }
