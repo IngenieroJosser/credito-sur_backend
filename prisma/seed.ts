@@ -4,15 +4,8 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import * as argon2 from 'argon2';
 
-//  CONFIGURACIÓN PRISMA
-const connectionString = process.env.DATABASE_URL;
-
-if (!connectionString) {
-  throw new Error('DATABASE_URL environment variable is not defined');
-}
-
 const pool = new Pool({
-  connectionString,
+  connectionString: process.env.DATABASE_URL,
 });
 
 const adapter = new PrismaPg(pool);
