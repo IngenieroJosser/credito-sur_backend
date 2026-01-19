@@ -11,12 +11,7 @@ import {
 import { AuthService } from './auth.service';
 import { LoginAuthDto } from './dto/login-auth.dto';
 import { CreateAuthDto } from './dto/create-auth.dto';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiOkResponse,
-  ApiBody,
-} from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiOkResponse, ApiBody } from '@nestjs/swagger';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { Publico } from './decorators/public.decorator';
 

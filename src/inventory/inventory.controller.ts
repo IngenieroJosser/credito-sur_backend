@@ -15,6 +15,11 @@ import { UpdateInventoryDto } from './dto/update-inventory.dto';
 export class InventoryController {
   constructor(private readonly inventoryService: InventoryService) {}
 
+  @Get('stats')
+  getInventoryStats() {
+    return this.inventoryService.getInventoryStats();
+  }
+
   @Post()
   create(@Body() createInventoryDto: CreateInventoryDto) {
     return this.inventoryService.create(createInventoryDto);
