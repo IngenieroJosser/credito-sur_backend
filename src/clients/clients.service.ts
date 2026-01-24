@@ -7,23 +7,59 @@ import { PrismaService } from 'prisma/prisma.service';
 export class ClientsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  create(createClientDto: CreateClientDto) {
-    return 'This action adds a new client';
+  async create(createClientDto: CreateClientDto) {
+    // Generar código único (simple por ahora)
+    const count = await this.prisma.cliente.count();
+    const codigo = `C-${(count + 1).toString().padStart(4, '0')}`;
+
+    // Buscar un usuario para asignar como creador (TODO: Usar usuario autenticado)
+    const creador = await this.prisma.usuario.findFirst();
+    if (!creador) {
+      throw new Error('No existen usuarios en el sistema para asignar la creación');
+    }
+
+    // Extraer campos que no están en el modelo Cliente o necesitan mapeo
+    const { rutaId, observaciones, ...clientData } = createClientDto;
+
+    return this.prisma.cliente.create({
+      data: {
+        ...clientData,
+        codigo,
+        creadoPorId: creador.id,
+        // TODO: Manejar asignación de ruta y observaciones si es necesario en otras tablas
+      },
+    });
   }
 
   findAll() {
-    return `This action returns all clients`;
+    return this.prisma.cliente.findMany({
+      where: { eliminadoEn: null },
+      orderBy: { creadoEn: 'desc' },
+    });
   }
 
-  findOne(id: number) {
-    return `This action returns a #${id} client`;
+  findOne(id: string) {
+    return this.prisma.cliente.findUnique({
+      where: { id },
+      include: {
+        prestamos: true,
+        pagos: true,
+      }
+    });
   }
 
-  update(id: number, updateClientDto: UpdateClientDto) {
-    return `This action updates a #${id} client`;
+  update(id: string, updateClientDto: UpdateClientDto) {
+    const { rutaId, observaciones, ...clientData } = updateClientDto;
+    return this.prisma.cliente.update({
+      where: { id },
+      data: clientData,
+    });
   }
 
-  remove(id: number) {
-    return `This action removes a #${id} client`;
+  remove(id: string) {
+    return this.prisma.cliente.update({
+      where: { id },
+      data: { eliminadoEn: new Date() },
+    });
   }
 }
