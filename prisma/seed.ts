@@ -95,28 +95,28 @@ async function main() {
   await crearSuperadministradorInicial();
 
   await crearUsuarioPorRol(
-    'coordinador@creditosur.com',
+    'coordinador@credisur.com',
     'Coordinador',
     'General',
     RolUsuario.COORDINADOR,
   );
 
   await crearUsuarioPorRol(
-    'supervisor@creditosur.com',
+    'supervisor@credisur.com',
     'Supervisor',
     'Operativo',
     RolUsuario.SUPERVISOR,
   );
 
   await crearUsuarioPorRol(
-    'cobrador@creditosur.com',
+    'cobrador@credisur.com',
     'Cobrador',
     'Principal',
     RolUsuario.COBRADOR,
   );
 
   await crearUsuarioPorRol(
-    'contador@creditosur.com',
+    'contador@credisur.com',
     'Contador',
     'General',
     RolUsuario.CONTADOR,

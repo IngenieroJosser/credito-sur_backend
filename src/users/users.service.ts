@@ -89,7 +89,10 @@ export class UsersService {
   async obtenerPorNombres(nombres: string) {
     return this.prisma.usuario.findFirst({
       where: {
-        nombres,
+        nombres: {
+          equals: nombres,
+          mode: 'insensitive',
+        },
         eliminadoEn: null,
       },
     });
