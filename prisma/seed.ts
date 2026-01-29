@@ -23,12 +23,11 @@ async function crearSuperadministradorInicial() {
   });
 
   if (usuarioExistente) {
-    console.log('[SEED] Superadministrador ya existe');
+    console.log(`[SEED] Superadministrador ya existe`);
     return usuarioExistente;
   }
 
   const hashContrasena = await argon2.hash('SuperAdmin123!');
-
   const superadministrador = await prisma.usuario.create({
     data: {
       correo,
@@ -39,11 +38,7 @@ async function crearSuperadministradorInicial() {
       estado: EstadoUsuario.ACTIVO,
     },
   });
-
-  console.log(
-    '[SEED] Superadministrador creado con id:',
-    superadministrador.id,
-  );
+  console.log(`[SEED] Superadministrador creado con id: ${superadministrador.id}`);
 
   return superadministrador;
 }
@@ -59,16 +54,24 @@ async function crearUsuarioPorRol(
     where: { correo },
   });
 
-  if (existente) {
-    console.log(
-      `[SEED] Usuario ${rol} ya existe (${correo})`,
-    );
-    return existente;
-  }
+  const hashContrasena = await argon2.hash(password ?? `${rol}_1234`);
 
-  const hashContrasena = await argon2.hash(
-    password ?? `${rol}_1234`,
-  );
+  if (existente) {
+    console.log(`[SEED] Usuario ${rol} ya existe (${correo})`);
+    const usuarioActualizado = await prisma.usuario.update({
+      where: { correo },
+      data: {
+        nombres,
+        apellidos,
+        rol,
+        estado: EstadoUsuario.ACTIVO,
+        hashContrasena,
+      },
+    });
+    console.log(`[SEED] Usuario ${rol} actualizado (${correo})`);
+
+    return usuarioActualizado;
+  }
 
   const usuario = await prisma.usuario.create({
     data: {
@@ -80,10 +83,7 @@ async function crearUsuarioPorRol(
       estado: EstadoUsuario.ACTIVO,
     },
   });
-
-  console.log(
-    `[SEED] Usuario ${rol} creado (${correo})`,
-  );
+  console.log(`[SEED] Usuario ${rol} creado (${correo})`);
 
   return usuario;
 }
@@ -106,6 +106,7 @@ async function main() {
     'Supervisor',
     'Operativo',
     RolUsuario.SUPERVISOR,
+    'Supervisor123!',
   );
 
   await crearUsuarioPorRol(
@@ -113,6 +114,7 @@ async function main() {
     'Cobrador',
     'Principal',
     RolUsuario.COBRADOR,
+    'Cobrador123!',
   );
 
   await crearUsuarioPorRol(
