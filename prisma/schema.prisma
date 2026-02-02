@@ -692,6 +692,8 @@ model Aprobacion {
   
   // Sincronización
   estadoSincronizacion   EstadoSincronizacion  @default(PENDIENTE)
+
+  montoSolicitud Decimal? @db.Decimal(12,2)
   
   @@index([tipoAprobacion])
   @@index([referenciaId, tablaReferencia])

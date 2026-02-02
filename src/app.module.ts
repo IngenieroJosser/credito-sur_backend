@@ -15,6 +15,7 @@ import { ReportsModule } from './reports/reports.module';
 import { AuditModule } from './audit/audit.module';
 import { BackupModule } from './backup/backup.module';
 import { PrismaModule } from 'prisma/prisma.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { PrismaModule } from 'prisma/prisma.module';
     AuditModule,
     BackupModule,
     PrismaModule,
+    DashboardModule,
   ],
   controllers: [],
   providers: [],
