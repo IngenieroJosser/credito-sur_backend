@@ -2,41 +2,55 @@ import {
   Controller,
   Get,
   Post,
-  Body,
-  Patch,
-  Param,
   Delete,
+  Param,
+  Query,
+  Body,
+  UseGuards,
+  ParseIntPipe,
+  DefaultValuePipe,
 } from '@nestjs/common';
 import { LoansService } from './loans.service';
-import { CreateLoanDto } from './dto/create-loan.dto';
-import { UpdateLoanDto } from './dto/update-loan.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { RolUsuario } from '@prisma/client';
 
 @Controller('loans')
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class LoansController {
   constructor(private readonly loansService: LoansService) {}
 
-  @Post()
-  create(@Body() createLoanDto: CreateLoanDto) {
-    return this.loansService.create(createLoanDto);
-  }
-
   @Get()
-  findAll() {
-    return this.loansService.findAll();
+  @Roles(RolUsuario.COORDINADOR, RolUsuario.SUPERVISOR, RolUsuario.COBRADOR, RolUsuario.CONTADOR)
+  async getAllLoans(
+    @Query('estado', new DefaultValuePipe('todos')) estado: string,
+    @Query('ruta', new DefaultValuePipe('todas')) ruta: string,
+    @Query('search', new DefaultValuePipe('')) search: string,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(8), ParseIntPipe) limit: number,
+  ) {
+    // Validar límite máximo
+    const safeLimit = Math.min(limit, 100); // Máximo 100 por página
+    
+    return this.loansService.getAllLoans({
+      estado,
+      ruta,
+      search,
+      page,
+      limit: safeLimit,
+    });
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.loansService.findOne(+id);
-  }
-
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() updateLoanDto: UpdateLoanDto) {
-    return this.loansService.update(+id, updateLoanDto);
+  @Roles(RolUsuario.COORDINADOR, RolUsuario.SUPERVISOR, RolUsuario.COBRADOR, RolUsuario.CONTADOR)
+  async getLoanById(@Param('id') id: string) {
+    return this.loansService.getLoanById(id);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.loansService.remove(+id);
+  @Roles(RolUsuario.COORDINADOR)
+  async deleteLoan(@Param('id') id: string, @Body() body: { userId: string }) {
+    return this.loansService.deleteLoan(id, body.userId);
   }
 }
