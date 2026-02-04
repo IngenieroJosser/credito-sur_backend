@@ -1,45 +1,24 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Patch,
-  Param,
-  Delete,
-} from '@nestjs/common';
+import { Controller, Post, Body, Param, UseGuards } from '@nestjs/common';
 import { ApprovalsService } from './approvals.service';
-import { CreateApprovalDto } from './dto/create-approval.dto';
-import { UpdateApprovalDto } from './dto/update-approval.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { RolUsuario, TipoAprobacion } from '@prisma/client';
 
 @Controller('approvals')
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class ApprovalsController {
   constructor(private readonly approvalsService: ApprovalsService) {}
 
-  @Post()
-  create(@Body() createApprovalDto: CreateApprovalDto) {
-    return this.approvalsService.create(createApprovalDto);
+  @Post(':id/approve')
+  @Roles(RolUsuario.COORDINADOR)
+  async approveItem(@Param('id') id: string, @Body() body: { type: TipoAprobacion }) {
+    return this.approvalsService.approveItem(id, body.type as TipoAprobacion);
   }
 
-  @Get()
-  findAll() {
-    return this.approvalsService.findAll();
-  }
-
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.approvalsService.findOne(+id);
-  }
-
-  @Patch(':id')
-  update(
-    @Param('id') id: string,
-    @Body() updateApprovalDto: UpdateApprovalDto,
-  ) {
-    return this.approvalsService.update(+id, updateApprovalDto);
-  }
-
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.approvalsService.remove(+id);
+  @Post(':id/reject')
+  @Roles(RolUsuario.COORDINADOR)
+  async rejectItem(@Param('id') id: string, @Body() body: { type: TipoAprobacion }) {
+    return this.approvalsService.rejectItem(id, body.type as TipoAprobacion);
   }
 }

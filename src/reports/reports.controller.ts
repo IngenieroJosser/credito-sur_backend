@@ -7,12 +7,33 @@ import {
   Param,
   Delete,
   Query,
+  UseGuards,
+  HttpStatus,
+  DefaultValuePipe,
+  ParseIntPipe,
+  Req,
 } from '@nestjs/common';
+import { 
+  ApiTags, 
+  ApiOperation, 
+  ApiResponse, 
+  ApiBearerAuth,
+  ApiQuery 
+} from '@nestjs/swagger';
 import { ReportsService } from './reports.service';
-import { CreateReportDto } from './dto/create-report.dto';
-import { UpdateReportDto } from './dto/update-report.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { RolUsuario } from '@prisma/client';
+import { 
+  PrestamosMoraFiltrosDto,
+} from './dto/prestamo-mora.dto';
+import { ExportRequestDto, PrestamosMoraResponseDto } from './dto/responses.dto';
+import { CuentasVencidasFiltrosDto, DecisionCastigoDto } from './dto/cuentas-vencidas.dto';
+import { CuentasVencidasResponseDto } from './dto/responses-cuentas-vencidas.dto';
 
 @Controller('reports')
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
 
@@ -46,28 +67,89 @@ export class ReportsController {
     return this.reportsService.getExpenseDistribution(start, end);
   }
 
-  @Post()
-  create(@Body() createReportDto: CreateReportDto) {
-    return this.reportsService.create(createReportDto);
+  @Get('prestamos-mora')
+  @Roles(RolUsuario.COORDINADOR, RolUsuario.SUPERVISOR, RolUsuario.SUPER_ADMINISTRADOR)
+  @ApiOperation({ summary: 'Obtener préstamos en mora' })
+  @ApiResponse({ 
+    status: HttpStatus.OK, 
+    description: 'Lista de préstamos en mora',
+    type: PrestamosMoraResponseDto
+  })
+  @ApiQuery({ name: 'pagina', required: false, type: Number })
+  @ApiQuery({ name: 'limite', required: false, type: Number })
+  async obtenerPrestamosMora(
+    @Query() filtros: PrestamosMoraFiltrosDto,
+    @Query('pagina', new DefaultValuePipe(1), ParseIntPipe) pagina: number,
+    @Query('limite', new DefaultValuePipe(50), ParseIntPipe) limite: number
+  ) {
+    return this.reportsService.obtenerPrestamosEnMora(filtros, pagina, limite);
   }
 
-  @Get()
-  findAll() {
-    return this.reportsService.findAll();
+  @Post('exportar-mora')
+  @Roles(RolUsuario.COORDINADOR, RolUsuario.SUPERVISOR, RolUsuario.SUPER_ADMINISTRADOR)
+  @ApiOperation({ summary: 'Exportar reporte de mora' })
+  @ApiResponse({ 
+    status: HttpStatus.CREATED, 
+    description: 'Reporte exportado exitosamente'
+  })
+  async exportarReporteMora(@Body() exportRequest: ExportRequestDto) {
+    return this.reportsService.generarReporteMora(
+      exportRequest.filtros, 
+      exportRequest.formato
+    );
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.reportsService.findOne(+id);
+  @Get('estadisticas-mora')
+  @Roles(RolUsuario.COORDINADOR, RolUsuario.SUPERVISOR, RolUsuario.SUPER_ADMINISTRADOR)
+  @ApiOperation({ summary: 'Obtener estadísticas de mora' })
+  @ApiResponse({ 
+    status: HttpStatus.OK, 
+    description: 'Estadísticas de préstamos en mora'
+  })
+  async obtenerEstadisticasMora() {
+    return this.reportsService.obtenerEstadisticasMora();
   }
 
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() updateReportDto: UpdateReportDto) {
-    return this.reportsService.update(+id, updateReportDto);
+  @Get('cuentas-vencidas')
+  @Roles(RolUsuario.COORDINADOR, RolUsuario.SUPERVISOR, RolUsuario.SUPER_ADMINISTRADOR)
+  @ApiOperation({ summary: 'Obtener cuentas vencidas' })
+  @ApiResponse({ 
+    status: HttpStatus.OK, 
+    description: 'Lista de cuentas vencidas',
+    type: CuentasVencidasResponseDto
+  })
+  async obtenerCuentasVencidas(@Query() filtros: CuentasVencidasFiltrosDto) {
+    const pagina = filtros.pagina || 1;
+    const limite = filtros.limite || 50;
+    
+    return this.reportsService.obtenerCuentasVencidas(filtros, pagina, limite);
   }
 
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.reportsService.remove(+id);
+  @Post('cuentas-vencidas/decision')
+  @Roles(RolUsuario.COORDINADOR, RolUsuario.SUPER_ADMINISTRADOR)
+  @ApiOperation({ summary: 'Procesar decisión sobre cuenta vencida' })
+  @ApiResponse({ 
+    status: HttpStatus.CREATED, 
+    description: 'Decisión procesada exitosamente'
+  })
+  async procesarDecisionCastigo(
+    @Body() decisionDto: DecisionCastigoDto,
+    @Req() req: any
+  ) {
+    return this.reportsService.procesarDecisionCastigo(decisionDto, req.user.id);
+  }
+
+  @Post('cuentas-vencidas/exportar')
+  @Roles(RolUsuario.COORDINADOR, RolUsuario.SUPERVISOR, RolUsuario.SUPER_ADMINISTRADOR)
+  @ApiOperation({ summary: 'Exportar reporte de cuentas vencidas' })
+  @ApiResponse({ 
+    status: HttpStatus.CREATED, 
+    description: 'Reporte exportado exitosamente'
+  })
+  async exportarCuentasVencidas(@Body() exportRequest: ExportRequestDto) {
+    return this.reportsService.exportarCuentasVencidas(
+      exportRequest.formato, 
+      exportRequest.filtros as CuentasVencidasFiltrosDto
+    );
   }
 }
