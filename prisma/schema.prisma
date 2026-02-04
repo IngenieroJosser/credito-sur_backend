@@ -620,6 +620,7 @@ model Ruta {
   asignaciones           AsignacionRuta[]
   cajas                  Caja[]
   gastos                 Gasto[]
+  eliminadoEn            DateTime?
   
   // Timestamps
   creadoEn               DateTime              @default(now())
