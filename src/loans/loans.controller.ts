@@ -23,7 +23,12 @@ export class LoansController {
   constructor(private readonly loansService: LoansService) {}
 
   @Get()
-  @Roles(RolUsuario.COORDINADOR, RolUsuario.SUPERVISOR, RolUsuario.COBRADOR, RolUsuario.CONTADOR)
+  @Roles(
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COBRADOR,
+    RolUsuario.CONTADOR,
+  )
   async getAllLoans(
     @Query('estado', new DefaultValuePipe('todos')) estado: string,
     @Query('ruta', new DefaultValuePipe('todas')) ruta: string,
@@ -33,7 +38,7 @@ export class LoansController {
   ) {
     // Validar límite máximo
     const safeLimit = Math.min(limit, 100); // Máximo 100 por página
-    
+
     return this.loansService.getAllLoans({
       estado,
       ruta,
@@ -44,7 +49,12 @@ export class LoansController {
   }
 
   @Get(':id')
-  @Roles(RolUsuario.COORDINADOR, RolUsuario.SUPERVISOR, RolUsuario.COBRADOR, RolUsuario.CONTADOR)
+  @Roles(
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COBRADOR,
+    RolUsuario.CONTADOR,
+  )
   async getLoanById(@Param('id') id: string) {
     return this.loansService.getLoanById(id);
   }
@@ -86,7 +96,12 @@ export class LoansController {
   }
 
   @Get(':id/cuotas')
-  @Roles(RolUsuario.COORDINADOR, RolUsuario.SUPERVISOR, RolUsuario.COBRADOR, RolUsuario.CONTADOR)
+  @Roles(
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COBRADOR,
+    RolUsuario.CONTADOR,
+  )
   async getLoanCuotas(@Param('id') id: string) {
     return this.loansService.getLoanCuotas(id);
   }

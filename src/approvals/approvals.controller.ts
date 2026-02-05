@@ -12,13 +12,19 @@ export class ApprovalsController {
 
   @Post(':id/approve')
   @Roles(RolUsuario.COORDINADOR)
-  async approveItem(@Param('id') id: string, @Body() body: { type: TipoAprobacion }) {
-    return this.approvalsService.approveItem(id, body.type as TipoAprobacion);
+  async approveItem(
+    @Param('id') id: string,
+    @Body() body: { type: TipoAprobacion },
+  ) {
+    return this.approvalsService.approveItem(id, body.type);
   }
 
   @Post(':id/reject')
   @Roles(RolUsuario.COORDINADOR)
-  async rejectItem(@Param('id') id: string, @Body() body: { type: TipoAprobacion }) {
-    return this.approvalsService.rejectItem(id, body.type as TipoAprobacion);
+  async rejectItem(
+    @Param('id') id: string,
+    @Body() body: { type: TipoAprobacion },
+  ) {
+    return this.approvalsService.rejectItem(id, body.type);
   }
 }

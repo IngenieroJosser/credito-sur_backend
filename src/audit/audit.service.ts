@@ -19,8 +19,8 @@ export class AuditService {
     // Si no hay datos, intentar inferir cambios
     let cambios: any = null;
     if (data.datosAnteriores && data.datosNuevos) {
-       // Aquí podrías implementar una lógica para calcular diferencias
-       cambios = { diff: 'calculated' }; 
+      // Aquí podrías implementar una lógica para calcular diferencias
+      cambios = { diff: 'calculated' };
     }
 
     return this.prisma.registroAuditoria.create({
@@ -34,8 +34,8 @@ export class AuditService {
         cambios: cambios || {},
         direccionIP: data.metadata?.ip,
         agenteUsuario: data.metadata?.userAgent,
-        endpoint: data.metadata?.endpoint
-      }
+        endpoint: data.metadata?.endpoint,
+      },
     });
   }
 
@@ -45,15 +45,15 @@ export class AuditService {
       take: 100,
       include: {
         usuario: {
-          select: { nombres: true, apellidos: true, correo: true, rol: true }
-        }
-      }
+          select: { nombres: true, apellidos: true, correo: true, rol: true },
+        },
+      },
     });
   }
 
   findOne(id: string) {
     return this.prisma.registroAuditoria.findUnique({
-      where: { id }
+      where: { id },
     });
   }
 }

@@ -45,7 +45,12 @@ export class UploadController {
       }),
       fileFilter: (req, file, cb) => {
         if (!file.originalname.match(/\.(jpg|jpeg|png|gif|mp4|webm|pdf)$/)) {
-          return cb(new BadRequestException('Solo se permiten archivos de imagen, video o PDF'), false);
+          return cb(
+            new BadRequestException(
+              'Solo se permiten archivos de imagen, video o PDF',
+            ),
+            false,
+          );
         }
         cb(null, true);
       },
@@ -58,7 +63,7 @@ export class UploadController {
     if (!file) {
       throw new BadRequestException('El archivo es requerido');
     }
-    
+
     // Retornamos la URL relativa que el frontend usará
     // El frontend debe prefijar esto con la URL base del backend
     return {

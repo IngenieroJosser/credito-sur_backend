@@ -54,14 +54,7 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @Get('perfil')
   @ApiOperation({ summary: 'Obtener perfil del usuario autenticado' })
-  obtenerPerfil(@Request() req) {
+  obtenerPerfil(@Request() req: { user: unknown }) {
     return req.user;
-  }
-
-  @Publico()
-  @Get()
-  @ApiOperation({ summary: 'Mostrar todos los usuarios' })
-  mostrarTodosLosUsuarios() {
-    return this.authService.obtenerTodosLosUsuarios();
   }
 }

@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from 'prisma/prisma.service'; 
-import { EstadoAprobacion, EstadoCuota, EstadoPrestamo, TipoAprobacion, } from '@prisma/client';
+import { PrismaService } from 'prisma/prisma.service';
+import {
+  EstadoAprobacion,
+  EstadoCuota,
+  EstadoPrestamo,
+  TipoAprobacion,
+} from '@prisma/client';
 
 @Injectable()
 export class DashboardService {
@@ -29,7 +34,15 @@ export class DashboardService {
 
     // Cálculo de eficiencia (relación entre préstamos pagados vs totales)
     const totalLoans = await this.prisma.prestamo.count({
-      where: { estado: { in: [EstadoPrestamo.ACTIVO, EstadoPrestamo.PAGADO, EstadoPrestamo.EN_MORA] } },
+      where: {
+        estado: {
+          in: [
+            EstadoPrestamo.ACTIVO,
+            EstadoPrestamo.PAGADO,
+            EstadoPrestamo.EN_MORA,
+          ],
+        },
+      },
     });
 
     const paidLoans = await this.prisma.prestamo.count({
@@ -108,12 +121,16 @@ export class DashboardService {
 
   private calculateRequestedBase(approvals: any[]): number {
     let total = 0;
-    approvals.forEach(approval => {
-      if (approval.tipoAprobacion === 'SOLICITUD_BASE_EFECTIVO' && approval.datosSolicitud) {
+    approvals.forEach((approval) => {
+      if (
+        approval.tipoAprobacion === 'SOLICITUD_BASE_EFECTIVO' &&
+        approval.datosSolicitud
+      ) {
         try {
-          const data = typeof approval.datosSolicitud === 'string' 
-            ? JSON.parse(approval.datosSolicitud)
-            : approval.datosSolicitud;
+          const data =
+            typeof approval.datosSolicitud === 'string'
+              ? JSON.parse(approval.datosSolicitud)
+              : approval.datosSolicitud;
           total += data.monto || 0;
         } catch (error) {
           console.error('Error parsing datosSolicitud:', error);
@@ -128,7 +145,7 @@ export class DashboardService {
       const today = new Date();
       let startDate: Date;
       let groupBy: 'day' | 'week' | 'month' = 'day';
-  
+
       // Determinar el rango de fechas según el filtro
       switch (timeFilter) {
         case 'today':
@@ -156,7 +173,7 @@ export class DashboardService {
           startDate.setDate(today.getDate() - 7);
           groupBy = 'day';
       }
-  
+
       // Obtener datos de pagos reales
       const payments = await this.prisma.pago.groupBy({
         by: ['fechaPago'],
@@ -176,12 +193,12 @@ export class DashboardService {
           fechaPago: 'asc',
         },
       });
-  
+
       // Obtener metas (podrías tener una tabla de metas en tu base de datos)
       // Por ahora, usaremos una meta fija que podrías ajustar según tu lógica de negocio
       const dailyTarget = 2500000; // Meta diaria
       const weeklyTarget = 15000000; // Meta semanal
-  
+
       // Procesar y agrupar datos según el filtro
       const processedData = this.processTrendData(
         payments,
@@ -189,9 +206,9 @@ export class DashboardService {
         today,
         groupBy,
         dailyTarget,
-        weeklyTarget
+        weeklyTarget,
       );
-  
+
       return processedData;
     } catch (error) {
       console.error('Error al obtener datos de tendencia:', error);
@@ -199,39 +216,44 @@ export class DashboardService {
       return this.getSampleTrendData();
     }
   }
-  
+
   private processTrendData(
     payments: any[],
     startDate: Date,
     endDate: Date,
     groupBy: 'day' | 'week',
     dailyTarget: number,
-    weeklyTarget: number
+    weeklyTarget: number,
   ): any[] {
     const result: any[] = [];
-    
+
     if (groupBy === 'day') {
       // Agrupar por día
-      const daysDiff = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+      const daysDiff = Math.ceil(
+        (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24),
+      );
       const daysOfWeek = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'];
-      
+
       for (let i = 0; i <= daysDiff && i < 7; i++) {
         const currentDate = new Date(startDate);
         currentDate.setDate(startDate.getDate() + i);
-        
+
         const dayStart = new Date(currentDate);
         dayStart.setHours(0, 0, 0, 0);
-        
+
         const dayEnd = new Date(currentDate);
         dayEnd.setHours(23, 59, 59, 999);
-        
-        const dayPayments = payments.filter(p => {
+
+        const dayPayments = payments.filter((p) => {
           const paymentDate = new Date(p.fechaPago);
           return paymentDate >= dayStart && paymentDate <= dayEnd;
         });
-        
-        const total = dayPayments.reduce((sum, p) => sum + parseFloat(p._sum.montoTotal?.toString() || '0'), 0);
-        
+
+        const total = dayPayments.reduce(
+          (sum, p) => sum + parseFloat(p._sum.montoTotal?.toString() || '0'),
+          0,
+        );
+
         result.push({
           label: daysOfWeek[currentDate.getDay()],
           value: total,
@@ -240,24 +262,29 @@ export class DashboardService {
       }
     } else {
       // Agrupar por semana
-      const weeksDiff = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24 * 7));
+      const weeksDiff = Math.ceil(
+        (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24 * 7),
+      );
       const weekLabels = ['Sem 1', 'Sem 2', 'Sem 3', 'Sem 4'];
-      
+
       for (let i = 0; i <= weeksDiff && i < 4; i++) {
         const weekStart = new Date(startDate);
-        weekStart.setDate(startDate.getDate() + (i * 7));
-        
+        weekStart.setDate(startDate.getDate() + i * 7);
+
         const weekEnd = new Date(weekStart);
         weekEnd.setDate(weekStart.getDate() + 6);
         weekEnd.setHours(23, 59, 59, 999);
-        
-        const weekPayments = payments.filter(p => {
+
+        const weekPayments = payments.filter((p) => {
           const paymentDate = new Date(p.fechaPago);
           return paymentDate >= weekStart && paymentDate <= weekEnd;
         });
-        
-        const total = weekPayments.reduce((sum, p) => sum + parseFloat(p._sum.montoTotal?.toString() || '0'), 0);
-        
+
+        const total = weekPayments.reduce(
+          (sum, p) => sum + parseFloat(p._sum.montoTotal?.toString() || '0'),
+          0,
+        );
+
         result.push({
           label: weekLabels[i],
           value: total,
@@ -265,10 +292,10 @@ export class DashboardService {
         });
       }
     }
-    
+
     return result;
   }
-  
+
   private getSampleTrendData(): any[] {
     // Datos de muestra en caso de error
     return [
@@ -288,7 +315,10 @@ export class DashboardService {
       type: this.mapApprovalType(approval.tipoAprobacion),
       description: this.getApprovalDescription(approval.tipoAprobacion),
       requestedBy: `${approval.solicitadoPor.nombres} ${approval.solicitadoPor.apellidos}`,
-      time: new Date(approval.creadoEn).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
+      time: new Date(approval.creadoEn).toLocaleTimeString('es-ES', {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
       details: this.getApprovalDetails(approval),
       status: 'pending' as const,
       priority: this.determinePriority(approval.tipoAprobacion),
@@ -298,32 +328,33 @@ export class DashboardService {
 
   private mapApprovalType(tipo: TipoAprobacion): string {
     const map: Record<string, string> = {
-      'NUEVO_CLIENTE': 'cliente',
-      'NUEVO_PRESTAMO': 'credito',
-      'GASTO': 'gasto',
-      'SOLICITUD_BASE_EFECTIVO': 'base-dinero',
-      'PRORROGA_PAGO': 'prorroga',
+      NUEVO_CLIENTE: 'cliente',
+      NUEVO_PRESTAMO: 'credito',
+      GASTO: 'gasto',
+      SOLICITUD_BASE_EFECTIVO: 'base-dinero',
+      PRORROGA_PAGO: 'prorroga',
     };
     return map[tipo] || 'cliente';
   }
 
   private getApprovalDescription(tipo: string): string {
     const map: Record<string, string> = {
-      'NUEVO_CLIENTE': 'Nuevo cliente',
-      'NUEVO_PRESTAMO': 'Solicitud de crédito',
-      'GASTO': 'Gasto operativo',
-      'SOLICITUD_BASE_EFECTIVO': 'Base de efectivo',
-      'PRORROGA_PAGO': 'Prórroga de cuota',
+      NUEVO_CLIENTE: 'Nuevo cliente',
+      NUEVO_PRESTAMO: 'Solicitud de crédito',
+      GASTO: 'Gasto operativo',
+      SOLICITUD_BASE_EFECTIVO: 'Base de efectivo',
+      PRORROGA_PAGO: 'Prórroga de cuota',
     };
     return map[tipo] || 'Aprobación pendiente';
   }
 
   private getApprovalDetails(approval: any): string {
     try {
-      const data = typeof approval.datosSolicitud === 'string'
-        ? JSON.parse(approval.datosSolicitud)
-        : approval.datosSolicitud;
-      
+      const data =
+        typeof approval.datosSolicitud === 'string'
+          ? JSON.parse(approval.datosSolicitud)
+          : approval.datosSolicitud;
+
       switch (approval.tipoAprobacion) {
         case 'NUEVO_CLIENTE':
           return `${data.nombres || ''} ${data.apellidos || ''} - ${data.dni || 'Sin DNI'}`;
@@ -346,7 +377,7 @@ export class DashboardService {
   private determinePriority(tipo: string): 'high' | 'medium' | 'low' {
     const highPriority = ['NUEVO_PRESTAMO', 'SOLICITUD_BASE_EFECTIVO'];
     const mediumPriority = ['NUEVO_CLIENTE', 'PRORROGA_PAGO'];
-    
+
     if (highPriority.includes(tipo)) return 'high';
     if (mediumPriority.includes(tipo)) return 'medium';
     return 'low';
@@ -354,10 +385,11 @@ export class DashboardService {
 
   private extractAmountFromApproval(approval: any): number | undefined {
     try {
-      const data = typeof approval.datosSolicitud === 'string'
-        ? JSON.parse(approval.datosSolicitud)
-        : approval.datosSolicitud;
-      
+      const data =
+        typeof approval.datosSolicitud === 'string'
+          ? JSON.parse(approval.datosSolicitud)
+          : approval.datosSolicitud;
+
       if (data.monto) return parseFloat(data.monto);
       return undefined;
     } catch (error) {
@@ -367,10 +399,13 @@ export class DashboardService {
 
   private mapDelinquentAccount(loan: any) {
     const cuotaVencida = loan.cuotas[0];
-    const daysLate = cuotaVencida 
-      ? Math.ceil((Date.now() - new Date(cuotaVencida.fechaVencimiento).getTime()) / (1000 * 60 * 60 * 24))
+    const daysLate = cuotaVencida
+      ? Math.ceil(
+          (Date.now() - new Date(cuotaVencida.fechaVencimiento).getTime()) /
+            (1000 * 60 * 60 * 24),
+        )
       : 0;
-    
+
     return {
       id: loan.id,
       client: `${loan.cliente.nombres} ${loan.cliente.apellidos}`,
@@ -392,32 +427,45 @@ export class DashboardService {
     return {
       id: approval.id,
       client: `${approval.solicitadoPor.nombres} ${approval.solicitadoPor.apellidos}`,
-      action: this.getRecentActivityAction(approval.tipoAprobacion, approval.estado),
+      action: this.getRecentActivityAction(
+        approval.tipoAprobacion,
+        approval.estado,
+      ),
       amount: this.getRecentActivityAmount(approval),
-      time: new Date(approval.actualizadoEn).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
-      status: approval.estado === EstadoAprobacion.APROBADO ? 'approved' : 'alert',
+      time: new Date(approval.actualizadoEn).toLocaleTimeString('es-ES', {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+      status:
+        approval.estado === EstadoAprobacion.APROBADO ? 'approved' : 'alert',
     };
   }
 
-  private getRecentActivityAction(tipo: TipoAprobacion, estado: EstadoAprobacion): string {
+  private getRecentActivityAction(
+    tipo: TipoAprobacion,
+    estado: EstadoAprobacion,
+  ): string {
     const actionMap: Record<string, string> = {
-      'NUEVO_CLIENTE': 'Cliente aprobado',
-      'NUEVO_PRESTAMO': 'Crédito aprobado',
-      'GASTO': 'Gasto aprobado',
-      'SOLICITUD_BASE_EFECTIVO': 'Base de efectivo aprobada',
-      'PRORROGA_PAGO': 'Prórroga autorizada',
+      NUEVO_CLIENTE: 'Cliente aprobado',
+      NUEVO_PRESTAMO: 'Crédito aprobado',
+      GASTO: 'Gasto aprobado',
+      SOLICITUD_BASE_EFECTIVO: 'Base de efectivo aprobada',
+      PRORROGA_PAGO: 'Prórroga autorizada',
     };
-    
+
     const baseAction = actionMap[tipo] || 'Aprobación procesada';
-    return estado === EstadoAprobacion.APROBADO ? baseAction : `${baseAction} rechazada`;
+    return estado === EstadoAprobacion.APROBADO
+      ? baseAction
+      : `${baseAction} rechazada`;
   }
 
   private getRecentActivityAmount(approval: any): string {
     try {
-      const data = typeof approval.datosSolicitud === 'string'
-        ? JSON.parse(approval.datosSolicitud)
-        : approval.datosSolicitud;
-      
+      const data =
+        typeof approval.datosSolicitud === 'string'
+          ? JSON.parse(approval.datosSolicitud)
+          : approval.datosSolicitud;
+
       if (data.monto) {
         return new Intl.NumberFormat('es-ES', {
           style: 'currency',
@@ -430,6 +478,4 @@ export class DashboardService {
       return '-';
     }
   }
-
-  
 }

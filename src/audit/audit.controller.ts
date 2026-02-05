@@ -1,11 +1,4 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Param,
-  UseGuards,
-} from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, UseGuards } from '@nestjs/common';
 import { AuditService } from './audit.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
@@ -24,15 +17,18 @@ export class AuditController {
    * Normalmente se crean automáticamente desde otros servicios
    */
   @Post()
-  create(@Body() data: {
-    usuarioId: string;
-    accion: string;
-    entidad: string;
-    entidadId: string;
-    datosAnteriores?: any;
-    datosNuevos?: any;
-    metadata?: any;
-  }) {
+  create(
+    @Body()
+    data: {
+      usuarioId: string;
+      accion: string;
+      entidad: string;
+      entidadId: string;
+      datosAnteriores?: any;
+      datosNuevos?: any;
+      metadata?: any;
+    },
+  ) {
     return this.auditService.create(data);
   }
 

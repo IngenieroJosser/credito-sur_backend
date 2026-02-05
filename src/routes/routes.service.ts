@@ -1,4 +1,10 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException, InternalServerErrorException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { PrismaService } from 'prisma/prisma.service';
 import { CreateRouteDto } from './dto/create-route.dto';
 import { UpdateRouteDto } from './dto/update-route.dto';
@@ -21,27 +27,31 @@ export class RoutesService {
 
       // Verificar si el cobrador existe
       const cobrador = await this.prisma.usuario.findUnique({
-        where: { 
+        where: {
           id: createRouteDto.cobradorId,
-          rol: 'COBRADOR' 
+          rol: 'COBRADOR',
         },
       });
 
       if (!cobrador) {
-        throw new BadRequestException('El cobrador especificado no existe o no tiene el rol correcto');
+        throw new BadRequestException(
+          'El cobrador especificado no existe o no tiene el rol correcto',
+        );
       }
 
       // Verificar supervisor si se proporciona
       if (createRouteDto.supervisorId) {
         const supervisor = await this.prisma.usuario.findUnique({
-          where: { 
+          where: {
             id: createRouteDto.supervisorId,
-            rol: { in: ['SUPERVISOR', 'COORDINADOR'] }
+            rol: { in: ['SUPERVISOR', 'COORDINADOR'] },
           },
         });
 
         if (!supervisor) {
-          throw new BadRequestException('El supervisor especificado no existe o no tiene el rol correcto');
+          throw new BadRequestException(
+            'El supervisor especificado no existe o no tiene el rol correcto',
+          );
         }
       }
 
@@ -87,7 +97,9 @@ export class RoutesService {
           throw new ConflictException('El código de ruta ya existe');
         }
         if (error.code === 'P2003') {
-          throw new BadRequestException('Relación inválida con cobrador o supervisor');
+          throw new BadRequestException(
+            'Relación inválida con cobrador o supervisor',
+          );
         }
       }
       throw error;
@@ -102,7 +114,8 @@ export class RoutesService {
     cobradorId?: string;
     supervisorId?: string;
   }) {
-    const { skip, take, search, activa, cobradorId, supervisorId } = options || {};
+    const { skip, take, search, activa, cobradorId, supervisorId } =
+      options || {};
 
     const where: any = {
       eliminadoEn: null,
@@ -189,9 +202,9 @@ export class RoutesService {
         rutas.map(async (ruta) => {
           // Obtener préstamos activos de clientes asignados
           // Obtener préstamos activos de clientes asignados
-          const clientesIds = ruta.asignaciones.map(a => a.clienteId);
-          
-          let estadisticas = {
+          const clientesIds = ruta.asignaciones.map((a) => a.clienteId);
+
+          const estadisticas = {
             clientesAsignados: ruta._count.asignaciones,
             cobranzaDelDia: 0,
             metaDelDia: 0,
@@ -229,7 +242,7 @@ export class RoutesService {
 
             const pagosHoy = await this.prisma.pago.aggregate({
               where: {
-                prestamoId: { in: prestamosActivos.map(p => p.id) },
+                prestamoId: { in: prestamosActivos.map((p) => p.id) },
                 fechaPago: {
                   gte: inicioDia,
                   lt: finDia,
@@ -240,34 +253,47 @@ export class RoutesService {
               },
             });
 
-            estadisticas.cobranzaDelDia = pagosHoy._sum.montoTotal?.toNumber() || 0;
-            
+            estadisticas.cobranzaDelDia =
+              pagosHoy._sum.montoTotal?.toNumber() || 0;
+
             // Calcular meta del día (suma de cuotas vencidas hoy)
-            estadisticas.metaDelDia = prestamosActivos.reduce((total, prestamo) => {
-              return total + prestamo.cuotas.reduce((cuotaTotal, cuota) => {
-                return cuotaTotal + cuota.monto.toNumber();
-              }, 0);
-            }, 0);
+            estadisticas.metaDelDia = prestamosActivos.reduce(
+              (total, prestamo) => {
+                return (
+                  total +
+                  prestamo.cuotas.reduce((cuotaTotal, cuota) => {
+                    return cuotaTotal + cuota.monto.toNumber();
+                  }, 0)
+                );
+              },
+              0,
+            );
 
             // Calcular AVANCE DIARIO
             if (estadisticas.metaDelDia > 0) {
-                avanceDiario = (estadisticas.cobranzaDelDia / estadisticas.metaDelDia) * 100;
+              avanceDiario =
+                (estadisticas.cobranzaDelDia / estadisticas.metaDelDia) * 100;
             }
 
             // Calcular RIESGO (Cartera Vencida)
             const cuotasVencidasTotal = await this.prisma.cuota.aggregate({
               where: {
-                prestamoId: { in: prestamosActivos.map(p => p.id) },
+                prestamoId: { in: prestamosActivos.map((p) => p.id) },
                 fechaVencimiento: { lt: inicioDia },
                 estado: { not: 'PAGADA' },
               },
               _sum: { monto: true },
             });
 
-            const deudaTotal = prestamosActivos.reduce((acc, curr) => acc + curr.saldoPendiente.toNumber(), 0);
-            const montoVencido = cuotasVencidasTotal._sum.monto?.toNumber() || 0;
-            
-            porcentajeMora = deudaTotal > 0 ? (montoVencido / deudaTotal) * 100 : 0;
+            const deudaTotal = prestamosActivos.reduce(
+              (acc, curr) => acc + curr.saldoPendiente.toNumber(),
+              0,
+            );
+            const montoVencido =
+              cuotasVencidasTotal._sum.monto?.toNumber() || 0;
+
+            porcentajeMora =
+              deudaTotal > 0 ? (montoVencido / deudaTotal) * 100 : 0;
 
             if (porcentajeMora > 30) nivelRiesgo = 'ALTO_RIESGO';
             else if (porcentajeMora > 15) nivelRiesgo = 'RIESGO_MODERADO';
@@ -284,7 +310,7 @@ export class RoutesService {
             estado: ruta.activa ? 'ACTIVA' : 'INACTIVA',
             frecuenciaVisita: 'DIARIO',
           };
-        })
+        }),
       );
 
       return {
@@ -302,7 +328,7 @@ export class RoutesService {
 
   async findOne(id: string) {
     const ruta = await this.prisma.ruta.findUnique({
-      where: { 
+      where: {
         id,
         eliminadoEn: null,
       },
@@ -374,8 +400,8 @@ export class RoutesService {
     }
 
     // Calcular estadísticas detalladas
-    const clientesIds = ruta.asignaciones.map(a => a.clienteId);
-    let estadisticas = {
+    const clientesIds = ruta.asignaciones.map((a) => a.clienteId);
+    const estadisticas = {
       clientesAsignados: ruta._count.asignaciones,
       cobranzaDelDia: 0,
       metaDelDia: 0,
@@ -412,7 +438,7 @@ export class RoutesService {
       // Calcular cobranza del día
       const pagosHoy = await this.prisma.pago.aggregate({
         where: {
-          prestamoId: { in: prestamosActivos.map(p => p.id) },
+          prestamoId: { in: prestamosActivos.map((p) => p.id) },
           fechaPago: {
             gte: inicioDia,
             lt: finDia,
@@ -426,7 +452,7 @@ export class RoutesService {
       // Calcular cuotas vencidas hoy para la meta
       const cuotasHoy = await this.prisma.cuota.aggregate({
         where: {
-          prestamoId: { in: prestamosActivos.map(p => p.id) },
+          prestamoId: { in: prestamosActivos.map((p) => p.id) },
           fechaVencimiento: {
             gte: inicioDia,
             lt: finDia,
@@ -449,7 +475,8 @@ export class RoutesService {
 
       // Calcular avance diario
       if (estadisticas.metaDelDia > 0) {
-        avanceDiario = (estadisticas.cobranzaDelDia / estadisticas.metaDelDia) * 100;
+        avanceDiario =
+          (estadisticas.cobranzaDelDia / estadisticas.metaDelDia) * 100;
       }
 
       // Calcular clientes nuevos (últimos 7 días)
@@ -467,7 +494,7 @@ export class RoutesService {
       // Calcular cartera vencida total para riesgo
       const cuotasVencidasTotal = await this.prisma.cuota.aggregate({
         where: {
-          prestamoId: { in: prestamosActivos.map(p => p.id) },
+          prestamoId: { in: prestamosActivos.map((p) => p.id) },
           fechaVencimiento: { lt: inicioDia },
           estado: { not: 'PAGADA' },
         },
@@ -477,7 +504,10 @@ export class RoutesService {
       });
 
       const montoVencido = cuotasVencidasTotal._sum.monto?.toNumber() || 0;
-      porcentajeMora = estadisticas.totalDeuda > 0 ? (montoVencido / estadisticas.totalDeuda) * 100 : 0;
+      porcentajeMora =
+        estadisticas.totalDeuda > 0
+          ? (montoVencido / estadisticas.totalDeuda) * 100
+          : 0;
 
       if (porcentajeMora > 30) nivelRiesgo = 'ALTO_RIESGO';
       else if (porcentajeMora > 15) nivelRiesgo = 'RIESGO_MODERADO';
@@ -493,14 +523,16 @@ export class RoutesService {
       nivelRiesgo,
       porcentajeMora: parseFloat(porcentajeMora.toFixed(2)),
       cobrador: `${ruta.cobrador.nombres} ${ruta.cobrador.apellidos}`,
-      supervisor: ruta.supervisorId ? `${ruta.supervisor?.nombres ?? ''} ${ruta.supervisor?.apellidos ?? ''}` : undefined,
+      supervisor: ruta.supervisorId
+        ? `${ruta.supervisor?.nombres ?? ''} ${ruta.supervisor?.apellidos ?? ''}`
+        : undefined,
     };
   }
 
   async update(id: string, updateRouteDto: UpdateRouteDto) {
     // Verificar si la ruta existe
     const existingRoute = await this.prisma.ruta.findUnique({
-      where: { 
+      where: {
         id,
         eliminadoEn: null,
       },
@@ -511,7 +543,10 @@ export class RoutesService {
     }
 
     // Verificar si el código ya existe (si se está actualizando)
-    if (updateRouteDto.codigo && updateRouteDto.codigo !== existingRoute.codigo) {
+    if (
+      updateRouteDto.codigo &&
+      updateRouteDto.codigo !== existingRoute.codigo
+    ) {
       const duplicateCode = await this.prisma.ruta.findUnique({
         where: { codigo: updateRouteDto.codigo },
       });
@@ -524,28 +559,32 @@ export class RoutesService {
     // Verificar cobrador si se proporciona
     if (updateRouteDto.cobradorId) {
       const cobrador = await this.prisma.usuario.findUnique({
-        where: { 
+        where: {
           id: updateRouteDto.cobradorId,
           rol: 'COBRADOR',
         },
       });
 
       if (!cobrador) {
-        throw new BadRequestException('El cobrador especificado no existe o no tiene el rol correcto');
+        throw new BadRequestException(
+          'El cobrador especificado no existe o no tiene el rol correcto',
+        );
       }
     }
 
     // Verificar supervisor si se proporciona
     if (updateRouteDto.supervisorId) {
       const supervisor = await this.prisma.usuario.findUnique({
-        where: { 
+        where: {
           id: updateRouteDto.supervisorId,
           rol: { in: ['SUPERVISOR', 'COORDINADOR'] },
         },
       });
 
       if (!supervisor) {
-        throw new BadRequestException('El supervisor especificado no existe o no tiene el rol correcto');
+        throw new BadRequestException(
+          'El supervisor especificado no existe o no tiene el rol correcto',
+        );
       }
     }
 
@@ -584,7 +623,9 @@ export class RoutesService {
           throw new ConflictException('El código de ruta ya existe');
         }
         if (error.code === 'P2003') {
-          throw new BadRequestException('Relación inválida con cobrador o supervisor');
+          throw new BadRequestException(
+            'Relación inválida con cobrador o supervisor',
+          );
         }
       }
       throw error;
@@ -594,7 +635,7 @@ export class RoutesService {
   async remove(id: string) {
     // Verificar si la ruta existe
     const existingRoute = await this.prisma.ruta.findUnique({
-      where: { 
+      where: {
         id,
         eliminadoEn: null,
       },
@@ -618,12 +659,16 @@ export class RoutesService {
 
     // Verificar si hay asignaciones activas
     if (existingRoute._count.asignaciones > 0) {
-      throw new BadRequestException('No se puede eliminar una ruta con clientes asignados');
+      throw new BadRequestException(
+        'No se puede eliminar una ruta con clientes asignados',
+      );
     }
 
     // Verificar si hay cajas activas
     if (existingRoute._count.cajas > 0) {
-      throw new BadRequestException('No se puede eliminar una ruta con cajas activas');
+      throw new BadRequestException(
+        'No se puede eliminar una ruta con cajas activas',
+      );
     }
 
     try {
@@ -644,7 +689,7 @@ export class RoutesService {
 
   async toggleActive(id: string) {
     const existingRoute = await this.prisma.ruta.findUnique({
-      where: { 
+      where: {
         id,
         eliminadoEn: null,
       },
@@ -679,7 +724,9 @@ export class RoutesService {
         message: `Ruta ${updatedRoute.activa ? 'activada' : 'desactivada'} correctamente`,
       };
     } catch (error) {
-      throw new InternalServerErrorException('Error al cambiar el estado de la ruta');
+      throw new InternalServerErrorException(
+        'Error al cambiar el estado de la ruta',
+      );
     }
   }
 
@@ -697,7 +744,7 @@ export class RoutesService {
         this.prisma.ruta.count({ where: { activa: true, eliminadoEn: null } }),
         this.prisma.ruta.count({ where: { activa: false, eliminadoEn: null } }),
         this.prisma.asignacionRuta.count({ where: { activa: true } }),
-        
+
         // Cobranza de hoy
         (async () => {
           const hoy = new Date();
@@ -791,7 +838,7 @@ export class RoutesService {
         orderBy: { nombres: 'asc' },
       });
 
-      return cobradores.map(c => ({
+      return cobradores.map((c) => ({
         id: c.id,
         nombre: `${c.nombres} ${c.apellidos}`,
         correo: c.correo,
@@ -821,7 +868,7 @@ export class RoutesService {
         orderBy: { nombres: 'asc' },
       });
 
-      return supervisores.map(s => ({
+      return supervisores.map((s) => ({
         id: s.id,
         nombre: `${s.nombres} ${s.apellidos}`,
         correo: s.correo,
@@ -837,7 +884,7 @@ export class RoutesService {
     try {
       // Verificar si la ruta existe
       const ruta = await this.prisma.ruta.findUnique({
-        where: { 
+        where: {
           id: rutaId,
           eliminadoEn: null,
           activa: true,
@@ -850,7 +897,7 @@ export class RoutesService {
 
       // Verificar si el cliente existe
       const cliente = await this.prisma.cliente.findUnique({
-        where: { 
+        where: {
           id: clienteId,
           eliminadoEn: null,
         },
@@ -949,13 +996,13 @@ export class RoutesService {
       // Verificar ambas rutas
       const [rutaOrigen, rutaDestino] = await Promise.all([
         this.prisma.ruta.findUnique({
-          where: { 
+          where: {
             id: fromRutaId,
             eliminadoEn: null,
           },
         }),
         this.prisma.ruta.findUnique({
-          where: { 
+          where: {
             id: toRutaId,
             eliminadoEn: null,
           },
@@ -976,7 +1023,9 @@ export class RoutesService {
       });
 
       if (!asignacionActual) {
-        throw new NotFoundException('El cliente no está asignado a la ruta de origen');
+        throw new NotFoundException(
+          'El cliente no está asignado a la ruta de origen',
+        );
       }
 
       // Verificar si ya está asignado a la ruta destino
@@ -989,7 +1038,9 @@ export class RoutesService {
       });
 
       if (existingInDestination) {
-        throw new ConflictException('El cliente ya está asignado a la ruta destino');
+        throw new ConflictException(
+          'El cliente ya está asignado a la ruta destino',
+        );
       }
 
       // Obtener el orden de visita más alto en la ruta destino
@@ -1041,7 +1092,7 @@ export class RoutesService {
         this.prisma.asignacionRuta.update({
           where: { id: asignacion.id },
           data: { ordenVisita: index + 1 },
-        })
+        }),
       );
 
       await this.prisma.$transaction(updates);

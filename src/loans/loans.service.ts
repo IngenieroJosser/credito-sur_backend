@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, Logger } from '@nestjs/common';
-import { PrismaService } from 'prisma/prisma.service'; 
+import { PrismaService } from 'prisma/prisma.service';
 import { EstadoPrestamo, EstadoCuota, NivelRiesgo } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditService } from '../audit/audit.service';
@@ -11,7 +11,7 @@ export class LoansService {
   constructor(
     private prisma: PrismaService,
     private notificationsService: NotificationsService,
-    private auditService: AuditService
+    private auditService: AuditService,
   ) {}
 
   async getAllLoans(filters: {
@@ -23,7 +23,7 @@ export class LoansService {
   }) {
     try {
       this.logger.log(`Getting loans with filters: ${JSON.stringify(filters)}`);
-      
+
       const {
         estado = 'todos',
         ruta = 'todas',
@@ -174,7 +174,7 @@ export class LoansService {
 
       // Calcular estadísticas globales (sin filtros de eliminados)
       const whereStats = { eliminadoEn: null };
-      
+
       const [
         totalPrestamos,
         activos,
@@ -183,7 +183,7 @@ export class LoansService {
         perdida,
         pagados,
         totales,
-        moraTotal
+        moraTotal,
       ] = await Promise.all([
         this.prisma.prestamo.count({ where: whereStats }),
         this.prisma.prestamo.count({
@@ -254,7 +254,10 @@ export class LoansService {
           let tipoProducto = 'efectivo';
           if (prestamo.producto) {
             const categoria = (prestamo.producto.categoria || '').toLowerCase();
-            if (categoria.includes('electrodoméstico') || categoria.includes('electro')) {
+            if (
+              categoria.includes('electrodoméstico') ||
+              categoria.includes('electro')
+            ) {
               tipoProducto = 'electrodomestico';
             } else if (categoria.includes('mueble')) {
               tipoProducto = 'mueble';
@@ -266,8 +269,12 @@ export class LoansService {
           // Obtener ruta del cliente (si existe) - CORREGIDO
           let rutaAsignada = 'Sin asignar';
           let rutaNombre = 'Sin asignar';
-          
-          if (prestamo.cliente && prestamo.cliente.asignacionesRuta && prestamo.cliente.asignacionesRuta.length > 0) {
+
+          if (
+            prestamo.cliente &&
+            prestamo.cliente.asignacionesRuta &&
+            prestamo.cliente.asignacionesRuta.length > 0
+          ) {
             const asignacion = prestamo.cliente.asignacionesRuta[0];
             if (asignacion.ruta) {
               rutaAsignada = asignacion.ruta.codigo || asignacion.ruta.id;
@@ -279,7 +286,8 @@ export class LoansService {
             id: prestamo.id || '',
             numeroPrestamo: prestamo.numeroPrestamo || 'N/A',
             clienteId: prestamo.clienteId || '',
-            cliente: `${prestamo.cliente.nombres || ''} ${prestamo.cliente.apellidos || ''}`.trim(),
+            cliente:
+              `${prestamo.cliente.nombres || ''} ${prestamo.cliente.apellidos || ''}`.trim(),
             clienteDni: prestamo.cliente.dni || '',
             clienteTelefono: prestamo.cliente.telefono || '',
             producto: prestamo.producto?.nombre || 'Préstamo en efectivo',
@@ -297,7 +305,8 @@ export class LoansService {
             rutaNombre,
             fechaInicio: prestamo.fechaInicio || new Date(),
             fechaFin: prestamo.fechaFin || new Date(),
-            progreso: cuotasTotales > 0 ? (cuotasPagadas / cuotasTotales) * 100 : 0,
+            progreso:
+              cuotasTotales > 0 ? (cuotasPagadas / cuotasTotales) * 100 : 0,
           };
         } catch (error) {
           this.logger.error(`Error transforming loan ${prestamo.id}:`, error);
@@ -378,7 +387,7 @@ export class LoansService {
   async getLoanById(id: string) {
     try {
       const prestamo = await this.prisma.prestamo.findUnique({
-        where: { 
+        where: {
           id,
           eliminadoEn: null, // Solo si no está eliminado
         },
@@ -441,7 +450,7 @@ export class LoansService {
     try {
       // Verificar si el préstamo existe
       const prestamo = await this.prisma.prestamo.findUnique({
-        where: { 
+        where: {
           id,
           eliminadoEn: null, // Solo si no está eliminado
         },
@@ -468,7 +477,10 @@ export class LoansService {
         entidad: 'Prestamo',
         entidadId: prestamo.id,
         datosAnteriores: { eliminadoEn: null, estado: prestamo.estado },
-        datosNuevos: { eliminadoEn: prestamoEliminado.eliminadoEn, estado: prestamoEliminado.estado }
+        datosNuevos: {
+          eliminadoEn: prestamoEliminado.eliminadoEn,
+          estado: prestamoEliminado.estado,
+        },
       });
 
       return prestamoEliminado;
@@ -508,7 +520,7 @@ export class LoansService {
         entidad: 'Prestamo',
         entidadId: prestamo.id,
         datosAnteriores: { eliminadoEn: prestamo.eliminadoEn },
-        datosNuevos: { eliminadoEn: null }
+        datosNuevos: { eliminadoEn: null },
       });
 
       return prestamoRestaurado;
@@ -570,7 +582,8 @@ export class LoansService {
       }
 
       // Calcular interes total
-      const interesTotal = (data.monto * data.tasaInteres * data.plazoMeses) / 100;
+      const interesTotal =
+        (data.monto * data.tasaInteres * data.plazoMeses) / 100;
       const montoCuota = (data.monto + interesTotal) / cantidadCuotas;
       const montoCapitalCuota = data.monto / cantidadCuotas;
       const montoInteresCuota = interesTotal / cantidadCuotas;
@@ -599,19 +612,27 @@ export class LoansService {
           cuotas: {
             create: Array.from({ length: cantidadCuotas }, (_, i) => {
               const fechaVencimiento = new Date(fechaInicio);
-              
+
               switch (data.frecuenciaPago) {
                 case 'DIARIO':
-                  fechaVencimiento.setDate(fechaVencimiento.getDate() + (i + 1));
+                  fechaVencimiento.setDate(
+                    fechaVencimiento.getDate() + (i + 1),
+                  );
                   break;
                 case 'SEMANAL':
-                  fechaVencimiento.setDate(fechaVencimiento.getDate() + ((i + 1) * 7));
+                  fechaVencimiento.setDate(
+                    fechaVencimiento.getDate() + (i + 1) * 7,
+                  );
                   break;
                 case 'QUINCENAL':
-                  fechaVencimiento.setDate(fechaVencimiento.getDate() + ((i + 1) * 15));
+                  fechaVencimiento.setDate(
+                    fechaVencimiento.getDate() + (i + 1) * 15,
+                  );
                   break;
                 case 'MENSUAL':
-                  fechaVencimiento.setMonth(fechaVencimiento.getMonth() + (i + 1));
+                  fechaVencimiento.setMonth(
+                    fechaVencimiento.getMonth() + (i + 1),
+                  );
                   break;
               }
 
@@ -642,7 +663,7 @@ export class LoansService {
         tipo: 'INFO',
         entidad: 'PRESTAMO',
         entidadId: prestamo.id,
-        metadata: { creadoPor: data.creadoPorId }
+        metadata: { creadoPor: data.creadoPorId },
       });
 
       // Registrar Auditoría
@@ -652,7 +673,7 @@ export class LoansService {
         entidad: 'Prestamo',
         entidadId: prestamo.id,
         datosNuevos: prestamo,
-        metadata: { clienteId: data.clienteId }
+        metadata: { clienteId: data.clienteId },
       });
 
       return prestamo;
@@ -673,7 +694,9 @@ export class LoansService {
       }
 
       if (prestamo.estado !== EstadoPrestamo.PENDIENTE_APROBACION) {
-        throw new Error('El préstamo no está en estado pendiente de aprobación');
+        throw new Error(
+          'El préstamo no está en estado pendiente de aprobación',
+        );
       }
 
       const prestamoActualizado = await this.prisma.prestamo.update({
@@ -698,7 +721,7 @@ export class LoansService {
         tipo: 'EXITO',
         entidad: 'PRESTAMO',
         entidadId: prestamo.id,
-        metadata: { aprobadoPor: aprobadoPorId }
+        metadata: { aprobadoPor: aprobadoPorId },
       });
 
       // Auditoría
@@ -707,8 +730,11 @@ export class LoansService {
         accion: 'APROBAR_PRESTAMO',
         entidad: 'Prestamo',
         entidadId: prestamo.id,
-        datosAnteriores: { estado: prestamo.estado, estadoAprobacion: prestamo.estadoAprobacion },
-        datosNuevos: { estado: 'ACTIVO', estadoAprobacion: 'APROBADO' }
+        datosAnteriores: {
+          estado: prestamo.estado,
+          estadoAprobacion: prestamo.estadoAprobacion,
+        },
+        datosNuevos: { estado: 'ACTIVO', estadoAprobacion: 'APROBADO' },
       });
 
       return prestamoActualizado;
@@ -748,7 +774,7 @@ export class LoansService {
         tipo: 'ALERTA',
         entidad: 'PRESTAMO',
         entidadId: prestamo.id,
-        metadata: { rechazadoPor: rechazadoPorId, motivo }
+        metadata: { rechazadoPor: rechazadoPorId, motivo },
       });
 
       // Auditoría
@@ -758,7 +784,7 @@ export class LoansService {
         entidad: 'Prestamo',
         entidadId: prestamo.id,
         datosAnteriores: { estadoAprobacion: prestamo.estadoAprobacion },
-        datosNuevos: { estadoAprobacion: 'RECHAZADO', motivo }
+        datosNuevos: { estadoAprobacion: 'RECHAZADO', motivo },
       });
 
       return prestamoRechazado;

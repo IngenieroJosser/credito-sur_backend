@@ -30,7 +30,10 @@ export class NotificationsService {
         },
       });
     } catch (error) {
-      this.logger.error(`Error creating notification for user ${data.usuarioId}:`, error);
+      this.logger.error(
+        `Error creating notification for user ${data.usuarioId}:`,
+        error,
+      );
       // No lanzamos error para no interrumpir el flujo principal del negocio
     }
   }
@@ -52,7 +55,9 @@ export class NotificationsService {
         },
       });
 
-      this.logger.log(`Notifying ${coordinadores.length} coordinators: ${data.titulo}`);
+      this.logger.log(
+        `Notifying ${coordinadores.length} coordinators: ${data.titulo}`,
+      );
 
       // 2. Crear notificación para cada uno
       await Promise.all(

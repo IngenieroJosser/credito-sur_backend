@@ -1,19 +1,18 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from 'prisma/prisma.service';
 import { EstadoAprobacion } from '@prisma/client';
-import { PrestamosMoraFiltrosDto, TotalesMoraDto, PrestamoMoraDto } from './dto/prestamo-mora.dto';
+import {
+  PrestamosMoraFiltrosDto,
+  TotalesMoraDto,
+  PrestamoMoraDto,
+} from './dto/prestamo-mora.dto';
 import { PrestamosMoraResponseDto } from './dto/responses.dto';
-import { 
-  startOfDay,
-  endOfDay,
-  differenceInDays,
-  format 
-} from 'date-fns';
-import { 
-  TotalesVencidasDto, 
-  DecisionCastigoDto, 
-  CuentasVencidasFiltrosDto, 
-  CuentaVencidaDto 
+import { startOfDay, endOfDay, differenceInDays, format } from 'date-fns';
+import {
+  TotalesVencidasDto,
+  DecisionCastigoDto,
+  CuentasVencidasFiltrosDto,
+  CuentaVencidaDto,
 } from './dto/cuentas-vencidas.dto';
 import { CuentasVencidasResponseDto } from './dto/responses-cuentas-vencidas.dto';
 import { TipoAprobacion, EstadoPrestamo } from '@prisma/client';
@@ -119,17 +118,17 @@ export class ReportsService {
   async obtenerPrestamosEnMora(
     filtros: PrestamosMoraFiltrosDto,
     pagina: number = 1,
-    limite: number = 50
+    limite: number = 50,
   ): Promise<PrestamosMoraResponseDto> {
     const skip = (pagina - 1) * limite;
-    
+
     const whereConditions: any = {
       estado: 'EN_MORA',
       cuotas: {
         some: {
-          estado: 'VENCIDA'
-        }
-      }
+          estado: 'VENCIDA',
+        },
+      },
     };
 
     // Aplicar filtros
@@ -139,39 +138,39 @@ export class ReportsService {
           cliente: {
             nombres: {
               contains: filtros.busqueda,
-              mode: 'insensitive'
-            }
-          }
+              mode: 'insensitive',
+            },
+          },
         },
         {
           cliente: {
             apellidos: {
               contains: filtros.busqueda,
-              mode: 'insensitive'
-            }
-          }
+              mode: 'insensitive',
+            },
+          },
         },
         {
           cliente: {
             dni: {
               contains: filtros.busqueda,
-              mode: 'insensitive'
-            }
-          }
+              mode: 'insensitive',
+            },
+          },
         },
         {
           numeroPrestamo: {
             contains: filtros.busqueda,
-            mode: 'insensitive'
-          }
-        }
+            mode: 'insensitive',
+          },
+        },
       ];
     }
 
     if (filtros.nivelRiesgo) {
       whereConditions.cliente = {
         ...whereConditions.cliente,
-        nivelRiesgo: filtros.nivelRiesgo
+        nivelRiesgo: filtros.nivelRiesgo,
       };
     }
 
@@ -179,12 +178,12 @@ export class ReportsService {
       const clientesRuta = await this.prisma.asignacionRuta.findMany({
         where: {
           rutaId: filtros.rutaId,
-          activa: true
+          activa: true,
         },
-        select: { clienteId: true }
+        select: { clienteId: true },
       });
-      
-      const clienteIds = clientesRuta.map(cr => cr.clienteId);
+
+      const clienteIds = clientesRuta.map((cr) => cr.clienteId);
       whereConditions.clienteId = { in: clienteIds };
     }
 
@@ -192,27 +191,27 @@ export class ReportsService {
       const rutasCobrador = await this.prisma.ruta.findMany({
         where: {
           cobradorId: filtros.cobradorId,
-          activa: true
+          activa: true,
         },
-        select: { id: true }
+        select: { id: true },
       });
-      
-      const rutaIds = rutasCobrador.map(rc => rc.id);
+
+      const rutaIds = rutasCobrador.map((rc) => rc.id);
       const clientesRuta = await this.prisma.asignacionRuta.findMany({
         where: {
           rutaId: { in: rutaIds },
-          activa: true
+          activa: true,
         },
-        select: { clienteId: true }
+        select: { clienteId: true },
       });
-      
-      const clienteIds = clientesRuta.map(cr => cr.clienteId);
+
+      const clienteIds = clientesRuta.map((cr) => cr.clienteId);
       whereConditions.clienteId = { in: clienteIds };
     }
 
     // Obtener total de registros
     const total = await this.prisma.prestamo.count({
-      where: whereConditions
+      where: whereConditions,
     });
 
     // Obtener préstamos con relaciones
@@ -224,29 +223,29 @@ export class ReportsService {
         cliente: true,
         cuotas: {
           where: {
-            estado: 'VENCIDA'
+            estado: 'VENCIDA',
           },
           orderBy: {
-            fechaVencimiento: 'asc'
-          }
+            fechaVencimiento: 'asc',
+          },
         },
         pagos: {
           orderBy: {
-            fechaPago: 'desc'
+            fechaPago: 'desc',
           },
-          take: 1
-        }
+          take: 1,
+        },
       },
       orderBy: [
         {
           cliente: {
-            nivelRiesgo: 'desc'
-          }
+            nivelRiesgo: 'desc',
+          },
         },
         {
-          saldoPendiente: 'desc'
-        }
-      ]
+          saldoPendiente: 'desc',
+        },
+      ],
     });
 
     // Enriquecer datos con información de ruta y cobrador
@@ -256,31 +255,32 @@ export class ReportsService {
         const asignacion = await this.prisma.asignacionRuta.findFirst({
           where: {
             clienteId: prestamo.clienteId,
-            activa: true
+            activa: true,
           },
           include: {
             ruta: {
               include: {
-                cobrador: true
-              }
-            }
-          }
+                cobrador: true,
+              },
+            },
+          },
         });
 
         // Calcular días de mora (desde la primera cuota vencida)
         const primeraCuotaVencida = prestamo.cuotas[0];
-        const diasMora = primeraCuotaVencida 
+        const diasMora = primeraCuotaVencida
           ? differenceInDays(new Date(), primeraCuotaVencida.fechaVencimiento)
           : 0;
 
         // Calcular monto de mora (suma de intereses de mora de cuotas vencidas)
-        const montoMora = prestamo.cuotas.reduce((sum, cuota) => 
-          sum + cuota.montoInteresMora.toNumber(), 0
+        const montoMora = prestamo.cuotas.reduce(
+          (sum, cuota) => sum + cuota.montoInteresMora.toNumber(),
+          0,
         );
 
         // Obtener último pago
         const ultimoPago = prestamo.pagos[0];
-        
+
         return {
           id: prestamo.id,
           numeroPrestamo: prestamo.numeroPrestamo,
@@ -288,37 +288,43 @@ export class ReportsService {
             nombre: `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
             documento: prestamo.cliente.dni,
             telefono: prestamo.cliente.telefono,
-            direccion: prestamo.cliente.direccion || ''
+            direccion: prestamo.cliente.direccion || '',
           },
           diasMora,
           montoMora,
           montoTotalDeuda: prestamo.saldoPendiente.toNumber(),
           cuotasVencidas: prestamo.cuotas.length,
           ruta: asignacion?.ruta?.nombre || 'Sin asignar',
-          cobrador: asignacion?.ruta?.cobrador 
+          cobrador: asignacion?.ruta?.cobrador
             ? `${asignacion.ruta.cobrador.nombres} ${asignacion.ruta.cobrador.apellidos}`
             : 'Sin asignar',
           nivelRiesgo: prestamo.cliente.nivelRiesgo,
           estado: prestamo.estado,
-          ultimoPago: ultimoPago 
+          ultimoPago: ultimoPago
             ? format(ultimoPago.fechaPago, 'yyyy-MM-dd')
-            : undefined
+            : undefined,
         } as PrestamoMoraDto;
-      })
+      }),
     );
 
     // Calcular totales
-    const totalMora = prestamosEnriquecidos.reduce((sum, p) => sum + p.montoMora, 0);
-    const totalDeuda = prestamosEnriquecidos.reduce((sum, p) => sum + p.montoTotalDeuda, 0);
+    const totalMora = prestamosEnriquecidos.reduce(
+      (sum, p) => sum + p.montoMora,
+      0,
+    );
+    const totalDeuda = prestamosEnriquecidos.reduce(
+      (sum, p) => sum + p.montoTotalDeuda,
+      0,
+    );
     const totalCasosCriticos = prestamosEnriquecidos.filter(
-      p => p.nivelRiesgo === 'ROJO' || p.nivelRiesgo === 'LISTA_NEGRA'
+      (p) => p.nivelRiesgo === 'ROJO' || p.nivelRiesgo === 'LISTA_NEGRA',
     ).length;
 
     const totales: TotalesMoraDto = {
       totalMora,
       totalDeuda,
       totalCasosCriticos,
-      totalRegistros: total
+      totalRegistros: total,
     };
 
     return {
@@ -326,91 +332,94 @@ export class ReportsService {
       totales,
       total,
       pagina,
-      limite
+      limite,
     };
   }
 
-  async generarReporteMora(filtros: PrestamosMoraFiltrosDto, formato: 'excel' | 'pdf') {
+  async generarReporteMora(
+    filtros: PrestamosMoraFiltrosDto,
+    formato: 'excel' | 'pdf',
+  ) {
     const data = await this.obtenerPrestamosEnMora(filtros, 1, 1000);
-    
+
     // Aquí implementarías la generación del archivo Excel o PDF
     // Por ahora retornamos los datos en el formato solicitado
     return {
       mensaje: `Reporte generado en formato ${formato.toUpperCase()}`,
       datos: data.prestamos,
       totales: data.totales,
-      fechaGeneracion: new Date().toISOString()
+      fechaGeneracion: new Date().toISOString(),
     };
   }
 
   async obtenerEstadisticasMora() {
     const hoy = new Date();
-    
+
     const [
       totalPrestamosMora,
       prestamosRojos,
       prestamosListaNegra,
       moraAcumulada,
-      deudaTotal
+      deudaTotal,
     ] = await Promise.all([
       this.prisma.prestamo.count({
-        where: { estado: 'EN_MORA' }
+        where: { estado: 'EN_MORA' },
       }),
       this.prisma.prestamo.count({
         where: {
           estado: 'EN_MORA',
           cliente: {
-            nivelRiesgo: 'ROJO'
-          }
-        }
+            nivelRiesgo: 'ROJO',
+          },
+        },
       }),
       this.prisma.prestamo.count({
         where: {
           estado: 'EN_MORA',
           cliente: {
-            nivelRiesgo: 'LISTA_NEGRA'
-          }
-        }
+            nivelRiesgo: 'LISTA_NEGRA',
+          },
+        },
       }),
       this.prisma.cuota.aggregate({
         where: {
           estado: 'VENCIDA',
           prestamo: {
-            estado: 'EN_MORA'
-          }
+            estado: 'EN_MORA',
+          },
         },
         _sum: {
-          montoInteresMora: true
-        }
+          montoInteresMora: true,
+        },
       }),
       this.prisma.prestamo.aggregate({
         where: { estado: 'EN_MORA' },
         _sum: {
-          saldoPendiente: true
-        }
-      })
+          saldoPendiente: true,
+        },
+      }),
     ]);
 
     return {
       totalPrestamosMora,
       casosCriticos: prestamosRojos + prestamosListaNegra,
       moraAcumulada: moraAcumulada._sum.montoInteresMora?.toNumber() || 0,
-      deudaTotal: deudaTotal._sum.saldoPendiente?.toNumber() || 0
+      deudaTotal: deudaTotal._sum.saldoPendiente?.toNumber() || 0,
     };
   }
 
   async obtenerCuentasVencidas(
     filtros: CuentasVencidasFiltrosDto,
     pagina: number = 1,
-    limite: number = 50
+    limite: number = 50,
   ): Promise<CuentasVencidasResponseDto> {
     const skip = (pagina - 1) * limite;
     const hoy = new Date();
-    
+
     const whereConditions: any = {
       fechaFin: { lt: hoy },
       estado: { in: ['EN_MORA', 'INCUMPLIDO', 'PERDIDA'] },
-      saldoPendiente: { gt: 0 }
+      saldoPendiente: { gt: 0 },
     };
 
     // Aplicar filtros
@@ -420,39 +429,39 @@ export class ReportsService {
           cliente: {
             nombres: {
               contains: filtros.busqueda,
-              mode: 'insensitive'
-            }
-          }
+              mode: 'insensitive',
+            },
+          },
         },
         {
           cliente: {
             apellidos: {
               contains: filtros.busqueda,
-              mode: 'insensitive'
-            }
-          }
+              mode: 'insensitive',
+            },
+          },
         },
         {
           cliente: {
             dni: {
               contains: filtros.busqueda,
-              mode: 'insensitive'
-            }
-          }
+              mode: 'insensitive',
+            },
+          },
         },
         {
           numeroPrestamo: {
             contains: filtros.busqueda,
-            mode: 'insensitive'
-          }
-        }
+            mode: 'insensitive',
+          },
+        },
       ];
     }
 
     if (filtros.nivelRiesgo) {
       whereConditions.cliente = {
         ...whereConditions.cliente,
-        nivelRiesgo: filtros.nivelRiesgo
+        nivelRiesgo: filtros.nivelRiesgo,
       };
     }
 
@@ -460,18 +469,18 @@ export class ReportsService {
       const clientesRuta = await this.prisma.asignacionRuta.findMany({
         where: {
           rutaId: filtros.rutaId,
-          activa: true
+          activa: true,
         },
-        select: { clienteId: true }
+        select: { clienteId: true },
       });
-      
-      const clienteIds = clientesRuta.map(cr => cr.clienteId);
+
+      const clienteIds = clientesRuta.map((cr) => cr.clienteId);
       whereConditions.clienteId = { in: clienteIds };
     }
 
     // Obtener total de registros
     const total = await this.prisma.prestamo.count({
-      where: whereConditions
+      where: whereConditions,
     });
 
     // Obtener préstamos con relaciones
@@ -483,18 +492,18 @@ export class ReportsService {
         cliente: true,
         cuotas: {
           where: {
-            estado: 'VENCIDA'
-          }
-        }
+            estado: 'VENCIDA',
+          },
+        },
       },
       orderBy: [
         {
-          fechaFin: 'asc'
+          fechaFin: 'asc',
         },
         {
-          saldoPendiente: 'desc'
-        }
-      ]
+          saldoPendiente: 'desc',
+        },
+      ],
     });
 
     // Enriquecer datos con información de ruta y cobrador
@@ -504,23 +513,24 @@ export class ReportsService {
         const asignacion = await this.prisma.asignacionRuta.findFirst({
           where: {
             clienteId: prestamo.clienteId,
-            activa: true
+            activa: true,
           },
           include: {
             ruta: {
               include: {
-                cobrador: true
-              }
-            }
-          }
+                cobrador: true,
+              },
+            },
+          },
         });
 
         // Calcular días vencidos (desde fechaFin)
         const diasVencidos = differenceInDays(hoy, prestamo.fechaFin);
 
         // Sumar cuotas vencidas para intereses de mora
-        const interesesMora = prestamo.cuotas.reduce((sum, cuota) => 
-          sum + cuota.montoInteresMora.toNumber(), 0
+        const interesesMora = prestamo.cuotas.reduce(
+          (sum, cuota) => sum + cuota.montoInteresMora.toNumber(),
+          0,
         );
 
         return {
@@ -530,7 +540,7 @@ export class ReportsService {
             nombre: `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
             documento: prestamo.cliente.dni,
             telefono: prestamo.cliente.telefono,
-            direccion: prestamo.cliente.direccion || ''
+            direccion: prestamo.cliente.direccion || '',
           },
           fechaVencimiento: format(prestamo.fechaFin, 'yyyy-MM-dd'),
           diasVencidos,
@@ -539,22 +549,29 @@ export class ReportsService {
           ruta: asignacion?.ruta?.nombre || 'Sin asignar',
           nivelRiesgo: prestamo.cliente.nivelRiesgo,
           estado: prestamo.estado,
-          interesesMora
+          interesesMora,
         } as CuentaVencidaDto & { interesesMora: number };
-      })
+      }),
     );
 
     // Calcular totales
-    const totalVencido = cuentasVencidas.reduce((sum, c) => sum + c.saldoPendiente, 0);
-    const totalDiasVencidos = cuentasVencidas.reduce((sum, c) => sum + c.diasVencidos, 0);
-    const diasPromedioVencimiento = cuentasVencidas.length > 0 
-      ? Math.round(totalDiasVencidos / cuentasVencidas.length) 
-      : 0;
+    const totalVencido = cuentasVencidas.reduce(
+      (sum, c) => sum + c.saldoPendiente,
+      0,
+    );
+    const totalDiasVencidos = cuentasVencidas.reduce(
+      (sum, c) => sum + c.diasVencidos,
+      0,
+    );
+    const diasPromedioVencimiento =
+      cuentasVencidas.length > 0
+        ? Math.round(totalDiasVencidos / cuentasVencidas.length)
+        : 0;
 
     const totales: TotalesVencidasDto = {
       totalVencido,
       totalRegistros: total,
-      diasPromedioVencimiento
+      diasPromedioVencimiento,
     };
 
     return {
@@ -562,14 +579,17 @@ export class ReportsService {
       totales,
       total,
       pagina,
-      limite
+      limite,
     };
   }
 
-  async procesarDecisionCastigo(decisionDto: DecisionCastigoDto, usuarioId: string) {
+  async procesarDecisionCastigo(
+    decisionDto: DecisionCastigoDto,
+    usuarioId: string,
+  ) {
     const prestamo = await this.prisma.prestamo.findUnique({
       where: { id: decisionDto.prestamoId },
-      include: { cliente: true }
+      include: { cliente: true },
     });
 
     if (!prestamo) {
@@ -591,15 +611,15 @@ export class ReportsService {
           prestamoId: decisionDto.prestamoId,
           clienteNombre: `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
           saldoPendiente: prestamo.saldoPendiente.toNumber(),
-          fechaVencimientoOriginal: prestamo.fechaFin
+          fechaVencimientoOriginal: prestamo.fechaFin,
         },
-        montoSolicitud: decisionDto.montoInteres || 0
-      }
+        montoSolicitud: decisionDto.montoInteres || 0,
+      },
     });
 
     // Actualizar estado del préstamo según la decisión
     let nuevoEstado: EstadoPrestamo = prestamo.estado;
-    
+
     switch (decisionDto.decision) {
       case 'CASTIGAR':
         nuevoEstado = 'PERDIDA';
@@ -614,8 +634,8 @@ export class ReportsService {
             where: { id: decisionDto.prestamoId },
             data: {
               fechaFin: new Date(decisionDto.nuevaFechaVencimiento),
-              estado: 'EN_MORA'
-            }
+              estado: 'EN_MORA',
+            },
           });
         }
         break;
@@ -624,7 +644,7 @@ export class ReportsService {
     if (decisionDto.decision !== 'PRORROGAR') {
       await this.prisma.prestamo.update({
         where: { id: decisionDto.prestamoId },
-        data: { estado: nuevoEstado }
+        data: { estado: nuevoEstado },
       });
     }
 
@@ -633,19 +653,19 @@ export class ReportsService {
       const cuotasVencidas = await this.prisma.cuota.findMany({
         where: {
           prestamoId: decisionDto.prestamoId,
-          estado: 'VENCIDA'
-        }
+          estado: 'VENCIDA',
+        },
       });
 
       // Distribuir el interés entre las cuotas vencidas
       const interesPorCuota = decisionDto.montoInteres / cuotasVencidas.length;
-      
+
       for (const cuota of cuotasVencidas) {
         await this.prisma.cuota.update({
           where: { id: cuota.id },
           data: {
-            montoInteresMora: { increment: interesPorCuota }
-          }
+            montoInteresMora: { increment: interesPorCuota },
+          },
         });
       }
     }
@@ -653,20 +673,23 @@ export class ReportsService {
     return {
       mensaje: `Decisión de ${decisionDto.decision.toLowerCase()} procesada exitosamente`,
       aprobacionId: aprobacion.id,
-      nuevoEstado
+      nuevoEstado,
     };
   }
 
-  async exportarCuentasVencidas(formato: 'excel' | 'pdf', filtros: CuentasVencidasFiltrosDto) {
+  async exportarCuentasVencidas(
+    formato: 'excel' | 'pdf',
+    filtros: CuentasVencidasFiltrosDto,
+  ) {
     const data = await this.obtenerCuentasVencidas(filtros, 1, 1000);
-    
+
     // Simular generación de archivo (en producción usarías librerías como exceljs o pdfkit)
     return {
       mensaje: `Reporte de cuentas vencidas generado en formato ${formato.toUpperCase()}`,
       datos: data.cuentas,
       totales: data.totales,
       fechaGeneracion: new Date().toISOString(),
-      nombreArchivo: `cuentas-vencidas-${format(new Date(), 'yyyy-MM-dd')}.${formato}`
+      nombreArchivo: `cuentas-vencidas-${format(new Date(), 'yyyy-MM-dd')}.${formato}`,
     };
   }
 }
