@@ -188,6 +188,7 @@ export class RoutesService {
       const rutasConEstadisticas = await Promise.all(
         rutas.map(async (ruta) => {
           // Obtener préstamos activos de clientes asignados
+          // Obtener préstamos activos de clientes asignados
           const clientesIds = ruta.asignaciones.map(a => a.clienteId);
           
           let estadisticas = {
@@ -196,6 +197,10 @@ export class RoutesService {
             metaDelDia: 0,
             clientesNuevos: 0,
           };
+
+          let nivelRiesgo = 'PELIGRO_MINIMO';
+          let porcentajeMora = 0;
+          let avanceDiario = 0;
 
           if (clientesIds.length > 0) {
             // Obtener préstamos activos
@@ -243,15 +248,41 @@ export class RoutesService {
                 return cuotaTotal + cuota.monto.toNumber();
               }, 0);
             }, 0);
+
+            // Calcular AVANCE DIARIO
+            if (estadisticas.metaDelDia > 0) {
+                avanceDiario = (estadisticas.cobranzaDelDia / estadisticas.metaDelDia) * 100;
+            }
+
+            // Calcular RIESGO (Cartera Vencida)
+            const cuotasVencidasTotal = await this.prisma.cuota.aggregate({
+              where: {
+                prestamoId: { in: prestamosActivos.map(p => p.id) },
+                fechaVencimiento: { lt: inicioDia },
+                estado: { not: 'PAGADA' },
+              },
+              _sum: { monto: true },
+            });
+
+            const deudaTotal = prestamosActivos.reduce((acc, curr) => acc + curr.saldoPendiente.toNumber(), 0);
+            const montoVencido = cuotasVencidasTotal._sum.monto?.toNumber() || 0;
+            
+            porcentajeMora = deudaTotal > 0 ? (montoVencido / deudaTotal) * 100 : 0;
+
+            if (porcentajeMora > 30) nivelRiesgo = 'ALTO_RIESGO';
+            else if (porcentajeMora > 15) nivelRiesgo = 'RIESGO_MODERADO';
+            else if (porcentajeMora > 5) nivelRiesgo = 'LEVE_RETRASO';
           }
 
           return {
             ...ruta,
             ...estadisticas,
-            // Propiedades para compatibilidad con el frontend
+            nivelRiesgo,
+            porcentajeMora: parseFloat(porcentajeMora.toFixed(2)),
+            avanceDiario: parseFloat(avanceDiario.toFixed(2)),
             cobrador: `${ruta.cobrador.nombres} ${ruta.cobrador.apellidos}`,
             estado: ruta.activa ? 'ACTIVA' : 'INACTIVA',
-            frecuenciaVisita: 'DIARIO', // Valor por defecto
+            frecuenciaVisita: 'DIARIO',
           };
         })
       );
@@ -353,6 +384,10 @@ export class RoutesService {
       prestamosActivos: 0,
     };
 
+    let nivelRiesgo = 'PELIGRO_MINIMO';
+    let porcentajeMora = 0;
+    let avanceDiario = 0;
+
     if (clientesIds.length > 0) {
       const hoy = new Date();
       const inicioDia = new Date(hoy.setHours(0, 0, 0, 0));
@@ -412,6 +447,11 @@ export class RoutesService {
       estadisticas.totalDeuda = deudaTotal;
       estadisticas.prestamosActivos = prestamosActivos.length;
 
+      // Calcular avance diario
+      if (estadisticas.metaDelDia > 0) {
+        avanceDiario = (estadisticas.cobranzaDelDia / estadisticas.metaDelDia) * 100;
+      }
+
       // Calcular clientes nuevos (últimos 7 días)
       const sieteDiasAtras = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
       estadisticas.clientesNuevos = await this.prisma.asignacionRuta.count({
@@ -423,11 +463,35 @@ export class RoutesService {
           activa: true,
         },
       });
+
+      // Calcular cartera vencida total para riesgo
+      const cuotasVencidasTotal = await this.prisma.cuota.aggregate({
+        where: {
+          prestamoId: { in: prestamosActivos.map(p => p.id) },
+          fechaVencimiento: { lt: inicioDia },
+          estado: { not: 'PAGADA' },
+        },
+        _sum: {
+          monto: true,
+        },
+      });
+
+      const montoVencido = cuotasVencidasTotal._sum.monto?.toNumber() || 0;
+      porcentajeMora = estadisticas.totalDeuda > 0 ? (montoVencido / estadisticas.totalDeuda) * 100 : 0;
+
+      if (porcentajeMora > 30) nivelRiesgo = 'ALTO_RIESGO';
+      else if (porcentajeMora > 15) nivelRiesgo = 'RIESGO_MODERADO';
+      else if (porcentajeMora > 5) nivelRiesgo = 'LEVE_RETRASO';
     }
 
     return {
       ...ruta,
-      estadisticas,
+      estadisticas: {
+        ...estadisticas,
+        avanceDiario: parseFloat(avanceDiario.toFixed(2)),
+      },
+      nivelRiesgo,
+      porcentajeMora: parseFloat(porcentajeMora.toFixed(2)),
       cobrador: `${ruta.cobrador.nombres} ${ruta.cobrador.apellidos}`,
       supervisor: ruta.supervisorId ? `${ruta.supervisor?.nombres ?? ''} ${ruta.supervisor?.apellidos ?? ''}` : undefined,
     };

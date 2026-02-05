@@ -419,6 +419,7 @@ export class ClientsService {
     direccion?: string;
     referencia?: string;
     creadoPorId: string;
+    archivos?: any[];
   }) {
     try {
       // Generar código único para el cliente
@@ -440,6 +441,7 @@ export class ClientsService {
             correo: data.correo,
             direccion: data.direccion,
             referencia: data.referencia,
+            archivos: data.archivos || [], // Guardamos los metadatos de archivos
           }),
         },
       });
@@ -491,6 +493,29 @@ export class ClientsService {
           puntaje: 100,
         },
       });
+
+      // Si hay archivos en la solicitud, crearlos
+      if (datosSolicitud.archivos && Array.isArray(datosSolicitud.archivos) && datosSolicitud.archivos.length > 0) {
+        // Mapear tipos de contenido a Enum de Prisma si es necesario
+        // Asumimos que vienen validados
+        
+        await this.prisma.multimedia.createMany({
+          data: datosSolicitud.archivos.map((archivo: any) => ({
+            clienteId: cliente.id,
+            tipoContenido: archivo.tipoContenido,
+            tipoArchivo: archivo.tipoArchivo,
+            formato: archivo.nombreOriginal.split('.').pop() || 'bin',
+            nombreOriginal: archivo.nombreOriginal,
+            nombreAlmacenamiento: archivo.nombreAlmacenamiento,
+            ruta: archivo.ruta,
+            url: `/uploads/${archivo.nombreAlmacenamiento}`, // URL relativa
+            tamanoBytes: archivo.tamanoBytes,
+            subidoPorId: aprobacion.solicitadoPorId,
+            esPrincipal: archivo.tipoContenido === 'FOTO_PERFIL',
+            estado: 'ACTIVO',
+          })),
+        });
+      }
 
       // Actualizar la aprobación
       await this.prisma.aprobacion.update({

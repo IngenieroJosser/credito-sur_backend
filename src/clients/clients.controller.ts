@@ -76,6 +76,7 @@ export class ClientsController {
       direccion?: string;
       referencia?: string;
       creadoPorId: string;
+      archivos?: any[];
     },
   ) {
     return this.clientsService.createClient(body);
