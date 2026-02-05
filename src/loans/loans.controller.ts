@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Delete,
+  Patch,
   Param,
   Query,
   Body,
@@ -52,5 +53,41 @@ export class LoansController {
   @Roles(RolUsuario.COORDINADOR)
   async deleteLoan(@Param('id') id: string, @Body() body: { userId: string }) {
     return this.loansService.deleteLoan(id, body.userId);
+  }
+
+  @Patch(':id/restore')
+  @Roles(RolUsuario.COORDINADOR)
+  async restoreLoan(@Param('id') id: string, @Body() body: { userId: string }) {
+    return this.loansService.restoreLoan(id, body.userId);
+  }
+
+  @Post()
+  @Roles(RolUsuario.COORDINADOR, RolUsuario.COBRADOR)
+  async createLoan(@Body() createLoanDto: any) {
+    return this.loansService.createLoan(createLoanDto);
+  }
+
+  @Post(':id/approve')
+  @Roles(RolUsuario.COORDINADOR)
+  async approveLoan(
+    @Param('id') id: string,
+    @Body() body: { aprobadoPorId: string },
+  ) {
+    return this.loansService.approveLoan(id, body.aprobadoPorId);
+  }
+
+  @Post(':id/reject')
+  @Roles(RolUsuario.COORDINADOR)
+  async rejectLoan(
+    @Param('id') id: string,
+    @Body() body: { rechazadoPorId: string; motivo?: string },
+  ) {
+    return this.loansService.rejectLoan(id, body.rechazadoPorId, body.motivo);
+  }
+
+  @Get(':id/cuotas')
+  @Roles(RolUsuario.COORDINADOR, RolUsuario.SUPERVISOR, RolUsuario.COBRADOR, RolUsuario.CONTADOR)
+  async getLoanCuotas(@Param('id') id: string) {
+    return this.loansService.getLoanCuotas(id);
   }
 }

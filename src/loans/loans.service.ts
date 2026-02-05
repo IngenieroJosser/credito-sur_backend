@@ -1,12 +1,18 @@
 import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaService } from 'prisma/prisma.service'; 
 import { EstadoPrestamo, EstadoCuota, NivelRiesgo } from '@prisma/client';
+import { NotificationsService } from '../notifications/notifications.service';
+import { AuditService } from '../audit/audit.service';
 
 @Injectable()
 export class LoansService {
   private readonly logger = new Logger(LoansService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private notificationsService: NotificationsService,
+    private auditService: AuditService
+  ) {}
 
   async getAllLoans(filters: {
     estado?: string;
@@ -446,7 +452,7 @@ export class LoansService {
       }
 
       // Actualizar estado en lugar de eliminar físicamente
-      return await this.prisma.prestamo.update({
+      const prestamoEliminado = await this.prisma.prestamo.update({
         where: { id },
         data: {
           estado: EstadoPrestamo.PERDIDA,
@@ -454,8 +460,324 @@ export class LoansService {
           estadoSincronizacion: 'PENDIENTE',
         },
       });
+
+      // Auditoría
+      await this.auditService.create({
+        usuarioId: userId,
+        accion: 'ELIMINAR_PRESTAMO',
+        entidad: 'Prestamo',
+        entidadId: prestamo.id,
+        datosAnteriores: { eliminadoEn: null, estado: prestamo.estado },
+        datosNuevos: { eliminadoEn: prestamoEliminado.eliminadoEn, estado: prestamoEliminado.estado }
+      });
+
+      return prestamoEliminado;
     } catch (error) {
       this.logger.error(`Error deleting loan ${id}:`, error);
+      throw error;
+    }
+  }
+
+  async restoreLoan(id: string, userId: string) {
+    try {
+      const prestamo = await this.prisma.prestamo.findUnique({
+        where: { id },
+      });
+
+      if (!prestamo) {
+        throw new NotFoundException('Préstamo no encontrado');
+      }
+
+      if (!prestamo.eliminadoEn) {
+        throw new Error('El préstamo no está eliminado');
+      }
+
+      const prestamoRestaurado = await this.prisma.prestamo.update({
+        where: { id },
+        data: {
+          estado: EstadoPrestamo.ACTIVO,
+          eliminadoEn: null,
+          estadoSincronizacion: 'PENDIENTE',
+        },
+      });
+
+      // Auditoría
+      await this.auditService.create({
+        usuarioId: userId,
+        accion: 'RESTAURAR_PRESTAMO',
+        entidad: 'Prestamo',
+        entidadId: prestamo.id,
+        datosAnteriores: { eliminadoEn: prestamo.eliminadoEn },
+        datosNuevos: { eliminadoEn: null }
+      });
+
+      return prestamoRestaurado;
+    } catch (error) {
+      this.logger.error(`Error restoring loan ${id}:`, error);
+      throw error;
+    }
+  }
+
+  async createLoan(data: {
+    clienteId: string;
+    productoId?: string;
+    precioProductoId?: string;
+    tipoPrestamo: string;
+    monto: number;
+    tasaInteres: number;
+    tasaInteresMora: number;
+    plazoMeses: number;
+    frecuenciaPago: any;
+    fechaInicio: string;
+    creadoPorId: string;
+  }) {
+    try {
+      this.logger.log(`Creating loan for client ${data.clienteId}`);
+
+      // Verificar que el cliente existe
+      const cliente = await this.prisma.cliente.findUnique({
+        where: { id: data.clienteId },
+      });
+
+      if (!cliente) {
+        throw new NotFoundException('Cliente no encontrado');
+      }
+
+      // Generar numero de prestamo
+      const count = await this.prisma.prestamo.count();
+      const numeroPrestamo = `PRES-${String(count + 1).padStart(6, '0')}`;
+
+      // Calcular fecha fin
+      const fechaInicio = new Date(data.fechaInicio);
+      const fechaFin = new Date(fechaInicio);
+      fechaFin.setMonth(fechaFin.getMonth() + data.plazoMeses);
+
+      // Calcular cantidad de cuotas segun frecuencia
+      let cantidadCuotas = 0;
+      switch (data.frecuenciaPago) {
+        case 'DIARIO':
+          cantidadCuotas = data.plazoMeses * 30;
+          break;
+        case 'SEMANAL':
+          cantidadCuotas = data.plazoMeses * 4;
+          break;
+        case 'QUINCENAL':
+          cantidadCuotas = data.plazoMeses * 2;
+          break;
+        case 'MENSUAL':
+          cantidadCuotas = data.plazoMeses;
+          break;
+      }
+
+      // Calcular interes total
+      const interesTotal = (data.monto * data.tasaInteres * data.plazoMeses) / 100;
+      const montoCuota = (data.monto + interesTotal) / cantidadCuotas;
+      const montoCapitalCuota = data.monto / cantidadCuotas;
+      const montoInteresCuota = interesTotal / cantidadCuotas;
+
+      // Crear prestamo con cuotas
+      const prestamo = await this.prisma.prestamo.create({
+        data: {
+          numeroPrestamo,
+          clienteId: data.clienteId,
+          productoId: data.productoId,
+          precioProductoId: data.precioProductoId,
+          tipoPrestamo: data.tipoPrestamo,
+          monto: data.monto,
+          tasaInteres: data.tasaInteres,
+          tasaInteresMora: data.tasaInteresMora,
+          plazoMeses: data.plazoMeses,
+          frecuenciaPago: data.frecuenciaPago,
+          cantidadCuotas,
+          fechaInicio,
+          fechaFin,
+          estado: EstadoPrestamo.PENDIENTE_APROBACION,
+          estadoAprobacion: 'PENDIENTE',
+          creadoPorId: data.creadoPorId,
+          interesTotal,
+          saldoPendiente: data.monto + interesTotal,
+          cuotas: {
+            create: Array.from({ length: cantidadCuotas }, (_, i) => {
+              const fechaVencimiento = new Date(fechaInicio);
+              
+              switch (data.frecuenciaPago) {
+                case 'DIARIO':
+                  fechaVencimiento.setDate(fechaVencimiento.getDate() + (i + 1));
+                  break;
+                case 'SEMANAL':
+                  fechaVencimiento.setDate(fechaVencimiento.getDate() + ((i + 1) * 7));
+                  break;
+                case 'QUINCENAL':
+                  fechaVencimiento.setDate(fechaVencimiento.getDate() + ((i + 1) * 15));
+                  break;
+                case 'MENSUAL':
+                  fechaVencimiento.setMonth(fechaVencimiento.getMonth() + (i + 1));
+                  break;
+              }
+
+              return {
+                numeroCuota: i + 1,
+                fechaVencimiento,
+                monto: montoCuota,
+                montoCapital: montoCapitalCuota,
+                montoInteres: montoInteresCuota,
+                estado: EstadoCuota.PENDIENTE,
+              };
+            }),
+          },
+        },
+        include: {
+          cliente: true,
+          producto: true,
+          cuotas: true,
+        },
+      });
+
+      this.logger.log(`Loan created successfully: ${prestamo.id}`);
+
+      // Notificar al Coordinador
+      await this.notificationsService.notifyCoordinator({
+        titulo: 'Nuevo Préstamo Creado',
+        mensaje: `El usuario ha creado un préstamo para el cliente ${cliente.nombres} ${cliente.apellidos} por valor de ${data.monto}`,
+        tipo: 'INFO',
+        entidad: 'PRESTAMO',
+        entidadId: prestamo.id,
+        metadata: { creadoPor: data.creadoPorId }
+      });
+
+      // Registrar Auditoría
+      await this.auditService.create({
+        usuarioId: data.creadoPorId,
+        accion: 'CREAR_PRESTAMO',
+        entidad: 'Prestamo',
+        entidadId: prestamo.id,
+        datosNuevos: prestamo,
+        metadata: { clienteId: data.clienteId }
+      });
+
+      return prestamo;
+    } catch (error) {
+      this.logger.error('Error creating loan:', error);
+      throw error;
+    }
+  }
+
+  async approveLoan(id: string, aprobadoPorId: string) {
+    try {
+      const prestamo = await this.prisma.prestamo.findUnique({
+        where: { id },
+      });
+
+      if (!prestamo) {
+        throw new NotFoundException('Préstamo no encontrado');
+      }
+
+      if (prestamo.estado !== EstadoPrestamo.PENDIENTE_APROBACION) {
+        throw new Error('El préstamo no está en estado pendiente de aprobación');
+      }
+
+      const prestamoActualizado = await this.prisma.prestamo.update({
+        where: { id },
+        data: {
+          estado: EstadoPrestamo.ACTIVO,
+          estadoAprobacion: 'APROBADO',
+          aprobadoPorId,
+          estadoSincronizacion: 'PENDIENTE',
+        },
+        include: {
+          cliente: true,
+          producto: true,
+          cuotas: true,
+        },
+      });
+
+      // Notificar al Coordinador (INFO)
+      await this.notificationsService.notifyCoordinator({
+        titulo: 'Préstamo Aprobado',
+        mensaje: `El préstamo ${prestamo.numeroPrestamo} ha sido aprobado y activado.`,
+        tipo: 'EXITO',
+        entidad: 'PRESTAMO',
+        entidadId: prestamo.id,
+        metadata: { aprobadoPor: aprobadoPorId }
+      });
+
+      // Auditoría
+      await this.auditService.create({
+        usuarioId: aprobadoPorId,
+        accion: 'APROBAR_PRESTAMO',
+        entidad: 'Prestamo',
+        entidadId: prestamo.id,
+        datosAnteriores: { estado: prestamo.estado, estadoAprobacion: prestamo.estadoAprobacion },
+        datosNuevos: { estado: 'ACTIVO', estadoAprobacion: 'APROBADO' }
+      });
+
+      return prestamoActualizado;
+    } catch (error) {
+      this.logger.error(`Error approving loan ${id}:`, error);
+      throw error;
+    }
+  }
+
+  async rejectLoan(id: string, rechazadoPorId: string, motivo?: string) {
+    try {
+      const prestamo = await this.prisma.prestamo.findUnique({
+        where: { id },
+      });
+
+      if (!prestamo) {
+        throw new NotFoundException('Préstamo no encontrado');
+      }
+
+      const prestamoRechazado = await this.prisma.prestamo.update({
+        where: { id },
+        data: {
+          estadoAprobacion: 'RECHAZADO',
+          aprobadoPorId: rechazadoPorId, // Usamos el mismo campo para quien revisó
+          estadoSincronizacion: 'PENDIENTE',
+        },
+        include: {
+          cliente: true,
+          producto: true,
+        },
+      });
+
+      // Notificar al Coordinador (ALERTA)
+      await this.notificationsService.notifyCoordinator({
+        titulo: 'Préstamo Rechazado',
+        mensaje: `El préstamo ${prestamo.numeroPrestamo} ha sido rechazado. Motivo: ${motivo || 'No especificado'}`,
+        tipo: 'ALERTA',
+        entidad: 'PRESTAMO',
+        entidadId: prestamo.id,
+        metadata: { rechazadoPor: rechazadoPorId, motivo }
+      });
+
+      // Auditoría
+      await this.auditService.create({
+        usuarioId: rechazadoPorId,
+        accion: 'RECHAZAR_PRESTAMO',
+        entidad: 'Prestamo',
+        entidadId: prestamo.id,
+        datosAnteriores: { estadoAprobacion: prestamo.estadoAprobacion },
+        datosNuevos: { estadoAprobacion: 'RECHAZADO', motivo }
+      });
+
+      return prestamoRechazado;
+    } catch (error) {
+      this.logger.error(`Error rejecting loan ${id}:`, error);
+      throw error;
+    }
+  }
+
+  async getLoanCuotas(prestamoId: string) {
+    try {
+      const cuotas = await this.prisma.cuota.findMany({
+        where: { prestamoId },
+        orderBy: { numeroCuota: 'asc' },
+      });
+
+      return cuotas;
+    } catch (error) {
+      this.logger.error(`Error getting cuotas for loan ${prestamoId}:`, error);
       throw error;
     }
   }
