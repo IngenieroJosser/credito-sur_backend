@@ -17,7 +17,7 @@ export class AuditService {
     metadata?: any;
   }) {
     // Si no hay datos, intentar inferir cambios
-    let cambios = null;
+    let cambios: any = null;
     if (data.datosAnteriores && data.datosNuevos) {
        // Aquí podrías implementar una lógica para calcular diferencias
        cambios = { diff: 'calculated' }; 

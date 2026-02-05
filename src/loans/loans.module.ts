@@ -3,9 +3,11 @@ import { LoansController } from './loans.controller';
 import { LoansService } from './loans.service';
 import { PrismaModule } from 'prisma/prisma.module';
 import { LoggerMiddleware } from '../common/middleware/logger.middleware';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { AuditModule } from '../audit/audit.module';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, NotificationsModule, AuditModule],
   controllers: [LoansController],
   providers: [LoansService],
   exports: [LoansService],
