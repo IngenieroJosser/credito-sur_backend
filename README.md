@@ -14,6 +14,7 @@ Esta API constituye el núcleo transaccional del sistema, centralizando la lógi
 
 - Exponer una **API REST segura y documentada** para consumo del frontend (PWA).
 - Implementar **lógica de negocio financiera** con validaciones estrictas.
+- Implementar algoritmos de **cálculo de riesgo** y scoring crediticio en tiempo real.
 - Gestionar **autenticación y autorización** basada en JWT, roles y permisos.
 - Garantizar **integridad transaccional** en operaciones críticas (pagos, cuotas, mora).
 - Registrar **auditoría inmutable** de acciones y cambios relevantes.
@@ -103,3 +104,4 @@ La arquitectura está diseñada para crecer de forma progresiva sin comprometer 
 ├── package.json
 └── tsconfig.json
 
+```
