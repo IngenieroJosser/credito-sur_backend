@@ -3,8 +3,8 @@ import { PrismaService } from 'prisma/prisma.service';
 import { RolUsuario } from '@prisma/client';
 
 @Injectable()
-export class NotificationsService {
-  private readonly logger = new Logger(NotificationsService.name);
+export class NotificacionesService {
+  private readonly logger = new Logger(NotificacionesService.name);
 
   constructor(private prisma: PrismaService) {}
 

@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaService } from 'prisma/prisma.service';
 import { EstadoPrestamo, EstadoCuota, NivelRiesgo } from '@prisma/client';
-import { NotificationsService } from '../notifications/notifications.service';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { AuditService } from '../audit/audit.service';
 
 @Injectable()
@@ -10,7 +10,7 @@ export class LoansService {
 
   constructor(
     private prisma: PrismaService,
-    private notificationsService: NotificationsService,
+    private notificacionesService: NotificacionesService,
     private auditService: AuditService,
   ) {}
 
@@ -657,7 +657,7 @@ export class LoansService {
       this.logger.log(`Loan created successfully: ${prestamo.id}`);
 
       // Notificar al Coordinador
-      await this.notificationsService.notifyCoordinator({
+      await this.notificacionesService.notifyCoordinator({
         titulo: 'Nuevo Préstamo Creado',
         mensaje: `El usuario ha creado un préstamo para el cliente ${cliente.nombres} ${cliente.apellidos} por valor de ${data.monto}`,
         tipo: 'INFO',
@@ -715,7 +715,7 @@ export class LoansService {
       });
 
       // Notificar al Coordinador (INFO)
-      await this.notificationsService.notifyCoordinator({
+      await this.notificacionesService.notifyCoordinator({
         titulo: 'Préstamo Aprobado',
         mensaje: `El préstamo ${prestamo.numeroPrestamo} ha sido aprobado y activado.`,
         tipo: 'EXITO',
@@ -768,7 +768,7 @@ export class LoansService {
       });
 
       // Notificar al Coordinador (ALERTA)
-      await this.notificationsService.notifyCoordinator({
+      await this.notificacionesService.notifyCoordinator({
         titulo: 'Préstamo Rechazado',
         mensaje: `El préstamo ${prestamo.numeroPrestamo} ha sido rechazado. Motivo: ${motivo || 'No especificado'}`,
         tipo: 'ALERTA',
