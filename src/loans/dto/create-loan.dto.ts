@@ -5,11 +5,15 @@ import {
   IsEnum,
   IsDateString,
   Min,
+  IsNotEmpty,
+  ValidateIf,
 } from 'class-validator';
-import { FrecuenciaPago } from '@prisma/client';
+import { FrecuenciaPago, TipoAprobacion } from '@prisma/client';
+import { Type } from 'class-transformer';
 
 export class CreateLoanDto {
   @IsString()
+  @IsNotEmpty()
   clienteId: string;
 
   @IsString()
@@ -21,7 +25,8 @@ export class CreateLoanDto {
   precioProductoId?: string;
 
   @IsString()
-  tipoPrestamo: string;
+  @IsNotEmpty()
+  tipoPrestamo: string; // 'prestamo' o 'articulo'
 
   @IsNumber()
   @Min(0)
@@ -29,6 +34,7 @@ export class CreateLoanDto {
 
   @IsNumber()
   @Min(0)
+  @ValidateIf(o => o.tipoPrestamo === 'prestamo')
   tasaInteres: number;
 
   @IsNumber()
@@ -46,5 +52,19 @@ export class CreateLoanDto {
   fechaInicio: string;
 
   @IsString()
+  @IsNotEmpty()
   creadoPorId: string;
+
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  cuotaInicial?: number;
+
+  @IsString()
+  @IsOptional()
+  notas?: string;
+
+  @IsString()
+  @IsOptional()
+  fechaPrimerCobro?: string;
 }

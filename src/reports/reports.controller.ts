@@ -9,8 +9,11 @@ import {
   DefaultValuePipe,
   ParseIntPipe,
   Req,
+  Param,
+  HttpCode,
+  Res,
 } from '@nestjs/common';
-import { ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
+import { ApiOperation, ApiResponse, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { ReportsService } from './reports.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -26,7 +29,10 @@ import {
   DecisionCastigoDto,
 } from './dto/cuentas-vencidas.dto';
 import { CuentasVencidasResponseDto } from './dto/responses-cuentas-vencidas.dto';
+import { GetOperationalReportDto } from './dto/get-operational-report.dto';
+import { Response } from 'express';
 
+@ApiTags('reports')
 @Controller('reports')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ReportsController {
@@ -172,5 +178,74 @@ export class ReportsController {
       exportRequest.formato,
       exportRequest.filtros as CuentasVencidasFiltrosDto,
     );
+  }
+
+  @Get('operational/coordinator')
+  @Roles(RolUsuario.COORDINADOR, RolUsuario.ADMIN, RolUsuario.SUPER_ADMINISTRADOR)
+  @ApiOperation({
+    summary: 'Obtener reporte operativo para coordinador',
+    description: 'Retorna métricas de rendimiento por ruta, recaudo, préstamos nuevos y eficiencia',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Reporte operativo obtenido exitosamente',
+  })
+  @ApiResponse({
+    status: HttpStatus.UNAUTHORIZED,
+    description: 'No autorizado',
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Permisos insuficientes',
+  })
+  @HttpCode(HttpStatus.OK)
+  async getOperationalReport(@Query() query: GetOperationalReportDto) {
+    return this.reportsService.getOperationalReport(query);
+  }
+
+  @Get('operational/route-detail/:routeId')
+  @Roles(RolUsuario.COORDINADOR, RolUsuario.ADMIN, RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.SUPERVISOR)
+  @ApiOperation({
+    summary: 'Obtener detalle de reporte por ruta',
+    description: 'Retorna el detalle completo de una ruta específica',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Detalle de ruta obtenido exitosamente',
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Ruta no encontrada',
+  })
+  @HttpCode(HttpStatus.OK)
+  async getRouteDetail(
+    @Param('routeId') routeId: string,
+    @Query('period') period: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.reportsService.getRouteDetail(routeId, { period, startDate, endDate });
+  }
+
+  @Get('operational/export')
+  @Roles(RolUsuario.COORDINADOR, RolUsuario.ADMIN, RolUsuario.SUPER_ADMINISTRADOR)
+  @ApiOperation({
+    summary: 'Exportar reporte operativo',
+    description: 'Exporta el reporte operativo en formato Excel o PDF',
+  })
+  @HttpCode(HttpStatus.OK)
+  async exportOperationalReport(
+    @Query() filters: GetOperationalReportDto,
+    @Query('format') format: 'excel' | 'pdf',
+    @Res() res: Response
+  ) {
+    const result = await this.reportsService.exportOperationalReport(filters, format);
+    
+    // Configurar headers para la descarga
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    
+    // Enviar el buffer como respuesta
+    res.send(result.data);
   }
 }

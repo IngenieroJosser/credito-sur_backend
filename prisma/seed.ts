@@ -163,6 +163,7 @@ async function main() {
     'Contador',
     'General',
     RolUsuario.CONTADOR,
+    'Contador123!',
   );
 
   console.log('Seed de usuarios finalizado correctamente');
