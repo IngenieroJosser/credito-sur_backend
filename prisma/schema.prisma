@@ -18,6 +18,7 @@ enum EstadoUsuario {
 
 enum RolUsuario {
   SUPER_ADMINISTRADOR
+  ADMIN
   COORDINADOR
   SUPERVISOR
   COBRADOR
@@ -198,10 +199,35 @@ model Usuario {
   ultimaSincronizacion   DateTime?
   errorSincronizacion    String?               @db.Text
   
+  // Notificaciones
+  notificaciones         Notificacion[]
+
   @@index([correo])
   @@index([rol])
   @@index([estado])
   @@index([estadoSincronizacion])
+}
+
+// ... (contenido existente omitido, agregando al final)
+
+model Notificacion {
+  id          String    @id @default(uuid())
+  usuarioId   String    // Destinatario
+  titulo      String    @db.VarChar(100)
+  mensaje     String    @db.Text
+  leida       Boolean   @default(false)
+  tipo        String    @default("INFO") // INFO, ALERTA, EXITO
+  entidad     String?   // Cliente, Prestamo, etc
+  entidadId   String?
+  metadata    Json?     // Datos adicionales para navegación
+  creadoEn    DateTime  @default(now())
+  archivar    Boolean   @default(false)
+
+  usuario     Usuario   @relation(fields: [usuarioId], references: [id])
+
+  @@index([usuarioId])
+  @@index([leida])
+  @@map("notificaciones")
 }
 
 model Rol {

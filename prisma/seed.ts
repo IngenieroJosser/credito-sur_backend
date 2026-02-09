@@ -43,6 +43,46 @@ async function crearSuperadministradorInicial() {
   return superadministrador;
 }
 
+async function crearAdministradorInicial() {
+  const correo = 'admin@creditosur.com';
+
+  const usuarioExistente = await prisma.usuario.findUnique({
+    where: { correo },
+  });
+
+  if (usuarioExistente) {
+    console.log(`[SEED] Administrador ya existe, actualizando...`);
+    const hashContrasena = await argon2.hash('Admin123!');
+    const administradorActualizado = await prisma.usuario.update({
+      where: { correo },
+      data: {
+        nombres: 'Admin',
+        apellidos: 'General',
+        hashContrasena,
+        rol: RolUsuario.ADMIN,
+        estado: EstadoUsuario.ACTIVO,
+      },
+    });
+    console.log(`[SEED] Administrador actualizado con username: Admin`);
+    return administradorActualizado;
+  }
+
+  const hashContrasena = await argon2.hash('Admin123!');
+  const administrador = await prisma.usuario.create({
+    data: {
+      correo,
+      hashContrasena,
+      nombres: 'Admin',
+      apellidos: 'General',
+      rol: RolUsuario.ADMIN,
+      estado: EstadoUsuario.ACTIVO,
+    },
+  });
+  console.log(`[SEED] Administrador creado con id: ${administrador.id}`);
+
+  return administrador;
+}
+
 async function crearUsuarioPorRol(
   correo: string,
   nombres: string,
@@ -93,6 +133,7 @@ async function main() {
   console.log('Iniciando seed de usuarios...');
 
   await crearSuperadministradorInicial();
+  await crearAdministradorInicial();
 
   await crearUsuarioPorRol(
     'coordinador@credisur.com',
@@ -122,6 +163,7 @@ async function main() {
     'Contador',
     'General',
     RolUsuario.CONTADOR,
+    'Contador123!',
   );
 
   console.log('Seed de usuarios finalizado correctamente');

@@ -1,5 +1,9 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { PrestamoMoraDto, PrestamosMoraFiltrosDto, TotalesMoraDto } from './prestamo-mora.dto';
+import {
+  PrestamoMoraDto,
+  PrestamosMoraFiltrosDto,
+  TotalesMoraDto,
+} from './prestamo-mora.dto';
 import { IsString } from 'class-validator';
 
 export class PrestamosMoraResponseDto {

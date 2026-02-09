@@ -11,7 +11,7 @@ export class LoggerMiddleware implements NestMiddleware {
 
     // Log request
     this.logger.log(
-      `${method} ${originalUrl} - Query: ${JSON.stringify(query)} - Body: ${JSON.stringify(body)}`
+      `${method} ${originalUrl} - Query: ${JSON.stringify(query)} - Body: ${JSON.stringify(body)}`,
     );
 
     response.on('finish', () => {
@@ -20,7 +20,7 @@ export class LoggerMiddleware implements NestMiddleware {
       const responseTime = Date.now() - startTime;
 
       this.logger.log(
-        `${method} ${originalUrl} ${statusCode} ${contentLength} - ${responseTime}ms`
+        `${method} ${originalUrl} ${statusCode} ${contentLength} - ${responseTime}ms`,
       );
     });
 

@@ -45,7 +45,12 @@ export class ClientsController {
   }
 
   @Get()
-  @Roles(RolUsuario.COORDINADOR, RolUsuario.SUPERVISOR, RolUsuario.COBRADOR, RolUsuario.CONTADOR)
+  @Roles(
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COBRADOR,
+    RolUsuario.CONTADOR,
+  )
   async getAllClients(
     @Query('nivelRiesgo') nivelRiesgo: string,
     @Query('ruta') ruta: string,
@@ -59,7 +64,12 @@ export class ClientsController {
   }
 
   @Get(':id')
-  @Roles(RolUsuario.COORDINADOR, RolUsuario.SUPERVISOR, RolUsuario.COBRADOR, RolUsuario.CONTADOR)
+  @Roles(
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COBRADOR,
+    RolUsuario.CONTADOR,
+  )
   async getClientById(@Param('id') id: string) {
     return this.clientsService.getClientById(id);
   }
@@ -67,7 +77,8 @@ export class ClientsController {
   @Post()
   @Roles(RolUsuario.COORDINADOR)
   async createClient(
-    @Body() body: {
+    @Body()
+    body: {
       dni: string;
       nombres: string;
       apellidos: string;
@@ -76,6 +87,7 @@ export class ClientsController {
       direccion?: string;
       referencia?: string;
       creadoPorId: string;
+      archivos?: any[];
     },
   ) {
     return this.clientsService.createClient(body);
@@ -87,14 +99,19 @@ export class ClientsController {
     @Param('id') id: string,
     @Body() body: { aprobadoPorId: string; datosAprobados?: any },
   ) {
-    return this.clientsService.approveClient(id, body.aprobadoPorId, body.datosAprobados);
+    return this.clientsService.approveClient(
+      id,
+      body.aprobadoPorId,
+      body.datosAprobados,
+    );
   }
 
   @Put(':id')
   @Roles(RolUsuario.COORDINADOR)
   async updateClient(
     @Param('id') id: string,
-    @Body() body: {
+    @Body()
+    body: {
       nombres?: string;
       apellidos?: string;
       telefono?: string;
@@ -122,7 +139,11 @@ export class ClientsController {
     @Param('id') id: string,
     @Body() body: { razon: string; agregadoPorId: string },
   ) {
-    return this.clientsService.addToBlacklist(id, body.razon, body.agregadoPorId);
+    return this.clientsService.addToBlacklist(
+      id,
+      body.razon,
+      body.agregadoPorId,
+    );
   }
 
   @Delete(':id/blacklist')
@@ -137,6 +158,11 @@ export class ClientsController {
     @Param('id') clienteId: string,
     @Body() body: { rutaId: string; cobradorId: string; diaSemana?: number },
   ) {
-    return this.clientsService.assignToRoute(clienteId, body.rutaId, body.cobradorId, body.diaSemana);
+    return this.clientsService.assignToRoute(
+      clienteId,
+      body.rutaId,
+      body.cobradorId,
+      body.diaSemana,
+    );
   }
 }

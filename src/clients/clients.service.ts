@@ -18,11 +18,13 @@ export class ClientsService {
     // Buscar un usuario para asignar como creador (TODO: Usar usuario autenticado)
     const creador = await this.prisma.usuario.findFirst();
     if (!creador) {
-      throw new Error('No existen usuarios en el sistema para asignar la creación');
+      throw new Error(
+        'No existen usuarios en el sistema para asignar la creación',
+      );
     }
 
     // Extraer campos que no están en el modelo Cliente o necesitan mapeo
-    const { rutaId, observaciones, ...clientData } = createClientDto;
+    const { rutaId, observaciones, archivos, ...clientData } = createClientDto;
 
     return this.prisma.cliente.create({
       data: {
@@ -47,12 +49,12 @@ export class ClientsService {
       include: {
         prestamos: true,
         pagos: true,
-      }
+      },
     });
   }
 
   update(id: string, updateClientDto: UpdateClientDto) {
-    const { rutaId, observaciones, ...clientData } = updateClientDto;
+    const { rutaId, observaciones, archivos, ...clientData } = updateClientDto;
     return this.prisma.cliente.update({
       where: { id },
       data: clientData,
@@ -72,13 +74,11 @@ export class ClientsService {
     search?: string;
   }) {
     try {
-      this.logger.log(`Getting clients with filters: ${JSON.stringify(filters)}`);
-      
-      const {
-        nivelRiesgo = 'all',
-        ruta = '',
-        search = '',
-      } = filters;
+      this.logger.log(
+        `Getting clients with filters: ${JSON.stringify(filters)}`,
+      );
+
+      const { nivelRiesgo = 'all', ruta = '', search = '' } = filters;
 
       // Construir filtros de forma segura
       const where: any = {
@@ -198,10 +198,7 @@ export class ClientsService {
       const enRiesgo = await this.prisma.cliente.count({
         where: {
           eliminadoEn: null,
-          OR: [
-            { nivelRiesgo: 'ROJO' },
-            { nivelRiesgo: 'LISTA_NEGRA' },
-          ],
+          OR: [{ nivelRiesgo: 'ROJO' }, { nivelRiesgo: 'LISTA_NEGRA' }],
         },
       });
 
@@ -218,11 +215,15 @@ export class ClientsService {
           // Calcular score basado en múltiples factores
           let score = cliente.puntaje || 100;
           let tendencia: 'SUBE' | 'BAJA' | 'ESTABLE' = 'ESTABLE';
-          
+
           // Ajustar score basado en préstamos
-          const prestamosActivos = cliente.prestamos.filter(p => p.estado === 'ACTIVO');
-          const prestamosEnMora = cliente.prestamos.filter(p => p.estado === 'EN_MORA');
-          
+          const prestamosActivos = cliente.prestamos.filter(
+            (p) => p.estado === 'ACTIVO',
+          );
+          const prestamosEnMora = cliente.prestamos.filter(
+            (p) => p.estado === 'EN_MORA',
+          );
+
           if (prestamosEnMora.length > 0) {
             score -= 20;
             tendencia = 'BAJA';
@@ -235,9 +236,10 @@ export class ClientsService {
           if (cliente.pagos && cliente.pagos.length > 0) {
             const ultimoPago = cliente.pagos[0].fechaPago;
             const diasDesdeUltimoPago = Math.floor(
-              (Date.now() - new Date(ultimoPago).getTime()) / (1000 * 60 * 60 * 24)
+              (Date.now() - new Date(ultimoPago).getTime()) /
+                (1000 * 60 * 60 * 24),
             );
-            
+
             if (diasDesdeUltimoPago > 30) {
               score -= 10;
             } else if (diasDesdeUltimoPago <= 7) {
@@ -251,7 +253,7 @@ export class ClientsService {
           // Obtener ruta asignada
           let rutaAsignada = '';
           let rutaNombre = '';
-          
+
           if (cliente.asignacionesRuta && cliente.asignacionesRuta.length > 0) {
             const asignacion = cliente.asignacionesRuta[0];
             if (asignacion.ruta) {
@@ -338,7 +340,7 @@ export class ClientsService {
   async getClientById(id: string) {
     try {
       const cliente = await this.prisma.cliente.findUnique({
-        where: { 
+        where: {
           id,
           eliminadoEn: null,
         },
@@ -419,11 +421,12 @@ export class ClientsService {
     direccion?: string;
     referencia?: string;
     creadoPorId: string;
+    archivos?: any[];
   }) {
     try {
       // Generar código único para el cliente
       const codigo = `CLI-${Date.now().toString().slice(-6)}`;
-      
+
       // Crear aprobación para el nuevo cliente
       const aprobacion = await this.prisma.aprobacion.create({
         data: {
@@ -440,6 +443,7 @@ export class ClientsService {
             correo: data.correo,
             direccion: data.direccion,
             referencia: data.referencia,
+            archivos: data.archivos || [], // Guardamos los metadatos de archivos
           }),
         },
       });
@@ -492,13 +496,42 @@ export class ClientsService {
         },
       });
 
+      // Si hay archivos en la solicitud, crearlos
+      if (
+        datosSolicitud.archivos &&
+        Array.isArray(datosSolicitud.archivos) &&
+        datosSolicitud.archivos.length > 0
+      ) {
+        // Mapear tipos de contenido a Enum de Prisma si es necesario
+        // Asumimos que vienen validados
+
+        await this.prisma.multimedia.createMany({
+          data: datosSolicitud.archivos.map((archivo: any) => ({
+            clienteId: cliente.id,
+            tipoContenido: archivo.tipoContenido,
+            tipoArchivo: archivo.tipoArchivo,
+            formato: archivo.nombreOriginal.split('.').pop() || 'bin',
+            nombreOriginal: archivo.nombreOriginal,
+            nombreAlmacenamiento: archivo.nombreAlmacenamiento,
+            ruta: archivo.ruta,
+            url: `/uploads/${archivo.nombreAlmacenamiento}`, // URL relativa
+            tamanoBytes: archivo.tamanoBytes,
+            subidoPorId: aprobacion.solicitadoPorId,
+            esPrincipal: archivo.tipoContenido === 'FOTO_PERFIL',
+            estado: 'ACTIVO',
+          })),
+        });
+      }
+
       // Actualizar la aprobación
       await this.prisma.aprobacion.update({
         where: { id },
         data: {
           aprobadoPorId,
           estado: 'APROBADO',
-          datosAprobados: datosAprobados ? JSON.stringify(datosAprobados) : undefined,
+          datosAprobados: datosAprobados
+            ? JSON.stringify(datosAprobados)
+            : undefined,
           revisadoEn: new Date(),
         },
       });
@@ -510,19 +543,22 @@ export class ClientsService {
     }
   }
 
-  async updateClient(id: string, data: {
-    nombres?: string;
-    apellidos?: string;
-    telefono?: string;
-    correo?: string;
-    direccion?: string;
-    referencia?: string;
-    nivelRiesgo?: NivelRiesgo;
-    puntaje?: number;
-  }) {
+  async updateClient(
+    id: string,
+    data: {
+      nombres?: string;
+      apellidos?: string;
+      telefono?: string;
+      correo?: string;
+      direccion?: string;
+      referencia?: string;
+      nivelRiesgo?: NivelRiesgo;
+      puntaje?: number;
+    },
+  ) {
     try {
       const cliente = await this.prisma.cliente.findUnique({
-        where: { 
+        where: {
           id,
           eliminadoEn: null,
         },
@@ -536,7 +572,8 @@ export class ClientsService {
         where: { id },
         data: {
           ...data,
-          ultimaActualizacionRiesgo: data.nivelRiesgo || data.puntaje ? new Date() : undefined,
+          ultimaActualizacionRiesgo:
+            data.nivelRiesgo || data.puntaje ? new Date() : undefined,
         },
       });
     } catch (error) {
@@ -548,7 +585,7 @@ export class ClientsService {
   async addToBlacklist(id: string, razon: string, agregadoPorId: string) {
     try {
       const cliente = await this.prisma.cliente.findUnique({
-        where: { 
+        where: {
           id,
           eliminadoEn: null,
         },
@@ -578,7 +615,7 @@ export class ClientsService {
   async removeFromBlacklist(id: string) {
     try {
       const cliente = await this.prisma.cliente.findUnique({
-        where: { 
+        where: {
           id,
           eliminadoEn: null,
         },
@@ -605,7 +642,12 @@ export class ClientsService {
     }
   }
 
-  async assignToRoute(clienteId: string, rutaId: string, cobradorId: string, diaSemana?: number) {
+  async assignToRoute(
+    clienteId: string,
+    rutaId: string,
+    cobradorId: string,
+    diaSemana?: number,
+  ) {
     try {
       // Verificar si ya existe una asignación activa
       const asignacionExistente = await this.prisma.asignacionRuta.findFirst({

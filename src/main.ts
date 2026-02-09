@@ -863,18 +863,21 @@ async function bootstrap() {
       tryItOutEnabled: true,
       syntaxHighlight: {
         activate: true,
-        theme: 'tomorrow-night'
+        theme: 'tomorrow-night',
       },
     },
     customCss: premiumCss,
     customSiteTitle: 'Créditos del Sur API - Premium',
-    customfavIcon: 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>',
+    customfavIcon:
+      'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>',
   });
 
   await app.listen(process.env.PORT ?? 3001);
-  
+
   console.log(`\n✨  Aplicación ejecutándose en: ${await app.getUrl()}`);
-  console.log(`📚  Documentación Swagger disponible en: ${await app.getUrl()}/api-credisur`);
+  console.log(
+    `📚  Documentación Swagger disponible en: ${await app.getUrl()}/api-credisur`,
+  );
   console.log(`🎨  Tema ultra premium activado\n`);
   console.log(`   ┌─────────────────────────────────────────────┐`);
   console.log(`   │  Paleta de colores premium activada:        │`);

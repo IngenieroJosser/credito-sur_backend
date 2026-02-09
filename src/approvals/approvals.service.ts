@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from 'prisma/prisma.service'; 
-import { EstadoAprobacion, EstadoPrestamo, TipoAprobacion, TipoTransaccion } from '@prisma/client';
+import { PrismaService } from 'prisma/prisma.service';
+import {
+  EstadoAprobacion,
+  EstadoPrestamo,
+  TipoAprobacion,
+  TipoTransaccion,
+} from '@prisma/client';
 
 @Injectable()
 export class ApprovalsService {
@@ -62,9 +67,10 @@ export class ApprovalsService {
   }
 
   private async approveNewClient(approval: any) {
-    const data = typeof approval.datosSolicitud === 'string'
-      ? JSON.parse(approval.datosSolicitud)
-      : approval.datosSolicitud;
+    const data =
+      typeof approval.datosSolicitud === 'string'
+        ? JSON.parse(approval.datosSolicitud)
+        : approval.datosSolicitud;
 
     await this.prisma.cliente.create({
       data: {
@@ -82,9 +88,10 @@ export class ApprovalsService {
   }
 
   private async approveNewLoan(approval: any) {
-    const data = typeof approval.datosSolicitud === 'string'
-      ? JSON.parse(approval.datosSolicitud)
-      : approval.datosSolicitud;
+    const data =
+      typeof approval.datosSolicitud === 'string'
+        ? JSON.parse(approval.datosSolicitud)
+        : approval.datosSolicitud;
 
     // Crear el préstamo
     await this.prisma.prestamo.create({
@@ -110,9 +117,10 @@ export class ApprovalsService {
   }
 
   private async approveExpense(approval: any) {
-    const data = typeof approval.datosSolicitud === 'string'
-      ? JSON.parse(approval.datosSolicitud)
-      : approval.datosSolicitud;
+    const data =
+      typeof approval.datosSolicitud === 'string'
+        ? JSON.parse(approval.datosSolicitud)
+        : approval.datosSolicitud;
 
     await this.prisma.gasto.create({
       data: {
@@ -129,9 +137,10 @@ export class ApprovalsService {
   }
 
   private async approveCashBase(approval: any) {
-    const data = typeof approval.datosSolicitud === 'string'
-      ? JSON.parse(approval.datosSolicitud)
-      : approval.datosSolicitud;
+    const data =
+      typeof approval.datosSolicitud === 'string'
+        ? JSON.parse(approval.datosSolicitud)
+        : approval.datosSolicitud;
 
     // Crear transacción de ingreso a la caja
     await this.prisma.transaccion.create({
@@ -148,9 +157,10 @@ export class ApprovalsService {
   }
 
   private async approvePaymentExtension(approval: any) {
-    const data = typeof approval.datosSolicitud === 'string'
-      ? JSON.parse(approval.datosSolicitud)
-      : approval.datosSolicitud;
+    const data =
+      typeof approval.datosSolicitud === 'string'
+        ? JSON.parse(approval.datosSolicitud)
+        : approval.datosSolicitud;
 
     await this.prisma.extensionPago.create({
       data: {

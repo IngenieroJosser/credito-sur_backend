@@ -1,4 +1,13 @@
-import { IsString, IsOptional, IsEmail, IsEnum, IsBoolean, IsNumber, Min, Max } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsEmail,
+  IsEnum,
+  IsBoolean,
+  IsNumber,
+  Min,
+  Max,
+} from 'class-validator';
 import { NivelRiesgo } from '@prisma/client';
 
 export class CreateClientDto {
@@ -47,8 +56,22 @@ export class CreateClientDto {
   @IsString()
   @IsOptional()
   rutaId?: string;
-  
+
   @IsString()
   @IsOptional()
   observaciones?: string;
+
+  @IsOptional()
+  archivos?: {
+    tipoContenido:
+      | 'FOTO_PERFIL'
+      | 'DOCUMENTO_IDENTIDAD_FRENTE'
+      | 'DOCUMENTO_IDENTIDAD_REVERSO'
+      | 'COMPROBANTE_DOMICILIO';
+    tipoArchivo: string;
+    nombreOriginal: string;
+    nombreAlmacenamiento: string;
+    ruta: string;
+    tamanoBytes: number;
+  }[];
 }

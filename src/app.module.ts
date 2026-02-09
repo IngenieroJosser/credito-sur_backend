@@ -16,6 +16,7 @@ import { AuditModule } from './audit/audit.module';
 import { BackupModule } from './backup/backup.module';
 import { PrismaModule } from 'prisma/prisma.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { UploadModule } from './upload/upload.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
     BackupModule,
     PrismaModule,
     DashboardModule,
+    UploadModule,
   ],
   controllers: [],
   providers: [],

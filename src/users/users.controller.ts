@@ -38,6 +38,7 @@ export class UsersController {
   }
 
   @Get(':id')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   obtenerPorId(@Param('id', ParseUUIDPipe) id: string) {
     return this.usersService.obtenerPorId(id);
   }

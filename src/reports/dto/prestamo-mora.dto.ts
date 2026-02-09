@@ -1,6 +1,14 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { NivelRiesgo, EstadoPrestamo } from '@prisma/client';
-import { IsString, IsNumber, IsEnum, IsOptional, IsDateString, Min, Max } from 'class-validator';
+import {
+  IsString,
+  IsNumber,
+  IsEnum,
+  IsOptional,
+  IsDateString,
+  Min,
+  Max,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class ClienteInfoDto {
