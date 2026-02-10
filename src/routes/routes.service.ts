@@ -322,7 +322,10 @@ export class RoutesService {
         },
       };
     } catch (error) {
-      throw new InternalServerErrorException('Error al obtener las rutas');
+      console.error('Error detail in findAll:', error);
+      throw new InternalServerErrorException(
+        `Error al obtener las rutas: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
     }
   }
 

@@ -22,12 +22,23 @@ async function crearSuperadministradorInicial() {
     where: { correo },
   });
 
+  const hashContrasena = await argon2.hash('SuperAdmin123!');
+
   if (usuarioExistente) {
-    console.log(`[SEED] Superadministrador ya existe`);
+    console.log(`[SEED] Superadministrador ya existe, actualizando contraseña...`);
+    await prisma.usuario.update({
+      where: { correo },
+      data: {
+        hashContrasena,
+        nombres: 'Super',
+        apellidos: 'Administrador',
+        rol: RolUsuario.SUPER_ADMINISTRADOR,
+        estado: EstadoUsuario.ACTIVO,
+      },
+    });
     return usuarioExistente;
   }
 
-  const hashContrasena = await argon2.hash('SuperAdmin123!');
   const superadministrador = await prisma.usuario.create({
     data: {
       correo,

@@ -340,6 +340,8 @@ model Cliente {
   asignacionesRuta       AsignacionRuta[]
   pagos                  Pago[]
   archivos               Multimedia[]          @relation("MultimediaCliente")
+  categoria              Categoria?            @relation(fields: [categoriaId], references: [id])
+  categoriaId            String?
   
   // Timestamps
   creadoEn               DateTime              @default(now())
@@ -379,6 +381,8 @@ model Producto {
   precios                PrecioProducto[]
   prestamos              Prestamo[]
   archivos               Multimedia[]          @relation("MultimediaProducto")
+  categoriaRel           Categoria?            @relation(fields: [categoriaId], references: [id])
+  categoriaId            String?
   
   // Timestamps
   creadoEn               DateTime              @default(now())
@@ -831,6 +835,8 @@ model Gasto {
   caja                   Caja                  @relation(fields: [cajaId], references: [id])
   aprobadoPor            Usuario?              @relation("GastoAprobadoPor", fields: [aprobadoPorId], references: [id])
   archivos               Multimedia[]          @relation("MultimediaGasto")
+  categoria              Categoria?            @relation(fields: [categoriaId], references: [id])
+  categoriaId            String?
   
   // Timestamps
   fechaGasto             DateTime              @default(now())
@@ -999,4 +1005,30 @@ model Multimedia {
   @@index([creadoEn])
   @@index([estadoSincronizacion])
   @@map("multimedia")
+}
+
+// ============================================
+// MÓDULO CATEGORIAS
+// ============================================
+
+model Categoria {
+  id            String   @id @default(uuid())
+  nombre        String   @db.VarChar(100)
+  descripcion   String?  @db.Text
+  tipo          String   @db.VarChar(50) // "CLIENTE", "GASTO", "PRESTAMO", etc.
+  color         String?  @db.VarChar(20) // Hex code para badges
+  activa        Boolean  @default(true)
+  
+  // Relaciones
+  clientes      Cliente[]
+  gastos        Gasto[]
+  productos     Producto[]
+
+  // Timestamps
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+  eliminadoEn   DateTime?
+
+  @@index([tipo])
+  @@map("categorias")
 }

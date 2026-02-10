@@ -15,9 +15,18 @@ export class AuthService {
   ) {}
 
   async validarUsuario(nombres: string, contrasena: string) {
+    console.log(`[AUTH] Intentando validar usuario: ${nombres}`);
     const usuario = await this.usersService.obtenerPorNombres(nombres);
 
-    if (usuario && (await argon2.verify(usuario.hashContrasena, contrasena))) {
+    if (!usuario) {
+      console.log(`[AUTH] Usuario no encontrado: ${nombres}`);
+      return null;
+    }
+
+    const matches = await argon2.verify(usuario.hashContrasena, contrasena);
+    console.log(`[AUTH] Coincidencia de contraseña para ${nombres}: ${matches}`);
+
+    if (matches) {
       const { hashContrasena, ...resultado } = usuario;
       return resultado;
     }

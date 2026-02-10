@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { CreateClientDto } from './dto/create-client.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { PrismaService } from 'prisma/prisma.service';
@@ -145,7 +145,7 @@ export class ClientsService {
       this.logger.log(`Query where clause: ${JSON.stringify(where)}`);
 
       // Obtener clientes con relaciones necesarias
-      const clientes = await this.prisma.cliente.findMany({
+      const clientesRaw = await this.prisma.cliente.findMany({
         where,
         include: {
           asignacionesRuta: {
@@ -180,9 +180,30 @@ export class ClientsService {
         orderBy: { creadoEn: 'desc' },
       });
 
-      this.logger.log(`Found ${clientes.length} clients`);
+      // Si no hay filtros específicos de rutas o riesgo, incluimos aprobaciones pendientes
+      let aprobacionesPendientes: any[] = [];
+      if (nivelRiesgo === 'all' && (ruta === '' || !ruta)) {
+        const queryAprobaciones: any = {
+          estado: 'PENDIENTE',
+          tipoAprobacion: 'NUEVO_CLIENTE',
+        };
+        
+        // Aplicar búsqueda a las aprobaciones también si existe
+        if (search && search.trim() !== '') {
+          const s = search.trim();
+          queryAprobaciones.datosSolicitud = {
+            contains: s,
+          };
+        }
 
-      // Calcular estadísticas
+        aprobacionesPendientes = await this.prisma.aprobacion.findMany({
+          where: queryAprobaciones,
+          include: { solicitadoPor: true },
+          orderBy: { creadoEn: 'desc' },
+        });
+      }
+
+      // Calcular estadísticas (Restaurado)
       const totalClientes = await this.prisma.cliente.count({
         where: { eliminadoEn: null },
       });
@@ -209,8 +230,10 @@ export class ClientsService {
         },
       });
 
-      // Transformar datos para el frontend
-      const clientesTransformados = clientes.map((cliente) => {
+      this.logger.log(`Found ${clientesRaw.length} active clients and ${aprobacionesPendientes.length} pending approvals`);
+
+      // Transformar clientes reales
+      const clientesTransformados = clientesRaw.map((cliente) => {
         try {
           // Calcular score basado en múltiples factores
           let score = cliente.puntaje || 100;
@@ -269,6 +292,15 @@ export class ClientsService {
             ultimaVisita = fecha.toISOString().split('T')[0];
           }
 
+          // Calcular deuda total y mora
+          const montoTotal = cliente.prestamos.reduce(
+            (sum, p) => sum + Number(p.saldoPendiente || 0),
+            0,
+          );
+          const montoMora = cliente.prestamos
+            .filter((p) => p.estado === 'EN_MORA')
+            .reduce((sum, p) => sum + Number(p.saldoPendiente || 0), 0);
+
           return {
             id: cliente.id,
             codigo: cliente.codigo,
@@ -288,6 +320,9 @@ export class ClientsService {
             ultimaVisita,
             rutaId: rutaAsignada,
             rutaNombre: rutaNombre,
+            montoTotal,
+            montoMora,
+            prestamosActivos: prestamosActivos.length,
           };
         } catch (error) {
           this.logger.error(`Error transforming client ${cliente.id}:`, error);
@@ -310,12 +345,51 @@ export class ClientsService {
             ultimaVisita: 'Nunca',
             rutaId: '',
             rutaNombre: '',
+            montoTotal: 0,
+            montoMora: 0,
+            prestamosActivos: 0,
           };
         }
       });
 
+      // Transformar aprobaciones pendientes
+      const aprobacionesTransformadas = aprobacionesPendientes.map((aprob) => {
+        const datos = JSON.parse(aprob.datosSolicitud as string);
+        return {
+          id: aprob.id,
+          codigo: aprob.referenciaId || 'PENDIENTE',
+          dni: datos.dni || '',
+          nombres: datos.nombres || 'Pendiente',
+          apellidos: datos.apellidos || '',
+          telefono: datos.telefono || '',
+          correo: datos.correo || '',
+          direccion: datos.direccion || '',
+          referencia: datos.referencia || '',
+          nivelRiesgo: 'VERDE',
+          puntaje: 100,
+          enListaNegra: false,
+          estadoAprobacion: aprob.estado,
+          score: 100,
+          tendencia: 'ESTABLE',
+          ultimaVisita: 'Pendiente',
+          rutaId: '',
+          rutaNombre: 'Sin ruta',
+          montoTotal: 0,
+          montoMora: 0,
+          prestamosActivos: 0,
+          creadoEn: aprob.creadoEn,
+        };
+      });
+
+      // Combinar y ordenar por fecha de creación descendente
+      const todosLosClientes = [...aprobacionesTransformadas, ...clientesTransformados].sort((a: any, b: any) => {
+        const dateA = new Date(a.creadoEn || 0).getTime();
+        const dateB = new Date(b.creadoEn || 0).getTime();
+        return dateB - dateA;
+      });
+
       return {
-        clientes: clientesTransformados,
+        clientes: todosLosClientes,
         estadisticas: {
           total: totalClientes || 0,
           buenComportamiento: buenComportamiento || 0,
@@ -338,6 +412,7 @@ export class ClientsService {
   }
 
   async getClientById(id: string) {
+    this.logger.log(`[DEBUG] getClientById called with ID: ${id}`);
     try {
       const cliente = await this.prisma.cliente.findUnique({
         where: {
@@ -398,10 +473,35 @@ export class ClientsService {
           archivos: {
             where: { estado: 'ACTIVO' },
           },
+
         },
       });
 
       if (!cliente) {
+        this.logger.log(`[DEBUG] Cliente no encontrado en tabla principal, buscando en aprobaciones: ${id}`);
+        // Si no es un cliente aprobado, buscamos si es una solicitud pendiente
+        const aprobacion = await this.prisma.aprobacion.findUnique({
+          where: { id },
+          include: { solicitadoPor: true },
+        });
+
+        if (aprobacion) {
+          this.logger.log(`[DEBUG] Aprobación encontrada. Tipo: ${aprobacion.tipoAprobacion}, Estado: ${aprobacion.estado}`);
+          if (aprobacion.tipoAprobacion === 'NUEVO_CLIENTE') {
+            const datos = JSON.parse(aprobacion.datosSolicitud as string);
+            return {
+              id: aprobacion.id,
+              codigo: aprobacion.referenciaId || 'PENDIENTE',
+              ...datos,
+              estadoAprobacion: aprobacion.estado,
+              creadoEn: aprobacion.creadoEn,
+              creadoPor: aprobacion.solicitadoPor,
+            };
+          }
+        } else {
+          this.logger.warn(`[DEBUG] No se encontró la aprobación con ID: ${id}`);
+        }
+
         throw new NotFoundException('Cliente no encontrado');
       }
 
@@ -412,18 +512,32 @@ export class ClientsService {
     }
   }
 
-  async createClient(data: {
-    dni: string;
-    nombres: string;
-    apellidos: string;
-    telefono: string;
-    correo?: string;
-    direccion?: string;
-    referencia?: string;
-    creadoPorId: string;
-    archivos?: any[];
-  }) {
+  async createClient(data: CreateClientDto) {
+    this.logger.log(`[DEBUG] createClient called for DNI: ${data.dni}`);
     try {
+      // Validar si ya existe un cliente con ese DNI
+      const clienteExistente = await this.prisma.cliente.findFirst({
+        where: { dni: data.dni, eliminadoEn: null },
+      });
+
+      if (clienteExistente) {
+        throw new ConflictException(
+          `Ya existe un cliente registrado con ese número de documento: ${data.dni}`,
+        );
+      }
+
+      // Buscar un usuario para asignar como creador si no viene uno (TODO: Usar usuario autenticado)
+      let solicitadoPorId = data.creadoPorId;
+      if (!solicitadoPorId) {
+        const creador = await this.prisma.usuario.findFirst();
+        if (!creador) {
+          throw new NotFoundException(
+            'No existen usuarios en el sistema para asignar la creación',
+          );
+        }
+        solicitadoPorId = creador.id;
+      }
+
       // Generar código único para el cliente
       const codigo = `CLI-${Date.now().toString().slice(-6)}`;
 
@@ -433,7 +547,7 @@ export class ClientsService {
           tipoAprobacion: 'NUEVO_CLIENTE',
           referenciaId: codigo,
           tablaReferencia: 'clientes',
-          solicitadoPorId: data.creadoPorId,
+          solicitadoPorId: solicitadoPorId,
           estado: 'PENDIENTE',
           datosSolicitud: JSON.stringify({
             dni: data.dni,
@@ -443,10 +557,13 @@ export class ClientsService {
             correo: data.correo,
             direccion: data.direccion,
             referencia: data.referencia,
+
             archivos: data.archivos || [], // Guardamos los metadatos de archivos
           }),
         },
       });
+
+      this.logger.log(`[DEBUG] Aprobación creada con ID: ${aprobacion.id}`);
 
       return {
         mensaje: 'Cliente creado exitosamente. Pendiente de aprobación.',
@@ -488,6 +605,7 @@ export class ClientsService {
           correo: datosSolicitud.correo,
           direccion: datosSolicitud.direccion,
           referencia: datosSolicitud.referencia,
+
           creadoPorId: aprobacion.solicitadoPorId,
           aprobadoPorId: aprobadoPorId,
           estadoAprobacion: 'APROBADO',
@@ -554,6 +672,7 @@ export class ClientsService {
       referencia?: string;
       nivelRiesgo?: NivelRiesgo;
       puntaje?: number;
+
     },
   ) {
     try {
