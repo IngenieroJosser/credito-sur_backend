@@ -16,7 +16,8 @@ export class NotificacionesController {
 
   @Get()
   findAll(@Request() req) {
-    return this.notificacionesService.findAll(req.user.userId);
+    if (!req.user || !req.user.id) return [];
+    return this.notificacionesService.findAll(req.user.id);
   }
 
   @Patch(':id/read')
