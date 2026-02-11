@@ -1,8 +1,13 @@
-import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { CreateClientDto } from './dto/create-client.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { PrismaService } from 'prisma/prisma.service';
-import { NivelRiesgo } from '@prisma/client';
+import { NivelRiesgo, RolUsuario } from '@prisma/client';
 
 @Injectable()
 export class ClientsService {
@@ -187,7 +192,7 @@ export class ClientsService {
           estado: 'PENDIENTE',
           tipoAprobacion: 'NUEVO_CLIENTE',
         };
-        
+
         // Aplicar búsqueda a las aprobaciones también si existe
         if (search && search.trim() !== '') {
           const s = search.trim();
@@ -230,7 +235,9 @@ export class ClientsService {
         },
       });
 
-      this.logger.log(`Found ${clientesRaw.length} active clients and ${aprobacionesPendientes.length} pending approvals`);
+      this.logger.log(
+        `Found ${clientesRaw.length} active clients and ${aprobacionesPendientes.length} pending approvals`,
+      );
 
       // Transformar clientes reales
       const clientesTransformados = clientesRaw.map((cliente) => {
@@ -382,7 +389,10 @@ export class ClientsService {
       });
 
       // Combinar y ordenar por fecha de creación descendente
-      const todosLosClientes = [...aprobacionesTransformadas, ...clientesTransformados].sort((a: any, b: any) => {
+      const todosLosClientes = [
+        ...aprobacionesTransformadas,
+        ...clientesTransformados,
+      ].sort((a: any, b: any) => {
         const dateA = new Date(a.creadoEn || 0).getTime();
         const dateB = new Date(b.creadoEn || 0).getTime();
         return dateB - dateA;
@@ -473,12 +483,13 @@ export class ClientsService {
           archivos: {
             where: { estado: 'ACTIVO' },
           },
-
         },
       });
 
       if (!cliente) {
-        this.logger.log(`[DEBUG] Cliente no encontrado en tabla principal, buscando en aprobaciones: ${id}`);
+        this.logger.log(
+          `[DEBUG] Cliente no encontrado en tabla principal, buscando en aprobaciones: ${id}`,
+        );
         // Si no es un cliente aprobado, buscamos si es una solicitud pendiente
         const aprobacion = await this.prisma.aprobacion.findUnique({
           where: { id },
@@ -486,7 +497,9 @@ export class ClientsService {
         });
 
         if (aprobacion) {
-          this.logger.log(`[DEBUG] Aprobación encontrada. Tipo: ${aprobacion.tipoAprobacion}, Estado: ${aprobacion.estado}`);
+          this.logger.log(
+            `[DEBUG] Aprobación encontrada. Tipo: ${aprobacion.tipoAprobacion}, Estado: ${aprobacion.estado}`,
+          );
           if (aprobacion.tipoAprobacion === 'NUEVO_CLIENTE') {
             const datos = JSON.parse(aprobacion.datosSolicitud as string);
             return {
@@ -499,7 +512,9 @@ export class ClientsService {
             };
           }
         } else {
-          this.logger.warn(`[DEBUG] No se encontró la aprobación con ID: ${id}`);
+          this.logger.warn(
+            `[DEBUG] No se encontró la aprobación con ID: ${id}`,
+          );
         }
 
         throw new NotFoundException('Cliente no encontrado');
@@ -513,9 +528,9 @@ export class ClientsService {
   }
 
   async createClient(data: CreateClientDto) {
-    this.logger.log(`[DEBUG] createClient called for DNI: ${data.dni}`);
+    this.logger.log(`[DEBUG] createClient llamado para documento: ${data.dni}`);
     try {
-      // Validar si ya existe un cliente con ese DNI
+      // Validar si ya existe un cliente con ese documento
       const clienteExistente = await this.prisma.cliente.findFirst({
         where: { dni: data.dni, eliminadoEn: null },
       });
@@ -538,10 +553,72 @@ export class ClientsService {
         solicitadoPorId = creador.id;
       }
 
+      const solicitante = await this.prisma.usuario.findUnique({
+        where: { id: solicitadoPorId },
+        select: { id: true, rol: true },
+      });
+
+      if (!solicitante) {
+        throw new NotFoundException('Usuario solicitante no encontrado');
+      }
+
       // Generar código único para el cliente
       const codigo = `CLI-${Date.now().toString().slice(-6)}`;
 
-      // Crear aprobación para el nuevo cliente
+      // Si el creador es ADMIN o SUPER_ADMINISTRADOR -> crear cliente aprobado inmediatamente
+      if (
+        solicitante.rol === RolUsuario.ADMIN ||
+        solicitante.rol === RolUsuario.SUPER_ADMINISTRADOR
+      ) {
+        const cliente = await this.prisma.cliente.create({
+          data: {
+            codigo,
+            dni: data.dni,
+            nombres: data.nombres,
+            apellidos: data.apellidos,
+            telefono: data.telefono,
+            correo: data.correo,
+            direccion: data.direccion,
+            referencia: data.referencia,
+            creadoPorId: solicitadoPorId,
+            aprobadoPorId: solicitadoPorId,
+            estadoAprobacion: 'APROBADO',
+            nivelRiesgo: 'VERDE',
+            puntaje: 100,
+          },
+        });
+
+        // Crear multimedia si viene en la solicitud
+        if (
+          data.archivos &&
+          Array.isArray(data.archivos) &&
+          data.archivos.length > 0
+        ) {
+          await this.prisma.multimedia.createMany({
+            data: data.archivos.map((archivo: any) => ({
+              clienteId: cliente.id,
+              tipoContenido: archivo.tipoContenido,
+              tipoArchivo: archivo.tipoArchivo,
+              formato: archivo.nombreOriginal?.split('.').pop() || 'bin',
+              nombreOriginal: archivo.nombreOriginal,
+              nombreAlmacenamiento: archivo.nombreAlmacenamiento,
+              ruta: archivo.ruta,
+              url: `/uploads/${archivo.nombreAlmacenamiento}`,
+              tamanoBytes: archivo.tamanoBytes,
+              subidoPorId: solicitadoPorId,
+              esPrincipal: archivo.tipoContenido === 'FOTO_PERFIL',
+              estado: 'ACTIVO',
+            })),
+          });
+        }
+
+        this.logger.log(
+          `[DEBUG] Cliente aprobado automáticamente por ${solicitante.rol}: ${cliente.id}`,
+        );
+        return cliente;
+      }
+
+      // Caso contrario -> flujo de aprobación pendiente
       const aprobacion = await this.prisma.aprobacion.create({
         data: {
           tipoAprobacion: 'NUEVO_CLIENTE',
@@ -557,14 +634,12 @@ export class ClientsService {
             correo: data.correo,
             direccion: data.direccion,
             referencia: data.referencia,
-
-            archivos: data.archivos || [], // Guardamos los metadatos de archivos
+            archivos: data.archivos || [],
           }),
         },
       });
 
       this.logger.log(`[DEBUG] Aprobación creada con ID: ${aprobacion.id}`);
-
       return {
         mensaje: 'Cliente creado exitosamente. Pendiente de aprobación.',
         aprobacionId: aprobacion.id,
@@ -672,7 +747,6 @@ export class ClientsService {
       referencia?: string;
       nivelRiesgo?: NivelRiesgo;
       puntaje?: number;
-
     },
   ) {
     try {

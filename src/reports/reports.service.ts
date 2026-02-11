@@ -17,7 +17,10 @@ import {
 import { CuentasVencidasResponseDto } from './dto/responses-cuentas-vencidas.dto';
 import { TipoAprobacion, EstadoPrestamo } from '@prisma/client';
 import { GetOperationalReportDto } from './dto/get-operational-report.dto';
-import { OperationalReportResponse, RoutePerformanceDetail } from './dto/responses-routes.dto';
+import {
+  OperationalReportResponse,
+  RoutePerformanceDetail,
+} from './dto/responses-routes.dto';
 import { TimeFilterPeriod, calculateDateRange } from 'utils/date-utils';
 import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
@@ -698,12 +701,18 @@ export class ReportsService {
     };
   }
 
-  async getOperationalReport(filters: GetOperationalReportDto): Promise<OperationalReportResponse> {
+  async getOperationalReport(
+    filters: GetOperationalReportDto,
+  ): Promise<OperationalReportResponse> {
     const { period, routeId, startDate, endDate } = filters;
-    
+
     // Calcular rango de fechas según el periodo
-    const dateRange = calculateDateRange(period as TimeFilterPeriod, startDate, endDate);
-    
+    const dateRange = calculateDateRange(
+      period as TimeFilterPeriod,
+      startDate,
+      endDate,
+    );
+
     // Obtener rutas según filtro
     const routes = await this.prisma.ruta.findMany({
       where: {
@@ -728,8 +737,8 @@ export class ReportsService {
 
     // Obtener métricas para cada ruta
     const routePerformancePromises = routes.map(async (route) => {
-      const clientIds = route.asignaciones.map(a => a.cliente.id);
-      
+      const clientIds = route.asignaciones.map((a) => a.cliente.id);
+
       // Calcular recaudo total de la ruta en el periodo
       const payments = await this.prisma.pago.findMany({
         where: {
@@ -744,7 +753,10 @@ export class ReportsService {
         },
       });
 
-      const collected = payments.reduce((sum, p) => sum + Number(p.montoTotal), 0);
+      const collected = payments.reduce(
+        (sum, p) => sum + Number(p.montoTotal),
+        0,
+      );
 
       // Calcular préstamos nuevos en el periodo
       const newLoans = await this.prisma.prestamo.count({
@@ -787,9 +799,10 @@ export class ReportsService {
       });
 
       const target = duePayments.reduce((sum, c) => sum + Number(c.monto), 0);
-      
+
       // Calcular eficiencia
-      const efficiency = target > 0 ? Math.round((collected / target) * 100) : 0;
+      const efficiency =
+        target > 0 ? Math.round((collected / target) * 100) : 0;
 
       return {
         id: route.id,
@@ -807,16 +820,30 @@ export class ReportsService {
     const routePerformance = await Promise.all(routePerformancePromises);
 
     // Calcular métricas globales
-    const totalRecaudo = routePerformance.reduce((sum, r) => sum + r.recaudado, 0);
+    const totalRecaudo = routePerformance.reduce(
+      (sum, r) => sum + r.recaudado,
+      0,
+    );
     const totalMeta = routePerformance.reduce((sum, r) => sum + r.meta, 0);
-    const porcentajeGlobal = totalMeta > 0 ? Math.round((totalRecaudo / totalMeta) * 100) : 0;
-    const totalPrestamosNuevos = routePerformance.reduce((sum, r) => sum + r.nuevosPrestamos, 0);
-    const totalAfiliaciones = routePerformance.reduce((sum, r) => sum + r.nuevosClientes, 0);
+    const porcentajeGlobal =
+      totalMeta > 0 ? Math.round((totalRecaudo / totalMeta) * 100) : 0;
+    const totalPrestamosNuevos = routePerformance.reduce(
+      (sum, r) => sum + r.nuevosPrestamos,
+      0,
+    );
+    const totalAfiliaciones = routePerformance.reduce(
+      (sum, r) => sum + r.nuevosClientes,
+      0,
+    );
 
     // Calcular efectividad promedio
-    const efectividadPromedio = routePerformance.length > 0 
-      ? Math.round(routePerformance.reduce((sum, r) => sum + r.eficiencia, 0) / routePerformance.length)
-      : 0;
+    const efectividadPromedio =
+      routePerformance.length > 0
+        ? Math.round(
+            routePerformance.reduce((sum, r) => sum + r.eficiencia, 0) /
+              routePerformance.length,
+          )
+        : 0;
 
     return {
       totalRecaudo,
@@ -858,7 +885,11 @@ export class ReportsService {
       throw new NotFoundException(`Ruta con ID ${routeId} no encontrada`);
     }
 
-    const dateRange = calculateDateRange(filters.period as TimeFilterPeriod, filters.startDate, filters.endDate);
+    const dateRange = calculateDateRange(
+      filters.period as TimeFilterPeriod,
+      filters.startDate,
+      filters.endDate,
+    );
 
     // Obtener clientes asignados a la ruta
     const assignments = await this.prisma.asignacionRuta.findMany({
@@ -893,7 +924,7 @@ export class ReportsService {
     });
 
     // Obtener pagos de la ruta en el periodo
-    const clientIds = assignments.map(a => a.cliente.id);
+    const clientIds = assignments.map((a) => a.cliente.id);
     const payments = await this.prisma.pago.findMany({
       where: {
         clienteId: { in: clientIds },
@@ -921,9 +952,12 @@ export class ReportsService {
     });
 
     // Calcular estadísticas detalladas
-    const totalCollected = payments.reduce((sum, p) => sum + Number(p.montoTotal), 0);
+    const totalCollected = payments.reduce(
+      (sum, p) => sum + Number(p.montoTotal),
+      0,
+    );
     const paymentCount = payments.length;
-    
+
     // Agrupar pagos por día para gráfico
     const paymentsByDay = await this.prisma.$queryRaw`
       SELECT 
@@ -959,7 +993,7 @@ export class ReportsService {
         promedioDiario: totalCollected / Math.max(1, dateRange.days),
         pagosPorDia: paymentsByDay,
       },
-      pagosRecientes: payments.slice(0, 10).map(p => ({
+      pagosRecientes: payments.slice(0, 10).map((p) => ({
         id: p.id,
         numeroPago: p.numeroPago,
         cliente: `${p.cliente.nombres} ${p.cliente.apellidos}`,
@@ -968,8 +1002,8 @@ export class ReportsService {
         metodo: p.metodoPago,
       })),
       clientesConPrestamos: assignments
-        .filter(a => a.cliente.prestamos.length > 0)
-        .map(a => ({
+        .filter((a) => a.cliente.prestamos.length > 0)
+        .map((a) => ({
           id: a.cliente.id,
           nombre: `${a.cliente.nombres} ${a.cliente.apellidos}`,
           telefono: a.cliente.telefono,
@@ -979,14 +1013,17 @@ export class ReportsService {
     };
   }
 
-  async exportOperationalReport(filters: GetOperationalReportDto, format: 'excel' | 'pdf'): Promise<any> {
+  async exportOperationalReport(
+    filters: GetOperationalReportDto,
+    format: 'excel' | 'pdf',
+  ): Promise<any> {
     const reportData = await this.getOperationalReport(filters);
-    
+
     if (format === 'excel') {
       // Crear workbook de Excel
       const workbook = new ExcelJS.Workbook();
       const worksheet = workbook.addWorksheet('Reporte Operativo');
-      
+
       // Definir columnas
       worksheet.columns = [
         { header: 'Ruta', key: 'ruta', width: 20 },
@@ -997,7 +1034,7 @@ export class ReportsService {
         { header: 'Préstamos Nuevos', key: 'nuevosPrestamos', width: 15 },
         { header: 'Clientes Nuevos', key: 'nuevosClientes', width: 15 },
       ];
-      
+
       // Agregar datos
       reportData.rendimientoRutas.forEach((ruta: any) => {
         worksheet.addRow({
@@ -1010,7 +1047,7 @@ export class ReportsService {
           nuevosClientes: ruta.nuevosClientes,
         });
       });
-      
+
       // Agregar fila de totales
       worksheet.addRow({});
       worksheet.addRow({
@@ -1021,56 +1058,82 @@ export class ReportsService {
         nuevosPrestamos: reportData.totalPrestamosNuevos,
         nuevosClientes: reportData.totalAfiliaciones,
       });
-      
+
       // Generar buffer
       const buffer = await workbook.xlsx.writeBuffer();
-      
+
       return {
         data: buffer,
-        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        filename: `reporte-operativo-${filters.period}-${new Date().toISOString().split('T')[0]}.xlsx`
+        contentType:
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        filename: `reporte-operativo-${filters.period}-${new Date().toISOString().split('T')[0]}.xlsx`,
       };
-      
     } else if (format === 'pdf') {
       // Crear documento PDF
       const doc = new PDFDocument();
       const buffers: any[] = [];
-      
+
       doc.on('data', buffers.push.bind(buffers));
-      
+
       // Contenido del PDF
       doc.fontSize(16).text('Reporte Operativo', { align: 'center' });
       doc.moveDown();
       doc.fontSize(12).text(`Período: ${filters.period}`);
       doc.text(`Fecha: ${new Date().toLocaleDateString()}`);
       doc.moveDown();
-      
+
       // Tabla de datos
       const tableTop = 150;
       const tableLeft = 50;
       const rowHeight = 30;
       const colWidth = 100;
-      
+
       // Encabezados
-      const headers = ['Ruta', 'Cobrador', 'Meta', 'Recaudado', 'Eficiencia', 'Préstamos', 'Clientes'];
+      const headers = [
+        'Ruta',
+        'Cobrador',
+        'Meta',
+        'Recaudado',
+        'Eficiencia',
+        'Préstamos',
+        'Clientes',
+      ];
       headers.forEach((header, i) => {
-        doc.text(header, tableLeft + (i * colWidth), tableTop, { width: colWidth, align: 'center' });
+        doc.text(header, tableLeft + i * colWidth, tableTop, {
+          width: colWidth,
+          align: 'center',
+        });
       });
-      
+
       // Datos
       reportData.rendimientoRutas.forEach((ruta: any, rowIndex: number) => {
-        const y = tableTop + ((rowIndex + 1) * rowHeight);
+        const y = tableTop + (rowIndex + 1) * rowHeight;
         doc.text(ruta.ruta, tableLeft, y, { width: colWidth });
         doc.text(ruta.cobrador, tableLeft + colWidth, y, { width: colWidth });
-        doc.text(ruta.meta.toString(), tableLeft + (2 * colWidth), y, { width: colWidth, align: 'right' });
-        doc.text(ruta.recaudado.toString(), tableLeft + (3 * colWidth), y, { width: colWidth, align: 'right' });
-        doc.text(`${ruta.eficiencia}%`, tableLeft + (4 * colWidth), y, { width: colWidth, align: 'center' });
-        doc.text(ruta.nuevosPrestamos.toString(), tableLeft + (5 * colWidth), y, { width: colWidth, align: 'center' });
-        doc.text(ruta.nuevosClientes.toString(), tableLeft + (6 * colWidth), y, { width: colWidth, align: 'center' });
+        doc.text(ruta.meta.toString(), tableLeft + 2 * colWidth, y, {
+          width: colWidth,
+          align: 'right',
+        });
+        doc.text(ruta.recaudado.toString(), tableLeft + 3 * colWidth, y, {
+          width: colWidth,
+          align: 'right',
+        });
+        doc.text(`${ruta.eficiencia}%`, tableLeft + 4 * colWidth, y, {
+          width: colWidth,
+          align: 'center',
+        });
+        doc.text(ruta.nuevosPrestamos.toString(), tableLeft + 5 * colWidth, y, {
+          width: colWidth,
+          align: 'center',
+        });
+        doc.text(ruta.nuevosClientes.toString(), tableLeft + 6 * colWidth, y, {
+          width: colWidth,
+          align: 'center',
+        });
       });
-      
+
       doc.end();
-      
+
       // Esperar a que se complete la generación del PDF
       const buffer = await new Promise<Buffer>((resolve) => {
         doc.on('end', () => {
@@ -1078,14 +1141,14 @@ export class ReportsService {
           resolve(pdfBuffer);
         });
       });
-      
+
       return {
         data: buffer,
         contentType: 'application/pdf',
-        filename: `reporte-operativo-${filters.period}-${new Date().toISOString().split('T')[0]}.pdf`
+        filename: `reporte-operativo-${filters.period}-${new Date().toISOString().split('T')[0]}.pdf`,
       };
     }
-    
+
     throw new Error(`Formato no soportado: ${format}`);
   }
 }

@@ -20,9 +20,6 @@ import { Roles } from 'src/auth/decorators/roles.decorator';
 export class ClientsController {
   constructor(private readonly clientsService: ClientsService) {}
 
-
-
-
   @Patch(':id')
   update(@Param('id') id: string, @Body() updateClientDto: UpdateClientDto) {
     return this.clientsService.update(id, updateClientDto);

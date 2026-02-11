@@ -104,8 +104,6 @@ export class CreateClientDto {
   @IsOptional()
   creadoPorId?: string;
 
-
-
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })

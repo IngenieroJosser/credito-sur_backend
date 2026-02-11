@@ -1,4 +1,11 @@
-import { Injectable, Logger, NotFoundException, BadRequestException, ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { PrismaService } from 'prisma/prisma.service';
 import { TipoCaja, TipoTransaccion } from '@prisma/client';
 
@@ -17,33 +24,35 @@ export class AccountingService {
       where: { activa: true },
       include: {
         responsable: {
-          select: { id: true, nombres: true, apellidos: true }
+          select: { id: true, nombres: true, apellidos: true },
         },
         ruta: {
-          select: { id: true, nombre: true, codigo: true }
+          select: { id: true, nombre: true, codigo: true },
         },
         _count: {
-          select: { transacciones: true }
-        }
+          select: { transacciones: true },
+        },
       },
-      orderBy: { creadoEn: 'desc' }
+      orderBy: { creadoEn: 'desc' },
     });
 
-    return cajas.map(caja => ({
+    return cajas.map((caja) => ({
       id: caja.id,
       codigo: caja.codigo,
       nombre: caja.nombre,
       tipo: caja.tipo,
       rutaId: caja.rutaId,
       rutaNombre: caja.ruta?.nombre || null,
-      responsable: caja.responsable ? `${caja.responsable.nombres} ${caja.responsable.apellidos}` : 'Sin asignar',
+      responsable: caja.responsable
+        ? `${caja.responsable.nombres} ${caja.responsable.apellidos}`
+        : 'Sin asignar',
       responsableId: caja.responsableId,
       saldo: Number(caja.saldoActual),
       saldoMinimo: Number(caja.saldoMinimo),
       saldoMaximo: Number(caja.saldoMaximo),
       estado: caja.activa ? 'ABIERTA' : 'CERRADA',
       transacciones: caja._count.transacciones,
-      ultimaActualizacion: caja.actualizadoEn.toISOString()
+      ultimaActualizacion: caja.actualizadoEn.toISOString(),
     }));
   }
 
@@ -52,17 +61,17 @@ export class AccountingService {
       where: { id },
       include: {
         responsable: {
-          select: { id: true, nombres: true, apellidos: true }
+          select: { id: true, nombres: true, apellidos: true },
         },
         ruta: true,
         transacciones: {
           take: 20,
           orderBy: { fechaTransaccion: 'desc' },
           include: {
-            creadoPor: { select: { nombres: true, apellidos: true } }
-          }
-        }
-      }
+            creadoPor: { select: { nombres: true, apellidos: true } },
+          },
+        },
+      },
     });
 
     if (!caja) {
@@ -72,129 +81,154 @@ export class AccountingService {
     return caja;
   }
 
-  async createCaja(data: {
-    nombre: string;
-    tipo: TipoCaja;
-    rutaId?: string;
-    responsableId: string;
-    saldoInicial?: number;
-  }, userId: string) {
+  async createCaja(
+    data: {
+      nombre: string;
+      tipo: TipoCaja;
+      rutaId?: string;
+      responsableId: string;
+      saldoInicial?: number;
+    },
+    userId: string,
+  ) {
     try {
-        // 1. Validar Usuario actual y Permisos
-        const currentUser = await this.prisma.usuario.findUnique({
-            where: { id: userId },
-            select: { id: true, rol: true }
-        });
+      // 1. Validar Usuario actual y Permisos
+      const currentUser = await this.prisma.usuario.findUnique({
+        where: { id: userId },
+        select: { id: true, rol: true },
+      });
 
-        if (!currentUser) {
-            throw new UnauthorizedException('Usuario no válido para realizar esta acción');
-        }
-
-        // Regla: Solo Admin, SuperAdmin, Contador y Coordinador pueden crear Cajas Principales
-        if (data.tipo === 'PRINCIPAL') {
-            const rolesPermitidos = ['ADMIN', 'SUPER_ADMINISTRADOR', 'CONTADOR', 'COORDINADOR'];
-            if (!rolesPermitidos.includes(currentUser.rol)) {
-                throw new ForbiddenException('No tienes permisos para crear una Caja Principal');
-            }
-        }
-
-        // 2. Validar que el responsable exista
-        const responsable = await this.prisma.usuario.findUnique({
-            where: { id: data.responsableId }
-        });
-
-        if (!responsable) {
-            throw new BadRequestException('El responsable asignado no es un usuario válido');
-        }
-        
-        // 3. Si es tipo RUTA, validar que la ruta exista (si se envió rutaId)
-        // Se usa 'undefined' para asegurar que rutaId vacío sea ignorado en la consulta
-        const rutaIdSanitizado = data.rutaId ? data.rutaId : undefined; 
-
-        if (data.tipo === 'RUTA' && rutaIdSanitizado) {
-            const ruta = await this.prisma.ruta.findUnique({ where: { id: rutaIdSanitizado } });
-            if (!ruta) {
-                throw new BadRequestException('La ruta especificada no existe');
-            }
-        }
-
-        // Generar código único basándose en el último creado
-        const lastCaja = await this.prisma.caja.findFirst({
-            orderBy: { creadoEn: 'desc' }
-        });
-
-        let nextNum = 1;
-        if (lastCaja && lastCaja.codigo.startsWith('CAJA-')) {
-            const lastNum = parseInt(lastCaja.codigo.split('-')[1]);
-            if (!isNaN(lastNum)) {
-                nextNum = lastNum + 1;
-            }
-        }
-        
-        const codigo = `CAJA-${nextNum.toString().padStart(4, '0')}`;
-
-        return await this.prisma.$transaction(async (tx) => {
-            // 1. Crear la Caja
-            const nuevaCaja = await tx.caja.create({
-                data: {
-                    codigo,
-                    nombre: data.nombre,
-                    tipo: data.tipo,
-                    rutaId: rutaIdSanitizado,
-                    responsableId: data.responsableId,
-                    saldoActual: data.saldoInicial || 0,
-                },
-                include: {
-                    responsable: { select: { nombres: true, apellidos: true } },
-                },
-            });
-
-            // 2. Si hay saldo inicial > 0, registrar el movimiento de apertura
-            if (data.saldoInicial && data.saldoInicial > 0) {
-                const count = await tx.transaccion.count();
-                const numeroTransaccion = `TRX-${Date.now().toString().slice(-8)}-${(count + 1).toString().padStart(4, '0')}`;
-                
-                await tx.transaccion.create({
-                    data: {
-                        numeroTransaccion,
-                        cajaId: nuevaCaja.id,
-                        tipo: TipoTransaccion.INGRESO,
-                        monto: data.saldoInicial,
-                        descripcion: 'Saldo Inicial de Apertura de Caja',
-                        creadoPorId: userId, // El usuario que crea la caja es quien registra el saldo inicial
-                        tipoReferencia: 'APERTURA_CAJA',
-                        referenciaId: nuevaCaja.codigo
-                    }
-                });
-            }
-
-            return nuevaCaja;
-        });
-    } catch (error) {
-        this.logger.error(`Error creando caja: ${error.message}`, error.stack);
-        if (error instanceof BadRequestException || error instanceof ForbiddenException || error instanceof UnauthorizedException) {
-            throw error;
-        }
-        // Si es un error de base de datos específico (ej: input syntax for uuid), devolvemos BadRequest
-        if (error.code === 'P2023' || error.message.includes('uuid')) {
-             throw new BadRequestException('Formato de ID inválido (UUID requerido). Verifique responsableId o rutaId.');
-        }
-
-        throw new BadRequestException(
-            `No se pudo crear la caja: ${error.message || 'Error desconocido'}`
+      if (!currentUser) {
+        throw new UnauthorizedException(
+          'Usuario no válido para realizar esta acción',
         );
+      }
+
+      // Regla: Solo Admin, SuperAdmin, Contador y Coordinador pueden crear Cajas Principales
+      if (data.tipo === 'PRINCIPAL') {
+        const rolesPermitidos = [
+          'ADMIN',
+          'SUPER_ADMINISTRADOR',
+          'CONTADOR',
+          'COORDINADOR',
+        ];
+        if (!rolesPermitidos.includes(currentUser.rol)) {
+          throw new ForbiddenException(
+            'No tienes permisos para crear una Caja Principal',
+          );
+        }
+      }
+
+      // 2. Validar que el responsable exista
+      const responsable = await this.prisma.usuario.findUnique({
+        where: { id: data.responsableId },
+      });
+
+      if (!responsable) {
+        throw new BadRequestException(
+          'El responsable asignado no es un usuario válido',
+        );
+      }
+
+      // 3. Si es tipo RUTA, validar que la ruta exista (si se envió rutaId)
+      // Se usa 'undefined' para asegurar que rutaId vacío sea ignorado en la consulta
+      const rutaIdSanitizado = data.rutaId ? data.rutaId : undefined;
+
+      if (data.tipo === 'RUTA' && rutaIdSanitizado) {
+        const ruta = await this.prisma.ruta.findUnique({
+          where: { id: rutaIdSanitizado },
+        });
+        if (!ruta) {
+          throw new BadRequestException('La ruta especificada no existe');
+        }
+      }
+
+      // Generar código único basándose en el último creado
+      const lastCaja = await this.prisma.caja.findFirst({
+        orderBy: { creadoEn: 'desc' },
+      });
+
+      let nextNum = 1;
+      if (lastCaja && lastCaja.codigo.startsWith('CAJA-')) {
+        const lastNum = parseInt(lastCaja.codigo.split('-')[1]);
+        if (!isNaN(lastNum)) {
+          nextNum = lastNum + 1;
+        }
+      }
+
+      const codigo = `CAJA-${nextNum.toString().padStart(4, '0')}`;
+
+      return await this.prisma.$transaction(async (tx) => {
+        // 1. Crear la Caja
+        const nuevaCaja = await tx.caja.create({
+          data: {
+            codigo,
+            nombre: data.nombre,
+            tipo: data.tipo,
+            rutaId: rutaIdSanitizado,
+            responsableId: data.responsableId,
+            saldoActual: data.saldoInicial || 0,
+          },
+          include: {
+            responsable: { select: { nombres: true, apellidos: true } },
+          },
+        });
+
+        // 2. Si hay saldo inicial > 0, registrar el movimiento de apertura
+        if (data.saldoInicial && data.saldoInicial > 0) {
+          const count = await tx.transaccion.count();
+          const numeroTransaccion = `TRX-${Date.now().toString().slice(-8)}-${(count + 1).toString().padStart(4, '0')}`;
+
+          await tx.transaccion.create({
+            data: {
+              numeroTransaccion,
+              cajaId: nuevaCaja.id,
+              tipo: TipoTransaccion.INGRESO,
+              monto: data.saldoInicial,
+              descripcion: 'Saldo Inicial de Apertura de Caja',
+              creadoPorId: userId, // El usuario que crea la caja es quien registra el saldo inicial
+              tipoReferencia: 'APERTURA_CAJA',
+              referenciaId: nuevaCaja.codigo,
+            },
+          });
+        }
+
+        return nuevaCaja;
+      });
+    } catch (error) {
+      this.logger.error(`Error creando caja: ${error.message}`, error.stack);
+      if (
+        error instanceof BadRequestException ||
+        error instanceof ForbiddenException ||
+        error instanceof UnauthorizedException
+      ) {
+        throw error;
+      }
+      // Si es un error de base de datos específico (ej: input syntax for uuid), devolvemos BadRequest
+      if (error.code === 'P2023' || error.message.includes('uuid')) {
+        throw new BadRequestException(
+          'Formato de ID inválido (UUID requerido). Verifique responsableId o rutaId.',
+        );
+      }
+
+      throw new BadRequestException(
+        `No se pudo crear la caja: ${error.message || 'Error desconocido'}`,
+      );
     }
   }
 
-  async updateCaja(id: string, data: {
-    nombre?: string;
-    responsableId?: string;
-    activa?: boolean;
-    saldoActual?: number;
-  }) {
+  async updateCaja(
+    id: string,
+    data: {
+      nombre?: string;
+      responsableId?: string;
+      activa?: boolean;
+      saldoActual?: number;
+    },
+  ) {
     return this.prisma.caja.update({
       where: { id },
-      data
+      data,
     });
   }
 
@@ -210,13 +244,20 @@ export class AccountingService {
     page?: number;
     limit?: number;
   }) {
-    const { cajaId, tipo, fechaInicio, fechaFin, page = 1, limit = 50 } = filtros;
+    const {
+      cajaId,
+      tipo,
+      fechaInicio,
+      fechaFin,
+      page = 1,
+      limit = 50,
+    } = filtros;
     const skip = (page - 1) * limit;
 
     const where: any = {};
 
     // Se eliminó el filtro que excluía consolidaciones para mostrarlas en movimientos recientes
-    
+
     if (cajaId) where.cajaId = cajaId;
     if (tipo) where.tipo = tipo;
     if (fechaInicio || fechaFin) {
@@ -231,16 +272,24 @@ export class AccountingService {
         skip,
         take: limit,
         include: {
-          caja: { select: { nombre: true, codigo: true, tipo: true, rutaId: true, saldoActual: true } },
-          creadoPor: { select: { nombres: true, apellidos: true } }
+          caja: {
+            select: {
+              nombre: true,
+              codigo: true,
+              tipo: true,
+              rutaId: true,
+              saldoActual: true,
+            },
+          },
+          creadoPor: { select: { nombres: true, apellidos: true } },
         },
-        orderBy: { fechaTransaccion: 'desc' }
+        orderBy: { fechaTransaccion: 'desc' },
       }),
-      this.prisma.transaccion.count({ where })
+      this.prisma.transaccion.count({ where }),
     ]);
 
     return {
-      data: transacciones.map(t => ({
+      data: transacciones.map((t) => ({
         id: t.id,
         numero: t.numeroTransaccion,
         fecha: t.fechaTransaccion.toISOString(),
@@ -254,14 +303,14 @@ export class AccountingService {
         origen: t.caja.tipo === 'RUTA' ? 'COBRADOR' : 'EMPRESA',
         categoria: t.tipoReferencia || 'GENERAL',
         rutaId: t.caja.rutaId,
-        cajaSaldo: Number(t.caja.saldoActual)
+        cajaSaldo: Number(t.caja.saldoActual),
       })),
       meta: {
         total,
         page,
         limit,
-        totalPages: Math.ceil(total / limit)
-      }
+        totalPages: Math.ceil(total / limit),
+      },
     };
   }
 
@@ -279,12 +328,16 @@ export class AccountingService {
     const numeroTransaccion = `TRX-${Date.now().toString().slice(-8)}-${(count + 1).toString().padStart(4, '0')}`;
 
     // Actualizar saldo de la caja (Destino)
-    const caja = await this.prisma.caja.findUnique({ where: { id: data.cajaId } });
+    const caja = await this.prisma.caja.findUnique({
+      where: { id: data.cajaId },
+    });
     if (!caja) throw new NotFoundException('Caja no encontrada');
 
     // Caso Especial: Si hay caja origen, es una transferencia/consolidación
     if (data.cajaOrigenId) {
-      const cajaOrigen = await this.prisma.caja.findUnique({ where: { id: data.cajaOrigenId } });
+      const cajaOrigen = await this.prisma.caja.findUnique({
+        where: { id: data.cajaOrigenId },
+      });
       if (!cajaOrigen) throw new NotFoundException('Caja origen no encontrada');
 
       const numeroReferencia = `CONS-${Date.now().toString().slice(-6)}`;
@@ -301,8 +354,8 @@ export class AccountingService {
             descripcion: `Transferencia enviada a ${caja.nombre}`,
             creadoPorId: data.creadoPorId,
             tipoReferencia: 'TRANSFERENCIA_INTERNA',
-            referenciaId: numeroReferencia
-          }
+            referenciaId: numeroReferencia,
+          },
         });
 
         // 2. Entrada a la caja destino
@@ -315,28 +368,29 @@ export class AccountingService {
             descripcion: `Transferencia recibida de ${cajaOrigen.nombre}`,
             creadoPorId: data.creadoPorId,
             tipoReferencia: 'TRANSFERENCIA_INTERNA',
-            referenciaId: numeroReferencia
-          }
+            referenciaId: numeroReferencia,
+          },
         });
 
         // 3. Actualizar Saldos
         await tx.caja.update({
           where: { id: data.cajaOrigenId },
-          data: { saldoActual: { decrement: data.monto } }
+          data: { saldoActual: { decrement: data.monto } },
         });
 
         await tx.caja.update({
           where: { id: data.cajaId },
-          data: { saldoActual: { increment: data.monto } }
+          data: { saldoActual: { increment: data.monto } },
         });
 
         return transaccion;
       });
     }
 
-    const nuevoSaldo = data.tipo === 'INGRESO' 
-      ? Number(caja.saldoActual) + data.monto
-      : Number(caja.saldoActual) - data.monto;
+    const nuevoSaldo =
+      data.tipo === 'INGRESO'
+        ? Number(caja.saldoActual) + data.monto
+        : Number(caja.saldoActual) - data.monto;
 
     const [transaccion] = await this.prisma.$transaction([
       this.prisma.transaccion.create({
@@ -349,12 +403,12 @@ export class AccountingService {
           creadoPorId: data.creadoPorId,
           tipoReferencia: data.tipoReferencia,
           referenciaId: data.referenciaId,
-        }
+        },
       }),
       this.prisma.caja.update({
         where: { id: data.cajaId },
-        data: { saldoActual: nuevoSaldo }
-      })
+        data: { saldoActual: nuevoSaldo },
+      }),
     ]);
 
     return transaccion;
@@ -362,9 +416,11 @@ export class AccountingService {
 
   async consolidarCaja(cajaOrigenId: string, administradorId: string) {
     // 1. Validar Caja Origen
-    const cajaOrigen = await this.prisma.caja.findUnique({ where: { id: cajaOrigenId } });
+    const cajaOrigen = await this.prisma.caja.findUnique({
+      where: { id: cajaOrigenId },
+    });
     if (!cajaOrigen) throw new NotFoundException('Caja origen no encontrada');
-    
+
     const saldo = Number(cajaOrigen.saldoActual);
     if (saldo <= 0) {
       throw new Error('La caja no tiene fondos para consolidar');
@@ -372,11 +428,14 @@ export class AccountingService {
 
     // 2. Buscar Caja Principal
     const cajaPrincipal = await this.prisma.caja.findFirst({
-      where: { tipo: TipoCaja.PRINCIPAL, activa: true }
+      where: { tipo: TipoCaja.PRINCIPAL, activa: true },
     });
 
     if (!cajaPrincipal) throw new Error('No existe una Caja Principal activa');
-    if (cajaPrincipal.id === cajaOrigen.id) throw new Error('No se puede consolidar la caja principal sobre sí misma');
+    if (cajaPrincipal.id === cajaOrigen.id)
+      throw new Error(
+        'No se puede consolidar la caja principal sobre sí misma',
+      );
 
     const fecha = new Date();
     const numeroRef = `CONS-${Date.now().toString().slice(-6)}`;
@@ -393,8 +452,8 @@ export class AccountingService {
           descripcion: `Consolidación enviada a Caja Principal (${cajaPrincipal.nombre})`,
           creadoPorId: administradorId,
           tipoReferencia: 'CONSOLIDACION',
-          referenciaId: numeroRef
-        }
+          referenciaId: numeroRef,
+        },
       });
 
       // Registrar entrada en caja principal
@@ -407,29 +466,29 @@ export class AccountingService {
           descripcion: `Consolidación recibida de ${cajaOrigen.nombre}`,
           creadoPorId: administradorId,
           tipoReferencia: 'CONSOLIDACION',
-          referenciaId: numeroRef
-        }
+          referenciaId: numeroRef,
+        },
       });
 
       // Actualizar saldo origen a 0
       await tx.caja.update({
         where: { id: cajaOrigen.id },
-        data: { saldoActual: 0 }
+        data: { saldoActual: 0 },
       });
 
       // Actualizar saldo principal
       await tx.caja.update({
         where: { id: cajaPrincipal.id },
-        data: { 
-            saldoActual: { increment: saldo } 
-        }
+        data: {
+          saldoActual: { increment: saldo },
+        },
       });
 
       return {
         origen: cajaOrigen.nombre,
         destino: cajaPrincipal.nombre,
         monto: saldo,
-        transacciones: [egreso.id, ingreso.id]
+        transacciones: [egreso.id, ingreso.id],
       };
     });
   }
@@ -440,92 +499,110 @@ export class AccountingService {
 
   async getResumenFinanciero(fechaInicio?: string, fechaFin?: string) {
     const hoy = new Date();
-    const inicioHoy = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
+    const inicioHoy = new Date(
+      hoy.getFullYear(),
+      hoy.getMonth(),
+      hoy.getDate(),
+    );
     const finHoy = new Date(inicioHoy.getTime() + 24 * 60 * 60 * 1000);
 
     const inicioAyer = new Date(inicioHoy.getTime() - 24 * 60 * 60 * 1000);
     const finAyer = inicioHoy;
 
     const whereHoy = {
-      fechaTransaccion: { gte: inicioHoy, lt: finHoy }
+      fechaTransaccion: { gte: inicioHoy, lt: finHoy },
     };
 
     const whereAyer = {
-      fechaTransaccion: { gte: inicioAyer, lt: finAyer }
+      fechaTransaccion: { gte: inicioAyer, lt: finAyer },
     };
 
     // Ingresos y egresos del día y de ayer (Incluyendo transferencias/consolidaciones)
     const [
-      ingresosHoy, 
-      egresosHoy, 
-      ingresosAyer, 
-      egresosAyer, 
-      totalCajas, 
+      ingresosHoy,
+      egresosHoy,
+      ingresosAyer,
+      egresosAyer,
+      totalCajas,
       prestamosActivos,
       totalRutasCount,
       rutasAbiertasCount,
       rutasPendientesConsolidacion,
-      consolidacionesHoy
+      consolidacionesHoy,
     ] = await Promise.all([
       this.prisma.transaccion.aggregate({
-        where: { 
+        where: {
           ...whereHoy,
           OR: [
             { tipo: 'INGRESO' },
-            { tipo: 'TRANSFERENCIA', numeroTransaccion: { startsWith: 'TRX-IN' } }
-          ]
+            {
+              tipo: 'TRANSFERENCIA',
+              numeroTransaccion: { startsWith: 'TRX-IN' },
+            },
+          ],
         },
-        _sum: { monto: true }
+        _sum: { monto: true },
       }),
       this.prisma.transaccion.aggregate({
-        where: { 
-          ...whereHoy, 
+        where: {
+          ...whereHoy,
           OR: [
             { tipo: 'EGRESO' },
-            { tipo: 'TRANSFERENCIA', numeroTransaccion: { startsWith: 'TRX-OUT' } }
-          ]
+            {
+              tipo: 'TRANSFERENCIA',
+              numeroTransaccion: { startsWith: 'TRX-OUT' },
+            },
+          ],
         },
-        _sum: { monto: true }
+        _sum: { monto: true },
       }),
       this.prisma.transaccion.aggregate({
-        where: { 
-          ...whereAyer, 
+        where: {
+          ...whereAyer,
           OR: [
             { tipo: 'INGRESO' },
-            { tipo: 'TRANSFERENCIA', numeroTransaccion: { startsWith: 'TRX-IN' } }
-          ]
+            {
+              tipo: 'TRANSFERENCIA',
+              numeroTransaccion: { startsWith: 'TRX-IN' },
+            },
+          ],
         },
-        _sum: { monto: true }
+        _sum: { monto: true },
       }),
       this.prisma.transaccion.aggregate({
-        where: { 
-          ...whereAyer, 
+        where: {
+          ...whereAyer,
           OR: [
             { tipo: 'EGRESO' },
-            { tipo: 'TRANSFERENCIA', numeroTransaccion: { startsWith: 'TRX-OUT' } }
-          ]
+            {
+              tipo: 'TRANSFERENCIA',
+              numeroTransaccion: { startsWith: 'TRX-OUT' },
+            },
+          ],
         },
-        _sum: { monto: true }
+        _sum: { monto: true },
       }),
       this.prisma.caja.aggregate({
         where: { activa: true },
-        _sum: { saldoActual: true }
+        _sum: { saldoActual: true },
       }),
       this.prisma.prestamo.aggregate({
         where: { estado: 'ACTIVO' },
-        _sum: { saldoPendiente: true }
+        _sum: { saldoPendiente: true },
       }),
       this.prisma.caja.count({ where: { tipo: 'RUTA' } }),
       this.prisma.caja.count({ where: { tipo: 'RUTA', activa: true } }),
-      this.prisma.caja.count({ where: { tipo: 'RUTA', saldoActual: { gt: 0 } } }),
+      this.prisma.caja.count({
+        where: { tipo: 'RUTA', saldoActual: { gt: 0 } },
+      }),
       this.prisma.transaccion.count({
         where: {
           ...whereHoy,
           tipoReferencia: 'CONSOLIDACION',
           tipo: 'TRANSFERENCIA',
-          caja: { tipo: 'RUTA' }
-        }
-      })
+          caja: { tipo: 'RUTA' },
+        },
+      }),
     ]);
 
     const ingresos = Number(ingresosHoy._sum.monto || 0);
@@ -535,12 +612,15 @@ export class AccountingService {
 
     const calcularDiferencia = (actual: number, anterior: number) => {
       if (anterior === 0) return actual > 0 ? 100 : 0;
-      return Number(((actual - anterior) / anterior * 100).toFixed(2));
+      return Number((((actual - anterior) / anterior) * 100).toFixed(2));
     };
 
-    const porcentajeCierres = totalRutasCount > 0 
-      ? Math.round(((totalRutasCount - rutasAbiertasCount) / totalRutasCount) * 100) 
-      : 0;
+    const porcentajeCierres =
+      totalRutasCount > 0
+        ? Math.round(
+            ((totalRutasCount - rutasAbiertasCount) / totalRutasCount) * 100,
+          )
+        : 0;
 
     return {
       ingresosHoy: ingresos,
@@ -548,7 +628,9 @@ export class AccountingService {
       gananciaNeta: ingresos - egresos,
       capitalEnCalle: Number(prestamosActivos._sum.saldoPendiente || 0),
       saldoCajas: Number(totalCajas._sum.saldoActual || 0),
-      cajasAbiertasCount: await this.prisma.caja.count({ where: { activa: true } }),
+      cajasAbiertasCount: await this.prisma.caja.count({
+        where: { activa: true },
+      }),
       rutasTotales: totalRutasCount,
       rutasAbiertas: rutasAbiertasCount,
       rutasPendientesConsolidacion: rutasPendientesConsolidacion,
@@ -558,7 +640,7 @@ export class AccountingService {
       porcentajeIngresosVsAyer: calcularDiferencia(ingresos, ingresosAyerVal),
       porcentajeEgresosVsAyer: calcularDiferencia(egresos, egresosAyerVal),
       esIngresoPositivo: ingresos >= ingresosAyerVal,
-      esEgresoPositivo: egresos <= egresosAyerVal
+      esEgresoPositivo: egresos <= egresosAyerVal,
     };
   }
 
@@ -572,17 +654,17 @@ export class AccountingService {
     const consolidaciones = await this.prisma.transaccion.findMany({
       where: {
         tipoReferencia: 'CONSOLIDACION',
-        tipo: 'TRANSFERENCIA'
+        tipo: 'TRANSFERENCIA',
       },
       include: {
         caja: { select: { nombre: true } },
-        creadoPor: { select: { nombres: true, apellidos: true } }
+        creadoPor: { select: { nombres: true, apellidos: true } },
       },
       orderBy: { fechaTransaccion: 'desc' },
-      take: 50
+      take: 50,
     });
 
-    return consolidaciones.map(c => ({
+    return consolidaciones.map((c) => ({
       id: c.id,
       fecha: c.fechaTransaccion.toISOString(),
       caja: c.caja.nombre,
@@ -590,7 +672,7 @@ export class AccountingService {
       saldoSistema: Number(c.monto),
       saldoReal: Number(c.monto),
       diferencia: 0,
-      estado: 'CUADRADA' // Para compatibilidad con tipos, aunque mostramos AUTOMATICO en frontend
+      estado: 'CUADRADA', // Para compatibilidad con tipos, aunque mostramos AUTOMATICO en frontend
     }));
   }
 
@@ -619,15 +701,15 @@ export class AccountingService {
         include: {
           cobrador: { select: { nombres: true, apellidos: true } },
           ruta: { select: { nombre: true } },
-          caja: { select: { nombre: true } }
+          caja: { select: { nombre: true } },
         },
-        orderBy: { fechaGasto: 'desc' }
+        orderBy: { fechaGasto: 'desc' },
       }),
-      this.prisma.gasto.count({ where })
+      this.prisma.gasto.count({ where }),
     ]);
 
     return {
-      data: gastos.map(g => ({
+      data: gastos.map((g) => ({
         id: g.id,
         numero: g.numeroGasto,
         fecha: g.fechaGasto.toISOString(),
@@ -637,11 +719,9 @@ export class AccountingService {
         cobrador: `${g.cobrador.nombres} ${g.cobrador.apellidos}`,
         ruta: g.ruta?.nombre || 'Sin ruta',
         caja: g.caja.nombre,
-        estado: g.estadoAprobacion
+        estado: g.estadoAprobacion,
       })),
-      meta: { total, page, limit, totalPages: Math.ceil(total / limit) }
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
   }
 }
-
-

@@ -25,4 +25,3 @@ export class NotificacionesController {
     return this.notificacionesService.markAsRead(id);
   }
 }
-

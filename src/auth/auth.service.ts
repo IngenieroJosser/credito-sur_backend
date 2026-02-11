@@ -24,7 +24,9 @@ export class AuthService {
     }
 
     const matches = await argon2.verify(usuario.hashContrasena, contrasena);
-    console.log(`[AUTH] Coincidencia de contraseña para ${nombres}: ${matches}`);
+    console.log(
+      `[AUTH] Coincidencia de contraseña para ${nombres}: ${matches}`,
+    );
 
     if (matches) {
       const { hashContrasena, ...resultado } = usuario;

@@ -34,7 +34,7 @@ export class CreateLoanDto {
 
   @IsNumber()
   @Min(0)
-  @ValidateIf(o => o.tipoPrestamo === 'prestamo')
+  @ValidateIf((o) => o.tipoPrestamo === 'prestamo')
   tasaInteres: number;
 
   @IsNumber()

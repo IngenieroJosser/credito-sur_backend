@@ -1,13 +1,18 @@
-import { Injectable, NotFoundException, Logger, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  Logger,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from 'prisma/prisma.service';
-import { 
-  EstadoPrestamo, 
-  EstadoCuota, 
-  NivelRiesgo, 
-  FrecuenciaPago, 
-  TipoAprobacion, 
+import {
+  EstadoPrestamo,
+  EstadoCuota,
+  NivelRiesgo,
+  FrecuenciaPago,
+  TipoAprobacion,
   EstadoAprobacion,
-  RolUsuario 
+  RolUsuario,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { AuditService } from '../audit/audit.service';
@@ -580,7 +585,10 @@ export class LoansService {
 
       // Calcular interes total
       const interesTotal =
-        (createLoanDto.monto * createLoanDto.tasaInteres * createLoanDto.plazoMeses) / 100;
+        (createLoanDto.monto *
+          createLoanDto.tasaInteres *
+          createLoanDto.plazoMeses) /
+        100;
       const montoCuota = (createLoanDto.monto + interesTotal) / cantidadCuotas;
       const montoCapitalCuota = createLoanDto.monto / cantidadCuotas;
       const montoInteresCuota = interesTotal / cantidadCuotas;
@@ -857,7 +865,9 @@ export class LoansService {
 
   async createLoan(data: CreateLoanDto) {
     try {
-      this.logger.log(`Creating loan for client ${data.clienteId}, type: ${data.tipoPrestamo}`);
+      this.logger.log(
+        `Creating loan for client ${data.clienteId}, type: ${data.tipoPrestamo}`,
+      );
 
       // Verificar que el cliente existe
       const cliente = await this.prisma.cliente.findUnique({
@@ -865,9 +875,9 @@ export class LoansService {
         include: {
           asignacionesRuta: {
             where: { activa: true },
-            include: { ruta: true }
-          }
-        }
+            include: { ruta: true },
+          },
+        },
       });
 
       if (!cliente) {
@@ -876,12 +886,14 @@ export class LoansService {
 
       // Verificar que el cliente no esté en lista negra
       if (cliente.enListaNegra) {
-        throw new BadRequestException('El cliente está en lista negra y no puede recibir créditos');
+        throw new BadRequestException(
+          'El cliente está en lista negra y no puede recibir créditos',
+        );
       }
 
       // Verificar que el creador existe
       const creador = await this.prisma.usuario.findUnique({
-        where: { id: data.creadoPorId }
+        where: { id: data.creadoPorId },
       });
 
       if (!creador) {
@@ -895,12 +907,14 @@ export class LoansService {
       // Para crédito por artículo
       if (data.tipoPrestamo === 'ARTICULO') {
         if (!data.productoId || !data.precioProductoId) {
-          throw new BadRequestException('Para crédito por artículo se requiere productoId y precioProductoId');
+          throw new BadRequestException(
+            'Para crédito por artículo se requiere productoId y precioProductoId',
+          );
         }
 
         // Obtener el producto y precio del producto
         producto = await this.prisma.producto.findUnique({
-          where: { id: data.productoId }
+          where: { id: data.productoId },
         });
 
         if (!producto) {
@@ -913,7 +927,7 @@ export class LoansService {
         }
 
         precioProducto = await this.prisma.precioProducto.findUnique({
-          where: { id: data.precioProductoId }
+          where: { id: data.precioProductoId },
         });
 
         if (!precioProducto) {
@@ -921,24 +935,33 @@ export class LoansService {
         }
 
         // Verificar que el precioProducto corresponda al producto - CORREGIDO: acceso seguro
-        if (precioProducto.productoId && precioProducto.productoId !== data.productoId) {
-          throw new BadRequestException('El plan de precio no corresponde al producto seleccionado');
+        if (
+          precioProducto.productoId &&
+          precioProducto.productoId !== data.productoId
+        ) {
+          throw new BadRequestException(
+            'El plan de precio no corresponde al producto seleccionado',
+          );
         }
 
         // Calcular monto a financiar (precio total - cuota inicial)
         const cuotaInicial = data.cuotaInicial || 0;
-        const precioTotal = precioProducto.precio ? Number(precioProducto.precio) : 0;
+        const precioTotal = precioProducto.precio
+          ? Number(precioProducto.precio)
+          : 0;
         montoFinanciar = Math.max(0, precioTotal - cuotaInicial);
 
         if (cuotaInicial > precioTotal) {
-          throw new BadRequestException('La cuota inicial no puede ser mayor al precio total');
+          throw new BadRequestException(
+            'La cuota inicial no puede ser mayor al precio total',
+          );
         }
 
         // Reducir stock del producto si existe la propiedad stock
         if (producto.stock !== undefined) {
           await this.prisma.producto.update({
             where: { id: data.productoId },
-            data: { stock: { decrement: 1 } }
+            data: { stock: { decrement: 1 } },
           });
         }
       }
@@ -970,11 +993,14 @@ export class LoansService {
       }
 
       // Calcular interés total y montos por cuota
-      const interesTotal = (montoFinanciar * data.tasaInteres * data.plazoMeses) / 100;
+      const interesTotal =
+        (montoFinanciar * data.tasaInteres * data.plazoMeses) / 100;
       const montoTotal = montoFinanciar + interesTotal;
       const montoCuota = cantidadCuotas > 0 ? montoTotal / cantidadCuotas : 0;
-      const montoCapitalCuota = cantidadCuotas > 0 ? montoFinanciar / cantidadCuotas : 0;
-      const montoInteresCuota = cantidadCuotas > 0 ? interesTotal / cantidadCuotas : 0;
+      const montoCapitalCuota =
+        cantidadCuotas > 0 ? montoFinanciar / cantidadCuotas : 0;
+      const montoInteresCuota =
+        cantidadCuotas > 0 ? interesTotal / cantidadCuotas : 0;
 
       // Crear préstamo con cuotas
       const prestamo = await this.prisma.prestamo.create({
@@ -1003,16 +1029,24 @@ export class LoansService {
 
               switch (data.frecuenciaPago) {
                 case FrecuenciaPago.DIARIO:
-                  fechaVencimiento.setDate(fechaVencimiento.getDate() + (i + 1));
+                  fechaVencimiento.setDate(
+                    fechaVencimiento.getDate() + (i + 1),
+                  );
                   break;
                 case FrecuenciaPago.SEMANAL:
-                  fechaVencimiento.setDate(fechaVencimiento.getDate() + (i + 1) * 7);
+                  fechaVencimiento.setDate(
+                    fechaVencimiento.getDate() + (i + 1) * 7,
+                  );
                   break;
                 case FrecuenciaPago.QUINCENAL:
-                  fechaVencimiento.setDate(fechaVencimiento.getDate() + (i + 1) * 15);
+                  fechaVencimiento.setDate(
+                    fechaVencimiento.getDate() + (i + 1) * 15,
+                  );
                   break;
                 case FrecuenciaPago.MENSUAL:
-                  fechaVencimiento.setMonth(fechaVencimiento.getMonth() + (i + 1));
+                  fechaVencimiento.setMonth(
+                    fechaVencimiento.getMonth() + (i + 1),
+                  );
                   break;
               }
 
@@ -1066,7 +1100,7 @@ export class LoansService {
 
       // Notificar a coordinadores
       const coordinadores = await this.prisma.usuario.findMany({
-        where: { rol: RolUsuario.COORDINADOR, estado: 'ACTIVO' }
+        where: { rol: RolUsuario.COORDINADOR, estado: 'ACTIVO' },
       });
 
       for (const coordinador of coordinadores) {

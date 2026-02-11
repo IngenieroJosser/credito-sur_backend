@@ -11,4 +11,3 @@ import { NotificacionesController } from './notificaciones.controller';
   exports: [NotificacionesService],
 })
 export class NotificacionesModule {}
-

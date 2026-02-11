@@ -32,7 +32,11 @@ export class UsersController {
   }
 
   @Get()
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+  )
   obtenerTodos() {
     return this.usersService.obtenerTodos();
   }

@@ -181,10 +181,15 @@ export class ReportsController {
   }
 
   @Get('operational/coordinator')
-  @Roles(RolUsuario.COORDINADOR, RolUsuario.ADMIN, RolUsuario.SUPER_ADMINISTRADOR)
+  @Roles(
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
   @ApiOperation({
     summary: 'Obtener reporte operativo para coordinador',
-    description: 'Retorna métricas de rendimiento por ruta, recaudo, préstamos nuevos y eficiencia',
+    description:
+      'Retorna métricas de rendimiento por ruta, recaudo, préstamos nuevos y eficiencia',
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -204,7 +209,12 @@ export class ReportsController {
   }
 
   @Get('operational/route-detail/:routeId')
-  @Roles(RolUsuario.COORDINADOR, RolUsuario.ADMIN, RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.SUPERVISOR)
+  @Roles(
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.SUPERVISOR,
+  )
   @ApiOperation({
     summary: 'Obtener detalle de reporte por ruta',
     description: 'Retorna el detalle completo de una ruta específica',
@@ -224,11 +234,19 @@ export class ReportsController {
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
-    return this.reportsService.getRouteDetail(routeId, { period, startDate, endDate });
+    return this.reportsService.getRouteDetail(routeId, {
+      period,
+      startDate,
+      endDate,
+    });
   }
 
   @Get('operational/export')
-  @Roles(RolUsuario.COORDINADOR, RolUsuario.ADMIN, RolUsuario.SUPER_ADMINISTRADOR)
+  @Roles(
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
   @ApiOperation({
     summary: 'Exportar reporte operativo',
     description: 'Exporta el reporte operativo en formato Excel o PDF',
@@ -237,14 +255,20 @@ export class ReportsController {
   async exportOperationalReport(
     @Query() filters: GetOperationalReportDto,
     @Query('format') format: 'excel' | 'pdf',
-    @Res() res: Response
+    @Res() res: Response,
   ) {
-    const result = await this.reportsService.exportOperationalReport(filters, format);
-    
+    const result = await this.reportsService.exportOperationalReport(
+      filters,
+      format,
+    );
+
     // Configurar headers para la descarga
     res.setHeader('Content-Type', result.contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
-    
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${result.filename}"`,
+    );
+
     // Enviar el buffer como respuesta
     res.send(result.data);
   }

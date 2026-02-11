@@ -46,10 +46,12 @@ describe('ClientsService', () => {
     it('should create a client with auto-generated code', async () => {
       // 1. Mock count para que retorne 10 (el siguiente será 11 -> C-0011)
       (prismaService.cliente.count as jest.Mock).mockResolvedValue(10);
-      
+
       // 2. Mock usuario creador
-      (prismaService.usuario.findFirst as jest.Mock).mockResolvedValue({ id: 'user-admin' });
-      
+      (prismaService.usuario.findFirst as jest.Mock).mockResolvedValue({
+        id: 'user-admin',
+      });
+
       // 3. Mock create response
       const mockClientData = {
         nombres: 'Juan',
@@ -64,22 +66,24 @@ describe('ClientsService', () => {
       (prismaService.cliente.create as jest.Mock).mockResolvedValue({
         id: 'new-client-id',
         codigo: 'C-0011',
-        ...mockClientData
+        ...mockClientData,
       });
 
       const result = await service.create(mockClientData as any);
 
       // Verificaciones
       expect(prismaService.cliente.count).toHaveBeenCalled();
-      
+
       // Verificar que se llamó a create con el código generado correcto
-      expect(prismaService.cliente.create).toHaveBeenCalledWith(expect.objectContaining({
-        data: expect.objectContaining({
-          nombres: 'Juan',
-          codigo: 'C-0011', // 10 + 1 format 4 digits
-          creadoPorId: 'user-admin'
-        })
-      }));
+      expect(prismaService.cliente.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            nombres: 'Juan',
+            codigo: 'C-0011', // 10 + 1 format 4 digits
+            creadoPorId: 'user-admin',
+          }),
+        }),
+      );
 
       expect(result).toHaveProperty('id', 'new-client-id');
       expect(result).toHaveProperty('codigo', 'C-0011');
@@ -89,11 +93,13 @@ describe('ClientsService', () => {
       (prismaService.cliente.count as jest.Mock).mockResolvedValue(0);
       (prismaService.usuario.findFirst as jest.Mock).mockResolvedValue(null);
 
-      await expect(service.create({
-        nombres: 'Test',
-        apellidos: 'Test',
-        dni: '123'
-      } as any)).rejects.toThrow('No existen usuarios en el sistema');
+      await expect(
+        service.create({
+          nombres: 'Test',
+          apellidos: 'Test',
+          dni: '123',
+        } as any),
+      ).rejects.toThrow('No existen usuarios en el sistema');
     });
   });
 });
