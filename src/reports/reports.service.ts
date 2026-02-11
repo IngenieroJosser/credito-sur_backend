@@ -123,6 +123,19 @@ export class ReportsService {
     }));
   }
 
+  async getFinancialTargets() {
+    const envValue =
+      process.env.REPORTS_META_MARGEN ||
+      process.env.META_MARGEN ||
+      process.env.NEXT_PUBLIC_META_MARGEN;
+    if (typeof envValue === 'undefined' || envValue === null || envValue === '') {
+      return { metaMargen: null };
+    }
+    const parsed = parseFloat(envValue);
+    const metaMargen = Number.isFinite(parsed) ? parsed : null;
+    return { metaMargen };
+  }
+
   async obtenerPrestamosEnMora(
     filtros: PrestamosMoraFiltrosDto,
     pagina: number = 1,

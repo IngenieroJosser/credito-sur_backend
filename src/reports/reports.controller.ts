@@ -71,6 +71,12 @@ export class ReportsController {
     return this.reportsService.getExpenseDistribution(start, end);
   }
 
+  @Get('financial/targets')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.CONTADOR)
+  getFinancialTargets() {
+    return this.reportsService.getFinancialTargets();
+  }
+
   @Get('prestamos-mora')
   @Roles(
     RolUsuario.COORDINADOR,
