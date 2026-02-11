@@ -133,18 +133,42 @@ export class AccountingService {
         
         const codigo = `CAJA-${nextNum.toString().padStart(4, '0')}`;
 
-        return await this.prisma.caja.create({
-            data: {
-                codigo,
-                nombre: data.nombre,
-                tipo: data.tipo,
-                rutaId: rutaIdSanitizado,
-                responsableId: data.responsableId,
-                saldoActual: data.saldoInicial || 0,
-            },
-            include: {
-                responsable: { select: { nombres: true, apellidos: true } },
-            },
+        return await this.prisma.$transaction(async (tx) => {
+            // 1. Crear la Caja
+            const nuevaCaja = await tx.caja.create({
+                data: {
+                    codigo,
+                    nombre: data.nombre,
+                    tipo: data.tipo,
+                    rutaId: rutaIdSanitizado,
+                    responsableId: data.responsableId,
+                    saldoActual: data.saldoInicial || 0,
+                },
+                include: {
+                    responsable: { select: { nombres: true, apellidos: true } },
+                },
+            });
+
+            // 2. Si hay saldo inicial > 0, registrar el movimiento de apertura
+            if (data.saldoInicial && data.saldoInicial > 0) {
+                const count = await tx.transaccion.count();
+                const numeroTransaccion = `TRX-${Date.now().toString().slice(-8)}-${(count + 1).toString().padStart(4, '0')}`;
+                
+                await tx.transaccion.create({
+                    data: {
+                        numeroTransaccion,
+                        cajaId: nuevaCaja.id,
+                        tipo: TipoTransaccion.INGRESO,
+                        monto: data.saldoInicial,
+                        descripcion: 'Saldo Inicial de Apertura de Caja',
+                        creadoPorId: userId, // El usuario que crea la caja es quien registra el saldo inicial
+                        tipoReferencia: 'APERTURA_CAJA',
+                        referenciaId: nuevaCaja.codigo
+                    }
+                });
+            }
+
+            return nuevaCaja;
         });
     } catch (error) {
         this.logger.error(`Error creando caja: ${error.message}`, error.stack);
@@ -274,7 +298,7 @@ export class AccountingService {
             cajaId: cajaOrigenId,
             tipo: TipoTransaccion.TRANSFERENCIA,
             monto: data.monto,
-            descripcion: `Salida hacia ${caja.nombre}: ${data.descripcion}`,
+            descripcion: `Transferencia enviada a ${caja.nombre}`,
             creadoPorId: data.creadoPorId,
             tipoReferencia: 'TRANSFERENCIA_INTERNA',
             referenciaId: numeroReferencia
@@ -288,7 +312,7 @@ export class AccountingService {
             cajaId: data.cajaId,
             tipo: TipoTransaccion.TRANSFERENCIA,
             monto: data.monto,
-            descripcion: `Entrada desde ${cajaOrigen.nombre}: ${data.descripcion}`,
+            descripcion: `Transferencia recibida de ${cajaOrigen.nombre}`,
             creadoPorId: data.creadoPorId,
             tipoReferencia: 'TRANSFERENCIA_INTERNA',
             referenciaId: numeroReferencia
@@ -366,7 +390,7 @@ export class AccountingService {
           cajaId: cajaOrigen.id,
           tipo: TipoTransaccion.TRANSFERENCIA,
           monto: saldo,
-          descripcion: `Consolidación hacia Caja Principal (${cajaPrincipal.nombre})`,
+          descripcion: `Consolidación enviada a Caja Principal (${cajaPrincipal.nombre})`,
           creadoPorId: administradorId,
           tipoReferencia: 'CONSOLIDACION',
           referenciaId: numeroRef
@@ -380,7 +404,7 @@ export class AccountingService {
           cajaId: cajaPrincipal.id,
           tipo: TipoTransaccion.TRANSFERENCIA,
           monto: saldo,
-          descripcion: `Consolidación desde Caja ${cajaOrigen.nombre}`,
+          descripcion: `Consolidación recibida de ${cajaOrigen.nombre}`,
           creadoPorId: administradorId,
           tipoReferencia: 'CONSOLIDACION',
           referenciaId: numeroRef
@@ -430,7 +454,7 @@ export class AccountingService {
       fechaTransaccion: { gte: inicioAyer, lt: finAyer }
     };
 
-    // Ingresos y egresos del día y de ayer
+    // Ingresos y egresos del día y de ayer (Incluyendo transferencias/consolidaciones)
     const [
       ingresosHoy, 
       egresosHoy, 
@@ -444,19 +468,43 @@ export class AccountingService {
       consolidacionesHoy
     ] = await Promise.all([
       this.prisma.transaccion.aggregate({
-        where: { ...whereHoy, tipo: 'INGRESO' },
+        where: { 
+          ...whereHoy,
+          OR: [
+            { tipo: 'INGRESO' },
+            { tipo: 'TRANSFERENCIA', numeroTransaccion: { startsWith: 'TRX-IN' } }
+          ]
+        },
         _sum: { monto: true }
       }),
       this.prisma.transaccion.aggregate({
-        where: { ...whereHoy, tipo: 'EGRESO' },
+        where: { 
+          ...whereHoy, 
+          OR: [
+            { tipo: 'EGRESO' },
+            { tipo: 'TRANSFERENCIA', numeroTransaccion: { startsWith: 'TRX-OUT' } }
+          ]
+        },
         _sum: { monto: true }
       }),
       this.prisma.transaccion.aggregate({
-        where: { ...whereAyer, tipo: 'INGRESO' },
+        where: { 
+          ...whereAyer, 
+          OR: [
+            { tipo: 'INGRESO' },
+            { tipo: 'TRANSFERENCIA', numeroTransaccion: { startsWith: 'TRX-IN' } }
+          ]
+        },
         _sum: { monto: true }
       }),
       this.prisma.transaccion.aggregate({
-        where: { ...whereAyer, tipo: 'EGRESO' },
+        where: { 
+          ...whereAyer, 
+          OR: [
+            { tipo: 'EGRESO' },
+            { tipo: 'TRANSFERENCIA', numeroTransaccion: { startsWith: 'TRX-OUT' } }
+          ]
+        },
         _sum: { monto: true }
       }),
       this.prisma.caja.aggregate({
