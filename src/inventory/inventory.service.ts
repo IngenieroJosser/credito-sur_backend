@@ -2,8 +2,6 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
-  BadRequestException,
-  InternalServerErrorException,
 } from '@nestjs/common';
 import { PrismaService } from 'prisma/prisma.service';
 import { CreateInventoryDto } from './dto/create-inventory.dto';
@@ -214,7 +212,7 @@ export class InventoryService {
         }
 
         // Update basic fields
-        const product = await tx.producto.update({
+        await tx.producto.update({
           where: { id },
           data: {
             codigo: updateInventoryDto.codigo,

@@ -18,15 +18,27 @@ export class NotificacionesService {
     metadata?: any;
   }) {
     try {
+      const map: Record<string, string> = {
+        INFO: 'INFORMATIVO',
+        WARNING: 'ADVERTENCIA',
+        CRITICAL: 'CRITICO',
+      };
+      const incoming = (data.tipo || '').toUpperCase();
+      const isSeverity = incoming in map;
+      const tipoFinal = isSeverity ? 'SISTEMA' : data.tipo || 'SISTEMA';
+      const metadataFinal = {
+        ...(data.metadata || {}),
+        nivel: isSeverity ? map[incoming] : undefined,
+      };
       return await this.prisma.notificacion.create({
         data: {
           usuarioId: data.usuarioId,
           titulo: data.titulo,
           mensaje: data.mensaje,
-          tipo: data.tipo || 'INFO',
+          tipo: tipoFinal,
           entidad: data.entidad,
           entidadId: data.entidadId,
-          metadata: data.metadata || {},
+          metadata: metadataFinal,
         },
       });
     } catch (error) {

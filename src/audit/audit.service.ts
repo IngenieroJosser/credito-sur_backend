@@ -1,6 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { CreateAuditDto } from './dto/create-audit.dto';
-import { UpdateAuditDto } from './dto/update-audit.dto';
 import { PrismaService } from 'prisma/prisma.service';
 
 @Injectable()
@@ -47,6 +45,39 @@ export class AuditService {
         usuario: {
           select: { nombres: true, apellidos: true, correo: true, rol: true },
         },
+      },
+    });
+  }
+
+  async findByUserId(
+    usuarioId: string,
+    take: number = 20,
+    page: number = 1,
+    startDate?: Date,
+    endDate?: Date,
+  ) {
+    const skip = page > 1 ? (page - 1) * take : 0;
+    const where: any = { usuarioId };
+    if (startDate || endDate) {
+      where.creadoEn = {};
+      if (startDate) where.creadoEn.gte = startDate;
+      if (endDate) where.creadoEn.lte = endDate;
+    }
+    return this.prisma.registroAuditoria.findMany({
+      where,
+      orderBy: { creadoEn: 'desc' },
+      take,
+      skip,
+      select: {
+        id: true,
+        accion: true,
+        entidad: true,
+        entidadId: true,
+        valoresAnteriores: true,
+        valoresNuevos: true,
+        cambios: true,
+        creadoEn: true,
+        endpoint: true,
       },
     });
   }

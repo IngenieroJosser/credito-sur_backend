@@ -7,7 +7,7 @@ import {
   PrestamoMoraDto,
 } from './dto/prestamo-mora.dto';
 import { PrestamosMoraResponseDto } from './dto/responses.dto';
-import { startOfDay, endOfDay, differenceInDays, format } from 'date-fns';
+import { differenceInDays, format } from 'date-fns';
 import {
   TotalesVencidasDto,
   DecisionCastigoDto,
@@ -128,7 +128,11 @@ export class ReportsService {
       process.env.REPORTS_META_MARGEN ||
       process.env.META_MARGEN ||
       process.env.NEXT_PUBLIC_META_MARGEN;
-    if (typeof envValue === 'undefined' || envValue === null || envValue === '') {
+    if (
+      typeof envValue === 'undefined' ||
+      envValue === null ||
+      envValue === ''
+    ) {
       return { metaMargen: null };
     }
     const parsed = parseFloat(envValue);
@@ -374,8 +378,6 @@ export class ReportsService {
   }
 
   async obtenerEstadisticasMora() {
-    const hoy = new Date();
-
     const [
       totalPrestamosMora,
       prestamosRojos,

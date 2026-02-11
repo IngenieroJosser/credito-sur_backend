@@ -686,10 +686,13 @@ export class LoansService {
       await this.notificacionesService.notifyCoordinator({
         titulo: 'Nuevo Préstamo Creado',
         mensaje: `El usuario ha creado un préstamo para el cliente ${cliente.nombres} ${cliente.apellidos} por valor de ${createLoanDto.monto}`,
-        tipo: 'INFO',
+        tipo: 'SISTEMA',
         entidad: 'PRESTAMO',
         entidadId: prestamo.id,
-        metadata: { creadoPor: createLoanDto.creadoPorId },
+        metadata: {
+          creadoPor: createLoanDto.creadoPorId,
+          nivel: 'INFORMATIVO',
+        },
       });
 
       // Registrar Auditoría
@@ -1108,7 +1111,7 @@ export class LoansService {
           usuarioId: coordinador.id,
           titulo: 'Nuevo Préstamo Requiere Aprobación',
           mensaje: `El usuario ${creador.nombres} ${creador.apellidos} ha creado un préstamo ${data.tipoPrestamo === 'EFECTIVO' ? 'en efectivo' : 'por artículo'} para ${cliente.nombres} ${cliente.apellidos} por valor de ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
-          tipo: 'INFO',
+          tipo: 'SISTEMA',
           entidad: 'PRESTAMO',
           entidadId: prestamo.id,
           metadata: {
@@ -1116,6 +1119,7 @@ export class LoansService {
             clienteId: cliente.id,
             monto: montoFinanciar,
             tipo: data.tipoPrestamo,
+            nivel: 'INFORMATIVO',
           },
         });
       }

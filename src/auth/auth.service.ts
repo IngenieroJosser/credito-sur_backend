@@ -16,7 +16,9 @@ export class AuthService {
 
   async validarUsuario(nombres: string, contrasena: string) {
     console.log(`[AUTH] Intentando validar usuario: ${nombres}`);
-    const usuario = await this.usersService.obtenerPorNombres(nombres);
+    const usuario =
+      (await this.usersService.obtenerPorNombres(nombres)) ||
+      (await this.usersService.obtenerPorCorreo(nombres));
 
     if (!usuario) {
       console.log(`[AUTH] Usuario no encontrado: ${nombres}`);
@@ -29,7 +31,7 @@ export class AuthService {
     );
 
     if (matches) {
-      const { hashContrasena, ...resultado } = usuario;
+      const { hashContrasena: _hashContrasena, ...resultado } = usuario;
       return resultado;
     }
 
@@ -49,6 +51,11 @@ export class AuthService {
     if (usuario.estado !== 'ACTIVO') {
       throw new UnauthorizedException('Usuario inactivo o suspendido');
     }
+
+    await this.prisma.usuario.update({
+      where: { id: usuario.id },
+      data: { ultimoIngreso: new Date() },
+    });
 
     const payload = {
       sub: usuario.id,

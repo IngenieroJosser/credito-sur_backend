@@ -7,7 +7,7 @@ import { PrismaService } from 'prisma/prisma.service';
 export class PaymentsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  create(createPaymentDto: CreatePaymentDto) {
+  create(_createPaymentDto: CreatePaymentDto) {
     return 'This action adds a new payment';
   }
 
@@ -19,7 +19,7 @@ export class PaymentsService {
     return `This action returns a #${id} payment`;
   }
 
-  update(id: number, updatePaymentDto: UpdatePaymentDto) {
+  update(id: number, _updatePaymentDto: UpdatePaymentDto) {
     return `This action updates a #${id} payment`;
   }
 

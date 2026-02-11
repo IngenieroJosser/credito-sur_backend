@@ -29,7 +29,12 @@ export class ClientsService {
     }
 
     // Extraer campos que no están en el modelo Cliente o necesitan mapeo
-    const { rutaId, observaciones, archivos, ...clientData } = createClientDto;
+    const {
+      rutaId: _rutaId,
+      observaciones: _observaciones,
+      archivos: _archivos,
+      ...clientData
+    } = createClientDto;
 
     return this.prisma.cliente.create({
       data: {
@@ -59,7 +64,12 @@ export class ClientsService {
   }
 
   update(id: string, updateClientDto: UpdateClientDto) {
-    const { rutaId, observaciones, archivos, ...clientData } = updateClientDto;
+    const {
+      rutaId: _rutaId,
+      observaciones: _observaciones,
+      archivos: _archivos,
+      ...clientData
+    } = updateClientDto;
     return this.prisma.cliente.update({
       where: { id },
       data: clientData,

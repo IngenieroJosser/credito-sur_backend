@@ -1,4 +1,12 @@
-import { Controller, Get, Post, Body, Param, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  UseGuards,
+  Query,
+} from '@nestjs/common';
 import { AuditService } from './audit.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
@@ -38,6 +46,24 @@ export class AuditController {
   @Get()
   findAll() {
     return this.auditService.findAll();
+  }
+
+  /**
+   * Obtener historial de auditoría por usuario
+   */
+  @Get('user/:id')
+  findByUser(
+    @Param('id') id: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    const p = page ? parseInt(page) : 1;
+    const l = limit ? parseInt(limit) : 20;
+    const start = startDate ? new Date(startDate) : undefined;
+    const end = endDate ? new Date(endDate) : undefined;
+    return this.auditService.findByUserId(id, l, p, start, end);
   }
 
   /**

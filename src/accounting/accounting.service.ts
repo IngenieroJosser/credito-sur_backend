@@ -437,7 +437,6 @@ export class AccountingService {
         'No se puede consolidar la caja principal sobre sí misma',
       );
 
-    const fecha = new Date();
     const numeroRef = `CONS-${Date.now().toString().slice(-6)}`;
 
     // 3. Ejecutar Transacción Atómica
@@ -497,7 +496,7 @@ export class AccountingService {
   // RESUMEN FINANCIERO
   // =====================
 
-  async getResumenFinanciero(fechaInicio?: string, fechaFin?: string) {
+  async getResumenFinanciero(_fechaInicio?: string, _fechaFin?: string) {
     const hoy = new Date();
     const inicioHoy = new Date(
       hoy.getFullYear(),
@@ -700,7 +699,9 @@ export class AccountingService {
             if (k === 'ER') efectivoReal = Number(v);
             if (k === 'DF') diferencia = Number(v);
           }
-        } catch (_) {}
+        } catch (_) {
+          void 0;
+        }
         return {
           id: t.id,
           fecha: t.fechaTransaccion.toISOString(),

@@ -6,9 +6,8 @@ import {
   IsDateString,
   Min,
   IsBoolean,
-  IsDecimal,
 } from 'class-validator';
-import { FrecuenciaPago, TipoContenidoMultimedia } from '@prisma/client';
+import { FrecuenciaPago } from '@prisma/client';
 import { Transform } from 'class-transformer';
 
 export class CreateLoanDto {

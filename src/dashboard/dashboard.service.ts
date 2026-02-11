@@ -22,7 +22,7 @@ export class DashboardService {
     });
 
     // Base solicitada (suma de aprobaciones pendientes de tipo SOLICITUD_BASE_EFECTIVO)
-    const requestedBaseResult = await this.prisma.aprobacion.aggregate({
+    const _requestedBaseResult = await this.prisma.aprobacion.aggregate({
       where: {
         estado: EstadoAprobacion.PENDIENTE,
         tipoAprobacion: TipoAprobacion.SOLICITUD_BASE_EFECTIVO,
