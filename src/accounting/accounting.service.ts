@@ -648,32 +648,156 @@ export class AccountingService {
   // CIERRES
   // =====================
 
-  async getHistorialCierres() {
-    // Usamos las transacciones de tipo TRANSFERENCIA con referencia CONSOLIDACION
-    // como historial de cierres/arqueos
-    const consolidaciones = await this.prisma.transaccion.findMany({
-      where: {
-        tipoReferencia: 'CONSOLIDACION',
-        tipo: 'TRANSFERENCIA',
-      },
+  async getHistorialCierres(filtros?: {
+    tipo?: 'ARQUEO' | 'CONSOLIDACION';
+    cajaId?: string;
+    soloRutas?: boolean;
+    estado?: 'CUADRADA' | 'DESCUADRADA';
+    fechaInicio?: string;
+    fechaFin?: string;
+  }) {
+    const where: any = {};
+    const or: any[] = [];
+    const tipo = filtros?.tipo;
+    if (!tipo || tipo === undefined) {
+      or.push({ tipoReferencia: 'CONSOLIDACION', tipo: 'TRANSFERENCIA' });
+      or.push({ tipoReferencia: 'ARQUEO' });
+    } else if (tipo === 'CONSOLIDACION') {
+      or.push({ tipoReferencia: 'CONSOLIDACION', tipo: 'TRANSFERENCIA' });
+    } else if (tipo === 'ARQUEO') {
+      or.push({ tipoReferencia: 'ARQUEO' });
+    }
+    where.OR = or;
+    if (filtros?.cajaId) where.cajaId = filtros.cajaId;
+    if (filtros?.fechaInicio || filtros?.fechaFin) {
+      where.fechaTransaccion = {};
+      if (filtros.fechaInicio)
+        where.fechaTransaccion.gte = new Date(filtros.fechaInicio);
+      if (filtros.fechaFin)
+        where.fechaTransaccion.lte = new Date(filtros.fechaFin);
+    }
+    const transacciones = await this.prisma.transaccion.findMany({
+      where,
       include: {
-        caja: { select: { nombre: true } },
+        caja: { select: { nombre: true, tipo: true } },
         creadoPor: { select: { nombres: true, apellidos: true } },
       },
       orderBy: { fechaTransaccion: 'desc' },
-      take: 50,
+      take: 200,
     });
 
-    return consolidaciones.map((c) => ({
-      id: c.id,
-      fecha: c.fechaTransaccion.toISOString(),
-      caja: c.caja.nombre,
-      responsable: `${c.creadoPor.nombres} ${c.creadoPor.apellidos}`,
-      saldoSistema: Number(c.monto),
-      saldoReal: Number(c.monto),
-      diferencia: 0,
-      estado: 'CUADRADA', // Para compatibilidad con tipos, aunque mostramos AUTOMATICO en frontend
-    }));
+    let mapped = transacciones.map((t) => {
+      if (t.tipoReferencia === 'ARQUEO') {
+        // referenciaId formateado como "SS:<saldoSistema>|ER:<efectivoReal>|DF:<diferencia>"
+        let saldoSistema = 0;
+        let efectivoReal = 0;
+        let diferencia = Number(t.monto);
+        try {
+          const parts = (t.referenciaId || '').split('|');
+          for (const p of parts) {
+            const [k, v] = p.split(':');
+            if (k === 'SS') saldoSistema = Number(v);
+            if (k === 'ER') efectivoReal = Number(v);
+            if (k === 'DF') diferencia = Number(v);
+          }
+        } catch (_) {}
+        return {
+          id: t.id,
+          fecha: t.fechaTransaccion.toISOString(),
+          caja: t.caja.nombre,
+          responsable: `${t.creadoPor.nombres} ${t.creadoPor.apellidos}`,
+          saldoSistema,
+          saldoReal: efectivoReal,
+          diferencia,
+          estado: diferencia === 0 ? 'CUADRADA' : 'DESCUADRADA',
+          descripcion: t.descripcion,
+          tipo: 'ARQUEO',
+          referenciaId: t.referenciaId,
+          cajaId: t.cajaId,
+        };
+      }
+      return {
+        id: t.id,
+        fecha: t.fechaTransaccion.toISOString(),
+        caja: t.caja.nombre,
+        responsable: `${t.creadoPor.nombres} ${t.creadoPor.apellidos}`,
+        saldoSistema: Number(t.monto),
+        saldoReal: Number(t.monto),
+        diferencia: 0,
+        estado: 'CUADRADA',
+        cajaTipo: t.caja.tipo,
+        descripcion: t.descripcion,
+        tipo: 'CONSOLIDACION',
+        referenciaId: t.referenciaId,
+        cajaId: t.cajaId,
+      };
+    });
+    // Filtro opcional por estado (solo aplicable para ARQUEO)
+    if (filtros?.estado) {
+      if (filtros.estado === 'DESCUADRADA') {
+        mapped = mapped.filter((m) => m.estado === 'DESCUADRADA');
+      } else if (filtros.estado === 'CUADRADA') {
+        mapped = mapped.filter((m) => m.estado === 'CUADRADA');
+      }
+    }
+    // Filtro opcional: solo cajas de rutas (cobradores)
+    if (filtros?.soloRutas) {
+      mapped = mapped.filter((m: any) => m.cajaTipo === 'RUTA');
+    }
+    return mapped;
+  }
+
+  async registrarArqueo(
+    cajaId: string,
+    data: {
+      efectivoReal: number;
+      saldoSistema: number;
+      diferencia: number;
+      observaciones?: string;
+    },
+    userId: string,
+  ) {
+    const caja = await this.prisma.caja.findUnique({ where: { id: cajaId } });
+    if (!caja) throw new NotFoundException('Caja no encontrada');
+
+    const montoAjuste = Math.abs(Number(data.diferencia || 0));
+    const referenciaId = `SS:${Number(data.saldoSistema)}|ER:${Number(data.efectivoReal)}|DF:${Number(data.diferencia)}`;
+    const descripcionBase = 'Arqueo de Caja';
+    const descripcion = data.observaciones
+      ? `${descripcionBase}: ${data.observaciones}`
+      : descripcionBase;
+
+    // Si no hay diferencia, registramos evento neutro para historial (monto 0)
+    if (montoAjuste === 0) {
+      return this.prisma.transaccion.create({
+        data: {
+          numeroTransaccion: `ARQ-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          cajaId,
+          tipo: TipoTransaccion.TRANSFERENCIA,
+          monto: 0,
+          descripcion,
+          creadoPorId: userId,
+          tipoReferencia: 'ARQUEO',
+          referenciaId,
+        },
+      });
+    }
+
+    // Con diferencia: registrar ajuste como ingreso/egreso para cuadrar
+    const tipoAjuste =
+      Number(data.diferencia) > 0
+        ? TipoTransaccion.INGRESO
+        : TipoTransaccion.EGRESO;
+
+    return this.createTransaccion({
+      cajaId,
+      tipo: tipoAjuste,
+      monto: montoAjuste,
+      descripcion,
+      creadoPorId: userId,
+      tipoReferencia: 'ARQUEO',
+      referenciaId,
+    });
   }
 
   // =====================

@@ -94,6 +94,30 @@ export class AccountingController {
     return this.accountingService.consolidarCaja(id, req.user.id);
   }
 
+  @Post('cajas/:id/arqueos')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.CONTADOR,
+    RolUsuario.COORDINADOR,
+  )
+  registrarArqueo(
+    @Param('id') id: string,
+    @Request() req,
+    @Body()
+    body: {
+      efectivoReal: number;
+      saldoSistema: number;
+      diferencia: number;
+      observaciones?: string;
+    },
+  ) {
+    if (!req.user || !req.user.id) {
+      throw new UnauthorizedException('Usuario no autenticado');
+    }
+    return this.accountingService.registrarArqueo(id, body, req.user.id);
+  }
+
   // =====================
   // TRANSACCIONES / MOVIMIENTOS
   // =====================
@@ -160,8 +184,22 @@ export class AccountingController {
   // =====================
 
   @Get('cierres')
-  getHistorialCierres() {
-    return this.accountingService.getHistorialCierres();
+  getHistorialCierres(
+    @Query('tipo') tipo?: 'ARQUEO' | 'CONSOLIDACION',
+    @Query('cajaId') cajaId?: string,
+    @Query('soloRutas') soloRutas?: string,
+    @Query('estado') estado?: 'CUADRADA' | 'DESCUADRADA',
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
+  ) {
+    return this.accountingService.getHistorialCierres({
+      tipo,
+      cajaId,
+      soloRutas: soloRutas === '1',
+      estado,
+      fechaInicio,
+      fechaFin,
+    });
   }
 
   // =====================
