@@ -82,6 +82,8 @@ export class ReportsController {
     RolUsuario.COORDINADOR,
     RolUsuario.SUPERVISOR,
     RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.CONTADOR,
   )
   @ApiOperation({ summary: 'Obtener préstamos en mora' })
   @ApiResponse({
@@ -104,6 +106,8 @@ export class ReportsController {
     RolUsuario.COORDINADOR,
     RolUsuario.SUPERVISOR,
     RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.CONTADOR,
   )
   @ApiOperation({ summary: 'Exportar reporte de mora' })
   @ApiResponse({
@@ -122,6 +126,8 @@ export class ReportsController {
     RolUsuario.COORDINADOR,
     RolUsuario.SUPERVISOR,
     RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.CONTADOR,
   )
   @ApiOperation({ summary: 'Obtener estadísticas de mora' })
   @ApiResponse({
@@ -137,6 +143,8 @@ export class ReportsController {
     RolUsuario.COORDINADOR,
     RolUsuario.SUPERVISOR,
     RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.CONTADOR,
   )
   @ApiOperation({ summary: 'Obtener cuentas vencidas' })
   @ApiResponse({
@@ -152,7 +160,7 @@ export class ReportsController {
   }
 
   @Post('cuentas-vencidas/decision')
-  @Roles(RolUsuario.COORDINADOR, RolUsuario.SUPER_ADMINISTRADOR)
+  @Roles(RolUsuario.COORDINADOR, RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.CONTADOR)
   @ApiOperation({ summary: 'Procesar decisión sobre cuenta vencida' })
   @ApiResponse({
     status: HttpStatus.CREATED,
@@ -173,6 +181,8 @@ export class ReportsController {
     RolUsuario.COORDINADOR,
     RolUsuario.SUPERVISOR,
     RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.CONTADOR,
   )
   @ApiOperation({ summary: 'Exportar reporte de cuentas vencidas' })
   @ApiResponse({

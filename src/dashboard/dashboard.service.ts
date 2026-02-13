@@ -113,9 +113,15 @@ export class DashboardService {
         efficiency: parseFloat(efficiency.toFixed(1)),
       },
       trend: trendData,
-      pendingApprovals: pendingApprovalsList.map(this.mapApproval),
-      delinquentAccounts: delinquentAccountsList.map(this.mapDelinquentAccount),
-      recentActivity: recentActivityList.map(this.mapRecentActivity),
+      pendingApprovals: pendingApprovalsList.map((item) =>
+        this.mapApproval(item),
+      ),
+      delinquentAccounts: delinquentAccountsList.map((item) =>
+        this.mapDelinquentAccount(item),
+      ),
+      recentActivity: recentActivityList.map((item) =>
+        this.mapRecentActivity(item),
+      ),
     };
   }
 
@@ -471,7 +477,7 @@ export class DashboardService {
           style: 'currency',
           currency: 'COP',
           minimumFractionDigits: 0,
-        }).format(data.monto);
+        }).format(Number(data.monto));
       }
       return '-';
     } catch (error) {

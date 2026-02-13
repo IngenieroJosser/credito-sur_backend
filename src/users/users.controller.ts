@@ -91,4 +91,13 @@ export class UsersController {
       req.user?.id,
     );
   }
+
+  @Post(':id/permisos')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR)
+  asignarPermisos(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body('permisos') permisos: string[],
+  ) {
+    return (this.usersService as any).asignarPermisos(id, permisos);
+  }
 }

@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { PrismaService } from 'prisma/prisma.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import * as argon2 from 'argon2';
 import { EstadoUsuario } from '@prisma/client';
 import { UnauthorizedException } from '@nestjs/common';
@@ -28,26 +28,45 @@ export class UsersService {
 
     const hashContrasena = await argon2.hash(password);
 
-    return this.prisma.usuario.create({
-      data: {
-        ...datosUsuario,
-        hashContrasena,
-      },
-      select: {
-        id: true,
-        nombres: true,
-        apellidos: true,
-        correo: true,
-        rol: true,
-        estado: true,
-        telefono: true,
-        creadoEn: true,
-      },
+    // Buscar el rol dinámico correspondiente
+    const rolDinamico = await this.prisma.rol.findUnique({
+      where: { nombre: usuarioDto.rol },
+    });
+
+    return this.prisma.$transaction(async (tx) => {
+      const nuevoUsuario = await tx.usuario.create({
+        data: {
+          ...datosUsuario,
+          hashContrasena,
+        },
+        select: {
+          id: true,
+          nombres: true,
+          apellidos: true,
+          correo: true,
+          rol: true,
+          estado: true,
+          telefono: true,
+          creadoEn: true,
+        },
+      });
+
+      if (rolDinamico) {
+        await tx.asignacionRolUsuario.create({
+          data: {
+            usuarioId: nuevoUsuario.id,
+            rolId: rolDinamico.id,
+          },
+        });
+      }
+
+      return nuevoUsuario;
     });
   }
 
-  obtenerTodos() {
-    return this.prisma.usuario.findMany({
+  async obtenerTodos() {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const usuarios = await this.prisma.usuario.findMany({
       where: {
         eliminadoEn: null,
       },
@@ -61,7 +80,92 @@ export class UsersService {
         telefono: true,
         creadoEn: true,
         ultimoIngreso: true,
+        asignacionesRoles: {
+          include: {
+            rol: {
+              include: {
+                permisos: {
+                  include: {
+                    permiso: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        permisosPersonalizados: {
+          include: {
+            permiso: true,
+          },
+        },
+      } as any,
+    }) as any[];
+
+    return usuarios.map((usuario) => {
+      // 1. Permisos del Rol (default)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const permisosRol = usuario.asignacionesRoles.flatMap((asignacion: any) =>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        asignacion.rol.permisos.map((rp: any) => rp.permiso.accion),
+      );
+
+      // 2. Permisos Personalizados (overrides)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const permisosCustom = usuario.permisosPersonalizados.map(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (p: any) => p.permiso.accion,
+      );
+
+      // Si tiene permisos personalizados, tienen precedencia total.
+      // Si no, se usan los del rol.
+      const permisosFinales =
+        permisosCustom.length > 0 ? permisosCustom : permisosRol;
+
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { asignacionesRoles, permisosPersonalizados, ...userData } =
+        usuario;
+
+      return {
+        ...userData,
+        permisos: [...new Set(permisosFinales)],
+      };
+    });
+  }
+
+  async asignarPermisos(usuarioId: string, permisos: string[]) {
+    // 1. Validar usuario
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { id: usuarioId },
+    });
+    if (!usuario) {
+      throw new NotFoundException(`Usuario con ID ${usuarioId} no encontrado`);
+    }
+
+    // 2. Buscar IDs de los permisos basados en 'accion' (que es lo que manda el frontend)
+    const permisosDb = await this.prisma.permiso.findMany({
+      where: {
+        accion: { in: permisos },
       },
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return this.prisma.$transaction(async (tx: any) => {
+      // 3. Limpiar permisos personalizados existentes
+      await tx.asignacionPermisoUsuario.deleteMany({
+        where: { usuarioId },
+      });
+
+      // 4. Crear nuevas asignaciones
+      if (permisosDb.length > 0) {
+        await tx.asignacionPermisoUsuario.createMany({
+          data: permisosDb.map((p) => ({
+            usuarioId,
+            permisoId: p.id,
+          })),
+        });
+      }
+
+      return { mensaje: 'Permisos actualizados correctamente' };
     });
   }
 
@@ -106,27 +210,47 @@ export class UsersService {
     });
   }
 
-  async actualizar(id: string, usuarioDto: UpdateUserDto) {
-    const usuario = await this.prisma.usuario.findUnique({ where: { id } });
-    if (!usuario) {
-      throw new NotFoundException(`Usuario con ID ${id} no encontrado`);
+  async actualizar(id: string, updateUserDto: UpdateUserDto) {
+    const usuario = await this.obtenerPorId(id);
+
+    if (updateUserDto.password) {
+      updateUserDto.password = await argon2.hash(updateUserDto.password);
     }
 
-    const { password, ...restoDatos } = usuarioDto;
-
-    type DatosActualizadosUsuario = typeof restoDatos & {
-      hashContrasena?: string;
-    };
-
-    const datosActualizados: DatosActualizadosUsuario = { ...restoDatos };
-
-    if (password) {
-      datosActualizados.hashContrasena = await argon2.hash(password);
+    // Si cambia el rol, actualizar también la tabla relacional
+    if (updateUserDto.rol && updateUserDto.rol !== usuario.rol) {
+       // Buscar el nuevo rol dinámico
+       const nuevoRol = await this.prisma.rol.findUnique({
+         where: { nombre: updateUserDto.rol }
+       });
+       
+       if (nuevoRol) {
+         // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         await this.prisma.$transaction(async (tx: any) => {
+            // Eliminar asignación anterior
+            await tx.asignacionRolUsuario.deleteMany({
+              where: { usuarioId: id }
+            });
+            // Crear nueva
+            await tx.asignacionRolUsuario.create({
+              data: {
+                usuarioId: id,
+                rolId: nuevoRol.id
+              }
+            });
+         });
+       }
     }
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { password, ...datos } = updateUserDto;
 
     return this.prisma.usuario.update({
       where: { id },
-      data: datosActualizados,
+      data: {
+        ...datos,
+        ...(updateUserDto.password && { hashContrasena: updateUserDto.password }),
+      },
       select: {
         id: true,
         nombres: true,
@@ -137,104 +261,67 @@ export class UsersService {
         telefono: true,
         creadoEn: true,
         ultimoIngreso: true,
-        actualizadoEn: true,
       },
     });
   }
 
   async eliminar(id: string) {
-    const usuario = await this.prisma.usuario.findUnique({ where: { id } });
-    if (!usuario) {
-      throw new NotFoundException(`Usuario con ID ${id} no encontrado`);
-    }
+    await this.obtenerPorId(id);
+    return this.prisma.usuario.update({
+      where: { id },
+      data: {
+        eliminadoEn: new Date(),
+        estado: EstadoUsuario.INACTIVO
+      }
+    });
+  }
+
+  async toggleEstado(id: string, nuevoEstado: EstadoUsuario) {
+    await this.obtenerPorId(id);
 
     return this.prisma.usuario.update({
       where: { id },
       data: {
-        estado: EstadoUsuario.INACTIVO,
-        eliminadoEn: new Date(),
+        estado: nuevoEstado,
+      },
+      select: {
+        id: true,
+        nombres: true,
+        estado: true,
       },
     });
   }
 
-  async cambiarContrasena(
-    id: string,
-    dto: ChangePasswordDto,
-    actorRol?: string,
-    actorId?: string,
-  ) {
-    const usuario = await this.prisma.usuario.findUnique({ where: { id } });
+  async changePassword(id: string, changePasswordDto: ChangePasswordDto) {
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { id },
+    });
+
     if (!usuario) {
-      throw new NotFoundException(`Usuario con ID ${id} no encontrado`);
+      throw new NotFoundException('Usuario no encontrado');
     }
 
-    if (usuario.rol === 'SUPER_ADMINISTRADOR' && actorId !== usuario.id) {
-      throw new UnauthorizedException(
-        'No se puede cambiar la contraseña del superadministrador',
-      );
-    }
-
-    const esAdmin = actorRol === 'SUPER_ADMINISTRADOR' || actorRol === 'ADMIN';
-
-    if (!esAdmin) {
-      if (!dto.contrasenaActual) {
-        throw new UnauthorizedException('Contraseña actual requerida');
-      }
-      const ok = await argon2.verify(
+    // Si se proporciona contraseña actual, validarla
+    if (changePasswordDto.contrasenaActual) {
+      const passwordValid = await argon2.verify(
         usuario.hashContrasena,
-        dto.contrasenaActual,
+        changePasswordDto.contrasenaActual,
       );
-      if (!ok) {
-        throw new UnauthorizedException('Contraseña actual inválida');
-      }
-      if (actorId !== usuario.id) {
-        throw new UnauthorizedException(
-          'Solo puedes cambiar tu propia contraseña',
-        );
+
+      if (!passwordValid) {
+        throw new UnauthorizedException('La contraseña actual es incorrecta');
       }
     }
 
-    const nuevoHash = await argon2.hash(dto.contrasenaNueva);
+    const hashContrasena = await argon2.hash(changePasswordDto.contrasenaNueva);
+
     await this.prisma.usuario.update({
       where: { id },
       data: {
-        hashContrasena: nuevoHash,
-        debeCambiarContrasena: false,
+        hashContrasena,
       },
     });
 
-    return { mensaje: 'Contraseña actualizada' };
-  }
-
-  async resetearContrasena(id: string, actorRol?: string, _actorId?: string) {
-    const usuario = await this.prisma.usuario.findUnique({ where: { id } });
-    if (!usuario) {
-      throw new NotFoundException(`Usuario con ID ${id} no encontrado`);
-    }
-    const esAdmin = actorRol === 'SUPER_ADMINISTRADOR' || actorRol === 'ADMIN';
-    if (!esAdmin) {
-      throw new UnauthorizedException('No autorizado');
-    }
-    if (usuario.rol === 'SUPER_ADMINISTRADOR') {
-      throw new UnauthorizedException(
-        'No se puede resetear la contraseña del superadministrador',
-      );
-    }
-
-    const temporal =
-      Math.random().toString(36).slice(2, 7) +
-      Math.random().toString(36).slice(2, 3).toUpperCase() +
-      Math.floor(10 + Math.random() * 90).toString();
-
-    const nuevoHash = await argon2.hash(temporal);
-    await this.prisma.usuario.update({
-      where: { id },
-      data: {
-        hashContrasena: nuevoHash,
-        debeCambiarContrasena: true,
-      },
-    });
-
-    return { contrasenaTemporal: temporal };
+    return { message: 'Contraseña actualizada correctamente' };
   }
 }

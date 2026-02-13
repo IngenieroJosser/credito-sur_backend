@@ -23,6 +23,7 @@ enum RolUsuario {
   SUPERVISOR
   COBRADOR
   CONTADOR
+  PUNTO_DE_VENTA
 }
 
 enum NivelRiesgo {
@@ -145,6 +146,7 @@ model Usuario {
   
   // Relaciones
   asignacionesRoles      AsignacionRolUsuario[]
+  permisosPersonalizados AsignacionPermisoUsuario[]
   registrosAuditoria     RegistroAuditoria[]
   
   // Clientes (creados y aprobados)
@@ -235,6 +237,7 @@ model Rol {
   nombre                 String                @unique @db.VarChar(50)
   descripcion            String?               @db.VarChar(255)
   esSistema              Boolean               @default(false)
+  rutaDefault            String?               @db.VarChar(100) // Ruta de redirección post-login
   
   // Relaciones
   permisos               RolPermiso[]
@@ -253,10 +256,18 @@ model Permiso {
   id                     String                @id @default(uuid())
   modulo                 String                @db.VarChar(50)
   accion                 String                @db.VarChar(50)
+  nombre                 String                @db.VarChar(100) // Nombre legible para UI
   descripcion            String?               @db.VarChar(255)
+  
+  // Sidebar metadata
+  icono                  String?               @db.VarChar(50)  // Nombre del icono Lucide (ej: 'CreditCard')
+  ruta                   String?               @db.VarChar(200) // Ruta del frontend (ej: '/admin/creditos')
+  orden                  Int                   @default(0)      // Orden en el sidebar
+  esNavegable            Boolean               @default(true)   // Si aparece como item navegable en sidebar
   
   // Relaciones
   rolesPermisos          RolPermiso[]
+  asignacionesUsuarios   AsignacionPermisoUsuario[]
   
   // Timestamps
   creadoEn               DateTime              @default(now())
@@ -299,6 +310,22 @@ model AsignacionRolUsuario {
   @@unique([usuarioId, rolId])
   @@index([usuarioId])
   @@map("asignaciones_roles_usuarios")
+}
+
+model AsignacionPermisoUsuario {
+  id                     String                @id @default(uuid())
+  usuarioId              String
+  permisoId              String
+  
+  // Relaciones
+  usuario                Usuario               @relation(fields: [usuarioId], references: [id])
+  permiso                Permiso               @relation(fields: [permisoId], references: [id])
+  
+  // Timestamps
+  creadoEn               DateTime              @default(now())
+  
+  @@unique([usuarioId, permisoId])
+  @@map("asignaciones_permisos_usuarios")
 }
 
 // ============================================
