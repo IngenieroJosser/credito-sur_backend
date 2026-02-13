@@ -849,4 +849,154 @@ export class AccountingService {
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
   }
+
+  async exportAccountingReport(
+    format: 'excel' | 'pdf',
+  ): Promise<{ data: Buffer; contentType: string; filename: string }> {
+    const ExcelJS = await import('exceljs');
+    const PDFDocument = await import('pdfkit');
+
+    const [cajas, transacciones] = await Promise.all([
+      this.prisma.caja.findMany({
+        where: { activa: true },
+        include: {
+          responsable: { select: { nombres: true, apellidos: true } },
+          ruta: { select: { nombre: true } },
+        },
+        orderBy: { creadoEn: 'desc' },
+      }),
+      this.prisma.transaccion.findMany({
+        include: {
+          caja: { select: { nombre: true } },
+          creadoPor: { select: { nombres: true, apellidos: true } },
+        },
+        orderBy: { creadoEn: 'desc' },
+        take: 500,
+      }),
+    ]);
+
+    const fecha = new Date().toISOString().split('T')[0];
+
+    if (format === 'excel') {
+      const workbook = new ExcelJS.Workbook();
+
+      // Hoja 1: Estado de Cajas
+      const ws1 = workbook.addWorksheet('Estado de Cajas');
+      ws1.columns = [
+        { header: 'Caja', key: 'nombre', width: 18 },
+        { header: 'Código', key: 'codigo', width: 14 },
+        { header: 'Tipo', key: 'tipo', width: 14 },
+        { header: 'Responsable', key: 'responsable', width: 25 },
+        { header: 'Ruta', key: 'ruta', width: 18 },
+        { header: 'Saldo', key: 'saldo', width: 16 },
+      ] as any;
+      const h1 = ws1.getRow(1);
+      h1.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      h1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0369A1' } };
+      h1.alignment = { horizontal: 'center' };
+      cajas.forEach((c: any) => {
+        ws1.addRow({
+          nombre: c.nombre,
+          codigo: c.codigo,
+          tipo: c.tipo,
+          responsable: c.responsable ? `${c.responsable.nombres} ${c.responsable.apellidos}` : 'Sin asignar',
+          ruta: c.ruta?.nombre || 'N/A',
+          saldo: Number(c.saldoActual),
+        });
+      });
+      ws1.getColumn('saldo').numFmt = '#,##0';
+
+      // Hoja 2: Movimientos
+      const ws2 = workbook.addWorksheet('Movimientos');
+      ws2.columns = [
+        { header: 'Fecha', key: 'fecha', width: 20 },
+        { header: 'Tipo', key: 'tipo', width: 14 },
+        { header: 'Monto', key: 'monto', width: 16 },
+        { header: 'Descripción', key: 'descripcion', width: 35 },
+        { header: 'Caja', key: 'caja', width: 18 },
+        { header: 'Usuario', key: 'usuario', width: 22 },
+      ] as any;
+      const h2 = ws2.getRow(1);
+      h2.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      h2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0369A1' } };
+      h2.alignment = { horizontal: 'center' };
+      transacciones.forEach((t: any) => {
+        ws2.addRow({
+          fecha: t.creadoEn ? new Date(t.creadoEn).toLocaleString('es-CO') : '',
+          tipo: t.tipo,
+          monto: Number(t.monto),
+          descripcion: t.descripcion || '',
+          caja: t.caja?.nombre || '',
+          usuario: t.creadoPor ? `${t.creadoPor.nombres} ${t.creadoPor.apellidos}` : '',
+        });
+      });
+      ws2.getColumn('monto').numFmt = '#,##0';
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      return {
+        data: Buffer.from(buffer as ArrayBuffer),
+        contentType: 'application/vnd.ms-excel.sheet.macroEnabled.12',
+        filename: `reporte-contable-${fecha}.xlsm`,
+      };
+    } else if (format === 'pdf') {
+      const doc = new PDFDocument({ layout: 'landscape', size: 'LETTER', margin: 30 });
+      const buffers: any[] = [];
+      doc.on('data', buffers.push.bind(buffers));
+
+      doc.fontSize(16).font('Helvetica-Bold').text('Créditos del Sur — Reporte Contable', { align: 'center' });
+      doc.fontSize(9).font('Helvetica').text(`Generado: ${new Date().toLocaleString('es-CO')}`, { align: 'center' });
+      doc.moveDown(1);
+
+      // Sección Cajas
+      doc.fontSize(12).font('Helvetica-Bold').text('Estado de Cajas');
+      doc.moveDown(0.3);
+      const cCols = [
+        { label: 'Caja', width: 100 }, { label: 'Código', width: 80 }, { label: 'Tipo', width: 80 },
+        { label: 'Responsable', width: 130 }, { label: 'Ruta', width: 100 }, { label: 'Saldo', width: 100 },
+      ];
+      let y = doc.y + 5;
+      const rowH = 16;
+      doc.fontSize(7).font('Helvetica-Bold');
+      doc.rect(30, y, cCols.reduce((s, c) => s + c.width, 0), rowH).fill('#0369A1');
+      let x = 30;
+      cCols.forEach(c => { doc.fillColor('white').text(c.label, x + 2, y + 4, { width: c.width - 4 }); x += c.width; });
+      y += rowH;
+      doc.font('Helvetica').fontSize(7).fillColor('black');
+      cajas.forEach((c: any, i: number) => {
+        if (i % 2 === 0) { doc.rect(30, y, cCols.reduce((s, cc) => s + cc.width, 0), rowH).fill('#F0F9FF'); doc.fillColor('black'); }
+        x = 30;
+        [c.nombre, c.codigo, c.tipo, c.responsable ? `${c.responsable.nombres} ${c.responsable.apellidos}` : '', c.ruta?.nombre || '', `$${Number(c.saldoActual).toLocaleString('es-CO')}`]
+          .forEach((v, ci) => { doc.text(v, x + 2, y + 4, { width: cCols[ci].width - 4 }); x += cCols[ci].width; });
+        y += rowH;
+      });
+
+      doc.y = y + 20;
+      doc.fontSize(12).font('Helvetica-Bold').fillColor('black').text('Últimos Movimientos');
+      doc.moveDown(0.3);
+      const tCols = [
+        { label: 'Fecha', width: 110 }, { label: 'Tipo', width: 80 }, { label: 'Monto', width: 90 },
+        { label: 'Descripción', width: 200 }, { label: 'Caja', width: 100 }, { label: 'Usuario', width: 110 },
+      ];
+      y = doc.y + 5;
+      doc.fontSize(7).font('Helvetica-Bold');
+      doc.rect(30, y, tCols.reduce((s, c) => s + c.width, 0), rowH).fill('#0369A1');
+      x = 30;
+      tCols.forEach(c => { doc.fillColor('white').text(c.label, x + 2, y + 4, { width: c.width - 4 }); x += c.width; });
+      y += rowH;
+      doc.font('Helvetica').fontSize(7).fillColor('black');
+      transacciones.slice(0, 30).forEach((t: any, i: number) => {
+        if (y > 560) { doc.addPage(); y = 30; }
+        if (i % 2 === 0) { doc.rect(30, y, tCols.reduce((s, c) => s + c.width, 0), rowH).fill('#F0F9FF'); doc.fillColor('black'); }
+        x = 30;
+        [t.creadoEn ? new Date(t.creadoEn).toLocaleString('es-CO') : '', t.tipo, `$${Number(t.monto).toLocaleString('es-CO')}`, (t.descripcion || '').substring(0, 35), t.caja?.nombre || '', t.creadoPor ? `${t.creadoPor.nombres} ${t.creadoPor.apellidos}` : '']
+          .forEach((v, ci) => { doc.text(v, x + 2, y + 4, { width: tCols[ci].width - 4 }); x += tCols[ci].width; });
+        y += rowH;
+      });
+
+      doc.end();
+      const buffer = await new Promise<Buffer>((resolve) => { doc.on('end', () => resolve(Buffer.concat(buffers))); });
+      return { data: buffer, contentType: 'application/pdf', filename: `reporte-contable-${fecha}.pdf` };
+    }
+    throw new Error(`Formato no soportado: ${format}`);
+  }
 }

@@ -17,6 +17,8 @@ import {
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { AuditService } from '../audit/audit.service';
 import { CreateLoanDto } from './dto/create-loan.dto';
+import * as ExcelJS from 'exceljs';
+import * as PDFDocument from 'pdfkit';
 
 @Injectable()
 export class LoansService {
@@ -504,6 +506,74 @@ export class LoansService {
     }
   }
 
+  async updateLoan(id: string, updateData: any, userId: string) {
+    try {
+      const prestamo = await this.prisma.prestamo.findUnique({
+        where: { id, eliminadoEn: null },
+      });
+
+      if (!prestamo) {
+        throw new NotFoundException('Préstamo no encontrado');
+      }
+
+      const datosAnteriores = {
+        monto: prestamo.monto,
+        tasaInteres: prestamo.tasaInteres,
+        plazoMeses: prestamo.plazoMeses,
+        frecuenciaPago: prestamo.frecuenciaPago,
+        estado: prestamo.estado,
+      };
+
+      // Build update payload - only allow safe fields
+      const data: any = { estadoSincronizacion: 'PENDIENTE' };
+
+      if (updateData.monto !== undefined) data.monto = updateData.monto;
+      if (updateData.tasaInteres !== undefined) data.tasaInteres = updateData.tasaInteres;
+      if (updateData.plazoMeses !== undefined) data.plazoMeses = updateData.plazoMeses;
+      if (updateData.frecuenciaPago !== undefined) data.frecuenciaPago = updateData.frecuenciaPago;
+      if (updateData.estado !== undefined) {
+        const estadosValidos = Object.values(EstadoPrestamo);
+        if (estadosValidos.includes(updateData.estado as EstadoPrestamo)) {
+          data.estado = updateData.estado;
+        }
+      }
+      if (updateData.notas !== undefined) data.notas = updateData.notas;
+
+      // Recalculate financial fields if monto or tasaInteres changed
+      const newMonto = data.monto !== undefined ? Number(data.monto) : Number(prestamo.monto);
+      const newTasa = data.tasaInteres !== undefined ? Number(data.tasaInteres) : Number(prestamo.tasaInteres);
+      const newInteresTotal = (newMonto * newTasa) / 100;
+      data.interesTotal = newInteresTotal;
+      data.saldoPendiente = (newMonto + newInteresTotal) - Number(prestamo.totalPagado || 0);
+
+      const prestamoActualizado = await this.prisma.prestamo.update({
+        where: { id },
+        data,
+        include: {
+          cliente: true,
+          producto: true,
+          cuotas: true,
+        },
+      });
+
+      // Auditoría
+      await this.auditService.create({
+        usuarioId: userId,
+        accion: 'ACTUALIZAR_PRESTAMO',
+        entidad: 'Prestamo',
+        entidadId: prestamo.id,
+        datosAnteriores,
+        datosNuevos: data,
+      });
+
+      this.logger.log(`Loan ${id} updated by user ${userId}`);
+      return prestamoActualizado;
+    } catch (error) {
+      this.logger.error(`Error updating loan ${id}:`, error);
+      throw error;
+    }
+  }
+
   async restoreLoan(id: string, userId: string) {
     try {
       const prestamo = await this.prisma.prestamo.findUnique({
@@ -583,12 +653,9 @@ export class LoansService {
           break;
       }
 
-      // Calcular interes total
+      // Calcular interes total (tasa plana: capital × tasa / 100)
       const interesTotal =
-        (createLoanDto.monto *
-          createLoanDto.tasaInteres *
-          createLoanDto.plazoMeses) /
-        100;
+        (createLoanDto.monto * createLoanDto.tasaInteres) / 100;
       const montoCuota = (createLoanDto.monto + interesTotal) / cantidadCuotas;
       const montoCapitalCuota = createLoanDto.monto / cantidadCuotas;
       const montoInteresCuota = interesTotal / cantidadCuotas;
@@ -995,9 +1062,9 @@ export class LoansService {
           break;
       }
 
-      // Calcular interés total y montos por cuota
+      // Calcular interés total (tasa plana: capital × tasa / 100)
       const interesTotal =
-        (montoFinanciar * data.tasaInteres * data.plazoMeses) / 100;
+        (montoFinanciar * data.tasaInteres) / 100;
       const montoTotal = montoFinanciar + interesTotal;
       const montoCuota = cantidadCuotas > 0 ? montoTotal / cantidadCuotas : 0;
       const montoCapitalCuota =
@@ -1160,5 +1227,362 @@ export class LoansService {
       this.logger.error('Error creating loan:', error);
       throw error;
     }
+  }
+
+  async exportLoans(
+    filters: { estado?: string; ruta?: string; search?: string },
+    format: 'excel' | 'pdf',
+  ): Promise<{ data: Buffer; contentType: string; filename: string }> {
+    // Fetch all matching loans (no pagination for export)
+    const result = await this.getAllLoans({
+      ...filters,
+      page: 1,
+      limit: 10000,
+    });
+
+    const prestamos = result.prestamos;
+    const fecha = new Date().toISOString().split('T')[0];
+
+    if (format === 'excel') {
+      const workbook = new ExcelJS.Workbook();
+      const ws = workbook.addWorksheet('Cartera de Créditos');
+
+      // Header row styling
+      ws.columns = [
+        { header: 'N° Préstamo', key: 'numero', width: 18 },
+        { header: 'Cliente', key: 'cliente', width: 30 },
+        { header: 'Cédula', key: 'dni', width: 15 },
+        { header: 'Producto', key: 'producto', width: 22 },
+        { header: 'Estado', key: 'estado', width: 15 },
+        { header: 'Monto Total', key: 'montoTotal', width: 18 },
+        { header: 'Monto Pendiente', key: 'montoPendiente', width: 18 },
+        { header: 'Monto Pagado', key: 'montoPagado', width: 18 },
+        { header: 'Mora', key: 'mora', width: 15 },
+        { header: 'Cuotas Pagadas', key: 'cuotasPagadas', width: 15 },
+        { header: 'Cuotas Totales', key: 'cuotasTotales', width: 15 },
+        { header: 'Progreso %', key: 'progreso', width: 12 },
+        { header: 'Riesgo', key: 'riesgo', width: 12 },
+        { header: 'Ruta', key: 'ruta', width: 18 },
+        { header: 'Fecha Inicio', key: 'fechaInicio', width: 14 },
+        { header: 'Fecha Fin', key: 'fechaFin', width: 14 },
+      ];
+
+      // Style header row
+      const headerRow = ws.getRow(1);
+      headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF08557F' } };
+      headerRow.alignment = { horizontal: 'center' };
+
+      // Add data rows
+      prestamos.forEach((p: any) => {
+        ws.addRow({
+          numero: p.numeroPrestamo,
+          cliente: p.cliente,
+          dni: p.clienteDni,
+          producto: p.producto,
+          estado: p.estado,
+          montoTotal: p.montoTotal,
+          montoPendiente: p.montoPendiente,
+          montoPagado: p.montoPagado,
+          mora: p.moraAcumulada || 0,
+          cuotasPagadas: p.cuotasPagadas,
+          cuotasTotales: p.cuotasTotales,
+          progreso: Math.round(p.progreso || 0),
+          riesgo: p.riesgo,
+          ruta: p.rutaNombre || p.ruta,
+          fechaInicio: p.fechaInicio ? new Date(p.fechaInicio).toLocaleDateString('es-CO') : '',
+          fechaFin: p.fechaFin ? new Date(p.fechaFin).toLocaleDateString('es-CO') : '',
+        });
+      });
+
+      // Format currency columns
+      ['montoTotal', 'montoPendiente', 'montoPagado', 'mora'].forEach(key => {
+        const col = ws.getColumn(key);
+        col.numFmt = '#,##0';
+      });
+
+      // Summary row
+      ws.addRow({});
+      const summaryRow = ws.addRow({
+        numero: 'RESUMEN',
+        montoTotal: result.estadisticas.montoTotal,
+        montoPendiente: result.estadisticas.montoPendiente,
+        mora: result.estadisticas.moraTotal,
+      });
+      summaryRow.font = { bold: true };
+
+      const buffer = await workbook.xlsx.writeBuffer();
+
+      return {
+        data: Buffer.from(buffer as ArrayBuffer),
+        contentType: 'application/vnd.ms-excel.sheet.macroEnabled.12',
+        filename: `cartera-creditos-${fecha}.xlsm`,
+      };
+    } else if (format === 'pdf') {
+      const doc = new PDFDocument({ layout: 'landscape', size: 'LETTER', margin: 30 });
+      const buffers: any[] = [];
+      doc.on('data', buffers.push.bind(buffers));
+
+      // Title
+      doc.fontSize(16).font('Helvetica-Bold').text('Créditos del Sur — Cartera de Créditos', { align: 'center' });
+      doc.fontSize(9).font('Helvetica').text(`Generado: ${new Date().toLocaleString('es-CO')}`, { align: 'center' });
+      doc.moveDown(0.5);
+
+      // Stats bar
+      const stats = result.estadisticas;
+      doc.fontSize(8).font('Helvetica-Bold');
+      doc.text(`Total: ${stats.total}  |  Activos: ${stats.activos}  |  En Mora: ${stats.atrasados}  |  Pagados: ${stats.pagados}  |  Cartera: $${(stats.montoTotal || 0).toLocaleString('es-CO')}  |  Pendiente: $${(stats.montoPendiente || 0).toLocaleString('es-CO')}  |  Mora: $${(stats.moraTotal || 0).toLocaleString('es-CO')}`, { align: 'center' });
+      doc.moveDown(0.5);
+
+      // Table
+      const cols = [
+        { label: 'N° Préstamo', width: 80 },
+        { label: 'Cliente', width: 130 },
+        { label: 'Estado', width: 65 },
+        { label: 'Monto Total', width: 80 },
+        { label: 'Pendiente', width: 80 },
+        { label: 'Mora', width: 65 },
+        { label: 'Cuotas', width: 55 },
+        { label: 'Progreso', width: 55 },
+        { label: 'Ruta', width: 80 },
+        { label: 'Fecha Inicio', width: 70 },
+      ];
+
+      const tableLeft = 30;
+      let y = doc.y + 5;
+      const rowH = 16;
+
+      // Header
+      doc.fontSize(7).font('Helvetica-Bold');
+      doc.rect(tableLeft, y, cols.reduce((s, c) => s + c.width, 0), rowH).fill('#08557F');
+      let x = tableLeft;
+      cols.forEach(col => {
+        doc.fillColor('white').text(col.label, x + 3, y + 4, { width: col.width - 6, align: 'left' });
+        x += col.width;
+      });
+      y += rowH;
+
+      // Rows
+      doc.font('Helvetica').fontSize(7).fillColor('black');
+      prestamos.forEach((p: any, i: number) => {
+        if (y > 560) {
+          doc.addPage();
+          y = 30;
+        }
+        if (i % 2 === 0) {
+          doc.rect(tableLeft, y, cols.reduce((s, c) => s + c.width, 0), rowH).fill('#F8FAFC');
+          doc.fillColor('black');
+        }
+        x = tableLeft;
+        const rowData = [
+          p.numeroPrestamo || '',
+          (p.cliente || '').substring(0, 25),
+          p.estado || '',
+          `$${(p.montoTotal || 0).toLocaleString('es-CO')}`,
+          `$${(p.montoPendiente || 0).toLocaleString('es-CO')}`,
+          `$${(p.moraAcumulada || 0).toLocaleString('es-CO')}`,
+          `${p.cuotasPagadas || 0}/${p.cuotasTotales || 0}`,
+          `${Math.round(p.progreso || 0)}%`,
+          (p.rutaNombre || p.ruta || '').substring(0, 15),
+          p.fechaInicio ? new Date(p.fechaInicio).toLocaleDateString('es-CO') : '',
+        ];
+        rowData.forEach((val, ci) => {
+          doc.text(val, x + 3, y + 4, { width: cols[ci].width - 6, align: 'left' });
+          x += cols[ci].width;
+        });
+        y += rowH;
+      });
+
+      doc.end();
+
+      const buffer = await new Promise<Buffer>((resolve) => {
+        doc.on('end', () => resolve(Buffer.concat(buffers)));
+      });
+
+      return {
+        data: buffer,
+        contentType: 'application/pdf',
+        filename: `cartera-creditos-${fecha}.pdf`,
+      };
+    }
+
+    throw new Error(`Formato no soportado: ${format}`);
+  }
+
+  async generarContrato(
+    loanId: string,
+  ): Promise<{ data: Buffer; contentType: string; filename: string }> {
+    const prestamo = await this.prisma.prestamo.findUnique({
+      where: { id: loanId },
+      include: {
+        cliente: true,
+        producto: true,
+        cuotas: { orderBy: { numeroCuota: 'asc' } },
+        creadoPor: { select: { nombres: true, apellidos: true } },
+      },
+    });
+
+    if (!prestamo) {
+      throw new NotFoundException('Préstamo no encontrado');
+    }
+
+    if (prestamo.tipoPrestamo !== 'ARTICULO') {
+      throw new BadRequestException('El contrato solo se puede generar para créditos de artículo');
+    }
+
+    const fecha = new Date().toISOString().split('T')[0];
+    const titulo = 'CONTRATO DE CRÉDITO DE ARTÍCULO';
+
+    const doc = new PDFDocument({ layout: 'portrait', size: 'LETTER', margin: 50 });
+    const buffers: any[] = [];
+    doc.on('data', buffers.push.bind(buffers));
+
+    // ── ENCABEZADO EMPRESA ──
+    doc.fontSize(18).font('Helvetica-Bold').fillColor('#08557F').text('CRÉDITOS DEL SUR S.A.S', { align: 'center' });
+    doc.fontSize(9).font('Helvetica').fillColor('#64748B').text('Neiva, Huila | creditos@delsur.co', { align: 'center' });
+    doc.moveDown(0.5);
+    doc.moveTo(50, doc.y).lineTo(562, doc.y).strokeColor('#CBD5E1').stroke();
+    doc.moveDown(0.5);
+
+    // ── TÍTULO ──
+    doc.fontSize(14).font('Helvetica-Bold').fillColor('#1E293B').text(`${titulo} N° ${prestamo.numeroPrestamo}`, { align: 'center' });
+    doc.fontSize(9).font('Helvetica').fillColor('#64748B').text(`Fecha: ${new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' })}`, { align: 'center' });
+    if (prestamo.creadoPor) {
+      doc.text(`Vendedor: ${prestamo.creadoPor.nombres} ${prestamo.creadoPor.apellidos}`, { align: 'center' });
+    }
+    doc.moveDown(1);
+
+    // ── DATOS DEL CLIENTE ──
+    doc.fontSize(11).font('Helvetica-Bold').fillColor('#08557F').text('DATOS DEL CLIENTE');
+    doc.moveDown(0.2);
+    doc.rect(50, doc.y, 512, 0.5).fill('#08557F');
+    doc.moveDown(0.3);
+    doc.fontSize(10).font('Helvetica').fillColor('#1E293B');
+    const cliente = prestamo.cliente;
+    if (cliente) {
+      doc.text(`Nombre:    ${cliente.nombres} ${cliente.apellidos}`);
+      doc.text(`Cédula:    ${cliente.dni || 'N/A'}`);
+      doc.text(`Dirección: ${cliente.direccion || 'N/A'}`);
+      doc.text(`Teléfono:  ${cliente.telefono || 'N/A'}`);
+    }
+    doc.moveDown(1);
+
+    // ── ARTÍCULO ──
+    if (prestamo.producto) {
+      doc.fontSize(11).font('Helvetica-Bold').fillColor('#08557F').text('ARTÍCULO');
+      doc.moveDown(0.2);
+      doc.rect(50, doc.y, 512, 0.5).fill('#08557F');
+      doc.moveDown(0.3);
+      doc.fontSize(10).font('Helvetica').fillColor('#1E293B');
+      doc.text(`Artículo:  ${prestamo.producto.nombre}`);
+      if (prestamo.producto.marca) doc.text(`Marca:     ${prestamo.producto.marca}`);
+      if (prestamo.producto.modelo) doc.text(`Modelo:    ${prestamo.producto.modelo}`);
+      doc.moveDown(1);
+    }
+
+    // ── CONDICIONES FINANCIERAS ──
+    doc.fontSize(11).font('Helvetica-Bold').fillColor('#08557F').text('CONDICIONES FINANCIERAS');
+    doc.moveDown(0.2);
+    doc.rect(50, doc.y, 512, 0.5).fill('#08557F');
+    doc.moveDown(0.3);
+    doc.fontSize(10).font('Helvetica').fillColor('#1E293B');
+
+    const monto = Number(prestamo.monto);
+    const interes = Number(prestamo.interesTotal || 0);
+    const total = monto + interes;
+    const cuota = prestamo.cantidadCuotas > 0 ? total / prestamo.cantidadCuotas : total;
+
+    doc.text(`Precio / Monto:      $${monto.toLocaleString('es-CO')}`);
+    doc.text(`Tasa de interés:     ${prestamo.tasaInteres}%`);
+    doc.text(`Interés total:       $${interes.toLocaleString('es-CO')}`);
+    doc.font('Helvetica-Bold').text(`TOTAL A PAGAR:       $${total.toLocaleString('es-CO')}`);
+    doc.font('Helvetica');
+    doc.text(`Plazo:               ${prestamo.cantidadCuotas} cuotas`);
+    doc.text(`Frecuencia:          ${prestamo.frecuenciaPago}`);
+    doc.text(`Valor cuota:         $${cuota.toLocaleString('es-CO')}`);
+    if (prestamo.fechaInicio) doc.text(`Fecha primer pago:   ${new Date(prestamo.fechaInicio).toLocaleDateString('es-CO')}`);
+    if (prestamo.fechaFin) doc.text(`Fecha último pago:   ${new Date(prestamo.fechaFin).toLocaleDateString('es-CO')}`);
+    doc.moveDown(1);
+
+    // ── TABLA DE AMORTIZACIÓN ──
+    if (prestamo.cuotas && prestamo.cuotas.length > 0) {
+      doc.fontSize(11).font('Helvetica-Bold').fillColor('#08557F').text('TABLA DE AMORTIZACIÓN');
+      doc.moveDown(0.2);
+      doc.rect(50, doc.y, 512, 0.5).fill('#08557F');
+      doc.moveDown(0.3);
+
+      const aCols = [
+        { label: 'N°', width: 35 }, { label: 'Fecha Venc.', width: 90 },
+        { label: 'Cuota', width: 90 }, { label: 'Estado', width: 80 },
+      ];
+      let y = doc.y + 3;
+      const rowH = 15;
+      doc.fontSize(8).font('Helvetica-Bold');
+      doc.rect(50, y, aCols.reduce((s, c) => s + c.width, 0), rowH).fill('#08557F');
+      let x = 50;
+      aCols.forEach(c => { doc.fillColor('white').text(c.label, x + 2, y + 3, { width: c.width - 4 }); x += c.width; });
+      y += rowH;
+
+      doc.font('Helvetica').fontSize(8).fillColor('#1E293B');
+      const cuotasToShow = prestamo.cuotas.length <= 14
+        ? prestamo.cuotas
+        : [...prestamo.cuotas.slice(0, 6), null, ...prestamo.cuotas.slice(-1)];
+
+      cuotasToShow.forEach((c: any, i: number) => {
+        if (y > 680) { doc.addPage(); y = 50; }
+        if (!c) {
+          doc.text('...', 50 + 2, y + 3);
+          y += rowH;
+          return;
+        }
+        if (i % 2 === 0) { doc.rect(50, y, aCols.reduce((s, cc) => s + cc.width, 0), rowH).fill('#F0F9FF'); doc.fillColor('#1E293B'); }
+        x = 50;
+        [
+          String(c.numeroCuota),
+          c.fechaVencimiento ? new Date(c.fechaVencimiento).toLocaleDateString('es-CO') : '',
+          `$${Number(c.monto || cuota).toLocaleString('es-CO')}`,
+          c.estado || 'PENDIENTE',
+        ].forEach((v, ci) => { doc.text(v, x + 2, y + 3, { width: aCols[ci].width - 4 }); x += aCols[ci].width; });
+        y += rowH;
+      });
+      doc.y = y + 10;
+    }
+
+    // ── CLÁUSULAS ──
+    doc.moveDown(0.5);
+    doc.fontSize(11).font('Helvetica-Bold').fillColor('#08557F').text('CLÁUSULAS');
+    doc.moveDown(0.2);
+    doc.rect(50, doc.y, 512, 0.5).fill('#08557F');
+    doc.moveDown(0.3);
+    doc.fontSize(8).font('Helvetica').fillColor('#1E293B');
+
+    doc.text('1. El comprador se compromete a pagar las cuotas en las fechas establecidas. El incumplimiento generará intereses de mora según la tasa máxima legal vigente.');
+    doc.text('2. El artículo será entregado al momento de la firma del presente contrato. La propiedad se transfiere al completar el pago total.');
+    doc.text('3. En caso de incumplimiento de 3 o más cuotas consecutivas, CRÉDITOS DEL SUR se reserva el derecho de recuperar el artículo.');
+    doc.text('4. El comprador declara haber recibido el artículo en perfecto estado y acepta las condiciones aquí estipuladas.');
+    doc.moveDown(2);
+
+    // ── FIRMAS ──
+    if (doc.y > 620) doc.addPage();
+    const firmaY = Math.max(doc.y, 620);
+    doc.fontSize(9).font('Helvetica').fillColor('#1E293B');
+    doc.text('________________________', 80, firmaY);
+    doc.text('COMPRADOR', 80, firmaY + 14);
+    doc.text(cliente ? `${cliente.nombres} ${cliente.apellidos}` : '', 80, firmaY + 26);
+    doc.text(cliente?.dni ? `C.C. ${cliente.dni}` : '', 80, firmaY + 38);
+
+    doc.text('________________________', 350, firmaY);
+    doc.text('VENDEDOR', 350, firmaY + 14);
+    doc.text(prestamo.creadoPor ? `${prestamo.creadoPor.nombres} ${prestamo.creadoPor.apellidos}` : '', 350, firmaY + 26);
+    doc.text('Créditos del Sur', 350, firmaY + 38);
+
+    doc.end();
+    const buffer = await new Promise<Buffer>((resolve) => { doc.on('end', () => resolve(Buffer.concat(buffers))); });
+
+    return {
+      data: buffer,
+      contentType: 'application/pdf',
+      filename: `contrato-${prestamo.numeroPrestamo}-${fecha}.pdf`,
+    };
   }
 }

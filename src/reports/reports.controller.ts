@@ -114,11 +114,17 @@ export class ReportsController {
     status: HttpStatus.CREATED,
     description: 'Reporte exportado exitosamente',
   })
-  async exportarReporteMora(@Body() exportRequest: ExportRequestDto) {
-    return this.reportsService.generarReporteMora(
+  async exportarReporteMora(
+    @Body() exportRequest: ExportRequestDto,
+    @Res() res: Response,
+  ) {
+    const result = await this.reportsService.generarReporteMora(
       exportRequest.filtros,
       exportRequest.formato,
     );
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.send(result.data);
   }
 
   @Get('estadisticas-mora')
@@ -189,11 +195,17 @@ export class ReportsController {
     status: HttpStatus.CREATED,
     description: 'Reporte exportado exitosamente',
   })
-  async exportarCuentasVencidas(@Body() exportRequest: ExportRequestDto) {
-    return this.reportsService.exportarCuentasVencidas(
+  async exportarCuentasVencidas(
+    @Body() exportRequest: ExportRequestDto,
+    @Res() res: Response,
+  ) {
+    const result = await this.reportsService.exportarCuentasVencidas(
       exportRequest.formato,
       exportRequest.filtros as CuentasVencidasFiltrosDto,
     );
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.send(result.data);
   }
 
   @Get('operational/coordinator')
@@ -255,6 +267,26 @@ export class ReportsController {
       startDate,
       endDate,
     });
+  }
+
+  @Get('financial/export')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.CONTADOR)
+  @ApiOperation({ summary: 'Exportar reporte financiero' })
+  @HttpCode(HttpStatus.OK)
+  async exportFinancialReport(
+    @Query('format') format: 'excel' | 'pdf',
+    @Query('startDate', new DefaultValuePipe('')) startDate: string,
+    @Query('endDate', new DefaultValuePipe('')) endDate: string,
+    @Res() res: Response,
+  ) {
+    const start = startDate
+      ? new Date(startDate)
+      : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const end = endDate ? new Date(endDate) : new Date();
+    const result = await this.reportsService.exportFinancialReport(start, end, format);
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.send(result.data);
   }
 
   @Get('operational/export')

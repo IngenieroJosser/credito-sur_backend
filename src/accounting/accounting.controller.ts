@@ -9,6 +9,10 @@ import {
   UseGuards,
   Request,
   UnauthorizedException,
+  DefaultValuePipe,
+  HttpCode,
+  HttpStatus,
+  Res,
 } from '@nestjs/common';
 import { AccountingService } from './accounting.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -17,6 +21,7 @@ import { TipoCaja, TipoTransaccion } from '@prisma/client';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolUsuario } from '@prisma/client';
+import { Response } from 'express';
 
 @Controller('accounting')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -219,5 +224,18 @@ export class AccountingController {
       page: page ? parseInt(page) : 1,
       limit: limit ? parseInt(limit) : 50,
     });
+  }
+
+  @Get('export')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.CONTADOR)
+  @HttpCode(HttpStatus.OK)
+  async exportAccountingReport(
+    @Query('format') format: 'excel' | 'pdf',
+    @Res() res: Response,
+  ) {
+    const result = await this.accountingService.exportAccountingReport(format);
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.send(result.data);
   }
 }

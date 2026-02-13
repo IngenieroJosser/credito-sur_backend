@@ -13,9 +13,11 @@ import {
   HttpCode,
   HttpStatus,
   Request,
+  Res,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
+import { Response } from 'express';
 import {
   ApiTags,
   ApiOperation,
@@ -413,6 +415,73 @@ export class LoansController {
     return this.loansService.deleteLoan(id, userId);
   }
 
+  @Get('export')
+  @Roles(
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.CONTADOR,
+  )
+  @ApiOperation({
+    summary: 'Exportar listado de préstamos',
+    description: 'Exporta el listado de préstamos en formato Excel (.xlsm) o PDF',
+  })
+  @ApiQuery({ name: 'format', required: true, enum: ['excel', 'pdf'] })
+  @ApiQuery({ name: 'estado', required: false })
+  @ApiQuery({ name: 'ruta', required: false })
+  @ApiQuery({ name: 'search', required: false })
+  @HttpCode(HttpStatus.OK)
+  async exportLoans(
+    @Query('format') format: 'excel' | 'pdf',
+    @Query('estado', new DefaultValuePipe('todos')) estado: string,
+    @Query('ruta', new DefaultValuePipe('todas')) ruta: string,
+    @Query('search', new DefaultValuePipe('')) search: string,
+    @Res() res: Response,
+  ) {
+    const result = await this.loansService.exportLoans(
+      { estado, ruta, search },
+      format,
+    );
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.send(result.data);
+  }
+
+  @Patch(':id')
+  @Roles(RolUsuario.COORDINADOR, RolUsuario.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @UsePipes(new ValidationPipe({ transform: true }))
+  @ApiOperation({
+    summary: 'Actualizar un préstamo',
+    description: 'Actualiza los datos editables de un préstamo existente',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Préstamo actualizado exitosamente',
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Préstamo no encontrado',
+  })
+  @ApiResponse({
+    status: HttpStatus.UNAUTHORIZED,
+    description: 'No autorizado',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID del préstamo a actualizar',
+    example: 'cl67qg5e80001c8ibw3d2q7p8',
+  })
+  async updateLoan(
+    @Param('id') id: string,
+    @Body() updateData: any,
+    @Request() req,
+  ) {
+    const userId = req.user.id;
+    return this.loansService.updateLoan(id, updateData, userId);
+  }
+
   @Patch(':id/restore')
   @Roles(RolUsuario.COORDINADOR, RolUsuario.ADMIN)
   @HttpCode(HttpStatus.OK)
@@ -446,5 +515,27 @@ export class LoansController {
     const userId = req.user.id;
 
     return this.loansService.restoreLoan(id, userId);
+  }
+
+  @Get(':id/contrato')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+  )
+  @ApiOperation({ summary: 'Generar contrato PDF para crédito de artículo' })
+  @ApiParam({ name: 'id', description: 'ID del préstamo (solo tipo ARTICULO)' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Contrato PDF generado' })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'No es un crédito de artículo' })
+  @HttpCode(HttpStatus.OK)
+  async generarContrato(
+    @Param('id') id: string,
+    @Res() res: Response,
+  ) {
+    const result = await this.loansService.generarContrato(id);
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.send(result.data);
   }
 }
