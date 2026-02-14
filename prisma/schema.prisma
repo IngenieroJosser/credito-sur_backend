@@ -23,6 +23,7 @@ enum RolUsuario {
   SUPERVISOR
   COBRADOR
   CONTADOR
+  PUNTO_DE_VENTA
 }
 
 enum NivelRiesgo {
@@ -145,6 +146,7 @@ model Usuario {
   
   // Relaciones
   asignacionesRoles      AsignacionRolUsuario[]
+  permisosPersonalizados AsignacionPermisoUsuario[]
   registrosAuditoria     RegistroAuditoria[]
   
   // Clientes (creados y aprobados)
@@ -199,10 +201,35 @@ model Usuario {
   ultimaSincronizacion   DateTime?
   errorSincronizacion    String?               @db.Text
   
+  // Notificaciones
+  notificaciones         Notificacion[]
+
   @@index([correo])
   @@index([rol])
   @@index([estado])
   @@index([estadoSincronizacion])
+}
+
+// ... (contenido existente omitido, agregando al final)
+
+model Notificacion {
+  id          String    @id @default(uuid())
+  usuarioId   String    // Destinatario
+  titulo      String    @db.VarChar(100)
+  mensaje     String    @db.Text
+  leida       Boolean   @default(false)
+  tipo        String    @default("INFO") // INFO, ALERTA, EXITO
+  entidad     String?   // Cliente, Prestamo, etc
+  entidadId   String?
+  metadata    Json?     // Datos adicionales para navegación
+  creadoEn    DateTime  @default(now())
+  archivar    Boolean   @default(false)
+
+  usuario     Usuario   @relation(fields: [usuarioId], references: [id])
+
+  @@index([usuarioId])
+  @@index([leida])
+  @@map("notificaciones")
 }
 
 model Rol {
@@ -210,6 +237,7 @@ model Rol {
   nombre                 String                @unique @db.VarChar(50)
   descripcion            String?               @db.VarChar(255)
   esSistema              Boolean               @default(false)
+  rutaDefault            String?               @db.VarChar(100) // Ruta de redirección post-login
   
   // Relaciones
   permisos               RolPermiso[]
@@ -228,10 +256,18 @@ model Permiso {
   id                     String                @id @default(uuid())
   modulo                 String                @db.VarChar(50)
   accion                 String                @db.VarChar(50)
+  nombre                 String                @db.VarChar(100) // Nombre legible para UI
   descripcion            String?               @db.VarChar(255)
+  
+  // Sidebar metadata
+  icono                  String?               @db.VarChar(50)  // Nombre del icono Lucide (ej: 'CreditCard')
+  ruta                   String?               @db.VarChar(200) // Ruta del frontend (ej: '/admin/creditos')
+  orden                  Int                   @default(0)      // Orden en el sidebar
+  esNavegable            Boolean               @default(true)   // Si aparece como item navegable en sidebar
   
   // Relaciones
   rolesPermisos          RolPermiso[]
+  asignacionesUsuarios   AsignacionPermisoUsuario[]
   
   // Timestamps
   creadoEn               DateTime              @default(now())
@@ -276,6 +312,22 @@ model AsignacionRolUsuario {
   @@map("asignaciones_roles_usuarios")
 }
 
+model AsignacionPermisoUsuario {
+  id                     String                @id @default(uuid())
+  usuarioId              String
+  permisoId              String
+  
+  // Relaciones
+  usuario                Usuario               @relation(fields: [usuarioId], references: [id])
+  permiso                Permiso               @relation(fields: [permisoId], references: [id])
+  
+  // Timestamps
+  creadoEn               DateTime              @default(now())
+  
+  @@unique([usuarioId, permisoId])
+  @@map("asignaciones_permisos_usuarios")
+}
+
 // ============================================
 // MÓDULO CLIENTES
 // ============================================
@@ -315,6 +367,8 @@ model Cliente {
   asignacionesRuta       AsignacionRuta[]
   pagos                  Pago[]
   archivos               Multimedia[]          @relation("MultimediaCliente")
+  categoria              Categoria?            @relation(fields: [categoriaId], references: [id])
+  categoriaId            String?
   
   // Timestamps
   creadoEn               DateTime              @default(now())
@@ -354,6 +408,8 @@ model Producto {
   precios                PrecioProducto[]
   prestamos              Prestamo[]
   archivos               Multimedia[]          @relation("MultimediaProducto")
+  categoriaRel           Categoria?            @relation(fields: [categoriaId], references: [id])
+  categoriaId            String?
   
   // Timestamps
   creadoEn               DateTime              @default(now())
@@ -621,6 +677,7 @@ model Ruta {
   asignaciones           AsignacionRuta[]
   cajas                  Caja[]
   gastos                 Gasto[]
+  eliminadoEn            DateTime?
   
   // Timestamps
   creadoEn               DateTime              @default(now())
@@ -693,6 +750,8 @@ model Aprobacion {
   
   // Sincronización
   estadoSincronizacion   EstadoSincronizacion  @default(PENDIENTE)
+
+  montoSolicitud Decimal? @db.Decimal(12,2)
   
   @@index([tipoAprobacion])
   @@index([referenciaId, tablaReferencia])
@@ -803,6 +862,8 @@ model Gasto {
   caja                   Caja                  @relation(fields: [cajaId], references: [id])
   aprobadoPor            Usuario?              @relation("GastoAprobadoPor", fields: [aprobadoPorId], references: [id])
   archivos               Multimedia[]          @relation("MultimediaGasto")
+  categoria              Categoria?            @relation(fields: [categoriaId], references: [id])
+  categoriaId            String?
   
   // Timestamps
   fechaGasto             DateTime              @default(now())
@@ -971,4 +1032,30 @@ model Multimedia {
   @@index([creadoEn])
   @@index([estadoSincronizacion])
   @@map("multimedia")
+}
+
+// ============================================
+// MÓDULO CATEGORIAS
+// ============================================
+
+model Categoria {
+  id            String   @id @default(uuid())
+  nombre        String   @db.VarChar(100)
+  descripcion   String?  @db.Text
+  tipo          String   @db.VarChar(50) // "CLIENTE", "GASTO", "PRESTAMO", etc.
+  color         String?  @db.VarChar(20) // Hex code para badges
+  activa        Boolean  @default(true)
+  
+  // Relaciones
+  clientes      Cliente[]
+  gastos        Gasto[]
+  productos     Producto[]
+
+  // Timestamps
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+  eliminadoEn   DateTime?
+
+  @@index([tipo])
+  @@map("categorias")
 }

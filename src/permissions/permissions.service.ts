@@ -7,7 +7,7 @@ import { PrismaService } from 'prisma/prisma.service';
 export class PermissionsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  create(createPermissionDto: CreatePermissionDto) {
+  create(_createPermissionDto: CreatePermissionDto) {
     return 'This action adds a new permission';
   }
 
@@ -19,7 +19,7 @@ export class PermissionsService {
     return `This action returns a #${id} permission`;
   }
 
-  update(id: number, updatePermissionDto: UpdatePermissionDto) {
+  update(id: number, _updatePermissionDto: UpdatePermissionDto) {
     return `This action updates a #${id} permission`;
   }
 
