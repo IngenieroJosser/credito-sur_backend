@@ -65,7 +65,9 @@ describe('NotificacionesService', () => {
 
     it('should handle errors gracefully (log only)', async () => {
       // Configuramos el mock para lanzar error
-      (prismaService.notificacion.create as jest.Mock).mockRejectedValue(new Error('DB Error'));
+      (prismaService.notificacion.create as jest.Mock).mockRejectedValue(
+        new Error('DB Error'),
+      );
 
       const data = {
         usuarioId: 'user-123',
@@ -85,7 +87,9 @@ describe('NotificacionesService', () => {
         { id: 'coord-1', rol: RolUsuario.COORDINADOR },
         { id: 'coord-2', rol: RolUsuario.COORDINADOR },
       ];
-      (prismaService.usuario.findMany as jest.Mock).mockResolvedValue(mockCoordinators);
+      (prismaService.usuario.findMany as jest.Mock).mockResolvedValue(
+        mockCoordinators,
+      );
 
       const data = {
         titulo: 'Alerta Coordinador',

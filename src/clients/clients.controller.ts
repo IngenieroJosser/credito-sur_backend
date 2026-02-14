@@ -8,6 +8,7 @@ import {
   Delete,
   Query,
   Put,
+  Logger,
 } from '@nestjs/common';
 import { ClientsService } from './clients.service';
 import { CreateClientDto } from './dto/create-client.dto';
@@ -18,21 +19,6 @@ import { Roles } from 'src/auth/decorators/roles.decorator';
 @Controller('clients')
 export class ClientsController {
   constructor(private readonly clientsService: ClientsService) {}
-
-  @Post()
-  create(@Body() createClientDto: CreateClientDto) {
-    return this.clientsService.create(createClientDto);
-  }
-
-  @Get()
-  findAll() {
-    return this.clientsService.findAll();
-  }
-
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.clientsService.findOne(id);
-  }
 
   @Patch(':id')
   update(@Param('id') id: string, @Body() updateClientDto: UpdateClientDto) {
@@ -74,22 +60,17 @@ export class ClientsController {
     return this.clientsService.getClientById(id);
   }
 
+  private readonly logger = new Logger(ClientsController.name);
+
   @Post()
-  @Roles(RolUsuario.COORDINADOR)
-  async createClient(
-    @Body()
-    body: {
-      dni: string;
-      nombres: string;
-      apellidos: string;
-      telefono: string;
-      correo?: string;
-      direccion?: string;
-      referencia?: string;
-      creadoPorId: string;
-      archivos?: any[];
-    },
-  ) {
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+  )
+  async createClient(@Body() body: CreateClientDto) {
+    this.logger.log(`Creando cliente con datos: ${JSON.stringify(body)}`);
+    // Si viene creadoPorId en el body, lo usamos, si no el service intentará buscar uno (hack actual)
     return this.clientsService.createClient(body);
   }
 

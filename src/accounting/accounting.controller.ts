@@ -8,13 +8,23 @@ import {
   Query,
   UseGuards,
   Request,
+  UnauthorizedException,
+  DefaultValuePipe,
+  HttpCode,
+  HttpStatus,
+  Res,
 } from '@nestjs/common';
 import { AccountingService } from './accounting.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { TipoCaja, TipoTransaccion } from '@prisma/client';
 
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { RolUsuario } from '@prisma/client';
+import { Response } from 'express';
+
 @Controller('accounting')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class AccountingController {
   constructor(private readonly accountingService: AccountingService) {}
 
@@ -33,29 +43,84 @@ export class AccountingController {
   }
 
   @Post('cajas')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.CONTADOR,
+    RolUsuario.COORDINADOR,
+  )
   createCaja(
-    @Body() body: {
+    @Request() req,
+    @Body()
+    body: {
       nombre: string;
       tipo: TipoCaja;
       rutaId?: string;
       responsableId: string;
       saldoInicial?: number;
-    }
+    },
   ) {
-    return this.accountingService.createCaja(body);
+    if (!req.user || !req.user.id) {
+      throw new UnauthorizedException(
+        'Usuario no autenticado o token inválido',
+      );
+    }
+    return this.accountingService.createCaja(body, req.user.id);
   }
 
   @Patch('cajas/:id')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.CONTADOR,
+    RolUsuario.COORDINADOR,
+  )
   updateCaja(
     @Param('id') id: string,
-    @Body() body: {
+    @Body()
+    body: {
       nombre?: string;
       responsableId?: string;
       activa?: boolean;
       saldoActual?: number;
-    }
+    },
   ) {
     return this.accountingService.updateCaja(id, body);
+  }
+
+  @Post('cajas/:id/consolidar')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.CONTADOR,
+    RolUsuario.COORDINADOR,
+  )
+  consolidarCaja(@Param('id') id: string, @Request() req) {
+    return this.accountingService.consolidarCaja(id, req.user.id);
+  }
+
+  @Post('cajas/:id/arqueos')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.CONTADOR,
+    RolUsuario.COORDINADOR,
+  )
+  registrarArqueo(
+    @Param('id') id: string,
+    @Request() req,
+    @Body()
+    body: {
+      efectivoReal: number;
+      saldoSistema: number;
+      diferencia: number;
+      observaciones?: string;
+    },
+  ) {
+    if (!req.user || !req.user.id) {
+      throw new UnauthorizedException('Usuario no autenticado');
+    }
+    return this.accountingService.registrarArqueo(id, body, req.user.id);
   }
 
   // =====================
@@ -77,27 +142,35 @@ export class AccountingController {
       fechaInicio,
       fechaFin,
       page: page ? parseInt(page) : 1,
-      limit: limit ? parseInt(limit) : 50
+      limit: limit ? parseInt(limit) : 50,
     });
   }
 
   @Post('transacciones')
   createTransaccion(
     @Request() req,
-    @Body() body: {
+    @Body()
+    body: {
       cajaId: string;
       tipo: TipoTransaccion;
       monto: number;
       descripcion: string;
       tipoReferencia?: string;
       referenciaId?: string;
-    }
+    },
   ) {
+    if (!req.user || !req.user.id) {
+      throw new UnauthorizedException('Usuario no autenticado');
+    }
     return this.accountingService.createTransaccion({
       ...body,
-      creadoPorId: req.user.userId
+      creadoPorId: req.user.id,
     });
   }
+
+  // =====================
+  // RESUMEN FINANCIERO
+  // =====================
 
   // =====================
   // RESUMEN FINANCIERO
@@ -109,6 +182,29 @@ export class AccountingController {
     @Query('fechaFin') fechaFin?: string,
   ) {
     return this.accountingService.getResumenFinanciero(fechaInicio, fechaFin);
+  }
+
+  // =====================
+  // CIERRES (HISTORIAL)
+  // =====================
+
+  @Get('cierres')
+  getHistorialCierres(
+    @Query('tipo') tipo?: 'ARQUEO' | 'CONSOLIDACION',
+    @Query('cajaId') cajaId?: string,
+    @Query('soloRutas') soloRutas?: string,
+    @Query('estado') estado?: 'CUADRADA' | 'DESCUADRADA',
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
+  ) {
+    return this.accountingService.getHistorialCierres({
+      tipo,
+      cajaId,
+      soloRutas: soloRutas === '1',
+      estado,
+      fechaInicio,
+      fechaFin,
+    });
   }
 
   // =====================
@@ -126,7 +222,20 @@ export class AccountingController {
       rutaId,
       estado,
       page: page ? parseInt(page) : 1,
-      limit: limit ? parseInt(limit) : 50
+      limit: limit ? parseInt(limit) : 50,
     });
+  }
+
+  @Get('export')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.CONTADOR)
+  @HttpCode(HttpStatus.OK)
+  async exportAccountingReport(
+    @Query('format') format: 'excel' | 'pdf',
+    @Res() res: Response,
+  ) {
+    const result = await this.accountingService.exportAccountingReport(format);
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.send(result.data);
   }
 }

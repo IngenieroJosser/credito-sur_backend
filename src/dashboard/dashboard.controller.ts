@@ -11,13 +11,13 @@ export class DashboardController {
   constructor(private readonly dashboardService: DashboardService) {}
 
   @Get()
-  @Roles(RolUsuario.COORDINADOR)
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
   async getDashboardData(@Query('timeFilter') timeFilter: string) {
     return this.dashboardService.getDashboardData(timeFilter);
   }
 
   @Get('trend')
-  @Roles(RolUsuario.COORDINADOR)
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
   async getTrendData(@Query('timeFilter') timeFilter: string) {
     return this.dashboardService.getTrendData(timeFilter);
   }

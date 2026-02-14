@@ -297,6 +297,7 @@ export class RoutesService {
 
             if (porcentajeMora > 30) nivelRiesgo = 'ALTO_RIESGO';
             else if (porcentajeMora > 15) nivelRiesgo = 'RIESGO_MODERADO';
+            else if (porcentajeMora > 10) nivelRiesgo = 'PRECAUCION';
             else if (porcentajeMora > 5) nivelRiesgo = 'LEVE_RETRASO';
           }
 
@@ -322,7 +323,10 @@ export class RoutesService {
         },
       };
     } catch (error) {
-      throw new InternalServerErrorException('Error al obtener las rutas');
+      console.error('Error detail in findAll:', error);
+      throw new InternalServerErrorException(
+        `Error al obtener las rutas: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
     }
   }
 
@@ -511,6 +515,7 @@ export class RoutesService {
 
       if (porcentajeMora > 30) nivelRiesgo = 'ALTO_RIESGO';
       else if (porcentajeMora > 15) nivelRiesgo = 'RIESGO_MODERADO';
+      else if (porcentajeMora > 10) nivelRiesgo = 'PRECAUCION';
       else if (porcentajeMora > 5) nivelRiesgo = 'LEVE_RETRASO';
     }
 

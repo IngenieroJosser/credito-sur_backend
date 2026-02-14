@@ -71,11 +71,19 @@ export class ReportsController {
     return this.reportsService.getExpenseDistribution(start, end);
   }
 
+  @Get('financial/targets')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.CONTADOR)
+  getFinancialTargets() {
+    return this.reportsService.getFinancialTargets();
+  }
+
   @Get('prestamos-mora')
   @Roles(
     RolUsuario.COORDINADOR,
     RolUsuario.SUPERVISOR,
     RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.CONTADOR,
   )
   @ApiOperation({ summary: 'Obtener préstamos en mora' })
   @ApiResponse({
@@ -98,17 +106,25 @@ export class ReportsController {
     RolUsuario.COORDINADOR,
     RolUsuario.SUPERVISOR,
     RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.CONTADOR,
   )
   @ApiOperation({ summary: 'Exportar reporte de mora' })
   @ApiResponse({
     status: HttpStatus.CREATED,
     description: 'Reporte exportado exitosamente',
   })
-  async exportarReporteMora(@Body() exportRequest: ExportRequestDto) {
-    return this.reportsService.generarReporteMora(
+  async exportarReporteMora(
+    @Body() exportRequest: ExportRequestDto,
+    @Res() res: Response,
+  ) {
+    const result = await this.reportsService.generarReporteMora(
       exportRequest.filtros,
       exportRequest.formato,
     );
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.send(result.data);
   }
 
   @Get('estadisticas-mora')
@@ -116,6 +132,8 @@ export class ReportsController {
     RolUsuario.COORDINADOR,
     RolUsuario.SUPERVISOR,
     RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.CONTADOR,
   )
   @ApiOperation({ summary: 'Obtener estadísticas de mora' })
   @ApiResponse({
@@ -131,6 +149,8 @@ export class ReportsController {
     RolUsuario.COORDINADOR,
     RolUsuario.SUPERVISOR,
     RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.CONTADOR,
   )
   @ApiOperation({ summary: 'Obtener cuentas vencidas' })
   @ApiResponse({
@@ -146,7 +166,7 @@ export class ReportsController {
   }
 
   @Post('cuentas-vencidas/decision')
-  @Roles(RolUsuario.COORDINADOR, RolUsuario.SUPER_ADMINISTRADOR)
+  @Roles(RolUsuario.COORDINADOR, RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.CONTADOR)
   @ApiOperation({ summary: 'Procesar decisión sobre cuenta vencida' })
   @ApiResponse({
     status: HttpStatus.CREATED,
@@ -167,24 +187,37 @@ export class ReportsController {
     RolUsuario.COORDINADOR,
     RolUsuario.SUPERVISOR,
     RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.CONTADOR,
   )
   @ApiOperation({ summary: 'Exportar reporte de cuentas vencidas' })
   @ApiResponse({
     status: HttpStatus.CREATED,
     description: 'Reporte exportado exitosamente',
   })
-  async exportarCuentasVencidas(@Body() exportRequest: ExportRequestDto) {
-    return this.reportsService.exportarCuentasVencidas(
+  async exportarCuentasVencidas(
+    @Body() exportRequest: ExportRequestDto,
+    @Res() res: Response,
+  ) {
+    const result = await this.reportsService.exportarCuentasVencidas(
       exportRequest.formato,
       exportRequest.filtros as CuentasVencidasFiltrosDto,
     );
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.send(result.data);
   }
 
   @Get('operational/coordinator')
-  @Roles(RolUsuario.COORDINADOR, RolUsuario.ADMIN, RolUsuario.SUPER_ADMINISTRADOR)
+  @Roles(
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
   @ApiOperation({
     summary: 'Obtener reporte operativo para coordinador',
-    description: 'Retorna métricas de rendimiento por ruta, recaudo, préstamos nuevos y eficiencia',
+    description:
+      'Retorna métricas de rendimiento por ruta, recaudo, préstamos nuevos y eficiencia',
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -204,7 +237,12 @@ export class ReportsController {
   }
 
   @Get('operational/route-detail/:routeId')
-  @Roles(RolUsuario.COORDINADOR, RolUsuario.ADMIN, RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.SUPERVISOR)
+  @Roles(
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.SUPERVISOR,
+  )
   @ApiOperation({
     summary: 'Obtener detalle de reporte por ruta',
     description: 'Retorna el detalle completo de una ruta específica',
@@ -224,11 +262,39 @@ export class ReportsController {
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
-    return this.reportsService.getRouteDetail(routeId, { period, startDate, endDate });
+    return this.reportsService.getRouteDetail(routeId, {
+      period,
+      startDate,
+      endDate,
+    });
+  }
+
+  @Get('financial/export')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.CONTADOR)
+  @ApiOperation({ summary: 'Exportar reporte financiero' })
+  @HttpCode(HttpStatus.OK)
+  async exportFinancialReport(
+    @Query('format') format: 'excel' | 'pdf',
+    @Query('startDate', new DefaultValuePipe('')) startDate: string,
+    @Query('endDate', new DefaultValuePipe('')) endDate: string,
+    @Res() res: Response,
+  ) {
+    const start = startDate
+      ? new Date(startDate)
+      : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const end = endDate ? new Date(endDate) : new Date();
+    const result = await this.reportsService.exportFinancialReport(start, end, format);
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.send(result.data);
   }
 
   @Get('operational/export')
-  @Roles(RolUsuario.COORDINADOR, RolUsuario.ADMIN, RolUsuario.SUPER_ADMINISTRADOR)
+  @Roles(
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
   @ApiOperation({
     summary: 'Exportar reporte operativo',
     description: 'Exporta el reporte operativo en formato Excel o PDF',
@@ -237,14 +303,20 @@ export class ReportsController {
   async exportOperationalReport(
     @Query() filters: GetOperationalReportDto,
     @Query('format') format: 'excel' | 'pdf',
-    @Res() res: Response
+    @Res() res: Response,
   ) {
-    const result = await this.reportsService.exportOperationalReport(filters, format);
-    
+    const result = await this.reportsService.exportOperationalReport(
+      filters,
+      format,
+    );
+
     // Configurar headers para la descarga
     res.setHeader('Content-Type', result.contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
-    
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${result.filename}"`,
+    );
+
     // Enviar el buffer como respuesta
     res.send(result.data);
   }

@@ -6,7 +6,7 @@ import {
   IsString,
   MinLength,
 } from 'class-validator';
-import { RolUsuario } from '@prisma/client';
+import { RolUsuario, EstadoUsuario } from '@prisma/client';
 
 export class CreateUserDto {
   @IsString()
@@ -33,4 +33,8 @@ export class CreateUserDto {
   @IsString()
   @IsOptional()
   telefono?: string;
+
+  @IsEnum(EstadoUsuario)
+  @IsOptional()
+  estado?: EstadoUsuario;
 }

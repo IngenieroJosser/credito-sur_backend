@@ -8,8 +8,7 @@ import {
   IsNotEmpty,
   ValidateIf,
 } from 'class-validator';
-import { FrecuenciaPago, TipoAprobacion } from '@prisma/client';
-import { Type } from 'class-transformer';
+import { FrecuenciaPago } from '@prisma/client';
 
 export class CreateLoanDto {
   @IsString()
@@ -34,7 +33,7 @@ export class CreateLoanDto {
 
   @IsNumber()
   @Min(0)
-  @ValidateIf(o => o.tipoPrestamo === 'prestamo')
+  @ValidateIf((o) => o.tipoPrestamo === 'prestamo')
   tasaInteres: number;
 
   @IsNumber()

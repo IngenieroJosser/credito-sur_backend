@@ -11,7 +11,7 @@ import {
 export class ApprovalsService {
   constructor(private prisma: PrismaService) {}
 
-  async approveItem(id: string, type: TipoAprobacion) {
+  async approveItem(id: string, _type: TipoAprobacion) {
     // Buscar la aprobación
     const approval = await this.prisma.aprobacion.findUnique({
       where: { id },
@@ -54,7 +54,7 @@ export class ApprovalsService {
     return { success: true, message: 'Aprobación procesada exitosamente' };
   }
 
-  async rejectItem(id: string, type: TipoAprobacion) {
+  async rejectItem(id: string, _type: TipoAprobacion) {
     await this.prisma.aprobacion.update({
       where: { id },
       data: {
