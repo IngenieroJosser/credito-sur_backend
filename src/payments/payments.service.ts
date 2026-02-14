@@ -5,7 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { CreatePaymentDto } from './dto/create-payment.dto';
-import { PrismaService } from 'prisma/prisma.service';
+import { PrismaService } from '../prisma/prisma.service';
 import {
   EstadoPrestamo,
   EstadoCuota,

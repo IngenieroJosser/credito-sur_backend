@@ -14,7 +14,7 @@ import { ClientsService } from './clients.service';
 import { CreateClientDto } from './dto/create-client.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { NivelRiesgo, RolUsuario } from '@prisma/client';
-import { Roles } from 'src/auth/decorators/roles.decorator';
+import { Roles } from '../auth/decorators/roles.decorator'; 
 
 @Controller('clients')
 export class ClientsController {

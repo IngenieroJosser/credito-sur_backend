@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from 'prisma/prisma.service';
+import { PrismaService } from '../prisma/prisma.service'; 
 import { EstadoAprobacion } from '@prisma/client';
 import {
   PrestamosMoraFiltrosDto,
@@ -21,7 +21,7 @@ import {
   OperationalReportResponse,
   RoutePerformanceDetail,
 } from './dto/responses-routes.dto';
-import { TimeFilterPeriod, calculateDateRange } from 'utils/date-utils';
+import { TimeFilterPeriod, calculateDateRange } from '../utils/date-utils';
 import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
 

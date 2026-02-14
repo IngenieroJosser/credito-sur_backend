@@ -6,7 +6,7 @@ import {
   ForbiddenException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { PrismaService } from 'prisma/prisma.service';
+import { PrismaService } from '../prisma/prisma.service'; 
 import { TipoCaja, TipoTransaccion } from '@prisma/client';
 
 @Injectable()
