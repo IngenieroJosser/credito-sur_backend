@@ -13,6 +13,7 @@ import {
   TipoAprobacion,
   EstadoAprobacion,
   RolUsuario,
+  TipoAmortizacion,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { AuditService } from '../audit/audit.service';
@@ -134,6 +135,29 @@ export class LoansService {
       interesTotal: Math.round(interesTotalAcumulado * 100) / 100,
       tabla,
     };
+  }
+
+  private calcularFechaVencimiento(
+    fechaInicio: Date,
+    numeroCuota: number,
+    frecuencia: FrecuenciaPago,
+  ): Date {
+    const fecha = new Date(fechaInicio);
+    switch (frecuencia) {
+      case FrecuenciaPago.DIARIO:
+        fecha.setDate(fecha.getDate() + numeroCuota);
+        break;
+      case FrecuenciaPago.SEMANAL:
+        fecha.setDate(fecha.getDate() + numeroCuota * 7);
+        break;
+      case FrecuenciaPago.QUINCENAL:
+        fecha.setDate(fecha.getDate() + numeroCuota * 15);
+        break;
+      case FrecuenciaPago.MENSUAL:
+        fecha.setMonth(fecha.getMonth() + numeroCuota);
+        break;
+    }
+    return fecha;
   }
 
   async getAllLoans(filters: {
@@ -759,18 +783,61 @@ export class LoansService {
           break;
       }
 
-      // Calcular amortización francesa (cuota fija, interés decreciente)
-      const amortizacion = this.calcularAmortizacionFrancesa(
-        createLoanDto.monto,
-        createLoanDto.tasaInteres,
-        cantidadCuotas,
-        createLoanDto.plazoMeses,
-        createLoanDto.frecuenciaPago,
-      );
+      // Determinar tipo de amortización
+      const tipoAmort = createLoanDto.tipoAmortizacion || TipoAmortizacion.INTERES_SIMPLE;
 
-      const interesTotal = amortizacion.interesTotal;
+      let interesTotal: number;
+      let cuotasData: Array<{
+        numeroCuota: number;
+        fechaVencimiento: Date;
+        monto: number;
+        montoCapital: number;
+        montoInteres: number;
+        estado: typeof EstadoCuota.PENDIENTE;
+      }>;
 
-      // Crear prestamo con cuotas amortizadas
+      if (tipoAmort === TipoAmortizacion.FRANCESA) {
+        // Amortización francesa (cuota fija, interés decreciente)
+        const amortizacion = this.calcularAmortizacionFrancesa(
+          createLoanDto.monto,
+          createLoanDto.tasaInteres,
+          cantidadCuotas,
+          createLoanDto.plazoMeses,
+          createLoanDto.frecuenciaPago,
+        );
+        interesTotal = amortizacion.interesTotal;
+        cuotasData = amortizacion.tabla.map((cuota) => {
+          const fechaVencimiento = this.calcularFechaVencimiento(fechaInicio, cuota.numeroCuota, createLoanDto.frecuenciaPago);
+          return {
+            numeroCuota: cuota.numeroCuota,
+            fechaVencimiento,
+            monto: cuota.monto,
+            montoCapital: cuota.montoCapital,
+            montoInteres: cuota.montoInteres,
+            estado: EstadoCuota.PENDIENTE,
+          };
+        });
+      } else {
+        // Interés simple (tasa plana: capital × tasa / 100)
+        interesTotal = (createLoanDto.monto * createLoanDto.tasaInteres) / 100;
+        const montoTotal = createLoanDto.monto + interesTotal;
+        const montoCuota = cantidadCuotas > 0 ? montoTotal / cantidadCuotas : 0;
+        const montoCapitalCuota = cantidadCuotas > 0 ? createLoanDto.monto / cantidadCuotas : 0;
+        const montoInteresCuota = cantidadCuotas > 0 ? interesTotal / cantidadCuotas : 0;
+        cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => {
+          const fechaVencimiento = this.calcularFechaVencimiento(fechaInicio, i + 1, createLoanDto.frecuenciaPago);
+          return {
+            numeroCuota: i + 1,
+            fechaVencimiento,
+            monto: Math.round(montoCuota * 100) / 100,
+            montoCapital: Math.round(montoCapitalCuota * 100) / 100,
+            montoInteres: Math.round(montoInteresCuota * 100) / 100,
+            estado: EstadoCuota.PENDIENTE,
+          };
+        });
+      }
+
+      // Crear prestamo con cuotas
       const prestamo = await this.prisma.prestamo.create({
         data: {
           numeroPrestamo,
@@ -778,6 +845,7 @@ export class LoansService {
           productoId: createLoanDto.productoId,
           precioProductoId: createLoanDto.precioProductoId,
           tipoPrestamo: createLoanDto.tipoPrestamo,
+          tipoAmortizacion: tipoAmort,
           monto: createLoanDto.monto,
           tasaInteres: createLoanDto.tasaInteres,
           tasaInteresMora: createLoanDto.tasaInteresMora,
@@ -792,41 +860,7 @@ export class LoansService {
           interesTotal,
           saldoPendiente: createLoanDto.monto + interesTotal,
           cuotas: {
-            create: amortizacion.tabla.map((cuota) => {
-              const fechaVencimiento = new Date(fechaInicio);
-
-              switch (createLoanDto.frecuenciaPago) {
-                case FrecuenciaPago.DIARIO:
-                  fechaVencimiento.setDate(
-                    fechaVencimiento.getDate() + cuota.numeroCuota,
-                  );
-                  break;
-                case FrecuenciaPago.SEMANAL:
-                  fechaVencimiento.setDate(
-                    fechaVencimiento.getDate() + cuota.numeroCuota * 7,
-                  );
-                  break;
-                case FrecuenciaPago.QUINCENAL:
-                  fechaVencimiento.setDate(
-                    fechaVencimiento.getDate() + cuota.numeroCuota * 15,
-                  );
-                  break;
-                case FrecuenciaPago.MENSUAL:
-                  fechaVencimiento.setMonth(
-                    fechaVencimiento.getMonth() + cuota.numeroCuota,
-                  );
-                  break;
-              }
-
-              return {
-                numeroCuota: cuota.numeroCuota,
-                fechaVencimiento,
-                monto: cuota.monto,
-                montoCapital: cuota.montoCapital,
-                montoInteres: cuota.montoInteres,
-                estado: EstadoCuota.PENDIENTE,
-              };
-            }),
+            create: cuotasData,
           },
         },
         include: {
@@ -836,7 +870,7 @@ export class LoansService {
         },
       });
 
-      this.logger.log(`Loan created successfully: ${prestamo.id}`);
+      this.logger.log(`Loan created successfully: ${prestamo.id} (${tipoAmort})`);
 
       // Crear solicitud de aprobación automáticamente
       await this.prisma.aprobacion.create({
@@ -1172,19 +1206,63 @@ export class LoansService {
           break;
       }
 
-      // Calcular amortización francesa (cuota fija, interés decreciente mes a mes)
-      const amortizacion = this.calcularAmortizacionFrancesa(
-        montoFinanciar,
-        data.tasaInteres,
-        cantidadCuotas,
-        data.plazoMeses,
-        data.frecuenciaPago,
-      );
+      // Determinar tipo de amortización
+      const tipoAmort = data.tipoAmortizacion || TipoAmortizacion.INTERES_SIMPLE;
 
-      const interesTotal = amortizacion.interesTotal;
+      let interesTotal: number;
+      let cuotasData: Array<{
+        numeroCuota: number;
+        fechaVencimiento: Date;
+        monto: number;
+        montoCapital: number;
+        montoInteres: number;
+        estado: typeof EstadoCuota.PENDIENTE;
+      }>;
+
+      if (tipoAmort === TipoAmortizacion.FRANCESA) {
+        // Amortización francesa (cuota fija, interés decreciente mes a mes)
+        const amortizacion = this.calcularAmortizacionFrancesa(
+          montoFinanciar,
+          data.tasaInteres,
+          cantidadCuotas,
+          data.plazoMeses,
+          data.frecuenciaPago,
+        );
+        interesTotal = amortizacion.interesTotal;
+        cuotasData = amortizacion.tabla.map((cuota) => {
+          const fechaVencimiento = this.calcularFechaVencimiento(fechaInicio, cuota.numeroCuota, data.frecuenciaPago);
+          return {
+            numeroCuota: cuota.numeroCuota,
+            fechaVencimiento,
+            monto: cuota.monto,
+            montoCapital: cuota.montoCapital,
+            montoInteres: cuota.montoInteres,
+            estado: EstadoCuota.PENDIENTE,
+          };
+        });
+      } else {
+        // Interés simple (tasa plana: capital × tasa / 100)
+        interesTotal = (montoFinanciar * data.tasaInteres) / 100;
+        const montoTotalSimple = montoFinanciar + interesTotal;
+        const montoCuota = cantidadCuotas > 0 ? montoTotalSimple / cantidadCuotas : 0;
+        const montoCapitalCuota = cantidadCuotas > 0 ? montoFinanciar / cantidadCuotas : 0;
+        const montoInteresCuota = cantidadCuotas > 0 ? interesTotal / cantidadCuotas : 0;
+        cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => {
+          const fechaVencimiento = this.calcularFechaVencimiento(fechaInicio, i + 1, data.frecuenciaPago);
+          return {
+            numeroCuota: i + 1,
+            fechaVencimiento,
+            monto: Math.round(montoCuota * 100) / 100,
+            montoCapital: Math.round(montoCapitalCuota * 100) / 100,
+            montoInteres: Math.round(montoInteresCuota * 100) / 100,
+            estado: EstadoCuota.PENDIENTE,
+          };
+        });
+      }
+
       const montoTotal = montoFinanciar + interesTotal;
 
-      // Crear préstamo con cuotas amortizadas
+      // Crear préstamo con cuotas
       const prestamo = await this.prisma.prestamo.create({
         data: {
           numeroPrestamo,
@@ -1192,6 +1270,7 @@ export class LoansService {
           productoId: data.productoId,
           precioProductoId: data.precioProductoId,
           tipoPrestamo: data.tipoPrestamo,
+          tipoAmortizacion: tipoAmort,
           monto: montoFinanciar,
           tasaInteres: data.tasaInteres,
           tasaInteresMora: data.tasaInteresMora || 2,
@@ -1206,41 +1285,7 @@ export class LoansService {
           interesTotal,
           saldoPendiente: montoTotal,
           cuotas: {
-            create: amortizacion.tabla.map((cuota) => {
-              const fechaVencimiento = new Date(fechaInicio);
-
-              switch (data.frecuenciaPago) {
-                case FrecuenciaPago.DIARIO:
-                  fechaVencimiento.setDate(
-                    fechaVencimiento.getDate() + cuota.numeroCuota,
-                  );
-                  break;
-                case FrecuenciaPago.SEMANAL:
-                  fechaVencimiento.setDate(
-                    fechaVencimiento.getDate() + cuota.numeroCuota * 7,
-                  );
-                  break;
-                case FrecuenciaPago.QUINCENAL:
-                  fechaVencimiento.setDate(
-                    fechaVencimiento.getDate() + cuota.numeroCuota * 15,
-                  );
-                  break;
-                case FrecuenciaPago.MENSUAL:
-                  fechaVencimiento.setMonth(
-                    fechaVencimiento.getMonth() + cuota.numeroCuota,
-                  );
-                  break;
-              }
-
-              return {
-                numeroCuota: cuota.numeroCuota,
-                fechaVencimiento,
-                monto: cuota.monto,
-                montoCapital: cuota.montoCapital,
-                montoInteres: cuota.montoInteres,
-                estado: EstadoCuota.PENDIENTE,
-              };
-            }),
+            create: cuotasData,
           },
         },
         include: {
