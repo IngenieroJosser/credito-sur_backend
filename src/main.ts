@@ -24,7 +24,8 @@ async function bootstrap() {
   app.enableCors({
     origin: [
       'http://localhost:3000',
-      'https://credito-sur-frontend.onrender.com'
+      'https://credito-sur-frontend.onrender.com',
+      'https://creditos-del-sur.vercel.app',
     ],
     credentials: true,
   });
