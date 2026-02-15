@@ -17,12 +17,12 @@ async function bootstrap() {
       validationError: {
         target: false,
         value: false,
-      },
+      }, 
     }),
   );
 
   app.enableCors({
-    origin: 'http://localhost:3000',
+    origin: ['http://localhost:3000', 'https://credito-sur-backend.onrender.com'],
   });
 
   const config = new DocumentBuilder()
