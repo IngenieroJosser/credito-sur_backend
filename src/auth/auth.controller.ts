@@ -21,6 +21,13 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Publico()
+  @Get()
+  @ApiOperation({ summary: 'Mostrar todos los usuarios registrados' })
+  obtenerTodosLosUsuarios() {
+    return this.authService.obtenerTodosLosUsuarios()
+  }
+
+  @Publico()
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Iniciar sesión' })
