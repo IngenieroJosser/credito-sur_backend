@@ -22,9 +22,13 @@ async function bootstrap() {
   );
 
   app.enableCors({
-    origin: ['http://localhost:3000', 'https://credito-sur-backend.onrender.com'],
+    origin: [
+      'http://localhost:3000',
+      'https://credito-sur-frontend.onrender.com'
+    ],
+    credentials: true,
   });
-
+    
   const config = new DocumentBuilder()
     .setTitle('Créditos del Sur – API REST')
     .setDescription(
