@@ -58,6 +58,11 @@ enum FrecuenciaPago {
   MENSUAL
 }
 
+enum TipoAmortizacion {
+  INTERES_SIMPLE
+  FRANCESA
+}
+
 enum MetodoPago {
   EFECTIVO
   TRANSFERENCIA
@@ -455,6 +460,7 @@ model Prestamo {
   
   // Tipo de préstamo
   tipoPrestamo           String                @db.VarChar(20)
+  tipoAmortizacion       TipoAmortizacion      @default(INTERES_SIMPLE)
   monto                  Decimal               @db.Decimal(12, 2)
   tasaInteres            Decimal               @db.Decimal(5, 2)
   tasaInteresMora        Decimal               @db.Decimal(5, 2)

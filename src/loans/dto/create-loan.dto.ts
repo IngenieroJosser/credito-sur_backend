@@ -8,7 +8,7 @@ import {
   IsNotEmpty,
   ValidateIf,
 } from 'class-validator';
-import { FrecuenciaPago } from '@prisma/client';
+import { FrecuenciaPago, TipoAmortizacion } from '@prisma/client';
 
 export class CreateLoanDto {
   @IsString()
@@ -66,4 +66,8 @@ export class CreateLoanDto {
   @IsString()
   @IsOptional()
   fechaPrimerCobro?: string;
+
+  @IsEnum(TipoAmortizacion)
+  @IsOptional()
+  tipoAmortizacion?: TipoAmortizacion;
 }
