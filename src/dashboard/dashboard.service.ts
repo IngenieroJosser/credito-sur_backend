@@ -12,44 +12,45 @@ export class DashboardService {
   constructor(private prisma: PrismaService) {}
 
   async getDashboardData(timeFilter: string) {
-    // 1. Obtener métricas principales
-    const pendingApprovals = await this.prisma.aprobacion.count({
-      where: { estado: EstadoAprobacion.PENDIENTE },
-    });
+    try {
+      // 1. Obtener métricas principales
+      const pendingApprovals = await this.prisma.aprobacion.count({
+        where: { estado: EstadoAprobacion.PENDIENTE },
+      });
 
-    const delinquentAccounts = await this.prisma.prestamo.count({
-      where: { estado: EstadoPrestamo.EN_MORA },
-    });
+      const delinquentAccounts = await this.prisma.prestamo.count({
+        where: { estado: EstadoPrestamo.EN_MORA },
+      });
 
-    // Base solicitada (suma de aprobaciones pendientes de tipo SOLICITUD_BASE_EFECTIVO)
-    const _requestedBaseResult = await this.prisma.aprobacion.aggregate({
-      where: {
-        estado: EstadoAprobacion.PENDIENTE,
-        tipoAprobacion: TipoAprobacion.SOLICITUD_BASE_EFECTIVO,
-      },
-      _sum: {
-        montoSolicitud: true, // Esto necesita un manejo especial, veremos más abajo
-      },
-    });
-
-    // Cálculo de eficiencia (relación entre préstamos pagados vs totales)
-    const totalLoans = await this.prisma.prestamo.count({
-      where: {
-        estado: {
-          in: [
-            EstadoPrestamo.ACTIVO,
-            EstadoPrestamo.PAGADO,
-            EstadoPrestamo.EN_MORA,
-          ],
+      // Base solicitada (suma de aprobaciones pendientes de tipo SOLICITUD_BASE_EFECTIVO)
+      const _requestedBaseResult = await this.prisma.aprobacion.aggregate({
+        where: {
+          estado: EstadoAprobacion.PENDIENTE,
+          tipoAprobacion: TipoAprobacion.SOLICITUD_BASE_EFECTIVO,
         },
-      },
-    });
+        _sum: {
+          montoSolicitud: true, // Esto necesita un manejo especial, veremos más abajo
+        },
+      });
 
-    const paidLoans = await this.prisma.prestamo.count({
-      where: { estado: EstadoPrestamo.PAGADO },
-    });
+      // Cálculo de eficiencia (relación entre préstamos pagados vs totales)
+      const totalLoans = await this.prisma.prestamo.count({
+        where: {
+          estado: {
+            in: [
+              EstadoPrestamo.ACTIVO,
+              EstadoPrestamo.PAGADO,
+              EstadoPrestamo.EN_MORA,
+            ],
+          },
+        },
+      });
 
-    const efficiency = totalLoans > 0 ? (paidLoans / totalLoans) * 100 : 0;
+      const paidLoans = await this.prisma.prestamo.count({
+        where: { estado: EstadoPrestamo.PAGADO },
+      });
+
+      const efficiency = totalLoans > 0 ? (paidLoans / totalLoans) * 100 : 0;
 
     // 2. Obtener aprobaciones pendientes
     const pendingApprovalsList = await this.prisma.aprobacion.findMany({
@@ -105,24 +106,40 @@ export class DashboardService {
     // 5. Datos de tendencia (últimos 7 días)
     const trendData = await this.getTrendData(timeFilter);
 
-    return {
-      metrics: {
-        pendingApprovals,
-        delinquentAccounts,
-        requestedBase: this.calculateRequestedBase(pendingApprovalsList),
-        efficiency: parseFloat(efficiency.toFixed(1)),
-      },
-      trend: trendData,
-      pendingApprovals: pendingApprovalsList.map((item) =>
-        this.mapApproval(item),
-      ),
-      delinquentAccounts: delinquentAccountsList.map((item) =>
-        this.mapDelinquentAccount(item),
-      ),
-      recentActivity: recentActivityList.map((item) =>
-        this.mapRecentActivity(item),
-      ),
-    };
+      return {
+        metrics: {
+          pendingApprovals,
+          delinquentAccounts,
+          requestedBase: this.calculateRequestedBase(pendingApprovalsList),
+          efficiency: parseFloat(efficiency.toFixed(1)),
+        },
+        trend: trendData,
+        pendingApprovals: pendingApprovalsList.map((item) =>
+          this.mapApproval(item),
+        ),
+        delinquentAccounts: delinquentAccountsList.map((item) =>
+          this.mapDelinquentAccount(item),
+        ),
+        recentActivity: recentActivityList.map((item) =>
+          this.mapRecentActivity(item),
+        ),
+      };
+    } catch (error) {
+      console.error('Error al obtener datos del dashboard:', error);
+      // Retornar datos de fallback en caso de error
+      return {
+        metrics: {
+          pendingApprovals: 0,
+          delinquentAccounts: 0,
+          requestedBase: 0,
+          efficiency: 0,
+        },
+        trend: this.getSampleTrendData(),
+        pendingApprovals: [],
+        delinquentAccounts: [],
+        recentActivity: [],
+      };
+    }
   }
 
   private calculateRequestedBase(approvals: any[]): number {
