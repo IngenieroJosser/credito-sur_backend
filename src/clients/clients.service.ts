@@ -83,56 +83,74 @@ export class ClientsService {
       data: clientData,
     });
 
-    // Si vienen archivos nuevos, procesar actualización
-    if (archivos && Array.isArray(archivos) && archivos.length > 0) {
-      // Obtener archivos existentes del cliente
+    // Si vienen archivos, procesar actualización (incluso si el array está vacío, significa que se eliminaron todos)
+    if (archivos !== undefined) {
+      this.logger.log(`[DEBUG] Actualizando archivos para cliente ${id}. Archivos recibidos: ${archivos.length}`);
+
+      // ESTRATEGIA SIMPLE: Marcar TODOS los archivos existentes como ELIMINADOS
       const archivosExistentes = await this.prisma.multimedia.findMany({
         where: { 
           clienteId: id,
           estado: 'ACTIVO'
         },
+        select: { id: true, tipoContenido: true },
       });
 
-      // Marcar archivos antiguos como eliminados (soft delete)
-      // Solo los que tienen el mismo tipoContenido que los nuevos
-      const tiposNuevos = archivos.map(a => a.tipoContenido);
-      const archivosAEliminar = archivosExistentes.filter(a => 
-        tiposNuevos.includes(a.tipoContenido)
-      );
-
-      if (archivosAEliminar.length > 0) {
+      if (archivosExistentes.length > 0) {
+        this.logger.log(`[DEBUG] Marcando ${archivosExistentes.length} archivos antiguos como ELIMINADOS`);
         await this.prisma.multimedia.updateMany({
           where: {
-            id: { in: archivosAEliminar.map(a => a.id) }
+            id: { in: archivosExistentes.map(a => a.id) }
           },
           data: {
-            estado: 'ELIMINADO',
+            estado: 'ELIMINADO' as const,
             eliminadoEn: new Date()
           }
         });
       }
 
       // Crear nuevos archivos
-      await this.prisma.multimedia.createMany({
-        data: archivos.map((archivo: any) => ({
+      const nuevosArchivos = archivos.map((archivo: any) => {
+        // Asegurar que la URL sea correcta
+        const url = archivo.url || archivo.path || archivo.ruta;
+        const urlFinal = url?.startsWith('http') ? url : url;
+        
+        return {
           clienteId: id,
           tipoContenido: archivo.tipoContenido,
           tipoArchivo: archivo.tipoArchivo,
           formato: archivo.formato || archivo.tipoArchivo?.split('/')[1] || 'jpg',
           nombreOriginal: archivo.nombreOriginal,
           nombreAlmacenamiento: archivo.nombreAlmacenamiento || archivo.nombreOriginal,
-          ruta: archivo.ruta,
-          url: archivo.url,
+          ruta: archivo.ruta || archivo.path,
+          url: urlFinal,
           tamanoBytes: archivo.tamanoBytes || 0,
           subidoPorId: archivo.subidoPorId || clienteActualizado.creadoPorId,
-          estado: 'ACTIVO',
-        })),
+          estado: 'ACTIVO' as const,
+        };
       });
 
-      this.logger.log(`Archivos actualizados para cliente ${id}: ${archivos.length} nuevos archivos`);
+      await this.prisma.multimedia.createMany({
+        data: nuevosArchivos,
+      });
+
+      this.logger.log(`[DEBUG] Archivos actualizados para cliente ${id}:`);
+      this.logger.log(`  - Eliminados: ${archivosExistentes.length} archivos antiguos`);
+      this.logger.log(`  - Creados: ${nuevosArchivos.length} archivos nuevos`);
+      nuevosArchivos.forEach((a, i) => {
+        this.logger.log(`    [${i}] ${a.tipoContenido} - ${a.tipoArchivo} - ${a.url}`);
+      });
     }
 
-    return clienteActualizado;
+    // Devolver cliente con archivos actualizados
+    return this.prisma.cliente.findUnique({
+      where: { id },
+      include: {
+        archivos: {
+          where: { estado: 'ACTIVO' },
+        },
+      },
+    });
   }
 
   remove(id: string) {
@@ -555,6 +573,14 @@ export class ClientsService {
         },
       });
 
+      // Log de archivos devueltos
+      if (cliente && cliente.archivos) {
+        this.logger.log(`[DEBUG] Cliente ${id} - Archivos ACTIVOS devueltos: ${cliente.archivos.length}`);
+        cliente.archivos.forEach((a: any, i: number) => {
+          this.logger.log(`  [${i}] ${a.tipoContenido} - ${a.tipoArchivo} - Estado: ${a.estado} - URL: ${a.url}`);
+        });
+      }
+
       if (!cliente) {
         this.logger.log(
           `[DEBUG] Cliente no encontrado en tabla principal, buscando en aprobaciones: ${id}`,
@@ -947,6 +973,7 @@ export class ClientsService {
       referencia?: string;
       nivelRiesgo?: NivelRiesgo;
       puntaje?: number;
+      archivos?: any[];
     },
   ) {
     try {
@@ -961,12 +988,64 @@ export class ClientsService {
         throw new NotFoundException('Cliente no encontrado');
       }
 
-      return await this.prisma.cliente.update({
+      // Separar archivos de los datos del cliente
+      const { archivos, ...clientData } = data;
+
+      // Actualizar datos básicos del cliente
+      const clienteActualizado = await this.prisma.cliente.update({
         where: { id },
         data: {
-          ...data,
+          ...clientData,
           ultimaActualizacionRiesgo:
-            data.nivelRiesgo || data.puntaje ? new Date() : undefined,
+            clientData.nivelRiesgo || clientData.puntaje ? new Date() : undefined,
+        },
+      });
+
+      // Procesar archivos si se enviaron
+      if (archivos && Array.isArray(archivos)) {
+        this.logger.log(`[UPDATE] Procesando ${archivos.length} archivos para cliente ${id}`);
+
+        // 1. Marcar TODOS los archivos ACTIVOS como ELIMINADOS
+        const eliminados = await this.prisma.multimedia.updateMany({
+          where: {
+            clienteId: id,
+            estado: 'ACTIVO',
+          },
+          data: {
+            estado: 'ELIMINADO' as const,
+            eliminadoEn: new Date(),
+          },
+        });
+        this.logger.log(`[UPDATE] ${eliminados.count} archivos antiguos marcados como ELIMINADOS`);
+
+        // 2. Crear los archivos nuevos
+        if (archivos.length > 0) {
+          await this.prisma.multimedia.createMany({
+            data: archivos.map((archivo: any) => ({
+              clienteId: id,
+              tipoContenido: archivo.tipoContenido,
+              tipoArchivo: archivo.tipoArchivo || 'image/jpeg',
+              formato: archivo.formato || archivo.tipoArchivo?.split('/')[1] || archivo.nombreOriginal?.split('.').pop() || 'jpg',
+              nombreOriginal: archivo.nombreOriginal,
+              nombreAlmacenamiento: archivo.nombreAlmacenamiento || archivo.nombreOriginal,
+              ruta: archivo.ruta || archivo.path || '',
+              url: archivo.url || archivo.ruta || archivo.path || '',
+              tamanoBytes: archivo.tamanoBytes || 0,
+              subidoPorId: cliente.creadoPorId,
+              estado: 'ACTIVO' as const,
+            })),
+          });
+          this.logger.log(`[UPDATE] ${archivos.length} archivos nuevos creados`);
+        }
+      }
+
+      // Devolver cliente con archivos actualizados
+      return this.prisma.cliente.findUnique({
+        where: { id },
+        include: {
+          archivos: {
+            where: { estado: 'ACTIVO' },
+          },
         },
       });
     } catch (error) {

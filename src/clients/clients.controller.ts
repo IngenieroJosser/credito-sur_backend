@@ -101,7 +101,7 @@ export class ClientsController {
   }
 
   @Put(':id')
-  @Roles(RolUsuario.COORDINADOR)
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
   async updateClient(
     @Param('id') id: string,
     @Body()
@@ -114,6 +114,8 @@ export class ClientsController {
       referencia?: string;
       nivelRiesgo?: string;
       puntaje?: number;
+      archivos?: any[];
+      creadoPorId?: string;
     },
   ) {
     return this.clientsService.updateClient(id, {
@@ -124,6 +126,7 @@ export class ClientsController {
       direccion: body.direccion,
       referencia: body.referencia,
       nivelRiesgo: body.nivelRiesgo as NivelRiesgo,
+      archivos: body.archivos,
     });
   }
 
