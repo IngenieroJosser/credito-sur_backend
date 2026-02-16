@@ -75,7 +75,7 @@ export class ClientsController {
   }
 
   @Post('approve/:id')
-  @Roles(RolUsuario.COORDINADOR)
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
   async approveClient(
     @Param('id') id: string,
     @Body() body: { aprobadoPorId: string; datosAprobados?: any },
@@ -84,6 +84,19 @@ export class ClientsController {
       id,
       body.aprobadoPorId,
       body.datosAprobados,
+    );
+  }
+
+  @Post('reject/:id')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
+  async rejectClient(
+    @Param('id') id: string,
+    @Body() body: { rechazadoPorId: string; razon?: string },
+  ) {
+    return this.clientsService.rejectClient(
+      id,
+      body.rechazadoPorId,
+      body.razon,
     );
   }
 

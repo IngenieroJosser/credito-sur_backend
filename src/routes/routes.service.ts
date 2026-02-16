@@ -6,13 +6,17 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
 import { CreateRouteDto } from './dto/create-route.dto';
 import { UpdateRouteDto } from './dto/update-route.dto';
 import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class RoutesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private auditService: AuditService,
+  ) {}
 
   async create(createRouteDto: CreateRouteDto) {
     try {
@@ -89,6 +93,24 @@ export class RoutesService {
           },
         },
       });
+
+      // Registrar en auditoría
+      if (createRouteDto.cobradorId) {
+        await this.auditService.create({
+          usuarioId: createRouteDto.cobradorId,
+          accion: 'CREAR_RUTA',
+          entidad: 'Ruta',
+          entidadId: route.id,
+          datosNuevos: {
+            codigo: route.codigo,
+            nombre: route.nombre,
+            descripcion: route.descripcion,
+            zona: route.zona,
+            cobrador: `${route.cobrador.nombres} ${route.cobrador.apellidos}`,
+            supervisor: route.supervisor ? `${route.supervisor.nombres} ${route.supervisor.apellidos}` : null,
+          },
+        });
+      }
 
       return route;
     } catch (error) {

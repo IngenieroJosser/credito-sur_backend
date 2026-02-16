@@ -7,13 +7,19 @@ import {
 import { CreateClientDto } from './dto/create-client.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NivelRiesgo, RolUsuario } from '@prisma/client';
 
 @Injectable()
 export class ClientsService {
   private readonly logger = new Logger(ClientsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditService: AuditService,
+    private readonly notificacionesService: NotificacionesService,
+  ) {}
 
   async create(createClientDto: CreateClientDto) {
     // Generar código único (simple por ahora)
@@ -675,6 +681,24 @@ export class ClientsService {
           });
         }
 
+        // Registrar en auditoría
+        await this.auditService.create({
+          usuarioId: solicitadoPorId,
+          accion: 'CREAR_CLIENTE',
+          entidad: 'Cliente',
+          entidadId: cliente.id,
+          datosNuevos: {
+            codigo: cliente.codigo,
+            dni: cliente.dni,
+            nombres: cliente.nombres,
+            apellidos: cliente.apellidos,
+            telefono: cliente.telefono,
+            correo: cliente.correo,
+            direccion: cliente.direccion,
+            estadoAprobacion: cliente.estadoAprobacion,
+          },
+        });
+
         this.logger.log(
           `[DEBUG] Cliente aprobado automáticamente por ${solicitante.rol}: ${cliente.id}`,
         );
@@ -702,7 +726,38 @@ export class ClientsService {
         },
       });
 
-      this.logger.log(`[DEBUG] Aprobación creada con ID: ${aprobacion.id}`);
+      // Enviar notificaciones a todos los SUPER_ADMINISTRADOR, ADMIN y COORDINADOR
+      const aprobadores = await this.prisma.usuario.findMany({
+        where: {
+          rol: { in: [RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR] },
+          estado: 'ACTIVO',
+        },
+        select: { id: true, nombres: true, apellidos: true },
+      });
+
+      const solicitanteInfo = await this.prisma.usuario.findUnique({
+        where: { id: solicitadoPorId },
+        select: { nombres: true, apellidos: true },
+      });
+
+      for (const aprobador of aprobadores) {
+        await this.notificacionesService.create({
+          usuarioId: aprobador.id,
+          titulo: 'Nueva Solicitud de Cliente',
+          mensaje: `${solicitanteInfo?.nombres} ${solicitanteInfo?.apellidos} ha solicitado la aprobación de un nuevo cliente: ${data.nombres} ${data.apellidos} (DNI: ${data.dni})`,
+          tipo: 'APROBACION',
+          entidad: 'Aprobacion',
+          entidadId: aprobacion.id,
+          metadata: {
+            tipoAprobacion: 'NUEVO_CLIENTE',
+            clienteNombre: `${data.nombres} ${data.apellidos}`,
+            clienteDni: data.dni,
+            solicitadoPor: `${solicitanteInfo?.nombres} ${solicitanteInfo?.apellidos}`,
+          },
+        });
+      }
+
+      this.logger.log(`[DEBUG] Aprobación creada con ID: ${aprobacion.id}. Notificaciones enviadas a ${aprobadores.length} aprobadores.`);
       return {
         mensaje: 'Cliente creado exitosamente. Pendiente de aprobación.',
         aprobacionId: aprobacion.id,
@@ -792,9 +847,91 @@ export class ClientsService {
         },
       });
 
+      // Notificar al solicitante que su cliente fue aprobado
+      const aprobadorInfo = await this.prisma.usuario.findUnique({
+        where: { id: aprobadoPorId },
+        select: { nombres: true, apellidos: true },
+      });
+
+      await this.notificacionesService.create({
+        usuarioId: aprobacion.solicitadoPorId,
+        titulo: 'Cliente Aprobado',
+        mensaje: `Tu solicitud de cliente ${datosSolicitud.nombres} ${datosSolicitud.apellidos} (DNI: ${datosSolicitud.dni}) ha sido aprobada por ${aprobadorInfo?.nombres} ${aprobadorInfo?.apellidos}`,
+        tipo: 'APROBACION',
+        entidad: 'Cliente',
+        entidadId: cliente.id,
+        metadata: {
+          accion: 'APROBADO',
+          clienteNombre: `${datosSolicitud.nombres} ${datosSolicitud.apellidos}`,
+          clienteDni: datosSolicitud.dni,
+          aprobadoPor: `${aprobadorInfo?.nombres} ${aprobadorInfo?.apellidos}`,
+        },
+      });
+
       return cliente;
     } catch (error) {
       this.logger.error(`Error approving client ${id}:`, error);
+      throw error;
+    }
+  }
+
+  async rejectClient(id: string, rechazadoPorId: string, razon?: string) {
+    try {
+      // Encontrar la aprobación
+      const aprobacion = await this.prisma.aprobacion.findUnique({
+        where: { id },
+      });
+
+      if (!aprobacion) {
+        throw new NotFoundException('Aprobación no encontrada');
+      }
+
+      if (aprobacion.tipoAprobacion !== 'NUEVO_CLIENTE') {
+        throw new Error('Tipo de aprobación inválido');
+      }
+
+      // Parsear datos de solicitud
+      const datosSolicitud = JSON.parse(aprobacion.datosSolicitud as string);
+
+      // Actualizar la aprobación como rechazada
+      await this.prisma.aprobacion.update({
+        where: { id },
+        data: {
+          aprobadoPorId: rechazadoPorId,
+          estado: 'RECHAZADO',
+          datosAprobados: razon ? JSON.stringify({ razon }) : undefined,
+          revisadoEn: new Date(),
+        },
+      });
+
+      // Notificar al solicitante que su cliente fue rechazado
+      const rechazadorInfo = await this.prisma.usuario.findUnique({
+        where: { id: rechazadoPorId },
+        select: { nombres: true, apellidos: true },
+      });
+
+      await this.notificacionesService.create({
+        usuarioId: aprobacion.solicitadoPorId,
+        titulo: 'Cliente Rechazado',
+        mensaje: `Tu solicitud de cliente ${datosSolicitud.nombres} ${datosSolicitud.apellidos} (DNI: ${datosSolicitud.dni}) ha sido rechazada por ${rechazadorInfo?.nombres} ${rechazadorInfo?.apellidos}${razon ? `. Razón: ${razon}` : ''}`,
+        tipo: 'APROBACION',
+        entidad: 'Aprobacion',
+        entidadId: id,
+        metadata: {
+          accion: 'RECHAZADO',
+          clienteNombre: `${datosSolicitud.nombres} ${datosSolicitud.apellidos}`,
+          clienteDni: datosSolicitud.dni,
+          rechazadoPor: `${rechazadorInfo?.nombres} ${rechazadorInfo?.apellidos}`,
+          razon: razon || 'No especificada',
+        },
+      });
+
+      return {
+        mensaje: 'Solicitud de cliente rechazada exitosamente',
+        aprobacionId: id,
+      };
+    } catch (error) {
+      this.logger.error(`Error rejecting client ${id}:`, error);
       throw error;
     }
   }
