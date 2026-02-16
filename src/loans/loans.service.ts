@@ -1742,4 +1742,79 @@ export class LoansService {
       filename: `contrato-${prestamo.numeroPrestamo}-${fecha}.pdf`,
     };
   }
+
+  /**
+   * Archivar préstamo como pérdida y agregar cliente a blacklist
+   */
+  async archiveLoan(prestamoId: string, data: { motivo: string; notas?: string; archivarPorId: string }) {
+    const prestamo = await this.prisma.prestamo.findUnique({
+      where: { id: prestamoId },
+      include: { cliente: true },
+    });
+
+    if (!prestamo) {
+      throw new NotFoundException('Préstamo no encontrado');
+    }
+
+    if (prestamo.estado === 'PERDIDA') {
+      throw new BadRequestException('Este préstamo ya está archivado como pérdida');
+    }
+
+    // Realizar operaciones en transacción
+    await this.prisma.$transaction(async (tx) => {
+      // 1. Marcar préstamo como PERDIDA
+      await tx.prestamo.update({
+        where: { id: prestamoId },
+        data: {
+          estado: 'PERDIDA',
+          eliminadoEn: new Date(),
+        },
+      });
+
+      // 2. Agregar cliente a blacklist
+      await tx.cliente.update({
+        where: { id: prestamo.clienteId },
+        data: {
+          enListaNegra: true,
+          razonListaNegra: data.motivo,
+          fechaListaNegra: new Date(),
+          agregadoListaNegraPorId: data.archivarPorId,
+          nivelRiesgo: 'LISTA_NEGRA',
+        },
+      });
+
+      // 3. Registrar en auditoría
+      await this.auditService.create({
+        usuarioId: data.archivarPorId,
+        accion: 'ARCHIVAR_PRESTAMO',
+        entidad: 'Prestamo',
+        entidadId: prestamoId,
+        datosAnteriores: { estado: prestamo.estado },
+        datosNuevos: { estado: 'PERDIDA', motivo: data.motivo },
+      });
+
+      // 4. Notificar (opcional - puede fallar si el servicio no tiene el método)
+      try {
+        await tx.notificacion.create({
+          data: {
+            usuarioId: data.archivarPorId,
+            titulo: 'Cuenta Archivada',
+            mensaje: `Préstamo ${prestamo.numeroPrestamo} archivado como pérdida. Cliente ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos} agregado a lista negra.`,
+            tipo: 'ALERTA',
+            entidad: 'Prestamo',
+            entidadId: prestamoId,
+          },
+        });
+      } catch (err) {
+        // Ignorar error de notificación
+      }
+    });
+
+    return {
+      message: 'Préstamo archivado exitosamente',
+      prestamoId,
+      clienteId: prestamo.clienteId,
+      montoPerdida: Number(prestamo.saldoPendiente),
+    };
+  }
 }

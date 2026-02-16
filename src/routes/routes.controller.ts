@@ -256,4 +256,39 @@ export class RoutesController {
   ) {
     return this.routesService.moveClient(clienteId, fromRutaId, toRutaId);
   }
+
+  @Get(':id/daily-visits')
+  @Roles(
+    RolUsuario.COBRADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
+  @ApiOperation({ summary: 'Obtener visitas del día para una ruta' })
+  @ApiQuery({ name: 'fecha', required: false, type: String, description: 'Fecha en formato YYYY-MM-DD' })
+  @ApiResponse({ status: 200, description: 'Visitas del día obtenidas exitosamente' })
+  @ApiResponse({ status: 404, description: 'Ruta no encontrada' })
+  getDailyVisits(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('fecha') fecha?: string,
+  ) {
+    return this.routesService.getDailyVisits(id, fecha);
+  }
+
+  @Patch(':id/reorder')
+  @Roles(
+    RolUsuario.COBRADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
+  @ApiOperation({ summary: 'Actualizar orden de clientes en una ruta (drag & drop)' })
+  @ApiResponse({ status: 200, description: 'Orden actualizado exitosamente' })
+  @ApiResponse({ status: 404, description: 'Ruta no encontrada' })
+  updateClientOrder(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body('orden') orden: Array<{ clienteId: string; orden: number }>,
+  ) {
+    return this.routesService.updateClientOrder(id, orden);
+  }
 }

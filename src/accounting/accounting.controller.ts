@@ -226,6 +226,20 @@ export class AccountingController {
     });
   }
 
+  @Get('rutas/:rutaId/saldo-disponible')
+  @Roles(
+    RolUsuario.COBRADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
+  getSaldoDisponibleRuta(
+    @Param('rutaId') rutaId: string,
+    @Query('fecha') fecha?: string,
+  ) {
+    return this.accountingService.getSaldoDisponibleRuta(rutaId, fecha);
+  }
+
   @Get('export')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.CONTADOR)
   @HttpCode(HttpStatus.OK)
