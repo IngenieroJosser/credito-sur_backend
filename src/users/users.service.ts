@@ -278,8 +278,13 @@ export class UsersService {
       throw new ForbiddenException('No se puede cambiar el rol del Superadministrador principal');
     }
 
+    // Hashear contraseña si se proporciona
+    let hashContrasena: string | undefined;
     if (updateUserDto.password) {
-      updateUserDto.password = await argon2.hash(updateUserDto.password);
+      hashContrasena = await argon2.hash(updateUserDto.password);
+      console.log(`[USERS] Hasheando nueva contraseña para usuario ${id}. Password recibido: "${updateUserDto.password.substring(0, 3)}***". Hash generado: ${hashContrasena.substring(0, 20)}...`);
+    } else {
+      console.log(`[USERS] No se recibió password para usuario ${id}. Keys recibidas: ${Object.keys(updateUserDto).join(', ')}`);
     }
 
     // Si cambia el rol, actualizar también la tabla relacional
@@ -314,7 +319,7 @@ export class UsersService {
       where: { id },
       data: {
         ...datos,
-        ...(updateUserDto.password && { hashContrasena: updateUserDto.password }),
+        ...(hashContrasena && { hashContrasena }),
       },
       select: {
         id: true,

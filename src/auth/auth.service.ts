@@ -25,14 +25,20 @@ export class AuthService {
       return null;
     }
 
-    const matches = await argon2.verify(usuario.hashContrasena, contrasena);
-    console.log(
-      `[AUTH] Coincidencia de contraseña para ${nombres}: ${matches}`,
-    );
+    console.log(`[AUTH] Usuario encontrado: ${usuario.nombres} (ID: ${usuario.id})`);
+    console.log(`[AUTH] Hash en BD: ${usuario.hashContrasena.substring(0, 30)}...`);
+    console.log(`[AUTH] Contraseña recibida: "${contrasena.substring(0, 3)}***" (longitud: ${contrasena.length})`);
 
-    if (matches) {
-      const { hashContrasena: _hashContrasena, ...resultado } = usuario;
-      return resultado;
+    try {
+      const matches = await argon2.verify(usuario.hashContrasena, contrasena);
+      console.log(`[AUTH] Coincidencia de contraseña para ${nombres}: ${matches}`);
+
+      if (matches) {
+        const { hashContrasena: _hashContrasena, ...resultado } = usuario;
+        return resultado;
+      }
+    } catch (error) {
+      console.error(`[AUTH] Error al verificar contraseña:`, error);
     }
 
     return null;

@@ -50,7 +50,7 @@ export class UsersController {
   }
 
   @Patch(':id')
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR)
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   actualizar(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() usuarioDto: UpdateUserDto,
