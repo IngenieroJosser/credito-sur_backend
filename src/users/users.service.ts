@@ -454,27 +454,40 @@ export class UsersService {
   }
 
   async changePassword(id: string, changePasswordDto: ChangePasswordDto) {
+    console.log(`[USERS] changePassword llamado para usuario ${id}`);
+    console.log(`[USERS] DTO recibido:`, JSON.stringify(changePasswordDto));
+    
     const usuario = await this.prisma.usuario.findUnique({
       where: { id },
     });
 
     if (!usuario) {
+      console.log(`[USERS] Usuario ${id} no encontrado`);
       throw new NotFoundException('Usuario no encontrado');
     }
 
+    console.log(`[USERS] Usuario encontrado: ${usuario.nombres} ${usuario.apellidos}`);
+
     // Si se proporciona contraseña actual, validarla
-    if (changePasswordDto.contrasenaActual) {
+    if (changePasswordDto.contrasenaActual && changePasswordDto.contrasenaActual.trim() !== '') {
+      console.log(`[USERS] Validando contraseña actual...`);
       const passwordValid = await argon2.verify(
         usuario.hashContrasena,
         changePasswordDto.contrasenaActual,
       );
 
       if (!passwordValid) {
+        console.log(`[USERS] Contraseña actual incorrecta`);
         throw new UnauthorizedException('La contraseña actual es incorrecta');
       }
+      console.log(`[USERS] Contraseña actual validada correctamente`);
+    } else {
+      console.log(`[USERS] No se proporcionó contraseña actual - cambio administrativo`);
     }
 
+    console.log(`[USERS] Hasheando nueva contraseña...`);
     const hashContrasena = await argon2.hash(changePasswordDto.contrasenaNueva);
+    console.log(`[USERS] Hash generado: ${hashContrasena.substring(0, 20)}...`);
 
     await this.prisma.usuario.update({
       where: { id },
@@ -482,6 +495,8 @@ export class UsersService {
         hashContrasena,
       },
     });
+
+    console.log(`[USERS] Contraseña actualizada exitosamente para usuario ${id}`);
 
     return { message: 'Contraseña actualizada correctamente' };
   }
