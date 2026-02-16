@@ -192,7 +192,7 @@ export class LoansController {
   }
 
   @Post()
-  @Roles(RolUsuario.COORDINADOR, RolUsuario.COBRADOR, RolUsuario.SUPERVISOR)
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR, RolUsuario.COBRADOR, RolUsuario.SUPERVISOR)
   @UsePipes(new ValidationPipe({ transform: true }))
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
