@@ -63,17 +63,70 @@ export class ClientsService {
     });
   }
 
-  update(id: string, updateClientDto: UpdateClientDto) {
+  async update(id: string, updateClientDto: UpdateClientDto) {
     const {
       rutaId: _rutaId,
       observaciones: _observaciones,
-      archivos: _archivos,
+      archivos,
       ...clientData
     } = updateClientDto;
-    return this.prisma.cliente.update({
+
+    // Actualizar datos básicos del cliente
+    const clienteActualizado = await this.prisma.cliente.update({
       where: { id },
       data: clientData,
     });
+
+    // Si vienen archivos nuevos, procesar actualización
+    if (archivos && Array.isArray(archivos) && archivos.length > 0) {
+      // Obtener archivos existentes del cliente
+      const archivosExistentes = await this.prisma.multimedia.findMany({
+        where: { 
+          clienteId: id,
+          estado: 'ACTIVO'
+        },
+      });
+
+      // Marcar archivos antiguos como eliminados (soft delete)
+      // Solo los que tienen el mismo tipoContenido que los nuevos
+      const tiposNuevos = archivos.map(a => a.tipoContenido);
+      const archivosAEliminar = archivosExistentes.filter(a => 
+        tiposNuevos.includes(a.tipoContenido)
+      );
+
+      if (archivosAEliminar.length > 0) {
+        await this.prisma.multimedia.updateMany({
+          where: {
+            id: { in: archivosAEliminar.map(a => a.id) }
+          },
+          data: {
+            estado: 'ELIMINADO',
+            eliminadoEn: new Date()
+          }
+        });
+      }
+
+      // Crear nuevos archivos
+      await this.prisma.multimedia.createMany({
+        data: archivos.map((archivo: any) => ({
+          clienteId: id,
+          tipoContenido: archivo.tipoContenido,
+          tipoArchivo: archivo.tipoArchivo,
+          formato: archivo.formato || archivo.tipoArchivo?.split('/')[1] || 'jpg',
+          nombreOriginal: archivo.nombreOriginal,
+          nombreAlmacenamiento: archivo.nombreAlmacenamiento || archivo.nombreOriginal,
+          ruta: archivo.ruta,
+          url: archivo.url,
+          tamanoBytes: archivo.tamanoBytes || 0,
+          subidoPorId: archivo.subidoPorId || clienteActualizado.creadoPorId,
+          estado: 'ACTIVO',
+        })),
+      });
+
+      this.logger.log(`Archivos actualizados para cliente ${id}: ${archivos.length} nuevos archivos`);
+    }
+
+    return clienteActualizado;
   }
 
   remove(id: string) {
