@@ -314,6 +314,80 @@ export class AccountingService {
     };
   }
 
+  /**
+   * Obtener saldo disponible de una ruta (recaudo del día - gastos)
+   */
+  async getSaldoDisponibleRuta(rutaId: string, fecha?: string) {
+    const fechaConsulta = fecha ? new Date(fecha) : new Date();
+    fechaConsulta.setHours(0, 0, 0, 0);
+    const fechaFin = new Date(fechaConsulta);
+    fechaFin.setHours(23, 59, 59, 999);
+
+    // Obtener caja de la ruta
+    const caja = await this.prisma.caja.findFirst({
+      where: {
+        rutaId,
+        tipo: 'RUTA',
+        activa: true,
+      },
+    });
+
+    if (!caja) {
+      return {
+        rutaId,
+        fecha: fechaConsulta.toISOString(),
+        saldoDisponible: 0,
+        recaudoDelDia: 0,
+        gastosDelDia: 0,
+        mensaje: 'No hay caja asignada a esta ruta',
+      };
+    }
+
+    // Calcular recaudo del día (ingresos)
+    const recaudo = await this.prisma.transaccion.aggregate({
+      where: {
+        cajaId: caja.id,
+        tipo: 'INGRESO',
+        fechaTransaccion: {
+          gte: fechaConsulta,
+          lte: fechaFin,
+        },
+      },
+      _sum: {
+        monto: true,
+      },
+    });
+
+    // Calcular gastos del día (egresos)
+    const gastos = await this.prisma.transaccion.aggregate({
+      where: {
+        cajaId: caja.id,
+        tipo: 'EGRESO',
+        fechaTransaccion: {
+          gte: fechaConsulta,
+          lte: fechaFin,
+        },
+      },
+      _sum: {
+        monto: true,
+      },
+    });
+
+    const recaudoDelDia = Number(recaudo._sum.monto || 0);
+    const gastosDelDia = Number(gastos._sum.monto || 0);
+    const saldoDisponible = recaudoDelDia - gastosDelDia;
+
+    return {
+      rutaId,
+      cajaId: caja.id,
+      fecha: fechaConsulta.toISOString(),
+      saldoDisponible,
+      recaudoDelDia,
+      gastosDelDia,
+      saldoCaja: Number(caja.saldoActual),
+    };
+  }
+
   async createTransaccion(data: {
     cajaId: string;
     tipo: TipoTransaccion;
@@ -330,8 +404,19 @@ export class AccountingService {
     // Actualizar saldo de la caja (Destino)
     const caja = await this.prisma.caja.findUnique({
       where: { id: data.cajaId },
+      include: { ruta: true },
     });
     if (!caja) throw new NotFoundException('Caja no encontrada');
+
+    // VALIDACIÓN: Si es un egreso de caja de ruta, verificar saldo disponible del día
+    if (data.tipo === 'EGRESO' && caja.tipo === 'RUTA' && caja.rutaId) {
+      const saldoInfo = await this.getSaldoDisponibleRuta(caja.rutaId);
+      if (data.monto > saldoInfo.saldoDisponible) {
+        throw new BadRequestException(
+          `Saldo insuficiente. Disponible: $${saldoInfo.saldoDisponible.toLocaleString()}, Recaudo del día: $${saldoInfo.recaudoDelDia.toLocaleString()}, Gastos del día: $${saldoInfo.gastosDelDia.toLocaleString()}`,
+        );
+      }
+    }
 
     // Caso Especial: Si hay caja origen, es una transferencia/consolidación
     if (data.cajaOrigenId) {

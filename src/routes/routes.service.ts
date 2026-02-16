@@ -1105,4 +1105,178 @@ export class RoutesService {
       throw new InternalServerErrorException('Error al reordenar asignaciones');
     }
   }
+
+  /**
+   * Obtener visitas del día para una ruta
+   * Calcula qué clientes deben aparecer hoy según frecuencia de pago y estado de cuotas
+   */
+  async getDailyVisits(rutaId: string, fecha?: string) {
+    const fechaConsulta = fecha ? new Date(fecha) : new Date();
+    fechaConsulta.setHours(0, 0, 0, 0);
+
+    // Obtener todos los clientes de la ruta con sus préstamos activos
+    const asignaciones = await this.prisma.asignacionRuta.findMany({
+      where: {
+        rutaId,
+        activa: true,
+      },
+      include: {
+        cliente: {
+          include: {
+            prestamos: {
+              where: {
+                estado: { in: ['ACTIVO', 'EN_MORA'] },
+              },
+              include: {
+                cuotas: {
+                  where: {
+                    estado: { in: ['PENDIENTE', 'VENCIDA', 'PARCIAL'] },
+                  },
+                  orderBy: { fechaVencimiento: 'asc' },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { ordenVisita: 'asc' },
+    });
+
+    const visitasDelDia: any[] = [];
+
+    for (const asignacion of asignaciones) {
+      const cliente = asignacion.cliente;
+      let debeAparecerHoy = false;
+
+      // Revisar cada préstamo activo
+      for (const prestamo of cliente.prestamos) {
+        if (prestamo.cuotas.length === 0) continue;
+
+        const proximaCuota = prestamo.cuotas[0];
+        const fechaVencimiento = new Date(proximaCuota.fechaVencimiento);
+        fechaVencimiento.setHours(0, 0, 0, 0);
+
+        // Si la cuota está vencida, siempre aparece
+        if (fechaVencimiento <= fechaConsulta) {
+          debeAparecerHoy = true;
+          break;
+        }
+
+        // Calcular si debe aparecer según frecuencia
+        const diasHastaVencimiento = Math.ceil(
+          (fechaVencimiento.getTime() - fechaConsulta.getTime()) /
+            (1000 * 60 * 60 * 24),
+        );
+
+        switch (prestamo.frecuenciaPago) {
+          case 'DIARIO':
+            // Aparece todos los días si tiene cuota pendiente
+            if (diasHastaVencimiento <= 1) debeAparecerHoy = true;
+            break;
+          case 'SEMANAL':
+            // Aparece 1 día antes del vencimiento
+            if (diasHastaVencimiento <= 1) debeAparecerHoy = true;
+            break;
+          case 'QUINCENAL':
+            // Aparece 1 día antes del vencimiento
+            if (diasHastaVencimiento <= 1) debeAparecerHoy = true;
+            break;
+          case 'MENSUAL':
+            // Aparece 2 días antes del vencimiento
+            if (diasHastaVencimiento <= 2) debeAparecerHoy = true;
+            break;
+        }
+
+        if (debeAparecerHoy) break;
+      }
+
+      if (debeAparecerHoy) {
+        visitasDelDia.push({
+          asignacionId: asignacion.id,
+          ordenVisita: asignacion.ordenVisita,
+          cliente: {
+            id: cliente.id,
+            codigo: cliente.codigo,
+            dni: cliente.dni,
+            nombres: cliente.nombres,
+            apellidos: cliente.apellidos,
+            telefono: cliente.telefono,
+            direccion: cliente.direccion,
+            nivelRiesgo: cliente.nivelRiesgo,
+            prestamosActivos: cliente.prestamos.length,
+          },
+          prestamos: cliente.prestamos.map((p) => ({
+            id: p.id,
+            numeroPrestamo: p.numeroPrestamo,
+            monto: Number(p.monto),
+            saldoPendiente: Number(p.saldoPendiente),
+            frecuenciaPago: p.frecuenciaPago,
+            estado: p.estado,
+            proximaCuota: p.cuotas[0]
+              ? {
+                  numeroCuota: p.cuotas[0].numeroCuota,
+                  fechaVencimiento: p.cuotas[0].fechaVencimiento,
+                  monto: Number(p.cuotas[0].monto),
+                  estado: p.cuotas[0].estado,
+                }
+              : null,
+          })),
+        });
+      }
+    }
+
+    return {
+      fecha: fechaConsulta.toISOString(),
+      rutaId,
+      totalVisitas: visitasDelDia.length,
+      visitas: visitasDelDia,
+    };
+  }
+
+  /**
+   * Actualizar orden de clientes en una ruta (para drag & drop)
+   */
+  async updateClientOrder(
+    rutaId: string,
+    reorderData: Array<{ clienteId: string; orden: number }>,
+  ) {
+    try {
+      // Verificar que la ruta existe
+      const ruta = await this.prisma.ruta.findUnique({
+        where: { id: rutaId },
+      });
+
+      if (!ruta) {
+        throw new NotFoundException('Ruta no encontrada');
+      }
+
+      // Actualizar el orden de cada cliente
+      const updates = reorderData.map((item) =>
+        this.prisma.asignacionRuta.updateMany({
+          where: {
+            rutaId,
+            clienteId: item.clienteId,
+            activa: true,
+          },
+          data: {
+            ordenVisita: item.orden,
+          },
+        }),
+      );
+
+      await this.prisma.$transaction(updates);
+
+      return {
+        message: 'Orden actualizado correctamente',
+        totalActualizados: reorderData.length,
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      throw new InternalServerErrorException(
+        'Error al actualizar el orden de clientes',
+      );
+    }
+  }
 }

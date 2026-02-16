@@ -538,4 +538,38 @@ export class LoansController {
     res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
     res.send(result.data);
   }
+
+  @Post(':id/archive')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+  )
+  @ApiOperation({ summary: 'Archivar préstamo como pérdida y agregar cliente a blacklist' })
+  @ApiParam({ name: 'id', description: 'ID del préstamo a archivar' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        motivo: { type: 'string', example: 'Impago reiterado' },
+        notas: { type: 'string', example: 'Cliente no responde llamadas' },
+      },
+      required: ['motivo'],
+    },
+  })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Préstamo archivado exitosamente' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Préstamo no encontrado' })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'El préstamo ya está archivado' })
+  async archiveLoan(
+    @Param('id') id: string,
+    @Body() body: { motivo: string; notas?: string },
+    @Request() req,
+  ) {
+    return this.loansService.archiveLoan(id, {
+      motivo: body.motivo,
+      notas: body.notas,
+      archivarPorId: req.user.id,
+    });
+  }
 }
