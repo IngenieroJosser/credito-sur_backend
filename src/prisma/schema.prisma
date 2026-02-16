@@ -139,6 +139,7 @@ model Usuario {
   apellidos              String                @db.VarChar(100)
   telefono               String?               @db.VarChar(20)
   rol                    RolUsuario
+  esPrincipal            Boolean               @default(false)
   estado                 EstadoUsuario         @default(ACTIVO)
   ultimoIngreso          DateTime?
   intentosFallidos       Int                   @default(0)

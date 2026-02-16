@@ -29,8 +29,8 @@ export class UsersController {
 
   @Post()
   @Roles(RolUsuario.SUPER_ADMINISTRADOR)
-  crear(@Body() usuarioDto: CreateUserDto) {
-    return this.usersService.crear(usuarioDto);
+  crear(@Body() usuarioDto: CreateUserDto, @Request() req: any) {
+    return this.usersService.crear(usuarioDto, req.user?.id);
   }
 
   @Get()
@@ -54,14 +54,15 @@ export class UsersController {
   actualizar(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() usuarioDto: UpdateUserDto,
+    @Request() req: any,
   ) {
-    return this.usersService.actualizar(id, usuarioDto);
+    return this.usersService.actualizar(id, usuarioDto, req.user?.id);
   }
 
   @Delete(':id')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR)
-  eliminar(@Param('id', ParseUUIDPipe) id: string) {
-    return this.usersService.eliminar(id);
+  eliminar(@Param('id', ParseUUIDPipe) id: string, @Request() req: any) {
+    return this.usersService.eliminar(id, req.user?.id);
   }
 
   @Patch(':id/password')

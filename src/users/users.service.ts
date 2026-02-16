@@ -2,12 +2,14 @@ import {
   Injectable,
   ConflictException,
   NotFoundException,
+  ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import * as argon2 from 'argon2';
-import { EstadoUsuario } from '@prisma/client';
+import { EstadoUsuario, RolUsuario } from '@prisma/client';
 import { UnauthorizedException } from '@nestjs/common';
 import { ChangePasswordDto } from './dto/change-password.dto';
 
@@ -15,13 +17,28 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async crear(usuarioDto: CreateUserDto) {
+  async crear(usuarioDto: CreateUserDto, usuarioCreadorId?: string) {
     const usuarioExistente = await this.prisma.usuario.findUnique({
       where: { correo: usuarioDto.correo },
     });
 
     if (usuarioExistente) {
       throw new ConflictException('El correo ya está registrado');
+    }
+
+    // VALIDACIÓN: Solo SUPER_ADMINISTRADOR puede crear otro SUPER_ADMINISTRADOR
+    if (usuarioDto.rol === RolUsuario.SUPER_ADMINISTRADOR) {
+      if (!usuarioCreadorId) {
+        throw new ForbiddenException('Se requiere autenticación para crear un Superadministrador');
+      }
+
+      const usuarioCreador = await this.prisma.usuario.findUnique({
+        where: { id: usuarioCreadorId },
+      });
+
+      if (!usuarioCreador || usuarioCreador.rol !== RolUsuario.SUPER_ADMINISTRADOR) {
+        throw new ForbiddenException('Solo un Superadministrador puede crear otro Superadministrador');
+      }
     }
 
     const { password, ...datosUsuario } = usuarioDto;
@@ -34,10 +51,16 @@ export class UsersService {
     });
 
     return this.prisma.$transaction(async (tx) => {
+      // Si es el primer usuario del sistema, marcarlo como principal
+      const totalUsuarios = await tx.usuario.count();
+      const esPrimerUsuario = totalUsuarios === 0;
+
       const nuevoUsuario = await tx.usuario.create({
         data: {
           ...datosUsuario,
           hashContrasena,
+          esPrincipal: esPrimerUsuario && usuarioDto.rol === RolUsuario.SUPER_ADMINISTRADOR,
+          creadoPorId: usuarioCreadorId,
         },
         select: {
           id: true,
@@ -45,6 +68,7 @@ export class UsersService {
           apellidos: true,
           correo: true,
           rol: true,
+          esPrincipal: true,
           estado: true,
           telefono: true,
           creadoEn: true,
@@ -76,6 +100,7 @@ export class UsersService {
         apellidos: true,
         correo: true,
         rol: true,
+        esPrincipal: true,
         estado: true,
         telefono: true,
         creadoEn: true,
@@ -178,6 +203,7 @@ export class UsersService {
         apellidos: true,
         correo: true,
         rol: true,
+        esPrincipal: true,
         estado: true,
         telefono: true,
         creadoEn: true,
@@ -210,8 +236,26 @@ export class UsersService {
     });
   }
 
-  async actualizar(id: string, updateUserDto: UpdateUserDto) {
-    const usuario = await this.obtenerPorId(id);
+  async actualizar(id: string, updateUserDto: UpdateUserDto, usuarioModificadorId?: string) {
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { id },
+    });
+
+    if (!usuario) {
+      throw new NotFoundException(`Usuario con ID ${id} no encontrado`);
+    }
+
+    // PROTECCIÓN: Solo el Superadmin puede modificar su propia información
+    if (usuario.rol === RolUsuario.SUPER_ADMINISTRADOR) {
+      if (!usuarioModificadorId || usuarioModificadorId !== id) {
+        throw new ForbiddenException('Solo el Superadministrador puede modificar su propia información');
+      }
+    }
+
+    // PROTECCIÓN: No se puede cambiar el rol del Superadmin principal
+    if (usuario.esPrincipal && updateUserDto.rol && updateUserDto.rol !== RolUsuario.SUPER_ADMINISTRADOR) {
+      throw new ForbiddenException('No se puede cambiar el rol del Superadministrador principal');
+    }
 
     if (updateUserDto.password) {
       updateUserDto.password = await argon2.hash(updateUserDto.password);
@@ -257,6 +301,7 @@ export class UsersService {
         apellidos: true,
         correo: true,
         rol: true,
+        esPrincipal: true,
         estado: true,
         telefono: true,
         creadoEn: true,
@@ -265,19 +310,81 @@ export class UsersService {
     });
   }
 
-  async eliminar(id: string) {
-    await this.obtenerPorId(id);
+  async eliminar(id: string, usuarioEliminadorId?: string) {
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { id },
+    });
+
+    if (!usuario) {
+      throw new NotFoundException(`Usuario con ID ${id} no encontrado`);
+    }
+
+    // PROTECCIÓN: El Superadmin principal solo puede eliminarse a sí mismo
+    if (usuario.esPrincipal) {
+      if (!usuarioEliminadorId || usuarioEliminadorId !== id) {
+        throw new ForbiddenException('El Superadministrador principal solo puede ser eliminado por sí mismo');
+      }
+
+      // Si se elimina el Superadmin principal, transferir el rol a otro Superadmin
+      return this.prisma.$transaction(async (tx) => {
+        // Buscar otro Superadmin activo
+        const nuevoSuperadminPrincipal = await tx.usuario.findFirst({
+          where: {
+            rol: RolUsuario.SUPER_ADMINISTRADOR,
+            id: { not: id },
+            eliminadoEn: null,
+            estado: EstadoUsuario.ACTIVO,
+          },
+          orderBy: {
+            creadoEn: 'asc', // El más antiguo
+          },
+        });
+
+        // Si hay otro Superadmin, marcarlo como principal
+        if (nuevoSuperadminPrincipal) {
+          await tx.usuario.update({
+            where: { id: nuevoSuperadminPrincipal.id },
+            data: { esPrincipal: true },
+          });
+        }
+
+        // Eliminar el usuario actual
+        return tx.usuario.update({
+          where: { id },
+          data: {
+            eliminadoEn: new Date(),
+            estado: EstadoUsuario.INACTIVO,
+            esPrincipal: false,
+          },
+        });
+      });
+    }
+
+    // Usuario normal - eliminar directamente
     return this.prisma.usuario.update({
       where: { id },
       data: {
         eliminadoEn: new Date(),
-        estado: EstadoUsuario.INACTIVO
-      }
+        estado: EstadoUsuario.INACTIVO,
+      },
     });
   }
 
-  async toggleEstado(id: string, nuevoEstado: EstadoUsuario) {
-    await this.obtenerPorId(id);
+  async toggleEstado(id: string, nuevoEstado: EstadoUsuario, usuarioModificadorId?: string) {
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { id },
+    });
+
+    if (!usuario) {
+      throw new NotFoundException(`Usuario con ID ${id} no encontrado`);
+    }
+
+    // PROTECCIÓN: El Superadmin principal no puede ser desactivado por otros
+    if (usuario.esPrincipal && nuevoEstado !== EstadoUsuario.ACTIVO) {
+      if (!usuarioModificadorId || usuarioModificadorId !== id) {
+        throw new ForbiddenException('El Superadministrador principal no puede ser desactivado por otros usuarios');
+      }
+    }
 
     return this.prisma.usuario.update({
       where: { id },
