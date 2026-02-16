@@ -5,11 +5,9 @@ import { ValidationPipe } from '@nestjs/common';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
-      forbidNonWhitelisted: false,
       transform: true,
       transformOptions: {
         enableImplicitConversion: true,
@@ -17,9 +15,9 @@ async function bootstrap() {
       validationError: {
         target: false,
         value: false,
-      }, 
+      },
     }),
-  );
+  );  
 
   app.enableCors({
     origin: [

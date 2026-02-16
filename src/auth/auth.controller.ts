@@ -8,10 +8,19 @@ import {
   UseGuards,
   Request,
 } from '@nestjs/common';
+
 import { AuthService } from './auth.service';
-import { LoginAuthDto } from './dto/login-auth.dto'; 
+import { LoginAuthDto } from './dto/login-auth.dto';
 import { CreateAuthDto } from './dto/create-auth.dto';
-import { ApiTags, ApiOperation, ApiOkResponse, ApiBody } from '@nestjs/swagger';
+
+import {
+  ApiTags,
+  ApiOperation,
+  ApiOkResponse,
+  ApiBody,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
+
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { Publico } from './decorators/public.decorator';
 
@@ -22,9 +31,9 @@ export class AuthController {
 
   @Publico()
   @Get()
-  @ApiOperation({ summary: 'Mostrar todos los usuarios registrados' })
+  @ApiOperation({ summary: 'Listar usuarios registrados' })
   obtenerTodosLosUsuarios() {
-    return this.authService.obtenerTodosLosUsuarios()
+    return this.authService.obtenerTodosLosUsuarios();
   }
 
   @Publico()
@@ -46,8 +55,8 @@ export class AuthController {
       },
     },
   })
-  login(@Body() loginAuthDto: LoginAuthDto) {
-    return this.authService.login(loginAuthDto);
+  login(@Body() dto: LoginAuthDto) {
+    return this.authService.login(dto);
   }
 
   @Publico()
@@ -58,9 +67,11 @@ export class AuthController {
     return this.authService.registrarUsuario(dto);
   }
 
+  // 👤 Perfil
   @UseGuards(JwtAuthGuard)
   @Get('perfil')
-  @ApiOperation({ summary: 'Obtener perfil del usuario autenticado' })
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Perfil del usuario autenticado' })
   obtenerPerfil(@Request() req: { user: unknown }) {
     return req.user;
   }
