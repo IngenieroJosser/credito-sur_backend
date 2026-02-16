@@ -72,12 +72,7 @@ export class UsersController {
     @Body() dto: ChangePasswordDto,
     @Request() req: any,
   ) {
-    return (this.usersService as any).cambiarContrasena(
-      id,
-      dto,
-      req.user?.rol,
-      req.user?.id,
-    );
+    return this.usersService.changePassword(id, dto);
   }
 
   @Post(':id/reset-password')
