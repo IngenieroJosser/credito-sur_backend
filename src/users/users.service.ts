@@ -8,6 +8,7 @@ import {
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
 import * as argon2 from 'argon2';
 import { EstadoUsuario, RolUsuario } from '@prisma/client';
 import { UnauthorizedException } from '@nestjs/common';
@@ -15,7 +16,10 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditService: AuditService,
+  ) {}
 
   async crear(usuarioDto: CreateUserDto, usuarioCreadorId?: string) {
     const usuarioExistente = await this.prisma.usuario.findUnique({
@@ -80,6 +84,23 @@ export class UsersService {
           data: {
             usuarioId: nuevoUsuario.id,
             rolId: rolDinamico.id,
+          },
+        });
+      }
+
+      // Registrar en auditoría
+      if (usuarioCreadorId) {
+        await this.auditService.create({
+          usuarioId: usuarioCreadorId,
+          accion: 'CREAR_USUARIO',
+          entidad: 'Usuario',
+          entidadId: nuevoUsuario.id,
+          datosNuevos: {
+            nombres: nuevoUsuario.nombres,
+            apellidos: nuevoUsuario.apellidos,
+            correo: nuevoUsuario.correo,
+            rol: nuevoUsuario.rol,
+            estado: nuevoUsuario.estado,
           },
         });
       }
@@ -289,7 +310,7 @@ export class UsersService {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { password, ...datos } = updateUserDto;
 
-    return this.prisma.usuario.update({
+    const usuarioActualizado = await this.prisma.usuario.update({
       where: { id },
       data: {
         ...datos,
@@ -308,6 +329,34 @@ export class UsersService {
         ultimoIngreso: true,
       },
     });
+
+    // Registrar en auditoría
+    if (usuarioModificadorId) {
+      await this.auditService.create({
+        usuarioId: usuarioModificadorId,
+        accion: 'ACTUALIZAR_USUARIO',
+        entidad: 'Usuario',
+        entidadId: id,
+        datosAnteriores: {
+          nombres: usuario.nombres,
+          apellidos: usuario.apellidos,
+          correo: usuario.correo,
+          rol: usuario.rol,
+          estado: usuario.estado,
+          telefono: usuario.telefono,
+        },
+        datosNuevos: {
+          nombres: usuarioActualizado.nombres,
+          apellidos: usuarioActualizado.apellidos,
+          correo: usuarioActualizado.correo,
+          rol: usuarioActualizado.rol,
+          estado: usuarioActualizado.estado,
+          telefono: usuarioActualizado.telefono,
+        },
+      });
+    }
+
+    return usuarioActualizado;
   }
 
   async eliminar(id: string, usuarioEliminadorId?: string) {

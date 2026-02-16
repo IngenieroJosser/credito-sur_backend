@@ -7,13 +7,19 @@ import {
 import { CreateClientDto } from './dto/create-client.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NivelRiesgo, RolUsuario } from '@prisma/client';
 
 @Injectable()
 export class ClientsService {
   private readonly logger = new Logger(ClientsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditService: AuditService,
+    private readonly notificacionesService: NotificacionesService,
+  ) {}
 
   async create(createClientDto: CreateClientDto) {
     // Generar código único (simple por ahora)
@@ -63,16 +69,87 @@ export class ClientsService {
     });
   }
 
-  update(id: string, updateClientDto: UpdateClientDto) {
+  async update(id: string, updateClientDto: UpdateClientDto) {
     const {
       rutaId: _rutaId,
       observaciones: _observaciones,
-      archivos: _archivos,
+      archivos,
       ...clientData
     } = updateClientDto;
-    return this.prisma.cliente.update({
+
+    // Actualizar datos básicos del cliente
+    const clienteActualizado = await this.prisma.cliente.update({
       where: { id },
       data: clientData,
+    });
+
+    // Si vienen archivos, procesar actualización (incluso si el array está vacío, significa que se eliminaron todos)
+    if (archivos !== undefined) {
+      this.logger.log(`[DEBUG] Actualizando archivos para cliente ${id}. Archivos recibidos: ${archivos.length}`);
+
+      // ESTRATEGIA SIMPLE: Marcar TODOS los archivos existentes como ELIMINADOS
+      const archivosExistentes = await this.prisma.multimedia.findMany({
+        where: { 
+          clienteId: id,
+          estado: 'ACTIVO'
+        },
+        select: { id: true, tipoContenido: true },
+      });
+
+      if (archivosExistentes.length > 0) {
+        this.logger.log(`[DEBUG] Marcando ${archivosExistentes.length} archivos antiguos como ELIMINADOS`);
+        await this.prisma.multimedia.updateMany({
+          where: {
+            id: { in: archivosExistentes.map(a => a.id) }
+          },
+          data: {
+            estado: 'ELIMINADO' as const,
+            eliminadoEn: new Date()
+          }
+        });
+      }
+
+      // Crear nuevos archivos
+      const nuevosArchivos = archivos.map((archivo: any) => {
+        // Asegurar que la URL sea correcta
+        const url = archivo.url || archivo.path || archivo.ruta;
+        const urlFinal = url?.startsWith('http') ? url : url;
+        
+        return {
+          clienteId: id,
+          tipoContenido: archivo.tipoContenido,
+          tipoArchivo: archivo.tipoArchivo,
+          formato: archivo.formato || archivo.tipoArchivo?.split('/')[1] || 'jpg',
+          nombreOriginal: archivo.nombreOriginal,
+          nombreAlmacenamiento: archivo.nombreAlmacenamiento || archivo.nombreOriginal,
+          ruta: archivo.ruta || archivo.path,
+          url: urlFinal,
+          tamanoBytes: archivo.tamanoBytes || 0,
+          subidoPorId: archivo.subidoPorId || clienteActualizado.creadoPorId,
+          estado: 'ACTIVO' as const,
+        };
+      });
+
+      await this.prisma.multimedia.createMany({
+        data: nuevosArchivos,
+      });
+
+      this.logger.log(`[DEBUG] Archivos actualizados para cliente ${id}:`);
+      this.logger.log(`  - Eliminados: ${archivosExistentes.length} archivos antiguos`);
+      this.logger.log(`  - Creados: ${nuevosArchivos.length} archivos nuevos`);
+      nuevosArchivos.forEach((a, i) => {
+        this.logger.log(`    [${i}] ${a.tipoContenido} - ${a.tipoArchivo} - ${a.url}`);
+      });
+    }
+
+    // Devolver cliente con archivos actualizados
+    return this.prisma.cliente.findUnique({
+      where: { id },
+      include: {
+        archivos: {
+          where: { estado: 'ACTIVO' },
+        },
+      },
     });
   }
 
@@ -496,6 +573,14 @@ export class ClientsService {
         },
       });
 
+      // Log de archivos devueltos
+      if (cliente && cliente.archivos) {
+        this.logger.log(`[DEBUG] Cliente ${id} - Archivos ACTIVOS devueltos: ${cliente.archivos.length}`);
+        cliente.archivos.forEach((a: any, i: number) => {
+          this.logger.log(`  [${i}] ${a.tipoContenido} - ${a.tipoArchivo} - Estado: ${a.estado} - URL: ${a.url}`);
+        });
+      }
+
       if (!cliente) {
         this.logger.log(
           `[DEBUG] Cliente no encontrado en tabla principal, buscando en aprobaciones: ${id}`,
@@ -622,6 +707,24 @@ export class ClientsService {
           });
         }
 
+        // Registrar en auditoría
+        await this.auditService.create({
+          usuarioId: solicitadoPorId,
+          accion: 'CREAR_CLIENTE',
+          entidad: 'Cliente',
+          entidadId: cliente.id,
+          datosNuevos: {
+            codigo: cliente.codigo,
+            dni: cliente.dni,
+            nombres: cliente.nombres,
+            apellidos: cliente.apellidos,
+            telefono: cliente.telefono,
+            correo: cliente.correo,
+            direccion: cliente.direccion,
+            estadoAprobacion: cliente.estadoAprobacion,
+          },
+        });
+
         this.logger.log(
           `[DEBUG] Cliente aprobado automáticamente por ${solicitante.rol}: ${cliente.id}`,
         );
@@ -649,7 +752,38 @@ export class ClientsService {
         },
       });
 
-      this.logger.log(`[DEBUG] Aprobación creada con ID: ${aprobacion.id}`);
+      // Enviar notificaciones a todos los SUPER_ADMINISTRADOR, ADMIN y COORDINADOR
+      const aprobadores = await this.prisma.usuario.findMany({
+        where: {
+          rol: { in: [RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR] },
+          estado: 'ACTIVO',
+        },
+        select: { id: true, nombres: true, apellidos: true },
+      });
+
+      const solicitanteInfo = await this.prisma.usuario.findUnique({
+        where: { id: solicitadoPorId },
+        select: { nombres: true, apellidos: true },
+      });
+
+      for (const aprobador of aprobadores) {
+        await this.notificacionesService.create({
+          usuarioId: aprobador.id,
+          titulo: 'Nueva Solicitud de Cliente',
+          mensaje: `${solicitanteInfo?.nombres} ${solicitanteInfo?.apellidos} ha solicitado la aprobación de un nuevo cliente: ${data.nombres} ${data.apellidos} (DNI: ${data.dni})`,
+          tipo: 'APROBACION',
+          entidad: 'Aprobacion',
+          entidadId: aprobacion.id,
+          metadata: {
+            tipoAprobacion: 'NUEVO_CLIENTE',
+            clienteNombre: `${data.nombres} ${data.apellidos}`,
+            clienteDni: data.dni,
+            solicitadoPor: `${solicitanteInfo?.nombres} ${solicitanteInfo?.apellidos}`,
+          },
+        });
+      }
+
+      this.logger.log(`[DEBUG] Aprobación creada con ID: ${aprobacion.id}. Notificaciones enviadas a ${aprobadores.length} aprobadores.`);
       return {
         mensaje: 'Cliente creado exitosamente. Pendiente de aprobación.',
         aprobacionId: aprobacion.id,
@@ -739,9 +873,91 @@ export class ClientsService {
         },
       });
 
+      // Notificar al solicitante que su cliente fue aprobado
+      const aprobadorInfo = await this.prisma.usuario.findUnique({
+        where: { id: aprobadoPorId },
+        select: { nombres: true, apellidos: true },
+      });
+
+      await this.notificacionesService.create({
+        usuarioId: aprobacion.solicitadoPorId,
+        titulo: 'Cliente Aprobado',
+        mensaje: `Tu solicitud de cliente ${datosSolicitud.nombres} ${datosSolicitud.apellidos} (DNI: ${datosSolicitud.dni}) ha sido aprobada por ${aprobadorInfo?.nombres} ${aprobadorInfo?.apellidos}`,
+        tipo: 'APROBACION',
+        entidad: 'Cliente',
+        entidadId: cliente.id,
+        metadata: {
+          accion: 'APROBADO',
+          clienteNombre: `${datosSolicitud.nombres} ${datosSolicitud.apellidos}`,
+          clienteDni: datosSolicitud.dni,
+          aprobadoPor: `${aprobadorInfo?.nombres} ${aprobadorInfo?.apellidos}`,
+        },
+      });
+
       return cliente;
     } catch (error) {
       this.logger.error(`Error approving client ${id}:`, error);
+      throw error;
+    }
+  }
+
+  async rejectClient(id: string, rechazadoPorId: string, razon?: string) {
+    try {
+      // Encontrar la aprobación
+      const aprobacion = await this.prisma.aprobacion.findUnique({
+        where: { id },
+      });
+
+      if (!aprobacion) {
+        throw new NotFoundException('Aprobación no encontrada');
+      }
+
+      if (aprobacion.tipoAprobacion !== 'NUEVO_CLIENTE') {
+        throw new Error('Tipo de aprobación inválido');
+      }
+
+      // Parsear datos de solicitud
+      const datosSolicitud = JSON.parse(aprobacion.datosSolicitud as string);
+
+      // Actualizar la aprobación como rechazada
+      await this.prisma.aprobacion.update({
+        where: { id },
+        data: {
+          aprobadoPorId: rechazadoPorId,
+          estado: 'RECHAZADO',
+          datosAprobados: razon ? JSON.stringify({ razon }) : undefined,
+          revisadoEn: new Date(),
+        },
+      });
+
+      // Notificar al solicitante que su cliente fue rechazado
+      const rechazadorInfo = await this.prisma.usuario.findUnique({
+        where: { id: rechazadoPorId },
+        select: { nombres: true, apellidos: true },
+      });
+
+      await this.notificacionesService.create({
+        usuarioId: aprobacion.solicitadoPorId,
+        titulo: 'Cliente Rechazado',
+        mensaje: `Tu solicitud de cliente ${datosSolicitud.nombres} ${datosSolicitud.apellidos} (DNI: ${datosSolicitud.dni}) ha sido rechazada por ${rechazadorInfo?.nombres} ${rechazadorInfo?.apellidos}${razon ? `. Razón: ${razon}` : ''}`,
+        tipo: 'APROBACION',
+        entidad: 'Aprobacion',
+        entidadId: id,
+        metadata: {
+          accion: 'RECHAZADO',
+          clienteNombre: `${datosSolicitud.nombres} ${datosSolicitud.apellidos}`,
+          clienteDni: datosSolicitud.dni,
+          rechazadoPor: `${rechazadorInfo?.nombres} ${rechazadorInfo?.apellidos}`,
+          razon: razon || 'No especificada',
+        },
+      });
+
+      return {
+        mensaje: 'Solicitud de cliente rechazada exitosamente',
+        aprobacionId: id,
+      };
+    } catch (error) {
+      this.logger.error(`Error rejecting client ${id}:`, error);
       throw error;
     }
   }
@@ -757,6 +973,7 @@ export class ClientsService {
       referencia?: string;
       nivelRiesgo?: NivelRiesgo;
       puntaje?: number;
+      archivos?: any[];
     },
   ) {
     try {
@@ -771,12 +988,64 @@ export class ClientsService {
         throw new NotFoundException('Cliente no encontrado');
       }
 
-      return await this.prisma.cliente.update({
+      // Separar archivos de los datos del cliente
+      const { archivos, ...clientData } = data;
+
+      // Actualizar datos básicos del cliente
+      const clienteActualizado = await this.prisma.cliente.update({
         where: { id },
         data: {
-          ...data,
+          ...clientData,
           ultimaActualizacionRiesgo:
-            data.nivelRiesgo || data.puntaje ? new Date() : undefined,
+            clientData.nivelRiesgo || clientData.puntaje ? new Date() : undefined,
+        },
+      });
+
+      // Procesar archivos si se enviaron
+      if (archivos && Array.isArray(archivos)) {
+        this.logger.log(`[UPDATE] Procesando ${archivos.length} archivos para cliente ${id}`);
+
+        // 1. Marcar TODOS los archivos ACTIVOS como ELIMINADOS
+        const eliminados = await this.prisma.multimedia.updateMany({
+          where: {
+            clienteId: id,
+            estado: 'ACTIVO',
+          },
+          data: {
+            estado: 'ELIMINADO' as const,
+            eliminadoEn: new Date(),
+          },
+        });
+        this.logger.log(`[UPDATE] ${eliminados.count} archivos antiguos marcados como ELIMINADOS`);
+
+        // 2. Crear los archivos nuevos
+        if (archivos.length > 0) {
+          await this.prisma.multimedia.createMany({
+            data: archivos.map((archivo: any) => ({
+              clienteId: id,
+              tipoContenido: archivo.tipoContenido,
+              tipoArchivo: archivo.tipoArchivo || 'image/jpeg',
+              formato: archivo.formato || archivo.tipoArchivo?.split('/')[1] || archivo.nombreOriginal?.split('.').pop() || 'jpg',
+              nombreOriginal: archivo.nombreOriginal,
+              nombreAlmacenamiento: archivo.nombreAlmacenamiento || archivo.nombreOriginal,
+              ruta: archivo.ruta || archivo.path || '',
+              url: archivo.url || archivo.ruta || archivo.path || '',
+              tamanoBytes: archivo.tamanoBytes || 0,
+              subidoPorId: cliente.creadoPorId,
+              estado: 'ACTIVO' as const,
+            })),
+          });
+          this.logger.log(`[UPDATE] ${archivos.length} archivos nuevos creados`);
+        }
+      }
+
+      // Devolver cliente con archivos actualizados
+      return this.prisma.cliente.findUnique({
+        where: { id },
+        include: {
+          archivos: {
+            where: { estado: 'ACTIVO' },
+          },
         },
       });
     } catch (error) {
