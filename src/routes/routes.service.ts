@@ -9,7 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { CreateRouteDto } from './dto/create-route.dto';
 import { UpdateRouteDto } from './dto/update-route.dto';
-import { Prisma } from '@prisma/client';
+import { Prisma, EstadoPrestamo, EstadoCuota } from '@prisma/client';
 
 @Injectable()
 export class RoutesService {
@@ -382,15 +382,27 @@ export class RoutesService {
           where: { activa: true },
           include: {
             cliente: {
-              select: {
-                id: true,
-                nombres: true,
-                apellidos: true,
-                dni: true,
-                telefono: true,
-                direccion: true,
-                nivelRiesgo: true,
-              },
+              include: {
+                prestamos: {
+                  where: {
+                    OR: [
+                      { estado: EstadoPrestamo.ACTIVO },
+                      { estado: EstadoPrestamo.EN_MORA }
+                    ]
+                  },
+                  include: {
+                    cuotas: {
+                      where: {
+                        estado: {
+                          in: [EstadoCuota.PENDIENTE, EstadoCuota.VENCIDA, EstadoCuota.PARCIAL]
+                        }
+                      },
+                      orderBy: { numeroCuota: 'asc' },
+                      take: 1
+                    }
+                  }
+                }
+              }
             },
           },
           orderBy: { ordenVisita: 'asc' },

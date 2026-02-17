@@ -38,6 +38,7 @@ export class RoutesController {
   @Roles(
     RolUsuario.SUPERVISOR,
     RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
     RolUsuario.SUPER_ADMINISTRADOR,
   )
   @ApiOperation({ summary: 'Crear una nueva ruta' })
@@ -52,6 +53,7 @@ export class RoutesController {
   @Roles(
     RolUsuario.SUPERVISOR,
     RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
     RolUsuario.SUPER_ADMINISTRADOR,
     RolUsuario.COBRADOR,
   )
@@ -93,6 +95,7 @@ export class RoutesController {
   @Roles(
     RolUsuario.SUPERVISOR,
     RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
     RolUsuario.SUPER_ADMINISTRADOR,
   )
   @ApiOperation({ summary: 'Obtener estadísticas de rutas' })
@@ -108,6 +111,7 @@ export class RoutesController {
   @Roles(
     RolUsuario.SUPERVISOR,
     RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
     RolUsuario.SUPER_ADMINISTRADOR,
   )
   @ApiOperation({ summary: 'Obtener lista de cobradores disponibles' })
@@ -123,6 +127,7 @@ export class RoutesController {
   @Roles(
     RolUsuario.SUPERVISOR,
     RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
     RolUsuario.SUPER_ADMINISTRADOR,
   )
   @ApiOperation({ summary: 'Obtener lista de supervisores disponibles' })
@@ -138,6 +143,7 @@ export class RoutesController {
   @Roles(
     RolUsuario.SUPERVISOR,
     RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
     RolUsuario.SUPER_ADMINISTRADOR,
     RolUsuario.COBRADOR,
   )
@@ -152,6 +158,7 @@ export class RoutesController {
   @Roles(
     RolUsuario.SUPERVISOR,
     RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
     RolUsuario.SUPER_ADMINISTRADOR,
   )
   @ApiOperation({ summary: 'Actualizar una ruta' })
@@ -168,6 +175,7 @@ export class RoutesController {
   @Roles(
     RolUsuario.SUPERVISOR,
     RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
     RolUsuario.SUPER_ADMINISTRADOR,
   )
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -186,6 +194,7 @@ export class RoutesController {
   @Roles(
     RolUsuario.SUPERVISOR,
     RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
     RolUsuario.SUPER_ADMINISTRADOR,
   )
   @ApiOperation({ summary: 'Activar/desactivar una ruta' })
@@ -202,6 +211,7 @@ export class RoutesController {
   @Roles(
     RolUsuario.SUPERVISOR,
     RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
     RolUsuario.SUPER_ADMINISTRADOR,
   )
   @ApiOperation({ summary: 'Asignar cliente a una ruta' })
@@ -223,6 +233,7 @@ export class RoutesController {
   @Roles(
     RolUsuario.SUPERVISOR,
     RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
     RolUsuario.SUPER_ADMINISTRADOR,
   )
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -240,6 +251,7 @@ export class RoutesController {
   @Roles(
     RolUsuario.SUPERVISOR,
     RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
     RolUsuario.SUPER_ADMINISTRADOR,
   )
   @ApiOperation({ summary: 'Mover cliente entre rutas' })
@@ -262,6 +274,7 @@ export class RoutesController {
     RolUsuario.COBRADOR,
     RolUsuario.SUPERVISOR,
     RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
     RolUsuario.SUPER_ADMINISTRADOR,
   )
   @ApiOperation({ summary: 'Obtener visitas del día para una ruta' })
@@ -280,6 +293,7 @@ export class RoutesController {
     RolUsuario.COBRADOR,
     RolUsuario.SUPERVISOR,
     RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
     RolUsuario.SUPER_ADMINISTRADOR,
   )
   @ApiOperation({ summary: 'Actualizar orden de clientes en una ruta (drag & drop)' })

@@ -32,6 +32,8 @@ export class ClientsController {
 
   @Get()
   @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
     RolUsuario.SUPERVISOR,
     RolUsuario.COBRADOR,
@@ -51,6 +53,8 @@ export class ClientsController {
 
   @Get(':id')
   @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
     RolUsuario.SUPERVISOR,
     RolUsuario.COBRADOR,
