@@ -10,9 +10,9 @@ import { RolUsuario, EstadoUsuario } from '@prisma/client';
 
 export class CreateUserDto {
   @IsString()
-  @IsOptional()
+  @IsNotEmpty()
   @MinLength(3)
-  nombreUsuario?: string;
+  nombreUsuario: string;
 
   @IsString()
   @IsNotEmpty()

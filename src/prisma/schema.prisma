@@ -133,7 +133,7 @@ enum EstadoMultimedia {
 
 model Usuario {
   id                     String                @id @default(uuid())
-  nombreUsuario          String?               @unique @db.VarChar(50)
+  nombreUsuario          String                @unique @db.VarChar(50)
   correo                 String                @unique @db.VarChar(255)
   hashContrasena         String                @db.VarChar(255)
   nombres                String                @db.VarChar(100)

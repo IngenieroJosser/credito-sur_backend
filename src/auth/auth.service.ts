@@ -16,10 +16,8 @@ export class AuthService {
 
   async validarUsuario(nombreUsuario: string, contrasena: string) {
     console.log(`[AUTH] Intentando validar usuario: ${nombreUsuario}`);
-    // TODO: Después de ejecutar migración, descomentar línea siguiente y comentar las dos siguientes
-    // const usuario = (await this.usersService.obtenerPorNombreUsuario(nombreUsuario)) || (await this.usersService.obtenerPorCorreo(nombreUsuario));
     const usuario =
-      (await this.usersService.obtenerPorNombres(nombreUsuario)) ||
+      (await this.usersService.obtenerPorNombreUsuario(nombreUsuario)) ||
       (await this.usersService.obtenerPorCorreo(nombreUsuario));
 
     if (!usuario) {
@@ -27,9 +25,7 @@ export class AuthService {
       return null;
     }
 
-    // TODO: Después de ejecutar migración, descomentar para mostrar nombreUsuario
-    // console.log(`[AUTH] Usuario encontrado: ${usuario.nombreUsuario} - ${usuario.nombres} (ID: ${usuario.id})`);
-    console.log(`[AUTH] Usuario encontrado: ${usuario.nombres} (ID: ${usuario.id})`);
+    console.log(`[AUTH] Usuario encontrado: ${usuario.nombreUsuario} - ${usuario.nombres} (ID: ${usuario.id})`);
     console.log(`[AUTH] Hash en BD: ${usuario.hashContrasena.substring(0, 30)}...`);
     console.log(`[AUTH] Contraseña recibida: "${contrasena.substring(0, 3)}***" (longitud: ${contrasena.length})`);
 
@@ -162,7 +158,17 @@ export class AuthService {
   }
 
   async registrarUsuario(dto: CreateAuthDto) {
+    // Generar nombreUsuario automáticamente: primera letra nombre + primera letra segundo nombre (si existe) + primer apellido
+    const nombresParts = dto.nombres.split(' ');
+    const apellidosParts = dto.apellidos.split(' ');
+    const nombreUsuario = (
+      nombresParts[0].charAt(0) +
+      (nombresParts[1] ? nombresParts[1].charAt(0) : '') +
+      apellidosParts[0]
+    ).toLowerCase().replace(/[^a-z0-9]/g, '');
+    
     const usuario = await this.usersService.crear({
+      nombreUsuario,
       nombres: dto.nombres,
       apellidos: dto.apellidos,
       correo: dto.correo,
