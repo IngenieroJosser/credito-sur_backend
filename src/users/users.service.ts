@@ -512,6 +512,7 @@ export class UsersService {
     }
 
     console.log(`[USERS] Usuario encontrado: ${usuario.nombres} ${usuario.apellidos}`);
+    console.log(`[USERS] Hash actual (primeros 20 caracteres): ${usuario.hashContrasena.substring(0, 20)}...`);
 
     // Si se proporciona contraseña actual, validarla
     if (changePasswordDto.contrasenaActual && changePasswordDto.contrasenaActual.trim() !== '') {
@@ -538,9 +539,9 @@ export class UsersService {
     console.log(`[USERS] Hasheando nueva contraseña...`);
     try {
       const hashContrasena = await argon2.hash(changePasswordDto.contrasenaNueva);
-      console.log(`[USERS] Hash generado: ${hashContrasena.substring(0, 20)}...`);
+      console.log(`[USERS] Nuevo hash generado: ${hashContrasena.substring(0, 20)}...`);
 
-      await this.prisma.usuario.update({
+      const usuarioActualizado = await this.prisma.usuario.update({
         where: { id },
         data: {
           hashContrasena,
@@ -548,6 +549,19 @@ export class UsersService {
       });
 
       console.log(`[USERS] Contraseña actualizada exitosamente para usuario ${id}`);
+      console.log(`[USERS] Nuevo hash en BD (primeros 20 caracteres): ${usuarioActualizado.hashContrasena.substring(0, 20)}...`);
+      console.log(`[USERS] Verificando persistencia...`);
+      
+      // Verificar que el cambio se persistió correctamente
+      const usuarioVerificado = await this.prisma.usuario.findUnique({
+        where: { id },
+      });
+      
+      if (usuarioVerificado && usuarioVerificado.hashContrasena === hashContrasena) {
+        console.log(`[USERS] ✅ Contraseña persistida correctamente en la base de datos`);
+      } else {
+        console.log(`[USERS] ❌ ADVERTENCIA: La contraseña NO se persistió correctamente`);
+      }
 
       return { message: 'Contraseña actualizada correctamente' };
     } catch (error) {

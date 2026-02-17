@@ -1303,10 +1303,14 @@ export class LoansService {
       const fechaFin = new Date(fechaInicio);
       fechaFin.setMonth(fechaFin.getMonth() + data.plazoMeses);
 
+
       // Calcular cantidad de cuotas: usar cantidadCuotas directa si se proporcionó, sino calcular desde plazoMeses
+      this.logger.log(`[CUOTAS CALCULATION] Datos recibidos: cantidadCuotas=${data.cantidadCuotas}, plazoMeses=${data.plazoMeses}, frecuenciaPago=${data.frecuenciaPago}`);
+      
       let cantidadCuotas = 0;
       if (data.cantidadCuotas && data.cantidadCuotas > 0) {
         cantidadCuotas = data.cantidadCuotas;
+        this.logger.log(`[CUOTAS CALCULATION] Usando cantidadCuotas directa del frontend: ${cantidadCuotas}`);
       } else {
         switch (data.frecuenciaPago) {
           case FrecuenciaPago.DIARIO:
@@ -1322,7 +1326,10 @@ export class LoansService {
             cantidadCuotas = data.plazoMeses;
             break;
         }
+        this.logger.log(`[CUOTAS CALCULATION] Calculado desde plazoMeses: ${cantidadCuotas}`);
       }
+      
+      this.logger.log(`[CUOTAS CALCULATION] Cantidad final de cuotas a crear: ${cantidadCuotas}`);
 
       // Determinar tipo de amortización
       const tipoAmort = data.tipoAmortizacion || TipoAmortizacion.INTERES_SIMPLE;
@@ -1359,12 +1366,17 @@ export class LoansService {
           };
         });
       } else {
-        // Interés simple (tasa plana: capital × tasa / 100)
-        interesTotal = (montoFinanciar * data.tasaInteres) / 100;
+        // Interés simple (tasa plana: capital × tasa × plazoMeses / 100)
+        // CORREGIDO: Multiplicar por plazoMeses para calcular el interés total del período
+        interesTotal = (montoFinanciar * data.tasaInteres * data.plazoMeses) / 100;
         const montoTotalSimple = montoFinanciar + interesTotal;
         const montoCuota = cantidadCuotas > 0 ? montoTotalSimple / cantidadCuotas : 0;
         const montoCapitalCuota = cantidadCuotas > 0 ? montoFinanciar / cantidadCuotas : 0;
         const montoInteresCuota = cantidadCuotas > 0 ? interesTotal / cantidadCuotas : 0;
+        
+        this.logger.log(`[LOAN CALCULATION] Capital: ${montoFinanciar}, Tasa: ${data.tasaInteres}%, Plazo: ${data.plazoMeses} meses`);
+        this.logger.log(`[LOAN CALCULATION] Interés Total: ${interesTotal}, Cuotas: ${cantidadCuotas}, Monto/Cuota: ${montoCuota}`);
+        
         cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => {
           const fechaVencimiento = this.calcularFechaVencimiento(fechaInicio, i + 1, data.frecuenciaPago);
           return {
