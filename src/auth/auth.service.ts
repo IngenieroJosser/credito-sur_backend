@@ -14,24 +14,28 @@ export class AuthService {
     private readonly prisma: PrismaService,
   ) {}
 
-  async validarUsuario(nombres: string, contrasena: string) {
-    console.log(`[AUTH] Intentando validar usuario: ${nombres}`);
+  async validarUsuario(nombreUsuario: string, contrasena: string) {
+    console.log(`[AUTH] Intentando validar usuario: ${nombreUsuario}`);
+    // TODO: Después de ejecutar migración, descomentar línea siguiente y comentar las dos siguientes
+    // const usuario = (await this.usersService.obtenerPorNombreUsuario(nombreUsuario)) || (await this.usersService.obtenerPorCorreo(nombreUsuario));
     const usuario =
-      (await this.usersService.obtenerPorNombres(nombres)) ||
-      (await this.usersService.obtenerPorCorreo(nombres));
+      (await this.usersService.obtenerPorNombres(nombreUsuario)) ||
+      (await this.usersService.obtenerPorCorreo(nombreUsuario));
 
     if (!usuario) {
-      console.log(`[AUTH] Usuario no encontrado: ${nombres}`);
+      console.log(`[AUTH] Usuario no encontrado: ${nombreUsuario}`);
       return null;
     }
 
+    // TODO: Después de ejecutar migración, descomentar para mostrar nombreUsuario
+    // console.log(`[AUTH] Usuario encontrado: ${usuario.nombreUsuario} - ${usuario.nombres} (ID: ${usuario.id})`);
     console.log(`[AUTH] Usuario encontrado: ${usuario.nombres} (ID: ${usuario.id})`);
     console.log(`[AUTH] Hash en BD: ${usuario.hashContrasena.substring(0, 30)}...`);
     console.log(`[AUTH] Contraseña recibida: "${contrasena.substring(0, 3)}***" (longitud: ${contrasena.length})`);
 
     try {
       const matches = await argon2.verify(usuario.hashContrasena, contrasena);
-      console.log(`[AUTH] Coincidencia de contraseña para ${nombres}: ${matches}`);
+      console.log(`[AUTH] Coincidencia de contraseña para ${nombreUsuario}: ${matches}`);
 
       if (matches) {
         const { hashContrasena: _hashContrasena, ...resultado } = usuario;

@@ -239,14 +239,20 @@ export class UsersService {
     return usuario;
   }
 
+  // TODO: Descomentar después de ejecutar migración de nombreUsuario
+  // async obtenerPorNombreUsuario(nombreUsuario: string) {
+  //   return this.prisma.usuario.findUnique({
+  //     where: { nombreUsuario },
+  //   });
+  // }
+
   async obtenerPorNombres(nombres: string) {
     return this.prisma.usuario.findFirst({
       where: {
         nombres: {
-          equals: nombres,
+          contains: nombres,
           mode: 'insensitive',
         },
-        eliminadoEn: null,
       },
     });
   }
