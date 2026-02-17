@@ -15,10 +15,17 @@ export class AuthService {
   ) {}
 
   async validarUsuario(nombres: string, contrasena: string) {
+    console.log(`[AUTH] validarUsuario llamado con: "${nombres}"`);
+    
     const usuario =
       (await this.usersService.obtenerPorNombreUsuario(nombres)) ||
       (await this.usersService.obtenerPorNombres(nombres)) ||
       (await this.usersService.obtenerPorCorreo(nombres));
+
+    console.log(`[AUTH] Usuario encontrado en validarUsuario: ${usuario ? 'SÍ' : 'NO'}`);
+    if (usuario) {
+      console.log(`[AUTH] Usuario: ${usuario.nombreUsuario} (${usuario.correo}) - Rol: ${usuario.rol}`);
+    }
 
     if (!usuario) {
       return null;
@@ -39,12 +46,20 @@ export class AuthService {
   }
 
   async login(loginAuthDto: LoginAuthDto) {
+    console.log(`[AUTH] login llamado con:`, JSON.stringify(loginAuthDto));
+    
     const usuario = await this.validarUsuario(
       loginAuthDto.nombres,
       loginAuthDto.contrasena,
     );
 
+    console.log(`[AUTH] Usuario validado: ${usuario ? 'SÍ' : 'NO'}`);
+    if (usuario) {
+      console.log(`[AUTH] Estado del usuario: ${usuario.estado}`);
+    }
+
     if (!usuario) {
+      console.log(`[AUTH] Lanzando UnauthorizedException: Credenciales inválidas`);
       throw new UnauthorizedException('Credenciales inválidas');
     }
 

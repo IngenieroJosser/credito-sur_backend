@@ -198,6 +198,9 @@ model Usuario {
   archivosSubidos        Multimedia[]          @relation("MultimediaSubidoPor")
   archivosAsociados      Multimedia[]          @relation("MultimediaUsuario")
   
+  // Push Notifications
+  pushSubscriptions      PushSubscription[]
+  
   // Timestamps
   creadoEn               DateTime              @default(now())
   actualizadoEn          DateTime              @updatedAt
@@ -1067,4 +1070,26 @@ model Categoria {
 
   @@index([tipo])
   @@map("categorias")
+}
+
+// ============================================
+// MÓDULO PUSH NOTIFICATIONS
+// ============================================
+
+model PushSubscription {
+  id          String   @id @default(uuid())
+  endpoint    String   @unique
+  usuarioId   String
+  p256dh      String   @db.Text
+  auth        String   @db.Text
+  activa      Boolean  @default(true)
+  
+  // Timestamps
+  creadoEn    DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  // Relaciones
+  usuario     Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@map("push_subscriptions")
 }

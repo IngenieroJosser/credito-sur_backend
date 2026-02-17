@@ -18,6 +18,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { UploadModule } from './upload/upload.module';
 import { CategoriasModule } from './categorias/categorias.module';
+import { PushModule } from './push/push.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { CategoriasModule } from './categorias/categorias.module';
     DashboardModule,
     UploadModule,
     CategoriasModule,
+    PushModule,
   ],
   controllers: [],
   providers: [],

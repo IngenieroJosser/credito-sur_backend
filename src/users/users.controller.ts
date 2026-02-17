@@ -72,6 +72,10 @@ export class UsersController {
     @Body() dto: ChangePasswordDto,
     @Request() req: any,
   ) {
+    console.log(`[CONTROLLER] cambiarContrasena llamado para usuario ${id}`);
+    console.log(`[CONTROLLER] DTO recibido:`, JSON.stringify(dto));
+    console.log(`[CONTROLLER] Usuario solicitante:`, req.user?.id, req.user?.rol);
+    
     return this.usersService.changePassword(id, dto);
   }
 

@@ -605,4 +605,14 @@ export class LoansController {
       reprogramadoPorId: req.user.id,
     });
   }
+
+  @Post('fix-interest-calculations')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR)
+  @ApiOperation({
+    summary: 'Corregir cálculos de intereses en préstamos existentes',
+    description: 'Ejecuta script de corrección masiva para préstamos con interés simple mal calculado',
+  })
+  async fixInterestCalculations() {
+    return this.loansService.fixInterestCalculations();
+  }
 }

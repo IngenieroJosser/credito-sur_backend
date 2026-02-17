@@ -3,6 +3,7 @@ import {
   NotFoundException,
   Logger,
   BadRequestException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -17,19 +18,32 @@ import {
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { AuditService } from '../audit/audit.service';
+import { PushService } from '../push/push.service';
 import { CreateLoanDto } from './dto/create-loan.dto';
 import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
 
 @Injectable()
-export class LoansService {
+export class LoansService implements OnModuleInit {
   private readonly logger = new Logger(LoansService.name);
 
   constructor(
     private prisma: PrismaService,
     private notificacionesService: NotificacionesService,
     private auditService: AuditService,
+    private pushService: PushService,
   ) {}
+
+  async onModuleInit() {
+    // Ejecutar automáticamente la corrección de intereses al arrancar (Deploy en Render)
+    this.logger.log('🔄 [AUTO-FIX] Verificando e iniciando corrección de intereses al arranque...');
+    try {
+        const result = await this.fixInterestCalculations();
+        this.logger.log(`✅ [AUTO-FIX] Proceso completado. ${result.corrected} préstamos corregidos de ${result.processed} verificados.`);
+    } catch (error) {
+        this.logger.error(`❌ [AUTO-FIX] Error durante la corrección automática: ${error}`);
+    }
+  }
 
   /**
    * Genera tabla de amortización francesa (cuota fija).
@@ -660,6 +674,7 @@ export class LoansService {
       if (updateData.monto !== undefined) data.monto = updateData.monto;
       if (updateData.tasaInteres !== undefined) data.tasaInteres = updateData.tasaInteres;
       if (updateData.plazoMeses !== undefined) data.plazoMeses = updateData.plazoMeses;
+      if (updateData.cantidadCuotas !== undefined) data.cantidadCuotas = updateData.cantidadCuotas;
       if (updateData.frecuenciaPago !== undefined) data.frecuenciaPago = updateData.frecuenciaPago;
       if (updateData.estado !== undefined) {
         const estadosValidos = Object.values(EstadoPrestamo);
@@ -675,6 +690,82 @@ export class LoansService {
       const newInteresTotal = (newMonto * newTasa) / 100;
       data.interesTotal = newInteresTotal;
       data.saldoPendiente = (newMonto + newInteresTotal) - Number(prestamo.totalPagado || 0);
+
+      // Regenerate cuotas if cantidadCuotas, monto, tasaInteres, or frecuenciaPago changed
+      const shouldRegenerateCuotas = (
+        data.cantidadCuotas !== undefined || 
+        data.monto !== undefined || 
+        data.tasaInteres !== undefined || 
+        data.frecuenciaPago !== undefined
+      );
+
+      if (shouldRegenerateCuotas) {
+        const cantidadCuotas = data.cantidadCuotas !== undefined ? data.cantidadCuotas : prestamo.cantidadCuotas;
+        const frecuenciaPago = data.frecuenciaPago !== undefined ? data.frecuenciaPago : prestamo.frecuenciaPago;
+        const tipoAmortizacion = prestamo.tipoAmortizacion || TipoAmortizacion.INTERES_SIMPLE;
+
+        // Delete existing cuotas
+        await this.prisma.cuota.deleteMany({
+          where: { prestamoId: id }
+        });
+
+        // Generate new cuotas
+        let cuotasData: Array<{
+          prestamoId: string;
+          numeroCuota: number;
+          fechaVencimiento: Date;
+          monto: number;
+          montoCapital: number;
+          montoInteres: number;
+          estado: typeof EstadoCuota.PENDIENTE;
+        }>;
+
+        if (tipoAmortizacion === TipoAmortizacion.FRANCESA) {
+          const amortizacion = this.calcularAmortizacionFrancesa(
+            newMonto,
+            newTasa,
+            cantidadCuotas,
+            prestamo.plazoMeses,
+            frecuenciaPago,
+          );
+          cuotasData = amortizacion.tabla.map((cuota) => {
+            const fechaVencimiento = this.calcularFechaVencimiento(prestamo.fechaInicio, cuota.numeroCuota, frecuenciaPago);
+            return {
+              prestamoId: id,
+              numeroCuota: cuota.numeroCuota,
+              fechaVencimiento,
+              monto: cuota.monto,
+              montoCapital: cuota.montoCapital,
+              montoInteres: cuota.montoInteres,
+              estado: EstadoCuota.PENDIENTE,
+            };
+          });
+        } else {
+          const montoTotalSimple = newMonto + newInteresTotal;
+          const montoCuota = cantidadCuotas > 0 ? montoTotalSimple / cantidadCuotas : 0;
+          const montoCapitalCuota = cantidadCuotas > 0 ? newMonto / cantidadCuotas : 0;
+          const montoInteresCuota = cantidadCuotas > 0 ? newInteresTotal / cantidadCuotas : 0;
+          cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => {
+            const fechaVencimiento = this.calcularFechaVencimiento(prestamo.fechaInicio, i + 1, frecuenciaPago);
+            return {
+              prestamoId: id,
+              numeroCuota: i + 1,
+              fechaVencimiento,
+              monto: Math.round(montoCuota * 100) / 100,
+              montoCapital: Math.round(montoCapitalCuota * 100) / 100,
+              montoInteres: Math.round(montoInteresCuota * 100) / 100,
+              estado: EstadoCuota.PENDIENTE,
+            };
+          });
+        }
+
+        // Create new cuotas
+        await this.prisma.cuota.createMany({
+          data: cuotasData
+        });
+
+        data.cantidadCuotas = cantidadCuotas;
+      }
 
       const prestamoActualizado = await this.prisma.prestamo.update({
         where: { id },
@@ -1224,10 +1315,14 @@ export class LoansService {
       const fechaFin = new Date(fechaInicio);
       fechaFin.setMonth(fechaFin.getMonth() + data.plazoMeses);
 
+
       // Calcular cantidad de cuotas: usar cantidadCuotas directa si se proporcionó, sino calcular desde plazoMeses
+      this.logger.log(`[CUOTAS CALCULATION] Datos recibidos: cantidadCuotas=${data.cantidadCuotas}, plazoMeses=${data.plazoMeses}, frecuenciaPago=${data.frecuenciaPago}`);
+      
       let cantidadCuotas = 0;
       if (data.cantidadCuotas && data.cantidadCuotas > 0) {
         cantidadCuotas = data.cantidadCuotas;
+        this.logger.log(`[CUOTAS CALCULATION] Usando cantidadCuotas directa del frontend: ${cantidadCuotas}`);
       } else {
         switch (data.frecuenciaPago) {
           case FrecuenciaPago.DIARIO:
@@ -1243,7 +1338,10 @@ export class LoansService {
             cantidadCuotas = data.plazoMeses;
             break;
         }
+        this.logger.log(`[CUOTAS CALCULATION] Calculado desde plazoMeses: ${cantidadCuotas}`);
       }
+      
+      this.logger.log(`[CUOTAS CALCULATION] Cantidad final de cuotas a crear: ${cantidadCuotas}`);
 
       // Determinar tipo de amortización
       const tipoAmort = data.tipoAmortizacion || TipoAmortizacion.INTERES_SIMPLE;
@@ -1280,12 +1378,17 @@ export class LoansService {
           };
         });
       } else {
-        // Interés simple (tasa plana: capital × tasa / 100)
-        interesTotal = (montoFinanciar * data.tasaInteres) / 100;
+        // Interés simple (tasa plana: capital × tasa × plazoMeses / 100)
+        // CORREGIDO: Multiplicar por plazoMeses para calcular el interés total del período
+        interesTotal = (montoFinanciar * data.tasaInteres * data.plazoMeses) / 100;
         const montoTotalSimple = montoFinanciar + interesTotal;
         const montoCuota = cantidadCuotas > 0 ? montoTotalSimple / cantidadCuotas : 0;
         const montoCapitalCuota = cantidadCuotas > 0 ? montoFinanciar / cantidadCuotas : 0;
         const montoInteresCuota = cantidadCuotas > 0 ? interesTotal / cantidadCuotas : 0;
+        
+        this.logger.log(`[LOAN CALCULATION] Capital: ${montoFinanciar}, Tasa: ${data.tasaInteres}%, Plazo: ${data.plazoMeses} meses`);
+        this.logger.log(`[LOAN CALCULATION] Interés Total: ${interesTotal}, Cuotas: ${cantidadCuotas}, Monto/Cuota: ${montoCuota}`);
+        
         cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => {
           const fechaVencimiento = this.calcularFechaVencimiento(fechaInicio, i + 1, data.frecuenciaPago);
           return {
@@ -1391,6 +1494,18 @@ export class LoansService {
           });
         }
 
+        // Enviar notificaciones push a administradores
+        await this.pushService.sendPushNotification({
+          title: 'Préstamo Aprobado Automáticamente',
+          body: `${creador.nombres} ${creador.apellidos} creó y aprobó un préstamo por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
+          roleFilter: ['ADMIN', 'SUPER_ADMINISTRADOR'],
+          data: {
+            type: 'PRESTAMO_APROBADO',
+            prestamoId: prestamo.id,
+            numeroPrestamo: prestamo.numeroPrestamo
+          }
+        });
+
         // Notificar al creador
         await this.notificacionesService.create({
           usuarioId: data.creadoPorId,
@@ -1399,6 +1514,18 @@ export class LoansService {
           tipo: 'EXITO',
           entidad: 'PRESTAMO',
           entidadId: prestamo.id,
+        });
+
+        // Enviar notificación push al creador
+        await this.pushService.sendPushNotification({
+          title: 'Préstamo Creado y Aprobado',
+          body: `Tu préstamo ${prestamo.numeroPrestamo} ha sido creado y aprobado automáticamente.`,
+          userId: data.creadoPorId,
+          data: {
+            type: 'PRESTAMO_CREADO',
+            prestamoId: prestamo.id,
+            numeroPrestamo: prestamo.numeroPrestamo
+          }
         });
       } else {
         // Notificar a coordinadores para aprobación
@@ -1423,6 +1550,18 @@ export class LoansService {
             },
           });
         }
+
+        // Enviar notificaciones push a coordinadores
+        await this.pushService.sendPushNotification({
+          title: 'Nuevo Préstamo Requiere Aprobación',
+          body: `${creador.nombres} ${creador.apellidos} ha creado un préstamo por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
+          roleFilter: ['COORDINADOR'],
+          data: {
+            type: 'PRESTAMO_PENDIENTE',
+            prestamoId: prestamo.id,
+            numeroPrestamo: prestamo.numeroPrestamo
+          }
+        });
 
 // Notificar al creador
         await this.notificacionesService.create({
@@ -1970,5 +2109,103 @@ export class LoansService {
       mensaje: 'Cuota reprogramada exitosamente',
       cuota: cuotaActualizada,
     };
+  }
+
+  /**
+   * ADMIN: Corrige cálculos de intereses en préstamos existentes.
+   * Recalcula el interés total basándose en Interés Simple Correcto (Capital * Tasa * PlazoMeses / 100).
+   * Ajusta el saldo pendiente y distribuye la diferencia en las cuotas pendientes.
+   */
+  async fixInterestCalculations() {
+    this.logger.log('Iniciando corrección masiva de intereses...');
+    const results = {
+      processed: 0,
+      corrected: 0,
+      details: [] as string[]
+    };
+
+    // 1. Obtener préstamos activos con interés SIMPLE
+    const loans = await this.prisma.prestamo.findMany({
+      where: {
+        tipoAmortizacion: 'INTERES_SIMPLE',
+        estado: { in: ['ACTIVO', 'EN_MORA'] },
+      },
+      include: { 
+        cuotas: { orderBy: { numeroCuota: 'asc' } }
+      },
+    });
+
+    results.processed = loans.length;
+
+    for (const loan of loans) {
+      try {
+        const capital = Number(loan.monto);
+        const tasaMensual = Number(loan.tasaInteres);
+        
+        // Calcular plazo en meses aproximado si no existe, o usar el guardado
+        let plazoMeses = loan.plazoMeses;
+        if (!plazoMeses || plazoMeses === 0) {
+            const factor = loan.frecuenciaPago === 'MENSUAL' ? 1 : 
+                           loan.frecuenciaPago === 'QUINCENAL' ? 2 : 
+                           loan.frecuenciaPago === 'SEMANAL' ? 4 : 30;
+            plazoMeses = Math.ceil(loan.cantidadCuotas / factor);
+        }
+        
+        // INTERES SIMPLE: I = C * i * t
+        const interesCorrecto = Math.round((capital * (tasaMensual / 100) * plazoMeses) * 100) / 100;
+        const interesActual = Number(loan.interesTotal);
+
+        // Verificar discrepancia significativa (> $100 pesos)
+        if (interesCorrecto > interesActual && (interesCorrecto - interesActual) > 100) {
+          const diferenciaInteres = interesCorrecto - interesActual;
+          
+          this.logger.log(`Corrigiendo Préstamo ${loan.numeroPrestamo}: Interés Actual ${interesActual} -> Nuevo ${interesCorrecto} (Dif: ${diferenciaInteres})`);
+
+          // Calcular deuda total previa y pagado
+          const deudaTotalVieja = Number(loan.monto) + Number(loan.interesTotal);
+          const pagado = deudaTotalVieja - Number(loan.saldoPendiente);
+          
+          // Nuevo saldo pendiente (Capital + NuevoInteres - Pagado)
+          const nuevoMontoTotal = Number(loan.monto) + interesCorrecto;
+          const nuevoSaldoPendiente = nuevoMontoTotal - pagado;
+
+          // Actualizar préstamo
+          await this.prisma.prestamo.update({
+            where: { id: loan.id },
+            data: {
+              interesTotal: interesCorrecto,
+              saldoPendiente: nuevoSaldoPendiente,
+            }
+          });
+
+          // Ajustar cuotas NO pagadas totalmente (PENDIENTE, PARCIAL, VENCIDA)
+          const cuotasAjustables = loan.cuotas.filter(c => 
+            c.estado === 'PENDIENTE' || c.estado === 'PARCIAL' || c.estado === 'VENCIDA'
+          );
+          
+          if (cuotasAjustables.length > 0) {
+            const ajustePorCuota = Math.round((diferenciaInteres / cuotasAjustables.length) * 100) / 100;
+            
+            // Aplicar ajuste
+            for (const cuota of cuotasAjustables) {
+              await this.prisma.cuota.update({
+                where: { id: cuota.id },
+                data: {
+                  montoInteres: { increment: ajustePorCuota },
+                  monto: { increment: ajustePorCuota },
+                }
+              });
+            }
+          }
+
+          results.corrected++;
+          results.details.push(`Préstamo ${loan.numeroPrestamo}: Ajuste de +${diferenciaInteres}`);
+        }
+      } catch (error) {
+        this.logger.error(`Error corrigiendo préstamo ${loan.numeroPrestamo}: ${error}`);
+      }
+    }
+
+    return results;
   }
 }

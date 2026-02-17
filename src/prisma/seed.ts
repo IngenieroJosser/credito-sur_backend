@@ -22,30 +22,29 @@ async function crearSuperadministradorInicial() {
     where: { correo },
   });
 
-  const hashContrasena = await argon2.hash('SuperAdmin123!');
-
   if (usuarioExistente) {
-    console.log(`[SEED] Superadministrador ya existe, actualizando contraseña...`);
+    console.log(`[SEED] Superadministrador ya existe - manteniendo contraseña actual`);
     await prisma.usuario.update({
       where: { correo },
       data: {
-        hashContrasena,
         nombres: 'Super',
         apellidos: 'Administrador',
+        // NO actualizar hashContrasena para mantener la contraseña existente
         rol: RolUsuario.SUPER_ADMINISTRADOR,
         estado: EstadoUsuario.ACTIVO,
         nombreUsuario: 'superadmin',
       },
     });
+    console.log(`[SEED] Superadministrador actualizado - contraseña sin cambios`);
     return usuarioExistente;
   }
 
+  const hashContrasena = await argon2.hash('SuperAdmin123!');
   const superadministrador = await prisma.usuario.create({
     data: {
       nombreUsuario: 'superadmin',
       correo,
       hashContrasena,
-      nombreUsuario: 'superadmin',
       nombres: 'Super',
       apellidos: 'Administrador',
       rol: RolUsuario.SUPER_ADMINISTRADOR,
@@ -65,20 +64,19 @@ async function crearAdministradorInicial() {
   });
 
   if (usuarioExistente) {
-    console.log(`[SEED] Administrador ya existe, actualizando...`);
-    const hashContrasena = await argon2.hash('Admin123!');
+    console.log(`[SEED] Administrador ya existe - manteniendo contraseña actual`);
     const administradorActualizado = await prisma.usuario.update({
       where: { correo },
       data: {
         nombres: 'Admin',
         apellidos: 'General',
-        hashContrasena,
+        // NO actualizar hashContrasena para mantener la contraseña existente
         rol: RolUsuario.ADMIN,
         estado: EstadoUsuario.ACTIVO,
         nombreUsuario: 'admin',
       },
     });
-    console.log(`[SEED] Administrador actualizado con username: Admin`);
+    console.log(`[SEED] Administrador actualizado - contraseña sin cambios`);
     return administradorActualizado;
   }
 
@@ -88,7 +86,6 @@ async function crearAdministradorInicial() {
       nombreUsuario: 'admin',
       correo,
       hashContrasena,
-      nombreUsuario: 'admin',
       nombres: 'Admin',
       apellidos: 'General',
       rol: RolUsuario.ADMIN,
@@ -123,7 +120,7 @@ async function crearUsuarioPorRol(
   ).toLowerCase().replace(/[^a-z0-9]/g, '');
 
   if (existente) {
-    console.log(`[SEED] Usuario ${rol} ya existe (${correo})`);
+    console.log(`[SEED] Usuario ${rol} ya existe (${correo}) - manteniendo contraseña actual`);
     const usuarioActualizado = await prisma.usuario.update({
       where: { correo },
       data: {
@@ -132,33 +129,19 @@ async function crearUsuarioPorRol(
         apellidos,
         rol,
         estado: EstadoUsuario.ACTIVO,
-        hashContrasena,
-        nombreUsuario: (
-          (nombres.charAt(0) || '') +
-          (apellidos.charAt(0) || '')
-        ).toLowerCase().replace(/[^a-z0-9]/g, ''),
+        // NO actualizar hashContrasena para mantener la contraseña existente
       },
     });
-    console.log(`[SEED] Usuario ${rol} actualizado (${correo})`);
+    console.log(`[SEED] Usuario ${rol} actualizado (${correo}) - contraseña sin cambios`);
 
     return usuarioActualizado;
   }
-
-  // Generar nombreUsuario: primera letra nombre + primera letra segundo nombre (si hay) + primer apellido
-  const partsNombre = nombres.split(' ');
-  const partsApellido = apellidos.split(' ');
-  const nombreUsuario = (
-    (partsNombre[0]?.charAt(0) || '') +
-    (partsNombre[1]?.charAt(0) || '') +
-    (partsApellido[0] || '')
-  ).toLowerCase().replace(/[^a-z0-9]/g, '');
 
   const usuario = await prisma.usuario.create({
     data: {
       nombreUsuario,
       correo,
       hashContrasena,
-      nombreUsuario,
       nombres,
       apellidos,
       rol,
