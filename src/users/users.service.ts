@@ -117,6 +117,7 @@ export class UsersService {
       },
       select: {
         id: true,
+        nombreUsuario: true,
         nombres: true,
         apellidos: true,
         correo: true,
