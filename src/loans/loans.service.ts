@@ -978,6 +978,35 @@ export class LoansService {
         metadata: { aprobadoPor: aprobadoPorId },
       });
 
+      // Notificar a ADMIN y SUPER_ADMINISTRADOR
+      const admins = await this.prisma.usuario.findMany({
+        where: { 
+          rol: { in: [RolUsuario.ADMIN, RolUsuario.SUPER_ADMINISTRADOR] },
+          estado: 'ACTIVO' 
+        },
+      });
+
+      const cliente = await this.prisma.cliente.findUnique({
+        where: { id: prestamo.clienteId },
+      });
+
+      for (const admin of admins) {
+        await this.notificacionesService.create({
+          usuarioId: admin.id,
+          titulo: 'Préstamo Aprobado',
+          mensaje: `El préstamo ${prestamo.numeroPrestamo} para el cliente ${cliente?.nombres || ''} ${cliente?.apellidos || ''} ha sido aprobado y activado.`,
+          tipo: 'EXITO',
+          entidad: 'PRESTAMO',
+          entidadId: prestamo.id,
+          metadata: {
+            prestamoId: prestamo.id,
+            clienteId: prestamo.clienteId,
+            monto: prestamo.monto,
+            aprobadoPor: aprobadoPorId,
+          },
+        });
+      }
+
       // Auditoría
       await this.auditService.create({
         usuarioId: aprobadoPorId,
@@ -1372,8 +1401,8 @@ export class LoansService {
         // Notificar al creador que fue aprobado automáticamente
         await this.notificacionesService.create({
           usuarioId: data.creadoPorId,
-          titulo: 'Préstamo Creado y Aprobado',
-          mensaje: `Tu préstamo ${prestamo.numeroPrestamo} ha sido creado y aprobado exitosamente. El crédito está activo.`,
+          titulo: 'Préstamo Creado y Aprobado Automáticamente',
+          mensaje: `Tu préstamo ${prestamo.numeroPrestamo} ha sido creado exitosamente. Como ${creador.rol === RolUsuario.SUPER_ADMINISTRADOR ? 'SuperAdministrador' : 'Administrador'}, el crédito fue aprobado automáticamente y está activo. No requiere aprobación adicional.`,
           tipo: 'EXITO',
           entidad: 'PRESTAMO',
           entidadId: prestamo.id,
