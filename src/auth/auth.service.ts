@@ -14,31 +14,25 @@ export class AuthService {
     private readonly prisma: PrismaService,
   ) {}
 
-  async validarUsuario(nombreUsuario: string, contrasena: string) {
-    console.log(`[AUTH] Intentando validar usuario: ${nombreUsuario}`);
+  async validarUsuario(nombres: string, contrasena: string) {
     const usuario =
-      (await this.usersService.obtenerPorNombreUsuario(nombreUsuario)) ||
-      (await this.usersService.obtenerPorCorreo(nombreUsuario));
+      (await this.usersService.obtenerPorNombreUsuario(nombres)) ||
+      (await this.usersService.obtenerPorNombres(nombres)) ||
+      (await this.usersService.obtenerPorCorreo(nombres));
 
     if (!usuario) {
-      console.log(`[AUTH] Usuario no encontrado: ${nombreUsuario}`);
       return null;
     }
 
-    console.log(`[AUTH] Usuario encontrado: ${usuario.nombreUsuario} - ${usuario.nombres} (ID: ${usuario.id})`);
-    console.log(`[AUTH] Hash en BD: ${usuario.hashContrasena.substring(0, 30)}...`);
-    console.log(`[AUTH] Contraseña recibida: "${contrasena.substring(0, 3)}***" (longitud: ${contrasena.length})`);
-
     try {
       const matches = await argon2.verify(usuario.hashContrasena, contrasena);
-      console.log(`[AUTH] Coincidencia de contraseña para ${nombreUsuario}: ${matches}`);
 
       if (matches) {
         const { hashContrasena: _hashContrasena, ...resultado } = usuario;
         return resultado;
       }
     } catch (error) {
-      console.error(`[AUTH] Error al verificar contraseña:`, error);
+      // Error al verificar contraseña
     }
 
     return null;

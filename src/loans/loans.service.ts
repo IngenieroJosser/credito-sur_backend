@@ -1224,21 +1224,25 @@ export class LoansService {
       const fechaFin = new Date(fechaInicio);
       fechaFin.setMonth(fechaFin.getMonth() + data.plazoMeses);
 
-      // Calcular cantidad de cuotas según frecuencia
+      // Calcular cantidad de cuotas: usar cantidadCuotas directa si se proporcionó, sino calcular desde plazoMeses
       let cantidadCuotas = 0;
-      switch (data.frecuenciaPago) {
-        case FrecuenciaPago.DIARIO:
-          cantidadCuotas = data.plazoMeses * 30;
-          break;
-        case FrecuenciaPago.SEMANAL:
-          cantidadCuotas = data.plazoMeses * 4;
-          break;
-        case FrecuenciaPago.QUINCENAL:
-          cantidadCuotas = data.plazoMeses * 2;
-          break;
-        case FrecuenciaPago.MENSUAL:
-          cantidadCuotas = data.plazoMeses;
-          break;
+      if (data.cantidadCuotas && data.cantidadCuotas > 0) {
+        cantidadCuotas = data.cantidadCuotas;
+      } else {
+        switch (data.frecuenciaPago) {
+          case FrecuenciaPago.DIARIO:
+            cantidadCuotas = data.plazoMeses * 30;
+            break;
+          case FrecuenciaPago.SEMANAL:
+            cantidadCuotas = data.plazoMeses * 4;
+            break;
+          case FrecuenciaPago.QUINCENAL:
+            cantidadCuotas = data.plazoMeses * 2;
+            break;
+          case FrecuenciaPago.MENSUAL:
+            cantidadCuotas = data.plazoMeses;
+            break;
+        }
       }
 
       // Determinar tipo de amortización
@@ -1297,6 +1301,10 @@ export class LoansService {
 
       const montoTotal = montoFinanciar + interesTotal;
 
+      // Determinar si auto-aprobar (ADMIN y SUPER_ADMINISTRADOR)
+      const esAutoAprobado = creador.rol === RolUsuario.ADMIN || creador.rol === RolUsuario.SUPER_ADMINISTRADOR;
+      this.logger.log(`[CREATE LOAN] Usuario: ${creador.nombres}, Rol: ${creador.rol}, Auto-aprobado: ${esAutoAprobado}`);
+
       // Crear préstamo con cuotas
       const prestamo = await this.prisma.prestamo.create({
         data: {
@@ -1314,8 +1322,14 @@ export class LoansService {
           cantidadCuotas,
           fechaInicio,
           fechaFin,
+<<<<<<< HEAD
           estado: estadoInicial,
           estadoAprobacion: estadoAprobacionInicial,
+=======
+          estado: esAutoAprobado ? EstadoPrestamo.ACTIVO : EstadoPrestamo.PENDIENTE_APROBACION,
+          estadoAprobacion: esAutoAprobado ? 'APROBADO' : 'PENDIENTE',
+          aprobadoPorId: esAutoAprobado ? data.creadoPorId : undefined,
+>>>>>>> 81d0882 (feat: implementar reprogramación de cuotas y correcciones críticas)
           creadoPorId: data.creadoPorId,
           aprobadoPorId: requiereAprobacion ? null : data.creadoPorId,
           interesTotal,
@@ -1341,6 +1355,7 @@ export class LoansService {
 
       this.logger.log(`Loan created successfully: ${prestamo.id}, requiereAprobacion: ${requiereAprobacion}`);
 
+<<<<<<< HEAD
       if (requiereAprobacion) {
         // Crear solicitud de aprobación
         await this.prisma.aprobacion.create({
@@ -1363,6 +1378,61 @@ export class LoansService {
         });
 
         // Notificar a coordinadores sobre préstamo pendiente
+=======
+      // Crear registro de aprobación
+      await this.prisma.aprobacion.create({
+        data: {
+          tipoAprobacion: TipoAprobacion.NUEVO_PRESTAMO,
+          referenciaId: prestamo.id,
+          tablaReferencia: 'Prestamo',
+          solicitadoPorId: data.creadoPorId,
+          datosSolicitud: {
+            numeroPrestamo: prestamo.numeroPrestamo,
+            cliente: `${cliente.nombres} ${cliente.apellidos}`,
+            monto: prestamo.monto,
+            tipo: data.tipoPrestamo,
+            plazoMeses: data.plazoMeses,
+            frecuenciaPago: data.frecuenciaPago,
+          },
+          montoSolicitud: prestamo.monto,
+          estado: esAutoAprobado ? EstadoAprobacion.APROBADO : EstadoAprobacion.PENDIENTE,
+          aprobadoPorId: esAutoAprobado ? data.creadoPorId : undefined,
+        },
+      });
+
+      if (esAutoAprobado) {
+        // Notificar a ADMIN y SUPER_ADMIN sobre la auto-aprobación
+        const admins = await this.prisma.usuario.findMany({
+          where: {
+            rol: { in: [RolUsuario.ADMIN, RolUsuario.SUPER_ADMINISTRADOR] },
+            estado: 'ACTIVO',
+            id: { not: data.creadoPorId },
+          },
+        });
+
+        for (const admin of admins) {
+          await this.notificacionesService.create({
+            usuarioId: admin.id,
+            titulo: 'Préstamo Aprobado Automáticamente',
+            mensaje: `${creador.nombres} ${creador.apellidos} creó y aprobó automáticamente un préstamo para ${cliente.nombres} ${cliente.apellidos} por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
+            tipo: 'SISTEMA',
+            entidad: 'PRESTAMO',
+            entidadId: prestamo.id,
+          });
+        }
+
+        // Notificar al creador
+        await this.notificacionesService.create({
+          usuarioId: data.creadoPorId,
+          titulo: 'Préstamo Creado y Aprobado',
+          mensaje: `El préstamo ${prestamo.numeroPrestamo} ha sido creado y aprobado automáticamente.`,
+          tipo: 'EXITO',
+          entidad: 'PRESTAMO',
+          entidadId: prestamo.id,
+        });
+      } else {
+        // Notificar a coordinadores para aprobación
+>>>>>>> 81d0882 (feat: implementar reprogramación de cuotas y correcciones críticas)
         const coordinadores = await this.prisma.usuario.findMany({
           where: { rol: RolUsuario.COORDINADOR, estado: 'ACTIVO' },
         });
@@ -1385,6 +1455,7 @@ export class LoansService {
           });
         }
 
+<<<<<<< HEAD
         // Notificar al creador que está pendiente
         await this.notificacionesService.create({
           usuarioId: data.creadoPorId,
@@ -1403,6 +1474,13 @@ export class LoansService {
           usuarioId: data.creadoPorId,
           titulo: 'Préstamo Creado y Aprobado Automáticamente',
           mensaje: `Tu préstamo ${prestamo.numeroPrestamo} ha sido creado exitosamente. Como ${creador.rol === RolUsuario.SUPER_ADMINISTRADOR ? 'SuperAdministrador' : 'Administrador'}, el crédito fue aprobado automáticamente y está activo. No requiere aprobación adicional.`,
+=======
+        // Notificar al creador
+        await this.notificacionesService.create({
+          usuarioId: data.creadoPorId,
+          titulo: 'Préstamo Creado Exitosamente',
+          mensaje: `Tu préstamo ${prestamo.numeroPrestamo} ha sido creado exitosamente y está pendiente de aprobación.`,
+>>>>>>> 81d0882 (feat: implementar reprogramación de cuotas y correcciones críticas)
           tipo: 'EXITO',
           entidad: 'PRESTAMO',
           entidadId: prestamo.id,
@@ -1422,14 +1500,17 @@ export class LoansService {
           monto: prestamo.monto,
           plazoMeses: prestamo.plazoMeses,
           frecuenciaPago: prestamo.frecuenciaPago,
+          autoAprobado: esAutoAprobado,
         },
         metadata: { notas: data.notas || null },
       });
 
       return {
         ...prestamo,
-        mensaje: 'Préstamo creado exitosamente. Pendiente de aprobación.',
-        requiereAprobacion: true,
+        mensaje: esAutoAprobado
+          ? 'Préstamo creado y aprobado automáticamente.'
+          : 'Préstamo creado exitosamente. Pendiente de aprobación.',
+        requiereAprobacion: !esAutoAprobado,
       };
     } catch (error) {
       this.logger.error('Error creating loan:', error);
@@ -1866,6 +1947,80 @@ export class LoansService {
       prestamoId,
       clienteId: prestamo.clienteId,
       montoPerdida: Number(prestamo.saldoPendiente),
+    };
+  }
+
+  async reprogramarCuota(
+    prestamoId: string,
+    numeroCuota: number,
+    data: {
+      motivo: string;
+      nuevaFecha: string;
+      montoParcial?: number;
+      reprogramadoPorId: string;
+    }
+  ) {
+    // Validar que el préstamo exista
+    const prestamo = await this.prisma.prestamo.findUnique({
+      where: { id: prestamoId },
+      include: { cuotas: true },
+    });
+
+    if (!prestamo) {
+      throw new NotFoundException('Préstamo no encontrado');
+    }
+
+    // Buscar la cuota específica
+    const cuota = prestamo.cuotas.find(c => c.numeroCuota === numeroCuota);
+    if (!cuota) {
+      throw new NotFoundException(`Cuota #${numeroCuota} no encontrada`);
+    }
+
+    // Validar que la cuota esté pendiente
+    if (cuota.estado !== 'PENDIENTE') {
+      throw new BadRequestException('Solo se pueden reprogramar cuotas pendientes');
+    }
+
+    // Validar la nueva fecha
+    const nuevaFecha = new Date(data.nuevaFecha);
+    if (isNaN(nuevaFecha.getTime())) {
+      throw new BadRequestException('Fecha inválida');
+    }
+
+    // Actualizar la cuota
+    const cuotaActualizada = await this.prisma.cuota.update({
+      where: { id: cuota.id },
+      data: {
+        fechaVencimiento: nuevaFecha,
+        ...(data.montoParcial && { monto: data.montoParcial }),
+        actualizadoEn: new Date(),
+      },
+    });
+
+    // Registrar auditoría
+    await this.auditService.create({
+      usuarioId: data.reprogramadoPorId,
+      accion: 'REPROGRAMAR_CUOTA',
+      entidad: 'Cuota',
+      entidadId: cuota.id,
+      datosNuevos: {
+        prestamoId,
+        numeroCuota,
+        fechaAnterior: cuota.fechaVencimiento,
+        fechaNueva: data.nuevaFecha,
+        motivo: data.motivo,
+        montoParcial: data.montoParcial,
+      },
+    });
+
+    // Notificar al cliente (opcional)
+    // TODO: Implementar notificación al cliente sobre reprogramación
+
+    this.logger.log(`Cuota #${numeroCuota} del préstamo ${prestamoId} reprogramada a ${data.nuevaFecha}`);
+
+    return {
+      mensaje: 'Cuota reprogramada exitosamente',
+      cuota: cuotaActualizada,
     };
   }
 }

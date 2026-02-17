@@ -45,6 +45,7 @@ async function crearSuperadministradorInicial() {
       nombreUsuario: 'superadmin',
       correo,
       hashContrasena,
+      nombreUsuario: 'superadmin',
       nombres: 'Super',
       apellidos: 'Administrador',
       rol: RolUsuario.SUPER_ADMINISTRADOR,
@@ -87,6 +88,7 @@ async function crearAdministradorInicial() {
       nombreUsuario: 'admin',
       correo,
       hashContrasena,
+      nombreUsuario: 'admin',
       nombres: 'Admin',
       apellidos: 'General',
       rol: RolUsuario.ADMIN,
@@ -131,6 +133,10 @@ async function crearUsuarioPorRol(
         rol,
         estado: EstadoUsuario.ACTIVO,
         hashContrasena,
+        nombreUsuario: (
+          (nombres.charAt(0) || '') +
+          (apellidos.charAt(0) || '')
+        ).toLowerCase().replace(/[^a-z0-9]/g, ''),
       },
     });
     console.log(`[SEED] Usuario ${rol} actualizado (${correo})`);
@@ -138,11 +144,21 @@ async function crearUsuarioPorRol(
     return usuarioActualizado;
   }
 
+  // Generar nombreUsuario: primera letra nombre + primera letra segundo nombre (si hay) + primer apellido
+  const partsNombre = nombres.split(' ');
+  const partsApellido = apellidos.split(' ');
+  const nombreUsuario = (
+    (partsNombre[0]?.charAt(0) || '') +
+    (partsNombre[1]?.charAt(0) || '') +
+    (partsApellido[0] || '')
+  ).toLowerCase().replace(/[^a-z0-9]/g, '');
+
   const usuario = await prisma.usuario.create({
     data: {
       nombreUsuario,
       correo,
       hashContrasena,
+      nombreUsuario,
       nombres,
       apellidos,
       rol,

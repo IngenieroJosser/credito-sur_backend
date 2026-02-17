@@ -49,6 +49,26 @@ export class UsersService {
 
     const hashContrasena = await argon2.hash(password);
 
+    // Auto-generar nombreUsuario si no se proporcionó
+    if (!datosUsuario.nombreUsuario) {
+      const partsNombre = datosUsuario.nombres.split(' ');
+      const partsApellido = datosUsuario.apellidos.split(' ');
+      let baseUsername = (
+        (partsNombre[0]?.charAt(0) || '') +
+        (partsNombre[1]?.charAt(0) || '') +
+        (partsApellido[0] || '')
+      ).toLowerCase().replace(/[^a-z0-9]/g, '');
+
+      // Verificar unicidad y agregar número si es necesario
+      let nombreUsuario = baseUsername;
+      let counter = 1;
+      while (await this.prisma.usuario.findUnique({ where: { nombreUsuario } })) {
+        nombreUsuario = `${baseUsername}${counter}`;
+        counter++;
+      }
+      datosUsuario.nombreUsuario = nombreUsuario;
+    }
+
     // Buscar el rol dinámico correspondiente
     const rolDinamico = await this.prisma.rol.findUnique({
       where: { nombre: usuarioDto.rol },
@@ -61,10 +81,16 @@ export class UsersService {
 
       const nuevoUsuario = await tx.usuario.create({
         data: {
-          ...datosUsuario,
+          nombreUsuario: datosUsuario.nombreUsuario as string,
+          nombres: datosUsuario.nombres,
+          apellidos: datosUsuario.apellidos,
+          correo: datosUsuario.correo,
+          rol: datosUsuario.rol,
+          telefono: datosUsuario.telefono,
+          estado: datosUsuario.estado,
           hashContrasena,
           esPrincipal: esPrimerUsuario && usuarioDto.rol === RolUsuario.SUPER_ADMINISTRADOR,
-          creadoPorId: usuarioCreadorId,
+          ...(usuarioCreadorId ? { creadoPor: { connect: { id: usuarioCreadorId } } } : {}),
         },
         select: {
           id: true,
@@ -253,6 +279,18 @@ export class UsersService {
           contains: nombres,
           mode: 'insensitive',
         },
+      },
+    });
+  }
+
+  async obtenerPorNombreUsuario(nombreUsuario: string) {
+    return this.prisma.usuario.findFirst({
+      where: {
+        nombreUsuario: {
+          equals: nombreUsuario,
+          mode: 'insensitive',
+        },
+        eliminadoEn: null,
       },
     });
   }

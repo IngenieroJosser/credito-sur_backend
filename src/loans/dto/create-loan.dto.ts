@@ -44,6 +44,11 @@ export class CreateLoanDto {
   @Min(1)
   plazoMeses: number;
 
+  @IsNumber()
+  @Min(1)
+  @IsOptional()
+  cantidadCuotas?: number;
+
   @IsEnum(FrecuenciaPago)
   frecuenciaPago: FrecuenciaPago;
 
