@@ -125,7 +125,6 @@ export class DashboardService {
         ),
       };
     } catch (error) {
-      console.error('Error al obtener datos del dashboard:', error);
       // Retornar datos de fallback en caso de error
       return {
         metrics: {
@@ -156,7 +155,7 @@ export class DashboardService {
               : approval.datosSolicitud;
           total += data.monto || 0;
         } catch (error) {
-          console.error('Error parsing datosSolicitud:', error);
+          // Error parsing datosSolicitud, continuar con siguiente
         }
       }
     });
@@ -255,7 +254,6 @@ export class DashboardService {
 
       return processedData;
     } catch (error) {
-      console.error('Error al obtener datos de tendencia:', error);
       // En caso de error, devolver datos de muestra
       return this.getSampleTrendData();
     }

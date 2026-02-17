@@ -112,7 +112,6 @@ export class LoansController {
     @Query('limit', new DefaultValuePipe(8), ParseIntPipe) limit: number,
     @Request() req,
   ) {
-    console.log(`[DEBUG LOANS] Usuario: ${req.user?.id}, Rol: ${req.user?.rol}`);
     // Validar límite máximo
     const safeLimit = Math.min(limit, 100); // Máximo 100 por página
 

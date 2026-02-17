@@ -326,9 +326,6 @@ export class UsersService {
     let hashContrasena: string | undefined;
     if (updateUserDto.password) {
       hashContrasena = await argon2.hash(updateUserDto.password);
-      console.log(`[USERS] Hasheando nueva contraseña para usuario ${id}. Password recibido: "${updateUserDto.password.substring(0, 3)}***". Hash generado: ${hashContrasena.substring(0, 20)}...`);
-    } else {
-      console.log(`[USERS] No se recibió password para usuario ${id}. Keys recibidas: ${Object.keys(updateUserDto).join(', ')}`);
     }
 
     // Si cambia el rol, actualizar también la tabla relacional
