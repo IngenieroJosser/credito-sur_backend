@@ -267,8 +267,14 @@ export class UsersService {
   }
 
   async obtenerPorNombreUsuario(nombreUsuario: string) {
-    return this.prisma.usuario.findUnique({
-      where: { nombreUsuario },
+    return this.prisma.usuario.findFirst({
+      where: {
+        nombreUsuario: {
+          equals: nombreUsuario,
+          mode: 'insensitive',
+        },
+        eliminadoEn: null,
+      },
     });
   }
 
@@ -279,18 +285,6 @@ export class UsersService {
           contains: nombres,
           mode: 'insensitive',
         },
-      },
-    });
-  }
-
-  async obtenerPorNombreUsuario(nombreUsuario: string) {
-    return this.prisma.usuario.findFirst({
-      where: {
-        nombreUsuario: {
-          equals: nombreUsuario,
-          mode: 'insensitive',
-        },
-        eliminadoEn: null,
       },
     });
   }
