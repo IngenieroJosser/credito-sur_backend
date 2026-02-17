@@ -3,6 +3,7 @@ import {
   NotFoundException,
   Logger,
   BadRequestException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -23,7 +24,7 @@ import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
 
 @Injectable()
-export class LoansService {
+export class LoansService implements OnModuleInit {
   private readonly logger = new Logger(LoansService.name);
 
   constructor(
@@ -32,6 +33,17 @@ export class LoansService {
     private auditService: AuditService,
     private pushService: PushService,
   ) {}
+
+  async onModuleInit() {
+    // Ejecutar automáticamente la corrección de intereses al arrancar (Deploy en Render)
+    this.logger.log('🔄 [AUTO-FIX] Verificando e iniciando corrección de intereses al arranque...');
+    try {
+        const result = await this.fixInterestCalculations();
+        this.logger.log(`✅ [AUTO-FIX] Proceso completado. ${result.corrected} préstamos corregidos de ${result.processed} verificados.`);
+    } catch (error) {
+        this.logger.error(`❌ [AUTO-FIX] Error durante la corrección automática: ${error}`);
+    }
+  }
 
   /**
    * Genera tabla de amortización francesa (cuota fija).
@@ -2097,5 +2109,103 @@ export class LoansService {
       mensaje: 'Cuota reprogramada exitosamente',
       cuota: cuotaActualizada,
     };
+  }
+
+  /**
+   * ADMIN: Corrige cálculos de intereses en préstamos existentes.
+   * Recalcula el interés total basándose en Interés Simple Correcto (Capital * Tasa * PlazoMeses / 100).
+   * Ajusta el saldo pendiente y distribuye la diferencia en las cuotas pendientes.
+   */
+  async fixInterestCalculations() {
+    this.logger.log('Iniciando corrección masiva de intereses...');
+    const results = {
+      processed: 0,
+      corrected: 0,
+      details: [] as string[]
+    };
+
+    // 1. Obtener préstamos activos con interés SIMPLE
+    const loans = await this.prisma.prestamo.findMany({
+      where: {
+        tipoAmortizacion: 'INTERES_SIMPLE',
+        estado: { in: ['ACTIVO', 'EN_MORA'] },
+      },
+      include: { 
+        cuotas: { orderBy: { numeroCuota: 'asc' } }
+      },
+    });
+
+    results.processed = loans.length;
+
+    for (const loan of loans) {
+      try {
+        const capital = Number(loan.monto);
+        const tasaMensual = Number(loan.tasaInteres);
+        
+        // Calcular plazo en meses aproximado si no existe, o usar el guardado
+        let plazoMeses = loan.plazoMeses;
+        if (!plazoMeses || plazoMeses === 0) {
+            const factor = loan.frecuenciaPago === 'MENSUAL' ? 1 : 
+                           loan.frecuenciaPago === 'QUINCENAL' ? 2 : 
+                           loan.frecuenciaPago === 'SEMANAL' ? 4 : 30;
+            plazoMeses = Math.ceil(loan.cantidadCuotas / factor);
+        }
+        
+        // INTERES SIMPLE: I = C * i * t
+        const interesCorrecto = Math.round((capital * (tasaMensual / 100) * plazoMeses) * 100) / 100;
+        const interesActual = Number(loan.interesTotal);
+
+        // Verificar discrepancia significativa (> $100 pesos)
+        if (interesCorrecto > interesActual && (interesCorrecto - interesActual) > 100) {
+          const diferenciaInteres = interesCorrecto - interesActual;
+          
+          this.logger.log(`Corrigiendo Préstamo ${loan.numeroPrestamo}: Interés Actual ${interesActual} -> Nuevo ${interesCorrecto} (Dif: ${diferenciaInteres})`);
+
+          // Calcular deuda total previa y pagado
+          const deudaTotalVieja = Number(loan.monto) + Number(loan.interesTotal);
+          const pagado = deudaTotalVieja - Number(loan.saldoPendiente);
+          
+          // Nuevo saldo pendiente (Capital + NuevoInteres - Pagado)
+          const nuevoMontoTotal = Number(loan.monto) + interesCorrecto;
+          const nuevoSaldoPendiente = nuevoMontoTotal - pagado;
+
+          // Actualizar préstamo
+          await this.prisma.prestamo.update({
+            where: { id: loan.id },
+            data: {
+              interesTotal: interesCorrecto,
+              saldoPendiente: nuevoSaldoPendiente,
+            }
+          });
+
+          // Ajustar cuotas NO pagadas totalmente (PENDIENTE, PARCIAL, VENCIDA)
+          const cuotasAjustables = loan.cuotas.filter(c => 
+            c.estado === 'PENDIENTE' || c.estado === 'PARCIAL' || c.estado === 'VENCIDA'
+          );
+          
+          if (cuotasAjustables.length > 0) {
+            const ajustePorCuota = Math.round((diferenciaInteres / cuotasAjustables.length) * 100) / 100;
+            
+            // Aplicar ajuste
+            for (const cuota of cuotasAjustables) {
+              await this.prisma.cuota.update({
+                where: { id: cuota.id },
+                data: {
+                  montoInteres: { increment: ajustePorCuota },
+                  monto: { increment: ajustePorCuota },
+                }
+              });
+            }
+          }
+
+          results.corrected++;
+          results.details.push(`Préstamo ${loan.numeroPrestamo}: Ajuste de +${diferenciaInteres}`);
+        }
+      } catch (error) {
+        this.logger.error(`Error corrigiendo préstamo ${loan.numeroPrestamo}: ${error}`);
+      }
+    }
+
+    return results;
   }
 }
