@@ -46,12 +46,20 @@ export class AuthService {
   }
 
   async login(loginAuthDto: LoginAuthDto) {
+    console.log(`[AUTH] login llamado con:`, JSON.stringify(loginAuthDto));
+    
     const usuario = await this.validarUsuario(
       loginAuthDto.nombres,
       loginAuthDto.contrasena,
     );
 
+    console.log(`[AUTH] Usuario validado: ${usuario ? 'SÍ' : 'NO'}`);
+    if (usuario) {
+      console.log(`[AUTH] Estado del usuario: ${usuario.estado}`);
+    }
+
     if (!usuario) {
+      console.log(`[AUTH] Lanzando UnauthorizedException: Credenciales inválidas`);
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
