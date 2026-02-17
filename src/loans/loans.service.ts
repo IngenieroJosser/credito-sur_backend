@@ -17,6 +17,7 @@ import {
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { AuditService } from '../audit/audit.service';
+import { PushService } from '../push/push.service';
 import { CreateLoanDto } from './dto/create-loan.dto';
 import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
@@ -29,6 +30,7 @@ export class LoansService {
     private prisma: PrismaService,
     private notificacionesService: NotificacionesService,
     private auditService: AuditService,
+    private pushService: PushService,
   ) {}
 
   /**
@@ -1468,6 +1470,18 @@ export class LoansService {
           });
         }
 
+        // Enviar notificaciones push a administradores
+        await this.pushService.sendPushNotification({
+          title: 'Préstamo Aprobado Automáticamente',
+          body: `${creador.nombres} ${creador.apellidos} creó y aprobó un préstamo por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
+          roleFilter: ['ADMIN', 'SUPER_ADMINISTRADOR'],
+          data: {
+            type: 'PRESTAMO_APROBADO',
+            prestamoId: prestamo.id,
+            numeroPrestamo: prestamo.numeroPrestamo
+          }
+        });
+
         // Notificar al creador
         await this.notificacionesService.create({
           usuarioId: data.creadoPorId,
@@ -1476,6 +1490,18 @@ export class LoansService {
           tipo: 'EXITO',
           entidad: 'PRESTAMO',
           entidadId: prestamo.id,
+        });
+
+        // Enviar notificación push al creador
+        await this.pushService.sendPushNotification({
+          title: 'Préstamo Creado y Aprobado',
+          body: `Tu préstamo ${prestamo.numeroPrestamo} ha sido creado y aprobado automáticamente.`,
+          userId: data.creadoPorId,
+          data: {
+            type: 'PRESTAMO_CREADO',
+            prestamoId: prestamo.id,
+            numeroPrestamo: prestamo.numeroPrestamo
+          }
         });
       } else {
         // Notificar a coordinadores para aprobación
@@ -1500,6 +1526,18 @@ export class LoansService {
             },
           });
         }
+
+        // Enviar notificaciones push a coordinadores
+        await this.pushService.sendPushNotification({
+          title: 'Nuevo Préstamo Requiere Aprobación',
+          body: `${creador.nombres} ${creador.apellidos} ha creado un préstamo por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
+          roleFilter: ['COORDINADOR'],
+          data: {
+            type: 'PRESTAMO_PENDIENTE',
+            prestamoId: prestamo.id,
+            numeroPrestamo: prestamo.numeroPrestamo
+          }
+        });
 
 // Notificar al creador
         await this.notificacionesService.create({

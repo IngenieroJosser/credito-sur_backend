@@ -5,9 +5,10 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { LoggerMiddleware } from '../common/middleware/logger.middleware';
 import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 import { AuditModule } from '../audit/audit.module';
+import { PushModule } from '../push/push.module';
 
 @Module({
-  imports: [PrismaModule, NotificacionesModule, AuditModule],
+  imports: [PrismaModule, NotificacionesModule, AuditModule, PushModule],
   controllers: [LoansController],
   providers: [LoansService],
   exports: [LoansService],

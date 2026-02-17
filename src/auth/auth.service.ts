@@ -15,10 +15,17 @@ export class AuthService {
   ) {}
 
   async validarUsuario(nombres: string, contrasena: string) {
+    console.log(`[AUTH] validarUsuario llamado con: "${nombres}"`);
+    
     const usuario =
       (await this.usersService.obtenerPorNombreUsuario(nombres)) ||
       (await this.usersService.obtenerPorNombres(nombres)) ||
       (await this.usersService.obtenerPorCorreo(nombres));
+
+    console.log(`[AUTH] Usuario encontrado en validarUsuario: ${usuario ? 'SÍ' : 'NO'}`);
+    if (usuario) {
+      console.log(`[AUTH] Usuario: ${usuario.nombreUsuario} (${usuario.correo}) - Rol: ${usuario.rol}`);
+    }
 
     if (!usuario) {
       return null;
