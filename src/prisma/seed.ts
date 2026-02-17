@@ -34,6 +34,7 @@ async function crearSuperadministradorInicial() {
         apellidos: 'Administrador',
         rol: RolUsuario.SUPER_ADMINISTRADOR,
         estado: EstadoUsuario.ACTIVO,
+        nombreUsuario: 'superadmin',
       },
     });
     return usuarioExistente;
@@ -41,8 +42,10 @@ async function crearSuperadministradorInicial() {
 
   const superadministrador = await prisma.usuario.create({
     data: {
+      nombreUsuario: 'superadmin',
       correo,
       hashContrasena,
+      nombreUsuario: 'superadmin',
       nombres: 'Super',
       apellidos: 'Administrador',
       rol: RolUsuario.SUPER_ADMINISTRADOR,
@@ -72,6 +75,7 @@ async function crearAdministradorInicial() {
         hashContrasena,
         rol: RolUsuario.ADMIN,
         estado: EstadoUsuario.ACTIVO,
+        nombreUsuario: 'admin',
       },
     });
     console.log(`[SEED] Administrador actualizado con username: Admin`);
@@ -81,8 +85,10 @@ async function crearAdministradorInicial() {
   const hashContrasena = await argon2.hash('Admin123!');
   const administrador = await prisma.usuario.create({
     data: {
+      nombreUsuario: 'admin',
       correo,
       hashContrasena,
+      nombreUsuario: 'admin',
       nombres: 'Admin',
       apellidos: 'General',
       rol: RolUsuario.ADMIN,
@@ -106,17 +112,31 @@ async function crearUsuarioPorRol(
   });
 
   const hashContrasena = await argon2.hash(password ?? `${rol}_1234`);
+  
+  // Generar nombreUsuario: primera letra nombre + primera letra segundo nombre (si existe) + primer apellido
+  const nombresParts = nombres.split(' ');
+  const apellidosParts = apellidos.split(' ');
+  const nombreUsuario = (
+    nombresParts[0].charAt(0) +
+    (nombresParts[1] ? nombresParts[1].charAt(0) : '') +
+    apellidosParts[0]
+  ).toLowerCase().replace(/[^a-z0-9]/g, '');
 
   if (existente) {
     console.log(`[SEED] Usuario ${rol} ya existe (${correo})`);
     const usuarioActualizado = await prisma.usuario.update({
       where: { correo },
       data: {
+        nombreUsuario,
         nombres,
         apellidos,
         rol,
         estado: EstadoUsuario.ACTIVO,
         hashContrasena,
+        nombreUsuario: (
+          (nombres.charAt(0) || '') +
+          (apellidos.charAt(0) || '')
+        ).toLowerCase().replace(/[^a-z0-9]/g, ''),
       },
     });
     console.log(`[SEED] Usuario ${rol} actualizado (${correo})`);
@@ -124,10 +144,21 @@ async function crearUsuarioPorRol(
     return usuarioActualizado;
   }
 
+  // Generar nombreUsuario: primera letra nombre + primera letra segundo nombre (si hay) + primer apellido
+  const partsNombre = nombres.split(' ');
+  const partsApellido = apellidos.split(' ');
+  const nombreUsuario = (
+    (partsNombre[0]?.charAt(0) || '') +
+    (partsNombre[1]?.charAt(0) || '') +
+    (partsApellido[0] || '')
+  ).toLowerCase().replace(/[^a-z0-9]/g, '');
+
   const usuario = await prisma.usuario.create({
     data: {
+      nombreUsuario,
       correo,
       hashContrasena,
+      nombreUsuario,
       nombres,
       apellidos,
       rol,

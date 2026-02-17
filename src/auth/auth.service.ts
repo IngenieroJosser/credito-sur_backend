@@ -15,30 +15,24 @@ export class AuthService {
   ) {}
 
   async validarUsuario(nombres: string, contrasena: string) {
-    console.log(`[AUTH] Intentando validar usuario: ${nombres}`);
     const usuario =
+      (await this.usersService.obtenerPorNombreUsuario(nombres)) ||
       (await this.usersService.obtenerPorNombres(nombres)) ||
       (await this.usersService.obtenerPorCorreo(nombres));
 
     if (!usuario) {
-      console.log(`[AUTH] Usuario no encontrado: ${nombres}`);
       return null;
     }
 
-    console.log(`[AUTH] Usuario encontrado: ${usuario.nombres} (ID: ${usuario.id})`);
-    console.log(`[AUTH] Hash en BD: ${usuario.hashContrasena.substring(0, 30)}...`);
-    console.log(`[AUTH] Contraseña recibida: "${contrasena.substring(0, 3)}***" (longitud: ${contrasena.length})`);
-
     try {
       const matches = await argon2.verify(usuario.hashContrasena, contrasena);
-      console.log(`[AUTH] Coincidencia de contraseña para ${nombres}: ${matches}`);
 
       if (matches) {
         const { hashContrasena: _hashContrasena, ...resultado } = usuario;
         return resultado;
       }
     } catch (error) {
-      console.error(`[AUTH] Error al verificar contraseña:`, error);
+      // Error al verificar contraseña
     }
 
     return null;
@@ -158,7 +152,17 @@ export class AuthService {
   }
 
   async registrarUsuario(dto: CreateAuthDto) {
+    // Generar nombreUsuario automáticamente: primera letra nombre + primera letra segundo nombre (si existe) + primer apellido
+    const nombresParts = dto.nombres.split(' ');
+    const apellidosParts = dto.apellidos.split(' ');
+    const nombreUsuario = (
+      nombresParts[0].charAt(0) +
+      (nombresParts[1] ? nombresParts[1].charAt(0) : '') +
+      apellidosParts[0]
+    ).toLowerCase().replace(/[^a-z0-9]/g, '');
+    
     const usuario = await this.usersService.crear({
+      nombreUsuario,
       nombres: dto.nombres,
       apellidos: dto.apellidos,
       correo: dto.correo,

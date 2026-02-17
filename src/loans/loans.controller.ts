@@ -33,6 +33,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolUsuario } from '@prisma/client';
 import { CreateLoanDto } from './dto/create-loan.dto';
+import { ReprogramarCuotaDto } from './dto/reprogramar-cuota.dto';
 
 @ApiTags('loans')
 @ApiBearerAuth()
@@ -43,11 +44,12 @@ export class LoansController {
 
   @Get()
   @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
     RolUsuario.SUPERVISOR,
     RolUsuario.COBRADOR,
     RolUsuario.CONTADOR,
-    RolUsuario.ADMIN,
   )
   @ApiOperation({
     summary: 'Obtener todos los préstamos',
@@ -108,6 +110,7 @@ export class LoansController {
     @Query('search', new DefaultValuePipe('')) search: string,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(8), ParseIntPipe) limit: number,
+    @Request() req,
   ) {
     // Validar límite máximo
     const safeLimit = Math.min(limit, 100); // Máximo 100 por página
@@ -123,6 +126,8 @@ export class LoansController {
 
   @Get(':id')
   @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
     RolUsuario.SUPERVISOR,
     RolUsuario.COBRADOR,
@@ -164,6 +169,8 @@ export class LoansController {
 
   @Get(':id/cuotas')
   @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
     RolUsuario.SUPERVISOR,
     RolUsuario.COBRADOR,
@@ -279,7 +286,7 @@ export class LoansController {
   }
 
   @Post(':id/approve')
-  @Roles(RolUsuario.COORDINADOR, RolUsuario.ADMIN)
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.COORDINADOR, RolUsuario.ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Aprobar un préstamo',
@@ -329,7 +336,7 @@ export class LoansController {
   }
 
   @Post(':id/reject')
-  @Roles(RolUsuario.COORDINADOR, RolUsuario.ADMIN)
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.COORDINADOR, RolUsuario.ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Rechazar un préstamo',
@@ -384,7 +391,7 @@ export class LoansController {
   }
 
   @Delete(':id')
-  @Roles(RolUsuario.COORDINADOR, RolUsuario.ADMIN)
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.COORDINADOR, RolUsuario.ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Eliminar un préstamo (marcar como eliminado)',
@@ -449,7 +456,7 @@ export class LoansController {
   }
 
   @Patch(':id')
-  @Roles(RolUsuario.COORDINADOR, RolUsuario.ADMIN)
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.COORDINADOR, RolUsuario.ADMIN)
   @HttpCode(HttpStatus.OK)
   @UsePipes(new ValidationPipe({ transform: true }))
   @ApiOperation({
@@ -483,7 +490,7 @@ export class LoansController {
   }
 
   @Patch(':id/restore')
-  @Roles(RolUsuario.COORDINADOR, RolUsuario.ADMIN)
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.COORDINADOR, RolUsuario.ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Restaurar un préstamo eliminado',
@@ -570,6 +577,32 @@ export class LoansController {
       motivo: body.motivo,
       notas: body.notas,
       archivarPorId: req.user.id,
+    });
+  }
+
+  @Patch(':id/cuotas/:numeroCuota/reprogramar')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+  )
+  @ApiOperation({ summary: 'Reprogramar fecha de vencimiento de una cuota' })
+  @ApiParam({ name: 'id', description: 'ID del préstamo' })
+  @ApiParam({ name: 'numeroCuota', description: 'Número de la cuota a reprogramar' })
+  @ApiBody({ type: ReprogramarCuotaDto })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Cuota reprogramada exitosamente' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Préstamo o cuota no encontrada' })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Datos inválidos' })
+  async reprogramarCuota(
+    @Param('id') id: string,
+    @Param('numeroCuota', ParseIntPipe) numeroCuota: number,
+    @Body() reprogramarDto: ReprogramarCuotaDto,
+    @Request() req,
+  ) {
+    return this.loansService.reprogramarCuota(id, numeroCuota, {
+      ...reprogramarDto,
+      reprogramadoPorId: req.user.id,
     });
   }
 }

@@ -125,7 +125,6 @@ export class DashboardService {
         ),
       };
     } catch (error) {
-      console.error('Error al obtener datos del dashboard:', error);
       // Retornar datos de fallback en caso de error
       return {
         metrics: {
@@ -156,7 +155,7 @@ export class DashboardService {
               : approval.datosSolicitud;
           total += data.monto || 0;
         } catch (error) {
-          console.error('Error parsing datosSolicitud:', error);
+          // Error parsing datosSolicitud, continuar con siguiente
         }
       }
     });
@@ -217,10 +216,31 @@ export class DashboardService {
         },
       });
 
-      // Obtener metas (podrías tener una tabla de metas en tu base de datos)
-      // Por ahora, usaremos una meta fija que podrías ajustar según tu lógica de negocio
-      const dailyTarget = 2500000; // Meta diaria
-      const weeklyTarget = 15000000; // Meta semanal
+      // Calcular metas dinámicamente basadas en promedio histórico de últimos 30 días
+      const thirtyDaysAgo = new Date(today);
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      const historicalPayments = await this.prisma.pago.aggregate({
+        where: {
+          fechaPago: {
+            gte: thirtyDaysAgo,
+            lte: today,
+          },
+        },
+        _sum: {
+          montoTotal: true,
+        },
+      });
+
+      // Calcular promedio diario de los últimos 30 días
+      const totalHistorical = Number(historicalPayments._sum?.montoTotal || 0);
+      const dailyTarget = Math.round(totalHistorical / 30);
+      const weeklyTarget = dailyTarget * 7;
+
+      console.log(`[DASHBOARD] Objetivo calculado dinámicamente:`);
+      console.log(`  - Total últimos 30 días: ${totalHistorical}`);
+      console.log(`  - Objetivo diario: ${dailyTarget}`);
+      console.log(`  - Objetivo semanal: ${weeklyTarget}`);
 
       // Procesar y agrupar datos según el filtro
       const processedData = this.processTrendData(
@@ -234,7 +254,6 @@ export class DashboardService {
 
       return processedData;
     } catch (error) {
-      console.error('Error al obtener datos de tendencia:', error);
       // En caso de error, devolver datos de muestra
       return this.getSampleTrendData();
     }
