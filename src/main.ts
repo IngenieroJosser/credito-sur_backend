@@ -5,6 +5,10 @@ import { ValidationPipe } from '@nestjs/common';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  
+  // Configurar prefijo global para la API
+  app.setGlobalPrefix('api-credisur');
+  
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,

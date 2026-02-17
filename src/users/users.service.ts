@@ -496,6 +496,12 @@ export class UsersService {
     console.log(`[USERS] changePassword llamado para usuario ${id}`);
     console.log(`[USERS] DTO recibido:`, JSON.stringify(changePasswordDto));
     
+    // Validar que se tenga la nueva contraseña
+    if (!changePasswordDto.contrasenaNueva || changePasswordDto.contrasenaNueva.trim().length < 6) {
+      console.log(`[USERS] Nueva contraseña inválida`);
+      throw new BadRequestException('La nueva contraseña debe tener al menos 6 caracteres');
+    }
+    
     const usuario = await this.prisma.usuario.findUnique({
       where: { id },
     });
@@ -510,33 +516,43 @@ export class UsersService {
     // Si se proporciona contraseña actual, validarla
     if (changePasswordDto.contrasenaActual && changePasswordDto.contrasenaActual.trim() !== '') {
       console.log(`[USERS] Validando contraseña actual...`);
-      const passwordValid = await argon2.verify(
-        usuario.hashContrasena,
-        changePasswordDto.contrasenaActual,
-      );
+      try {
+        const passwordValid = await argon2.verify(
+          usuario.hashContrasena,
+          changePasswordDto.contrasenaActual,
+        );
 
-      if (!passwordValid) {
-        console.log(`[USERS] Contraseña actual incorrecta`);
-        throw new UnauthorizedException('La contraseña actual es incorrecta');
+        if (!passwordValid) {
+          console.log(`[USERS] Contraseña actual incorrecta`);
+          throw new UnauthorizedException('La contraseña actual es incorrecta');
+        }
+        console.log(`[USERS] Contraseña actual validada correctamente`);
+      } catch (error) {
+        console.log(`[USERS] Error validando contraseña actual:`, error);
+        throw new BadRequestException('Error al validar la contraseña actual');
       }
-      console.log(`[USERS] Contraseña actual validada correctamente`);
     } else {
       console.log(`[USERS] No se proporcionó contraseña actual - cambio administrativo`);
     }
 
     console.log(`[USERS] Hasheando nueva contraseña...`);
-    const hashContrasena = await argon2.hash(changePasswordDto.contrasenaNueva);
-    console.log(`[USERS] Hash generado: ${hashContrasena.substring(0, 20)}...`);
+    try {
+      const hashContrasena = await argon2.hash(changePasswordDto.contrasenaNueva);
+      console.log(`[USERS] Hash generado: ${hashContrasena.substring(0, 20)}...`);
 
-    await this.prisma.usuario.update({
-      where: { id },
-      data: {
-        hashContrasena,
-      },
-    });
+      await this.prisma.usuario.update({
+        where: { id },
+        data: {
+          hashContrasena,
+        },
+      });
 
-    console.log(`[USERS] Contraseña actualizada exitosamente para usuario ${id}`);
+      console.log(`[USERS] Contraseña actualizada exitosamente para usuario ${id}`);
 
-    return { message: 'Contraseña actualizada correctamente' };
+      return { message: 'Contraseña actualizada correctamente' };
+    } catch (error) {
+      console.log(`[USERS] Error actualizando contraseña:`, error);
+      throw new BadRequestException('Error al actualizar la contraseña');
+    }
   }
 }
