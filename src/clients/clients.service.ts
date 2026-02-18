@@ -22,6 +22,17 @@ export class ClientsService {
   ) {}
 
   async create(createClientDto: CreateClientDto) {
+    // Validar si ya existe un cliente con ese documento
+    const clienteExistente = await this.prisma.cliente.findFirst({
+      where: { dni: createClientDto.dni, eliminadoEn: null },
+    });
+
+    if (clienteExistente) {
+      throw new ConflictException(
+        `Ya existe un cliente registrado con ese número de documento: ${createClientDto.dni}`,
+      );
+    }
+
     // Generar código único (simple por ahora)
     const count = await this.prisma.cliente.count();
     const codigo = `C-${(count + 1).toString().padStart(4, '0')}`;
