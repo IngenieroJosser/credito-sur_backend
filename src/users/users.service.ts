@@ -282,8 +282,7 @@ export class UsersService {
     return this.prisma.usuario.findFirst({
       where: {
         nombres: {
-          contains: nombres,
-          mode: 'insensitive',
+          equals: nombres,
         },
         eliminadoEn: null,
       },
