@@ -7,13 +7,17 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service'; 
-import { TipoCaja, TipoTransaccion } from '@prisma/client';
+import { TipoCaja, TipoTransaccion, TipoAprobacion, EstadoAprobacion } from '@prisma/client';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
 
 @Injectable()
 export class AccountingService {
   private readonly logger = new Logger(AccountingService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificacionesService: NotificacionesService,
+  ) {}
 
   // =====================
   // CAJAS
@@ -79,6 +83,69 @@ export class AccountingService {
     }
 
     return caja;
+  }
+
+  // =====================
+  // GASTOS (SOLICITUD)
+  // =====================
+
+  async registrarGasto(data: {
+    descripcion: string;
+    monto: number;
+    rutaId: string;
+    cobradorId: string;
+    solicitadoPorId: string;
+    tipoAprobacion: TipoAprobacion;
+  }) {
+    const cajaRuta = await this.prisma.caja.findFirst({
+      where: {
+        rutaId: data.rutaId,
+        tipo: 'RUTA',
+        activa: true,
+      },
+    });
+
+    if (!cajaRuta) {
+      throw new NotFoundException('Caja de ruta no encontrada para registrar el gasto');
+    }
+
+    const aprobacion = await this.prisma.aprobacion.create({
+      data: {
+        tipoAprobacion: data.tipoAprobacion,
+        referenciaId: cajaRuta.id,
+        tablaReferencia: 'Gasto',
+        solicitadoPorId: data.solicitadoPorId,
+        estado: EstadoAprobacion.PENDIENTE,
+        datosSolicitud: {
+          rutaId: data.rutaId,
+          cobradorId: data.cobradorId,
+          cajaId: cajaRuta.id,
+          tipoGasto: 'GASTO_OPERATIVO',
+          monto: data.monto,
+          descripcion: data.descripcion,
+        },
+        montoSolicitud: data.monto,
+      },
+    });
+
+    await this.notificacionesService.notifyCoordinator({
+      titulo: 'Nuevo Gasto Requiere Aprobación',
+      mensaje: `El cobrador ha registrado un gasto por ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}.`,
+      tipo: 'SISTEMA',
+      entidad: 'GASTO',
+      entidadId: aprobacion.id,
+      metadata: {
+        rutaId: data.rutaId,
+        cajaId: cajaRuta.id,
+        cobradorId: data.cobradorId,
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Gasto registrado y enviado para aprobación del coordinador',
+      approvalId: aprobacion.id,
+    };
   }
 
   async createCaja(
@@ -495,6 +562,26 @@ export class AccountingService {
         data: { saldoActual: nuevoSaldo },
       }),
     ]);
+
+    try {
+      if (data.tipo === 'EGRESO' && caja.tipo === 'RUTA') {
+        await this.notificacionesService.notifyCoordinator({
+          titulo: 'Gasto Registrado en Ruta',
+          mensaje: `Se registró un gasto de ${data.monto.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} en la ruta ${caja.ruta?.nombre || 'Sin ruta'} (Caja: ${caja.nombre})`,
+          tipo: 'SISTEMA',
+          entidad: 'TRANSACCION',
+          entidadId: transaccion.id,
+          metadata: {
+            rutaId: caja.rutaId,
+            cajaId: data.cajaId,
+            tipoTransaccion: data.tipo,
+            descripcion: data.descripcion,
+          },
+        });
+      }
+    } catch (error) {
+      this.logger.error('Error enviando notificación de gasto:', error);
+    }
 
     return transaccion;
   }
