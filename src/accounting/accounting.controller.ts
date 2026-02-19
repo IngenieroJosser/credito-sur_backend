@@ -16,7 +16,7 @@ import {
 } from '@nestjs/common';
 import { AccountingService } from './accounting.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { TipoCaja, TipoTransaccion } from '@prisma/client';
+import { TipoCaja, TipoTransaccion, TipoAprobacion } from '@prisma/client';
 
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -223,6 +223,36 @@ export class AccountingController {
       estado,
       page: page ? parseInt(page) : 1,
       limit: limit ? parseInt(limit) : 50,
+    });
+  }
+
+  @Post('gastos')
+  @Roles(
+    RolUsuario.COBRADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
+  async registrarGasto(
+    @Request() req,
+    @Body()
+    body: {
+      descripcion: string;
+      valor: number;
+      rutaId: string;
+      cobradorId: string;
+    },
+  ) {
+    if (!req.user || !req.user.id) {
+      throw new UnauthorizedException('Usuario no autenticado');
+    }
+    return this.accountingService.registrarGasto({
+      descripcion: body.descripcion,
+      monto: body.valor,
+      rutaId: body.rutaId,
+      cobradorId: body.cobradorId,
+      solicitadoPorId: req.user.id,
+      tipoAprobacion: TipoAprobacion.GASTO,
     });
   }
 

@@ -6,10 +6,14 @@ import {
   TipoAprobacion,
   TipoTransaccion,
 } from '@prisma/client';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
 
 @Injectable()
 export class ApprovalsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private notificacionesService: NotificacionesService,
+  ) {}
 
   async approveItem(id: string, _type: TipoAprobacion) {
     // Buscar la aprobación
@@ -122,7 +126,7 @@ export class ApprovalsService {
         ? JSON.parse(approval.datosSolicitud)
         : approval.datosSolicitud;
 
-    await this.prisma.gasto.create({
+    const gasto = await this.prisma.gasto.create({
       data: {
         numeroGasto: `G${Date.now()}`,
         rutaId: data.rutaId,
@@ -133,7 +137,29 @@ export class ApprovalsService {
         descripcion: data.descripcion,
         estadoAprobacion: EstadoAprobacion.APROBADO,
       },
+      include: {
+        ruta: { select: { id: true, nombre: true } },
+        caja: { select: { id: true, nombre: true } },
+        cobrador: { select: { id: true, nombres: true, apellidos: true } },
+      },
     });
+
+    try {
+      await this.notificacionesService.notifyCoordinator({
+        titulo: 'Gasto Aprobado',
+        mensaje: `Se aprobó un gasto de ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} en la ruta ${gasto.ruta?.nombre || 'Sin ruta'} (Caja: ${gasto.caja?.nombre || 'N/A'}) por ${gasto.cobrador ? gasto.cobrador.nombres + ' ' + gasto.cobrador.apellidos : 'usuario'}.`,
+        tipo: 'SISTEMA',
+        entidad: 'GASTO',
+        entidadId: gasto.id,
+        metadata: {
+          rutaId: gasto.ruta?.id,
+          cajaId: gasto.caja?.id,
+          cobradorId: gasto.cobrador?.id,
+        },
+      });
+    } catch (error) {
+      // No interrumpimos el flujo de aprobación si la notificación falla
+    }
   }
 
   private async approveCashBase(approval: any) {
@@ -143,7 +169,7 @@ export class ApprovalsService {
         : approval.datosSolicitud;
 
     // Crear transacción de ingreso a la caja
-    await this.prisma.transaccion.create({
+    const trx = await this.prisma.transaccion.create({
       data: {
         numeroTransaccion: `T${Date.now()}`,
         cajaId: data.cajaId,
@@ -154,6 +180,35 @@ export class ApprovalsService {
         aprobadoPorId: approval.aprobadoPorId,
       },
     });
+
+    try {
+      await this.notificacionesService.notifyCoordinator({
+        titulo: 'Base de Efectivo Aprobada',
+        mensaje: `Se aprobó una base de efectivo por ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}.`,
+        tipo: 'SISTEMA',
+        entidad: 'TRANSACCION',
+        entidadId: trx.id,
+        metadata: {
+          cajaId: data.cajaId,
+          monto: data.monto,
+          solicitadoPorId: approval.solicitadoPorId,
+          aprobadoPorId: approval.aprobadoPorId,
+        },
+      });
+      await this.notificacionesService.create({
+        usuarioId: approval.solicitadoPorId,
+        titulo: 'Tu Solicitud de Base fue Aprobada',
+        mensaje: `Tu solicitud por ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} fue aprobada.`,
+        tipo: 'EXITO',
+        entidad: 'TRANSACCION',
+        entidadId: trx.id,
+        metadata: {
+          cajaId: data.cajaId,
+        },
+      });
+    } catch (error) {
+      // No interrumpimos el flujo si la notificación falla
+    }
   }
 
   private async approvePaymentExtension(approval: any) {

@@ -10,6 +10,7 @@ import {
   EstadoPrestamo,
   EstadoCuota,
   MetodoPago,
+    TipoTransaccion,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { AuditService } from '../audit/audit.service';
@@ -50,13 +51,26 @@ export class PaymentsService {
   }
 
   async create(dto: CreatePaymentDto) {
+    // Validar que se proporcione el prestamoId
+    if (!dto.prestamoId) {
+      throw new BadRequestException('El ID del préstamo es requerido');
+    }
+
+    // Validar cobrador
+    if (!dto.cobradorId) {
+      throw new BadRequestException('El cobrador es requerido');
+    }
+
+    const prestamoIdVal = dto.prestamoId;
+    const cobradorIdVal = dto.cobradorId;
+
     this.logger.log(
-      `Registrando pago: préstamo=${dto.prestamoId}, monto=${dto.montoTotal}`,
+      `Registrando pago: préstamo=${prestamoIdVal}, monto=${dto.montoTotal}`,
     );
 
     // Obtener préstamo con cuotas pendientes
     const prestamo = await this.prisma.prestamo.findUnique({
-      where: { id: dto.prestamoId, eliminadoEn: null },
+      where: { id: prestamoIdVal, eliminadoEn: null },
       include: {
         cuotas: {
           where: {
@@ -74,6 +88,9 @@ export class PaymentsService {
       throw new NotFoundException('Préstamo no encontrado');
     }
 
+    // Usar el clienteId del préstamo si no se proporciona
+    const clienteId = dto.clienteId || prestamo.clienteId;
+
     if (
       prestamo.estado !== EstadoPrestamo.ACTIVO &&
       prestamo.estado !== EstadoPrestamo.EN_MORA
@@ -83,7 +100,7 @@ export class PaymentsService {
       );
     }
 
-    if (prestamo.clienteId !== dto.clienteId) {
+    if (clienteId && prestamo.clienteId !== clienteId) {
       throw new BadRequestException(
         'El cliente no corresponde al préstamo indicado',
       );
@@ -151,15 +168,20 @@ export class PaymentsService {
       montoRestante -= montoAplicar;
     }
 
+    // Validar cobrador
+    if (!dto.cobradorId) {
+      throw new BadRequestException('El cobrador es requerido');
+    }
+
     // Crear pago y actualizar todo en una transacción
     const resultado = await this.prisma.$transaction(async (tx) => {
       // 1. Crear el registro de pago
       const pago = await tx.pago.create({
         data: {
           numeroPago,
-          clienteId: dto.clienteId,
-          prestamoId: dto.prestamoId,
-          cobradorId: dto.cobradorId,
+          clienteId: clienteId,
+          prestamoId: prestamoIdVal,
+          cobradorId: cobradorIdVal,
           fechaPago: dto.fechaPago ? new Date(dto.fechaPago) : new Date(),
           montoTotal,
           metodoPago: dto.metodoPago || MetodoPago.EFECTIVO,
@@ -201,7 +223,7 @@ export class PaymentsService {
       const prestamoQuedaPagado = nuevoSaldoPendiente <= 0;
 
       await tx.prestamo.update({
-        where: { id: dto.prestamoId },
+        where: { id: prestamoIdVal },
         data: {
           totalPagado: nuevoTotalPagado,
           capitalPagado: nuevoCapitalPagado,
@@ -213,6 +235,42 @@ export class PaymentsService {
           estadoSincronizacion: 'PENDIENTE',
         },
       });
+
+      // 4. Registrar ingreso en contabilidad (CAJA de la ruta)
+      try {
+        const asignacion = await tx.asignacionRuta.findFirst({
+          where: { clienteId, activa: true },
+          select: { rutaId: true },
+        });
+        if (asignacion?.rutaId) {
+          const cajaRuta = await tx.caja.findFirst({
+            where: { rutaId: asignacion.rutaId, tipo: 'RUTA', activa: true },
+            select: { id: true, nombre: true, saldoActual: true },
+          });
+          if (cajaRuta?.id) {
+            const numeroTransaccion = `TRX-IN-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+            await tx.transaccion.create({
+              data: {
+                numeroTransaccion,
+                cajaId: cajaRuta.id,
+                tipo: TipoTransaccion.INGRESO,
+                monto: montoTotal,
+                descripcion: `Cobranza ${numeroPago}`,
+                creadoPorId: cobradorIdVal,
+                tipoReferencia: 'PAGO',
+                referenciaId: numeroPago,
+              },
+            });
+            await tx.caja.update({
+              where: { id: cajaRuta.id },
+              data: { saldoActual: { increment: montoTotal } },
+            });
+          }
+        }
+      } catch (e) {
+        // No interrumpir el flujo principal si la contabilidad falla
+        this.logger.warn(`Contabilidad no registrada para pago ${numeroPago}: ${e?.message || e}`);
+      }
 
       return {
         pago,
@@ -236,7 +294,7 @@ export class PaymentsService {
       entidadId: resultado.pago.id,
       datosNuevos: {
         numeroPago,
-        prestamoId: dto.prestamoId,
+        prestamoIdVal,
         montoTotal,
         capitalRecuperado: capitalTotal,
         interesRecuperado: interesTotal,
@@ -251,7 +309,7 @@ export class PaymentsService {
       entidad: 'PAGO',
       entidadId: resultado.pago.id,
       metadata: {
-        prestamoId: dto.prestamoId,
+        prestamoIdVal,
         capitalRecuperado: capitalTotal,
         interesRecuperado: interesTotal,
       },
