@@ -17,15 +17,10 @@ export class AuthService {
   async validarUsuario(nombres: string, contrasena: string) {
     console.log(`[AUTH] validarUsuario llamado con: "${nombres}"`);
     
-    const usuario =
-      (await this.usersService.obtenerPorNombreUsuario(nombres)) ||
-      (await this.usersService.obtenerPorNombres(nombres)) ||
-      (await this.usersService.obtenerPorCorreo(nombres));
+    // Buscar únicamente por el campo "nombres" (nombre real del usuario)
+    const usuario = await this.usersService.obtenerPorNombres(nombres);
 
-    console.log(`[AUTH] Usuario encontrado en validarUsuario: ${usuario ? 'SÍ' : 'NO'}`);
-    if (usuario) {
-      console.log(`[AUTH] Usuario: ${usuario.nombreUsuario} (${usuario.correo}) - Rol: ${usuario.rol}`);
-    }
+    console.log(`[AUTH] Usuario encontrado: ${usuario ? `SÍ - ${usuario.nombres} ${usuario.apellidos} (${usuario.rol})` : 'NO'}`);
 
     if (!usuario) {
       return null;
