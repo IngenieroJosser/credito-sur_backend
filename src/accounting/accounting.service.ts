@@ -148,6 +148,70 @@ export class AccountingService {
     };
   }
 
+  async solicitarBase(data: {
+    descripcion: string;
+    monto: number;
+    rutaId: string;
+    cobradorId: string;
+    solicitadoPorId: string;
+  }) {
+    const cajaRuta = await this.prisma.caja.findFirst({
+      where: {
+        rutaId: data.rutaId,
+        tipo: 'RUTA',
+        activa: true,
+      },
+    });
+
+    if (!cajaRuta) {
+      throw new NotFoundException(
+        'Caja de ruta no encontrada para registrar la base',
+      );
+    }
+
+    const aprobacion = await this.prisma.aprobacion.create({
+      data: {
+        tipoAprobacion: TipoAprobacion.SOLICITUD_BASE_EFECTIVO,
+        referenciaId: cajaRuta.id,
+        tablaReferencia: 'Caja',
+        solicitadoPorId: data.solicitadoPorId,
+        estado: EstadoAprobacion.PENDIENTE,
+        datosSolicitud: {
+          rutaId: data.rutaId,
+          cobradorId: data.cobradorId,
+          cajaId: cajaRuta.id,
+          monto: data.monto,
+          descripcion: data.descripcion,
+        },
+        montoSolicitud: data.monto,
+      },
+    });
+
+    await this.notificacionesService.notifyCoordinator({
+      titulo: 'Nueva Solicitud de Base de Efectivo',
+      mensaje: `El cobrador ha solicitado una base de efectivo por ${Number(
+        data.monto,
+      ).toLocaleString('es-CO', {
+        style: 'currency',
+        currency: 'COP',
+      })}.`,
+      tipo: 'SISTEMA',
+      entidad: 'APROBACION',
+      entidadId: aprobacion.id,
+      metadata: {
+        rutaId: data.rutaId,
+        cajaId: cajaRuta.id,
+        cobradorId: data.cobradorId,
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Solicitud de base registrada y enviada para aprobación',
+      approvalId: aprobacion.id,
+    };
+  }
+
   async createCaja(
     data: {
       nombre: string;

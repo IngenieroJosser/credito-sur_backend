@@ -256,6 +256,35 @@ export class AccountingController {
     });
   }
 
+  @Post('base-requests')
+  @Roles(
+    RolUsuario.COBRADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
+  async solicitarBase(
+    @Request() req,
+    @Body()
+    body: {
+      descripcion: string;
+      monto: number;
+      rutaId: string;
+      cobradorId: string;
+    },
+  ) {
+    if (!req.user || !req.user.id) {
+      throw new UnauthorizedException('Usuario no autenticado');
+    }
+    return this.accountingService.solicitarBase({
+      descripcion: body.descripcion,
+      monto: body.monto,
+      rutaId: body.rutaId,
+      cobradorId: body.cobradorId,
+      solicitadoPorId: req.user.id,
+    });
+  }
+
   @Get('rutas/:rutaId/saldo-disponible')
   @Roles(
     RolUsuario.COBRADOR,
