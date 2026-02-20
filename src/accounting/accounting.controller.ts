@@ -217,12 +217,16 @@ export class AccountingController {
     @Query('estado') estado?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
   ) {
     return this.accountingService.getGastos({
       rutaId,
       estado,
       page: page ? parseInt(page) : 1,
       limit: limit ? parseInt(limit) : 50,
+      fechaInicio,
+      fechaFin,
     });
   }
 
@@ -295,8 +299,15 @@ export class AccountingController {
   getSaldoDisponibleRuta(
     @Param('rutaId') rutaId: string,
     @Query('fecha') fecha?: string,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
   ) {
-    return this.accountingService.getSaldoDisponibleRuta(rutaId, fecha);
+    return this.accountingService.getSaldoDisponibleRuta(
+      rutaId,
+      fecha,
+      fechaInicio,
+      fechaFin,
+    );
   }
 
   @Get('export')

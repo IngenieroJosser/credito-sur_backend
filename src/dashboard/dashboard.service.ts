@@ -13,13 +13,25 @@ export class DashboardService {
 
   async getDashboardData(timeFilter: string) {
     try {
-      // 1. Obtener métricas principales
+      // Calcular rango de fechas según el filtro de período PRIMERO
+      const { startDate, endDate } = this.calculateDateRangeFromFilter(timeFilter);
+      
+      // Debug: Log de fechas calculadas
+      console.log(`[DASHBOARD] Filtro: ${timeFilter}, Inicio: ${startDate.toISOString()}, Fin: ${endDate.toISOString()}`);
+
+      // 1. Obtener métricas principales filtradas por período
       const pendingApprovals = await this.prisma.aprobacion.count({
-        where: { estado: EstadoAprobacion.PENDIENTE },
+        where: { 
+          estado: EstadoAprobacion.PENDIENTE,
+          creadoEn: { gte: startDate, lte: endDate },
+        },
       });
 
       const delinquentAccounts = await this.prisma.prestamo.count({
-        where: { estado: EstadoPrestamo.EN_MORA },
+        where: { 
+          estado: EstadoPrestamo.EN_MORA,
+          creadoEn: { gte: startDate, lte: endDate },
+        },
       });
 
       // Base solicitada (suma de aprobaciones pendientes de tipo SOLICITUD_BASE_EFECTIVO)
@@ -27,13 +39,14 @@ export class DashboardService {
         where: {
           estado: EstadoAprobacion.PENDIENTE,
           tipoAprobacion: TipoAprobacion.SOLICITUD_BASE_EFECTIVO,
+          creadoEn: { gte: startDate, lte: endDate },
         },
         _sum: {
-          montoSolicitud: true, // Esto necesita un manejo especial, veremos más abajo
+          montoSolicitud: true,
         },
       });
 
-      // Cálculo de eficiencia (relación entre préstamos pagados vs totales)
+      // Cálculo de eficiencia (relación entre préstamos pagados vs totales) - filtrado por período
       const totalLoans = await this.prisma.prestamo.count({
         where: {
           estado: {
@@ -43,18 +56,135 @@ export class DashboardService {
               EstadoPrestamo.EN_MORA,
             ],
           },
+          creadoEn: { gte: startDate, lte: endDate },
         },
       });
 
       const paidLoans = await this.prisma.prestamo.count({
-        where: { estado: EstadoPrestamo.PAGADO },
+        where: { 
+          estado: EstadoPrestamo.PAGADO,
+          creadoEn: { gte: startDate, lte: endDate },
+        },
       });
 
       const efficiency = totalLoans > 0 ? (paidLoans / totalLoans) * 100 : 0;
 
-    // 2. Obtener aprobaciones pendientes
-    const pendingApprovalsList = await this.prisma.aprobacion.findMany({
-      where: { estado: EstadoAprobacion.PENDIENTE },
+      console.log('[DASHBOARD] Antes de calcular capital prestado y recaudo');
+      console.log(`[DASHBOARD] Fechas calculadas - Inicio: ${startDate.toISOString()}, Fin: ${endDate.toISOString()}`);
+
+      // Consulta de prueba para ver qué préstamos hay en el rango
+      const prestamosPrueba = await this.prisma.prestamo.findMany({
+        where: {
+          eliminadoEn: null,
+        },
+        select: {
+          id: true,
+          monto: true,
+          creadoEn: true,
+          estado: true,
+        },
+        take: 5,
+        orderBy: { creadoEn: 'desc' },
+      });
+      console.log(`[DASHBOARD] Préstamos de prueba (últimos 5):`, prestamosPrueba.map(p => ({
+        id: p.id,
+        monto: p.monto,
+        creadoEn: p.creadoEn.toISOString(),
+        estado: p.estado,
+        estaEnRango: p.creadoEn >= startDate && p.creadoEn <= endDate,
+      })));
+
+      // Calcular capital prestado del período (suma de montos de préstamos creados en el período)
+      const capitalPrestado = await this.prisma.prestamo.aggregate({
+        where: {
+          creadoEn: { gte: startDate, lte: endDate },
+          eliminadoEn: null,
+        },
+        _sum: {
+          monto: true,
+        },
+      });
+      
+      // Contar cuántos préstamos hay en el rango
+      const countPrestamos = await this.prisma.prestamo.count({
+        where: {
+          creadoEn: { gte: startDate, lte: endDate },
+          eliminadoEn: null,
+        },
+      });
+      
+      console.log(`[DASHBOARD] Capital Prestado: ${capitalPrestado._sum?.monto || 0}, Count: ${countPrestamos}, Fechas: ${startDate.toISOString()} - ${endDate.toISOString()}`);
+      
+      // Consulta adicional: ver todos los préstamos sin filtro de fecha para diagnóstico
+      const todosLosPrestamos = await this.prisma.prestamo.findMany({
+        where: { eliminadoEn: null },
+        select: { id: true, monto: true, creadoEn: true },
+        take: 10,
+        orderBy: { creadoEn: 'desc' },
+      });
+      console.log(`[DASHBOARD] Todos los préstamos (últimos 10):`, todosLosPrestamos.map(p => ({
+        monto: p.monto,
+        creadoEn: p.creadoEn.toISOString(),
+        fechaLocal: p.creadoEn.toLocaleString('es-CO'),
+        estaEnRango: p.creadoEn >= startDate && p.creadoEn <= endDate,
+      })));
+
+      // Consulta de prueba para ver qué pagos hay en el rango
+      const pagosPrueba = await this.prisma.pago.findMany({
+        select: {
+          id: true,
+          montoTotal: true,
+          fechaPago: true,
+        },
+        take: 5,
+        orderBy: { fechaPago: 'desc' },
+      });
+      console.log(`[DASHBOARD] Pagos de prueba (últimos 5):`, pagosPrueba.map(p => ({
+        id: p.id,
+        montoTotal: p.montoTotal,
+        fechaPago: p.fechaPago.toISOString(),
+        fechaLocal: p.fechaPago.toLocaleString('es-CO'),
+        estaEnRango: p.fechaPago >= startDate && p.fechaPago <= endDate,
+      })));
+      
+      // Consulta adicional: ver todos los pagos sin filtro de fecha para diagnóstico
+      const todosLosPagos = await this.prisma.pago.findMany({
+        select: { id: true, montoTotal: true, fechaPago: true },
+        take: 10,
+        orderBy: { fechaPago: 'desc' },
+      });
+      console.log(`[DASHBOARD] Todos los pagos (últimos 10):`, todosLosPagos.map(p => ({
+        montoTotal: p.montoTotal,
+        fechaPago: p.fechaPago.toISOString(),
+        fechaLocal: p.fechaPago.toLocaleString('es-CO'),
+        estaEnRango: p.fechaPago >= startDate && p.fechaPago <= endDate,
+      })));
+
+      // Calcular recaudo del período (suma de pagos en el período)
+      const recaudo = await this.prisma.pago.aggregate({
+        where: {
+          fechaPago: { gte: startDate, lte: endDate },
+        },
+        _sum: {
+          montoTotal: true,
+        },
+      });
+      
+      // Contar cuántos pagos hay en el rango
+      const countPagos = await this.prisma.pago.count({
+        where: {
+          fechaPago: { gte: startDate, lte: endDate },
+        },
+      });
+      
+      console.log(`[DASHBOARD] Recaudo: ${recaudo._sum?.montoTotal || 0}, Count: ${countPagos}, Fechas: ${startDate.toISOString()} - ${endDate.toISOString()}`);
+
+      // 2. Obtener aprobaciones pendientes (filtradas por período)
+      const pendingApprovalsList = await this.prisma.aprobacion.findMany({
+      where: { 
+        estado: EstadoAprobacion.PENDIENTE,
+        creadoEn: { gte: startDate, lte: endDate },
+      },
       include: {
         solicitadoPor: {
           select: {
@@ -67,9 +197,12 @@ export class DashboardService {
       take: 5,
     });
 
-    // 3. Obtener cuentas en mora
-    const delinquentAccountsList = await this.prisma.prestamo.findMany({
-      where: { estado: EstadoPrestamo.EN_MORA },
+      // 3. Obtener cuentas en mora (filtradas por período)
+      const delinquentAccountsList = await this.prisma.prestamo.findMany({
+      where: { 
+        estado: EstadoPrestamo.EN_MORA,
+        creadoEn: { gte: startDate, lte: endDate },
+      },
       include: {
         cliente: {
           select: {
@@ -86,10 +219,11 @@ export class DashboardService {
       take: 5,
     });
 
-    // 4. Obtener actividad reciente (últimas aprobaciones procesadas)
-    const recentActivityList = await this.prisma.aprobacion.findMany({
+      // 4. Obtener actividad reciente (últimas aprobaciones procesadas) - filtradas por período
+      const recentActivityList = await this.prisma.aprobacion.findMany({
       where: {
         estado: { in: [EstadoAprobacion.APROBADO, EstadoAprobacion.RECHAZADO] },
+        actualizadoEn: { gte: startDate, lte: endDate },
       },
       include: {
         solicitadoPor: {
@@ -103,21 +237,17 @@ export class DashboardService {
       take: 5,
     });
 
-    // 5. Datos de tendencia (últimos 7 días)
-    const trendData = await this.getTrendData(timeFilter);
+      // 5. Datos de tendencia (últimos 7 días)
+      const trendData = await this.getTrendData(timeFilter);
 
-    // 6. Top 5 Cobradores (Mes Actual) - Filtrado por Rol
-    const startOfMonth = new Date();
-    startOfMonth.setDate(1);
-    startOfMonth.setHours(0, 0, 0, 0);
-
-    const topCollectorsRaw = await this.prisma.pago.groupBy({
+      // 6. Top 5 Cobradores (filtrado por período) - Filtrado por Rol
+      const topCollectorsRaw = await this.prisma.pago.groupBy({
       by: ['cobradorId'],
       _sum: {
         montoTotal: true,
       },
       where: {
-        fechaPago: { gte: startOfMonth },
+        fechaPago: { gte: startDate, lte: endDate },
       },
       orderBy: {
         _sum: {
@@ -127,36 +257,38 @@ export class DashboardService {
       take: 10, // Traemos extra para filtrar
     });
 
-    // Enriquecer con datos de usuario y filtrar
-    const topCollectorsList: any[] = [];
-    for (const item of topCollectorsRaw) {
-      if (!item.cobradorId) continue;
-      const user = await this.prisma.usuario.findUnique({
-        where: { id: item.cobradorId },
-        select: { nombres: true, apellidos: true, rol: true },
-      });
-
-      if (user && ['COBRADOR', 'SUPERVISOR'].includes(user.rol)) {
-        // Calcular eficiencia simple (pagos a tiempo vs total asignado - simplificado por ahora)
-        // Por ahora hardcodeamos eficiencia basada en random para demo o 100% si no hay mora
-        const efficiency = 95 + Math.floor(Math.random() * 5); 
-
-        topCollectorsList.push({
-          name: `${user.nombres} ${user.apellidos}`,
-          collected: Number(item._sum.montoTotal || 0),
-          efficiency,
-          trend: 'up',
+      // Enriquecer con datos de usuario y filtrar
+      const topCollectorsList: any[] = [];
+      for (const item of topCollectorsRaw) {
+        if (!item.cobradorId) continue;
+        const user = await this.prisma.usuario.findUnique({
+          where: { id: item.cobradorId },
+          select: { nombres: true, apellidos: true, rol: true },
         });
-      }
-      if (topCollectorsList.length >= 5) break; 
-    }
 
-      return {
+        if (user && ['COBRADOR', 'SUPERVISOR'].includes(user.rol)) {
+          // Calcular eficiencia simple (pagos a tiempo vs total asignado - simplificado por ahora)
+          // Por ahora hardcodeamos eficiencia basada en random para demo o 100% si no hay mora
+          const efficiency = 95 + Math.floor(Math.random() * 5); 
+
+          topCollectorsList.push({
+            name: `${user.nombres} ${user.apellidos}`,
+            collected: Number(item._sum.montoTotal || 0),
+            efficiency,
+            trend: 'up',
+          });
+        }
+        if (topCollectorsList.length >= 5) break; 
+      }
+
+      const result = {
         metrics: {
           pendingApprovals,
           delinquentAccounts,
           requestedBase: this.calculateRequestedBase(pendingApprovalsList),
           efficiency: parseFloat(efficiency.toFixed(1)),
+          capitalPrestado: Number(capitalPrestado._sum?.monto || 0),
+          recaudo: Number(recaudo._sum?.montoTotal || 0),
         },
         trend: trendData,
         pendingApprovals: pendingApprovalsList.map((item) =>
@@ -168,10 +300,20 @@ export class DashboardService {
         recentActivity: recentActivityList.map((item) =>
           this.mapRecentActivity(item),
         ),
-        topCollectors: topCollectorsList, // Nuevo campo
+        topCollectors: topCollectorsList,
       };
+      
+      console.log('[DASHBOARD] Resultado final:', JSON.stringify({
+        capitalPrestado: result.metrics.capitalPrestado,
+        recaudo: result.metrics.recaudo,
+        efficiency: result.metrics.efficiency,
+      }));
+      
+      return result;
     } catch (error) {
       console.error('Error getting dashboard data:', error);
+      console.error('Error details:', error instanceof Error ? error.message : error);
+      console.error('Error stack:', error instanceof Error ? error.stack : 'No stack');
       // Retornar datos de fallback en caso de error
       return {
         metrics: {
@@ -179,6 +321,8 @@ export class DashboardService {
           delinquentAccounts: 0,
           requestedBase: 0,
           efficiency: 0,
+          capitalPrestado: 0,
+          recaudo: 0,
         },
         trend: this.getSampleTrendData(),
         pendingApprovals: [],
@@ -212,45 +356,36 @@ export class DashboardService {
 
   async getTrendData(timeFilter: string): Promise<any[]> {
     try {
+      // Usar el mismo cálculo de fechas que getDashboardData para consistencia
+      const { startDate, endDate } = this.calculateDateRangeFromFilter(timeFilter);
       const today = new Date();
-      let startDate: Date;
       let groupBy: 'day' | 'week' | 'month' = 'day';
 
-      // Determinar el rango de fechas según el filtro
+      // Determinar cómo agrupar según el filtro
       switch (timeFilter) {
         case 'today':
-          startDate = new Date(today);
-          startDate.setHours(0, 0, 0, 0);
           groupBy = 'day';
           break;
         case 'week':
-          startDate = new Date(today);
-          startDate.setDate(today.getDate() - 7);
           groupBy = 'day';
           break;
         case 'month':
-          startDate = new Date(today);
-          startDate.setMonth(today.getMonth() - 1);
           groupBy = 'day';
           break;
         case 'quarter':
-          startDate = new Date(today);
-          startDate.setMonth(today.getMonth() - 3);
           groupBy = 'week';
           break;
         default:
-          startDate = new Date(today);
-          startDate.setDate(today.getDate() - 7);
           groupBy = 'day';
       }
 
-      // Obtener datos de pagos reales
+      // Obtener datos de pagos reales filtrados por el período
       const payments = await this.prisma.pago.groupBy({
         by: ['fechaPago'],
         where: {
           fechaPago: {
             gte: startDate,
-            lte: today,
+            lte: endDate,
           },
           montoTotal: {
             gt: 0,
@@ -294,7 +429,7 @@ export class DashboardService {
       const processedData = this.processTrendData(
         payments,
         startDate,
-        today,
+        endDate,
         groupBy,
         dailyTarget,
         weeklyTarget,
@@ -311,7 +446,7 @@ export class DashboardService {
     payments: any[],
     startDate: Date,
     endDate: Date,
-    groupBy: 'day' | 'week',
+    groupBy: 'day' | 'week' | 'month',
     dailyTarget: number,
     weeklyTarget: number,
   ): any[] {
@@ -324,9 +459,14 @@ export class DashboardService {
       );
       const daysOfWeek = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'];
 
-      for (let i = 0; i <= daysDiff && i < 7; i++) {
+      // Limitar a máximo 30 días para evitar sobrecarga, pero asegurar que incluya todos los días del período
+      const maxDays = Math.min(daysDiff, 30);
+      for (let i = 0; i <= maxDays; i++) {
         const currentDate = new Date(startDate);
         currentDate.setDate(startDate.getDate() + i);
+        
+        // No procesar días futuros
+        if (currentDate > endDate) break;
 
         const dayStart = new Date(currentDate);
         dayStart.setHours(0, 0, 0, 0);
@@ -344,13 +484,19 @@ export class DashboardService {
           0,
         );
 
+        // Crear etiqueta más descriptiva: día de semana + fecha
+        const dayName = daysOfWeek[currentDate.getDay()];
+        const dayNumber = currentDate.getDate();
+        const monthName = currentDate.toLocaleDateString('es-CO', { month: 'short' });
+        const label = `${dayName} ${dayNumber}/${monthName}`;
+        
         result.push({
-          label: daysOfWeek[currentDate.getDay()],
+          label,
           value: total,
           target: dailyTarget,
         });
       }
-    } else {
+    } else if (groupBy === 'week') {
       // Agrupar por semana
       const weeksDiff = Math.ceil(
         (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24 * 7),
@@ -380,6 +526,44 @@ export class DashboardService {
           value: total,
           target: weeklyTarget,
         });
+      }
+    } else if (groupBy === 'month') {
+      // Agrupar pagos por mes (YYYY-MM)
+      const monthMap = new Map<string, number>();
+
+      for (const payment of payments) {
+        const date = new Date(payment.fechaPago);
+        const key = `${date.getFullYear()}-${String(
+          date.getMonth() + 1,
+        ).padStart(2, '0')}`;
+        const total = parseFloat(payment._sum.montoTotal?.toString() || '0');
+        monthMap.set(key, (monthMap.get(key) || 0) + total);
+      }
+
+      // Generar puntos de tendencia por mes dentro del rango
+      const current = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+      current.setHours(0, 0, 0, 0);
+
+      while (current <= endDate) {
+        const key = `${current.getFullYear()}-${String(
+          current.getMonth() + 1,
+        ).padStart(2, '0')}`;
+        const total = monthMap.get(key) || 0;
+
+        const monthName = current.toLocaleDateString('es-CO', {
+          month: 'short',
+        });
+        const label = `${monthName} ${current.getFullYear()}`;
+
+        result.push({
+          label,
+          value: total,
+          // Para rangos largos usamos la meta semanal como referencia aproximada
+          target: weeklyTarget,
+        });
+
+        // Avanzar al siguiente mes
+        current.setMonth(current.getMonth() + 1);
       }
     }
 
@@ -567,5 +751,53 @@ export class DashboardService {
     } catch (error) {
       return '-';
     }
+  }
+
+  /**
+   * Calcula el rango de fechas según el filtro de período
+   */
+  private calculateDateRangeFromFilter(timeFilter: string): { startDate: Date; endDate: Date } {
+    const today = new Date();
+    let startDate: Date;
+    let endDate: Date = new Date(today);
+    endDate.setHours(23, 59, 59, 999);
+
+    switch (timeFilter) {
+      case 'today':
+        startDate = new Date(today);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(today);
+        endDate.setHours(23, 59, 59, 999);
+        break;
+      case 'week':
+        startDate = new Date(today);
+        // Inicio de semana (domingo = 0)
+        const day = today.getDay();
+        // Calcular diferencia para llegar al domingo (día 0)
+        const diff = day === 0 ? 0 : -day; // Si es domingo, diff = 0; si no, retrocedemos días
+        startDate.setDate(today.getDate() + diff);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(today);
+        endDate.setHours(23, 59, 59, 999);
+        break;
+      case 'month':
+        startDate = new Date(today.getFullYear(), today.getMonth(), 1);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
+        break;
+      case 'quarter':
+        const quarter = Math.floor(today.getMonth() / 3);
+        startDate = new Date(today.getFullYear(), quarter * 3, 1);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(today.getFullYear(), (quarter + 1) * 3, 0, 23, 59, 59, 999);
+        break;
+      default:
+        // Por defecto: mes actual
+        startDate = new Date(today.getFullYear(), today.getMonth(), 1);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
+    }
+
+    return { startDate, endDate };
   }
 }

@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Param, UseGuards } from '@nestjs/common';
+import { Controller, Post, Body, Param, UseGuards, Request } from '@nestjs/common';
 import { ApprovalsService } from './approvals.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -11,20 +11,32 @@ export class ApprovalsController {
   constructor(private readonly approvalsService: ApprovalsService) {}
 
   @Post(':id/approve')
-  @Roles(RolUsuario.COORDINADOR)
+  @Roles(
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+  )
   async approveItem(
     @Param('id') id: string,
-    @Body() body: { type: TipoAprobacion },
+    @Body() body: { type: TipoAprobacion; notas?: string },
+    @Request() req: any,
   ) {
-    return this.approvalsService.approveItem(id, body.type);
+    const aprobadoPorId = req.user?.id || req.user?.sub;
+    return this.approvalsService.approveItem(id, body.type, aprobadoPorId, body.notas);
   }
 
   @Post(':id/reject')
-  @Roles(RolUsuario.COORDINADOR)
+  @Roles(
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+  )
   async rejectItem(
     @Param('id') id: string,
-    @Body() body: { type: TipoAprobacion },
+    @Body() body: { type: TipoAprobacion; motivoRechazo?: string },
+    @Request() req: any,
   ) {
-    return this.approvalsService.rejectItem(id, body.type);
+    const rechazadoPorId = req.user?.id || req.user?.sub;
+    return this.approvalsService.rejectItem(id, body.type, rechazadoPorId, body.motivoRechazo);
   }
 }

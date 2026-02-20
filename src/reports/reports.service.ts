@@ -30,12 +30,15 @@ export class ReportsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getFinancialSummary(startDate: Date, endDate: Date) {
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
+
     const ingresosResult = await this.prisma.pago.aggregate({
       _sum: { montoTotal: true },
       where: {
         fechaPago: {
           gte: startDate,
-          lte: endDate,
+          lte: end,
         },
       },
     });
@@ -45,7 +48,7 @@ export class ReportsService {
       where: {
         fechaGasto: {
           gte: startDate,
-          lte: endDate,
+          lte: end,
         },
         estadoAprobacion: EstadoAprobacion.APROBADO,
       },
@@ -108,11 +111,14 @@ export class ReportsService {
   }
 
   async getExpenseDistribution(startDate: Date, endDate: Date) {
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
+
     const gastos = await this.prisma.gasto.groupBy({
       by: ['tipoGasto'],
       _sum: { monto: true },
       where: {
-        fechaGasto: { gte: startDate, lte: endDate },
+        fechaGasto: { gte: startDate, lte: end },
         estadoAprobacion: EstadoAprobacion.APROBADO,
       },
     });
