@@ -2,7 +2,7 @@
 CREATE TYPE "EstadoUsuario" AS ENUM ('ACTIVO', 'INACTIVO', 'SUSPENDIDO');
 
 -- CreateEnum
-CREATE TYPE "RolUsuario" AS ENUM ('SUPER_ADMINISTRADOR', 'COORDINADOR', 'SUPERVISOR', 'COBRADOR', 'CONTADOR');
+CREATE TYPE "RolUsuario" AS ENUM ('SUPER_ADMINISTRADOR', 'ADMIN', 'COORDINADOR', 'SUPERVISOR', 'COBRADOR', 'CONTADOR', 'PUNTO_DE_VENTA');
 
 -- CreateEnum
 CREATE TYPE "NivelRiesgo" AS ENUM ('VERDE', 'AMARILLO', 'ROJO', 'LISTA_NEGRA');
@@ -15,6 +15,9 @@ CREATE TYPE "EstadoCuota" AS ENUM ('PENDIENTE', 'PAGADA', 'PARCIAL', 'VENCIDA', 
 
 -- CreateEnum
 CREATE TYPE "FrecuenciaPago" AS ENUM ('DIARIO', 'SEMANAL', 'QUINCENAL', 'MENSUAL');
+
+-- CreateEnum
+CREATE TYPE "TipoAmortizacion" AS ENUM ('INTERES_SIMPLE', 'FRANCESA');
 
 -- CreateEnum
 CREATE TYPE "MetodoPago" AS ENUM ('EFECTIVO', 'TRANSFERENCIA');
@@ -37,15 +40,23 @@ CREATE TYPE "TipoTransaccion" AS ENUM ('INGRESO', 'EGRESO', 'TRANSFERENCIA');
 -- CreateEnum
 CREATE TYPE "EstadoSincronizacion" AS ENUM ('PENDIENTE', 'SINCRONIZADO', 'CONFLICTO', 'ERROR');
 
+-- CreateEnum
+CREATE TYPE "TipoContenidoMultimedia" AS ENUM ('FOTO_PERFIL', 'DOCUMENTO_IDENTIDAD_FRENTE', 'DOCUMENTO_IDENTIDAD_REVERSO', 'COMPROBANTE_DOMICILIO', 'FIRMA_DIGITAL', 'FOTO_PRODUCTO', 'RECIBO_PAGO', 'EVIDENCIA_GASTO', 'CONTRATO_PRESTAMO', 'OTRO_DOCUMENTO');
+
+-- CreateEnum
+CREATE TYPE "EstadoMultimedia" AS ENUM ('TEMPORAL', 'ACTIVO', 'ELIMINADO');
+
 -- CreateTable
 CREATE TABLE "Usuario" (
     "id" TEXT NOT NULL,
+    "nombreUsuario" VARCHAR(50) NOT NULL,
     "correo" VARCHAR(255) NOT NULL,
     "hashContrasena" VARCHAR(255) NOT NULL,
     "nombres" VARCHAR(100) NOT NULL,
     "apellidos" VARCHAR(100) NOT NULL,
     "telefono" VARCHAR(20),
     "rol" "RolUsuario" NOT NULL,
+    "esPrincipal" BOOLEAN NOT NULL DEFAULT false,
     "estado" "EstadoUsuario" NOT NULL DEFAULT 'ACTIVO',
     "ultimoIngreso" TIMESTAMP(3),
     "intentosFallidos" INTEGER NOT NULL DEFAULT 0,
@@ -62,11 +73,29 @@ CREATE TABLE "Usuario" (
 );
 
 -- CreateTable
+CREATE TABLE "notificaciones" (
+    "id" TEXT NOT NULL,
+    "usuarioId" TEXT NOT NULL,
+    "titulo" VARCHAR(100) NOT NULL,
+    "mensaje" TEXT NOT NULL,
+    "leida" BOOLEAN NOT NULL DEFAULT false,
+    "tipo" TEXT NOT NULL DEFAULT 'INFO',
+    "entidad" TEXT,
+    "entidadId" TEXT,
+    "metadata" JSONB,
+    "creadoEn" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "archivar" BOOLEAN NOT NULL DEFAULT false,
+
+    CONSTRAINT "notificaciones_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "roles" (
     "id" TEXT NOT NULL,
     "nombre" VARCHAR(50) NOT NULL,
     "descripcion" VARCHAR(255),
     "esSistema" BOOLEAN NOT NULL DEFAULT false,
+    "rutaDefault" VARCHAR(100),
     "creadoEn" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "actualizadoEn" TIMESTAMP(3) NOT NULL,
     "eliminadoEn" TIMESTAMP(3),
@@ -79,7 +108,12 @@ CREATE TABLE "permisos" (
     "id" TEXT NOT NULL,
     "modulo" VARCHAR(50) NOT NULL,
     "accion" VARCHAR(50) NOT NULL,
+    "nombre" VARCHAR(100) NOT NULL,
     "descripcion" VARCHAR(255),
+    "icono" VARCHAR(50),
+    "ruta" VARCHAR(200),
+    "orden" INTEGER NOT NULL DEFAULT 0,
+    "esNavegable" BOOLEAN NOT NULL DEFAULT true,
     "creadoEn" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "actualizadoEn" TIMESTAMP(3) NOT NULL,
 
@@ -108,6 +142,16 @@ CREATE TABLE "asignaciones_roles_usuarios" (
 );
 
 -- CreateTable
+CREATE TABLE "asignaciones_permisos_usuarios" (
+    "id" TEXT NOT NULL,
+    "usuarioId" TEXT NOT NULL,
+    "permisoId" TEXT NOT NULL,
+    "creadoEn" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "asignaciones_permisos_usuarios_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "Cliente" (
     "id" TEXT NOT NULL,
     "codigo" VARCHAR(20) NOT NULL,
@@ -128,6 +172,7 @@ CREATE TABLE "Cliente" (
     "creadoPorId" TEXT NOT NULL,
     "aprobadoPorId" TEXT,
     "estadoAprobacion" "EstadoAprobacion" NOT NULL DEFAULT 'PENDIENTE',
+    "categoriaId" TEXT,
     "creadoEn" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "actualizadoEn" TIMESTAMP(3) NOT NULL,
     "eliminadoEn" TIMESTAMP(3),
@@ -150,6 +195,7 @@ CREATE TABLE "Producto" (
     "stock" INTEGER NOT NULL DEFAULT 0,
     "stockMinimo" INTEGER NOT NULL DEFAULT 0,
     "activo" BOOLEAN NOT NULL DEFAULT true,
+    "categoriaId" TEXT,
     "creadoEn" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "actualizadoEn" TIMESTAMP(3) NOT NULL,
     "eliminadoEn" TIMESTAMP(3),
@@ -178,6 +224,7 @@ CREATE TABLE "Prestamo" (
     "productoId" TEXT,
     "precioProductoId" TEXT,
     "tipoPrestamo" VARCHAR(20) NOT NULL,
+    "tipoAmortizacion" "TipoAmortizacion" NOT NULL DEFAULT 'INTERES_SIMPLE',
     "monto" DECIMAL(12,2) NOT NULL,
     "tasaInteres" DECIMAL(5,2) NOT NULL,
     "tasaInteresMora" DECIMAL(5,2) NOT NULL,
@@ -300,6 +347,7 @@ CREATE TABLE "rutas" (
     "activa" BOOLEAN NOT NULL DEFAULT true,
     "cobradorId" TEXT NOT NULL,
     "supervisorId" TEXT,
+    "eliminadoEn" TIMESTAMP(3),
     "creadoEn" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "actualizadoEn" TIMESTAMP(3) NOT NULL,
 
@@ -338,6 +386,7 @@ CREATE TABLE "aprobaciones" (
     "actualizadoEn" TIMESTAMP(3) NOT NULL,
     "revisadoEn" TIMESTAMP(3),
     "estadoSincronizacion" "EstadoSincronizacion" NOT NULL DEFAULT 'PENDIENTE',
+    "montoSolicitud" DECIMAL(12,2),
 
     CONSTRAINT "aprobaciones_pkey" PRIMARY KEY ("id")
 );
@@ -394,6 +443,7 @@ CREATE TABLE "Gasto" (
     "fotoRecibo" VARCHAR(500),
     "aprobadoPorId" TEXT,
     "estadoAprobacion" "EstadoAprobacion" NOT NULL DEFAULT 'PENDIENTE',
+    "categoriaId" TEXT,
     "fechaGasto" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "creadoEn" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "actualizadoEn" TIMESTAMP(3) NOT NULL,
@@ -440,8 +490,81 @@ CREATE TABLE "cola_sincronizacion" (
     CONSTRAINT "cola_sincronizacion_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "multimedia" (
+    "id" TEXT NOT NULL,
+    "clienteId" TEXT,
+    "prestamoId" TEXT,
+    "pagoId" TEXT,
+    "gastoId" TEXT,
+    "usuarioId" TEXT,
+    "productoId" TEXT,
+    "reciboId" TEXT,
+    "entidad" VARCHAR(50),
+    "tipoContenido" "TipoContenidoMultimedia" NOT NULL,
+    "tipoArchivo" VARCHAR(50) NOT NULL,
+    "formato" VARCHAR(10) NOT NULL,
+    "nombreOriginal" VARCHAR(255) NOT NULL,
+    "nombreAlmacenamiento" VARCHAR(255) NOT NULL,
+    "ruta" VARCHAR(500) NOT NULL,
+    "url" VARCHAR(500),
+    "tamanoBytes" INTEGER NOT NULL DEFAULT 0,
+    "ancho" INTEGER,
+    "alto" INTEGER,
+    "duracion" INTEGER,
+    "descripcion" TEXT,
+    "etiquetas" VARCHAR(255),
+    "esPublico" BOOLEAN NOT NULL DEFAULT false,
+    "esPrincipal" BOOLEAN NOT NULL DEFAULT false,
+    "estado" "EstadoMultimedia" NOT NULL DEFAULT 'ACTIVO',
+    "subidoPorId" TEXT NOT NULL,
+    "creadoEn" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "actualizadoEn" TIMESTAMP(3) NOT NULL,
+    "eliminadoEn" TIMESTAMP(3),
+    "estadoSincronizacion" "EstadoSincronizacion" NOT NULL DEFAULT 'PENDIENTE',
+    "ultimaSincronizacion" TIMESTAMP(3),
+    "hashArchivo" VARCHAR(64),
+
+    CONSTRAINT "multimedia_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "categorias" (
+    "id" TEXT NOT NULL,
+    "nombre" VARCHAR(100) NOT NULL,
+    "descripcion" TEXT,
+    "tipo" VARCHAR(50) NOT NULL,
+    "color" VARCHAR(20),
+    "activa" BOOLEAN NOT NULL DEFAULT true,
+    "creadoEn" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "actualizadoEn" TIMESTAMP(3) NOT NULL,
+    "eliminadoEn" TIMESTAMP(3),
+
+    CONSTRAINT "categorias_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "push_subscriptions" (
+    "id" TEXT NOT NULL,
+    "endpoint" TEXT NOT NULL,
+    "usuarioId" TEXT NOT NULL,
+    "p256dh" TEXT NOT NULL,
+    "auth" TEXT NOT NULL,
+    "activa" BOOLEAN NOT NULL DEFAULT true,
+    "creadoEn" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "actualizadoEn" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "push_subscriptions_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Usuario_nombreUsuario_key" ON "Usuario"("nombreUsuario");
+
 -- CreateIndex
 CREATE UNIQUE INDEX "Usuario_correo_key" ON "Usuario"("correo");
+
+-- CreateIndex
+CREATE INDEX "Usuario_nombreUsuario_idx" ON "Usuario"("nombreUsuario");
 
 -- CreateIndex
 CREATE INDEX "Usuario_correo_idx" ON "Usuario"("correo");
@@ -454,6 +577,12 @@ CREATE INDEX "Usuario_estado_idx" ON "Usuario"("estado");
 
 -- CreateIndex
 CREATE INDEX "Usuario_estadoSincronizacion_idx" ON "Usuario"("estadoSincronizacion");
+
+-- CreateIndex
+CREATE INDEX "notificaciones_usuarioId_idx" ON "notificaciones"("usuarioId");
+
+-- CreateIndex
+CREATE INDEX "notificaciones_leida_idx" ON "notificaciones"("leida");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "roles_nombre_key" ON "roles"("nombre");
@@ -475,6 +604,9 @@ CREATE INDEX "asignaciones_roles_usuarios_usuarioId_idx" ON "asignaciones_roles_
 
 -- CreateIndex
 CREATE UNIQUE INDEX "asignaciones_roles_usuarios_usuarioId_rolId_key" ON "asignaciones_roles_usuarios"("usuarioId", "rolId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "asignaciones_permisos_usuarios_usuarioId_permisoId_key" ON "asignaciones_permisos_usuarios"("usuarioId", "permisoId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Cliente_codigo_key" ON "Cliente"("codigo");
@@ -755,8 +887,56 @@ CREATE INDEX "cola_sincronizacion_estado_idx" ON "cola_sincronizacion"("estado")
 -- CreateIndex
 CREATE INDEX "cola_sincronizacion_creadoEn_idx" ON "cola_sincronizacion"("creadoEn");
 
+-- CreateIndex
+CREATE INDEX "multimedia_clienteId_idx" ON "multimedia"("clienteId");
+
+-- CreateIndex
+CREATE INDEX "multimedia_prestamoId_idx" ON "multimedia"("prestamoId");
+
+-- CreateIndex
+CREATE INDEX "multimedia_pagoId_idx" ON "multimedia"("pagoId");
+
+-- CreateIndex
+CREATE INDEX "multimedia_gastoId_idx" ON "multimedia"("gastoId");
+
+-- CreateIndex
+CREATE INDEX "multimedia_usuarioId_idx" ON "multimedia"("usuarioId");
+
+-- CreateIndex
+CREATE INDEX "multimedia_productoId_idx" ON "multimedia"("productoId");
+
+-- CreateIndex
+CREATE INDEX "multimedia_reciboId_idx" ON "multimedia"("reciboId");
+
+-- CreateIndex
+CREATE INDEX "multimedia_tipoContenido_idx" ON "multimedia"("tipoContenido");
+
+-- CreateIndex
+CREATE INDEX "multimedia_subidoPorId_idx" ON "multimedia"("subidoPorId");
+
+-- CreateIndex
+CREATE INDEX "multimedia_esPrincipal_idx" ON "multimedia"("esPrincipal");
+
+-- CreateIndex
+CREATE INDEX "multimedia_estado_idx" ON "multimedia"("estado");
+
+-- CreateIndex
+CREATE INDEX "multimedia_creadoEn_idx" ON "multimedia"("creadoEn");
+
+-- CreateIndex
+CREATE INDEX "multimedia_estadoSincronizacion_idx" ON "multimedia"("estadoSincronizacion");
+
+-- CreateIndex
+CREATE INDEX "categorias_tipo_idx" ON "categorias"("tipo");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "push_subscriptions_endpoint_key" ON "push_subscriptions"("endpoint");
+
 -- AddForeignKey
 ALTER TABLE "Usuario" ADD CONSTRAINT "Usuario_creadoPorId_fkey" FOREIGN KEY ("creadoPorId") REFERENCES "Usuario"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "notificaciones" ADD CONSTRAINT "notificaciones_usuarioId_fkey" FOREIGN KEY ("usuarioId") REFERENCES "Usuario"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "roles_permisos" ADD CONSTRAINT "roles_permisos_rolId_fkey" FOREIGN KEY ("rolId") REFERENCES "roles"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -771,6 +951,12 @@ ALTER TABLE "asignaciones_roles_usuarios" ADD CONSTRAINT "asignaciones_roles_usu
 ALTER TABLE "asignaciones_roles_usuarios" ADD CONSTRAINT "asignaciones_roles_usuarios_rolId_fkey" FOREIGN KEY ("rolId") REFERENCES "roles"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "asignaciones_permisos_usuarios" ADD CONSTRAINT "asignaciones_permisos_usuarios_usuarioId_fkey" FOREIGN KEY ("usuarioId") REFERENCES "Usuario"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "asignaciones_permisos_usuarios" ADD CONSTRAINT "asignaciones_permisos_usuarios_permisoId_fkey" FOREIGN KEY ("permisoId") REFERENCES "permisos"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "Cliente" ADD CONSTRAINT "Cliente_creadoPorId_fkey" FOREIGN KEY ("creadoPorId") REFERENCES "Usuario"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -778,6 +964,12 @@ ALTER TABLE "Cliente" ADD CONSTRAINT "Cliente_aprobadoPorId_fkey" FOREIGN KEY ("
 
 -- AddForeignKey
 ALTER TABLE "Cliente" ADD CONSTRAINT "Cliente_agregadoListaNegraPorId_fkey" FOREIGN KEY ("agregadoListaNegraPorId") REFERENCES "Usuario"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Cliente" ADD CONSTRAINT "Cliente_categoriaId_fkey" FOREIGN KEY ("categoriaId") REFERENCES "categorias"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Producto" ADD CONSTRAINT "Producto_categoriaId_fkey" FOREIGN KEY ("categoriaId") REFERENCES "categorias"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "precios_productos" ADD CONSTRAINT "precios_productos_productoId_fkey" FOREIGN KEY ("productoId") REFERENCES "Producto"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -876,7 +1068,37 @@ ALTER TABLE "Gasto" ADD CONSTRAINT "Gasto_cajaId_fkey" FOREIGN KEY ("cajaId") RE
 ALTER TABLE "Gasto" ADD CONSTRAINT "Gasto_aprobadoPorId_fkey" FOREIGN KEY ("aprobadoPorId") REFERENCES "Usuario"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "Gasto" ADD CONSTRAINT "Gasto_categoriaId_fkey" FOREIGN KEY ("categoriaId") REFERENCES "categorias"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "registros_auditoria" ADD CONSTRAINT "registros_auditoria_usuarioId_fkey" FOREIGN KEY ("usuarioId") REFERENCES "Usuario"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "cola_sincronizacion" ADD CONSTRAINT "cola_sincronizacion_usuarioCreadorId_fkey" FOREIGN KEY ("usuarioCreadorId") REFERENCES "Usuario"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "multimedia" ADD CONSTRAINT "multimedia_subidoPorId_fkey" FOREIGN KEY ("subidoPorId") REFERENCES "Usuario"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "multimedia" ADD CONSTRAINT "multimedia_clienteId_fkey" FOREIGN KEY ("clienteId") REFERENCES "Cliente"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "multimedia" ADD CONSTRAINT "multimedia_prestamoId_fkey" FOREIGN KEY ("prestamoId") REFERENCES "Prestamo"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "multimedia" ADD CONSTRAINT "multimedia_pagoId_fkey" FOREIGN KEY ("pagoId") REFERENCES "Pago"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "multimedia" ADD CONSTRAINT "multimedia_gastoId_fkey" FOREIGN KEY ("gastoId") REFERENCES "Gasto"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "multimedia" ADD CONSTRAINT "multimedia_usuarioId_fkey" FOREIGN KEY ("usuarioId") REFERENCES "Usuario"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "multimedia" ADD CONSTRAINT "multimedia_productoId_fkey" FOREIGN KEY ("productoId") REFERENCES "Producto"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "multimedia" ADD CONSTRAINT "multimedia_reciboId_fkey" FOREIGN KEY ("reciboId") REFERENCES "recibos"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "push_subscriptions" ADD CONSTRAINT "push_subscriptions_usuarioId_fkey" FOREIGN KEY ("usuarioId") REFERENCES "Usuario"("id") ON DELETE CASCADE ON UPDATE CASCADE;
