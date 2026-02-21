@@ -1535,7 +1535,7 @@ export class LoansService implements OnModuleInit {
         // Notificar a coordinadores, admins y superadmins para aprobación
         await this.notificacionesService.notifyApprovers({
           titulo: 'Nuevo Préstamo Requiere Aprobación',
-          mensaje: `El usuario ${creador.nombres} ${creador.apellidos} ha creado un préstamo ${data.tipoPrestamo === 'EFECTIVO' ? 'en efectivo' : 'por artículo'} para ${cliente.nombres} ${cliente.apellidos} por valor de ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
+          mensaje: `El usuario ${creador.nombres} ${creador.apellidos} ha solicitado un préstamo ${data.tipoPrestamo === 'EFECTIVO' ? 'en efectivo' : 'por artículo'} para ${cliente.nombres} ${cliente.apellidos} por valor de ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
           tipo: 'APROBACION',
           entidad: 'Aprobacion',
           entidadId: aprobacion.id,
@@ -1551,7 +1551,7 @@ export class LoansService implements OnModuleInit {
         // Enviar notificaciones push a coordinadores
         await this.pushService.sendPushNotification({
           title: 'Nuevo Préstamo Requiere Aprobación',
-          body: `${creador.nombres} ${creador.apellidos} ha creado un préstamo por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
+          body: `${creador.nombres} ${creador.apellidos} ha solicitado un préstamo por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
           roleFilter: ['COORDINADOR'],
           data: {
             type: 'PRESTAMO_PENDIENTE',
@@ -1563,8 +1563,8 @@ export class LoansService implements OnModuleInit {
 // Notificar al creador
         await this.notificacionesService.create({
           usuarioId: data.creadoPorId,
-          titulo: 'Préstamo Creado Exitosamente',
-          mensaje: `Tu préstamo ${prestamo.numeroPrestamo} ha sido creado exitosamente y está pendiente de aprobación.`,
+          titulo: 'Préstamo Solicitado Exitosamente',
+          mensaje: `Tu solicitud de préstamo ${prestamo.numeroPrestamo} ha sido creada exitosamente y está pendiente de aprobación.`,
           tipo: 'EXITO',
           entidad: 'PRESTAMO',
           entidadId: prestamo.id,
