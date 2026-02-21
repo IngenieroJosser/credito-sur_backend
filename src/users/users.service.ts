@@ -49,23 +49,21 @@ export class UsersService {
 
     const hashContrasena = await argon2.hash(password);
 
-    // Auto-generar nombreUsuario si no se proporcionó
+    // Usar 'nombres' directamente como nombre de usuario si no se proporciona uno explícitamente
     if (!datosUsuario.nombreUsuario) {
-      const partsNombre = datosUsuario.nombres.split(' ');
-      const partsApellido = datosUsuario.apellidos.split(' ');
-      let baseUsername = (
-        (partsNombre[0]?.charAt(0) || '') +
-        (partsNombre[1]?.charAt(0) || '') +
-        (partsApellido[0] || '')
-      ).toLowerCase().replace(/[^a-z0-9]/g, '');
-
-      // Verificar unicidad y agregar número si es necesario
-      let nombreUsuario = baseUsername;
+      // Como el usuario quiere usar exactamente "Erick Manuel" como su usuario para el login
+      // Simplemente asiganmos el campo 'nombres' al campo 'nombreUsuario'.
+      let nombreUsuarioBase = datosUsuario.nombres ? datosUsuario.nombres.trim() : datosUsuario.correo;
+      
+      let nombreUsuario = nombreUsuarioBase;
       let counter = 1;
+      
+      // Aún verificamos si existe para evitar un crash de clave duplicada a nivel base de datos
       while (await this.prisma.usuario.findUnique({ where: { nombreUsuario } })) {
-        nombreUsuario = `${baseUsername}${counter}`;
+        nombreUsuario = `${nombreUsuarioBase} ${counter}`;
         counter++;
       }
+      
       datosUsuario.nombreUsuario = nombreUsuario;
     }
 

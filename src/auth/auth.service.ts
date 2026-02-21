@@ -17,9 +17,15 @@ export class AuthService {
   async validarUsuario(nombreUsuario: string, contrasena: string) {
     console.log(`[AUTH] validarUsuario llamado con: "${nombreUsuario}"`);
     
-    // Buscar por nombreUsuario directamente en la base de datos
-    const usuario = await this.prisma.usuario.findUnique({
-      where: { nombreUsuario },
+    // Buscar por nombreUsuario, correo o nombres (case insensitive para todos)
+    const usuario = await this.prisma.usuario.findFirst({
+      where: {
+        OR: [
+          { nombreUsuario: { equals: nombreUsuario, mode: 'insensitive' } },
+          { correo: { equals: nombreUsuario, mode: 'insensitive' } },
+          { nombres: { equals: nombreUsuario, mode: 'insensitive' } },
+        ],
+      },
     });
 
     console.log(`[AUTH] Usuario encontrado: ${usuario ? `SÍ - ${usuario.nombres} ${usuario.apellidos} (${usuario.rol})` : 'NO'}`);
@@ -164,17 +170,7 @@ export class AuthService {
   }
 
   async registrarUsuario(dto: CreateAuthDto) {
-    // Generar nombreUsuario automáticamente: primera letra nombre + primera letra segundo nombre (si existe) + primer apellido
-    const nombresParts = dto.nombres.split(' ');
-    const apellidosParts = dto.apellidos.split(' ');
-    const nombreUsuario = (
-      nombresParts[0].charAt(0) +
-      (nombresParts[1] ? nombresParts[1].charAt(0) : '') +
-      apellidosParts[0]
-    ).toLowerCase().replace(/[^a-z0-9]/g, '');
-    
     const usuario = await this.usersService.crear({
-      nombreUsuario,
       nombres: dto.nombres,
       apellidos: dto.apellidos,
       correo: dto.correo,
