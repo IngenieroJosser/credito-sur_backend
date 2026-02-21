@@ -31,17 +31,24 @@ export class UsersService {
     }
 
     // VALIDACIÓN: Solo SUPER_ADMINISTRADOR puede crear otro SUPER_ADMINISTRADOR
+    // EXCEPCIÓN: Permitir crear el primer superadministrador desde endpoints públicos (Swagger) si no existe ninguno.
     if (usuarioDto.rol === RolUsuario.SUPER_ADMINISTRADOR) {
-      if (!usuarioCreadorId) {
-        throw new ForbiddenException('Se requiere autenticación para crear un Superadministrador');
-      }
-
-      const usuarioCreador = await this.prisma.usuario.findUnique({
-        where: { id: usuarioCreadorId },
+      const superadminsExistentes = await this.prisma.usuario.count({
+        where: { rol: RolUsuario.SUPER_ADMINISTRADOR, estado: EstadoUsuario.ACTIVO }
       });
 
-      if (!usuarioCreador || usuarioCreador.rol !== RolUsuario.SUPER_ADMINISTRADOR) {
-        throw new ForbiddenException('Solo un Superadministrador puede crear otro Superadministrador');
+      if (superadminsExistentes > 0) {
+        if (!usuarioCreadorId) {
+          throw new ForbiddenException('Se requiere autenticación para crear un Superadministrador adicional. Usa el token de un Superadmin.');
+        }
+
+        const usuarioCreador = await this.prisma.usuario.findUnique({
+          where: { id: usuarioCreadorId },
+        });
+
+        if (!usuarioCreador || usuarioCreador.rol !== RolUsuario.SUPER_ADMINISTRADOR) {
+          throw new ForbiddenException('Solo un Superadministrador puede crear otro Superadministrador');
+        }
       }
     }
 
