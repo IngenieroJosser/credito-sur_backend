@@ -14,11 +14,13 @@ export class AuthService {
     private readonly prisma: PrismaService,
   ) {}
 
-  async validarUsuario(nombres: string, contrasena: string) {
-    console.log(`[AUTH] validarUsuario llamado con: "${nombres}"`);
+  async validarUsuario(nombreUsuario: string, contrasena: string) {
+    console.log(`[AUTH] validarUsuario llamado con: "${nombreUsuario}"`);
     
-    // Buscar únicamente por el campo "nombres" (nombre real del usuario)
-    const usuario = await this.usersService.obtenerPorNombres(nombres);
+    // Buscar por nombreUsuario directamente en la base de datos
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { nombreUsuario },
+    });
 
     console.log(`[AUTH] Usuario encontrado: ${usuario ? `SÍ - ${usuario.nombres} ${usuario.apellidos} (${usuario.rol})` : 'NO'}`);
 
@@ -44,7 +46,7 @@ export class AuthService {
     console.log(`[AUTH] login llamado con:`, JSON.stringify(loginAuthDto));
     
     const usuario = await this.validarUsuario(
-      loginAuthDto.nombres,
+      loginAuthDto.nombres, // El DTO mantiene 'nombres' pero ahora se usa como nombre de usuario
       loginAuthDto.contrasena,
     );
 
