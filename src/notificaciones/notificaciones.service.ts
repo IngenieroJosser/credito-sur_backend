@@ -85,12 +85,111 @@ export class NotificacionesService {
     }
   }
 
+  async notifyApprovers(data: {
+    titulo: string;
+    mensaje: string;
+    tipo?: string;
+    entidad?: string;
+    entidadId?: string;
+    metadata?: any;
+  }) {
+    try {
+      const aprobadores = await this.prisma.usuario.findMany({
+        where: {
+          rol: {
+            in: [
+              RolUsuario.SUPER_ADMINISTRADOR,
+              RolUsuario.ADMIN,
+              RolUsuario.COORDINADOR,
+            ],
+          },
+          estado: 'ACTIVO',
+        },
+      });
+
+      this.logger.log(
+        `Notifying ${aprobadores.length} approvers: ${data.titulo}`,
+      );
+
+      await Promise.all(
+        aprobadores.map((user) =>
+          this.create({
+            usuarioId: user.id,
+            ...data,
+          }),
+        ),
+      );
+    } catch (error) {
+      this.logger.error('Error notifying approvers:', error);
+    }
+  }
+
   async findAll(userId: string) {
-    return this.prisma.notificacion.findMany({
+    const notificaciones = await this.prisma.notificacion.findMany({
       where: { usuarioId: userId, archivar: false },
       orderBy: { creadoEn: 'desc' },
       take: 50,
     });
+
+    // Enriquecer notificaciones vinculadas a aprobaciones con estado real y nombre del solicitante
+    const enriquecidas = await Promise.all(
+      notificaciones.map(async (notif) => {
+        const meta = (notif.metadata as any) || {};
+
+        // Si tiene entidadId y parece una aprobación, buscar datos reales
+        if (notif.entidadId && (notif.entidad === 'Aprobacion' || meta.tipoAprobacion || notif.entidad === 'GASTO')) {
+          try {
+            const aprobacion = await this.prisma.aprobacion.findUnique({
+              where: { id: notif.entidadId },
+              select: {
+                estado: true,
+                tipoAprobacion: true,
+                datosSolicitud: true,
+                comentarios: true,
+                solicitadoPor: {
+                  select: { nombres: true, apellidos: true },
+                },
+                aprobadoPor: {
+                  select: { nombres: true, apellidos: true },
+                },
+              },
+            });
+
+            if (aprobacion) {
+              const nombreSolicitante = aprobacion.solicitadoPor
+                ? `${aprobacion.solicitadoPor.nombres} ${aprobacion.solicitadoPor.apellidos}`.trim()
+                : undefined;
+              
+              const nombreRevisor = aprobacion.aprobadoPor
+                ? `${aprobacion.aprobadoPor.nombres} ${aprobacion.aprobadoPor.apellidos}`.trim()
+                : undefined;
+
+              const datos = (aprobacion.datosSolicitud as any) || {};
+              const descOriginal = datos.descripcion || datos.motivo || datos.razon || undefined;
+
+              return {
+                ...notif,
+                metadata: {
+                  ...meta,
+                  tipoAprobacion: meta.tipoAprobacion || aprobacion.tipoAprobacion,
+                  estadoAprobacion: aprobacion.estado,
+                  solicitadoPor: meta.solicitadoPor || nombreSolicitante,
+                  revisadoPor: nombreRevisor,
+                  motivoRechazo: aprobacion.comentarios,
+                  descSolicitud: descOriginal,
+                },
+              };
+            }
+          } catch {
+            // Si no se encuentra la aprobación, retornar la notificación tal cual
+          }
+        }
+
+        return notif;
+      }),
+    );
+
+    return enriquecidas;
   }
 
   async markAsRead(id: string) {

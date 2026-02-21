@@ -196,6 +196,9 @@ export class PaymentsService {
           cliente: {
             select: { id: true, nombres: true, apellidos: true },
           },
+            cobrador: {
+              select: { id: true, nombres: true, apellidos: true },
+            },
         },
       });
 
@@ -236,41 +239,47 @@ export class PaymentsService {
         },
       });
 
-      // 4. Registrar ingreso en contabilidad (CAJA de la ruta)
-      try {
-        const asignacion = await tx.asignacionRuta.findFirst({
-          where: { clienteId, activa: true },
-          select: { rutaId: true },
-        });
-        if (asignacion?.rutaId) {
-          const cajaRuta = await tx.caja.findFirst({
-            where: { rutaId: asignacion.rutaId, tipo: 'RUTA', activa: true },
-            select: { id: true, nombre: true, saldoActual: true },
-          });
-          if (cajaRuta?.id) {
-            const numeroTransaccion = `TRX-IN-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-            await tx.transaccion.create({
-              data: {
-                numeroTransaccion,
-                cajaId: cajaRuta.id,
-                tipo: TipoTransaccion.INGRESO,
-                monto: montoTotal,
-                descripcion: `Cobranza ${numeroPago}`,
-                creadoPorId: cobradorIdVal,
-                tipoReferencia: 'PAGO',
-                referenciaId: numeroPago,
-              },
-            });
-            await tx.caja.update({
-              where: { id: cajaRuta.id },
-              data: { saldoActual: { increment: montoTotal } },
-            });
-          }
-        }
-      } catch (e) {
-        // No interrumpir el flujo principal si la contabilidad falla
-        this.logger.warn(`Contabilidad no registrada para pago ${numeroPago}: ${e?.message || e}`);
+      const asignacion = await tx.asignacionRuta.findFirst({
+        where: { clienteId, activa: true },
+        select: { rutaId: true },
+      });
+      if (!asignacion?.rutaId) {
+        throw new BadRequestException(
+          'El cliente no tiene una ruta asignada activa para registrar el pago',
+        );
       }
+
+      const cajaRuta = await tx.caja.findFirst({
+        where: { rutaId: asignacion.rutaId, tipo: 'RUTA', activa: true },
+        select: { id: true, nombre: true, saldoActual: true },
+      });
+      if (!cajaRuta?.id) {
+        throw new BadRequestException(
+          'No existe una caja de ruta activa asociada a la ruta del cliente',
+        );
+      }
+
+      const numeroTransaccionCaja = `TRX-IN-${Date.now()}-${Math.floor(
+        Math.random() * 1000,
+      )}`;
+
+      await tx.transaccion.create({
+        data: {
+          numeroTransaccion: numeroTransaccionCaja,
+          cajaId: cajaRuta.id,
+          tipo: TipoTransaccion.INGRESO,
+          monto: montoTotal,
+          descripcion: `Cobranza ${numeroPago}`,
+          creadoPorId: cobradorIdVal,
+          tipoReferencia: 'PAGO',
+          referenciaId: numeroPago,
+        },
+      });
+
+      await tx.caja.update({
+        where: { id: cajaRuta.id },
+        data: { saldoActual: { increment: montoTotal } },
+      });
 
       return {
         pago,
@@ -304,14 +313,17 @@ export class PaymentsService {
     // Notificar
     await this.notificacionesService.notifyCoordinator({
       titulo: 'Pago Registrado',
-      mensaje: `Se registró un pago de ${montoTotal.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} para ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
-      tipo: 'EXITO',
+      mensaje: `${resultado.pago.cobrador?.nombres || ''} ${resultado.pago.cobrador?.apellidos || ''} registró un pago de ${montoTotal.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} para ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
+      tipo: 'PAGO',
       entidad: 'PAGO',
       entidadId: resultado.pago.id,
       metadata: {
         prestamoIdVal,
         capitalRecuperado: capitalTotal,
         interesRecuperado: interesTotal,
+        solicitadoPor: resultado.pago.cobrador
+          ? `${resultado.pago.cobrador.nombres} ${resultado.pago.cobrador.apellidos}`.trim()
+          : undefined,
       },
     });
 

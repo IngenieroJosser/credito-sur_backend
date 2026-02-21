@@ -40,24 +40,38 @@ export class AccountingService {
       orderBy: { creadoEn: 'desc' },
     });
 
-    return cajas.map((caja) => ({
-      id: caja.id,
-      codigo: caja.codigo,
-      nombre: caja.nombre,
-      tipo: caja.tipo,
-      rutaId: caja.rutaId,
-      rutaNombre: caja.ruta?.nombre || null,
-      responsable: caja.responsable
-        ? `${caja.responsable.nombres} ${caja.responsable.apellidos}`
-        : 'Sin asignar',
-      responsableId: caja.responsableId,
-      saldo: Number(caja.saldoActual),
-      saldoMinimo: Number(caja.saldoMinimo),
-      saldoMaximo: Number(caja.saldoMaximo),
-      estado: caja.activa ? 'ABIERTA' : 'CERRADA',
-      transacciones: caja._count.transacciones,
-      ultimaActualizacion: caja.actualizadoEn.toISOString(),
-    }));
+    const ahora = new Date();
+    const fechaInicio = new Date(ahora);
+    fechaInicio.setHours(0, 0, 0, 0);
+    const fechaFin = new Date(ahora);
+    fechaFin.setHours(23, 59, 59, 999);
+
+    const cajasConSaldo = await Promise.all(
+      cajas.map(async (caja) => {
+        const saldoCalculado = Number(caja.saldoActual);
+
+        return {
+          id: caja.id,
+          codigo: caja.codigo,
+          nombre: caja.nombre,
+          tipo: caja.tipo,
+          rutaId: caja.rutaId,
+          rutaNombre: caja.ruta?.nombre || null,
+          responsable: caja.responsable
+            ? `${caja.responsable.nombres} ${caja.responsable.apellidos}`
+            : 'Sin asignar',
+          responsableId: caja.responsableId,
+          saldo: saldoCalculado,
+          saldoMinimo: Number(caja.saldoMinimo),
+          saldoMaximo: Number(caja.saldoMaximo),
+          estado: caja.activa ? 'ABIERTA' : 'CERRADA',
+          transacciones: caja._count.transacciones,
+          ultimaActualizacion: caja.actualizadoEn.toISOString(),
+        };
+      }),
+    );
+
+    return cajasConSaldo;
   }
 
   async getCajaById(id: string) {
@@ -120,7 +134,7 @@ export class AccountingService {
           rutaId: data.rutaId,
           cobradorId: data.cobradorId,
           cajaId: cajaRuta.id,
-          tipoGasto: 'GASTO_OPERATIVO',
+          tipoGasto: 'OPERATIVO',
           monto: data.monto,
           descripcion: data.descripcion,
         },
@@ -128,22 +142,112 @@ export class AccountingService {
       },
     });
 
-    await this.notificacionesService.notifyCoordinator({
+    // Buscar nombre del solicitante para mostrar en la notificación
+    const solicitante = await this.prisma.usuario.findUnique({
+      where: { id: data.solicitadoPorId },
+      select: { nombres: true, apellidos: true },
+    });
+    const nombreSolicitante = solicitante
+      ? `${solicitante.nombres} ${solicitante.apellidos}`.trim()
+      : 'Cobrador';
+
+    await this.notificacionesService.notifyApprovers({
       titulo: 'Nuevo Gasto Requiere Aprobación',
-      mensaje: `El cobrador ha registrado un gasto por ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}.`,
-      tipo: 'SISTEMA',
-      entidad: 'GASTO',
+      mensaje: `${nombreSolicitante} ha registrado un gasto por ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}.`,
+      tipo: 'GASTO',
+      entidad: 'Aprobacion',
       entidadId: aprobacion.id,
       metadata: {
+        tipoAprobacion: 'GASTO',
         rutaId: data.rutaId,
         cajaId: cajaRuta.id,
         cobradorId: data.cobradorId,
+        monto: data.monto,
+        descripcion: data.descripcion,
+        solicitadoPor: nombreSolicitante,
       },
     });
 
     return {
       success: true,
       message: 'Gasto registrado y enviado para aprobación del coordinador',
+      approvalId: aprobacion.id,
+    };
+  }
+
+  async solicitarBase(data: {
+    descripcion: string;
+    monto: number;
+    rutaId: string;
+    cobradorId: string;
+    solicitadoPorId: string;
+  }) {
+    const cajaRuta = await this.prisma.caja.findFirst({
+      where: {
+        rutaId: data.rutaId,
+        tipo: 'RUTA',
+        activa: true,
+      },
+    });
+
+    if (!cajaRuta) {
+      throw new NotFoundException(
+        'Caja de ruta no encontrada para registrar la base',
+      );
+    }
+
+    const aprobacion = await this.prisma.aprobacion.create({
+      data: {
+        tipoAprobacion: TipoAprobacion.SOLICITUD_BASE_EFECTIVO,
+        referenciaId: cajaRuta.id,
+        tablaReferencia: 'Caja',
+        solicitadoPorId: data.solicitadoPorId,
+        estado: EstadoAprobacion.PENDIENTE,
+        datosSolicitud: {
+          rutaId: data.rutaId,
+          cobradorId: data.cobradorId,
+          cajaId: cajaRuta.id,
+          monto: data.monto,
+          descripcion: data.descripcion,
+        },
+        montoSolicitud: data.monto,
+      },
+    });
+
+    // Buscar nombre del solicitante
+    const solicitanteBase = await this.prisma.usuario.findUnique({
+      where: { id: data.solicitadoPorId },
+      select: { nombres: true, apellidos: true },
+    });
+    const nombreSolicitanteBase = solicitanteBase
+      ? `${solicitanteBase.nombres} ${solicitanteBase.apellidos}`.trim()
+      : 'Cobrador';
+
+    await this.notificacionesService.notifyApprovers({
+      titulo: 'Nueva Solicitud de Base de Efectivo',
+      mensaje: `${nombreSolicitanteBase} ha solicitado una base de efectivo por ${Number(
+        data.monto,
+      ).toLocaleString('es-CO', {
+        style: 'currency',
+        currency: 'COP',
+      })}.`,
+      tipo: 'SOLICITUD_DINERO',
+      entidad: 'Aprobacion',
+      entidadId: aprobacion.id,
+      metadata: {
+        tipoAprobacion: 'SOLICITUD_BASE_EFECTIVO',
+        rutaId: data.rutaId,
+        cajaId: cajaRuta.id,
+        cobradorId: data.cobradorId,
+        monto: data.monto,
+        descripcion: data.descripcion,
+        solicitadoPor: nombreSolicitanteBase,
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Solicitud de base registrada y enviada para aprobación',
       approvalId: aprobacion.id,
     };
   }
@@ -311,6 +415,7 @@ export class AccountingService {
     page?: number;
     limit?: number;
   }) {
+    try {
     const {
       cajaId,
       tipo,
@@ -329,8 +434,16 @@ export class AccountingService {
     if (tipo) where.tipo = tipo;
     if (fechaInicio || fechaFin) {
       where.fechaTransaccion = {};
-      if (fechaInicio) where.fechaTransaccion.gte = new Date(fechaInicio);
-      if (fechaFin) where.fechaTransaccion.lte = new Date(fechaFin);
+      if (fechaInicio) {
+        const start = new Date(fechaInicio.includes('T') ? fechaInicio : `${fechaInicio}T00:00:00`);
+        start.setHours(0, 0, 0, 0);
+        where.fechaTransaccion.gte = start;
+      }
+      if (fechaFin) {
+        const end = new Date(fechaFin.includes('T') ? fechaFin : `${fechaFin}T23:59:59.999`);
+        end.setHours(23, 59, 59, 999);
+        where.fechaTransaccion.lte = end;
+      }
     }
 
     const [transacciones, total] = await Promise.all([
@@ -379,18 +492,37 @@ export class AccountingService {
         totalPages: Math.ceil(total / limit),
       },
     };
+    } catch (error) {
+      this.logger.error(`Error fetching transacciones: ${error.message}`, error.stack);
+      throw error;
+    }
   }
 
   /**
    * Obtener saldo disponible de una ruta (recaudo del día - gastos)
    */
-  async getSaldoDisponibleRuta(rutaId: string, fecha?: string) {
-    const fechaConsulta = fecha ? new Date(fecha) : new Date();
-    fechaConsulta.setHours(0, 0, 0, 0);
-    const fechaFin = new Date(fechaConsulta);
-    fechaFin.setHours(23, 59, 59, 999);
+  async getSaldoDisponibleRuta(
+    rutaId: string,
+    fecha?: string,
+    fechaInicio?: string,
+    fechaFin?: string,
+  ) {
+    let rangeStart: Date;
+    let rangeEnd: Date;
 
-    // Obtener caja de la ruta
+    if (fechaInicio && fechaFin) {
+      // Usar los rangos proporcionados, asegurando que cubran todo el día
+      // Agregamos la hora para que el constructor de Date lo trate como hora local del servidor
+      rangeStart = new Date(fechaInicio.includes('T') ? fechaInicio : `${fechaInicio}T00:00:00`);
+      rangeEnd = new Date(fechaFin.includes('T') ? fechaFin : `${fechaFin}T23:59:59.999`);
+    } else {
+      const baseDate = fecha ? new Date(fecha.includes('T') ? fecha : `${fecha}T00:00:00`) : new Date();
+      rangeStart = new Date(baseDate);
+      rangeStart.setHours(0, 0, 0, 0);
+      rangeEnd = new Date(baseDate);
+      rangeEnd.setHours(23, 59, 59, 999);
+    }
+
     const caja = await this.prisma.caja.findFirst({
       where: {
         rutaId,
@@ -400,57 +532,116 @@ export class AccountingService {
     });
 
     if (!caja) {
+      // Retornar ceros si no hay caja, para evitar errores en el dashboard
       return {
         rutaId,
-        fecha: fechaConsulta.toISOString(),
-        saldoDisponible: 0,
         recaudoDelDia: 0,
+        cobranzaDelDia: 0,
         gastosDelDia: 0,
-        mensaje: 'No hay caja asignada a esta ruta',
+        baseEfectivo: 0,
+        desembolsos: 0,
+        saldoDisponible: 0,
+        fechaInicio: rangeStart.toISOString(),
+        fechaFin: rangeEnd.toISOString(),
       };
     }
 
-    // Calcular recaudo del día (ingresos)
-    const recaudo = await this.prisma.transaccion.aggregate({
+    // 1. Obtener todas las transacciones del período para esta caja
+    const transacciones = await this.prisma.transaccion.findMany({
       where: {
         cajaId: caja.id,
-        tipo: 'INGRESO',
         fechaTransaccion: {
-          gte: fechaConsulta,
-          lte: fechaFin,
+          gte: rangeStart,
+          lte: rangeEnd,
         },
-      },
-      _sum: {
-        monto: true,
       },
     });
 
-    // Calcular gastos del día (egresos)
-    const gastos = await this.prisma.transaccion.aggregate({
-      where: {
-        cajaId: caja.id,
-        tipo: 'EGRESO',
-        fechaTransaccion: {
-          gte: fechaConsulta,
-          lte: fechaFin,
-        },
-      },
-      _sum: {
-        monto: true,
-      },
+    // 2. Clasificar y sumar transacciones
+    let cobranzaTrx = 0;
+    let baseEfectivo = 0;
+    let gastosOperativos = 0;
+    let desembolsos = 0;
+    let otrosIngresos = 0;
+    let otrosEgresos = 0;
+
+    transacciones.forEach((t) => {
+      const monto = Number(t.monto);
+      if (t.tipo === 'INGRESO') {
+        if (t.tipoReferencia === 'PAGO') {
+          cobranzaTrx += monto;
+        } else if (
+          t.tipoReferencia === 'SOLICITUD_BASE_EFECTIVO' ||
+          t.tipoReferencia === 'SOLICITUD_BASE' ||
+          t.descripcion.toLowerCase().includes('base de efectivo')
+        ) {
+          baseEfectivo += monto;
+        } else {
+          otrosIngresos += monto;
+        }
+      } else if (t.tipo === 'EGRESO') {
+        if (t.tipoReferencia === 'GASTO') {
+          gastosOperativos += monto;
+        } else if (
+          t.tipoReferencia === 'PRESTAMO' ||
+          t.descripcion.toLowerCase().includes('desembolso') ||
+          t.descripcion.toLowerCase().includes('préstamo')
+        ) {
+          desembolsos += monto;
+        } else {
+          otrosEgresos += monto;
+        }
+      }
     });
 
-    const recaudoDelDia = Number(recaudo._sum.monto || 0);
-    const gastosDelDia = Number(gastos._sum.monto || 0);
-    const saldoDisponible = recaudoDelDia - gastosDelDia;
+    // 3. Fallback: Obtener pagos directamente de la tabla Pago si no hay transacciones de pago vinculadas
+    // Esto es útil para instalaciones donde la vinculación TRX <-> PAGO no esté activa o para auditoría.
+    let cobranzaPagos = 0;
+    if (cobranzaTrx === 0) {
+      const asignaciones = await this.prisma.asignacionRuta.findMany({
+        where: { rutaId, activa: true },
+        select: { clienteId: true },
+      });
+      const clienteIds = asignaciones.map((a) => a.clienteId);
+
+      const pagosAgg = await this.prisma.pago.aggregate({
+        where: {
+          clienteId: { in: clienteIds },
+          fechaPago: {
+            gte: rangeStart,
+            lte: rangeEnd,
+          },
+        },
+        _sum: { montoTotal: true },
+      });
+      cobranzaPagos = Number(pagosAgg._sum.montoTotal || 0);
+    }
+
+    // Decidimos qué usar para cobranza (preferimos transacciones si existen)
+    const totalCobranza = cobranzaTrx > 0 ? cobranzaTrx : cobranzaPagos;
+    
+    // El "Recaudo" total es lo que entró por cobranza y otros conceptos (NO incluye la base operativa)
+    const totalRecaudo = totalCobranza + otrosIngresos;
+    
+    // Los "Gastos" para el cobrador suelen ser los operativos
+    const totalGastos = gastosOperativos + otrosEgresos;
+
+    // Saldo disponible (Neto del período)
+    const saldoNetoPeriodo = totalRecaudo - totalGastos - desembolsos;
 
     return {
       rutaId,
       cajaId: caja.id,
-      fecha: fechaConsulta.toISOString(),
-      saldoDisponible,
-      recaudoDelDia,
-      gastosDelDia,
+      fecha: rangeStart.toISOString(),
+      saldoDisponible: Number(caja.saldoActual), // Saldo real en libros actual
+      recaudoDelDia: totalRecaudo, 
+      cobranzaDelDia: totalCobranza,
+      gastosDelDia: totalGastos,
+      baseEfectivo: baseEfectivo,
+      desembolsos: desembolsos,
+      netoPeriodo: saldoNetoPeriodo,
+      fechaInicio: rangeStart.toISOString(),
+      fechaFin: rangeEnd.toISOString(),
       saldoCaja: Number(caja.saldoActual),
     };
   }
@@ -668,24 +859,35 @@ export class AccountingService {
   // RESUMEN FINANCIERO
   // =====================
 
-  async getResumenFinanciero(_fechaInicio?: string, _fechaFin?: string) {
-    const hoy = new Date();
-    const inicioHoy = new Date(
-      hoy.getFullYear(),
-      hoy.getMonth(),
-      hoy.getDate(),
-    );
-    const finHoy = new Date(inicioHoy.getTime() + 24 * 60 * 60 * 1000);
+  async getResumenFinanciero(fechaInicio?: string, fechaFin?: string) {
+    let rangeStart: Date;
+    let rangeEnd: Date;
 
-    const inicioAyer = new Date(inicioHoy.getTime() - 24 * 60 * 60 * 1000);
-    const finAyer = inicioHoy;
+    if (fechaInicio && fechaFin) {
+      rangeStart = new Date(fechaInicio.includes('T') ? fechaInicio : `${fechaInicio}T00:00:00`);
+      rangeEnd = new Date(fechaFin.includes('T') ? fechaFin : `${fechaFin}T23:59:59.999`);
+    } else {
+      const hoy = new Date();
+      rangeStart = new Date(hoy);
+      rangeStart.setHours(0, 0, 0, 0);
+      rangeEnd = new Date(hoy);
+      rangeEnd.setHours(23, 59, 59, 999);
+    }
+
+    const inicioHoy = rangeStart;
+    const finHoy = rangeEnd;
+
+    // Para "Ayer" o el período anterior, comparamos con un período de igual duración inmediatamente anterior
+    const duration = finHoy.getTime() - inicioHoy.getTime();
+    const inicioAnterior = new Date(inicioHoy.getTime() - duration - 1);
+    const finAnterior = new Date(inicioHoy.getTime() - 1);
 
     const whereHoy = {
-      fechaTransaccion: { gte: inicioHoy, lt: finHoy },
+      fechaTransaccion: { gte: inicioHoy, lte: finHoy },
     };
 
     const whereAyer = {
-      fechaTransaccion: { gte: inicioAyer, lt: finAyer },
+      fechaTransaccion: { gte: inicioAnterior, lte: finAnterior },
     };
 
     // Ingresos y egresos del día y de ayer (Incluyendo transferencias/consolidaciones)
@@ -711,6 +913,12 @@ export class AccountingService {
               numeroTransaccion: { startsWith: 'TRX-IN' },
             },
           ],
+          NOT: {
+            OR: [
+              { tipoReferencia: 'SOLICITUD_BASE' },
+              { tipoReferencia: 'SOLICITUD_BASE_EFECTIVO' },
+            ],
+          },
         },
         _sum: { monto: true },
       }),
@@ -737,6 +945,12 @@ export class AccountingService {
               numeroTransaccion: { startsWith: 'TRX-IN' },
             },
           ],
+          NOT: {
+            OR: [
+              { tipoReferencia: 'SOLICITUD_BASE' },
+              { tipoReferencia: 'SOLICITUD_BASE_EFECTIVO' },
+            ],
+          },
         },
         _sum: { monto: true },
       }),
@@ -758,8 +972,8 @@ export class AccountingService {
         _sum: { saldoActual: true },
       }),
       this.prisma.prestamo.aggregate({
-        where: { estado: 'ACTIVO' },
-        _sum: { saldoPendiente: true },
+        where: { estado: { in: ['ACTIVO', 'EN_MORA'] } },
+        _sum: { monto: true },
       }),
       this.prisma.caja.count({ where: { tipo: 'RUTA' } }),
       this.prisma.caja.count({ where: { tipo: 'RUTA', activa: true } }),
@@ -786,6 +1000,11 @@ export class AccountingService {
       return Number((((actual - anterior) / anterior) * 100).toFixed(2));
     };
 
+    // Determinar si debemos usar comparación con ayer
+    // Solo comparamos cuando el período es de un solo día (hoy)
+    const esUnSoloDia = duration < 24 * 60 * 60 * 1000; // Menos de 24 horas
+    const usarComparacionAyer = esUnSoloDia;
+
     const porcentajeCierres =
       totalRutasCount > 0
         ? Math.round(
@@ -797,7 +1016,7 @@ export class AccountingService {
       ingresosHoy: ingresos,
       egresosHoy: egresos,
       gananciaNeta: ingresos - egresos,
-      capitalEnCalle: Number(prestamosActivos._sum.saldoPendiente || 0),
+      capitalEnCalle: Number(prestamosActivos._sum.monto || 0),
       saldoCajas: Number(totalCajas._sum.saldoActual || 0),
       cajasAbiertasCount: await this.prisma.caja.count({
         where: { activa: true },
@@ -807,11 +1026,11 @@ export class AccountingService {
       rutasPendientesConsolidacion: rutasPendientesConsolidacion,
       consolidacionesHoy: consolidacionesHoy,
       porcentajeCierre: porcentajeCierres,
-      fecha: hoy.toISOString(),
-      porcentajeIngresosVsAyer: calcularDiferencia(ingresos, ingresosAyerVal),
-      porcentajeEgresosVsAyer: calcularDiferencia(egresos, egresosAyerVal),
-      esIngresoPositivo: ingresos >= ingresosAyerVal,
-      esEgresoPositivo: egresos <= egresosAyerVal,
+      fecha: inicioHoy.toISOString(),
+      porcentajeIngresosVsAyer: usarComparacionAyer ? calcularDiferencia(ingresos, ingresosAyerVal) : null,
+      porcentajeEgresosVsAyer: usarComparacionAyer ? calcularDiferencia(egresos, egresosAyerVal) : null,
+      esIngresoPositivo: usarComparacionAyer ? ingresos >= ingresosAyerVal : true,
+      esEgresoPositivo: usarComparacionAyer ? egresos <= egresosAyerVal : true,
     };
   }
 
@@ -982,13 +1201,28 @@ export class AccountingService {
     estado?: string;
     page?: number;
     limit?: number;
+    fechaInicio?: string;
+    fechaFin?: string;
   }) {
-    const { rutaId, estado, page = 1, limit = 50 } = filtros;
+    const { rutaId, estado, page = 1, limit = 50, fechaInicio, fechaFin } = filtros;
     const skip = (page - 1) * limit;
 
     const where: any = {};
     if (rutaId) where.rutaId = rutaId;
     if (estado) where.estadoAprobacion = estado;
+    if (fechaInicio || fechaFin) {
+      where.fechaGasto = {};
+      if (fechaInicio) {
+        const start = new Date(fechaInicio);
+        start.setHours(0, 0, 0, 0);
+        where.fechaGasto.gte = start;
+      }
+      if (fechaFin) {
+        const end = new Date(fechaFin);
+        end.setHours(23, 59, 59, 999);
+        where.fechaGasto.lte = end;
+      }
+    }
 
     const [gastos, total] = await Promise.all([
       this.prisma.gasto.findMany({

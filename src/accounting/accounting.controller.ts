@@ -217,12 +217,16 @@ export class AccountingController {
     @Query('estado') estado?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
   ) {
     return this.accountingService.getGastos({
       rutaId,
       estado,
       page: page ? parseInt(page) : 1,
       limit: limit ? parseInt(limit) : 50,
+      fechaInicio,
+      fechaFin,
     });
   }
 
@@ -256,6 +260,35 @@ export class AccountingController {
     });
   }
 
+  @Post('base-requests')
+  @Roles(
+    RolUsuario.COBRADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
+  async solicitarBase(
+    @Request() req,
+    @Body()
+    body: {
+      descripcion: string;
+      monto: number;
+      rutaId: string;
+      cobradorId: string;
+    },
+  ) {
+    if (!req.user || !req.user.id) {
+      throw new UnauthorizedException('Usuario no autenticado');
+    }
+    return this.accountingService.solicitarBase({
+      descripcion: body.descripcion,
+      monto: body.monto,
+      rutaId: body.rutaId,
+      cobradorId: body.cobradorId,
+      solicitadoPorId: req.user.id,
+    });
+  }
+
   @Get('rutas/:rutaId/saldo-disponible')
   @Roles(
     RolUsuario.COBRADOR,
@@ -266,8 +299,15 @@ export class AccountingController {
   getSaldoDisponibleRuta(
     @Param('rutaId') rutaId: string,
     @Query('fecha') fecha?: string,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
   ) {
-    return this.accountingService.getSaldoDisponibleRuta(rutaId, fecha);
+    return this.accountingService.getSaldoDisponibleRuta(
+      rutaId,
+      fecha,
+      fechaInicio,
+      fechaFin,
+    );
   }
 
   @Get('export')

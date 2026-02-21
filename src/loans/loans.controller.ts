@@ -50,6 +50,7 @@ export class LoansController {
     RolUsuario.SUPERVISOR,
     RolUsuario.COBRADOR,
     RolUsuario.CONTADOR,
+    RolUsuario.PUNTO_DE_VENTA,
   )
   @ApiOperation({
     summary: 'Obtener todos los préstamos',
@@ -132,7 +133,7 @@ export class LoansController {
     RolUsuario.SUPERVISOR,
     RolUsuario.COBRADOR,
     RolUsuario.CONTADOR,
-    RolUsuario.ADMIN,
+    RolUsuario.PUNTO_DE_VENTA,
   )
   @ApiOperation({
     summary: 'Obtener un préstamo por ID',
@@ -175,7 +176,7 @@ export class LoansController {
     RolUsuario.SUPERVISOR,
     RolUsuario.COBRADOR,
     RolUsuario.CONTADOR,
-    RolUsuario.ADMIN,
+    RolUsuario.PUNTO_DE_VENTA,
   )
   @ApiOperation({
     summary: 'Obtener cuotas de un préstamo',
@@ -199,7 +200,7 @@ export class LoansController {
   }
 
   @Post()
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR, RolUsuario.COBRADOR, RolUsuario.SUPERVISOR)
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR, RolUsuario.COBRADOR, RolUsuario.SUPERVISOR, RolUsuario.PUNTO_DE_VENTA)
   @UsePipes(new ValidationPipe({ transform: true }))
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({

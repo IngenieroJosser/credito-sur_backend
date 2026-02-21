@@ -964,7 +964,7 @@ export class LoansService implements OnModuleInit {
       this.logger.log(`Loan created successfully: ${prestamo.id} (${tipoAmort})`);
 
       // Crear solicitud de aprobación automáticamente
-      await this.prisma.aprobacion.create({
+      const aprobacion = await this.prisma.aprobacion.create({
         data: {
           tipoAprobacion: TipoAprobacion.NUEVO_PRESTAMO,
           referenciaId: prestamo.id,
@@ -984,16 +984,20 @@ export class LoansService implements OnModuleInit {
         },
       });
 
-      // Notificar al Coordinador
-      await this.notificacionesService.notifyCoordinator({
-        titulo: 'Nuevo Préstamo Creado',
+      // Notificar a coordinadores, admins y superadmins sobre nuevo préstamo pendiente de aprobación
+      await this.notificacionesService.notifyApprovers({
+        titulo: 'Nuevo Préstamo Requiere Aprobación',
         mensaje: `El usuario ha creado un préstamo para el cliente ${cliente.nombres} ${cliente.apellidos} por valor de ${createLoanDto.monto}`,
-        tipo: 'SISTEMA',
-        entidad: 'PRESTAMO',
-        entidadId: prestamo.id,
+        tipo: 'APROBACION',
+        entidad: 'Aprobacion',
+        entidadId: aprobacion.id,
         metadata: {
-          creadoPor: createLoanDto.creadoPorId,
-          nivel: 'INFORMATIVO',
+          tipoAprobacion: 'NUEVO_PRESTAMO',
+          prestamoId: prestamo.id,
+          clienteId: prestamo.clienteId,
+          monto: prestamo.monto,
+          plazoMeses: prestamo.plazoMeses,
+          frecuenciaPago: prestamo.frecuenciaPago,
         },
       });
 
@@ -1404,8 +1408,8 @@ export class LoansService implements OnModuleInit {
 
       const montoTotal = montoFinanciar + interesTotal;
 
-      // Determinar si auto-aprobar (ADMIN y SUPER_ADMINISTRADOR)
-      const esAutoAprobado = creador.rol === RolUsuario.ADMIN || creador.rol === RolUsuario.SUPER_ADMINISTRADOR;
+      // A partir de ahora, ningún préstamo se auto-aprueba: siempre requiere aprobación explícita
+      const esAutoAprobado = false;
       this.logger.log(`[CREATE LOAN] Usuario: ${creador.nombres}, Rol: ${creador.rol}, Auto-aprobado: ${esAutoAprobado}`);
 
       // Crear préstamo con cuotas
@@ -1453,7 +1457,7 @@ export class LoansService implements OnModuleInit {
       this.logger.log(`Loan created successfully: ${prestamo.id}, requiereAprobacion: ${esAutoAprobado}`);
 
       // Crear registro de aprobación
-      await this.prisma.aprobacion.create({
+      const aprobacion = await this.prisma.aprobacion.create({
         data: {
           tipoAprobacion: TipoAprobacion.NUEVO_PRESTAMO,
           referenciaId: prestamo.id,
@@ -1528,28 +1532,21 @@ export class LoansService implements OnModuleInit {
           }
         });
       } else {
-        // Notificar a coordinadores para aprobación
-        const coordinadores = await this.prisma.usuario.findMany({
-          where: { rol: RolUsuario.COORDINADOR, estado: 'ACTIVO' },
+        // Notificar a coordinadores, admins y superadmins para aprobación
+        await this.notificacionesService.notifyApprovers({
+          titulo: 'Nuevo Préstamo Requiere Aprobación',
+          mensaje: `El usuario ${creador.nombres} ${creador.apellidos} ha creado un préstamo ${data.tipoPrestamo === 'EFECTIVO' ? 'en efectivo' : 'por artículo'} para ${cliente.nombres} ${cliente.apellidos} por valor de ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
+          tipo: 'APROBACION',
+          entidad: 'Aprobacion',
+          entidadId: aprobacion.id,
+          metadata: {
+            tipoAprobacion: 'NUEVO_PRESTAMO',
+            prestamoId: prestamo.id,
+            clienteId: cliente.id,
+            monto: montoFinanciar,
+            tipo: data.tipoPrestamo,
+          },
         });
-
-        for (const coordinador of coordinadores) {
-          await this.notificacionesService.create({
-            usuarioId: coordinador.id,
-            titulo: 'Nuevo Préstamo Requiere Aprobación',
-            mensaje: `El usuario ${creador.nombres} ${creador.apellidos} ha creado un préstamo ${data.tipoPrestamo === 'EFECTIVO' ? 'en efectivo' : 'por artículo'} para ${cliente.nombres} ${cliente.apellidos} por valor de ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
-            tipo: 'SISTEMA',
-            entidad: 'PRESTAMO',
-            entidadId: prestamo.id,
-            metadata: {
-              prestamoId: prestamo.id,
-              clienteId: cliente.id,
-              monto: montoFinanciar,
-              tipo: data.tipoPrestamo,
-              nivel: 'INFORMATIVO',
-            },
-          });
-        }
 
         // Enviar notificaciones push a coordinadores
         await this.pushService.sendPushNotification({

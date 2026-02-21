@@ -26,6 +26,7 @@ async function bootstrap() {
   app.enableCors({
     origin: [
       'http://localhost:3000',
+      'http://127.0.0.1:3000',
       'https://credito-sur-frontend.onrender.com',
       'https://creditos-del-sur.vercel.app',
     ],

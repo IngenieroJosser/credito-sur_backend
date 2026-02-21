@@ -558,6 +558,11 @@ export class ClientsService {
             include: {
               prestamo: true,
               cobrador: true,
+              detalles: {
+                include: {
+                  cuota: true,
+                },
+              },
             },
             orderBy: { fechaPago: 'desc' },
             take: 10,
