@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import * as webpush from 'web-push';
 
 export interface SendPushNotificationDto {
   title: string;
@@ -16,7 +17,14 @@ export interface SendPushNotificationDto {
 export class PushService {
   private readonly logger = new Logger(PushService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) {
+    // Configurar llaves VAPID
+    webpush.setVapidDetails(
+      process.env.VAPID_MAILTO || 'mailto:soporte@creditosur.com',
+      process.env.VAPID_PUBLIC_KEY || '',
+      process.env.VAPID_PRIVATE_KEY || ''
+    );
+  }
 
   async sendPushNotification(data: SendPushNotificationDto): Promise<void> {
     try {
@@ -56,7 +64,14 @@ export class PushService {
       };
 
       for (const subscription of subscriptions) {
-        await this.sendToSubscription(subscription.endpoint, payload);
+        const pushSub = {
+          endpoint: subscription.endpoint,
+          keys: {
+            p256dh: subscription.p256dh,
+            auth: subscription.auth,
+          },
+        };
+        await this.sendToSubscription(pushSub, payload);
       }
 
       this.logger.log(`Push notification sent to ${subscriptions.length} subscribers`);
@@ -65,17 +80,20 @@ export class PushService {
     }
   }
 
-  private async sendToSubscription(endpoint: string, payload: any): Promise<void> {
+  private async sendToSubscription(subscription: any, payload: any): Promise<void> {
     try {
-      // Aquí iría la implementación real con Web Push Protocol
-      // Por ahora, solo logueamos el envío
-      this.logger.log(`Sending push to ${endpoint}:`, payload);
-      
-      // En producción, usarías algo como:
-      // const webpush = require('web-push');
-      // await webpush.sendNotification(subscription, JSON.stringify(payload));
-    } catch (error) {
-      this.logger.error(`Error sending to ${endpoint}:`, error);
+      this.logger.log(`Enviando push real a: ${subscription.endpoint}`);
+      await webpush.sendNotification(subscription, JSON.stringify(payload));
+    } catch (error: any) {
+      if (error.statusCode === 410 || error.statusCode === 404) {
+        this.logger.warn(`Suscripción expirada o inválida, eliminando: ${subscription.endpoint}`);
+        await this.prisma.pushSubscription.update({
+          where: { endpoint: subscription.endpoint },
+          data: { activa: false }
+        });
+      } else {
+        this.logger.error(`Error enviando a ${subscription.endpoint}:`, error);
+      }
     }
   }
 

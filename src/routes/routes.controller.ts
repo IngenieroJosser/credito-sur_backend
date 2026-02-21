@@ -56,6 +56,8 @@ export class RoutesController {
     RolUsuario.ADMIN,
     RolUsuario.SUPER_ADMINISTRADOR,
     RolUsuario.COBRADOR,
+    RolUsuario.PUNTO_DE_VENTA,
+    RolUsuario.CONTADOR,
   )
   @ApiOperation({ summary: 'Obtener todas las rutas' })
   @ApiQuery({ name: 'page', required: false, type: Number })

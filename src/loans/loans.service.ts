@@ -178,6 +178,7 @@ export class LoansService implements OnModuleInit {
     estado?: string;
     ruta?: string;
     search?: string;
+    tipo?: string;
     page?: number;
     limit?: number;
   }) {
@@ -188,6 +189,7 @@ export class LoansService implements OnModuleInit {
         estado = 'todos',
         ruta = 'todas',
         search = '',
+        tipo = 'todos',
         page = 1,
         limit = 8,
       } = filters;
@@ -198,6 +200,11 @@ export class LoansService implements OnModuleInit {
       const where: any = {
         eliminadoEn: null, // Solo préstamos no eliminados
       };
+
+      // Filtro por tipo de préstamo
+      if (tipo !== 'todos' && tipo !== '') {
+        where.tipoPrestamo = tipo;
+      }
 
       // Filtro por estado
       if (estado !== 'todos') {
@@ -320,6 +327,13 @@ export class LoansService implements OnModuleInit {
                 monto: true,
                 montoPagado: true,
                 montoInteresMora: true,
+              },
+            },
+            creadoPor: {
+              select: {
+                id: true,
+                nombres: true,
+                apellidos: true,
               },
             },
           },
@@ -452,19 +466,26 @@ export class LoansService implements OnModuleInit {
             clienteTelefono: prestamo.cliente.telefono || '',
             producto: prestamo.producto?.nombre || 'Préstamo en efectivo',
             tipoProducto,
+            tipoPrestamo: prestamo.tipoPrestamo,
             montoTotal,
             montoPendiente,
             montoPagado,
+            cuotaInicial: Number((prestamo as any).cuotaInicial) || 0,
+            valorCuota: cuotas.length > 0 ? Number(cuotas[0].monto) : 0,
+            tasaInteres: Number(prestamo.tasaInteres) || 0,
+            frecuenciaPago: prestamo.frecuenciaPago,
             moraAcumulada,
             cuotasPagadas,
             cuotasTotales,
             cuotasVencidas,
             estado: prestamo.estado || EstadoPrestamo.BORRADOR,
-            riesgo: prestamo.cliente.nivelRiesgo || NivelRiesgo.VERDE,
+            riesgo: (prestamo.cliente as any).nivelRiesgo || NivelRiesgo.VERDE,
             ruta: rutaAsignada,
             rutaNombre,
+            vendedor: (prestamo as any).creadoPor?.nombres || 'Sin asignar',
             fechaInicio: prestamo.fechaInicio || new Date(),
             fechaFin: prestamo.fechaFin || new Date(),
+            creadoEn: (prestamo as any).creadoEn || new Date(),
             progreso:
               cuotasTotales > 0 ? (cuotasPagadas / cuotasTotales) * 100 : 0,
           };
@@ -938,6 +959,7 @@ export class LoansService implements OnModuleInit {
           tipoPrestamo: createLoanDto.tipoPrestamo,
           tipoAmortizacion: tipoAmort,
           monto: createLoanDto.monto,
+          cuotaInicial: (createLoanDto as any).cuotaInicial || 0,
           tasaInteres: createLoanDto.tasaInteres,
           tasaInteresMora: createLoanDto.tasaInteresMora,
           plazoMeses: createLoanDto.plazoMeses,
@@ -949,11 +971,11 @@ export class LoansService implements OnModuleInit {
           estadoAprobacion: EstadoAprobacion.PENDIENTE,
           creadoPorId: createLoanDto.creadoPorId,
           interesTotal,
-          saldoPendiente: createLoanDto.monto + interesTotal,
+          saldoPendiente: createLoanDto.monto + interesTotal - ((createLoanDto as any).cuotaInicial || 0),
           cuotas: {
             create: cuotasData,
           },
-        },
+        } as any,
         include: {
           cliente: true,
           producto: true,

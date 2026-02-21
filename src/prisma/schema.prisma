@@ -468,6 +468,7 @@ model Prestamo {
   tipoPrestamo           String                @db.VarChar(20)
   tipoAmortizacion       TipoAmortizacion      @default(INTERES_SIMPLE)
   monto                  Decimal               @db.Decimal(12, 2)
+  cuotaInicial           Decimal               @db.Decimal(12, 2)    @default(0)
   tasaInteres            Decimal               @db.Decimal(5, 2)
   tasaInteresMora        Decimal               @db.Decimal(5, 2)
   
