@@ -38,6 +38,7 @@ export class ClientsController {
     RolUsuario.SUPERVISOR,
     RolUsuario.COBRADOR,
     RolUsuario.CONTADOR,
+    RolUsuario.PUNTO_DE_VENTA,
   )
   async getAllClients(
     @Query('nivelRiesgo') nivelRiesgo: string,
@@ -59,6 +60,7 @@ export class ClientsController {
     RolUsuario.SUPERVISOR,
     RolUsuario.COBRADOR,
     RolUsuario.CONTADOR,
+    RolUsuario.PUNTO_DE_VENTA,
   )
   async getClientById(@Param('id') id: string) {
     return this.clientsService.getClientById(id);
@@ -71,6 +73,7 @@ export class ClientsController {
     RolUsuario.SUPER_ADMINISTRADOR,
     RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
+    RolUsuario.PUNTO_DE_VENTA,
   )
   async createClient(@Body() body: CreateClientDto) {
     this.logger.log(`Creando cliente con datos: ${JSON.stringify(body)}`);
