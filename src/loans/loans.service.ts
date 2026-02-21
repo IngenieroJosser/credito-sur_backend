@@ -178,6 +178,7 @@ export class LoansService implements OnModuleInit {
     estado?: string;
     ruta?: string;
     search?: string;
+    tipo?: string;
     page?: number;
     limit?: number;
   }) {
@@ -188,6 +189,7 @@ export class LoansService implements OnModuleInit {
         estado = 'todos',
         ruta = 'todas',
         search = '',
+        tipo = 'todos',
         page = 1,
         limit = 8,
       } = filters;
@@ -198,6 +200,11 @@ export class LoansService implements OnModuleInit {
       const where: any = {
         eliminadoEn: null, // Solo préstamos no eliminados
       };
+
+      // Filtro por tipo de préstamo
+      if (tipo !== 'todos' && tipo !== '') {
+        where.tipoPrestamo = tipo;
+      }
 
       // Filtro por estado
       if (estado !== 'todos') {
@@ -320,6 +327,13 @@ export class LoansService implements OnModuleInit {
                 monto: true,
                 montoPagado: true,
                 montoInteresMora: true,
+              },
+            },
+            creadoPor: {
+              select: {
+                id: true,
+                nombres: true,
+                apellidos: true,
               },
             },
           },
@@ -452,9 +466,14 @@ export class LoansService implements OnModuleInit {
             clienteTelefono: prestamo.cliente.telefono || '',
             producto: prestamo.producto?.nombre || 'Préstamo en efectivo',
             tipoProducto,
+            tipoPrestamo: prestamo.tipoPrestamo,
             montoTotal,
             montoPendiente,
             montoPagado,
+            cuotaInicial: Number(prestamo.cuotaInicial) || 0,
+            valorCuota: cuotas.length > 0 ? Number(cuotas[0].monto) : 0,
+            tasaInteres: Number(prestamo.tasaInteres) || 0,
+            frecuenciaPago: prestamo.frecuenciaPago,
             moraAcumulada,
             cuotasPagadas,
             cuotasTotales,
@@ -463,8 +482,10 @@ export class LoansService implements OnModuleInit {
             riesgo: prestamo.cliente.nivelRiesgo || NivelRiesgo.VERDE,
             ruta: rutaAsignada,
             rutaNombre,
+            vendedor: (prestamo as any).creadoPor?.nombres || 'Sin asignar',
             fechaInicio: prestamo.fechaInicio || new Date(),
             fechaFin: prestamo.fechaFin || new Date(),
+            creadoEn: (prestamo as any).creadoEn || new Date(),
             progreso:
               cuotasTotales > 0 ? (cuotasPagadas / cuotasTotales) * 100 : 0,
           };
@@ -938,6 +959,7 @@ export class LoansService implements OnModuleInit {
           tipoPrestamo: createLoanDto.tipoPrestamo,
           tipoAmortizacion: tipoAmort,
           monto: createLoanDto.monto,
+          cuotaInicial: createLoanDto.cuotaInicial || 0,
           tasaInteres: createLoanDto.tasaInteres,
           tasaInteresMora: createLoanDto.tasaInteresMora,
           plazoMeses: createLoanDto.plazoMeses,
@@ -949,11 +971,11 @@ export class LoansService implements OnModuleInit {
           estadoAprobacion: EstadoAprobacion.PENDIENTE,
           creadoPorId: createLoanDto.creadoPorId,
           interesTotal,
-          saldoPendiente: createLoanDto.monto + interesTotal,
+          saldoPendiente: createLoanDto.monto + interesTotal - (createLoanDto.cuotaInicial || 0),
           cuotas: {
             create: cuotasData,
           },
-        },
+        } as any,
         include: {
           cliente: true,
           producto: true,
@@ -1535,7 +1557,7 @@ export class LoansService implements OnModuleInit {
         // Notificar a coordinadores, admins y superadmins para aprobación
         await this.notificacionesService.notifyApprovers({
           titulo: 'Nuevo Préstamo Requiere Aprobación',
-          mensaje: `El usuario ${creador.nombres} ${creador.apellidos} ha creado un préstamo ${data.tipoPrestamo === 'EFECTIVO' ? 'en efectivo' : 'por artículo'} para ${cliente.nombres} ${cliente.apellidos} por valor de ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
+          mensaje: `El usuario ${creador.nombres} ${creador.apellidos} ha solicitado un préstamo ${data.tipoPrestamo === 'EFECTIVO' ? 'en efectivo' : 'por artículo'} para ${cliente.nombres} ${cliente.apellidos} por valor de ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
           tipo: 'APROBACION',
           entidad: 'Aprobacion',
           entidadId: aprobacion.id,
@@ -1551,7 +1573,7 @@ export class LoansService implements OnModuleInit {
         // Enviar notificaciones push a coordinadores
         await this.pushService.sendPushNotification({
           title: 'Nuevo Préstamo Requiere Aprobación',
-          body: `${creador.nombres} ${creador.apellidos} ha creado un préstamo por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
+          body: `${creador.nombres} ${creador.apellidos} ha solicitado un préstamo por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
           roleFilter: ['COORDINADOR'],
           data: {
             type: 'PRESTAMO_PENDIENTE',
@@ -1563,8 +1585,8 @@ export class LoansService implements OnModuleInit {
 // Notificar al creador
         await this.notificacionesService.create({
           usuarioId: data.creadoPorId,
-          titulo: 'Préstamo Creado Exitosamente',
-          mensaje: `Tu préstamo ${prestamo.numeroPrestamo} ha sido creado exitosamente y está pendiente de aprobación.`,
+          titulo: 'Préstamo Solicitado Exitosamente',
+          mensaje: `Tu solicitud de préstamo ${prestamo.numeroPrestamo} ha sido creada exitosamente y está pendiente de aprobación.`,
           tipo: 'EXITO',
           entidad: 'PRESTAMO',
           entidadId: prestamo.id,

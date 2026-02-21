@@ -91,6 +91,22 @@ export class ApprovalsService {
       },
     });
 
+    // Operación específica por tipo de rechazo
+    if (approval.tipoAprobacion === TipoAprobacion.NUEVO_PRESTAMO && approval.referenciaId) {
+      try {
+        await this.prisma.prestamo.update({
+          where: { id: approval.referenciaId },
+          data: {
+            estadoAprobacion: EstadoAprobacion.RECHAZADO,
+            aprobadoPorId: rechazadoPorId || undefined,
+            eliminadoEn: new Date(), // Oculta el préstamo del listado
+          },
+        });
+      } catch (error) {
+        this.logger.error(`Error actualizando préstamo rechazado ${approval.referenciaId}:`, error);
+      }
+    }
+
     let nombreRevisor: string | undefined;
     if (rechazadoPorId) {
       const usuario = await this.prisma.usuario.findUnique({

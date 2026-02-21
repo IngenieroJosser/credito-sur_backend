@@ -1,13 +1,23 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, forwardRef, Inject } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { RolUsuario } from '@prisma/client';
+import { NotificacionesGateway } from './notificaciones.gateway';
+import { PushService } from '../push/push.service';
 
 @Injectable()
 export class NotificacionesService {
   private readonly logger = new Logger(NotificacionesService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    @Inject(forwardRef(() => NotificacionesGateway))
+    private notificacionesGateway: NotificacionesGateway,
+    private pushService: PushService,
+  ) {}
 
+  /**
+   * Crea una notificación persistente y la emite en tiempo real a través de WebSockets y Push.
+   */
   async create(data: {
     usuarioId: string;
     titulo: string;
@@ -30,7 +40,7 @@ export class NotificacionesService {
         ...(data.metadata || {}),
         nivel: isSeverity ? map[incoming] : undefined,
       };
-      return await this.prisma.notificacion.create({
+      const notificacion = await this.prisma.notificacion.create({
         data: {
           usuarioId: data.usuarioId,
           titulo: data.titulo,
@@ -41,15 +51,37 @@ export class NotificacionesService {
           metadata: metadataFinal,
         },
       });
+
+      // Emitir evento en tiempo real (WebSockets)
+      this.notificacionesGateway.enviarNotificacionAUsuario(data.usuarioId, notificacion);
+      this.notificacionesGateway.notificarActualizacion(data.usuarioId);
+
+      // Enviar notificación Push (PWA)
+      this.pushService.sendPushNotification({
+        userId: data.usuarioId,
+        title: data.titulo,
+        body: data.mensaje,
+        data: {
+          tipo: tipoFinal,
+          entidadId: data.entidadId,
+          entidad: data.entidad,
+          link: notificacion.id ? `/notificaciones` : undefined // Ajustar según necesidad
+        }
+      }).catch(err => this.logger.error('Error enviando push:', err));
+
+      return notificacion;
     } catch (error) {
       this.logger.error(
-        `Error creating notification for user ${data.usuarioId}:`,
+        `Error creando notificación para el usuario ${data.usuarioId}:`,
         error,
       );
-      // No lanzamos error para no interrumpir el flujo principal del negocio
+      // No lanzamos error para no interrumpir el flujo principal del negocio (ej. si falla el socket)
     }
   }
 
+  /**
+   * Notifica a todos los coordinadores activos del sistema.
+   */
   async notifyCoordinator(data: {
     titulo: string;
     mensaje: string;
@@ -68,10 +100,10 @@ export class NotificacionesService {
       });
 
       this.logger.log(
-        `Notifying ${coordinadores.length} coordinators: ${data.titulo}`,
+        `Notificando a ${coordinadores.length} coordinadores: ${data.titulo}`,
       );
 
-      // 2. Crear notificación para cada uno
+      // 2. Crear notificación para cada uno (esto dispara sockets y push automáticamente en this.create)
       await Promise.all(
         coordinadores.map((coord) =>
           this.create({
