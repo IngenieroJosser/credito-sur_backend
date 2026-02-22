@@ -18,9 +18,10 @@ Esta API constituye el núcleo transaccional del sistema, centralizando la lógi
 - Gestionar **autenticación y autorización** basada en JWT, roles y permisos.
 - Garantizar **integridad transaccional** en operaciones críticas (pagos, cuotas, mora).
 - Registrar **auditoría inmutable** de acciones y cambios relevantes.
-- Administrar **respaldos locales** y sincronización hacia infraestructura en la nube.
-- Operar de forma eficiente en **entornos LAN** con posibilidad de acceso remoto.
-- Gestionar **notificaciones push** en tiempo real para eventos críticos del sistema.
+- **Alta Disponibilidad (LAN/VPS):** Preparado para operar de forma híbrida como servidor principal o nodo de contingencia local.
+- **Sincronización Bidireccional:** API diseñada para recibir ráfagas de sincronización masiva desde dispositivos offline o servidores locales.
+- **Notificaciones Realtime (WebSockets):** Soporte completo para eventos en vivo mediante Socket.io para dashboards operativos.
+- **Notificaciones Push:** Gestión de suscripciones y envío de alertas PWA mediante protocolos VAPID.
 
 ---
 
@@ -116,9 +117,11 @@ El backend implementa un sistema completo de notificaciones push para alertar a 
 ### Endpoints Disponibles
 
 #### `POST /api-credisur/push/subscribe`
+
 Registrar una nueva suscripción push del usuario autenticado.
 
 **Request:**
+
 ```json
 {
   "endpoint": "https://fcm.googleapis.com/fcm/send/...",
@@ -130,12 +133,15 @@ Registrar una nueva suscripción push del usuario autenticado.
 ```
 
 #### `DELETE /api-credisur/push/unsubscribe`
+
 Eliminar una suscripción push existente.
 
 #### `GET /api-credisur/push/subscriptions`
+
 Obtener todas las suscripciones activas del usuario.
 
 #### `POST /api-credisur/push/test`
+
 Enviar una notificación de prueba al usuario autenticado.
 
 ### Tipos de Notificaciones
@@ -187,7 +193,7 @@ await pushService.sendNotification(userId, {
   title: 'Pago Recibido',
   body: `Se registró un pago de ${formatCurrency(monto)}`,
   url: '/pagos/historial',
-  data: { pagoId, monto }
+  data: { pagoId, monto },
 });
 ```
 
