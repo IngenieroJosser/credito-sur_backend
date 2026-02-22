@@ -109,6 +109,7 @@ export class LoansController {
     @Query('estado', new DefaultValuePipe('todos')) estado: string,
     @Query('ruta', new DefaultValuePipe('todas')) ruta: string,
     @Query('search', new DefaultValuePipe('')) search: string,
+    @Query('tipo', new DefaultValuePipe('todos')) tipo: string,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(8), ParseIntPipe) limit: number,
     @Request() req,
@@ -120,6 +121,7 @@ export class LoansController {
       estado,
       ruta,
       search,
+      tipo,
       page,
       limit: safeLimit,
     });
