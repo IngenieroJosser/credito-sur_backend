@@ -1015,8 +1015,8 @@ export class ReportsService {
     const routePerformancePromises = routes.map(async (route) => {
       const clientIds = route.asignaciones.map((a) => a.cliente.id);
 
-      // Calcular recaudo total de la ruta en el periodo
-      const payments = await this.prisma.pago.findMany({
+      // 1. Recaudo de la ruta (Pagos + Cuotas Iniciales)
+      const routePayments = await this.prisma.pago.aggregate({
         where: {
           clienteId: { in: clientIds },
           fechaPago: {
@@ -1024,32 +1024,38 @@ export class ReportsService {
             lte: dateRange.endDate,
           },
         },
-        select: {
-          montoTotal: true,
-        },
+        _sum: { montoTotal: true },
       });
 
-      const collected = payments.reduce(
-        (sum, p) => sum + Number(p.montoTotal),
-        0,
-      );
+      const collected = Number(routePayments._sum.montoTotal || 0);
 
-      // Calcular préstamos nuevos en el periodo
-      const newLoans = await this.prisma.prestamo.count({
+      // 2. Préstamos Nuevos y Cuota Inicial de la ruta
+      const routeNewLoansStats = await this.prisma.prestamo.aggregate({
         where: {
           clienteId: { in: clientIds },
           creadoEn: {
             gte: dateRange.startDate,
             lte: dateRange.endDate,
           },
-          estado: 'ACTIVO',
+          estado: { in: ['ACTIVO', 'EN_MORA', 'PAGADO'] },
         },
+        _sum: {
+          monto: true,
+          cuotaInicial: true,
+        },
+        _count: { id: true },
       });
 
-      // Calcular nuevos clientes en el periodo
+      const newLoans = routeNewLoansStats._count.id || 0;
+      const newLoansAmount = Number(routeNewLoansStats._sum.monto || 0);
+      const collectedFromCuotaInicial = Number(routeNewLoansStats._sum.cuotaInicial || 0);
+
+      // 3. Clientes Nuevos de la ruta
       const newClients = await this.prisma.cliente.count({
         where: {
-          id: { in: clientIds },
+          asignacionesRuta: {
+            some: { rutaId: route.id },
+          },
           creadoEn: {
             gte: dateRange.startDate,
             lte: dateRange.endDate,
@@ -1057,28 +1063,50 @@ export class ReportsService {
         },
       });
 
-      // Calcular meta de la ruta (basada en cuotas vencidas en el periodo)
-      const duePayments = await this.prisma.cuota.findMany({
+      // 4. Meta de la ruta (Cuotas vencidas + hoy + cuota inicial)
+      // Incluimos: 1. Lo que vence hoy, 2. Lo pendiente de antes, 3. Lo que era de antes pero se pagó hoy
+      const routeDuePayments = await this.prisma.cuota.aggregate({
         where: {
           prestamo: {
             clienteId: { in: clientIds },
+            estado: { in: ['ACTIVO', 'EN_MORA'] },
           },
-          fechaVencimiento: {
-            gte: dateRange.startDate,
-            lte: dateRange.endDate,
-          },
-          estado: { in: ['PENDIENTE', 'VENCIDA'] },
+          OR: [
+            {
+              // Caso 1: Vence en este periodo
+              fechaVencimiento: {
+                gte: dateRange.startDate,
+                lte: dateRange.endDate,
+              },
+            },
+            {
+              // Caso 2: Pendiente/Vencido de antes
+              estado: { in: ['PENDIENTE', 'PARCIAL', 'VENCIDA'] },
+              fechaVencimiento: { lt: dateRange.startDate },
+            },
+            {
+              // Caso 3: Era de antes pero se pagó hoy (fija la meta retrospectivamente para eficiencia)
+              estado: 'PAGADA',
+              fechaVencimiento: { lt: dateRange.startDate },
+              fechaPago: {
+                gte: dateRange.startDate,
+                lte: dateRange.endDate,
+              },
+            },
+          ],
         },
-        select: {
+        _sum: {
           monto: true,
+          montoInteresMora: true,
         },
       });
 
-      const target = duePayments.reduce((sum, c) => sum + Number(c.monto), 0);
+      const target = Number(routeDuePayments._sum.monto || 0) + 
+                    Number(routeDuePayments._sum.montoInteresMora || 0) + 
+                     collectedFromCuotaInicial;
 
-      // Calcular eficiencia
       const efficiency =
-        target > 0 ? Math.round((collected / target) * 100) : 0;
+        target > 0 ? Math.round(((collected + collectedFromCuotaInicial) / target) * 100) : 0;
 
       return {
         id: route.id,
@@ -1086,37 +1114,102 @@ export class ReportsService {
         cobrador: `${route.cobrador.nombres} ${route.cobrador.apellidos}`,
         cobradorId: route.cobrador.id,
         meta: target,
-        recaudado: collected,
+        recaudado: collected + collectedFromCuotaInicial,
         eficiencia: efficiency,
         nuevosPrestamos: newLoans,
         nuevosClientes: newClients,
-      } as RoutePerformanceDetail;
+        montoNuevosPrestamos: newLoansAmount,
+      } as any;
     });
 
     const routePerformance = await Promise.all(routePerformancePromises);
 
-    // Calcular métricas globales
-    const totalRecaudo = routePerformance.reduce(
-      (sum, r) => sum + r.recaudado,
-      0,
-    );
-    const totalMeta = routePerformance.reduce((sum, r) => sum + r.meta, 0);
-    const porcentajeGlobal =
-      totalMeta > 0 ? Math.round((totalRecaudo / totalMeta) * 100) : 0;
-    const totalPrestamosNuevos = routePerformance.reduce(
-      (sum, r) => sum + r.nuevosPrestamos,
-      0,
-    );
-    const totalAfiliaciones = routePerformance.reduce(
-      (sum, r) => sum + r.nuevosClientes,
-      0,
-    );
+    // --- CÁLCULO DE MÉTRICAS GLOBALES (Independiente de las rutas para asegurar integridad) ---
+    
+    // 1. Recaudo Total Global (Incluye pagos y cuotas iniciales de todos los clientes)
+    const globalPayments = await this.prisma.pago.aggregate({
+      where: {
+        fechaPago: {
+          gte: dateRange.startDate,
+          lte: dateRange.endDate,
+        },
+      },
+      _sum: { montoTotal: true },
+    });
 
-    // Calcular efectividad promedio
+    const globalNewLoansStats = await this.prisma.prestamo.aggregate({
+      where: {
+        creadoEn: {
+          gte: dateRange.startDate,
+          lte: dateRange.endDate,
+        },
+        estado: { in: ['ACTIVO', 'EN_MORA', 'PAGADO'] },
+      },
+      _sum: {
+        monto: true,
+        cuotaInicial: true,
+      },
+      _count: { id: true }
+    });
+
+    const totalRecaudo = Number(globalPayments._sum.montoTotal || 0) + Number(globalNewLoansStats._sum.cuotaInicial || 0);
+    const totalMontoPrestamosNuevos = Number(globalNewLoansStats._sum.monto || 0);
+    const totalPrestamosNuevos = globalNewLoansStats._count.id || 0;
+
+    // 2. Meta Global
+    const globalDuePayments = await this.prisma.cuota.aggregate({
+      where: {
+        prestamo: {
+          estado: { in: ['ACTIVO', 'EN_MORA'] },
+        },
+        OR: [
+          {
+            fechaVencimiento: {
+              gte: dateRange.startDate,
+              lte: dateRange.endDate,
+            },
+          },
+          {
+            estado: { in: ['PENDIENTE', 'PARCIAL', 'VENCIDA'] },
+            fechaVencimiento: { lt: dateRange.startDate },
+          },
+          {
+            estado: 'PAGADA',
+            fechaVencimiento: { lt: dateRange.startDate },
+            fechaPago: {
+              gte: dateRange.startDate,
+              lte: dateRange.endDate,
+            },
+          },
+        ],
+      },
+      _sum: {
+        monto: true,
+        montoInteresMora: true,
+      },
+    });
+
+    const totalMeta = Number(globalDuePayments._sum.monto || 0) + 
+                     Number(globalDuePayments._sum.montoInteresMora || 0) + 
+                     Number(globalNewLoansStats._sum.cuotaInicial || 0);
+
+    const porcentajeGlobal = totalMeta > 0 ? Math.round((totalRecaudo / totalMeta) * 100) : 0;
+
+    // 3. Nuevos Clientes Globales
+    const totalAfiliaciones = await this.prisma.cliente.count({
+      where: {
+        creadoEn: {
+          gte: dateRange.startDate,
+          lte: dateRange.endDate,
+        },
+      },
+    });
+
+    // 4. Efectividad Promedio (Promedio de las eficiencias de las rutas)
     const efectividadPromedio =
       routePerformance.length > 0
         ? Math.round(
-            routePerformance.reduce((sum, r) => sum + r.eficiencia, 0) /
+            routePerformance.reduce((sum, r) => sum + (r.eficiencia || 0), 0) /
               routePerformance.length,
           )
         : 0;
@@ -1128,6 +1221,7 @@ export class ReportsService {
       totalPrestamosNuevos,
       totalAfiliaciones,
       efectividadPromedio,
+      totalMontoPrestamosNuevos,
       rendimientoRutas: routePerformance,
       periodo: period,
       fechaInicio: dateRange.startDate,

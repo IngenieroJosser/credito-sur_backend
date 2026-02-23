@@ -27,6 +27,9 @@ export class RoutePerformanceDetail {
 
   @ApiProperty()
   nuevosClientes: number;
+
+  @ApiProperty()
+  montoNuevosPrestamos: number;
 }
 
 export class OperationalMetrics {
@@ -47,6 +50,9 @@ export class OperationalMetrics {
 
   @ApiProperty()
   efectividadPromedio: number;
+
+  @ApiProperty()
+  totalMontoPrestamosNuevos: number;
 }
 
 export class OperationalReportResponse extends OperationalMetrics {
