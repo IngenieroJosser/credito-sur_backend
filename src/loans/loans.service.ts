@@ -1332,9 +1332,10 @@ export class LoansService implements OnModuleInit {
         }
       }
 
-      // Generar número de préstamo
+      // Generar número de préstamo/crédito
       const count = await this.prisma.prestamo.count();
-      const numeroPrestamo = `PRES-${String(count + 1).padStart(6, '0')}`;
+      const prefix = data.tipoPrestamo === 'ARTICULO' ? 'ART' : 'PRES';
+      const numeroPrestamo = `${prefix}-${String(count + 1).padStart(6, '0')}`;
 
       // Calcular fechas
       const fechaInicio = new Date(data.fechaInicio);
