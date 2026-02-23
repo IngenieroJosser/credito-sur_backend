@@ -48,7 +48,70 @@ export class AccountingService {
 
     const cajasConSaldo = await Promise.all(
       cajas.map(async (caja) => {
-        const saldoCalculado = Number(caja.saldoActual);
+        let saldoCalculado = Number(caja.saldoActual);
+
+        if (caja.tipo === 'RUTA' && caja.rutaId) {
+          const ingresos = await this.prisma.transaccion.aggregate({
+            where: {
+              cajaId: caja.id,
+              tipo: 'INGRESO',
+              fechaTransaccion: {
+                gte: fechaInicio,
+                lte: fechaFin,
+              },
+              NOT: {
+                OR: [
+                  { tipoReferencia: 'SOLICITUD_BASE' },
+                  { tipoReferencia: 'SOLICITUD_BASE_EFECTIVO' },
+                ],
+              },
+            },
+            _sum: {
+              monto: true,
+            },
+          });
+
+          const egresos = await this.prisma.transaccion.aggregate({
+            where: {
+              cajaId: caja.id,
+              tipo: 'EGRESO',
+              fechaTransaccion: {
+                gte: fechaInicio,
+                lte: fechaFin,
+              },
+            },
+            _sum: {
+              monto: true,
+            },
+          });
+
+          let recaudoDelDia = Number(ingresos._sum.monto || 0);
+          const gastosDelDia = Number(egresos._sum.monto || 0);
+
+          if (recaudoDelDia === 0) {
+            const asignaciones = await this.prisma.asignacionRuta.findMany({
+              where: { rutaId: caja.rutaId, activa: true },
+              select: { clienteId: true },
+            });
+
+            if (asignaciones.length > 0) {
+              const clienteIds = asignaciones.map((a) => a.clienteId);
+              const pagosAgg = await this.prisma.pago.aggregate({
+                where: {
+                  clienteId: { in: clienteIds },
+                  fechaPago: {
+                    gte: fechaInicio,
+                    lte: fechaFin,
+                  },
+                },
+                _sum: { montoTotal: true },
+              });
+              recaudoDelDia = Number(pagosAgg._sum.montoTotal || 0);
+            }
+          }
+
+          saldoCalculado = recaudoDelDia - gastosDelDia;
+        }
 
         return {
           id: caja.id,

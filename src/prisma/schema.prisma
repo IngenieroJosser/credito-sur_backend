@@ -6,9 +6,705 @@ datasource db {
   provider = "postgresql"
 }
 
-// ============================================
-// ENUMS
-// ============================================
+model Usuario {
+  id                      String                     @id @default(uuid())
+  nombreUsuario           String                     @unique @db.VarChar(50)
+  correo                  String                     @unique @db.VarChar(255)
+  hashContrasena          String                     @db.VarChar(255)
+  nombres                 String                     @db.VarChar(100)
+  apellidos               String                     @db.VarChar(100)
+  telefono                String?                    @db.VarChar(20)
+  rol                     RolUsuario
+  esPrincipal             Boolean                    @default(false)
+  estado                  EstadoUsuario              @default(ACTIVO)
+  ultimoIngreso           DateTime?
+  intentosFallidos        Int                        @default(0)
+  debeCambiarContrasena   Boolean                    @default(false)
+  creadoPorId             String?
+  creadoEn                DateTime                   @default(now())
+  actualizadoEn           DateTime                   @updatedAt
+  eliminadoEn             DateTime?
+  estadoSincronizacion    EstadoSincronizacion       @default(PENDIENTE)
+  ultimaSincronizacion    DateTime?
+  errorSincronizacion     String?
+  clientesListaNegra      Cliente[]                  @relation("ClienteListaNegraPor")
+  clientesAprobados       Cliente[]                  @relation("ClienteAprobadoPor")
+  clientesCreados         Cliente[]                  @relation("ClienteCreadoPor")
+  gastosAprobados         Gasto[]                    @relation("GastoAprobadoPor")
+  gastosReportados        Gasto[]                    @relation("GastoReportadoPor")
+  pagosRegistrados        Pago[]
+  prestamosAprobados      Prestamo[]                 @relation("PrestamoAprobadoPor")
+  prestamosCreados        Prestamo[]                 @relation("PrestamoCreadoPor")
+  transaccionesAprobadas  Transaccion[]              @relation("TransaccionAprobadaPor")
+  transaccionesCreadas    Transaccion[]              @relation("TransaccionCreadaPor")
+  creadoPor               Usuario?                   @relation("UsuarioCreadoPor", fields: [creadoPorId], references: [id])
+  usuariosCreados         Usuario[]                  @relation("UsuarioCreadoPor")
+  aprobacionesRevisadas   Aprobacion[]               @relation("AprobacionRevisadaPor")
+  aprobacionesSolicitadas Aprobacion[]               @relation("AprobacionSolicitadaPor")
+  permisosPersonalizados  AsignacionPermisoUsuario[]
+  asignacionesRoles       AsignacionRolUsuario[]
+  asignacionesRuta        AsignacionRuta[]
+  cajasResponsable        Caja[]
+  itemsColaSincronizacion ColaSincronizacion[]
+  extensionesPago         ExtensionPago[]
+  archivosSubidos         Multimedia[]               @relation("MultimediaSubidoPor")
+  archivosAsociados       Multimedia[]               @relation("MultimediaUsuario")
+  notificaciones          Notificacion[]
+  pushSubscriptions       PushSubscription[]
+  registrosAuditoria      RegistroAuditoria[]
+  rutasComoCobrador       Ruta[]                     @relation("RutaCobrador")
+  rutasComoSupervisor     Ruta[]                     @relation("RutaSupervisor")
+
+  @@index([nombreUsuario])
+  @@index([correo])
+  @@index([rol])
+  @@index([estado])
+  @@index([estadoSincronizacion])
+}
+
+model Notificacion {
+  id        String   @id @default(uuid())
+  usuarioId String
+  titulo    String   @db.VarChar(100)
+  mensaje   String
+  leida     Boolean  @default(false)
+  tipo      String   @default("INFO")
+  entidad   String?
+  entidadId String?
+  metadata  Json?
+  creadoEn  DateTime @default(now())
+  archivar  Boolean  @default(false)
+  usuario   Usuario  @relation(fields: [usuarioId], references: [id])
+
+  @@index([usuarioId])
+  @@index([leida])
+  @@map("notificaciones")
+}
+
+model Rol {
+  id                  String                 @id @default(uuid())
+  nombre              String                 @unique @db.VarChar(50)
+  descripcion         String?                @db.VarChar(255)
+  esSistema           Boolean                @default(false)
+  rutaDefault         String?                @db.VarChar(100)
+  creadoEn            DateTime               @default(now())
+  actualizadoEn       DateTime               @updatedAt
+  eliminadoEn         DateTime?
+  asignacionesUsuario AsignacionRolUsuario[]
+  permisos            RolPermiso[]
+
+  @@index([nombre])
+  @@map("roles")
+}
+
+model Permiso {
+  id                   String                     @id @default(uuid())
+  modulo               String                     @db.VarChar(50)
+  accion               String                     @db.VarChar(50)
+  nombre               String                     @db.VarChar(100)
+  descripcion          String?                    @db.VarChar(255)
+  icono                String?                    @db.VarChar(50)
+  ruta                 String?                    @db.VarChar(200)
+  orden                Int                        @default(0)
+  esNavegable          Boolean                    @default(true)
+  creadoEn             DateTime                   @default(now())
+  actualizadoEn        DateTime                   @updatedAt
+  asignacionesUsuarios AsignacionPermisoUsuario[]
+  rolesPermisos        RolPermiso[]
+
+  @@unique([modulo, accion])
+  @@index([modulo])
+  @@map("permisos")
+}
+
+model RolPermiso {
+  id        String   @id @default(uuid())
+  rolId     String
+  permisoId String
+  creadoEn  DateTime @default(now())
+  permiso   Permiso  @relation(fields: [permisoId], references: [id])
+  rol       Rol      @relation(fields: [rolId], references: [id])
+
+  @@unique([rolId, permisoId])
+  @@map("roles_permisos")
+}
+
+model AsignacionRolUsuario {
+  id        String    @id @default(uuid())
+  usuarioId String
+  rolId     String
+  creadoEn  DateTime  @default(now())
+  expiraEn  DateTime?
+  rol       Rol       @relation(fields: [rolId], references: [id])
+  usuario   Usuario   @relation(fields: [usuarioId], references: [id])
+
+  @@unique([usuarioId, rolId])
+  @@index([usuarioId])
+  @@map("asignaciones_roles_usuarios")
+}
+
+model AsignacionPermisoUsuario {
+  id        String   @id @default(uuid())
+  usuarioId String
+  permisoId String
+  creadoEn  DateTime @default(now())
+  permiso   Permiso  @relation(fields: [permisoId], references: [id])
+  usuario   Usuario  @relation(fields: [usuarioId], references: [id])
+
+  @@unique([usuarioId, permisoId])
+  @@map("asignaciones_permisos_usuarios")
+}
+
+model Cliente {
+  id                        String               @id @default(uuid())
+  codigo                    String               @unique @db.VarChar(20)
+  dni                       String               @unique @db.VarChar(20)
+  nombres                   String               @db.VarChar(100)
+  apellidos                 String               @db.VarChar(100)
+  correo                    String?              @db.VarChar(255)
+  telefono                  String               @db.VarChar(20)
+  direccion                 String?
+  referencia                String?
+  nivelRiesgo               NivelRiesgo          @default(VERDE)
+  puntaje                   Int                  @default(100)
+  ultimaActualizacionRiesgo DateTime?
+  enListaNegra              Boolean              @default(false)
+  razonListaNegra           String?
+  fechaListaNegra           DateTime?
+  agregadoListaNegraPorId   String?
+  creadoPorId               String
+  aprobadoPorId             String?
+  estadoAprobacion          EstadoAprobacion     @default(PENDIENTE)
+  categoriaId               String?
+  creadoEn                  DateTime             @default(now())
+  actualizadoEn             DateTime             @updatedAt
+  eliminadoEn               DateTime?
+  estadoSincronizacion      EstadoSincronizacion @default(PENDIENTE)
+  ultimaSincronizacion      DateTime?
+  agregadoListaNegraPor     Usuario?             @relation("ClienteListaNegraPor", fields: [agregadoListaNegraPorId], references: [id])
+  aprobadoPor               Usuario?             @relation("ClienteAprobadoPor", fields: [aprobadoPorId], references: [id])
+  categoria                 Categoria?           @relation(fields: [categoriaId], references: [id])
+  creadoPor                 Usuario              @relation("ClienteCreadoPor", fields: [creadoPorId], references: [id])
+  pagos                     Pago[]
+  prestamos                 Prestamo[]
+  asignacionesRuta          AsignacionRuta[]
+  archivos                  Multimedia[]         @relation("MultimediaCliente")
+
+  @@index([dni])
+  @@index([nivelRiesgo])
+  @@index([enListaNegra])
+  @@index([estadoAprobacion])
+  @@index([creadoPorId])
+  @@index([estadoSincronizacion])
+}
+
+model Producto {
+  id            String           @id @default(uuid())
+  codigo        String           @unique @db.VarChar(50)
+  nombre        String           @db.VarChar(255)
+  descripcion   String?
+  categoria     String           @db.VarChar(100)
+  marca         String?          @db.VarChar(100)
+  modelo        String?          @db.VarChar(100)
+  costo         Decimal          @db.Decimal(10, 2)
+  stock         Int              @default(0)
+  stockMinimo   Int              @default(0)
+  activo        Boolean          @default(true)
+  categoriaId   String?
+  creadoEn      DateTime         @default(now())
+  actualizadoEn DateTime         @updatedAt
+  eliminadoEn   DateTime?
+  prestamos     Prestamo[]
+  categoriaRel  Categoria?       @relation(fields: [categoriaId], references: [id])
+  archivos      Multimedia[]     @relation("MultimediaProducto")
+  precios       PrecioProducto[]
+
+  @@index([codigo])
+  @@index([categoria])
+  @@index([activo])
+}
+
+model PrecioProducto {
+  id            String     @id @default(uuid())
+  productoId    String
+  meses         Int
+  precio        Decimal    @db.Decimal(10, 2)
+  activo        Boolean    @default(true)
+  creadoEn      DateTime   @default(now())
+  actualizadoEn DateTime   @updatedAt
+  prestamos     Prestamo[] @relation("PrecioProductoPrestamos")
+  producto      Producto   @relation(fields: [productoId], references: [id])
+
+  @@unique([productoId, meses])
+  @@index([productoId])
+  @@index([meses])
+  @@map("precios_productos")
+}
+
+model Prestamo {
+  id                   String               @id @default(uuid())
+  numeroPrestamo       String               @unique @db.VarChar(50)
+  clienteId            String
+  productoId           String?
+  precioProductoId     String?
+  tipoPrestamo         String               @db.VarChar(20)
+  tipoAmortizacion     TipoAmortizacion     @default(INTERES_SIMPLE)
+  monto                Decimal              @db.Decimal(12, 2)
+  tasaInteres          Decimal              @db.Decimal(5, 2)
+  tasaInteresMora      Decimal              @db.Decimal(5, 2)
+  plazoMeses           Int
+  frecuenciaPago       FrecuenciaPago
+  cantidadCuotas       Int
+  fechaInicio          DateTime
+  fechaFin             DateTime
+  estado               EstadoPrestamo       @default(BORRADOR)
+  creadoPorId          String
+  aprobadoPorId        String?
+  estadoAprobacion     EstadoAprobacion     @default(PENDIENTE)
+  interesTotal         Decimal              @default(0) @db.Decimal(12, 2)
+  totalPagado          Decimal              @default(0) @db.Decimal(12, 2)
+  capitalPagado        Decimal              @default(0) @db.Decimal(12, 2)
+  interesPagado        Decimal              @default(0) @db.Decimal(12, 2)
+  interesMoraPagado    Decimal              @default(0) @db.Decimal(12, 2)
+  saldoPendiente       Decimal              @default(0) @db.Decimal(12, 2)
+  creadoEn             DateTime             @default(now())
+  actualizadoEn        DateTime             @updatedAt
+  eliminadoEn          DateTime?
+  estadoSincronizacion EstadoSincronizacion @default(PENDIENTE)
+  ultimaSincronizacion DateTime?
+  cuotaInicial         Decimal              @default(0) @db.Decimal(12, 2)
+  pagos                Pago[]
+  aprobadoPor          Usuario?             @relation("PrestamoAprobadoPor", fields: [aprobadoPorId], references: [id])
+  cliente              Cliente              @relation(fields: [clienteId], references: [id])
+  creadoPor            Usuario              @relation("PrestamoCreadoPor", fields: [creadoPorId], references: [id])
+  precioProducto       PrecioProducto?      @relation("PrecioProductoPrestamos", fields: [precioProductoId], references: [id])
+  producto             Producto?            @relation(fields: [productoId], references: [id])
+  cuotas               Cuota[]
+  extensiones          ExtensionPago[]
+  archivos             Multimedia[]         @relation("MultimediaPrestamo")
+
+  @@index([numeroPrestamo])
+  @@index([clienteId])
+  @@index([estado])
+  @@index([estadoAprobacion])
+  @@index([creadoPorId])
+  @@index([estadoSincronizacion])
+  @@index([fechaInicio])
+  @@index([fechaFin])
+}
+
+model Cuota {
+  id                       String         @id @default(uuid())
+  prestamoId               String
+  numeroCuota              Int
+  fechaVencimiento         DateTime
+  monto                    Decimal        @db.Decimal(10, 2)
+  montoCapital             Decimal        @db.Decimal(10, 2)
+  montoInteres             Decimal        @db.Decimal(10, 2)
+  montoInteresMora         Decimal        @default(0) @db.Decimal(10, 2)
+  estado                   EstadoCuota    @default(PENDIENTE)
+  montoPagado              Decimal        @default(0) @db.Decimal(10, 2)
+  fechaPago                DateTime?
+  fechaVencimientoProrroga DateTime?
+  extensionId              String?        @unique
+  creadoEn                 DateTime       @default(now())
+  actualizadoEn            DateTime       @updatedAt
+  extension                ExtensionPago? @relation(fields: [extensionId], references: [id])
+  prestamo                 Prestamo       @relation(fields: [prestamoId], references: [id])
+  detallesPago             DetallePago[]
+
+  @@unique([prestamoId, numeroCuota])
+  @@index([prestamoId])
+  @@index([fechaVencimiento])
+  @@index([estado])
+  @@index([fechaVencimientoProrroga])
+  @@map("cuotas")
+}
+
+model ExtensionPago {
+  id                       String   @id @default(uuid())
+  prestamoId               String
+  cuotaId                  String?  @unique
+  fechaVencimientoOriginal DateTime
+  nuevaFechaVencimiento    DateTime
+  razon                    String?
+  aprobadoPorId            String
+  creadoEn                 DateTime @default(now())
+  actualizadoEn            DateTime @updatedAt
+  cuota                    Cuota?
+  aprobadoPor              Usuario  @relation(fields: [aprobadoPorId], references: [id])
+  prestamo                 Prestamo @relation(fields: [prestamoId], references: [id])
+
+  @@index([prestamoId])
+  @@index([aprobadoPorId])
+  @@map("extensiones_pago")
+}
+
+model Pago {
+  id                   String               @id @default(uuid())
+  numeroPago           String               @unique @db.VarChar(50)
+  clienteId            String
+  prestamoId           String
+  cobradorId           String
+  fechaPago            DateTime             @default(now())
+  montoTotal           Decimal              @db.Decimal(10, 2)
+  metodoPago           MetodoPago
+  numeroReferencia     String?              @db.VarChar(100)
+  notas                String?
+  creadoEn             DateTime             @default(now())
+  actualizadoEn        DateTime             @updatedAt
+  estadoSincronizacion EstadoSincronizacion @default(PENDIENTE)
+  ultimaSincronizacion DateTime?
+  cliente              Cliente              @relation(fields: [clienteId], references: [id])
+  cobrador             Usuario              @relation(fields: [cobradorId], references: [id])
+  prestamo             Prestamo             @relation(fields: [prestamoId], references: [id])
+  detalles             DetallePago[]
+  archivos             Multimedia[]         @relation("MultimediaPago")
+  recibo               Recibo?
+
+  @@index([numeroPago])
+  @@index([clienteId])
+  @@index([prestamoId])
+  @@index([cobradorId])
+  @@index([fechaPago])
+  @@index([estadoSincronizacion])
+}
+
+model DetallePago {
+  id               String   @id @default(uuid())
+  pagoId           String
+  cuotaId          String
+  monto            Decimal  @db.Decimal(10, 2)
+  montoCapital     Decimal  @db.Decimal(10, 2)
+  montoInteres     Decimal  @db.Decimal(10, 2)
+  montoInteresMora Decimal  @db.Decimal(10, 2)
+  creadoEn         DateTime @default(now())
+  cuota            Cuota    @relation(fields: [cuotaId], references: [id])
+  pago             Pago     @relation(fields: [pagoId], references: [id])
+
+  @@unique([pagoId, cuotaId])
+  @@index([pagoId])
+  @@index([cuotaId])
+  @@map("detalles_pago")
+}
+
+model Recibo {
+  id              String       @id @default(uuid())
+  pagoId          String       @unique
+  numeroRecibo    String       @unique @db.VarChar(50)
+  contenido       Json
+  rutaPDF         String?      @db.VarChar(500)
+  compartidoVia   String?      @db.VarChar(50)
+  fechaCompartido DateTime?
+  creadoEn        DateTime     @default(now())
+  actualizadoEn   DateTime     @updatedAt
+  archivos        Multimedia[] @relation("MultimediaRecibo")
+  pago            Pago         @relation(fields: [pagoId], references: [id])
+
+  @@index([numeroRecibo])
+  @@index([pagoId])
+  @@map("recibos")
+}
+
+model Ruta {
+  id            String           @id @default(uuid())
+  codigo        String           @unique @db.VarChar(20)
+  nombre        String           @db.VarChar(255)
+  descripcion   String?
+  zona          String           @db.VarChar(100)
+  activa        Boolean          @default(true)
+  cobradorId    String
+  supervisorId  String?
+  eliminadoEn   DateTime?
+  creadoEn      DateTime         @default(now())
+  actualizadoEn DateTime         @updatedAt
+  gastos        Gasto[]
+  asignaciones  AsignacionRuta[]
+  cajas         Caja[]
+  cobrador      Usuario          @relation("RutaCobrador", fields: [cobradorId], references: [id])
+  supervisor    Usuario?         @relation("RutaSupervisor", fields: [supervisorId], references: [id])
+
+  @@index([codigo])
+  @@index([cobradorId])
+  @@index([supervisorId])
+  @@index([activa])
+  @@map("rutas")
+}
+
+model AsignacionRuta {
+  id              String    @id @default(uuid())
+  rutaId          String
+  clienteId       String
+  cobradorId      String
+  diaSemana       Int?
+  fechaEspecifica DateTime?
+  ordenVisita     Int       @default(0)
+  activa          Boolean   @default(true)
+  creadoEn        DateTime  @default(now())
+  actualizadoEn   DateTime  @updatedAt
+  cliente         Cliente   @relation(fields: [clienteId], references: [id])
+  cobrador        Usuario   @relation(fields: [cobradorId], references: [id])
+  ruta            Ruta      @relation(fields: [rutaId], references: [id])
+
+  @@unique([rutaId, clienteId, fechaEspecifica])
+  @@index([rutaId])
+  @@index([clienteId])
+  @@index([cobradorId])
+  @@index([diaSemana])
+  @@index([fechaEspecifica])
+  @@index([ordenVisita])
+  @@map("asignaciones_rutas")
+}
+
+model Aprobacion {
+  id                   String               @id @default(uuid())
+  tipoAprobacion       TipoAprobacion
+  referenciaId         String
+  tablaReferencia      String               @db.VarChar(50)
+  solicitadoPorId      String
+  datosSolicitud       Json
+  aprobadoPorId        String?
+  estado               EstadoAprobacion     @default(PENDIENTE)
+  comentarios          String?
+  datosAprobados       Json?
+  creadoEn             DateTime             @default(now())
+  actualizadoEn        DateTime             @updatedAt
+  revisadoEn           DateTime?
+  estadoSincronizacion EstadoSincronizacion @default(PENDIENTE)
+  montoSolicitud       Decimal?             @db.Decimal(12, 2)
+  aprobadoPor          Usuario?             @relation("AprobacionRevisadaPor", fields: [aprobadoPorId], references: [id])
+  solicitadoPor        Usuario              @relation("AprobacionSolicitadaPor", fields: [solicitadoPorId], references: [id])
+
+  @@index([tipoAprobacion])
+  @@index([referenciaId, tablaReferencia])
+  @@index([solicitadoPorId])
+  @@index([aprobadoPorId])
+  @@index([estado])
+  @@index([creadoEn])
+  @@index([estadoSincronizacion])
+  @@map("aprobaciones")
+}
+
+model Caja {
+  id            String        @id @default(uuid())
+  codigo        String        @unique @db.VarChar(20)
+  nombre        String        @db.VarChar(255)
+  tipo          TipoCaja
+  rutaId        String?
+  saldoActual   Decimal       @default(0) @db.Decimal(12, 2)
+  saldoMinimo   Decimal       @default(0) @db.Decimal(12, 2)
+  saldoMaximo   Decimal       @default(0) @db.Decimal(12, 2)
+  activa        Boolean       @default(true)
+  responsableId String
+  creadoEn      DateTime      @default(now())
+  actualizadoEn DateTime      @updatedAt
+  gastos        Gasto[]
+  transacciones Transaccion[]
+  responsable   Usuario       @relation(fields: [responsableId], references: [id])
+  ruta          Ruta?         @relation(fields: [rutaId], references: [id])
+
+  @@index([codigo])
+  @@index([tipo])
+  @@index([rutaId])
+  @@index([responsableId])
+  @@map("cajas")
+}
+
+model Transaccion {
+  id                   String               @id @default(uuid())
+  numeroTransaccion    String               @unique @db.VarChar(50)
+  cajaId               String
+  tipo                 TipoTransaccion
+  monto                Decimal              @db.Decimal(12, 2)
+  tipoReferencia       String?              @db.VarChar(50)
+  referenciaId         String?
+  descripcion          String
+  notas                String?
+  creadoPorId          String
+  aprobadoPorId        String?
+  fechaTransaccion     DateTime             @default(now())
+  creadoEn             DateTime             @default(now())
+  actualizadoEn        DateTime             @updatedAt
+  estadoSincronizacion EstadoSincronizacion @default(PENDIENTE)
+  aprobadoPor          Usuario?             @relation("TransaccionAprobadaPor", fields: [aprobadoPorId], references: [id])
+  caja                 Caja                 @relation(fields: [cajaId], references: [id])
+  creadoPor            Usuario              @relation("TransaccionCreadaPor", fields: [creadoPorId], references: [id])
+
+  @@index([numeroTransaccion])
+  @@index([cajaId])
+  @@index([tipo])
+  @@index([tipoReferencia, referenciaId])
+  @@index([creadoPorId])
+  @@index([fechaTransaccion])
+  @@index([estadoSincronizacion])
+}
+
+model Gasto {
+  id                   String               @id @default(uuid())
+  numeroGasto          String               @unique @db.VarChar(50)
+  rutaId               String?
+  cobradorId           String
+  cajaId               String
+  tipoGasto            TipoGasto
+  monto                Decimal              @db.Decimal(10, 2)
+  descripcion          String
+  fotoRecibo           String?              @db.VarChar(500)
+  aprobadoPorId        String?
+  estadoAprobacion     EstadoAprobacion     @default(PENDIENTE)
+  categoriaId          String?
+  fechaGasto           DateTime             @default(now())
+  creadoEn             DateTime             @default(now())
+  actualizadoEn        DateTime             @updatedAt
+  estadoSincronizacion EstadoSincronizacion @default(PENDIENTE)
+  aprobadoPor          Usuario?             @relation("GastoAprobadoPor", fields: [aprobadoPorId], references: [id])
+  caja                 Caja                 @relation(fields: [cajaId], references: [id])
+  categoria            Categoria?           @relation(fields: [categoriaId], references: [id])
+  cobrador             Usuario              @relation("GastoReportadoPor", fields: [cobradorId], references: [id])
+  ruta                 Ruta?                @relation(fields: [rutaId], references: [id])
+  archivos             Multimedia[]         @relation("MultimediaGasto")
+
+  @@index([numeroGasto])
+  @@index([rutaId])
+  @@index([cobradorId])
+  @@index([estadoAprobacion])
+  @@index([fechaGasto])
+  @@index([estadoSincronizacion])
+}
+
+model RegistroAuditoria {
+  id                String      @id @default(uuid())
+  usuarioId         String?
+  rolUsuario        RolUsuario?
+  accion            String      @db.VarChar(100)
+  entidad           String      @db.VarChar(50)
+  entidadId         String?
+  valoresAnteriores Json?
+  valoresNuevos     Json?
+  cambios           Json?
+  direccionIP       String?     @db.VarChar(45)
+  agenteUsuario     String?
+  endpoint          String?     @db.VarChar(500)
+  creadoEn          DateTime    @default(now())
+  usuario           Usuario?    @relation(fields: [usuarioId], references: [id])
+
+  @@index([usuarioId])
+  @@index([accion])
+  @@index([entidad, entidadId])
+  @@index([creadoEn])
+  @@map("registros_auditoria")
+}
+
+model ColaSincronizacion {
+  id                 String               @id @default(uuid())
+  nombreTabla        String               @db.VarChar(50)
+  idRegistro         String
+  operacion          String               @db.VarChar(10)
+  datos              Json
+  estado             EstadoSincronizacion @default(PENDIENTE)
+  intentos           Int                  @default(0)
+  ultimoIntento      DateTime?
+  mensajeError       String?
+  dispositivoCreador String?              @db.VarChar(100)
+  usuarioCreadorId   String?
+  creadoEn           DateTime             @default(now())
+  actualizadoEn      DateTime             @updatedAt
+  usuarioCreador     Usuario?             @relation(fields: [usuarioCreadorId], references: [id])
+
+  @@index([nombreTabla, idRegistro])
+  @@index([estado])
+  @@index([creadoEn])
+  @@map("cola_sincronizacion")
+}
+
+model Multimedia {
+  id                   String                  @id @default(uuid())
+  clienteId            String?
+  prestamoId           String?
+  pagoId               String?
+  gastoId              String?
+  usuarioId            String?
+  productoId           String?
+  reciboId             String?
+  entidad              String?                 @db.VarChar(50)
+  tipoContenido        TipoContenidoMultimedia
+  tipoArchivo          String                  @db.VarChar(50)
+  formato              String                  @db.VarChar(10)
+  nombreOriginal       String                  @db.VarChar(255)
+  nombreAlmacenamiento String                  @db.VarChar(255)
+  ruta                 String                  @db.VarChar(500)
+  url                  String?                 @db.VarChar(500)
+  tamanoBytes          Int                     @default(0)
+  ancho                Int?
+  alto                 Int?
+  duracion             Int?
+  descripcion          String?
+  etiquetas            String?                 @db.VarChar(255)
+  esPublico            Boolean                 @default(false)
+  esPrincipal          Boolean                 @default(false)
+  estado               EstadoMultimedia        @default(ACTIVO)
+  subidoPorId          String
+  creadoEn             DateTime                @default(now())
+  actualizadoEn        DateTime                @updatedAt
+  eliminadoEn          DateTime?
+  estadoSincronizacion EstadoSincronizacion    @default(PENDIENTE)
+  ultimaSincronizacion DateTime?
+  hashArchivo          String?                 @db.VarChar(64)
+  cliente              Cliente?                @relation("MultimediaCliente", fields: [clienteId], references: [id], onDelete: Cascade)
+  gasto                Gasto?                  @relation("MultimediaGasto", fields: [gastoId], references: [id], onDelete: Cascade)
+  pago                 Pago?                   @relation("MultimediaPago", fields: [pagoId], references: [id], onDelete: Cascade)
+  prestamo             Prestamo?               @relation("MultimediaPrestamo", fields: [prestamoId], references: [id], onDelete: Cascade)
+  producto             Producto?               @relation("MultimediaProducto", fields: [productoId], references: [id], onDelete: Cascade)
+  recibo               Recibo?                 @relation("MultimediaRecibo", fields: [reciboId], references: [id], onDelete: Cascade)
+  subidoPor            Usuario                 @relation("MultimediaSubidoPor", fields: [subidoPorId], references: [id])
+  usuario              Usuario?                @relation("MultimediaUsuario", fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([clienteId])
+  @@index([prestamoId])
+  @@index([pagoId])
+  @@index([gastoId])
+  @@index([usuarioId])
+  @@index([productoId])
+  @@index([reciboId])
+  @@index([tipoContenido])
+  @@index([subidoPorId])
+  @@index([esPrincipal])
+  @@index([estado])
+  @@index([creadoEn])
+  @@index([estadoSincronizacion])
+  @@map("multimedia")
+}
+
+model Categoria {
+  id            String     @id @default(uuid())
+  nombre        String     @db.VarChar(100)
+  descripcion   String?
+  tipo          String     @db.VarChar(50)
+  color         String?    @db.VarChar(20)
+  activa        Boolean    @default(true)
+  creadoEn      DateTime   @default(now())
+  actualizadoEn DateTime   @updatedAt
+  eliminadoEn   DateTime?
+  clientes      Cliente[]
+  gastos        Gasto[]
+  productos     Producto[]
+
+  @@index([tipo])
+  @@map("categorias")
+}
+
+model PushSubscription {
+  id            String   @id @default(uuid())
+  endpoint      String   @unique
+  usuarioId     String
+  p256dh        String
+  auth          String
+  activa        Boolean  @default(true)
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+  usuario       Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@map("push_subscriptions")
+}
 
 enum EstadoUsuario {
   ACTIVO
@@ -125,972 +821,4 @@ enum EstadoMultimedia {
   TEMPORAL
   ACTIVO
   ELIMINADO
-}
-
-// ============================================
-// MÓDULO AUTENTICACIÓN / USUARIOS / ROLES
-// ============================================
-
-model Usuario {
-  id                     String                @id @default(uuid())
-  nombreUsuario          String                @unique @db.VarChar(50)
-  correo                 String                @unique @db.VarChar(255)
-  hashContrasena         String                @db.VarChar(255)
-  nombres                String                @db.VarChar(100)
-  apellidos              String                @db.VarChar(100)
-  telefono               String?               @db.VarChar(20)
-  rol                    RolUsuario
-  esPrincipal            Boolean               @default(false)
-  estado                 EstadoUsuario         @default(ACTIVO)
-  ultimoIngreso          DateTime?
-  intentosFallidos       Int                   @default(0)
-  debeCambiarContrasena  Boolean               @default(false)
-  
-  // Auditoría
-  creadoPorId            String?     
-  creadoPor              Usuario?              @relation("UsuarioCreadoPor", fields: [creadoPorId], references: [id])
-  usuariosCreados        Usuario[]             @relation("UsuarioCreadoPor")
-  
-  // Relaciones
-  asignacionesRoles      AsignacionRolUsuario[]
-  permisosPersonalizados AsignacionPermisoUsuario[]
-  registrosAuditoria     RegistroAuditoria[]
-  
-  // Clientes (creados y aprobados)
-  clientesCreados        Cliente[]             @relation("ClienteCreadoPor")
-  clientesAprobados      Cliente[]             @relation("ClienteAprobadoPor")
-  clientesListaNegra     Cliente[]             @relation("ClienteListaNegraPor")
-  
-  // Préstamos (creados y aprobados)
-  prestamosCreados       Prestamo[]            @relation("PrestamoCreadoPor")
-  prestamosAprobados     Prestamo[]            @relation("PrestamoAprobadoPor")
-  
-  // Pagos
-  pagosRegistrados       Pago[]
-  
-  // Rutas
-  asignacionesRuta       AsignacionRuta[]
-  rutasComoCobrador      Ruta[]                @relation("RutaCobrador")
-  rutasComoSupervisor    Ruta[]                @relation("RutaSupervisor")
-  
-  // Aprobaciones
-  aprobacionesSolicitadas Aprobacion[]         @relation("AprobacionSolicitadaPor")
-  aprobacionesRevisadas  Aprobacion[]          @relation("AprobacionRevisadaPor")
-  
-  // Gastos
-  gastosReportados       Gasto[]               @relation("GastoReportadoPor")
-  gastosAprobados        Gasto[]               @relation("GastoAprobadoPor")
-  
-  // Cajas
-  cajasResponsable       Caja[]
-  
-  // Transacciones
-  transaccionesCreadas   Transaccion[]         @relation("TransaccionCreadaPor")
-  transaccionesAprobadas Transaccion[]         @relation("TransaccionAprobadaPor")
-  
-  // Extensiones de pago
-  extensionesPago        ExtensionPago[]
-  
-  // Cola de sincronización
-  itemsColaSincronizacion ColaSincronizacion[]
-  
-  // Multimedia
-  archivosSubidos        Multimedia[]          @relation("MultimediaSubidoPor")
-  archivosAsociados      Multimedia[]          @relation("MultimediaUsuario")
-  
-  // Push Notifications
-  pushSubscriptions      PushSubscription[]
-  
-  // Timestamps
-  creadoEn               DateTime              @default(now())
-  actualizadoEn          DateTime              @updatedAt
-  eliminadoEn            DateTime?
-  
-  // Sincronización
-  estadoSincronizacion   EstadoSincronizacion  @default(PENDIENTE)
-  ultimaSincronizacion   DateTime?
-  errorSincronizacion    String?               @db.Text
-  
-  // Notificaciones
-  notificaciones         Notificacion[]
-
-  @@index([nombreUsuario])
-  @@index([correo])
-  @@index([rol])
-  @@index([estado])
-  @@index([estadoSincronizacion])
-}
-
-// ... (contenido existente omitido, agregando al final)
-
-model Notificacion {
-  id          String    @id @default(uuid())
-  usuarioId   String    // Destinatario
-  titulo      String    @db.VarChar(100)
-  mensaje     String    @db.Text
-  leida       Boolean   @default(false)
-  tipo        String    @default("INFO") // INFO, ALERTA, EXITO
-  entidad     String?   // Cliente, Prestamo, etc
-  entidadId   String?
-  metadata    Json?     // Datos adicionales para navegación
-  creadoEn    DateTime  @default(now())
-  archivar    Boolean   @default(false)
-
-  usuario     Usuario   @relation(fields: [usuarioId], references: [id])
-
-  @@index([usuarioId])
-  @@index([leida])
-  @@map("notificaciones")
-}
-
-model Rol {
-  id                     String                @id @default(uuid())
-  nombre                 String                @unique @db.VarChar(50)
-  descripcion            String?               @db.VarChar(255)
-  esSistema              Boolean               @default(false)
-  rutaDefault            String?               @db.VarChar(100) // Ruta de redirección post-login
-  
-  // Relaciones
-  permisos               RolPermiso[]
-  asignacionesUsuario    AsignacionRolUsuario[]
-  
-  // Timestamps
-  creadoEn               DateTime              @default(now())
-  actualizadoEn          DateTime              @updatedAt
-  eliminadoEn            DateTime?
-  
-  @@index([nombre])
-  @@map("roles")
-}
-
-model Permiso {
-  id                     String                @id @default(uuid())
-  modulo                 String                @db.VarChar(50)
-  accion                 String                @db.VarChar(50)
-  nombre                 String                @db.VarChar(100) // Nombre legible para UI
-  descripcion            String?               @db.VarChar(255)
-  
-  // Sidebar metadata
-  icono                  String?               @db.VarChar(50)  // Nombre del icono Lucide (ej: 'CreditCard')
-  ruta                   String?               @db.VarChar(200) // Ruta del frontend (ej: '/admin/creditos')
-  orden                  Int                   @default(0)      // Orden en el sidebar
-  esNavegable            Boolean               @default(true)   // Si aparece como item navegable en sidebar
-  
-  // Relaciones
-  rolesPermisos          RolPermiso[]
-  asignacionesUsuarios   AsignacionPermisoUsuario[]
-  
-  // Timestamps
-  creadoEn               DateTime              @default(now())
-  actualizadoEn          DateTime              @updatedAt
-  
-  @@unique([modulo, accion])
-  @@index([modulo])
-  @@map("permisos")
-}
-
-model RolPermiso {
-  id                     String                @id @default(uuid())
-  rolId                  String
-  permisoId              String
-  
-  // Relaciones
-  rol                    Rol                   @relation(fields: [rolId], references: [id])
-  permiso                Permiso               @relation(fields: [permisoId], references: [id])
-  
-  // Timestamps
-  creadoEn               DateTime              @default(now())
-  
-  @@unique([rolId, permisoId])
-  @@map("roles_permisos")
-}
-
-model AsignacionRolUsuario {
-  id                     String                @id @default(uuid())
-  usuarioId              String
-  rolId                  String
-  
-  // Relaciones
-  usuario                Usuario               @relation(fields: [usuarioId], references: [id])
-  rol                    Rol                   @relation(fields: [rolId], references: [id])
-  
-  // Timestamps
-  creadoEn               DateTime              @default(now())
-  expiraEn               DateTime?
-  
-  @@unique([usuarioId, rolId])
-  @@index([usuarioId])
-  @@map("asignaciones_roles_usuarios")
-}
-
-model AsignacionPermisoUsuario {
-  id                     String                @id @default(uuid())
-  usuarioId              String
-  permisoId              String
-  
-  // Relaciones
-  usuario                Usuario               @relation(fields: [usuarioId], references: [id])
-  permiso                Permiso               @relation(fields: [permisoId], references: [id])
-  
-  // Timestamps
-  creadoEn               DateTime              @default(now())
-  
-  @@unique([usuarioId, permisoId])
-  @@map("asignaciones_permisos_usuarios")
-}
-
-// ============================================
-// MÓDULO CLIENTES
-// ============================================
-
-model Cliente {
-  id                     String                @id @default(uuid())
-  codigo                 String                @unique @db.VarChar(20)
-  dni                    String                @unique @db.VarChar(20)
-  nombres                String                @db.VarChar(100)
-  apellidos              String                @db.VarChar(100)
-  correo                 String?               @db.VarChar(255)
-  telefono               String                @db.VarChar(20)
-  direccion              String?               @db.Text
-  referencia             String?               @db.Text
-  
-  // Semáforo de riesgo
-  nivelRiesgo            NivelRiesgo           @default(VERDE)
-  puntaje                Int                   @default(100)
-  ultimaActualizacionRiesgo DateTime?
-  
-  // Lista negra
-  enListaNegra           Boolean               @default(false)
-  razonListaNegra        String?               @db.Text
-  fechaListaNegra        DateTime?
-  agregadoListaNegraPorId String?
-  
-  // Auditoría y aprobación
-  creadoPorId            String
-  aprobadoPorId          String?
-  estadoAprobacion       EstadoAprobacion      @default(PENDIENTE)
-  
-  // Relaciones
-  creadoPor              Usuario               @relation("ClienteCreadoPor", fields: [creadoPorId], references: [id])
-  aprobadoPor            Usuario?              @relation("ClienteAprobadoPor", fields: [aprobadoPorId], references: [id])
-  agregadoListaNegraPor  Usuario?              @relation("ClienteListaNegraPor", fields: [agregadoListaNegraPorId], references: [id])
-  prestamos              Prestamo[]
-  asignacionesRuta       AsignacionRuta[]
-  pagos                  Pago[]
-  archivos               Multimedia[]          @relation("MultimediaCliente")
-  categoria              Categoria?            @relation(fields: [categoriaId], references: [id])
-  categoriaId            String?
-  
-  // Timestamps
-  creadoEn               DateTime              @default(now())
-  actualizadoEn          DateTime              @updatedAt
-  eliminadoEn            DateTime?
-  
-  // Sincronización
-  estadoSincronizacion   EstadoSincronizacion  @default(PENDIENTE)
-  ultimaSincronizacion   DateTime?
-  
-  @@index([dni])
-  @@index([nivelRiesgo])
-  @@index([enListaNegra])
-  @@index([estadoAprobacion])
-  @@index([creadoPorId])
-  @@index([estadoSincronizacion])
-}
-
-// ============================================
-// MÓDULO INVENTARIO / ARTÍCULOS
-// ============================================
-
-model Producto {
-  id                     String                @id @default(uuid())
-  codigo                 String                @unique @db.VarChar(50)
-  nombre                 String                @db.VarChar(255)
-  descripcion            String?               @db.Text
-  categoria              String                @db.VarChar(100)
-  marca                  String?               @db.VarChar(100)
-  modelo                 String?               @db.VarChar(100)
-  costo                  Decimal               @db.Decimal(10, 2)
-  stock                  Int                   @default(0)
-  stockMinimo            Int                   @default(0)
-  activo                 Boolean               @default(true)
-  
-  // Relaciones
-  precios                PrecioProducto[]
-  prestamos              Prestamo[]
-  archivos               Multimedia[]          @relation("MultimediaProducto")
-  categoriaRel           Categoria?            @relation(fields: [categoriaId], references: [id])
-  categoriaId            String?
-  
-  // Timestamps
-  creadoEn               DateTime              @default(now())
-  actualizadoEn          DateTime              @updatedAt
-  eliminadoEn            DateTime?
-  
-  @@index([codigo])
-  @@index([categoria])
-  @@index([activo])
-}
-
-model PrecioProducto {
-  id                     String                @id @default(uuid())
-  productoId             String
-  meses                  Int
-  precio                 Decimal               @db.Decimal(10, 2)
-  activo                 Boolean               @default(true)
-  
-  // Relaciones
-  producto               Producto              @relation(fields: [productoId], references: [id])
-  prestamos              Prestamo[]            @relation("PrecioProductoPrestamos")
-  
-  // Timestamps
-  creadoEn               DateTime              @default(now())
-  actualizadoEn          DateTime              @updatedAt
-  
-  @@unique([productoId, meses])
-  @@index([productoId])
-  @@index([meses])
-  @@map("precios_productos")
-}
-
-// ============================================
-// MÓDULO PRÉSTAMOS / CRÉDITOS
-// ============================================
-
-model Prestamo {
-  id                     String                @id @default(uuid())
-  numeroPrestamo         String                @unique @db.VarChar(50)
-  clienteId              String
-  productoId             String?
-  precioProductoId       String?
-  
-  // Tipo de préstamo
-  tipoPrestamo           String                @db.VarChar(20)
-  tipoAmortizacion       TipoAmortizacion      @default(INTERES_SIMPLE)
-  monto                  Decimal               @db.Decimal(12, 2)
-  cuotaInicial           Decimal               @db.Decimal(12, 2)    @default(0)
-  tasaInteres            Decimal               @db.Decimal(5, 2)
-  tasaInteresMora        Decimal               @db.Decimal(5, 2)
-  
-  // Plazos y frecuencia
-  plazoMeses             Int
-  frecuenciaPago         FrecuenciaPago
-  cantidadCuotas         Int
-  fechaInicio            DateTime
-  fechaFin               DateTime
-  
-  // Estado y aprobación
-  estado                 EstadoPrestamo        @default(BORRADOR)
-  creadoPorId            String
-  aprobadoPorId          String?
-  estadoAprobacion       EstadoAprobacion      @default(PENDIENTE)
-  
-  // Campos financieros calculados
-  interesTotal           Decimal               @db.Decimal(12, 2) @default(0)
-  totalPagado            Decimal               @db.Decimal(12, 2) @default(0)
-  capitalPagado          Decimal               @db.Decimal(12, 2) @default(0)
-  interesPagado          Decimal               @db.Decimal(12, 2) @default(0)
-  interesMoraPagado      Decimal               @db.Decimal(12, 2) @default(0)
-  saldoPendiente         Decimal               @db.Decimal(12, 2) @default(0)
-  
-  // Relaciones
-  cliente                Cliente               @relation(fields: [clienteId], references: [id])
-  producto               Producto?             @relation(fields: [productoId], references: [id])
-  precioProducto         PrecioProducto?       @relation("PrecioProductoPrestamos", fields: [precioProductoId], references: [id])
-  creadoPor              Usuario               @relation("PrestamoCreadoPor", fields: [creadoPorId], references: [id])
-  aprobadoPor            Usuario?              @relation("PrestamoAprobadoPor", fields: [aprobadoPorId], references: [id])
-  cuotas                 Cuota[]
-  pagos                  Pago[]
-  extensiones            ExtensionPago[]
-  archivos               Multimedia[]          @relation("MultimediaPrestamo")
-  
-  // Timestamps
-  creadoEn               DateTime              @default(now())
-  actualizadoEn          DateTime              @updatedAt
-  eliminadoEn            DateTime?
-  
-  // Sincronización
-  estadoSincronizacion   EstadoSincronizacion  @default(PENDIENTE)
-  ultimaSincronizacion   DateTime?
-  
-  @@index([numeroPrestamo])
-  @@index([clienteId])
-  @@index([estado])
-  @@index([estadoAprobacion])
-  @@index([creadoPorId])
-  @@index([estadoSincronizacion])
-  @@index([fechaInicio])
-  @@index([fechaFin])
-}
-
-model Cuota {
-  id                     String                @id @default(uuid())
-  prestamoId             String
-  numeroCuota            Int
-  fechaVencimiento       DateTime
-  monto                  Decimal               @db.Decimal(10, 2)
-  montoCapital           Decimal               @db.Decimal(10, 2)
-  montoInteres           Decimal               @db.Decimal(10, 2)
-  montoInteresMora       Decimal               @db.Decimal(10, 2) @default(0)
-  
-  // Estado de pago
-  estado                 EstadoCuota           @default(PENDIENTE)
-  montoPagado            Decimal               @db.Decimal(10, 2) @default(0)
-  fechaPago              DateTime?
-  
-  // Prórroga
-  fechaVencimientoProrroga DateTime?
-  extensionId            String?               @unique
-  
-  // Relaciones
-  prestamo               Prestamo              @relation(fields: [prestamoId], references: [id])
-  detallesPago           DetallePago[]
-  extension              ExtensionPago?        @relation(fields: [extensionId], references: [id])
-  
-  // Timestamps
-  creadoEn               DateTime              @default(now())
-  actualizadoEn          DateTime              @updatedAt
-  
-  @@unique([prestamoId, numeroCuota])
-  @@index([prestamoId])
-  @@index([fechaVencimiento])
-  @@index([estado])
-  @@index([fechaVencimientoProrroga])
-  @@map("cuotas")
-}
-
-model ExtensionPago {
-  id                     String                @id @default(uuid())
-  prestamoId             String
-  cuotaId                String?               @unique
-  fechaVencimientoOriginal DateTime
-  nuevaFechaVencimiento  DateTime
-  razon                  String?               @db.Text
-  aprobadoPorId          String
-  
-  // Relaciones
-  prestamo               Prestamo              @relation(fields: [prestamoId], references: [id])
-  cuota                  Cuota?                
-  aprobadoPor            Usuario               @relation(fields: [aprobadoPorId], references: [id])
-  
-  // Timestamps
-  creadoEn               DateTime              @default(now())
-  actualizadoEn          DateTime              @updatedAt
-  
-  @@index([prestamoId])
-  @@index([aprobadoPorId])
-  @@map("extensiones_pago")
-}
-
-// ============================================
-// MÓDULO PAGOS
-// ============================================
-
-model Pago {
-  id                     String                @id @default(uuid())
-  numeroPago             String                @unique @db.VarChar(50)
-  clienteId              String
-  prestamoId             String
-  cobradorId             String
-  
-  // Información del pago
-  fechaPago              DateTime              @default(now())
-  montoTotal             Decimal               @db.Decimal(10, 2)
-  metodoPago             MetodoPago
-  numeroReferencia       String?               @db.VarChar(100)
-  notas                  String?               @db.Text
-  
-  // Relaciones
-  cliente                Cliente               @relation(fields: [clienteId], references: [id])
-  prestamo               Prestamo              @relation(fields: [prestamoId], references: [id])
-  cobrador               Usuario               @relation(fields: [cobradorId], references: [id])
-  detalles               DetallePago[]
-  recibo                 Recibo?
-  archivos               Multimedia[]          @relation("MultimediaPago")
-  
-  // Timestamps
-  creadoEn               DateTime              @default(now())
-  actualizadoEn          DateTime              @updatedAt
-  
-  // Sincronización
-  estadoSincronizacion   EstadoSincronizacion  @default(PENDIENTE)
-  ultimaSincronizacion   DateTime?
-  
-  @@index([numeroPago])
-  @@index([clienteId])
-  @@index([prestamoId])
-  @@index([cobradorId])
-  @@index([fechaPago])
-  @@index([estadoSincronizacion])
-}
-
-model DetallePago {
-  id                     String                @id @default(uuid())
-  pagoId                 String
-  cuotaId                String
-  monto                  Decimal               @db.Decimal(10, 2)
-  montoCapital           Decimal               @db.Decimal(10, 2)
-  montoInteres           Decimal               @db.Decimal(10, 2)
-  montoInteresMora       Decimal               @db.Decimal(10, 2)
-  
-  // Relaciones
-  pago                   Pago                  @relation(fields: [pagoId], references: [id])
-  cuota                  Cuota                 @relation(fields: [cuotaId], references: [id])
-  
-  // Timestamps
-  creadoEn               DateTime              @default(now())
-  
-  @@unique([pagoId, cuotaId])
-  @@index([pagoId])
-  @@index([cuotaId])
-  @@map("detalles_pago")
-}
-
-model Recibo {
-  id                     String                @id @default(uuid())
-  pagoId                 String                @unique
-  numeroRecibo           String                @unique @db.VarChar(50)
-  contenido              Json
-  rutaPDF                String?               @db.VarChar(500)
-  compartidoVia          String?               @db.VarChar(50)
-  fechaCompartido        DateTime?
-  
-  // Relaciones
-  pago                   Pago                  @relation(fields: [pagoId], references: [id])
-  archivos               Multimedia[]          @relation("MultimediaRecibo")
-  
-  // Timestamps
-  creadoEn               DateTime              @default(now())
-  actualizadoEn          DateTime              @updatedAt
-  
-  @@index([numeroRecibo])
-  @@index([pagoId])
-  @@map("recibos")
-}
-
-// ============================================
-// MÓDULO RUTAS
-// ============================================
-
-model Ruta {
-  id                     String                @id @default(uuid())
-  codigo                 String                @unique @db.VarChar(20)
-  nombre                 String                @db.VarChar(255)
-  descripcion            String?               @db.Text
-  zona                   String                @db.VarChar(100)
-  activa                 Boolean               @default(true)
-  
-  // Asignación
-  cobradorId             String
-  supervisorId           String?
-  
-  // Relaciones
-  cobrador               Usuario               @relation("RutaCobrador", fields: [cobradorId], references: [id])
-  supervisor             Usuario?              @relation("RutaSupervisor", fields: [supervisorId], references: [id])
-  asignaciones           AsignacionRuta[]
-  cajas                  Caja[]
-  gastos                 Gasto[]
-  eliminadoEn            DateTime?
-  
-  // Timestamps
-  creadoEn               DateTime              @default(now())
-  actualizadoEn          DateTime              @updatedAt
-  
-  @@index([codigo])
-  @@index([cobradorId])
-  @@index([supervisorId])
-  @@index([activa])
-  @@map("rutas")
-}
-
-model AsignacionRuta {
-  id                     String                @id @default(uuid())
-  rutaId                 String
-  clienteId              String
-  cobradorId             String
-  diaSemana              Int?
-  fechaEspecifica        DateTime?
-  ordenVisita            Int                   @default(0)
-  activa                 Boolean               @default(true)
-  
-  // Relaciones
-  ruta                   Ruta                  @relation(fields: [rutaId], references: [id])
-  cliente                Cliente               @relation(fields: [clienteId], references: [id])
-  cobrador               Usuario               @relation(fields: [cobradorId], references: [id])
-  
-  // Timestamps
-  creadoEn               DateTime              @default(now())
-  actualizadoEn          DateTime              @updatedAt
-  
-  @@unique([rutaId, clienteId, fechaEspecifica])
-  @@index([rutaId])
-  @@index([clienteId])
-  @@index([cobradorId])
-  @@index([diaSemana])
-  @@index([fechaEspecifica])
-  @@index([ordenVisita])
-  @@map("asignaciones_rutas")
-}
-
-// ============================================
-// MÓDULO APROBACIONES
-// ============================================
-
-model Aprobacion {
-  id                     String                @id @default(uuid())
-  tipoAprobacion         TipoAprobacion
-  referenciaId           String
-  tablaReferencia        String                @db.VarChar(50)
-  
-  // Solicitud
-  solicitadoPorId        String
-  datosSolicitud         Json
-  
-  // Aprobación
-  aprobadoPorId          String?
-  estado                 EstadoAprobacion      @default(PENDIENTE)
-  comentarios            String?               @db.Text
-  datosAprobados         Json?
-  
-  // Relaciones
-  solicitadoPor          Usuario               @relation("AprobacionSolicitadaPor", fields: [solicitadoPorId], references: [id])
-  aprobadoPor            Usuario?              @relation("AprobacionRevisadaPor", fields: [aprobadoPorId], references: [id])
-  
-  // Timestamps
-  creadoEn               DateTime              @default(now())
-  actualizadoEn          DateTime              @updatedAt
-  revisadoEn             DateTime?
-  
-  // Sincronización
-  estadoSincronizacion   EstadoSincronizacion  @default(PENDIENTE)
-
-  montoSolicitud Decimal? @db.Decimal(12,2)
-  
-  @@index([tipoAprobacion])
-  @@index([referenciaId, tablaReferencia])
-  @@index([solicitadoPorId])
-  @@index([aprobadoPorId])
-  @@index([estado])
-  @@index([creadoEn])
-  @@index([estadoSincronizacion])
-  @@map("aprobaciones")
-}
-
-// ============================================
-// MÓDULO CONTABILIDAD / CAJAS
-// ============================================
-
-model Caja {
-  id                     String                @id @default(uuid())
-  codigo                 String                @unique @db.VarChar(20)
-  nombre                 String                @db.VarChar(255)
-  tipo                   TipoCaja
-  rutaId                 String?
-  saldoActual            Decimal               @db.Decimal(12, 2) @default(0)
-  saldoMinimo            Decimal               @db.Decimal(12, 2) @default(0)
-  saldoMaximo            Decimal               @db.Decimal(12, 2) @default(0)
-  activa                 Boolean               @default(true)
-  
-  // Responsable
-  responsableId          String
-  
-  // Relaciones
-  ruta                   Ruta?                 @relation(fields: [rutaId], references: [id])
-  responsable            Usuario               @relation(fields: [responsableId], references: [id])
-  transacciones          Transaccion[]
-  gastos                 Gasto[]
-  
-  // Timestamps
-  creadoEn               DateTime              @default(now())
-  actualizadoEn          DateTime              @updatedAt
-  
-  @@index([codigo])
-  @@index([tipo])
-  @@index([rutaId])
-  @@index([responsableId])
-  @@map("cajas")
-}
-
-model Transaccion {
-  id                     String                @id @default(uuid())
-  numeroTransaccion      String                @unique @db.VarChar(50)
-  cajaId                 String
-  tipo                   TipoTransaccion
-  monto                  Decimal               @db.Decimal(12, 2)
-  
-  // Referencia
-  tipoReferencia         String?               @db.VarChar(50)
-  referenciaId           String?
-  
-  // Descripción
-  descripcion            String                @db.Text
-  notas                  String?               @db.Text
-  
-  // Auditoría
-  creadoPorId            String
-  aprobadoPorId          String?
-  
-  // Relaciones
-  caja                   Caja                  @relation(fields: [cajaId], references: [id])
-  creadoPor              Usuario               @relation("TransaccionCreadaPor", fields: [creadoPorId], references: [id])
-  aprobadoPor            Usuario?              @relation("TransaccionAprobadaPor", fields: [aprobadoPorId], references: [id])
-  
-  // Timestamps
-  fechaTransaccion       DateTime              @default(now())
-  creadoEn               DateTime              @default(now())
-  actualizadoEn          DateTime              @updatedAt
-  
-  // Sincronización
-  estadoSincronizacion   EstadoSincronizacion  @default(PENDIENTE)
-  
-  @@index([numeroTransaccion])
-  @@index([cajaId])
-  @@index([tipo])
-  @@index([tipoReferencia, referenciaId])
-  @@index([creadoPorId])
-  @@index([fechaTransaccion])
-  @@index([estadoSincronizacion])
-}
-
-model Gasto {
-  id                     String                @id @default(uuid())
-  numeroGasto            String                @unique @db.VarChar(50)
-  rutaId                 String?
-  cobradorId             String
-  cajaId                 String
-  
-  // Información del gasto
-  tipoGasto              TipoGasto
-  monto                  Decimal               @db.Decimal(10, 2)
-  descripcion            String                @db.Text
-  fotoRecibo             String?               @db.VarChar(500)
-  
-  // Aprobación
-  aprobadoPorId          String?
-  estadoAprobacion       EstadoAprobacion      @default(PENDIENTE)
-  
-  // Relaciones
-  ruta                   Ruta?                 @relation(fields: [rutaId], references: [id])
-  cobrador               Usuario               @relation("GastoReportadoPor", fields: [cobradorId], references: [id])
-  caja                   Caja                  @relation(fields: [cajaId], references: [id])
-  aprobadoPor            Usuario?              @relation("GastoAprobadoPor", fields: [aprobadoPorId], references: [id])
-  archivos               Multimedia[]          @relation("MultimediaGasto")
-  categoria              Categoria?            @relation(fields: [categoriaId], references: [id])
-  categoriaId            String?
-  
-  // Timestamps
-  fechaGasto             DateTime              @default(now())
-  creadoEn               DateTime              @default(now())
-  actualizadoEn          DateTime              @updatedAt
-  
-  // Sincronización
-  estadoSincronizacion   EstadoSincronizacion  @default(PENDIENTE)
-  
-  @@index([numeroGasto])
-  @@index([rutaId])
-  @@index([cobradorId])
-  @@index([estadoAprobacion])
-  @@index([fechaGasto])
-  @@index([estadoSincronizacion])
-}
-
-// ============================================
-// MÓDULO AUDITORÍA
-// ============================================
-
-model RegistroAuditoria {
-  id                     String                @id @default(uuid())
-  usuarioId              String?
-  rolUsuario             RolUsuario?
-  
-  // Acción
-  accion                 String                @db.VarChar(100)
-  entidad                String                @db.VarChar(50)
-  entidadId              String?
-  
-  // Cambios
-  valoresAnteriores      Json?
-  valoresNuevos          Json?
-  cambios                Json?
-  
-  // Contexto
-  direccionIP            String?               @db.VarChar(45)
-  agenteUsuario          String?               @db.Text
-  endpoint               String?               @db.VarChar(500)
-  
-  // Relaciones
-  usuario                Usuario?              @relation(fields: [usuarioId], references: [id])
-  
-  // Timestamps
-  creadoEn               DateTime              @default(now())
-  
-  @@index([usuarioId])
-  @@index([accion])
-  @@index([entidad, entidadId])
-  @@index([creadoEn])
-  @@map("registros_auditoria")
-}
-
-// ============================================
-// MÓDULO SINCRONIZACIÓN (Para Opción B)
-// ============================================
-
-model ColaSincronizacion {
-  id                     String                @id @default(uuid())
-  nombreTabla            String                @db.VarChar(50)
-  idRegistro             String
-  operacion              String                @db.VarChar(10)
-  datos                  Json
-  estado                 EstadoSincronizacion  @default(PENDIENTE)
-  intentos               Int                   @default(0)
-  ultimoIntento          DateTime?
-  mensajeError           String?               @db.Text
-  
-  // Contexto
-  dispositivoCreador     String?               @db.VarChar(100)
-  usuarioCreadorId       String?
-  
-  // Relaciones
-  usuarioCreador         Usuario?              @relation(fields: [usuarioCreadorId], references: [id])
-  
-  // Timestamps
-  creadoEn               DateTime              @default(now())
-  actualizadoEn          DateTime              @updatedAt
-  
-  @@index([nombreTabla, idRegistro])
-  @@index([estado])
-  @@index([creadoEn])
-  @@map("cola_sincronizacion")
-}
-
-// ============================================
-// MÓDULO MULTIMEDIA / ARCHIVOS ADJUNTOS
-// ============================================
-
-model Multimedia {
-  id                     String                @id @default(uuid())
-  
-  // Entidad asociada (polimórfico - enfoque con campos separados)
-  clienteId              String?
-  prestamoId             String?
-  pagoId                 String?
-  gastoId                String?
-  usuarioId              String?
-  productoId             String?
-  reciboId               String?
-  
-  // Campo de entidad general para búsqueda (opcional)
-  entidad                String?               @db.VarChar(50)   // Ej: "cliente", "prestamo", "pago", "gasto", "usuario", "producto", "recibo"
-  
-  // Tipo de contenido
-  tipoContenido          TipoContenidoMultimedia
-  tipoArchivo            String                @db.VarChar(50)   // MIME type: "image/jpeg", "image/png", "video/mp4", "application/pdf"
-  formato                String                @db.VarChar(10)   // "jpg", "png", "pdf", "mp4"
-  
-  // Metadatos del archivo
-  nombreOriginal         String                @db.VarChar(255)
-  nombreAlmacenamiento   String                @db.VarChar(255)  // Nombre único en el sistema de almacenamiento
-  ruta                   String                @db.VarChar(500)  // Ruta relativa en el bucket/storage
-  url                    String?               @db.VarChar(500)  // URL completa para acceso
-  tamanoBytes            Int                   @default(0)       // Tamaño en bytes
-  
-  // Dimensiones para imágenes/videos
-  ancho                  Int?                  // Píxeles
-  alto                   Int?                  // Píxeles
-  duracion               Int?                  // Segundos (para videos)
-  
-  // Metadatos adicionales
-  descripcion            String?               @db.Text
-  etiquetas              String?               @db.VarChar(255)  // Etiquetas separadas por comas
-  
-  // Estado y visibilidad
-  esPublico              Boolean               @default(false)
-  esPrincipal            Boolean               @default(false)   // Para múltiples archivos de la misma entidad
-  estado                 EstadoMultimedia      @default(ACTIVO)
-  
-  // Auditoría
-  subidoPorId            String
-  subidoPor              Usuario               @relation("MultimediaSubidoPor", fields: [subidoPorId], references: [id])
-  
-  // Relaciones específicas
-  cliente                Cliente?              @relation("MultimediaCliente", fields: [clienteId], references: [id], onDelete: Cascade)
-  prestamo               Prestamo?             @relation("MultimediaPrestamo", fields: [prestamoId], references: [id], onDelete: Cascade)
-  pago                   Pago?                 @relation("MultimediaPago", fields: [pagoId], references: [id], onDelete: Cascade)
-  gasto                  Gasto?                @relation("MultimediaGasto", fields: [gastoId], references: [id], onDelete: Cascade)
-  usuario                Usuario?              @relation("MultimediaUsuario", fields: [usuarioId], references: [id], onDelete: Cascade)
-  producto               Producto?             @relation("MultimediaProducto", fields: [productoId], references: [id], onDelete: Cascade)
-  recibo                 Recibo?               @relation("MultimediaRecibo", fields: [reciboId], references: [id], onDelete: Cascade)
-  
-  // Timestamps
-  creadoEn               DateTime              @default(now())
-  actualizadoEn          DateTime              @updatedAt
-  eliminadoEn            DateTime?
-  
-  // Sincronización
-  estadoSincronizacion   EstadoSincronizacion  @default(PENDIENTE)
-  ultimaSincronizacion   DateTime?
-  hashArchivo            String?               @db.VarChar(64)   // SHA-256 para verificar integridad
-  
-  @@index([clienteId])
-  @@index([prestamoId])
-  @@index([pagoId])
-  @@index([gastoId])
-  @@index([usuarioId])
-  @@index([productoId])
-  @@index([reciboId])
-  @@index([tipoContenido])
-  @@index([subidoPorId])
-  @@index([esPrincipal])
-  @@index([estado])
-  @@index([creadoEn])
-  @@index([estadoSincronizacion])
-  @@map("multimedia")
-}
-
-// ============================================
-// MÓDULO CATEGORIAS
-// ============================================
-
-model Categoria {
-  id            String   @id @default(uuid())
-  nombre        String   @db.VarChar(100)
-  descripcion   String?  @db.Text
-  tipo          String   @db.VarChar(50) // "CLIENTE", "GASTO", "PRESTAMO", etc.
-  color         String?  @db.VarChar(20) // Hex code para badges
-  activa        Boolean  @default(true)
-  
-  // Relaciones
-  clientes      Cliente[]
-  gastos        Gasto[]
-  productos     Producto[]
-
-  // Timestamps
-  creadoEn      DateTime @default(now())
-  actualizadoEn DateTime @updatedAt
-  eliminadoEn   DateTime?
-
-  @@index([tipo])
-  @@map("categorias")
-}
-
-// ============================================
-// MÓDULO PUSH NOTIFICATIONS
-// ============================================
-
-model PushSubscription {
-  id          String   @id @default(uuid())
-  endpoint    String   @unique
-  usuarioId   String
-  p256dh      String   @db.Text
-  auth        String   @db.Text
-  activa      Boolean  @default(true)
-  
-  // Timestamps
-  creadoEn    DateTime @default(now())
-  actualizadoEn DateTime @updatedAt
-
-  // Relaciones
-  usuario     Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
-
-  @@map("push_subscriptions")
 }

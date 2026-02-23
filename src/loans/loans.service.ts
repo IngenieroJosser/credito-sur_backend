@@ -704,7 +704,12 @@ export class LoansService implements OnModuleInit {
         }
       }
       if (updateData.notas !== undefined) data.notas = updateData.notas;
-
+      if (updateData.garantia !== undefined) data.garantia = updateData.garantia;
+      if (updateData.tasaInteresMora !== undefined) data.tasaInteresMora = updateData.tasaInteresMora;
+      if (updateData.cuotaInicial !== undefined) data.cuotaInicial = updateData.cuotaInicial;
+      if (updateData.tipoAmortizacion !== undefined) data.tipoAmortizacion = updateData.tipoAmortizacion;
+      if (updateData.fechaInicio !== undefined) data.fechaInicio = new Date(updateData.fechaInicio);
+      
       // Recalculate financial fields if monto or tasaInteres changed
       const newMonto = data.monto !== undefined ? Number(data.monto) : Number(prestamo.monto);
       const newTasa = data.tasaInteres !== undefined ? Number(data.tasaInteres) : Number(prestamo.tasaInteres);
@@ -712,18 +717,19 @@ export class LoansService implements OnModuleInit {
       data.interesTotal = newInteresTotal;
       data.saldoPendiente = (newMonto + newInteresTotal) - Number(prestamo.totalPagado || 0);
 
-      // Regenerate cuotas if cantidadCuotas, monto, tasaInteres, or frecuenciaPago changed
+      // Regenerate cuotas if cantidadCuotas, monto, tasaInteres, frecuenciaPago or tipoAmortizacion changed
       const shouldRegenerateCuotas = (
         data.cantidadCuotas !== undefined || 
         data.monto !== undefined || 
         data.tasaInteres !== undefined || 
-        data.frecuenciaPago !== undefined
+        data.frecuenciaPago !== undefined ||
+        data.tipoAmortizacion !== undefined
       );
 
       if (shouldRegenerateCuotas) {
         const cantidadCuotas = data.cantidadCuotas !== undefined ? data.cantidadCuotas : prestamo.cantidadCuotas;
         const frecuenciaPago = data.frecuenciaPago !== undefined ? data.frecuenciaPago : prestamo.frecuenciaPago;
-        const tipoAmortizacion = prestamo.tipoAmortizacion || TipoAmortizacion.INTERES_SIMPLE;
+        const tipoAmortizacion = data.tipoAmortizacion !== undefined ? data.tipoAmortizacion : (prestamo.tipoAmortizacion || TipoAmortizacion.INTERES_SIMPLE);
 
         // Delete existing cuotas
         await this.prisma.cuota.deleteMany({
@@ -1334,7 +1340,8 @@ export class LoansService implements OnModuleInit {
 
       // Generar número de préstamo/crédito
       const count = await this.prisma.prestamo.count();
-      const prefix = data.tipoPrestamo === 'ARTICULO' ? 'ART' : 'PRES';
+      const tipo = (data.tipoPrestamo || '').toUpperCase();
+      const prefix = tipo === 'ARTICULO' ? 'ART' : 'PRES';
       const numeroPrestamo = `${prefix}-${String(count + 1).padStart(6, '0')}`;
 
       // Calcular fechas
@@ -1364,8 +1371,16 @@ export class LoansService implements OnModuleInit {
           case FrecuenciaPago.MENSUAL:
             cantidadCuotas = data.plazoMeses;
             break;
+          default:
+            // Fallback razonable si no hay frecuencia clara (usar semanal como base común)
+            cantidadCuotas = data.plazoMeses * 4;
         }
         this.logger.log(`[CUOTAS CALCULATION] Calculado desde plazoMeses: ${cantidadCuotas}`);
+      }
+      
+      // Asegurar que nunca sea 0 si hay plazo
+      if (cantidadCuotas === 0 && data.plazoMeses > 0) {
+        cantidadCuotas = data.plazoMeses * 4;
       }
       
       this.logger.log(`[CUOTAS CALCULATION] Cantidad final de cuotas a crear: ${cantidadCuotas}`);
@@ -1450,6 +1465,7 @@ export class LoansService implements OnModuleInit {
           plazoMeses: data.plazoMeses,
           frecuenciaPago: data.frecuenciaPago,
           cantidadCuotas,
+          cuotaInicial: data.cuotaInicial || 0,
           fechaInicio,
           fechaFin,
           estado: esAutoAprobado ? EstadoPrestamo.ACTIVO : EstadoPrestamo.PENDIENTE_APROBACION,
@@ -1479,6 +1495,10 @@ export class LoansService implements OnModuleInit {
 
       this.logger.log(`Loan created successfully: ${prestamo.id}, requiereAprobacion: ${esAutoAprobado}`);
 
+      const articuloNombre = (data as any).productoNombre || (prestamo as any).producto?.nombre || 'Artículo';
+      const totalCuotasPrometidas = cantidadCuotas;
+      const isFinanciamientoArticulo = data.tipoPrestamo === 'ARTICULO';
+
       // Crear registro de aprobación
       const aprobacion = await this.prisma.aprobacion.create({
         data: {
@@ -1489,10 +1509,17 @@ export class LoansService implements OnModuleInit {
           datosSolicitud: {
             numeroPrestamo: prestamo.numeroPrestamo,
             cliente: `${cliente.nombres} ${cliente.apellidos}`,
-            monto: prestamo.monto,
-            tipo: data.tipoPrestamo,
-            plazoMeses: data.plazoMeses,
-            frecuenciaPago: data.frecuenciaPago,
+            cedula: String(cliente.dni),
+            telefono: String(cliente.telefono),
+            monto: Number(prestamo.monto),
+            tipo: String(data.tipoPrestamo),
+            articulo: String(articuloNombre),
+            valorArticulo: Number((data as any).valorArticulo || (Number(data.monto || 0) + Number(data.cuotaInicial || 0))), 
+            cuotas: Number(totalCuotasPrometidas),
+            plazoMeses: Number(data.plazoMeses),
+            porcentaje: Number(isFinanciamientoArticulo ? 0 : data.tasaInteres),
+            frecuenciaPago: String(data.frecuenciaPago),
+            cuotaInicial: Number(data.cuotaInicial || 0),
           },
           montoSolicitud: prestamo.monto,
           estado: esAutoAprobado ? EstadoAprobacion.APROBADO : EstadoAprobacion.PENDIENTE,
@@ -1558,7 +1585,7 @@ export class LoansService implements OnModuleInit {
         // Notificar a coordinadores, admins y superadmins para aprobación
         await this.notificacionesService.notifyApprovers({
           titulo: 'Nuevo Préstamo Requiere Aprobación',
-          mensaje: `El usuario ${creador.nombres} ${creador.apellidos} ha solicitado un préstamo ${data.tipoPrestamo === 'EFECTIVO' ? 'en efectivo' : 'por artículo'} para ${cliente.nombres} ${cliente.apellidos} por valor de ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
+          mensaje: `El usuario ${creador.nombres} ${creador.apellidos} ha solicitado un ${data.tipoPrestamo === 'EFECTIVO' ? 'préstamo en efectivo' : 'crédito por un artículo'} para ${cliente.nombres} ${cliente.apellidos} por valor de ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
           tipo: 'APROBACION',
           entidad: 'Aprobacion',
           entidadId: aprobacion.id,
@@ -1566,15 +1593,27 @@ export class LoansService implements OnModuleInit {
             tipoAprobacion: 'NUEVO_PRESTAMO',
             prestamoId: prestamo.id,
             clienteId: cliente.id,
-            monto: montoFinanciar,
-            tipo: data.tipoPrestamo,
+            cliente: `${cliente.nombres} ${cliente.apellidos}`,
+            cedula: String(cliente.dni),
+            telefono: String(cliente.telefono),
+            monto: Number(montoFinanciar),
+            tipo: String(data.tipoPrestamo),
+            articulo: String(articuloNombre),
+            valorArticulo: Number((data as any).monto),
+            cuotas: Number(totalCuotasPrometidas),
+            porcentaje: Number(isFinanciamientoArticulo ? 0 : data.tasaInteres),
+            frecuenciaPago: String(data.frecuenciaPago),
+            cuotaInicial: Number(data.cuotaInicial || 0),
+            plazoMeses: Number(data.plazoMeses),
+            tipoAmortizacion: String(tipoAmort),
+            fechaInicio: fechaInicio.toISOString(),
           },
         });
 
         // Enviar notificaciones push a coordinadores
         await this.pushService.sendPushNotification({
           title: 'Nuevo Préstamo Requiere Aprobación',
-          body: `${creador.nombres} ${creador.apellidos} ha solicitado un préstamo por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
+          body: `${creador.nombres} ${creador.apellidos} ha solicitado un ${data.tipoPrestamo === 'EFECTIVO' ? 'préstamo' : 'crédito de artículo'} por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
           roleFilter: ['COORDINADOR'],
           data: {
             type: 'PRESTAMO_PENDIENTE',

@@ -18,11 +18,11 @@ export class ApprovalsController {
   )
   async approveItem(
     @Param('id') id: string,
-    @Body() body: { type: TipoAprobacion; notas?: string },
+    @Body() body: { type: TipoAprobacion; notas?: string; editedData?: any },
     @Request() req: any,
   ) {
     const aprobadoPorId = req.user?.id || req.user?.sub;
-    return this.approvalsService.approveItem(id, body.type, aprobadoPorId, body.notas);
+    return this.approvalsService.approveItem(id, body.type, aprobadoPorId, body.notas, body.editedData);
   }
 
   @Post(':id/reject')
@@ -38,5 +38,18 @@ export class ApprovalsController {
   ) {
     const rechazadoPorId = req.user?.id || req.user?.sub;
     return this.approvalsService.rejectItem(id, body.type, rechazadoPorId, body.motivoRechazo);
+  }
+
+  @Post('history')
+  @Roles(
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.CONTADOR,
+  )
+  async getHistory(
+    @Body() body: { entidadId: string; tabla: string },
+  ) {
+    return this.approvalsService.getHistory(body.entidadId, body.tabla);
   }
 }

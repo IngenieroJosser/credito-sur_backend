@@ -196,9 +196,6 @@ export class PaymentsService {
           cliente: {
             select: { id: true, nombres: true, apellidos: true },
           },
-            cobrador: {
-              select: { id: true, nombres: true, apellidos: true },
-            },
         },
       });
 
@@ -313,17 +310,14 @@ export class PaymentsService {
     // Notificar
     await this.notificacionesService.notifyCoordinator({
       titulo: 'Pago Registrado',
-      mensaje: `${resultado.pago.cobrador?.nombres || ''} ${resultado.pago.cobrador?.apellidos || ''} registró un pago de ${montoTotal.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} para ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
-      tipo: 'PAGO',
+      mensaje: `Se registró un pago de ${montoTotal.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} para ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
+      tipo: 'EXITO',
       entidad: 'PAGO',
       entidadId: resultado.pago.id,
       metadata: {
         prestamoIdVal,
         capitalRecuperado: capitalTotal,
         interesRecuperado: interesTotal,
-        solicitadoPor: resultado.pago.cobrador
-          ? `${resultado.pago.cobrador.nombres} ${resultado.pago.cobrador.apellidos}`.trim()
-          : undefined,
       },
     });
 
