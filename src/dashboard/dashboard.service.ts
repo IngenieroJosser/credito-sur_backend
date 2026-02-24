@@ -208,6 +208,14 @@ export class DashboardService {
           select: {
             nombres: true,
             apellidos: true,
+            asignacionesRuta: {
+              where: { activa: true },
+              include: {
+                ruta: { select: { nombre: true } },
+                cobrador: { select: { nombres: true, apellidos: true } }
+              },
+              take: 1
+            }
           },
         },
         cuotas: {
@@ -266,16 +274,38 @@ export class DashboardService {
           select: { nombres: true, apellidos: true, rol: true },
         });
 
-        if (user && ['COBRADOR', 'SUPERVISOR'].includes(user.rol)) {
-          // Calcular eficiencia simple (pagos a tiempo vs total asignado - simplificado por ahora)
-          // Por ahora hardcodeamos eficiencia basada en random para demo o 100% si no hay mora
-          const efficiency = 95 + Math.floor(Math.random() * 5); 
+        if (user && ['COBRADOR', 'SUPERVISOR', 'COORDINADOR'].includes(user.rol)) {
+          // Calcular eficiencia real: (recaudado / meta_periodo) * 100
+          const metaCobroRes = await this.prisma.cuota.aggregate({
+            where: {
+              fechaVencimiento: { gte: startDate, lte: endDate },
+              prestamo: {
+                cliente: {
+                  asignacionesRuta: {
+                    some: {
+                      cobradorId: item.cobradorId,
+                      activa: true
+                    }
+                  }
+                }
+              }
+            },
+            _sum: { monto: true }
+          });
+
+          const montoMeta = Number(metaCobroRes._sum.monto || 0);
+          const collected = Number(item._sum.montoTotal || 0);
+          
+          // Si no hay meta, asumimos 100% de eficiencia si recaudó algo
+          const efficiency = montoMeta > 0 
+            ? Math.min(100, (collected / montoMeta) * 100) 
+            : (collected > 0 ? 100 : 0);
 
           topCollectorsList.push({
             name: `${user.nombres} ${user.apellidos}`,
-            collected: Number(item._sum.montoTotal || 0),
-            efficiency,
-            trend: 'up',
+            collected,
+            efficiency: parseFloat(efficiency.toFixed(1)),
+            trend: efficiency >= 90 ? 'up' : 'down',
           });
         }
         if (topCollectorsList.length >= 5) break; 
@@ -324,7 +354,7 @@ export class DashboardService {
           capitalPrestado: 0,
           recaudo: 0,
         },
-        trend: this.getSampleTrendData(),
+        trend: [],
         pendingApprovals: [],
         delinquentAccounts: [],
         recentActivity: [],
@@ -438,7 +468,7 @@ export class DashboardService {
       return processedData;
     } catch (error) {
       // En caso de error, devolver datos de muestra
-      return this.getSampleTrendData();
+      return [];
     }
   }
 
@@ -571,16 +601,8 @@ export class DashboardService {
   }
 
   private getSampleTrendData(): any[] {
-    // Datos de muestra en caso de error
-    return [
-      { label: 'Lun', value: 2100000, target: 2500000 },
-      { label: 'Mar', value: 2400000, target: 2500000 },
-      { label: 'Mie', value: 1500000, target: 2500000 },
-      { label: 'Jue', value: 2800000, target: 2500000 },
-      { label: 'Vie', value: 2200000, target: 2500000 },
-      { label: 'Sab', value: 3100000, target: 2500000 },
-      { label: 'Dom', value: 900000, target: 1200000 },
-    ];
+    // Devolvemos array vacío para evitar datos ficticios en producción
+    return [];
   }
 
   private mapApproval(approval: any) {
@@ -680,13 +702,19 @@ export class DashboardService {
         )
       : 0;
 
+    const asignacion = loan.cliente.asignacionesRuta?.[0];
+    const collectorName = asignacion?.cobrador 
+      ? `${asignacion.cobrador.nombres} ${asignacion.cobrador.apellidos}`
+      : 'No asignado';
+    const routeName = asignacion?.ruta?.nombre || 'General';
+
     return {
       id: loan.id,
       client: `${loan.cliente.nombres} ${loan.cliente.apellidos}`,
       daysLate,
       amountDue: parseFloat(loan.saldoPendiente.toString()),
-      collector: 'Por asignar', // Esto necesitaría una consulta adicional
-      route: 'Por asignar', // Esto necesitaría una consulta adicional
+      collector: collectorName,
+      route: routeName,
       status: this.determineDelinquentStatus(daysLate),
     };
   }
