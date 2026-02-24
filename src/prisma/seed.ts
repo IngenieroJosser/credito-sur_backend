@@ -16,7 +16,7 @@ const prisma = new PrismaClient({
 
 //  FUNCIONES DE CREACIÓN
 async function crearSuperadministradorInicial() {
-  const correo = 'superadmin@creditosur.com';
+  const correo = 'erickmanuel238@gmail.com';
 
   const usuarioExistente = await prisma.usuario.findUnique({
     where: { correo },
@@ -57,7 +57,7 @@ async function crearSuperadministradorInicial() {
 }
 
 async function crearAdministradorInicial() {
-  const correo = 'admin@creditosur.com';
+  const correo = 'admin.erick@gmail.com';
 
   const usuarioExistente = await prisma.usuario.findUnique({
     where: { correo },

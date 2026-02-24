@@ -16,17 +16,33 @@ export interface SendPushNotificationDto {
 @Injectable()
 export class PushService {
   private readonly logger = new Logger(PushService.name);
+  private isInitialized = false;
 
   constructor(private prisma: PrismaService) {
     // Configurar llaves VAPID
-    webpush.setVapidDetails(
-      process.env.VAPID_MAILTO || 'mailto:soporte@creditosur.com',
-      process.env.VAPID_PUBLIC_KEY || '',
-      process.env.VAPID_PRIVATE_KEY || ''
-    );
+    const publicKey = process.env.VAPID_PUBLIC_KEY;
+    const privateKey = process.env.VAPID_PRIVATE_KEY;
+    const mailto = process.env.VAPID_MAILTO || 'mailto:erickmanuel238@gmail.com';
+
+    if (publicKey && privateKey) {
+      try {
+        webpush.setVapidDetails(mailto, publicKey, privateKey);
+        this.isInitialized = true;
+      } catch (error) {
+        this.logger.error('Error al configurar llaves VAPID:', error);
+      }
+    } else {
+      this.logger.warn(
+        'Notificaciones Push desactivadas: Faltan las variables de entorno VAPID_PUBLIC_KEY o VAPID_PRIVATE_KEY'
+      );
+    }
   }
 
   async sendPushNotification(data: SendPushNotificationDto): Promise<void> {
+    if (!this.isInitialized) {
+      this.logger.warn('Intento de enviar notificación push pero el servicio no está configurado');
+      return;
+    }
     try {
       // Obtener suscripciones de push
       let subscriptions = await this.prisma.pushSubscription.findMany({
