@@ -710,12 +710,18 @@ export class LoansService implements OnModuleInit {
       if (updateData.tipoAmortizacion !== undefined) data.tipoAmortizacion = updateData.tipoAmortizacion;
       if (updateData.fechaInicio !== undefined) data.fechaInicio = new Date(updateData.fechaInicio);
       
-      // Recalculate financial fields if monto or tasaInteres changed
       const newMonto = data.monto !== undefined ? Number(data.monto) : Number(prestamo.monto);
       const newTasa = data.tasaInteres !== undefined ? Number(data.tasaInteres) : Number(prestamo.tasaInteres);
       const newInteresTotal = (newMonto * newTasa) / 100;
-      data.interesTotal = newInteresTotal;
-      data.saldoPendiente = (newMonto + newInteresTotal) - Number(prestamo.totalPagado || 0);
+
+      const shouldRecalculateFinancing =
+        data.monto !== undefined ||
+        data.tasaInteres !== undefined;
+
+      if (shouldRecalculateFinancing) {
+        data.interesTotal = newInteresTotal;
+        data.saldoPendiente = (newMonto + newInteresTotal) - Number(prestamo.totalPagado || 0);
+      }
 
       // Regenerate cuotas if cantidadCuotas, monto, tasaInteres, frecuenciaPago or tipoAmortizacion changed
       const shouldRegenerateCuotas = (
@@ -803,6 +809,74 @@ export class LoansService implements OnModuleInit {
           cuotas: true,
         },
       });
+
+      try {
+        const estadoAnterior = prestamo.estado;
+        const estadoNuevo = prestamoActualizado.estado;
+        const cambioEstado = data.estado !== undefined && estadoAnterior !== estadoNuevo;
+        if (cambioEstado) {
+          const clienteNombre = `${prestamoActualizado.cliente?.nombres || ''} ${prestamoActualizado.cliente?.apellidos || ''}`.trim();
+          const tituloBase = `Crédito ${prestamoActualizado.numeroPrestamo || ''} actualizado`;
+          const msgBase = `El crédito ${prestamoActualizado.numeroPrestamo || ''} del cliente ${clienteNombre || ''} cambió de ${estadoAnterior} a ${estadoNuevo}.`;
+          
+          let actorNombre = '';
+          try {
+            const usuario = await this.prisma.usuario.findUnique({
+              where: { id: userId },
+              select: { nombres: true, apellidos: true },
+            });
+            if (usuario) {
+              actorNombre = `${usuario.nombres || ''} ${usuario.apellidos || ''}`.trim();
+            }
+          } catch {}
+
+          const metadataBase = {
+            estadoAnterior,
+            estadoNuevo,
+            solicitadoPor: actorNombre || undefined,
+            solicitadoPorId: userId,
+            cliente: clienteNombre || undefined,
+            numeroPrestamo: prestamoActualizado.numeroPrestamo || undefined,
+          };
+          
+          await this.notificacionesService.create({
+            usuarioId: userId,
+            titulo: tituloBase,
+            mensaje: msgBase,
+            tipo: 'PRESTAMO',
+            entidad: 'Prestamo',
+            entidadId: prestamoActualizado.id,
+            metadata: metadataBase,
+          });
+          
+          if (estadoNuevo === EstadoPrestamo.PENDIENTE_APROBACION) {
+            await this.notificacionesService.notifyApprovers({
+              titulo: `Crédito marcado como PENDIENTE`,
+              mensaje: msgBase,
+              tipo: 'PRESTAMO',
+              entidad: 'Prestamo',
+              entidadId: prestamoActualizado.id,
+              metadata: metadataBase,
+            });
+          }
+          
+          if (estadoNuevo === EstadoPrestamo.ACTIVO) {
+            if (prestamo.creadoPorId && prestamo.creadoPorId !== userId) {
+              await this.notificacionesService.create({
+                usuarioId: prestamo.creadoPorId,
+                titulo: `Crédito activado`,
+                mensaje: msgBase,
+                tipo: 'PRESTAMO',
+                entidad: 'Prestamo',
+                entidadId: prestamoActualizado.id,
+                metadata: metadataBase,
+              });
+            }
+          }
+        }
+      } catch (e) {
+        this.logger.error('Error enviando notificaciones de cambio de estado:', e);
+      }
 
       // Auditoría
       await this.auditService.create({

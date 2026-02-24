@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service'; 
 import {
   EstadoAprobacion,
@@ -20,21 +20,19 @@ export class ApprovalsService {
     private notificacionesService: NotificacionesService,
   ) {}
 
-    async approveItem(id: string, _type: TipoAprobacion, aprobadoPorId?: string, notas?: string, editedData?: any) {
-    // Buscar la aprobación
+  async approveItem(id: string, _type: TipoAprobacion, aprobadoPorId?: string, notas?: string, editedData?: any) {
     const approval = await this.prisma.aprobacion.findUnique({
       where: { id },
     });
 
     if (!approval) {
-      throw new Error('Aprobación no encontrada');
+      throw new NotFoundException('Aprobación no encontrada');
     }
 
     if (approval.estado !== EstadoAprobacion.PENDIENTE) {
-      throw new Error(`Esta solicitud ya fue procesada (estado: ${approval.estado})`);
+      throw new BadRequestException(`Esta solicitud ya fue procesada (estado: ${approval.estado})`);
     }
 
-    // Procesar según el tipo
     switch (approval.tipoAprobacion) {
       case TipoAprobacion.NUEVO_CLIENTE:
         await this.approveNewClient(approval);
@@ -52,10 +50,9 @@ export class ApprovalsService {
         await this.approvePaymentExtension(approval, aprobadoPorId);
         break;
       default:
-        throw new Error('Tipo de aprobación no soportado');
+        throw new BadRequestException('Tipo de aprobación no soportado');
     }
 
-    // Marcar como aprobado e incluir quién aprobó
     await this.prisma.aprobacion.update({
       where: { id },
       data: {
@@ -99,11 +96,11 @@ export class ApprovalsService {
     });
 
     if (!approval) {
-      throw new Error('Aprobación no encontrada');
+      throw new NotFoundException('Aprobación no encontrada');
     }
 
     if (approval.estado !== EstadoAprobacion.PENDIENTE) {
-      throw new Error(`Esta solicitud ya fue procesada (estado: ${approval.estado})`);
+      throw new BadRequestException(`Esta solicitud ya fue procesada (estado: ${approval.estado})`);
     }
 
     await this.prisma.aprobacion.update({
@@ -488,14 +485,14 @@ export class ApprovalsService {
       });
 
       if (!cajaPrincipal) {
-        throw new Error('No se encontró una Caja Principal activa para entregar la base.');
+        throw new BadRequestException('No se encontró una Caja Principal activa para entregar la base.');
       }
 
       const monto = Number(data.monto);
 
       // 2. Verificar fondos en Caja Principal
       if (Number(cajaPrincipal.saldoActual) < monto) {
-        throw new Error(
+        throw new BadRequestException(
           `Fondos insuficientes en la Caja Principal (${cajaPrincipal.nombre}). Saldo actual: ${Number(
             cajaPrincipal.saldoActual,
           ).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,

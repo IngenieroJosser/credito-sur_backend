@@ -146,6 +146,7 @@ export class NotificacionesService {
               RolUsuario.SUPER_ADMINISTRADOR,
               RolUsuario.ADMIN,
               RolUsuario.COORDINADOR,
+              RolUsuario.SUPERVISOR,
             ],
           },
           estado: 'ACTIVO',
@@ -217,7 +218,15 @@ export class NotificacionesService {
               if (aprobacion.referenciaId && (aprobacion.tablaReferencia === 'Prestamo' || aprobacion.tipoAprobacion === 'NUEVO_PRESTAMO')) {
                 const p = await this.prisma.prestamo.findUnique({
                   where: { id: aprobacion.referenciaId },
-                  include: { cliente: true, producto: { select: { nombre: true } } }
+                  include: { 
+                    cliente: true, 
+                    producto: { 
+                      select: { 
+                        nombre: true, 
+                        precios: true 
+                      } 
+                    } 
+                  }
                 });
                 if (p) {
                     const bInic = Number(p.cuotaInicial || 0);
@@ -235,7 +244,15 @@ export class NotificacionesService {
                       plazoMeses: p.plazoMeses,
                       tipoAmortizacion: p.tipoAmortizacion,
                       cuotaInicial: bInic || rInic || 0,
-                      porcentaje: Number(p.tasaInteres || 0)
+                      porcentaje: Number(p.tasaInteres || 0),
+                      planesArticulo: Array.isArray(p.producto?.precios)
+                        ? p.producto?.precios
+                            .filter((pr) => pr.activo && pr.meses > 0)
+                            .map((pr) => ({
+                              meses: pr.meses,
+                              precioTotal: Number(pr.precio),
+                            }))
+                        : undefined,
                     };
                 }
               }
@@ -267,7 +284,15 @@ export class NotificacionesService {
             if (!aprobacionReal && (notif.entidad === 'PRESTAMO' || notif.entidad === 'Prestamo')) {
                const p = await this.prisma.prestamo.findUnique({
                   where: { id: notif.entidadId },
-                  include: { cliente: true, producto: { select: { nombre: true } } }
+                  include: { 
+                    cliente: true, 
+                    producto: { 
+                      select: { 
+                        nombre: true, 
+                        precios: true 
+                      } 
+                    } 
+                  }
                });
                if (p) {
                   let articuloManual = '';
@@ -296,7 +321,15 @@ export class NotificacionesService {
                     plazoMeses: p.plazoMeses,
                     tipoAmortizacion: p.tipoAmortizacion,
                     cuotaInicial: Number(p.cuotaInicial || cuotaInicialManual || 0),
-                    porcentaje: Number(p.tasaInteres || 0)
+                    porcentaje: Number(p.tasaInteres || 0),
+                    planesArticulo: Array.isArray(p.producto?.precios)
+                      ? p.producto?.precios
+                          .filter((pr) => pr.activo && pr.meses > 0)
+                          .map((pr) => ({
+                            meses: pr.meses,
+                            precioTotal: Number(pr.precio),
+                          }))
+                      : undefined,
                   };
                   enrichedNotif = {
                     ...enrichedNotif,
