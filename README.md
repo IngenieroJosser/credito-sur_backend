@@ -159,7 +159,7 @@ Enviar una notificación de prueba al usuario autenticado.
 # Variables de entorno (.env)
 VAPID_PUBLIC_KEY=BKxN...
 VAPID_PRIVATE_KEY=5I2T...
-VAPID_SUBJECT=mailto:admin@creditosur.com
+VAPID_SUBJECT=mailto:erickmanuel238@gmail.com
 ```
 
 ### Modelo de Datos
