@@ -9,6 +9,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service'; 
 import { TipoCaja, TipoTransaccion, TipoAprobacion, EstadoAprobacion } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
+import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 
 @Injectable()
 export class AccountingService {
@@ -17,6 +18,7 @@ export class AccountingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificacionesService: NotificacionesService,
+    private readonly notificacionesGateway: NotificacionesGateway,
   ) {}
 
   // =====================
@@ -231,6 +233,11 @@ export class AccountingService {
       },
     });
 
+    this.notificacionesGateway.broadcastDashboardsActualizados({
+      origen: 'GASTO',
+      rutaId: data.rutaId,
+    });
+
     return {
       success: true,
       message: 'Gasto registrado y enviado para aprobación del coordinador',
@@ -306,6 +313,11 @@ export class AccountingService {
         descripcion: data.descripcion,
         solicitadoPor: nombreSolicitanteBase,
       },
+    });
+
+    this.notificacionesGateway.broadcastDashboardsActualizados({
+      origen: 'BASE',
+      rutaId: data.rutaId,
     });
 
     return {

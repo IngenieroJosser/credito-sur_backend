@@ -17,6 +17,7 @@ import {
   TipoAmortizacion,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
+import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { AuditService } from '../audit/audit.service';
 import { PushService } from '../push/push.service';
 import { CreateLoanDto } from './dto/create-loan.dto';
@@ -32,6 +33,7 @@ export class LoansService implements OnModuleInit {
     private notificacionesService: NotificacionesService,
     private auditService: AuditService,
     private pushService: PushService,
+    private notificacionesGateway: NotificacionesGateway,
   ) {}
 
   async onModuleInit() {
@@ -1113,6 +1115,12 @@ export class LoansService implements OnModuleInit {
         metadata: { clienteId: createLoanDto.clienteId },
       });
 
+      this.notificacionesGateway.broadcastPrestamosActualizados({
+        accion: 'CREAR',
+        prestamoId: prestamo.id,
+      });
+      this.notificacionesGateway.broadcastDashboardsActualizados({});
+
       return prestamo;
     } catch (error) {
       this.logger.error('Error creating loan:', error);
@@ -1217,6 +1225,12 @@ export class LoansService implements OnModuleInit {
         datosNuevos: { estado: 'ACTIVO', estadoAprobacion: 'APROBADO' },
       });
 
+      this.notificacionesGateway.broadcastPrestamosActualizados({
+        accion: 'APROBAR',
+        prestamoId: prestamoActualizado.id,
+      });
+      this.notificacionesGateway.broadcastDashboardsActualizados({});
+
       return prestamoActualizado;
     } catch (error) {
       this.logger.error(`Error approving loan ${id}:`, error);
@@ -1281,6 +1295,12 @@ export class LoansService implements OnModuleInit {
         datosAnteriores: { estadoAprobacion: prestamo.estadoAprobacion },
         datosNuevos: { estadoAprobacion: 'RECHAZADO', motivo },
       });
+
+      this.notificacionesGateway.broadcastPrestamosActualizados({
+        accion: 'RECHAZAR',
+        prestamoId: prestamoRechazado.id,
+      });
+      this.notificacionesGateway.broadcastDashboardsActualizados({});
 
       return prestamoRechazado;
     } catch (error) {
@@ -1724,6 +1744,12 @@ export class LoansService implements OnModuleInit {
         },
         metadata: { notas: data.notas || null },
       });
+
+      this.notificacionesGateway.broadcastPrestamosActualizados({
+        accion: 'CREAR',
+        prestamoId: prestamo.id,
+      });
+      this.notificacionesGateway.broadcastDashboardsActualizados({});
 
       return {
         ...prestamo,

@@ -100,4 +100,52 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
   enviarNotificacionATodos(notificacion: any) {
     this.server.emit('nueva_notificacion_global', notificacion);
   }
+
+  broadcastUsuariosActualizados(payload?: any) {
+    this.logger.log('Emitiendo evento usuarios_actualizados');
+    this.server.emit('usuarios_actualizados', {
+      timestamp: new Date(),
+      ...(payload || {}),
+    });
+  }
+
+  broadcastClientesActualizados(payload?: any) {
+    this.logger.log('Emitiendo evento clientes_actualizados');
+    this.server.emit('clientes_actualizados', {
+      timestamp: new Date(),
+      ...(payload || {}),
+    });
+  }
+
+  broadcastPrestamosActualizados(payload?: any) {
+    this.logger.log('Emitiendo evento prestamos_actualizados');
+    this.server.emit('prestamos_actualizados', {
+      timestamp: new Date(),
+      ...(payload || {}),
+    });
+  }
+
+  broadcastPagosActualizados(payload?: any) {
+    this.logger.log('Emitiendo evento pagos_actualizados');
+    this.server.emit('pagos_actualizados', {
+      timestamp: new Date(),
+      ...(payload || {}),
+    });
+  }
+
+  broadcastRutasActualizadas(payload?: any) {
+    this.logger.log('Emitiendo evento rutas_actualizadas');
+    this.server.emit('rutas_actualizadas', {
+      timestamp: new Date(),
+      ...(payload || {}),
+    });
+  }
+
+  broadcastDashboardsActualizados(payload?: any) {
+    this.logger.log('Emitiendo evento dashboards_actualizados');
+    this.server.emit('dashboards_actualizados', {
+      timestamp: new Date(),
+      ...(payload || {}),
+    });
+  }
 }

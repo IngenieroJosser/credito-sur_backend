@@ -14,6 +14,7 @@ import {
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { AuditService } from '../audit/audit.service';
+import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 
 @Injectable()
 export class PaymentsService {
@@ -23,6 +24,7 @@ export class PaymentsService {
     private readonly prisma: PrismaService,
     private notificacionesService: NotificacionesService,
     private auditService: AuditService,
+    private notificacionesGateway: NotificacionesGateway,
   ) {}
 
   /**
@@ -324,6 +326,19 @@ export class PaymentsService {
     this.logger.log(
       `Pago ${numeroPago} registrado: capital=${capitalTotal.toFixed(2)}, interés=${interesTotal.toFixed(2)}, saldo=${resultado.descomposicion.saldoNuevo.toFixed(2)}`,
     );
+
+    this.notificacionesGateway.broadcastPagosActualizados({
+      accion: 'CREAR',
+      pagoId: resultado.pago.id,
+    });
+    this.notificacionesGateway.broadcastPrestamosActualizados({
+      accion: 'PAGO',
+      prestamoId: prestamoIdVal,
+    });
+    this.notificacionesGateway.broadcastRutasActualizadas({
+      accion: 'PAGO',
+    });
+    this.notificacionesGateway.broadcastDashboardsActualizados({});
 
     return resultado;
   }

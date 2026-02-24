@@ -10,6 +10,7 @@ import {
   TipoAmortizacion,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
+import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 
 @Injectable()
 export class ApprovalsService {
@@ -18,6 +19,7 @@ export class ApprovalsService {
   constructor(
     private prisma: PrismaService,
     private notificacionesService: NotificacionesService,
+    private notificacionesGateway: NotificacionesGateway,
   ) {}
 
   async approveItem(id: string, _type: TipoAprobacion, aprobadoPorId?: string, notas?: string, editedData?: any) {
@@ -170,7 +172,7 @@ export class ApprovalsService {
         ? JSON.parse(approval.datosSolicitud)
         : approval.datosSolicitud;
 
-    await this.prisma.cliente.create({
+    const cliente = await this.prisma.cliente.create({
       data: {
         dni: data.dni,
         nombres: data.nombres,
@@ -182,6 +184,10 @@ export class ApprovalsService {
         estadoAprobacion: EstadoAprobacion.APROBADO,
         codigo: `CL-${Date.now()}`,
       },
+    });
+    this.notificacionesGateway.broadcastClientesActualizados({
+      accion: 'CREAR',
+      clienteId: cliente.id,
     });
   }
 
@@ -379,6 +385,11 @@ export class ApprovalsService {
     } catch (e) {
       this.logger.error('Error notifying loan approval:', e);
     }
+    this.notificacionesGateway.broadcastPrestamosActualizados({
+      accion: 'APROBAR',
+      prestamoId: approval.referenciaId,
+    });
+    this.notificacionesGateway.broadcastDashboardsActualizados({});
   }
 
   private async approveExpense(approval: any, aprobadoPorId?: string) {
@@ -469,6 +480,9 @@ export class ApprovalsService {
     } catch (error) {
       // No interrumpimos el flujo de aprobación si la notificación falla
     }
+    this.notificacionesGateway.broadcastDashboardsActualizados({
+      origen: 'GASTO',
+    });
   }
 
   private async approveCashBase(approval: any, aprobadoPorId?: string) {
@@ -580,6 +594,9 @@ export class ApprovalsService {
     } catch (error) {
       // No interrumpimos el flujo si la notificación falla
     }
+    this.notificacionesGateway.broadcastDashboardsActualizados({
+      origen: 'BASE',
+    });
   }
 
   private async approvePaymentExtension(approval: any, aprobadoPorId?: string) {
@@ -614,6 +631,10 @@ export class ApprovalsService {
       }
 
       // 3. Opcionalmente marcar el préstamo con algún flag de prórroga si fuera necesario
+    });
+    this.notificacionesGateway.broadcastPrestamosActualizados({
+      accion: 'PRORROGA',
+      prestamoId: approval.referenciaId,
     });
   }
 }

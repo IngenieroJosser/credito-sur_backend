@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NivelRiesgo, RolUsuario } from '@prisma/client';
+import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 
 @Injectable()
 export class ClientsService {
@@ -19,6 +20,7 @@ export class ClientsService {
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
     private readonly notificacionesService: NotificacionesService,
+    private readonly notificacionesGateway: NotificacionesGateway,
   ) {}
 
   async create(createClientDto: CreateClientDto) {
@@ -53,7 +55,7 @@ export class ClientsService {
       ...clientData
     } = createClientDto;
 
-    return this.prisma.cliente.create({
+    const cliente = await this.prisma.cliente.create({
       data: {
         ...clientData,
         codigo,
@@ -61,6 +63,13 @@ export class ClientsService {
         // TODO: Manejar asignación de ruta y observaciones si es necesario en otras tablas
       },
     });
+
+    this.notificacionesGateway.broadcastClientesActualizados({
+      accion: 'CREAR',
+      clienteId: cliente.id,
+    });
+
+    return cliente;
   }
 
   findAll() {
@@ -153,8 +162,7 @@ export class ClientsService {
       });
     }
 
-    // Devolver cliente con archivos actualizados
-    return this.prisma.cliente.findUnique({
+    const clienteConArchivos = await this.prisma.cliente.findUnique({
       where: { id },
       include: {
         archivos: {
@@ -162,12 +170,25 @@ export class ClientsService {
         },
       },
     });
+
+    this.notificacionesGateway.broadcastClientesActualizados({
+      accion: 'ACTUALIZAR',
+      clienteId: id,
+    });
+
+    return clienteConArchivos;
   }
 
   remove(id: string) {
     return this.prisma.cliente.update({
       where: { id },
       data: { eliminadoEn: new Date() },
+    }).then((cliente) => {
+      this.notificacionesGateway.broadcastClientesActualizados({
+        accion: 'ELIMINAR',
+        clienteId: id,
+      });
+      return cliente;
     });
   }
 
