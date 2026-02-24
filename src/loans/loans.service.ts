@@ -2286,17 +2286,20 @@ export class LoansService implements OnModuleInit {
     // 1. Obtener préstamos activos con interés SIMPLE
     const loans = await this.prisma.prestamo.findMany({
       where: {
-        tipoAmortizacion: 'INTERES_SIMPLE',
-        estado: { in: ['ACTIVO', 'EN_MORA'] },
+        tipoAmortizacion: TipoAmortizacion.INTERES_SIMPLE,
+        estado: { in: [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA] },
       },
       include: { 
-        cuotas: { orderBy: { numeroCuota: 'asc' } }
+        cuotas: true
       },
     });
 
     results.processed = loans.length;
 
     for (const loan of loans) {
+      // Ordenar cuotas en memoria para evitar fallos de driver con orderBy en include
+      loan.cuotas.sort((a, b) => a.numeroCuota - b.numeroCuota);
+
       try {
         const capital = Number(loan.monto);
         const tasaMensual = Number(loan.tasaInteres);
