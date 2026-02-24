@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { CreateRouteDto } from './dto/create-route.dto';
 import { UpdateRouteDto } from './dto/update-route.dto';
 import { Prisma, EstadoPrestamo, EstadoCuota } from '@prisma/client';
@@ -16,6 +17,7 @@ export class RoutesService {
   constructor(
     private prisma: PrismaService,
     private auditService: AuditService,
+    private notificacionesGateway: NotificacionesGateway,
   ) {}
 
   async create(createRouteDto: CreateRouteDto) {
@@ -111,6 +113,12 @@ export class RoutesService {
           },
         });
       }
+
+      this.notificacionesGateway.broadcastRutasActualizadas({
+        accion: 'CREAR',
+        rutaId: route.id,
+      });
+      this.notificacionesGateway.broadcastDashboardsActualizados({});
 
       return route;
     } catch (error) {

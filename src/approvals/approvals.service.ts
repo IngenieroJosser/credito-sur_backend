@@ -1,12 +1,16 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service'; 
 import {
   EstadoAprobacion,
   EstadoPrestamo,
+  EstadoCuota,
   TipoAprobacion,
   TipoTransaccion,
+  FrecuenciaPago,
+  TipoAmortizacion,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
+import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 
 @Injectable()
 export class ApprovalsService {
@@ -15,29 +19,28 @@ export class ApprovalsService {
   constructor(
     private prisma: PrismaService,
     private notificacionesService: NotificacionesService,
+    private notificacionesGateway: NotificacionesGateway,
   ) {}
 
-  async approveItem(id: string, _type: TipoAprobacion, aprobadoPorId?: string, notas?: string) {
-    // Buscar la aprobación
+  async approveItem(id: string, _type: TipoAprobacion, aprobadoPorId?: string, notas?: string, editedData?: any) {
     const approval = await this.prisma.aprobacion.findUnique({
       where: { id },
     });
 
     if (!approval) {
-      throw new Error('Aprobación no encontrada');
+      throw new NotFoundException('Aprobación no encontrada');
     }
 
     if (approval.estado !== EstadoAprobacion.PENDIENTE) {
-      throw new Error(`Esta solicitud ya fue procesada (estado: ${approval.estado})`);
+      throw new BadRequestException(`Esta solicitud ya fue procesada (estado: ${approval.estado})`);
     }
 
-    // Procesar según el tipo
     switch (approval.tipoAprobacion) {
       case TipoAprobacion.NUEVO_CLIENTE:
         await this.approveNewClient(approval);
         break;
       case TipoAprobacion.NUEVO_PRESTAMO:
-        await this.approveNewLoan(approval, aprobadoPorId);
+        await this.approveNewLoan(approval, aprobadoPorId, editedData);
         break;
       case TipoAprobacion.GASTO:
         await this.approveExpense(approval, aprobadoPorId);
@@ -49,16 +52,16 @@ export class ApprovalsService {
         await this.approvePaymentExtension(approval, aprobadoPorId);
         break;
       default:
-        throw new Error('Tipo de aprobación no soportado');
+        throw new BadRequestException('Tipo de aprobación no soportado');
     }
 
-    // Marcar como aprobado e incluir quién aprobó
     await this.prisma.aprobacion.update({
       where: { id },
       data: {
         estado: EstadoAprobacion.APROBADO,
         aprobadoPorId: aprobadoPorId || undefined,
         comentarios: notas || undefined,
+        datosAprobados: editedData || undefined,
         revisadoEn: new Date(),
       },
     });
@@ -68,17 +71,38 @@ export class ApprovalsService {
     return { success: true, message: 'Aprobación procesada exitosamente' };
   }
 
+  /**
+   * Obtener el historial de aprobaciones para una entidad específica
+   */
+  async getHistory(referenciaId: string, tablaReferencia: string) {
+    return this.prisma.aprobacion.findMany({
+      where: {
+        referenciaId,
+        tablaReferencia,
+      },
+      include: {
+        solicitadoPor: {
+          select: { nombres: true, apellidos: true }
+        },
+        aprobadoPor: {
+          select: { nombres: true, apellidos: true }
+        }
+      },
+      orderBy: { creadoEn: 'desc' }
+    });
+  }
+
   async rejectItem(id: string, _type: TipoAprobacion, rechazadoPorId?: string, motivoRechazo?: string) {
     const approval = await this.prisma.aprobacion.findUnique({
       where: { id },
     });
 
     if (!approval) {
-      throw new Error('Aprobación no encontrada');
+      throw new NotFoundException('Aprobación no encontrada');
     }
 
     if (approval.estado !== EstadoAprobacion.PENDIENTE) {
-      throw new Error(`Esta solicitud ya fue procesada (estado: ${approval.estado})`);
+      throw new BadRequestException(`Esta solicitud ya fue procesada (estado: ${approval.estado})`);
     }
 
     await this.prisma.aprobacion.update({
@@ -148,7 +172,7 @@ export class ApprovalsService {
         ? JSON.parse(approval.datosSolicitud)
         : approval.datosSolicitud;
 
-    await this.prisma.cliente.create({
+    const cliente = await this.prisma.cliente.create({
       data: {
         dni: data.dni,
         nombres: data.nombres,
@@ -161,23 +185,37 @@ export class ApprovalsService {
         codigo: `CL-${Date.now()}`,
       },
     });
+    this.notificacionesGateway.broadcastClientesActualizados({
+      accion: 'CREAR',
+      clienteId: cliente.id,
+    });
   }
 
-  private async approveNewLoan(approval: any, aprobadoPorId?: string) {
+  private async approveNewLoan(approval: any, aprobadoPorId?: string, editedData?: any) {
     const data =
       typeof approval.datosSolicitud === 'string'
         ? JSON.parse(approval.datosSolicitud)
         : approval.datosSolicitud;
 
+    // Usar datos editados si existen, de lo contrario los originales
+    const finalData = editedData || data;
+
     // Ejecutar en una transacción
     await this.prisma.$transaction(async (tx) => {
-      // 1. Activar el préstamo
+      // 1. Activar el préstamo (aplicando cambios si fueron editados)
       const prestamo = await tx.prestamo.update({
         where: { id: approval.referenciaId },
         data: {
           estado: EstadoPrestamo.ACTIVO,
           estadoAprobacion: EstadoAprobacion.APROBADO,
           aprobadoPorId: aprobadoPorId || undefined,
+          // Actualizar campos financieros si cambiaron en la revisión
+          monto: finalData.monto || finalData.valorArticulo ? Number(finalData.monto || finalData.valorArticulo) : undefined,
+          cantidadCuotas: finalData.cuotas || finalData.numCuotas ? Number(finalData.cuotas || finalData.numCuotas) : undefined,
+          tasaInteres: finalData.porcentaje !== undefined ? Number(finalData.porcentaje) : undefined,
+          frecuenciaPago: finalData.frecuenciaPago || undefined,
+          cuotaInicial: finalData.cuotaInicial !== undefined ? Number(finalData.cuotaInicial) : undefined,
+          fechaInicio: finalData.fechaInicio ? new Date(finalData.fechaInicio) : undefined,
         },
         include: {
           cliente: {
@@ -190,6 +228,105 @@ export class ApprovalsService {
           }
         }
       });
+
+      // Si se editaron datos financieros, es probable que las cuotas (instancias de Cuota) necesiten ser regeneradas
+      // o ajustadas. Para simplificar, si hay cambios, recalculamos los montos.
+      if (editedData) {
+        // Recalcular componentes financieros del préstamo
+        const montoFinanciar = Number(prestamo.monto);
+        const tasaInteres = Number(prestamo.tasaInteres);
+        const plazoMeses = Number(prestamo.plazoMeses);
+        const cantidadCuotas = Number(prestamo.cantidadCuotas);
+        const frecuencia = prestamo.frecuenciaPago;
+        const tipoAmort = prestamo.tipoAmortizacion;
+        const fechaInicio = new Date(prestamo.fechaInicio);
+
+        let interesTotal = 0;
+        let cuotasData: any[] = [];
+
+        if (tipoAmort === TipoAmortizacion.FRANCESA) {
+          // Usamos la fórmula de amortización francesa (Simplificada para este contexto)
+          const tasaMensual = tasaInteres / plazoMeses / 100;
+          let tasaPeriodo = tasaMensual;
+          if (frecuencia === FrecuenciaPago.DIARIO) tasaPeriodo = tasaMensual / 30;
+          else if (frecuencia === FrecuenciaPago.SEMANAL) tasaPeriodo = tasaMensual / 4;
+          else if (frecuencia === FrecuenciaPago.QUINCENAL) tasaPeriodo = tasaMensual / 2;
+
+          if (tasaPeriodo === 0) {
+              interesTotal = 0;
+              const montoCuota = montoFinanciar / cantidadCuotas;
+              cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => ({
+                  numeroCuota: i + 1,
+                  montoCapital: montoCuota,
+                  montoInteres: 0,
+                  monto: montoCuota
+              }));
+          } else {
+              const cuotaFija = (montoFinanciar * tasaPeriodo) / (1 - Math.pow(1 + tasaPeriodo, -cantidadCuotas));
+              let saldo = montoFinanciar;
+              for (let i = 0; i < cantidadCuotas; i++) {
+                  const intPeriodo = saldo * tasaPeriodo;
+                  const capPeriodo = i === cantidadCuotas - 1 ? saldo : cuotaFija - intPeriodo;
+                  interesTotal += intPeriodo;
+                  cuotasData.push({
+                      numeroCuota: i + 1,
+                      montoCapital: capPeriodo,
+                      montoInteres: intPeriodo,
+                      monto: capPeriodo + intPeriodo
+                  });
+                  saldo -= capPeriodo;
+              }
+          }
+        } else {
+          // INTERES SIMPLE
+          interesTotal = (montoFinanciar * tasaInteres * plazoMeses) / 100;
+          const montoTotalSimple = montoFinanciar + interesTotal;
+          const montoCuota = cantidadCuotas > 0 ? montoTotalSimple / cantidadCuotas : 0;
+          const montoCapitalCuota = cantidadCuotas > 0 ? montoFinanciar / cantidadCuotas : 0;
+          const montoInteresCuota = cantidadCuotas > 0 ? interesTotal / cantidadCuotas : 0;
+          
+          cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => ({
+            numeroCuota: i + 1,
+            monto: montoCuota,
+            montoCapital: montoCapitalCuota,
+            montoInteres: montoInteresCuota
+          }));
+        }
+
+        // Actualizar el préstamo con el nuevo interés calculado y saldo
+        await tx.prestamo.update({
+            where: { id: prestamo.id },
+            data: { 
+                interesTotal,
+                saldoPendiente: montoFinanciar + interesTotal
+            }
+        });
+
+        // Eliminar cuotas viejas y crear nuevas para que coincidan con la edición
+        await tx.cuota.deleteMany({ where: { prestamoId: prestamo.id } });
+        
+        // Función auxiliar para calcular fechas (duplicada brevemente aquí para el tx)
+        const calcularFecha = (base: Date, num: number, freq: FrecuenciaPago) => {
+            const d = new Date(base);
+            if (freq === FrecuenciaPago.DIARIO) d.setDate(d.getDate() + num);
+            else if (freq === FrecuenciaPago.SEMANAL) d.setDate(d.getDate() + num * 7);
+            else if (freq === FrecuenciaPago.QUINCENAL) d.setDate(d.getDate() + num * 15);
+            else if (freq === FrecuenciaPago.MENSUAL) d.setMonth(d.getMonth() + num);
+            return d;
+        };
+
+        await tx.cuota.createMany({
+            data: cuotasData.map(c => ({
+                prestamoId: prestamo.id,
+                numeroCuota: c.numeroCuota,
+                monto: c.monto,
+                montoCapital: c.montoCapital,
+                montoInteres: c.montoInteres,
+                fechaVencimiento: calcularFecha(fechaInicio, c.numeroCuota, frecuencia),
+                estado: EstadoCuota.PENDIENTE
+            }))
+        });
+      }
 
       // 2. Buscar la caja de la ruta para registrar el desembolso
       const rutaId = prestamo.cliente?.asignacionesRuta?.[0]?.rutaId;
@@ -205,7 +342,7 @@ export class ApprovalsService {
               numeroTransaccion: `T${Date.now()}`,
               cajaId: cajaRuta.id,
               tipo: TipoTransaccion.EGRESO,
-              monto: prestamo.monto,
+              monto: Number(prestamo.monto),
               descripcion: `Desembolso de préstamo #${prestamo.numeroPrestamo} - Cliente: ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
               creadoPorId: approval.solicitadoPorId,
               aprobadoPorId: aprobadoPorId || undefined,
@@ -226,6 +363,33 @@ export class ApprovalsService {
         }
       }
     });
+
+    try {
+      // Notificar al solicitante que su préstamo fue aprobado
+      const isArticulo = data.tipo === 'ARTICULO' || data.tipoPrestamo === 'ARTICULO';
+      const label = isArticulo ? 'crédito por un artículo' : 'préstamo';
+
+      await this.notificacionesService.create({
+        usuarioId: approval.solicitadoPorId,
+        titulo: 'Solicitud Aprobada',
+        mensaje: `Tu solicitud de ${label} para ${data.cliente || 'el cliente'} ha sido aprobada.`,
+        tipo: 'EXITO',
+        entidad: 'Prestamo',
+        entidadId: approval.referenciaId,
+        metadata: {
+          estadoAprobacion: 'APROBADO',
+          monto: data.monto,
+          articulo: data.articulo
+        }
+      });
+    } catch (e) {
+      this.logger.error('Error notifying loan approval:', e);
+    }
+    this.notificacionesGateway.broadcastPrestamosActualizados({
+      accion: 'APROBAR',
+      prestamoId: approval.referenciaId,
+    });
+    this.notificacionesGateway.broadcastDashboardsActualizados({});
   }
 
   private async approveExpense(approval: any, aprobadoPorId?: string) {
@@ -316,6 +480,9 @@ export class ApprovalsService {
     } catch (error) {
       // No interrumpimos el flujo de aprobación si la notificación falla
     }
+    this.notificacionesGateway.broadcastDashboardsActualizados({
+      origen: 'GASTO',
+    });
   }
 
   private async approveCashBase(approval: any, aprobadoPorId?: string) {
@@ -332,14 +499,14 @@ export class ApprovalsService {
       });
 
       if (!cajaPrincipal) {
-        throw new Error('No se encontró una Caja Principal activa para entregar la base.');
+        throw new BadRequestException('No se encontró una Caja Principal activa para entregar la base.');
       }
 
       const monto = Number(data.monto);
 
       // 2. Verificar fondos en Caja Principal
       if (Number(cajaPrincipal.saldoActual) < monto) {
-        throw new Error(
+        throw new BadRequestException(
           `Fondos insuficientes en la Caja Principal (${cajaPrincipal.nombre}). Saldo actual: ${Number(
             cajaPrincipal.saldoActual,
           ).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
@@ -427,6 +594,9 @@ export class ApprovalsService {
     } catch (error) {
       // No interrumpimos el flujo si la notificación falla
     }
+    this.notificacionesGateway.broadcastDashboardsActualizados({
+      origen: 'BASE',
+    });
   }
 
   private async approvePaymentExtension(approval: any, aprobadoPorId?: string) {
@@ -435,15 +605,36 @@ export class ApprovalsService {
         ? JSON.parse(approval.datosSolicitud)
         : approval.datosSolicitud;
 
-    await this.prisma.extensionPago.create({
-      data: {
-        prestamoId: data.prestamoId,
-        cuotaId: data.cuotaId,
-        fechaVencimientoOriginal: new Date(data.fechaVencimientoOriginal),
-        nuevaFechaVencimiento: new Date(data.nuevaFechaVencimiento),
-        razon: data.razon,
-        aprobadoPorId: aprobadoPorId || approval.solicitadoPorId,
-      },
+    // Usar una transacción para asegurar que tanto la extensión como la cuota se actualicen
+    await this.prisma.$transaction(async (tx) => {
+      // 1. Crear el registro de extensión
+      const extension = await tx.extensionPago.create({
+        data: {
+          prestamoId: data.prestamoId,
+          cuotaId: data.cuotaId,
+          fechaVencimientoOriginal: new Date(data.fechaVencimientoOriginal),
+          nuevaFechaVencimiento: new Date(data.nuevaFechaVencimiento),
+          razon: data.razon,
+          aprobadoPorId: aprobadoPorId || approval.solicitadoPorId,
+        },
+      });
+
+      // 2. Vincular la extensión a la cuota y actualizar su fecha de prorroga
+      if (data.cuotaId) {
+        await tx.cuota.update({
+          where: { id: data.cuotaId },
+          data: {
+            fechaVencimientoProrroga: new Date(data.nuevaFechaVencimiento),
+            extensionId: extension.id,
+          },
+        });
+      }
+
+      // 3. Opcionalmente marcar el préstamo con algún flag de prórroga si fuera necesario
+    });
+    this.notificacionesGateway.broadcastPrestamosActualizados({
+      accion: 'PRORROGA',
+      prestamoId: approval.referenciaId,
     });
   }
 }

@@ -15,6 +15,16 @@ export class NotificacionesService {
     private pushService: PushService,
   ) {}
 
+  private cleanNotificationText(txt: string): string {
+    if (!txt) return txt;
+    return txt
+      .replace(/préstamo por artículo/gi, 'crédito por un artículo')
+      .replace(/préstamo de artículo/gi, 'crédito por un artículo')
+      .replace(/préstamo por un artículo/gi, 'crédito por un artículo')
+      .replace(/solicitado un préstamo por artículo/gi, 'solicitado un crédito por un artículo')
+      .replace(/préstamo en efectivo/gi, 'préstamo');
+  }
+
   /**
    * Crea una notificación persistente y la emite en tiempo real a través de WebSockets y Push.
    */
@@ -28,6 +38,9 @@ export class NotificacionesService {
     metadata?: any;
   }) {
     try {
+      const cleanTitulo = this.cleanNotificationText(data.titulo);
+      const cleanMensaje = this.cleanNotificationText(data.mensaje);
+
       const map: Record<string, string> = {
         INFO: 'INFORMATIVO',
         WARNING: 'ADVERTENCIA',
@@ -43,8 +56,8 @@ export class NotificacionesService {
       const notificacion = await this.prisma.notificacion.create({
         data: {
           usuarioId: data.usuarioId,
-          titulo: data.titulo,
-          mensaje: data.mensaje,
+          titulo: cleanTitulo,
+          mensaje: cleanMensaje,
           tipo: tipoFinal,
           entidad: data.entidad,
           entidadId: data.entidadId,
@@ -59,8 +72,8 @@ export class NotificacionesService {
       // Enviar notificación Push (PWA)
       this.pushService.sendPushNotification({
         userId: data.usuarioId,
-        title: data.titulo,
-        body: data.mensaje,
+        title: cleanTitulo,
+        body: cleanMensaje,
         data: {
           tipo: tipoFinal,
           entidadId: data.entidadId,
@@ -133,6 +146,7 @@ export class NotificacionesService {
               RolUsuario.SUPER_ADMINISTRADOR,
               RolUsuario.ADMIN,
               RolUsuario.COORDINADOR,
+              RolUsuario.SUPERVISOR,
             ],
           },
           estado: 'ACTIVO',
@@ -166,11 +180,21 @@ export class NotificacionesService {
     // Enriquecer notificaciones vinculadas a aprobaciones con estado real y nombre del solicitante
     const enriquecidas = await Promise.all(
       notificaciones.map(async (notif) => {
-        const meta = (notif.metadata as any) || {};
+        const rawMeta = notif.metadata;
+        const meta = typeof rawMeta === 'string' ? JSON.parse(rawMeta) : (rawMeta || {});
+        
+        let enrichedNotif: any = { 
+          ...notif,
+          titulo: this.cleanNotificationText(notif.titulo),
+          mensaje: this.cleanNotificationText(notif.mensaje)
+        };
 
-        // Si tiene entidadId y parece una aprobación, buscar datos reales
-        if (notif.entidadId && (notif.entidad === 'Aprobacion' || meta.tipoAprobacion || notif.entidad === 'GASTO')) {
+        if (notif.entidadId) {
           try {
+            let datosExtra = {};
+            let aprobacionReal: any = null;
+
+            // 1. Intentar buscar como Aprobación
             const aprobacion = await this.prisma.aprobacion.findUnique({
               where: { id: notif.entidadId },
               select: {
@@ -178,46 +202,154 @@ export class NotificacionesService {
                 tipoAprobacion: true,
                 datosSolicitud: true,
                 comentarios: true,
-                solicitadoPor: {
-                  select: { nombres: true, apellidos: true },
-                },
-                aprobadoPor: {
-                  select: { nombres: true, apellidos: true },
-                },
+                referenciaId: true,
+                tablaReferencia: true,
+                solicitadoPor: { select: { nombres: true, apellidos: true } },
+                aprobadoPor: { select: { nombres: true, apellidos: true } },
               },
             });
 
             if (aprobacion) {
-              const nombreSolicitante = aprobacion.solicitadoPor
-                ? `${aprobacion.solicitadoPor.nombres} ${aprobacion.solicitadoPor.apellidos}`.trim()
-                : undefined;
+              aprobacionReal = aprobacion;
+              const rawDatos = aprobacion.datosSolicitud;
+              const datos = typeof rawDatos === 'string' ? JSON.parse(rawDatos) : (rawDatos || {});
               
-              const nombreRevisor = aprobacion.aprobadoPor
-                ? `${aprobacion.aprobadoPor.nombres} ${aprobacion.aprobadoPor.apellidos}`.trim()
-                : undefined;
+              // Si la aprobación apunta a un préstamo, cargar datos reales
+              if (aprobacion.referenciaId && (aprobacion.tablaReferencia === 'Prestamo' || aprobacion.tipoAprobacion === 'NUEVO_PRESTAMO')) {
+                const p = await this.prisma.prestamo.findUnique({
+                  where: { id: aprobacion.referenciaId },
+                  include: { 
+                    cliente: true, 
+                    producto: { 
+                      select: { 
+                        nombre: true, 
+                        precios: true 
+                      } 
+                    } 
+                  }
+                });
+                if (p) {
+                    const bInic = Number(p.cuotaInicial || 0);
+                    const rInic = Number((datos as any).cuotaInicial || 0);
+                    
+                    datosExtra = {
+                      cedula: String(p.cliente.dni),
+                      telefono: String(p.cliente.telefono),
+                      cliente: `${p.cliente.nombres} ${p.cliente.apellidos}`,
+                      monto: Number(p.monto),
+                      valorArticulo: Number(p.monto) + (bInic || rInic || 0),
+                      articulo: p.producto?.nombre || (datos as any).articulo || 'Artículo',
+                      frecuenciaPago: p.frecuenciaPago,
+                      cuotas: p.cantidadCuotas,
+                      plazoMeses: p.plazoMeses,
+                      tipoAmortizacion: p.tipoAmortizacion,
+                      cuotaInicial: bInic || rInic || 0,
+                      porcentaje: Number(p.tasaInteres || 0),
+                      planesArticulo: Array.isArray(p.producto?.precios)
+                        ? p.producto?.precios
+                            .filter((pr) => pr.activo && pr.meses > 0)
+                            .map((pr) => ({
+                              meses: pr.meses,
+                              precioTotal: Number(pr.precio),
+                            }))
+                        : undefined,
+                    };
+                }
+              }
+              
+              const nombreSolicitante = aprobacion.solicitadoPor ? `${aprobacion.solicitadoPor.nombres} ${aprobacion.solicitadoPor.apellidos}`.trim() : undefined;
+              const nombreRevisor = aprobacion.aprobadoPor ? `${aprobacion.aprobadoPor.nombres} ${aprobacion.aprobadoPor.apellidos}`.trim() : undefined;
+              const descOriginal = (datos as any).descripcion || (datos as any).motivo || (datos as any).razon || undefined;
 
-              const datos = (aprobacion.datosSolicitud as any) || {};
-              const descOriginal = datos.descripcion || datos.motivo || datos.razon || undefined;
-
-              return {
-                ...notif,
-                metadata: {
-                  ...meta,
-                  tipoAprobacion: meta.tipoAprobacion || aprobacion.tipoAprobacion,
-                  estadoAprobacion: aprobacion.estado,
-                  solicitadoPor: meta.solicitadoPor || nombreSolicitante,
-                  revisadoPor: nombreRevisor,
-                  motivoRechazo: aprobacion.comentarios,
-                  descSolicitud: descOriginal,
-                },
+              const enrichedMetadata = {
+                ...meta,
+                ...(datos as any),
+                ...datosExtra,
+                tipoAprobacion: meta.tipoAprobacion || aprobacion.tipoAprobacion,
+                estadoAprobacion: aprobacion.estado,
+                solicitadoPor: meta.solicitadoPor || nombreSolicitante,
+                revisadoPor: nombreRevisor,
+                motivoRechazo: aprobacion.comentarios,
+                descSolicitud: descOriginal,
               };
+
+              enrichedNotif = {
+                ...enrichedNotif,
+                metadata: enrichedMetadata,
+                detalles: { ...((notif as any).detalles || {}), ...(datos as any), ...datosExtra }
+              };
+            } 
+            
+            // 2. Si no es aprobación, intentar buscar como Préstamo directo
+            if (!aprobacionReal && (notif.entidad === 'PRESTAMO' || notif.entidad === 'Prestamo')) {
+               const p = await this.prisma.prestamo.findUnique({
+                  where: { id: notif.entidadId },
+                  include: { 
+                    cliente: true, 
+                    producto: { 
+                      select: { 
+                        nombre: true, 
+                        precios: true 
+                      } 
+                    } 
+                  }
+               });
+               if (p) {
+                  let articuloManual = '';
+                  let cuotaInicialManual = 0;
+                  try {
+                    const apAsociada = await this.prisma.aprobacion.findFirst({
+                      where: { referenciaId: p.id, tablaReferencia: 'Prestamo' },
+                      select: { datosSolicitud: true }
+                    });
+                    if (apAsociada) {
+                      const d = typeof apAsociada.datosSolicitud === 'string' ? JSON.parse(apAsociada.datosSolicitud) : apAsociada.datosSolicitud;
+                      articuloManual = (d as any).articulo || (d as any).articuloNombre || '';
+                      cuotaInicialManual = Number((d as any).cuotaInicial || 0);
+                    }
+                  } catch {}
+
+                  const pData = {
+                    cedula: String(p.cliente.dni),
+                    telefono: String(p.cliente.telefono),
+                    cliente: `${p.cliente.nombres} ${p.cliente.apellidos}`,
+                    monto: Number(p.monto),
+                    valorArticulo: Number(p.monto) + Number(p.cuotaInicial || cuotaInicialManual || 0),
+                    articulo: p.producto?.nombre || articuloManual || 'Artículo',
+                    frecuenciaPago: p.frecuenciaPago,
+                    cuotas: p.cantidadCuotas,
+                    plazoMeses: p.plazoMeses,
+                    tipoAmortizacion: p.tipoAmortizacion,
+                    cuotaInicial: Number(p.cuotaInicial || cuotaInicialManual || 0),
+                    porcentaje: Number(p.tasaInteres || 0),
+                    planesArticulo: Array.isArray(p.producto?.precios)
+                      ? p.producto?.precios
+                          .filter((pr) => pr.activo && pr.meses > 0)
+                          .map((pr) => ({
+                            meses: pr.meses,
+                            precioTotal: Number(pr.precio),
+                          }))
+                      : undefined,
+                  };
+                  enrichedNotif = {
+                    ...enrichedNotif,
+                    metadata: { ...meta, ...pData },
+                    detalles: { ...((notif as any).detalles || {}), ...pData }
+                  };
+               }
             }
-          } catch {
-            // Si no se encuentra la aprobación, retornar la notificación tal cual
+          } catch (error) {
+            this.logger.error('Error in notification enrichment:', error);
           }
         }
 
-        return notif;
+        // Aplicamos la limpieza de texto al final para asegurarnos de que el texto enriquecido 
+        // o el original queden estandarizados.
+        return {
+          ...enrichedNotif,
+          titulo: this.cleanNotificationText(enrichedNotif.titulo),
+          mensaje: this.cleanNotificationText(enrichedNotif.mensaje)
+        };
       }),
     );
 

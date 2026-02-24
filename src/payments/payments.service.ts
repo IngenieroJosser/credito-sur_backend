@@ -14,6 +14,7 @@ import {
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { AuditService } from '../audit/audit.service';
+import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 
 @Injectable()
 export class PaymentsService {
@@ -23,6 +24,7 @@ export class PaymentsService {
     private readonly prisma: PrismaService,
     private notificacionesService: NotificacionesService,
     private auditService: AuditService,
+    private notificacionesGateway: NotificacionesGateway,
   ) {}
 
   /**
@@ -196,9 +198,6 @@ export class PaymentsService {
           cliente: {
             select: { id: true, nombres: true, apellidos: true },
           },
-            cobrador: {
-              select: { id: true, nombres: true, apellidos: true },
-            },
         },
       });
 
@@ -313,23 +312,33 @@ export class PaymentsService {
     // Notificar
     await this.notificacionesService.notifyCoordinator({
       titulo: 'Pago Registrado',
-      mensaje: `${resultado.pago.cobrador?.nombres || ''} ${resultado.pago.cobrador?.apellidos || ''} registró un pago de ${montoTotal.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} para ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
-      tipo: 'PAGO',
+      mensaje: `Se registró un pago de ${montoTotal.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} para ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
+      tipo: 'EXITO',
       entidad: 'PAGO',
       entidadId: resultado.pago.id,
       metadata: {
         prestamoIdVal,
         capitalRecuperado: capitalTotal,
         interesRecuperado: interesTotal,
-        solicitadoPor: resultado.pago.cobrador
-          ? `${resultado.pago.cobrador.nombres} ${resultado.pago.cobrador.apellidos}`.trim()
-          : undefined,
       },
     });
 
     this.logger.log(
       `Pago ${numeroPago} registrado: capital=${capitalTotal.toFixed(2)}, interés=${interesTotal.toFixed(2)}, saldo=${resultado.descomposicion.saldoNuevo.toFixed(2)}`,
     );
+
+    this.notificacionesGateway.broadcastPagosActualizados({
+      accion: 'CREAR',
+      pagoId: resultado.pago.id,
+    });
+    this.notificacionesGateway.broadcastPrestamosActualizados({
+      accion: 'PAGO',
+      prestamoId: prestamoIdVal,
+    });
+    this.notificacionesGateway.broadcastRutasActualizadas({
+      accion: 'PAGO',
+    });
+    this.notificacionesGateway.broadcastDashboardsActualizados({});
 
     return resultado;
   }

@@ -75,4 +75,8 @@ export class CreateLoanDto {
   @IsEnum(TipoAmortizacion)
   @IsOptional()
   tipoAmortizacion?: TipoAmortizacion;
+
+  @IsString()
+  @IsOptional()
+  garantia?: string;
 }

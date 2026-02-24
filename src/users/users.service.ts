@@ -13,12 +13,14 @@ import * as argon2 from 'argon2';
 import { EstadoUsuario, RolUsuario } from '@prisma/client';
 import { UnauthorizedException } from '@nestjs/common';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 
 @Injectable()
 export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly notificacionesGateway: NotificacionesGateway,
   ) {}
 
   async crear(usuarioDto: CreateUserDto, usuarioCreadorId?: string) {
@@ -79,7 +81,7 @@ export class UsersService {
       where: { nombre: usuarioDto.rol },
     });
 
-    return this.prisma.$transaction(async (tx) => {
+    const nuevoUsuario = await this.prisma.$transaction(async (tx) => {
       // Si es el primer usuario del sistema, marcarlo como principal
       const totalUsuarios = await tx.usuario.count();
       const esPrimerUsuario = totalUsuarios === 0;
@@ -138,6 +140,13 @@ export class UsersService {
 
       return nuevoUsuario;
     });
+
+    this.notificacionesGateway.broadcastUsuariosActualizados({
+      accion: 'CREAR',
+      usuarioId: nuevoUsuario.id,
+    });
+
+    return nuevoUsuario;
   }
 
   async obtenerTodos() {
@@ -404,6 +413,11 @@ export class UsersService {
       });
     }
 
+    this.notificacionesGateway.broadcastUsuariosActualizados({
+      accion: 'ACTUALIZAR',
+      usuarioId: usuarioActualizado.id,
+    });
+
     return usuarioActualizado;
   }
 
@@ -423,7 +437,7 @@ export class UsersService {
       }
 
       // Si se elimina el Superadmin principal, transferir el rol a otro Superadmin
-      return this.prisma.$transaction(async (tx) => {
+      const eliminado = await this.prisma.$transaction(async (tx) => {
         // Buscar otro Superadmin activo
         const nuevoSuperadminPrincipal = await tx.usuario.findFirst({
           where: {
@@ -455,16 +469,29 @@ export class UsersService {
           },
         });
       });
+
+      this.notificacionesGateway.broadcastUsuariosActualizados({
+        accion: 'ELIMINAR',
+        usuarioId: id,
+      });
+
+      return eliminado;
     }
 
-    // Usuario normal - eliminar directamente
-    return this.prisma.usuario.update({
+    const eliminado = await this.prisma.usuario.update({
       where: { id },
       data: {
         eliminadoEn: new Date(),
         estado: EstadoUsuario.INACTIVO,
       },
     });
+
+    this.notificacionesGateway.broadcastUsuariosActualizados({
+      accion: 'ELIMINAR',
+      usuarioId: id,
+    });
+
+    return eliminado;
   }
 
   async toggleEstado(id: string, nuevoEstado: EstadoUsuario, usuarioModificadorId?: string) {
@@ -483,7 +510,7 @@ export class UsersService {
       }
     }
 
-    return this.prisma.usuario.update({
+    const usuarioActualizado = await this.prisma.usuario.update({
       where: { id },
       data: {
         estado: nuevoEstado,
@@ -494,6 +521,13 @@ export class UsersService {
         estado: true,
       },
     });
+
+    this.notificacionesGateway.broadcastUsuariosActualizados({
+      accion: 'TOGGLE_ESTADO',
+      usuarioId: usuarioActualizado.id,
+    });
+
+    return usuarioActualizado;
   }
 
   async changePassword(id: string, changePasswordDto: ChangePasswordDto) {
