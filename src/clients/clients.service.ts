@@ -26,13 +26,19 @@ export class ClientsService {
   async create(createClientDto: CreateClientDto) {
     // Validar si ya existe un cliente con ese documento
     const clienteExistente = await this.prisma.cliente.findFirst({
-      where: { dni: createClientDto.dni, eliminadoEn: null },
+      where: { dni: createClientDto.dni },
     });
 
     if (clienteExistente) {
-      throw new ConflictException(
-        `Ya existe un cliente registrado con ese número de documento: ${createClientDto.dni}`,
-      );
+      if (!clienteExistente.eliminadoEn) {
+        throw new ConflictException(
+          `Ya existe un cliente activo con ese número de documento: ${createClientDto.dni}`,
+        );
+      } else {
+        throw new ConflictException(
+          `El cliente con documento ${createClientDto.dni} ya existe pero está archivado. Restáuralo desde la sección de Archivados.`,
+        );
+      }
     }
 
     // Generar código único (simple por ahora)
@@ -304,28 +310,9 @@ export class ClientsService {
         orderBy: { creadoEn: 'desc' },
       });
 
-      // Si no hay filtros específicos de rutas o riesgo, incluimos aprobaciones pendientes
-      let aprobacionesPendientes: any[] = [];
-      if (nivelRiesgo === 'all' && (ruta === '' || !ruta)) {
-        const queryAprobaciones: any = {
-          estado: 'PENDIENTE',
-          tipoAprobacion: 'NUEVO_CLIENTE',
-        };
-
-        // Aplicar búsqueda a las aprobaciones también si existe
-        if (search && search.trim() !== '') {
-          const s = search.trim();
-          queryAprobaciones.datosSolicitud = {
-            contains: s,
-          };
-        }
-
-        aprobacionesPendientes = await this.prisma.aprobacion.findMany({
-          where: queryAprobaciones,
-          include: { solicitadoPor: true },
-          orderBy: { creadoEn: 'desc' },
-        });
-      }
+      // Ya no necesitamos incluir aprobacionesPendientes por separado porque ahora
+      // todos los clientes se crean en la tabla principal con estado PENDIENTE.
+      const aprobacionesPendientes: any[] = [];
 
       // Calcular estadísticas (Restaurado)
       const totalClientes = await this.prisma.cliente.count({
@@ -664,13 +651,19 @@ export class ClientsService {
     try {
       // Validar si ya existe un cliente con ese documento
       const clienteExistente = await this.prisma.cliente.findFirst({
-        where: { dni: data.dni, eliminadoEn: null },
+        where: { dni: data.dni },
       });
 
       if (clienteExistente) {
-        throw new ConflictException(
-          `Ya existe un cliente registrado con ese número de documento: ${data.dni}`,
-        );
+        if (!clienteExistente.eliminadoEn) {
+          throw new ConflictException(
+            `Ya existe un cliente activo con ese número de documento: ${data.dni}`,
+          );
+        } else {
+          throw new ConflictException(
+            `El cliente con documento ${data.dni} ya existe pero está archivado. Restáuralo desde la sección de Archivados.`,
+          );
+        }
       }
 
       // Buscar un usuario para asignar como creador si no viene uno (TODO: Usar usuario autenticado)
@@ -697,83 +690,55 @@ export class ClientsService {
       // Generar código único para el cliente
       const codigo = `CLI-${Date.now().toString().slice(-6)}`;
 
-      // Si el creador es ADMIN o SUPER_ADMINISTRADOR -> crear cliente aprobado inmediatamente
+      // Flujo de aprobación pendiente para todos los roles
+      // 1. Crear el cliente en la base de datos con estado PENDIENTE
+      const cliente = await this.prisma.cliente.create({
+        data: {
+          codigo,
+          dni: data.dni,
+          nombres: data.nombres,
+          apellidos: data.apellidos,
+          telefono: data.telefono,
+          correo: data.correo,
+          direccion: data.direccion,
+          referencia: data.referencia,
+          creadoPorId: solicitadoPorId,
+          estadoAprobacion: 'PENDIENTE',
+          nivelRiesgo: 'VERDE',
+          puntaje: 100,
+        },
+      });
+
+      // 2. Crear multimedia si viene en la solicitud
       if (
-        solicitante.rol === RolUsuario.ADMIN ||
-        solicitante.rol === RolUsuario.SUPER_ADMINISTRADOR
+        data.archivos &&
+        Array.isArray(data.archivos) &&
+        data.archivos.length > 0
       ) {
-        const cliente = await this.prisma.cliente.create({
-          data: {
-            codigo,
-            dni: data.dni,
-            nombres: data.nombres,
-            apellidos: data.apellidos,
-            telefono: data.telefono,
-            correo: data.correo,
-            direccion: data.direccion,
-            referencia: data.referencia,
-            creadoPorId: solicitadoPorId,
-            aprobadoPorId: solicitadoPorId,
-            estadoAprobacion: 'APROBADO',
-            nivelRiesgo: 'VERDE',
-            puntaje: 100,
-          },
+        await this.prisma.multimedia.createMany({
+          data: data.archivos.map((archivo: any) => ({
+            clienteId: cliente.id,
+            tipoContenido: archivo.tipoContenido,
+            tipoArchivo: archivo.tipoArchivo,
+            formato: archivo.nombreOriginal?.split('.').pop() || 'bin',
+            nombreOriginal: archivo.nombreOriginal,
+            nombreAlmacenamiento: archivo.nombreAlmacenamiento,
+            ruta: archivo.ruta,
+            url: `/uploads/${archivo.nombreAlmacenamiento}`,
+            tamanoBytes: archivo.tamanoBytes,
+            subidoPorId: solicitadoPorId,
+            esPrincipal: archivo.tipoContenido === 'FOTO_PERFIL',
+            estado: 'ACTIVO',
+          })),
         });
-
-        // Crear multimedia si viene en la solicitud
-        if (
-          data.archivos &&
-          Array.isArray(data.archivos) &&
-          data.archivos.length > 0
-        ) {
-          await this.prisma.multimedia.createMany({
-            data: data.archivos.map((archivo: any) => ({
-              clienteId: cliente.id,
-              tipoContenido: archivo.tipoContenido,
-              tipoArchivo: archivo.tipoArchivo,
-              formato: archivo.nombreOriginal?.split('.').pop() || 'bin',
-              nombreOriginal: archivo.nombreOriginal,
-              nombreAlmacenamiento: archivo.nombreAlmacenamiento,
-              ruta: archivo.ruta,
-              url: `/uploads/${archivo.nombreAlmacenamiento}`,
-              tamanoBytes: archivo.tamanoBytes,
-              subidoPorId: solicitadoPorId,
-              esPrincipal: archivo.tipoContenido === 'FOTO_PERFIL',
-              estado: 'ACTIVO',
-            })),
-          });
-        }
-
-        // Registrar en auditoría
-        await this.auditService.create({
-          usuarioId: solicitadoPorId,
-          accion: 'CREAR_CLIENTE',
-          entidad: 'Cliente',
-          entidadId: cliente.id,
-          datosNuevos: {
-            codigo: cliente.codigo,
-            dni: cliente.dni,
-            nombres: cliente.nombres,
-            apellidos: cliente.apellidos,
-            telefono: cliente.telefono,
-            correo: cliente.correo,
-            direccion: cliente.direccion,
-            estadoAprobacion: cliente.estadoAprobacion,
-          },
-        });
-
-        this.logger.log(
-          `[DEBUG] Cliente aprobado automáticamente por ${solicitante.rol}: ${cliente.id}`,
-        );
-        return cliente;
       }
 
-      // Caso contrario -> flujo de aprobación pendiente
+      // 3. Crear el registro de aprobación referenciando al cliente
       const aprobacion = await this.prisma.aprobacion.create({
         data: {
           tipoAprobacion: 'NUEVO_CLIENTE',
-          referenciaId: codigo,
-          tablaReferencia: 'clientes',
+          referenciaId: cliente.id,
+          tablaReferencia: 'Cliente',
           solicitadoPorId: solicitadoPorId,
           estado: 'PENDIENTE',
           datosSolicitud: JSON.stringify({
@@ -807,7 +772,7 @@ export class ClientsService {
         await this.notificacionesService.create({
           usuarioId: aprobador.id,
           titulo: 'Nueva Solicitud de Cliente',
-          mensaje: `${solicitanteInfo?.nombres} ${solicitanteInfo?.apellidos} ha solicitado la aprobación de un nuevo cliente: ${data.nombres} ${data.apellidos} (DNI: ${data.dni})`,
+          mensaje: `${solicitanteInfo?.nombres} ${solicitanteInfo?.apellidos} ha solicitado la aprobación de un nuevo cliente: ${data.nombres} ${data.apellidos} (CC: ${data.dni})`,
           tipo: 'APROBACION',
           entidad: 'Aprobacion',
           entidadId: aprobacion.id,
@@ -816,14 +781,22 @@ export class ClientsService {
             clienteNombre: `${data.nombres} ${data.apellidos}`,
             clienteDni: data.dni,
             solicitadoPor: `${solicitanteInfo?.nombres} ${solicitanteInfo?.apellidos}`,
+            clienteId: cliente.id,
+            archivos: data.archivos || [],
           },
         });
       }
 
-      this.logger.log(`[DEBUG] Aprobación creada con ID: ${aprobacion.id}. Notificaciones enviadas a ${aprobadores.length} aprobadores.`);
+      this.notificacionesGateway.broadcastClientesActualizados({
+        accion: 'CREAR',
+        clienteId: cliente.id,
+      });
+
+      this.logger.log(`[DEBUG] Cliente creado con estado PENDIENTE (ID: ${cliente.id}) y aprobación creada (ID: ${aprobacion.id}). Notificaciones enviadas a ${aprobadores.length} aprobadores.`);
       return {
         mensaje: 'Cliente creado exitosamente. Pendiente de aprobación.',
         aprobacionId: aprobacion.id,
+        clienteId: cliente.id,
         clienteCodigo: codigo,
       };
     } catch (error) {
@@ -850,52 +823,24 @@ export class ClientsService {
       // Parsear datos de solicitud
       const datosSolicitud = JSON.parse(aprobacion.datosSolicitud as string);
 
-      // Crear el cliente
-      const cliente = await this.prisma.cliente.create({
+      // El cliente ya fue creado con estado PENDIENTE, ahora lo activamos
+      const cliente = await this.prisma.cliente.update({
+        where: { id: aprobacion.referenciaId },
         data: {
-          codigo: aprobacion.referenciaId,
-          dni: datosSolicitud.dni,
-          nombres: datosSolicitud.nombres,
-          apellidos: datosSolicitud.apellidos,
-          telefono: datosSolicitud.telefono,
-          correo: datosSolicitud.correo,
-          direccion: datosSolicitud.direccion,
-          referencia: datosSolicitud.referencia,
-
-          creadoPorId: aprobacion.solicitadoPorId,
-          aprobadoPorId: aprobadoPorId,
           estadoAprobacion: 'APROBADO',
-          nivelRiesgo: 'VERDE',
-          puntaje: 100,
+          aprobadoPorId: aprobadoPorId,
+          // Actualizar datos si cambiaron durante la aprobación
+          dni: datosAprobados?.dni || datosSolicitud.dni,
+          nombres: datosAprobados?.nombres || datosSolicitud.nombres,
+          apellidos: datosAprobados?.apellidos || datosSolicitud.apellidos,
+          telefono: datosAprobados?.telefono || datosSolicitud.telefono,
+          correo: datosAprobados?.correo || datosSolicitud.correo,
+          direccion: datosAprobados?.direccion || datosSolicitud.direccion,
+          referencia: datosAprobados?.referencia || datosSolicitud.referencia,
         },
       });
 
-      // Si hay archivos en la solicitud, crearlos
-      if (
-        datosSolicitud.archivos &&
-        Array.isArray(datosSolicitud.archivos) &&
-        datosSolicitud.archivos.length > 0
-      ) {
-        // Mapear tipos de contenido a Enum de Prisma si es necesario
-        // Asumimos que vienen validados
-
-        await this.prisma.multimedia.createMany({
-          data: datosSolicitud.archivos.map((archivo: any) => ({
-            clienteId: cliente.id,
-            tipoContenido: archivo.tipoContenido,
-            tipoArchivo: archivo.tipoArchivo,
-            formato: archivo.nombreOriginal.split('.').pop() || 'bin',
-            nombreOriginal: archivo.nombreOriginal,
-            nombreAlmacenamiento: archivo.nombreAlmacenamiento,
-            ruta: archivo.ruta,
-            url: `/uploads/${archivo.nombreAlmacenamiento}`, // URL relativa
-            tamanoBytes: archivo.tamanoBytes,
-            subidoPorId: aprobacion.solicitadoPorId,
-            esPrincipal: archivo.tipoContenido === 'FOTO_PERFIL',
-            estado: 'ACTIVO',
-          })),
-        });
-      }
+      // Los archivos ya fueron creados en createClient, no es necesario volver a crearlos aquí
 
       // Actualizar la aprobación
       await this.prisma.aprobacion.update({
@@ -964,6 +909,15 @@ export class ClientsService {
           estado: 'RECHAZADO',
           datosAprobados: razon ? JSON.stringify({ razon }) : undefined,
           revisadoEn: new Date(),
+        },
+      });
+
+      // También actualizamos el estado del cliente a RECHAZADO
+      await this.prisma.cliente.update({
+        where: { id: aprobacion.referenciaId },
+        data: {
+          estadoAprobacion: 'RECHAZADO',
+          eliminadoEn: new Date(), // Lo ocultamos de la lista normal
         },
       });
 
