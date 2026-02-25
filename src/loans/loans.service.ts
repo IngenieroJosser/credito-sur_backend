@@ -1563,7 +1563,7 @@ export class LoansService implements OnModuleInit {
           fechaInicio,
           fechaFin,
           estado: esAutoAprobado ? EstadoPrestamo.ACTIVO : EstadoPrestamo.PENDIENTE_APROBACION,
-          estadoAprobacion: esAutoAprobado ? 'APROBADO' : 'PENDIENTE',
+          estadoAprobacion: esAutoAprobado ? EstadoAprobacion.APROBADO : EstadoAprobacion.PENDIENTE,
           aprobadoPorId: esAutoAprobado ? data.creadoPorId : undefined,
           creadoPorId: data.creadoPorId,
           interesTotal,

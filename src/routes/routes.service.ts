@@ -656,6 +656,12 @@ export class RoutesService {
         },
       });
 
+      this.notificacionesGateway.broadcastRutasActualizadas({
+        accion: 'ACTUALIZAR',
+        rutaId: updatedRoute.id,
+      });
+      this.notificacionesGateway.broadcastDashboardsActualizados({});
+
       return updatedRoute;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -713,13 +719,19 @@ export class RoutesService {
 
     try {
       // Soft delete
-      await this.prisma.ruta.update({
+      const updatedRoute = await this.prisma.ruta.update({
         where: { id },
         data: {
           eliminadoEn: new Date(),
           activa: false,
         },
       });
+
+      this.notificacionesGateway.broadcastRutasActualizadas({
+        accion: 'ELIMINAR',
+        rutaId: updatedRoute.id,
+      });
+      this.notificacionesGateway.broadcastDashboardsActualizados({});
 
       return { message: 'Ruta eliminada correctamente' };
     } catch (error) {
@@ -758,6 +770,12 @@ export class RoutesService {
           },
         },
       });
+
+      this.notificacionesGateway.broadcastRutasActualizadas({
+        accion: 'ACTUALIZAR',
+        rutaId: updatedRoute.id,
+      });
+      this.notificacionesGateway.broadcastDashboardsActualizados({});
 
       return {
         ...updatedRoute,
