@@ -324,6 +324,7 @@ export class ReportsService {
           diasMora,
           montoMora,
           montoTotalDeuda: prestamo.saldoPendiente.toNumber(),
+          montoOriginal: prestamo.monto.toNumber(),
           cuotasVencidas: prestamo.cuotas.length,
           ruta: asignacion?.ruta?.nombre || 'Sin asignar',
           cobrador: asignacion?.ruta?.cobrador
@@ -334,6 +335,7 @@ export class ReportsService {
           ultimoPago: ultimoPago
             ? format(ultimoPago.fechaPago, 'yyyy-MM-dd')
             : undefined,
+          fechaVencimiento: format(prestamo.fechaFin, 'yyyy-MM-dd'),
         } as PrestamoMoraDto;
       }),
     );
