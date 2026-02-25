@@ -129,6 +129,19 @@ export class ApprovalsService {
       } catch (error) {
         this.logger.error(`Error actualizando préstamo rechazado ${approval.referenciaId}:`, error);
       }
+    } else if (approval.tipoAprobacion === TipoAprobacion.NUEVO_CLIENTE && approval.referenciaId) {
+      try {
+        await this.prisma.cliente.update({
+          where: { id: approval.referenciaId },
+          data: {
+            estadoAprobacion: EstadoAprobacion.RECHAZADO,
+            aprobadoPorId: rechazadoPorId || undefined,
+            eliminadoEn: new Date(), // Oculta el cliente del listado
+          },
+        });
+      } catch (error) {
+        this.logger.error(`Error actualizando cliente rechazado ${approval.referenciaId}:`, error);
+      }
     }
 
     let nombreRevisor: string | undefined;
@@ -172,21 +185,23 @@ export class ApprovalsService {
         ? JSON.parse(approval.datosSolicitud)
         : approval.datosSolicitud;
 
-    const cliente = await this.prisma.cliente.create({
+    // El cliente ya existe con estado PENDIENTE, lo actualizamos a APROBADO
+    const cliente = await this.prisma.cliente.update({
+      where: { id: approval.referenciaId },
       data: {
+        estadoAprobacion: EstadoAprobacion.APROBADO,
+        // Sincronizar otros campos por si hubo ediciones en la aprobación
         dni: data.dni,
         nombres: data.nombres,
         apellidos: data.apellidos,
         telefono: data.telefono,
         direccion: data.direccion,
         correo: data.correo,
-        creadoPorId: approval.solicitadoPorId,
-        estadoAprobacion: EstadoAprobacion.APROBADO,
-        codigo: `CL-${Date.now()}`,
       },
     });
+
     this.notificacionesGateway.broadcastClientesActualizados({
-      accion: 'CREAR',
+      accion: 'ACTUALIZAR',
       clienteId: cliente.id,
     });
   }

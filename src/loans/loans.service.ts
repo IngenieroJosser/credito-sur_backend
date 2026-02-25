@@ -979,6 +979,7 @@ export class LoansService implements OnModuleInit {
 
       // Determinar tipo de amortización
       const tipoAmort = createLoanDto.tipoAmortizacion || TipoAmortizacion.INTERES_SIMPLE;
+      const tasaInteres = createLoanDto.tasaInteres || 0;
 
       let interesTotal: number;
       let cuotasData: Array<{
@@ -994,7 +995,7 @@ export class LoansService implements OnModuleInit {
         // Amortización francesa (cuota fija, interés decreciente)
         const amortizacion = this.calcularAmortizacionFrancesa(
           createLoanDto.monto,
-          createLoanDto.tasaInteres,
+          tasaInteres,
           cantidadCuotas,
           createLoanDto.plazoMeses,
           createLoanDto.frecuenciaPago,
@@ -1012,8 +1013,8 @@ export class LoansService implements OnModuleInit {
           };
         });
       } else {
-        // Interés simple (tasa plana: capital × tasa / 100)
-        interesTotal = (createLoanDto.monto * createLoanDto.tasaInteres) / 100;
+        // Interés simple (tasa plana: capital × tasa × plazoMeses / 100)
+        interesTotal = (createLoanDto.monto * tasaInteres * createLoanDto.plazoMeses) / 100;
         const montoTotal = createLoanDto.monto + interesTotal;
         const montoCuota = cantidadCuotas > 0 ? montoTotal / cantidadCuotas : 0;
         const montoCapitalCuota = cantidadCuotas > 0 ? createLoanDto.monto / cantidadCuotas : 0;
@@ -1042,8 +1043,8 @@ export class LoansService implements OnModuleInit {
           tipoAmortizacion: tipoAmort,
           monto: createLoanDto.monto,
           cuotaInicial: createLoanDto.cuotaInicial || 0,
-          tasaInteres: createLoanDto.tasaInteres,
-          tasaInteresMora: createLoanDto.tasaInteresMora,
+          tasaInteres: tasaInteres,
+          tasaInteresMora: createLoanDto.tasaInteresMora || 2,
           plazoMeses: createLoanDto.plazoMeses,
           frecuenciaPago: createLoanDto.frecuenciaPago,
           cantidadCuotas,
@@ -1481,6 +1482,7 @@ export class LoansService implements OnModuleInit {
 
       // Determinar tipo de amortización
       const tipoAmort = data.tipoAmortizacion || TipoAmortizacion.INTERES_SIMPLE;
+      const tasaInteres = data.tasaInteres || 0;
 
       let interesTotal: number;
       let cuotasData: Array<{
@@ -1496,7 +1498,7 @@ export class LoansService implements OnModuleInit {
         // Amortización francesa (cuota fija, interés decreciente mes a mes)
         const amortizacion = this.calcularAmortizacionFrancesa(
           montoFinanciar,
-          data.tasaInteres,
+          tasaInteres,
           cantidadCuotas,
           data.plazoMeses,
           data.frecuenciaPago,
@@ -1516,13 +1518,13 @@ export class LoansService implements OnModuleInit {
       } else {
         // Interés simple (tasa plana: capital × tasa × plazoMeses / 100)
         // CORREGIDO: Multiplicar por plazoMeses para calcular el interés total del período
-        interesTotal = (montoFinanciar * data.tasaInteres * data.plazoMeses) / 100;
+        interesTotal = (montoFinanciar * tasaInteres * data.plazoMeses) / 100;
         const montoTotalSimple = montoFinanciar + interesTotal;
         const montoCuota = cantidadCuotas > 0 ? montoTotalSimple / cantidadCuotas : 0;
         const montoCapitalCuota = cantidadCuotas > 0 ? montoFinanciar / cantidadCuotas : 0;
         const montoInteresCuota = cantidadCuotas > 0 ? interesTotal / cantidadCuotas : 0;
         
-        this.logger.log(`[LOAN CALCULATION] Capital: ${montoFinanciar}, Tasa: ${data.tasaInteres}%, Plazo: ${data.plazoMeses} meses`);
+        this.logger.log(`[LOAN CALCULATION] Capital: ${montoFinanciar}, Tasa: ${tasaInteres}%, Plazo: ${data.plazoMeses} meses`);
         this.logger.log(`[LOAN CALCULATION] Interés Total: ${interesTotal}, Cuotas: ${cantidadCuotas}, Monto/Cuota: ${montoCuota}`);
         
         cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => {
@@ -1554,7 +1556,7 @@ export class LoansService implements OnModuleInit {
           tipoPrestamo: data.tipoPrestamo,
           tipoAmortizacion: tipoAmort,
           monto: montoFinanciar,
-          tasaInteres: data.tasaInteres,
+          tasaInteres: tasaInteres,
           tasaInteresMora: data.tasaInteresMora || 2,
           plazoMeses: data.plazoMeses,
           frecuenciaPago: data.frecuenciaPago,
@@ -1593,6 +1595,11 @@ export class LoansService implements OnModuleInit {
       const totalCuotasPrometidas = cantidadCuotas;
       const isFinanciamientoArticulo = data.tipoPrestamo === 'ARTICULO';
 
+      const safeNumber = (val: any) => {
+        const n = Number(val);
+        return isNaN(n) ? 0 : n;
+      };
+
       // Crear registro de aprobación
       const aprobacion = await this.prisma.aprobacion.create({
         data: {
@@ -1605,15 +1612,15 @@ export class LoansService implements OnModuleInit {
             cliente: `${cliente.nombres} ${cliente.apellidos}`,
             cedula: String(cliente.dni),
             telefono: String(cliente.telefono),
-            monto: Number(prestamo.monto),
+            monto: safeNumber(prestamo.monto),
             tipo: String(data.tipoPrestamo),
             articulo: String(articuloNombre),
-            valorArticulo: Number((data as any).valorArticulo || (Number(data.monto || 0) + Number(data.cuotaInicial || 0))), 
-            cuotas: Number(totalCuotasPrometidas),
-            plazoMeses: Number(data.plazoMeses),
-            porcentaje: Number(isFinanciamientoArticulo ? 0 : data.tasaInteres),
+            valorArticulo: safeNumber((data as any).valorArticulo || (safeNumber(data.monto) + safeNumber(data.cuotaInicial))), 
+            cuotas: safeNumber(totalCuotasPrometidas),
+            plazoMeses: safeNumber(data.plazoMeses),
+            porcentaje: safeNumber(isFinanciamientoArticulo ? 0 : tasaInteres),
             frecuenciaPago: String(data.frecuenciaPago),
-            cuotaInicial: Number(data.cuotaInicial || 0),
+            cuotaInicial: safeNumber(data.cuotaInicial),
           },
           montoSolicitud: prestamo.monto,
           estado: esAutoAprobado ? EstadoAprobacion.APROBADO : EstadoAprobacion.PENDIENTE,
@@ -1690,15 +1697,15 @@ export class LoansService implements OnModuleInit {
             cliente: `${cliente.nombres} ${cliente.apellidos}`,
             cedula: String(cliente.dni),
             telefono: String(cliente.telefono),
-            monto: Number(montoFinanciar),
+            monto: safeNumber(montoFinanciar),
             tipo: String(data.tipoPrestamo),
             articulo: String(articuloNombre),
-            valorArticulo: Number((data as any).monto),
-            cuotas: Number(totalCuotasPrometidas),
-            porcentaje: Number(isFinanciamientoArticulo ? 0 : data.tasaInteres),
+            valorArticulo: safeNumber(data.monto),
+            cuotas: safeNumber(totalCuotasPrometidas),
+            porcentaje: safeNumber(isFinanciamientoArticulo ? 0 : tasaInteres),
             frecuenciaPago: String(data.frecuenciaPago),
-            cuotaInicial: Number(data.cuotaInicial || 0),
-            plazoMeses: Number(data.plazoMeses),
+            cuotaInicial: safeNumber(data.cuotaInicial),
+            plazoMeses: safeNumber(data.plazoMeses),
             tipoAmortizacion: String(tipoAmort),
             fechaInicio: fechaInicio.toISOString(),
           },
