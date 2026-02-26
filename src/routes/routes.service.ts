@@ -1140,6 +1140,60 @@ export class RoutesService {
     }
   }
 
+  /**
+   * Mueve un crédito específico de un cliente a otra ruta.
+   * Como la asignación es por cliente, esto crea una nueva asignación del cliente
+   * en la ruta destino sin eliminar la original, permitiendo que el cliente
+   * aparezca en rutas distintas según el tipo/frecuencia de cada crédito.
+   */
+  async moveLoan(prestamoId: string, toRutaId: string) {
+    try {
+      const prestamo = await this.prisma.prestamo.findUnique({
+        where: { id: prestamoId },
+        select: { id: true, clienteId: true, frecuenciaPago: true, estado: true },
+      });
+      if (!prestamo) throw new NotFoundException('Préstamo no encontrado');
+
+      const rutaDestino = await this.prisma.ruta.findUnique({
+        where: { id: toRutaId, eliminadoEn: null },
+      });
+      if (!rutaDestino) throw new NotFoundException('Ruta destino no encontrada');
+
+      const yaAsignado = await this.prisma.asignacionRuta.findFirst({
+        where: { clienteId: prestamo.clienteId, rutaId: toRutaId, activa: true },
+      });
+
+      if (yaAsignado) {
+        return { message: 'El cliente ya está asignado a esa ruta' };
+      }
+
+      const maxOrden = await this.prisma.asignacionRuta.aggregate({
+        where: { rutaId: toRutaId, activa: true },
+        _max: { ordenVisita: true },
+      });
+
+      await this.prisma.asignacionRuta.create({
+        data: {
+          rutaId: toRutaId,
+          clienteId: prestamo.clienteId,
+          cobradorId: rutaDestino.cobradorId,
+          ordenVisita: (maxOrden._max.ordenVisita || 0) + 1,
+          activa: true,
+        },
+      });
+
+      this.notificacionesGateway.broadcastRutasActualizadas({
+        accion: 'ACTUALIZAR',
+        rutaId: toRutaId,
+      });
+
+      return { message: 'Crédito asignado a la nueva ruta correctamente' };
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      throw new InternalServerErrorException('Error al mover el crédito');
+    }
+  }
+
   async reorderAssignments(rutaId: string) {
     try {
       const asignaciones = await this.prisma.asignacionRuta.findMany({
