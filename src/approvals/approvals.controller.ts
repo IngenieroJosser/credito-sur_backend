@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Param, UseGuards, Request } from '@nestjs/common';
+import { Controller, Post, Get, Body, Param, UseGuards, Request, Query } from '@nestjs/common';
 import { ApprovalsService } from './approvals.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -9,6 +9,30 @@ import { RolUsuario, TipoAprobacion } from '@prisma/client';
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ApprovalsController {
   constructor(private readonly approvalsService: ApprovalsService) {}
+
+  /**
+   * Obtener todas las aprobaciones pendientes, agrupadas por tipo.
+   * Alimenta el módulo de Revisiones del frontend.
+   */
+  @Get('pending')
+  @Roles(
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+  )
+  async getPending(@Query('tipo') tipo?: string) {
+    return this.approvalsService.getPendingApprovals(tipo as TipoAprobacion | undefined);
+  }
+
+  /**
+   * Obtener items escalados para revisión final del SuperAdmin.
+   * Incluye rechazos y eliminaciones que requieren confirmación.
+   */
+  @Get('superadmin-review')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR)
+  async getSuperadminReview() {
+    return this.approvalsService.getSuperadminReviewItems();
+  }
 
   @Post(':id/approve')
   @Roles(
@@ -38,6 +62,17 @@ export class ApprovalsController {
   ) {
     const rechazadoPorId = req.user?.id || req.user?.sub;
     return this.approvalsService.rejectItem(id, body.type, rechazadoPorId, body.motivoRechazo);
+  }
+
+  @Post(':id/confirm-deletion')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR)
+  async confirmDeletion(
+    @Param('id') id: string,
+    @Body() body: { accion: 'CONFIRMAR' | 'REVERTIR'; notas?: string },
+    @Request() req: any,
+  ) {
+    const userId = req.user?.id || req.user?.sub;
+    return this.approvalsService.confirmSuperadminAction(id, body.accion, userId, body.notas);
   }
 
   @Post('history')
