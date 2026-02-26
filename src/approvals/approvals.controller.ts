@@ -29,7 +29,7 @@ export class ApprovalsController {
    * Incluye rechazos y eliminaciones que requieren confirmación.
    */
   @Get('superadmin-review')
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR)
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   async getSuperadminReview() {
     return this.approvalsService.getSuperadminReviewItems();
   }
@@ -65,7 +65,7 @@ export class ApprovalsController {
   }
 
   @Post(':id/confirm-deletion')
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR)
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   async confirmDeletion(
     @Param('id') id: string,
     @Body() body: { accion: 'CONFIRMAR' | 'REVERTIR'; notas?: string },

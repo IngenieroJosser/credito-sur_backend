@@ -7,10 +7,11 @@ import {
 import { CreateClientDto } from './dto/create-client.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { PrismaService } from '../prisma/prisma.service';
-import { AuditService } from '../audit/audit.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
-import { NivelRiesgo, RolUsuario } from '@prisma/client';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+import { ConfiguracionService } from '../configuracion/configuracion.service';
+import { NivelRiesgo, RolUsuario } from '@prisma/client';
+import { AuditService } from '../audit/audit.service';
 
 @Injectable()
 export class ClientsService {
@@ -21,6 +22,7 @@ export class ClientsService {
     private readonly auditService: AuditService,
     private readonly notificacionesService: NotificacionesService,
     private readonly notificacionesGateway: NotificacionesGateway,
+    private readonly configuracionService: ConfiguracionService,
   ) {}
 
   async create(createClientDto: CreateClientDto) {
@@ -690,8 +692,11 @@ export class ClientsService {
       // Generar código único para el cliente
       const codigo = `CLI-${Date.now().toString().slice(-6)}`;
 
-      // Flujo de aprobación pendiente para todos los roles
-      // 1. Crear el cliente en la base de datos con estado PENDIENTE
+      // Flujo de aprobación
+      const autoAprobar = await this.configuracionService.shouldAutoApproveClients();
+      const estadoInicial = autoAprobar ? 'APROBADO' : 'PENDIENTE';
+
+      // 1. Crear el cliente en la base de datos
       const cliente = await this.prisma.cliente.create({
         data: {
           codigo,
@@ -703,7 +708,7 @@ export class ClientsService {
           direccion: data.direccion,
           referencia: data.referencia,
           creadoPorId: solicitadoPorId,
-          estadoAprobacion: 'PENDIENTE',
+          estadoAprobacion: estadoInicial,
           nivelRiesgo: 'VERDE',
           puntaje: 100,
         },
@@ -740,7 +745,7 @@ export class ClientsService {
           referenciaId: cliente.id,
           tablaReferencia: 'Cliente',
           solicitadoPorId: solicitadoPorId,
-          estado: 'PENDIENTE',
+          estado: estadoInicial,
           datosSolicitud: JSON.stringify({
             dni: data.dni,
             nombres: data.nombres,
@@ -751,11 +756,14 @@ export class ClientsService {
             referencia: data.referencia,
             archivos: data.archivos || [],
           }),
+          ...(autoAprobar ? { aprobadoPorId: solicitadoPorId, revisadoEn: new Date() } : {})
         },
       });
 
-      // Enviar notificaciones a todos los SUPER_ADMINISTRADOR, ADMIN y COORDINADOR
-      const aprobadores = await this.prisma.usuario.findMany({
+      // Si se auto-aprobó, no enviamos notificación a los aprobadores (o podríamos notificar de la auto-aprobación)
+      if (!autoAprobar) {
+        // Enviar notificaciones a todos los SUPER_ADMINISTRADOR, ADMIN y COORDINADOR
+        const aprobadores = await this.prisma.usuario.findMany({
         where: {
           rol: { in: [RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR] },
           estado: 'ACTIVO',
@@ -786,15 +794,16 @@ export class ClientsService {
           },
         });
       }
+      } // Fin de if (!autoAprobar)
 
       this.notificacionesGateway.broadcastClientesActualizados({
         accion: 'CREAR',
         clienteId: cliente.id,
       });
 
-      this.logger.log(`[DEBUG] Cliente creado con estado PENDIENTE (ID: ${cliente.id}) y aprobación creada (ID: ${aprobacion.id}). Notificaciones enviadas a ${aprobadores.length} aprobadores.`);
+      this.logger.log(`[DEBUG] Cliente creado con estado ${estadoInicial} (ID: ${cliente.id}) y aprobación creada (ID: ${aprobacion.id}).`);
       return {
-        mensaje: 'Cliente creado exitosamente. Pendiente de aprobación.',
+        mensaje: autoAprobar ? 'Cliente creado y aprobado automáticamente.' : 'Cliente creado exitosamente. Pendiente de aprobación.',
         aprobacionId: aprobacion.id,
         clienteId: cliente.id,
         clienteCodigo: codigo,
