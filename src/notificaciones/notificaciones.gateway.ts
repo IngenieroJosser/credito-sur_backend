@@ -79,6 +79,27 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
   }
 
   /**
+   * Recibir evento del cobrador al finalizar ruta y alertar a todos
+   */
+  @SubscribeMessage('ruta_completada_emit')
+  handleRutaCompletadaEmit(
+    @MessageBody() data: { rutaNombre: string, cobradorNombre: string, recaudo: number, efectividad: number, clientesFaltantes: number },
+    @ConnectedSocket() client: Socket,
+  ) {
+    this.logger.log(`El cobrador completó la ruta: ${data.rutaNombre}`);
+    
+    // Alerta al Coordinador/Supervisor
+    this.server.emit('nueva_notificacion_global', {
+      id: `rta-comp-${Date.now()}`,
+      titulo: 'Cierre de Ruta Completo',
+      mensaje: `Cobrador: ${data.cobradorNombre} cerró la ruta ${data.rutaNombre}. Recaudo Final: $${data.recaudo.toLocaleString('es-CO')} (${data.efectividad}% META). Visitó faltantes: ${data.clientesFaltantes > 0 ? 'Faltaron ' + data.clientesFaltantes : 'Todos visitados'}.`,
+      tipo: 'SISTEMA',
+      fecha: new Date().toISOString(),
+      leida: false,
+    });
+  }
+
+  /**
    * Enviar notificación a un usuario específico
    */
   enviarNotificacionAUsuario(userId: string, notificacion: any) {
