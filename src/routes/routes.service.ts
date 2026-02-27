@@ -11,6 +11,7 @@ import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway'
 import { CreateRouteDto } from './dto/create-route.dto';
 import { UpdateRouteDto } from './dto/update-route.dto';
 import { Prisma, EstadoPrestamo, EstadoCuota } from '@prisma/client';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
 
 @Injectable()
 export class RoutesService {
@@ -18,6 +19,7 @@ export class RoutesService {
     private prisma: PrismaService,
     private auditService: AuditService,
     private notificacionesGateway: NotificacionesGateway,
+    private notificacionesService: NotificacionesService,
   ) {}
 
   async create(createRouteDto: CreateRouteDto) {
@@ -111,6 +113,17 @@ export class RoutesService {
             cobrador: `${route.cobrador.nombres} ${route.cobrador.apellidos}`,
             supervisor: route.supervisor ? `${route.supervisor.nombres} ${route.supervisor.apellidos}` : null,
           },
+        });
+      }
+
+      if (createRouteDto.cobradorId) {
+        await this.notificacionesService.create({
+          usuarioId: createRouteDto.cobradorId,
+          titulo: 'Nueva Ruta Asignada',
+          mensaje: `Se te ha asignado la ruta ${route.nombre} (${route.codigo})`,
+          tipo: 'RUTA',
+          entidad: 'Ruta',
+          entidadId: route.id,
         });
       }
 
@@ -656,6 +669,17 @@ export class RoutesService {
         },
       });
 
+      if (updateRouteDto.cobradorId && updateRouteDto.cobradorId !== existingRoute.cobradorId) {
+        await this.notificacionesService.create({
+          usuarioId: updateRouteDto.cobradorId,
+          titulo: 'Ruta Asignada',
+          mensaje: `Se te ha asignado la ruta ${updatedRoute.nombre} (${updatedRoute.codigo})`,
+          tipo: 'RUTA',
+          entidad: 'Ruta',
+          entidadId: updatedRoute.id,
+        });
+      }
+
       this.notificacionesGateway.broadcastRutasActualizadas({
         accion: 'ACTUALIZAR',
         rutaId: updatedRoute.id,
@@ -770,6 +794,17 @@ export class RoutesService {
           },
         },
       });
+
+      if (updatedRoute.activa && updatedRoute.cobradorId) {
+        await this.notificacionesService.create({
+          usuarioId: updatedRoute.cobradorId,
+          titulo: 'Ruta Activada',
+          mensaje: `Tu ruta ${updatedRoute.nombre} ha sido activada`,
+          tipo: 'RUTA',
+          entidad: 'Ruta',
+          entidadId: updatedRoute.id,
+        });
+      }
 
       this.notificacionesGateway.broadcastRutasActualizadas({
         accion: 'ACTUALIZAR',
@@ -1010,6 +1045,17 @@ export class RoutesService {
         },
       });
 
+      if (cobradorId) {
+        await this.notificacionesService.create({
+          usuarioId: cobradorId,
+          titulo: 'Nuevo Cliente Asignado',
+          mensaje: `Se ha asignado el cliente ${asignacion.cliente.nombres} ${asignacion.cliente.apellidos} a tu ruta ${ruta.nombre}`,
+          tipo: 'CLIENTE',
+          entidad: 'Cliente',
+          entidadId: asignacion.clienteId,
+        });
+      }
+
       return asignacion;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -1044,6 +1090,25 @@ export class RoutesService {
 
       // Reordenar las asignaciones restantes
       await this.reorderAssignments(rutaId);
+
+      const ruta = await this.prisma.ruta.findUnique({
+        where: { id: rutaId },
+        select: { nombre: true, cobradorId: true },
+      });
+
+      const cliente = await this.prisma.cliente.findUnique({
+        where: { id: clienteId },
+        select: { nombres: true, apellidos: true },
+      });
+
+      if (ruta?.cobradorId) {
+        await this.notificacionesService.create({
+          usuarioId: ruta.cobradorId,
+          titulo: 'Cliente Removido',
+          mensaje: `El cliente ${cliente?.nombres} ${cliente?.apellidos} ha sido removido de tu ruta ${ruta.nombre}`,
+          tipo: 'CLIENTE',
+        });
+      }
 
       return { message: 'Cliente removido de la ruta correctamente' };
     } catch (error) {
@@ -1134,9 +1199,90 @@ export class RoutesService {
         this.reorderAssignments(toRutaId),
       ]);
 
+      if (rutaDestino.cobradorId) {
+        const cliente = await this.prisma.cliente.findUnique({
+          where: { id: clientId },
+          select: { nombres: true, apellidos: true },
+        });
+
+        await this.notificacionesService.create({
+          usuarioId: rutaDestino.cobradorId,
+          titulo: 'Nuevo Cliente Trasladado',
+          mensaje: `Se ha trasladado al cliente ${cliente?.nombres} ${cliente?.apellidos} a tu ruta ${rutaDestino.nombre}`,
+          tipo: 'CLIENTE',
+        });
+      }
+
       return { message: 'Cliente movido correctamente' };
     } catch (error) {
       throw new InternalServerErrorException('Error al mover el cliente');
+    }
+  }
+
+  /**
+   * Mueve un crédito específico de un cliente a otra ruta.
+   * Como la asignación es por cliente, esto crea una nueva asignación del cliente
+   * en la ruta destino sin eliminar la original, permitiendo que el cliente
+   * aparezca en rutas distintas según el tipo/frecuencia de cada crédito.
+   */
+  async moveLoan(prestamoId: string, toRutaId: string) {
+    try {
+      const prestamo = await this.prisma.prestamo.findUnique({
+        where: { id: prestamoId },
+        select: { id: true, clienteId: true, frecuenciaPago: true, estado: true },
+      });
+      if (!prestamo) throw new NotFoundException('Préstamo no encontrado');
+
+      const rutaDestino = await this.prisma.ruta.findUnique({
+        where: { id: toRutaId, eliminadoEn: null },
+      });
+      if (!rutaDestino) throw new NotFoundException('Ruta destino no encontrada');
+
+      const yaAsignado = await this.prisma.asignacionRuta.findFirst({
+        where: { clienteId: prestamo.clienteId, rutaId: toRutaId, activa: true },
+      });
+
+      if (yaAsignado) {
+        return { message: 'El cliente ya está asignado a esa ruta' };
+      }
+
+      const maxOrden = await this.prisma.asignacionRuta.aggregate({
+        where: { rutaId: toRutaId, activa: true },
+        _max: { ordenVisita: true },
+      });
+
+      await this.prisma.asignacionRuta.create({
+        data: {
+          rutaId: toRutaId,
+          clienteId: prestamo.clienteId,
+          cobradorId: rutaDestino.cobradorId,
+          ordenVisita: (maxOrden._max.ordenVisita || 0) + 1,
+          activa: true,
+        },
+      });
+
+      this.notificacionesGateway.broadcastRutasActualizadas({
+        accion: 'ACTUALIZAR',
+        rutaId: toRutaId,
+      });
+
+      if (rutaDestino.cobradorId) {
+        const cliente = await this.prisma.cliente.findUnique({
+          where: { id: prestamo.clienteId },
+          select: { nombres: true, apellidos: true },
+        });
+        await this.notificacionesService.create({
+          usuarioId: rutaDestino.cobradorId,
+          titulo: 'Nuevo Crédito en Ruta',
+          mensaje: `Se ha asignado un nuevo crédito del cliente ${cliente?.nombres} ${cliente?.apellidos} a tu ruta ${rutaDestino.nombre}`,
+          tipo: 'PRESTAMO',
+        });
+      }
+
+      return { message: 'Crédito asignado a la nueva ruta correctamente' };
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      throw new InternalServerErrorException('Error al mover el crédito');
     }
   }
 

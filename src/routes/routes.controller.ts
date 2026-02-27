@@ -271,6 +271,22 @@ export class RoutesController {
     return this.routesService.moveClient(clienteId, fromRutaId, toRutaId);
   }
 
+  @Post('move-loan')
+  @Roles(
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
+  @ApiOperation({ summary: 'Asignar un crédito específico a otra ruta' })
+  @ApiResponse({ status: 200, description: 'Crédito asignado a la nueva ruta' })
+  moveLoan(
+    @Body('prestamoId', ParseUUIDPipe) prestamoId: string,
+    @Body('toRutaId', ParseUUIDPipe) toRutaId: string,
+  ) {
+    return this.routesService.moveLoan(prestamoId, toRutaId);
+  }
+
   @Get(':id/daily-visits')
   @Roles(
     RolUsuario.COBRADOR,

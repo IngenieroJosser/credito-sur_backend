@@ -9,7 +9,8 @@ import {
   ConnectedSocket,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Logger } from '@nestjs/common';
+import { Logger, forwardRef, Inject } from '@nestjs/common';
+import { NotificacionesService } from './notificaciones.service';
 
 @WebSocketGateway({
   cors: {
@@ -26,6 +27,11 @@ import { Logger } from '@nestjs/common';
 export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
+
+  constructor(
+    @Inject(forwardRef(() => NotificacionesService))
+    private notificacionesService: NotificacionesService,
+  ) {}
 
   private logger: Logger = new Logger('NotificacionesGateway');
   // Almacenar el mapeo de userId -> socketId(s)
@@ -76,6 +82,24 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
     
     this.logger.log(`Usuario ${userId} registrado con socket ${client.id}`);
     return { success: true };
+  }
+
+  /**
+   * Recibir evento del cobrador al finalizar ruta y alertar a todos
+   */
+  @SubscribeMessage('ruta_completada_emit')
+  async handleRutaCompletadaEmit(
+    @MessageBody() data: { rutaNombre: string, cobradorNombre: string, recaudo: number, efectividad: number, clientesFaltantes: number },
+    @ConnectedSocket() client: Socket,
+  ) {
+    this.logger.log(`El cobrador completó la ruta: ${data.rutaNombre}`);
+    
+    // Alerta al Coordinador/Supervisor a través del servicio (Sistematizado + Push)
+    await this.notificacionesService.notifyApprovers({
+      titulo: 'Cierre de Ruta Completo',
+      mensaje: `Cobrador: ${data.cobradorNombre} cerró la ruta ${data.rutaNombre}. Recaudo Final: $${data.recaudo.toLocaleString('es-CO')} (${data.efectividad}% META). ${data.clientesFaltantes > 0 ? 'Faltaron ' + data.clientesFaltantes + ' clientes' : 'Todos visitados'}.`,
+      tipo: 'SISTEMA',
+    });
   }
 
   /**

@@ -6,9 +6,10 @@ import { LoggerMiddleware } from '../common/middleware/logger.middleware';
 import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 import { AuditModule } from '../audit/audit.module';
 import { PushModule } from '../push/push.module';
+import { ConfiguracionModule } from '../configuracion/configuracion.module';
 
 @Module({
-  imports: [PrismaModule, NotificacionesModule, AuditModule, PushModule],
+  imports: [PrismaModule, NotificacionesModule, AuditModule, PushModule, ConfiguracionModule],
   controllers: [LoansController],
   providers: [LoansService],
   exports: [LoansService],

@@ -92,6 +92,172 @@ export class ApprovalsService {
     });
   }
 
+  /**
+   * Obtener todas las aprobaciones pendientes agrupadas por tipo.
+   * Incluye datos del solicitante y montos para el módulo de Revisiones.
+   */
+  async getPendingApprovals(tipo?: TipoAprobacion) {
+    const where: any = { estado: EstadoAprobacion.PENDIENTE };
+    if (tipo) where.tipoAprobacion = tipo;
+
+    const pendientes = await this.prisma.aprobacion.findMany({
+      where,
+      include: {
+        solicitadoPor: {
+          select: { id: true, nombres: true, apellidos: true, rol: true }
+        },
+        aprobadoPor: {
+          select: { id: true, nombres: true, apellidos: true }
+        }
+      },
+      orderBy: { creadoEn: 'desc' }
+    });
+
+    const grouped: Record<string, any[]> = {};
+    const conteo: Record<string, number> = {};
+
+    for (const item of pendientes) {
+      const key = item.tipoAprobacion;
+      if (!grouped[key]) {
+        grouped[key] = [];
+        conteo[key] = 0;
+      }
+      
+      const datos = typeof item.datosSolicitud === 'string'
+        ? JSON.parse(item.datosSolicitud)
+        : item.datosSolicitud;
+
+      grouped[key].push({
+        ...item,
+        datosSolicitud: datos,
+        solicitante: item.solicitadoPor
+          ? `${item.solicitadoPor.nombres} ${item.solicitadoPor.apellidos}`.trim()
+          : 'Desconocido',
+        rolSolicitante: item.solicitadoPor?.rol || 'N/A',
+      });
+      conteo[key]++;
+    }
+
+    return {
+      total: pendientes.length,
+      conteo,
+      items: grouped,
+    };
+  }
+
+  /**
+   * Obtener items rechazados que necesitan revisión final del SuperAdmin.
+   */
+  async getSuperadminReviewItems() {
+    const rechazados = await this.prisma.aprobacion.findMany({
+      where: {
+        estado: EstadoAprobacion.RECHAZADO,
+        revisadoEn: {
+          gte: new Date(Date.now() - 72 * 60 * 60 * 1000),
+        },
+      },
+      include: {
+        solicitadoPor: {
+          select: { id: true, nombres: true, apellidos: true, rol: true }
+        },
+        aprobadoPor: {
+          select: { id: true, nombres: true, apellidos: true, rol: true }
+        }
+      },
+      orderBy: { revisadoEn: 'desc' },
+    });
+
+    return {
+      total: rechazados.length,
+      items: rechazados.map((item) => {
+        const datos = typeof item.datosSolicitud === 'string'
+          ? JSON.parse(item.datosSolicitud)
+          : item.datosSolicitud;
+
+        return {
+          ...item,
+          datosSolicitud: datos,
+          solicitante: item.solicitadoPor
+            ? `${item.solicitadoPor.nombres} ${item.solicitadoPor.apellidos}`.trim()
+            : 'Desconocido',
+          rechazadoPor: item.aprobadoPor
+            ? `${item.aprobadoPor.nombres} ${item.aprobadoPor.apellidos}`.trim()
+            : 'Desconocido',
+          rolRechazador: item.aprobadoPor?.rol || 'N/A',
+        };
+      }),
+    };
+  }
+
+  /**
+   * Confirmar o revertir un rechazo (decisión final del SuperAdmin).
+   */
+  async confirmSuperadminAction(id: string, accion: 'CONFIRMAR' | 'REVERTIR', userId: string, notas?: string) {
+    const approval = await this.prisma.aprobacion.findUnique({ where: { id } });
+    
+    if (!approval) {
+      throw new NotFoundException('Aprobación no encontrada');
+    }
+
+    if (accion === 'CONFIRMAR') {
+      await this.prisma.aprobacion.update({
+        where: { id },
+        data: {
+          estado: EstadoAprobacion.CANCELADO,
+          comentarios: notas
+            ? `[SuperAdmin] Eliminación confirmada: ${notas}`
+            : `[SuperAdmin] Eliminación confirmada`,
+        },
+      });
+      return { success: true, message: 'Eliminación confirmada por el SuperAdministrador' };
+    } else {
+      await this.prisma.aprobacion.update({
+        where: { id },
+        data: {
+          estado: EstadoAprobacion.PENDIENTE,
+          aprobadoPorId: null,
+          revisadoEn: null,
+          comentarios: notas
+            ? `[SuperAdmin] Revertido a pendiente: ${notas}`
+            : `[SuperAdmin] Revertido a pendiente para re-evaluación`,
+        },
+      });
+
+      if (approval.tipoAprobacion === TipoAprobacion.NUEVO_PRESTAMO && approval.referenciaId) {
+        try {
+          await this.prisma.prestamo.update({
+            where: { id: approval.referenciaId },
+            data: { estadoAprobacion: EstadoAprobacion.PENDIENTE, eliminadoEn: null },
+          });
+        } catch (error) {
+          this.logger.error(`Error revirtiendo préstamo ${approval.referenciaId}:`, error);
+        }
+      } else if (approval.tipoAprobacion === TipoAprobacion.NUEVO_CLIENTE && approval.referenciaId) {
+        try {
+          await this.prisma.cliente.update({
+            where: { id: approval.referenciaId },
+            data: { estadoAprobacion: EstadoAprobacion.PENDIENTE, eliminadoEn: null },
+          });
+        } catch (error) {
+          this.logger.error(`Error revirtiendo cliente ${approval.referenciaId}:`, error);
+        }
+      }
+
+      try {
+        await this.notificacionesService.create({
+          usuarioId: approval.solicitadoPorId,
+          titulo: 'Solicitud Restaurada',
+          mensaje: 'Tu solicitud fue restaurada a estado pendiente por el SuperAdministrador para re-evaluación.',
+          tipo: 'SISTEMA',
+          entidad: 'Aprobacion',
+          entidadId: approval.id,
+        });
+      } catch { /* no interrumpir */ }
+
+      return { success: true, message: 'Solicitud restaurada a pendiente para re-evaluación' };
+    }
+  }
+
   async rejectItem(id: string, _type: TipoAprobacion, rechazadoPorId?: string, motivoRechazo?: string) {
     const approval = await this.prisma.aprobacion.findUnique({
       where: { id },

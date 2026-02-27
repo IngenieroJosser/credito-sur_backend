@@ -19,8 +19,9 @@ import {
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { AuditService } from '../audit/audit.service';
-import { PushService } from '../push/push.service';
 import { CreateLoanDto } from './dto/create-loan.dto';
+import { ConfiguracionService } from '../configuracion/configuracion.service';
+import { PushService } from '../push/push.service';
 import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
 
@@ -34,6 +35,7 @@ export class LoansService implements OnModuleInit {
     private auditService: AuditService,
     private pushService: PushService,
     private notificacionesGateway: NotificacionesGateway,
+    private configuracionService: ConfiguracionService,
   ) {}
 
   async onModuleInit() {
@@ -1542,9 +1544,9 @@ export class LoansService implements OnModuleInit {
 
       const montoTotal = montoFinanciar + interesTotal;
 
-      // A partir de ahora, ningún préstamo se auto-aprueba: siempre requiere aprobación explícita
-      const esAutoAprobado = false;
-      this.logger.log(`[CREATE LOAN] Usuario: ${creador.nombres}, Rol: ${creador.rol}, Auto-aprobado: ${esAutoAprobado}`);
+      const autoAprobarCreditos = await this.configuracionService.shouldAutoApproveCredits();
+      const esAutoAprobado = autoAprobarCreditos;
+      this.logger.log(`[CREATE LOAN] Usuario: ${creador.nombres}, Rol: ${creador.rol}, Auto-aprobado por configuración global: ${esAutoAprobado}`);
 
       // Crear préstamo con cuotas
       const prestamo = await this.prisma.prestamo.create({

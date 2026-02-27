@@ -822,3 +822,15 @@ enum EstadoMultimedia {
   ACTIVO
   ELIMINADO
 }
+
+model ConfiguracionSistema {
+  id                    String   @id @default("default")
+  autoAprobarClientes   Boolean  @default(false)
+  autoAprobarCreditos   Boolean  @default(false)
+  tasaInteresBase       Decimal  @default(20.00) @db.Decimal(5, 2)
+  porcentajeMoraDiaria  Decimal  @default(2.50) @db.Decimal(5, 2)
+  actualizadoEn         DateTime @updatedAt
+  actualizadoPorId      String?
+
+  @@map("configuracion_sistema")
+}

@@ -58,6 +58,10 @@ export class PrestamoMoraDto {
   cuotasVencidas: number;
 
   @ApiProperty()
+  @IsNumber()
+  montoOriginal: number;
+
+  @ApiProperty()
   @IsString()
   ruta: string;
 
@@ -77,6 +81,11 @@ export class PrestamoMoraDto {
   @IsOptional()
   @IsDateString()
   ultimoPago?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsDateString()
+  fechaVencimiento?: string;
 }
 
 export class PrestamosMoraFiltrosDto {
