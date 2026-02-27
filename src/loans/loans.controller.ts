@@ -28,6 +28,7 @@ import {
   ApiParam,
 } from '@nestjs/swagger';
 import { LoansService } from './loans.service';
+import { MoraService } from './mora.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -40,7 +41,11 @@ import { ReprogramarCuotaDto } from './dto/reprogramar-cuota.dto';
 @Controller('loans')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class LoansController {
-  constructor(private readonly loansService: LoansService) {}
+  constructor(
+    private readonly loansService: LoansService,
+    private readonly moraService: MoraService,
+  ) {}
+
 
   @Get()
   @Roles(
@@ -618,4 +623,70 @@ export class LoansController {
   async fixInterestCalculations() {
     return this.loansService.fixInterestCalculations();
   }
+
+  // ─── ENDPOINTS DE MORA ────────────────────────────────────────────────────
+
+  @Post('procesar-mora')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Procesar mora automática',
+    description:
+      'Marca cuotas vencidas, actualiza préstamos a EN_MORA y actualiza nivel de riesgo de clientes. ' +
+      'Este proceso también se ejecuta automáticamente al arrancar el servidor.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Proceso de mora ejecutado exitosamente',
+    schema: {
+      example: {
+        cuotasVencidas: 5,
+        prestamosEnMoraActualizados: 3,
+        prestamosActivosRecuperados: 1,
+        clientesRiesgoActualizado: 4,
+        errores: [],
+        procesadoEn: '2026-02-27T17:00:00.000Z',
+      },
+    },
+  })
+  async procesarMora() {
+    return this.moraService.procesarMoraAutomatica();
+  }
+
+  @Get('mora/cliente/:clienteId')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COBRADOR,
+  )
+  @ApiOperation({
+    summary: 'Resumen de mora de un cliente',
+    description:
+      'Retorna días en mora, nivel de riesgo, etiqueta (Mínimo/Leve/Precaución/Moderado/Crítico) y montos vencidos del cliente.',
+  })
+  @ApiParam({ name: 'clienteId', description: 'ID del cliente' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Resumen de mora del cliente',
+    schema: {
+      example: {
+        clienteId: 'abc123',
+        diasEnMora: 12,
+        nivelRiesgo: 'AMARILLO',
+        etiqueta: 'Precaución',
+        cuotasVencidas: 2,
+        montoVencido: 150000,
+      },
+    },
+  })
+  async getResumenMoraCliente(@Param('clienteId') clienteId: string) {
+    return this.moraService.getResumenMoraCliente(clienteId);
+  }
 }
+
