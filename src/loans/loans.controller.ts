@@ -29,12 +29,15 @@ import {
 } from '@nestjs/swagger';
 import { LoansService } from './loans.service';
 import { MoraService } from './mora.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { RolUsuario } from '@prisma/client';
+import { RolUsuario, TipoAprobacion } from '@prisma/client';
 import { CreateLoanDto } from './dto/create-loan.dto';
 import { ReprogramarCuotaDto } from './dto/reprogramar-cuota.dto';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
+import { AuditService } from '../audit/audit.service';
 
 @ApiTags('loans')
 @ApiBearerAuth()
@@ -44,6 +47,9 @@ export class LoansController {
   constructor(
     private readonly loansService: LoansService,
     private readonly moraService: MoraService,
+    private readonly prisma: PrismaService,
+    private readonly notificacionesService: NotificacionesService,
+    private readonly auditService: AuditService,
   ) {}
 
 
@@ -688,5 +694,558 @@ export class LoansController {
   async getResumenMoraCliente(@Param('clienteId') clienteId: string) {
     return this.moraService.getResumenMoraCliente(clienteId);
   }
-}
 
+  // ─── ENDPOINT DE SEED (SOLO PARA PRUEBAS) ────────────────────────────────
+
+  @Post('seed-mora-test')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: '🧪 Crear datos de prueba para módulo de mora',
+    description:
+      'Crea préstamos en mora con distintos niveles (Leve, Precaución, Moderado, Crítico) ' +
+      'usando clientes existentes. SOLO PARA ENTORNO DE PRUEBAS.',
+  })
+  @ApiResponse({ status: HttpStatus.CREATED, description: 'Datos de prueba creados exitosamente' })
+  async seedMoraTest(@Request() req) {
+    const creadorId = req.user.id;
+
+    // Buscar clientes aprobados existentes
+    const clientes = await this.prisma.cliente.findMany({
+      where: {
+        eliminadoEn: null,
+        estadoAprobacion: 'APROBADO',
+        enListaNegra: false,
+      },
+      select: { id: true, nombres: true, apellidos: true, dni: true },
+      take: 10,
+    });
+
+    if (clientes.length === 0) {
+      return { error: 'No hay clientes aprobados en la BD. Crea y aprueba clientes primero.' };
+    }
+
+    const helper = {
+      diasAtras: (n: number): Date => {
+        const d = new Date();
+        d.setDate(d.getDate() - n);
+        d.setHours(0, 0, 0, 0);
+        return d;
+      },
+    };
+
+    /** Escenarios de prueba: (nombre, diasVencidos, cuotasVencidas, estadoLoan, nivelCliente) */
+    const escenarios = [
+      { label: 'Leve',       dias: 2,  cuotas: 1, nivelCliente: 'VERDE'    as const },
+      { label: 'Precaución', dias: 4,  cuotas: 2, nivelCliente: 'AMARILLO' as const },
+      { label: 'Moderado',   dias: 7,  cuotas: 3, nivelCliente: 'AMARILLO' as const },
+      { label: 'Crítico',    dias: 15, cuotas: 5, nivelCliente: 'ROJO'     as const },
+      { label: 'Crítico+',   dias: 45, cuotas: 8, nivelCliente: 'ROJO'     as const },
+    ];
+
+    const resultados: any[] = [];
+
+    for (let i = 0; i < escenarios.length; i++) {
+      const esc = escenarios[i];
+      const cliente = clientes[i % clientes.length];
+
+      try {
+        const monto = 500_000 + (i + 1) * 200_000;
+        const tasaInteres = 10;
+        const plazoMeses = 3;
+        const cantCuotas = 12;
+        const interesTotal = (monto * tasaInteres * plazoMeses) / 100;
+        const montoTotal = monto + interesTotal;
+        const montoCuota = Math.round((montoTotal / cantCuotas) * 100) / 100;
+        const montoCapCuota = Math.round((monto / cantCuotas) * 100) / 100;
+        const montoIntCuota = Math.round((interesTotal / cantCuotas) * 100) / 100;
+
+        const fechaInicio = helper.diasAtras(90);
+        const fechaFin = new Date(fechaInicio);
+        fechaFin.setMonth(fechaFin.getMonth() + plazoMeses);
+
+        // Generar número de préstamo único
+        const count = await this.prisma.prestamo.count();
+        const numPrest = `TEST-${esc.label.toUpperCase().replace(/[^A-Z0-9]/g, '')}-${String(count + i + 1).padStart(4, '0')}`;
+
+        // Construir cuotas (primeras N vencidas, resto pendientes)
+        const cuotasData: any[] = [];
+        for (let c = 0; c < cantCuotas; c++) {
+          const esVencida = c < esc.cuotas;
+          // Cuotas vencidas escalonadas, la más antigua = diasVencidos días atrás
+          const fechaVencida = helper.diasAtras(esc.dias - c);
+          const fechaPendiente = new Date(fechaInicio);
+          fechaPendiente.setDate(fechaPendiente.getDate() + (c + 1) * 7);
+
+          cuotasData.push({
+            numeroCuota: c + 1,
+            fechaVencimiento: esVencida ? fechaVencida : fechaPendiente,
+            monto: montoCuota,
+            montoCapital: montoCapCuota,
+            montoInteres: montoIntCuota,
+            montoInteresMora: 0,
+            estado: esVencida ? 'VENCIDA' : 'PENDIENTE',
+            montoPagado: 0,
+          });
+        }
+
+        // Crear préstamo directamente como EN_MORA con cuotas VENCIDAS
+        const prestamo = await this.prisma.prestamo.create({
+          data: {
+            numeroPrestamo: numPrest,
+            clienteId: cliente.id,
+            tipoPrestamo: 'EFECTIVO',
+            tipoAmortizacion: 'INTERES_SIMPLE',
+            monto,
+            tasaInteres,
+            tasaInteresMora: 2,
+            plazoMeses,
+            frecuenciaPago: 'SEMANAL',
+            cantidadCuotas: cantCuotas,
+            fechaInicio,
+            fechaFin,
+            estado: 'EN_MORA',
+            estadoAprobacion: 'APROBADO',
+            creadoPorId: creadorId,
+            aprobadoPorId: creadorId,
+            interesTotal,
+            totalPagado: 0,
+            capitalPagado: 0,
+            interesPagado: 0,
+            saldoPendiente: montoTotal,
+            cuotaInicial: 0,
+            cuotas: { create: cuotasData },
+          },
+        });
+
+        // Actualizar nivelRiesgo del cliente
+        await this.prisma.cliente.update({
+          where: { id: cliente.id },
+          data: {
+            nivelRiesgo: esc.nivelCliente,
+            ultimaActualizacionRiesgo: new Date(),
+          },
+        });
+
+        resultados.push({
+          ok: true,
+          nivel: esc.label,
+          numeroPrestamo: prestamo.numeroPrestamo,
+          cliente: `${cliente.nombres} ${cliente.apellidos}`,
+          dni: cliente.dni,
+          diasEnMora: esc.dias,
+          cuotasVencidas: esc.cuotas,
+          monto,
+          nivelRiesgoCliente: esc.nivelCliente,
+        });
+
+      } catch (err: any) {
+        resultados.push({ ok: false, nivel: esc.label, error: err.message });
+      }
+    }
+
+    // Totales finales
+    const [totalMora, totalVencidas, totalCuotasV] = await Promise.all([
+      this.prisma.prestamo.count({ where: { estado: 'EN_MORA' } }),
+      this.prisma.prestamo.count({
+        where: {
+          estado: { in: ['EN_MORA', 'INCUMPLIDO'] },
+          saldoPendiente: { gt: 0 },
+          fechaFin: { lt: new Date() },
+        },
+      }),
+      this.prisma.cuota.count({ where: { estado: 'VENCIDA' } }),
+    ]);
+
+    return {
+      mensaje: '✅ Datos de prueba de mora creados exitosamente',
+      prestamosCreados: resultados.filter(r => r.ok).length,
+      errores: resultados.filter(r => !r.ok).length,
+      detalle: resultados,
+      estadoBD: {
+        totalPrestamosEnMora: totalMora,
+        totalCuentasVencidas: totalVencidas,
+        totalCuotasVencidas: totalCuotasV,
+      },
+    };
+  }
+
+  // ─── SEED DE CUENTAS VENCIDAS (fechaFin ya pasó) ─────────────────────────
+
+  @Post('seed-vencidas-test')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: '🧪 Crear cuentas vencidas de prueba (fechaFin pasada)',
+    description:
+      'Crea préstamos con fechaFin ya expirada (en el pasado) para que aparezcan ' +
+      'en el módulo de Cuentas Vencidas. SOLO PARA ENTORNO DE PRUEBAS.',
+  })
+  async seedVencidasTest(@Request() req) {
+    const creadorId = req.user.id;
+
+    const clientes = await this.prisma.cliente.findMany({
+      where: { eliminadoEn: null, estadoAprobacion: 'APROBADO', enListaNegra: false },
+      select: { id: true, nombres: true, apellidos: true, dni: true },
+      take: 10,
+    });
+
+    if (clientes.length === 0) {
+      return { error: 'No hay clientes aprobados.' };
+    }
+
+    const diasAtras = (n: number): Date => {
+      const d = new Date();
+      d.setDate(d.getDate() - n);
+      d.setHours(0, 0, 0, 0);
+      return d;
+    };
+
+    // Escenarios de cuentas vencidas: fechaFin en el PASADO
+    const escenarios = [
+      { label: 'VEN-30d',    inicioHaceDias: 120, plazoMeses: 2, finHaceDias: 30,  nivelCliente: 'AMARILLO' as const, estado: 'EN_MORA'    as const },
+      { label: 'VEN-60d',    inicioHaceDias: 150, plazoMeses: 2, finHaceDias: 60,  nivelCliente: 'ROJO'     as const, estado: 'EN_MORA'    as const },
+      { label: 'VEN-90d',    inicioHaceDias: 180, plazoMeses: 2, finHaceDias: 90,  nivelCliente: 'ROJO'     as const, estado: 'EN_MORA'    as const },
+      { label: 'INCUMPLIDA', inicioHaceDias: 200, plazoMeses: 2, finHaceDias: 110, nivelCliente: 'ROJO'     as const, estado: 'INCUMPLIDO' as const },
+    ];
+
+    const resultados: any[] = [];
+
+    for (let i = 0; i < escenarios.length; i++) {
+      const esc = escenarios[i];
+      const cliente = clientes[i % clientes.length];
+
+      try {
+        const monto = 800_000 + (i + 1) * 150_000;
+        const tasaInteres = 12;
+        const plazoMeses = esc.plazoMeses;
+        const cantCuotas = plazoMeses * 4;
+        const interesTotal = (monto * tasaInteres * plazoMeses) / 100;
+        const montoTotal = monto + interesTotal;
+        const montoCuota = Math.round((montoTotal / cantCuotas) * 100) / 100;
+        const montoCapCuota = Math.round((monto / cantCuotas) * 100) / 100;
+        const montoIntCuota = Math.round((interesTotal / cantCuotas) * 100) / 100;
+
+        const fechaInicio = diasAtras(esc.inicioHaceDias);
+        const fechaFin = diasAtras(esc.finHaceDias); // ← PASADA
+
+        const count = await this.prisma.prestamo.count();
+        const numPrest = `TEST-VEN-${String(count + i + 1).padStart(4, '0')}-${esc.label}`;
+
+        // Todas las cuotas VENCIDAS
+        const cuotasData: any[] = Array.from({ length: cantCuotas }, (_, c) => {
+          const fv = new Date(fechaInicio);
+          fv.setDate(fv.getDate() + (c + 1) * 7);
+          return {
+            numeroCuota: c + 1,
+            fechaVencimiento: fv,
+            monto: montoCuota,
+            montoCapital: montoCapCuota,
+            montoInteres: montoIntCuota,
+            montoInteresMora: Math.round(montoCuota * 0.02 * 100) / 100,
+            estado: 'VENCIDA',
+            montoPagado: 0,
+          };
+        });
+
+        const prestamo = await this.prisma.prestamo.create({
+          data: {
+            numeroPrestamo: numPrest,
+            clienteId: cliente.id,
+            tipoPrestamo: 'EFECTIVO',
+            tipoAmortizacion: 'INTERES_SIMPLE',
+            monto,
+            tasaInteres,
+            tasaInteresMora: 2,
+            plazoMeses,
+            frecuenciaPago: 'SEMANAL',
+            cantidadCuotas: cantCuotas,
+            fechaInicio,
+            fechaFin,
+            estado: esc.estado,
+            estadoAprobacion: 'APROBADO',
+            creadoPorId: creadorId,
+            aprobadoPorId: creadorId,
+            interesTotal,
+            totalPagado: 0,
+            capitalPagado: 0,
+            interesPagado: 0,
+            saldoPendiente: montoTotal,
+            cuotaInicial: 0,
+            cuotas: { create: cuotasData },
+          },
+        });
+
+        await this.prisma.cliente.update({
+          where: { id: cliente.id },
+          data: { nivelRiesgo: esc.nivelCliente, ultimaActualizacionRiesgo: new Date() },
+        });
+
+        resultados.push({
+          ok: true,
+          escenario: esc.label,
+          numeroPrestamo: prestamo.numeroPrestamo,
+          cliente: `${cliente.nombres} ${cliente.apellidos}`,
+          fechaFin: fechaFin.toISOString().split('T')[0],
+          diasVencidaContrato: esc.finHaceDias,
+          estado: esc.estado,
+          monto,
+        });
+      } catch (err: any) {
+        resultados.push({ ok: false, escenario: esc.label, error: err.message });
+      }
+    }
+
+    const totalVencidasAhora = await this.prisma.prestamo.count({
+      where: {
+        estado: { in: ['EN_MORA', 'INCUMPLIDO'] },
+        saldoPendiente: { gt: 0 },
+        fechaFin: { lt: new Date() },
+      },
+    });
+
+    return {
+      mensaje: '✅ Cuentas vencidas de prueba creadas exitosamente',
+      prestamosCreados: resultados.filter(r => r.ok).length,
+      errores: resultados.filter(r => !r.ok).length,
+      detalle: resultados,
+      estadoBD: { totalCuentasVencidas: totalVencidasAhora },
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // GESTIÓN MORA — Asignar interés de mora manual
+  // Crea Aprobacion + Auditoria + Notificación
+  // ─────────────────────────────────────────────────────────────────────
+  @Post(':id/asignar-mora')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+  )
+  @ApiOperation({ summary: 'Asignar interés de mora a un préstamo (requiere aprobación)' })
+  async asignarMora(
+    @Param('id') prestamoId: string,
+    @Body() body: {
+      montoInteres: number;
+      diasGracia: number;
+      comentarios?: string;
+    },
+    @Request() req: any,
+  ) {
+    const usuarioId: string = req.user?.sub || req.user?.id;
+    if (!usuarioId) throw new Error('Usuario no autenticado');
+
+    // Cargar el préstamo con datos del cliente
+    const prestamo = await this.prisma.prestamo.findUnique({
+      where: { id: prestamoId },
+      include: {
+        cliente: { select: { nombres: true, apellidos: true, dni: true } },
+      },
+    });
+    if (!prestamo) throw new Error('Préstamo no encontrado');
+
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { id: usuarioId },
+      select: { nombres: true, apellidos: true, rol: true },
+    });
+    const nombreUsuario = usuario ? `${usuario.nombres} ${usuario.apellidos}` : 'Usuario';
+    const nombreCliente = prestamo.cliente
+      ? `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`
+      : 'Cliente';
+
+    // Calcular fecha límite de gracia
+    const fechaLimite = new Date();
+    fechaLimite.setDate(fechaLimite.getDate() + body.diasGracia);
+
+    // 1. Crear solicitud de aprobación
+    const aprobacion = await this.prisma.aprobacion.create({
+      data: {
+        tipoAprobacion: 'PRORROGA_PAGO' as TipoAprobacion, // reutilizamos tipo existente
+        solicitadoPorId: usuarioId,
+        referenciaId: prestamoId,
+        tablaReferencia: 'Prestamo',
+        montoSolicitud: body.montoInteres,
+        datosSolicitud: {
+          tipo: 'ASIGNAR_MORA',
+          prestamoId,
+          numeroPrestamo: prestamo.numeroPrestamo,
+          cliente: nombreCliente,
+          montoInteres: body.montoInteres,
+          diasGracia: body.diasGracia,
+          fechaLimite: fechaLimite.toISOString(),
+          comentarios: body.comentarios,
+          saldoPendiente: Number(prestamo.saldoPendiente),
+          asignadoPor: nombreUsuario,
+          rolAsignador: usuario?.rol,
+        } as any,
+      },
+    });
+
+    // 2. Registrar en auditoría
+    await this.auditService.create({
+      usuarioId,
+      accion: 'ASIGNAR_MORA',
+      entidad: 'Prestamo',
+      entidadId: prestamoId,
+      datosNuevos: {
+        aprobacionId: aprobacion.id,
+        montoInteres: body.montoInteres,
+        diasGracia: body.diasGracia,
+        cliente: nombreCliente,
+        prestamo: prestamo.numeroPrestamo,
+        comentarios: body.comentarios,
+      },
+      metadata: { endpoint: `POST /loans/${prestamoId}/asignar-mora` },
+    });
+
+    // 3. Notificar a aprobadores (interna + push)
+    await this.notificacionesService.notifyApprovers({
+      titulo: '🟡 Mora asignada — Requiere aprobación',
+      mensaje: `${nombreUsuario} asignó $${body.montoInteres.toLocaleString('es-CO')} de mora al préstamo ${prestamo.numeroPrestamo} (${nombreCliente}). Plazo: ${body.diasGracia} días. Requiere aprobación.`,
+      tipo: 'ALERTA',
+      entidad: 'Aprobacion',
+      entidadId: aprobacion.id,
+      metadata: {
+        tipoAprobacion: 'PRORROGA_PAGO',
+        tipo: 'ASIGNAR_MORA',
+        prestamoId,
+        montoInteres: body.montoInteres,
+        diasGracia: body.diasGracia,
+        cliente: nombreCliente,
+        asignadoPor: nombreUsuario,
+      },
+    });
+
+    return {
+      mensaje: 'Mora pendiente de aprobación creada exitosamente',
+      aprobacionId: aprobacion.id,
+      fechaLimite: fechaLimite.toISOString(),
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // GESTIÓN VENCIDA — Prorrogar / Castigar / Jurídico
+  // Crea Aprobacion + Auditoria + Notificación
+  // ─────────────────────────────────────────────────────────────────────
+  @Post(':id/gestion-vencida')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.CONTADOR,
+  )
+  @ApiOperation({ summary: 'Gestionar cuenta vencida: Prorrogar, Castigar o Jurídico' })
+  async gestionVencida(
+    @Param('id') prestamoId: string,
+    @Body() body: {
+      decision: 'CASTIGAR' | 'PRORROGAR' | 'JURIDICO';
+      montoInteres: number;
+      diasGracia: number;
+      comentarios?: string;
+    },
+    @Request() req: any,
+  ) {
+    const usuarioId: string = req.user?.sub || req.user?.id;
+    if (!usuarioId) throw new Error('Usuario no autenticado');
+
+    const prestamo = await this.prisma.prestamo.findUnique({
+      where: { id: prestamoId },
+      include: {
+        cliente: { select: { nombres: true, apellidos: true, dni: true } },
+      },
+    });
+    if (!prestamo) throw new Error('Préstamo no encontrado');
+
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { id: usuarioId },
+      select: { nombres: true, apellidos: true, rol: true },
+    });
+    const nombreUsuario = usuario ? `${usuario.nombres} ${usuario.apellidos}` : 'Usuario';
+    const nombreCliente = prestamo.cliente
+      ? `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`
+      : 'Cliente';
+
+    const nuevaFecha = new Date();
+    if (body.diasGracia > 0) nuevaFecha.setDate(nuevaFecha.getDate() + body.diasGracia);
+
+    const LABEL_DECISION: Record<string, string> = {
+      PRORROGAR: 'Prórroga',
+      CASTIGAR: 'Baja por pérdida',
+      JURIDICO: 'Cobro jurídico',
+    };
+    const tipoAprobacion: TipoAprobacion =
+      body.decision === 'CASTIGAR'
+        ? 'BAJA_POR_PERDIDA' as TipoAprobacion
+        : 'PRORROGA_PAGO' as TipoAprobacion;
+
+    // 1. Crear aprobación
+    const aprobacion = await this.prisma.aprobacion.create({
+      data: {
+        tipoAprobacion,
+        solicitadoPorId: usuarioId,
+        referenciaId: prestamoId,
+        tablaReferencia: 'Prestamo',
+        montoSolicitud: Number(prestamo.saldoPendiente),
+        datosSolicitud: {
+          tipo: 'GESTION_VENCIDA',
+          decision: body.decision,
+          prestamoId,
+          numeroPrestamo: prestamo.numeroPrestamo,
+          cliente: nombreCliente,
+          saldoPendiente: Number(prestamo.saldoPendiente),
+          montoInteres: body.montoInteres,
+          diasGracia: body.diasGracia,
+          nuevaFechaVencimiento: body.decision === 'PRORROGAR' ? nuevaFecha.toISOString() : undefined,
+          comentarios: body.comentarios,
+          gestionadoPor: nombreUsuario,
+          rolGestor: usuario?.rol,
+        } as any,
+      },
+    });
+
+    // 2. Auditoría
+    await this.auditService.create({
+      usuarioId,
+      accion: `GESTION_VENCIDA_${body.decision}`,
+      entidad: 'Prestamo',
+      entidadId: prestamoId,
+      datosNuevos: {
+        aprobacionId: aprobacion.id,
+        decision: body.decision,
+        cliente: nombreCliente,
+        prestamo: prestamo.numeroPrestamo,
+        montoInteres: body.montoInteres,
+        diasGracia: body.diasGracia,
+        comentarios: body.comentarios,
+      },
+      metadata: { endpoint: `POST /loans/${prestamoId}/gestion-vencida` },
+    });
+
+    // 3. Notificar a aprobadores
+    const emojis: Record<string, string> = { PRORROGAR: '📅', CASTIGAR: '🔴', JURIDICO: '⚖️' };
+    await this.notificacionesService.notifyApprovers({
+      titulo: `${emojis[body.decision] || '📌'} ${LABEL_DECISION[body.decision]} — Requiere aprobación`,
+      mensaje: `${nombreUsuario} solicitó ${LABEL_DECISION[body.decision].toLowerCase()} para el préstamo ${prestamo.numeroPrestamo} (${nombreCliente}). Saldo: $${Number(prestamo.saldoPendiente).toLocaleString('es-CO')}. Requiere aprobación.`,
+      tipo: body.decision === 'CASTIGAR' ? 'WARNING' : 'INFO',
+      entidad: 'Aprobacion',
+      entidadId: aprobacion.id,
+      metadata: {
+        tipoAprobacion,
+        tipo: 'GESTION_VENCIDA',
+        decision: body.decision,
+        prestamoId,
+        cliente: nombreCliente,
+        saldoPendiente: Number(prestamo.saldoPendiente),
+        gestionadoPor: nombreUsuario,
+      },
+    });
+
+    return {
+      mensaje: `Solicitud de ${LABEL_DECISION[body.decision]} enviada para aprobación`,
+      aprobacionId: aprobacion.id,
+      decision: body.decision,
+    };
+  }
+}

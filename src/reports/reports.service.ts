@@ -315,7 +315,9 @@ export class ReportsService {
         return {
           id: prestamo.id,
           numeroPrestamo: prestamo.numeroPrestamo,
+          clienteId: prestamo.clienteId,   // ← ID del cliente para Ver Perfil
           cliente: {
+            id: prestamo.clienteId,        // ← también dentro de cliente para compatibilidad con frontend
             nombre: `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
             documento: prestamo.cliente.dni,
             telefono: prestamo.cliente.telefono,

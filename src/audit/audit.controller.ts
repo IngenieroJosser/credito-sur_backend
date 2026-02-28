@@ -49,10 +49,18 @@ export class AuditController {
   }
 
   /**
-   * Listar todos los registros de auditoría
+   * Listar todos los registros de auditoría (con paginación opcional)
    */
   @Get()
-  findAll() {
+  findAll(
+    @Query('pagina') pagina?: string,
+    @Query('limite') limite?: string,
+  ) {
+    if (pagina || limite) {
+      const p = pagina ? parseInt(pagina) : 1;
+      const l = limite ? parseInt(limite) : 50;
+      return this.auditService.findAllPaginated(p, l);
+    }
     return this.auditService.findAll();
   }
 
