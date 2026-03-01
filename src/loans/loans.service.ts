@@ -1091,6 +1091,7 @@ export class LoansService implements OnModuleInit {
         },
       });
 
+      /*
       // Notificar a coordinadores, admins y superadmins sobre nuevo préstamo pendiente de aprobación
       await this.notificacionesService.notifyApprovers({
         titulo: 'Nuevo Préstamo Requiere Aprobación',
@@ -1099,14 +1100,10 @@ export class LoansService implements OnModuleInit {
         entidad: 'Aprobacion',
         entidadId: aprobacion.id,
         metadata: {
-          tipoAprobacion: 'NUEVO_PRESTAMO',
-          prestamoId: prestamo.id,
-          clienteId: prestamo.clienteId,
-          monto: prestamo.monto,
-          plazoMeses: prestamo.plazoMeses,
-          frecuenciaPago: prestamo.frecuenciaPago,
+           // ...
         },
       });
+      */
 
       // Registrar Auditoría
       await this.auditService.create({
@@ -1685,6 +1682,7 @@ export class LoansService implements OnModuleInit {
           }
         });
       } else {
+        /* 
         // Notificar a coordinadores, admins y superadmins para aprobación
         await this.notificacionesService.notifyApprovers({
           titulo: 'Nuevo Préstamo Requiere Aprobación',
@@ -1693,25 +1691,10 @@ export class LoansService implements OnModuleInit {
           entidad: 'Aprobacion',
           entidadId: aprobacion.id,
           metadata: {
-            tipoAprobacion: 'NUEVO_PRESTAMO',
-            prestamoId: prestamo.id,
-            clienteId: cliente.id,
-            cliente: `${cliente.nombres} ${cliente.apellidos}`,
-            cedula: String(cliente.dni),
-            telefono: String(cliente.telefono),
-            monto: safeNumber(montoFinanciar),
-            tipo: String(data.tipoPrestamo),
-            articulo: String(articuloNombre),
-            valorArticulo: safeNumber(data.monto),
-            cuotas: safeNumber(totalCuotasPrometidas),
-            porcentaje: safeNumber(isFinanciamientoArticulo ? 0 : tasaInteres),
-            frecuenciaPago: String(data.frecuenciaPago),
-            cuotaInicial: safeNumber(data.cuotaInicial),
-            plazoMeses: safeNumber(data.plazoMeses),
-            tipoAmortizacion: String(tipoAmort),
-            fechaInicio: fechaInicio.toISOString(),
+             // ... [Omitido para no generar ruido de notificaciones de aprobación]
           },
         });
+        */
 
         // Enviar notificaciones push a coordinadores
         await this.pushService.sendPushNotification({
