@@ -14,6 +14,10 @@ import { Type } from 'class-transformer';
 export class ClienteInfoDto {
   @ApiProperty()
   @IsString()
+  id: string;
+
+  @ApiProperty()
+  @IsString()
   nombre: string;
 
   @ApiProperty()
@@ -37,6 +41,10 @@ export class PrestamoMoraDto {
   @ApiProperty()
   @IsString()
   numeroPrestamo: string;
+
+  @ApiProperty()
+  @IsString()
+  clienteId: string;
 
   @ApiProperty()
   cliente: ClienteInfoDto;
