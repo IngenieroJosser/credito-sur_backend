@@ -58,24 +58,6 @@ export class UsersService {
 
     const hashContrasena = await argon2.hash(password);
 
-    // Usar 'nombres' directamente como nombre de usuario si no se proporciona uno explícitamente
-    if (!datosUsuario.nombreUsuario) {
-      // Como el usuario quiere usar exactamente "Erick Manuel" como su usuario para el login
-      // Simplemente asiganmos el campo 'nombres' al campo 'nombreUsuario'.
-      let nombreUsuarioBase = datosUsuario.nombres ? datosUsuario.nombres.trim() : datosUsuario.correo;
-      
-      let nombreUsuario = nombreUsuarioBase;
-      let counter = 1;
-      
-      // Aún verificamos si existe para evitar un crash de clave duplicada a nivel base de datos
-      while (await this.prisma.usuario.findUnique({ where: { nombreUsuario } })) {
-        nombreUsuario = `${nombreUsuarioBase} ${counter}`;
-        counter++;
-      }
-      
-      datosUsuario.nombreUsuario = nombreUsuario;
-    }
-
     // Buscar el rol dinámico correspondiente
     const rolDinamico = await this.prisma.rol.findUnique({
       where: { nombre: usuarioDto.rol },
@@ -88,7 +70,6 @@ export class UsersService {
 
       const nuevoUsuario = await tx.usuario.create({
         data: {
-          nombreUsuario: datosUsuario.nombreUsuario as string,
           nombres: datosUsuario.nombres,
           apellidos: datosUsuario.apellidos,
           correo: datosUsuario.correo,
@@ -157,7 +138,6 @@ export class UsersService {
       },
       select: {
         id: true,
-        nombreUsuario: true,
         nombres: true,
         apellidos: true,
         correo: true,
@@ -278,18 +258,6 @@ export class UsersService {
     }
 
     return usuario;
-  }
-
-  async obtenerPorNombreUsuario(nombreUsuario: string) {
-    return this.prisma.usuario.findFirst({
-      where: {
-        nombreUsuario: {
-          equals: nombreUsuario,
-          mode: 'insensitive',
-        },
-        eliminadoEn: null,
-      },
-    });
   }
 
   async obtenerPorNombres(nombres: string) {

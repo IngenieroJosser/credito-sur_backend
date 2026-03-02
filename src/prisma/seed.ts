@@ -32,7 +32,6 @@ async function crearSuperadministradorInicial() {
         // NO actualizar hashContrasena para mantener la contraseña existente
         rol: RolUsuario.SUPER_ADMINISTRADOR,
         estado: EstadoUsuario.ACTIVO,
-        nombreUsuario: 'superadmin',
       },
     });
     console.log(`[SEED] Superadministrador actualizado - contraseña sin cambios`);
@@ -42,7 +41,6 @@ async function crearSuperadministradorInicial() {
   const hashContrasena = await argon2.hash('SuperAdmin123!');
   const superadministrador = await prisma.usuario.create({
     data: {
-      nombreUsuario: 'superadmin',
       correo,
       hashContrasena,
       nombres: 'Super',
@@ -73,7 +71,6 @@ async function crearAdministradorInicial() {
         // NO actualizar hashContrasena para mantener la contraseña existente
         rol: RolUsuario.ADMIN,
         estado: EstadoUsuario.ACTIVO,
-        nombreUsuario: 'admin',
       },
     });
     console.log(`[SEED] Administrador actualizado - contraseña sin cambios`);
@@ -83,7 +80,6 @@ async function crearAdministradorInicial() {
   const hashContrasena = await argon2.hash('Admin123!');
   const administrador = await prisma.usuario.create({
     data: {
-      nombreUsuario: 'admin',
       correo,
       hashContrasena,
       nombres: 'Admin',
@@ -109,22 +105,12 @@ async function crearUsuarioPorRol(
   });
 
   const hashContrasena = await argon2.hash(password ?? `${rol}_1234`);
-  
-  // Generar nombreUsuario: primera letra nombre + primera letra segundo nombre (si existe) + primer apellido
-  const nombresParts = nombres.split(' ');
-  const apellidosParts = apellidos.split(' ');
-  const nombreUsuario = (
-    nombresParts[0].charAt(0) +
-    (nombresParts[1] ? nombresParts[1].charAt(0) : '') +
-    apellidosParts[0]
-  ).toLowerCase().replace(/[^a-z0-9]/g, '');
 
   if (existente) {
     console.log(`[SEED] Usuario ${rol} ya existe (${correo}) - manteniendo contraseña actual`);
     const usuarioActualizado = await prisma.usuario.update({
       where: { correo },
       data: {
-        nombreUsuario,
         nombres,
         apellidos,
         rol,
@@ -139,7 +125,6 @@ async function crearUsuarioPorRol(
 
   const usuario = await prisma.usuario.create({
     data: {
-      nombreUsuario,
       correo,
       hashContrasena,
       nombres,

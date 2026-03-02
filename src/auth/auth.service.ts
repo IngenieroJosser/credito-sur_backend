@@ -17,11 +17,10 @@ export class AuthService {
   async validarUsuario(nombreUsuario: string, contrasena: string) {
     console.log(`[AUTH] validarUsuario llamado con: "${nombreUsuario}"`);
     
-    // Buscar por nombreUsuario, correo o nombres (case insensitive para todos)
+    // Buscar por correo o nombres (case insensitive)
     const usuario = await this.prisma.usuario.findFirst({
       where: {
         OR: [
-          { nombreUsuario: { equals: nombreUsuario, mode: 'insensitive' } },
           { correo: { equals: nombreUsuario, mode: 'insensitive' } },
           { nombres: { equals: nombreUsuario, mode: 'insensitive' } },
         ],

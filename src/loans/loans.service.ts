@@ -582,6 +582,7 @@ export class LoansService implements OnModuleInit {
         include: {
           cliente: {
             include: {
+              archivos: true,
               asignacionesRuta: {
                 where: { activa: true },
                 include: {

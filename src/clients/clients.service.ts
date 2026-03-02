@@ -660,15 +660,175 @@ export class ClientsService {
       });
 
       if (clienteExistente) {
+        // Si está activo, no permitimos duplicar
         if (!clienteExistente.eliminadoEn) {
           throw new ConflictException(
             `Ya existe un cliente activo con ese número de documento: ${data.dni}`,
           );
-        } else {
-          throw new ConflictException(
-            `El cliente con documento ${data.dni} ya existe pero está archivado. Restáuralo desde la sección de Archivados.`,
-          );
         }
+
+        // Si fue rechazado (y quedó archivado), permitimos reintento: restaurar + nueva aprobación
+        if (clienteExistente.estadoAprobacion === 'RECHAZADO') {
+          // Buscar un usuario para asignar como solicitante si no viene uno
+          let solicitadoPorId = data.creadoPorId;
+          if (!solicitadoPorId) {
+            const creador = await this.prisma.usuario.findFirst();
+            if (!creador) {
+              throw new NotFoundException(
+                'No existen usuarios en el sistema para asignar la creación',
+              );
+            }
+            solicitadoPorId = creador.id;
+          }
+
+          const solicitante = await this.prisma.usuario.findUnique({
+            where: { id: solicitadoPorId },
+            select: { id: true, rol: true },
+          });
+
+          if (!solicitante) {
+            throw new NotFoundException('Usuario solicitante no encontrado');
+          }
+
+          const autoAprobar = await this.configuracionService.shouldAutoApproveClients();
+          const estadoInicial = autoAprobar ? 'APROBADO' : 'PENDIENTE';
+
+          const clienteRestaurado = await this.prisma.cliente.update({
+            where: { id: clienteExistente.id },
+            data: {
+              eliminadoEn: null,
+              estadoAprobacion: estadoInicial,
+              nombres: data.nombres,
+              apellidos: data.apellidos,
+              telefono: data.telefono,
+              correo: data.correo,
+              direccion: data.direccion,
+              referencia: data.referencia,
+              creadoPorId: solicitadoPorId,
+            },
+          });
+
+          // Si viene multimedia en el reintento, la adjuntamos también
+          if (
+            data.archivos &&
+            Array.isArray(data.archivos) &&
+            data.archivos.length > 0
+          ) {
+            await this.prisma.multimedia.updateMany({
+              where: {
+                clienteId: clienteRestaurado.id,
+                estado: 'ACTIVO',
+              },
+              data: {
+                estado: 'ELIMINADO',
+              },
+            });
+
+            await this.prisma.multimedia.createMany({
+              data: data.archivos.map((archivo: any) => ({
+                clienteId: clienteRestaurado.id,
+                tipoContenido: archivo.tipoContenido,
+                tipoArchivo: archivo.tipoArchivo,
+                formato: archivo.nombreOriginal?.split('.').pop() || 'bin',
+                nombreOriginal: archivo.nombreOriginal,
+                nombreAlmacenamiento: archivo.nombreAlmacenamiento,
+                ruta: archivo.ruta || archivo.path || '',
+                url:
+                  archivo.url ||
+                  archivo.path ||
+                  (archivo.nombreAlmacenamiento
+                    ? `/uploads/${archivo.nombreAlmacenamiento}`
+                    : null),
+                tamanoBytes: archivo.tamanoBytes,
+                subidoPorId: solicitadoPorId,
+                esPrincipal: archivo.tipoContenido === 'FOTO_PERFIL',
+                estado: 'ACTIVO',
+              })),
+            });
+          }
+
+          const aprobacion = await this.prisma.aprobacion.create({
+            data: {
+              tipoAprobacion: 'NUEVO_CLIENTE',
+              referenciaId: clienteRestaurado.id,
+              tablaReferencia: 'Cliente',
+              solicitadoPorId: solicitadoPorId,
+              estado: estadoInicial,
+              datosSolicitud: JSON.stringify({
+                dni: data.dni,
+                nombres: data.nombres,
+                apellidos: data.apellidos,
+                telefono: data.telefono,
+                correo: data.correo,
+                direccion: data.direccion,
+                referencia: data.referencia,
+                archivos: data.archivos || [],
+              }),
+              ...(autoAprobar ? { aprobadoPorId: solicitadoPorId, revisadoEn: new Date() } : {}),
+            },
+          });
+
+          if (!autoAprobar) {
+            try {
+              await this.notificacionesService.notifyApprovers({
+                titulo: 'Nuevo cliente requiere aprobación',
+                mensaje: `Se reenvi f3 la solicitud del cliente (${data.nombres} ${data.apellidos}). Requiere revisi f3n.`,
+                tipo: 'CLIENTE',
+                entidad: 'Aprobacion',
+                entidadId: aprobacion.id,
+                metadata: {
+                  tipoAprobacion: 'NUEVO_CLIENTE',
+                  clienteId: clienteRestaurado.id,
+                  solicitanteId: solicitadoPorId,
+                  dni: data.dni,
+                  nombres: data.nombres,
+                  apellidos: data.apellidos,
+                  reenviado: true,
+                },
+              });
+            } catch {
+              // silencioso
+            }
+
+            try {
+              await this.notificacionesService.create({
+                usuarioId: solicitadoPorId,
+                titulo: 'Solicitud reenviada',
+                mensaje: 'Tu solicitud fue reenviada con  e9xito y qued f3 pendiente de aprobaci f3n.',
+                tipo: 'INFORMATIVO',
+                entidad: 'Aprobacion',
+                entidadId: aprobacion.id,
+                metadata: {
+                  tipoAprobacion: 'NUEVO_CLIENTE',
+                  clienteId: clienteRestaurado.id,
+                  reenviado: true,
+                },
+              });
+            } catch {
+              // silencioso
+            }
+          }
+
+          this.notificacionesGateway.broadcastClientesActualizados({
+            accion: 'REENVIAR',
+            clienteId: clienteRestaurado.id,
+          });
+
+          return {
+            mensaje: autoAprobar
+              ? 'Cliente restaurado y aprobado autom e1ticamente.'
+              : 'Cliente restaurado y solicitud reenviada. Pendiente de aprobaci f3n.',
+            aprobacionId: aprobacion.id,
+            clienteId: clienteRestaurado.id,
+            clienteCodigo: clienteRestaurado.codigo,
+            reenviado: true,
+          };
+        }
+
+        // Otros casos archivados (archivado manual, etc.) deben restaurarse desde Archivados
+        throw new ConflictException(
+          `El cliente con documento ${data.dni} ya existe pero está archivado. Restáuralo desde la sección de Archivados.`,
+        );
       }
 
       // Buscar un usuario para asignar como creador si no viene uno (TODO: Usar usuario autenticado)
@@ -731,8 +891,13 @@ export class ClientsService {
             formato: archivo.nombreOriginal?.split('.').pop() || 'bin',
             nombreOriginal: archivo.nombreOriginal,
             nombreAlmacenamiento: archivo.nombreAlmacenamiento,
-            ruta: archivo.ruta,
-            url: `/uploads/${archivo.nombreAlmacenamiento}`,
+            ruta: archivo.ruta || archivo.path || '',
+            url:
+              archivo.url ||
+              archivo.path ||
+              (archivo.nombreAlmacenamiento
+                ? `/uploads/${archivo.nombreAlmacenamiento}`
+                : null),
             tamanoBytes: archivo.tamanoBytes,
             subidoPorId: solicitadoPorId,
             esPrincipal: archivo.tipoContenido === 'FOTO_PERFIL',
