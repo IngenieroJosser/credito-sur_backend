@@ -1588,6 +1588,65 @@ export class LoansService implements OnModuleInit {
         },
       });
 
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const startDate = new Date(fechaInicio);
+      startDate.setHours(0, 0, 0, 0);
+
+      if (startDate.getTime() === today.getTime()) {
+        const rutaPreferida = cliente.asignacionesRuta?.find((a: any) => a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn);
+
+        const rutaCobrador = !rutaPreferida && creador.rol === RolUsuario.COBRADOR
+          ? await this.prisma.ruta.findFirst({
+              where: {
+                eliminadoEn: null,
+                activa: true,
+                cobradorId: creador.id,
+              },
+              select: { id: true, cobradorId: true },
+            })
+          : null;
+
+        const rutaIdAsignar = (rutaPreferida as any)?.rutaId || (rutaPreferida as any)?.ruta?.id || rutaCobrador?.id;
+        const cobradorIdAsignar = (rutaPreferida as any)?.cobradorId || (rutaPreferida as any)?.ruta?.cobradorId || rutaCobrador?.cobradorId;
+
+        if (rutaIdAsignar && cobradorIdAsignar) {
+          const existenteHoy = await this.prisma.asignacionRuta.findFirst({
+            where: {
+              rutaId: rutaIdAsignar,
+              clienteId: cliente.id,
+              activa: true,
+              fechaEspecifica: today,
+            },
+            select: { id: true },
+          });
+
+          if (!existenteHoy) {
+            const maxOrden = await this.prisma.asignacionRuta.aggregate({
+              where: { rutaId: rutaIdAsignar, activa: true },
+              _max: { ordenVisita: true },
+            });
+
+            await this.prisma.asignacionRuta.create({
+              data: {
+                rutaId: rutaIdAsignar,
+                clienteId: cliente.id,
+                cobradorId: cobradorIdAsignar,
+                fechaEspecifica: today,
+                ordenVisita: (maxOrden._max.ordenVisita || 0) + 1,
+                activa: true,
+              },
+            });
+
+            this.notificacionesGateway.broadcastRutasActualizadas({
+              accion: 'ACTUALIZAR',
+              rutaId: rutaIdAsignar,
+              clienteId: cliente.id,
+            });
+          }
+        }
+      }
+
       this.logger.log(`Loan created successfully: ${prestamo.id}, requiereAprobacion: ${esAutoAprobado}`);
 
       const articuloNombre = (data as any).productoNombre || (prestamo as any).producto?.nombre || 'Artículo';
@@ -1620,6 +1679,9 @@ export class LoansService implements OnModuleInit {
             porcentaje: safeNumber(isFinanciamientoArticulo ? 0 : tasaInteres),
             frecuenciaPago: String(data.frecuenciaPago),
             cuotaInicial: safeNumber(data.cuotaInicial),
+            notas: data.notas ? String(data.notas) : undefined,
+            garantia: data.garantia ? String(data.garantia) : undefined,
+            fechaPrimerCobro: (data as any).fechaPrimerCobro ? String((data as any).fechaPrimerCobro) : undefined,
           },
           montoSolicitud: prestamo.monto,
           estado: esAutoAprobado ? EstadoAprobacion.APROBADO : EstadoAprobacion.PENDIENTE,
