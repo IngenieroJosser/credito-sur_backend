@@ -8,7 +8,6 @@ datasource db {
 
 model Usuario {
   id                      String                     @id @default(uuid())
-  nombreUsuario           String                     @unique @db.VarChar(50)
   correo                  String                     @unique @db.VarChar(255)
   hashContrasena          String                     @db.VarChar(255)
   nombres                 String                     @db.VarChar(100)
@@ -55,7 +54,6 @@ model Usuario {
   rutasComoCobrador       Ruta[]                     @relation("RutaCobrador")
   rutasComoSupervisor     Ruta[]                     @relation("RutaSupervisor")
 
-  @@index([nombreUsuario])
   @@index([correo])
   @@index([rol])
   @@index([estado])

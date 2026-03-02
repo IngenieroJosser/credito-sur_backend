@@ -42,6 +42,10 @@ export class CreateMultimediaDto {
   @IsOptional()
   ruta?: string;
 
+  @IsString()
+  @IsOptional()
+  url?: string;
+
   @IsNumber()
   @IsOptional()
   tamanoBytes?: number;
