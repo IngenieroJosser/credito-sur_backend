@@ -798,6 +798,16 @@ export class ClientsService {
         throw new BadRequestException('Datos inválidos para crear el cliente.');
       }
 
+      if (error instanceof Prisma.PrismaClientValidationError) {
+        this.logger.error(
+          `[CLIENTS] Prisma validation error creating client: ${error.message}`,
+        );
+        throw new BadRequestException({
+          message: 'Datos inválidos para crear el cliente.',
+          details: error.message,
+        });
+      }
+
       this.logger.error('Error creating client:', error);
       throw new InternalServerErrorException('Error interno del servidor');
     }
