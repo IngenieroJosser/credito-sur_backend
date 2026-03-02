@@ -366,100 +366,105 @@ export class RoutesService {
   }
 
   async findOne(id: string) {
-    const ruta = await this.prisma.ruta.findFirst({
-      where: {
-        id,
-        eliminadoEn: null,
-      },
-      include: {
-        cobrador: {
-          select: {
-            id: true,
-            nombres: true,
-            apellidos: true,
-            correo: true,
-            telefono: true,
-            rol: true,
-          },
+    try {
+      const ruta = await this.prisma.ruta.findFirst({
+        where: {
+          id,
+          eliminadoEn: null,
         },
-        supervisor: {
-          select: {
-            id: true,
-            nombres: true,
-            apellidos: true,
-            correo: true,
-            telefono: true,
-            rol: true,
+        include: {
+          cobrador: {
+            select: {
+              id: true,
+              nombres: true,
+              apellidos: true,
+              correo: true,
+              telefono: true,
+              rol: true,
+            },
           },
-        },
-        asignaciones: {
-          where: { activa: true },
-          include: {
-            cliente: {
-              include: {
-                prestamos: {
-                  where: {
-                    OR: [
-                      { estado: EstadoPrestamo.ACTIVO },
-                      { estado: EstadoPrestamo.EN_MORA }
-                    ]
-                  },
-                  include: {
-                    cuotas: {
-                      where: {
-                        estado: {
-                          in: [EstadoCuota.PENDIENTE, EstadoCuota.VENCIDA, EstadoCuota.PARCIAL]
-                        }
+          supervisor: {
+            select: {
+              id: true,
+              nombres: true,
+              apellidos: true,
+              correo: true,
+              telefono: true,
+              rol: true,
+            },
+          },
+          asignaciones: {
+            where: { activa: true },
+            include: {
+              cliente: {
+                include: {
+                  prestamos: {
+                    where: {
+                      OR: [
+                        { estado: EstadoPrestamo.ACTIVO },
+                        { estado: EstadoPrestamo.EN_MORA },
+                      ],
+                    },
+                    include: {
+                      cuotas: {
+                        where: {
+                          estado: {
+                            in: [
+                              EstadoCuota.PENDIENTE,
+                              EstadoCuota.VENCIDA,
+                              EstadoCuota.PARCIAL,
+                            ],
+                          },
+                        },
+                        orderBy: { numeroCuota: 'asc' },
+                        take: 1,
                       },
-                      orderBy: { numeroCuota: 'asc' },
-                      take: 1
-                    }
-                  }
-                }
-              }
+                    },
+                  },
+                },
+              },
+            },
+            orderBy: { ordenVisita: 'asc' },
+          },
+          cajas: {
+            where: { activa: true },
+            select: {
+              id: true,
+              codigo: true,
+              nombre: true,
+              saldoActual: true,
             },
           },
-          orderBy: { ordenVisita: 'asc' },
-        },
-        cajas: {
-          where: { activa: true },
-          select: {
-            id: true,
-            codigo: true,
-            nombre: true,
-            saldoActual: true,
+          gastos: {
+            where: { estadoAprobacion: 'APROBADO' },
+            take: 10,
+            orderBy: { fechaGasto: 'desc' },
           },
-        },
-        gastos: {
-          where: { estadoAprobacion: 'APROBADO' },
-          take: 10,
-          orderBy: { fechaGasto: 'desc' },
-        },
-        _count: {
-          select: {
-            asignaciones: {
-              where: { activa: true },
+          _count: {
+            select: {
+              asignaciones: {
+                where: { activa: true },
+              },
+              gastos: true,
             },
-            gastos: true,
           },
         },
-      },
-    });
+      });
 
-    if (!ruta) {
-      throw new NotFoundException('Ruta no encontrada');
-    }
+      if (!ruta) {
+        throw new NotFoundException('Ruta no encontrada');
+      }
 
-    // Calcular estadísticas detalladas
-    const clientesIds = ruta.asignaciones.map((a) => a.clienteId);
-    const estadisticas = {
-      clientesAsignados: ruta._count.asignaciones,
-      cobranzaDelDia: 0,
-      metaDelDia: 0,
-      clientesNuevos: 0,
-      totalDeuda: 0,
-      prestamosActivos: 0,
-    };
+      // Calcular estadísticas detalladas
+      const clientesIds = ruta.asignaciones.map((a) => a.clienteId);
+      const estadisticas = {
+        clientesAsignados: ruta._count.asignaciones,
+        cobranzaDelDia: 0,
+        metaDelDia: 0,
+        clientesNuevos: 0,
+        totalDeuda: 0,
+        prestamosActivos: 0,
+      };
 
     let nivelRiesgo = 'PELIGRO_MINIMO';
     let porcentajeMora = 0;
@@ -567,19 +572,41 @@ export class RoutesService {
       else if (porcentajeMora > 5) nivelRiesgo = 'LEVE_RETRASO';
     }
 
-    return {
-      ...ruta,
-      estadisticas: {
-        ...estadisticas,
-        avanceDiario: parseFloat(avanceDiario.toFixed(2)),
-      },
-      nivelRiesgo,
-      porcentajeMora: parseFloat(porcentajeMora.toFixed(2)),
-      cobrador: `${ruta.cobrador.nombres} ${ruta.cobrador.apellidos}`,
-      supervisor: ruta.supervisorId
-        ? `${ruta.supervisor?.nombres ?? ''} ${ruta.supervisor?.apellidos ?? ''}`
-        : undefined,
-    };
+      return {
+        ...ruta,
+        estadisticas: {
+          ...estadisticas,
+          avanceDiario: parseFloat(avanceDiario.toFixed(2)),
+        },
+        nivelRiesgo,
+        porcentajeMora: parseFloat(porcentajeMora.toFixed(2)),
+        cobrador: `${ruta.cobrador.nombres} ${ruta.cobrador.apellidos}`,
+        supervisor: ruta.supervisorId
+          ? `${ruta.supervisor?.nombres ?? ''} ${ruta.supervisor?.apellidos ?? ''}`
+          : undefined,
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+
+      if (error instanceof Prisma.PrismaClientKnownRequestError) {
+        throw new BadRequestException({
+          message: 'Datos inválidos para obtener la ruta.',
+          code: error.code,
+          meta: error.meta,
+        });
+      }
+
+      if (error instanceof Prisma.PrismaClientValidationError) {
+        throw new BadRequestException({
+          message: 'Datos inválidos para obtener la ruta.',
+          details: error.message,
+        });
+      }
+
+      throw new InternalServerErrorException(
+        `Error al obtener la ruta: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+    }
   }
 
   async update(id: string, updateRouteDto: UpdateRouteDto) {
