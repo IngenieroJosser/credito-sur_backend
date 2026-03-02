@@ -760,41 +760,6 @@ export class ClientsService {
         },
       });
 
-      // Si se auto-aprobó, no enviamos notificación a los aprobadores (o podríamos notificar de la auto-aprobación)
-      if (!autoAprobar) {
-        // Enviar notificaciones a todos los SUPER_ADMINISTRADOR, ADMIN y COORDINADOR
-        const aprobadores = await this.prisma.usuario.findMany({
-        where: {
-          rol: { in: [RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR] },
-          estado: 'ACTIVO',
-        },
-        select: { id: true, nombres: true, apellidos: true },
-      });
-
-      const solicitanteInfo = await this.prisma.usuario.findUnique({
-        where: { id: solicitadoPorId },
-        select: { nombres: true, apellidos: true },
-      });
-
-      for (const aprobador of aprobadores) {
-        await this.notificacionesService.create({
-          usuarioId: aprobador.id,
-          titulo: 'Nueva Solicitud de Cliente',
-          mensaje: `${solicitanteInfo?.nombres} ${solicitanteInfo?.apellidos} ha solicitado la aprobación de un nuevo cliente: ${data.nombres} ${data.apellidos} (CC: ${data.dni})`,
-          tipo: 'APROBACION',
-          entidad: 'Aprobacion',
-          entidadId: aprobacion.id,
-          metadata: {
-            tipoAprobacion: 'NUEVO_CLIENTE',
-            clienteNombre: `${data.nombres} ${data.apellidos}`,
-            clienteDni: data.dni,
-            solicitadoPor: `${solicitanteInfo?.nombres} ${solicitanteInfo?.apellidos}`,
-            clienteId: cliente.id,
-            archivos: data.archivos || [],
-          },
-        });
-      }
-      } // Fin de if (!autoAprobar)
 
       this.notificacionesGateway.broadcastClientesActualizados({
         accion: 'CREAR',
