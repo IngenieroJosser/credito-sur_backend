@@ -1378,6 +1378,15 @@ export class RoutesService {
 
       // Revisar cada préstamo activo
       for (const prestamo of cliente.prestamos) {
+        const fechaInicioPrestamo = new Date(prestamo.fechaInicio);
+        fechaInicioPrestamo.setHours(0, 0, 0, 0);
+
+        // Si el préstamo inicia hoy, debe aparecer hoy para empezar a cobrar.
+        if (fechaInicioPrestamo.getTime() === fechaConsulta.getTime()) {
+          debeAparecerHoy = true;
+          break;
+        }
+
         if (prestamo.cuotas.length === 0) continue;
 
         const proximaCuota = prestamo.cuotas[0];
