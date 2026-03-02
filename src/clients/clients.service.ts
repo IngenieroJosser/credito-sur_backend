@@ -760,7 +760,6 @@ export class ClientsService {
         },
       });
 
-      } // Fin de if (!autoAprobar)
 
       this.notificacionesGateway.broadcastClientesActualizados({
         accion: 'CREAR',
