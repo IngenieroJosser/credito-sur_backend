@@ -680,6 +680,8 @@ export class AccountingService {
         } else if (
           t.tipoReferencia === 'SOLICITUD_BASE_EFECTIVO' ||
           t.tipoReferencia === 'SOLICITUD_BASE' ||
+          t.tipoReferencia === 'APERTURA_CAJA' ||
+          t.descripcion.toLowerCase().includes('apertura de caja') ||
           t.descripcion.toLowerCase().includes('base de efectivo')
         ) {
           baseEfectivo += monto;

@@ -66,6 +66,12 @@ export class ApprovalsService {
       },
     });
 
+    this.notificacionesGateway.broadcastAprobacionesActualizadas({
+      accion: 'APROBAR',
+      aprobacionId: id,
+      tipoAprobacion: approval.tipoAprobacion,
+    });
+
     this.logger.log(`Aprobación ${id} procesada por ${aprobadoPorId || 'desconocido'} (tipo: ${approval.tipoAprobacion})`);
 
     return { success: true, message: 'Aprobación procesada exitosamente' };
@@ -209,6 +215,13 @@ export class ApprovalsService {
             : `[SuperAdmin] Eliminación confirmada`,
         },
       });
+
+      this.notificacionesGateway.broadcastAprobacionesActualizadas({
+        accion: 'CONFIRMAR',
+        aprobacionId: id,
+        tipoAprobacion: approval.tipoAprobacion,
+      });
+
       return { success: true, message: 'Eliminación confirmada por el SuperAdministrador' };
     } else {
       await this.prisma.aprobacion.update({
@@ -221,6 +234,12 @@ export class ApprovalsService {
             ? `[SuperAdmin] Revertido a pendiente: ${notas}`
             : `[SuperAdmin] Revertido a pendiente para re-evaluación`,
         },
+      });
+
+      this.notificacionesGateway.broadcastAprobacionesActualizadas({
+        accion: 'REVERTIR',
+        aprobacionId: id,
+        tipoAprobacion: approval.tipoAprobacion,
       });
 
       if (approval.tipoAprobacion === TipoAprobacion.NUEVO_PRESTAMO && approval.referenciaId) {
@@ -279,6 +298,12 @@ export class ApprovalsService {
         comentarios: motivoRechazo || 'Rechazado sin motivo especificado',
         revisadoEn: new Date(),
       },
+    });
+
+    this.notificacionesGateway.broadcastAprobacionesActualizadas({
+      accion: 'RECHAZAR',
+      aprobacionId: id,
+      tipoAprobacion: approval.tipoAprobacion,
     });
 
     // Operación específica por tipo de rechazo
