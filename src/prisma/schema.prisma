@@ -256,6 +256,7 @@ model Prestamo {
   frecuenciaPago       FrecuenciaPago
   cantidadCuotas       Int
   fechaInicio          DateTime
+  fechaPrimerCobro     DateTime?
   fechaFin             DateTime
   estado               EstadoPrestamo       @default(BORRADOR)
   creadoPorId          String
@@ -273,6 +274,8 @@ model Prestamo {
   estadoSincronizacion EstadoSincronizacion @default(PENDIENTE)
   ultimaSincronizacion DateTime?
   cuotaInicial         Decimal              @default(0) @db.Decimal(12, 2)
+  notas                String?
+  garantia             String?
   pagos                Pago[]
   aprobadoPor          Usuario?             @relation("PrestamoAprobadoPor", fields: [aprobadoPorId], references: [id])
   cliente              Cliente              @relation(fields: [clienteId], references: [id])

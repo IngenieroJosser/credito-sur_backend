@@ -51,13 +51,14 @@ export class LoansService implements OnModuleInit {
 
   /**
    * Genera tabla de amortización francesa (cuota fija).
-   * La tasa que recibe es la tasa TOTAL del préstamo (ej: 10 = 10%).
-   * Se convierte internamente a tasa por período según la frecuencia.
+   * La tasa que recibe es la tasa MENSUAL del crédito (ej: 10 = 10% mensual).
+   * La conversión a tasa por período se hace de forma compuesta:
+   * i_periodo = (1 + i_mensual)^(fracción del mes) - 1
    *
    * @param capital      Monto a financiar
-   * @param tasaTotal    Tasa de interés total del préstamo (%)
+   * @param tasaTotal    Tasa de interés mensual del crédito (%)
    * @param numCuotas    Cantidad de cuotas
-   * @param plazoMeses   Plazo en meses (para calcular tasa por período)
+   * @param plazoMeses   Plazo en meses (no afecta el cálculo de i_periodo)
    * @param frecuencia   Frecuencia de pago
    * @returns { cuotaFija, interesTotal, tabla[] }
    */
@@ -72,28 +73,29 @@ export class LoansService implements OnModuleInit {
       return { cuotaFija: 0, interesTotal: 0, tabla: [] };
     }
 
-    // Convertir tasa total a tasa mensual y luego a tasa por período
-    // tasaTotal es % sobre el capital total para todo el plazo
-    // La convertimos a tasa mensual efectiva: tasaTotal / plazoMeses / 100
-    const tasaMensual = tasaTotal / plazoMeses / 100;
+    // Convertir tasa mensual (%) a tasa mensual decimal
+    const tasaMensual = tasaTotal / 100;
 
-    // Tasa por período según frecuencia
-    let tasaPeriodo: number;
+    // Convertir a tasa por período de forma compuesta
+    // (1 + i_m)^(fracción) - 1
+    let fraccionMes = 1;
     switch (frecuencia) {
       case FrecuenciaPago.DIARIO:
-        tasaPeriodo = tasaMensual / 30;
+        fraccionMes = 1 / 30;
         break;
       case FrecuenciaPago.SEMANAL:
-        tasaPeriodo = tasaMensual / 4;
+        fraccionMes = 1 / 4;
         break;
       case FrecuenciaPago.QUINCENAL:
-        tasaPeriodo = tasaMensual / 2;
+        fraccionMes = 1 / 2;
         break;
       case FrecuenciaPago.MENSUAL:
       default:
-        tasaPeriodo = tasaMensual;
+        fraccionMes = 1;
         break;
     }
+
+    const tasaPeriodo = Math.pow(1 + tasaMensual, fraccionMes) - 1;
 
     // Si la tasa es 0, amortización lineal pura
     if (tasaPeriodo === 0) {
@@ -1015,7 +1017,7 @@ export class LoansService implements OnModuleInit {
           };
         });
       } else {
-        // Interés simple (tasa plana: capital × tasa × plazoMeses / 100)
+        // Interés simple (flat): capital × tasa mensual × plazoMeses (simple)
         interesTotal = (createLoanDto.monto * tasaInteres * createLoanDto.plazoMeses) / 100;
         const montoTotal = createLoanDto.monto + interesTotal;
         const montoCuota = cantidadCuotas > 0 ? montoTotal / cantidadCuotas : 0;
@@ -1051,12 +1053,15 @@ export class LoansService implements OnModuleInit {
           frecuenciaPago: createLoanDto.frecuenciaPago,
           cantidadCuotas,
           fechaInicio,
+          fechaPrimerCobro: (createLoanDto as any).fechaPrimerCobro ? new Date((createLoanDto as any).fechaPrimerCobro) : undefined,
           fechaFin,
           estado: EstadoPrestamo.PENDIENTE_APROBACION,
           estadoAprobacion: EstadoAprobacion.PENDIENTE,
           creadoPorId: createLoanDto.creadoPorId,
           interesTotal,
           saldoPendiente: createLoanDto.monto + interesTotal - (createLoanDto.cuotaInicial || 0),
+          notas: createLoanDto.notas ? String(createLoanDto.notas) : undefined,
+          garantia: (createLoanDto as any).garantia ? String((createLoanDto as any).garantia) : undefined,
           cuotas: {
             create: cuotasData,
           },
@@ -1065,6 +1070,14 @@ export class LoansService implements OnModuleInit {
           cliente: true,
           producto: true,
           cuotas: true,
+          creadoPor: {
+            select: {
+              id: true,
+              nombres: true,
+              apellidos: true,
+              rol: true,
+            },
+          },
         },
       });
 
@@ -1515,8 +1528,7 @@ export class LoansService implements OnModuleInit {
           };
         });
       } else {
-        // Interés simple (tasa plana: capital × tasa × plazoMeses / 100)
-        // CORREGIDO: Multiplicar por plazoMeses para calcular el interés total del período
+        // Interés simple (flat): capital × tasa mensual × plazoMeses (simple)
         interesTotal = (montoFinanciar * tasaInteres * data.plazoMeses) / 100;
         const montoTotalSimple = montoFinanciar + interesTotal;
         const montoCuota = cantidadCuotas > 0 ? montoTotalSimple / cantidadCuotas : 0;
@@ -1562,6 +1574,7 @@ export class LoansService implements OnModuleInit {
           cantidadCuotas,
           cuotaInicial: data.cuotaInicial || 0,
           fechaInicio,
+          fechaPrimerCobro: (data as any).fechaPrimerCobro ? new Date((data as any).fechaPrimerCobro) : undefined,
           fechaFin,
           estado: esAutoAprobado ? EstadoPrestamo.ACTIVO : EstadoPrestamo.PENDIENTE_APROBACION,
           estadoAprobacion: esAutoAprobado ? EstadoAprobacion.APROBADO : EstadoAprobacion.PENDIENTE,
@@ -1569,10 +1582,12 @@ export class LoansService implements OnModuleInit {
           creadoPorId: data.creadoPorId,
           interesTotal,
           saldoPendiente: montoTotal,
+          notas: data.notas ? String(data.notas) : undefined,
+          garantia: (data as any).garantia ? String((data as any).garantia) : undefined,
           cuotas: {
             create: cuotasData,
           },
-        },
+        } as any,
         include: {
           cliente: true,
           producto: true,
