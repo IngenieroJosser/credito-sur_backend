@@ -25,12 +25,12 @@ export class CreateMultimediaDto {
   tipoContenido: string;
 
   @IsString()
-  @IsOptional()
-  tipoArchivo?: string;
+  @IsNotEmpty()
+  tipoArchivo: string;
 
   @IsString()
-  @IsOptional()
-  nombreOriginal?: string;
+  @IsNotEmpty()
+  nombreOriginal: string;
 
   @IsString()
   @IsOptional()

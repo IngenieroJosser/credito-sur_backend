@@ -1,6 +1,8 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
@@ -12,6 +14,7 @@ import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway'
 import { ConfiguracionService } from '../configuracion/configuracion.service';
 import { NivelRiesgo, RolUsuario } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class ClientsService {
@@ -774,8 +777,29 @@ export class ClientsService {
         clienteCodigo: codigo,
       };
     } catch (error) {
+      // Prisma errors (DB constraints, invalid relations, etc.)
+      if (error instanceof Prisma.PrismaClientKnownRequestError) {
+        this.logger.error(
+          `[CLIENTS] Prisma error creating client (code=${error.code}): ${error.message}`,
+        );
+
+        // Unique constraint (e.g. dni/codigo)
+        if (error.code === 'P2002') {
+          throw new ConflictException('Ya existe un cliente con esos datos.');
+        }
+
+        // FK constraint (e.g. creadoPorId/aprobadoPorId/subidoPorId)
+        if (error.code === 'P2003') {
+          throw new BadRequestException(
+            'Datos inválidos: referencia relacionada no existe (usuario/relación).',
+          );
+        }
+
+        throw new BadRequestException('Datos inválidos para crear el cliente.');
+      }
+
       this.logger.error('Error creating client:', error);
-      throw error;
+      throw new InternalServerErrorException('Error interno del servidor');
     }
   }
 
