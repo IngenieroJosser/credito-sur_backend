@@ -233,6 +233,22 @@ export class AccountingService {
       },
     });
 
+    try {
+      await this.notificacionesService.create({
+        usuarioId: data.solicitadoPorId,
+        titulo: 'Solicitud enviada',
+        mensaje: 'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
+        tipo: 'INFORMATIVO',
+        entidad: 'Aprobacion',
+        entidadId: aprobacion.id,
+        metadata: {
+          tipoAprobacion: data.tipoAprobacion,
+          rutaId: data.rutaId,
+          cajaId: cajaRuta.id,
+        },
+      });
+    } catch {}
+
     this.notificacionesGateway.broadcastDashboardsActualizados({
       origen: 'GASTO',
       rutaId: data.rutaId,
@@ -314,6 +330,22 @@ export class AccountingService {
         solicitadoPor: nombreSolicitanteBase,
       },
     });
+
+    try {
+      await this.notificacionesService.create({
+        usuarioId: data.solicitadoPorId,
+        titulo: 'Solicitud enviada',
+        mensaje: 'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
+        tipo: 'INFORMATIVO',
+        entidad: 'Aprobacion',
+        entidadId: aprobacion.id,
+        metadata: {
+          tipoAprobacion: 'SOLICITUD_BASE_EFECTIVO',
+          rutaId: data.rutaId,
+          cajaId: cajaRuta.id,
+        },
+      });
+    } catch {}
 
     this.notificacionesGateway.broadcastDashboardsActualizados({
       origen: 'BASE',

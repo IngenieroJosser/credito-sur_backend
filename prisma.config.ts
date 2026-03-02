@@ -1,6 +1,10 @@
 import 'dotenv/config';
 import { defineConfig } from 'prisma/config';
 
+declare const process: {
+  env: Record<string, string | undefined>;
+};
+
 export default defineConfig({
   schema: 'src/prisma/schema.prisma',
 
@@ -10,6 +14,5 @@ export default defineConfig({
 
   migrations: {
     path: 'src/prisma/migrations',
-    seed: 'ts-node src/prisma/seed.ts',
   },
 });
