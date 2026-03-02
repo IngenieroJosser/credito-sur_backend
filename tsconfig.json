@@ -6,6 +6,8 @@
     "rootDir": "./src",
     "outDir": "./dist",
 
+    "types": ["node"],
+
     "declaration": false,
     "removeComments": true,
 
