@@ -50,8 +50,8 @@ export class CreateMultimediaDto {
 export class CreateClientDto {
   @IsString()
   @IsNotEmpty()
-  @Matches(/^\d+$/, { message: 'El DNI/Cédula debe contener solo números.' })
-  @Length(6, 10, { message: 'El DNI/Cédula debe tener entre 6 y 10 dígitos.' })
+  @Matches(/^\d+$/, { message: 'La Cédula debe contener solo números.' })
+  @Length(6, 10, { message: 'La Cédula debe tener entre 6 y 10 dígitos.' })
   dni: string;
 
   @IsString()
