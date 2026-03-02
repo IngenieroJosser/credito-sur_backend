@@ -1627,6 +1627,42 @@ export class LoansService implements OnModuleInit {
         },
       });
 
+      if (!esAutoAprobado) {
+        try {
+          await this.notificacionesService.notifyApprovers({
+            titulo: 'Nuevo crédito requiere aprobación',
+            mensaje: `${creador.nombres} ${creador.apellidos} solicitó un ${data.tipoPrestamo === 'EFECTIVO' ? 'préstamo' : 'crédito por un artículo'} para ${cliente.nombres} ${cliente.apellidos} por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}.`,
+            tipo: 'PRESTAMO',
+            entidad: 'Aprobacion',
+            entidadId: aprobacion.id,
+            metadata: {
+              tipoAprobacion: 'NUEVO_PRESTAMO',
+              prestamoId: prestamo.id,
+              clienteId: cliente.id,
+              numeroPrestamo: prestamo.numeroPrestamo,
+              monto: safeNumber(prestamo.monto),
+              tipoPrestamo: data.tipoPrestamo,
+            },
+          });
+        } catch {}
+
+        try {
+          await this.notificacionesService.create({
+            usuarioId: data.creadoPorId,
+            titulo: 'Solicitud enviada',
+            mensaje: 'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
+            tipo: 'INFORMATIVO',
+            entidad: 'Aprobacion',
+            entidadId: aprobacion.id,
+            metadata: {
+              tipoAprobacion: 'NUEVO_PRESTAMO',
+              prestamoId: prestamo.id,
+              numeroPrestamo: prestamo.numeroPrestamo,
+            },
+          });
+        } catch {}
+      }
+
       if (esAutoAprobado) {
         // Notificar a administradores sobre préstamo aprobado automáticamente
         const admins = await this.prisma.usuario.findMany({

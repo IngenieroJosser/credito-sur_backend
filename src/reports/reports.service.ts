@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service'; 
 import { EstadoAprobacion } from '@prisma/client';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import {
   PrestamosMoraFiltrosDto,
   TotalesMoraDto,
@@ -27,7 +28,10 @@ import * as PDFDocument from 'pdfkit';
 
 @Injectable()
 export class ReportsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificacionesService: NotificacionesService,
+  ) {}
 
   async getFinancialSummary(startDate: Date, endDate: Date) {
     const end = new Date(endDate);
@@ -779,6 +783,47 @@ export class ReportsService {
         montoSolicitud: decisionDto.montoInteres || 0,
       },
     });
+
+    let nombreUsuario = 'Usuario';
+    try {
+      const u = await this.prisma.usuario.findUnique({
+        where: { id: usuarioId },
+        select: { nombres: true, apellidos: true },
+      });
+      if (u) nombreUsuario = `${u.nombres} ${u.apellidos}`.trim() || nombreUsuario;
+    } catch {}
+
+    try {
+      await this.notificacionesService.notifyApprovers({
+        titulo: 'Solicitud requiere aprobación',
+        mensaje: `${nombreUsuario} solicitó ${decisionDto.decision.toLowerCase()} para el préstamo ${prestamo.numeroPrestamo} (${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}).`,
+        tipo: 'WARNING',
+        entidad: 'Aprobacion',
+        entidadId: aprobacion.id,
+        metadata: {
+          tipoAprobacion: 'BAJA_POR_PERDIDA',
+          prestamoId: decisionDto.prestamoId,
+          decision: decisionDto.decision,
+          montoInteres: decisionDto.montoInteres || 0,
+        },
+      });
+    } catch {}
+
+    try {
+      await this.notificacionesService.create({
+        usuarioId,
+        titulo: 'Solicitud enviada',
+        mensaje: 'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
+        tipo: 'INFORMATIVO',
+        entidad: 'Aprobacion',
+        entidadId: aprobacion.id,
+        metadata: {
+          tipoAprobacion: 'BAJA_POR_PERDIDA',
+          prestamoId: decisionDto.prestamoId,
+          decision: decisionDto.decision,
+        },
+      });
+    } catch {}
 
     // Actualizar estado del préstamo según la decisión
     let nuevoEstado: EstadoPrestamo = prestamo.estado;

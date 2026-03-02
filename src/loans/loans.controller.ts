@@ -1118,6 +1118,22 @@ export class LoansController {
       },
     });
 
+    try {
+      await this.notificacionesService.create({
+        usuarioId,
+        titulo: 'Solicitud enviada',
+        mensaje: 'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
+        tipo: 'INFORMATIVO',
+        entidad: 'Aprobacion',
+        entidadId: aprobacion.id,
+        metadata: {
+          tipoAprobacion: 'PRORROGA_PAGO',
+          tipo: 'ASIGNAR_MORA',
+          prestamoId,
+        },
+      });
+    } catch {}
+
     return {
       mensaje: 'Mora pendiente de aprobación creada exitosamente',
       aprobacionId: aprobacion.id,
@@ -1241,6 +1257,23 @@ export class LoansController {
         gestionadoPor: nombreUsuario,
       },
     });
+
+    try {
+      await this.notificacionesService.create({
+        usuarioId,
+        titulo: 'Solicitud enviada',
+        mensaje: 'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
+        tipo: 'INFORMATIVO',
+        entidad: 'Aprobacion',
+        entidadId: aprobacion.id,
+        metadata: {
+          tipoAprobacion,
+          tipo: 'GESTION_VENCIDA',
+          decision: body.decision,
+          prestamoId,
+        },
+      });
+    } catch {}
 
     return {
       mensaje: `Solicitud de ${LABEL_DECISION[body.decision]} enviada para aprobación`,

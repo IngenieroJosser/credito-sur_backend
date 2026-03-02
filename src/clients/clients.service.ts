@@ -763,6 +763,56 @@ export class ClientsService {
         },
       });
 
+      if (!autoAprobar) {
+        let nombreSolicitante = 'Usuario';
+        try {
+          const solicitante = await this.prisma.usuario.findUnique({
+            where: { id: solicitadoPorId },
+            select: { nombres: true, apellidos: true },
+          });
+          if (solicitante) {
+            nombreSolicitante = `${solicitante.nombres} ${solicitante.apellidos}`.trim() || nombreSolicitante;
+          }
+        } catch {
+          // silencioso
+        }
+
+        try {
+          await this.notificacionesService.notifyApprovers({
+            titulo: 'Nuevo cliente requiere aprobación',
+            mensaje: `${nombreSolicitante} creó un nuevo cliente (${data.nombres} ${data.apellidos}). Requiere revisión.`,
+            tipo: 'CLIENTE',
+            entidad: 'Aprobacion',
+            entidadId: aprobacion.id,
+            metadata: {
+              tipoAprobacion: 'NUEVO_CLIENTE',
+              clienteId: cliente.id,
+              solicitanteId: solicitadoPorId,
+              dni: data.dni,
+              nombres: data.nombres,
+              apellidos: data.apellidos,
+            },
+          });
+        } catch {
+        }
+
+        try {
+          await this.notificacionesService.create({
+            usuarioId: solicitadoPorId,
+            titulo: 'Solicitud enviada',
+            mensaje: 'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
+            tipo: 'INFORMATIVO',
+            entidad: 'Aprobacion',
+            entidadId: aprobacion.id,
+            metadata: {
+              tipoAprobacion: 'NUEVO_CLIENTE',
+              clienteId: cliente.id,
+            },
+          });
+        } catch {
+        }
+      }
+
 
       this.notificacionesGateway.broadcastClientesActualizados({
         accion: 'CREAR',
