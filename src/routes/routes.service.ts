@@ -366,7 +366,7 @@ export class RoutesService {
   }
 
   async findOne(id: string) {
-    const ruta = await this.prisma.ruta.findUnique({
+    const ruta = await this.prisma.ruta.findFirst({
       where: {
         id,
         eliminadoEn: null,

@@ -795,7 +795,11 @@ export class ClientsService {
           );
         }
 
-        throw new BadRequestException('Datos inválidos para crear el cliente.');
+        throw new BadRequestException({
+          message: 'Datos inválidos para crear el cliente.',
+          code: error.code,
+          meta: error.meta,
+        });
       }
 
       if (error instanceof Prisma.PrismaClientValidationError) {
