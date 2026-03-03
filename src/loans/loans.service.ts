@@ -700,6 +700,8 @@ export class LoansService implements OnModuleInit {
         estado: prestamo.estado,
       };
 
+      const archivos = updateData?.archivos;
+
       // Build update payload - only allow safe fields
       const data: any = { estadoSincronizacion: 'PENDIENTE' };
 
@@ -822,6 +824,64 @@ export class LoansService implements OnModuleInit {
           cuotas: true,
         },
       });
+
+      // Actualizar archivos del préstamo si vienen en el payload
+      if (archivos !== undefined) {
+        this.logger.log(`[DEBUG] Actualizando archivos para préstamo ${id}. Archivos recibidos: ${Array.isArray(archivos) ? archivos.length : 'N/A'}`);
+
+        const activos = await this.prisma.multimedia.findMany({
+          where: {
+            prestamoId: id,
+            estado: 'ACTIVO',
+          },
+          select: { id: true },
+        });
+
+        if (activos.length > 0) {
+          await this.prisma.multimedia.updateMany({
+            where: { id: { in: activos.map((a) => a.id) } },
+            data: {
+              estado: 'ELIMINADO' as const,
+              eliminadoEn: new Date(),
+            },
+          });
+        }
+
+        if (Array.isArray(archivos) && archivos.length > 0) {
+          const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+
+          const nuevosArchivos = archivos.map((archivo: any) => {
+            const url = archivo.url || archivo.path || archivo.ruta;
+            const urlFinal = typeof url === 'string' && url.startsWith('http') ? url : undefined;
+
+            const rutaValue = String(archivo.ruta || archivo.path || archivo.nombreAlmacenamiento || '').trim();
+            const tipoArchivoValue = String(archivo.tipoArchivo || '').toLowerCase();
+            const isVideo = tipoArchivoValue.startsWith('video/');
+
+            const urlDerivada = (!urlFinal && cloudName && rutaValue)
+              ? `https://res.cloudinary.com/${cloudName}/${isVideo ? 'video' : 'image'}/upload/${rutaValue}`
+              : undefined;
+
+            return {
+              prestamoId: id,
+              tipoContenido: archivo.tipoContenido,
+              tipoArchivo: archivo.tipoArchivo,
+              formato: archivo.formato || archivo.tipoArchivo?.split('/')[1] || 'jpg',
+              nombreOriginal: archivo.nombreOriginal,
+              nombreAlmacenamiento: archivo.nombreAlmacenamiento || archivo.nombreOriginal,
+              ruta: archivo.ruta || archivo.path,
+              url: urlFinal || urlDerivada,
+              tamanoBytes: archivo.tamanoBytes || 0,
+              subidoPorId: archivo.subidoPorId || userId || prestamoActualizado.creadoPorId,
+              estado: 'ACTIVO' as const,
+            };
+          });
+
+          await this.prisma.multimedia.createMany({
+            data: nuevosArchivos,
+          });
+        }
+      }
 
       try {
         const estadoAnterior = prestamo.estado;
