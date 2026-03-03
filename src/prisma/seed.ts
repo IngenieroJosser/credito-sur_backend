@@ -1,5 +1,9 @@
 import 'dotenv/config';
-import { PrismaClient, RolUsuario, EstadoUsuario } from '@prisma/client';
+import {
+  PrismaClient,
+  RolUsuario,
+  EstadoUsuario,
+} from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import * as argon2 from 'argon2';
@@ -204,7 +208,7 @@ async function seedRolesYPermisos() {
     // Gesti\u00f3n Clientes
     { modulo: 'Gesti\u00f3n Clientes', accion: 'clientes', nombre: 'Clientes', descripcion: 'Directorio de clientes', icono: 'Users', ruta: '/admin/clientes', orden: 20, esNavegable: true },
     { modulo: 'Gesti\u00f3n Clientes', accion: 'cuentas-mora', nombre: 'Cuentas en mora', descripcion: 'Gesti\u00f3n de mora', icono: 'AlertCircle', ruta: '/cuentas-mora', orden: 21, esNavegable: true },
-    { modulo: 'Gesti\u00f3n Clientes', accion: 'cuentas-vencidas', nombre: 'Cuentas vencidas', descripcion: 'Cartera castigada', icono: 'Archive', ruta: '/cuentas-vencidas', orden: 22, esNavegable: true },
+    { modulo: 'Gesti\u00f3n Clientes', accion: 'cuentas-vencidas', nombre: 'Cuentas vencidas', descripcion: 'Cartera castigada', icono: 'FileX2', ruta: '/cuentas-vencidas', orden: 22, esNavegable: true },
     { modulo: 'Gesti\u00f3n Clientes', accion: 'archivados', nombre: 'Archivados', descripcion: 'Hist\u00f3ricos', icono: 'Archive', ruta: '/admin/archivados', orden: 23, esNavegable: true },
 
     // Finanzas
