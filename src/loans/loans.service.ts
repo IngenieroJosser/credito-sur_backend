@@ -580,6 +580,9 @@ export class LoansService implements OnModuleInit {
           eliminadoEn: null, // Solo si no está eliminado
         },
         include: {
+          archivos: {
+            where: { estado: 'ACTIVO' },
+          },
           cliente: {
             include: {
               archivos: true,

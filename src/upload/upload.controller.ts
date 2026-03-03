@@ -140,9 +140,13 @@ export class UploadController {
           ? 'videos'
           : 'documentos';
 
+    const isHostedProd =
+      process.env.NODE_ENV === 'production' ||
+      Boolean(process.env.RENDER);
+
     const rootFolder =
       process.env.CLOUDINARY_ROOT_FOLDER ||
-      (process.env.NODE_ENV === 'production' ? 'creditos-del-sur' : 'creditos-del-sur-local');
+      (isHostedProd ? 'creditos-del-sur' : 'creditos-del-sur-local');
 
     const folder = `${rootFolder}/clientes/${clientLabel}/${groupFolder}`;
     const resourceType = file.mimetype.startsWith('video/') ? 'video' : 'auto';
