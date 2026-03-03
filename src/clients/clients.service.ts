@@ -96,6 +96,9 @@ export class ClientsService {
       include: {
         prestamos: true,
         pagos: true,
+        archivos: {
+          where: { estado: 'ACTIVO' },
+        },
       },
     });
   }
@@ -144,7 +147,16 @@ export class ClientsService {
       const nuevosArchivos = archivos.map((archivo: any) => {
         // Asegurar que la URL sea correcta
         const url = archivo.url || archivo.path || archivo.ruta;
-        const urlFinal = url?.startsWith('http') ? url : url;
+        const urlFinal = typeof url === 'string' && url.startsWith('http') ? url : undefined;
+
+        const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+        const rutaValue = String(archivo.ruta || archivo.path || archivo.nombreAlmacenamiento || '').trim();
+        const tipoArchivoValue = String(archivo.tipoArchivo || '').toLowerCase();
+        const isVideo = tipoArchivoValue.startsWith('video/');
+
+        const urlDerivada = (!urlFinal && cloudName && rutaValue)
+          ? `https://res.cloudinary.com/${cloudName}/${isVideo ? 'video' : 'image'}/upload/${rutaValue}`
+          : undefined;
         
         return {
           clienteId: id,
@@ -154,7 +166,7 @@ export class ClientsService {
           nombreOriginal: archivo.nombreOriginal,
           nombreAlmacenamiento: archivo.nombreAlmacenamiento || archivo.nombreOriginal,
           ruta: archivo.ruta || archivo.path,
-          url: urlFinal,
+          url: urlFinal || urlDerivada,
           tamanoBytes: archivo.tamanoBytes || 0,
           subidoPorId: archivo.subidoPorId || clienteActualizado.creadoPorId,
           estado: 'ACTIVO' as const,
