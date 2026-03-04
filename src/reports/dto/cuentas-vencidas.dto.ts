@@ -125,4 +125,9 @@ export class DecisionCastigoDto {
   @IsOptional()
   @IsString()
   nuevaFechaVencimiento?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsNumber()
+  diasGracia?: number;
 }

@@ -763,10 +763,28 @@ export class ReportsService {
       throw new Error('Préstamo no encontrado');
     }
 
-    // Crear registro de aprobación
+    // Buscar la primera cuota vencida o pendiente para vincular la prorroga
+    let cuotaId: string | null = null;
+    if (decisionDto.decision === 'PRORROGAR') {
+      const cuotaVencida = await this.prisma.cuota.findFirst({
+        where: {
+          prestamoId: decisionDto.prestamoId,
+          estado: { in: ['VENCIDA', 'PENDIENTE'] },
+        },
+        orderBy: { numeroCuota: 'asc' },
+      });
+      cuotaId = cuotaVencida?.id || null;
+    }
+
+    // Usar el tipo de aprobacion correcto segun la decision
+    const tipoAprobacion = decisionDto.decision === 'PRORROGAR'
+      ? TipoAprobacion.PRORROGA_PAGO
+      : TipoAprobacion.BAJA_POR_PERDIDA;
+
+    // Crear registro de aprobacion
     const aprobacion = await this.prisma.aprobacion.create({
       data: {
-        tipoAprobacion: TipoAprobacion.BAJA_POR_PERDIDA,
+        tipoAprobacion,
         referenciaId: decisionDto.prestamoId,
         tablaReferencia: 'Prestamo',
         solicitadoPorId: usuarioId,
@@ -776,9 +794,12 @@ export class ReportsService {
           comentarios: decisionDto.comentarios,
           nuevaFechaVencimiento: decisionDto.nuevaFechaVencimiento,
           prestamoId: decisionDto.prestamoId,
+          cuotaId,
+          fechaVencimientoOriginal: prestamo.fechaFin,
           clienteNombre: `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
           saldoPendiente: prestamo.saldoPendiente.toNumber(),
-          fechaVencimientoOriginal: prestamo.fechaFin,
+          numeroPrestamo: prestamo.numeroPrestamo,
+          diasGracia: decisionDto.diasGracia,
         },
         montoSolicitud: decisionDto.montoInteres || 0,
       },
@@ -793,37 +814,40 @@ export class ReportsService {
       if (u) nombreUsuario = `${u.nombres} ${u.apellidos}`.trim() || nombreUsuario;
     } catch {}
 
-    try {
-      await this.notificacionesService.notifyApprovers({
-        titulo: 'Solicitud requiere aprobación',
-        mensaje: `${nombreUsuario} solicitó ${decisionDto.decision.toLowerCase()} para el préstamo ${prestamo.numeroPrestamo} (${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}).`,
-        tipo: 'WARNING',
-        entidad: 'Aprobacion',
-        entidadId: aprobacion.id,
-        metadata: {
-          tipoAprobacion: 'BAJA_POR_PERDIDA',
-          prestamoId: decisionDto.prestamoId,
-          decision: decisionDto.decision,
-          montoInteres: decisionDto.montoInteres || 0,
-        },
-      });
-    } catch {}
+    // Solo notificar a aprobadores si NO es prorroga (la prorroga va directamente a revisiones sin notificacion)
+    if (decisionDto.decision !== 'PRORROGAR') {
+      try {
+        await this.notificacionesService.notifyApprovers({
+          titulo: 'Solicitud requiere aprobacion',
+          mensaje: `${nombreUsuario} solicito ${decisionDto.decision.toLowerCase()} para el prestamo ${prestamo.numeroPrestamo} (${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}).`,
+          tipo: 'WARNING',
+          entidad: 'Aprobacion',
+          entidadId: aprobacion.id,
+          metadata: {
+            tipoAprobacion: 'BAJA_POR_PERDIDA',
+            prestamoId: decisionDto.prestamoId,
+            decision: decisionDto.decision,
+            montoInteres: decisionDto.montoInteres || 0,
+          },
+        });
+      } catch {}
 
-    try {
-      await this.notificacionesService.create({
-        usuarioId,
-        titulo: 'Solicitud enviada',
-        mensaje: 'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
-        tipo: 'INFORMATIVO',
-        entidad: 'Aprobacion',
-        entidadId: aprobacion.id,
-        metadata: {
-          tipoAprobacion: 'BAJA_POR_PERDIDA',
-          prestamoId: decisionDto.prestamoId,
-          decision: decisionDto.decision,
-        },
-      });
-    } catch {}
+      try {
+        await this.notificacionesService.create({
+          usuarioId,
+          titulo: 'Solicitud enviada',
+          mensaje: 'Tu solicitud fue enviada y quedo pendiente de aprobacion.',
+          tipo: 'INFORMATIVO',
+          entidad: 'Aprobacion',
+          entidadId: aprobacion.id,
+          metadata: {
+            tipoAprobacion: 'BAJA_POR_PERDIDA',
+            prestamoId: decisionDto.prestamoId,
+            decision: decisionDto.decision,
+          },
+        });
+      } catch {}
+    }
 
     // Actualizar estado del préstamo según la decisión
     let nuevoEstado: EstadoPrestamo = prestamo.estado;

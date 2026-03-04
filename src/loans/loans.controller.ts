@@ -854,7 +854,7 @@ export class LoansController {
         cliente: { select: { nombres: true, apellidos: true, dni: true } },
       },
     });
-    if (!prestamo) throw new Error('Préstamo no encontrado');
+    if (!prestamo) throw new Error('Prestamo no encontrado');
 
     const usuario = await this.prisma.usuario.findUnique({
       where: { id: usuarioId },
@@ -868,17 +868,30 @@ export class LoansController {
     const nuevaFecha = new Date();
     if (body.diasGracia > 0) nuevaFecha.setDate(nuevaFecha.getDate() + body.diasGracia);
 
+    // Buscar la cuotaId para la prorroga (primera cuota vencida o pendiente)
+    let cuotaId: string | null = null;
+    if (body.decision === 'PRORROGAR') {
+      const cuotaVencida = await this.prisma.cuota.findFirst({
+        where: {
+          prestamoId,
+          estado: { in: ['VENCIDA', 'PENDIENTE'] },
+        },
+        orderBy: { numeroCuota: 'asc' },
+      });
+      cuotaId = cuotaVencida?.id || null;
+    }
+
     const LABEL_DECISION: Record<string, string> = {
-      PRORROGAR: 'Prórroga',
-      CASTIGAR: 'Baja por pérdida',
-      JURIDICO: 'Cobro jurídico',
+      PRORROGAR: 'Prorroga',
+      CASTIGAR: 'Baja por perdida',
+      JURIDICO: 'Cobro juridico',
     };
     const tipoAprobacion: TipoAprobacion =
       body.decision === 'CASTIGAR'
         ? 'BAJA_POR_PERDIDA' as TipoAprobacion
         : 'PRORROGA_PAGO' as TipoAprobacion;
 
-    // 1. Crear aprobación
+    // 1. Crear aprobacion
     const aprobacion = await this.prisma.aprobacion.create({
       data: {
         tipoAprobacion,
@@ -890,11 +903,14 @@ export class LoansController {
           tipo: 'GESTION_VENCIDA',
           decision: body.decision,
           prestamoId,
+          cuotaId,
           numeroPrestamo: prestamo.numeroPrestamo,
           cliente: nombreCliente,
+          clienteNombre: nombreCliente,
           saldoPendiente: Number(prestamo.saldoPendiente),
           montoInteres: body.montoInteres,
           diasGracia: body.diasGracia,
+          fechaVencimientoOriginal: prestamo.fechaFin,
           nuevaFechaVencimiento: body.decision === 'PRORROGAR' ? nuevaFecha.toISOString() : undefined,
           comentarios: body.comentarios,
           gestionadoPor: nombreUsuario,
@@ -903,7 +919,7 @@ export class LoansController {
       },
     });
 
-    // 2. Auditoría
+    // 2. Auditoria
     await this.auditService.create({
       usuarioId,
       accion: `GESTION_VENCIDA_${body.decision}`,
@@ -921,31 +937,13 @@ export class LoansController {
       metadata: { endpoint: `POST /loans/${prestamoId}/gestion-vencida` },
     });
 
-    // 3. Notificar a aprobadores
-    const emojis: Record<string, string> = { PRORROGAR: '📅', CASTIGAR: '🔴', JURIDICO: '⚖️' };
-    await this.notificacionesService.notifyApprovers({
-      titulo: `${emojis[body.decision] || '📌'} ${LABEL_DECISION[body.decision]} — Requiere aprobación`,
-      mensaje: `${nombreUsuario} solicitó ${LABEL_DECISION[body.decision].toLowerCase()} para el préstamo ${prestamo.numeroPrestamo} (${nombreCliente}). Saldo: $${Number(prestamo.saldoPendiente).toLocaleString('es-CO')}. Requiere aprobación.`,
-      tipo: body.decision === 'CASTIGAR' ? 'WARNING' : 'INFO',
-      entidad: 'Aprobacion',
-      entidadId: aprobacion.id,
-      metadata: {
-        tipoAprobacion,
-        tipo: 'GESTION_VENCIDA',
-        decision: body.decision,
-        prestamoId,
-        cliente: nombreCliente,
-        saldoPendiente: Number(prestamo.saldoPendiente),
-        gestionadoPor: nombreUsuario,
-      },
-    });
-
-    try {
-      await this.notificacionesService.create({
-        usuarioId,
-        titulo: 'Solicitud enviada',
-        mensaje: 'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
-        tipo: 'INFORMATIVO',
+    // 3. Solo notificar a aprobadores si NO es prorroga
+    //    La prorroga va directamente a revisiones sin generar notificacion
+    if (body.decision !== 'PRORROGAR') {
+      await this.notificacionesService.notifyApprovers({
+        titulo: `${LABEL_DECISION[body.decision]} requiere aprobacion`,
+        mensaje: `${nombreUsuario} solicito ${LABEL_DECISION[body.decision].toLowerCase()} para el prestamo ${prestamo.numeroPrestamo} (${nombreCliente}). Saldo: $${Number(prestamo.saldoPendiente).toLocaleString('es-CO')}.`,
+        tipo: body.decision === 'CASTIGAR' ? 'WARNING' : 'INFO',
         entidad: 'Aprobacion',
         entidadId: aprobacion.id,
         metadata: {
@@ -953,12 +951,32 @@ export class LoansController {
           tipo: 'GESTION_VENCIDA',
           decision: body.decision,
           prestamoId,
+          cliente: nombreCliente,
+          saldoPendiente: Number(prestamo.saldoPendiente),
+          gestionadoPor: nombreUsuario,
         },
       });
-    } catch {}
+
+      try {
+        await this.notificacionesService.create({
+          usuarioId,
+          titulo: 'Solicitud enviada',
+          mensaje: 'Tu solicitud fue enviada y quedo pendiente de aprobacion.',
+          tipo: 'INFORMATIVO',
+          entidad: 'Aprobacion',
+          entidadId: aprobacion.id,
+          metadata: {
+            tipoAprobacion,
+            tipo: 'GESTION_VENCIDA',
+            decision: body.decision,
+            prestamoId,
+          },
+        });
+      } catch {}
+    }
 
     return {
-      mensaje: `Solicitud de ${LABEL_DECISION[body.decision]} enviada para aprobaciÃ³n`,
+      mensaje: `Solicitud de ${LABEL_DECISION[body.decision]} enviada a revision`,
       aprobacionId: aprobacion.id,
       decision: body.decision,
     };

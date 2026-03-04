@@ -811,33 +811,55 @@ export class ApprovalsService {
         ? JSON.parse(approval.datosSolicitud)
         : approval.datosSolicitud;
 
-    // Usar una transacción para asegurar que tanto la extensión como la cuota se actualicen
+    // Calcular nueva fecha: si viene explicita la usamos, sino calculamos con diasGracia
+    const fechaOriginal = data.fechaVencimientoOriginal
+      ? new Date(data.fechaVencimientoOriginal)
+      : new Date();
+
+    let nuevaFecha: Date;
+    if (data.nuevaFechaVencimiento) {
+      nuevaFecha = new Date(data.nuevaFechaVencimiento);
+    } else if (data.diasGracia) {
+      nuevaFecha = new Date(Date.now() + Number(data.diasGracia) * 24 * 60 * 60 * 1000);
+    } else {
+      // Por defecto 30 dias de gracia
+      nuevaFecha = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    }
+
     await this.prisma.$transaction(async (tx) => {
-      // 1. Crear el registro de extensión
+      // 1. Crear el registro de extension de pago
       const extension = await tx.extensionPago.create({
         data: {
           prestamoId: data.prestamoId,
-          cuotaId: data.cuotaId,
-          fechaVencimientoOriginal: new Date(data.fechaVencimientoOriginal),
-          nuevaFechaVencimiento: new Date(data.nuevaFechaVencimiento),
-          razon: data.razon,
+          cuotaId: data.cuotaId || null,
+          fechaVencimientoOriginal: fechaOriginal,
+          nuevaFechaVencimiento: nuevaFecha,
+          razon: data.comentarios || data.razon || 'Prorroga aprobada',
           aprobadoPorId: aprobadoPorId || approval.solicitadoPorId,
         },
       });
 
-      // 2. Vincular la extensión a la cuota y actualizar su fecha de prorroga
+      // 2. Si hay cuota vinculada, actualizar su fecha de prorroga
       if (data.cuotaId) {
         await tx.cuota.update({
           where: { id: data.cuotaId },
           data: {
-            fechaVencimientoProrroga: new Date(data.nuevaFechaVencimiento),
+            fechaVencimientoProrroga: nuevaFecha,
             extensionId: extension.id,
           },
         });
       }
 
-      // 3. Opcionalmente marcar el préstamo con algún flag de prórroga si fuera necesario
+      // 3. Actualizar la fecha de fin del prestamo para reflejar la prorroga
+      await tx.prestamo.update({
+        where: { id: data.prestamoId },
+        data: {
+          fechaFin: nuevaFecha,
+          estado: 'EN_MORA',
+        },
+      });
     });
+
     this.notificacionesGateway.broadcastPrestamosActualizados({
       accion: 'PRORROGA',
       prestamoId: approval.referenciaId,
