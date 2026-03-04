@@ -26,6 +26,9 @@ model Usuario {
   estadoSincronizacion    EstadoSincronizacion       @default(PENDIENTE)
   ultimaSincronizacion    DateTime?
   errorSincronizacion     String?
+  resetPasswordToken      String?
+  resetPasswordExpires    DateTime?
+
   clientesListaNegra      Cliente[]                  @relation("ClienteListaNegraPor")
   clientesAprobados       Cliente[]                  @relation("ClienteAprobadoPor")
   clientesCreados         Cliente[]                  @relation("ClienteCreadoPor")
