@@ -1,4 +1,4 @@
-import {
+﻿import {
   Controller,
   Get,
   Post,
@@ -958,9 +958,78 @@ export class LoansController {
     } catch {}
 
     return {
-      mensaje: `Solicitud de ${LABEL_DECISION[body.decision]} enviada para aprobación`,
+      mensaje: `Solicitud de ${LABEL_DECISION[body.decision]} enviada para aprobaciÃ³n`,
       aprobacionId: aprobacion.id,
       decision: body.decision,
     };
+  }
+
+  // â”€â”€â”€ REPROGRAMACIONES (flujo de aprobaciÃ³n) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+  /** POST /loans/solicitar-reprogramacion â€” Cobrador solicita reprogramar una cuota */
+  @Post('solicitar-reprogramacion')
+  @Roles(
+    RolUsuario.COBRADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.COORDINADOR,
+  )
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Solicitar reprogramaciÃ³n de cuota (requiere aprobaciÃ³n)' })
+  async solicitarReprogramacion(
+    @Body() body: { prestamoId: string; cuotaId: string; nuevaFecha: string; motivo: string },
+    @Request() req,
+  ) {
+    return this.loansService.solicitarReprogramacion({
+      ...body,
+      solicitadoPorId: req.user.id,
+    });
+  }
+
+  /** GET /loans/reprogramaciones-pendientes â€” Listar solicitudes para mÃ³dulo de revisiones */
+  @Get('reprogramaciones-pendientes')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+  )
+  @ApiOperation({ summary: 'Listar solicitudes de reprogramaciÃ³n pendientes' })
+  @ApiQuery({ name: 'estado', required: false, enum: ['PENDIENTE', 'APROBADO', 'RECHAZADO', 'TODOS'] })
+  async listarReprogramacionesPendientes(@Query('estado') estado?: string) {
+    return this.loansService.listarReprogramacionesPendientes(estado);
+  }
+
+  /** PATCH /loans/reprogramaciones/:id/aprobar â€” Aprobar reprogramaciÃ³n */
+  @Patch('reprogramaciones/:id/aprobar')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Aprobar solicitud de reprogramaciÃ³n' })
+  async aprobarReprogramacion(@Param('id') id: string, @Request() req) {
+    return this.loansService.aprobarReprogramacion(id, req.user.id);
+  }
+
+  /** PATCH /loans/reprogramaciones/:id/rechazar â€” Rechazar reprogramaciÃ³n */
+  @Patch('reprogramaciones/:id/rechazar')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Rechazar solicitud de reprogramaciÃ³n' })
+  async rechazarReprogramacion(
+    @Param('id') id: string,
+    @Body() body: { comentarios?: string },
+    @Request() req,
+  ) {
+    return this.loansService.rechazarReprogramacion(id, req.user.id, body.comentarios);
   }
 }
