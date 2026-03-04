@@ -784,7 +784,7 @@ export class LoansController {
 
     // 3. Notificar a aprobadores (interna + push)
     await this.notificacionesService.notifyApprovers({
-      titulo: '🟡 Mora asignada — Requiere aprobación',
+      titulo: 'Mora asignada — Requiere aprobacion',
       mensaje: `${nombreUsuario} asignó $${body.montoInteres.toLocaleString('es-CO')} de mora al préstamo ${prestamo.numeroPrestamo} (${nombreCliente}). Plazo: ${body.diasGracia} días. Requiere aprobación.`,
       tipo: 'ALERTA',
       entidad: 'Aprobacion',
@@ -910,7 +910,7 @@ export class LoansController {
           saldoPendiente: Number(prestamo.saldoPendiente),
           montoInteres: body.montoInteres,
           diasGracia: body.diasGracia,
-          fechaVencimientoOriginal: prestamo.fechaFin,
+          fechaVencimientoOriginal: prestamo.fechaFin ? new Date(prestamo.fechaFin).toISOString() : undefined,
           nuevaFechaVencimiento: body.decision === 'PRORROGAR' ? nuevaFecha.toISOString() : undefined,
           comentarios: body.comentarios,
           gestionadoPor: nombreUsuario,
