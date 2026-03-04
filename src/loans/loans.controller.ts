@@ -838,7 +838,7 @@ export class LoansController {
   async gestionVencida(
     @Param('id') prestamoId: string,
     @Body() body: {
-      decision: 'CASTIGAR' | 'PRORROGAR' | 'JURIDICO';
+      decision: 'CASTIGAR' | 'PRORROGAR' | 'DEJAR_QUIETO';
       montoInteres: number;
       diasGracia: number;
       comentarios?: string;
@@ -882,9 +882,9 @@ export class LoansController {
     }
 
     const LABEL_DECISION: Record<string, string> = {
-      PRORROGAR: 'Prorroga',
-      CASTIGAR: 'Baja por perdida',
-      JURIDICO: 'Cobro juridico',
+      PRORROGAR:    'Prorroga',
+      CASTIGAR:     'Baja por perdida',
+      DEJAR_QUIETO: 'Sin mora por ahora',
     };
     const tipoAprobacion: TipoAprobacion =
       body.decision === 'CASTIGAR'
