@@ -839,23 +839,35 @@ export class ApprovalsService {
         },
       });
 
-      // 2. Si hay cuota vinculada, actualizar su fecha de prorroga
+      // 3. Marcar TODAS las cuotas vencidas como PRORROGADA y actualizar su fecha de vencimiento
+      await tx.cuota.updateMany({
+        where: {
+          prestamoId: data.prestamoId,
+          estado: 'VENCIDA',
+        },
+        data: {
+          estado: 'PRORROGADA',
+          fechaVencimientoProrroga: nuevaFecha,
+        },
+      });
+
+      // Si hay una cuota específica vinculada, también actualizamos el extensionId
       if (data.cuotaId) {
         await tx.cuota.update({
           where: { id: data.cuotaId },
           data: {
-            fechaVencimientoProrroga: nuevaFecha,
             extensionId: extension.id,
           },
         });
       }
 
-      // 3. Actualizar la fecha de fin del prestamo para reflejar la prorroga
+      // 4. Cambiar estado del préstamo a ACTIVO para que salga de cuentas vencidas
+      //    El job nocturno lo volverá a marcar EN_MORA si vence la prórroga sin pago
       await tx.prestamo.update({
         where: { id: data.prestamoId },
         data: {
           fechaFin: nuevaFecha,
-          estado: 'EN_MORA',
+          estado: 'ACTIVO',
         },
       });
     });

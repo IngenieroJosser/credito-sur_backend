@@ -158,10 +158,10 @@ export class ReportsService {
     const skip = (pagina - 1) * limite;
 
     const whereConditions: any = {
-      estado: 'EN_MORA',
+      estado: { in: ['EN_MORA', 'ACTIVO'] },
       cuotas: {
         some: {
-          estado: 'VENCIDA',
+          estado: { in: ['VENCIDA', 'PRORROGADA'] },
         },
       },
     };
@@ -258,7 +258,7 @@ export class ReportsService {
         cliente: true,
         cuotas: {
           where: {
-            estado: 'VENCIDA',
+            estado: { in: ['VENCIDA', 'PRORROGADA'] },
           },
           orderBy: {
             fechaVencimiento: 'asc',
@@ -268,6 +268,10 @@ export class ReportsService {
           orderBy: {
             fechaPago: 'desc',
           },
+          take: 1,
+        },
+        extensiones: {
+          orderBy: { id: 'desc' },
           take: 1,
         },
       },
@@ -316,12 +320,21 @@ export class ReportsService {
         // Obtener último pago
         const ultimoPago = prestamo.pagos[0];
 
+        // Prorroga activa: la extension mas reciente
+        const extension = (prestamo as any).extensiones?.[0];
+        const fechaProrroga = extension?.nuevaFechaVencimiento
+          ? format(new Date(extension.nuevaFechaVencimiento), 'yyyy-MM-dd')
+          : undefined;
+        const diasProrroga = extension?.nuevaFechaVencimiento
+          ? Math.ceil((new Date(extension.nuevaFechaVencimiento).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+          : undefined;
+
         return {
           id: prestamo.id,
           numeroPrestamo: prestamo.numeroPrestamo,
-          clienteId: prestamo.clienteId,   // ← ID del cliente para Ver Perfil
+          clienteId: prestamo.clienteId,
           cliente: {
-            id: prestamo.clienteId,        // ← también dentro de cliente para compatibilidad con frontend
+            id: prestamo.clienteId,
             nombre: `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
             documento: prestamo.cliente.dni,
             telefono: prestamo.cliente.telefono,
@@ -342,6 +355,10 @@ export class ReportsService {
             ? format(ultimoPago.fechaPago, 'yyyy-MM-dd')
             : undefined,
           fechaVencimiento: format(prestamo.fechaFin, 'yyyy-MM-dd'),
+          // Extension de pago (prorroga)
+          fechaProrroga,
+          diasProrroga,
+          tieneProrroga: !!extension,
         } as PrestamoMoraDto;
       }),
     );
