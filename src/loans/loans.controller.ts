@@ -937,12 +937,16 @@ export class LoansController {
       metadata: { endpoint: `POST /loans/${prestamoId}/gestion-vencida` },
     });
 
-    // 3. Solo notificar a aprobadores si NO es prorroga
-    //    La prorroga va directamente a revisiones sin generar notificacion
-    if (body.decision !== 'PRORROGAR') {
+    // 3. Notificar a aprobadores — SIEMPRE, incluyendo la prorroga
+    try {
+      const msgPorDecision: Record<string, string> = {
+        PRORROGAR: `${nombreUsuario} solicito una prorroga de ${body.diasGracia} dias para el prestamo ${prestamo.numeroPrestamo} del cliente ${nombreCliente}. Saldo pendiente: $${Number(prestamo.saldoPendiente).toLocaleString('es-CO')}. Requiere aprobacion en revisiones.`,
+        CASTIGAR:  `${nombreUsuario} solicito dar de baja por perdida el prestamo ${prestamo.numeroPrestamo} del cliente ${nombreCliente}. Saldo: $${Number(prestamo.saldoPendiente).toLocaleString('es-CO')}.`,
+        JURIDICO:  `${nombreUsuario} solicito escalar a cobro juridico el prestamo ${prestamo.numeroPrestamo} del cliente ${nombreCliente}.`,
+      };
       await this.notificacionesService.notifyApprovers({
-        titulo: `${LABEL_DECISION[body.decision]} requiere aprobacion`,
-        mensaje: `${nombreUsuario} solicito ${LABEL_DECISION[body.decision].toLowerCase()} para el prestamo ${prestamo.numeroPrestamo} (${nombreCliente}). Saldo: $${Number(prestamo.saldoPendiente).toLocaleString('es-CO')}.`,
+        titulo: `${LABEL_DECISION[body.decision]} — ${nombreCliente} (${prestamo.numeroPrestamo})`,
+        mensaje: msgPorDecision[body.decision] || `${nombreUsuario} solicito ${LABEL_DECISION[body.decision].toLowerCase()} para el prestamo ${prestamo.numeroPrestamo}.`,
         tipo: body.decision === 'CASTIGAR' ? 'WARNING' : 'INFO',
         entidad: 'Aprobacion',
         entidadId: aprobacion.id,
@@ -952,28 +956,33 @@ export class LoansController {
           decision: body.decision,
           prestamoId,
           cliente: nombreCliente,
+          numeroPrestamo: prestamo.numeroPrestamo,
           saldoPendiente: Number(prestamo.saldoPendiente),
+          diasGracia: body.diasGracia,
+          montoInteres: body.montoInteres,
           gestionadoPor: nombreUsuario,
         },
       });
+    } catch {}
 
-      try {
-        await this.notificacionesService.create({
-          usuarioId,
-          titulo: 'Solicitud enviada',
-          mensaje: 'Tu solicitud fue enviada y quedo pendiente de aprobacion.',
-          tipo: 'INFORMATIVO',
-          entidad: 'Aprobacion',
-          entidadId: aprobacion.id,
-          metadata: {
-            tipoAprobacion,
-            tipo: 'GESTION_VENCIDA',
-            decision: body.decision,
-            prestamoId,
-          },
-        });
-      } catch {}
-    }
+    try {
+      await this.notificacionesService.create({
+        usuarioId,
+        titulo: `Solicitud de ${LABEL_DECISION[body.decision]} enviada`,
+        mensaje: body.decision === 'PRORROGAR'
+          ? `Tu solicitud de prorroga de ${body.diasGracia} dias para ${nombreCliente} fue enviada a revisiones correctamente.`
+          : `Tu solicitud fue enviada y quedo pendiente de aprobacion.`,
+        tipo: 'INFORMATIVO',
+        entidad: 'Aprobacion',
+        entidadId: aprobacion.id,
+        metadata: {
+          tipoAprobacion,
+          tipo: 'GESTION_VENCIDA',
+          decision: body.decision,
+          prestamoId,
+        },
+      });
+    } catch {}
 
     return {
       mensaje: `Solicitud de ${LABEL_DECISION[body.decision]} enviada a revision`,
@@ -982,7 +991,7 @@ export class LoansController {
     };
   }
 
-  // â”€â”€â”€ REPROGRAMACIONES (flujo de aprobaciÃ³n) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // REPROGRAMACIONES (flujo de aprobación)
 
   /** POST /loans/solicitar-reprogramacion â€” Cobrador solicita reprogramar una cuota */
   @Post('solicitar-reprogramacion')
@@ -1005,7 +1014,7 @@ export class LoansController {
     });
   }
 
-  /** GET /loans/reprogramaciones-pendientes â€” Listar solicitudes para mÃ³dulo de revisiones */
+  /** GET /loans/reprogramaciones-pendientes ” Listar solicitudes para modulo de revisiones */
   @Get('reprogramaciones-pendientes')
   @Roles(
     RolUsuario.SUPER_ADMINISTRADOR,
@@ -1019,7 +1028,7 @@ export class LoansController {
     return this.loansService.listarReprogramacionesPendientes(estado);
   }
 
-  /** PATCH /loans/reprogramaciones/:id/aprobar â€” Aprobar reprogramaciÃ³n */
+  /** PATCH /loans/reprogramaciones/:id/aprobar ” Aprobar reprogramación */
   @Patch('reprogramaciones/:id/aprobar')
   @Roles(
     RolUsuario.SUPER_ADMINISTRADOR,
