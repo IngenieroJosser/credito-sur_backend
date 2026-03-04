@@ -2562,4 +2562,192 @@ export class LoansService implements OnModuleInit {
 
     return results;
   }
+
+  // ── FLUJO DE APROBACIÓN DE REPROGRAMACIONES ─────────────────────────────────
+
+  /**
+   * El COBRADOR solicita reprogramar una cuota. Se registra como Aprobacion
+   * en estado PENDIENTE y se notifica a los aprobadores (ADMIN/COORDINADOR).
+   * Valida los límites de días: semanal ≤6 días, quincenal ≤14 días.
+   */
+  async solicitarReprogramacion(data: {
+    prestamoId: string;
+    cuotaId: string;
+    nuevaFecha: string;
+    motivo: string;
+    solicitadoPorId: string;
+  }) {
+    const prestamo = await this.prisma.prestamo.findUnique({
+      where: { id: data.prestamoId },
+      include: { cliente: true, cuotas: { where: { id: data.cuotaId } } },
+    });
+    if (!prestamo) throw new NotFoundException('Préstamo no encontrado');
+
+    const cuota = prestamo.cuotas[0];
+    if (!cuota) throw new NotFoundException('Cuota no encontrada');
+    if (cuota.estado === 'PAGADA') {
+      throw new BadRequestException('La cuota ya fue pagada');
+    }
+
+    // Validar límite de días según frecuencia
+    const nuevaFecha = new Date(data.nuevaFecha + 'T00:00:00.000Z');
+    const hoy = new Date();
+    hoy.setUTCHours(0, 0, 0, 0);
+    const diasDesdeHoy = Math.round((nuevaFecha.getTime() - hoy.getTime()) / 86_400_000);
+
+    const limiteDias: Record<string, number> = {
+      SEMANAL: 6,
+      QUINCENAL: 14,
+      MENSUAL: 30,
+      DIARIO: 1,
+    };
+    const limite = limiteDias[prestamo.frecuenciaPago] ?? 30;
+    if (diasDesdeHoy > limite) {
+      throw new BadRequestException(
+        `La reprogramación para créditos ${prestamo.frecuenciaPago.toLowerCase()} no puede ser más de ${limite} días desde hoy`,
+      );
+    }
+    if (diasDesdeHoy < 0) {
+      throw new BadRequestException('La nueva fecha no puede ser anterior a hoy');
+    }
+
+    // Crear solicitud de aprobación
+    const aprobacion = await this.prisma.aprobacion.create({
+      data: {
+        tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
+        referenciaId: cuota.id,
+        tablaReferencia: 'cuotas',
+        solicitadoPorId: data.solicitadoPorId,
+        estado: EstadoAprobacion.PENDIENTE,
+        datosSolicitud: {
+          prestamoId: data.prestamoId,
+          cuotaId: data.cuotaId,
+          clienteNombre: `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
+          clienteId: prestamo.clienteId,
+          frecuenciaPago: prestamo.frecuenciaPago,
+          fechaVencimientoOriginal: cuota.fechaVencimiento.toISOString(),
+          nuevaFecha: data.nuevaFecha,
+          motivo: data.motivo,
+          montoCuota: Number(cuota.monto),
+        },
+      },
+    });
+
+    // Notificar a aprobadores (ADMIN / COORDINADOR)
+    await this.notificacionesService.notifyApprovers({
+      titulo: 'Solicitud de reprogramacion',
+      mensaje: `El cobrador solicita reprogramar la cuota de ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos} al ${data.nuevaFecha}. Motivo: ${data.motivo}`,
+      tipo: 'REPROGRAMACION',
+      entidad: 'Aprobacion',
+      entidadId: aprobacion.id,
+      metadata: { aprobacionId: aprobacion.id, prestamoId: data.prestamoId },
+    });
+
+    this.logger.log(`Reprogramacion solicitada: cuota ${cuota.id} del prestamo ${data.prestamoId} -> ${data.nuevaFecha}`);
+    return { mensaje: 'Solicitud de reprogramacion enviada para revision', aprobacion };
+  }
+
+  /**
+   * Lista todas las reprogramaciones PENDIENTES para el módulo de revisiones.
+   */
+  async listarReprogramacionesPendientes(estado?: string) {
+    const where: any = {
+      tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
+    };
+    if (estado && estado !== 'TODOS') {
+      where.estado = estado as EstadoAprobacion;
+    } else {
+      where.estado = EstadoAprobacion.PENDIENTE;
+    }
+
+    const solicitudes = await this.prisma.aprobacion.findMany({
+      where,
+      orderBy: { creadoEn: 'desc' },
+      include: {
+        solicitadoPor: { select: { id: true, nombres: true, apellidos: true, rol: true } },
+        aprobadoPor: { select: { id: true, nombres: true, apellidos: true } },
+      },
+    });
+
+    return solicitudes.map(s => ({
+      ...s,
+      datosSolicitud: s.datosSolicitud as Record<string, any>,
+    }));
+  }
+
+  /**
+   * SUPERVISOR/ADMIN aprueba una reprogramación: aplica la nueva fecha a la cuota.
+   */
+  async aprobarReprogramacion(aprobacionId: string, aprobadoPorId: string) {
+    const aprobacion = await this.prisma.aprobacion.findUnique({ where: { id: aprobacionId } });
+    if (!aprobacion) throw new NotFoundException('Solicitud no encontrada');
+    if (aprobacion.estado !== EstadoAprobacion.PENDIENTE) {
+      throw new BadRequestException('Solo se pueden aprobar solicitudes pendientes');
+    }
+
+    const datos = aprobacion.datosSolicitud as Record<string, any>;
+
+    // Aplicar la nueva fecha a la cuota
+    await this.prisma.cuota.update({
+      where: { id: datos.cuotaId },
+      data: { fechaVencimiento: new Date(datos.nuevaFecha + 'T00:00:00.000Z') },
+    });
+
+    // Actualizar estado de la aprobación
+    await this.prisma.aprobacion.update({
+      where: { id: aprobacionId },
+      data: {
+        estado: EstadoAprobacion.APROBADO,
+        aprobadoPorId,
+        revisadoEn: new Date(),
+      },
+    });
+
+    // Notificar al cobrador que solicitó
+    await this.notificacionesService.create({
+      usuarioId: aprobacion.solicitadoPorId,
+      titulo: 'Reprogramacion aprobada',
+      mensaje: `La reprogramacion de la cuota del cliente ${datos.clienteNombre} al ${datos.nuevaFecha} fue APROBADA.`,
+      tipo: 'REPROGRAMACION_APROBADA',
+      entidad: 'Aprobacion',
+      entidadId: aprobacionId,
+    });
+
+    return { mensaje: 'Reprogramación aprobada y aplicada exitosamente' };
+  }
+
+  /**
+   * SUPERVISOR/ADMIN rechaza una reprogramación.
+   */
+  async rechazarReprogramacion(aprobacionId: string, rechazadoPorId: string, comentarios?: string) {
+    const aprobacion = await this.prisma.aprobacion.findUnique({ where: { id: aprobacionId } });
+    if (!aprobacion) throw new NotFoundException('Solicitud no encontrada');
+    if (aprobacion.estado !== EstadoAprobacion.PENDIENTE) {
+      throw new BadRequestException('Solo se pueden rechazar solicitudes pendientes');
+    }
+
+    const datos = aprobacion.datosSolicitud as Record<string, any>;
+
+    await this.prisma.aprobacion.update({
+      where: { id: aprobacionId },
+      data: {
+        estado: EstadoAprobacion.RECHAZADO,
+        aprobadoPorId: rechazadoPorId,
+        revisadoEn: new Date(),
+        comentarios: comentarios || null,
+      },
+    });
+
+    // Notificar al cobrador
+    await this.notificacionesService.create({
+      usuarioId: aprobacion.solicitadoPorId,
+      titulo: 'Reprogramacion rechazada',
+      mensaje: `La reprogramacion de la cuota del cliente ${datos.clienteNombre} fue RECHAZADA.${comentarios ? ` Motivo: ${comentarios}` : ''}`,
+      tipo: 'REPROGRAMACION_RECHAZADA',
+      entidad: 'Aprobacion',
+      entidadId: aprobacionId,
+    });
+
+    return { mensaje: 'Reprogramación rechazada' };
+  }
 }

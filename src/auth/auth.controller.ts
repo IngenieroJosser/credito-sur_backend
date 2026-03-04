@@ -12,6 +12,7 @@ import {
 import { AuthService } from './auth.service';
 import { LoginAuthDto } from './dto/login-auth.dto';
 import { CreateAuthDto } from './dto/create-auth.dto';
+import { ForgotPasswordDto, VerifyResetCodeDto } from './dto/forgot-password.dto';
 
 import {
   ApiTags,
@@ -74,5 +75,22 @@ export class AuthController {
   @ApiOperation({ summary: 'Perfil del usuario autenticado' })
   obtenerPerfil(@Request() req: { user: unknown }) {
     return req.user;
+  }
+
+  // Recuperacion de contrasena — acceso publico
+  @Publico()
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Solicitar codigo de recuperacion de contrasena (solo Superadmin)' })
+  async olvidarContrasena(@Body() dto: ForgotPasswordDto) {
+    return this.authService.solicitarRecuperacion(dto);
+  }
+
+  @Publico()
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Verificar codigo y cambiar contrasena' })
+  async resetearContrasena(@Body() dto: VerifyResetCodeDto) {
+    return this.authService.verificarCodigoRecuperacion(dto);
   }
 }
