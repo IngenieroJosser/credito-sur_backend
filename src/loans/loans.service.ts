@@ -491,10 +491,10 @@ export class LoansService implements OnModuleInit {
             riesgo: prestamo.cliente.nivelRiesgo || NivelRiesgo.VERDE,
             ruta: rutaAsignada,
             rutaNombre,
-            vendedor: (prestamo as any).creadoPor?.nombres || 'Sin asignar',
+            vendedor: prestamo.creadoPor?.nombres || 'Sin asignar',
             fechaInicio: prestamo.fechaInicio || new Date(),
             fechaFin: prestamo.fechaFin || new Date(),
-            creadoEn: (prestamo as any).creadoEn || new Date(),
+            creadoEn: prestamo.creadoEn || new Date(),
             progreso:
               cuotasTotales > 0 ? (cuotasPagadas / cuotasTotales) * 100 : 0,
           };
@@ -1041,8 +1041,8 @@ export class LoansService implements OnModuleInit {
       const fechaFin = new Date(fechaInicio);
       fechaFin.setMonth(fechaFin.getMonth() + createLoanDto.plazoMeses);
 
-      const fechaPrimerCobroParsed = (createLoanDto as any).fechaPrimerCobro
-        ? new Date((createLoanDto as any).fechaPrimerCobro)
+      const fechaPrimerCobroParsed = createLoanDto.fechaPrimerCobro
+        ? new Date(createLoanDto.fechaPrimerCobro)
         : undefined;
       if (fechaPrimerCobroParsed) {
         fechaPrimerCobroParsed.setHours(0, 0, 0, 0);
@@ -1090,7 +1090,7 @@ export class LoansService implements OnModuleInit {
         );
         interesTotal = amortizacion.interesTotal;
         cuotasData = amortizacion.tabla.map((cuota) => {
-          const fechaBase = (createLoanDto as any).fechaPrimerCobro ? new Date((createLoanDto as any).fechaPrimerCobro) : fechaInicio;
+          const fechaBase = createLoanDto.fechaPrimerCobro ? new Date(createLoanDto.fechaPrimerCobro) : fechaInicio;
           const fechaVencimiento = this.calcularFechaVencimiento(fechaBase, cuota.numeroCuota, createLoanDto.frecuenciaPago);
           return {
             numeroCuota: cuota.numeroCuota,
@@ -1109,7 +1109,7 @@ export class LoansService implements OnModuleInit {
         const montoCapitalCuota = cantidadCuotas > 0 ? createLoanDto.monto / cantidadCuotas : 0;
         const montoInteresCuota = cantidadCuotas > 0 ? interesTotal / cantidadCuotas : 0;
         cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => {
-          const fechaBase = (createLoanDto as any).fechaPrimerCobro ? new Date((createLoanDto as any).fechaPrimerCobro) : fechaInicio;
+          const fechaBase = createLoanDto.fechaPrimerCobro ? new Date(createLoanDto.fechaPrimerCobro) : fechaInicio;
           const fechaVencimiento = this.calcularFechaVencimiento(fechaBase, i + 1, createLoanDto.frecuenciaPago);
           return {
             numeroCuota: i + 1,
@@ -1147,7 +1147,7 @@ export class LoansService implements OnModuleInit {
           interesTotal,
           saldoPendiente: createLoanDto.monto + interesTotal - (createLoanDto.cuotaInicial || 0),
           notas: createLoanDto.notas ? String(createLoanDto.notas) : undefined,
-          garantia: (createLoanDto as any).garantia ? String((createLoanDto as any).garantia) : undefined,
+          garantia: createLoanDto.garantia ? String(createLoanDto.garantia) : undefined,
           cuotas: {
             create: cuotasData,
           },
@@ -1543,8 +1543,8 @@ export class LoansService implements OnModuleInit {
       const fechaFin = new Date(fechaInicio);
       fechaFin.setMonth(fechaFin.getMonth() + data.plazoMeses);
 
-      const fechaPrimerCobroParsed = (data as any).fechaPrimerCobro
-        ? new Date((data as any).fechaPrimerCobro)
+      const fechaPrimerCobroParsed = data.fechaPrimerCobro
+        ? new Date(data.fechaPrimerCobro)
         : undefined;
       if (fechaPrimerCobroParsed) {
         fechaPrimerCobroParsed.setHours(0, 0, 0, 0);
@@ -1611,7 +1611,7 @@ export class LoansService implements OnModuleInit {
         );
         interesTotal = amortizacion.interesTotal;
         cuotasData = amortizacion.tabla.map((cuota) => {
-          const fechaBase = (data as any).fechaPrimerCobro ? new Date((data as any).fechaPrimerCobro) : fechaInicio;
+          const fechaBase = data.fechaPrimerCobro ? new Date(data.fechaPrimerCobro) : fechaInicio;
           const fechaVencimiento = this.calcularFechaVencimiento(fechaBase, cuota.numeroCuota, data.frecuenciaPago);
           return {
             numeroCuota: cuota.numeroCuota,
@@ -1634,7 +1634,7 @@ export class LoansService implements OnModuleInit {
         this.logger.log(`[LOAN CALCULATION] Interés Total: ${interesTotal}, Cuotas: ${cantidadCuotas}, Monto/Cuota: ${montoCuota}`);
         
         cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => {
-          const fechaBase = (data as any).fechaPrimerCobro ? new Date((data as any).fechaPrimerCobro) : fechaInicio;
+          const fechaBase = data.fechaPrimerCobro ? new Date(data.fechaPrimerCobro) : fechaInicio;
           const fechaVencimiento = this.calcularFechaVencimiento(fechaBase, i + 1, data.frecuenciaPago);
           return {
             numeroCuota: i + 1,
@@ -1679,7 +1679,7 @@ export class LoansService implements OnModuleInit {
           interesTotal,
           saldoPendiente: montoTotal,
           notas: data.notas ? String(data.notas) : undefined,
-          garantia: (data as any).garantia ? String((data as any).garantia) : undefined,
+          garantia: data.garantia ? String(data.garantia) : undefined,
           cuotas: {
             create: cuotasData,
           },

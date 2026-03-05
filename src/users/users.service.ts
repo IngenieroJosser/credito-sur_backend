@@ -11,7 +11,7 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import * as argon2 from 'argon2';
-import { EstadoUsuario, RolUsuario } from '@prisma/client';
+import { EstadoUsuario, RolUsuario, Prisma } from '@prisma/client';
 import { UnauthorizedException } from '@nestjs/common';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
@@ -134,7 +134,6 @@ export class UsersService {
   }
 
   async obtenerTodos() {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const usuarios = await this.prisma.usuario.findMany({
       where: {
         eliminadoEn: null,
@@ -169,21 +168,23 @@ export class UsersService {
           },
         },
       } as any,
-    }) as any[];
+    // Prisma no soporta select + include anidados con tipos estáticos; cast necesario
+    }) as unknown as any[];
 
     return usuarios.map((usuario) => {
       // 1. Permisos del Rol (default)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const permisosRol = usuario.asignacionesRoles.flatMap((asignacion: any) =>
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        asignacion.rol.permisos.map((rp: any) => rp.permiso.accion),
+      const permisosRol = usuario.asignacionesRoles.flatMap(
+        (asignacion: {
+          rol: { permisos: { permiso: { accion: string } }[] };
+        }) =>
+          asignacion.rol.permisos.map(
+            (rp: { permiso: { accion: string } }) => rp.permiso.accion,
+          ),
       );
 
       // 2. Permisos Personalizados (overrides)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const permisosCustom = usuario.permisosPersonalizados.map(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (p: any) => p.permiso.accion,
+        (p: { permiso: { accion: string } }) => p.permiso.accion,
       );
 
       // Si tiene permisos personalizados, tienen precedencia total.
@@ -191,7 +192,6 @@ export class UsersService {
       const permisosFinales =
         permisosCustom.length > 0 ? permisosCustom : permisosRol;
 
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { asignacionesRoles, permisosPersonalizados, ...userData } =
         usuario;
 
@@ -218,8 +218,7 @@ export class UsersService {
       },
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return this.prisma.$transaction(async (tx: any) => {
+    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // 3. Limpiar permisos personalizados existentes
       await tx.asignacionPermisoUsuario.deleteMany({
         where: { usuarioId },
@@ -318,8 +317,7 @@ export class UsersService {
        });
        
        if (nuevoRol) {
-         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-         await this.prisma.$transaction(async (tx: any) => {
+         await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
             // Eliminar asignación anterior
             await tx.asignacionRolUsuario.deleteMany({
               where: { usuarioId: id }
@@ -335,7 +333,6 @@ export class UsersService {
        }
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { password, ...datos } = updateUserDto;
 
     const usuarioActualizado = await this.prisma.usuario.update({

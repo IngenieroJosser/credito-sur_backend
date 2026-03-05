@@ -566,6 +566,6 @@ export class PaymentsService {
       const buffer = await new Promise<Buffer>((resolve) => { doc.on('end', () => resolve(Buffer.concat(buffers))); });
       return { data: buffer, contentType: 'application/pdf', filename: `historial-pagos-${fecha}.pdf` };
     }
-    throw new Error(`Formato no soportado: ${format}`);
+    throw new BadRequestException(`Formato no soportado: ${format}`);
   }
 }
