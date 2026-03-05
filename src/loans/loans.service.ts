@@ -15,6 +15,7 @@ import {
   EstadoAprobacion,
   RolUsuario,
   TipoAmortizacion,
+  Prisma,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
@@ -24,6 +25,7 @@ import { ConfiguracionService } from '../configuracion/configuracion.service';
 import { PushService } from '../push/push.service';
 import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
+import { UpdateLoanData } from '../common/types';
 
 @Injectable()
 export class LoansService implements OnModuleInit {
@@ -204,7 +206,7 @@ export class LoansService implements OnModuleInit {
       const skip = (page - 1) * limit;
 
       // Construir filtros de forma segura
-      const where: any = {
+      const where: Prisma.PrestamoWhereInput = {
         eliminadoEn: null, // Solo préstamos no eliminados
       };
 
@@ -217,7 +219,7 @@ export class LoansService implements OnModuleInit {
       if (estado !== 'todos') {
         const estadosValidos = Object.values(EstadoPrestamo);
         if (estadosValidos.includes(estado as EstadoPrestamo)) {
-          where.estado = estado;
+          (where as Record<string, unknown>).estado = estado;
         } else {
           this.logger.warn(`Estado inválido recibido: ${estado}`);
         }
@@ -251,19 +253,19 @@ export class LoansService implements OnModuleInit {
                 {
                   nombres: {
                     contains: searchTerm,
-                    mode: 'insensitive' as any,
+                    mode: Prisma.QueryMode.insensitive,
                   },
                 },
                 {
                   apellidos: {
                     contains: searchTerm,
-                    mode: 'insensitive' as any,
+                    mode: Prisma.QueryMode.insensitive,
                   },
                 },
                 {
                   dni: {
                     contains: searchTerm,
-                    mode: 'insensitive' as any,
+                    mode: Prisma.QueryMode.insensitive,
                   },
                 },
               ],
@@ -273,7 +275,7 @@ export class LoansService implements OnModuleInit {
             producto: {
               nombre: {
                 contains: searchTerm,
-                mode: 'insensitive' as any,
+                mode: Prisma.QueryMode.insensitive,
               },
             },
           },
@@ -682,7 +684,7 @@ export class LoansService implements OnModuleInit {
     }
   }
 
-  async updateLoan(id: string, updateData: any, userId: string) {
+  async updateLoan(id: string, updateData: UpdateLoanData, userId: string) {
     try {
       const prestamo = await this.prisma.prestamo.findUnique({
         where: { id, eliminadoEn: null },
@@ -703,7 +705,8 @@ export class LoansService implements OnModuleInit {
       const archivos = updateData?.archivos;
 
       // Build update payload - only allow safe fields
-      const data: any = { estadoSincronizacion: 'PENDIENTE' };
+      // Record tipado con los campos permitidos del schema
+      const data: Record<string, unknown> = { estadoSincronizacion: 'PENDIENTE' };
 
       if (updateData.monto !== undefined) data.monto = updateData.monto;
       if (updateData.tasaInteres !== undefined) data.tasaInteres = updateData.tasaInteres;
@@ -746,9 +749,15 @@ export class LoansService implements OnModuleInit {
       );
 
       if (shouldRegenerateCuotas) {
-        const cantidadCuotas = data.cantidadCuotas !== undefined ? data.cantidadCuotas : prestamo.cantidadCuotas;
-        const frecuenciaPago = data.frecuenciaPago !== undefined ? data.frecuenciaPago : prestamo.frecuenciaPago;
-        const tipoAmortizacion = data.tipoAmortizacion !== undefined ? data.tipoAmortizacion : (prestamo.tipoAmortizacion || TipoAmortizacion.INTERES_SIMPLE);
+        const cantidadCuotas = data.cantidadCuotas !== undefined
+          ? Number(data.cantidadCuotas)
+          : (prestamo.cantidadCuotas ?? 0);
+        const frecuenciaPago = (data.frecuenciaPago !== undefined
+          ? data.frecuenciaPago
+          : prestamo.frecuenciaPago) as FrecuenciaPago;
+        const tipoAmortizacion = (data.tipoAmortizacion !== undefined
+          ? data.tipoAmortizacion
+          : (prestamo.tipoAmortizacion || TipoAmortizacion.INTERES_SIMPLE)) as TipoAmortizacion;
 
         // Delete existing cuotas
         await this.prisma.cuota.deleteMany({

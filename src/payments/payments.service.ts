@@ -10,11 +10,13 @@ import {
   EstadoPrestamo,
   EstadoCuota,
   MetodoPago,
-    TipoTransaccion,
+  TipoTransaccion,
+  Prisma,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+import { PagoConRelacionesExport } from '../common/types';
 
 @Injectable()
 export class PaymentsService {
@@ -352,7 +354,7 @@ export class PaymentsService {
     const { prestamoId, clienteId, page = 1, limit = 20 } = filters || {};
     const skip = (page - 1) * limit;
 
-    const where: any = {};
+    const where: Prisma.PagoWhereInput = {};
     if (prestamoId) where.prestamoId = prestamoId;
     if (clienteId) where.clienteId = clienteId;
 
@@ -441,7 +443,7 @@ export class PaymentsService {
     const ExcelJS = await import('exceljs');
     const PDFDocument = await import('pdfkit');
 
-    const where: any = {};
+    const where: Prisma.PagoWhereInput = {};
     if (filters.startDate || filters.endDate) {
       where.fechaPago = {};
       if (filters.startDate) where.fechaPago.gte = new Date(filters.startDate);
@@ -476,13 +478,13 @@ export class PaymentsService {
         { header: 'Interés', key: 'interes', width: 16 },
         { header: 'Método', key: 'metodo', width: 14 },
         { header: 'Cobrador', key: 'cobrador', width: 22 },
-      ] as any;
+      ] as { header: string; key: string; width: number }[];
       const headerRow = ws.getRow(1);
       headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
       headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF7C3AED' } };
       headerRow.alignment = { horizontal: 'center' };
 
-      pagos.forEach((p: any) => {
+      pagos.forEach((p: PagoConRelacionesExport) => {
         ws.addRow({
           fecha: p.fechaPago ? new Date(p.fechaPago).toLocaleDateString('es-CO') : '',
           numeroPago: p.numeroPago || '',
@@ -490,8 +492,8 @@ export class PaymentsService {
           documento: p.cliente?.dni || '',
           numeroPrestamo: p.prestamo?.numeroPrestamo || '',
           monto: Number(p.montoTotal),
-          capital: Number(p.capitalRecuperado || 0),
-          interes: Number(p.interesRecuperado || 0),
+          capital: 0, // El campo calculado no está en el schema; viene de la descomposición al momento del pago
+          interes: 0,
           metodo: p.metodoPago || '',
           cobrador: p.cobrador ? `${p.cobrador.nombres} ${p.cobrador.apellidos}` : '',
         });
@@ -509,7 +511,7 @@ export class PaymentsService {
       };
     } else if (format === 'pdf') {
       const doc = new PDFDocument({ layout: 'landscape', size: 'LETTER', margin: 30 });
-      const buffers: any[] = [];
+      const buffers: Buffer[] = [];
       doc.on('data', buffers.push.bind(buffers));
 
       doc.fontSize(16).font('Helvetica-Bold').text('Créditos del Sur — Historial de Pagos', { align: 'center' });
@@ -541,7 +543,7 @@ export class PaymentsService {
       y += rowH;
 
       doc.font('Helvetica').fontSize(7).fillColor('black');
-      pagos.forEach((p: any, i: number) => {
+      pagos.forEach((p: PagoConRelacionesExport, i: number) => {
         if (y > 560) { doc.addPage(); y = 30; }
         if (i % 2 === 0) { doc.rect(tableLeft, y, cols.reduce((s, c) => s + c.width, 0), rowH).fill('#F5F3FF'); doc.fillColor('black'); }
         x = tableLeft;
@@ -551,8 +553,8 @@ export class PaymentsService {
           p.cliente ? `${p.cliente.nombres} ${p.cliente.apellidos}`.substring(0, 22) : '',
           p.prestamo?.numeroPrestamo || '',
           `$${Number(p.montoTotal).toLocaleString('es-CO')}`,
-          `$${Number(p.capitalRecuperado || 0).toLocaleString('es-CO')}`,
-          `$${Number(p.interesRecuperado || 0).toLocaleString('es-CO')}`,
+          `$${Number(0).toLocaleString('es-CO')}`, // campo calculado no está en schema
+          `$${Number(0).toLocaleString('es-CO')}`,
           p.metodoPago || '',
           p.cobrador ? `${p.cobrador.nombres} ${p.cobrador.apellidos}`.substring(0, 18) : '',
         ];

@@ -6,7 +6,7 @@
     "rootDir": "./src",
     "outDir": "./dist",
 
-    "types": ["node"],
+    "types": ["node", "jest"],
 
     "declaration": false,
     "removeComments": true,
@@ -28,7 +28,6 @@
   "exclude": [
     "node_modules",
     "dist",
-    "test",
-    "**/*.spec.ts"
+    "test"
   ]
 }
