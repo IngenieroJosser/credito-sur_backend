@@ -2,6 +2,7 @@ import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { LoansController } from './loans.controller';
 import { LoansService } from './loans.service';
 import { MoraService } from './mora.service';
+import { LoansScheduler } from './loans.scheduler';
 import { PrismaModule } from '../prisma/prisma.module'; 
 import { PrismaService } from '../prisma/prisma.service';
 import { LoggerMiddleware } from '../common/middleware/logger.middleware';
@@ -13,7 +14,7 @@ import { ConfiguracionModule } from '../configuracion/configuracion.module';
 @Module({
   imports: [PrismaModule, NotificacionesModule, AuditModule, PushModule, ConfiguracionModule],
   controllers: [LoansController],
-  providers: [LoansService, MoraService, PrismaService],
+  providers: [LoansService, MoraService, PrismaService, LoansScheduler],
   exports: [LoansService, MoraService],
 })
 export class LoansModule implements NestModule {

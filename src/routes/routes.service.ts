@@ -413,11 +413,30 @@ export class RoutesService {
                               EstadoCuota.PENDIENTE,
                               EstadoCuota.VENCIDA,
                               EstadoCuota.PARCIAL,
+                              EstadoCuota.PRORROGADA,
                             ],
                           },
                         },
                         orderBy: { numeroCuota: 'asc' },
                         take: 1,
+                        select: {
+                          id: true,
+                          numeroCuota: true,
+                          monto: true,
+                          estado: true,
+                          fechaVencimiento: true,
+                          fechaVencimientoProrroga: true,
+                          extensionId: true,
+                        },
+                      },
+                      extensiones: {
+                        orderBy: { creadoEn: 'desc' },
+                        take: 1,
+                        select: {
+                          id: true,
+                          nuevaFechaVencimiento: true,
+                          creadoEn: true,
+                        },
                       },
                     },
                   },
@@ -1358,7 +1377,7 @@ export class RoutesService {
               include: {
                 cuotas: {
                   where: {
-                    estado: { in: ['PENDIENTE', 'VENCIDA', 'PARCIAL'] },
+                    estado: { in: ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'] },
                   },
                   orderBy: { fechaVencimiento: 'asc' },
                 },
@@ -1390,18 +1409,21 @@ export class RoutesService {
         if (prestamo.cuotas.length === 0) continue;
 
         const proximaCuota = prestamo.cuotas[0];
-        const fechaVencimiento = new Date(proximaCuota.fechaVencimiento);
-        fechaVencimiento.setHours(0, 0, 0, 0);
+        // Para cuotas PRORROGADA, usar la nueva fecha de vencimiento
+        const fechaEfectiva = proximaCuota.estado === 'PRORROGADA' && proximaCuota.fechaVencimientoProrroga
+          ? new Date(proximaCuota.fechaVencimientoProrroga)
+          : new Date(proximaCuota.fechaVencimiento);
+        fechaEfectiva.setHours(0, 0, 0, 0);
 
-        // Si la cuota está vencida, siempre aparece
-        if (fechaVencimiento <= fechaConsulta) {
+        // Si la cuota está vencida o prorrogada expirada, siempre aparece
+        if (fechaEfectiva <= fechaConsulta) {
           debeAparecerHoy = true;
           break;
         }
 
         // Calcular si debe aparecer según frecuencia
         const diasHastaVencimiento = Math.ceil(
-          (fechaVencimiento.getTime() - fechaConsulta.getTime()) /
+          (fechaEfectiva.getTime() - fechaConsulta.getTime()) /
             (1000 * 60 * 60 * 24),
         );
 
@@ -1452,9 +1474,17 @@ export class RoutesService {
             proximaCuota: p.cuotas[0]
               ? {
                   numeroCuota: p.cuotas[0].numeroCuota,
-                  fechaVencimiento: p.cuotas[0].fechaVencimiento,
+                  fechaVencimiento: (
+                    p.cuotas[0].estado === 'PRORROGADA' && p.cuotas[0].fechaVencimientoProrroga
+                      ? p.cuotas[0].fechaVencimientoProrroga
+                      : p.cuotas[0].fechaVencimiento
+                  ),
                   monto: Number(p.cuotas[0].monto),
                   estado: p.cuotas[0].estado,
+                  enProrroga: p.cuotas[0].estado === 'PRORROGADA',
+                  fechaOriginalVencimiento: p.cuotas[0].estado === 'PRORROGADA'
+                    ? p.cuotas[0].fechaVencimiento
+                    : undefined,
                 }
               : null,
           })),

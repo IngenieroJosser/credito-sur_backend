@@ -784,7 +784,7 @@ export class LoansController {
 
     // 3. Notificar a aprobadores (interna + push)
     await this.notificacionesService.notifyApprovers({
-      titulo: '🟡 Mora asignada — Requiere aprobación',
+      titulo: 'Mora asignada — Requiere aprobacion',
       mensaje: `${nombreUsuario} asignó $${body.montoInteres.toLocaleString('es-CO')} de mora al préstamo ${prestamo.numeroPrestamo} (${nombreCliente}). Plazo: ${body.diasGracia} días. Requiere aprobación.`,
       tipo: 'ALERTA',
       entidad: 'Aprobacion',
@@ -838,7 +838,7 @@ export class LoansController {
   async gestionVencida(
     @Param('id') prestamoId: string,
     @Body() body: {
-      decision: 'CASTIGAR' | 'PRORROGAR' | 'JURIDICO';
+      decision: 'CASTIGAR' | 'PRORROGAR' | 'DEJAR_QUIETO';
       montoInteres: number;
       diasGracia: number;
       comentarios?: string;
@@ -854,7 +854,7 @@ export class LoansController {
         cliente: { select: { nombres: true, apellidos: true, dni: true } },
       },
     });
-    if (!prestamo) throw new Error('Préstamo no encontrado');
+    if (!prestamo) throw new Error('Prestamo no encontrado');
 
     const usuario = await this.prisma.usuario.findUnique({
       where: { id: usuarioId },
@@ -868,17 +868,30 @@ export class LoansController {
     const nuevaFecha = new Date();
     if (body.diasGracia > 0) nuevaFecha.setDate(nuevaFecha.getDate() + body.diasGracia);
 
+    // Buscar la cuotaId para la prorroga (primera cuota vencida o pendiente)
+    let cuotaId: string | null = null;
+    if (body.decision === 'PRORROGAR') {
+      const cuotaVencida = await this.prisma.cuota.findFirst({
+        where: {
+          prestamoId,
+          estado: { in: ['VENCIDA', 'PENDIENTE'] },
+        },
+        orderBy: { numeroCuota: 'asc' },
+      });
+      cuotaId = cuotaVencida?.id || null;
+    }
+
     const LABEL_DECISION: Record<string, string> = {
-      PRORROGAR: 'Prórroga',
-      CASTIGAR: 'Baja por pérdida',
-      JURIDICO: 'Cobro jurídico',
+      PRORROGAR:    'Prorroga',
+      CASTIGAR:     'Baja por perdida',
+      DEJAR_QUIETO: 'Sin mora por ahora',
     };
     const tipoAprobacion: TipoAprobacion =
       body.decision === 'CASTIGAR'
         ? 'BAJA_POR_PERDIDA' as TipoAprobacion
         : 'PRORROGA_PAGO' as TipoAprobacion;
 
-    // 1. Crear aprobación
+    // 1. Crear aprobacion
     const aprobacion = await this.prisma.aprobacion.create({
       data: {
         tipoAprobacion,
@@ -890,11 +903,14 @@ export class LoansController {
           tipo: 'GESTION_VENCIDA',
           decision: body.decision,
           prestamoId,
+          cuotaId,
           numeroPrestamo: prestamo.numeroPrestamo,
           cliente: nombreCliente,
+          clienteNombre: nombreCliente,
           saldoPendiente: Number(prestamo.saldoPendiente),
           montoInteres: body.montoInteres,
           diasGracia: body.diasGracia,
+          fechaVencimientoOriginal: prestamo.fechaFin ? new Date(prestamo.fechaFin).toISOString() : undefined,
           nuevaFechaVencimiento: body.decision === 'PRORROGAR' ? nuevaFecha.toISOString() : undefined,
           comentarios: body.comentarios,
           gestionadoPor: nombreUsuario,
@@ -903,7 +919,7 @@ export class LoansController {
       },
     });
 
-    // 2. Auditoría
+    // 2. Auditoria
     await this.auditService.create({
       usuarioId,
       accion: `GESTION_VENCIDA_${body.decision}`,
@@ -921,30 +937,41 @@ export class LoansController {
       metadata: { endpoint: `POST /loans/${prestamoId}/gestion-vencida` },
     });
 
-    // 3. Notificar a aprobadores
-    const emojis: Record<string, string> = { PRORROGAR: '📅', CASTIGAR: '🔴', JURIDICO: '⚖️' };
-    await this.notificacionesService.notifyApprovers({
-      titulo: `${emojis[body.decision] || '📌'} ${LABEL_DECISION[body.decision]} — Requiere aprobación`,
-      mensaje: `${nombreUsuario} solicitó ${LABEL_DECISION[body.decision].toLowerCase()} para el préstamo ${prestamo.numeroPrestamo} (${nombreCliente}). Saldo: $${Number(prestamo.saldoPendiente).toLocaleString('es-CO')}. Requiere aprobación.`,
-      tipo: body.decision === 'CASTIGAR' ? 'WARNING' : 'INFO',
-      entidad: 'Aprobacion',
-      entidadId: aprobacion.id,
-      metadata: {
-        tipoAprobacion,
-        tipo: 'GESTION_VENCIDA',
-        decision: body.decision,
-        prestamoId,
-        cliente: nombreCliente,
-        saldoPendiente: Number(prestamo.saldoPendiente),
-        gestionadoPor: nombreUsuario,
-      },
-    });
+    // 3. Notificar a aprobadores — SIEMPRE, incluyendo la prorroga
+    try {
+      const msgPorDecision: Record<string, string> = {
+        PRORROGAR: `${nombreUsuario} solicito una prorroga de ${body.diasGracia} dias para el prestamo ${prestamo.numeroPrestamo} del cliente ${nombreCliente}. Saldo pendiente: $${Number(prestamo.saldoPendiente).toLocaleString('es-CO')}. Requiere aprobacion en revisiones.`,
+        CASTIGAR:  `${nombreUsuario} solicito dar de baja por perdida el prestamo ${prestamo.numeroPrestamo} del cliente ${nombreCliente}. Saldo: $${Number(prestamo.saldoPendiente).toLocaleString('es-CO')}.`,
+        JURIDICO:  `${nombreUsuario} solicito escalar a cobro juridico el prestamo ${prestamo.numeroPrestamo} del cliente ${nombreCliente}.`,
+      };
+      await this.notificacionesService.notifyApprovers({
+        titulo: `${LABEL_DECISION[body.decision]} — ${nombreCliente} (${prestamo.numeroPrestamo})`,
+        mensaje: msgPorDecision[body.decision] || `${nombreUsuario} solicito ${LABEL_DECISION[body.decision].toLowerCase()} para el prestamo ${prestamo.numeroPrestamo}.`,
+        tipo: body.decision === 'CASTIGAR' ? 'WARNING' : 'INFO',
+        entidad: 'Aprobacion',
+        entidadId: aprobacion.id,
+        metadata: {
+          tipoAprobacion,
+          tipo: 'GESTION_VENCIDA',
+          decision: body.decision,
+          prestamoId,
+          cliente: nombreCliente,
+          numeroPrestamo: prestamo.numeroPrestamo,
+          saldoPendiente: Number(prestamo.saldoPendiente),
+          diasGracia: body.diasGracia,
+          montoInteres: body.montoInteres,
+          gestionadoPor: nombreUsuario,
+        },
+      });
+    } catch {}
 
     try {
       await this.notificacionesService.create({
         usuarioId,
-        titulo: 'Solicitud enviada',
-        mensaje: 'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
+        titulo: `Solicitud de ${LABEL_DECISION[body.decision]} enviada`,
+        mensaje: body.decision === 'PRORROGAR'
+          ? `Tu solicitud de prorroga de ${body.diasGracia} dias para ${nombreCliente} fue enviada a revisiones correctamente.`
+          : `Tu solicitud fue enviada y quedo pendiente de aprobacion.`,
         tipo: 'INFORMATIVO',
         entidad: 'Aprobacion',
         entidadId: aprobacion.id,
@@ -958,13 +985,13 @@ export class LoansController {
     } catch {}
 
     return {
-      mensaje: `Solicitud de ${LABEL_DECISION[body.decision]} enviada para aprobaciÃ³n`,
+      mensaje: `Solicitud de ${LABEL_DECISION[body.decision]} enviada a revision`,
       aprobacionId: aprobacion.id,
       decision: body.decision,
     };
   }
 
-  // â”€â”€â”€ REPROGRAMACIONES (flujo de aprobaciÃ³n) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // REPROGRAMACIONES (flujo de aprobación)
 
   /** POST /loans/solicitar-reprogramacion â€” Cobrador solicita reprogramar una cuota */
   @Post('solicitar-reprogramacion')
@@ -987,7 +1014,7 @@ export class LoansController {
     });
   }
 
-  /** GET /loans/reprogramaciones-pendientes â€” Listar solicitudes para mÃ³dulo de revisiones */
+  /** GET /loans/reprogramaciones-pendientes ” Listar solicitudes para modulo de revisiones */
   @Get('reprogramaciones-pendientes')
   @Roles(
     RolUsuario.SUPER_ADMINISTRADOR,
@@ -1001,7 +1028,7 @@ export class LoansController {
     return this.loansService.listarReprogramacionesPendientes(estado);
   }
 
-  /** PATCH /loans/reprogramaciones/:id/aprobar â€” Aprobar reprogramaciÃ³n */
+  /** PATCH /loans/reprogramaciones/:id/aprobar ” Aprobar reprogramación */
   @Patch('reprogramaciones/:id/aprobar')
   @Roles(
     RolUsuario.SUPER_ADMINISTRADOR,
