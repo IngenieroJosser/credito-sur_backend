@@ -4,6 +4,7 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -17,6 +18,8 @@ import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway'
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
@@ -499,12 +502,8 @@ export class UsersService {
   }
 
   async changePassword(id: string, changePasswordDto: ChangePasswordDto) {
-    console.log(`[USERS] changePassword llamado para usuario ${id}`);
-    console.log(`[USERS] DTO recibido:`, JSON.stringify(changePasswordDto));
-    
     // Validar que se tenga la nueva contraseña
     if (!changePasswordDto.contrasenaNueva || changePasswordDto.contrasenaNueva.trim().length < 6) {
-      console.log(`[USERS] Nueva contraseña inválida`);
       throw new BadRequestException('La nueva contraseña debe tener al menos 6 caracteres');
     }
     
@@ -513,16 +512,11 @@ export class UsersService {
     });
 
     if (!usuario) {
-      console.log(`[USERS] Usuario ${id} no encontrado`);
       throw new NotFoundException('Usuario no encontrado');
     }
 
-    console.log(`[USERS] Usuario encontrado: ${usuario.nombres} ${usuario.apellidos}`);
-    console.log(`[USERS] Hash actual (primeros 20 caracteres): ${usuario.hashContrasena.substring(0, 20)}...`);
-
     // Si se proporciona contraseña actual, validarla
     if (changePasswordDto.contrasenaActual && changePasswordDto.contrasenaActual.trim() !== '') {
-      console.log(`[USERS] Validando contraseña actual...`);
       try {
         const passwordValid = await argon2.verify(
           usuario.hashContrasena,
@@ -530,48 +524,29 @@ export class UsersService {
         );
 
         if (!passwordValid) {
-          console.log(`[USERS] Contraseña actual incorrecta`);
           throw new UnauthorizedException('La contraseña actual es incorrecta');
         }
-        console.log(`[USERS] Contraseña actual validada correctamente`);
       } catch (error) {
-        console.log(`[USERS] Error validando contraseña actual:`, error);
+        if (error instanceof UnauthorizedException) throw error;
+        this.logger.error(`Error al verificar contraseña actual para usuario ${id}`, error instanceof Error ? error.stack : error);
         throw new BadRequestException('Error al validar la contraseña actual');
       }
     } else {
-      console.log(`[USERS] No se proporcionó contraseña actual - cambio administrativo`);
+      this.logger.log(`Cambio de contraseña administrativo para usuario ${id}`);
     }
 
-    console.log(`[USERS] Hasheando nueva contraseña...`);
     try {
       const hashContrasena = await argon2.hash(changePasswordDto.contrasenaNueva);
-      console.log(`[USERS] Nuevo hash generado: ${hashContrasena.substring(0, 20)}...`);
 
-      const usuarioActualizado = await this.prisma.usuario.update({
+      await this.prisma.usuario.update({
         where: { id },
-        data: {
-          hashContrasena,
-        },
+        data: { hashContrasena },
       });
 
-      console.log(`[USERS] Contraseña actualizada exitosamente para usuario ${id}`);
-      console.log(`[USERS] Nuevo hash en BD (primeros 20 caracteres): ${usuarioActualizado.hashContrasena.substring(0, 20)}...`);
-      console.log(`[USERS] Verificando persistencia...`);
-      
-      // Verificar que el cambio se persistió correctamente
-      const usuarioVerificado = await this.prisma.usuario.findUnique({
-        where: { id },
-      });
-      
-      if (usuarioVerificado && usuarioVerificado.hashContrasena === hashContrasena) {
-        console.log(`[USERS] ✅ Contraseña persistida correctamente en la base de datos`);
-      } else {
-        console.log(`[USERS] ❌ ADVERTENCIA: La contraseña NO se persistió correctamente`);
-      }
-
+      this.logger.log(`Contraseña actualizada para usuario ${id}`);
       return { message: 'Contraseña actualizada correctamente' };
     } catch (error) {
-      console.log(`[USERS] Error actualizando contraseña:`, error);
+      this.logger.error(`Error al actualizar contraseña para usuario ${id}`, error instanceof Error ? error.stack : error);
       throw new BadRequestException('Error al actualizar la contraseña');
     }
   }
