@@ -827,11 +827,11 @@ export class ApprovalsService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      // 1. Crear el registro de extension de pago
+      // 1. Crear el registro de extension de pago (sin cuotaId para evitar conflicto unique)
       const extension = await tx.extensionPago.create({
         data: {
           prestamoId: data.prestamoId,
-          cuotaId: data.cuotaId || null,
+          // cuotaId omitido aquí - se vincula abajo individualmente para evitar violación unique
           fechaVencimientoOriginal: fechaOriginal,
           nuevaFechaVencimiento: nuevaFecha,
           razon: data.comentarios || data.razon || 'Prorroga aprobada',
@@ -839,7 +839,8 @@ export class ApprovalsService {
         },
       });
 
-      // 3. Marcar TODAS las cuotas vencidas como PRORROGADA y actualizar su fecha de vencimiento
+      // 2. Marcar TODAS las cuotas vencidas como PRORROGADA y actualizar su fecha
+      //    (updateMany no asigna extensionId para evitar conflicto @unique)
       await tx.cuota.updateMany({
         where: {
           prestamoId: data.prestamoId,
@@ -851,18 +852,27 @@ export class ApprovalsService {
         },
       });
 
-      // Si hay una cuota específica vinculada, también actualizamos el extensionId
+      // 3. Si hay una cuota específica y aún no tiene extensionId, vincularla
       if (data.cuotaId) {
-        await tx.cuota.update({
+        const cuotaActual = await tx.cuota.findUnique({
           where: { id: data.cuotaId },
-          data: {
-            extensionId: extension.id,
-          },
+          select: { extensionId: true },
         });
+        if (!cuotaActual?.extensionId) {
+          await tx.cuota.update({
+            where: { id: data.cuotaId },
+            data: { extensionId: extension.id },
+          });
+          // Actualizar el extensionPago también con el cuotaId
+          await tx.extensionPago.update({
+            where: { id: extension.id },
+            data: { cuotaId: data.cuotaId },
+          });
+        }
       }
 
-      // 4. Cambiar estado del préstamo a ACTIVO para que salga de cuentas vencidas
-      //    El job nocturno lo volverá a marcar EN_MORA si vence la prórroga sin pago
+      // 4. Cambiar estado del préstamo a ACTIVO para que salga de cuentas en mora
+      //    El job nocturno (LoansScheduler) lo volverá a marcar EN_MORA si la prórroga vence sin pago
       await tx.prestamo.update({
         where: { id: data.prestamoId },
         data: {

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { RolesModule } from './roles/roles.module';
@@ -24,9 +25,10 @@ import { ConfiguracionModule } from './configuracion/configuracion.module';
 @Module({
   imports: [
     ConfigModule.forRoot({
-      isGlobal: true, // Hace que las variables estén disponibles globalmente
+      isGlobal: true,
       envFilePath: '.env',
     }),
+    ScheduleModule.forRoot(),
     AuthModule,
     UsersModule,
     RolesModule,
