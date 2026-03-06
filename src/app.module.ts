@@ -21,6 +21,7 @@ import { UploadModule } from './upload/upload.module';
 import { CategoriasModule } from './categorias/categorias.module';
 import { PushModule } from './push/push.module';
 import { ConfiguracionModule } from './configuracion/configuracion.module';
+import { SyncConflictsModule } from './sync-conflicts/sync-conflicts.module';
 
 @Module({
   imports: [
@@ -49,6 +50,7 @@ import { ConfiguracionModule } from './configuracion/configuracion.module';
     CategoriasModule,
     PushModule,
     ConfiguracionModule,
+    SyncConflictsModule,
   ],
   controllers: [],
   providers: [],
