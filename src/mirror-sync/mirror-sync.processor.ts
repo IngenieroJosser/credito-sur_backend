@@ -40,6 +40,7 @@ export class MirrorSyncProcessor extends WorkerHost {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${mirrorToken}`,
           'X-Mirror-Sync-Engine': 'BullMQ-Engine-v1', // Firma de seguridad
+          'X-Mirror-Sync-Timestamp': Date.now().toString(), // Prevención de ataque por repetición (Replay Attack)
         },
         // Enviamos el Row crudo como payload a insertar o actualizar en la tabla espejo
         body: JSON.stringify({ payload: data }), 

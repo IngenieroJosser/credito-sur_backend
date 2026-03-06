@@ -17,14 +17,30 @@ export class MirrorSyncController {
     @Param('action') action: string,
     @Headers('authorization') authHeader: string,
     @Headers('x-mirror-sync-engine') engineHeader: string,
+    @Headers('x-mirror-sync-timestamp') timestampHeader: string,
     @Body() body: { payload: any }
   ) {
-    // 1. Verificación Estricta de Seguridad (Búnker)
+    // 1. Verificación Estricta de Seguridad (Búnker con expiración)
     const expectedToken = this.configService.get<string>('MIRROR_SYNC_TOKEN');
     
     if (!expectedToken || authHeader !== `Bearer ${expectedToken}` || engineHeader !== 'BullMQ-Engine-v1') {
       this.logger.warn(`Intento bloqueado de sincronización no autorizada en el Espejo.`);
       throw new UnauthorizedException('Token de sincronización de espejo inválido o faltante');
+    }
+
+    // Prevención de Replay Attack (Daño permanente si se roba el Token estático)
+    if (!timestampHeader) {
+      this.logger.warn(`Petición rechazada: Falta el Timestamp de seguridad.`);
+      throw new UnauthorizedException('Firma de tiempo requerida para evitar Replay Attacks');
+    }
+
+    const requestTime = parseInt(timestampHeader, 10);
+    const currentTime = Date.now();
+    const toleranceWindowMs = 5 * 60 * 1000; // 5 minutos de tolerancia para desfaces de reloj entre Quibdó y la Nube
+
+    if (isNaN(requestTime) || Math.abs(currentTime - requestTime) > toleranceWindowMs) {
+      this.logger.error(`Ataque de Repetición detectado (Replay Attack) o relojes desincronizados. Petición expirada.`);
+      throw new UnauthorizedException('El token dinámico temporal ha expirado. Sincronía rechazada.');
     }
 
     // 2. Ejecutar la acción cruda en el Prisma del VPS
