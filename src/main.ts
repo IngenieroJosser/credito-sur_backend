@@ -25,7 +25,14 @@ async function bootstrap() {
         scriptSrc: ["'self'", "'unsafe-inline'"], // unsafe-inline necesario frecuentemente para frameworks frontend/swagger
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", "data:", "blob:", "https:"],
-        connectSrc: ["'self'", "*"], 
+        connectSrc: [
+          "'self'", 
+          "https://fcm.googleapis.com", 
+          "https://credito-sur-backend.onrender.com",
+          "https://credito-sur-frontend.onrender.com",
+          "http://localhost:3000",
+          "http://127.0.0.1:3000"
+        ], 
         workerSrc: ["'self'"],
         manifestSrc: ["'self'"],
       },

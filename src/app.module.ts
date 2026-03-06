@@ -22,7 +22,9 @@ import { CategoriasModule } from './categorias/categorias.module';
 import { PushModule } from './push/push.module';
 import { ConfiguracionModule } from './configuracion/configuracion.module';
 import { SyncConflictsModule } from './sync-conflicts/sync-conflicts.module';
-
+import { MirrorSyncModule } from './mirror-sync/mirror-sync.module';
+import { BullModule } from '@nestjs/bullmq';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -51,6 +53,15 @@ import { SyncConflictsModule } from './sync-conflicts/sync-conflicts.module';
     PushModule,
     ConfiguracionModule,
     SyncConflictsModule,
+    EventEmitterModule.forRoot(),
+    BullModule.forRoot({
+      connection: {
+        host: process.env.REDIS_HOST || 'localhost',
+        port: parseInt(process.env.REDIS_PORT || '6379'),
+        password: process.env.REDIS_PASSWORD || undefined,
+      },
+    }),
+    MirrorSyncModule,
   ],
   controllers: [],
   providers: [],

@@ -804,7 +804,7 @@ export class ClientsService {
 
             try {
               await this.notificacionesService.create({
-                usuarioId: solicitadoPorId,
+                usuarioId: solicitadoPorId as string,
                 titulo: 'Solicitud reenviada',
                 mensaje: 'Tu solicitud fue reenviada con  e9xito y qued f3 pendiente de aprobaci f3n.',
                 tipo: 'INFORMATIVO',
@@ -975,7 +975,7 @@ export class ClientsService {
 
         try {
           await this.notificacionesService.create({
-            usuarioId: solicitadoPorId,
+            usuarioId: solicitadoPorId as string,
             titulo: 'Solicitud enviada',
             mensaje: 'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
             tipo: 'INFORMATIVO',
