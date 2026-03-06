@@ -2,6 +2,8 @@ import { NestFactory } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { ValidationPipe, Logger } from '@nestjs/common';
+import helmet from 'helmet';
+import { SanitizePipe } from './common/pipes/sanitize.pipe';
 import { validateEnv } from './common/env.validation';
 
 async function bootstrap() {
@@ -14,6 +16,20 @@ async function bootstrap() {
   
   // Configurar prefijo global para la API
   app.setGlobalPrefix('api-credisur');
+
+  // Aplicar mitigaciones de seguridad XSS y Headers HTTP con Helmet
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"], // unsafe-inline necesario frecuentemente para frameworks frontend/swagger
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:", "https:"],
+        connectSrc: ["'self'", "*"], 
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+  }));
   
   app.useGlobalPipes(
     new ValidationPipe({
@@ -27,6 +43,7 @@ async function bootstrap() {
         value: false,
       },
     }),
+    new SanitizePipe(),
   );  
 
   app.enableCors({
