@@ -25,12 +25,16 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
             const watchActions = ['create', 'update', 'delete', 'upsert', 'createMany', 'updateMany', 'deleteMany'];
             
             if (watchActions.includes(operation as string) && model) {
-              // Lanzar evento asíncrono para BullMQ 
-              eventEmitter.emit('database.write.success', {
-                model,
-                action: operation,
-                data: result,
-              });
+              // Lanzar evento asíncrono para BullMQ
+              // CRÍTICO: Si el Node que está corriendo y guardando estto en BD es el propio VPS Espejo en la NUBE
+              // NO debe volver a emitir el evento a BullMQ, o creará un bucle infinito recursivo de sincronización.
+              if (process.env.IS_MIRROR_VPS !== 'true') {
+                 eventEmitter.emit('database.write.success', {
+                  model,
+                  action: operation,
+                  data: result,
+                });
+              }
             }
             
             return result;

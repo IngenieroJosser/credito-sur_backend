@@ -27,7 +27,11 @@ export class MirrorSyncProcessor extends WorkerHost {
     this.logger.log(`Procesando envío de sincronización espejo: ${model} [${action}] (Intento actual: ${job.attemptsMade})`);
 
     // Endpoint universal en el VPS que recibirá en masa cualquier modelo para actualizar su DB Prisma 
-    const endpointRegex = `${mirrorUrl}/api-credisur/mirror-receiver/${model.toLowerCase()}/${action.toLowerCase()}`;
+    // Usamos enrutamiento interno NestJS (Prefijo API y versión v1)
+    let baseUrl = mirrorUrl;
+    if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
+    
+    const endpointRegex = `${baseUrl}/api/v1/mirror-sync/receiver/${model}/${action}`;
     
     try {
       const response = await fetch(endpointRegex, {
