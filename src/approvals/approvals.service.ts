@@ -417,11 +417,12 @@ export class ApprovalsService {
           aprobadoPorId: aprobadoPorId || undefined,
           // Actualizar campos financieros si cambiaron en la revisión
           monto: finalData.monto || finalData.valorArticulo ? Number(finalData.monto || finalData.valorArticulo) : undefined,
-          cantidadCuotas: finalData.cuotas || finalData.numCuotas ? Number(finalData.cuotas || finalData.numCuotas) : undefined,
+          cantidadCuotas: finalData.cantidadCuotas || finalData.cuotas || finalData.numCuotas ? Number(finalData.cantidadCuotas || finalData.cuotas || finalData.numCuotas) : undefined,
           tasaInteres: finalData.porcentaje !== undefined ? Number(finalData.porcentaje) : undefined,
           frecuenciaPago: finalData.frecuenciaPago || undefined,
           cuotaInicial: finalData.cuotaInicial !== undefined ? Number(finalData.cuotaInicial) : undefined,
           fechaInicio: finalData.fechaInicio ? new Date(finalData.fechaInicio) : undefined,
+          notas: finalData.notas || undefined,
         },
         include: {
           cliente: {
@@ -441,9 +442,20 @@ export class ApprovalsService {
         // Recalcular componentes financieros del préstamo
         const montoFinanciar = Number(prestamo.monto);
         const tasaInteres = Number(prestamo.tasaInteres);
-        const plazoMeses = Number(prestamo.plazoMeses);
-        const cantidadCuotas = Number(prestamo.cantidadCuotas);
         const frecuencia = prestamo.frecuenciaPago;
+        const cantidadCuotas = Number(prestamo.cantidadCuotas || (finalData.cantidadCuotas || finalData.cuotas || finalData.numCuotas || 0));
+        
+        // Determinar plazo real para el cálculo de intereses
+        let realPlazoMeses = Number(finalData.plazoMeses || finalData.plajeMeses || (finalData as any).plazo || (prestamo as any).plazoMeses || 1);
+        
+        // Sincronizar con la lógica de loans.service: derivar el plazo de las cuotas si existen
+        if (cantidadCuotas > 0) {
+           if (frecuencia === FrecuenciaPago.DIARIO) realPlazoMeses = cantidadCuotas / 30;
+           else if (frecuencia === FrecuenciaPago.SEMANAL) realPlazoMeses = cantidadCuotas / 4;
+           else if (frecuencia === FrecuenciaPago.QUINCENAL) realPlazoMeses = cantidadCuotas / 2;
+           else if (frecuencia === FrecuenciaPago.MENSUAL) realPlazoMeses = cantidadCuotas;
+        }
+
         const tipoAmort = prestamo.tipoAmortizacion;
         const fechaInicio = new Date(prestamo.fechaInicio);
 
@@ -452,7 +464,7 @@ export class ApprovalsService {
 
         if (tipoAmort === TipoAmortizacion.FRANCESA) {
           // Usamos la fórmula de amortización francesa (Simplificada para este contexto)
-          const tasaMensual = tasaInteres / plazoMeses / 100;
+          const tasaMensual = tasaInteres / realPlazoMeses / 100;
           let tasaPeriodo = tasaMensual;
           if (frecuencia === FrecuenciaPago.DIARIO) tasaPeriodo = tasaMensual / 30;
           else if (frecuencia === FrecuenciaPago.SEMANAL) tasaPeriodo = tasaMensual / 4;
@@ -485,7 +497,8 @@ export class ApprovalsService {
           }
         } else {
           // INTERES SIMPLE
-          interesTotal = (montoFinanciar * tasaInteres * plazoMeses) / 100;
+          const mesesInteres = Math.max(1, realPlazoMeses);
+          interesTotal = (montoFinanciar * tasaInteres * mesesInteres) / 100;
           const montoTotalSimple = montoFinanciar + interesTotal;
           const montoCuota = cantidadCuotas > 0 ? montoTotalSimple / cantidadCuotas : 0;
           const montoCapitalCuota = cantidadCuotas > 0 ? montoFinanciar / cantidadCuotas : 0;
