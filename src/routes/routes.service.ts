@@ -1470,6 +1470,7 @@ export class RoutesService {
             monto: Number(p.monto),
             saldoPendiente: Number(p.saldoPendiente),
             frecuenciaPago: p.frecuenciaPago,
+            cantidadCuotas: p.cantidadCuotas,
             estado: p.estado,
             proximaCuota: p.cuotas[0]
               ? {

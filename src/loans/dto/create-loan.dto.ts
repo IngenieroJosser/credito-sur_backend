@@ -41,7 +41,7 @@ export class CreateLoanDto {
   tasaInteresMora: number;
 
   @IsNumber()
-  @Min(1)
+  @Min(0.01)
   plazoMeses: number;
 
   @IsNumber()

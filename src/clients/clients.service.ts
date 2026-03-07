@@ -202,17 +202,62 @@ export class ClientsService {
     return clienteConArchivos;
   }
 
-  remove(id: string) {
-    return this.prisma.cliente.update({
+  async remove(id: string, userId: string) {
+    const cliente = await this.prisma.cliente.findUnique({ where: { id } });
+    if (!cliente) throw new NotFoundException('Cliente no encontrado');
+
+    const clienteEliminado = await this.prisma.cliente.update({
       where: { id },
       data: { eliminadoEn: new Date() },
-    }).then((cliente) => {
-      this.notificacionesGateway.broadcastClientesActualizados({
-        accion: 'ELIMINAR',
-        clienteId: id,
-      });
-      return cliente;
     });
+
+    this.notificacionesGateway.broadcastClientesActualizados({
+      accion: 'ELIMINAR',
+      clienteId: id,
+    });
+
+    // Registrar en auditoría
+    await this.auditService.create({
+      usuarioId: userId,
+      accion: 'ELIMINAR_CLIENTE',
+      entidad: 'Cliente',
+      entidadId: id,
+      datosAnteriores: {
+        nombres: cliente.nombres,
+        apellidos: cliente.apellidos,
+        dni: cliente.dni
+      },
+      datosNuevos: { eliminadoEn: clienteEliminado.eliminadoEn },
+    });
+
+    return clienteEliminado;
+  }
+
+  async restore(id: string, userId: string) {
+    const cliente = await this.prisma.cliente.findUnique({ where: { id } });
+    if (!cliente) throw new NotFoundException('Cliente no encontrado');
+
+    const clienteRestaurado = await this.prisma.cliente.update({
+      where: { id },
+      data: { eliminadoEn: null },
+    });
+
+    this.notificacionesGateway.broadcastClientesActualizados({
+      accion: 'RESTAURAR',
+      clienteId: id,
+    });
+
+    // Registrar en auditoría
+    await this.auditService.create({
+      usuarioId: userId,
+      accion: 'RESTAURAR_CLIENTE',
+      entidad: 'Cliente',
+      entidadId: id,
+      datosAnteriores: { eliminadoEn: cliente.eliminadoEn },
+      datosNuevos: { eliminadoEn: null },
+    });
+
+    return clienteRestaurado;
   }
 
   async getAllClients(filters: {
@@ -804,7 +849,7 @@ export class ClientsService {
 
             try {
               await this.notificacionesService.create({
-                usuarioId: solicitadoPorId,
+                usuarioId: solicitadoPorId as string,
                 titulo: 'Solicitud reenviada',
                 mensaje: 'Tu solicitud fue reenviada con  e9xito y qued f3 pendiente de aprobaci f3n.',
                 tipo: 'INFORMATIVO',
@@ -975,7 +1020,7 @@ export class ClientsService {
 
         try {
           await this.notificacionesService.create({
-            usuarioId: solicitadoPorId,
+            usuarioId: solicitadoPorId as string,
             titulo: 'Solicitud enviada',
             mensaje: 'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
             tipo: 'INFORMATIVO',
@@ -1152,11 +1197,28 @@ export class ClientsService {
       });
 
       // También actualizamos el estado del cliente a RECHAZADO
-      await this.prisma.cliente.update({
+      const clienteRechazado = await this.prisma.cliente.update({
         where: { id: aprobacion.referenciaId },
         data: {
           estadoAprobacion: 'RECHAZADO',
           eliminadoEn: new Date(), // Lo ocultamos de la lista normal
+        },
+      });
+
+      // Registrar en auditoría
+      await this.auditService.create({
+        usuarioId: rechazadoPorId,
+        accion: 'RECHAZAR_CLIENTE',
+        entidad: 'Cliente',
+        entidadId: clienteRechazado.id,
+        datosAnteriores: {
+          nombres: clienteRechazado.nombres,
+          apellidos: clienteRechazado.apellidos,
+          dni: clienteRechazado.dni
+        },
+        datosNuevos: { 
+          estadoAprobacion: 'RECHAZADO',
+          razon
         },
       });
 
@@ -1297,7 +1359,7 @@ export class ClientsService {
         throw new NotFoundException('Cliente no encontrado');
       }
 
-      return await this.prisma.cliente.update({
+      const clienteActualizado = await this.prisma.cliente.update({
         where: { id },
         data: {
           enListaNegra: true,
@@ -1308,6 +1370,25 @@ export class ClientsService {
           puntaje: 0,
         },
       });
+
+      // Registrar en auditoría
+      await this.auditService.create({
+        usuarioId: agregadoPorId,
+        accion: 'ARCHIVAR_CLIENTE',
+        entidad: 'Cliente',
+        entidadId: id,
+        datosAnteriores: {
+          nombres: cliente.nombres,
+          apellidos: cliente.apellidos,
+          dni: cliente.dni
+        },
+        datosNuevos: {
+          enListaNegra: true,
+          razon
+        },
+      });
+
+      return clienteActualizado;
     } catch (error) {
       this.logger.error(`Error adding client ${id} to blacklist:`, error);
       throw error;

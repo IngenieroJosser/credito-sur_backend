@@ -1,13 +1,44 @@
 import { NestFactory } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
+import helmet from 'helmet';
+import { SanitizePipe } from './common/pipes/sanitize.pipe';
+import { validateEnv } from './common/env.validation';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // Validar variables de entorno ANTES de crear la app
+  // Si faltan DATABASE_URL o JWT_SECRET, el proceso termina con mensaje claro
+  validateEnv();
+
+  const logger = new Logger('Bootstrap');
+  const app = await NestFactory.create(AppModule, { logger: ['log', 'warn', 'error'] });
   
   // Configurar prefijo global para la API
   app.setGlobalPrefix('api-credisur');
+
+  // Aplicar mitigaciones de seguridad XSS y Headers HTTP con Helmet
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"], // unsafe-inline necesario frecuentemente para frameworks frontend/swagger
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:", "blob:", "https:"],
+        connectSrc: [
+          "'self'", 
+          "https://fcm.googleapis.com", 
+          "https://credito-sur-backend.onrender.com",
+          "https://credito-sur-frontend.onrender.com",
+          "http://localhost:3000",
+          "http://127.0.0.1:3000"
+        ], 
+        workerSrc: ["'self'"],
+        manifestSrc: ["'self'"],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+  }));
   
   app.useGlobalPipes(
     new ValidationPipe({
@@ -21,6 +52,7 @@ async function bootstrap() {
         value: false,
       },
     }),
+    new SanitizePipe(),
   );  
 
   app.enableCors({
@@ -882,17 +914,9 @@ async function bootstrap() {
 
   await app.listen(process.env.PORT ?? 3001);
 
-  console.log(`\n✨  Aplicación ejecutándose en: ${await app.getUrl()}`);
-  console.log(
-    `📚  Documentación Swagger disponible en: ${await app.getUrl()}/api-credisur`,
-  );
-  console.log(`🎨  Tema ultra premium activado\n`);
-  console.log(`   ┌─────────────────────────────────────────────┐`);
-  console.log(`   │  Paleta de colores premium activada:        │`);
-  console.log(`   │  • Azul corporativo: #003787                │`);
-  console.log(`   │  • Naranja acento: #ff7300                  │`);
-  console.log(`   │  • Blanco puro: #ffffff                     │`);
-  console.log(`   └─────────────────────────────────────────────┘\n`);
+  const url = await app.getUrl();
+  logger.log(`Servidor ejecutándose en: ${url}`);
+  logger.log(`Documentación Swagger en: ${url}/api-credisur`);
 }
 
 void bootstrap();

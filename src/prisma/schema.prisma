@@ -57,6 +57,9 @@ model Usuario {
   rutasComoCobrador       Ruta[]                     @relation("RutaCobrador")
   rutasComoSupervisor     Ruta[]                     @relation("RutaSupervisor")
 
+  syncConflictsCreados    SyncConflict[]             @relation("SyncConflictCreadoPor")
+  syncConflictsResueltos  SyncConflict[]             @relation("SyncConflictResueltoPor")
+
   @@index([correo])
   @@index([rol])
   @@index([estado])
@@ -618,6 +621,29 @@ model ColaSincronizacion {
   @@index([estado])
   @@index([creadoEn])
   @@map("cola_sincronizacion")
+}
+
+model SyncConflict {
+  id               String               @id @default(uuid())
+  entidad          String               @db.VarChar(50) // ej: "pago", "cliente", "nota"
+  operacion        String               @db.VarChar(20) // POST, PUT, DELETE
+  datos            Json                 // payload original guardado en IndexedDB
+  errorMotivo      String               @db.Text
+  statusCode       Int?
+  endpoint         String               @db.VarChar(255)
+  estadoResolucion String               @default("PENDIENTE") @db.VarChar(20) // PENDIENTE, RESUELTO, DESCARTADO
+  creadoPorId      String?
+  creadoEn         DateTime             @default(now())
+  actualizadoEn    DateTime             @updatedAt
+  resueltoPorId    String?
+
+  creadoPor        Usuario?             @relation("SyncConflictCreadoPor", fields: [creadoPorId], references: [id])
+  resueltoPor      Usuario?             @relation("SyncConflictResueltoPor", fields: [resueltoPorId], references: [id])
+
+  @@index([entidad])
+  @@index([estadoResolucion])
+  @@index([creadoEn])
+  @@map("sync_conflicts")
 }
 
 model Multimedia {

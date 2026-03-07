@@ -15,6 +15,7 @@ import {
   EstadoAprobacion,
   RolUsuario,
   TipoAmortizacion,
+  Prisma,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
@@ -24,6 +25,7 @@ import { ConfiguracionService } from '../configuracion/configuracion.service';
 import { PushService } from '../push/push.service';
 import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
+import { UpdateLoanData } from '../common/types';
 
 @Injectable()
 export class LoansService implements OnModuleInit {
@@ -204,7 +206,7 @@ export class LoansService implements OnModuleInit {
       const skip = (page - 1) * limit;
 
       // Construir filtros de forma segura
-      const where: any = {
+      const where: Prisma.PrestamoWhereInput = {
         eliminadoEn: null, // Solo préstamos no eliminados
       };
 
@@ -217,7 +219,7 @@ export class LoansService implements OnModuleInit {
       if (estado !== 'todos') {
         const estadosValidos = Object.values(EstadoPrestamo);
         if (estadosValidos.includes(estado as EstadoPrestamo)) {
-          where.estado = estado;
+          (where as Record<string, unknown>).estado = estado;
         } else {
           this.logger.warn(`Estado inválido recibido: ${estado}`);
         }
@@ -251,19 +253,19 @@ export class LoansService implements OnModuleInit {
                 {
                   nombres: {
                     contains: searchTerm,
-                    mode: 'insensitive' as any,
+                    mode: Prisma.QueryMode.insensitive,
                   },
                 },
                 {
                   apellidos: {
                     contains: searchTerm,
-                    mode: 'insensitive' as any,
+                    mode: Prisma.QueryMode.insensitive,
                   },
                 },
                 {
                   dni: {
                     contains: searchTerm,
-                    mode: 'insensitive' as any,
+                    mode: Prisma.QueryMode.insensitive,
                   },
                 },
               ],
@@ -273,7 +275,7 @@ export class LoansService implements OnModuleInit {
             producto: {
               nombre: {
                 contains: searchTerm,
-                mode: 'insensitive' as any,
+                mode: Prisma.QueryMode.insensitive,
               },
             },
           },
@@ -489,10 +491,10 @@ export class LoansService implements OnModuleInit {
             riesgo: prestamo.cliente.nivelRiesgo || NivelRiesgo.VERDE,
             ruta: rutaAsignada,
             rutaNombre,
-            vendedor: (prestamo as any).creadoPor?.nombres || 'Sin asignar',
+            vendedor: prestamo.creadoPor?.nombres || 'Sin asignar',
             fechaInicio: prestamo.fechaInicio || new Date(),
             fechaFin: prestamo.fechaFin || new Date(),
-            creadoEn: (prestamo as any).creadoEn || new Date(),
+            creadoEn: prestamo.creadoEn || new Date(),
             progreso:
               cuotasTotales > 0 ? (cuotasPagadas / cuotasTotales) * 100 : 0,
           };
@@ -668,7 +670,11 @@ export class LoansService implements OnModuleInit {
         accion: 'ELIMINAR_PRESTAMO',
         entidad: 'Prestamo',
         entidadId: prestamo.id,
-        datosAnteriores: { eliminadoEn: null, estado: prestamo.estado },
+        datosAnteriores: { 
+          eliminadoEn: null, 
+          estado: prestamo.estado,
+          numeroPrestamo: prestamo.numeroPrestamo
+        },
         datosNuevos: {
           eliminadoEn: prestamoEliminado.eliminadoEn,
           estado: prestamoEliminado.estado,
@@ -682,7 +688,7 @@ export class LoansService implements OnModuleInit {
     }
   }
 
-  async updateLoan(id: string, updateData: any, userId: string) {
+  async updateLoan(id: string, updateData: UpdateLoanData, userId: string) {
     try {
       const prestamo = await this.prisma.prestamo.findUnique({
         where: { id, eliminadoEn: null },
@@ -703,7 +709,8 @@ export class LoansService implements OnModuleInit {
       const archivos = updateData?.archivos;
 
       // Build update payload - only allow safe fields
-      const data: any = { estadoSincronizacion: 'PENDIENTE' };
+      // Record tipado con los campos permitidos del schema
+      const data: Record<string, unknown> = { estadoSincronizacion: 'PENDIENTE' };
 
       if (updateData.monto !== undefined) data.monto = updateData.monto;
       if (updateData.tasaInteres !== undefined) data.tasaInteres = updateData.tasaInteres;
@@ -746,9 +753,15 @@ export class LoansService implements OnModuleInit {
       );
 
       if (shouldRegenerateCuotas) {
-        const cantidadCuotas = data.cantidadCuotas !== undefined ? data.cantidadCuotas : prestamo.cantidadCuotas;
-        const frecuenciaPago = data.frecuenciaPago !== undefined ? data.frecuenciaPago : prestamo.frecuenciaPago;
-        const tipoAmortizacion = data.tipoAmortizacion !== undefined ? data.tipoAmortizacion : (prestamo.tipoAmortizacion || TipoAmortizacion.INTERES_SIMPLE);
+        const cantidadCuotas = data.cantidadCuotas !== undefined
+          ? Number(data.cantidadCuotas)
+          : (prestamo.cantidadCuotas ?? 0);
+        const frecuenciaPago = (data.frecuenciaPago !== undefined
+          ? data.frecuenciaPago
+          : prestamo.frecuenciaPago) as FrecuenciaPago;
+        const tipoAmortizacion = (data.tipoAmortizacion !== undefined
+          ? data.tipoAmortizacion
+          : (prestamo.tipoAmortizacion || TipoAmortizacion.INTERES_SIMPLE)) as TipoAmortizacion;
 
         // Delete existing cuotas
         await this.prisma.cuota.deleteMany({
@@ -1032,8 +1045,8 @@ export class LoansService implements OnModuleInit {
       const fechaFin = new Date(fechaInicio);
       fechaFin.setMonth(fechaFin.getMonth() + createLoanDto.plazoMeses);
 
-      const fechaPrimerCobroParsed = (createLoanDto as any).fechaPrimerCobro
-        ? new Date((createLoanDto as any).fechaPrimerCobro)
+      const fechaPrimerCobroParsed = createLoanDto.fechaPrimerCobro
+        ? new Date(createLoanDto.fechaPrimerCobro)
         : undefined;
       if (fechaPrimerCobroParsed) {
         fechaPrimerCobroParsed.setHours(0, 0, 0, 0);
@@ -1081,7 +1094,7 @@ export class LoansService implements OnModuleInit {
         );
         interesTotal = amortizacion.interesTotal;
         cuotasData = amortizacion.tabla.map((cuota) => {
-          const fechaBase = (createLoanDto as any).fechaPrimerCobro ? new Date((createLoanDto as any).fechaPrimerCobro) : fechaInicio;
+          const fechaBase = createLoanDto.fechaPrimerCobro ? new Date(createLoanDto.fechaPrimerCobro) : fechaInicio;
           const fechaVencimiento = this.calcularFechaVencimiento(fechaBase, cuota.numeroCuota, createLoanDto.frecuenciaPago);
           return {
             numeroCuota: cuota.numeroCuota,
@@ -1100,7 +1113,7 @@ export class LoansService implements OnModuleInit {
         const montoCapitalCuota = cantidadCuotas > 0 ? createLoanDto.monto / cantidadCuotas : 0;
         const montoInteresCuota = cantidadCuotas > 0 ? interesTotal / cantidadCuotas : 0;
         cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => {
-          const fechaBase = (createLoanDto as any).fechaPrimerCobro ? new Date((createLoanDto as any).fechaPrimerCobro) : fechaInicio;
+          const fechaBase = createLoanDto.fechaPrimerCobro ? new Date(createLoanDto.fechaPrimerCobro) : fechaInicio;
           const fechaVencimiento = this.calcularFechaVencimiento(fechaBase, i + 1, createLoanDto.frecuenciaPago);
           return {
             numeroCuota: i + 1,
@@ -1138,7 +1151,7 @@ export class LoansService implements OnModuleInit {
           interesTotal,
           saldoPendiente: createLoanDto.monto + interesTotal - (createLoanDto.cuotaInicial || 0),
           notas: createLoanDto.notas ? String(createLoanDto.notas) : undefined,
-          garantia: (createLoanDto as any).garantia ? String((createLoanDto as any).garantia) : undefined,
+          garantia: createLoanDto.garantia ? String(createLoanDto.garantia) : undefined,
           cuotas: {
             create: cuotasData,
           },
@@ -1450,6 +1463,25 @@ export class LoansService implements OnModuleInit {
         throw new NotFoundException('Usuario creador no encontrado');
       }
 
+      // Verificación de idempotencia / prevención de duplicados
+      // Buscar si existe un préstamo idéntico creado en los últimos 2 minutos
+      const dosMinutosAtras = new Date(Date.now() - 2 * 60 * 1000);
+      const prestamoDuplicado = await this.prisma.prestamo.findFirst({
+        where: {
+          clienteId: data.clienteId,
+          monto: data.monto,
+          tipoPrestamo: data.tipoPrestamo,
+          frecuenciaPago: data.frecuenciaPago,
+          creadoEn: { gte: dosMinutosAtras },
+        },
+      });
+
+      if (prestamoDuplicado) {
+        throw new BadRequestException(
+          'Se ha detectado un crédito idéntico creado hace menos de 2 minutos. Para evitar registros duplicados por problemas de conexión, la solicitud fue bloqueada.',
+        );
+      }
+
       // Determinar si requiere aprobación (ADMIN y SUPER_ADMINISTRADOR no requieren)
       const rolesAutoAprobacion: RolUsuario[] = [RolUsuario.ADMIN, RolUsuario.SUPER_ADMINISTRADOR];
       const requiereAprobacion = !rolesAutoAprobacion.includes(creador.rol);
@@ -1532,10 +1564,15 @@ export class LoansService implements OnModuleInit {
       const fechaInicio = new Date(data.fechaInicio);
       fechaInicio.setHours(0, 0, 0, 0);
       const fechaFin = new Date(fechaInicio);
-      fechaFin.setMonth(fechaFin.getMonth() + data.plazoMeses);
+      if (Number.isInteger(data.plazoMeses)) {
+        fechaFin.setMonth(fechaFin.getMonth() + data.plazoMeses);
+      } else {
+        const diasTotales = Math.round(data.plazoMeses * 30);
+        fechaFin.setDate(fechaFin.getDate() + diasTotales);
+      }
 
-      const fechaPrimerCobroParsed = (data as any).fechaPrimerCobro
-        ? new Date((data as any).fechaPrimerCobro)
+      const fechaPrimerCobroParsed = data.fechaPrimerCobro
+        ? new Date(data.fechaPrimerCobro)
         : undefined;
       if (fechaPrimerCobroParsed) {
         fechaPrimerCobroParsed.setHours(0, 0, 0, 0);
@@ -1602,7 +1639,7 @@ export class LoansService implements OnModuleInit {
         );
         interesTotal = amortizacion.interesTotal;
         cuotasData = amortizacion.tabla.map((cuota) => {
-          const fechaBase = (data as any).fechaPrimerCobro ? new Date((data as any).fechaPrimerCobro) : fechaInicio;
+          const fechaBase = data.fechaPrimerCobro ? new Date(data.fechaPrimerCobro) : fechaInicio;
           const fechaVencimiento = this.calcularFechaVencimiento(fechaBase, cuota.numeroCuota, data.frecuenciaPago);
           return {
             numeroCuota: cuota.numeroCuota,
@@ -1625,7 +1662,7 @@ export class LoansService implements OnModuleInit {
         this.logger.log(`[LOAN CALCULATION] Interés Total: ${interesTotal}, Cuotas: ${cantidadCuotas}, Monto/Cuota: ${montoCuota}`);
         
         cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => {
-          const fechaBase = (data as any).fechaPrimerCobro ? new Date((data as any).fechaPrimerCobro) : fechaInicio;
+          const fechaBase = data.fechaPrimerCobro ? new Date(data.fechaPrimerCobro) : fechaInicio;
           const fechaVencimiento = this.calcularFechaVencimiento(fechaBase, i + 1, data.frecuenciaPago);
           return {
             numeroCuota: i + 1,
@@ -1670,7 +1707,7 @@ export class LoansService implements OnModuleInit {
           interesTotal,
           saldoPendiente: montoTotal,
           notas: data.notas ? String(data.notas) : undefined,
-          garantia: (data as any).garantia ? String((data as any).garantia) : undefined,
+          garantia: data.garantia ? String(data.garantia) : undefined,
           cuotas: {
             create: cuotasData,
           },
@@ -2359,7 +2396,12 @@ export class LoansService implements OnModuleInit {
         accion: 'ARCHIVAR_PRESTAMO',
         entidad: 'Prestamo',
         entidadId: prestamoId,
-        datosAnteriores: { estado: prestamo.estado },
+        datosAnteriores: { 
+          estado: prestamo.estado,
+          numeroPrestamo: prestamo.numeroPrestamo,
+          nombres: prestamo.cliente.nombres,
+          apellidos: prestamo.cliente.apellidos
+        },
         datosNuevos: { estado: 'PERDIDA', motivo: data.motivo },
       });
 
