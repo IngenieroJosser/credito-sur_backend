@@ -282,6 +282,7 @@ export class LoansController {
     },
   })
   async createLoan(@Body() createLoanDto: CreateLoanDto, @Request() req) {
+    console.log('[CONTROLLER DEBUG] createLoan received:', JSON.stringify(createLoanDto));
     // Obtener usuario del request (JWT)
     const usuarioId = req.user.id;
 
@@ -436,39 +437,6 @@ export class LoansController {
     return this.loansService.deleteLoan(id, userId);
   }
 
-  @Get('export')
-  @Roles(
-    RolUsuario.COORDINADOR,
-    RolUsuario.SUPERVISOR,
-    RolUsuario.ADMIN,
-    RolUsuario.SUPER_ADMINISTRADOR,
-    RolUsuario.CONTADOR,
-  )
-  @ApiOperation({
-    summary: 'Exportar listado de préstamos',
-    description: 'Exporta el listado de préstamos en formato Excel (.xlsm) o PDF',
-  })
-  @ApiQuery({ name: 'format', required: true, enum: ['excel', 'pdf'] })
-  @ApiQuery({ name: 'estado', required: false })
-  @ApiQuery({ name: 'ruta', required: false })
-  @ApiQuery({ name: 'search', required: false })
-  @HttpCode(HttpStatus.OK)
-  async exportLoans(
-    @Query('format') format: 'excel' | 'pdf',
-    @Query('estado', new DefaultValuePipe('todos')) estado: string,
-    @Query('ruta', new DefaultValuePipe('todas')) ruta: string,
-    @Query('search', new DefaultValuePipe('')) search: string,
-    @Res() res: Response,
-  ) {
-    const result = await this.loansService.exportLoans(
-      { estado, ruta, search },
-      format,
-    );
-    res.setHeader('Content-Type', result.contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
-    res.send(result.data);
-  }
-
   @Patch(':id')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.COORDINADOR, RolUsuario.ADMIN)
   @HttpCode(HttpStatus.OK)
@@ -538,27 +506,7 @@ export class LoansController {
     return this.loansService.restoreLoan(id, userId);
   }
 
-  @Get(':id/contrato')
-  @Roles(
-    RolUsuario.SUPER_ADMINISTRADOR,
-    RolUsuario.ADMIN,
-    RolUsuario.SUPERVISOR,
-    RolUsuario.COORDINADOR,
-  )
-  @ApiOperation({ summary: 'Generar contrato PDF para crédito de artículo' })
-  @ApiParam({ name: 'id', description: 'ID del préstamo (solo tipo ARTICULO)' })
-  @ApiResponse({ status: HttpStatus.OK, description: 'Contrato PDF generado' })
-  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'No es un crédito de artículo' })
-  @HttpCode(HttpStatus.OK)
-  async generarContrato(
-    @Param('id') id: string,
-    @Res() res: Response,
-  ) {
-    const result = await this.loansService.generarContrato(id);
-    res.setHeader('Content-Type', result.contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
-    res.send(result.data);
-  }
+
 
   @Post(':id/archive')
   @Roles(
