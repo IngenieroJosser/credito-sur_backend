@@ -1390,9 +1390,14 @@ export class RoutesService {
     });
 
     const visitasDelDia: any[] = [];
+    const clientesProcesados = new Set<string>();
 
     for (const asignacion of asignaciones) {
       const cliente = asignacion.cliente;
+      
+      // Si el cliente ya fue agregado a la lista de hoy (evitar duplicados por múltiples asignaciones)
+      if (clientesProcesados.has(cliente.id)) continue;
+
       let debeAparecerHoy = false;
 
       // Revisar cada préstamo activo
@@ -1490,6 +1495,7 @@ export class RoutesService {
               : null,
           })),
         });
+        clientesProcesados.add(cliente.id);
       }
     }
 
