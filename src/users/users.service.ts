@@ -462,6 +462,42 @@ export class UsersService {
     return eliminado;
   }
 
+  async restaurar(id: string, usuarioRestauradorId?: string) {
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { id },
+    });
+
+    if (!usuario) {
+      throw new NotFoundException(`Usuario con ID ${id} no encontrado`);
+    }
+
+    const restaurado = await this.prisma.usuario.update({
+      where: { id },
+      data: {
+        eliminadoEn: null,
+        estado: EstadoUsuario.ACTIVO,
+      },
+    });
+
+    if (usuarioRestauradorId) {
+      await this.auditService.create({
+        usuarioId: usuarioRestauradorId,
+        accion: 'RESTAURAR_USUARIO',
+        entidad: 'Usuario',
+        entidadId: id,
+        datosAnteriores: { eliminadoEn: usuario.eliminadoEn },
+        datosNuevos: { eliminadoEn: null },
+      });
+    }
+
+    this.notificacionesGateway.broadcastUsuariosActualizados({
+      accion: 'RESTAURAR',
+      usuarioId: id,
+    });
+
+    return restaurado;
+  }
+
   async toggleEstado(id: string, nuevoEstado: EstadoUsuario, usuarioModificadorId?: string) {
     const usuario = await this.prisma.usuario.findUnique({
       where: { id },

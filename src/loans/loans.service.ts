@@ -670,7 +670,11 @@ export class LoansService implements OnModuleInit {
         accion: 'ELIMINAR_PRESTAMO',
         entidad: 'Prestamo',
         entidadId: prestamo.id,
-        datosAnteriores: { eliminadoEn: null, estado: prestamo.estado },
+        datosAnteriores: { 
+          eliminadoEn: null, 
+          estado: prestamo.estado,
+          numeroPrestamo: prestamo.numeroPrestamo
+        },
         datosNuevos: {
           eliminadoEn: prestamoEliminado.eliminadoEn,
           estado: prestamoEliminado.estado,
@@ -1459,6 +1463,25 @@ export class LoansService implements OnModuleInit {
         throw new NotFoundException('Usuario creador no encontrado');
       }
 
+      // Verificación de idempotencia / prevención de duplicados
+      // Buscar si existe un préstamo idéntico creado en los últimos 2 minutos
+      const dosMinutosAtras = new Date(Date.now() - 2 * 60 * 1000);
+      const prestamoDuplicado = await this.prisma.prestamo.findFirst({
+        where: {
+          clienteId: data.clienteId,
+          monto: data.monto,
+          tipoPrestamo: data.tipoPrestamo,
+          frecuenciaPago: data.frecuenciaPago,
+          creadoEn: { gte: dosMinutosAtras },
+        },
+      });
+
+      if (prestamoDuplicado) {
+        throw new BadRequestException(
+          'Se ha detectado un crédito idéntico creado hace menos de 2 minutos. Para evitar registros duplicados por problemas de conexión, la solicitud fue bloqueada.',
+        );
+      }
+
       // Determinar si requiere aprobación (ADMIN y SUPER_ADMINISTRADOR no requieren)
       const rolesAutoAprobacion: RolUsuario[] = [RolUsuario.ADMIN, RolUsuario.SUPER_ADMINISTRADOR];
       const requiereAprobacion = !rolesAutoAprobacion.includes(creador.rol);
@@ -1541,7 +1564,12 @@ export class LoansService implements OnModuleInit {
       const fechaInicio = new Date(data.fechaInicio);
       fechaInicio.setHours(0, 0, 0, 0);
       const fechaFin = new Date(fechaInicio);
-      fechaFin.setMonth(fechaFin.getMonth() + data.plazoMeses);
+      if (Number.isInteger(data.plazoMeses)) {
+        fechaFin.setMonth(fechaFin.getMonth() + data.plazoMeses);
+      } else {
+        const diasTotales = Math.round(data.plazoMeses * 30);
+        fechaFin.setDate(fechaFin.getDate() + diasTotales);
+      }
 
       const fechaPrimerCobroParsed = data.fechaPrimerCobro
         ? new Date(data.fechaPrimerCobro)
@@ -2368,7 +2396,12 @@ export class LoansService implements OnModuleInit {
         accion: 'ARCHIVAR_PRESTAMO',
         entidad: 'Prestamo',
         entidadId: prestamoId,
-        datosAnteriores: { estado: prestamo.estado },
+        datosAnteriores: { 
+          estado: prestamo.estado,
+          numeroPrestamo: prestamo.numeroPrestamo,
+          nombres: prestamo.cliente.nombres,
+          apellidos: prestamo.cliente.apellidos
+        },
         datosNuevos: { estado: 'PERDIDA', motivo: data.motivo },
       });
 
