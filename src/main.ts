@@ -23,6 +23,7 @@ async function bootstrap() {
 
   app.enableCors({
     origin: 'http://localhost:3000',
+    credentials: true,
   });
 
   const config = new DocumentBuilder()
@@ -52,10 +53,10 @@ async function bootstrap() {
     },
   });
 
-  await app.listen(process.env.PORT ?? 3001);
-  console.log(`Application is running on: ${await app.getUrl()}`);
+  await app.listen(process.env.PORT ?? 3001, '0.0.0.0');
+  console.log(`Application is running on: http://localhost:${process.env.PORT ?? 3001}`);
   console.log(
-    `Swagger documentation available at: ${await app.getUrl()}/api-credisur`,
+    `Swagger documentation available at: http://localhost:${process.env.PORT ?? 3001}/api-credisur`,
   );
 }
 

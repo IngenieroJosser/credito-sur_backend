@@ -15,21 +15,31 @@ export class AuthService {
   ) {}
 
   async validarUsuario(nombres: string, contrasena: string) {
+    console.log('[VALIDAR] Buscando usuario con nombres:', nombres);
+    
     const usuario = await this.usersService.obtenerPorNombres(nombres);
+    
+    console.log('[VALIDAR] Usuario encontrado:', usuario ? JSON.stringify(usuario, null, 2) : 'No');
 
     if (usuario && (await argon2.verify(usuario.hashContrasena, contrasena))) {
+      console.log('[VALIDAR] Contraseña correcta');
       const { hashContrasena, ...resultado } = usuario;
       return resultado;
     }
 
+    console.log('[VALIDAR] Contraseña incorrecta o usuario no existe');
     return null;
   }
 
   async login(loginAuthDto: LoginAuthDto) {
+    console.log('[AUTH] Intento de login con nombres:', loginAuthDto.nombres);
+    
     const usuario = await this.validarUsuario(
       loginAuthDto.nombres,
       loginAuthDto.contrasena,
     );
+
+    console.log('[AUTH] Usuario encontrado:', usuario ? 'Sí' : 'No');
 
     if (!usuario) {
       throw new UnauthorizedException('Credenciales inválidas');

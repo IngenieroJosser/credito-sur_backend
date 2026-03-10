@@ -38,7 +38,9 @@ async function crearSuperadministradorInicial() {
       estado: EstadoUsuario.ACTIVO,
     },
   });
-  console.log(`[SEED] Superadministrador creado con id: ${superadministrador.id}`);
+  console.log(
+    `[SEED] Superadministrador creado con id: ${superadministrador.id}`,
+  );
 
   return superadministrador;
 }
@@ -89,6 +91,7 @@ async function crearUsuarioPorRol(
 }
 
 //  SEED PRINCIPAL
+//  SEED PRINCIPAL
 async function main() {
   console.log('Iniciando seed de usuarios...');
 
@@ -101,9 +104,29 @@ async function main() {
     RolUsuario.COORDINADOR,
   );
 
+  // Eliminar admin previo para asegurar limpieza
+  try {
+    await prisma.usuario.delete({ where: { correo: 'admin@credisur.com' } });
+    console.log('[SEED] Usuario admin limpiado para recreación');
+  } catch (e) { }
+
+  await crearUsuarioPorRol(
+    'admin@credisur.com',
+    'Admin',
+    'General',
+    RolUsuario.SUPER_ADMINISTRADOR,
+    'Admin123!',
+  );
+
+  // Eliminar supervisor previo para asegurar limpieza
+  try {
+    await prisma.usuario.delete({ where: { correo: 'supervisor@credisur.com' } });
+    console.log('[SEED] Usuario supervisor limpiado para recreación');
+  } catch (e) { }
+
   await crearUsuarioPorRol(
     'supervisor@credisur.com',
-    'Supervisor',
+    'Supervisor', // Nombres EXACTOS
     'Operativo',
     RolUsuario.SUPERVISOR,
     'Supervisor123!',
