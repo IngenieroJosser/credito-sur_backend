@@ -15,6 +15,10 @@ import { ConfiguracionService } from '../configuracion/configuracion.service';
 import { NivelRiesgo, RolUsuario } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { Prisma } from '@prisma/client';
+import {
+  generarExcelClientes,
+  generarPDFClientes,
+} from '../templates/exports/clientes.template';
 
 @Injectable()
 export class ClientsService {
@@ -1463,5 +1467,80 @@ export class ClientsService {
       this.logger.error(`Error assigning client ${clienteId} to route:`, error);
       throw error;
     }
+  }
+
+  /**
+   * Exportar listado de clientes en Excel o PDF.
+   * Reutiliza la misma consulta de getAllClients pero sin transformaciones de score.
+   */
+  async exportarClientes(
+    formato: 'excel' | 'pdf',
+    filtros?: { nivelRiesgo?: string; ruta?: string; search?: string },
+  ): Promise<{ data: Buffer; contentType: string; filename: string }> {
+    const where: any = { eliminadoEn: null };
+
+    if (filtros?.nivelRiesgo && filtros.nivelRiesgo !== 'all') {
+      where.nivelRiesgo = filtros.nivelRiesgo;
+    }
+    if (filtros?.ruta) {
+      where.asignacionesRuta = { some: { rutaId: filtros.ruta, activa: true } };
+    }
+    if (filtros?.search?.trim()) {
+      const s = filtros.search.trim();
+      where.OR = [
+        { nombres: { contains: s, mode: 'insensitive' as any } },
+        { apellidos: { contains: s, mode: 'insensitive' as any } },
+        { dni: { contains: s, mode: 'insensitive' as any } },
+        { telefono: { contains: s, mode: 'insensitive' as any } },
+        { codigo: { contains: s, mode: 'insensitive' as any } },
+      ];
+    }
+
+    const clientes = await this.prisma.cliente.findMany({
+      where,
+      include: {
+        asignacionesRuta: {
+          where: { activa: true },
+          include: { ruta: { select: { id: true, nombre: true } } },
+          take: 1,
+        },
+        prestamos: {
+          where: { eliminadoEn: null },
+          select: { id: true, estado: true, saldoPendiente: true },
+        },
+      },
+      orderBy: { creadoEn: 'desc' },
+    });
+
+    const filas = clientes.map((c) => {
+      const prestamosActivos = c.prestamos.filter((p) => p.estado === 'ACTIVO').length;
+      const montoTotal = c.prestamos.reduce((s, p) => s + Number(p.saldoPendiente ?? 0), 0);
+      const montoMora = c.prestamos
+        .filter((p) => p.estado === 'EN_MORA')
+        .reduce((s, p) => s + Number(p.saldoPendiente ?? 0), 0);
+      const rutaNombre = c.asignacionesRuta?.[0]?.ruta?.nombre ?? '';
+
+      return {
+        codigo: c.codigo,
+        nombres: c.nombres,
+        apellidos: c.apellidos,
+        dni: c.dni,
+        telefono: c.telefono,
+        correo: c.correo,
+        direccion: c.direccion,
+        nivelRiesgo: c.nivelRiesgo,
+        estadoAprobacion: c.estadoAprobacion,
+        prestamosActivos,
+        montoTotal,
+        montoMora,
+        rutaNombre,
+        creadoEn: c.creadoEn,
+      };
+    });
+
+    const fecha = new Date().toISOString().split('T')[0];
+    return formato === 'pdf'
+      ? generarPDFClientes(filas, fecha)
+      : generarExcelClientes(filas, fecha);
   }
 }
