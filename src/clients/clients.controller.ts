@@ -9,12 +9,13 @@ import {
   Query,
   Put,
   Logger,
+  Request,
 } from '@nestjs/common';
 import { ClientsService } from './clients.service';
 import { CreateClientDto } from './dto/create-client.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { NivelRiesgo, RolUsuario } from '@prisma/client';
-import { Roles } from 'src/auth/decorators/roles.decorator';
+import { Roles } from '../auth/decorators/roles.decorator'; 
 
 @Controller('clients')
 export class ClientsController {
@@ -26,16 +27,28 @@ export class ClientsController {
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.clientsService.remove(id);
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
+  remove(@Param('id') id: string, @Request() req: any) {
+    const userId = req.user.id;
+    return this.clientsService.remove(id, userId);
+  }
+
+  @Patch(':id/restore')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
+  restore(@Param('id') id: string, @Request() req: any) {
+    const userId = req.user.id;
+    return this.clientsService.restore(id, userId);
   }
 
   @Get()
   @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
     RolUsuario.SUPERVISOR,
     RolUsuario.COBRADOR,
     RolUsuario.CONTADOR,
+    RolUsuario.PUNTO_DE_VENTA,
   )
   async getAllClients(
     @Query('nivelRiesgo') nivelRiesgo: string,
@@ -51,10 +64,13 @@ export class ClientsController {
 
   @Get(':id')
   @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
     RolUsuario.SUPERVISOR,
     RolUsuario.COBRADOR,
     RolUsuario.CONTADOR,
+    RolUsuario.PUNTO_DE_VENTA,
   )
   async getClientById(@Param('id') id: string) {
     return this.clientsService.getClientById(id);
@@ -67,6 +83,7 @@ export class ClientsController {
     RolUsuario.SUPER_ADMINISTRADOR,
     RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
+    RolUsuario.PUNTO_DE_VENTA,
   )
   async createClient(@Body() body: CreateClientDto) {
     this.logger.log(`Creando cliente con datos: ${JSON.stringify(body)}`);
@@ -75,7 +92,7 @@ export class ClientsController {
   }
 
   @Post('approve/:id')
-  @Roles(RolUsuario.COORDINADOR)
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
   async approveClient(
     @Param('id') id: string,
     @Body() body: { aprobadoPorId: string; datosAprobados?: any },
@@ -87,8 +104,21 @@ export class ClientsController {
     );
   }
 
+  @Post('reject/:id')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
+  async rejectClient(
+    @Param('id') id: string,
+    @Body() body: { rechazadoPorId: string; razon?: string },
+  ) {
+    return this.clientsService.rejectClient(
+      id,
+      body.rechazadoPorId,
+      body.razon,
+    );
+  }
+
   @Put(':id')
-  @Roles(RolUsuario.COORDINADOR)
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
   async updateClient(
     @Param('id') id: string,
     @Body()
@@ -101,6 +131,8 @@ export class ClientsController {
       referencia?: string;
       nivelRiesgo?: string;
       puntaje?: number;
+      archivos?: any[];
+      creadoPorId?: string;
     },
   ) {
     return this.clientsService.updateClient(id, {
@@ -111,6 +143,7 @@ export class ClientsController {
       direccion: body.direccion,
       referencia: body.referencia,
       nivelRiesgo: body.nivelRiesgo as NivelRiesgo,
+      archivos: body.archivos,
     });
   }
 

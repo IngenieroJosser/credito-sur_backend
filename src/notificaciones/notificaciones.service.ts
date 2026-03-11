@@ -1,13 +1,33 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from 'prisma/prisma.service';
+import { Injectable, Logger, forwardRef, Inject } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
 import { RolUsuario } from '@prisma/client';
+import { NotificacionesGateway } from './notificaciones.gateway';
+import { PushService } from '../push/push.service';
 
 @Injectable()
 export class NotificacionesService {
   private readonly logger = new Logger(NotificacionesService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    @Inject(forwardRef(() => NotificacionesGateway))
+    private notificacionesGateway: NotificacionesGateway,
+    private pushService: PushService,
+  ) {}
 
+  private cleanNotificationText(txt: string): string {
+    if (!txt) return txt;
+    return txt
+      .replace(/préstamo por artículo/gi, 'crédito por un artículo')
+      .replace(/préstamo de artículo/gi, 'crédito por un artículo')
+      .replace(/préstamo por un artículo/gi, 'crédito por un artículo')
+      .replace(/solicitado un préstamo por artículo/gi, 'solicitado un crédito por un artículo')
+      .replace(/préstamo en efectivo/gi, 'préstamo');
+  }
+
+  /**
+   * Crea una notificación persistente y la emite en tiempo real a través de WebSockets y Push.
+   */
   async create(data: {
     usuarioId: string;
     titulo: string;
@@ -18,6 +38,9 @@ export class NotificacionesService {
     metadata?: any;
   }) {
     try {
+      const cleanTitulo = this.cleanNotificationText(data.titulo);
+      const cleanMensaje = this.cleanNotificationText(data.mensaje);
+
       const map: Record<string, string> = {
         INFO: 'INFORMATIVO',
         WARNING: 'ADVERTENCIA',
@@ -30,26 +53,48 @@ export class NotificacionesService {
         ...(data.metadata || {}),
         nivel: isSeverity ? map[incoming] : undefined,
       };
-      return await this.prisma.notificacion.create({
+      const notificacion = await this.prisma.notificacion.create({
         data: {
           usuarioId: data.usuarioId,
-          titulo: data.titulo,
-          mensaje: data.mensaje,
+          titulo: cleanTitulo,
+          mensaje: cleanMensaje,
           tipo: tipoFinal,
           entidad: data.entidad,
           entidadId: data.entidadId,
           metadata: metadataFinal,
         },
       });
+
+      // Emitir evento en tiempo real (WebSockets)
+      this.notificacionesGateway.enviarNotificacionAUsuario(data.usuarioId, notificacion);
+      this.notificacionesGateway.notificarActualizacion(data.usuarioId);
+
+      // Enviar notificación Push (PWA)
+      this.pushService.sendPushNotification({
+        userId: data.usuarioId,
+        title: cleanTitulo,
+        body: cleanMensaje,
+        data: {
+          tipo: tipoFinal,
+          entidadId: data.entidadId,
+          entidad: data.entidad,
+          link: notificacion.id ? `/notificaciones` : undefined // Ajustar según necesidad
+        }
+      }).catch(err => this.logger.error('Error enviando push:', err));
+
+      return notificacion;
     } catch (error) {
       this.logger.error(
-        `Error creating notification for user ${data.usuarioId}:`,
+        `Error creando notificación para el usuario ${data.usuarioId}:`,
         error,
       );
-      // No lanzamos error para no interrumpir el flujo principal del negocio
+      // No lanzamos error para no interrumpir el flujo principal del negocio (ej. si falla el socket)
     }
   }
 
+  /**
+   * Notifica a todos los coordinadores activos del sistema.
+   */
   async notifyCoordinator(data: {
     titulo: string;
     mensaje: string;
@@ -68,10 +113,10 @@ export class NotificacionesService {
       });
 
       this.logger.log(
-        `Notifying ${coordinadores.length} coordinators: ${data.titulo}`,
+        `Notificando a ${coordinadores.length} coordinadores: ${data.titulo}`,
       );
 
-      // 2. Crear notificación para cada uno
+      // 2. Crear notificación para cada uno (esto dispara sockets y push automáticamente en this.create)
       await Promise.all(
         coordinadores.map((coord) =>
           this.create({
@@ -85,12 +130,232 @@ export class NotificacionesService {
     }
   }
 
+  async notifyApprovers(data: {
+    titulo: string;
+    mensaje: string;
+    tipo?: string;
+    entidad?: string;
+    entidadId?: string;
+    metadata?: any;
+  }) {
+    try {
+      const aprobadores = await this.prisma.usuario.findMany({
+        where: {
+          rol: {
+            in: [
+              RolUsuario.SUPER_ADMINISTRADOR,
+              RolUsuario.ADMIN,
+              RolUsuario.COORDINADOR,
+              RolUsuario.SUPERVISOR,
+            ],
+          },
+          estado: 'ACTIVO',
+        },
+      });
+
+      this.logger.log(
+        `Notifying ${aprobadores.length} approvers: ${data.titulo}`,
+      );
+
+      await Promise.all(
+        aprobadores.map((user) =>
+          this.create({
+            usuarioId: user.id,
+            ...data,
+          }),
+        ),
+      );
+    } catch (error) {
+      this.logger.error('Error notifying approvers:', error);
+    }
+  }
+
   async findAll(userId: string) {
-    return this.prisma.notificacion.findMany({
+    const notificaciones = await this.prisma.notificacion.findMany({
       where: { usuarioId: userId, archivar: false },
       orderBy: { creadoEn: 'desc' },
       take: 50,
     });
+
+    // Enriquecer notificaciones vinculadas a aprobaciones con estado real y nombre del solicitante
+    const enriquecidas = await Promise.all(
+      notificaciones.map(async (notif) => {
+        const rawMeta = notif.metadata;
+        const meta = typeof rawMeta === 'string' ? JSON.parse(rawMeta) : (rawMeta || {});
+        
+        let enrichedNotif: any = { 
+          ...notif,
+          titulo: this.cleanNotificationText(notif.titulo),
+          mensaje: this.cleanNotificationText(notif.mensaje)
+        };
+
+        if (notif.entidadId) {
+          try {
+            let datosExtra = {};
+            let aprobacionReal: any = null;
+
+            // 1. Intentar buscar como Aprobación
+            const aprobacion = await this.prisma.aprobacion.findUnique({
+              where: { id: notif.entidadId },
+              select: {
+                estado: true,
+                tipoAprobacion: true,
+                datosSolicitud: true,
+                comentarios: true,
+                referenciaId: true,
+                tablaReferencia: true,
+                solicitadoPor: { select: { nombres: true, apellidos: true } },
+                aprobadoPor: { select: { nombres: true, apellidos: true } },
+              },
+            });
+
+            if (aprobacion) {
+              aprobacionReal = aprobacion;
+              const rawDatos = aprobacion.datosSolicitud;
+              const datos = typeof rawDatos === 'string' ? JSON.parse(rawDatos) : (rawDatos || {});
+              
+              // Si la aprobación apunta a un préstamo, cargar datos reales
+              if (aprobacion.referenciaId && (aprobacion.tablaReferencia === 'Prestamo' || aprobacion.tipoAprobacion === 'NUEVO_PRESTAMO')) {
+                const p = await this.prisma.prestamo.findUnique({
+                  where: { id: aprobacion.referenciaId },
+                  include: { 
+                    cliente: true, 
+                    producto: { 
+                      select: { 
+                        nombre: true, 
+                        precios: true 
+                      } 
+                    } 
+                  }
+                });
+                if (p) {
+                    const bInic = Number(p.cuotaInicial || 0);
+                    const rInic = Number((datos as any).cuotaInicial || 0);
+                    
+                    datosExtra = {
+                      cedula: String(p.cliente.dni),
+                      telefono: String(p.cliente.telefono),
+                      cliente: `${p.cliente.nombres} ${p.cliente.apellidos}`,
+                      monto: Number(p.monto),
+                      valorArticulo: Number(p.monto) + (bInic || rInic || 0),
+                      articulo: p.producto?.nombre || (datos as any).articulo || 'Artículo',
+                      frecuenciaPago: p.frecuenciaPago,
+                      cuotas: p.cantidadCuotas || (datos as any).cuotas || (datos as any).numCuotas || 0,
+                      plazoMeses: p.plazoMeses,
+                      tipoAmortizacion: p.tipoAmortizacion,
+                      cuotaInicial: bInic || rInic || 0,
+                      porcentaje: Number(p.tasaInteres || 0),
+                      notas: p.notas || (datos as any).notas || (datos as any).observaciones || (datos as any).comentarios || undefined,
+                      planesArticulo: Array.isArray(p.producto?.precios)
+                        ? p.producto?.precios
+                            .filter((pr) => pr.activo && pr.meses > 0)
+                            .map((pr) => ({
+                              meses: pr.meses,
+                              precioTotal: Number(pr.precio),
+                            }))
+                        : undefined,
+                    };
+                }
+              }
+              
+              const nombreSolicitante = aprobacion.solicitadoPor ? `${aprobacion.solicitadoPor.nombres} ${aprobacion.solicitadoPor.apellidos}`.trim() : undefined;
+              const nombreRevisor = aprobacion.aprobadoPor ? `${aprobacion.aprobadoPor.nombres} ${aprobacion.aprobadoPor.apellidos}`.trim() : undefined;
+              const descOriginal = (datos as any).descripcion || (datos as any).motivo || (datos as any).razon || undefined;
+
+              const enrichedMetadata = {
+                ...meta,
+                ...(datos as any),
+                ...datosExtra,
+                tipoAprobacion: meta.tipoAprobacion || aprobacion.tipoAprobacion,
+                estadoAprobacion: aprobacion.estado,
+                solicitadoPor: meta.solicitadoPor || nombreSolicitante,
+                revisadoPor: nombreRevisor,
+                motivoRechazo: aprobacion.comentarios,
+                descSolicitud: descOriginal,
+              };
+
+              enrichedNotif = {
+                ...enrichedNotif,
+                metadata: enrichedMetadata,
+                detalles: { ...((notif as any).detalles || {}), ...(datos as any), ...datosExtra }
+              };
+            } 
+            
+            // 2. Si no es aprobación, intentar buscar como Préstamo directo
+            if (!aprobacionReal && (notif.entidad === 'PRESTAMO' || notif.entidad === 'Prestamo')) {
+               const p = await this.prisma.prestamo.findUnique({
+                  where: { id: notif.entidadId },
+                  include: { 
+                    cliente: true, 
+                    producto: { 
+                      select: { 
+                        nombre: true, 
+                        precios: true 
+                      } 
+                    } 
+                  }
+               });
+               if (p) {
+                  let articuloManual = '';
+                  let cuotaInicialManual = 0;
+                  try {
+                    const apAsociada = await this.prisma.aprobacion.findFirst({
+                      where: { referenciaId: p.id, tablaReferencia: 'Prestamo' },
+                      select: { datosSolicitud: true }
+                    });
+                    if (apAsociada) {
+                      const d = typeof apAsociada.datosSolicitud === 'string' ? JSON.parse(apAsociada.datosSolicitud) : apAsociada.datosSolicitud;
+                      articuloManual = (d as any).articulo || (d as any).articuloNombre || '';
+                      cuotaInicialManual = Number((d as any).cuotaInicial || 0);
+                    }
+                  } catch {}
+
+                  const pData = {
+                    cedula: String(p.cliente.dni),
+                    telefono: String(p.cliente.telefono),
+                    cliente: `${p.cliente.nombres} ${p.cliente.apellidos}`,
+                    monto: Number(p.monto),
+                    valorArticulo: Number(p.monto) + Number(p.cuotaInicial || cuotaInicialManual || 0),
+                    articulo: p.producto?.nombre || articuloManual || 'Artículo',
+                    frecuenciaPago: p.frecuenciaPago,
+                    cuotas: p.cantidadCuotas || (meta as any).cuotas || (meta as any).numCuotas || 0,
+                    plazoMeses: p.plazoMeses,
+                    tipoAmortizacion: p.tipoAmortizacion,
+                    cuotaInicial: Number(p.cuotaInicial || cuotaInicialManual || 0),
+                    porcentaje: Number(p.tasaInteres || 0),
+                    notas: p.notas || (meta as any).notas || (meta as any).observaciones || (meta as any).comentarios || undefined,
+                    planesArticulo: Array.isArray(p.producto?.precios)
+                      ? p.producto?.precios
+                          .filter((pr) => pr.activo && pr.meses > 0)
+                          .map((pr) => ({
+                            meses: pr.meses,
+                            precioTotal: Number(pr.precio),
+                          }))
+                      : undefined,
+                  };
+                  enrichedNotif = {
+                    ...enrichedNotif,
+                    metadata: { ...meta, ...pData },
+                    detalles: { ...((notif as any).detalles || {}), ...pData }
+                  };
+               }
+            }
+          } catch (error) {
+            this.logger.error('Error in notification enrichment:', error);
+          }
+        }
+
+        // Aplicamos la limpieza de texto al final para asegurarnos de que el texto enriquecido 
+        // o el original queden estandarizados.
+        return {
+          ...enrichedNotif,
+          titulo: this.cleanNotificationText(enrichedNotif.titulo),
+          mensaje: this.cleanNotificationText(enrichedNotif.mensaje)
+        };
+      }),
+    );
+
+    return enriquecidas;
   }
 
   async markAsRead(id: string) {

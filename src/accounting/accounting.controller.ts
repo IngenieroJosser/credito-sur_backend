@@ -4,6 +4,7 @@ import {
   Post,
   Body,
   Patch,
+  Delete,
   Param,
   Query,
   UseGuards,
@@ -16,7 +17,7 @@ import {
 } from '@nestjs/common';
 import { AccountingService } from './accounting.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { TipoCaja, TipoTransaccion } from '@prisma/client';
+import { TipoCaja, TipoTransaccion, TipoAprobacion } from '@prisma/client';
 
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -88,6 +89,15 @@ export class AccountingController {
     return this.accountingService.updateCaja(id, body);
   }
 
+  @Delete('cajas/:id')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+  )
+  deleteCaja(@Param('id') id: string) {
+    return this.accountingService.deleteCaja(id);
+  }
+
   @Post('cajas/:id/consolidar')
   @Roles(
     RolUsuario.SUPER_ADMINISTRADOR,
@@ -95,8 +105,12 @@ export class AccountingController {
     RolUsuario.CONTADOR,
     RolUsuario.COORDINADOR,
   )
-  consolidarCaja(@Param('id') id: string, @Request() req) {
-    return this.accountingService.consolidarCaja(id, req.user.id);
+  consolidarCaja(
+    @Param('id') id: string,
+    @Request() req,
+    @Body() body?: { monto?: number },
+  ) {
+    return this.accountingService.consolidarCaja(id, req.user.id, body?.monto);
   }
 
   @Post('cajas/:id/arqueos')
@@ -217,13 +231,97 @@ export class AccountingController {
     @Query('estado') estado?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
   ) {
     return this.accountingService.getGastos({
       rutaId,
       estado,
       page: page ? parseInt(page) : 1,
       limit: limit ? parseInt(limit) : 50,
+      fechaInicio,
+      fechaFin,
     });
+  }
+
+  @Post('gastos')
+  @Roles(
+    RolUsuario.COBRADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
+  async registrarGasto(
+    @Request() req,
+    @Body()
+    body: {
+      descripcion: string;
+      valor: number;
+      rutaId: string;
+      cobradorId: string;
+    },
+  ) {
+    if (!req.user || !req.user.id) {
+      throw new UnauthorizedException('Usuario no autenticado');
+    }
+    return this.accountingService.registrarGasto({
+      descripcion: body.descripcion,
+      monto: body.valor,
+      rutaId: body.rutaId,
+      cobradorId: body.cobradorId,
+      solicitadoPorId: req.user.id,
+      tipoAprobacion: TipoAprobacion.GASTO,
+    });
+  }
+
+  @Post('base-requests')
+  @Roles(
+    RolUsuario.COBRADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
+  async solicitarBase(
+    @Request() req,
+    @Body()
+    body: {
+      descripcion: string;
+      monto: number;
+      rutaId: string;
+      cobradorId: string;
+    },
+  ) {
+    if (!req.user || !req.user.id) {
+      throw new UnauthorizedException('Usuario no autenticado');
+    }
+    return this.accountingService.solicitarBase({
+      descripcion: body.descripcion,
+      monto: body.monto,
+      rutaId: body.rutaId,
+      cobradorId: body.cobradorId,
+      solicitadoPorId: req.user.id,
+    });
+  }
+
+  @Get('rutas/:rutaId/saldo-disponible')
+  @Roles(
+    RolUsuario.COBRADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
+  getSaldoDisponibleRuta(
+    @Param('rutaId') rutaId: string,
+    @Query('fecha') fecha?: string,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
+  ) {
+    return this.accountingService.getSaldoDisponibleRuta(
+      rutaId,
+      fecha,
+      fechaInicio,
+      fechaFin,
+    );
   }
 
   @Get('export')

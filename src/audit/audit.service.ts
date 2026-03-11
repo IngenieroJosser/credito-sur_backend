@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from 'prisma/prisma.service';
+import { PrismaService } from '../prisma/prisma.service'; 
 
 @Injectable()
 export class AuditService {
@@ -47,6 +47,31 @@ export class AuditService {
         },
       },
     });
+  }
+
+  /** Versión paginada con total para el frontend */
+  async findAllPaginated(pagina: number = 1, limite: number = 50) {
+    const skip = (pagina - 1) * limite;
+    const [registros, total] = await Promise.all([
+      this.prisma.registroAuditoria.findMany({
+        orderBy: { creadoEn: 'desc' },
+        take: limite,
+        skip,
+        include: {
+          usuario: {
+            select: { nombres: true, apellidos: true, correo: true, rol: true },
+          },
+        },
+      }),
+      this.prisma.registroAuditoria.count(),
+    ]);
+    return {
+      registros,
+      total,
+      pagina,
+      limite,
+      totalPaginas: Math.ceil(total / limite),
+    };
   }
 
   async findByUserId(

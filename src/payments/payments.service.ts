@@ -5,14 +5,18 @@ import {
   Logger,
 } from '@nestjs/common';
 import { CreatePaymentDto } from './dto/create-payment.dto';
-import { PrismaService } from 'prisma/prisma.service';
+import { PrismaService } from '../prisma/prisma.service';
 import {
   EstadoPrestamo,
   EstadoCuota,
   MetodoPago,
+  TipoTransaccion,
+  Prisma,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { AuditService } from '../audit/audit.service';
+import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+import { PagoConRelacionesExport } from '../common/types';
 
 @Injectable()
 export class PaymentsService {
@@ -22,6 +26,7 @@ export class PaymentsService {
     private readonly prisma: PrismaService,
     private notificacionesService: NotificacionesService,
     private auditService: AuditService,
+    private notificacionesGateway: NotificacionesGateway,
   ) {}
 
   /**
@@ -50,13 +55,26 @@ export class PaymentsService {
   }
 
   async create(dto: CreatePaymentDto) {
+    // Validar que se proporcione el prestamoId
+    if (!dto.prestamoId) {
+      throw new BadRequestException('El ID del préstamo es requerido');
+    }
+
+    // Validar cobrador
+    if (!dto.cobradorId) {
+      throw new BadRequestException('El cobrador es requerido');
+    }
+
+    const prestamoIdVal = dto.prestamoId;
+    const cobradorIdVal = dto.cobradorId;
+
     this.logger.log(
-      `Registrando pago: préstamo=${dto.prestamoId}, monto=${dto.montoTotal}`,
+      `Registrando pago: préstamo=${prestamoIdVal}, monto=${dto.montoTotal}`,
     );
 
     // Obtener préstamo con cuotas pendientes
     const prestamo = await this.prisma.prestamo.findUnique({
-      where: { id: dto.prestamoId, eliminadoEn: null },
+      where: { id: prestamoIdVal, eliminadoEn: null },
       include: {
         cuotas: {
           where: {
@@ -74,6 +92,9 @@ export class PaymentsService {
       throw new NotFoundException('Préstamo no encontrado');
     }
 
+    // Usar el clienteId del préstamo si no se proporciona
+    const clienteId = dto.clienteId || prestamo.clienteId;
+
     if (
       prestamo.estado !== EstadoPrestamo.ACTIVO &&
       prestamo.estado !== EstadoPrestamo.EN_MORA
@@ -83,7 +104,7 @@ export class PaymentsService {
       );
     }
 
-    if (prestamo.clienteId !== dto.clienteId) {
+    if (clienteId && prestamo.clienteId !== clienteId) {
       throw new BadRequestException(
         'El cliente no corresponde al préstamo indicado',
       );
@@ -151,15 +172,20 @@ export class PaymentsService {
       montoRestante -= montoAplicar;
     }
 
+    // Validar cobrador
+    if (!dto.cobradorId) {
+      throw new BadRequestException('El cobrador es requerido');
+    }
+
     // Crear pago y actualizar todo en una transacción
     const resultado = await this.prisma.$transaction(async (tx) => {
       // 1. Crear el registro de pago
       const pago = await tx.pago.create({
         data: {
           numeroPago,
-          clienteId: dto.clienteId,
-          prestamoId: dto.prestamoId,
-          cobradorId: dto.cobradorId,
+          clienteId: clienteId,
+          prestamoId: prestamoIdVal,
+          cobradorId: cobradorIdVal,
           fechaPago: dto.fechaPago ? new Date(dto.fechaPago) : new Date(),
           montoTotal,
           metodoPago: dto.metodoPago || MetodoPago.EFECTIVO,
@@ -201,7 +227,7 @@ export class PaymentsService {
       const prestamoQuedaPagado = nuevoSaldoPendiente <= 0;
 
       await tx.prestamo.update({
-        where: { id: dto.prestamoId },
+        where: { id: prestamoIdVal },
         data: {
           totalPagado: nuevoTotalPagado,
           capitalPagado: nuevoCapitalPagado,
@@ -212,6 +238,48 @@ export class PaymentsService {
             : prestamo.estado,
           estadoSincronizacion: 'PENDIENTE',
         },
+      });
+
+      const asignacion = await tx.asignacionRuta.findFirst({
+        where: { clienteId, activa: true },
+        select: { rutaId: true },
+      });
+      if (!asignacion?.rutaId) {
+        throw new BadRequestException(
+          'El cliente no tiene una ruta asignada activa para registrar el pago',
+        );
+      }
+
+      const cajaRuta = await tx.caja.findFirst({
+        where: { rutaId: asignacion.rutaId, tipo: 'RUTA', activa: true },
+        select: { id: true, nombre: true, saldoActual: true },
+      });
+      if (!cajaRuta?.id) {
+        throw new BadRequestException(
+          'No existe una caja de ruta activa asociada a la ruta del cliente',
+        );
+      }
+
+      const numeroTransaccionCaja = `TRX-IN-${Date.now()}-${Math.floor(
+        Math.random() * 1000,
+      )}`;
+
+      await tx.transaccion.create({
+        data: {
+          numeroTransaccion: numeroTransaccionCaja,
+          cajaId: cajaRuta.id,
+          tipo: TipoTransaccion.INGRESO,
+          monto: montoTotal,
+          descripcion: `Cobranza ${numeroPago}`,
+          creadoPorId: cobradorIdVal,
+          tipoReferencia: 'PAGO',
+          referenciaId: numeroPago,
+        },
+      });
+
+      await tx.caja.update({
+        where: { id: cajaRuta.id },
+        data: { saldoActual: { increment: montoTotal } },
       });
 
       return {
@@ -236,7 +304,7 @@ export class PaymentsService {
       entidadId: resultado.pago.id,
       datosNuevos: {
         numeroPago,
-        prestamoId: dto.prestamoId,
+        prestamoIdVal,
         montoTotal,
         capitalRecuperado: capitalTotal,
         interesRecuperado: interesTotal,
@@ -251,7 +319,7 @@ export class PaymentsService {
       entidad: 'PAGO',
       entidadId: resultado.pago.id,
       metadata: {
-        prestamoId: dto.prestamoId,
+        prestamoIdVal,
         capitalRecuperado: capitalTotal,
         interesRecuperado: interesTotal,
       },
@@ -260,6 +328,19 @@ export class PaymentsService {
     this.logger.log(
       `Pago ${numeroPago} registrado: capital=${capitalTotal.toFixed(2)}, interés=${interesTotal.toFixed(2)}, saldo=${resultado.descomposicion.saldoNuevo.toFixed(2)}`,
     );
+
+    this.notificacionesGateway.broadcastPagosActualizados({
+      accion: 'CREAR',
+      pagoId: resultado.pago.id,
+    });
+    this.notificacionesGateway.broadcastPrestamosActualizados({
+      accion: 'PAGO',
+      prestamoId: prestamoIdVal,
+    });
+    this.notificacionesGateway.broadcastRutasActualizadas({
+      accion: 'PAGO',
+    });
+    this.notificacionesGateway.broadcastDashboardsActualizados({});
 
     return resultado;
   }
@@ -273,7 +354,7 @@ export class PaymentsService {
     const { prestamoId, clienteId, page = 1, limit = 20 } = filters || {};
     const skip = (page - 1) * limit;
 
-    const where: any = {};
+    const where: Prisma.PagoWhereInput = {};
     if (prestamoId) where.prestamoId = prestamoId;
     if (clienteId) where.clienteId = clienteId;
 
@@ -362,7 +443,7 @@ export class PaymentsService {
     const ExcelJS = await import('exceljs');
     const PDFDocument = await import('pdfkit');
 
-    const where: any = {};
+    const where: Prisma.PagoWhereInput = {};
     if (filters.startDate || filters.endDate) {
       where.fechaPago = {};
       if (filters.startDate) where.fechaPago.gte = new Date(filters.startDate);
@@ -397,13 +478,13 @@ export class PaymentsService {
         { header: 'Interés', key: 'interes', width: 16 },
         { header: 'Método', key: 'metodo', width: 14 },
         { header: 'Cobrador', key: 'cobrador', width: 22 },
-      ] as any;
+      ] as { header: string; key: string; width: number }[];
       const headerRow = ws.getRow(1);
       headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
       headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF7C3AED' } };
       headerRow.alignment = { horizontal: 'center' };
 
-      pagos.forEach((p: any) => {
+      pagos.forEach((p: PagoConRelacionesExport) => {
         ws.addRow({
           fecha: p.fechaPago ? new Date(p.fechaPago).toLocaleDateString('es-CO') : '',
           numeroPago: p.numeroPago || '',
@@ -411,8 +492,8 @@ export class PaymentsService {
           documento: p.cliente?.dni || '',
           numeroPrestamo: p.prestamo?.numeroPrestamo || '',
           monto: Number(p.montoTotal),
-          capital: Number(p.capitalRecuperado || 0),
-          interes: Number(p.interesRecuperado || 0),
+          capital: 0, // El campo calculado no está en el schema; viene de la descomposición al momento del pago
+          interes: 0,
           metodo: p.metodoPago || '',
           cobrador: p.cobrador ? `${p.cobrador.nombres} ${p.cobrador.apellidos}` : '',
         });
@@ -430,7 +511,7 @@ export class PaymentsService {
       };
     } else if (format === 'pdf') {
       const doc = new PDFDocument({ layout: 'landscape', size: 'LETTER', margin: 30 });
-      const buffers: any[] = [];
+      const buffers: Buffer[] = [];
       doc.on('data', buffers.push.bind(buffers));
 
       doc.fontSize(16).font('Helvetica-Bold').text('Créditos del Sur — Historial de Pagos', { align: 'center' });
@@ -462,7 +543,7 @@ export class PaymentsService {
       y += rowH;
 
       doc.font('Helvetica').fontSize(7).fillColor('black');
-      pagos.forEach((p: any, i: number) => {
+      pagos.forEach((p: PagoConRelacionesExport, i: number) => {
         if (y > 560) { doc.addPage(); y = 30; }
         if (i % 2 === 0) { doc.rect(tableLeft, y, cols.reduce((s, c) => s + c.width, 0), rowH).fill('#F5F3FF'); doc.fillColor('black'); }
         x = tableLeft;
@@ -472,8 +553,8 @@ export class PaymentsService {
           p.cliente ? `${p.cliente.nombres} ${p.cliente.apellidos}`.substring(0, 22) : '',
           p.prestamo?.numeroPrestamo || '',
           `$${Number(p.montoTotal).toLocaleString('es-CO')}`,
-          `$${Number(p.capitalRecuperado || 0).toLocaleString('es-CO')}`,
-          `$${Number(p.interesRecuperado || 0).toLocaleString('es-CO')}`,
+          `$${Number(0).toLocaleString('es-CO')}`, // campo calculado no está en schema
+          `$${Number(0).toLocaleString('es-CO')}`,
           p.metodoPago || '',
           p.cobrador ? `${p.cobrador.nombres} ${p.cobrador.apellidos}`.substring(0, 18) : '',
         ];
@@ -485,6 +566,6 @@ export class PaymentsService {
       const buffer = await new Promise<Buffer>((resolve) => { doc.on('end', () => resolve(Buffer.concat(buffers))); });
       return { data: buffer, contentType: 'application/pdf', filename: `historial-pagos-${fecha}.pdf` };
     }
-    throw new Error(`Formato no soportado: ${format}`);
+    throw new BadRequestException(`Formato no soportado: ${format}`);
   }
 }

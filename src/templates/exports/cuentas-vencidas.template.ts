@@ -68,3 +68,160 @@ export const VENCIDAS_PDF_COLUMNS = [
 
 export const VENCIDAS_PDF_HEADER_COLOR = '#D97706';
 export const VENCIDAS_PDF_ROW_ALT_COLOR = '#FFFBEB';
+<<<<<<< HEAD
+
+/**
+ * codigo de exportación de  cuentas vencidas
+ */
+
+import { NextRequest, NextResponse } from "next/server";
+import ExcelJS from "exceljs";
+import { prisma } from "@/lib/prisma";
+import {
+  VENCIDAS_COLUMNS,
+  VENCIDAS_HEADER_STYLE,
+  VENCIDAS_CURRENCY_COLUMNS
+} from "@/lib/templates/vencidas";
+
+function formatoFechaHora() {
+  return new Intl.DateTimeFormat("es-CO", {
+    dateStyle: "short",
+    timeStyle: "short"
+  }).format(new Date());
+}
+
+export async function POST(req: NextRequest) {
+  try {
+
+    const prestamos = await prisma.prestamo.findMany({
+      where: {
+        diasVencido: { gt: 0 }
+      },
+      include: {
+        cliente: true,
+        ruta: true
+      },
+      orderBy: {
+        diasVencido: "desc"
+      }
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Cuentas Vencidas", {
+      views: [{ state: "frozen", ySplit: 4 }]
+    });
+
+    sheet.columns = VENCIDAS_COLUMNS;
+
+    const titulo = sheet.addRow([
+      "CRÉDITOS DEL SUR — CUENTAS VENCIDAS"
+    ]);
+    titulo.font = { size: 16, bold: true };
+    sheet.mergeCells("A1:I1");
+
+    const generado = sheet.addRow([
+      `Generado: ${formatoFechaHora()}`
+    ]);
+    sheet.mergeCells("A2:I2");
+
+    sheet.addRow([]);
+
+    const header = sheet.addRow(
+      VENCIDAS_COLUMNS.map(c => c.header)
+    );
+
+    header.eachCell(cell => {
+      cell.font = VENCIDAS_HEADER_STYLE.font;
+      cell.fill = VENCIDAS_HEADER_STYLE.fill;
+      cell.alignment = VENCIDAS_HEADER_STYLE.alignment;
+    });
+
+    sheet.autoFilter = {
+      from: "A4",
+      to: "I4"
+    };
+
+    let totalVencido = 0;
+    let sumaDias = 0;
+
+    prestamos.forEach((item, index) => {
+
+      const row = sheet.addRow([
+        item.numero,
+        item.cliente?.nombre,
+        item.cliente?.documento,
+        item.diasVencido,
+        item.montoVencido,
+        item.saldoPendiente,
+        item.interesesMora,
+        item.riesgo,
+        item.ruta?.nombre
+      ]);
+
+      totalVencido += Number(item.montoVencido || 0);
+      sumaDias += Number(item.diasVencido || 0);
+
+      if (index % 2 === 1) {
+        row.eachCell(cell => {
+          cell.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: "FFFFFBEB" }
+          };
+        });
+      }
+
+      VENCIDAS_CURRENCY_COLUMNS.forEach(colKey => {
+        const colIndex =
+          VENCIDAS_COLUMNS.findIndex(c => c.key === colKey) + 1;
+
+        row.getCell(colIndex).numFmt = "#,##0";
+      });
+
+    });
+
+    sheet.addRow([]);
+
+    const promedioDias =
+      prestamos.length > 0
+        ? Math.round(sumaDias / prestamos.length)
+        : 0;
+
+    const resumen = sheet.addRow([
+      "",
+      "",
+      "",
+      "",
+      `Total Vencido: ${totalVencido}`,
+      "",
+      "",
+      "",
+      `Días Promedio: ${promedioDias}`
+    ]);
+
+    resumen.font = { bold: true };
+
+    const buffer = await workbook.xlsx.writeBuffer();
+
+    return new NextResponse(buffer, {
+      headers: {
+        "Content-Type":
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition":
+          'attachment; filename="cuentas_vencidas.xlsx"'
+      }
+    });
+
+  } catch (error) {
+
+    console.error(error);
+
+    return NextResponse.json(
+      { error: "Error exportando cuentas vencidas" },
+      { status: 500 }
+    );
+
+  }
+}
+=======
+>>>>>>> main

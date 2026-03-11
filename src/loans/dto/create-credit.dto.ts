@@ -10,7 +10,7 @@ import {
 import { FrecuenciaPago } from '@prisma/client';
 import { Transform } from 'class-transformer';
 
-export class CreateLoanDto {
+export class CreateLoanLegacyDto {
   @IsString()
   clienteId: string;
 
@@ -41,10 +41,25 @@ export class CreateLoanDto {
   @IsOptional()
   tasaInteresMora?: number;
 
-  @Transform(({ value }) => parseInt(value))
+  @Transform(({ value }) => parseFloat(value))
+  @IsNumber()
+  @Min(0.01)
+  plazoMeses: number;
+
   @IsNumber()
   @Min(1)
-  plazoMeses: number;
+  @IsOptional()
+  cantidadCuotas?: number;
+
+  @IsNumber()
+  @Min(1)
+  @IsOptional()
+  cuotas?: number;
+
+  @IsNumber()
+  @Min(1)
+  @IsOptional()
+  cuotasTotales?: number;
 
   @IsEnum(FrecuenciaPago)
   frecuenciaPago: FrecuenciaPago;
@@ -70,7 +85,7 @@ export class CreateLoanDto {
   generarAprobacionAutomatica?: boolean;
 }
 
-export class CreateLoanWithArticleDto extends CreateLoanDto {
+export class CreateLoanWithArticleDto extends CreateLoanLegacyDto {
   @IsString()
   @IsOptional()
   articuloNombre?: string;

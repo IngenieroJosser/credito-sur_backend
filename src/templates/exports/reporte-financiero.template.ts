@@ -78,3 +78,275 @@ export const FINANCIERO_HEADER_STYLE = {
 };
 
 export const FINANCIERO_PDF_HEADER_COLOR = '#059669';
+<<<<<<< HEAD
+
+/**
+ * codigo de exportación de reporte financiero
+ */
+
+import { NextRequest, NextResponse } from "next/server";
+import ExcelJS from "exceljs";
+import { prisma } from "@/lib/prisma";
+
+import {
+  FINANCIERO_RESUMEN_COLUMNS,
+  FINANCIERO_MENSUAL_COLUMNS,
+  FINANCIERO_GASTOS_COLUMNS,
+  FINANCIERO_HEADER_STYLE
+} from "@/lib/templates/financiero";
+
+function formatMonth(date: Date) {
+  return new Intl.DateTimeFormat("es-CO", { month: "long" }).format(date);
+}
+
+export async function GET(req: NextRequest) {
+  try {
+
+    const { searchParams } = new URL(req.url);
+
+    const startDate = searchParams.get("startDate");
+    const endDate = searchParams.get("endDate");
+
+    const where: any = {};
+
+    if (startDate && endDate) {
+      where.fecha = {
+        gte: new Date(startDate),
+        lte: new Date(endDate)
+      };
+    }
+
+    /* =========================
+       CONSULTAS PRISMA
+    ========================= */
+
+    const ingresos = await prisma.transaccion.aggregate({
+      _sum: { monto: true },
+      where: { ...where, tipo: "INGRESO" }
+    });
+
+    const egresos = await prisma.transaccion.aggregate({
+      _sum: { monto: true },
+      where: { ...where, tipo: "EGRESO" }
+    });
+
+    const totalIngresos = ingresos._sum.monto || 0;
+    const totalEgresos = egresos._sum.monto || 0;
+    const utilidad = totalIngresos - totalEgresos;
+
+    const margen =
+      totalIngresos > 0 ? utilidad / totalIngresos : 0;
+
+    const movimientos = await prisma.transaccion.findMany({
+      where,
+      orderBy: { fecha: "asc" }
+    });
+
+    const mensual: any = {};
+
+    movimientos.forEach(m => {
+
+      const mes = formatMonth(m.fecha);
+
+      if (!mensual[mes]) {
+        mensual[mes] = {
+          ingresos: 0,
+          egresos: 0
+        };
+      }
+
+      if (m.tipo === "INGRESO") {
+        mensual[mes].ingresos += m.monto;
+      } else {
+        mensual[mes].egresos += m.monto;
+      }
+
+    });
+
+    const evolucionMensual = Object.keys(mensual).map(mes => {
+
+      const ingresos = mensual[mes].ingresos;
+      const egresos = mensual[mes].egresos;
+
+      return {
+        mes,
+        ingresos,
+        egresos,
+        utilidad: ingresos - egresos
+      };
+
+    });
+
+    const gastos = await prisma.transaccion.groupBy({
+      by: ["categoria"],
+      _sum: { monto: true },
+      where: { ...where, tipo: "EGRESO" }
+    });
+
+    const totalGastos = gastos.reduce(
+      (sum, g) => sum + (g._sum.monto || 0),
+      0
+    );
+
+    const distribucion = gastos.map(g => ({
+      categoria: g.categoria || "Otros",
+      monto: g._sum.monto || 0,
+      porcentaje:
+        totalGastos > 0 ? (g._sum.monto || 0) / totalGastos : 0
+    }));
+
+    /* =========================
+       CREAR EXCEL
+    ========================= */
+
+    const workbook = new ExcelJS.Workbook();
+
+    /* =========================
+       HOJA 1 RESUMEN
+    ========================= */
+
+    const resumenSheet = workbook.addWorksheet(
+      "Resumen Financiero"
+    );
+
+    resumenSheet.addRow([
+      "CRÉDITOS DEL SUR — REPORTE FINANCIERO"
+    ]).font = { bold: true, size: 16 };
+
+    resumenSheet.addRow([
+      `Período: ${startDate || ""} - ${endDate || ""}`
+    ]);
+
+    resumenSheet.addRow([]);
+
+    resumenSheet.columns = FINANCIERO_RESUMEN_COLUMNS;
+
+    const header1 = resumenSheet.addRow(
+      FINANCIERO_RESUMEN_COLUMNS.map(c => c.header)
+    );
+
+    header1.eachCell(cell => {
+      cell.font = FINANCIERO_HEADER_STYLE.font;
+      cell.fill = FINANCIERO_HEADER_STYLE.fill;
+      cell.alignment = FINANCIERO_HEADER_STYLE.alignment;
+    });
+
+    const rowsResumen = [
+      { concepto: "Ingresos", monto: totalIngresos },
+      { concepto: "Egresos", monto: totalEgresos },
+      { concepto: "Utilidad", monto: utilidad },
+      { concepto: "Margen (%)", monto: margen }
+    ];
+
+    rowsResumen.forEach(r => {
+
+      const row = resumenSheet.addRow([
+        r.concepto,
+        r.monto,
+        ""
+      ]);
+
+      if (r.concepto === "Margen (%)") {
+        row.getCell(2).numFmt = "0.0%";
+      } else {
+        row.getCell(2).numFmt = "$#,##0";
+      }
+
+    });
+
+    /* =========================
+       HOJA 2 EVOLUCIÓN
+    ========================= */
+
+    const mensualSheet = workbook.addWorksheet(
+      "Evolución Mensual"
+    );
+
+    mensualSheet.columns = FINANCIERO_MENSUAL_COLUMNS;
+
+    const header2 = mensualSheet.addRow(
+      FINANCIERO_MENSUAL_COLUMNS.map(c => c.header)
+    );
+
+    header2.eachCell(cell => {
+      cell.font = FINANCIERO_HEADER_STYLE.font;
+      cell.fill = FINANCIERO_HEADER_STYLE.fill;
+      cell.alignment = FINANCIERO_HEADER_STYLE.alignment;
+    });
+
+    evolucionMensual.forEach(m => {
+
+      const row = mensualSheet.addRow([
+        m.mes,
+        m.ingresos,
+        m.egresos,
+        m.utilidad
+      ]);
+
+      row.getCell(2).numFmt = "$#,##0";
+      row.getCell(3).numFmt = "$#,##0";
+      row.getCell(4).numFmt = "$#,##0";
+
+    });
+
+    /* =========================
+       HOJA 3 DISTRIBUCIÓN
+    ========================= */
+
+    const gastosSheet = workbook.addWorksheet(
+      "Distribución Gastos"
+    );
+
+    gastosSheet.columns = FINANCIERO_GASTOS_COLUMNS;
+
+    const header3 = gastosSheet.addRow(
+      FINANCIERO_GASTOS_COLUMNS.map(c => c.header)
+    );
+
+    header3.eachCell(cell => {
+      cell.font = FINANCIERO_HEADER_STYLE.font;
+      cell.fill = FINANCIERO_HEADER_STYLE.fill;
+      cell.alignment = FINANCIERO_HEADER_STYLE.alignment;
+    });
+
+    distribucion.forEach(g => {
+
+      const row = gastosSheet.addRow([
+        g.categoria,
+        g.monto,
+        g.porcentaje
+      ]);
+
+      row.getCell(2).numFmt = "$#,##0";
+      row.getCell(3).numFmt = "0.0%";
+
+    });
+
+    /* =========================
+       RESPUESTA
+    ========================= */
+
+    const buffer = await workbook.xlsx.writeBuffer();
+
+    return new NextResponse(buffer, {
+      headers: {
+        "Content-Type":
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition":
+          'attachment; filename="reporte_financiero.xlsx"'
+      }
+    });
+
+  } catch (error) {
+
+    console.error(error);
+
+    return NextResponse.json(
+      { error: "Error generando reporte financiero" },
+      { status: 500 }
+    );
+
+  }
+}
+=======
+>>>>>>> main

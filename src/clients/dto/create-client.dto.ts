@@ -10,6 +10,8 @@ import {
   IsArray,
   ValidateNested,
   IsNotEmpty,
+  Matches,
+  Length,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { NivelRiesgo } from '@prisma/client';
@@ -25,12 +27,12 @@ export class CreateMultimediaDto {
   tipoContenido: string;
 
   @IsString()
-  @IsOptional()
-  tipoArchivo?: string;
+  @IsNotEmpty()
+  tipoArchivo: string;
 
   @IsString()
-  @IsOptional()
-  nombreOriginal?: string;
+  @IsNotEmpty()
+  nombreOriginal: string;
 
   @IsString()
   @IsOptional()
@@ -40,6 +42,10 @@ export class CreateMultimediaDto {
   @IsOptional()
   ruta?: string;
 
+  @IsString()
+  @IsOptional()
+  url?: string;
+
   @IsNumber()
   @IsOptional()
   tamanoBytes?: number;
@@ -48,6 +54,8 @@ export class CreateMultimediaDto {
 export class CreateClientDto {
   @IsString()
   @IsNotEmpty()
+  @Matches(/^\d+$/, { message: 'La Cédula debe contener solo números.' })
+  @Length(6, 10, { message: 'La Cédula debe tener entre 6 y 10 dígitos.' })
   dni: string;
 
   @IsString()

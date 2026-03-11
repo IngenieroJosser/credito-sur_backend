@@ -29,8 +29,8 @@ export class UsersController {
 
   @Post()
   @Roles(RolUsuario.SUPER_ADMINISTRADOR)
-  crear(@Body() usuarioDto: CreateUserDto) {
-    return this.usersService.crear(usuarioDto);
+  crear(@Body() usuarioDto: CreateUserDto, @Request() req: any) {
+    return this.usersService.crear(usuarioDto, req.user?.id);
   }
 
   @Get()
@@ -50,18 +50,25 @@ export class UsersController {
   }
 
   @Patch(':id')
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR)
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   actualizar(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() usuarioDto: UpdateUserDto,
+    @Request() req: any,
   ) {
-    return this.usersService.actualizar(id, usuarioDto);
+    return this.usersService.actualizar(id, usuarioDto, req.user?.id);
   }
 
   @Delete(':id')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR)
-  eliminar(@Param('id', ParseUUIDPipe) id: string) {
-    return this.usersService.eliminar(id);
+  eliminar(@Param('id', ParseUUIDPipe) id: string, @Request() req: any) {
+    return this.usersService.eliminar(id, req.user?.id);
+  }
+
+  @Patch(':id/restore')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR)
+  restaurar(@Param('id', ParseUUIDPipe) id: string, @Request() req: any) {
+    return this.usersService.restaurar(id, req.user?.id);
   }
 
   @Patch(':id/password')
@@ -71,12 +78,11 @@ export class UsersController {
     @Body() dto: ChangePasswordDto,
     @Request() req: any,
   ) {
-    return (this.usersService as any).cambiarContrasena(
-      id,
-      dto,
-      req.user?.rol,
-      req.user?.id,
-    );
+    console.log(`[CONTROLLER] cambiarContrasena llamado para usuario ${id}`);
+    console.log(`[CONTROLLER] DTO recibido:`, JSON.stringify(dto));
+    console.log(`[CONTROLLER] Usuario solicitante:`, req.user?.id, req.user?.rol);
+    
+    return this.usersService.changePassword(id, dto);
   }
 
   @Post(':id/reset-password')

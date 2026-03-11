@@ -76,3 +76,174 @@ export const PAGOS_PDF_COLUMNS = [
 
 export const PAGOS_PDF_HEADER_COLOR = '#7C3AED';
 export const PAGOS_PDF_ROW_ALT_COLOR = '#F5F3FF';
+<<<<<<< HEAD
+
+/**
+ * codigo de exportación de historial de pago
+ */
+
+import { NextRequest, NextResponse } from "next/server";
+import ExcelJS from "exceljs";
+import { prisma } from "@/lib/prisma";
+import {
+  PAGOS_COLUMNS,
+  PAGOS_HEADER_STYLE,
+  PAGOS_CURRENCY_COLUMNS
+} from "@/lib/templates/pagos";
+
+function formatDate(date: Date) {
+  return new Intl.DateTimeFormat("es-CO").format(date);
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+
+    const startDate = searchParams.get("startDate");
+    const endDate = searchParams.get("endDate");
+    const rutaId = searchParams.get("rutaId");
+
+    const where: any = {};
+
+    if (startDate && endDate) {
+      where.fecha = {
+        gte: new Date(startDate),
+        lte: new Date(endDate)
+      };
+    }
+
+    if (rutaId) {
+      where.rutaId = rutaId;
+    }
+
+    const pagos = await prisma.pago.findMany({
+      where,
+      include: {
+        cliente: true,
+        prestamo: true,
+        cobrador: true,
+        ruta: true
+      },
+      orderBy: {
+        fecha: "desc"
+      }
+    });
+
+    const workbook = new ExcelJS.Workbook();
+
+    const sheet = workbook.addWorksheet("Historial Pagos", {
+      views: [{ state: "frozen", ySplit: 4 }]
+    });
+
+    sheet.columns = PAGOS_COLUMNS;
+
+    const title = sheet.addRow([
+      "CRÉDITOS DEL SUR — HISTORIAL DE PAGOS"
+    ]);
+
+    title.font = { size: 16, bold: true };
+    sheet.mergeCells("A1:J1");
+
+    const period =
+      startDate && endDate
+        ? `Período: ${formatDate(new Date(startDate))} - ${formatDate(
+            new Date(endDate)
+          )}`
+        : "Período: Todos los registros";
+
+    const periodRow = sheet.addRow([period]);
+    sheet.mergeCells("A2:J2");
+
+    sheet.addRow([]);
+
+    const header = sheet.addRow(
+      PAGOS_COLUMNS.map(c => c.header)
+    );
+
+    header.eachCell(cell => {
+      cell.font = PAGOS_HEADER_STYLE.font;
+      cell.fill = PAGOS_HEADER_STYLE.fill;
+      cell.alignment = PAGOS_HEADER_STYLE.alignment;
+    });
+
+    sheet.autoFilter = {
+      from: "A4",
+      to: "J4"
+    };
+
+    let totalRecaudado = 0;
+
+    pagos.forEach((pago, index) => {
+
+      const row = sheet.addRow([
+        pago.fecha,
+        pago.cliente?.nombre,
+        pago.prestamo?.numero,
+        pago.monto,
+        pago.tipoPago,
+        pago.numeroCuota,
+        pago.cobrador?.nombre,
+        pago.ruta?.nombre,
+        pago.estado,
+        pago.observaciones
+      ]);
+
+      totalRecaudado += Number(pago.monto || 0);
+
+      if (index % 2 === 1) {
+        row.eachCell(cell => {
+          cell.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: "FFF5F3FF" }
+          };
+        });
+      }
+
+      PAGOS_CURRENCY_COLUMNS.forEach(colKey => {
+        const colIndex =
+          PAGOS_COLUMNS.findIndex(c => c.key === colKey) + 1;
+
+        row.getCell(colIndex).numFmt = "#,##0";
+      });
+    });
+
+    sheet.addRow([]);
+
+    const resumen = sheet.addRow([
+      "",
+      "",
+      "",
+      `Total Recaudado: ${totalRecaudado}`,
+      "",
+      "",
+      "",
+      "",
+      "",
+      `N° Pagos: ${pagos.length}`
+    ]);
+
+    resumen.font = { bold: true };
+
+    const buffer = await workbook.xlsx.writeBuffer();
+
+    return new NextResponse(buffer, {
+      headers: {
+        "Content-Type":
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition":
+          'attachment; filename="historial_pagos.xlsx"'
+      }
+    });
+
+  } catch (error) {
+    console.error(error);
+
+    return NextResponse.json(
+      { error: "Error exportando historial de pagos" },
+      { status: 500 }
+    );
+  }
+}
+=======
+>>>>>>> main

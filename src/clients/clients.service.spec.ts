@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ClientsService } from './clients.service';
-import { PrismaService } from 'prisma/prisma.service'; // Intentaremos usar el alias del proyecto
-// Si no funciona el alias, usaremos path relativo en el siguiente intento
+import { PrismaService } from '../prisma/prisma.service'; 
+
 
 describe('ClientsService', () => {
   let service: ClientsService;

@@ -5,29 +5,36 @@ import {
   IsEnum,
   IsDateString,
   Min,
-  IsNotEmpty,
 } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
 import { MetodoPago } from '@prisma/client';
 
 export class CreatePaymentDto {
   @IsString()
-  @IsNotEmpty()
-  clienteId: string;
+  @IsOptional()
+  clienteId?: string;
 
   @IsString()
-  @IsNotEmpty()
-  prestamoId: string;
+  @IsOptional()
+  prestamoId?: string;
 
   @IsString()
-  @IsNotEmpty()
-  cobradorId: string;
+  @IsOptional()
+  @Transform(({ value }) => value?.toString().trim())
+  cobradorId?: string;
 
-  @IsNumber()
-  @Min(1)
+  @IsNumber({}, { message: 'montoTotal debe ser un número válido' })
+  @Min(1, { message: 'montoTotal debe ser mayor a 0' })
+  @Type(() => Number)
+  @Transform(({ value }) => {
+    if (typeof value === 'string') return parseFloat(value);
+    return value;
+  })
   montoTotal: number;
 
-  @IsEnum(MetodoPago)
   @IsOptional()
+  @Transform(({ value }) => value?.toString().toUpperCase())
+  @IsEnum(MetodoPago, { message: 'metodoPago debe ser EFECTIVO o TRANSFERENCIA' })
   metodoPago?: MetodoPago;
 
   @IsDateString()

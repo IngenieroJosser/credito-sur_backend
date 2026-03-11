@@ -1,5 +1,5 @@
-import { Injectable } from '@nestjs/common';
-import { PrismaService } from 'prisma/prisma.service';
+import { Injectable, Logger } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
 import {
   EstadoAprobacion,
   EstadoCuota,
@@ -9,51 +9,91 @@ import {
 
 @Injectable()
 export class DashboardService {
+  private readonly logger = new Logger(DashboardService.name);
+
   constructor(private prisma: PrismaService) {}
 
   async getDashboardData(timeFilter: string) {
-    // 1. Obtener métricas principales
-    const pendingApprovals = await this.prisma.aprobacion.count({
-      where: { estado: EstadoAprobacion.PENDIENTE },
-    });
+    try {
+      const { startDate, endDate } = this.calculateDateRangeFromFilter(timeFilter);
 
-    const delinquentAccounts = await this.prisma.prestamo.count({
-      where: { estado: EstadoPrestamo.EN_MORA },
-    });
-
-    // Base solicitada (suma de aprobaciones pendientes de tipo SOLICITUD_BASE_EFECTIVO)
-    const _requestedBaseResult = await this.prisma.aprobacion.aggregate({
-      where: {
-        estado: EstadoAprobacion.PENDIENTE,
-        tipoAprobacion: TipoAprobacion.SOLICITUD_BASE_EFECTIVO,
-      },
-      _sum: {
-        montoSolicitud: true, // Esto necesita un manejo especial, veremos más abajo
-      },
-    });
-
-    // Cálculo de eficiencia (relación entre préstamos pagados vs totales)
-    const totalLoans = await this.prisma.prestamo.count({
-      where: {
-        estado: {
-          in: [
-            EstadoPrestamo.ACTIVO,
-            EstadoPrestamo.PAGADO,
-            EstadoPrestamo.EN_MORA,
-          ],
+      // 1. Obtener métricas principales filtradas por período
+      const pendingApprovals = await this.prisma.aprobacion.count({
+        where: { 
+          estado: EstadoAprobacion.PENDIENTE,
+          creadoEn: { gte: startDate, lte: endDate },
         },
+      });
+
+      const delinquentAccounts = await this.prisma.prestamo.count({
+        where: { 
+          estado: EstadoPrestamo.EN_MORA,
+          creadoEn: { gte: startDate, lte: endDate },
+        },
+      });
+
+      // Base solicitada (suma de aprobaciones pendientes de tipo SOLICITUD_BASE_EFECTIVO)
+      const _requestedBaseResult = await this.prisma.aprobacion.aggregate({
+        where: {
+          estado: EstadoAprobacion.PENDIENTE,
+          tipoAprobacion: TipoAprobacion.SOLICITUD_BASE_EFECTIVO,
+          creadoEn: { gte: startDate, lte: endDate },
+        },
+        _sum: {
+          montoSolicitud: true,
+        },
+      });
+
+      // Cálculo de eficiencia (relación entre préstamos pagados vs totales) - filtrado por período
+      const totalLoans = await this.prisma.prestamo.count({
+        where: {
+          estado: {
+            in: [
+              EstadoPrestamo.ACTIVO,
+              EstadoPrestamo.PAGADO,
+              EstadoPrestamo.EN_MORA,
+            ],
+          },
+          creadoEn: { gte: startDate, lte: endDate },
+        },
+      });
+
+      const paidLoans = await this.prisma.prestamo.count({
+        where: { 
+          estado: EstadoPrestamo.PAGADO,
+          creadoEn: { gte: startDate, lte: endDate },
+        },
+      });
+
+      const efficiency = totalLoans > 0 ? (paidLoans / totalLoans) * 100 : 0;
+
+      // Calcular capital prestado del período (suma de montos de préstamos creados en el período)
+      const capitalPrestado = await this.prisma.prestamo.aggregate({
+        where: {
+          creadoEn: { gte: startDate, lte: endDate },
+          eliminadoEn: null,
+        },
+        _sum: {
+          monto: true,
+        },
+      });
+
+      // Calcular recaudo del período (suma de pagos en el período)
+      const recaudo = await this.prisma.pago.aggregate({
+        where: {
+          fechaPago: { gte: startDate, lte: endDate },
+        },
+        _sum: {
+          montoTotal: true,
+        },
+      });
+
+      // 2. Obtener aprobaciones pendientes (filtradas por período)
+      const pendingApprovalsList = await this.prisma.aprobacion.findMany({
+      where: { 
+        estado: EstadoAprobacion.PENDIENTE,
+        creadoEn: { gte: startDate, lte: endDate },
       },
-    });
-
-    const paidLoans = await this.prisma.prestamo.count({
-      where: { estado: EstadoPrestamo.PAGADO },
-    });
-
-    const efficiency = totalLoans > 0 ? (paidLoans / totalLoans) * 100 : 0;
-
-    // 2. Obtener aprobaciones pendientes
-    const pendingApprovalsList = await this.prisma.aprobacion.findMany({
-      where: { estado: EstadoAprobacion.PENDIENTE },
       include: {
         solicitadoPor: {
           select: {
@@ -66,14 +106,25 @@ export class DashboardService {
       take: 5,
     });
 
-    // 3. Obtener cuentas en mora
-    const delinquentAccountsList = await this.prisma.prestamo.findMany({
-      where: { estado: EstadoPrestamo.EN_MORA },
+      // 3. Obtener cuentas en mora (filtradas por período)
+      const delinquentAccountsList = await this.prisma.prestamo.findMany({
+      where: { 
+        estado: EstadoPrestamo.EN_MORA,
+        creadoEn: { gte: startDate, lte: endDate },
+      },
       include: {
         cliente: {
           select: {
             nombres: true,
             apellidos: true,
+            asignacionesRuta: {
+              where: { activa: true },
+              include: {
+                ruta: { select: { nombre: true } },
+                cobrador: { select: { nombres: true, apellidos: true } }
+              },
+              take: 1
+            }
           },
         },
         cuotas: {
@@ -85,10 +136,11 @@ export class DashboardService {
       take: 5,
     });
 
-    // 4. Obtener actividad reciente (últimas aprobaciones procesadas)
-    const recentActivityList = await this.prisma.aprobacion.findMany({
+      // 4. Obtener actividad reciente (últimas aprobaciones procesadas) - filtradas por período
+      const recentActivityList = await this.prisma.aprobacion.findMany({
       where: {
         estado: { in: [EstadoAprobacion.APROBADO, EstadoAprobacion.RECHAZADO] },
+        actualizadoEn: { gte: startDate, lte: endDate },
       },
       include: {
         solicitadoPor: {
@@ -102,27 +154,114 @@ export class DashboardService {
       take: 5,
     });
 
-    // 5. Datos de tendencia (últimos 7 días)
-    const trendData = await this.getTrendData(timeFilter);
+      // 5. Datos de tendencia (últimos 7 días)
+      const trendData = await this.getTrendData(timeFilter);
 
-    return {
-      metrics: {
-        pendingApprovals,
-        delinquentAccounts,
-        requestedBase: this.calculateRequestedBase(pendingApprovalsList),
-        efficiency: parseFloat(efficiency.toFixed(1)),
+      // 6. Top 5 Cobradores (filtrado por período) - Filtrado por Rol
+      const topCollectorsRaw = await this.prisma.pago.groupBy({
+      by: ['cobradorId'],
+      _sum: {
+        montoTotal: true,
       },
-      trend: trendData,
-      pendingApprovals: pendingApprovalsList.map((item) =>
-        this.mapApproval(item),
-      ),
-      delinquentAccounts: delinquentAccountsList.map((item) =>
-        this.mapDelinquentAccount(item),
-      ),
-      recentActivity: recentActivityList.map((item) =>
-        this.mapRecentActivity(item),
-      ),
-    };
+      where: {
+        fechaPago: { gte: startDate, lte: endDate },
+      },
+      orderBy: {
+        _sum: {
+          montoTotal: 'desc',
+        },
+      },
+      take: 10, // Traemos extra para filtrar
+    });
+
+      // Enriquecer con datos de usuario y filtrar
+      const topCollectorsList: any[] = [];
+      for (const item of topCollectorsRaw) {
+        if (!item.cobradorId) continue;
+        const user = await this.prisma.usuario.findUnique({
+          where: { id: item.cobradorId },
+          select: { nombres: true, apellidos: true, rol: true },
+        });
+
+        if (user && ['COBRADOR', 'SUPERVISOR', 'COORDINADOR'].includes(user.rol)) {
+          // Calcular eficiencia real: (recaudado / meta_periodo) * 100
+          const metaCobroRes = await this.prisma.cuota.aggregate({
+            where: {
+              fechaVencimiento: { gte: startDate, lte: endDate },
+              prestamo: {
+                cliente: {
+                  asignacionesRuta: {
+                    some: {
+                      cobradorId: item.cobradorId,
+                      activa: true
+                    }
+                  }
+                }
+              }
+            },
+            _sum: { monto: true }
+          });
+
+          const montoMeta = Number(metaCobroRes._sum.monto || 0);
+          const collected = Number(item._sum.montoTotal || 0);
+          
+          // Si no hay meta, asumimos 100% de eficiencia si recaudó algo
+          const efficiency = montoMeta > 0 
+            ? Math.min(100, (collected / montoMeta) * 100) 
+            : (collected > 0 ? 100 : 0);
+
+          topCollectorsList.push({
+            name: `${user.nombres} ${user.apellidos}`,
+            collected,
+            efficiency: parseFloat(efficiency.toFixed(1)),
+            trend: efficiency >= 90 ? 'up' : 'down',
+          });
+        }
+        if (topCollectorsList.length >= 5) break; 
+      }
+
+      const result = {
+        metrics: {
+          pendingApprovals,
+          delinquentAccounts,
+          requestedBase: this.calculateRequestedBase(pendingApprovalsList),
+          efficiency: parseFloat(efficiency.toFixed(1)),
+          capitalPrestado: Number(capitalPrestado._sum?.monto || 0),
+          recaudo: Number(recaudo._sum?.montoTotal || 0),
+        },
+        trend: trendData,
+        pendingApprovals: pendingApprovalsList.map((item) =>
+          this.mapApproval(item),
+        ),
+        delinquentAccounts: delinquentAccountsList.map((item) =>
+          this.mapDelinquentAccount(item),
+        ),
+        recentActivity: recentActivityList.map((item) =>
+          this.mapRecentActivity(item),
+        ),
+        topCollectors: topCollectorsList,
+      };
+      
+      return result;
+    } catch (error) {
+      this.logger.error('Error obteniendo datos del dashboard', error instanceof Error ? error.stack : error);
+      // Retornar datos de fallback en caso de error
+      return {
+        metrics: {
+          pendingApprovals: 0,
+          delinquentAccounts: 0,
+          requestedBase: 0,
+          efficiency: 0,
+          capitalPrestado: 0,
+          recaudo: 0,
+        },
+        trend: [],
+        pendingApprovals: [],
+        delinquentAccounts: [],
+        recentActivity: [],
+        topCollectors: [],
+      };
+    }
   }
 
   private calculateRequestedBase(approvals: any[]): number {
@@ -139,7 +278,7 @@ export class DashboardService {
               : approval.datosSolicitud;
           total += data.monto || 0;
         } catch (error) {
-          console.error('Error parsing datosSolicitud:', error);
+          // Error parsing datosSolicitud, continuar con siguiente
         }
       }
     });
@@ -148,45 +287,36 @@ export class DashboardService {
 
   async getTrendData(timeFilter: string): Promise<any[]> {
     try {
+      // Usar el mismo cálculo de fechas que getDashboardData para consistencia
+      const { startDate, endDate } = this.calculateDateRangeFromFilter(timeFilter);
       const today = new Date();
-      let startDate: Date;
       let groupBy: 'day' | 'week' | 'month' = 'day';
 
-      // Determinar el rango de fechas según el filtro
+      // Determinar cómo agrupar según el filtro
       switch (timeFilter) {
         case 'today':
-          startDate = new Date(today);
-          startDate.setHours(0, 0, 0, 0);
           groupBy = 'day';
           break;
         case 'week':
-          startDate = new Date(today);
-          startDate.setDate(today.getDate() - 7);
           groupBy = 'day';
           break;
         case 'month':
-          startDate = new Date(today);
-          startDate.setMonth(today.getMonth() - 1);
           groupBy = 'day';
           break;
         case 'quarter':
-          startDate = new Date(today);
-          startDate.setMonth(today.getMonth() - 3);
           groupBy = 'week';
           break;
         default:
-          startDate = new Date(today);
-          startDate.setDate(today.getDate() - 7);
           groupBy = 'day';
       }
 
-      // Obtener datos de pagos reales
+      // Obtener datos de pagos reales filtrados por el período
       const payments = await this.prisma.pago.groupBy({
         by: ['fechaPago'],
         where: {
           fechaPago: {
             gte: startDate,
-            lte: today,
+            lte: endDate,
           },
           montoTotal: {
             gt: 0,
@@ -200,16 +330,32 @@ export class DashboardService {
         },
       });
 
-      // Obtener metas (podrías tener una tabla de metas en tu base de datos)
-      // Por ahora, usaremos una meta fija que podrías ajustar según tu lógica de negocio
-      const dailyTarget = 2500000; // Meta diaria
-      const weeklyTarget = 15000000; // Meta semanal
+      // Calcular metas dinámicamente basadas en promedio histórico de últimos 30 días
+      const thirtyDaysAgo = new Date(today);
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      const historicalPayments = await this.prisma.pago.aggregate({
+        where: {
+          fechaPago: {
+            gte: thirtyDaysAgo,
+            lte: today,
+          },
+        },
+        _sum: {
+          montoTotal: true,
+        },
+      });
+
+      // Calcular promedio diario de los últimos 30 días
+      const totalHistorical = Number(historicalPayments._sum?.montoTotal || 0);
+      const dailyTarget = Math.round(totalHistorical / 30);
+      const weeklyTarget = dailyTarget * 7;
 
       // Procesar y agrupar datos según el filtro
       const processedData = this.processTrendData(
         payments,
         startDate,
-        today,
+        endDate,
         groupBy,
         dailyTarget,
         weeklyTarget,
@@ -217,9 +363,8 @@ export class DashboardService {
 
       return processedData;
     } catch (error) {
-      console.error('Error al obtener datos de tendencia:', error);
       // En caso de error, devolver datos de muestra
-      return this.getSampleTrendData();
+      return [];
     }
   }
 
@@ -227,7 +372,7 @@ export class DashboardService {
     payments: any[],
     startDate: Date,
     endDate: Date,
-    groupBy: 'day' | 'week',
+    groupBy: 'day' | 'week' | 'month',
     dailyTarget: number,
     weeklyTarget: number,
   ): any[] {
@@ -240,9 +385,14 @@ export class DashboardService {
       );
       const daysOfWeek = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'];
 
-      for (let i = 0; i <= daysDiff && i < 7; i++) {
+      // Limitar a máximo 30 días para evitar sobrecarga, pero asegurar que incluya todos los días del período
+      const maxDays = Math.min(daysDiff, 30);
+      for (let i = 0; i <= maxDays; i++) {
         const currentDate = new Date(startDate);
         currentDate.setDate(startDate.getDate() + i);
+        
+        // No procesar días futuros
+        if (currentDate > endDate) break;
 
         const dayStart = new Date(currentDate);
         dayStart.setHours(0, 0, 0, 0);
@@ -260,13 +410,19 @@ export class DashboardService {
           0,
         );
 
+        // Crear etiqueta más descriptiva: día de semana + fecha
+        const dayName = daysOfWeek[currentDate.getDay()];
+        const dayNumber = currentDate.getDate();
+        const monthName = currentDate.toLocaleDateString('es-CO', { month: 'short' });
+        const label = `${dayName} ${dayNumber}/${monthName}`;
+        
         result.push({
-          label: daysOfWeek[currentDate.getDay()],
+          label,
           value: total,
           target: dailyTarget,
         });
       }
-    } else {
+    } else if (groupBy === 'week') {
       // Agrupar por semana
       const weeksDiff = Math.ceil(
         (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24 * 7),
@@ -297,22 +453,52 @@ export class DashboardService {
           target: weeklyTarget,
         });
       }
+    } else if (groupBy === 'month') {
+      // Agrupar pagos por mes (YYYY-MM)
+      const monthMap = new Map<string, number>();
+
+      for (const payment of payments) {
+        const date = new Date(payment.fechaPago);
+        const key = `${date.getFullYear()}-${String(
+          date.getMonth() + 1,
+        ).padStart(2, '0')}`;
+        const total = parseFloat(payment._sum.montoTotal?.toString() || '0');
+        monthMap.set(key, (monthMap.get(key) || 0) + total);
+      }
+
+      // Generar puntos de tendencia por mes dentro del rango
+      const current = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+      current.setHours(0, 0, 0, 0);
+
+      while (current <= endDate) {
+        const key = `${current.getFullYear()}-${String(
+          current.getMonth() + 1,
+        ).padStart(2, '0')}`;
+        const total = monthMap.get(key) || 0;
+
+        const monthName = current.toLocaleDateString('es-CO', {
+          month: 'short',
+        });
+        const label = `${monthName} ${current.getFullYear()}`;
+
+        result.push({
+          label,
+          value: total,
+          // Para rangos largos usamos la meta semanal como referencia aproximada
+          target: weeklyTarget,
+        });
+
+        // Avanzar al siguiente mes
+        current.setMonth(current.getMonth() + 1);
+      }
     }
 
     return result;
   }
 
   private getSampleTrendData(): any[] {
-    // Datos de muestra en caso de error
-    return [
-      { label: 'Lun', value: 2100000, target: 2500000 },
-      { label: 'Mar', value: 2400000, target: 2500000 },
-      { label: 'Mie', value: 1500000, target: 2500000 },
-      { label: 'Jue', value: 2800000, target: 2500000 },
-      { label: 'Vie', value: 2200000, target: 2500000 },
-      { label: 'Sab', value: 3100000, target: 2500000 },
-      { label: 'Dom', value: 900000, target: 1200000 },
-    ];
+    // Devolvemos array vacío para evitar datos ficticios en producción
+    return [];
   }
 
   private mapApproval(approval: any) {
@@ -412,13 +598,19 @@ export class DashboardService {
         )
       : 0;
 
+    const asignacion = loan.cliente.asignacionesRuta?.[0];
+    const collectorName = asignacion?.cobrador 
+      ? `${asignacion.cobrador.nombres} ${asignacion.cobrador.apellidos}`
+      : 'No asignado';
+    const routeName = asignacion?.ruta?.nombre || 'General';
+
     return {
       id: loan.id,
       client: `${loan.cliente.nombres} ${loan.cliente.apellidos}`,
       daysLate,
       amountDue: parseFloat(loan.saldoPendiente.toString()),
-      collector: 'Por asignar', // Esto necesitaría una consulta adicional
-      route: 'Por asignar', // Esto necesitaría una consulta adicional
+      collector: collectorName,
+      route: routeName,
       status: this.determineDelinquentStatus(daysLate),
     };
   }
@@ -483,5 +675,53 @@ export class DashboardService {
     } catch (error) {
       return '-';
     }
+  }
+
+  /**
+   * Calcula el rango de fechas según el filtro de período
+   */
+  private calculateDateRangeFromFilter(timeFilter: string): { startDate: Date; endDate: Date } {
+    const today = new Date();
+    let startDate: Date;
+    let endDate: Date = new Date(today);
+    endDate.setHours(23, 59, 59, 999);
+
+    switch (timeFilter) {
+      case 'today':
+        startDate = new Date(today);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(today);
+        endDate.setHours(23, 59, 59, 999);
+        break;
+      case 'week':
+        startDate = new Date(today);
+        // Inicio de semana (domingo = 0)
+        const day = today.getDay();
+        // Calcular diferencia para llegar al domingo (día 0)
+        const diff = day === 0 ? 0 : -day; // Si es domingo, diff = 0; si no, retrocedemos días
+        startDate.setDate(today.getDate() + diff);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(today);
+        endDate.setHours(23, 59, 59, 999);
+        break;
+      case 'month':
+        startDate = new Date(today.getFullYear(), today.getMonth(), 1);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
+        break;
+      case 'quarter':
+        const quarter = Math.floor(today.getMonth() / 3);
+        startDate = new Date(today.getFullYear(), quarter * 3, 1);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(today.getFullYear(), (quarter + 1) * 3, 0, 23, 59, 59, 999);
+        break;
+      default:
+        // Por defecto: mes actual
+        startDate = new Date(today.getFullYear(), today.getMonth(), 1);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
+    }
+
+    return { startDate, endDate };
   }
 }

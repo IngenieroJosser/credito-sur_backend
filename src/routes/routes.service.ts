@@ -5,14 +5,22 @@ import {
   BadRequestException,
   InternalServerErrorException,
 } from '@nestjs/common';
-import { PrismaService } from 'prisma/prisma.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
+import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { CreateRouteDto } from './dto/create-route.dto';
 import { UpdateRouteDto } from './dto/update-route.dto';
-import { Prisma } from '@prisma/client';
+import { Prisma, EstadoPrestamo, EstadoCuota } from '@prisma/client';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
 
 @Injectable()
 export class RoutesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private auditService: AuditService,
+    private notificacionesGateway: NotificacionesGateway,
+    private notificacionesService: NotificacionesService,
+  ) {}
 
   async create(createRouteDto: CreateRouteDto) {
     try {
@@ -89,6 +97,41 @@ export class RoutesService {
           },
         },
       });
+
+      // Registrar en auditoría
+      if (createRouteDto.cobradorId) {
+        await this.auditService.create({
+          usuarioId: createRouteDto.cobradorId,
+          accion: 'CREAR_RUTA',
+          entidad: 'Ruta',
+          entidadId: route.id,
+          datosNuevos: {
+            codigo: route.codigo,
+            nombre: route.nombre,
+            descripcion: route.descripcion,
+            zona: route.zona,
+            cobrador: `${route.cobrador.nombres} ${route.cobrador.apellidos}`,
+            supervisor: route.supervisor ? `${route.supervisor.nombres} ${route.supervisor.apellidos}` : null,
+          },
+        });
+      }
+
+      if (createRouteDto.cobradorId) {
+        await this.notificacionesService.create({
+          usuarioId: createRouteDto.cobradorId,
+          titulo: 'Nueva Ruta Asignada',
+          mensaje: `Se te ha asignado la ruta ${route.nombre} (${route.codigo})`,
+          tipo: 'RUTA',
+          entidad: 'Ruta',
+          entidadId: route.id,
+        });
+      }
+
+      this.notificacionesGateway.broadcastRutasActualizadas({
+        accion: 'CREAR',
+        rutaId: route.id,
+      });
+      this.notificacionesGateway.broadcastDashboardsActualizados({});
 
       return route;
     } catch (error) {
@@ -178,16 +221,13 @@ export class RoutesService {
                     nombres: true,
                     apellidos: true,
                     dni: true,
-                    telefono: true,
                   },
                 },
               },
             },
             _count: {
               select: {
-                asignaciones: {
-                  where: { activa: true },
-                },
+                asignaciones: { where: { activa: true } },
                 gastos: true,
               },
             },
@@ -200,12 +240,15 @@ export class RoutesService {
       // Calcular estadísticas para cada ruta
       const rutasConEstadisticas = await Promise.all(
         rutas.map(async (ruta) => {
-          // Obtener préstamos activos de clientes asignados
-          // Obtener préstamos activos de clientes asignados
-          const clientesIds = ruta.asignaciones.map((a) => a.clienteId);
+          // Obtener IDs de clientes asignados de forma robusta
+          const asignaciones = await this.prisma.asignacionRuta.findMany({
+            where: { rutaId: ruta.id, activa: true },
+            select: { clienteId: true }
+          });
+          const clientesIds = asignaciones.map((a) => a.clienteId);
 
           const estadisticas = {
-            clientesAsignados: ruta._count.asignaciones,
+            clientesAsignados: asignaciones.length,
             cobranzaDelDia: 0,
             metaDelDia: 0,
             clientesNuevos: 0,
@@ -216,94 +259,87 @@ export class RoutesService {
           let avanceDiario = 0;
 
           if (clientesIds.length > 0) {
-            // Obtener préstamos activos
+            // Obtener préstamos activos y en mora
             const prestamosActivos = await this.prisma.prestamo.findMany({
               where: {
                 clienteId: { in: clientesIds },
-                estado: 'ACTIVO',
+                estado: { in: ['ACTIVO', 'EN_MORA'] },
                 eliminadoEn: null,
               },
-              include: {
-                cuotas: {
+              select: { id: true, saldoPendiente: true }
+            });
+
+            const pIds = prestamosActivos.map(p => p.id);
+
+            // Crear rango del día actual (00:00:00 a 23:59:59)
+            const dInicio = new Date();
+            dInicio.setHours(0, 0, 0, 0);
+            const dFin = new Date();
+            dFin.setHours(23, 59, 59, 999);
+
+            if (pIds.length > 0) {
+              const [pagosHoy, cuotasHoy, cuotasVencidasTotal] = await Promise.all([
+                this.prisma.pago.aggregate({
                   where: {
-                    fechaVencimiento: {
-                      gte: new Date(new Date().setHours(0, 0, 0, 0)),
-                      lt: new Date(new Date().setHours(23, 59, 59, 999)),
-                    },
+                    prestamoId: { in: pIds },
+                    fechaPago: { gte: dInicio, lt: dFin },
                   },
-                },
-              },
-            });
+                  _sum: { montoTotal: true },
+                }),
+                this.prisma.cuota.aggregate({
+                  where: {
+                    prestamoId: { in: pIds },
+                    fechaVencimiento: { gte: dInicio, lt: dFin },
+                  },
+                  _sum: { monto: true },
+                }),
+                this.prisma.cuota.aggregate({
+                  where: {
+                    prestamoId: { in: pIds },
+                    fechaVencimiento: { lt: dInicio },
+                    estado: { not: 'PAGADA' },
+                  },
+                  _sum: { monto: true },
+                })
+              ]);
 
-            // Calcular cobranza del día (suma de pagos de hoy)
-            const hoy = new Date();
-            const inicioDia = new Date(hoy.setHours(0, 0, 0, 0));
-            const finDia = new Date(hoy.setHours(23, 59, 59, 999));
+              estadisticas.cobranzaDelDia = pagosHoy._sum.montoTotal?.toNumber() || 0;
+              estadisticas.metaDelDia = cuotasHoy._sum.monto?.toNumber() || 0;
 
-            const pagosHoy = await this.prisma.pago.aggregate({
-              where: {
-                prestamoId: { in: prestamosActivos.map((p) => p.id) },
-                fechaPago: {
-                  gte: inicioDia,
-                  lt: finDia,
-                },
-              },
-              _sum: {
-                montoTotal: true,
-              },
-            });
+              // Calcular AVANCE DIARIO
+              if (estadisticas.metaDelDia > 0) {
+                avanceDiario = (estadisticas.cobranzaDelDia / estadisticas.metaDelDia) * 100;
+              }
 
-            estadisticas.cobranzaDelDia =
-              pagosHoy._sum.montoTotal?.toNumber() || 0;
+              const deudaTotal = prestamosActivos.reduce((acc, curr) => acc + curr.saldoPendiente.toNumber(), 0);
+              const montoVencido = cuotasVencidasTotal._sum.monto?.toNumber() || 0;
 
-            // Calcular meta del día (suma de cuotas vencidas hoy)
-            estadisticas.metaDelDia = prestamosActivos.reduce(
-              (total, prestamo) => {
-                return (
-                  total +
-                  prestamo.cuotas.reduce((cuotaTotal, cuota) => {
-                    return cuotaTotal + cuota.monto.toNumber();
-                  }, 0)
-                );
-              },
-              0,
-            );
+              porcentajeMora = deudaTotal > 0 ? (montoVencido / deudaTotal) * 100 : 0;
 
-            // Calcular AVANCE DIARIO
-            if (estadisticas.metaDelDia > 0) {
-              avanceDiario =
-                (estadisticas.cobranzaDelDia / estadisticas.metaDelDia) * 100;
+              if (porcentajeMora > 30) nivelRiesgo = 'ALTO_RIESGO';
+              else if (porcentajeMora > 15) nivelRiesgo = 'RIESGO_MODERADO';
+              else if (porcentajeMora > 10) nivelRiesgo = 'PRECAUCION';
+              else if (porcentajeMora > 5) nivelRiesgo = 'LEVE_RETRASO';
             }
 
-            // Calcular RIESGO (Cartera Vencida)
-            const cuotasVencidasTotal = await this.prisma.cuota.aggregate({
+            // Clientes nuevos (últimos 7 días)
+            const sieteDiasAtras = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+            estadisticas.clientesNuevos = await this.prisma.asignacionRuta.count({
               where: {
-                prestamoId: { in: prestamosActivos.map((p) => p.id) },
-                fechaVencimiento: { lt: inicioDia },
-                estado: { not: 'PAGADA' },
+                rutaId: ruta.id,
+                creadoEn: { gte: sieteDiasAtras },
+                activa: true,
               },
-              _sum: { monto: true },
             });
-
-            const deudaTotal = prestamosActivos.reduce(
-              (acc, curr) => acc + curr.saldoPendiente.toNumber(),
-              0,
-            );
-            const montoVencido =
-              cuotasVencidasTotal._sum.monto?.toNumber() || 0;
-
-            porcentajeMora =
-              deudaTotal > 0 ? (montoVencido / deudaTotal) * 100 : 0;
-
-            if (porcentajeMora > 30) nivelRiesgo = 'ALTO_RIESGO';
-            else if (porcentajeMora > 15) nivelRiesgo = 'RIESGO_MODERADO';
-            else if (porcentajeMora > 10) nivelRiesgo = 'PRECAUCION';
-            else if (porcentajeMora > 5) nivelRiesgo = 'LEVE_RETRASO';
           }
 
           return {
             ...ruta,
             ...estadisticas,
+            clientesAsignados: estadisticas.clientesAsignados,
+            clientesNuevos: estadisticas.clientesNuevos,
+            cobranzaDelDia: estadisticas.cobranzaDelDia,
+            metaDelDia: estadisticas.metaDelDia,
             nivelRiesgo,
             porcentajeMora: parseFloat(porcentajeMora.toFixed(2)),
             avanceDiario: parseFloat(avanceDiario.toFixed(2)),
@@ -323,7 +359,6 @@ export class RoutesService {
         },
       };
     } catch (error) {
-      console.error('Error detail in findAll:', error);
       throw new InternalServerErrorException(
         `Error al obtener las rutas: ${error instanceof Error ? error.message : 'Unknown error'}`,
       );
@@ -331,103 +366,135 @@ export class RoutesService {
   }
 
   async findOne(id: string) {
-    const ruta = await this.prisma.ruta.findUnique({
-      where: {
-        id,
-        eliminadoEn: null,
-      },
-      include: {
-        cobrador: {
-          select: {
-            id: true,
-            nombres: true,
-            apellidos: true,
-            correo: true,
-            telefono: true,
-            rol: true,
-          },
+    try {
+      const ruta = await this.prisma.ruta.findFirst({
+        where: {
+          id,
+          eliminadoEn: null,
         },
-        supervisor: {
-          select: {
-            id: true,
-            nombres: true,
-            apellidos: true,
-            correo: true,
-            telefono: true,
-            rol: true,
+        include: {
+          cobrador: {
+            select: {
+              id: true,
+              nombres: true,
+              apellidos: true,
+              correo: true,
+              telefono: true,
+              rol: true,
+            },
           },
-        },
-        asignaciones: {
-          where: { activa: true },
-          include: {
-            cliente: {
-              select: {
-                id: true,
-                nombres: true,
-                apellidos: true,
-                dni: true,
-                telefono: true,
-                direccion: true,
-                nivelRiesgo: true,
+          supervisor: {
+            select: {
+              id: true,
+              nombres: true,
+              apellidos: true,
+              correo: true,
+              telefono: true,
+              rol: true,
+            },
+          },
+          asignaciones: {
+            where: { activa: true },
+            include: {
+              cliente: {
+                include: {
+                  prestamos: {
+                    where: {
+                      OR: [
+                        { estado: EstadoPrestamo.ACTIVO },
+                        { estado: EstadoPrestamo.EN_MORA },
+                      ],
+                    },
+                    include: {
+                      cuotas: {
+                        where: {
+                          estado: {
+                            in: [
+                              EstadoCuota.PENDIENTE,
+                              EstadoCuota.VENCIDA,
+                              EstadoCuota.PARCIAL,
+                              EstadoCuota.PRORROGADA,
+                            ],
+                          },
+                        },
+                        orderBy: { numeroCuota: 'asc' },
+                        take: 1,
+                        select: {
+                          id: true,
+                          numeroCuota: true,
+                          monto: true,
+                          estado: true,
+                          fechaVencimiento: true,
+                          fechaVencimientoProrroga: true,
+                          extensionId: true,
+                        },
+                      },
+                      extensiones: {
+                        orderBy: { creadoEn: 'desc' },
+                        take: 1,
+                        select: {
+                          id: true,
+                          nuevaFechaVencimiento: true,
+                          creadoEn: true,
+                        },
+                      },
+                    },
+                  },
+                },
               },
             },
+            orderBy: { ordenVisita: 'asc' },
           },
-          orderBy: { ordenVisita: 'asc' },
-        },
-        cajas: {
-          where: { activa: true },
-          select: {
-            id: true,
-            codigo: true,
-            nombre: true,
-            saldoActual: true,
-          },
-        },
-        gastos: {
-          where: { estadoAprobacion: 'APROBADO' },
-          take: 10,
-          orderBy: { fechaGasto: 'desc' },
-        },
-        _count: {
-          select: {
-            asignaciones: {
-              where: { activa: true },
+          cajas: {
+            where: { activa: true },
+            select: {
+              id: true,
+              codigo: true,
+              nombre: true,
+              saldoActual: true,
             },
-            gastos: true,
+          },
+          gastos: {
+            where: { estadoAprobacion: 'APROBADO' },
+            take: 10,
+            orderBy: { fechaGasto: 'desc' },
+          },
+          _count: {
+            select: {
+              asignaciones: {
+                where: { activa: true },
+              },
+              gastos: true,
+            },
           },
         },
-      },
-    });
+      });
 
-    if (!ruta) {
-      throw new NotFoundException('Ruta no encontrada');
-    }
+      if (!ruta) {
+        throw new NotFoundException('Ruta no encontrada');
+      }
 
-    // Calcular estadísticas detalladas
-    const clientesIds = ruta.asignaciones.map((a) => a.clienteId);
-    const estadisticas = {
-      clientesAsignados: ruta._count.asignaciones,
-      cobranzaDelDia: 0,
-      metaDelDia: 0,
-      clientesNuevos: 0,
-      totalDeuda: 0,
-      prestamosActivos: 0,
-    };
+      // Calcular estadísticas detalladas
+      const clientesIds = ruta.asignaciones.map((a) => a.clienteId);
+      const estadisticas = {
+        clientesAsignados: ruta._count.asignaciones,
+        cobranzaDelDia: 0,
+        metaDelDia: 0,
+        clientesNuevos: 0,
+        totalDeuda: 0,
+        prestamosActivos: 0,
+      };
 
     let nivelRiesgo = 'PELIGRO_MINIMO';
     let porcentajeMora = 0;
     let avanceDiario = 0;
 
     if (clientesIds.length > 0) {
-      const hoy = new Date();
-      const inicioDia = new Date(hoy.setHours(0, 0, 0, 0));
-      const finDia = new Date(hoy.setHours(23, 59, 59, 999));
-
-      // Obtener préstamos activos
+      // Obtener préstamos activos y en mora
       const prestamosActivos = await this.prisma.prestamo.findMany({
         where: {
           clienteId: { in: clientesIds },
-          estado: 'ACTIVO',
+          estado: { in: ['ACTIVO', 'EN_MORA'] },
           eliminadoEn: null,
         },
         include: {
@@ -439,13 +506,18 @@ export class RoutesService {
         },
       });
 
+      const hoyInicio = new Date();
+      hoyInicio.setHours(0, 0, 0, 0);
+      const hoyFin = new Date();
+      hoyFin.setHours(23, 59, 59, 999);
+
       // Calcular cobranza del día
       const pagosHoy = await this.prisma.pago.aggregate({
         where: {
           prestamoId: { in: prestamosActivos.map((p) => p.id) },
           fechaPago: {
-            gte: inicioDia,
-            lt: finDia,
+            gte: hoyInicio,
+            lt: hoyFin,
           },
         },
         _sum: {
@@ -458,8 +530,8 @@ export class RoutesService {
         where: {
           prestamoId: { in: prestamosActivos.map((p) => p.id) },
           fechaVencimiento: {
-            gte: inicioDia,
-            lt: finDia,
+            gte: hoyInicio,
+            lt: hoyFin,
           },
         },
         _sum: {
@@ -499,7 +571,7 @@ export class RoutesService {
       const cuotasVencidasTotal = await this.prisma.cuota.aggregate({
         where: {
           prestamoId: { in: prestamosActivos.map((p) => p.id) },
-          fechaVencimiento: { lt: inicioDia },
+          fechaVencimiento: { lt: hoyInicio },
           estado: { not: 'PAGADA' },
         },
         _sum: {
@@ -519,19 +591,41 @@ export class RoutesService {
       else if (porcentajeMora > 5) nivelRiesgo = 'LEVE_RETRASO';
     }
 
-    return {
-      ...ruta,
-      estadisticas: {
-        ...estadisticas,
-        avanceDiario: parseFloat(avanceDiario.toFixed(2)),
-      },
-      nivelRiesgo,
-      porcentajeMora: parseFloat(porcentajeMora.toFixed(2)),
-      cobrador: `${ruta.cobrador.nombres} ${ruta.cobrador.apellidos}`,
-      supervisor: ruta.supervisorId
-        ? `${ruta.supervisor?.nombres ?? ''} ${ruta.supervisor?.apellidos ?? ''}`
-        : undefined,
-    };
+      return {
+        ...ruta,
+        estadisticas: {
+          ...estadisticas,
+          avanceDiario: parseFloat(avanceDiario.toFixed(2)),
+        },
+        nivelRiesgo,
+        porcentajeMora: parseFloat(porcentajeMora.toFixed(2)),
+        cobrador: `${ruta.cobrador.nombres} ${ruta.cobrador.apellidos}`,
+        supervisor: ruta.supervisorId
+          ? `${ruta.supervisor?.nombres ?? ''} ${ruta.supervisor?.apellidos ?? ''}`
+          : undefined,
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+
+      if (error instanceof Prisma.PrismaClientKnownRequestError) {
+        throw new BadRequestException({
+          message: 'Datos inválidos para obtener la ruta.',
+          code: error.code,
+          meta: error.meta,
+        });
+      }
+
+      if (error instanceof Prisma.PrismaClientValidationError) {
+        throw new BadRequestException({
+          message: 'Datos inválidos para obtener la ruta.',
+          details: error.message,
+        });
+      }
+
+      throw new InternalServerErrorException(
+        `Error al obtener la ruta: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+    }
   }
 
   async update(id: string, updateRouteDto: UpdateRouteDto) {
@@ -621,6 +715,23 @@ export class RoutesService {
         },
       });
 
+      if (updateRouteDto.cobradorId && updateRouteDto.cobradorId !== existingRoute.cobradorId) {
+        await this.notificacionesService.create({
+          usuarioId: updateRouteDto.cobradorId,
+          titulo: 'Ruta Asignada',
+          mensaje: `Se te ha asignado la ruta ${updatedRoute.nombre} (${updatedRoute.codigo})`,
+          tipo: 'RUTA',
+          entidad: 'Ruta',
+          entidadId: updatedRoute.id,
+        });
+      }
+
+      this.notificacionesGateway.broadcastRutasActualizadas({
+        accion: 'ACTUALIZAR',
+        rutaId: updatedRoute.id,
+      });
+      this.notificacionesGateway.broadcastDashboardsActualizados({});
+
       return updatedRoute;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -678,13 +789,19 @@ export class RoutesService {
 
     try {
       // Soft delete
-      await this.prisma.ruta.update({
+      const updatedRoute = await this.prisma.ruta.update({
         where: { id },
         data: {
           eliminadoEn: new Date(),
           activa: false,
         },
       });
+
+      this.notificacionesGateway.broadcastRutasActualizadas({
+        accion: 'ELIMINAR',
+        rutaId: updatedRoute.id,
+      });
+      this.notificacionesGateway.broadcastDashboardsActualizados({});
 
       return { message: 'Ruta eliminada correctamente' };
     } catch (error) {
@@ -724,6 +841,23 @@ export class RoutesService {
         },
       });
 
+      if (updatedRoute.activa && updatedRoute.cobradorId) {
+        await this.notificacionesService.create({
+          usuarioId: updatedRoute.cobradorId,
+          titulo: 'Ruta Activada',
+          mensaje: `Tu ruta ${updatedRoute.nombre} ha sido activada`,
+          tipo: 'RUTA',
+          entidad: 'Ruta',
+          entidadId: updatedRoute.id,
+        });
+      }
+
+      this.notificacionesGateway.broadcastRutasActualizadas({
+        accion: 'ACTUALIZAR',
+        rutaId: updatedRoute.id,
+      });
+      this.notificacionesGateway.broadcastDashboardsActualizados({});
+
       return {
         ...updatedRoute,
         message: `Ruta ${updatedRoute.activa ? 'activada' : 'desactivada'} correctamente`,
@@ -752,15 +886,16 @@ export class RoutesService {
 
         // Cobranza de hoy
         (async () => {
-          const hoy = new Date();
-          const inicioDia = new Date(hoy.setHours(0, 0, 0, 0));
-          const finDia = new Date(hoy.setHours(23, 59, 59, 999));
+          const hoyInicio = new Date();
+          hoyInicio.setHours(0, 0, 0, 0);
+          const hoyFin = new Date();
+          hoyFin.setHours(23, 59, 59, 999);
 
           const result = await this.prisma.pago.aggregate({
             where: {
               fechaPago: {
-                gte: inicioDia,
-                lt: finDia,
+                gte: hoyInicio,
+                lt: hoyFin,
               },
             },
             _sum: {
@@ -773,18 +908,19 @@ export class RoutesService {
 
         // Meta de hoy (cuotas vencidas hoy)
         (async () => {
-          const hoy = new Date();
-          const inicioDia = new Date(hoy.setHours(0, 0, 0, 0));
-          const finDia = new Date(hoy.setHours(23, 59, 59, 999));
+          const hoyInicio = new Date();
+          hoyInicio.setHours(0, 0, 0, 0);
+          const hoyFin = new Date();
+          hoyFin.setHours(23, 59, 59, 999);
 
           const result = await this.prisma.cuota.aggregate({
             where: {
               fechaVencimiento: {
-                gte: inicioDia,
-                lt: finDia,
+                gte: hoyInicio,
+                lt: hoyFin,
               },
               prestamo: {
-                estado: 'ACTIVO',
+                estado: { in: ['ACTIVO', 'EN_MORA'] },
               },
             },
             _sum: {
@@ -955,6 +1091,17 @@ export class RoutesService {
         },
       });
 
+      if (cobradorId) {
+        await this.notificacionesService.create({
+          usuarioId: cobradorId,
+          titulo: 'Nuevo Cliente Asignado',
+          mensaje: `Se ha asignado el cliente ${asignacion.cliente.nombres} ${asignacion.cliente.apellidos} a tu ruta ${ruta.nombre}`,
+          tipo: 'CLIENTE',
+          entidad: 'Cliente',
+          entidadId: asignacion.clienteId,
+        });
+      }
+
       return asignacion;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -989,6 +1136,25 @@ export class RoutesService {
 
       // Reordenar las asignaciones restantes
       await this.reorderAssignments(rutaId);
+
+      const ruta = await this.prisma.ruta.findUnique({
+        where: { id: rutaId },
+        select: { nombre: true, cobradorId: true },
+      });
+
+      const cliente = await this.prisma.cliente.findUnique({
+        where: { id: clienteId },
+        select: { nombres: true, apellidos: true },
+      });
+
+      if (ruta?.cobradorId) {
+        await this.notificacionesService.create({
+          usuarioId: ruta.cobradorId,
+          titulo: 'Cliente Removido',
+          mensaje: `El cliente ${cliente?.nombres} ${cliente?.apellidos} ha sido removido de tu ruta ${ruta.nombre}`,
+          tipo: 'CLIENTE',
+        });
+      }
 
       return { message: 'Cliente removido de la ruta correctamente' };
     } catch (error) {
@@ -1079,9 +1245,90 @@ export class RoutesService {
         this.reorderAssignments(toRutaId),
       ]);
 
+      if (rutaDestino.cobradorId) {
+        const cliente = await this.prisma.cliente.findUnique({
+          where: { id: clientId },
+          select: { nombres: true, apellidos: true },
+        });
+
+        await this.notificacionesService.create({
+          usuarioId: rutaDestino.cobradorId,
+          titulo: 'Nuevo Cliente Trasladado',
+          mensaje: `Se ha trasladado al cliente ${cliente?.nombres} ${cliente?.apellidos} a tu ruta ${rutaDestino.nombre}`,
+          tipo: 'CLIENTE',
+        });
+      }
+
       return { message: 'Cliente movido correctamente' };
     } catch (error) {
       throw new InternalServerErrorException('Error al mover el cliente');
+    }
+  }
+
+  /**
+   * Mueve un crédito específico de un cliente a otra ruta.
+   * Como la asignación es por cliente, esto crea una nueva asignación del cliente
+   * en la ruta destino sin eliminar la original, permitiendo que el cliente
+   * aparezca en rutas distintas según el tipo/frecuencia de cada crédito.
+   */
+  async moveLoan(prestamoId: string, toRutaId: string) {
+    try {
+      const prestamo = await this.prisma.prestamo.findUnique({
+        where: { id: prestamoId },
+        select: { id: true, clienteId: true, frecuenciaPago: true, estado: true },
+      });
+      if (!prestamo) throw new NotFoundException('Préstamo no encontrado');
+
+      const rutaDestino = await this.prisma.ruta.findUnique({
+        where: { id: toRutaId, eliminadoEn: null },
+      });
+      if (!rutaDestino) throw new NotFoundException('Ruta destino no encontrada');
+
+      const yaAsignado = await this.prisma.asignacionRuta.findFirst({
+        where: { clienteId: prestamo.clienteId, rutaId: toRutaId, activa: true },
+      });
+
+      if (yaAsignado) {
+        return { message: 'El cliente ya está asignado a esa ruta' };
+      }
+
+      const maxOrden = await this.prisma.asignacionRuta.aggregate({
+        where: { rutaId: toRutaId, activa: true },
+        _max: { ordenVisita: true },
+      });
+
+      await this.prisma.asignacionRuta.create({
+        data: {
+          rutaId: toRutaId,
+          clienteId: prestamo.clienteId,
+          cobradorId: rutaDestino.cobradorId,
+          ordenVisita: (maxOrden._max.ordenVisita || 0) + 1,
+          activa: true,
+        },
+      });
+
+      this.notificacionesGateway.broadcastRutasActualizadas({
+        accion: 'ACTUALIZAR',
+        rutaId: toRutaId,
+      });
+
+      if (rutaDestino.cobradorId) {
+        const cliente = await this.prisma.cliente.findUnique({
+          where: { id: prestamo.clienteId },
+          select: { nombres: true, apellidos: true },
+        });
+        await this.notificacionesService.create({
+          usuarioId: rutaDestino.cobradorId,
+          titulo: 'Nuevo Crédito en Ruta',
+          mensaje: `Se ha asignado un nuevo crédito del cliente ${cliente?.nombres} ${cliente?.apellidos} a tu ruta ${rutaDestino.nombre}`,
+          tipo: 'PRESTAMO',
+        });
+      }
+
+      return { message: 'Crédito asignado a la nueva ruta correctamente' };
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      throw new InternalServerErrorException('Error al mover el crédito');
     }
   }
 
@@ -1103,6 +1350,207 @@ export class RoutesService {
       await this.prisma.$transaction(updates);
     } catch (error) {
       throw new InternalServerErrorException('Error al reordenar asignaciones');
+    }
+  }
+
+  /**
+   * Obtener visitas del día para una ruta
+   * Calcula qué clientes deben aparecer hoy según frecuencia de pago y estado de cuotas
+   */
+  async getDailyVisits(rutaId: string, fecha?: string) {
+    const fechaConsulta = fecha ? new Date(fecha) : new Date();
+    fechaConsulta.setHours(0, 0, 0, 0);
+
+    // Obtener todos los clientes de la ruta con sus préstamos activos
+    const asignaciones = await this.prisma.asignacionRuta.findMany({
+      where: {
+        rutaId,
+        activa: true,
+      },
+      include: {
+        cliente: {
+          include: {
+            prestamos: {
+              where: {
+                estado: { in: ['ACTIVO', 'EN_MORA'] },
+              },
+              include: {
+                cuotas: {
+                  where: {
+                    estado: { in: ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'] },
+                  },
+                  orderBy: { fechaVencimiento: 'asc' },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { ordenVisita: 'asc' },
+    });
+
+    const visitasDelDia: any[] = [];
+    const clientesProcesados = new Set<string>();
+
+    for (const asignacion of asignaciones) {
+      const cliente = asignacion.cliente;
+      
+      // Si el cliente ya fue agregado a la lista de hoy (evitar duplicados por múltiples asignaciones)
+      if (clientesProcesados.has(cliente.id)) continue;
+
+      let debeAparecerHoy = false;
+
+      // Revisar cada préstamo activo
+      for (const prestamo of cliente.prestamos) {
+        const fechaInicioPrestamo = new Date(prestamo.fechaInicio);
+        fechaInicioPrestamo.setHours(0, 0, 0, 0);
+
+        // Si el préstamo inicia hoy, debe aparecer hoy para empezar a cobrar.
+        if (fechaInicioPrestamo.getTime() === fechaConsulta.getTime()) {
+          debeAparecerHoy = true;
+          break;
+        }
+
+        if (prestamo.cuotas.length === 0) continue;
+
+        const proximaCuota = prestamo.cuotas[0];
+        // Para cuotas PRORROGADA, usar la nueva fecha de vencimiento
+        const fechaEfectiva = proximaCuota.estado === 'PRORROGADA' && proximaCuota.fechaVencimientoProrroga
+          ? new Date(proximaCuota.fechaVencimientoProrroga)
+          : new Date(proximaCuota.fechaVencimiento);
+        fechaEfectiva.setHours(0, 0, 0, 0);
+
+        // Si la cuota está vencida o prorrogada expirada, siempre aparece
+        if (fechaEfectiva <= fechaConsulta) {
+          debeAparecerHoy = true;
+          break;
+        }
+
+        // Calcular si debe aparecer según frecuencia
+        const diasHastaVencimiento = Math.ceil(
+          (fechaEfectiva.getTime() - fechaConsulta.getTime()) /
+            (1000 * 60 * 60 * 24),
+        );
+
+        switch (prestamo.frecuenciaPago) {
+          case 'DIARIO':
+            // Aparece todos los días si tiene cuota pendiente
+            if (diasHastaVencimiento <= 1) debeAparecerHoy = true;
+            break;
+          case 'SEMANAL':
+            // Aparece 1 día antes del vencimiento
+            if (diasHastaVencimiento <= 1) debeAparecerHoy = true;
+            break;
+          case 'QUINCENAL':
+            // Aparece 1 día antes del vencimiento
+            if (diasHastaVencimiento <= 1) debeAparecerHoy = true;
+            break;
+          case 'MENSUAL':
+            // Aparece 2 días antes del vencimiento
+            if (diasHastaVencimiento <= 2) debeAparecerHoy = true;
+            break;
+        }
+
+        if (debeAparecerHoy) break;
+      }
+
+      if (debeAparecerHoy) {
+        visitasDelDia.push({
+          asignacionId: asignacion.id,
+          ordenVisita: asignacion.ordenVisita,
+          cliente: {
+            id: cliente.id,
+            codigo: cliente.codigo,
+            dni: cliente.dni,
+            nombres: cliente.nombres,
+            apellidos: cliente.apellidos,
+            telefono: cliente.telefono,
+            direccion: cliente.direccion,
+            nivelRiesgo: cliente.nivelRiesgo,
+            prestamosActivos: cliente.prestamos.length,
+          },
+          prestamos: cliente.prestamos.map((p) => ({
+            id: p.id,
+            numeroPrestamo: p.numeroPrestamo,
+            monto: Number(p.monto),
+            saldoPendiente: Number(p.saldoPendiente),
+            frecuenciaPago: p.frecuenciaPago,
+            cantidadCuotas: p.cantidadCuotas,
+            estado: p.estado,
+            proximaCuota: p.cuotas[0]
+              ? {
+                  numeroCuota: p.cuotas[0].numeroCuota,
+                  fechaVencimiento: (
+                    p.cuotas[0].estado === 'PRORROGADA' && p.cuotas[0].fechaVencimientoProrroga
+                      ? p.cuotas[0].fechaVencimientoProrroga
+                      : p.cuotas[0].fechaVencimiento
+                  ),
+                  monto: Number(p.cuotas[0].monto),
+                  estado: p.cuotas[0].estado,
+                  enProrroga: p.cuotas[0].estado === 'PRORROGADA',
+                  fechaOriginalVencimiento: p.cuotas[0].estado === 'PRORROGADA'
+                    ? p.cuotas[0].fechaVencimiento
+                    : undefined,
+                }
+              : null,
+          })),
+        });
+        clientesProcesados.add(cliente.id);
+      }
+    }
+
+    return {
+      fecha: fechaConsulta.toISOString(),
+      rutaId,
+      totalVisitas: visitasDelDia.length,
+      visitas: visitasDelDia,
+    };
+  }
+
+  /**
+   * Actualizar orden de clientes en una ruta (para drag & drop)
+   */
+  async updateClientOrder(
+    rutaId: string,
+    reorderData: Array<{ clienteId: string; orden: number }>,
+  ) {
+    try {
+      // Verificar que la ruta existe
+      const ruta = await this.prisma.ruta.findUnique({
+        where: { id: rutaId },
+      });
+
+      if (!ruta) {
+        throw new NotFoundException('Ruta no encontrada');
+      }
+
+      // Actualizar el orden de cada cliente
+      const updates = reorderData.map((item) =>
+        this.prisma.asignacionRuta.updateMany({
+          where: {
+            rutaId,
+            clienteId: item.clienteId,
+            activa: true,
+          },
+          data: {
+            ordenVisita: item.orden,
+          },
+        }),
+      );
+
+      await this.prisma.$transaction(updates);
+
+      return {
+        message: 'Orden actualizado correctamente',
+        totalActualizados: reorderData.length,
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      throw new InternalServerErrorException(
+        'Error al actualizar el orden de clientes',
+      );
     }
   }
 }

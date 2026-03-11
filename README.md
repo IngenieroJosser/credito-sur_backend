@@ -18,8 +18,10 @@ Esta API constituye el núcleo transaccional del sistema, centralizando la lógi
 - Gestionar **autenticación y autorización** basada en JWT, roles y permisos.
 - Garantizar **integridad transaccional** en operaciones críticas (pagos, cuotas, mora).
 - Registrar **auditoría inmutable** de acciones y cambios relevantes.
-- Administrar **respaldos locales** y sincronización hacia infraestructura en la nube.
-- Operar de forma eficiente en **entornos LAN** con posibilidad de acceso remoto.
+- **Alta Disponibilidad (LAN/VPS):** Preparado para operar de forma híbrida como servidor principal o nodo de contingencia local.
+- **Sincronización Bidireccional:** API diseñada para recibir ráfagas de sincronización masiva desde dispositivos offline o servidores locales.
+- **Notificaciones Realtime (WebSockets):** Soporte completo para eventos en vivo mediante Socket.io para dashboards operativos.
+- **Notificaciones Push:** Gestión de suscripciones y envío de alertas PWA mediante protocolos VAPID.
 
 ---
 
@@ -105,3 +107,99 @@ La arquitectura está diseñada para crecer de forma progresiva sin comprometer 
 └── tsconfig.json
 
 ```
+
+---
+
+## Notificaciones Push
+
+El backend implementa un sistema completo de notificaciones push para alertar a los usuarios sobre eventos críticos en tiempo real.
+
+### Endpoints Disponibles
+
+#### `POST /api-credisur/push/subscribe`
+
+Registrar una nueva suscripción push del usuario autenticado.
+
+**Request:**
+
+```json
+{
+  "endpoint": "https://fcm.googleapis.com/fcm/send/...",
+  "keys": {
+    "p256dh": "BKxN...",
+    "auth": "5I2T..."
+  }
+}
+```
+
+#### `DELETE /api-credisur/push/unsubscribe`
+
+Eliminar una suscripción push existente.
+
+#### `GET /api-credisur/push/subscriptions`
+
+Obtener todas las suscripciones activas del usuario.
+
+#### `POST /api-credisur/push/test`
+
+Enviar una notificación de prueba al usuario autenticado.
+
+### Tipos de Notificaciones
+
+- **PAGO:** Notificaciones de pagos recibidos
+- **MORA:** Alertas de cuentas en mora
+- **CLIENTE:** Eventos relacionados con clientes
+- **PRESTAMO:** Actualizaciones de préstamos
+- **SOLICITUD:** Solicitudes pendientes de aprobación
+- **SISTEMA:** Notificaciones generales del sistema
+
+### Configuración Requerida
+
+```env
+# Variables de entorno (.env)
+VAPID_PUBLIC_KEY=BKxN...
+VAPID_PRIVATE_KEY=5I2T...
+VAPID_SUBJECT=mailto:erickmanuel238@gmail.com
+```
+
+### Modelo de Datos
+
+```prisma
+model PushSubscription {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([endpoint])
+  @@map("push_subscriptions")
+}
+```
+
+### Integración con Eventos
+
+El sistema permite enviar notificaciones automáticamente cuando ocurren eventos importantes:
+
+```typescript
+// Ejemplo: Notificar al recibir un pago
+await pushService.sendNotification(userId, {
+  tipo: 'PAGO',
+  title: 'Pago Recibido',
+  body: `Se registró un pago de ${formatCurrency(monto)}`,
+  url: '/pagos/historial',
+  data: { pagoId, monto },
+});
+```
+
+### Documentación Completa
+
+Para implementación detallada, ver documentación en el repositorio del frontend:
+`credito-sur_frontend/docs/PUSH_NOTIFICATIONS_BACKEND.md`
+
+---

@@ -14,6 +14,10 @@ import { Type } from 'class-transformer';
 export class ClienteInfoDto {
   @ApiProperty()
   @IsString()
+  id: string;
+
+  @ApiProperty()
+  @IsString()
   nombre: string;
 
   @ApiProperty()
@@ -39,6 +43,10 @@ export class PrestamoMoraDto {
   numeroPrestamo: string;
 
   @ApiProperty()
+  @IsString()
+  clienteId: string;
+
+  @ApiProperty()
   cliente: ClienteInfoDto;
 
   @ApiProperty()
@@ -56,6 +64,10 @@ export class PrestamoMoraDto {
   @ApiProperty()
   @IsNumber()
   cuotasVencidas: number;
+
+  @ApiProperty()
+  @IsNumber()
+  montoOriginal: number;
 
   @ApiProperty()
   @IsString()
@@ -77,6 +89,11 @@ export class PrestamoMoraDto {
   @IsOptional()
   @IsDateString()
   ultimoPago?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsDateString()
+  fechaVencimiento?: string;
 }
 
 export class PrestamosMoraFiltrosDto {

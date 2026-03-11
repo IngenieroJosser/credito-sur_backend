@@ -7,11 +7,14 @@ import {
   Query,
   Request,
   UseGuards,
+  UseInterceptors,
   DefaultValuePipe,
   HttpCode,
   HttpStatus,
   Res,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { PaymentsService } from './payments.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -26,12 +29,30 @@ export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
 
   @Post()
-  create(@Body() createPaymentDto: CreatePaymentDto, @Request() req) {
+  @HttpCode(HttpStatus.CREATED)
+  @UseInterceptors(FileInterceptor('comprobante'))
+  async create(
+    @Body() createPaymentDto: CreatePaymentDto,
+    @Request() req,
+    @UploadedFile() _file?: Express.Multer.File,
+  ) {
+    // Transformar campos que vienen como strings desde FormData
+    const dto = {
+      ...createPaymentDto,
+      prestamoId: createPaymentDto.prestamoId?.toString(),
+      clienteId: createPaymentDto.clienteId?.toString(),
+      cobradorId: createPaymentDto.cobradorId?.toString() || req.user?.id,
+      montoTotal: typeof createPaymentDto.montoTotal === 'string' 
+        ? parseFloat(createPaymentDto.montoTotal) 
+        : createPaymentDto.montoTotal,
+    };
+
     // Si no viene cobradorId, usar el usuario del JWT
-    if (!createPaymentDto.cobradorId && req.user?.id) {
-      createPaymentDto.cobradorId = req.user.id;
+    if (!dto.cobradorId && req.user?.id) {
+      dto.cobradorId = req.user.id;
     }
-    return this.paymentsService.create(createPaymentDto);
+
+    return this.paymentsService.create(dto as CreatePaymentDto);
   }
 
   @Get()
