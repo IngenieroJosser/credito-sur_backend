@@ -23,8 +23,11 @@ import {
   RoutePerformanceDetail,
 } from './dto/responses-routes.dto';
 import { TimeFilterPeriod, calculateDateRange } from '../utils/date-utils';
-import * as ExcelJS from 'exceljs';
-import * as PDFDocument from 'pdfkit';
+import { generarExcelMora, generarPDFMora, MoraRow, MoraTotales } from '../templates/exports/cuentas-mora.template';
+import { generarExcelVencidas, generarPDFVencidas, VencidasRow, VencidasTotales } from '../templates/exports/cuentas-vencidas.template';
+import { generarExcelOperativo, generarPDFOperativo, OperativoRow, OperativoResumen } from '../templates/exports/reporte-operativo.template';
+import { generarExcelFinanciero, generarPDFFinanciero } from '../templates/exports/reporte-financiero.template';
+
 
 @Injectable()
 export class ReportsService {
@@ -396,148 +399,39 @@ export class ReportsService {
     filtros: PrestamosMoraFiltrosDto,
     formato: 'excel' | 'pdf',
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
+    // 1. Solo consulta de BD
     const data = await this.obtenerPrestamosEnMora(filtros, 1, 10000);
     const prestamos = data.prestamos;
     const fecha = new Date().toISOString().split('T')[0];
 
-    if (formato === 'excel') {
-      const workbook = new ExcelJS.Workbook();
-      const ws = workbook.addWorksheet('Cuentas en Mora');
+    // 2. Mapeo al tipo del template
+    const filas: MoraRow[] = prestamos.map((p: any) => ({
+      numeroPrestamo: p.numeroPrestamo || '',
+      cliente: p.cliente?.nombre || '',
+      documento: p.cliente?.documento || '',
+      diasMora: p.diasMora || 0,
+      montoMora: p.montoMora || 0,
+      montoTotalDeuda: p.montoTotalDeuda || 0,
+      cuotasVencidas: p.cuotasVencidas || 0,
+      ruta: p.ruta || '',
+      cobrador: p.cobrador || '',
+      nivelRiesgo: p.nivelRiesgo || '',
+      ultimoPago: p.ultimoPago,
+    }));
 
-      ws.columns = [
-        { header: 'N° Préstamo', key: 'numero', width: 18 },
-        { header: 'Cliente', key: 'cliente', width: 28 },
-        { header: 'Documento', key: 'documento', width: 15 },
-        { header: 'Días Mora', key: 'diasMora', width: 12 },
-        { header: 'Monto Mora', key: 'montoMora', width: 16 },
-        { header: 'Deuda Total', key: 'deudaTotal', width: 16 },
-        { header: 'Cuotas Vencidas', key: 'cuotasVencidas', width: 15 },
-        { header: 'Ruta', key: 'ruta', width: 18 },
-        { header: 'Cobrador', key: 'cobrador', width: 22 },
-        { header: 'Nivel Riesgo', key: 'riesgo', width: 14 },
-        { header: 'Último Pago', key: 'ultimoPago', width: 14 },
-      ];
+    const totales: MoraTotales = {
+      totalMora: data.totales.totalMora || 0,
+      totalDeuda: data.totales.totalDeuda || 0,
+      totalCasosCriticos: data.totales.totalCasosCriticos || 0,
+      totalRegistros: data.totales.totalRegistros || 0,
+    };
 
-      const headerRow = ws.getRow(1);
-      headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-      headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDC2626' } };
-      headerRow.alignment = { horizontal: 'center' };
-
-      prestamos.forEach((p: any) => {
-        ws.addRow({
-          numero: p.numeroPrestamo,
-          cliente: p.cliente?.nombre || '',
-          documento: p.cliente?.documento || '',
-          diasMora: p.diasMora,
-          montoMora: p.montoMora,
-          deudaTotal: p.montoTotalDeuda,
-          cuotasVencidas: p.cuotasVencidas,
-          ruta: p.ruta,
-          cobrador: p.cobrador,
-          riesgo: p.nivelRiesgo,
-          ultimoPago: p.ultimoPago || 'Sin pagos',
-        });
-      });
-
-      ['montoMora', 'deudaTotal'].forEach(key => {
-        ws.getColumn(key).numFmt = '#,##0';
-      });
-
-      ws.addRow({});
-      const summaryRow = ws.addRow({
-        numero: 'TOTALES',
-        montoMora: data.totales.totalMora,
-        deudaTotal: data.totales.totalDeuda,
-        cuotasVencidas: data.totales.totalRegistros,
-      });
-      summaryRow.font = { bold: true };
-
-      const buffer = await workbook.xlsx.writeBuffer();
-      return {
-        data: Buffer.from(buffer as ArrayBuffer),
-        contentType: 'application/vnd.ms-excel.sheet.macroEnabled.12',
-        filename: `cuentas-mora-${fecha}.xlsm`,
-      };
-    } else if (formato === 'pdf') {
-      const doc = new PDFDocument({ layout: 'landscape', size: 'LETTER', margin: 30 });
-      const buffers: any[] = [];
-      doc.on('data', buffers.push.bind(buffers));
-
-      doc.fontSize(16).font('Helvetica-Bold').text('Créditos del Sur — Cuentas en Mora', { align: 'center' });
-      doc.fontSize(9).font('Helvetica').text(`Generado: ${new Date().toLocaleString('es-CO')}`, { align: 'center' });
-      doc.moveDown(0.5);
-
-      const totales = data.totales;
-      doc.fontSize(8).font('Helvetica-Bold');
-      doc.text(`Total Registros: ${totales.totalRegistros}  |  Mora Acumulada: $${(totales.totalMora || 0).toLocaleString('es-CO')}  |  Deuda Total: $${(totales.totalDeuda || 0).toLocaleString('es-CO')}  |  Casos Críticos: ${totales.totalCasosCriticos}`, { align: 'center' });
-      doc.moveDown(0.5);
-
-      const cols = [
-        { label: 'N° Préstamo', width: 80 },
-        { label: 'Cliente', width: 120 },
-        { label: 'Días Mora', width: 60 },
-        { label: 'Monto Mora', width: 80 },
-        { label: 'Deuda Total', width: 80 },
-        { label: 'Cuotas Venc.', width: 60 },
-        { label: 'Ruta', width: 80 },
-        { label: 'Cobrador', width: 100 },
-        { label: 'Riesgo', width: 60 },
-      ];
-
-      const tableLeft = 30;
-      let y = doc.y + 5;
-      const rowH = 16;
-
-      doc.fontSize(7).font('Helvetica-Bold');
-      doc.rect(tableLeft, y, cols.reduce((s, c) => s + c.width, 0), rowH).fill('#DC2626');
-      let x = tableLeft;
-      cols.forEach(col => {
-        doc.fillColor('white').text(col.label, x + 2, y + 4, { width: col.width - 4, align: 'left' });
-        x += col.width;
-      });
-      y += rowH;
-
-      doc.font('Helvetica').fontSize(7).fillColor('black');
-      prestamos.forEach((p: any, i: number) => {
-        if (y > 560) { doc.addPage(); y = 30; }
-        if (i % 2 === 0) {
-          doc.rect(tableLeft, y, cols.reduce((s, c) => s + c.width, 0), rowH).fill('#FEF2F2');
-          doc.fillColor('black');
-        }
-        x = tableLeft;
-        const rowData = [
-          p.numeroPrestamo || '',
-          (p.cliente?.nombre || '').substring(0, 22),
-          String(p.diasMora || 0),
-          `$${(p.montoMora || 0).toLocaleString('es-CO')}`,
-          `$${(p.montoTotalDeuda || 0).toLocaleString('es-CO')}`,
-          String(p.cuotasVencidas || 0),
-          (p.ruta || '').substring(0, 14),
-          (p.cobrador || '').substring(0, 18),
-          p.nivelRiesgo || '',
-        ];
-        rowData.forEach((val, ci) => {
-          doc.text(val, x + 2, y + 4, { width: cols[ci].width - 4, align: 'left' });
-          x += cols[ci].width;
-        });
-        y += rowH;
-      });
-
-      doc.end();
-      const buffer = await new Promise<Buffer>((resolve) => {
-        doc.on('end', () => resolve(Buffer.concat(buffers)));
-      });
-
-      return {
-        data: buffer,
-        contentType: 'application/pdf',
-        filename: `cuentas-mora-${fecha}.pdf`,
-      };
-    }
+    // 3. Delegamos al template
+    if (formato === 'excel') return generarExcelMora(filas, totales, fecha);
+    if (formato === 'pdf') return generarPDFMora(filas, totales, fecha);
 
     throw new Error(`Formato no soportado: ${formato}`);
   }
-
   async obtenerEstadisticasMora() {
     const [
       totalPrestamosMora,
@@ -756,6 +650,8 @@ export class ReportsService {
       totalVencido,
       totalRegistros: total,
       diasPromedioVencimiento,
+      totalInteresesMora: cuentasVencidas.reduce((s, c: any) => s + (c.interesesMora || 0), 0),
+      totalMontoOriginal: cuentasVencidas.reduce((s, c: any) => s + (c.montoOriginal || 0), 0),
     };
 
     return {
@@ -930,139 +826,37 @@ export class ReportsService {
     formato: 'excel' | 'pdf',
     filtros: CuentasVencidasFiltrosDto,
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
+    // 1. Solo consulta de BD
     const data = await this.obtenerCuentasVencidas(filtros, 1, 10000);
     const cuentas = data.cuentas;
     const fecha = new Date().toISOString().split('T')[0];
 
-    if (formato === 'excel') {
-      const workbook = new ExcelJS.Workbook();
-      const ws = workbook.addWorksheet('Cuentas Vencidas');
+    // 2. Mapeo al tipo del template
+    const filas: VencidasRow[] = cuentas.map((c: any) => ({
+      numeroPrestamo: c.numeroPrestamo || '',
+      cliente: typeof c.cliente === 'string' ? c.cliente : (c.cliente?.nombre || ''),
+      documento: typeof c.cliente === 'object' ? (c.cliente?.documento || '') : '',
+      fechaVencimiento: c.fechaVencimiento || '',
+      diasVencidos: Number(c.diasVencidos || 0),
+      saldoPendiente: Number(c.saldoPendiente || 0),
+      montoOriginal: Number(c.montoOriginal || 0),
+      interesesMora: Number(c.interesesMora || 0),
+      nivelRiesgo: c.nivelRiesgo || '',
+      ruta: c.ruta || '',
+      estado: c.estado || '',
+    }));
 
-      ws.columns = [
-        { header: 'N° Préstamo', key: 'numero', width: 18 },
-        { header: 'Cliente', key: 'cliente', width: 28 },
-        { header: 'Documento', key: 'documento', width: 15 },
-        { header: 'Días Vencido', key: 'diasVencido', width: 14 },
-        { header: 'Monto Vencido', key: 'montoVencido', width: 16 },
-        { header: 'Saldo Pendiente', key: 'saldoPendiente', width: 16 },
-        { header: 'Intereses Mora', key: 'interesesMora', width: 16 },
-        { header: 'Nivel Riesgo', key: 'riesgo', width: 14 },
-        { header: 'Ruta', key: 'ruta', width: 18 },
-      ];
+    const totales: VencidasTotales = {
+      totalVencido: Number(data.totales?.totalVencido || 0),
+      diasPromedioVencimiento: Number(data.totales?.diasPromedioVencimiento || 0),
+      totalRegistros: Number(data.totales?.totalRegistros || 0),
+      totalInteresesMora: Number(data.totales?.totalInteresesMora || 0),
+      totalMontoOriginal: Number(data.totales?.totalMontoOriginal || 0),
+    };
 
-      const headerRow = ws.getRow(1);
-      headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-      headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD97706' } };
-      headerRow.alignment = { horizontal: 'center' };
-
-      cuentas.forEach((c: any) => {
-        ws.addRow({
-          numero: c.numeroPrestamo,
-          cliente: c.cliente?.nombre || '',
-          documento: c.cliente?.documento || '',
-          diasVencido: c.diasVencido,
-          montoVencido: c.montoVencido,
-          saldoPendiente: c.saldoPendiente,
-          interesesMora: c.interesesMora || 0,
-          riesgo: c.nivelRiesgo,
-          ruta: c.ruta || '',
-        });
-      });
-
-      ['montoVencido', 'saldoPendiente', 'interesesMora'].forEach(key => {
-        ws.getColumn(key).numFmt = '#,##0';
-      });
-
-      ws.addRow({});
-      const summaryRow = ws.addRow({
-        numero: 'TOTALES',
-        montoVencido: data.totales.totalVencido,
-        diasVencido: data.totales.diasPromedioVencimiento,
-      });
-      summaryRow.font = { bold: true };
-
-      const buffer = await workbook.xlsx.writeBuffer();
-      return {
-        data: Buffer.from(buffer as ArrayBuffer),
-        contentType: 'application/vnd.ms-excel.sheet.macroEnabled.12',
-        filename: `cuentas-vencidas-${fecha}.xlsm`,
-      };
-    } else if (formato === 'pdf') {
-      const doc = new PDFDocument({ layout: 'landscape', size: 'LETTER', margin: 30 });
-      const buffers: any[] = [];
-      doc.on('data', buffers.push.bind(buffers));
-
-      doc.fontSize(16).font('Helvetica-Bold').text('Créditos del Sur — Cuentas Vencidas', { align: 'center' });
-      doc.fontSize(9).font('Helvetica').text(`Generado: ${new Date().toLocaleString('es-CO')}`, { align: 'center' });
-      doc.moveDown(0.5);
-
-      const totales = data.totales;
-      doc.fontSize(8).font('Helvetica-Bold');
-      doc.text(`Total Registros: ${totales.totalRegistros}  |  Total Vencido: $${(totales.totalVencido || 0).toLocaleString('es-CO')}  |  Días Promedio: ${totales.diasPromedioVencimiento}`, { align: 'center' });
-      doc.moveDown(0.5);
-
-      const cols = [
-        { label: 'N° Préstamo', width: 85 },
-        { label: 'Cliente', width: 130 },
-        { label: 'Documento', width: 80 },
-        { label: 'Días Venc.', width: 60 },
-        { label: 'Monto Vencido', width: 85 },
-        { label: 'Saldo Pend.', width: 85 },
-        { label: 'Int. Mora', width: 75 },
-        { label: 'Riesgo', width: 60 },
-        { label: 'Ruta', width: 80 },
-      ];
-
-      const tableLeft = 30;
-      let y = doc.y + 5;
-      const rowH = 16;
-
-      doc.fontSize(7).font('Helvetica-Bold');
-      doc.rect(tableLeft, y, cols.reduce((s, c) => s + c.width, 0), rowH).fill('#D97706');
-      let x = tableLeft;
-      cols.forEach(col => {
-        doc.fillColor('white').text(col.label, x + 2, y + 4, { width: col.width - 4, align: 'left' });
-        x += col.width;
-      });
-      y += rowH;
-
-      doc.font('Helvetica').fontSize(7).fillColor('black');
-      cuentas.forEach((c: any, i: number) => {
-        if (y > 560) { doc.addPage(); y = 30; }
-        if (i % 2 === 0) {
-          doc.rect(tableLeft, y, cols.reduce((s, cc) => s + cc.width, 0), rowH).fill('#FFFBEB');
-          doc.fillColor('black');
-        }
-        x = tableLeft;
-        const rowData = [
-          c.numeroPrestamo || '',
-          (c.cliente?.nombre || '').substring(0, 24),
-          c.cliente?.documento || '',
-          String(c.diasVencido || 0),
-          `$${(c.montoVencido || 0).toLocaleString('es-CO')}`,
-          `$${(c.saldoPendiente || 0).toLocaleString('es-CO')}`,
-          `$${(c.interesesMora || 0).toLocaleString('es-CO')}`,
-          c.nivelRiesgo || '',
-          (c.ruta || '').substring(0, 14),
-        ];
-        rowData.forEach((val, ci) => {
-          doc.text(val, x + 2, y + 4, { width: cols[ci].width - 4, align: 'left' });
-          x += cols[ci].width;
-        });
-        y += rowH;
-      });
-
-      doc.end();
-      const buffer = await new Promise<Buffer>((resolve) => {
-        doc.on('end', () => resolve(Buffer.concat(buffers)));
-      });
-
-      return {
-        data: buffer,
-        contentType: 'application/pdf',
-        filename: `cuentas-vencidas-${fecha}.pdf`,
-      };
-    }
+    // 3. Delegamos al template
+    if (formato === 'excel') return generarExcelVencidas(filas, totales, fecha);
+    if (formato === 'pdf') return generarPDFVencidas(filas, totales, fecha);
 
     throw new Error(`Formato no soportado: ${formato}`);
   }
@@ -1477,264 +1271,56 @@ export class ReportsService {
     filters: GetOperationalReportDto,
     format: 'excel' | 'pdf',
   ): Promise<any> {
+    // 1. Solo consulta de BD
     const reportData = await this.getOperationalReport(filters);
+    const fecha = new Date().toISOString().split('T')[0];
 
-    if (format === 'excel') {
-      // Crear workbook de Excel
-      const workbook = new ExcelJS.Workbook();
-      const worksheet = workbook.addWorksheet('Reporte Operativo');
+    // 2. Mapeo al tipo del template
+    const filas: OperativoRow[] = (reportData.rendimientoRutas || []).map((r: any) => ({
+      ruta: r.ruta || '',
+      cobrador: r.cobrador || '',
+      meta: Number(r.meta || 0),
+      recaudado: Number(r.recaudado || 0),
+      eficiencia: Number(r.eficiencia || 0),
+      nuevosPrestamos: Number(r.nuevosPrestamos || 0),
+      nuevosClientes: Number(r.nuevosClientes || 0),
+    }));
 
-      // Definir columnas
-      worksheet.columns = [
-        { header: 'Ruta', key: 'ruta', width: 20 },
-        { header: 'Cobrador', key: 'cobrador', width: 20 },
-        { header: 'Meta', key: 'meta', width: 15 },
-        { header: 'Recaudado', key: 'recaudado', width: 15 },
-        { header: 'Eficiencia %', key: 'eficiencia', width: 15 },
-        { header: 'Préstamos Nuevos', key: 'nuevosPrestamos', width: 15 },
-        { header: 'Clientes Nuevos', key: 'nuevosClientes', width: 15 },
-      ];
+    const resumen: OperativoResumen = {
+      totalRecaudo: Number(reportData.totalRecaudo || 0),
+      totalMeta: Number(reportData.totalMeta || 0),
+      porcentajeGlobal: Number(reportData.porcentajeGlobal || 0),
+      totalPrestamosNuevos: Number(reportData.totalPrestamosNuevos || 0),
+      totalAfiliaciones: Number(reportData.totalAfiliaciones || 0),
+      efectividadPromedio: Number(reportData.efectividadPromedio || 0),
+      periodo: String(reportData.periodo || filters.period || ''),
+      fechaInicio: String(reportData.fechaInicio || filters.startDate || ''),
+      fechaFin: String(reportData.fechaFin || filters.endDate || ''),
+    };
 
-      // Agregar datos
-      reportData.rendimientoRutas.forEach((ruta: any) => {
-        worksheet.addRow({
-          ruta: ruta.ruta,
-          cobrador: ruta.cobrador,
-          meta: ruta.meta,
-          recaudado: ruta.recaudado,
-          eficiencia: ruta.eficiencia,
-          nuevosPrestamos: ruta.nuevosPrestamos,
-          nuevosClientes: ruta.nuevosClientes,
-        });
-      });
-
-      // Agregar fila de totales
-      worksheet.addRow({});
-      worksheet.addRow({
-        ruta: 'TOTALES',
-        meta: reportData.totalMeta,
-        recaudado: reportData.totalRecaudo,
-        eficiencia: reportData.porcentajeGlobal,
-        nuevosPrestamos: reportData.totalPrestamosNuevos,
-        nuevosClientes: reportData.totalAfiliaciones,
-      });
-
-      // Generar buffer
-      const buffer = await workbook.xlsx.writeBuffer();
-
-      return {
-        data: buffer,
-        contentType:
-          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        filename: `reporte-operativo-${filters.period}-${new Date().toISOString().split('T')[0]}.xlsx`,
-      };
-    } else if (format === 'pdf') {
-      // Crear documento PDF
-      const doc = new PDFDocument();
-      const buffers: any[] = [];
-
-      doc.on('data', buffers.push.bind(buffers));
-
-      // Contenido del PDF
-      doc.fontSize(16).text('Reporte Operativo', { align: 'center' });
-      doc.moveDown();
-      doc.fontSize(12).text(`Período: ${filters.period}`);
-      doc.text(`Fecha: ${new Date().toLocaleDateString()}`);
-      doc.moveDown();
-
-      // Tabla de datos
-      const tableTop = 150;
-      const tableLeft = 50;
-      const rowHeight = 30;
-      const colWidth = 100;
-
-      // Encabezados
-      const headers = [
-        'Ruta',
-        'Cobrador',
-        'Meta',
-        'Recaudado',
-        'Eficiencia',
-        'Préstamos',
-        'Clientes',
-      ];
-      headers.forEach((header, i) => {
-        doc.text(header, tableLeft + i * colWidth, tableTop, {
-          width: colWidth,
-          align: 'center',
-        });
-      });
-
-      // Datos
-      reportData.rendimientoRutas.forEach((ruta: any, rowIndex: number) => {
-        const y = tableTop + (rowIndex + 1) * rowHeight;
-        doc.text(ruta.ruta, tableLeft, y, { width: colWidth });
-        doc.text(ruta.cobrador, tableLeft + colWidth, y, { width: colWidth });
-        doc.text(ruta.meta.toString(), tableLeft + 2 * colWidth, y, {
-          width: colWidth,
-          align: 'right',
-        });
-        doc.text(ruta.recaudado.toString(), tableLeft + 3 * colWidth, y, {
-          width: colWidth,
-          align: 'right',
-        });
-        doc.text(`${ruta.eficiencia}%`, tableLeft + 4 * colWidth, y, {
-          width: colWidth,
-          align: 'center',
-        });
-        doc.text(ruta.nuevosPrestamos.toString(), tableLeft + 5 * colWidth, y, {
-          width: colWidth,
-          align: 'center',
-        });
-        doc.text(ruta.nuevosClientes.toString(), tableLeft + 6 * colWidth, y, {
-          width: colWidth,
-          align: 'center',
-        });
-      });
-
-      doc.end();
-
-      // Esperar a que se complete la generación del PDF
-      const buffer = await new Promise<Buffer>((resolve) => {
-        doc.on('end', () => {
-          const pdfBuffer = Buffer.concat(buffers);
-          resolve(pdfBuffer);
-        });
-      });
-
-      return {
-        data: buffer,
-        contentType: 'application/pdf',
-        filename: `reporte-operativo-${filters.period}-${new Date().toISOString().split('T')[0]}.pdf`,
-      };
-    }
+    // 3. Delegamos al template
+    if (format === 'excel') return generarExcelOperativo(filas, resumen, fecha);
+    if (format === 'pdf') return generarPDFOperativo(filas, resumen, fecha);
 
     throw new Error(`Formato no soportado: ${format}`);
   }
-
   async exportFinancialReport(
     startDate: Date,
     endDate: Date,
     format: 'excel' | 'pdf',
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
+    // 1. Solo consulta de BD
     const [summary, monthly, expenses] = await Promise.all([
       this.getFinancialSummary(startDate, endDate),
       this.getMonthlyEvolution(startDate.getFullYear()),
       this.getExpenseDistribution(startDate, endDate),
     ]);
     const fecha = new Date().toISOString().split('T')[0];
-    const totalGastos = expenses.reduce((s, e) => s + e.monto, 0);
 
-    if (format === 'excel') {
-      const workbook = new ExcelJS.Workbook();
+    // 2. Delegamos al template (datos ya procesados por los mÃ©todos del servicio)
+    if (format === 'excel') return generarExcelFinanciero(summary, monthly, expenses, fecha);
+    if (format === 'pdf') return generarPDFFinanciero(summary, monthly, expenses, fecha);
 
-      // Hoja 1: Resumen
-      const ws1 = workbook.addWorksheet('Resumen Financiero');
-      ws1.columns = [
-        { header: 'Concepto', key: 'concepto', width: 25 },
-        { header: 'Monto', key: 'monto', width: 20 },
-      ] as any;
-      const h1 = ws1.getRow(1);
-      h1.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-      h1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF059669' } };
-      h1.alignment = { horizontal: 'center' };
-      ws1.addRow({ concepto: 'Ingresos', monto: summary.ingresos });
-      ws1.addRow({ concepto: 'Egresos', monto: summary.egresos });
-      ws1.addRow({ concepto: 'Utilidad', monto: summary.utilidad });
-      ws1.addRow({ concepto: 'Margen (%)', monto: summary.margen });
-      ws1.getColumn('monto').numFmt = '#,##0';
-
-      // Hoja 2: Evolución Mensual
-      const ws2 = workbook.addWorksheet('Evolución Mensual');
-      ws2.columns = [
-        { header: 'Mes', key: 'mes', width: 15 },
-        { header: 'Ingresos', key: 'ingresos', width: 18 },
-        { header: 'Egresos', key: 'egresos', width: 18 },
-        { header: 'Utilidad', key: 'utilidad', width: 18 },
-      ] as any;
-      const h2 = ws2.getRow(1);
-      h2.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-      h2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF059669' } };
-      h2.alignment = { horizontal: 'center' };
-      monthly.forEach((m: any) => ws2.addRow(m));
-      ['ingresos', 'egresos', 'utilidad'].forEach(k => { ws2.getColumn(k).numFmt = '#,##0'; });
-
-      // Hoja 3: Distribución de Gastos
-      const ws3 = workbook.addWorksheet('Distribución Gastos');
-      ws3.columns = [
-        { header: 'Categoría', key: 'categoria', width: 25 },
-        { header: 'Monto', key: 'monto', width: 18 },
-        { header: 'Porcentaje', key: 'porcentaje', width: 15 },
-      ] as any;
-      const h3 = ws3.getRow(1);
-      h3.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-      h3.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF059669' } };
-      h3.alignment = { horizontal: 'center' };
-      expenses.forEach((e: any) => {
-        ws3.addRow({ categoria: e.categoria, monto: e.monto, porcentaje: totalGastos > 0 ? `${((e.monto / totalGastos) * 100).toFixed(1)}%` : '0%' });
-      });
-      ws3.getColumn('monto').numFmt = '#,##0';
-
-      const buffer = await workbook.xlsx.writeBuffer();
-      return {
-        data: Buffer.from(buffer as ArrayBuffer),
-        contentType: 'application/vnd.ms-excel.sheet.macroEnabled.12',
-        filename: `reporte-financiero-${fecha}.xlsm`,
-      };
-    } else if (format === 'pdf') {
-      const doc = new PDFDocument({ layout: 'portrait', size: 'LETTER', margin: 40 });
-      const buffers: any[] = [];
-      doc.on('data', buffers.push.bind(buffers));
-
-      doc.fontSize(18).font('Helvetica-Bold').text('Créditos del Sur — Reporte Financiero', { align: 'center' });
-      doc.fontSize(9).font('Helvetica').text(`Generado: ${new Date().toLocaleString('es-CO')}`, { align: 'center' });
-      doc.moveDown(1);
-
-      // Resumen
-      doc.fontSize(12).font('Helvetica-Bold').text('Resumen Financiero');
-      doc.moveDown(0.3);
-      doc.fontSize(10).font('Helvetica');
-      doc.text(`Ingresos:  $${summary.ingresos.toLocaleString('es-CO')}`);
-      doc.text(`Egresos:   $${summary.egresos.toLocaleString('es-CO')}`);
-      doc.text(`Utilidad:  $${summary.utilidad.toLocaleString('es-CO')}`);
-      doc.text(`Margen:    ${summary.margen}%`);
-      doc.moveDown(1);
-
-      // Evolución Mensual
-      doc.fontSize(12).font('Helvetica-Bold').text('Evolución Mensual');
-      doc.moveDown(0.3);
-      const mCols = [{ l: 'Mes', w: 80 }, { l: 'Ingresos', w: 120 }, { l: 'Egresos', w: 120 }, { l: 'Utilidad', w: 120 }];
-      let y = doc.y + 5;
-      doc.fontSize(8).font('Helvetica-Bold');
-      doc.rect(40, y, mCols.reduce((s, c) => s + c.w, 0), 16).fill('#059669');
-      let x = 40;
-      mCols.forEach(c => { doc.fillColor('white').text(c.l, x + 2, y + 4, { width: c.w - 4 }); x += c.w; });
-      y += 16;
-      doc.font('Helvetica').fontSize(8).fillColor('black');
-      monthly.forEach((m: any, i: number) => {
-        if (i % 2 === 0) { doc.rect(40, y, mCols.reduce((s, c) => s + c.w, 0), 16).fill('#F0FDF4'); doc.fillColor('black'); }
-        x = 40;
-        [m.mes, `$${m.ingresos.toLocaleString('es-CO')}`, `$${m.egresos.toLocaleString('es-CO')}`, `$${m.utilidad.toLocaleString('es-CO')}`].forEach((v, ci) => {
-          doc.text(v, x + 2, y + 4, { width: mCols[ci].w - 4 }); x += mCols[ci].w;
-        });
-        y += 16;
-      });
-      doc.moveDown(2);
-
-      // Distribución de Gastos
-      doc.y = y + 20;
-      doc.fontSize(12).font('Helvetica-Bold').fillColor('black').text('Distribución de Gastos');
-      doc.moveDown(0.3);
-      doc.fontSize(9).font('Helvetica');
-      expenses.forEach((e: any) => {
-        const pct = totalGastos > 0 ? ((e.monto / totalGastos) * 100).toFixed(1) : '0';
-        doc.text(`${e.categoria}: $${e.monto.toLocaleString('es-CO')} (${pct}%)`);
-      });
-
-      doc.end();
-      const buffer = await new Promise<Buffer>((resolve) => { doc.on('end', () => resolve(Buffer.concat(buffers))); });
-      return { data: buffer, contentType: 'application/pdf', filename: `reporte-financiero-${fecha}.pdf` };
-    }
     throw new Error(`Formato no soportado: ${format}`);
   }
 }

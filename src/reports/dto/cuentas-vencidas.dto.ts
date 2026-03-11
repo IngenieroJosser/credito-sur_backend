@@ -89,17 +89,25 @@ export class CuentasVencidasFiltrosDto {
 }
 
 export class TotalesVencidasDto {
-  @ApiProperty()
+  @ApiProperty({ description: 'Suma total del saldo pendiente de cuentas vencidas' })
   @IsNumber()
   totalVencido: number;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Total de registros de cuentas vencidas' })
   @IsNumber()
   totalRegistros: number;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Promedio de días vencidos entre todos los registros' })
   @IsNumber()
   diasPromedioVencimiento: number;
+
+  @ApiProperty({ description: 'Total acumulado de intereses de mora generados' })
+  @IsNumber()
+  totalInteresesMora: number;
+
+  @ApiProperty({ description: 'Monto total original prestado en cuentas vencidas' })
+  @IsNumber()
+  totalMontoOriginal: number;
 }
 
 export class DecisionCastigoDto {

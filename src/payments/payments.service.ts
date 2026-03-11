@@ -17,6 +17,8 @@ import { NotificacionesService } from '../notificaciones/notificaciones.service'
 import { AuditService } from '../audit/audit.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { PagoConRelacionesExport } from '../common/types';
+import { generarExcelPagos, generarPDFPagos, PagoRow, PagosTotales } from '../templates/exports/historial-pagos.template';
+
 
 @Injectable()
 export class PaymentsService {
@@ -440,14 +442,12 @@ export class PaymentsService {
     filters: { startDate?: string; endDate?: string; rutaId?: string },
     format: 'excel' | 'pdf',
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
-    const ExcelJS = await import('exceljs');
-    const PDFDocument = await import('pdfkit');
-
+    // 1. Solo consulta de BD
     const where: Prisma.PagoWhereInput = {};
     if (filters.startDate || filters.endDate) {
       where.fechaPago = {};
-      if (filters.startDate) where.fechaPago.gte = new Date(filters.startDate);
-      if (filters.endDate) where.fechaPago.lte = new Date(filters.endDate);
+      if (filters.startDate) (where.fechaPago as any).gte = new Date(filters.startDate);
+      if (filters.endDate) (where.fechaPago as any).lte = new Date(filters.endDate);
     }
 
     const pagos = await this.prisma.pago.findMany({
@@ -462,110 +462,29 @@ export class PaymentsService {
     });
 
     const fecha = new Date().toISOString().split('T')[0];
-    const totalRecaudado = pagos.reduce((s, p) => s + Number(p.montoTotal), 0);
 
-    if (format === 'excel') {
-      const workbook = new ExcelJS.Workbook();
-      const ws = workbook.addWorksheet('Historial de Pagos');
-      ws.columns = [
-        { header: 'Fecha', key: 'fecha', width: 18 },
-        { header: 'N° Pago', key: 'numeroPago', width: 14 },
-        { header: 'Cliente', key: 'cliente', width: 28 },
-        { header: 'Documento', key: 'documento', width: 15 },
-        { header: 'N° Préstamo', key: 'numeroPrestamo', width: 18 },
-        { header: 'Monto', key: 'monto', width: 16 },
-        { header: 'Capital', key: 'capital', width: 16 },
-        { header: 'Interés', key: 'interes', width: 16 },
-        { header: 'Método', key: 'metodo', width: 14 },
-        { header: 'Cobrador', key: 'cobrador', width: 22 },
-      ] as { header: string; key: string; width: number }[];
-      const headerRow = ws.getRow(1);
-      headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-      headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF7C3AED' } };
-      headerRow.alignment = { horizontal: 'center' };
+    // 2. Mapeo al tipo del template
+    const filas: PagoRow[] = pagos.map((p: PagoConRelacionesExport) => ({
+      fecha: p.fechaPago,
+      numeroPago: p.numeroPago || '',
+      cliente: p.cliente ? `${p.cliente.nombres} ${p.cliente.apellidos}` : '',
+      documento: p.cliente?.dni || '',
+      numeroPrestamo: p.prestamo?.numeroPrestamo || '',
+      montoTotal: Number(p.montoTotal),
+      metodoPago: p.metodoPago || '',
+      cobrador: p.cobrador ? `${p.cobrador.nombres} ${p.cobrador.apellidos}` : '',
+    }));
 
-      pagos.forEach((p: PagoConRelacionesExport) => {
-        ws.addRow({
-          fecha: p.fechaPago ? new Date(p.fechaPago).toLocaleDateString('es-CO') : '',
-          numeroPago: p.numeroPago || '',
-          cliente: p.cliente ? `${p.cliente.nombres} ${p.cliente.apellidos}` : '',
-          documento: p.cliente?.dni || '',
-          numeroPrestamo: p.prestamo?.numeroPrestamo || '',
-          monto: Number(p.montoTotal),
-          capital: 0, // El campo calculado no está en el schema; viene de la descomposición al momento del pago
-          interes: 0,
-          metodo: p.metodoPago || '',
-          cobrador: p.cobrador ? `${p.cobrador.nombres} ${p.cobrador.apellidos}` : '',
-        });
-      });
-      ['monto', 'capital', 'interes'].forEach(k => { ws.getColumn(k).numFmt = '#,##0'; });
-      ws.addRow({});
-      const sr = ws.addRow({ fecha: 'TOTALES', monto: totalRecaudado, numeroPago: `${pagos.length} pagos` });
-      sr.font = { bold: true };
+    const totales: PagosTotales = {
+      totalRecaudado: filas.reduce((s, p) => s + p.montoTotal, 0),
+      totalPagos: filas.length,
+    };
 
-      const buffer = await workbook.xlsx.writeBuffer();
-      return {
-        data: Buffer.from(buffer as ArrayBuffer),
-        contentType: 'application/vnd.ms-excel.sheet.macroEnabled.12',
-        filename: `historial-pagos-${fecha}.xlsm`,
-      };
-    } else if (format === 'pdf') {
-      const doc = new PDFDocument({ layout: 'landscape', size: 'LETTER', margin: 30 });
-      const buffers: Buffer[] = [];
-      doc.on('data', buffers.push.bind(buffers));
+    // 3. Delegamos al template
+    if (format === 'excel') return generarExcelPagos(filas, totales, fecha);
+    if (format === 'pdf') return generarPDFPagos(filas, totales, fecha);
 
-      doc.fontSize(16).font('Helvetica-Bold').text('Créditos del Sur — Historial de Pagos', { align: 'center' });
-      doc.fontSize(9).font('Helvetica').text(`Generado: ${new Date().toLocaleString('es-CO')}`, { align: 'center' });
-      doc.moveDown(0.5);
-      doc.fontSize(8).font('Helvetica-Bold');
-      doc.text(`Total Pagos: ${pagos.length}  |  Total Recaudado: $${totalRecaudado.toLocaleString('es-CO')}`, { align: 'center' });
-      doc.moveDown(0.5);
-
-      const cols = [
-        { label: 'Fecha', width: 75 },
-        { label: 'N° Pago', width: 65 },
-        { label: 'Cliente', width: 120 },
-        { label: 'N° Préstamo', width: 80 },
-        { label: 'Monto', width: 80 },
-        { label: 'Capital', width: 75 },
-        { label: 'Interés', width: 70 },
-        { label: 'Método', width: 65 },
-        { label: 'Cobrador', width: 100 },
-      ];
-      const tableLeft = 30;
-      let y = doc.y + 5;
-      const rowH = 16;
-
-      doc.fontSize(7).font('Helvetica-Bold');
-      doc.rect(tableLeft, y, cols.reduce((s, c) => s + c.width, 0), rowH).fill('#7C3AED');
-      let x = tableLeft;
-      cols.forEach(col => { doc.fillColor('white').text(col.label, x + 2, y + 4, { width: col.width - 4 }); x += col.width; });
-      y += rowH;
-
-      doc.font('Helvetica').fontSize(7).fillColor('black');
-      pagos.forEach((p: PagoConRelacionesExport, i: number) => {
-        if (y > 560) { doc.addPage(); y = 30; }
-        if (i % 2 === 0) { doc.rect(tableLeft, y, cols.reduce((s, c) => s + c.width, 0), rowH).fill('#F5F3FF'); doc.fillColor('black'); }
-        x = tableLeft;
-        const rowData = [
-          p.fechaPago ? new Date(p.fechaPago).toLocaleDateString('es-CO') : '',
-          p.numeroPago || '',
-          p.cliente ? `${p.cliente.nombres} ${p.cliente.apellidos}`.substring(0, 22) : '',
-          p.prestamo?.numeroPrestamo || '',
-          `$${Number(p.montoTotal).toLocaleString('es-CO')}`,
-          `$${Number(0).toLocaleString('es-CO')}`, // campo calculado no está en schema
-          `$${Number(0).toLocaleString('es-CO')}`,
-          p.metodoPago || '',
-          p.cobrador ? `${p.cobrador.nombres} ${p.cobrador.apellidos}`.substring(0, 18) : '',
-        ];
-        rowData.forEach((val, ci) => { doc.text(val, x + 2, y + 4, { width: cols[ci].width - 4 }); x += cols[ci].width; });
-        y += rowH;
-      });
-
-      doc.end();
-      const buffer = await new Promise<Buffer>((resolve) => { doc.on('end', () => resolve(Buffer.concat(buffers))); });
-      return { data: buffer, contentType: 'application/pdf', filename: `historial-pagos-${fecha}.pdf` };
-    }
     throw new BadRequestException(`Formato no soportado: ${format}`);
   }
 }
+
