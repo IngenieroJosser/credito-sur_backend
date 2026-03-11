@@ -56,8 +56,10 @@ export interface CarteraTotales {
 }
 
 // ─── Colores corporativos ─────────────────────────────────────────────────────
-const AZUL       = 'FF08557F';
+const AZUL       = 'FF004F7B';
 const AZUL_CLARO = 'FFF0F9FF';
+const NARANJA    = 'FFF37920';
+const NARANJA_CLARO = 'FFFFEDD5';
 const GRIS_OSC   = 'FF1E293B';
 
 function colHdr(cell: ExcelJS.Cell): void {
@@ -132,8 +134,8 @@ export async function generarExcelCartera(
   ws.mergeCells(`A2:${lastColLetter}2`);
   const c2 = ws.getCell('A2');
   c2.value = 'LISTADO DE CRÉDITOS';
-  c2.font = { bold: true, size: 12, color: { argb: AZUL } };
-  c2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: AZUL_CLARO } };
+  c2.font = { bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
+  c2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NARANJA } };
   c2.alignment = { horizontal: 'center', vertical: 'middle' };
   ws.getRow(2).height = 22;
 
@@ -168,8 +170,8 @@ export async function generarExcelCartera(
     lc.font = { bold: true, size: 8, color: { argb: 'FF64748B' } };
     vc.value = kpi.val;
     vc.numFmt = kpi.fmt;
-    vc.font = { bold: true, size: 9, color: { argb: AZUL } };
-    vc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: AZUL_CLARO } };
+    vc.font = { bold: true, size: 9, color: { argb: 'FF000000' } };
+    vc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NARANJA_CLARO } };
     vc.alignment = { horizontal: 'right', vertical: 'middle' };
   });
   ws.getRow(4).height = 18;
@@ -259,6 +261,37 @@ export async function generarExcelCartera(
     if ((fila.diasVencidos || 0) > 0) {
       row.getCell(20).font = { bold: true, color: { argb: 'FFDC2626' } };
     }
+
+    // Fórmulas recomendadas
+    if ((fila.montoTotal || 0) > 0) {
+      row.getCell(14).value = { formula: `H${row.number}/F${row.number}` };
+    }
+  });
+
+  const endRow = 5 + filas.length;
+  // Fila de suma (fórmulas)
+  const sumRow = ws.addRow([
+    'TOTALES', '', '', '', '',
+    { formula: `SUM(F6:F${endRow})` }, // Capital Orig
+    { formula: `SUM(G6:G${endRow})` }, // Capital Actual
+    { formula: `SUM(H6:H${endRow})` }, // Capital Pagado
+    { formula: `SUM(I6:I${endRow})` }, // Interes Recogido
+    { formula: `SUM(J6:J${endRow})` }, // Mora
+    { formula: `SUM(K6:K${endRow})` }, // Recaudo
+    { formula: `SUM(L6:L${endRow})` }, // Total adeudado
+  ]);
+  sumRow.height = 20;
+  ws.mergeCells(`A${sumRow.number}:E${sumRow.number}`);
+  const stCell = sumRow.getCell(1);
+  stCell.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+  stCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NARANJA } };
+  stCell.alignment = { horizontal: 'right', vertical: 'middle' };
+  
+  [6, 7, 8, 9, 10, 11, 12].forEach(c => {
+    sumRow.getCell(c).numFmt = '"$"#,##0';
+    sumRow.getCell(c).font = { bold: true, color: { argb: 'FF000000' } };
+    sumRow.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NARANJA_CLARO } };
+    sumRow.getCell(c).alignment = { horizontal: 'right', vertical: 'middle' };
   });
 
   // Fila totales
@@ -367,7 +400,25 @@ export async function generarPDFCartera(
   const buffers: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
 
-  const BLUE = '#08557F';
+  const BLUE = '#004F7B';
+  const ORANGE = '#F37920';
+
+  const fs = require('fs');
+  const path = require('path');
+
+  const drawWatermark = () => {
+    try {
+      const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
+      const pDev = path.join(process.cwd(), 'src/assets/logo.png');
+      const logoPath = fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
+      if (logoPath) {
+        doc.save();
+        doc.opacity(0.08); // Opacidad muy sutil y elegante
+        doc.image(logoPath, (doc.page.width - 300) / 2, (doc.page.height - 300) / 2, { width: 300 });
+        doc.restore();
+      }
+    } catch(e) {}
+  };
 
   const drawPageHeader = (): number => {
     doc.rect(0, 0, doc.page.width, 50).fill(BLUE);
@@ -420,6 +471,7 @@ export async function generarPDFCartera(
     return y + 18;
   };
 
+  drawWatermark();
   let y = drawPageHeader();
   y = drawTableH(y);
   doc.font('Helvetica').fontSize(7);
@@ -432,6 +484,7 @@ export async function generarPDFCartera(
   filas.forEach((fila, i) => {
     if (y > 520) {
       doc.addPage();
+      drawWatermark();
       y = drawPageHeader();
       y = drawTableH(y);
       doc.font('Helvetica').fontSize(7);

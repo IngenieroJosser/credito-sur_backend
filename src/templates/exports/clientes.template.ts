@@ -34,11 +34,14 @@ const COP = (n: number) =>
   new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(n);
 
 const RISGO_COLOR: Record<string, string> = {
-  VERDE: 'FF16a34a',
-  AMARILLO: 'FFca8a04',
   ROJO: 'FFdc2626',
+  AMARILLO: 'FFeab308',
+  VERDE: 'FF22c55e',
   LISTA_NEGRA: 'FF1e293b',
 };
+
+const AZUL_OSCURO = 'FF004F7B';
+const NARANJA = 'FFF37920';
 
 // ─── Generador Excel ──────────────────────────────────────────────────────────
 
@@ -84,6 +87,13 @@ export async function generarExcelClientes(
   subRow.font = { italic: true, size: 9, color: { argb: 'FF64748B' } };
   ws.mergeCells('A2:N2');
 
+  const c2 = ws.getCell('A2');
+  c2.value = 'LISTADO DE CLIENTES';
+  c2.font = { bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
+  c2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NARANJA } };
+  c2.alignment = { horizontal: 'center', vertical: 'middle' };
+  ws.mergeCells('A2:N2'); // Re-merge after setting value to ensure it spans
+
   ws.addRow([]);
 
   // Encabezados
@@ -92,7 +102,7 @@ export async function generarExcelClientes(
     const cell = headerRow.getCell(i + 1);
     cell.value = col.header;
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF08557f' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: AZUL_OSCURO } };
     cell.alignment = { horizontal: 'center', vertical: 'middle' };
     cell.border = {
       bottom: { style: 'thin', color: { argb: 'FF0369a1' } },
@@ -114,11 +124,15 @@ export async function generarExcelClientes(
       nivelRiesgo: fila.nivelRiesgo,
       estadoAprobacion: fila.estadoAprobacion?.replace(/_/g, ' '),
       prestamosActivos: fila.prestamosActivos,
-      montoTotal: COP(fila.montoTotal),
-      montoMora: COP(fila.montoMora),
+      montoTotal: fila.montoTotal, // Keep as number for formula
+      montoMora: fila.montoMora, // Keep as number for formula
       rutaNombre: fila.rutaNombre || 'Sin ruta',
       creadoEn: fila.creadoEn ? new Date(fila.creadoEn).toLocaleDateString('es-CO') : '',
     });
+
+    // Format currency columns
+    row.getCell(11).numFmt = '"$"#,##0';
+    row.getCell(12).numFmt = '"$"#,##0';
 
     // Fila cebra
     if (idx % 2 === 1) {
@@ -142,14 +156,29 @@ export async function generarExcelClientes(
 
   // Fila total
   ws.addRow([]);
-  const totalRow = ws.addRow({
-    codigo: `TOTAL: ${filas.length} clientes`,
-    prestamosActivos: filas.reduce((s, f) => s + f.prestamosActivos, 0),
-    montoTotal: COP(filas.reduce((s, f) => s + f.montoTotal, 0)),
-    montoMora: COP(filas.reduce((s, f) => s + f.montoMora, 0)),
+  const sumRow = ws.addRow([
+    'TOTALES', '', '', '', '', '', '',
+    { formula: `SUM(K5:K${4 + filas.length})` }, // K column for montoTotal
+    { formula: `SUM(L5:L${4 + filas.length})` }, // L column for montoMora
+  ]);
+  sumRow.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+  const mergeCell = sumRow.getCell(1);
+  sumRow.eachCell({ includeEmpty: true }, (c, cn) => {
+    if (cn <= 7) {
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NARANJA } };
+      c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    }
   });
-  totalRow.font = { bold: true };
-  totalRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0F2FE' } };
+  ws.mergeCells(`A${sumRow.number}:G${sumRow.number}`);
+  mergeCell.alignment = { horizontal: 'right', vertical: 'middle' };
+
+  [8, 9].forEach(c => { // These indices correspond to the formula columns (K and L)
+    const sc = sumRow.getCell(c);
+    sc.numFmt = '"$"#,##0';
+    sc.font = { bold: true, size: 10, color: { argb: 'FF000000' } };
+    sc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFEDD5' } };
+    sc.alignment = { horizontal: 'right', vertical: 'middle' };
+  });
 
   const buffer = await workbook.xlsx.writeBuffer();
   return {
@@ -169,15 +198,36 @@ export async function generarPDFClientes(
   const buffers: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
 
-  // Encabezado
-  doc.fontSize(16).font('Helvetica-Bold').fillColor('#08557f')
-    .text('Créditos del Sur — Listado de Clientes', { align: 'center' });
-  doc.fontSize(9).font('Helvetica').fillColor('#64748b')
-    .text(
-      `Generado: ${new Date().toLocaleString('es-CO')}  |  Total clientes: ${filas.length}`,
-      { align: 'center' },
-    );
-  doc.moveDown(0.5);
+  const BLUE = '#004F7B';
+  const AZUL_CLARO = '#F0F9FF';
+  const NARANJA = '#F37920';
+
+  const fs = require('fs');
+  const path = require('path');
+
+  const drawWatermark = () => {
+    try {
+      const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
+      const pDev = path.join(process.cwd(), 'src/assets/logo.png');
+      const logoPath = fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
+      if (logoPath) {
+        doc.save();
+        doc.opacity(0.08);
+        doc.image(logoPath, (doc.page.width - 300) / 2, (doc.page.height - 300) / 2, { width: 300 });
+        doc.restore();
+      }
+    } catch(e) {}
+  };
+
+  // Encabezado institucional
+  doc.rect(0, 0, doc.page.width, 50).fill(BLUE);
+  doc.fontSize(16).font('Helvetica-Bold').fillColor('white').text('CRÉDITOS DEL SUR', 30, 10);
+  doc.fontSize(10).font('Helvetica').fillColor('white').text('LISTADO DE CLIENTES', 30, 30);
+  doc.fontSize(8).fillColor('white')
+    .text(`Fecha: ${fecha}   |   Generado: ${new Date().toLocaleString('es-CO')}`,
+      0, 36, { align: 'right', width: doc.page.width - 30 });
+      
+  doc.moveDown(2);
 
   const cols = [
     { label: 'Código', width: 55 },
@@ -199,21 +249,23 @@ export async function generarPDFClientes(
 
   const drawHeader = () => {
     doc.fontSize(7).font('Helvetica-Bold');
-    doc.rect(tableLeft, y, tableWidth, rowH).fill('#08557f');
+    doc.rect(tableLeft, y, tableWidth, rowH).fill(BLUE);
     let x = tableLeft;
     cols.forEach(col => {
-      doc.fillColor('white').text(col.label, x + 2, y + 4, { width: col.width - 4 });
+      doc.fillColor('white').text(col.label, x + 2, y + 4, { width: col.width - 4, align: 'center' });
       x += col.width;
     });
     return y + rowH;
   };
 
+  drawWatermark();
   y = drawHeader();
   doc.font('Helvetica').fontSize(7).fillColor('black');
 
   filas.forEach((fila, i) => {
     if (y > 540) {
       doc.addPage();
+      drawWatermark();
       y = 30;
       y = drawHeader();
       doc.font('Helvetica').fontSize(7).fillColor('black');
@@ -246,7 +298,7 @@ export async function generarPDFClientes(
 
   // Totales
   doc.moveDown(0.5);
-  doc.fontSize(8).font('Helvetica-Bold').fillColor('#08557f')
+  doc.fontSize(8).font('Helvetica-Bold').fillColor(BLUE)
     .text(
       `Total clientes: ${filas.length}   |   Saldo total: ${COP(filas.reduce((s, f) => s + f.montoTotal, 0))}   |   En mora: ${COP(filas.reduce((s, f) => s + f.montoMora, 0))}`,
       { align: 'right' },
