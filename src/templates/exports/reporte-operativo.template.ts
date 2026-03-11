@@ -184,125 +184,219 @@ export async function generarPDFOperativo(
   const buffers: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
 
+  const BLANCO     = '#FFFFFF';
+  const GRIS_FONDO = '#F8FAFC';
+  const GRIS_CLR   = '#E2E8F0';
+  const GRIS_MED   = '#94A3B8';
+  const GRIS_TXT   = '#475569';
+  const AZUL_DARK  = '#1A5F8A';
+  const AZUL_MED   = '#2676AC';
+  const AZUL_PALE  = '#F0F9FF';
+  const NAR_DARK   = '#D95C0F';
+  const NAR_MED    = '#F07A28';
+  const NAR_SOFT   = '#FDE8D5';
+
+  const fmtCOP   = (v: number) => `$${(v || 0).toLocaleString('es-CO')}`;
+
   const fs = require('fs');
   const path = require('path');
+
+  const getLogoPath = () => {
+    const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
+    const pDev  = path.join(process.cwd(), 'src/assets/logo.png');
+    return fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
+  };
+
   const drawWatermark = () => {
     try {
-      const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
-      const pDev = path.join(process.cwd(), 'src/assets/logo.png');
-      const logoPath = fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
-      if (logoPath) {
+      const lp = getLogoPath();
+      if (lp) {
         doc.save();
-        doc.opacity(0.08); // Opacidad muy sutil y elegante
-        doc.image(logoPath, (doc.page.width - 300) / 2, (doc.page.height - 300) / 2, { width: 300 });
+        doc.opacity(0.08); 
+        const W = doc.page.width;
+        const H = doc.page.height;
+        doc.image(lp, (W - 300) / 2, (H - 300) / 2, { width: 300 });
         doc.restore();
       }
     } catch(e) {}
   };
 
-  drawWatermark();
-  // Encabezado
-  doc.fontSize(16).font('Helvetica-Bold').fillColor('#EA580C')
-    .text('Créditos del Sur — Reporte Operativo', { align: 'center' });
-  doc.fontSize(9).font('Helvetica').fillColor('#475569')
-    .text(`Período: ${resumen.periodo?.toUpperCase() || 'N/A'}   |   Generado: ${new Date().toLocaleString('es-CO')}`, { align: 'center' });
-  doc.moveDown(0.4);
+  let pageNumber = 1;
 
-  // Fila de métricas clave
-  doc.fontSize(8).font('Helvetica-Bold').fillColor('#1E293B');
-  doc.text(
-    `Recaudo Total: $${resumen.totalRecaudo.toLocaleString('es-CO')}  |  Meta: $${resumen.totalMeta.toLocaleString('es-CO')}  |  Eficiencia: ${resumen.porcentajeGlobal}%  |  Préstamos: ${resumen.totalPrestamosNuevos}  |  Clientes: ${resumen.totalAfiliaciones}`,
-    { align: 'center' },
-  );
-  doc.moveDown(0.5);
+  const drawPageHeader = (): number => {
+    const W = doc.page.width;
 
-  // Tabla principal: rendimiento por ruta
-  const cols = [
-    { label: 'Ruta', width: 100 },
-    { label: 'Cobrador', width: 110 },
-    { label: 'Meta', width: 80 },
-    { label: 'Recaudado', width: 80 },
-    { label: 'Eficiencia %', width: 70 },
-    { label: 'Préstamos', width: 65 },
-    { label: 'Clientes', width: 60 },
-    { label: 'Monto Nuevos', width: 90 },
-  ];
+    doc.fontSize(22).font('Helvetica-Bold').fillColor(AZUL_DARK)
+       .text('Créditos del Sur', 30, 25);
+    doc.fontSize(9).font('Helvetica').fillColor(NAR_MED)
+       .text('REPORTE OPERATIVO & RENDIMIENTO', 30, 52, { characterSpacing: 0.5 });
 
-  const tableLeft = 30;
-  const rowH = 16;
-  const tableWidth = cols.reduce((s, c) => s + c.width, 0);
-  let y = doc.y + 5;
+    doc.roundedRect(W - 180, 20, 148, 44, 5).fillAndStroke(BLANCO, GRIS_CLR);
+    doc.fontSize(8).font('Helvetica-Bold').fillColor(GRIS_MED)
+       .text('PERÍODO', W - 180, 28, { width: 148, align: 'center' });
+    const pStr = resumen.fechaInicio && resumen.fechaFin
+      ? `${new Date(resumen.fechaInicio).toLocaleDateString('es-CO')} - ${new Date(resumen.fechaFin).toLocaleDateString('es-CO')}`
+      : resumen.periodo?.toUpperCase() || 'N/A';
+    doc.fontSize(10).font('Helvetica-Bold').fillColor(AZUL_DARK)
+       .text(pStr, W - 180, 40, { width: 148, align: 'center' });
 
-  const drawHeader = () => {
-    doc.fontSize(7).font('Helvetica-Bold');
-    doc.rect(tableLeft, y, tableWidth, rowH).fill('#EA580C');
-    let x = tableLeft;
-    cols.forEach(col => {
-      doc.fillColor('white').text(col.label, x + 2, y + 4, { width: col.width - 4 });
-      x += col.width;
+    const kW = (doc.page.width - 60) / 4;
+    const kY = 98;
+    [
+      { label: 'META TOTAL',      val: fmtCOP(resumen.totalMeta), bg: '#D6E9F5', color: AZUL_DARK },
+      { label: 'RECAUDO TOTAL',   val: fmtCOP(resumen.totalRecaudo), bg: NAR_SOFT, color: NAR_DARK },
+      { label: 'EFICIENCIA',      val: `${resumen.porcentajeGlobal}%`, bg: '#F0F4F8', color: GRIS_TXT },
+      { label: 'PRÉSTAMOS NUEVOS',val: String(resumen.totalPrestamosNuevos), bg: '#F0F4F8', color: GRIS_TXT },
+    ].forEach((m, i) => {
+      const mx = 30 + i * (kW + 4);
+      doc.roundedRect(mx, kY, kW, 44, 6).fillAndStroke(m.bg, GRIS_CLR);
+      doc.fontSize(7.5).font('Helvetica-Bold').fillColor(GRIS_MED)
+         .text(m.label, mx, kY + 10, { width: kW, align: 'center' });
+      doc.fontSize(13).font('Helvetica-Bold').fillColor(m.color)
+         .text(m.val, mx, kY + 23, { width: kW, align: 'center' });
     });
-    return y + rowH;
+    return kY + 58;
   };
 
-  y = drawHeader();
-  doc.font('Helvetica').fontSize(7).fillColor('black');
+  const drawFooter = () => {
+    const W = doc.page.width;
+    const H = doc.page.height;
+    doc.fontSize(7).font('Helvetica').fillColor(GRIS_MED);
+    doc.text(`Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`, 0, H - 25, { align: 'right', width: W - 30 });
+  };
+
+  const cols = [
+    { label: 'Ruta', width: 130 },
+    { label: 'Cobrador', width: 156 },
+    { label: 'Meta', width: 85 },
+    { label: 'Recaudado', width: 85 },
+    { label: 'Eficiencia', width: 66 },
+    { label: 'Préstamos', width: 65 },
+    { label: 'Clientes', width: 60 },
+    { label: 'Monto Nuevos', width: 85 },
+  ];
+  const tableLeft = 30;
+  const tableWidth = cols.reduce((s, c) => s + c.width, 0);
+
+  const drawTableHeader = (y: number): number => {
+    doc.rect(tableLeft, y, tableWidth, 24).fill(AZUL_MED);
+    doc.rect(tableLeft, y + 24, tableWidth, 2).fill(NAR_MED);
+    let x = tableLeft;
+    doc.fontSize(8).font('Helvetica-Bold').fillColor(BLANCO);
+    cols.forEach(col => {
+      doc.text(col.label, x + 4, y + 7, { width: col.width - 8, align: 'center' });
+      x += col.width;
+    });
+    return y + 30;
+  };
+
+  drawWatermark();
+  let y = drawPageHeader();
+  y = drawTableHeader(y);
+
+  doc.font('Helvetica').fontSize(7.5);
 
   filas.forEach((fila, i) => {
-    if (y > 540) {
-      doc.addPage();
-      drawWatermark();
-      y = 30;
-      y = drawHeader();
-      doc.font('Helvetica').fontSize(7).fillColor('black');
-    }
-
-    if (i % 2 === 0) {
-      doc.rect(tableLeft, y, tableWidth, rowH).fill('#FFF7ED');
-      doc.fillColor('black');
-    }
-
-    let x = tableLeft;
-    [
-      (fila.ruta || '').substring(0, 16),
-      (fila.cobrador || '').substring(0, 18),
-      `$${(fila.meta || 0).toLocaleString('es-CO')}`,
-      `$${(fila.recaudado || 0).toLocaleString('es-CO')}`,
+    let maxRowHeight = 17;
+    const vals = [
+      fila.ruta || '',
+      fila.cobrador || '',
+      fmtCOP(fila.meta || 0),
+      fmtCOP(fila.recaudado || 0),
       `${fila.eficiencia || 0}%`,
       String(fila.nuevosPrestamos || 0),
       String(fila.nuevosClientes || 0),
-      `$${(fila.montoNuevosPrestamos || 0).toLocaleString('es-CO')}`,
-    ].forEach((val, ci) => {
-      // Eficiencia baja en rojo
-      const color = ci === 4 && fila.eficiencia < 70 ? '#DC2626' : 'black';
-      doc.fillColor(color).text(val, x + 2, y + 4, { width: cols[ci].width - 4 });
-      doc.fillColor('black');
+      fmtCOP(fila.montoNuevosPrestamos || 0),
+    ];
+
+    doc.font('Helvetica').fontSize(7.5);
+    vals.forEach((val, ci) => {
+      if (ci === 0 || ci === 1 || ci === 3) doc.font('Helvetica-Bold');
+      const h = doc.heightOfString(val, { width: cols[ci].width - 8, lineBreak: true });
+      if (h + 8 > maxRowHeight) maxRowHeight = h + 8;
+      doc.font('Helvetica');
+    });
+
+    if (y + maxRowHeight > doc.page.height - 70) {
+      drawFooter();
+      pageNumber++;
+      doc.addPage();
+      drawWatermark();
+      y = drawPageHeader();
+      y = drawTableHeader(y);
+      doc.font('Helvetica').fontSize(7.5);
+    }
+
+    const baseBg = i % 2 === 0 ? BLANCO : AZUL_PALE;
+    const bg = fila.eficiencia < 70 ? '#FEF2F2' : baseBg; // Rojo muy claro si eficiencia baja
+    
+    doc.rect(tableLeft, y, tableWidth, maxRowHeight).fill(bg);
+    doc.moveTo(tableLeft, y + maxRowHeight)
+       .lineTo(tableLeft + tableWidth, y + maxRowHeight)
+       .strokeColor(GRIS_CLR).lineWidth(0.4).stroke();
+
+    let x = tableLeft;
+    vals.forEach((v, ci) => {
+      const align = ci >= 2 && ci <= 7 && ci !== 4 && ci !== 5 && ci !== 6 ? 'right' : (ci >= 4 && ci <= 6 ? 'center' : 'left');
+
+      if (ci === 3) {
+         doc.font('Helvetica-Bold').fillColor(AZUL_DARK);
+      } else if (ci === 4 && fila.eficiencia < 70) {
+         doc.font('Helvetica-Bold').fillColor('#DC2626');
+      } else if (ci === 1) {
+         doc.font('Helvetica-Bold').fillColor(AZUL_DARK);
+      } else if (ci === 0) {
+         doc.font('Helvetica-Bold').fillColor(GRIS_TXT);
+      } else {
+         doc.font('Helvetica').fillColor(GRIS_TXT);
+      }
+
+      doc.text(v, x + 4, y + 4, { width: cols[ci].width - 8, align, lineBreak: true });
       x += cols[ci].width;
     });
-    y += rowH;
+    y += maxRowHeight;
   });
 
-  // Fila de totales
-  y += 4;
-  doc.rect(tableLeft, y, tableWidth, rowH).fill('#FED7AA');
-  doc.fillColor('black');
-  let x = tableLeft;
-  const totalesData = [
-    'TOTALES',
-    '',
+  // Totales
+  y += 8;
+  doc.rect(tableLeft, y, tableWidth, 26).fill(AZUL_DARK);
+  doc.rect(tableLeft, y, tableWidth, 2).fill(NAR_MED);
+
+  doc.fontSize(8.5).font('Helvetica-Bold').fillColor(BLANCO);
+  doc.text(
+    `TOTAL GENERAL`,
+    tableLeft + 6, y + 8,
+    { width: cols.slice(0, 2).reduce((s, c) => s + c.width, 0) - 10 }
+  );
+
+  let tx = tableLeft + cols.slice(0, 2).reduce((s, c) => s + c.width, 0);
+  [
     `$${resumen.totalMeta.toLocaleString('es-CO')}`,
     `$${resumen.totalRecaudo.toLocaleString('es-CO')}`,
     `${resumen.porcentajeGlobal}%`,
     String(resumen.totalPrestamosNuevos),
     String(resumen.totalAfiliaciones),
-    '',
-  ];
-  doc.fontSize(7).font('Helvetica-Bold');
-  totalesData.forEach((val, ci) => {
-    doc.text(val, x + 2, y + 4, { width: cols[ci].width - 4 });
-    x += cols[ci].width;
+    `$${(filas.reduce((acc, f) => acc + (f.montoNuevosPrestamos || 0), 0)).toLocaleString('es-CO')}`,
+  ].forEach((val, i) => {
+    const ci = i + 2; // a partir de la columna 2
+    if (ci < cols.length) {
+      doc.fillColor(i === 1 ? NAR_SOFT : BLANCO).font('Helvetica-Bold').fontSize(8);
+      const align = ci === 4 || ci === 5 || ci === 6 ? 'center' : 'right';
+      doc.text(val, tx + 4, y + 9, { width: cols[ci].width - 8, align });
+      tx += cols[ci].width;
+    }
   });
 
+  y += 38;
+  doc.fontSize(7.5).font('Helvetica-Oblique').fillColor(GRIS_MED)
+     .text(
+       'Documento expedido por Créditos del Sur. Las cifras presentadas son definitivas y sujetas a revisión de auditoría.',
+       tableLeft, y, { align: 'center', width: tableWidth }
+     );
+
+  drawFooter();
   doc.end();
+
   const buffer = await new Promise<Buffer>(resolve => {
     doc.on('end', () => resolve(Buffer.concat(buffers)));
   });

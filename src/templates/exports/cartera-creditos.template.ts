@@ -400,53 +400,87 @@ export async function generarPDFCartera(
   const buffers: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
 
-  const BLUE = '#004F7B';
-  const ORANGE = '#F37920';
+  const BLANCO     = '#FFFFFF';
+  const GRIS_FONDO = '#F8FAFC';
+  const GRIS_CLR   = '#E2E8F0';
+  const GRIS_MED   = '#94A3B8';
+  const GRIS_TXT   = '#475569';
+  const AZUL_DARK  = '#1A5F8A';
+  const AZUL_MED   = '#2676AC';
+  const AZUL_PALE  = '#F0F9FF';
+  const NAR_DARK   = '#D95C0F';
+  const NAR_MED    = '#F07A28';
+  const NAR_SOFT   = '#FDE8D5';
+
+  const fmtCOP   = (v: number) => `$${(v || 0).toLocaleString('es-CO')}`;
 
   const fs = require('fs');
   const path = require('path');
 
+  const getLogoPath = () => {
+    const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
+    const pDev  = path.join(process.cwd(), 'src/assets/logo.png');
+    return fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
+  };
+
   const drawWatermark = () => {
     try {
-      const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
-      const pDev = path.join(process.cwd(), 'src/assets/logo.png');
-      const logoPath = fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
-      if (logoPath) {
+      const lp = getLogoPath();
+      if (lp) {
         doc.save();
-        doc.opacity(0.08); // Opacidad muy sutil y elegante
-        doc.image(logoPath, (doc.page.width - 300) / 2, (doc.page.height - 300) / 2, { width: 300 });
+        doc.opacity(0.08); 
+        const W = doc.page.width;
+        const H = doc.page.height;
+        doc.image(lp, (W - 300) / 2, (H - 300) / 2, { width: 300 });
         doc.restore();
       }
     } catch(e) {}
   };
 
+  let pageNumber = 1;
+
   const drawPageHeader = (): number => {
-    doc.rect(0, 0, doc.page.width, 50).fill(BLUE);
-    doc.fontSize(16).font('Helvetica-Bold').fillColor('white').text('CRÉDITOS DEL SUR', 30, 10);
-    doc.fontSize(10).font('Helvetica').fillColor('white').text('LISTADO DE CRÉDITOS', 30, 30);
-    doc.fontSize(8).fillColor('white')
-      .text(`Fecha: ${fecha}   |   Generado: ${new Date().toLocaleString('es-CO')}`,
-        0, 36, { align: 'right', width: doc.page.width - 30 });
+    const W = doc.page.width;
+
+    doc.fontSize(22).font('Helvetica-Bold').fillColor(AZUL_DARK)
+       .text('Créditos del Sur', 30, 25);
+    doc.fontSize(9).font('Helvetica').fillColor(NAR_MED)
+       .text('LISTADO DE CRÉDITOS', 30, 52, { characterSpacing: 0.5 });
+
+    doc.roundedRect(W - 180, 20, 148, 44, 5).fillAndStroke(BLANCO, GRIS_CLR);
+    doc.fontSize(8).font('Helvetica-Bold').fillColor(GRIS_MED)
+       .text('PERÍODO', W - 180, 28, { width: 148, align: 'center' });
+    doc.fontSize(11).font('Helvetica-Bold').fillColor(AZUL_DARK)
+       .text(fecha, W - 180, 40, { width: 148, align: 'center' });
 
     const kW = (doc.page.width - 60) / 4;
-    const kY = 58;
+    const kY = 98;
     [
-      { label: 'CAPITAL ORIGINAL',  val: `$${totales.montoTotal.toLocaleString('es-CO')}` },
-      { label: 'CAPITAL ACTUAL',    val: `$${totales.montoPendiente.toLocaleString('es-CO')}` },
-      { label: 'INTERÉS RECOGIDO',  val: `$${totales.interesRecogido.toLocaleString('es-CO')}` },
-      { label: 'TOTAL RECAUDO',     val: `$${totales.recaudo.toLocaleString('es-CO')}` },
+      { label: 'CAPITAL ORIGINAL',  val: totales.montoTotal, bg: '#D6E9F5', color: AZUL_DARK },
+      { label: 'CAPITAL ACTUAL',    val: totales.montoPendiente, bg: '#F0F4F8', color: GRIS_TXT },
+      { label: 'INTERÉS RECOGIDO',  val: totales.interesRecogido, bg: '#FDE8D5', color: NAR_DARK },
+      { label: 'TOTAL RECAUDO',     val: totales.recaudo, bg: '#F0F4F8', color: GRIS_TXT },
     ].forEach((m, i) => {
       const mx = 30 + i * (kW + 4);
-      doc.rect(mx, kY, kW, 26).fill('#05405F');
-      doc.fontSize(7).font('Helvetica').fillColor('white').text(m.label, mx + 4, kY + 3, { width: kW - 8 });
-      doc.fontSize(10).font('Helvetica-Bold').fillColor('white').text(m.val, mx + 4, kY + 13, { width: kW - 8 });
+      doc.roundedRect(mx, kY, kW, 44, 6).fillAndStroke(m.bg, GRIS_CLR);
+      doc.fontSize(7.5).font('Helvetica-Bold').fillColor(GRIS_MED)
+         .text(m.label, mx, kY + 10, { width: kW, align: 'center' });
+      doc.fontSize(13).font('Helvetica-Bold').fillColor(m.color)
+         .text(fmtCOP(m.val), mx, kY + 23, { width: kW, align: 'center' });
     });
-    return kY + 34;
+    return kY + 58;
+  };
+
+  const drawFooter = () => {
+    const W = doc.page.width;
+    const H = doc.page.height;
+    doc.fontSize(7).font('Helvetica').fillColor(GRIS_MED);
+    doc.text(`Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`, 0, H - 25, { align: 'right', width: W - 30 });
   };
 
   const cols = [
     { label: 'N° Préstamo',   width: 78 },
-    { label: 'Cliente',        width: 110 },
+    { label: 'Cliente',        width: 135 },
     { label: 'Estado',         width: 58 },
     { label: 'Cap. Orig.',     width: 72 },
     { label: 'Cap. Actual',    width: 72 },
@@ -454,88 +488,136 @@ export async function generarPDFCartera(
     { label: 'Mora',           width: 60 },
     { label: 'Recaudo',        width: 72 },
     { label: 'Total Adeudado', width: 80 },
-    { label: 'Progreso',       width: 50 },
+    { label: 'Prog.',          width: 33 }, // reducido para extender nombre
   ];
   const tableLeft = 30;
-  const rowH = 16;
   const tableWidth = cols.reduce((s, c) => s + c.width, 0);
 
-  const drawTableH = (y: number): number => {
-    doc.rect(tableLeft, y, tableWidth, 18).fill(BLUE);
+  const drawTableHeader = (y: number): number => {
+    doc.rect(tableLeft, y, tableWidth, 24).fill(AZUL_MED);
+    doc.rect(tableLeft, y + 24, tableWidth, 2).fill(NAR_MED);
     let x = tableLeft;
-    doc.fontSize(7).font('Helvetica-Bold').fillColor('white');
+    doc.fontSize(8).font('Helvetica-Bold').fillColor(BLANCO);
     cols.forEach(col => {
-      doc.text(col.label, x + 2, y + 5, { width: col.width - 4, align: 'center' });
+      doc.text(col.label, x + 4, y + 7, { width: col.width - 8, align: 'center' });
       x += col.width;
     });
-    return y + 18;
+    return y + 30;
   };
 
   drawWatermark();
   let y = drawPageHeader();
-  y = drawTableH(y);
-  doc.font('Helvetica').fontSize(7);
+  y = drawTableHeader(y);
+
+  doc.font('Helvetica').fontSize(7.5);
 
   const estadoPdf: Record<string, string> = {
-    ACTIVO: '#F0FDF4', EN_MORA: '#FEF2F2', VENCIDO: '#FFF1F2',
-    CANCELADO: '#EEF2FF', CASTIGADO: '#F8FAFC',
+    ACTIVO: '#DCFCE7', EN_MORA: '#FECACA', VENCIDO: '#FFE4E6',
+    CANCELADO: '#E0E7FF', CASTIGADO: '#ECEFF1',
   };
 
   filas.forEach((fila, i) => {
-    if (y > 520) {
+    let maxRowHeight = 17;
+    const vals = [
+      fila.numeroPrestamo || '',
+      fila.cliente || '',
+      fila.estado?.replace(/_/g, ' ') || '',
+      fmtCOP(fila.montoTotal || 0),
+      fmtCOP(fila.montoPendiente || 0),
+      fmtCOP(fila.interesRecogido || 0),
+      fmtCOP(fila.mora || 0),
+      fmtCOP(fila.recaudo || 0),
+      fmtCOP(fila.totalAdeudado || 0),
+      `${fila.progreso || 0}%`,
+    ];
+
+    doc.font('Helvetica').fontSize(7.5);
+    vals.forEach((val, ci) => {
+      if (ci === 1 || ci === 3 || ci === 8) doc.font('Helvetica-Bold');
+      const h = doc.heightOfString(val, { width: cols[ci].width - 8, lineBreak: true });
+      if (h + 8 > maxRowHeight) maxRowHeight = h + 8;
+      doc.font('Helvetica');
+    });
+
+    if (y + maxRowHeight > doc.page.height - 70) {
+      drawFooter();
+      pageNumber++;
       doc.addPage();
       drawWatermark();
       y = drawPageHeader();
-      y = drawTableH(y);
-      doc.font('Helvetica').fontSize(7);
+      y = drawTableHeader(y);
+      doc.font('Helvetica').fontSize(7.5);
     }
-    const bg = estadoPdf[fila.estado?.toUpperCase() || ''] || (i % 2 === 0 ? '#F8FAFC' : 'white');
-    doc.rect(tableLeft, y, tableWidth, rowH).fill(bg);
-    doc.fillColor('black');
+
+    const baseBg = i % 2 === 0 ? BLANCO : AZUL_PALE;
+    const bg = estadoPdf[fila.estado?.toUpperCase() || ''] || baseBg;
+    
+    doc.rect(tableLeft, y, tableWidth, maxRowHeight).fill(bg);
+    doc.moveTo(tableLeft, y + maxRowHeight)
+       .lineTo(tableLeft + tableWidth, y + maxRowHeight)
+       .strokeColor(GRIS_CLR).lineWidth(0.4).stroke();
 
     let x = tableLeft;
-    [
-      fila.numeroPrestamo || '',
-      (fila.cliente || '').substring(0, 20),
-      fila.estado?.replace(/_/g, ' ') || '',
-      `$${(fila.montoTotal || 0).toLocaleString('es-CO')}`,
-      `$${(fila.montoPendiente || 0).toLocaleString('es-CO')}`,
-      `$${(fila.interesRecogido || 0).toLocaleString('es-CO')}`,
-      `$${(fila.mora || 0).toLocaleString('es-CO')}`,
-      `$${(fila.recaudo || 0).toLocaleString('es-CO')}`,
-      `$${(fila.totalAdeudado || 0).toLocaleString('es-CO')}`,
-      `${fila.progreso || 0}%`,
-    ].forEach((val, ci) => {
-      const align = ci >= 3 && ci <= 8 ? 'right' : 'left';
-      doc.text(val, x + 2, y + 4, { width: cols[ci].width - 4, align });
+    vals.forEach((v, ci) => {
+      const align = ci >= 3 && ci <= 8 ? 'right' : (ci === 9 || ci === 2 ? 'center' : 'left');
+
+      if (ci === 8) {
+         doc.font('Helvetica-Bold').fillColor(AZUL_DARK);
+      } else if (ci === 1) {
+         doc.font('Helvetica-Bold').fillColor(AZUL_DARK);
+      } else if (ci >= 3 && ci <= 7) {
+         doc.font('Helvetica').fillColor(GRIS_TXT);
+      } else if (ci === 2) {
+         doc.font('Helvetica-Bold').fillColor(GRIS_TXT);
+      } else {
+         doc.font('Helvetica').fillColor(GRIS_TXT);
+      }
+
+      doc.text(v, x + 4, y + 4, { width: cols[ci].width - 8, align, lineBreak: true });
       x += cols[ci].width;
     });
-    y += rowH;
+    y += maxRowHeight;
   });
 
   // Totales
-  y += 4;
-  doc.rect(tableLeft, y, tableWidth, 18).fill('#1E293B');
-  doc.fontSize(7).font('Helvetica-Bold').fillColor('white');
-  let x = tableLeft;
+  y += 8;
+  doc.rect(tableLeft, y, tableWidth, 26).fill(AZUL_DARK);
+  doc.rect(tableLeft, y, tableWidth, 2).fill(NAR_MED);
+
+  doc.fontSize(8.5).font('Helvetica-Bold').fillColor(BLANCO);
+  doc.text(
+    `TOTAL GENERAL  /  ${totales.totalRegistros} créditos`,
+    tableLeft + 6, y + 8,
+    { width: cols.slice(0, 3).reduce((s, c) => s + c.width, 0) - 10 }
+  );
+
+  let tx = tableLeft + cols.slice(0, 3).reduce((s, c) => s + c.width, 0);
   [
-    `TOTALES (${totales.totalRegistros})`, '',  '',
-    `$${totales.montoTotal.toLocaleString('es-CO')}`,
-    `$${totales.montoPendiente.toLocaleString('es-CO')}`,
-    `$${totales.interesRecogido.toLocaleString('es-CO')}`,
-    `$${totales.mora.toLocaleString('es-CO')}`,
-    `$${totales.recaudo.toLocaleString('es-CO')}`,
-    `$${totales.totalAdeudado.toLocaleString('es-CO')}`,
-    '',
-  ].forEach((v, ci) => {
+    totales.montoTotal,
+    totales.montoPendiente,
+    totales.interesRecogido,
+    totales.mora,
+    totales.recaudo,
+    totales.totalAdeudado,
+  ].forEach((val, i) => {
+    const ci = i + 3; // a partir de la columna 4
     if (ci < cols.length) {
-      const align = ci >= 3 && ci <= 8 ? 'right' : 'left';
-      doc.text(v, x + 2, y + 5, { width: cols[ci].width - 4, align });
-      x += cols[ci].width;
+      doc.fillColor(val > 0 && ci === 8 ? NAR_SOFT : BLANCO).font('Helvetica-Bold').fontSize(8);
+      doc.text(fmtCOP(val), tx + 4, y + 9, { width: cols[ci].width - 8, align: 'right' });
+      tx += cols[ci].width;
     }
   });
 
+  y += 38;
+  doc.fontSize(7.5).font('Helvetica-Oblique').fillColor(GRIS_MED)
+     .text(
+       'Documento expedido por Créditos del Sur. Las cifras presentadas son definitivas y sujetas a revisión de auditoría.',
+       tableLeft, y, { align: 'center', width: tableWidth }
+     );
+
+  drawFooter();
   doc.end();
+
   const buffer = await new Promise<Buffer>(resolve => {
     doc.on('end', () => resolve(Buffer.concat(buffers)));
   });
