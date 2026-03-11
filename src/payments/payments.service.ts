@@ -374,7 +374,7 @@ export class PaymentsService {
       }
     }
 
-    // Notificar
+    // Notificar al coordinador
     await this.notificacionesService.notifyCoordinator({
       titulo: 'Pago Registrado',
       mensaje: `Se registró un pago de ${montoTotal.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} para ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
@@ -382,10 +382,21 @@ export class PaymentsService {
       entidad: 'PAGO',
       entidadId: resultado.pago.id,
       metadata: {
-        prestamoIdVal,
-        capitalRecuperado: capitalTotal,
-        interesRecuperado: interesTotal,
-        tieneComprobante: comprobante != null,
+        // Datos del pago para el modal de detalle en notificaciones
+        pagoId:              resultado.pago.id,
+        numeroPago,
+        monto:               montoTotal,
+        metodoPago:          dto.metodoPago || 'EFECTIVO',
+        tieneComprobante:    comprobante != null,
+        // Datos del cliente (para mostrar en el modal)
+        cliente:             `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
+        clienteId:           prestamo.clienteId,
+        // Datos financieros
+        capitalRecuperado:   capitalTotal,
+        interesRecuperado:   interesTotal,
+        saldoNuevo:          resultado.descomposicion.saldoNuevo,
+        prestamoId:          prestamoIdVal,
+        numeroPrestamo:      prestamo.numeroPrestamo,
       },
     });
 
@@ -488,6 +499,22 @@ export class PaymentsService {
         },
         cobrador: {
           select: { id: true, nombres: true, apellidos: true },
+        },
+        // Incluir archivos multimedia (comprobantes de transferencia, etc.)
+        archivos: {
+          where: { estado: 'ACTIVO', eliminadoEn: null },
+          select: {
+            id: true,
+            tipoContenido: true,
+            tipoArchivo: true,
+            nombreOriginal: true,
+            url: true,
+            ruta: true,
+            formato: true,
+            tamanoBytes: true,
+            creadoEn: true,
+          },
+          orderBy: { creadoEn: 'asc' },
         },
         recibo: true,
       },
