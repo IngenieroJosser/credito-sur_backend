@@ -11,7 +11,6 @@ import {
   EstadoCuota,
   MetodoPago,
   TipoTransaccion,
-  TipoContenidoMultimedia,
   Prisma,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
@@ -95,7 +94,7 @@ export class PaymentsService {
           orderBy: { numeroCuota: 'asc' },
         },
         cliente: {
-          select: { id: true, nombres: true, apellidos: true },
+          select: { id: true, dni: true, nombres: true, apellidos: true },
         },
       },
     });
@@ -324,37 +323,51 @@ export class PaymentsService {
     });
 
     // ── Subir comprobante de transferencia a Cloudinary ─────────────────────
-    // Si el pago es por transferencia y se adjuntó el comprobante, lo subimos
-    // a Cloudinary y lo registramos en Multimedia vinculado al pago.
+    // El comprobante queda dentro de la carpeta del cliente, igual que sus
+    // otros documentos: clientes/cc-{dni}-{nombre}-{apellido}-{last4}/comprobantes
     if (comprobante && dto.metodoPago === MetodoPago.TRANSFERENCIA) {
       try {
+        // Construir el label del cliente con el mismo patrón de upload.controller
+        const sanitize = (v?: string) =>
+          (v || '').toLowerCase()
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 60);
+
+        const dni       = (prestamo.cliente.dni || '').replace(/\D/g, '');
+        const dniLast4  = dni ? dni.slice(-4) : '';
+        const nombres   = sanitize(prestamo.cliente.nombres);
+        const apellidos = sanitize(prestamo.cliente.apellidos);
+        // Mismo formato que upload.controller: cc-{dni}-{nombres}-{apellidos}-{last4}
+        const clientLabel = [`cc-${dni}`, nombres, apellidos, dniLast4].filter(Boolean).join('-');
+
         const cloudResult = await this.cloudinaryService.subirArchivo(comprobante, {
-          folder: `pagos/comprobantes/${resultado.pago.id}`,
+          folder: `clientes/${clientLabel}/comprobantes-transferencia`,
         });
 
         await this.prisma.multimedia.create({
           data: {
-            pagoId:              resultado.pago.id,
-            tipoContenido:       TipoContenidoMultimedia.COMPROBANTE_TRANSFERENCIA,
-            tipoArchivo:         comprobante.mimetype,
-            formato:             cloudResult.formato,
-            nombreOriginal:      comprobante.originalname,
+            pagoId:               resultado.pago.id,
+            clienteId:            prestamo.clienteId,
+            tipoContenido:        'COMPROBANTE_TRANSFERENCIA' as any,
+            tipoArchivo:          comprobante.mimetype,
+            formato:              cloudResult.formato,
+            nombreOriginal:       comprobante.originalname,
             nombreAlmacenamiento: cloudResult.publicId,
-            ruta:                cloudResult.publicId,
-            url:                 cloudResult.url,
-            tamanoBytes:         cloudResult.tamanoBytes,
-            esPublico:           false,
-            esPrincipal:         true,
-            subidoPorId:         dto.cobradorId!,
+            ruta:                 cloudResult.publicId,
+            url:                  cloudResult.url,
+            tamanoBytes:          cloudResult.tamanoBytes,
+            esPublico:            false,
+            esPrincipal:          true,
+            subidoPorId:          dto.cobradorId!,
           },
         });
 
         this.logger.log(
-          `Comprobante de transferencia guardado para pago ${numeroPago}: ${cloudResult.url}`,
+          `Comprobante de transferencia guardado para pago ${numeroPago} → Cloudinary: ${cloudResult.url}`,
         );
       } catch (err) {
-        // No dejamos que un fallo del comprobante revierta el pago ya guardado.
-        // Lo registramos en el log para que el coordinador pueda solicitarlo manualmente.
+        // El pago ya está guardado en BD; el fallo del comprobante se registra
+        // en el log para que el coordinador pueda solicitarlo manualmente.
         this.logger.error(
           `Pago ${numeroPago} creado, pero falló la subida del comprobante: ${(err as Error).message}`,
         );
