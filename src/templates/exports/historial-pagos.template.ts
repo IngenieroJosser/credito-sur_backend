@@ -4,11 +4,14 @@
  * ============================================================================
  * Usado en: payments.service.ts → exportPayments()
  * Genera reporte de pagos recibidos en el período con formato profesional.
- * Inspirado en el modelo de Estado de Cuentas Diarias Ruta de referencia.
+ * Paleta corporativa: Azul #1A5F8A / Naranja #F07A28 / Blanco
  */
 
 import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
+import * as fs from 'fs';
+import * as path from 'path';
+import { createHmac } from 'crypto';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -21,12 +24,12 @@ export interface PagoRow {
   montoTotal: number;
   metodoPago: string;
   cobrador: string;
-  capitalPagado?: number;     // Capital amortizado en este pago
-  interesPagado?: number;     // Interés cobrado en este pago
-  moraPagada?: number;        // Mora cobrada en este pago
-  esAbono: boolean;           // true = abono parcial, false = cuota completa (§119 propuesta)
-  comentario?: string;        // Comentario por cuota (§5.5 propuesta)
-  origenCaja?: string;        // Caja de cobrador o caja principal (§4.5 propuesta)
+  capitalPagado?: number;
+  interesPagado?: number;
+  moraPagada?: number;
+  esAbono: boolean;
+  comentario?: string;
+  origenCaja?: string;
 }
 
 export interface PagosTotales {
@@ -35,35 +38,34 @@ export interface PagosTotales {
   totalCapital?: number;
   totalIntereses?: number;
   totalMora?: number;
-  totalAbonos?: number;         // Suma de pagos que son abonos parciales
-  cantidadAbonos?: number;      // Cuántos pagos son abonos
-  cantidadCuotasCompletas?: number; // Cuántos son cuotas completas
+  totalAbonos?: number;
+  cantidadAbonos?: number;
+  cantidadCuotasCompletas?: number;
 }
+
+// ─── Paleta corporativa ───────────────────────────────────────────────────────
+
+const C = {
+  // Azul
+  AZUL_DARK:    'FF1A5F8A',
+  AZUL_MED:     'FF2B7BB5',
+  AZUL_SOFT:    'FFD6E9F5',
+  AZUL_PALE:    'FFEBF4FB',
+  // Naranja
+  NAR_DARK:     'FFD4600A',
+  NAR_MED:      'FFF07A28',
+  NAR_SOFT:     'FFFDE8D5',
+  NAR_PALE:     'FFFEF3EC',
+  // Neutros
+  BLANCO:       'FFFFFFFF',
+  GRIS_TEXTO:   'FF2D3748',
+  GRIS_MED:     'FF718096',
+  GRIS_CLARO:   'FFE2E8F0',
+  GRIS_FONDO:   'FFF7FAFC',
+  GRIS_ALT:     'FFF0F4F8',
+} as const;
 
 // ─── Utilidades ───────────────────────────────────────────────────────────────
-
-const VERDE       = 'FF059669';
-const VERDE_CLARO = 'FFF0FDF4';
-const GRIS        = 'FF1E293B';
-
-function hdr(cell: ExcelJS.Cell, bg: string): void {
-  cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
-  cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
-  cell.alignment = { horizontal: 'center', vertical: 'middle' };
-  cell.border = {
-    bottom: { style: 'medium', color: { argb: 'FFFFFFFF' } },
-    right:  { style: 'thin',   color: { argb: 'FFFFFFFF' } },
-  };
-}
-
-function dataRow(cell: ExcelJS.Cell, par: boolean): void {
-  if (par) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
-  cell.border = {
-    bottom: { style: 'hair', color: { argb: 'FFE2E8F0' } },
-    right:  { style: 'hair', color: { argb: 'FFE2E8F0' } },
-  };
-  cell.alignment = { vertical: 'middle' };
-}
 
 function fmtFecha(f: Date | string): string {
   if (!f) return '';
@@ -71,196 +73,329 @@ function fmtFecha(f: Date | string): string {
   return isNaN(d.getTime()) ? String(f) : d.toLocaleDateString('es-CO');
 }
 
-// ─── Generador Excel ──────────────────────────────────────────────────────────
+function fmtCOP(val: number): string {
+  return `$${(val || 0).toLocaleString('es-CO')}`;
+}
+
+function solidFill(argb: string): ExcelJS.Fill {
+  return { type: 'pattern', pattern: 'solid', fgColor: { argb } };
+}
+
+function cellBorder(
+  bottomStyle: ExcelJS.BorderStyle = 'hair',
+  bottomColor: string = C.GRIS_CLARO,
+): Partial<ExcelJS.Borders> {
+  return {
+    bottom: { style: bottomStyle, color: { argb: bottomColor } },
+    right:  { style: 'hair',      color: { argb: C.GRIS_CLARO } },
+  };
+}
+
+function applyHeader(cell: ExcelJS.Cell, bgArgb: string = C.AZUL_MED): void {
+  cell.font      = { bold: true, size: 9, color: { argb: C.BLANCO }, name: 'Calibri' };
+  cell.fill      = solidFill(bgArgb);
+  cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+  cell.border    = {
+    bottom: { style: 'medium', color: { argb: C.NAR_MED } },
+    right:  { style: 'thin',   color: { argb: C.BLANCO } },
+  };
+}
+
+function applyDataCell(
+  cell: ExcelJS.Cell,
+  par: boolean,
+  overrideBg?: string,
+): void {
+  cell.fill      = solidFill(overrideBg ?? (par ? C.BLANCO : C.AZUL_PALE));
+  cell.font      = { size: 9, color: { argb: C.GRIS_TEXTO }, name: 'Calibri' };
+  cell.alignment = { vertical: 'middle' };
+  cell.border    = cellBorder();
+}
+
+// ─── Logo helper ──────────────────────────────────────────────────────────────
+
+function getLogoPath(): string | null {
+  const prod = path.join(process.cwd(), 'dist/assets/logo.png');
+  const dev  = path.join(process.cwd(), 'src/assets/logo.png');
+  return fs.existsSync(prod) ? prod : fs.existsSync(dev) ? dev : null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GENERADOR EXCEL
+// ═══════════════════════════════════════════════════════════════════════════════
 
 export async function generarExcelPagos(
   filas: PagoRow[],
   totales: PagosTotales,
   fecha: string,
 ): Promise<{ data: Buffer; contentType: string; filename: string }> {
-  const workbook = new ExcelJS.Workbook();
+
+  const workbook  = new ExcelJS.Workbook();
   workbook.creator = 'Créditos del Sur';
   workbook.created = new Date();
 
   // ── Hoja 1: Detalle de pagos ──────────────────────────────────────────────
   const ws = workbook.addWorksheet('Historial de Pagos', {
-    views: [{ state: 'frozen', ySplit: 5 }],
+    views:     [{ state: 'frozen', ySplit: 9 }],
     pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
   });
 
-  const hasMoney = (totales.totalCapital ?? 0) > 0 || (totales.totalIntereses ?? 0) > 0;
+  ws.views = [{ showGridLines: false }];
 
+  // Anchos — generosos en Cliente y Cobrador para que quepan nombres completos
   ws.columns = [
-    { key: 'fecha',         width: 14 },
-    { key: 'numeroPago',    width: 14 },
-    { key: 'numeroPrest',   width: 17 },
-    { key: 'cliente',       width: 30 },
-    { key: 'documento',     width: 13 },
-    { key: 'tipoPago',      width: 13 },  // ABONO / CUOTA
-    { key: 'monto',         width: 16 },
-    { key: 'capital',       width: 16 },
-    { key: 'interes',       width: 16 },
-    { key: 'mora',          width: 16 },
-    { key: 'metodo',        width: 14 },
-    { key: 'cobrador',      width: 22 },
-    { key: 'comentario',    width: 30 },
-  ] as any;
-  const numCols = 13;
-  const lastCol = 'M';
+    { key: 'fecha',        width: 14 },
+    { key: 'numeroPago',   width: 15 },
+    { key: 'numeroPrest',  width: 18 },
+    { key: 'cliente',      width: 36 },   // ← amplio
+    { key: 'documento',    width: 14 },
+    { key: 'tipo',         width: 12 },
+    { key: 'monto',        width: 18 },
+    { key: 'capital',      width: 17 },
+    { key: 'interes',      width: 17 },
+    { key: 'mora',         width: 14 },
+    { key: 'metodo',       width: 14 },
+    { key: 'cobrador',     width: 36 },   // ← amplio
+    { key: 'origenCaja',   width: 15 },
+    { key: 'comentario',   width: 32 },
+  ] as ExcelJS.Column[];
 
-  // Fila 1 — Encabezado corporativo
-  ws.mergeCells(`A1:${lastCol}1`);
-  const h1 = ws.getCell('A1');
-  h1.value = 'CRÉDITOS DEL SUR';
-  h1.font = { bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
-  h1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: VERDE } };
-  h1.alignment = { horizontal: 'center', vertical: 'middle' };
-  ws.getRow(1).height = 32;
+  const LAST = 'N';
+  const NCOLS = 14;
 
-  // Fila 2 — Nombre del reporte
-  ws.mergeCells(`A2:${lastCol}2`);
-  const h2 = ws.getCell('A2');
-  h2.value = 'HISTORIAL DE PAGOS RECIBIDOS';
-  h2.font = { bold: true, size: 12, color: { argb: VERDE } };
-  h2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: VERDE_CLARO } };
-  h2.alignment = { horizontal: 'center', vertical: 'middle' };
-  ws.getRow(2).height = 22;
+  // ── Fila 1: Banda azul decorativa ─────────────────────────────────────────
+  ws.getRow(1).height = 6;
+  for (let c = 1; c <= NCOLS; c++) ws.getCell(1, c).fill = solidFill(C.AZUL_DARK);
 
-  // Fila 3 — Metadata
-  ws.mergeCells('A3:E3');
-  ws.getCell('A3').value = `Generado: ${new Date().toLocaleString('es-CO')}`;
-  ws.getCell('A3').font = { size: 9, color: { argb: 'FF475569' } };
-  ws.mergeCells('F3:K3');
-  ws.getCell('F3').value = `Total registros: ${totales.totalPagos}  |  Fecha: ${fecha}`;
-  ws.getCell('F3').font = { size: 9, color: { argb: 'FF475569' } };
-  ws.getCell('F3').alignment = { horizontal: 'right' };
-  ws.getRow(3).height = 16;
+  // ── Filas 2-3: Logo + Título ───────────────────────────────────────────────
+  ws.getRow(2).height = 45;
+  ws.getRow(3).height = 20;
+  ws.mergeCells('A2:C3');
 
-  // Fila 4 — KPIs financieros
-  const kpis = [
-    ['Total Recaudado', totales.totalRecaudado],
-    ['Total Capital',   totales.totalCapital ?? 0],
-    ['Total Intereses', totales.totalIntereses ?? 0],
-    ['Total Mora',      totales.totalMora ?? 0],
+  const logoPath = getLogoPath();
+  if (logoPath) {
+    const logoId = workbook.addImage({ filename: logoPath, extension: 'png' });
+    ws.addImage(logoId, {
+      tl: { col: 0, row: 1 },
+      ext: { width: 110, height: 55 },
+    });
+  }
+
+  ws.mergeCells('D2:M2');
+  const tituloCell = ws.getCell('D2');
+  tituloCell.value     = 'CRÉDITOS DEL SUR';
+  tituloCell.font      = { bold: true, size: 20, color: { argb: C.AZUL_DARK }, name: 'Calibri' };
+  tituloCell.alignment = { horizontal: 'left', vertical: 'middle' };
+  tituloCell.fill      = solidFill(C.BLANCO);
+
+  ws.mergeCells('D3:M3');
+  const subCell = ws.getCell('D3');
+  subCell.value     = 'HISTORIAL DE PAGOS RECIBIDOS';
+  subCell.font      = { size: 10, italic: true, color: { argb: C.NAR_MED }, name: 'Calibri' };
+  subCell.alignment = { horizontal: 'left', vertical: 'middle' };
+  subCell.fill      = solidFill(C.BLANCO);
+
+  // ── Fila 4: Separador naranja ──────────────────────────────────────────────
+  ws.getRow(4).height = 3;
+  for (let c = 1; c <= NCOLS; c++) ws.getCell(4, c).fill = solidFill(C.NAR_MED);
+
+  // ── Fila 5: Meta ───────────────────────────────────────────────────────────
+  ws.getRow(5).height = 18;
+  ws.mergeCells('A5:F5');
+  const metaL = ws.getCell('A5');
+  metaL.value     = `Generado: ${new Date().toLocaleString('es-CO')}  |  Período: ${fecha}`;
+  metaL.font      = { size: 9, color: { argb: C.GRIS_MED }, name: 'Calibri' };
+  metaL.alignment = { horizontal: 'left', vertical: 'middle' };
+  metaL.fill      = solidFill(C.GRIS_FONDO);
+
+  ws.mergeCells('G5:M5');
+  const metaR = ws.getCell('G5');
+  metaR.value     = `Total: ${totales.totalPagos}  |  Abonos: ${totales.cantidadAbonos ?? 0}  |  Cuotas: ${totales.cantidadCuotasCompletas ?? 0}`;
+  metaR.font      = { size: 9, color: { argb: C.GRIS_MED }, name: 'Calibri' };
+  metaR.alignment = { horizontal: 'right', vertical: 'middle' };
+  metaR.fill      = solidFill(C.GRIS_FONDO);
+
+  // ── Filas 6-7: KPIs ───────────────────────────────────────────────────────
+  ws.getRow(6).height = 16;
+  ws.getRow(7).height = 26;
+
+  const kpis: [string, number, string, string][] = [
+    ['TOTAL RECAUDADO', totales.totalRecaudado,        C.AZUL_DARK, C.AZUL_SOFT],
+    ['CAPITAL',          totales.totalCapital  ?? 0,   C.GRIS_TEXTO, C.GRIS_ALT],
+    ['INTERESES',        totales.totalIntereses ?? 0,  C.NAR_DARK,  C.NAR_SOFT],
+    ['MORA',             totales.totalMora      ?? 0,  C.GRIS_TEXTO, C.GRIS_ALT],
   ];
-  kpis.forEach(([label, val], i) => {
-    const col = i * 2 + 1;
-    if (col + 1 > 13) return;
-    const lc = ws.getCell(4, col);
-    const vc = ws.getCell(4, col + 1);
-    lc.value = label;
-    lc.font = { bold: true, size: 8, color: { argb: 'FF64748B' } };
-    vc.value = val as number;
-    vc.numFmt = '"$"#,##0';
-    vc.font = { bold: true, size: 9, color: { argb: VERDE } };
-    vc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: VERDE_CLARO } };
-  });
-  ws.getCell('K4').value = `Abonos: ${totales.cantidadAbonos ?? 0} / Cuotas: ${totales.cantidadCuotasCompletas ?? 0}`;
-  ws.getCell('K4').font = { bold: true, size: 8, color: { argb: VERDE } };
-  ws.mergeCells('K4:M4');
-  ws.getRow(4).height = 18;
 
-  // Fila 5 — Encabezados de tabla
+  const kpiRanges: [string, string][] = [['A','C'],['D','F'],['G','J'],['K','M']];
+
+  kpis.forEach(([label, val, fg, bg], i) => {
+    const [sc, ec] = kpiRanges[i];
+    ws.mergeCells(`${sc}6:${ec}6`);
+    const lc = ws.getCell(`${sc}6`);
+    lc.value     = label;
+    lc.font      = { bold: true, size: 8, color: { argb: C.GRIS_MED }, name: 'Calibri' };
+    lc.alignment = { horizontal: 'center', vertical: 'middle' };
+    lc.fill      = solidFill(bg);
+
+    ws.mergeCells(`${sc}7:${ec}7`);
+    const vc = ws.getCell(`${sc}7`);
+    vc.value      = val;
+    vc.numFmt     = '"$"#,##0';
+    vc.font       = { bold: true, size: 14, color: { argb: fg }, name: 'Calibri' };
+    vc.alignment  = { horizontal: 'center', vertical: 'middle' };
+    vc.fill       = solidFill(bg);
+  });
+
+  // ── Fila 8: Separador ─────────────────────────────────────────────────────
+  ws.getRow(8).height = 2;
+  for (let c = 1; c <= NCOLS; c++) ws.getCell(8, c).fill = solidFill(C.GRIS_CLARO);
+
+  // ── Fila 9: Encabezados tabla ─────────────────────────────────────────────
+  ws.getRow(9).height = 28;
   const headers = ['Fecha','N° Pago','N° Préstamo','Cliente','Documento',
-    'Tipo','Monto Total','Capital','Interés','Mora','Método','Cobrador','Comentario'];
-  const hRow = ws.getRow(5);
-  headers.forEach((h, i) => {
-    const cell = hRow.getCell(i + 1);
-    cell.value = h;
-    hdr(cell, VERDE);
-  });
-  hRow.height = 22;
-  ws.autoFilter = { from: 'A5', to: `${lastCol}5` };
+    'Tipo','Monto Total','Capital','Interés','Mora','Método','Cobrador','Caja/P.V.','Comentario'];
+  headers.forEach((h, i) => applyHeader(ws.getCell(9, i + 1)));
+  headers.forEach((h, i) => { ws.getCell(9, i + 1).value = h; });
+  ws.autoFilter = { from: 'A9', to: `${LAST}9` };
 
-  // Datos
+  // ── Filas de datos ────────────────────────────────────────────────────────
   filas.forEach((fila, idx) => {
-    const tipoPago = fila.esAbono ? 'ABONO' : 'CUOTA';
-    const row = ws.addRow([
+    const r   = 10 + idx;
+    const par = idx % 2 === 0;
+    ws.getRow(r).height = 20;
+
+    const tipo = fila.esAbono ? 'ABONO' : 'CUOTA';
+    const vals: any[] = [
       fmtFecha(fila.fecha),
       fila.numeroPago,
       fila.numeroPrestamo,
       fila.cliente,
       fila.documento,
-      tipoPago,
+      tipo,
       fila.montoTotal,
-      fila.capitalPagado ?? 0,
-      fila.interesPagado ?? 0,
-      fila.moraPagada ?? 0,
+      fila.capitalPagado  ?? 0,
+      fila.interesPagado  ?? 0,
+      fila.moraPagada     ?? 0,
       fila.metodoPago,
       fila.cobrador,
-      fila.comentario || '',
-    ]);
-    row.height = 18;
-    const par = idx % 2 === 0;
-    row.eachCell(cell => dataRow(cell, par));
+      fila.origenCaja     || '',
+      fila.comentario     ?? '',
+    ];
 
-    // Resaltar abonos en amarillo claro
-    if (fila.esAbono) {
-      row.getCell(6).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF9C3' } };
-      row.getCell(6).font = { bold: true, color: { argb: 'FF854D0E' } };
-    } else {
-      row.getCell(6).font = { color: { argb: 'FF166534' } };
-    }
+    vals.forEach((val, ci) => {
+      const cell = ws.getCell(r, ci + 1);
+      cell.value = val;
+      applyDataCell(cell, par);
 
-    // Formato moneda
-    [7, 8, 9, 10].forEach(c => {
-      row.getCell(c).numFmt = '"$"#,##0';
-      row.getCell(c).alignment = { horizontal: 'right', vertical: 'middle' };
+      // Moneda
+      if ([7,8,9,10].includes(ci + 1)) {
+        cell.numFmt    = '"$"#,##0';
+        cell.alignment = { horizontal: 'right', vertical: 'middle' };
+      }
+
+      // Wrap en nombre cliente / cobrador / comentario
+      if ([4, 12, 14].includes(ci + 1)) {
+        cell.alignment = { vertical: 'middle', wrapText: true };
+      }
+
+      // Caja/PV
+      if (ci + 1 === 13) {
+        cell.font = { size: 9, bold: true, color: { argb: C.NAR_DARK }, name: 'Calibri' };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      }
+
+      // Tipo pago destacado
+      if (ci + 1 === 6) {
+        if (fila.esAbono) {
+          cell.fill = solidFill(C.NAR_PALE);
+          cell.font = { bold: true, size: 9, color: { argb: C.NAR_DARK }, name: 'Calibri' };
+        } else {
+          cell.fill = solidFill(par ? C.AZUL_PALE : C.AZUL_SOFT);
+          cell.font = { bold: true, size: 9, color: { argb: C.AZUL_DARK }, name: 'Calibri' };
+        }
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      }
+
+      // Monto total en azul bold
+      if (ci + 1 === 7) {
+        cell.font = { bold: true, size: 9, color: { argb: C.AZUL_DARK }, name: 'Calibri' };
+      }
     });
-
-    // Resaltar pagos grandes
-    if (fila.montoTotal > 500000) {
-      row.getCell(7).font = { bold: true, color: { argb: VERDE } };
-    }
   });
 
-  // Fila de totales
-  ws.addRow([]);
-  const totRow = ws.addRow([
-    `TOTALES — ${totales.totalPagos} pagos`,
-    '', '',
-    '', '',
-    `Abonos: ${totales.cantidadAbonos ?? 0}`,
-    totales.totalRecaudado,
-    totales.totalCapital ?? 0,
-    totales.totalIntereses ?? 0,
-    totales.totalMora ?? 0,
-    '', '', '',
-  ]);
-  totRow.height = 20;
-  totRow.eachCell(cell => {
-    cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GRIS } };
-  });
-  [7, 8, 9, 10].forEach(c => {
-    totRow.getCell(c).numFmt = '"$"#,##0';
-    totRow.getCell(c).alignment = { horizontal: 'right', vertical: 'middle' };
-  });
+  // ── Fila totales ──────────────────────────────────────────────────────────
+  const tr = 10 + filas.length + 1;
+  ws.getRow(tr).height = 26;
 
-  // ── Hoja 2: Resumen por cobrador ──────────────────────────────────────────
+  ws.mergeCells(`A${tr}:F${tr}`);
+  const totLabel = ws.getCell(`A${tr}`);
+  totLabel.value     = `TOTALES — ${totales.totalPagos} pagos registrados`;
+  totLabel.font      = { bold: true, size: 10, color: { argb: C.BLANCO }, name: 'Calibri' };
+  totLabel.fill      = solidFill(C.AZUL_DARK);
+  totLabel.alignment = { horizontal: 'left', vertical: 'middle' };
+  totLabel.border    = { top: { style: 'medium', color: { argb: C.NAR_MED } } };
+
+  const totVals: [string, number][] = [
+    ['G', totales.totalRecaudado],
+    ['H', totales.totalCapital   ?? 0],
+    ['I', totales.totalIntereses ?? 0],
+    ['J', totales.totalMora      ?? 0],
+  ];
+  totVals.forEach(([col, val]) => {
+    const cell    = ws.getCell(`${col}${tr}`);
+    cell.value    = val;
+    cell.numFmt   = '"$"#,##0';
+    cell.font     = { bold: true, size: 10, color: { argb: C.NAR_SOFT }, name: 'Calibri' };
+    cell.fill     = solidFill(C.AZUL_DARK);
+    cell.alignment = { horizontal: 'right', vertical: 'middle' };
+    cell.border   = { top: { style: 'medium', color: { argb: C.NAR_MED } } };
+  });
+  for (let c = 11; c <= NCOLS; c++) {
+    ws.getCell(tr, c).fill   = solidFill(C.AZUL_DARK);
+    ws.getCell(tr, c).border = { top: { style: 'medium', color: { argb: C.NAR_MED } } };
+  }
+
+  // ── Watermark: logo semitransparente flotante ──────────────────────────────
+  // Nota: ExcelJS no soporta opacidad nativa en imágenes. Para un watermark
+  // real, pre-genera un PNG con transparencia reducida (10-12% alpha) usando
+  // sharp o jimp y referencíalo aquí. Ejemplo:
+  //
+  //   const wmPath = path.join(process.cwd(), 'src/assets/logo-watermark.png');
+  //   if (fs.existsSync(wmPath)) {
+  //     const wmId = workbook.addImage({ filename: wmPath, extension: 'png' });
+  //     ws.addImage(wmId, { tl: { col: 4, row: 11 }, ext: { width: 340, height: 170 } });
+  //   }
+  //
+  // Para generar logo-watermark.png una sola vez:
+  //   sharp('logo.png').ensureAlpha().modulate().composite([{...}]).toFile('logo-watermark.png')
+
+  // ── Hoja 2: Por cobrador ───────────────────────────────────────────────────
   const ws2 = workbook.addWorksheet('Por Cobrador');
-  ws2.columns = [
-    { key: 'cobrador', width: 28 },
-    { key: 'cantidad', width: 12 },
-    { key: 'monto',    width: 20 },
-  ] as any;
+  ws2.views = [{ showGridLines: false }];
+  ws2.getColumn('A').width = 38;
+  ws2.getColumn('B').width = 16;
+  ws2.getColumn('C').width = 22;
 
-  ws2.mergeCells('A1:C1');
-  const ws2T = ws2.getCell('A1');
-  ws2T.value = 'Recaudo por Cobrador';
-  ws2T.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
-  ws2T.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: VERDE } };
+  ws2.getRow(1).height = 5;
+  for (let c = 1; c <= 3; c++) ws2.getCell(1, c).fill = solidFill(C.AZUL_DARK);
+
+  ws2.mergeCells('A2:C2');
+  ws2.getRow(2).height = 30;
+  const ws2T = ws2.getCell('A2');
+  ws2T.value     = 'RECAUDO POR COBRADOR';
+  ws2T.font      = { bold: true, size: 14, color: { argb: C.AZUL_DARK }, name: 'Calibri' };
+  ws2T.fill      = solidFill(C.AZUL_SOFT);
   ws2T.alignment = { horizontal: 'center', vertical: 'middle' };
-  ws2.getRow(1).height = 26;
-  ws2.addRow([]);
 
-  const ws2H = ws2.getRow(3);
-  ['Cobrador','Pagos Registrados','Monto Recaudado'].forEach((label, i) => {
-    const cell = ws2H.getCell(i + 1);
-    cell.value = label;
-    hdr(cell, VERDE);
+  ws2.getRow(3).height = 3;
+  for (let c = 1; c <= 3; c++) ws2.getCell(3, c).fill = solidFill(C.NAR_MED);
+
+  ws2.getRow(4).height = 22;
+  ['Cobrador', 'Pagos', 'Monto Recaudado'].forEach((h, i) => {
+    const cell = ws2.getCell(4, i + 1);
+    cell.value = h;
+    applyHeader(cell);
   });
-  ws2H.height = 20;
 
   const porCobrador: Record<string, { cantidad: number; monto: number }> = {};
   filas.forEach(f => {
@@ -273,178 +408,310 @@ export async function generarExcelPagos(
   Object.entries(porCobrador)
     .sort((a, b) => b[1].monto - a[1].monto)
     .forEach(([cobrador, datos], idx) => {
-      const row = ws2.addRow([cobrador, datos.cantidad, datos.monto]);
-      row.height = 18;
-      if (idx % 2 === 0) row.eachCell(cell => {
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
-      });
-      row.getCell(3).numFmt = '"$"#,##0';
-      row.getCell(3).alignment = { horizontal: 'right', vertical: 'middle' };
+      const r   = 5 + idx;
+      const par = idx % 2 === 0;
+      ws2.getRow(r).height = 20;
+
+      const c1 = ws2.getCell(r, 1);
+      c1.value     = cobrador;
+      c1.font      = { size: 9, color: { argb: C.GRIS_TEXTO }, name: 'Calibri' };
+      c1.fill      = solidFill(par ? C.BLANCO : C.AZUL_PALE);
+      c1.alignment = { vertical: 'middle' };
+
+      const c2 = ws2.getCell(r, 2);
+      c2.value     = datos.cantidad;
+      c2.font      = { bold: true, size: 9, color: { argb: C.AZUL_DARK }, name: 'Calibri' };
+      c2.fill      = solidFill(par ? C.BLANCO : C.AZUL_PALE);
+      c2.alignment = { horizontal: 'center', vertical: 'middle' };
+
+      const c3 = ws2.getCell(r, 3);
+      c3.value     = datos.monto;
+      c3.numFmt    = '"$"#,##0';
+      c3.font      = { bold: true, size: 9, color: { argb: C.NAR_DARK }, name: 'Calibri' };
+      c3.fill      = solidFill(par ? C.BLANCO : C.AZUL_PALE);
+      c3.alignment = { horizontal: 'right', vertical: 'middle' };
     });
 
-  // Sub-total cobrador
-  ws2.addRow([]);
-  const ct = ws2.addRow(['TOTAL', filas.length, totales.totalRecaudado]);
-  ct.height = 18;
-  ct.eachCell(cell => {
-    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GRIS } };
-  });
-  ct.getCell(3).numFmt = '"$"#,##0';
+  const tr2 = 5 + Object.keys(porCobrador).length + 1;
+  ws2.getRow(tr2).height = 22;
+  const t1 = ws2.getCell(tr2, 1);
+  t1.value = 'TOTAL GENERAL'; t1.font = { bold: true, size: 10, color: { argb: C.BLANCO }, name: 'Calibri' };
+  t1.fill = solidFill(C.AZUL_DARK); t1.alignment = { vertical: 'middle' };
+
+  const t2 = ws2.getCell(tr2, 2);
+  t2.value = filas.length; t2.font = { bold: true, size: 10, color: { argb: C.BLANCO }, name: 'Calibri' };
+  t2.fill = solidFill(C.AZUL_DARK); t2.alignment = { horizontal: 'center', vertical: 'middle' };
+
+  const t3 = ws2.getCell(tr2, 3);
+  t3.value = totales.totalRecaudado; t3.numFmt = '"$"#,##0';
+  t3.font = { bold: true, size: 10, color: { argb: C.NAR_SOFT }, name: 'Calibri' };
+  t3.fill = solidFill(C.AZUL_DARK); t3.alignment = { horizontal: 'right', vertical: 'middle' };
 
   const buffer = await workbook.xlsx.writeBuffer();
   return {
-    data: Buffer.from(buffer as ArrayBuffer),
+    data:        Buffer.from(buffer as ArrayBuffer),
     contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    filename: `historial-pagos-${fecha}.xlsx`,
+    filename:    `historial-pagos-${fecha}.xlsx`,
   };
 }
 
-// ─── Generador PDF ────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// GENERADOR PDF
+// ═══════════════════════════════════════════════════════════════════════════════
 
 export async function generarPDFPagos(
   filas: PagoRow[],
   totales: PagosTotales,
   fecha: string,
 ): Promise<{ data: Buffer; contentType: string; filename: string }> {
-  const doc = new PDFDocument({ layout: 'landscape', size: 'LETTER', margin: 30 });
+
+  const doc     = new PDFDocument({ layout: 'landscape', size: 'LETTER', margin: 30 });
   const buffers: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
 
-  const fs = require('fs');
-  const path = require('path');
+  // ── Colores ────────────────────────────────────────────────────────────────
+  const AZUL_DARK  = '#1A5F8A';
+  const AZUL_MED   = '#2B7BB5';
+  const AZUL_PALE  = '#EBF4FB';
+  const NAR_MED    = '#F07A28';
+  const NAR_DARK   = '#D4600A';
+  const NAR_SOFT   = '#FDE8D5';
+  const BLANCO     = '#FFFFFF';
+  const GRIS_TXT   = '#2D3748';
+  const GRIS_MED   = '#718096';
+  const GRIS_CLR   = '#E2E8F0';
+  const GRIS_FONDO = '#F7FAFC';
+
+  // ── Watermark ─────────────────────────────────────────────────────────────
   const drawWatermark = () => {
+    const logoPath = getLogoPath();
+    if (!logoPath) return;
     try {
-      const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
-      const pDev = path.join(process.cwd(), 'src/assets/logo.png');
-      const logoPath = fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
-      if (logoPath) {
-        doc.save();
-        doc.opacity(0.08);
-        doc.image(logoPath, (doc.page.width - 300) / 2, (doc.page.height - 300) / 2, { width: 300 });
-        doc.restore();
-      }
-    } catch(e) {}
+      doc.save();
+      doc.opacity(0.08);                          // Igual que en otros pdfs
+      const W = doc.page.width;
+      const H = doc.page.height;
+      doc.image(logoPath, (W - 300) / 2, (H - 300) / 2, { width: 300 });
+      doc.restore();
+    } catch (_) {}
   };
 
-  const GREEN = '#004F7B'; // Usamos AZUL pero dejamos val GREEN para no romper logic
+  // ── Encabezado de página ───────────────────────────────────────────────────
+  let pageNumber = 1;
 
   const drawPageHeader = (): number => {
-    doc.rect(0, 0, doc.page.width, 50).fill(GREEN);
-    doc.fontSize(16).font('Helvetica-Bold').fillColor('white')
-      .text('CRÉDITOS DEL SUR', 30, 10);
-    doc.fontSize(10).font('Helvetica').fillColor('white')
-      .text('HISTORIAL DE PAGOS RECIBIDOS', 30, 30);
-    doc.fontSize(8).fillColor('white')
-      .text(`Fecha: ${fecha}   |   Generado: ${new Date().toLocaleString('es-CO')}`,
-        0, 36, { align: 'right', width: doc.page.width - 30 });
+    const W = doc.page.width;
 
-    const metY = 58;
-    const metW = (doc.page.width - 60) / 4;
+    // Quitamos los colores de la cabecera superior y el fondo gris.
+
+    // Título alineado a la izquierda (donde iría el logo)
+    doc.fontSize(22).font('Helvetica-Bold').fillColor('#1A5F8A') // Volvemos a Bold pero mantenemos mayúsculas/minúsculas
+       .text('Créditos del Sur', 30, 25);
+    doc.fontSize(9).font('Helvetica').fillColor('#F07A28')
+       .text('HISTORIAL DE PAGOS', 30, 52, { characterSpacing: 0.5 });
+
+    // Bloque fecha (derecha)
+    doc.roundedRect(W - 180, 20, 148, 44, 5)
+       .fillAndStroke(BLANCO, GRIS_CLR);
+    doc.fontSize(8).font('Helvetica-Bold').fillColor(GRIS_MED)
+       .text('PERÍODO', W - 180, 28, { width: 148, align: 'center' });
+    doc.fontSize(11).font('Helvetica-Bold').fillColor(AZUL_DARK)
+       .text(fecha, W - 180, 40, { width: 148, align: 'center' });
+
+    // ── KPIs ──────────────────────────────────────────────────────────────
+    const metY = 98;
+    const metW = 148;
+    const gap  = 18;
+    const totalW = (metW * 4) + (gap * 3);
+    const startX = (W - totalW) / 2;
+
     [
-      { label: 'TOTAL RECAUDADO', val: `$${totales.totalRecaudado.toLocaleString('es-CO')}` },
-      { label: 'TOTAL CAPITAL',   val: `$${(totales.totalCapital ?? 0).toLocaleString('es-CO')}` },
-      { label: 'TOTAL INTERESES', val: `$${(totales.totalIntereses ?? 0).toLocaleString('es-CO')}` },
-      { label: 'TOTAL MORA',      val: `$${(totales.totalMora ?? 0).toLocaleString('es-CO')}` },
+      { label: 'TOTAL RECAUDADO', val: totales.totalRecaudado,        color: AZUL_DARK, bg: '#D6E9F5' },
+      { label: 'TOTAL CAPITAL',   val: totales.totalCapital   ?? 0,   color: GRIS_TXT,  bg: '#F0F4F8' },
+      { label: 'TOTAL INTERESES', val: totales.totalIntereses ?? 0,   color: NAR_DARK,  bg: '#FDE8D5' },
+      { label: 'TOTAL MORA',      val: totales.totalMora      ?? 0,   color: GRIS_TXT,  bg: '#F0F4F8' },
     ].forEach((m, i) => {
-      const mx = 30 + i * (metW + 4);
-      doc.rect(mx, metY, metW, 26).fill('#047857');
-      doc.fontSize(7).font('Helvetica').fillColor('white').text(m.label, mx + 4, metY + 3, { width: metW - 8 });
-      doc.fontSize(10).font('Helvetica-Bold').fillColor('white').text(m.val, mx + 4, metY + 13, { width: metW - 8 });
+      const mx = startX + i * (metW + gap);
+      doc.roundedRect(mx, metY, metW, 44, 6).fillAndStroke(m.bg, GRIS_CLR);
+      doc.fontSize(7.5).font('Helvetica-Bold').fillColor(GRIS_MED)
+         .text(m.label, mx, metY + 10, { width: metW, align: 'center' });
+      doc.fontSize(13).font('Helvetica-Bold').fillColor(m.color)
+         .text(fmtCOP(m.val), mx, metY + 23, { width: metW, align: 'center' });
     });
-    return metY + 34;
+
+    return metY + 58;
   };
 
+  // ── Configuración de columnas tabla ───────────────────────────────────────
   const cols = [
-    { label: 'Fecha',       width: 62 },
-    { label: 'N° Pago',    width: 62 },
-    { label: 'N° Préstamo',width: 78 },
-    { label: 'Cliente',    width: 110 },
-    { label: 'Monto Total',width: 78 },
-    { label: 'Capital',    width: 70 },
-    { label: 'Interés',    width: 70 },
-    { label: 'Método',     width: 62 },
-    { label: 'Cobrador',   width: 85 },
+    { label: 'Fecha',        width: 53  },
+    { label: 'N° Pago',      width: 53  },
+    { label: 'N° Préstamo',  width: 63  },
+    { label: 'Cliente',      width: 125 }, // Ya no truncamos
+    { label: 'Tipo',         width: 48  }, // Nueva columna para ABONO / CUOTA
+    { label: 'Monto Total',  width: 68  },
+    { label: 'Capital',      width: 60  },
+    { label: 'Interés',      width: 60  },
+    { label: 'Método',       width: 55  },
+    { label: 'Cobrador',     width: 90  }, 
+    { label: 'Caja/P.V.',    width: 45  },
   ];
-  const tableLeft = 30;
-  const rowH = 16;
+  const tableLeft  = 28;
   const tableWidth = cols.reduce((s, c) => s + c.width, 0);
 
   const drawTableHeader = (y: number): number => {
-    doc.rect(tableLeft, y, tableWidth, 18).fill(GREEN);
+    // Fondo cabecera
+    doc.rect(tableLeft, y, tableWidth, 24).fill(AZUL_MED);
+    // Línea naranja inferior
+    doc.rect(tableLeft, y + 24, tableWidth, 2).fill(NAR_MED);
+
     let x = tableLeft;
-    doc.fontSize(7).font('Helvetica-Bold').fillColor('white');
+    doc.fontSize(8).font('Helvetica-Bold').fillColor(BLANCO);
     cols.forEach(col => {
-      doc.text(col.label, x + 2, y + 5, { width: col.width - 4, align: 'center' });
+      doc.text(col.label, x + 4, y + 7, { width: col.width - 8, align: 'center' });
       x += col.width;
     });
-    return y + 18;
+    return y + 30;
   };
 
+  // ── Pie de página ─────────────────────────────────────────────────────────
+  const drawFooter = () => {
+    const W = doc.page.width;
+    const H = doc.page.height;
+    doc.fontSize(7).font('Helvetica').fillColor(GRIS_MED);
+    doc.text(`Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`, 0, H - 25, { align: 'right', width: W - 30 });
+  };
+
+  // ── Primera página ────────────────────────────────────────────────────────
   drawWatermark();
   let y = drawPageHeader();
-  y = drawTableHeader(y);
-  doc.font('Helvetica').fontSize(7);
+  y     = drawTableHeader(y);
 
+  doc.font('Helvetica').fontSize(7.5);
+
+  // ── Filas de datos ────────────────────────────────────────────────────────
   filas.forEach((fila, i) => {
-    if (y > 520) {
+    
+    // Primero, pre-calcular la altura que tomará esta fila
+    let maxRowHeight = 17; // Altura mínima base
+    const rowVals = [
+      fmtFecha(fila.fecha),
+      fila.numeroPago      || '',
+      fila.numeroPrestamo  || '',
+      fila.cliente         || '',
+      fila.esAbono ? 'ABONO' : 'CUOTA',
+      fmtCOP(fila.montoTotal),
+      fmtCOP(fila.capitalPagado  ?? 0),
+      fmtCOP(fila.interesPagado  ?? 0),
+      fila.metodoPago      || '',
+      fila.cobrador        || '',
+      fila.origenCaja      || '', 
+    ];
+
+    doc.font('Helvetica').fontSize(7.5); // Asegurar fuente para medir
+    rowVals.forEach((val, ci) => {
+      const isBold = ci === 3 || ci === 5 || ci === 4;
+      if (isBold) doc.font('Helvetica-Bold');
+      const h = doc.heightOfString(val, { width: cols[ci].width - 8, lineBreak: true });
+      if (h + 8 > maxRowHeight) maxRowHeight = h + 8; // + 8 de padding (Arriba y abajo)
+      doc.font('Helvetica'); // Restaurar
+    });
+
+    // Nueva página si no hay espacio para la fila entera
+    if (y + maxRowHeight > doc.page.height - 70) {
+      drawFooter();
+      pageNumber++;
       doc.addPage();
       drawWatermark();
       y = drawPageHeader();
       y = drawTableHeader(y);
-      doc.font('Helvetica').fontSize(7);
+      doc.font('Helvetica').fontSize(7.5);
     }
-    const bg = i % 2 === 0 ? '#F0FDF4' : 'white';
-    doc.rect(tableLeft, y, tableWidth, rowH).fill(bg);
-    doc.fillColor('black');
+
+    // Fondo de fila alterno
+    const par = i % 2 === 0;
+    doc.rect(tableLeft, y, tableWidth, maxRowHeight).fill(par ? BLANCO : AZUL_PALE);
+
+    // Línea separadora
+    doc.moveTo(tableLeft, y + maxRowHeight)
+       .lineTo(tableLeft + tableWidth, y + maxRowHeight)
+       .strokeColor(GRIS_CLR).lineWidth(0.4).stroke();
 
     let x = tableLeft;
-    [
-      fmtFecha(fila.fecha),
-      fila.numeroPago || '',
-      fila.numeroPrestamo || '',
-      (fila.cliente || '').substring(0, 22),
-      `$${(fila.montoTotal || 0).toLocaleString('es-CO')}`,
-      `$${(fila.capitalPagado || 0).toLocaleString('es-CO')}`,
-      `$${(fila.interesPagado || 0).toLocaleString('es-CO')}`,
-      fila.metodoPago || '',
-      (fila.cobrador || '').substring(0, 14),
-    ].forEach((val, ci) => {
-      const align = ci >= 4 && ci <= 6 ? 'right' : 'left';
-      doc.text(val, x + 2, y + 4, { width: cols[ci].width - 4, align });
+    rowVals.forEach((val, ci) => {
+      const isMoneyCol = ci >= 5 && ci <= 7;
+      const align      = isMoneyCol ? 'right' : (ci === 4 || ci === 10 ? 'center' : 'left');
+
+      if (ci === 5) {
+        // Monto total: amarillo si abono o azul si cuota
+        doc.font('Helvetica-Bold').fillColor(fila.esAbono ? NAR_DARK : AZUL_DARK);
+      } else if (ci === 4) {
+        // BADGE Tipo de pago
+        doc.font('Helvetica-Bold').fillColor(fila.esAbono ? NAR_DARK : AZUL_DARK);
+      } else if (ci === 6 || ci === 7) {
+        doc.font('Helvetica').fillColor(GRIS_TXT);
+      } else if (ci === 8) {
+        doc.font('Helvetica').fillColor(GRIS_MED); // Metodo Pago
+      } else if (ci === 9) {
+        doc.font('Helvetica').fillColor(GRIS_TXT); // Cobrador
+      } else if (ci === 10) {
+        doc.font('Helvetica-Bold').fillColor(NAR_MED); // Caja/PV
+      } else {
+        doc.font('Helvetica').fillColor(ci === 3 ? AZUL_DARK : GRIS_TXT);
+        if (ci === 3) doc.font('Helvetica-Bold');
+      }
+
+      doc.text(val, x + 4, y + 4, { width: cols[ci].width - 8, align, lineBreak: true });
       x += cols[ci].width;
     });
-    y += rowH;
+
+    y += maxRowHeight;
   });
 
-  // Totales
-  y += 4;
-  doc.rect(tableLeft, y, tableWidth, 18).fill('#1E293B');
-  doc.fontSize(7).font('Helvetica-Bold').fillColor('white');
-  let x = tableLeft;
+  // ── Fila totales ──────────────────────────────────────────────────────────
+  y += 8;
+  doc.rect(tableLeft, y, tableWidth, 26).fill(AZUL_DARK);
+  // Línea naranja superior totales
+  doc.rect(tableLeft, y, tableWidth, 2).fill(NAR_MED);
+
+  doc.fontSize(8.5).font('Helvetica-Bold').fillColor(BLANCO);
+  doc.text(
+    `TOTAL GENERAL  /  ${totales.totalPagos} pagos`,
+    tableLeft + 6, y + 8,
+    { width: cols.slice(0, 5).reduce((s, c) => s + c.width, 0) - 10 }
+  );
+
+  // Totales numéricos
+  let tx = tableLeft + cols.slice(0, 5).reduce((s, c) => s + c.width, 0);
   [
-    `TOTALES (${totales.totalPagos} pagos)`, '', '',
-    '',
-    `$${totales.totalRecaudado.toLocaleString('es-CO')}`,
-    `$${(totales.totalCapital ?? 0).toLocaleString('es-CO')}`,
-    `$${(totales.totalIntereses ?? 0).toLocaleString('es-CO')}`,
-    '', '',
-  ].forEach((v, ci) => {
-    if (ci < cols.length) {
-      const align = ci >= 4 && ci <= 6 ? 'right' : 'left';
-      doc.text(v, x + 2, y + 5, { width: cols[ci].width - 4, align });
-      x += cols[ci].width;
-    }
+    { val: totales.totalRecaudado,        color: NAR_MED  },
+    { val: totales.totalCapital   ?? 0,   color: NAR_SOFT },
+    { val: totales.totalIntereses ?? 0,   color: NAR_SOFT },
+  ].forEach(({ val, color }, ci) => {
+    doc.fillColor(color).font('Helvetica-Bold').fontSize(ci === 0 ? 9 : 8);
+    doc.text(fmtCOP(val), tx + 4, y + (ci === 0 ? 7 : 9),
+      { width: cols[5 + ci].width - 8, align: 'right', lineBreak: false });
+    tx += cols[5 + ci].width;
   });
 
+  // ── Nota al pie ───────────────────────────────────────────────────────────
+  y += 38;
+  doc.fontSize(7.5).font('Helvetica-Oblique').fillColor(GRIS_MED)
+     .text(
+       'Documento expedido por Créditos del Sur. Las cifras presentadas son definitivas y sujetas a revisión de auditoría.',
+       tableLeft, y, { align: 'center', width: tableWidth }
+     );
+
+  drawFooter();
   doc.end();
+
   const buffer = await new Promise<Buffer>(resolve => {
     doc.on('end', () => resolve(Buffer.concat(buffers)));
   });
 
   return {
-    data: buffer,
+    data:        buffer,
     contentType: 'application/pdf',
-    filename: `historial-pagos-${fecha}.pdf`,
+    filename:    `historial-pagos-${fecha}.pdf`,
   };
 }

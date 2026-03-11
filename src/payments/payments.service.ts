@@ -535,11 +535,14 @@ export class PaymentsService {
   }
 
   async exportPayments(
-    filters: { startDate?: string; endDate?: string; rutaId?: string },
+    filters: { startDate?: string; endDate?: string; rutaId?: string; prestamoId?: string },
     format: 'excel' | 'pdf',
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
     // 1. Solo consulta de BD
     const where: Prisma.PagoWhereInput = {};
+    if (filters.prestamoId) {
+      where.prestamoId = filters.prestamoId;
+    }
     if (filters.startDate || filters.endDate) {
       where.fechaPago = {};
       if (filters.startDate) (where.fechaPago as any).gte = new Date(filters.startDate);
@@ -551,7 +554,7 @@ export class PaymentsService {
       include: {
         cliente: { select: { nombres: true, apellidos: true, dni: true } },
         prestamo: { select: { numeroPrestamo: true } },
-        cobrador: { select: { nombres: true, apellidos: true } },
+        cobrador: { select: { nombres: true, apellidos: true, rol: true } },
       },
       orderBy: { fechaPago: 'desc' },
       take: 10000,
@@ -568,12 +571,23 @@ export class PaymentsService {
       numeroPrestamo: p.prestamo?.numeroPrestamo || '',
       montoTotal: Number(p.montoTotal),
       metodoPago: p.metodoPago || '',
-      cobrador: p.cobrador ? `${p.cobrador.nombres} ${p.cobrador.apellidos}` : '',
+      cobrador: p.cobrador ? `${p.cobrador.nombres} ${p.cobrador.apellidos}` : 'Admin',
+      esAbono: (p as any).esAbono ?? false,
+      capitalPagado: Number((p as any).capitalPagado || 0),
+      interesPagado: Number((p as any).interesPagado || 0),
+      moraPagada: Number((p as any).moraPagada || 0),
+      comentario: (p as any).notas || '',
+      origenCaja: !p.cobrador ? 'Admin' : p.cobrador.rol === 'PUNTO_DE_VENTA' ? 'P.Venta' : 'Ruta',
     }));
 
     const totales: PagosTotales = {
       totalRecaudado: filas.reduce((s, p) => s + p.montoTotal, 0),
       totalPagos: filas.length,
+      totalCapital: filas.reduce((s, p) => s + (p.capitalPagado || 0), 0),
+      totalIntereses: filas.reduce((s, p) => s + (p.interesPagado || 0), 0),
+      totalMora: filas.reduce((s, p) => s + (p.moraPagada || 0), 0),
+      cantidadAbonos: filas.filter((p) => p.esAbono).length,
+      cantidadCuotasCompletas: filas.filter((p) => !p.esAbono).length,
     };
 
     // 3. Delegamos al template
