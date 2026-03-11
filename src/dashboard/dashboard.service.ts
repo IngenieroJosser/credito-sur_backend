@@ -294,7 +294,7 @@ export class DashboardService {
       const today = new Date();
       let groupBy: 'day' | 'week' | 'month' = 'day';
 
-      // Determinar cómo agrupar según el filtro
+      // Determinar cómo agrupar según el filtro de período
       switch (timeFilter) {
         case 'today':
           groupBy = 'day';
@@ -305,23 +305,20 @@ export class DashboardService {
         case 'month':
           groupBy = 'day';
           break;
-        case 'quarter':
-          groupBy = 'week';
+        case 'year':
+          groupBy = 'month';  // Año → agrupa por mes (12 barras)
           break;
         default:
           groupBy = 'day';
       }
 
-      // Obtener datos de pagos reales filtrados por el período
+      // Obtener todos los pagos del período (sin filtro de montoTotal > 0 para incluir todos)
       const payments = await this.prisma.pago.groupBy({
         by: ['fechaPago'],
         where: {
           fechaPago: {
             gte: startDate,
             lte: endDate,
-          },
-          montoTotal: {
-            gt: 0,
           },
         },
         _sum: {

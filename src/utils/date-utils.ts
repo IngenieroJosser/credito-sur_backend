@@ -1,4 +1,4 @@
-export type TimeFilterPeriod = 'today' | 'week' | 'month' | 'quarter' | 'custom';
+export type TimeFilterPeriod = 'today' | 'week' | 'month' | 'year' | 'custom';
 
 export interface DateRange {
   startDate: Date;
@@ -32,10 +32,9 @@ export function calculateDateRange(
       startDate = new Date(now.getFullYear(), now.getMonth(), 1);
       endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
       break;
-    case 'quarter':
-      const quarter = Math.floor(now.getMonth() / 3);
-      startDate = new Date(now.getFullYear(), quarter * 3, 1);
-      endDate = new Date(now.getFullYear(), (quarter + 1) * 3, 0, 23, 59, 59, 999);
+    case 'year':
+      startDate = new Date(now.getFullYear(), 0, 1);
+      endDate = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
       break;
     case 'custom':
       startDate = customStart ? new Date(customStart) : new Date(now.setHours(0, 0, 0, 0));
