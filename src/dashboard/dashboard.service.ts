@@ -80,7 +80,7 @@ export class DashboardService {
         },
       });
 
-      // Calcular recaudo del período (suma de pagos en el período)
+      // Recaudo del período: suma de cobros realizados (fechaPago = fecha real del cobro)
       const recaudo = await this.prisma.pago.aggregate({
         where: {
           fechaPago: { gte: startDate, lte: endDate },
@@ -88,6 +88,11 @@ export class DashboardService {
         _sum: {
           montoTotal: true,
         },
+      });
+
+      // Total de pagos en el período
+      const totalPagos = await this.prisma.pago.count({
+        where: { fechaPago: { gte: startDate, lte: endDate } },
       });
 
       // 2. Obtener aprobaciones pendientes (filtradas por período)
@@ -230,6 +235,7 @@ export class DashboardService {
           efficiency: parseFloat(efficiency.toFixed(1)),
           capitalPrestado: Number(capitalPrestado._sum?.monto || 0),
           recaudo: Number(recaudo._sum?.montoTotal || 0),
+          totalPagos,
         },
         trend: trendData,
         pendingApprovals: pendingApprovalsList.map((item) =>
@@ -312,7 +318,7 @@ export class DashboardService {
           groupBy = 'day';
       }
 
-      // Obtener todos los pagos del período (sin filtro de montoTotal > 0 para incluir todos)
+      // Pagos del período agrupados por fechaPago (fecha real del cobro)
       const payments = await this.prisma.pago.groupBy({
         by: ['fechaPago'],
         where: {
