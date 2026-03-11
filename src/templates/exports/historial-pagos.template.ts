@@ -21,9 +21,12 @@ export interface PagoRow {
   montoTotal: number;
   metodoPago: string;
   cobrador: string;
-  capitalPagado?: number;
-  interesPagado?: number;
-  moraPagada?: number;
+  capitalPagado?: number;     // Capital amortizado en este pago
+  interesPagado?: number;     // Interés cobrado en este pago
+  moraPagada?: number;        // Mora cobrada en este pago
+  esAbono: boolean;           // true = abono parcial, false = cuota completa (§119 propuesta)
+  comentario?: string;        // Comentario por cuota (§5.5 propuesta)
+  origenCaja?: string;        // Caja de cobrador o caja principal (§4.5 propuesta)
 }
 
 export interface PagosTotales {
@@ -32,6 +35,9 @@ export interface PagosTotales {
   totalCapital?: number;
   totalIntereses?: number;
   totalMora?: number;
+  totalAbonos?: number;         // Suma de pagos que son abonos parciales
+  cantidadAbonos?: number;      // Cuántos pagos son abonos
+  cantidadCuotasCompletas?: number; // Cuántos son cuotas completas
 }
 
 // ─── Utilidades ───────────────────────────────────────────────────────────────
@@ -90,15 +96,17 @@ export async function generarExcelPagos(
     { key: 'numeroPrest',   width: 17 },
     { key: 'cliente',       width: 30 },
     { key: 'documento',     width: 13 },
+    { key: 'tipoPago',      width: 13 },  // ABONO / CUOTA
     { key: 'monto',         width: 16 },
     { key: 'capital',       width: 16 },
     { key: 'interes',       width: 16 },
     { key: 'mora',          width: 16 },
     { key: 'metodo',        width: 14 },
     { key: 'cobrador',      width: 22 },
+    { key: 'comentario',    width: 30 },
   ] as any;
-  const numCols = 11;
-  const lastCol = ws.columns[numCols - 1] ? String.fromCharCode(64 + numCols) : 'K';
+  const numCols = 13;
+  const lastCol = 'M';
 
   // Fila 1 — Encabezado corporativo
   ws.mergeCells(`A1:${lastCol}1`);
@@ -137,7 +145,7 @@ export async function generarExcelPagos(
   ];
   kpis.forEach(([label, val], i) => {
     const col = i * 2 + 1;
-    if (col + 1 > 11) return;
+    if (col + 1 > 13) return;
     const lc = ws.getCell(4, col);
     const vc = ws.getCell(4, col + 1);
     lc.value = label;
@@ -147,13 +155,14 @@ export async function generarExcelPagos(
     vc.font = { bold: true, size: 9, color: { argb: VERDE } };
     vc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: VERDE_CLARO } };
   });
-  ws.getCell('K4').value = `N° Pagos: ${totales.totalPagos}`;
-  ws.getCell('K4').font = { bold: true, size: 9, color: { argb: VERDE } };
+  ws.getCell('K4').value = `Abonos: ${totales.cantidadAbonos ?? 0} / Cuotas: ${totales.cantidadCuotasCompletas ?? 0}`;
+  ws.getCell('K4').font = { bold: true, size: 8, color: { argb: VERDE } };
+  ws.mergeCells('K4:M4');
   ws.getRow(4).height = 18;
 
   // Fila 5 — Encabezados de tabla
   const headers = ['Fecha','N° Pago','N° Préstamo','Cliente','Documento',
-    'Monto Total','Capital','Interés','Mora','Método','Cobrador'];
+    'Tipo','Monto Total','Capital','Interés','Mora','Método','Cobrador','Comentario'];
   const hRow = ws.getRow(5);
   headers.forEach((h, i) => {
     const cell = hRow.getCell(i + 1);
@@ -165,32 +174,43 @@ export async function generarExcelPagos(
 
   // Datos
   filas.forEach((fila, idx) => {
+    const tipoPago = fila.esAbono ? 'ABONO' : 'CUOTA';
     const row = ws.addRow([
       fmtFecha(fila.fecha),
       fila.numeroPago,
       fila.numeroPrestamo,
       fila.cliente,
       fila.documento,
+      tipoPago,
       fila.montoTotal,
       fila.capitalPagado ?? 0,
       fila.interesPagado ?? 0,
       fila.moraPagada ?? 0,
       fila.metodoPago,
       fila.cobrador,
+      fila.comentario || '',
     ]);
     row.height = 18;
     const par = idx % 2 === 0;
     row.eachCell(cell => dataRow(cell, par));
 
+    // Resaltar abonos en amarillo claro
+    if (fila.esAbono) {
+      row.getCell(6).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF9C3' } };
+      row.getCell(6).font = { bold: true, color: { argb: 'FF854D0E' } };
+    } else {
+      row.getCell(6).font = { color: { argb: 'FF166534' } };
+    }
+
     // Formato moneda
-    [6, 7, 8, 9].forEach(c => {
+    [7, 8, 9, 10].forEach(c => {
       row.getCell(c).numFmt = '"$"#,##0';
       row.getCell(c).alignment = { horizontal: 'right', vertical: 'middle' };
     });
 
     // Resaltar pagos grandes
     if (fila.montoTotal > 500000) {
-      row.getCell(6).font = { bold: true, color: { argb: VERDE } };
+      row.getCell(7).font = { bold: true, color: { argb: VERDE } };
     }
   });
 
@@ -200,18 +220,19 @@ export async function generarExcelPagos(
     `TOTALES — ${totales.totalPagos} pagos`,
     '', '',
     '', '',
+    `Abonos: ${totales.cantidadAbonos ?? 0}`,
     totales.totalRecaudado,
     totales.totalCapital ?? 0,
     totales.totalIntereses ?? 0,
     totales.totalMora ?? 0,
-    '', '',
+    '', '', '',
   ]);
   totRow.height = 20;
   totRow.eachCell(cell => {
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GRIS } };
   });
-  [6, 7, 8, 9].forEach(c => {
+  [7, 8, 9, 10].forEach(c => {
     totRow.getCell(c).numFmt = '"$"#,##0';
     totRow.getCell(c).alignment = { horizontal: 'right', vertical: 'middle' };
   });

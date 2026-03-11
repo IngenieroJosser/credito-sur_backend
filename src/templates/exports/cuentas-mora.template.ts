@@ -37,6 +37,13 @@ export interface MoraRow {
   cobrador: string;
   nivelRiesgo: string;
   ultimoPago?: string;
+  // Campos financieros adicionales (§4.2, §5.6 propuesta)
+  tasaMoraAplicada?: number;       // % de mora por día aplicado (ej: 0.5%)
+  interesEspecial?: number;        // Monto de interés especial si fue aprobado
+  interesEspecialAprobado?: boolean; // Si el coordinador aprobó un interés especial
+  comentario?: string;             // Nota del cobrador o supervisor
+  capitalPendiente?: number;       // Solo capital, sin intereses ni mora
+  interesesPendientes?: number;    // Total intereses aún no pagados
 }
 
 export interface MoraTotales {
@@ -44,6 +51,9 @@ export interface MoraTotales {
   totalDeuda: number;
   totalCasosCriticos: number;
   totalRegistros: number;
+  totalCapitalPendiente?: number;  // Suma del capital puro pendiente
+  totalInteresesPendientes?: number; // Suma de intereses aún no pagados
+  totalCasosInteresEspecial?: number; // Cuantos tienen interés especial aprobado
 }
 
 // ─── Utilidades Excel ─────────────────────────────────────────────────────────
@@ -90,21 +100,27 @@ export async function generarExcelMora(
   });
 
   ws.columns = [
-    { key: 'num',        width: 18 },
-    { key: 'cliente',    width: 30 },
-    { key: 'documento',  width: 14 },
-    { key: 'diasMora',   width: 11 },
-    { key: 'montoMora',  width: 16 },
-    { key: 'deudaTotal', width: 16 },
-    { key: 'cuotas',     width: 13 },
-    { key: 'ruta',       width: 20 },
-    { key: 'cobrador',   width: 24 },
-    { key: 'riesgo',     width: 13 },
-    { key: 'ultimoPago', width: 14 },
+    { key: 'num',           width: 18 },
+    { key: 'cliente',       width: 30 },
+    { key: 'documento',     width: 14 },
+    { key: 'diasMora',      width: 11 },
+    { key: 'capitalPend',   width: 16 },
+    { key: 'interesesPend', width: 16 },
+    { key: 'montoMora',     width: 16 },
+    { key: 'deudaTotal',    width: 18 },
+    { key: 'cuotas',        width: 13 },
+    { key: 'tasaMora',      width: 13 },
+    { key: 'intEspecial',   width: 16 },
+    { key: 'ruta',          width: 20 },
+    { key: 'cobrador',      width: 24 },
+    { key: 'riesgo',        width: 13 },
+    { key: 'ultimoPago',    width: 14 },
+    { key: 'comentario',    width: 28 },
   ] as any;
+  const moraLastCol = 'P';
 
-  // Fila 1: Logo + Título institucional
-  ws.mergeCells('A1:K1');
+  // Fila 1: Encabezado institucional
+  ws.mergeCells(`A1:${moraLastCol}1`);
   const tituloCell = ws.getCell('A1');
   tituloCell.value = 'CRÉDITOS DEL SUR';
   tituloCell.font = { bold: true, size: 18, color: { argb: COLOR.blanco } };
@@ -113,7 +129,7 @@ export async function generarExcelMora(
   ws.getRow(1).height = 32;
 
   // Fila 2: Subtítulo del reporte
-  ws.mergeCells('A2:K2');
+  ws.mergeCells(`A2:${moraLastCol}2`);
   const subCell = ws.getCell('A2');
   subCell.value = 'REPORTE DE CARTERA EN MORA';
   subCell.font = { bold: true, size: 12, color: { argb: COLOR.rojo } };
@@ -126,34 +142,49 @@ export async function generarExcelMora(
   ws.getCell('A3').value = `Fecha de Generación: ${new Date().toLocaleString('es-CO')}`;
   ws.getCell('A3').font = { size: 9, color: { argb: COLOR.grisTexto } };
   ws.mergeCells('E3:H3');
-  ws.getCell('E3').value = `Casos Críticos: ${totales.totalCasosCriticos}`;
+  ws.getCell('E3').value = `Casos Críticos: ${totales.totalCasosCriticos}  |  Int. Especial: ${totales.totalCasosInteresEspecial ?? 0} casos`;
   ws.getCell('E3').font = { bold: true, size: 9, color: { argb: COLOR.rojo } };
   ws.getCell('E3').alignment = { horizontal: 'center' };
-  ws.mergeCells('I3:K3');
+  ws.mergeCells('I3:P3');
   ws.getCell('I3').value = `Total Registros: ${totales.totalRegistros}`;
   ws.getCell('I3').font = { size: 9, color: { argb: COLOR.grisTexto } };
   ws.getCell('I3').alignment = { horizontal: 'right' };
   ws.getRow(3).height = 16;
 
   // Fila 4: Resumen financiero en celdas
-  ws.getCell('A4').value = 'Mora Acumulada';
-  ws.getCell('B4').value = totales.totalMora;
-  ws.getCell('B4').numFmt = '"$"#,##0';
-  ws.getCell('C4').value = 'Deuda Total Cartera';
-  ws.getCell('D4').value = totales.totalDeuda;
-  ws.getCell('D4').numFmt = '"$"#,##0';
-  ['A4','C4'].forEach(ref => {
-    ws.getCell(ref).font = { bold: true, size: 9, color: { argb: COLOR.grisTexto } };
+  const moraKpis = [
+    { label: 'Mora Acumulada',     val: totales.totalMora,                fmt: '"$"#,##0' },
+    { label: 'Deuda Total',        val: totales.totalDeuda,               fmt: '"$"#,##0' },
+    { label: 'Capital Pendiente',  val: totales.totalCapitalPendiente ?? 0, fmt: '"$"#,##0' },
+    { label: 'Interés Pendiente',  val: totales.totalInteresesPendientes ?? 0, fmt: '"$"#,##0' },
+  ];
+  moraKpis.forEach((kpi, i) => {
+    const colL = i * 2 + 1;
+    const colV = i * 2 + 2;
+    const lc = ws.getCell(4, colL);
+    const vc = ws.getCell(4, colV);
+    lc.value = kpi.label;
+    lc.font = { bold: true, size: 8, color: { argb: COLOR.grisTexto } };
+    vc.value = kpi.val;
+    vc.numFmt = kpi.fmt;
+    vc.font = { bold: true, size: 9, color: { argb: COLOR.rojo } };
+    vc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.rojoClaro } };
   });
-  ['B4','D4'].forEach(ref => {
-    ws.getCell(ref).font = { bold: true, size: 9, color: { argb: COLOR.rojo } };
-    ws.getCell(ref).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.rojoClaro } };
-  });
-  ws.getRow(4).height = 16;
+  ws.mergeCells('I4:J4');
+  ws.getCell('I4').value = `Casos Críticos: ${totales.totalCasosCriticos}`;
+  ws.getCell('I4').font = { bold: true, size: 9, color: { argb: COLOR.rojo } };
+  ws.mergeCells('K4:P4');
+  ws.getCell('K4').value = `Int. Especial Aprobado: ${totales.totalCasosInteresEspecial ?? 0} casos`;
+  ws.getCell('K4').font = { bold: true, size: 8, color: { argb: 'FFB45309' } };
+  ws.getRow(4).height = 18;
 
   // Fila 5: Encabezados de columnas
-  const headers = ['N° Préstamo','Cliente','Documento','Días Mora','Monto Mora',
-    'Deuda Total','Cuotas Venc.','Ruta','Cobrador','Nivel Riesgo','Último Pago'];
+  const headers = [
+    'N° Préstamo','Cliente','Documento','Días Mora',
+    'Capital Pend.','Interés Pend.','Monto Mora','Deuda Total',
+    'Cuotas Venc.','Tasa Mora %','Int. Especial',
+    'Ruta','Cobrador','Nivel Riesgo','Ultimo Pago','Comentario',
+  ];
   const hRow = ws.getRow(5);
   headers.forEach((h, i) => {
     const cell = hRow.getCell(i + 1);
@@ -161,61 +192,75 @@ export async function generarExcelMora(
     estiloEncabezado(cell, COLOR.rojo);
   });
   hRow.height = 22;
-  ws.autoFilter = { from: 'A5', to: 'K5' };
+  ws.autoFilter = { from: 'A5', to: `${moraLastCol}5` };
 
-  // Filas de datos
+  // Filas  // Datos
   filas.forEach((fila, idx) => {
     const row = ws.addRow([
       fila.numeroPrestamo,
       fila.cliente,
       fila.documento,
       fila.diasMora,
+      fila.capitalPendiente ?? 0,
+      fila.interesesPendientes ?? 0,
       fila.montoMora,
       fila.montoTotalDeuda,
       fila.cuotasVencidas,
+      fila.tasaMoraAplicada != null ? `${fila.tasaMoraAplicada}%` : '-',
+      fila.interesEspecial ?? 0,
       fila.ruta,
       fila.cobrador,
       fila.nivelRiesgo,
       fila.ultimoPago || 'Sin pagos',
+      fila.comentario || '',
     ]);
     row.height = 18;
     const esPar = idx % 2 === 0;
     row.eachCell(cell => estiloFila(cell, esPar));
 
     // Formato moneda
-    row.getCell(5).numFmt = '"$"#,##0';
-    row.getCell(6).numFmt = '"$"#,##0';
+    [5, 6, 7, 8, 11].forEach(c => {
+      row.getCell(c).numFmt = '"$"#,##0';
+      row.getCell(c).alignment = { horizontal: 'right', vertical: 'middle' };
+    });
 
-    // Alineación numérica
-    row.getCell(4).alignment = { horizontal: 'center', vertical: 'middle' };
-    row.getCell(7).alignment = { horizontal: 'center', vertical: 'middle' };
+    // Centrar números
+    [4, 9].forEach(c => row.getCell(c).alignment = { horizontal: 'center', vertical: 'middle' });
+
+    // Resaltar interés especial aprobado en naranja
+    if (fila.interesEspecialAprobado) {
+      row.getCell(11).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } };
+      row.getCell(11).font = { bold: true, color: { argb: 'FFB45309' } };
+    }
 
     // Resaltar casos críticos
     const riesgo = fila.nivelRiesgo?.toUpperCase() || '';
     if (riesgo === 'ROJO' || riesgo === 'LISTA_NEGRA') {
       row.getCell(2).font  = { bold: true, color: { argb: COLOR.rojo }, size: 10 };
-      row.getCell(10).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFECACA' } };
+      row.getCell(14).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFECACA' } };
     }
   });
 
   // Fila de totales
   ws.addRow([]);
   const totRow = ws.addRow([
-    'TOTALES', '', '',
-    '',
+    `TOTALES — ${totales.totalRegistros} préstamos en mora`,
+    '', '', '',
+    totales.totalCapitalPendiente ?? 0,
+    totales.totalInteresesPendientes ?? 0,
     totales.totalMora,
     totales.totalDeuda,
-    totales.totalRegistros,
-    '', '', '', '',
+    '', '', '', '', '', '', '', '',
   ]);
   totRow.height = 20;
-  totRow.getCell(1).value = `TOTALES — ${totales.totalRegistros} préstamos en mora`;
   totRow.eachCell(cell => {
     cell.font = { bold: true, color: { argb: COLOR.blanco }, size: 10 };
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.gris } };
   });
-  totRow.getCell(5).numFmt = '"$"#,##0';
-  totRow.getCell(6).numFmt = '"$"#,##0';
+  [5, 6, 7, 8].forEach(c => {
+    totRow.getCell(c).numFmt = '"$"#,##0';
+    totRow.getCell(c).alignment = { horizontal: 'right', vertical: 'middle' };
+  });
 
   // ── Hoja 2: Resumen por nivel de riesgo ──────────────────────────────────────
   const wsResumen = workbook.addWorksheet('Resumen por Riesgo');

@@ -18,6 +18,12 @@ export interface CajaRow {
   responsable: string;
   ruta: string;
   saldo: number;
+  // Separación por origen de caja (§4.5, §108 propuesta)
+  tipoCaja: 'COBRADOR' | 'EMPRESA' | 'PRINCIPAL' | string;
+  ingresosPeriodo?: number;   // Ingresos recibidos en el período
+  egresosPeriodo?: number;    // Egresos aprobados en el período
+  egresosPendientes?: number; // Gastos del cobrador pendientes de aprobación (§111)
+  baseAsignada?: number;      // Base de dinero para prestar asignada por coordinador (§117)
 }
 
 export interface TransaccionRow {
@@ -27,6 +33,11 @@ export interface TransaccionRow {
   descripcion: string;
   caja: string;
   usuario: string;
+  // Campos adicionales de flujo
+  tipoCaja?: 'COBRADOR' | 'EMPRESA' | 'PRINCIPAL' | string;
+  estadoAprobacion?: 'PENDIENTE' | 'APROBADO' | 'RECHAZADO' | string; // §111 propuesta
+  aprobadoPor?: string;       // Supervisor o coordinador que aprobó
+  metodoPago?: 'EFECTIVO' | 'TRANSFERENCIA' | string;  // §116 propuesta
 }
 
 // ─── Generador Excel ──────────────────────────────────────────────────────────
@@ -45,12 +56,17 @@ export async function generarExcelContable(
   // ── Hoja 1: Estado de Cajas ──
   const ws1 = workbook.addWorksheet('Estado de Cajas');
   ws1.columns = [
-    { header: 'Caja', key: 'nombre', width: 20 },
-    { header: 'Código', key: 'codigo', width: 16 },
-    { header: 'Tipo', key: 'tipo', width: 16 },
-    { header: 'Responsable', key: 'responsable', width: 28 },
-    { header: 'Ruta', key: 'ruta', width: 20 },
-    { header: 'Saldo Actual', key: 'saldo', width: 18 },
+    { header: 'Caja',            key: 'nombre',           width: 20 },
+    { header: 'Código',          key: 'codigo',           width: 14 },
+    { header: 'Tipo Caja',       key: 'tipoCaja',         width: 16 },
+    { header: 'Tipo',            key: 'tipo',             width: 14 },
+    { header: 'Responsable',     key: 'responsable',      width: 26 },
+    { header: 'Ruta',            key: 'ruta',             width: 18 },
+    { header: 'Saldo Actual',    key: 'saldo',            width: 16 },
+    { header: 'Ingresos',        key: 'ingresos',         width: 16 },
+    { header: 'Egresos',         key: 'egresos',          width: 16 },
+    { header: 'Gastos Pend.',    key: 'egresosPend',      width: 16 },
+    { header: 'Base Asignada',   key: 'baseAsignada',     width: 16 },
   ] as any;
 
   const t1 = ws1.addRow(['CRÉDITOS DEL SUR — ESTADO DE CAJAS']);
@@ -76,12 +92,17 @@ export async function generarExcelContable(
 
   cajas.forEach((caja, idx) => {
     const row = ws1.addRow({
-      nombre: caja.nombre,
-      codigo: caja.codigo,
-      tipo: caja.tipo,
+      nombre:      caja.nombre,
+      codigo:      caja.codigo,
+      tipoCaja:    caja.tipoCaja || '-',
+      tipo:        caja.tipo,
       responsable: caja.responsable,
-      ruta: caja.ruta,
-      saldo: caja.saldo,
+      ruta:        caja.ruta,
+      saldo:       caja.saldo,
+      ingresos:    caja.ingresosPeriodo ?? 0,
+      egresos:     caja.egresosPeriodo ?? 0,
+      egresosPend: caja.egresosPendientes ?? 0,
+      baseAsignada: caja.baseAsignada ?? 0,
     });
 
     if (idx % 2 === 1) {
@@ -90,7 +111,21 @@ export async function generarExcelContable(
       });
     }
 
-    row.getCell(6).numFmt = '#,##0';
+    [7, 8, 9, 10, 11].forEach(c => {
+      row.getCell(c).numFmt = '"$"#,##0';
+      row.getCell(c).alignment = { horizontal: 'right', vertical: 'middle' };
+    });
+
+    // Resaltar caja cobrador vs empresa
+    const tc = caja.tipoCaja?.toUpperCase() || '';
+    if (tc === 'COBRADOR') row.getCell(3).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0FDF4' } };
+    else if (tc === 'PRINCIPAL') row.getCell(3).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF6FF' } };
+
+    // Gastos pendientes en amarillo
+    if ((caja.egresosPendientes ?? 0) > 0) {
+      row.getCell(10).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF9C3' } };
+      row.getCell(10).font = { bold: true, color: { argb: 'FF854D0E' } };
+    }
   });
 
   ws1.addRow([]);
@@ -101,12 +136,16 @@ export async function generarExcelContable(
   // ── Hoja 2: Últimos Movimientos ──
   const ws2 = workbook.addWorksheet('Movimientos');
   ws2.columns = [
-    { header: 'Fecha', key: 'fecha', width: 22 },
-    { header: 'Tipo', key: 'tipo', width: 16 },
-    { header: 'Monto', key: 'monto', width: 18 },
-    { header: 'Descripción', key: 'descripcion', width: 38 },
-    { header: 'Caja', key: 'caja', width: 20 },
-    { header: 'Usuario', key: 'usuario', width: 25 },
+    { header: 'Fecha',         key: 'fecha',         width: 20 },
+    { header: 'Tipo',          key: 'tipo',          width: 14 },
+    { header: 'Tipo Caja',     key: 'tipoCaja',      width: 14 },
+    { header: 'Monto',         key: 'monto',         width: 16 },
+    { header: 'Método Pago',   key: 'metodoPago',    width: 16 },
+    { header: 'Estado',        key: 'estado',        width: 14 },
+    { header: 'Descripción',   key: 'descripcion',   width: 36 },
+    { header: 'Caja',          key: 'caja',          width: 18 },
+    { header: 'Usuario',       key: 'usuario',       width: 22 },
+    { header: 'Aprobado Por',  key: 'aprobadoPor',   width: 20 },
   ] as any;
 
   const t2 = ws2.addRow(['Últimos Movimientos']);
@@ -127,12 +166,16 @@ export async function generarExcelContable(
 
   transacciones.forEach((t, idx) => {
     const row = ws2.addRow({
-      fecha: t.fecha ? new Date(t.fecha).toLocaleString('es-CO') : '',
-      tipo: t.tipo,
-      monto: t.monto,
+      fecha:       t.fecha ? new Date(t.fecha).toLocaleString('es-CO') : '',
+      tipo:        t.tipo,
+      tipoCaja:    t.tipoCaja || '-',
+      monto:       t.monto,
+      metodoPago:  t.metodoPago || 'EFECTIVO',
+      estado:      t.estadoAprobacion || 'APROBADO',
       descripcion: t.descripcion || '',
-      caja: t.caja,
-      usuario: t.usuario,
+      caja:        t.caja,
+      usuario:     t.usuario,
+      aprobadoPor: t.aprobadoPor || '',
     });
 
     if (idx % 2 === 1) {
@@ -141,7 +184,18 @@ export async function generarExcelContable(
       });
     }
 
-    row.getCell(3).numFmt = '#,##0';
+    row.getCell(4).numFmt = '"$"#,##0';
+    row.getCell(4).alignment = { horizontal: 'right', vertical: 'middle' };
+
+    // Estado de aprobación con colores
+    const estado = (t.estadoAprobacion || '').toUpperCase();
+    if (estado === 'PENDIENTE') {
+      row.getCell(6).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF9C3' } };
+      row.getCell(6).font = { bold: true, color: { argb: 'FF854D0E' } };
+    } else if (estado === 'RECHAZADO') {
+      row.getCell(6).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFECACA' } };
+      row.getCell(6).font = { bold: true, color: { argb: 'FFDC2626' } };
+    }
 
     // Ingresos en verde, egresos en rojo
     const tipoCell = row.getCell(2);
