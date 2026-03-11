@@ -11,6 +11,7 @@ import {
   EstadoCuota,
   MetodoPago,
   TipoTransaccion,
+  TipoContenidoMultimedia,
   Prisma,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
@@ -18,6 +19,7 @@ import { AuditService } from '../audit/audit.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { PagoConRelacionesExport } from '../common/types';
 import { generarExcelPagos, generarPDFPagos, PagoRow, PagosTotales } from '../templates/exports/historial-pagos.template';
+import { CloudinaryService } from '../upload/cloudinary.service';
 
 
 @Injectable()
@@ -29,6 +31,7 @@ export class PaymentsService {
     private notificacionesService: NotificacionesService,
     private auditService: AuditService,
     private notificacionesGateway: NotificacionesGateway,
+    private readonly cloudinaryService: CloudinaryService,
   ) {}
 
   /**
@@ -56,13 +59,20 @@ export class PaymentsService {
     return { capital, interes };
   }
 
-  async create(dto: CreatePaymentDto) {
-    // Validar que se proporcione el prestamoId
+  async create(dto: CreatePaymentDto, comprobante?: Express.Multer.File) {
+    // 1. Validar que se proporcione el prestamoId
     if (!dto.prestamoId) {
       throw new BadRequestException('El ID del préstamo es requerido');
     }
 
-    // Validar cobrador
+    // 2. Si el método es TRANSFERENCIA, el comprobante es OBLIGATORIO
+    if (dto.metodoPago === MetodoPago.TRANSFERENCIA && !comprobante) {
+      throw new BadRequestException(
+        'Para pagos por transferencia debe adjuntar el comprobante (imagen o PDF)',
+      );
+    }
+
+    // 3. Validar cobrador
     if (!dto.cobradorId) {
       throw new BadRequestException('El cobrador es requerido');
     }
@@ -313,6 +323,44 @@ export class PaymentsService {
       },
     });
 
+    // ── Subir comprobante de transferencia a Cloudinary ─────────────────────
+    // Si el pago es por transferencia y se adjuntó el comprobante, lo subimos
+    // a Cloudinary y lo registramos en Multimedia vinculado al pago.
+    if (comprobante && dto.metodoPago === MetodoPago.TRANSFERENCIA) {
+      try {
+        const cloudResult = await this.cloudinaryService.subirArchivo(comprobante, {
+          folder: `pagos/comprobantes/${resultado.pago.id}`,
+        });
+
+        await this.prisma.multimedia.create({
+          data: {
+            pagoId:              resultado.pago.id,
+            tipoContenido:       TipoContenidoMultimedia.COMPROBANTE_TRANSFERENCIA,
+            tipoArchivo:         comprobante.mimetype,
+            formato:             cloudResult.formato,
+            nombreOriginal:      comprobante.originalname,
+            nombreAlmacenamiento: cloudResult.publicId,
+            ruta:                cloudResult.publicId,
+            url:                 cloudResult.url,
+            tamanoBytes:         cloudResult.tamanoBytes,
+            esPublico:           false,
+            esPrincipal:         true,
+            subidoPorId:         dto.cobradorId!,
+          },
+        });
+
+        this.logger.log(
+          `Comprobante de transferencia guardado para pago ${numeroPago}: ${cloudResult.url}`,
+        );
+      } catch (err) {
+        // No dejamos que un fallo del comprobante revierta el pago ya guardado.
+        // Lo registramos en el log para que el coordinador pueda solicitarlo manualmente.
+        this.logger.error(
+          `Pago ${numeroPago} creado, pero falló la subida del comprobante: ${(err as Error).message}`,
+        );
+      }
+    }
+
     // Notificar
     await this.notificacionesService.notifyCoordinator({
       titulo: 'Pago Registrado',
@@ -324,6 +372,7 @@ export class PaymentsService {
         prestamoIdVal,
         capitalRecuperado: capitalTotal,
         interesRecuperado: interesTotal,
+        tieneComprobante: comprobante != null,
       },
     });
 

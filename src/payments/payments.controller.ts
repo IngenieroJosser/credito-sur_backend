@@ -13,8 +13,10 @@ import {
   HttpStatus,
   Res,
   UploadedFile,
+  BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiOperation, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { PaymentsService } from './payments.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -30,29 +32,47 @@ export class PaymentsController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @UseInterceptors(FileInterceptor('comprobante'))
+  @ApiOperation({
+    summary: 'Registrar un pago',
+    description:
+      'Si metodoPago=TRANSFERENCIA, se debe adjuntar el campo "comprobante" (imagen o PDF) obligatoriamente.',
+  })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(
+    FileInterceptor('comprobante', {
+      storage: require('multer').memoryStorage(),
+      fileFilter: (_req: any, file: Express.Multer.File, cb: any) => {
+        if (!file.originalname.match(/\.(jpg|jpeg|png|gif|pdf)$/i)) {
+          return cb(
+            new BadRequestException('El comprobante debe ser una imagen (JPG, PNG) o PDF'),
+            false,
+          );
+        }
+        cb(null, true);
+      },
+      limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB máx para comprobantes
+    }),
+  )
   async create(
     @Body() createPaymentDto: CreatePaymentDto,
-    @Request() req,
-    @UploadedFile() _file?: Express.Multer.File,
+    @Request() req: any,
+    @UploadedFile() comprobante?: Express.Multer.File,
   ) {
-    // Transformar campos que vienen como strings desde FormData
     const dto = {
       ...createPaymentDto,
       prestamoId: createPaymentDto.prestamoId?.toString(),
-      clienteId: createPaymentDto.clienteId?.toString(),
+      clienteId:  createPaymentDto.clienteId?.toString(),
       cobradorId: createPaymentDto.cobradorId?.toString() || req.user?.id,
-      montoTotal: typeof createPaymentDto.montoTotal === 'string' 
-        ? parseFloat(createPaymentDto.montoTotal) 
+      montoTotal: typeof createPaymentDto.montoTotal === 'string'
+        ? parseFloat(createPaymentDto.montoTotal)
         : createPaymentDto.montoTotal,
     };
 
-    // Si no viene cobradorId, usar el usuario del JWT
     if (!dto.cobradorId && req.user?.id) {
       dto.cobradorId = req.user.id;
     }
 
-    return this.paymentsService.create(dto as CreatePaymentDto);
+    return this.paymentsService.create(dto as CreatePaymentDto, comprobante);
   }
 
   @Get()
