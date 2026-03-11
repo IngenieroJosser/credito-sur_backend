@@ -4,6 +4,7 @@ import {
   Post,
   Body,
   Patch,
+  Delete,
   Param,
   Query,
   UseGuards,
@@ -88,6 +89,15 @@ export class AccountingController {
     return this.accountingService.updateCaja(id, body);
   }
 
+  @Delete('cajas/:id')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+  )
+  deleteCaja(@Param('id') id: string) {
+    return this.accountingService.deleteCaja(id);
+  }
+
   @Post('cajas/:id/consolidar')
   @Roles(
     RolUsuario.SUPER_ADMINISTRADOR,
@@ -95,8 +105,12 @@ export class AccountingController {
     RolUsuario.CONTADOR,
     RolUsuario.COORDINADOR,
   )
-  consolidarCaja(@Param('id') id: string, @Request() req) {
-    return this.accountingService.consolidarCaja(id, req.user.id);
+  consolidarCaja(
+    @Param('id') id: string,
+    @Request() req,
+    @Body() body?: { monto?: number },
+  ) {
+    return this.accountingService.consolidarCaja(id, req.user.id, body?.monto);
   }
 
   @Post('cajas/:id/arqueos')

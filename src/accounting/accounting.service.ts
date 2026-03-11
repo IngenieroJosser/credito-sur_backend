@@ -5,6 +5,7 @@ import {
   BadRequestException,
   ForbiddenException,
   UnauthorizedException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service'; 
 import { TipoCaja, TipoTransaccion, TipoAprobacion, EstadoAprobacion } from '@prisma/client';
@@ -12,7 +13,7 @@ import { NotificacionesService } from '../notificaciones/notificaciones.service'
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 
 @Injectable()
-export class AccountingService {
+export class AccountingService implements OnModuleInit {
   private readonly logger = new Logger(AccountingService.name);
 
   constructor(
@@ -20,6 +21,63 @@ export class AccountingService {
     private readonly notificacionesService: NotificacionesService,
     private readonly notificacionesGateway: NotificacionesGateway,
   ) {}
+
+  // Codigos reservados para las cajas que no se pueden eliminar
+  private static readonly CODIGOS_DEFAULT = ['CAJA-PRINCIPAL', 'CAJA-OFICINA'] as const;
+
+  async onModuleInit() {
+    await this.ensureCajasDefault();
+  }
+
+  /**
+   * Crea las cajas por defecto si no existen.
+   * - Caja Principal: recibe consolidaciones de rutas.
+   * - Caja de Oficina: para movimientos internos de la oficina.
+   * El responsable inicial es el primer ADMIN o SUPER_ADMINISTRADOR activo.
+   * La asignacion del responsable puede cambiarse en cualquier momento.
+   */
+  private async ensureCajasDefault() {
+    try {
+      const adminUser = await this.prisma.usuario.findFirst({
+        where: {
+          rol: { in: ['SUPER_ADMINISTRADOR', 'ADMIN'] },
+          estado: 'ACTIVO',
+          eliminadoEn: null,
+        },
+        orderBy: { creadoEn: 'asc' },
+        select: { id: true },
+      });
+
+      if (!adminUser) {
+        this.logger.warn('No hay un usuario administrador activo para asignar las cajas por defecto. Se reintentara cuando exista uno.');
+        return;
+      }
+
+      const cajasDefault = [
+        { codigo: 'CAJA-PRINCIPAL', nombre: 'Caja Principal', tipo: 'PRINCIPAL' as const },
+        { codigo: 'CAJA-OFICINA',   nombre: 'Caja de Oficina', tipo: 'PRINCIPAL' as const },
+      ];
+
+      for (const def of cajasDefault) {
+        const existe = await this.prisma.caja.findUnique({ where: { codigo: def.codigo } });
+        if (!existe) {
+          await this.prisma.caja.create({
+            data: {
+              codigo:        def.codigo,
+              nombre:        def.nombre,
+              tipo:          def.tipo,
+              responsableId: adminUser.id,
+              saldoActual:   0,
+              activa:        true,
+            },
+          });
+          this.logger.log(`Caja por defecto creada: ${def.nombre} (${def.codigo})`);
+        }
+      }
+    } catch (err) {
+      this.logger.error(`Error al verificar cajas por defecto: ${err.message}`);
+    }
+  }
 
   // =====================
   // CAJAS
@@ -233,6 +291,22 @@ export class AccountingService {
       },
     });
 
+    try {
+      await this.notificacionesService.create({
+        usuarioId: data.solicitadoPorId,
+        titulo: 'Solicitud enviada',
+        mensaje: 'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
+        tipo: 'INFORMATIVO',
+        entidad: 'Aprobacion',
+        entidadId: aprobacion.id,
+        metadata: {
+          tipoAprobacion: data.tipoAprobacion,
+          rutaId: data.rutaId,
+          cajaId: cajaRuta.id,
+        },
+      });
+    } catch {}
+
     this.notificacionesGateway.broadcastDashboardsActualizados({
       origen: 'GASTO',
       rutaId: data.rutaId,
@@ -314,6 +388,22 @@ export class AccountingService {
         solicitadoPor: nombreSolicitanteBase,
       },
     });
+
+    try {
+      await this.notificacionesService.create({
+        usuarioId: data.solicitadoPorId,
+        titulo: 'Solicitud enviada',
+        mensaje: 'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
+        tipo: 'INFORMATIVO',
+        entidad: 'Aprobacion',
+        entidadId: aprobacion.id,
+        metadata: {
+          tipoAprobacion: 'SOLICITUD_BASE_EFECTIVO',
+          rutaId: data.rutaId,
+          cajaId: cajaRuta.id,
+        },
+      });
+    } catch {}
 
     this.notificacionesGateway.broadcastDashboardsActualizados({
       origen: 'BASE',
@@ -472,9 +562,60 @@ export class AccountingService {
       saldoActual?: number;
     },
   ) {
+    const caja = await this.prisma.caja.findUnique({ where: { id } });
+    if (!caja) throw new NotFoundException('Caja no encontrada');
+
+    // Las cajas por defecto NO pueden desactivarse ni renombrarse, solo cambiar responsable
+    if (AccountingService.CODIGOS_DEFAULT.includes(caja.codigo as any)) {
+      if (data.activa === false) {
+        throw new ForbiddenException(`La caja "${caja.nombre}" es una caja del sistema y no puede desactivarse.`);
+      }
+      if (data.nombre && data.nombre !== caja.nombre) {
+        throw new ForbiddenException(`El nombre de la caja "${caja.nombre}" no puede modificarse.`);
+      }
+      // Solo se permite actualizar responsableId y saldoActual
+      return this.prisma.caja.update({
+        where: { id },
+        data: {
+          responsableId: data.responsableId,
+          saldoActual: data.saldoActual,
+        },
+      });
+    }
+
     return this.prisma.caja.update({
       where: { id },
       data,
+    });
+  }
+
+  async deleteCaja(id: string) {
+    const caja = await this.prisma.caja.findUnique({ where: { id } });
+    if (!caja) throw new NotFoundException('Caja no encontrada');
+
+    if (AccountingService.CODIGOS_DEFAULT.includes(caja.codigo as any)) {
+      throw new ForbiddenException(
+        `La caja "${caja.nombre}" es una caja del sistema y no puede eliminarse. Solo puede reasignarse su responsable.`,
+      );
+    }
+
+    // Verificar que no tenga transacciones activas recientes (ultimas 24h)
+    const txRecientes = await this.prisma.transaccion.count({
+      where: {
+        cajaId: id,
+        fechaTransaccion: { gte: new Date(Date.now() - 86_400_000) },
+      },
+    });
+    if (txRecientes > 0) {
+      throw new BadRequestException(
+        `La caja tiene ${txRecientes} transacciones en las ultimas 24 horas. Espere antes de eliminarla o desactivela primero.`,
+      );
+    }
+
+    // Desactivar en lugar de borrar fisicamente para conservar historial
+    return this.prisma.caja.update({
+      where: { id },
+      data: { activa: false },
     });
   }
 
@@ -648,6 +789,8 @@ export class AccountingService {
         } else if (
           t.tipoReferencia === 'SOLICITUD_BASE_EFECTIVO' ||
           t.tipoReferencia === 'SOLICITUD_BASE' ||
+          t.tipoReferencia === 'APERTURA_CAJA' ||
+          t.descripcion.toLowerCase().includes('apertura de caja') ||
           t.descripcion.toLowerCase().includes('base de efectivo')
         ) {
           baseEfectivo += monto;
@@ -852,83 +995,125 @@ export class AccountingService {
     return transaccion;
   }
 
-  async consolidarCaja(cajaOrigenId: string, administradorId: string) {
+  async consolidarCaja(cajaOrigenId: string, administradorId: string, montoRecolectar?: number) {
     // 1. Validar Caja Origen
     const cajaOrigen = await this.prisma.caja.findUnique({
       where: { id: cajaOrigenId },
+      include: { ruta: { select: { nombre: true, id: true } } },
     });
     if (!cajaOrigen) throw new NotFoundException('Caja origen no encontrada');
 
-    const saldo = Number(cajaOrigen.saldoActual);
-    if (saldo <= 0) {
-      throw new Error('La caja no tiene fondos para consolidar');
+    const saldoDisponible = Number(cajaOrigen.saldoActual);
+    const montoATransferir = montoRecolectar && montoRecolectar > 0 ? montoRecolectar : saldoDisponible;
+
+    if (montoATransferir <= 0) {
+      throw new BadRequestException('El monto a recolectar debe ser mayor a cero');
+    }
+    if (montoATransferir > saldoDisponible) {
+      throw new BadRequestException(`El monto (${montoATransferir}) supera el saldo disponible (${saldoDisponible})`);
     }
 
-    // 2. Buscar Caja Principal
-    const cajaPrincipal = await this.prisma.caja.findFirst({
+    // 2. Buscar Caja de Oficina como destino
+    const cajaDestino = await this.prisma.caja.findFirst({
+      where: {
+        OR: [
+          { codigo: 'CAJA-OFICINA' },
+          { tipo: TipoCaja.PRINCIPAL, activa: true, NOT: { codigo: 'CAJA-PRINCIPAL' } },
+        ],
+      },
+      orderBy: { creadoEn: 'asc' },
+    }) ?? await this.prisma.caja.findFirst({
       where: { tipo: TipoCaja.PRINCIPAL, activa: true },
+      orderBy: { creadoEn: 'asc' },
     });
 
-    if (!cajaPrincipal) throw new Error('No existe una Caja Principal activa');
-    if (cajaPrincipal.id === cajaOrigen.id)
-      throw new Error(
-        'No se puede consolidar la caja principal sobre sí misma',
-      );
+    if (!cajaDestino) throw new BadRequestException('No existe una Caja de Oficina activa');
+    if (cajaDestino.id === cajaOrigen.id)
+      throw new BadRequestException('No se puede recolectar desde la caja destino');
 
-    const numeroRef = `CONS-${Date.now().toString().slice(-6)}`;
+    const numeroRef = `RECOL-${Date.now().toString().slice(-8)}`;
+    const esTotal = montoATransferir === saldoDisponible;
+    const rutaNombre = (cajaOrigen as any).ruta?.nombre || cajaOrigen.nombre;
 
-    // 3. Ejecutar Transacción Atómica
-    return this.prisma.$transaction(async (tx) => {
-      // Registrar salida en caja origen
+    // 3. Ejecutar Transaccion Atomica
+    const resultado = await this.prisma.$transaction(async (tx) => {
       const egreso = await tx.transaccion.create({
         data: {
           numeroTransaccion: `TRX-OUT-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
           cajaId: cajaOrigen.id,
           tipo: TipoTransaccion.TRANSFERENCIA,
-          monto: saldo,
-          descripcion: `Consolidación enviada a Caja Principal (${cajaPrincipal.nombre})`,
+          monto: montoATransferir,
+          descripcion: `Recoleccion ${esTotal ? 'total' : 'parcial'} enviada a ${cajaDestino.nombre}`,
           creadoPorId: administradorId,
-          tipoReferencia: 'CONSOLIDACION',
+          tipoReferencia: 'RECOLECCION',
           referenciaId: numeroRef,
         },
       });
 
-      // Registrar entrada en caja principal
       const ingreso = await tx.transaccion.create({
         data: {
           numeroTransaccion: `TRX-IN-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-          cajaId: cajaPrincipal.id,
+          cajaId: cajaDestino.id,
           tipo: TipoTransaccion.TRANSFERENCIA,
-          monto: saldo,
-          descripcion: `Consolidación recibida de ${cajaOrigen.nombre}`,
+          monto: montoATransferir,
+          descripcion: `Recoleccion recibida de ${rutaNombre}`,
           creadoPorId: administradorId,
-          tipoReferencia: 'CONSOLIDACION',
+          tipoReferencia: 'RECOLECCION',
           referenciaId: numeroRef,
         },
       });
 
-      // Actualizar saldo origen a 0
+      // Descontar de la caja origen
       await tx.caja.update({
         where: { id: cajaOrigen.id },
-        data: { saldoActual: 0 },
+        data: { saldoActual: { decrement: montoATransferir } },
       });
 
-      // Actualizar saldo principal
+      // Acreditar en la caja de oficina
       await tx.caja.update({
-        where: { id: cajaPrincipal.id },
-        data: {
-          saldoActual: { increment: saldo },
+        where: { id: cajaDestino.id },
+        data: { saldoActual: { increment: montoATransferir } },
+      });
+
+      return { egreso, ingreso };
+    });
+
+    // 4. Notificacion puramente informativa (no va a revisiones)
+    try {
+      const montoFmt = montoATransferir.toLocaleString('es-CO', { style: 'currency', currency: 'COP' });
+      await this.notificacionesService.notifyCoordinator({
+        titulo: 'Recoleccion de Dinero Registrada',
+        mensaje: `Se recolectaron ${montoFmt} de la ruta "${rutaNombre}" hacia ${cajaDestino.nombre}. Referencia: ${numeroRef}.`,
+        tipo: 'SISTEMA',
+        entidad: 'Transaccion',
+        entidadId: resultado.ingreso.id,
+        metadata: {
+          cajaOrigenId: cajaOrigen.id,
+          cajaDestinoId: cajaDestino.id,
+          monto: montoATransferir,
+          numeroRef,
+          administradorId,
+          esTotal,
         },
       });
+    } catch (notifErr) {
+      this.logger.warn('No se pudo enviar notificacion de recoleccion:', notifErr);
+    }
 
-      return {
-        origen: cajaOrigen.nombre,
-        destino: cajaPrincipal.nombre,
-        monto: saldo,
-        transacciones: [egreso.id, ingreso.id],
-      };
-    });
+    // 5. Auditoria
+    this.logger.log(
+      `[RECOLECCION] ${numeroRef} | Admin: ${administradorId} | Origen: ${cajaOrigen.nombre} (${cajaOrigenId}) | Destino: ${cajaDestino.nombre} | Monto: ${montoATransferir} | Tipo: ${esTotal ? 'TOTAL' : 'PARCIAL'}`
+    );
+
+    return {
+      origen: cajaOrigen.nombre,
+      destino: cajaDestino.nombre,
+      monto: montoATransferir,
+      numeroRef,
+      transacciones: [resultado.egreso.id, resultado.ingreso.id],
+    };
   }
+
 
   // =====================
   // RESUMEN FINANCIERO

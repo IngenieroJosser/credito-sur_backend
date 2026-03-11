@@ -240,11 +240,12 @@ export class NotificacionesService {
                       valorArticulo: Number(p.monto) + (bInic || rInic || 0),
                       articulo: p.producto?.nombre || (datos as any).articulo || 'Artículo',
                       frecuenciaPago: p.frecuenciaPago,
-                      cuotas: p.cantidadCuotas,
+                      cuotas: p.cantidadCuotas || (datos as any).cuotas || (datos as any).numCuotas || 0,
                       plazoMeses: p.plazoMeses,
                       tipoAmortizacion: p.tipoAmortizacion,
                       cuotaInicial: bInic || rInic || 0,
                       porcentaje: Number(p.tasaInteres || 0),
+                      notas: p.notas || (datos as any).notas || (datos as any).observaciones || (datos as any).comentarios || undefined,
                       planesArticulo: Array.isArray(p.producto?.precios)
                         ? p.producto?.precios
                             .filter((pr) => pr.activo && pr.meses > 0)
@@ -317,11 +318,12 @@ export class NotificacionesService {
                     valorArticulo: Number(p.monto) + Number(p.cuotaInicial || cuotaInicialManual || 0),
                     articulo: p.producto?.nombre || articuloManual || 'Artículo',
                     frecuenciaPago: p.frecuenciaPago,
-                    cuotas: p.cantidadCuotas,
+                    cuotas: p.cantidadCuotas || (meta as any).cuotas || (meta as any).numCuotas || 0,
                     plazoMeses: p.plazoMeses,
                     tipoAmortizacion: p.tipoAmortizacion,
                     cuotaInicial: Number(p.cuotaInicial || cuotaInicialManual || 0),
                     porcentaje: Number(p.tasaInteres || 0),
+                    notas: p.notas || (meta as any).notas || (meta as any).observaciones || (meta as any).comentarios || undefined,
                     planesArticulo: Array.isArray(p.producto?.precios)
                       ? p.producto?.precios
                           .filter((pr) => pr.activo && pr.meses > 0)

@@ -9,6 +9,7 @@ import {
   Query,
   Put,
   Logger,
+  Request,
 } from '@nestjs/common';
 import { ClientsService } from './clients.service';
 import { CreateClientDto } from './dto/create-client.dto';
@@ -26,8 +27,17 @@ export class ClientsController {
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.clientsService.remove(id);
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
+  remove(@Param('id') id: string, @Request() req: any) {
+    const userId = req.user.id;
+    return this.clientsService.remove(id, userId);
+  }
+
+  @Patch(':id/restore')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
+  restore(@Param('id') id: string, @Request() req: any) {
+    const userId = req.user.id;
+    return this.clientsService.restore(id, userId);
   }
 
   @Get()

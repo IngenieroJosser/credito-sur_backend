@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service'; 
 import { EstadoAprobacion } from '@prisma/client';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import {
   PrestamosMoraFiltrosDto,
   TotalesMoraDto,
@@ -27,7 +28,10 @@ import * as PDFDocument from 'pdfkit';
 
 @Injectable()
 export class ReportsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificacionesService: NotificacionesService,
+  ) {}
 
   async getFinancialSummary(startDate: Date, endDate: Date) {
     const end = new Date(endDate);
@@ -154,10 +158,10 @@ export class ReportsService {
     const skip = (pagina - 1) * limite;
 
     const whereConditions: any = {
-      estado: 'EN_MORA',
+      estado: { in: ['EN_MORA', 'ACTIVO'] },
       cuotas: {
         some: {
-          estado: 'VENCIDA',
+          estado: { in: ['VENCIDA', 'PRORROGADA'] },
         },
       },
     };
@@ -254,7 +258,7 @@ export class ReportsService {
         cliente: true,
         cuotas: {
           where: {
-            estado: 'VENCIDA',
+            estado: { in: ['VENCIDA', 'PRORROGADA'] },
           },
           orderBy: {
             fechaVencimiento: 'asc',
@@ -264,6 +268,10 @@ export class ReportsService {
           orderBy: {
             fechaPago: 'desc',
           },
+          take: 1,
+        },
+        extensiones: {
+          orderBy: { id: 'desc' },
           take: 1,
         },
       },
@@ -312,12 +320,21 @@ export class ReportsService {
         // Obtener último pago
         const ultimoPago = prestamo.pagos[0];
 
+        // Prorroga activa: la extension mas reciente
+        const extension = (prestamo as any).extensiones?.[0];
+        const fechaProrroga = extension?.nuevaFechaVencimiento
+          ? format(new Date(extension.nuevaFechaVencimiento), 'yyyy-MM-dd')
+          : undefined;
+        const diasProrroga = extension?.nuevaFechaVencimiento
+          ? Math.ceil((new Date(extension.nuevaFechaVencimiento).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+          : undefined;
+
         return {
           id: prestamo.id,
           numeroPrestamo: prestamo.numeroPrestamo,
-          clienteId: prestamo.clienteId,   // ← ID del cliente para Ver Perfil
+          clienteId: prestamo.clienteId,
           cliente: {
-            id: prestamo.clienteId,        // ← también dentro de cliente para compatibilidad con frontend
+            id: prestamo.clienteId,
             nombre: `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
             documento: prestamo.cliente.dni,
             telefono: prestamo.cliente.telefono,
@@ -338,6 +355,10 @@ export class ReportsService {
             ? format(ultimoPago.fechaPago, 'yyyy-MM-dd')
             : undefined,
           fechaVencimiento: format(prestamo.fechaFin, 'yyyy-MM-dd'),
+          // Extension de pago (prorroga)
+          fechaProrroga,
+          diasProrroga,
+          tieneProrroga: !!extension,
         } as PrestamoMoraDto;
       }),
     );
@@ -759,10 +780,28 @@ export class ReportsService {
       throw new Error('Préstamo no encontrado');
     }
 
-    // Crear registro de aprobación
+    // Buscar la primera cuota vencida o pendiente para vincular la prorroga
+    let cuotaId: string | null = null;
+    if (decisionDto.decision === 'PRORROGAR') {
+      const cuotaVencida = await this.prisma.cuota.findFirst({
+        where: {
+          prestamoId: decisionDto.prestamoId,
+          estado: { in: ['VENCIDA', 'PENDIENTE'] },
+        },
+        orderBy: { numeroCuota: 'asc' },
+      });
+      cuotaId = cuotaVencida?.id || null;
+    }
+
+    // Usar el tipo de aprobacion correcto segun la decision
+    const tipoAprobacion = decisionDto.decision === 'PRORROGAR'
+      ? TipoAprobacion.PRORROGA_PAGO
+      : TipoAprobacion.BAJA_POR_PERDIDA;
+
+    // Crear registro de aprobacion
     const aprobacion = await this.prisma.aprobacion.create({
       data: {
-        tipoAprobacion: TipoAprobacion.BAJA_POR_PERDIDA,
+        tipoAprobacion,
         referenciaId: decisionDto.prestamoId,
         tablaReferencia: 'Prestamo',
         solicitadoPorId: usuarioId,
@@ -772,13 +811,60 @@ export class ReportsService {
           comentarios: decisionDto.comentarios,
           nuevaFechaVencimiento: decisionDto.nuevaFechaVencimiento,
           prestamoId: decisionDto.prestamoId,
+          cuotaId,
+          fechaVencimientoOriginal: prestamo.fechaFin,
           clienteNombre: `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
           saldoPendiente: prestamo.saldoPendiente.toNumber(),
-          fechaVencimientoOriginal: prestamo.fechaFin,
+          numeroPrestamo: prestamo.numeroPrestamo,
+          diasGracia: decisionDto.diasGracia,
         },
         montoSolicitud: decisionDto.montoInteres || 0,
       },
     });
+
+    let nombreUsuario = 'Usuario';
+    try {
+      const u = await this.prisma.usuario.findUnique({
+        where: { id: usuarioId },
+        select: { nombres: true, apellidos: true },
+      });
+      if (u) nombreUsuario = `${u.nombres} ${u.apellidos}`.trim() || nombreUsuario;
+    } catch {}
+
+    // Solo notificar a aprobadores si NO es prorroga (la prorroga va directamente a revisiones sin notificacion)
+    if (decisionDto.decision !== 'PRORROGAR') {
+      try {
+        await this.notificacionesService.notifyApprovers({
+          titulo: 'Solicitud requiere aprobacion',
+          mensaje: `${nombreUsuario} solicito ${decisionDto.decision.toLowerCase()} para el prestamo ${prestamo.numeroPrestamo} (${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}).`,
+          tipo: 'WARNING',
+          entidad: 'Aprobacion',
+          entidadId: aprobacion.id,
+          metadata: {
+            tipoAprobacion: 'BAJA_POR_PERDIDA',
+            prestamoId: decisionDto.prestamoId,
+            decision: decisionDto.decision,
+            montoInteres: decisionDto.montoInteres || 0,
+          },
+        });
+      } catch {}
+
+      try {
+        await this.notificacionesService.create({
+          usuarioId,
+          titulo: 'Solicitud enviada',
+          mensaje: 'Tu solicitud fue enviada y quedo pendiente de aprobacion.',
+          tipo: 'INFORMATIVO',
+          entidad: 'Aprobacion',
+          entidadId: aprobacion.id,
+          metadata: {
+            tipoAprobacion: 'BAJA_POR_PERDIDA',
+            prestamoId: decisionDto.prestamoId,
+            decision: decisionDto.decision,
+          },
+        });
+      } catch {}
+    }
 
     // Actualizar estado del préstamo según la decisión
     let nuevoEstado: EstadoPrestamo = prestamo.estado;

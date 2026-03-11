@@ -1,5 +1,9 @@
 import 'dotenv/config';
-import { PrismaClient, RolUsuario, EstadoUsuario } from '@prisma/client';
+import {
+  PrismaClient,
+  RolUsuario,
+  EstadoUsuario,
+} from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import * as argon2 from 'argon2';
@@ -32,7 +36,6 @@ async function crearSuperadministradorInicial() {
         // NO actualizar hashContrasena para mantener la contraseña existente
         rol: RolUsuario.SUPER_ADMINISTRADOR,
         estado: EstadoUsuario.ACTIVO,
-        nombreUsuario: 'superadmin',
       },
     });
     console.log(`[SEED] Superadministrador actualizado - contraseña sin cambios`);
@@ -42,7 +45,6 @@ async function crearSuperadministradorInicial() {
   const hashContrasena = await argon2.hash('SuperAdmin123!');
   const superadministrador = await prisma.usuario.create({
     data: {
-      nombreUsuario: 'superadmin',
       correo,
       hashContrasena,
       nombres: 'Super',
@@ -73,7 +75,6 @@ async function crearAdministradorInicial() {
         // NO actualizar hashContrasena para mantener la contraseña existente
         rol: RolUsuario.ADMIN,
         estado: EstadoUsuario.ACTIVO,
-        nombreUsuario: 'admin',
       },
     });
     console.log(`[SEED] Administrador actualizado - contraseña sin cambios`);
@@ -83,7 +84,6 @@ async function crearAdministradorInicial() {
   const hashContrasena = await argon2.hash('Admin123!');
   const administrador = await prisma.usuario.create({
     data: {
-      nombreUsuario: 'admin',
       correo,
       hashContrasena,
       nombres: 'Admin',
@@ -109,22 +109,12 @@ async function crearUsuarioPorRol(
   });
 
   const hashContrasena = await argon2.hash(password ?? `${rol}_1234`);
-  
-  // Generar nombreUsuario: primera letra nombre + primera letra segundo nombre (si existe) + primer apellido
-  const nombresParts = nombres.split(' ');
-  const apellidosParts = apellidos.split(' ');
-  const nombreUsuario = (
-    nombresParts[0].charAt(0) +
-    (nombresParts[1] ? nombresParts[1].charAt(0) : '') +
-    apellidosParts[0]
-  ).toLowerCase().replace(/[^a-z0-9]/g, '');
 
   if (existente) {
     console.log(`[SEED] Usuario ${rol} ya existe (${correo}) - manteniendo contraseña actual`);
     const usuarioActualizado = await prisma.usuario.update({
       where: { correo },
       data: {
-        nombreUsuario,
         nombres,
         apellidos,
         rol,
@@ -139,7 +129,6 @@ async function crearUsuarioPorRol(
 
   const usuario = await prisma.usuario.create({
     data: {
-      nombreUsuario,
       correo,
       hashContrasena,
       nombres,
@@ -219,7 +208,7 @@ async function seedRolesYPermisos() {
     // Gesti\u00f3n Clientes
     { modulo: 'Gesti\u00f3n Clientes', accion: 'clientes', nombre: 'Clientes', descripcion: 'Directorio de clientes', icono: 'Users', ruta: '/admin/clientes', orden: 20, esNavegable: true },
     { modulo: 'Gesti\u00f3n Clientes', accion: 'cuentas-mora', nombre: 'Cuentas en mora', descripcion: 'Gesti\u00f3n de mora', icono: 'AlertCircle', ruta: '/cuentas-mora', orden: 21, esNavegable: true },
-    { modulo: 'Gesti\u00f3n Clientes', accion: 'cuentas-vencidas', nombre: 'Cuentas vencidas', descripcion: 'Cartera castigada', icono: 'Archive', ruta: '/cuentas-vencidas', orden: 22, esNavegable: true },
+    { modulo: 'Gesti\u00f3n Clientes', accion: 'cuentas-vencidas', nombre: 'Cuentas vencidas', descripcion: 'Cartera castigada', icono: 'FileX2', ruta: '/cuentas-vencidas', orden: 22, esNavegable: true },
     { modulo: 'Gesti\u00f3n Clientes', accion: 'archivados', nombre: 'Archivados', descripcion: 'Hist\u00f3ricos', icono: 'Archive', ruta: '/admin/archivados', orden: 23, esNavegable: true },
 
     // Finanzas

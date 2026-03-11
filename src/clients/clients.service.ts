@@ -1,6 +1,8 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
@@ -12,6 +14,7 @@ import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway'
 import { ConfiguracionService } from '../configuracion/configuracion.service';
 import { NivelRiesgo, RolUsuario } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class ClientsService {
@@ -93,6 +96,9 @@ export class ClientsService {
       include: {
         prestamos: true,
         pagos: true,
+        archivos: {
+          where: { estado: 'ACTIVO' },
+        },
       },
     });
   }
@@ -141,7 +147,16 @@ export class ClientsService {
       const nuevosArchivos = archivos.map((archivo: any) => {
         // Asegurar que la URL sea correcta
         const url = archivo.url || archivo.path || archivo.ruta;
-        const urlFinal = url?.startsWith('http') ? url : url;
+        const urlFinal = typeof url === 'string' && url.startsWith('http') ? url : undefined;
+
+        const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+        const rutaValue = String(archivo.ruta || archivo.path || archivo.nombreAlmacenamiento || '').trim();
+        const tipoArchivoValue = String(archivo.tipoArchivo || '').toLowerCase();
+        const isVideo = tipoArchivoValue.startsWith('video/');
+
+        const urlDerivada = (!urlFinal && cloudName && rutaValue)
+          ? `https://res.cloudinary.com/${cloudName}/${isVideo ? 'video' : 'image'}/upload/${rutaValue}`
+          : undefined;
         
         return {
           clienteId: id,
@@ -151,7 +166,7 @@ export class ClientsService {
           nombreOriginal: archivo.nombreOriginal,
           nombreAlmacenamiento: archivo.nombreAlmacenamiento || archivo.nombreOriginal,
           ruta: archivo.ruta || archivo.path,
-          url: urlFinal,
+          url: urlFinal || urlDerivada,
           tamanoBytes: archivo.tamanoBytes || 0,
           subidoPorId: archivo.subidoPorId || clienteActualizado.creadoPorId,
           estado: 'ACTIVO' as const,
@@ -187,17 +202,62 @@ export class ClientsService {
     return clienteConArchivos;
   }
 
-  remove(id: string) {
-    return this.prisma.cliente.update({
+  async remove(id: string, userId: string) {
+    const cliente = await this.prisma.cliente.findUnique({ where: { id } });
+    if (!cliente) throw new NotFoundException('Cliente no encontrado');
+
+    const clienteEliminado = await this.prisma.cliente.update({
       where: { id },
       data: { eliminadoEn: new Date() },
-    }).then((cliente) => {
-      this.notificacionesGateway.broadcastClientesActualizados({
-        accion: 'ELIMINAR',
-        clienteId: id,
-      });
-      return cliente;
     });
+
+    this.notificacionesGateway.broadcastClientesActualizados({
+      accion: 'ELIMINAR',
+      clienteId: id,
+    });
+
+    // Registrar en auditoría
+    await this.auditService.create({
+      usuarioId: userId,
+      accion: 'ELIMINAR_CLIENTE',
+      entidad: 'Cliente',
+      entidadId: id,
+      datosAnteriores: {
+        nombres: cliente.nombres,
+        apellidos: cliente.apellidos,
+        dni: cliente.dni
+      },
+      datosNuevos: { eliminadoEn: clienteEliminado.eliminadoEn },
+    });
+
+    return clienteEliminado;
+  }
+
+  async restore(id: string, userId: string) {
+    const cliente = await this.prisma.cliente.findUnique({ where: { id } });
+    if (!cliente) throw new NotFoundException('Cliente no encontrado');
+
+    const clienteRestaurado = await this.prisma.cliente.update({
+      where: { id },
+      data: { eliminadoEn: null },
+    });
+
+    this.notificacionesGateway.broadcastClientesActualizados({
+      accion: 'RESTAURAR',
+      clienteId: id,
+    });
+
+    // Registrar en auditoría
+    await this.auditService.create({
+      usuarioId: userId,
+      accion: 'RESTAURAR_CLIENTE',
+      entidad: 'Cliente',
+      entidadId: id,
+      datosAnteriores: { eliminadoEn: cliente.eliminadoEn },
+      datosNuevos: { eliminadoEn: null },
+    });
+
+    return clienteRestaurado;
   }
 
   async getAllClients(filters: {
@@ -657,15 +717,175 @@ export class ClientsService {
       });
 
       if (clienteExistente) {
+        // Si está activo, no permitimos duplicar
         if (!clienteExistente.eliminadoEn) {
           throw new ConflictException(
             `Ya existe un cliente activo con ese número de documento: ${data.dni}`,
           );
-        } else {
-          throw new ConflictException(
-            `El cliente con documento ${data.dni} ya existe pero está archivado. Restáuralo desde la sección de Archivados.`,
-          );
         }
+
+        // Si fue rechazado (y quedó archivado), permitimos reintento: restaurar + nueva aprobación
+        if (clienteExistente.estadoAprobacion === 'RECHAZADO') {
+          // Buscar un usuario para asignar como solicitante si no viene uno
+          let solicitadoPorId = data.creadoPorId;
+          if (!solicitadoPorId) {
+            const creador = await this.prisma.usuario.findFirst();
+            if (!creador) {
+              throw new NotFoundException(
+                'No existen usuarios en el sistema para asignar la creación',
+              );
+            }
+            solicitadoPorId = creador.id;
+          }
+
+          const solicitante = await this.prisma.usuario.findUnique({
+            where: { id: solicitadoPorId },
+            select: { id: true, rol: true },
+          });
+
+          if (!solicitante) {
+            throw new NotFoundException('Usuario solicitante no encontrado');
+          }
+
+          const autoAprobar = await this.configuracionService.shouldAutoApproveClients();
+          const estadoInicial = autoAprobar ? 'APROBADO' : 'PENDIENTE';
+
+          const clienteRestaurado = await this.prisma.cliente.update({
+            where: { id: clienteExistente.id },
+            data: {
+              eliminadoEn: null,
+              estadoAprobacion: estadoInicial,
+              nombres: data.nombres,
+              apellidos: data.apellidos,
+              telefono: data.telefono,
+              correo: data.correo,
+              direccion: data.direccion,
+              referencia: data.referencia,
+              creadoPorId: solicitadoPorId,
+            },
+          });
+
+          // Si viene multimedia en el reintento, la adjuntamos también
+          if (
+            data.archivos &&
+            Array.isArray(data.archivos) &&
+            data.archivos.length > 0
+          ) {
+            await this.prisma.multimedia.updateMany({
+              where: {
+                clienteId: clienteRestaurado.id,
+                estado: 'ACTIVO',
+              },
+              data: {
+                estado: 'ELIMINADO',
+              },
+            });
+
+            await this.prisma.multimedia.createMany({
+              data: data.archivos.map((archivo: any) => ({
+                clienteId: clienteRestaurado.id,
+                tipoContenido: archivo.tipoContenido,
+                tipoArchivo: archivo.tipoArchivo,
+                formato: archivo.nombreOriginal?.split('.').pop() || 'bin',
+                nombreOriginal: archivo.nombreOriginal,
+                nombreAlmacenamiento: archivo.nombreAlmacenamiento,
+                ruta: archivo.ruta || archivo.path || '',
+                url:
+                  archivo.url ||
+                  archivo.path ||
+                  (archivo.nombreAlmacenamiento
+                    ? `/uploads/${archivo.nombreAlmacenamiento}`
+                    : null),
+                tamanoBytes: archivo.tamanoBytes,
+                subidoPorId: solicitadoPorId,
+                esPrincipal: archivo.tipoContenido === 'FOTO_PERFIL',
+                estado: 'ACTIVO',
+              })),
+            });
+          }
+
+          const aprobacion = await this.prisma.aprobacion.create({
+            data: {
+              tipoAprobacion: 'NUEVO_CLIENTE',
+              referenciaId: clienteRestaurado.id,
+              tablaReferencia: 'Cliente',
+              solicitadoPorId: solicitadoPorId,
+              estado: estadoInicial,
+              datosSolicitud: JSON.stringify({
+                dni: data.dni,
+                nombres: data.nombres,
+                apellidos: data.apellidos,
+                telefono: data.telefono,
+                correo: data.correo,
+                direccion: data.direccion,
+                referencia: data.referencia,
+                archivos: data.archivos || [],
+              }),
+              ...(autoAprobar ? { aprobadoPorId: solicitadoPorId, revisadoEn: new Date() } : {}),
+            },
+          });
+
+          if (!autoAprobar) {
+            try {
+              await this.notificacionesService.notifyApprovers({
+                titulo: 'Nuevo cliente requiere aprobación',
+                mensaje: `Se reenvi f3 la solicitud del cliente (${data.nombres} ${data.apellidos}). Requiere revisi f3n.`,
+                tipo: 'CLIENTE',
+                entidad: 'Aprobacion',
+                entidadId: aprobacion.id,
+                metadata: {
+                  tipoAprobacion: 'NUEVO_CLIENTE',
+                  clienteId: clienteRestaurado.id,
+                  solicitanteId: solicitadoPorId,
+                  dni: data.dni,
+                  nombres: data.nombres,
+                  apellidos: data.apellidos,
+                  reenviado: true,
+                },
+              });
+            } catch {
+              // silencioso
+            }
+
+            try {
+              await this.notificacionesService.create({
+                usuarioId: solicitadoPorId as string,
+                titulo: 'Solicitud reenviada',
+                mensaje: 'Tu solicitud fue reenviada con  e9xito y qued f3 pendiente de aprobaci f3n.',
+                tipo: 'INFORMATIVO',
+                entidad: 'Aprobacion',
+                entidadId: aprobacion.id,
+                metadata: {
+                  tipoAprobacion: 'NUEVO_CLIENTE',
+                  clienteId: clienteRestaurado.id,
+                  reenviado: true,
+                },
+              });
+            } catch {
+              // silencioso
+            }
+          }
+
+          this.notificacionesGateway.broadcastClientesActualizados({
+            accion: 'REENVIAR',
+            clienteId: clienteRestaurado.id,
+          });
+
+          return {
+            mensaje: autoAprobar
+              ? 'Cliente restaurado y aprobado autom e1ticamente.'
+              : 'Cliente restaurado y solicitud reenviada. Pendiente de aprobaci f3n.',
+            aprobacionId: aprobacion.id,
+            clienteId: clienteRestaurado.id,
+            clienteCodigo: clienteRestaurado.codigo,
+            reenviado: true,
+          };
+        }
+
+        // Otros casos archivados (archivado manual, etc.) deben restaurarse desde Archivados
+        throw new ConflictException(
+          `El cliente con documento ${data.dni} ya existe pero está archivado. Restáuralo desde la sección de Archivados.`,
+        );
       }
 
       // Buscar un usuario para asignar como creador si no viene uno (TODO: Usar usuario autenticado)
@@ -728,8 +948,13 @@ export class ClientsService {
             formato: archivo.nombreOriginal?.split('.').pop() || 'bin',
             nombreOriginal: archivo.nombreOriginal,
             nombreAlmacenamiento: archivo.nombreAlmacenamiento,
-            ruta: archivo.ruta,
-            url: `/uploads/${archivo.nombreAlmacenamiento}`,
+            ruta: archivo.ruta || archivo.path || '',
+            url:
+              archivo.url ||
+              archivo.path ||
+              (archivo.nombreAlmacenamiento
+                ? `/uploads/${archivo.nombreAlmacenamiento}`
+                : null),
             tamanoBytes: archivo.tamanoBytes,
             subidoPorId: solicitadoPorId,
             esPrincipal: archivo.tipoContenido === 'FOTO_PERFIL',
@@ -760,41 +985,56 @@ export class ClientsService {
         },
       });
 
-      // Si se auto-aprobó, no enviamos notificación a los aprobadores (o podríamos notificar de la auto-aprobación)
       if (!autoAprobar) {
-        // Enviar notificaciones a todos los SUPER_ADMINISTRADOR, ADMIN y COORDINADOR
-        const aprobadores = await this.prisma.usuario.findMany({
-        where: {
-          rol: { in: [RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR] },
-          estado: 'ACTIVO',
-        },
-        select: { id: true, nombres: true, apellidos: true },
-      });
+        let nombreSolicitante = 'Usuario';
+        try {
+          const solicitante = await this.prisma.usuario.findUnique({
+            where: { id: solicitadoPorId },
+            select: { nombres: true, apellidos: true },
+          });
+          if (solicitante) {
+            nombreSolicitante = `${solicitante.nombres} ${solicitante.apellidos}`.trim() || nombreSolicitante;
+          }
+        } catch {
+          // silencioso
+        }
 
-      const solicitanteInfo = await this.prisma.usuario.findUnique({
-        where: { id: solicitadoPorId },
-        select: { nombres: true, apellidos: true },
-      });
+        try {
+          await this.notificacionesService.notifyApprovers({
+            titulo: 'Nuevo cliente requiere aprobación',
+            mensaje: `${nombreSolicitante} creó un nuevo cliente (${data.nombres} ${data.apellidos}). Requiere revisión.`,
+            tipo: 'CLIENTE',
+            entidad: 'Aprobacion',
+            entidadId: aprobacion.id,
+            metadata: {
+              tipoAprobacion: 'NUEVO_CLIENTE',
+              clienteId: cliente.id,
+              solicitanteId: solicitadoPorId,
+              dni: data.dni,
+              nombres: data.nombres,
+              apellidos: data.apellidos,
+            },
+          });
+        } catch {
+        }
 
-      for (const aprobador of aprobadores) {
-        await this.notificacionesService.create({
-          usuarioId: aprobador.id,
-          titulo: 'Nueva Solicitud de Cliente',
-          mensaje: `${solicitanteInfo?.nombres} ${solicitanteInfo?.apellidos} ha solicitado la aprobación de un nuevo cliente: ${data.nombres} ${data.apellidos} (CC: ${data.dni})`,
-          tipo: 'APROBACION',
-          entidad: 'Aprobacion',
-          entidadId: aprobacion.id,
-          metadata: {
-            tipoAprobacion: 'NUEVO_CLIENTE',
-            clienteNombre: `${data.nombres} ${data.apellidos}`,
-            clienteDni: data.dni,
-            solicitadoPor: `${solicitanteInfo?.nombres} ${solicitanteInfo?.apellidos}`,
-            clienteId: cliente.id,
-            archivos: data.archivos || [],
-          },
-        });
+        try {
+          await this.notificacionesService.create({
+            usuarioId: solicitadoPorId as string,
+            titulo: 'Solicitud enviada',
+            mensaje: 'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
+            tipo: 'INFORMATIVO',
+            entidad: 'Aprobacion',
+            entidadId: aprobacion.id,
+            metadata: {
+              tipoAprobacion: 'NUEVO_CLIENTE',
+              clienteId: cliente.id,
+            },
+          });
+        } catch {
+        }
       }
-      } // Fin de if (!autoAprobar)
+
 
       this.notificacionesGateway.broadcastClientesActualizados({
         accion: 'CREAR',
@@ -809,8 +1049,43 @@ export class ClientsService {
         clienteCodigo: codigo,
       };
     } catch (error) {
+      // Prisma errors (DB constraints, invalid relations, etc.)
+      if (error instanceof Prisma.PrismaClientKnownRequestError) {
+        this.logger.error(
+          `[CLIENTS] Prisma error creating client (code=${error.code}): ${error.message}`,
+        );
+
+        // Unique constraint (e.g. dni/codigo)
+        if (error.code === 'P2002') {
+          throw new ConflictException('Ya existe un cliente con esos datos.');
+        }
+
+        // FK constraint (e.g. creadoPorId/aprobadoPorId/subidoPorId)
+        if (error.code === 'P2003') {
+          throw new BadRequestException(
+            'Datos inválidos: referencia relacionada no existe (usuario/relación).',
+          );
+        }
+
+        throw new BadRequestException({
+          message: 'Datos inválidos para crear el cliente.',
+          code: error.code,
+          meta: error.meta,
+        });
+      }
+
+      if (error instanceof Prisma.PrismaClientValidationError) {
+        this.logger.error(
+          `[CLIENTS] Prisma validation error creating client: ${error.message}`,
+        );
+        throw new BadRequestException({
+          message: 'Datos inválidos para crear el cliente.',
+          details: error.message,
+        });
+      }
+
       this.logger.error('Error creating client:', error);
-      throw error;
+      throw new InternalServerErrorException('Error interno del servidor');
     }
   }
 
@@ -922,11 +1197,28 @@ export class ClientsService {
       });
 
       // También actualizamos el estado del cliente a RECHAZADO
-      await this.prisma.cliente.update({
+      const clienteRechazado = await this.prisma.cliente.update({
         where: { id: aprobacion.referenciaId },
         data: {
           estadoAprobacion: 'RECHAZADO',
           eliminadoEn: new Date(), // Lo ocultamos de la lista normal
+        },
+      });
+
+      // Registrar en auditoría
+      await this.auditService.create({
+        usuarioId: rechazadoPorId,
+        accion: 'RECHAZAR_CLIENTE',
+        entidad: 'Cliente',
+        entidadId: clienteRechazado.id,
+        datosAnteriores: {
+          nombres: clienteRechazado.nombres,
+          apellidos: clienteRechazado.apellidos,
+          dni: clienteRechazado.dni
+        },
+        datosNuevos: { 
+          estadoAprobacion: 'RECHAZADO',
+          razon
         },
       });
 
@@ -1067,7 +1359,7 @@ export class ClientsService {
         throw new NotFoundException('Cliente no encontrado');
       }
 
-      return await this.prisma.cliente.update({
+      const clienteActualizado = await this.prisma.cliente.update({
         where: { id },
         data: {
           enListaNegra: true,
@@ -1078,6 +1370,25 @@ export class ClientsService {
           puntaje: 0,
         },
       });
+
+      // Registrar en auditoría
+      await this.auditService.create({
+        usuarioId: agregadoPorId,
+        accion: 'ARCHIVAR_CLIENTE',
+        entidad: 'Cliente',
+        entidadId: id,
+        datosAnteriores: {
+          nombres: cliente.nombres,
+          apellidos: cliente.apellidos,
+          dni: cliente.dni
+        },
+        datosNuevos: {
+          enListaNegra: true,
+          razon
+        },
+      });
+
+      return clienteActualizado;
     } catch (error) {
       this.logger.error(`Error adding client ${id} to blacklist:`, error);
       throw error;

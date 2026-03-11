@@ -8,7 +8,6 @@ datasource db {
 
 model Usuario {
   id                      String                     @id @default(uuid())
-  nombreUsuario           String                     @unique @db.VarChar(50)
   correo                  String                     @unique @db.VarChar(255)
   hashContrasena          String                     @db.VarChar(255)
   nombres                 String                     @db.VarChar(100)
@@ -27,6 +26,9 @@ model Usuario {
   estadoSincronizacion    EstadoSincronizacion       @default(PENDIENTE)
   ultimaSincronizacion    DateTime?
   errorSincronizacion     String?
+  resetPasswordToken      String?
+  resetPasswordExpires    DateTime?
+
   clientesListaNegra      Cliente[]                  @relation("ClienteListaNegraPor")
   clientesAprobados       Cliente[]                  @relation("ClienteAprobadoPor")
   clientesCreados         Cliente[]                  @relation("ClienteCreadoPor")
@@ -55,7 +57,9 @@ model Usuario {
   rutasComoCobrador       Ruta[]                     @relation("RutaCobrador")
   rutasComoSupervisor     Ruta[]                     @relation("RutaSupervisor")
 
-  @@index([nombreUsuario])
+  syncConflictsCreados    SyncConflict[]             @relation("SyncConflictCreadoPor")
+  syncConflictsResueltos  SyncConflict[]             @relation("SyncConflictResueltoPor")
+
   @@index([correo])
   @@index([rol])
   @@index([estado])
@@ -256,6 +260,7 @@ model Prestamo {
   frecuenciaPago       FrecuenciaPago
   cantidadCuotas       Int
   fechaInicio          DateTime
+  fechaPrimerCobro     DateTime?
   fechaFin             DateTime
   estado               EstadoPrestamo       @default(BORRADOR)
   creadoPorId          String
@@ -273,6 +278,8 @@ model Prestamo {
   estadoSincronizacion EstadoSincronizacion @default(PENDIENTE)
   ultimaSincronizacion DateTime?
   cuotaInicial         Decimal              @default(0) @db.Decimal(12, 2)
+  notas                String?
+  garantia             String?
   pagos                Pago[]
   aprobadoPor          Usuario?             @relation("PrestamoAprobadoPor", fields: [aprobadoPorId], references: [id])
   cliente              Cliente              @relation(fields: [clienteId], references: [id])
@@ -616,6 +623,29 @@ model ColaSincronizacion {
   @@map("cola_sincronizacion")
 }
 
+model SyncConflict {
+  id               String               @id @default(uuid())
+  entidad          String               @db.VarChar(50) // ej: "pago", "cliente", "nota"
+  operacion        String               @db.VarChar(20) // POST, PUT, DELETE
+  datos            Json                 // payload original guardado en IndexedDB
+  errorMotivo      String               @db.Text
+  statusCode       Int?
+  endpoint         String               @db.VarChar(255)
+  estadoResolucion String               @default("PENDIENTE") @db.VarChar(20) // PENDIENTE, RESUELTO, DESCARTADO
+  creadoPorId      String?
+  creadoEn         DateTime             @default(now())
+  actualizadoEn    DateTime             @updatedAt
+  resueltoPorId    String?
+
+  creadoPor        Usuario?             @relation("SyncConflictCreadoPor", fields: [creadoPorId], references: [id])
+  resueltoPor      Usuario?             @relation("SyncConflictResueltoPor", fields: [resueltoPorId], references: [id])
+
+  @@index([entidad])
+  @@index([estadoResolucion])
+  @@index([creadoEn])
+  @@map("sync_conflicts")
+}
+
 model Multimedia {
   id                   String                  @id @default(uuid())
   clienteId            String?
@@ -778,6 +808,7 @@ enum TipoAprobacion {
   SOLICITUD_BASE_EFECTIVO
   PRORROGA_PAGO
   BAJA_POR_PERDIDA
+  REPROGRAMACION_CUOTA
 }
 
 enum TipoGasto {

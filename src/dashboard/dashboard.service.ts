@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   EstadoAprobacion,
@@ -9,15 +9,13 @@ import {
 
 @Injectable()
 export class DashboardService {
+  private readonly logger = new Logger(DashboardService.name);
+
   constructor(private prisma: PrismaService) {}
 
   async getDashboardData(timeFilter: string) {
     try {
-      // Calcular rango de fechas según el filtro de período PRIMERO
       const { startDate, endDate } = this.calculateDateRangeFromFilter(timeFilter);
-      
-      // Debug: Log de fechas calculadas
-      console.log(`[DASHBOARD] Filtro: ${timeFilter}, Inicio: ${startDate.toISOString()}, Fin: ${endDate.toISOString()}`);
 
       // 1. Obtener métricas principales filtradas por período
       const pendingApprovals = await this.prisma.aprobacion.count({
@@ -69,31 +67,6 @@ export class DashboardService {
 
       const efficiency = totalLoans > 0 ? (paidLoans / totalLoans) * 100 : 0;
 
-      console.log('[DASHBOARD] Antes de calcular capital prestado y recaudo');
-      console.log(`[DASHBOARD] Fechas calculadas - Inicio: ${startDate.toISOString()}, Fin: ${endDate.toISOString()}`);
-
-      // Consulta de prueba para ver qué préstamos hay en el rango
-      const prestamosPrueba = await this.prisma.prestamo.findMany({
-        where: {
-          eliminadoEn: null,
-        },
-        select: {
-          id: true,
-          monto: true,
-          creadoEn: true,
-          estado: true,
-        },
-        take: 5,
-        orderBy: { creadoEn: 'desc' },
-      });
-      console.log(`[DASHBOARD] Préstamos de prueba (últimos 5):`, prestamosPrueba.map(p => ({
-        id: p.id,
-        monto: p.monto,
-        creadoEn: p.creadoEn.toISOString(),
-        estado: p.estado,
-        estaEnRango: p.creadoEn >= startDate && p.creadoEn <= endDate,
-      })));
-
       // Calcular capital prestado del período (suma de montos de préstamos creados en el período)
       const capitalPrestado = await this.prisma.prestamo.aggregate({
         where: {
@@ -104,61 +77,6 @@ export class DashboardService {
           monto: true,
         },
       });
-      
-      // Contar cuántos préstamos hay en el rango
-      const countPrestamos = await this.prisma.prestamo.count({
-        where: {
-          creadoEn: { gte: startDate, lte: endDate },
-          eliminadoEn: null,
-        },
-      });
-      
-      console.log(`[DASHBOARD] Capital Prestado: ${capitalPrestado._sum?.monto || 0}, Count: ${countPrestamos}, Fechas: ${startDate.toISOString()} - ${endDate.toISOString()}`);
-      
-      // Consulta adicional: ver todos los préstamos sin filtro de fecha para diagnóstico
-      const todosLosPrestamos = await this.prisma.prestamo.findMany({
-        where: { eliminadoEn: null },
-        select: { id: true, monto: true, creadoEn: true },
-        take: 10,
-        orderBy: { creadoEn: 'desc' },
-      });
-      console.log(`[DASHBOARD] Todos los préstamos (últimos 10):`, todosLosPrestamos.map(p => ({
-        monto: p.monto,
-        creadoEn: p.creadoEn.toISOString(),
-        fechaLocal: p.creadoEn.toLocaleString('es-CO'),
-        estaEnRango: p.creadoEn >= startDate && p.creadoEn <= endDate,
-      })));
-
-      // Consulta de prueba para ver qué pagos hay en el rango
-      const pagosPrueba = await this.prisma.pago.findMany({
-        select: {
-          id: true,
-          montoTotal: true,
-          fechaPago: true,
-        },
-        take: 5,
-        orderBy: { fechaPago: 'desc' },
-      });
-      console.log(`[DASHBOARD] Pagos de prueba (últimos 5):`, pagosPrueba.map(p => ({
-        id: p.id,
-        montoTotal: p.montoTotal,
-        fechaPago: p.fechaPago.toISOString(),
-        fechaLocal: p.fechaPago.toLocaleString('es-CO'),
-        estaEnRango: p.fechaPago >= startDate && p.fechaPago <= endDate,
-      })));
-      
-      // Consulta adicional: ver todos los pagos sin filtro de fecha para diagnóstico
-      const todosLosPagos = await this.prisma.pago.findMany({
-        select: { id: true, montoTotal: true, fechaPago: true },
-        take: 10,
-        orderBy: { fechaPago: 'desc' },
-      });
-      console.log(`[DASHBOARD] Todos los pagos (últimos 10):`, todosLosPagos.map(p => ({
-        montoTotal: p.montoTotal,
-        fechaPago: p.fechaPago.toISOString(),
-        fechaLocal: p.fechaPago.toLocaleString('es-CO'),
-        estaEnRango: p.fechaPago >= startDate && p.fechaPago <= endDate,
-      })));
 
       // Calcular recaudo del período (suma de pagos en el período)
       const recaudo = await this.prisma.pago.aggregate({
@@ -169,15 +87,6 @@ export class DashboardService {
           montoTotal: true,
         },
       });
-      
-      // Contar cuántos pagos hay en el rango
-      const countPagos = await this.prisma.pago.count({
-        where: {
-          fechaPago: { gte: startDate, lte: endDate },
-        },
-      });
-      
-      console.log(`[DASHBOARD] Recaudo: ${recaudo._sum?.montoTotal || 0}, Count: ${countPagos}, Fechas: ${startDate.toISOString()} - ${endDate.toISOString()}`);
 
       // 2. Obtener aprobaciones pendientes (filtradas por período)
       const pendingApprovalsList = await this.prisma.aprobacion.findMany({
@@ -333,17 +242,9 @@ export class DashboardService {
         topCollectors: topCollectorsList,
       };
       
-      console.log('[DASHBOARD] Resultado final:', JSON.stringify({
-        capitalPrestado: result.metrics.capitalPrestado,
-        recaudo: result.metrics.recaudo,
-        efficiency: result.metrics.efficiency,
-      }));
-      
       return result;
     } catch (error) {
-      console.error('Error getting dashboard data:', error);
-      console.error('Error details:', error instanceof Error ? error.message : error);
-      console.error('Error stack:', error instanceof Error ? error.stack : 'No stack');
+      this.logger.error('Error obteniendo datos del dashboard', error instanceof Error ? error.stack : error);
       // Retornar datos de fallback en caso de error
       return {
         metrics: {
@@ -449,11 +350,6 @@ export class DashboardService {
       const totalHistorical = Number(historicalPayments._sum?.montoTotal || 0);
       const dailyTarget = Math.round(totalHistorical / 30);
       const weeklyTarget = dailyTarget * 7;
-
-      console.log(`[DASHBOARD] Objetivo calculado dinámicamente:`);
-      console.log(`  - Total últimos 30 días: ${totalHistorical}`);
-      console.log(`  - Objetivo diario: ${dailyTarget}`);
-      console.log(`  - Objetivo semanal: ${weeklyTarget}`);
 
       // Procesar y agrupar datos según el filtro
       const processedData = this.processTrendData(

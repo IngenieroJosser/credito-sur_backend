@@ -65,6 +65,12 @@ export class UsersController {
     return this.usersService.eliminar(id, req.user?.id);
   }
 
+  @Patch(':id/restore')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR)
+  restaurar(@Param('id', ParseUUIDPipe) id: string, @Request() req: any) {
+    return this.usersService.restaurar(id, req.user?.id);
+  }
+
   @Patch(':id/password')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   cambiarContrasena(

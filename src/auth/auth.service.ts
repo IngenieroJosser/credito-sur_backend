@@ -1,10 +1,12 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException, NotFoundException } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import { LoginAuthDto } from './dto/login-auth.dto';
 import { CreateAuthDto } from './dto/create-auth.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import * as nodemailer from 'nodemailer';
+import { ForgotPasswordDto, VerifyResetCodeDto } from './dto/forgot-password.dto';
 
 @Injectable()
 export class AuthService {
@@ -15,55 +17,39 @@ export class AuthService {
   ) {}
 
   async validarUsuario(nombreUsuario: string, contrasena: string) {
-    console.log(`[AUTH] validarUsuario llamado con: "${nombreUsuario}"`);
-    
-    // Buscar por nombreUsuario, correo o nombres (case insensitive para todos)
+    // Buscar por correo o nombres (case insensitive)
     const usuario = await this.prisma.usuario.findFirst({
       where: {
         OR: [
-          { nombreUsuario: { equals: nombreUsuario, mode: 'insensitive' } },
           { correo: { equals: nombreUsuario, mode: 'insensitive' } },
           { nombres: { equals: nombreUsuario, mode: 'insensitive' } },
         ],
       },
     });
 
-    console.log(`[AUTH] Usuario encontrado: ${usuario ? `SÍ - ${usuario.nombres} ${usuario.apellidos} (${usuario.rol})` : 'NO'}`);
-
-    if (!usuario) {
-      return null;
-    }
+    if (!usuario) return null;
 
     try {
       const matches = await argon2.verify(usuario.hashContrasena, contrasena);
-
       if (matches) {
         const { hashContrasena: _hashContrasena, ...resultado } = usuario;
         return resultado;
       }
-    } catch (error) {
-      // Error al verificar contraseña
+    } catch {
+      // Error al verificar contrasena
     }
 
     return null;
   }
 
   async login(loginAuthDto: LoginAuthDto) {
-    console.log(`[AUTH] login llamado con:`, JSON.stringify(loginAuthDto));
-    
     const usuario = await this.validarUsuario(
-      loginAuthDto.nombres, // El DTO mantiene 'nombres' pero ahora se usa como nombre de usuario
+      loginAuthDto.nombres,
       loginAuthDto.contrasena,
     );
 
-    console.log(`[AUTH] Usuario validado: ${usuario ? 'SÍ' : 'NO'}`);
-    if (usuario) {
-      console.log(`[AUTH] Estado del usuario: ${usuario.estado}`);
-    }
-
     if (!usuario) {
-      console.log(`[AUTH] Lanzando UnauthorizedException: Credenciales inválidas`);
-      throw new UnauthorizedException('Credenciales inválidas');
+      throw new UnauthorizedException('Credenciales invalidas');
     }
 
     if (usuario.estado !== 'ACTIVO') {
@@ -193,5 +179,131 @@ export class AuthService {
   async obtenerTodosLosUsuarios() {
     const mostrarUsuarios = await this.prisma.usuario.findMany();
     return mostrarUsuarios;
+  }
+
+  // ============================================================
+  // RECUPERACION DE CONTRASENA — Flujo por correo electronico
+  // ============================================================
+
+  async solicitarRecuperacion(dto: ForgotPasswordDto) {
+    // Buscar el usuario por correo
+    const usuario = await this.prisma.usuario.findFirst({
+      where: { correo: { equals: dto.correo, mode: 'insensitive' } },
+    });
+
+    // Por seguridad, no revelamos si el correo existe o no
+    if (!usuario || usuario.estado !== 'ACTIVO') {
+      return { mensaje: 'Si el correo existe y la cuenta está activa, recibirás un código en breve.' };
+    }
+
+    // Solo superadmin puede usar este flujo (otros roles lo gestionan a traves del admin)
+    if (usuario.rol !== 'SUPER_ADMINISTRADOR') {
+      return { mensaje: 'Si el correo existe y la cuenta está activa, recibirás un código en breve.' };
+    }
+
+    // Generar código OTP de 6 dígitos
+    const codigo = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiracion = new Date(Date.now() + 15 * 60 * 1000); // 15 minutos
+    const codigoHash = await argon2.hash(codigo);
+
+    // Guardar el código hasheado en la base de datos
+    await this.prisma.usuario.update({
+      where: { id: usuario.id },
+      data: {
+        resetPasswordToken: codigoHash,
+        resetPasswordExpires: expiracion,
+      } as any,
+    });
+
+    // Enviar el correo con el código
+    await this.enviarCorreoRecuperacion(usuario.correo, usuario.nombres, codigo);
+
+    return { mensaje: 'Si el correo existe y la cuenta está activa, recibirás un código en breve.' };
+  }
+
+  async verificarCodigoRecuperacion(dto: VerifyResetCodeDto) {
+    const usuario = await this.prisma.usuario.findFirst({
+      where: { correo: { equals: dto.correo, mode: 'insensitive' } },
+    });
+
+    if (!usuario) {
+      throw new BadRequestException('Código inválido o expirado');
+    }
+
+    // Verificar expiración
+    const expires = (usuario as any).resetPasswordExpires;
+    if (!expires || new Date() > new Date(expires)) {
+      throw new BadRequestException('El código ha expirado. Solicita uno nuevo.');
+    }
+
+    // Verificar el código
+    const token = (usuario as any).resetPasswordToken;
+    if (!token) {
+      throw new BadRequestException('Código inválido o expirado');
+    }
+
+    let codigoValido = false;
+    try {
+      codigoValido = await argon2.verify(token, dto.codigo);
+    } catch {
+      throw new BadRequestException('Código inválido o expirado');
+    }
+
+    if (!codigoValido) {
+      throw new BadRequestException('El código ingresado no es correcto');
+    }
+
+    // Cambiar la contraseña
+    const nuevoHash = await argon2.hash(dto.nuevaContrasena);
+    await this.prisma.usuario.update({
+      where: { id: usuario.id },
+      data: {
+        hashContrasena: nuevoHash,
+        resetPasswordToken: null,
+        resetPasswordExpires: null,
+      } as any,
+    });
+
+    return { mensaje: 'Contraseña actualizada correctamente. Ya puedes iniciar sesión.' };
+  }
+
+  private async enviarCorreoRecuperacion(correo: string, nombre: string, codigo: string) {
+    const smtpHost = process.env.SMTP_HOST;
+    const smtpPort = parseInt(process.env.SMTP_PORT || '587');
+    const smtpUser = process.env.SMTP_USER;
+    const smtpPass = process.env.SMTP_PASS;
+    const smtpFrom = process.env.SMTP_FROM || smtpUser;
+
+    if (!smtpHost || !smtpUser || !smtpPass) {
+      // En desarrollo o sin SMTP configurado, solo loguear el código
+      console.warn(`[RECOVERY] Codigo de recuperacion para ${correo}: ${codigo} (SMTP no configurado)`);
+      return;
+    }
+
+    const transporter = nodemailer.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpPort === 465,
+      auth: { user: smtpUser, pass: smtpPass },
+    });
+
+    await transporter.sendMail({
+      from: `"Créditos del Sur" <${smtpFrom}>`,
+      to: correo,
+      subject: 'Código de recuperación de contraseña',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 30px; background: #f8fafc; border-radius: 12px;">
+          <h2 style="color: #1e293b; margin-bottom: 8px;">Recuperación de contraseña</h2>
+          <p style="color: #64748b;">Hola <strong>${nombre}</strong>, recibimos una solicitud para restablecer tu contraseña.</p>
+          <div style="background: #fff; border: 2px solid #e2e8f0; border-radius: 10px; padding: 24px; text-align: center; margin: 24px 0;">
+            <p style="color: #64748b; font-size: 14px; margin: 0 0 8px 0;">Tu código de verificación es:</p>
+            <div style="font-size: 42px; font-weight: 900; letter-spacing: 12px; color: #0f172a; font-family: monospace;">${codigo}</div>
+          </div>
+          <p style="color: #64748b; font-size: 13px;">Este código expira en <strong>15 minutos</strong>. Si no solicitaste este cambio, ignora este correo.</p>
+          <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;">
+          <p style="color: #94a3b8; font-size: 12px; text-align: center;">Créditos del Sur — Sistema de Gestión</p>
+        </div>
+      `,
+    });
   }
 }

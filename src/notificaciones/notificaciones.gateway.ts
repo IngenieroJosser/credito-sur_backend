@@ -141,6 +141,14 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
     });
   }
 
+  broadcastAprobacionesActualizadas(payload?: any) {
+    this.logger.log('Emitiendo evento aprobaciones_actualizadas');
+    this.server.emit('aprobaciones_actualizadas', {
+      timestamp: new Date(),
+      ...(payload || {}),
+    });
+  }
+
   broadcastPrestamosActualizados(payload?: any) {
     this.logger.log('Emitiendo evento prestamos_actualizados');
     this.server.emit('prestamos_actualizados', {
