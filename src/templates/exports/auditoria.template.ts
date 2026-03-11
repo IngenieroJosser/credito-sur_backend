@@ -40,7 +40,12 @@
  * 3. Frontend: exportService.downloadFile('audit/export', params)
  */
 
+<<<<<<< HEAD
+import ExcelJS from 'exceljs';
+
+=======
 import * as ExcelJS from 'exceljs';
+>>>>>>> main
 
 export const AUDITORIA_COLUMNS: ExcelJS.Column[] = [
   { header: 'Fecha', key: 'fecha', width: 20 },
@@ -70,3 +75,156 @@ export const AUDITORIA_PDF_COLUMNS = [
 
 export const AUDITORIA_PDF_HEADER_COLOR = '#475569';
 export const AUDITORIA_PDF_ROW_ALT_COLOR = '#F8FAFC';
+<<<<<<< HEAD
+
+/**
+ * codigo de exportación de auditoría
+ */
+
+
+import { NextRequest, NextResponse } from "next/server";
+import ExcelJS from "exceljs";
+import { prisma } from "@/lib/prisma";
+import {
+  AUDITORIA_COLUMNS,
+  AUDITORIA_HEADER_STYLE
+} from "@/lib/templates/auditoria";
+
+function formatearFecha(fecha: Date) {
+  return new Intl.DateTimeFormat("es-CO").format(fecha);
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+
+    const startDate = searchParams.get("startDate");
+    const endDate = searchParams.get("endDate");
+
+    const where: any = {};
+
+    if (startDate && endDate) {
+      where.fecha = {
+        gte: new Date(startDate),
+        lte: new Date(endDate),
+      };
+    }
+
+    const logs = await prisma.auditLog.findMany({
+      where,
+      orderBy: {
+        fecha: "desc",
+      },
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Log Auditoría", {
+      views: [{ state: "frozen", ySplit: 4 }]
+    });
+
+    sheet.columns = AUDITORIA_COLUMNS;
+
+    const tituloRow = sheet.addRow([
+      "CRÉDITOS DEL SUR — LOG DE AUDITORÍA"
+    ]);
+
+    tituloRow.font = { size: 16, bold: true };
+    sheet.mergeCells(`A1:H1`);
+
+    const periodoTexto =
+      startDate && endDate
+        ? `Período: ${formatearFecha(new Date(startDate))} - ${formatearFecha(
+            new Date(endDate)
+          )}`
+        : "Período: Todos los registros";
+
+    const periodoRow = sheet.addRow([periodoTexto]);
+
+    sheet.mergeCells(`A2:H2`);
+
+    sheet.addRow([]);
+
+    const headerRow = sheet.addRow(
+      AUDITORIA_COLUMNS.map((c) => c.header)
+    );
+
+    headerRow.eachCell((cell) => {
+      cell.font = AUDITORIA_HEADER_STYLE.font;
+      cell.fill = AUDITORIA_HEADER_STYLE.fill;
+      cell.alignment = AUDITORIA_HEADER_STYLE.alignment;
+    });
+
+    sheet.autoFilter = {
+      from: "A4",
+      to: "H4",
+    };
+
+    logs.forEach((log, index) => {
+      const row = sheet.addRow([
+        log.fecha,
+        log.usuario,
+        log.accion,
+        log.entidad,
+        log.entidadId,
+        log.detalle,
+        log.datosAnteriores
+          ? JSON.stringify(log.datosAnteriores)
+          : "",
+        log.datosNuevos
+          ? JSON.stringify(log.datosNuevos)
+          : "",
+      ]);
+
+      if (index % 2 === 1) {
+        row.eachCell((cell) => {
+          cell.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: "FFF8FAFC" },
+          };
+        });
+      }
+    });
+
+    sheet.addRow([]);
+
+    const totalRow = sheet.addRow([
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      `TOTAL REGISTROS: ${logs.length}`,
+    ]);
+
+    totalRow.font = { bold: true };
+
+    sheet.columns.forEach((col) => {
+      if (!col.width) {
+        col.width = 20;
+      }
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+
+    return new NextResponse(buffer, {
+      headers: {
+        "Content-Type":
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition":
+          'attachment; filename="log_auditoria.xlsx"',
+      },
+    });
+  } catch (error) {
+    console.error(error);
+
+    return NextResponse.json(
+      { error: "Error al exportar auditoría" },
+      { status: 500 }
+    );
+  }
+}
+=======
+>>>>>>> main

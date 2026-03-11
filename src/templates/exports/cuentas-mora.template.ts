@@ -34,6 +34,10 @@
 
 import * as ExcelJS from 'exceljs';
 
+<<<<<<< HEAD
+
+=======
+>>>>>>> main
 export const MORA_COLUMNS: ExcelJS.Column[] = [
   { header: 'N° Préstamo', key: 'numero', width: 18 },
   { header: 'Cliente', key: 'cliente', width: 28 },
@@ -70,3 +74,170 @@ export const MORA_PDF_COLUMNS = [
 
 export const MORA_PDF_HEADER_COLOR = '#DC2626';
 export const MORA_PDF_ROW_ALT_COLOR = '#FEF2F2';
+<<<<<<< HEAD
+
+/**
+ * codigo de exportación de cuentas en mora
+ */
+
+import { NextRequest, NextResponse } from "next/server";
+import ExcelJS from "exceljs";
+import { prisma } from "@/lib/prisma";
+import {
+  CARTERA_CREDITOS_COLUMNS,
+  CARTERA_CREDITOS_HEADER_STYLE,
+  CARTERA_CREDITOS_CURRENCY_COLUMNS
+} from "@/lib/templates/cartera-creditos";
+
+function formatoFechaHora() {
+  return new Intl.DateTimeFormat("es-CO", {
+    dateStyle: "short",
+    timeStyle: "short"
+  }).format(new Date());
+}
+
+export async function GET(req: NextRequest) {
+  try {
+
+    const loans = await prisma.prestamo.findMany({
+      include: {
+        cliente: true,
+        producto: true,
+        ruta: true
+      },
+      orderBy: {
+        fechaInicio: "desc"
+      }
+    });
+
+    const workbook = new ExcelJS.Workbook();
+
+    const sheet = workbook.addWorksheet("Cartera Créditos", {
+      views: [{ state: "frozen", ySplit: 4 }]
+    });
+
+    sheet.columns = CARTERA_CREDITOS_COLUMNS;
+
+    const titulo = sheet.addRow([
+      "CRÉDITOS DEL SUR — CARTERA DE CRÉDITOS"
+    ]);
+
+    titulo.font = { size: 16, bold: true };
+    sheet.mergeCells("A1:P1");
+
+    const generado = sheet.addRow([
+      `Generado: ${formatoFechaHora()}`
+    ]);
+
+    sheet.mergeCells("A2:P2");
+
+    sheet.addRow([]);
+
+    const header = sheet.addRow(
+      CARTERA_CREDITOS_COLUMNS.map(c => c.header)
+    );
+
+    header.eachCell(cell => {
+      cell.font = CARTERA_CREDITOS_HEADER_STYLE.font;
+      cell.fill = CARTERA_CREDITOS_HEADER_STYLE.fill;
+      cell.alignment = CARTERA_CREDITOS_HEADER_STYLE.alignment;
+    });
+
+    sheet.autoFilter = {
+      from: "A4",
+      to: "P4"
+    };
+
+    let totalMonto = 0;
+    let totalPendiente = 0;
+    let totalMora = 0;
+
+    loans.forEach((loan, index) => {
+
+      const progreso =
+        loan.cuotasTotales > 0
+          ? Math.round((loan.cuotasPagadas / loan.cuotasTotales) * 100)
+          : 0;
+
+      const row = sheet.addRow([
+        loan.numero,
+        loan.cliente?.nombre,
+        loan.cliente?.dni,
+        loan.producto?.nombre,
+        loan.estado,
+        loan.montoTotal,
+        loan.montoPendiente,
+        loan.montoPagado,
+        loan.mora,
+        loan.cuotasPagadas,
+        loan.cuotasTotales,
+        progreso,
+        loan.riesgo,
+        loan.ruta?.nombre,
+        loan.fechaInicio,
+        loan.fechaFin
+      ]);
+
+      totalMonto += Number(loan.montoTotal || 0);
+      totalPendiente += Number(loan.montoPendiente || 0);
+      totalMora += Number(loan.mora || 0);
+
+      if (index % 2 === 1) {
+        row.eachCell(cell => {
+          cell.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: "FFF8FAFC" }
+          };
+        });
+      }
+
+      CARTERA_CREDITOS_CURRENCY_COLUMNS.forEach(colKey => {
+        const colIndex =
+          CARTERA_CREDITOS_COLUMNS.findIndex(c => c.key === colKey) + 1;
+
+        row.getCell(colIndex).numFmt = "#,##0";
+      });
+
+    });
+
+    sheet.addRow([]);
+
+    const resumen = sheet.addRow([
+      "",
+      "",
+      "",
+      "",
+      "",
+      `Monto Total: ${totalMonto}`,
+      `Pendiente: ${totalPendiente}`,
+      "",
+      `Mora: ${totalMora}`
+    ]);
+
+    resumen.font = { bold: true };
+
+    const buffer = await workbook.xlsx.writeBuffer();
+
+    return new NextResponse(buffer, {
+      headers: {
+        "Content-Type":
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition":
+          'attachment; filename="cartera_creditos.xlsx"'
+      }
+    });
+
+  } catch (error) {
+
+    console.error(error);
+
+    return NextResponse.json(
+      { error: "Error exportando cartera de créditos" },
+      { status: 500 }
+    );
+
+  }
+}
+=======
+>>>>>>> main
