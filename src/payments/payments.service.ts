@@ -374,29 +374,36 @@ export class PaymentsService {
       }
     }
 
-    // Notificar al coordinador
-    await this.notificacionesService.notifyCoordinator({
-      titulo: 'Pago Registrado',
-      mensaje: `Se registró un pago de ${montoTotal.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} para ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
+    // Notificar a todos los aprobadores (SUPER_ADMIN, ADMIN, COORDINADOR, SUPERVISOR)
+    const metodoPagoStr = dto.metodoPago === 'TRANSFERENCIA' ? 'Transferencia' : 'Efectivo';
+    await this.notificacionesService.notifyApprovers({
+      titulo: `Pago Registrado — ${metodoPagoStr}`,
+      mensaje: `Se registró ${numeroPago} de ${montoTotal.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} para ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos} (${prestamo.numeroPrestamo})`,
       tipo: 'EXITO',
       entidad: 'PAGO',
       entidadId: resultado.pago.id,
       metadata: {
-        // Datos del pago para el modal de detalle en notificaciones
-        pagoId:              resultado.pago.id,
+        // Identificación del pago
+        pagoId:           resultado.pago.id,
         numeroPago,
-        monto:               montoTotal,
-        metodoPago:          dto.metodoPago || 'EFECTIVO',
-        tieneComprobante:    comprobante != null,
-        // Datos del cliente (para mostrar en el modal)
-        cliente:             `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
-        clienteId:           prestamo.clienteId,
-        // Datos financieros
-        capitalRecuperado:   capitalTotal,
-        interesRecuperado:   interesTotal,
-        saldoNuevo:          resultado.descomposicion.saldoNuevo,
-        prestamoId:          prestamoIdVal,
-        numeroPrestamo:      prestamo.numeroPrestamo,
+        numeroPrestamo:   prestamo.numeroPrestamo,
+        prestamoId:       prestamoIdVal,
+        // Método y comprobante
+        metodoPago:       dto.metodoPago || 'EFECTIVO',
+        numeroReferencia: dto.numeroReferencia || null,
+        tieneComprobante: comprobante != null,
+        // Cliente
+        cliente:          `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
+        clienteId:        prestamo.clienteId,
+        clienteDni:       prestamo.cliente.dni || null,
+        // Montos
+        monto:            montoTotal,
+        capitalRecuperado: capitalTotal,
+        interesRecuperado: interesTotal,
+        saldoNuevo:       resultado.descomposicion.saldoNuevo,
+        saldoAnterior:    resultado.descomposicion.saldoAnterior,
+        prestamoQuedaPagado: resultado.descomposicion.prestamoQuedaPagado,
+        cuotasAfectadas:  resultado.descomposicion.cuotasAfectadas,
       },
     });
 
