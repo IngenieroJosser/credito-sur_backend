@@ -172,7 +172,7 @@ export async function generarExcelVencidas(
       fila.interesesMora,
       fila.nivelRiesgo,
       fila.ruta,
-      fila.estado || '',
+      fila.estado?.replace(/_/g, ' ') || '',
     ]);
     row.height = 18;
     const esPar = idx % 2 === 0;

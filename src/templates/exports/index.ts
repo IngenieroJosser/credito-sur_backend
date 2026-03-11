@@ -3,7 +3,7 @@
  * ÍNDICE DE PLANTILLAS DE EXPORTACIÓN
  * ============================================================================
  * Cada archivo define el diseño exacto (columnas, estilos, colores) para
- * generar los reportes en Excel (.xlsm) y PDF.
+ * generar los reportes en Excel (.xlsx) y PDF.
  *
  * Estado de implementación:
  * ✅ cartera-creditos    → loans.service.ts → exportLoans()

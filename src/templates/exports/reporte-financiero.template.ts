@@ -178,8 +178,8 @@ export async function generarExcelFinanciero(
   const buffer = await workbook.xlsx.writeBuffer();
   return {
     data: Buffer.from(buffer as ArrayBuffer),
-    contentType: 'application/vnd.ms-excel.sheet.macroEnabled.12',
-    filename: `reporte-financiero-${fecha}.xlsm`,
+    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    filename: `reporte-financiero-${fecha}.xlsx`,
   };
 }
 

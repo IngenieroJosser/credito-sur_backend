@@ -171,7 +171,7 @@ export async function generarExcelContable(
       tipoCaja:    t.tipoCaja || '-',
       monto:       t.monto,
       metodoPago:  t.metodoPago || 'EFECTIVO',
-      estado:      t.estadoAprobacion || 'APROBADO',
+      estado:      t.estadoAprobacion?.replace(/_/g, ' ') || 'APROBADO',
       descripcion: t.descripcion || '',
       caja:        t.caja,
       usuario:     t.usuario,
@@ -206,8 +206,8 @@ export async function generarExcelContable(
   const buffer = await workbook.xlsx.writeBuffer();
   return {
     data: Buffer.from(buffer as ArrayBuffer),
-    contentType: 'application/vnd.ms-excel.sheet.macroEnabled.12',
-    filename: `reporte-contable-${fecha}.xlsm`,
+    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    filename: `reporte-contable-${fecha}.xlsx`,
   };
 }
 

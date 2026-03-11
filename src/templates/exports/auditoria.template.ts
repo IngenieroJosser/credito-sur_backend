@@ -74,7 +74,7 @@ export async function generarExcelAuditoria(
     const row = ws.addRow({
       fecha: fila.fecha ? new Date(fila.fecha).toLocaleString('es-CO') : '',
       usuario: fila.usuario || '',
-      accion: fila.accion || '',
+      accion: fila.accion?.replace(/_/g, ' ') || '',
       entidad: fila.entidad || '',
       entidadId: fila.entidadId || '',
       datosAnteriores: fila.datosAnteriores
@@ -99,8 +99,8 @@ export async function generarExcelAuditoria(
   const buffer = await workbook.xlsx.writeBuffer();
   return {
     data: Buffer.from(buffer as ArrayBuffer),
-    contentType: 'application/vnd.ms-excel.sheet.macroEnabled.12',
-    filename: `auditoria-${fecha}.xlsm`,
+    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    filename: `auditoria-${fecha}.xlsx`,
   };
 }
 
@@ -169,7 +169,7 @@ export async function generarPDFAuditoria(
     [
       fila.fecha ? new Date(fila.fecha).toLocaleString('es-CO') : '',
       (fila.usuario || '').substring(0, 20),
-      (fila.accion || '').substring(0, 22),
+      (fila.accion?.replace(/_/g, ' ') || '').substring(0, 22),
       fila.entidad || '',
       (fila.entidadId || '').substring(0, 16),
       detalle,
