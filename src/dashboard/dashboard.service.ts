@@ -25,10 +25,12 @@ export class DashboardService {
         },
       });
 
+      // Cuentas en mora: sin filtro de período porque la mora es un estado ACTUAL del préstamo,
+      // no depende de cuándo se creó. Un préstamo creado hace 6 meses puede estar en mora hoy.
       const delinquentAccounts = await this.prisma.prestamo.count({
         where: { 
           estado: EstadoPrestamo.EN_MORA,
-          creadoEn: { gte: startDate, lte: endDate },
+          eliminadoEn: null,
         },
       });
 
@@ -106,11 +108,11 @@ export class DashboardService {
       take: 5,
     });
 
-      // 3. Obtener cuentas en mora (filtradas por período)
+      // Cuentas en mora para el listado detallado: sin filtro de período
       const delinquentAccountsList = await this.prisma.prestamo.findMany({
       where: { 
         estado: EstadoPrestamo.EN_MORA,
-        creadoEn: { gte: startDate, lte: endDate },
+        eliminadoEn: null,
       },
       include: {
         cliente: {
@@ -133,7 +135,7 @@ export class DashboardService {
           take: 1,
         },
       },
-      take: 5,
+      take: 10,
     });
 
       // 4. Obtener actividad reciente (últimas aprobaciones procesadas) - filtradas por período
@@ -709,11 +711,10 @@ export class DashboardService {
         startDate.setHours(0, 0, 0, 0);
         endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
         break;
-      case 'quarter':
-        const quarter = Math.floor(today.getMonth() / 3);
-        startDate = new Date(today.getFullYear(), quarter * 3, 1);
+      case 'year':
+        startDate = new Date(today.getFullYear(), 0, 1);
         startDate.setHours(0, 0, 0, 0);
-        endDate = new Date(today.getFullYear(), (quarter + 1) * 3, 0, 23, 59, 59, 999);
+        endDate = new Date(today.getFullYear(), 11, 31, 23, 59, 59, 999);
         break;
       default:
         // Por defecto: mes actual
