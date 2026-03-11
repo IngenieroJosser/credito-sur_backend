@@ -40,8 +40,12 @@
  * 3. Frontend: exportService.downloadFile('audit/export', params)
  */
 
+<<<<<<< HEAD
 import ExcelJS from 'exceljs';
 
+=======
+import * as ExcelJS from 'exceljs';
+>>>>>>> main
 
 export const AUDITORIA_COLUMNS: ExcelJS.Column[] = [
   { header: 'Fecha', key: 'fecha', width: 20 },
@@ -71,6 +75,7 @@ export const AUDITORIA_PDF_COLUMNS = [
 
 export const AUDITORIA_PDF_HEADER_COLOR = '#475569';
 export const AUDITORIA_PDF_ROW_ALT_COLOR = '#F8FAFC';
+<<<<<<< HEAD
 
 /**
  * codigo de exportación de auditoría
@@ -221,3 +226,5 @@ export async function GET(req: NextRequest) {
     );
   }
 }
+=======
+>>>>>>> main

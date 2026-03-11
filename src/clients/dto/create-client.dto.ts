@@ -1,17 +1,73 @@
-import { IsString, IsOptional, IsEmail, IsEnum, IsBoolean, IsNumber, Min, Max } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsEmail,
+  IsEnum,
+  IsBoolean,
+  IsNumber,
+  Min,
+  Max,
+  IsArray,
+  ValidateNested,
+  IsNotEmpty,
+  Matches,
+  Length,
+} from 'class-validator';
+import { Type } from 'class-transformer';
 import { NivelRiesgo } from '@prisma/client';
+
+export class CreateMultimediaDto {
+  @IsEnum([
+    'FOTO_PERFIL',
+    'DOCUMENTO_IDENTIDAD_FRENTE',
+    'DOCUMENTO_IDENTIDAD_REVERSO',
+    'COMPROBANTE_DOMICILIO',
+  ])
+  @IsNotEmpty()
+  tipoContenido: string;
+
+  @IsString()
+  @IsNotEmpty()
+  tipoArchivo: string;
+
+  @IsString()
+  @IsNotEmpty()
+  nombreOriginal: string;
+
+  @IsString()
+  @IsOptional()
+  nombreAlmacenamiento?: string;
+
+  @IsString()
+  @IsOptional()
+  ruta?: string;
+
+  @IsString()
+  @IsOptional()
+  url?: string;
+
+  @IsNumber()
+  @IsOptional()
+  tamanoBytes?: number;
+}
 
 export class CreateClientDto {
   @IsString()
+  @IsNotEmpty()
+  @Matches(/^\d+$/, { message: 'La Cédula debe contener solo números.' })
+  @Length(6, 10, { message: 'La Cédula debe tener entre 6 y 10 dígitos.' })
   dni: string;
 
   @IsString()
+  @IsNotEmpty()
   nombres: string;
 
   @IsString()
+  @IsNotEmpty()
   apellidos: string;
 
   @IsString()
+  @IsNotEmpty()
   telefono: string;
 
   @IsString()
@@ -47,8 +103,18 @@ export class CreateClientDto {
   @IsString()
   @IsOptional()
   rutaId?: string;
-  
+
   @IsString()
   @IsOptional()
   observaciones?: string;
+
+  @IsString()
+  @IsOptional()
+  creadoPorId?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateMultimediaDto)
+  archivos?: CreateMultimediaDto[];
 }

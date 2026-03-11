@@ -11,12 +11,24 @@ import {
 import { RolesService } from './roles.service';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
+import { AssignPermissionsDto } from './dto/assign-permissions.dto';
 import { ApiTags } from '@nestjs/swagger';
 
 @ApiTags('Roles')
 @Controller('roles')
 export class RolesController {
   constructor(private readonly rolesService: RolesService) {}
+
+  @Post(':id/permisos')
+  asignarPermisos(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() assignPermissionsDto: AssignPermissionsDto,
+  ) {
+    return this.rolesService.asignarPermisos(
+      id,
+      assignPermissionsDto.permisosIds,
+    );
+  }
 
   @Post()
   crear(@Body() rolDto: CreateRoleDto) {

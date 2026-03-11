@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { RolesModule } from './roles/roles.module';
@@ -14,14 +15,23 @@ import { AccountingModule } from './accounting/accounting.module';
 import { ReportsModule } from './reports/reports.module';
 import { AuditModule } from './audit/audit.module';
 import { BackupModule } from './backup/backup.module';
-import { PrismaModule } from 'prisma/prisma.module';
-
+import { PrismaModule } from './prisma/prisma.module'; 
+import { DashboardModule } from './dashboard/dashboard.module';
+import { UploadModule } from './upload/upload.module';
+import { CategoriasModule } from './categorias/categorias.module';
+import { PushModule } from './push/push.module';
+import { ConfiguracionModule } from './configuracion/configuracion.module';
+import { SyncConflictsModule } from './sync-conflicts/sync-conflicts.module';
+import { MirrorSyncModule } from './mirror-sync/mirror-sync.module';
+import { BullModule } from '@nestjs/bullmq';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 @Module({
   imports: [
     ConfigModule.forRoot({
-      isGlobal: true, // Hace que las variables estén disponibles globalmente
+      isGlobal: true,
       envFilePath: '.env',
     }),
+    ScheduleModule.forRoot(),
     AuthModule,
     UsersModule,
     RolesModule,
@@ -37,6 +47,21 @@ import { PrismaModule } from 'prisma/prisma.module';
     AuditModule,
     BackupModule,
     PrismaModule,
+    DashboardModule,
+    UploadModule,
+    CategoriasModule,
+    PushModule,
+    ConfiguracionModule,
+    SyncConflictsModule,
+    EventEmitterModule.forRoot(),
+    BullModule.forRoot({
+      connection: {
+        host: process.env.REDIS_HOST || 'localhost',
+        port: parseInt(process.env.REDIS_PORT || '6379'),
+        password: process.env.REDIS_PASSWORD || undefined,
+      },
+    }),
+    MirrorSyncModule,
   ],
   controllers: [],
   providers: [],

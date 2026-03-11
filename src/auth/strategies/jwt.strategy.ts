@@ -7,7 +7,9 @@ import type { RolUsuario } from '@prisma/client';
 interface JwtPayload {
   sub: string;
   email: string;
+  nombres: string;
   rol: RolUsuario;
+  permisos: string[];
 }
 
 @Injectable()
@@ -21,6 +23,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   validate(payload: JwtPayload) {
-    return { id: payload.sub, correo: payload.email, rol: payload.rol };
+    return {
+      id: payload.sub,
+      correo: payload.email,
+      nombres: payload.nombres,
+      rol: payload.rol,
+      permisos: payload.permisos || [],
+    };
   }
 }

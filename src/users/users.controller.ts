@@ -8,6 +8,7 @@ import {
   Delete,
   ParseUUIDPipe,
   UseGuards,
+  Request,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -17,6 +18,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolUsuario } from '@prisma/client';
+import { ChangePasswordDto } from './dto/change-password.dto';
 
 @ApiTags('Usuarios')
 @ApiBearerAuth()
@@ -27,33 +29,81 @@ export class UsersController {
 
   @Post()
   @Roles(RolUsuario.SUPER_ADMINISTRADOR)
-  crear(@Body() usuarioDto: CreateUserDto) {
-    return this.usersService.crear(usuarioDto);
+  crear(@Body() usuarioDto: CreateUserDto, @Request() req: any) {
+    return this.usersService.crear(usuarioDto, req.user?.id);
   }
 
   @Get()
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.COORDINADOR)
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+  )
   obtenerTodos() {
     return this.usersService.obtenerTodos();
   }
 
   @Get(':id')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   obtenerPorId(@Param('id', ParseUUIDPipe) id: string) {
     return this.usersService.obtenerPorId(id);
   }
 
   @Patch(':id')
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR)
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   actualizar(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() usuarioDto: UpdateUserDto,
+    @Request() req: any,
   ) {
-    return this.usersService.actualizar(id, usuarioDto);
+    return this.usersService.actualizar(id, usuarioDto, req.user?.id);
   }
 
   @Delete(':id')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR)
-  eliminar(@Param('id', ParseUUIDPipe) id: string) {
-    return this.usersService.eliminar(id);
+  eliminar(@Param('id', ParseUUIDPipe) id: string, @Request() req: any) {
+    return this.usersService.eliminar(id, req.user?.id);
+  }
+
+  @Patch(':id/restore')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR)
+  restaurar(@Param('id', ParseUUIDPipe) id: string, @Request() req: any) {
+    return this.usersService.restaurar(id, req.user?.id);
+  }
+
+  @Patch(':id/password')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
+  cambiarContrasena(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ChangePasswordDto,
+    @Request() req: any,
+  ) {
+    console.log(`[CONTROLLER] cambiarContrasena llamado para usuario ${id}`);
+    console.log(`[CONTROLLER] DTO recibido:`, JSON.stringify(dto));
+    console.log(`[CONTROLLER] Usuario solicitante:`, req.user?.id, req.user?.rol);
+    
+    return this.usersService.changePassword(id, dto);
+  }
+
+  @Post(':id/reset-password')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
+  resetearContrasena(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Request() req: any,
+  ) {
+    return (this.usersService as any).resetearContrasena(
+      id,
+      req.user?.rol,
+      req.user?.id,
+    );
+  }
+
+  @Post(':id/permisos')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR)
+  asignarPermisos(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body('permisos') permisos: string[],
+  ) {
+    return (this.usersService as any).asignarPermisos(id, permisos);
   }
 }

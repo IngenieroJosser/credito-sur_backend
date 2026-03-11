@@ -6,12 +6,18 @@ import {
   Patch,
   Param,
   Delete,
+  UseGuards,
 } from '@nestjs/common';
 import { BackupService } from './backup.service';
 import { CreateBackupDto } from './dto/create-backup.dto';
 import { UpdateBackupDto } from './dto/update-backup.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PermisosGuard } from '../auth/guards/permisos.guard';
+import { Permisos } from '../auth/decorators/permisos.decorator';
 
 @Controller('backup')
+@UseGuards(JwtAuthGuard, PermisosGuard)
+@Permisos('backups')
 export class BackupController {
   constructor(private readonly backupService: BackupService) {}
 

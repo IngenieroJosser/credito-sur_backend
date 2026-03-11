@@ -34,7 +34,10 @@
 
 import * as ExcelJS from 'exceljs';
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> main
 export const MORA_COLUMNS: ExcelJS.Column[] = [
   { header: 'N° Préstamo', key: 'numero', width: 18 },
   { header: 'Cliente', key: 'cliente', width: 28 },
@@ -71,6 +74,7 @@ export const MORA_PDF_COLUMNS = [
 
 export const MORA_PDF_HEADER_COLOR = '#DC2626';
 export const MORA_PDF_ROW_ALT_COLOR = '#FEF2F2';
+<<<<<<< HEAD
 
 /**
  * codigo de exportación de cuentas en mora
@@ -235,3 +239,5 @@ export async function GET(req: NextRequest) {
 
   }
 }
+=======
+>>>>>>> main

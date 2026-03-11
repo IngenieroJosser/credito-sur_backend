@@ -75,6 +75,7 @@ export const CONTABLE_HEADER_STYLE = {
 };
 
 export const CONTABLE_PDF_HEADER_COLOR = '#0369A1';
+<<<<<<< HEAD
 
 
 /**
@@ -308,3 +309,5 @@ export async function GET(req: NextRequest) {
 
   }
 }
+=======
+>>>>>>> main

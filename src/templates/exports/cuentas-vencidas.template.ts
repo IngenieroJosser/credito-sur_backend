@@ -68,6 +68,7 @@ export const VENCIDAS_PDF_COLUMNS = [
 
 export const VENCIDAS_PDF_HEADER_COLOR = '#D97706';
 export const VENCIDAS_PDF_ROW_ALT_COLOR = '#FFFBEB';
+<<<<<<< HEAD
 
 /**
  * codigo de exportación de  cuentas vencidas
@@ -222,3 +223,5 @@ export async function POST(req: NextRequest) {
 
   }
 }
+=======
+>>>>>>> main

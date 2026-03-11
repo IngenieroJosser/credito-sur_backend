@@ -54,6 +54,7 @@ export const OPERATIVO_PDF_COLUMNS = [
   { label: 'Préstamos', width: 100 },
   { label: 'Clientes', width: 100 },
 ];
+<<<<<<< HEAD
 
 
 /**
@@ -274,3 +275,5 @@ export async function GET(req: NextRequest) {
   }
 
 }
+=======
+>>>>>>> main

@@ -78,6 +78,7 @@ export const FINANCIERO_HEADER_STYLE = {
 };
 
 export const FINANCIERO_PDF_HEADER_COLOR = '#059669';
+<<<<<<< HEAD
 
 /**
  * codigo de exportación de reporte financiero
@@ -347,3 +348,5 @@ export async function GET(req: NextRequest) {
 
   }
 }
+=======
+>>>>>>> main

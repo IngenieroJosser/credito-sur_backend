@@ -76,6 +76,7 @@ export const PAGOS_PDF_COLUMNS = [
 
 export const PAGOS_PDF_HEADER_COLOR = '#7C3AED';
 export const PAGOS_PDF_ROW_ALT_COLOR = '#F5F3FF';
+<<<<<<< HEAD
 
 /**
  * codigo de exportación de historial de pago
@@ -244,3 +245,5 @@ export async function GET(req: NextRequest) {
     );
   }
 }
+=======
+>>>>>>> main

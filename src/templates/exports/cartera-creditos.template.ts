@@ -83,6 +83,7 @@ export const CARTERA_CREDITOS_PDF_COLUMNS = [
 
 export const CARTERA_CREDITOS_PDF_HEADER_COLOR = '#08557F';
 export const CARTERA_CREDITOS_PDF_ROW_ALT_COLOR = '#F8FAFC';
+<<<<<<< HEAD
 
 /**
  * codigo de exportación de cartera de créditos
@@ -248,3 +249,5 @@ export async function GET(req: NextRequest) {
 
   }
 }
+=======
+>>>>>>> main
