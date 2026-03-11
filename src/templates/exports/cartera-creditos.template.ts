@@ -131,7 +131,7 @@ export async function generarExcelCartera(
   // F2 — Nombre del reporte
   ws.mergeCells(`A2:${lastColLetter}2`);
   const c2 = ws.getCell('A2');
-  c2.value = 'ESTADO DE CARTERA DE CRÉDITOS';
+  c2.value = 'LISTADO DE CRÉDITOS';
   c2.font = { bold: true, size: 12, color: { argb: AZUL } };
   c2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: AZUL_CLARO } };
   c2.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -203,7 +203,7 @@ export async function generarExcelCartera(
       fila.cliente,
       fila.dni,
       fila.producto,
-      fila.estado,
+      fila.estado?.replace(/_/g, ' '),
       fila.montoTotal,
       fila.montoPendiente,
       fila.montoPagado,
@@ -327,7 +327,7 @@ export async function generarExcelCartera(
   });
 
   Object.entries(porEstado).forEach(([estado, d], i) => {
-    const row = ws2.addRow([estado, d.cantidad, d.capital, d.pendiente, d.recaudo, d.mora, d.adeudado]);
+    const row = ws2.addRow([estado.replace(/_/g, ' '), d.cantidad, d.capital, d.pendiente, d.recaudo, d.mora, d.adeudado]);
     row.height = 18;
     const bg = estadoFill[estado.toUpperCase()] || (i % 2 === 0 ? 'FFF8FAFC' : 'FFFFFFFF');
     row.eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } }; });
@@ -352,7 +352,7 @@ export async function generarExcelCartera(
   return {
     data: Buffer.from(buffer as ArrayBuffer),
     contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    filename: `cartera-creditos-${fecha}.xlsx`,
+    filename: `listado-creditos-${fecha}.xlsx`,
   };
 }
 
@@ -372,7 +372,7 @@ export async function generarPDFCartera(
   const drawPageHeader = (): number => {
     doc.rect(0, 0, doc.page.width, 50).fill(BLUE);
     doc.fontSize(16).font('Helvetica-Bold').fillColor('white').text('CRÉDITOS DEL SUR', 30, 10);
-    doc.fontSize(10).font('Helvetica').fillColor('white').text('ESTADO DE CARTERA DE CRÉDITOS', 30, 30);
+    doc.fontSize(10).font('Helvetica').fillColor('white').text('LISTADO DE CRÉDITOS', 30, 30);
     doc.fontSize(8).fillColor('white')
       .text(`Fecha: ${fecha}   |   Generado: ${new Date().toLocaleString('es-CO')}`,
         0, 36, { align: 'right', width: doc.page.width - 30 });
@@ -444,7 +444,7 @@ export async function generarPDFCartera(
     [
       fila.numeroPrestamo || '',
       (fila.cliente || '').substring(0, 20),
-      fila.estado || '',
+      fila.estado?.replace(/_/g, ' ') || '',
       `$${(fila.montoTotal || 0).toLocaleString('es-CO')}`,
       `$${(fila.montoPendiente || 0).toLocaleString('es-CO')}`,
       `$${(fila.interesRecogido || 0).toLocaleString('es-CO')}`,
@@ -489,6 +489,6 @@ export async function generarPDFCartera(
   return {
     data: buffer,
     contentType: 'application/pdf',
-    filename: `cartera-creditos-${fecha}.pdf`,
+    filename: `listado-creditos-${fecha}.pdf`,
   };
 }
