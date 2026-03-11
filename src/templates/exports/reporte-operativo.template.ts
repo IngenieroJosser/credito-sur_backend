@@ -184,6 +184,23 @@ export async function generarPDFOperativo(
   const buffers: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
 
+  const fs = require('fs');
+  const path = require('path');
+  const drawWatermark = () => {
+    try {
+      const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
+      const pDev = path.join(process.cwd(), 'src/assets/logo.png');
+      const logoPath = fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
+      if (logoPath) {
+        doc.save();
+        doc.opacity(0.08); // Opacidad muy sutil y elegante
+        doc.image(logoPath, (doc.page.width - 300) / 2, (doc.page.height - 300) / 2, { width: 300 });
+        doc.restore();
+      }
+    } catch(e) {}
+  };
+
+  drawWatermark();
   // Encabezado
   doc.fontSize(16).font('Helvetica-Bold').fillColor('#EA580C')
     .text('Créditos del Sur — Reporte Operativo', { align: 'center' });
@@ -233,6 +250,7 @@ export async function generarPDFOperativo(
   filas.forEach((fila, i) => {
     if (y > 540) {
       doc.addPage();
+      drawWatermark();
       y = 30;
       y = drawHeader();
       doc.font('Helvetica').fontSize(7).fillColor('black');

@@ -311,7 +311,23 @@ export async function generarPDFPagos(
   const buffers: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
 
-  const GREEN = '#059669';
+  const fs = require('fs');
+  const path = require('path');
+  const drawWatermark = () => {
+    try {
+      const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
+      const pDev = path.join(process.cwd(), 'src/assets/logo.png');
+      const logoPath = fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
+      if (logoPath) {
+        doc.save();
+        doc.opacity(0.08);
+        doc.image(logoPath, (doc.page.width - 300) / 2, (doc.page.height - 300) / 2, { width: 300 });
+        doc.restore();
+      }
+    } catch(e) {}
+  };
+
+  const GREEN = '#004F7B'; // Usamos AZUL pero dejamos val GREEN para no romper logic
 
   const drawPageHeader = (): number => {
     doc.rect(0, 0, doc.page.width, 50).fill(GREEN);
@@ -365,6 +381,7 @@ export async function generarPDFPagos(
     return y + 18;
   };
 
+  drawWatermark();
   let y = drawPageHeader();
   y = drawTableHeader(y);
   doc.font('Helvetica').fontSize(7);
@@ -372,6 +389,7 @@ export async function generarPDFPagos(
   filas.forEach((fila, i) => {
     if (y > 520) {
       doc.addPage();
+      drawWatermark();
       y = drawPageHeader();
       y = drawTableHeader(y);
       doc.font('Helvetica').fontSize(7);

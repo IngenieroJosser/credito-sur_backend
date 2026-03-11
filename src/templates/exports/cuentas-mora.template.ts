@@ -332,6 +332,22 @@ export async function generarPDFMora(
   const buffers: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
 
+  const fs = require('fs');
+  const path = require('path');
+  const drawWatermark = () => {
+    try {
+      const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
+      const pDev = path.join(process.cwd(), 'src/assets/logo.png');
+      const logoPath = fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
+      if (logoPath) {
+        doc.save();
+        doc.opacity(0.08);
+        doc.image(logoPath, (doc.page.width - 300) / 2, (doc.page.height - 300) / 2, { width: 300 });
+        doc.restore();
+      }
+    } catch(e) {}
+  };
+
   const drawPageHeader = () => {
     // Barra roja de título
     doc.rect(0, 0, doc.page.width, 50).fill('#DC2626');
@@ -387,6 +403,7 @@ export async function generarPDFMora(
     return y + rowH + 2;
   };
 
+  drawWatermark();
   let y = drawPageHeader();
   y = drawTableHeader(y);
 
@@ -394,6 +411,7 @@ export async function generarPDFMora(
   filas.forEach((fila, i) => {
     if (y > 530) {
       doc.addPage();
+      drawWatermark();
       y = drawPageHeader();
       y = drawTableHeader(y);
       doc.font('Helvetica').fontSize(7).fillColor('black');

@@ -195,6 +195,23 @@ export async function generarPDFFinanciero(
   const buffers: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
 
+  const fs = require('fs');
+  const path = require('path');
+  const drawWatermark = () => {
+    try {
+      const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
+      const pDev = path.join(process.cwd(), 'src/assets/logo.png');
+      const logoPath = fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
+      if (logoPath) {
+        doc.save();
+        doc.opacity(0.08); // Opacidad muy sutil y elegante
+        doc.image(logoPath, (doc.page.width - 300) / 2, (doc.page.height - 300) / 2, { width: 300 });
+        doc.restore();
+      }
+    } catch(e) {}
+  };
+
+  drawWatermark();
   const totalGastos = distribucionGastos.reduce((s, g) => s + g.monto, 0);
 
   // Encabezado
@@ -256,6 +273,7 @@ export async function generarPDFFinanciero(
   evolucionMensual.forEach((m, i) => {
     if (y > 700) {
       doc.addPage();
+      drawWatermark();
       y = 40;
     }
     if (i % 2 === 0) { doc.rect(40, y, mCols.reduce((s, c) => s + c.w, 0), 16).fill('#F0FDF4'); doc.fillColor('black'); }

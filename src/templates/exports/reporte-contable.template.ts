@@ -70,7 +70,7 @@ export async function generarExcelContable(
   ] as any;
 
   const t1 = ws1.addRow(['CRÉDITOS DEL SUR — ESTADO DE CAJAS']);
-  t1.font = { bold: true, size: 16, color: { argb: 'FF0369A1' } };
+  t1.font = { bold: true, size: 16, color: { argb: 'FF004F7B' } };
   ws1.mergeCells('A1:F1');
 
   const s1 = ws1.addRow([`Generado: ${new Date().toLocaleString('es-CO')}   |   Total cajas: ${cajas.length}`]);
@@ -84,7 +84,7 @@ export async function generarExcelContable(
     const cell = h1.getCell(i + 1);
     cell.value = col.header;
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0369A1' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF004F7B' } };
     cell.alignment = { horizontal: 'center', vertical: 'middle' };
   });
   h1.height = 22;
@@ -149,7 +149,7 @@ export async function generarExcelContable(
   ] as any;
 
   const t2 = ws2.addRow(['Últimos Movimientos']);
-  t2.font = { bold: true, size: 14, color: { argb: 'FF0369A1' } };
+  t2.font = { bold: true, size: 14, color: { argb: 'FF004F7B' } };
   ws2.mergeCells('A1:F1');
 
   ws2.addRow([]);
@@ -159,7 +159,7 @@ export async function generarExcelContable(
     const cell = h2.getCell(i + 1);
     cell.value = col.header;
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0369A1' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF004F7B' } };
     cell.alignment = { horizontal: 'center' };
   });
   h2.height = 20;
@@ -222,10 +222,27 @@ export async function generarPDFContable(
   const buffers: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
 
+  const fs = require('fs');
+  const path = require('path');
+  const drawWatermark = () => {
+    try {
+      const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
+      const pDev = path.join(process.cwd(), 'src/assets/logo.png');
+      const logoPath = fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
+      if (logoPath) {
+        doc.save();
+        doc.opacity(0.08); // Opacidad muy sutil y elegante
+        doc.image(logoPath, (doc.page.width - 300) / 2, (doc.page.height - 300) / 2, { width: 300 });
+        doc.restore();
+      }
+    } catch(e) {}
+  };
+
+  drawWatermark();
   const totalSaldo = cajas.reduce((s, c) => s + c.saldo, 0);
 
   // Encabezado
-  doc.fontSize(16).font('Helvetica-Bold').fillColor('#0369A1')
+  doc.fontSize(16).font('Helvetica-Bold').fillColor('#004F7B')
     .text('Créditos del Sur — Reporte Contable', { align: 'center' });
   doc.fontSize(9).font('Helvetica').fillColor('#475569')
     .text(`Generado: ${new Date().toLocaleString('es-CO')}`, { align: 'center' });
@@ -235,7 +252,7 @@ export async function generarPDFContable(
   doc.moveDown(0.5);
 
   // ── Tabla: Estado de Cajas ──
-  doc.fontSize(11).font('Helvetica-Bold').fillColor('#0369A1').text('Estado de Cajas');
+  doc.fontSize(11).font('Helvetica-Bold').fillColor('#004F7B').text('Estado de Cajas');
   doc.moveDown(0.3);
 
   const cajaCols = [
@@ -253,7 +270,7 @@ export async function generarPDFContable(
   let y = doc.y + 5;
 
   doc.fontSize(7).font('Helvetica-Bold');
-  doc.rect(tableLeft, y, cajaTableWidth, rowH).fill('#0369A1');
+  doc.rect(tableLeft, y, cajaTableWidth, rowH).fill('#004F7B');
   let x = tableLeft;
   cajaCols.forEach(c => { doc.fillColor('white').text(c.label, x + 2, y + 4, { width: c.width - 4 }); x += c.width; });
   y += rowH;
@@ -275,7 +292,7 @@ export async function generarPDFContable(
   // ── Tabla: Últimos Movimientos ──
   y += 20;
   doc.y = y;
-  doc.fontSize(11).font('Helvetica-Bold').fillColor('#0369A1').text('Últimos Movimientos');
+  doc.fontSize(11).font('Helvetica-Bold').fillColor('#004F7B').text('Últimos Movimientos');
   doc.moveDown(0.3);
 
   const movCols = [
@@ -290,14 +307,14 @@ export async function generarPDFContable(
   y = doc.y + 5;
 
   doc.fontSize(7).font('Helvetica-Bold');
-  doc.rect(tableLeft, y, movTableWidth, rowH).fill('#0369A1');
+  doc.rect(tableLeft, y, movTableWidth, rowH).fill('#004F7B');
   x = tableLeft;
   movCols.forEach(c => { doc.fillColor('white').text(c.label, x + 2, y + 4, { width: c.width - 4 }); x += c.width; });
   y += rowH;
 
   doc.font('Helvetica').fontSize(7).fillColor('black');
   transacciones.slice(0, 40).forEach((t, i) => {
-    if (y > 540) { doc.addPage(); y = 30; }
+    if (y > 540) { doc.addPage(); drawWatermark(); y = 30; }
     if (i % 2 === 0) { doc.rect(tableLeft, y, movTableWidth, rowH).fill('#F0F9FF'); doc.fillColor('black'); }
     x = tableLeft;
     [

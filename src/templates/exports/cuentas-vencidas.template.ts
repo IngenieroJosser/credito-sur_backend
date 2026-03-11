@@ -238,6 +238,22 @@ export async function generarPDFVencidas(
   const buffers: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
 
+  const fs = require('fs');
+  const path = require('path');
+  const drawWatermark = () => {
+    try {
+      const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
+      const pDev = path.join(process.cwd(), 'src/assets/logo.png');
+      const logoPath = fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
+      if (logoPath) {
+        doc.save();
+        doc.opacity(0.08);
+        doc.image(logoPath, (doc.page.width - 300) / 2, (doc.page.height - 300) / 2, { width: 300 });
+        doc.restore();
+      }
+    } catch(e) {}
+  };
+
   const PURPLE = '#7C3AED';
 
   const drawHeader = () => {
@@ -293,6 +309,7 @@ export async function generarPDFVencidas(
     return y + 18;
   };
 
+  drawWatermark();
   let y = drawHeader();
   y = drawTableHeader(y);
 
@@ -305,6 +322,7 @@ export async function generarPDFVencidas(
   filas.forEach((fila, i) => {
     if (y > 520) {
       doc.addPage();
+      drawWatermark();
       y = drawHeader();
       y = drawTableHeader(y);
       doc.font('Helvetica').fontSize(7);
