@@ -238,140 +238,250 @@ export async function generarPDFVencidas(
   const buffers: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
 
+  const BLANCO     = '#FFFFFF';
+  const GRIS_FONDO = '#F8FAFC';
+  const GRIS_CLR   = '#E2E8F0';
+  const GRIS_MED   = '#94A3B8';
+  const GRIS_TXT   = '#475569';
+  const PURPLE     = '#7C3AED';
+  const PURPLE_MED = '#8B5CF6';
+  const PURPLE_DARK = '#5B21B6';
+  const PURPLE_PALE = '#F5F3FF';
+  const ROJO_DARK  = '#DC2626';
+
+  const fmtCOP   = (v: number) => `$${(v || 0).toLocaleString('es-CO')}`;
+
   const fs = require('fs');
   const path = require('path');
+
+  const getLogoPath = () => {
+    const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
+    const pDev  = path.join(process.cwd(), 'src/assets/logo.png');
+    return fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
+  };
+
   const drawWatermark = () => {
     try {
-      const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
-      const pDev = path.join(process.cwd(), 'src/assets/logo.png');
-      const logoPath = fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
-      if (logoPath) {
+      const lp = getLogoPath();
+      if (lp) {
         doc.save();
-        doc.opacity(0.08);
-        doc.image(logoPath, (doc.page.width - 300) / 2, (doc.page.height - 300) / 2, { width: 300 });
+        doc.opacity(0.08); 
+        const W = doc.page.width;
+        const H = doc.page.height;
+        doc.image(lp, (W - 300) / 2, (H - 300) / 2, { width: 300 });
         doc.restore();
       }
     } catch(e) {}
   };
 
-  const PURPLE = '#7C3AED';
+  let pageNumber = 1;
 
-  const drawHeader = () => {
-    doc.rect(0, 0, doc.page.width, 50).fill(PURPLE);
-    doc.fontSize(16).font('Helvetica-Bold').fillColor('white')
-      .text('CRÉDITOS DEL SUR', 30, 10);
-    doc.fontSize(10).font('Helvetica').fillColor('white')
-      .text('REPORTE DE CUENTAS VENCIDAS', 30, 30);
-    doc.fontSize(8).fillColor('white')
-      .text(`Generado: ${new Date().toLocaleString('es-CO')}`,
-        0, 36, { align: 'right', width: doc.page.width - 30 });
+  const drawPageHeader = (): number => {
+    const W = doc.page.width;
 
-    const metW = (doc.page.width - 60) / 4;
-    const mets = [
-      { label: 'Saldo Vencido', val: `$${totales.totalVencido.toLocaleString('es-CO')}` },
-      { label: 'Monto Original', val: `$${totales.totalMontoOriginal.toLocaleString('es-CO')}` },
-      { label: 'Intereses Mora', val: `$${totales.totalInteresesMora.toLocaleString('es-CO')}` },
-      { label: 'Días Prom.', val: `${totales.diasPromedioVencimiento}d` },
-    ];
-    const metY = 58;
-    mets.forEach((m, i) => {
-      const mx = 30 + i * (metW + 4);
-      doc.rect(mx, metY, metW, 26).fill('#5B21B6');
-      doc.fontSize(7).font('Helvetica').fillColor('white').text(m.label, mx + 4, metY + 3, { width: metW - 8 });
-      doc.fontSize(10).font('Helvetica-Bold').fillColor('white').text(m.val, mx + 4, metY + 12, { width: metW - 8 });
+    doc.fontSize(22).font('Helvetica-Bold').fillColor(PURPLE_DARK)
+       .text('Créditos del Sur', 30, 25);
+    doc.fontSize(9).font('Helvetica').fillColor(PURPLE)
+       .text('REPORTE DE CUENTAS VENCIDAS', 30, 52, { characterSpacing: 0.5 });
+
+    doc.roundedRect(W - 180, 20, 148, 44, 5).fillAndStroke(BLANCO, GRIS_CLR);
+    doc.fontSize(8).font('Helvetica-Bold').fillColor(GRIS_MED)
+       .text('FECHA GENERACIÓN', W - 180, 28, { width: 148, align: 'center' });
+    doc.fontSize(10).font('Helvetica-Bold').fillColor(PURPLE_DARK)
+       .text(new Date().toLocaleDateString('es-CO'), W - 180, 40, { width: 148, align: 'center' });
+
+    const kW = (doc.page.width - 60) / 4;
+    const kY = 98;
+    [
+      { label: 'SALDO VENCIDO TOTAL', val: fmtCOP(totales.totalVencido), bg: PURPLE_PALE, color: PURPLE_DARK, isNum: true },
+      { label: 'MONTO ORIGINAL',      val: fmtCOP(totales.totalMontoOriginal), bg: '#F0F4F8', color: GRIS_TXT, isNum: true },
+      { label: 'INTERESES MORA',      val: fmtCOP(totales.totalInteresesMora), bg: '#FEF2F2', color: ROJO_DARK, isNum: true },
+      { label: 'PROMEDIO DÍAS VENC.', val: String(totales.diasPromedioVencimiento), bg: '#F0F4F8', color: GRIS_TXT, isNum: false },
+    ].forEach((m, i) => {
+      const mx = 30 + i * (kW + 4);
+      doc.roundedRect(mx, kY, kW, 44, 6).fillAndStroke(m.bg, GRIS_CLR);
+      doc.fontSize(7.5).font('Helvetica-Bold').fillColor(GRIS_MED)
+         .text(m.label, mx, kY + 10, { width: kW, align: 'center' });
+      doc.fontSize(13).font('Helvetica-Bold').fillColor(m.color)
+         .text(m.val, mx, kY + 23, { width: kW, align: 'center' });
     });
-    return metY + 34;
+    return kY + 58;
+  };
+
+  const drawFooter = () => {
+    const W = doc.page.width;
+    const H = doc.page.height;
+    doc.fontSize(7).font('Helvetica').fillColor(GRIS_MED);
+    doc.text(`Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`, 0, H - 25, { align: 'right', width: W - 30 });
   };
 
   const cols = [
     { label: 'N° Préstamo', width: 78 },
-    { label: 'Cliente',      width: 110 },
+    { label: 'Cliente',      width: 140 },
+    { label: 'Mto. Orig.',   width: 80 },
+    { label: 'Devuelto',     width: 80 },
     { label: 'Fecha Venc.',  width: 62 },
     { label: 'Días Venc.',   width: 55 },
     { label: 'Saldo Pend.',  width: 80 },
-    { label: 'Mto. Orig.',   width: 80 },
     { label: 'Int. Mora',    width: 70 },
     { label: 'Riesgo',       width: 55 },
     { label: 'Ruta',         width: 85 },
   ];
+
+  /* 
+   The user original columns were:
+   { label: 'N° Préstamo', width: 78 },
+   { label: 'Cliente',      width: 110 },
+   { label: 'Fecha Venc.',  width: 62 },
+   { label: 'Días Venc.',   width: 55 },
+   { label: 'Saldo Pend.',  width: 80 },
+   { label: 'Mto. Orig.',   width: 80 },
+   { label: 'Int. Mora',    width: 70 },
+   { label: 'Riesgo',       width: 55 },
+   { label: 'Ruta',         width: 85 },
+  I will stick exactly to the original ones except width for Cliente 140!
+  Wait, to not change the exact columns requested, let me use the exact properties map:
+  [numeroPrestamo, cliente, fechaVencimiento, diasVencidos, saldoPendiente, montoOriginal, interesesMora, nivelRiesgo, ruta]. 
+  So:
+  */
+
+  const realCols = [
+    { label: 'N° Préstamo', width: 78 },
+    { label: 'Cliente',      width: 140 }, // Expanded width
+    { label: 'Fecha Venc.',  width: 62 },
+    { label: 'Días Venc.',   width: 55 },
+    { label: 'Saldo Pend.',  width: 76 },
+    { label: 'Mto. Orig.',   width: 76 },
+    { label: 'Int. Mora',    width: 70 },
+    { label: 'Riesgo',       width: 55 },
+    { label: 'Ruta',         width: 80 },
+  ];
+  
+  // Total table width = 78+140+62+55+76+76+70+55+80 = 692 (fits landscape ~ 730 margins)
+
   const tableLeft = 30;
-  const rowH = 16;
-  const tableWidth = cols.reduce((s, c) => s + c.width, 0);
+  const tableWidth = realCols.reduce((s, c) => s + c.width, 0);
 
   const drawTableHeader = (y: number): number => {
-    doc.rect(tableLeft, y, tableWidth, 18).fill(PURPLE);
+    doc.rect(tableLeft, y, tableWidth, 24).fill(PURPLE_MED);
+    doc.rect(tableLeft, y + 24, tableWidth, 2).fill(PURPLE_DARK);
     let x = tableLeft;
-    doc.fontSize(7).font('Helvetica-Bold').fillColor('white');
-    cols.forEach(col => {
-      doc.text(col.label, x + 2, y + 5, { width: col.width - 4, align: 'center' });
+    doc.fontSize(8).font('Helvetica-Bold').fillColor(BLANCO);
+    realCols.forEach(col => {
+      doc.text(col.label, x + 4, y + 7, { width: col.width - 8, align: 'center' });
       x += col.width;
     });
-    return y + 18;
+    return y + 30;
   };
 
   drawWatermark();
-  let y = drawHeader();
+  let y = drawPageHeader();
   y = drawTableHeader(y);
 
-  doc.font('Helvetica').fontSize(7);
-  const riesgoColors: Record<string, string> = {
-    ROJO: '#FEF2F2', AMARILLO: '#FEFCE8',
-    LISTA_NEGRA: '#FFF1F2', VERDE: '#F0FDF4',
-  };
+  doc.font('Helvetica').fontSize(7.5);
 
   filas.forEach((fila, i) => {
-    if (y > 520) {
-      doc.addPage();
-      drawWatermark();
-      y = drawHeader();
-      y = drawTableHeader(y);
-      doc.font('Helvetica').fontSize(7);
-    }
-    const bg = riesgoColors[fila.nivelRiesgo?.toUpperCase() || ''] || (i % 2 === 0 ? '#F8FAFC' : 'white');
-    doc.rect(tableLeft, y, tableWidth, rowH).fill(bg);
-    doc.fillColor('black');
-
-    let x = tableLeft;
-    [
+    let maxRowHeight = 17;
+    const vals = [
       fila.numeroPrestamo || '',
-      (fila.cliente || '').substring(0, 22),
+      fila.cliente || '',
       fila.fechaVencimiento || '',
       String(fila.diasVencidos || 0),
-      `$${(fila.saldoPendiente || 0).toLocaleString('es-CO')}`,
-      `$${(fila.montoOriginal || 0).toLocaleString('es-CO')}`,
-      `$${(fila.interesesMora || 0).toLocaleString('es-CO')}`,
+      fmtCOP(fila.saldoPendiente || 0),
+      fmtCOP(fila.montoOriginal || 0),
+      fmtCOP(fila.interesesMora || 0),
       fila.nivelRiesgo || '',
-      (fila.ruta || '').substring(0, 14),
-    ].forEach((val, ci) => {
-      const isNum = ci >= 3 && ci <= 6;
-      doc.text(val, x + 2, y + 4, { width: cols[ci].width - 4, align: isNum ? 'right' : 'left' });
-      x += cols[ci].width;
+      fila.ruta || '',
+    ];
+
+    doc.font('Helvetica').fontSize(7.5);
+    vals.forEach((val, ci) => {
+      if (ci === 0 || ci === 1 || ci === 4 || ci === 6) doc.font('Helvetica-Bold');
+      const h = doc.heightOfString(val, { width: realCols[ci].width - 8, lineBreak: true });
+      if (h + 8 > maxRowHeight) maxRowHeight = h + 8;
+      doc.font('Helvetica');
     });
-    y += rowH;
+
+    if (y + maxRowHeight > doc.page.height - 70) {
+      drawFooter();
+      pageNumber++;
+      doc.addPage();
+      drawWatermark();
+      y = drawPageHeader();
+      y = drawTableHeader(y);
+      doc.font('Helvetica').fontSize(7.5);
+    }
+
+    const riesgo = fila.nivelRiesgo?.toUpperCase() || '';
+    const baseBg = i % 2 === 0 ? BLANCO : PURPLE_PALE;
+    const bg = fila.diasVencidos > 90 ? '#FEF2F2' : baseBg; // Rojo claro si > 90 días
+    
+    doc.rect(tableLeft, y, tableWidth, maxRowHeight).fill(bg);
+    doc.moveTo(tableLeft, y + maxRowHeight)
+       .lineTo(tableLeft + tableWidth, y + maxRowHeight)
+       .strokeColor(GRIS_CLR).lineWidth(0.4).stroke();
+
+    let x = tableLeft;
+    vals.forEach((v, ci) => {
+      const align = (ci >= 4 && ci <= 6) ? 'right' : (ci === 3 || ci === 7 ? 'center' : 'left');
+
+      if (ci === 4) {
+         doc.font('Helvetica-Bold').fillColor(PURPLE_DARK);
+      } else if (ci === 6) {
+         doc.font('Helvetica-Bold').fillColor(ROJO_DARK);
+      } else if (ci === 3 && fila.diasVencidos > 90) {
+         doc.font('Helvetica-Bold').fillColor(ROJO_DARK);
+      } else if (ci === 1) {
+         doc.font('Helvetica-Bold').fillColor(PURPLE_DARK);
+      } else if (ci === 7) {
+         if (riesgo === 'ROJO' || riesgo === 'LISTA_NEGRA') doc.font('Helvetica-Bold').fillColor(ROJO_DARK);
+         else doc.font('Helvetica-Bold').fillColor(GRIS_TXT);
+      } else {
+         doc.font('Helvetica').fillColor(GRIS_TXT);
+      }
+
+      doc.text(v, x + 4, y + 4, { width: realCols[ci].width - 8, align, lineBreak: true });
+      x += realCols[ci].width;
+    });
+    y += maxRowHeight;
   });
 
   // Totales
-  y += 4;
-  doc.rect(tableLeft, y, tableWidth, 18).fill('#1E1B4B');
-  doc.fontSize(7).font('Helvetica-Bold').fillColor('white');
-  let x = tableLeft;
-  const totData = [
-    `TOTALES (${totales.totalRegistros})`, '',
-    '', '',
+  y += 8;
+  doc.rect(tableLeft, y, tableWidth, 26).fill('#1E1B4B');
+  doc.rect(tableLeft, y, tableWidth, 2).fill(PURPLE_MED);
+
+  doc.fontSize(8.5).font('Helvetica-Bold').fillColor(BLANCO);
+  doc.text(
+    `TOTAL GENERAL  /  ${totales.totalRegistros} vencidas`,
+    tableLeft + 6, y + 8,
+    { width: realCols.slice(0, 4).reduce((s, c) => s + c.width, 0) - 10 }
+  );
+
+  let tx = tableLeft + realCols.slice(0, 4).reduce((s, c) => s + c.width, 0);
+  [
     `$${totales.totalVencido.toLocaleString('es-CO')}`,
     `$${totales.totalMontoOriginal.toLocaleString('es-CO')}`,
     `$${totales.totalInteresesMora.toLocaleString('es-CO')}`,
-    '', '',
-  ];
-  totData.forEach((v, ci) => {
-    if (ci < cols.length) {
-      const isNum = ci >= 4 && ci <= 6;
-      doc.text(v, x + 2, y + 5, { width: cols[ci].width - 4, align: isNum ? 'right' : 'left' });
-      x += cols[ci].width;
+  ].forEach((val, i) => {
+    const ci = i + 4; // a partir de la columna 4
+    if (ci < realCols.length) {
+      doc.fillColor(BLANCO).font('Helvetica-Bold').fontSize(8);
+      doc.text(val, tx + 4, y + 9, { width: realCols[ci].width - 8, align: 'right' });
+      tx += realCols[ci].width;
     }
   });
 
+  y += 38;
+  doc.fontSize(7.5).font('Helvetica-Oblique').fillColor(GRIS_MED)
+     .text(
+       'Documento expedido por Créditos del Sur. Las cifras presentadas son definitivas y sujetas a revisión de auditoría.',
+       tableLeft, y, { align: 'center', width: tableWidth }
+     );
+
+  drawFooter();
   doc.end();
+
   const buffer = await new Promise<Buffer>(resolve => {
     doc.on('end', () => resolve(Buffer.concat(buffers)));
   });

@@ -157,22 +157,22 @@ export async function generarExcelClientes(
   // Fila total
   ws.addRow([]);
   const sumRow = ws.addRow([
-    'TOTALES', '', '', '', '', '', '',
+    'TOTALES', '', '', '', '', '', '', '', '', '',
     { formula: `SUM(K5:K${4 + filas.length})` }, // K column for montoTotal
     { formula: `SUM(L5:L${4 + filas.length})` }, // L column for montoMora
   ]);
   sumRow.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
   const mergeCell = sumRow.getCell(1);
   sumRow.eachCell({ includeEmpty: true }, (c, cn) => {
-    if (cn <= 7) {
+    if (cn <= 10) {
       c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NARANJA } };
       c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     }
   });
-  ws.mergeCells(`A${sumRow.number}:G${sumRow.number}`);
+  ws.mergeCells(`A${sumRow.number}:J${sumRow.number}`);
   mergeCell.alignment = { horizontal: 'right', vertical: 'middle' };
 
-  [8, 9].forEach(c => { // These indices correspond to the formula columns (K and L)
+  [11, 12].forEach(c => { // These indices correspond to the formula columns (K and L)
     const sc = sumRow.getCell(c);
     sc.numFmt = '"$"#,##0';
     sc.font = { bold: true, size: 10, color: { argb: 'FF000000' } };

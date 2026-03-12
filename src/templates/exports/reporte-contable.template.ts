@@ -430,7 +430,7 @@ export async function generarPDFContable(
 
   y = drawMovHeader(y);
 
-  transacciones.slice(0, 50).forEach((t, i) => {
+  transacciones.forEach((t, i) => {
     let maxRowHeight = 17;
     const vals = [
       t.fecha ? new Date(t.fecha).toLocaleString('es-CO') : '',
@@ -497,7 +497,7 @@ export async function generarPDFContable(
 
   doc.fontSize(7.5).font('Helvetica-Oblique').fillColor(GRIS_MED)
      .text(
-       'Documento expedido por Créditos del Sur. Las cifras presentadas son definitivas y sujetas a revisión de auditoría. Solo se muestran las últimas 50 transacciones.',
+       'Documento expedido por Créditos del Sur. Las cifras presentadas son definitivas y sujetas a revisión de auditoría.',
        tableLeft, y, { align: 'center', width: movTableWidth }
      );
 

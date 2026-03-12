@@ -271,7 +271,7 @@ export async function generarExcelMora(
     { key: 'deuda', width: 20 },
   ] as any;
 
-  ws.mergeCells('A1:D1');
+  wsResumen.mergeCells('A1:D1');
   const rT = wsResumen.getCell('A1');
   rT.value = 'CRÉDITOS DEL SUR — Resumen por Nivel de Riesgo';
   rT.font = { bold: true, size: 14, color: { argb: COLOR.blanco } };

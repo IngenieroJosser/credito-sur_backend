@@ -114,91 +114,197 @@ export async function generarPDFAuditoria(
   const buffers: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
 
+  const BLANCO     = '#FFFFFF';
+  const GRIS_FONDO = '#F8FAFC';
+  const GRIS_CLR   = '#E2E8F0';
+  const GRIS_MED   = '#94A3B8';
+  const GRIS_TXT   = '#475569';
+  const SLATE_DARK = '#1E293B';
+  const SLATE_MED  = '#475569';
+  const SLATE_PALE = '#F1F5F9';
+  const AZUL_DARK  = '#1A5F8A';
+
   const fs = require('fs');
   const path = require('path');
+
+  const getLogoPath = () => {
+    const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
+    const pDev  = path.join(process.cwd(), 'src/assets/logo.png');
+    return fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
+  };
+
   const drawWatermark = () => {
     try {
-      const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
-      const pDev = path.join(process.cwd(), 'src/assets/logo.png');
-      const logoPath = fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
-      if (logoPath) {
+      const lp = getLogoPath();
+      if (lp) {
         doc.save();
-        doc.opacity(0.08);
-        doc.image(logoPath, (doc.page.width - 300) / 2, (doc.page.height - 300) / 2, { width: 300 });
+        doc.opacity(0.08); 
+        const W = doc.page.width;
+        const H = doc.page.height;
+        doc.image(lp, (W - 300) / 2, (H - 300) / 2, { width: 300 });
         doc.restore();
       }
     } catch(e) {}
   };
 
-  drawWatermark();
-  doc.fontSize(16).font('Helvetica-Bold').fillColor('#475569')
-    .text('Créditos del Sur — Log de Auditoría', { align: 'center' });
-  doc.fontSize(9).font('Helvetica').fillColor('#475569')
-    .text(`Generado: ${new Date().toLocaleString('es-CO')}  |  Total registros: ${filas.length}`, { align: 'center' });
-  doc.moveDown(0.5);
+  let pageNumber = 1;
+
+  const drawPageHeader = (): number => {
+    const W = doc.page.width;
+
+    doc.fontSize(22).font('Helvetica-Bold').fillColor(SLATE_DARK)
+       .text('Créditos del Sur', 30, 25);
+    doc.fontSize(9).font('Helvetica').fillColor(SLATE_MED)
+       .text('REPORTE DE AUDITORÍA DE SISTEMA', 30, 52, { characterSpacing: 0.5 });
+
+    doc.roundedRect(W - 180, 20, 148, 44, 5).fillAndStroke(BLANCO, GRIS_CLR);
+    doc.fontSize(8).font('Helvetica-Bold').fillColor(GRIS_MED)
+       .text('FECHA GENERACIÓN', W - 180, 28, { width: 148, align: 'center' });
+    doc.fontSize(10).font('Helvetica-Bold').fillColor(SLATE_DARK)
+       .text(new Date().toLocaleDateString('es-CO'), W - 180, 40, { width: 148, align: 'center' });
+
+    const kW = (doc.page.width - 60) / 3;
+    const kY = 98;
+    [
+      { label: 'TOTAL DE REGISTROS', val: String(filas.length), bg: SLATE_PALE, color: SLATE_DARK },
+      { label: 'SISTEMA BASE', val: 'Créditos del Sur V1.0', bg: '#F0F4F8', color: GRIS_TXT },
+      { label: 'NIVEL DE ACCESO', val: 'Administrador / Sistema', bg: '#F0F4F8', color: GRIS_TXT },
+    ].forEach((m, i) => {
+      const mx = 30 + i * (kW + 4);
+      doc.roundedRect(mx, kY, kW, 44, 6).fillAndStroke(m.bg, GRIS_CLR);
+      doc.fontSize(7.5).font('Helvetica-Bold').fillColor(GRIS_MED)
+         .text(m.label, mx, kY + 10, { width: kW, align: 'center' });
+      doc.fontSize(11).font('Helvetica-Bold').fillColor(m.color)
+         .text(m.val, mx, kY + 23, { width: kW, align: 'center' });
+    });
+    return kY + 58;
+  };
+
+  const drawFooter = () => {
+    const W = doc.page.width;
+    const H = doc.page.height;
+    doc.fontSize(7).font('Helvetica').fillColor(GRIS_MED);
+    doc.text(`Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`, 0, H - 25, { align: 'right', width: W - 30 });
+  };
 
   const cols = [
-    { label: 'Fecha', width: 100 },
+    { label: 'Fecha', width: 90 },
     { label: 'Usuario', width: 110 },
     { label: 'Acción', width: 120 },
     { label: 'Entidad', width: 80 },
     { label: 'ID Entidad', width: 100 },
-    { label: 'Detalle (Nuevo)', width: 210 },
+    { label: 'Detalle (Nuevos / Cambio)', width: 232 },
   ];
 
   const tableLeft = 30;
-  const rowH = 16;
   const tableWidth = cols.reduce((s, c) => s + c.width, 0);
-  let y = doc.y + 5;
 
-  const drawHeader = () => {
-    doc.fontSize(7).font('Helvetica-Bold');
-    doc.rect(tableLeft, y, tableWidth, rowH).fill('#475569');
+  const drawTableHeader = (y: number): number => {
+    doc.rect(tableLeft, y, tableWidth, 24).fill(SLATE_MED);
+    doc.rect(tableLeft, y + 24, tableWidth, 2).fill(SLATE_DARK);
     let x = tableLeft;
+    doc.fontSize(8).font('Helvetica-Bold').fillColor(BLANCO);
     cols.forEach(col => {
-      doc.fillColor('white').text(col.label, x + 2, y + 4, { width: col.width - 4 });
+      doc.text(col.label, x + 4, y + 7, { width: col.width - 8, align: 'center' });
       x += col.width;
     });
-    return y + rowH;
+    return y + 30;
   };
 
-  y = drawHeader();
-  doc.font('Helvetica').fontSize(7).fillColor('black');
+  drawWatermark();
+  let y = drawPageHeader();
+  y = drawTableHeader(y);
+
+  doc.font('Helvetica').fontSize(7.5);
 
   filas.forEach((fila, i) => {
-    if (y > 540) {
+    let maxRowHeight = 17;
+
+    const limitStr = (str: string, maxLen: number) => {
+      if (!str) return '';
+      if (str.length <= maxLen) return str;
+      return str.substring(0, maxLen - 3) + '...';
+    };
+
+    // Audit logs can have HUGE JSON blobs. We need to limit them to avoid multi-page single rows, but we give them a generous 500 chars instead of hard 50.
+    const detalle = fila.datosNuevos
+      ? limitStr(JSON.stringify(fila.datosNuevos), 500)
+      : (fila.datosAnteriores ? limitStr(JSON.stringify(fila.datosAnteriores), 500) : '');
+
+    const vals = [
+      fila.fecha ? new Date(fila.fecha).toLocaleString('es-CO') : '',
+      fila.usuario || '',
+      fila.accion?.replace(/_/g, ' ') || '',
+      fila.entidad || '',
+      fila.entidadId || '',
+      detalle,
+    ];
+
+    doc.font('Helvetica').fontSize(7.5);
+    vals.forEach((val, ci) => {
+      if (ci === 0 || ci === 1) doc.font('Helvetica-Bold');
+      const h = doc.heightOfString(val, { width: cols[ci].width - 8, lineBreak: true });
+      if (h + 8 > maxRowHeight) maxRowHeight = h + 8;
+      doc.font('Helvetica');
+    });
+
+    if (y + maxRowHeight > doc.page.height - 70) {
+      drawFooter();
+      pageNumber++;
       doc.addPage();
       drawWatermark();
-      y = 30;
-      y = drawHeader();
-      doc.font('Helvetica').fontSize(7).fillColor('black');
+      y = drawPageHeader();
+      y = drawTableHeader(y);
+      doc.font('Helvetica').fontSize(7.5);
     }
 
-    if (i % 2 === 0) {
-      doc.rect(tableLeft, y, tableWidth, rowH).fill('#F8FAFC');
-      doc.fillColor('black');
-    }
-
-    const detalle = fila.datosNuevos
-      ? JSON.stringify(fila.datosNuevos).substring(0, 50)
-      : '';
+    const baseBg = i % 2 === 0 ? BLANCO : SLATE_PALE;
+    doc.rect(tableLeft, y, tableWidth, maxRowHeight).fill(baseBg);
+    doc.moveTo(tableLeft, y + maxRowHeight)
+       .lineTo(tableLeft + tableWidth, y + maxRowHeight)
+       .strokeColor(GRIS_CLR).lineWidth(0.4).stroke();
 
     let x = tableLeft;
-    [
-      fila.fecha ? new Date(fila.fecha).toLocaleString('es-CO') : '',
-      (fila.usuario || '').substring(0, 20),
-      (fila.accion?.replace(/_/g, ' ') || '').substring(0, 22),
-      fila.entidad || '',
-      (fila.entidadId || '').substring(0, 16),
-      detalle,
-    ].forEach((val, ci) => {
-      doc.text(val, x + 2, y + 4, { width: cols[ci].width - 4 });
+    vals.forEach((v, ci) => {
+      const align = 'left';
+
+      if (ci === 1) {
+         doc.font('Helvetica-Bold').fillColor(AZUL_DARK);
+      } else if (ci === 0) {
+         doc.font('Helvetica-Bold').fillColor(SLATE_DARK);
+      } else if (ci === 2) {
+         doc.font('Helvetica-Bold').fillColor(SLATE_MED);
+      } else {
+         doc.font('Helvetica').fillColor(GRIS_TXT);
+      }
+
+      doc.text(v, x + 4, y + 4, { width: cols[ci].width - 8, align, lineBreak: true });
       x += cols[ci].width;
     });
-    y += rowH;
+    y += maxRowHeight;
   });
 
+  // Totales
+  y += 8;
+  doc.rect(tableLeft, y, tableWidth, 26).fill(SLATE_DARK);
+
+  doc.fontSize(8.5).font('Helvetica-Bold').fillColor(BLANCO);
+  doc.text(
+    `TOTAL REGISTROS DE AUDITORÍA: ${filas.length}`,
+    tableLeft + 6, y + 9,
+    { width: tableWidth - 10, align: 'center' }
+  );
+
+  y += 38;
+  doc.fontSize(7.5).font('Helvetica-Oblique').fillColor(GRIS_MED)
+     .text(
+       'Documento expedido por Créditos del Sur. Información de trazabilidad del sistema. Confidencial.',
+       tableLeft, y, { align: 'center', width: tableWidth }
+     );
+
+  drawFooter();
   doc.end();
+
   const buffer = await new Promise<Buffer>(resolve => {
     doc.on('end', () => resolve(Buffer.concat(buffers)));
   });

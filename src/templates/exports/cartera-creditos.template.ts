@@ -264,7 +264,7 @@ export async function generarExcelCartera(
 
     // Fórmulas recomendadas
     if ((fila.montoTotal || 0) > 0) {
-      row.getCell(14).value = { formula: `H${row.number}/F${row.number}` };
+      row.getCell(14).value = { formula: 'H' + row.number + '/F' + row.number };
     }
   });
 
