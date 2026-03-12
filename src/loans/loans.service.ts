@@ -2142,6 +2142,36 @@ export class LoansService implements OnModuleInit {
       }
     });
 
+    try {
+      const asignacion = await this.prisma.asignacionRuta.findFirst({
+        where: { clienteId: prestamo.clienteId, activa: true },
+        select: { ruta: { select: { cobradorId: true } } },
+      });
+
+      const cobradorId = asignacion?.ruta?.cobradorId;
+      if (cobradorId) {
+        await this.notificacionesService.create({
+          usuarioId: cobradorId,
+          titulo: `Cuenta gestionada — Reportada como pérdida (${prestamo.numeroPrestamo})`,
+          mensaje: `El cliente ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos} fue gestionado en Cuentas Vencidas y se reportó como pérdida.${data.motivo ? ` Motivo: ${data.motivo}` : ''}`,
+          tipo: 'ADVERTENCIA',
+          entidad: 'Prestamo',
+          entidadId: prestamoId,
+          metadata: {
+            tipo: 'GESTION_VENCIDA',
+            decision: 'CASTIGAR',
+            prestamoId,
+            clienteId: prestamo.clienteId,
+            numeroPrestamo: prestamo.numeroPrestamo,
+            motivo: data.motivo,
+            archivarPorId: data.archivarPorId,
+          },
+        });
+      }
+    } catch {
+      // no interrumpir
+    }
+
     return {
       message: 'Préstamo archivado exitosamente',
       prestamoId,
