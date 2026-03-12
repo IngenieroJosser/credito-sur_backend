@@ -2391,6 +2391,8 @@ export class LoansService implements OnModuleInit {
           cuotaId: data.cuotaId,
           clienteNombre: `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
           clienteId: prestamo.clienteId,
+          numeroPrestamo: prestamo.numeroPrestamo,
+          numeroCuota: cuota.numeroCuota,
           frecuenciaPago: prestamo.frecuenciaPago,
           fechaVencimientoOriginal: cuota.fechaVencimiento.toISOString(),
           nuevaFecha: data.nuevaFecha,
@@ -2413,12 +2415,12 @@ export class LoansService implements OnModuleInit {
        return { mensaje: 'Reprogramación aprobada y aplicada automáticamente', aprobacion };
     }
 
-    const rolNameText = usuarioSolicitante?.rol === 'SUPERVISOR' ? 'El supervisor' : 'El cobrador';
+    const rolNameText = usuarioSolicitante?.rol === 'SUPERVISOR' ? 'Supervisor' : 'Cobrador Principal';
 
     // Notificar a aprobadores (ADMIN / COORDINADOR / SUPERVISOR)
     await this.notificacionesService.notifyApprovers({
-      titulo: 'Solicitud de reprogramacion',
-      mensaje: `${rolNameText} solicita reprogramar la cuota de ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos} al ${data.nuevaFecha}. Motivo: ${data.motivo}`,
+      titulo: 'Reprogramaciones',
+      mensaje: `Solicitud de reprogramaciones por ${rolNameText}`,
       tipo: 'REPROGRAMACION',
       entidad: 'Aprobacion',
       entidadId: aprobacion.id,
