@@ -25,7 +25,7 @@ export class AccountingService implements OnModuleInit {
   ) {}
 
   // Codigos reservados para las cajas que no se pueden eliminar
-  private static readonly CODIGOS_DEFAULT = ['CAJA-PRINCIPAL', 'CAJA-OFICINA'] as const;
+  private static readonly CODIGOS_DEFAULT = ['CAJA-PRINCIPAL', 'CAJA-OFICINA', 'CAJA-BANCO'] as const;
 
   async onModuleInit() {
     await this.ensureCajasDefault();
@@ -58,6 +58,7 @@ export class AccountingService implements OnModuleInit {
       const cajasDefault = [
         { codigo: 'CAJA-PRINCIPAL', nombre: 'Caja Principal', tipo: 'PRINCIPAL' as const },
         { codigo: 'CAJA-OFICINA',   nombre: 'Caja de Oficina', tipo: 'PRINCIPAL' as const },
+        { codigo: 'CAJA-BANCO',     nombre: 'Caja Banco',      tipo: 'PRINCIPAL' as const },
       ];
 
       for (const def of cajasDefault) {
@@ -221,7 +222,24 @@ export class AccountingService implements OnModuleInit {
       throw new NotFoundException('Caja no encontrada');
     }
 
-    return caja;
+    return {
+      id: caja.id,
+      codigo: caja.codigo,
+      nombre: caja.nombre,
+      tipo: caja.tipo,
+      rutaId: caja.rutaId,
+      rutaNombre: (caja as any).ruta?.nombre || null,
+      responsable: caja.responsable
+        ? `${caja.responsable.nombres} ${caja.responsable.apellidos}`
+        : 'Sin asignar',
+      responsableId: caja.responsableId,
+      saldo: Number(caja.saldoActual) || 0,
+      saldoMinimo: Number(caja.saldoMinimo) || 0,
+      saldoMaximo: Number(caja.saldoMaximo) || 0,
+      estado: caja.activa ? 'ABIERTA' : 'CERRADA',
+      ultimaActualizacion: caja.actualizadoEn.toISOString(),
+      transacciones: caja.transacciones,
+    };
   }
 
   // =====================
@@ -648,8 +666,15 @@ export class AccountingService implements OnModuleInit {
 
     // Se eliminó el filtro que excluía consolidaciones para mostrarlas en movimientos recientes
 
-    if (cajaId) where.cajaId = cajaId;
-    if (tipo) where.tipo = tipo;
+    if (cajaId) {
+      where.cajaId = cajaId;
+      if (tipo) where.tipo = tipo;
+    } else {
+      // Movimientos recientes (global): mostrar solo movimientos entre cajas.
+      // Además, ocultar la "doble partida" de transferencias mostrando solo el lado TRX-IN.
+      where.tipo = TipoTransaccion.TRANSFERENCIA;
+      where.numeroTransaccion = { startsWith: 'TRX-IN' };
+    }
     if (fechaInicio || fechaFin) {
       where.fechaTransaccion = {};
       if (fechaInicio) {
