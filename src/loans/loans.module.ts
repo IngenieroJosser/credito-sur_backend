@@ -11,8 +11,10 @@ import { AuditModule } from '../audit/audit.module';
 import { PushModule } from '../push/push.module';
 import { ConfiguracionModule } from '../configuracion/configuracion.module';
 
+import { ApprovalsModule } from '../approvals/approvals.module';
+
 @Module({
-  imports: [PrismaModule, NotificacionesModule, AuditModule, PushModule, ConfiguracionModule],
+  imports: [PrismaModule, NotificacionesModule, AuditModule, PushModule, ConfiguracionModule, ApprovalsModule],
   controllers: [LoansController],
   providers: [LoansService, MoraService, PrismaService, LoansScheduler],
   exports: [LoansService, MoraService],

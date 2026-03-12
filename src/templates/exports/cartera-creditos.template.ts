@@ -64,6 +64,14 @@ const NARANJA    = 'FFF37920';
 const NARANJA_CLARO = 'FFFFEDD5';
 const GRIS_OSC   = 'FF1E293B';
 
+const BORDER_HAIR = { style: 'hair', color: { argb: 'FFE2E8F0' } } as any;
+const BORDER_MEDIUM = { style: 'medium', color: { argb: 'FF94A3B8' } } as any;
+
+const BASE_CELL_STYLE = {
+  alignment: { vertical: 'middle' } as ExcelJS.Alignment,
+  border: { bottom: BORDER_HAIR, right: BORDER_HAIR } as ExcelJS.Borders,
+};
+
 function colHdr(cell: ExcelJS.Cell, colNumber?: number): void {
   cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 9 };
   cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: AZUL } };
@@ -107,21 +115,21 @@ export async function generarExcelCartera(
     { key: 'dni',            width: 13 },
     { key: 'producto',       width: 20 },
     { key: 'estado',         width: 14 },
-    { key: 'capitalOrig',    width: 16 },
-    { key: 'capitalActual',  width: 16 },
-    { key: 'capitalPagado',  width: 16 },
-    { key: 'interesRecog',   width: 16 },
-    { key: 'mora',           width: 14 },
-    { key: 'recaudo',        width: 16 },
-    { key: 'totalAdeudado',  width: 18 },
-    { key: 'cuotas',         width: 12 },
-    { key: 'progreso',       width: 11 },
-    { key: 'riesgo',         width: 12 },
+    { key: 'capitalOrig',    width: 16, style: { numFmt: '"$"#,##0', alignment: { horizontal: 'right' } } },
+    { key: 'capitalActual',  width: 16, style: { numFmt: '"$"#,##0', alignment: { horizontal: 'right' } } },
+    { key: 'capitalPagado',  width: 16, style: { numFmt: '"$"#,##0', alignment: { horizontal: 'right' } } },
+    { key: 'interesRecog',   width: 16, style: { numFmt: '"$"#,##0', alignment: { horizontal: 'right' } } },
+    { key: 'mora',           width: 14, style: { numFmt: '"$"#,##0', alignment: { horizontal: 'right' } } },
+    { key: 'recaudo',        width: 16, style: { numFmt: '"$"#,##0', alignment: { horizontal: 'right' } } },
+    { key: 'totalAdeudado',  width: 18, style: { numFmt: '"$"#,##0', alignment: { horizontal: 'right' } } },
+    { key: 'cuotas',         width: 12, style: { alignment: { horizontal: 'center' } } },
+    { key: 'progreso',       width: 11, style: { numFmt: '0"%"', alignment: { horizontal: 'center' } } },
+    { key: 'riesgo',         width: 12, style: { alignment: { horizontal: 'center' } } },
     { key: 'ruta',           width: 18 },
     { key: 'cobrador',       width: 20 },
     { key: 'fechaInicio',    width: 13 },
     { key: 'fechaFin',       width: 13 },
-    { key: 'diasVenc',       width: 11 },
+    { key: 'diasVenc',       width: 11, style: { numFmt: '#,##0', alignment: { horizontal: 'right' } } },
   ] as any;
 
   const numCols = ws.columns.length;
@@ -248,27 +256,17 @@ export async function generarExcelCartera(
       });
     }
 
-    // Bordes
+    // Bordes y Estilos base reutilizando objetos
     row.eachCell((cell, colNumber) => {
       cell.border = { 
-        bottom: { style: 'hair', color: { argb: 'FFE2E8F0' } },
-        right: { style: 'hair', color: { argb: 'FFE2E8F0' } },
+        bottom: BORDER_HAIR,
+        right: BORDER_HAIR,
       };
       if ([6, 9, 13, 16].includes(colNumber)) {
-        cell.border.left = { style: 'medium', color: { argb: 'FF94A3B8' } };
+        cell.border.left = BORDER_MEDIUM;
       }
       cell.alignment = { ...cell.alignment, vertical: 'middle' };
     });
-
-    // Formato moneda (cols 6–12)
-    [6, 7, 8, 9, 10, 11, 12].forEach(c => {
-      row.getCell(c).numFmt = '"$"#,##0';
-      row.getCell(c).alignment = { horizontal: 'right', vertical: 'middle' };
-    });
-
-    // Formato progreso
-    row.getCell(14).numFmt = '0"%"';
-    row.getCell(14).alignment = { horizontal: 'center', vertical: 'middle' };
 
     // Color estado (col 5)
     const estadoBg = estadoFill[fila.estado?.toUpperCase() || ''];
@@ -282,8 +280,6 @@ export async function generarExcelCartera(
     if ((fila.diasVencidos || 0) > 0) {
       row.getCell(20).font = { bold: true, color: { argb: 'FFDC2626' } };
     }
-    row.getCell(20).numFmt = '#,##0';
-    row.getCell(20).alignment = { horizontal: 'right', vertical: 'middle' };
 
   });
 
@@ -305,6 +301,13 @@ export async function generarExcelCartera(
   stCell.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
   stCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NARANJA } };
   stCell.alignment = { horizontal: 'right', vertical: 'middle' };
+  sumRow.height = 24;
+  sumRow.eachCell({ includeEmpty: true }, (c) => {
+    c.border = {
+      top: { style: 'medium', color: { argb: 'FFFFFFFF' } },
+      right: { style: 'thin', color: { argb: 'FFFFFFFF' } },
+    };
+  });
   
   [6, 7, 8, 9, 10, 11, 12].forEach(c => {
     sumRow.getCell(c).numFmt = '"$"#,##0';
@@ -399,10 +402,16 @@ export async function generarExcelCartera(
     'TOTAL', totales.totalRegistros, totales.montoTotal,
     totales.montoPendiente, totales.recaudo, totales.mora, totales.totalAdeudado,
   ]);
-  ws2Tot.eachCell(cell => {
+  ws2Tot.eachCell({ includeEmpty: true }, cell => {
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GRIS_OSC } };
+    cell.border = {
+      top: { style: 'medium', color: { argb: 'FFFFFFFF' } },
+      right: { style: 'thin', color: { argb: 'FFFFFFFF' } },
+    };
   });
+  ws2Tot.height = 24;
+  ws2Tot.getCell(1).alignment = { horizontal: 'right', vertical: 'middle' };
   [3, 4, 5, 6, 7].forEach(c => { ws2Tot.getCell(c).numFmt = '"$"#,##0'; });
 
   const buffer = await workbook.xlsx.writeBuffer();

@@ -104,10 +104,11 @@ export class PaymentsController {
     @Query('startDate', new DefaultValuePipe('')) startDate: string,
     @Query('endDate', new DefaultValuePipe('')) endDate: string,
     @Query('rutaId', new DefaultValuePipe('')) rutaId: string,
+    @Query('prestamoId', new DefaultValuePipe('')) prestamoId: string,
     @Res() res: Response,
   ) {
     const result = await this.paymentsService.exportPayments(
-      { startDate: startDate || undefined, endDate: endDate || undefined, rutaId: rutaId || undefined },
+      { startDate: startDate || undefined, endDate: endDate || undefined, rutaId: rutaId || undefined, prestamoId: prestamoId || undefined },
       format,
     );
     res.setHeader('Content-Type', result.contentType);

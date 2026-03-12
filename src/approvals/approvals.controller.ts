@@ -19,6 +19,7 @@ export class ApprovalsController {
     RolUsuario.COORDINADOR,
     RolUsuario.SUPER_ADMINISTRADOR,
     RolUsuario.ADMIN,
+    RolUsuario.SUPERVISOR,
   )
   async getPending(@Query('tipo') tipo?: string) {
     return this.approvalsService.getPendingApprovals(tipo as TipoAprobacion | undefined);
@@ -39,6 +40,7 @@ export class ApprovalsController {
     RolUsuario.COORDINADOR,
     RolUsuario.SUPER_ADMINISTRADOR,
     RolUsuario.ADMIN,
+    RolUsuario.SUPERVISOR,
   )
   async approveItem(
     @Param('id') id: string,
@@ -54,6 +56,7 @@ export class ApprovalsController {
     RolUsuario.COORDINADOR,
     RolUsuario.SUPER_ADMINISTRADOR,
     RolUsuario.ADMIN,
+    RolUsuario.SUPERVISOR,
   )
   async rejectItem(
     @Param('id') id: string,

@@ -180,6 +180,13 @@ export async function generarExcelClientes(
   });
   ws.mergeCells(`A${sumRow.number}:J${sumRow.number}`);
   mergeCell.alignment = { horizontal: 'right', vertical: 'middle' };
+  sumRow.height = 24;
+  sumRow.eachCell({ includeEmpty: true }, (c, cn) => {
+    c.border = {
+      top: { style: 'medium', color: { argb: 'FFFFFFFF' } },
+      right: { style: 'thin', color: { argb: 'FFFFFFFF' } },
+    };
+  });
 
   [11, 12].forEach(c => { // These indices correspond to the formula columns (K and L)
     const sc = sumRow.getCell(c);

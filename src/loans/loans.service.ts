@@ -2334,14 +2334,19 @@ export class LoansService implements OnModuleInit {
    */
   async solicitarReprogramacion(data: {
     prestamoId: string;
-    cuotaId: string;
+    cuotaId?: string;
     nuevaFecha: string;
     motivo: string;
     solicitadoPorId: string;
   }) {
     const prestamo = await this.prisma.prestamo.findUnique({
       where: { id: data.prestamoId },
-      include: { cliente: true, cuotas: { where: { id: data.cuotaId } } },
+      include: {
+        cliente: true,
+        cuotas: data.cuotaId
+          ? { where: { id: data.cuotaId } }
+          : { where: { estado: { not: 'PAGADA' } }, orderBy: { numeroCuota: 'asc' }, take: 1 },
+      },
     });
     if (!prestamo) throw new NotFoundException('Préstamo no encontrado');
 
@@ -2361,7 +2366,7 @@ export class LoansService implements OnModuleInit {
       SEMANAL: 6,
       QUINCENAL: 14,
       MENSUAL: 30,
-      DIARIO: 1,
+      DIARIO: 8,
     };
     const limite = limiteDias[prestamo.frecuenciaPago] ?? 30;
     if (diasDesdeHoy > limite) {
@@ -2386,6 +2391,8 @@ export class LoansService implements OnModuleInit {
           cuotaId: data.cuotaId,
           clienteNombre: `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
           clienteId: prestamo.clienteId,
+          numeroPrestamo: prestamo.numeroPrestamo,
+          numeroCuota: cuota.numeroCuota,
           frecuenciaPago: prestamo.frecuenciaPago,
           fechaVencimientoOriginal: cuota.fechaVencimiento.toISOString(),
           nuevaFecha: data.nuevaFecha,
@@ -2395,10 +2402,25 @@ export class LoansService implements OnModuleInit {
       },
     });
 
-    // Notificar a aprobadores (ADMIN / COORDINADOR)
+    // Validar Auto-Aprobación
+    const usuarioSolicitante = await this.prisma.usuario.findUnique({
+      where: { id: data.solicitadoPorId },
+      select: { rol: true }
+    });
+
+    const rolesAutoAprobacion = ['ADMIN', 'SUPER_ADMINISTRADOR', 'COORDINADOR'];
+    if (usuarioSolicitante && rolesAutoAprobacion.includes(usuarioSolicitante.rol)) {
+       await this.aprobarReprogramacion(aprobacion.id, data.solicitadoPorId);
+       this.logger.log(`Reprogramacion auto-aprobada: cuota ${cuota.id} del prestamo ${data.prestamoId} -> ${data.nuevaFecha}`);
+       return { mensaje: 'Reprogramación aprobada y aplicada automáticamente', aprobacion };
+    }
+
+    const rolNameText = usuarioSolicitante?.rol === 'SUPERVISOR' ? 'Supervisor' : 'Cobrador Principal';
+
+    // Notificar a aprobadores (ADMIN / COORDINADOR / SUPERVISOR)
     await this.notificacionesService.notifyApprovers({
-      titulo: 'Solicitud de reprogramacion',
-      mensaje: `El cobrador solicita reprogramar la cuota de ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos} al ${data.nuevaFecha}. Motivo: ${data.motivo}`,
+      titulo: 'Reprogramaciones',
+      mensaje: `Solicitud de reprogramaciones por ${rolNameText}`,
       tipo: 'REPROGRAMACION',
       entidad: 'Aprobacion',
       entidadId: aprobacion.id,
@@ -2530,23 +2552,17 @@ export class LoansService implements OnModuleInit {
 
     const prestamos = rawLoans.prestamos;
     
-    // Calcular totales para la plantilla
+    // Calcular totales para la plantilla basados exactamente en lo que se va a mostrar
     const totales: CarteraTotales = {
-      montoTotal:      rawLoans.estadisticas.montoTotal,
-      montoPendiente:  rawLoans.estadisticas.montoPendiente,
-      montoPagado:     rawLoans.estadisticas.pagados, // Cuidado, en las estadísticas "pagados" es conteo.
-      totalAdeudado:   rawLoans.estadisticas.montoPendiente + rawLoans.estadisticas.moraTotal,
-      interesRecogido: 0, // Simplificado, idealmente viene de suma de cuotas pagadas
-      mora:            rawLoans.estadisticas.moraTotal,
-      recaudo:         0, // Simplificado
+      montoTotal:      prestamos.reduce((sum, p) => sum + (p.montoTotal || 0), 0),
+      montoPendiente:  prestamos.reduce((sum, p) => sum + (p.montoPendiente || 0), 0),
+      montoPagado:     prestamos.reduce((sum, p) => sum + (p.montoPagado || 0), 0),
+      totalAdeudado:   prestamos.reduce((sum, p) => sum + ((p.montoPendiente || 0) + (p.moraAcumulada || 0)), 0),
+      interesRecogido: 0, // Se mantiene 0 por ahora según lógica actual
+      mora:            prestamos.reduce((sum, p) => sum + (p.moraAcumulada || 0), 0),
+      recaudo:         prestamos.reduce((sum, p) => sum + (p.montoPagado || 0) + (p.moraAcumulada || 0), 0),
       totalRegistros:  prestamos.length,
     };
-
-    // Calcular montos reales iterando
-    totales.montoPagado = prestamos.reduce((sum, p) => sum + p.montoPagado, 0);
-    // Usaremos montoPagado aprox como recaudo total por simplicidad para la demo
-    totales.interesRecogido = 0;
-    totales.recaudo = prestamos.reduce((sum, p) => sum + (p.montoPagado || 0) + (p.moraAcumulada || 0), 0);
 
     const filas: CarteraRow[] = prestamos.map(p => ({
       numeroPrestamo: p.numeroPrestamo,
@@ -2560,7 +2576,7 @@ export class LoansService implements OnModuleInit {
       interesRecogido: 0,
       totalAdeudado:  p.montoPendiente + p.moraAcumulada,
       mora:           p.moraAcumulada,
-      recaudo:        p.montoPagado,
+      recaudo:        p.montoPagado + p.moraAcumulada, // Consistente con el recaudo total
       cuotasPagadas:  p.cuotasPagadas,
       cuotasTotales:  p.cuotasTotales,
       progreso:       p.progreso,
