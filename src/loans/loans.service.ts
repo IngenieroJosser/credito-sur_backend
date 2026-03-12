@@ -2497,6 +2497,12 @@ export class LoansService implements OnModuleInit {
       entidadId: aprobacionId,
     });
 
+    // Avisar a todos los componentes que recarguen datos
+    this.notificacionesGateway.broadcastRutasActualizadas();
+    this.notificacionesGateway.broadcastDashboardsActualizados();
+    this.notificacionesGateway.broadcastPrestamosActualizados();
+    this.notificacionesGateway.broadcastAprobacionesActualizadas();
+
     return { mensaje: 'Reprogramación aprobada y aplicada exitosamente' };
   }
 
@@ -2531,6 +2537,9 @@ export class LoansService implements OnModuleInit {
       entidad: 'Aprobacion',
       entidadId: aprobacionId,
     });
+
+    // Actualizar vistas (revisiones, etc)
+    this.notificacionesGateway.broadcastAprobacionesActualizadas();
 
     return { mensaje: 'Reprogramación rechazada' };
   }
