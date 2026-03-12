@@ -24,6 +24,140 @@ export class RoutesService {
     private notificacionesService: NotificacionesService,
   ) {}
 
+  async listarCreditosAsignadosACobrador(cobradorId: string) {
+    const asignaciones = await this.prisma.asignacionRuta.findMany({
+      where: {
+        cobradorId,
+        activa: true,
+        ruta: {
+          eliminadoEn: null,
+        },
+        cliente: {
+          eliminadoEn: null,
+        },
+      },
+      orderBy: { ordenVisita: 'asc' },
+      include: {
+        ruta: { select: { id: true, nombre: true, codigo: true, activa: true } },
+        cliente: {
+          select: {
+            id: true,
+            nombres: true,
+            apellidos: true,
+            telefono: true,
+            direccion: true,
+            nivelRiesgo: true,
+            prestamos: {
+              where: {
+                eliminadoEn: null,
+                estado: { in: ['ACTIVO', 'EN_MORA'] },
+              },
+              orderBy: { creadoEn: 'asc' },
+              select: {
+                id: true,
+                numeroPrestamo: true,
+                tipoPrestamo: true,
+                saldoPendiente: true,
+                frecuenciaPago: true,
+                cantidadCuotas: true,
+                estado: true,
+                producto: {
+                  select: {
+                    id: true,
+                    nombre: true,
+                    descripcion: true,
+                  },
+                },
+                cuotas: {
+                  where: {
+                    estado: { in: ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'] },
+                  },
+                  orderBy: { numeroCuota: 'asc' },
+                  take: 1,
+                  select: {
+                    id: true,
+                    numeroCuota: true,
+                    monto: true,
+                    estado: true,
+                    fechaVencimiento: true,
+                    fechaVencimientoProrroga: true,
+                  },
+                },
+                extensiones: {
+                  orderBy: { creadoEn: 'desc' },
+                  take: 1,
+                  select: { id: true, nuevaFechaVencimiento: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const filas: any[] = [];
+    for (const asig of asignaciones) {
+      const cliente = asig.cliente;
+      const prestamos = cliente?.prestamos || [];
+      if (!prestamos.length) continue;
+
+      for (const p of prestamos) {
+        const proxima = p.cuotas?.[0] || null;
+        const cuotaEnProrroga = proxima?.estado === 'PRORROGADA';
+        const extension = p.extensiones?.[0] || null;
+
+        const fechaEfectiva =
+          (cuotaEnProrroga && proxima?.fechaVencimientoProrroga)
+            ? proxima.fechaVencimientoProrroga
+            : (extension?.nuevaFechaVencimiento ?? proxima?.fechaVencimiento ?? null);
+
+        filas.push({
+          asignacionId: asig.id,
+          rutaId: asig.rutaId,
+          rutaNombre: asig.ruta?.nombre,
+          rutaCodigo: asig.ruta?.codigo,
+          ordenVisita: asig.ordenVisita,
+          cliente: {
+            id: cliente.id,
+            nombres: cliente.nombres,
+            apellidos: cliente.apellidos,
+            telefono: cliente.telefono,
+            direccion: cliente.direccion,
+            nivelRiesgo: cliente.nivelRiesgo,
+          },
+          prestamo: {
+            id: p.id,
+            tipo: p.tipoPrestamo,
+            numeroPrestamo: p.numeroPrestamo,
+            saldoPendiente: Number(p.saldoPendiente),
+            frecuenciaPago: p.frecuenciaPago,
+            cantidadCuotas: p.cantidadCuotas,
+            estado: p.estado,
+            articulo: p.producto?.nombre || p.producto?.descripcion || null,
+            proximaCuota: proxima
+              ? {
+                  id: proxima.id,
+                  numeroCuota: proxima.numeroCuota,
+                  monto: Number(proxima.monto),
+                  estado: proxima.estado,
+                  fechaVencimiento: proxima.fechaVencimiento,
+                  fechaVencimientoProrroga: proxima.fechaVencimientoProrroga,
+                  enProrroga: cuotaEnProrroga,
+                }
+              : null,
+            fechaEfectiva,
+          },
+        });
+      }
+    }
+
+    return {
+      cobradorId,
+      total: filas.length,
+      data: filas,
+    };
+  }
+
   async create(createRouteDto: CreateRouteDto) {
     try {
       // Verificar si el código ya existe
