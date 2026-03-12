@@ -1013,7 +1013,7 @@ export class LoansController {
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Solicitar reprogramaciÃ³n de cuota (requiere aprobaciÃ³n)' })
   async solicitarReprogramacion(
-    @Body() body: { prestamoId: string; cuotaId: string; nuevaFecha: string; motivo: string },
+    @Body() body: { prestamoId: string; cuotaId?: string; nuevaFecha: string; motivo: string },
     @Request() req,
   ) {
     return this.loansService.solicitarReprogramacion({

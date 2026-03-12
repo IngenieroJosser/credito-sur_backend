@@ -2334,14 +2334,19 @@ export class LoansService implements OnModuleInit {
    */
   async solicitarReprogramacion(data: {
     prestamoId: string;
-    cuotaId: string;
+    cuotaId?: string;
     nuevaFecha: string;
     motivo: string;
     solicitadoPorId: string;
   }) {
     const prestamo = await this.prisma.prestamo.findUnique({
       where: { id: data.prestamoId },
-      include: { cliente: true, cuotas: { where: { id: data.cuotaId } } },
+      include: {
+        cliente: true,
+        cuotas: data.cuotaId
+          ? { where: { id: data.cuotaId } }
+          : { where: { estado: { not: 'PAGADA' } }, orderBy: { numeroCuota: 'asc' }, take: 1 },
+      },
     });
     if (!prestamo) throw new NotFoundException('Préstamo no encontrado');
 
