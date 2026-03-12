@@ -2395,10 +2395,25 @@ export class LoansService implements OnModuleInit {
       },
     });
 
-    // Notificar a aprobadores (ADMIN / COORDINADOR)
+    // Validar Auto-Aprobación
+    const usuarioSolicitante = await this.prisma.usuario.findUnique({
+      where: { id: data.solicitadoPorId },
+      select: { rol: true }
+    });
+
+    const rolesAutoAprobacion = ['ADMIN', 'SUPER_ADMINISTRADOR', 'COORDINADOR'];
+    if (usuarioSolicitante && rolesAutoAprobacion.includes(usuarioSolicitante.rol)) {
+       await this.aprobarReprogramacion(aprobacion.id, data.solicitadoPorId);
+       this.logger.log(`Reprogramacion auto-aprobada: cuota ${cuota.id} del prestamo ${data.prestamoId} -> ${data.nuevaFecha}`);
+       return { mensaje: 'Reprogramación aprobada y aplicada automáticamente', aprobacion };
+    }
+
+    const rolNameText = usuarioSolicitante?.rol === 'SUPERVISOR' ? 'El supervisor' : 'El cobrador';
+
+    // Notificar a aprobadores (ADMIN / COORDINADOR / SUPERVISOR)
     await this.notificacionesService.notifyApprovers({
       titulo: 'Solicitud de reprogramacion',
-      mensaje: `El cobrador solicita reprogramar la cuota de ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos} al ${data.nuevaFecha}. Motivo: ${data.motivo}`,
+      mensaje: `${rolNameText} solicita reprogramar la cuota de ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos} al ${data.nuevaFecha}. Motivo: ${data.motivo}`,
       tipo: 'REPROGRAMACION',
       entidad: 'Aprobacion',
       entidadId: aprobacion.id,

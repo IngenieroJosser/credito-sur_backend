@@ -39,6 +39,8 @@ import { ReprogramarCuotaDto } from './dto/reprogramar-cuota.dto';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { AuditService } from '../audit/audit.service';
 
+import { ApprovalsService } from '../approvals/approvals.service';
+
 @ApiTags('loans')
 @ApiBearerAuth()
 @Controller('loans')
@@ -50,6 +52,7 @@ export class LoansController {
     private readonly prisma: PrismaService,
     private readonly notificacionesService: NotificacionesService,
     private readonly auditService: AuditService,
+    private readonly approvalsService: ApprovalsService,
   ) {}
 
 
@@ -914,6 +917,33 @@ export class LoansController {
       },
       metadata: { endpoint: `POST /loans/${prestamoId}/gestion-vencida` },
     });
+
+    const rolesAutoAprobacion: string[] = [RolUsuario.ADMIN, RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.COORDINADOR];
+    if (usuario && rolesAutoAprobacion.includes(usuario.rol) && (tipoAprobacion === 'BAJA_POR_PERDIDA' || tipoAprobacion === 'PRORROGA_PAGO')) {
+      try {
+        if (tipoAprobacion === 'BAJA_POR_PERDIDA') {
+          await this.prisma.aprobacion.update({
+            where: { id: aprobacion.id },
+            data: { estado: 'APROBADO', aprobadoPorId: usuarioId, revisadoEn: new Date() }
+          });
+          await this.loansService.archiveLoan(prestamoId, {
+            motivo: body.comentarios || 'Baja por pérdida (auto-aprobado)',
+            archivarPorId: usuarioId,
+          });
+        } else {
+          // execute auto approval without notifying
+          await this.approvalsService.approveItem(aprobacion.id, tipoAprobacion, usuarioId);
+        }
+        
+        return {
+          mensaje: `Decisión de ${LABEL_DECISION[body.decision]} aprobada y ejecutada automáticamente`,
+          aprobacionId: aprobacion.id,
+          decision: body.decision,
+        };
+      } catch (error) {
+         console.error('Error auto-aprobando gestión vencida:', error);
+      }
+    }
 
     // 3. Notificar a aprobadores — SIEMPRE, incluyendo la prorroga
     try {
