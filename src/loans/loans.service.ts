@@ -2388,7 +2388,7 @@ export class LoansService implements OnModuleInit {
         estado: EstadoAprobacion.PENDIENTE,
         datosSolicitud: {
           prestamoId: data.prestamoId,
-          cuotaId: data.cuotaId,
+          cuotaId: data.cuotaId || cuota.id,
           clienteNombre: `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
           clienteId: prestamo.clienteId,
           numeroPrestamo: prestamo.numeroPrestamo,
@@ -2473,8 +2473,8 @@ export class LoansService implements OnModuleInit {
 
     // Aplicar la nueva fecha a la cuota
     await this.prisma.cuota.update({
-      where: { id: datos.cuotaId },
-      data: { fechaVencimiento: new Date(datos.nuevaFecha + 'T00:00:00.000Z') },
+      where: { id: datos.cuotaId || aprobacion.referenciaId },
+      data: { fechaVencimiento: new Date(datos.nuevaFecha.includes('T') ? datos.nuevaFecha : datos.nuevaFecha + 'T12:00:00.000Z') },
     });
 
     // Actualizar estado de la aprobación
