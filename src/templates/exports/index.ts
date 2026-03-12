@@ -3,7 +3,7 @@
  * ÍNDICE DE PLANTILLAS DE EXPORTACIÓN
  * ============================================================================
  * Cada archivo define el diseño exacto (columnas, estilos, colores) para
- * generar los reportes en Excel (.xlsm) y PDF.
+ * generar los reportes en Excel (.xlsx) y PDF.
  *
  * Estado de implementación:
  * ✅ cartera-creditos    → loans.service.ts → exportLoans()
@@ -14,7 +14,8 @@
  * ✅ historial-pagos     → payments.service.ts → exportPayments()
  * ✅ reporte-contable    → accounting.service.ts → exportAccountingReport()
  * ✅ auditoria           → audit.service.ts → exportAuditLog()
- * ✅ contrato-credito    → loans.service.ts → generarContrato() (solo ARTICULO)
+ * ✅ clientes            → clients.service.ts → exportarClientes()
+ * ⬜ contrato-credito    → (solo exporta constantes)
  */
 
 export * from './cartera-creditos.template';
@@ -26,3 +27,4 @@ export * from './historial-pagos.template';
 export * from './reporte-contable.template';
 export * from './auditoria.template';
 export * from './contrato-credito-articulo.template';
+export * from './clientes.template';

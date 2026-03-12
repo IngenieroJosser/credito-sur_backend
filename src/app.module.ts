@@ -25,6 +25,7 @@ import { SyncConflictsModule } from './sync-conflicts/sync-conflicts.module';
 import { MirrorSyncModule } from './mirror-sync/mirror-sync.module';
 import { BullModule } from '@nestjs/bullmq';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+
 @Module({
   imports: [
     ConfigModule.forRoot({

@@ -11,7 +11,9 @@ import {
   ParseUUIDPipe,
   HttpCode,
   HttpStatus,
+  Res,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { RoutesService } from './routes.service';
 import { CreateRouteDto } from './dto/create-route.dto';
 import { UpdateRouteDto } from './dto/update-route.dto';
@@ -322,5 +324,49 @@ export class RoutesController {
     @Body('orden') orden: Array<{ clienteId: string; orden: number }>,
   ) {
     return this.routesService.updateClientOrder(id, orden);
+  }
+
+  // ── Exportación de ruta ────────────────────────────────────────────────────
+
+  @Get(':id/export/excel')
+  @Roles(
+    RolUsuario.COBRADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
+  @ApiOperation({ summary: 'Exportar ruta completa como Excel (.xlsx)' })
+  @ApiResponse({ status: 200, description: 'Archivo Excel de la ruta' })
+  @ApiResponse({ status: 404, description: 'Ruta no encontrada' })
+  async exportarRutaExcel(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.routesService.exportarRuta(id, 'excel');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="ruta_${id}.xlsx"`);
+    res.send(buffer);
+  }
+
+  @Get(':id/export/pdf')
+  @Roles(
+    RolUsuario.COBRADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
+  @ApiOperation({ summary: 'Exportar ruta completa como PDF' })
+  @ApiResponse({ status: 200, description: 'Archivo PDF de la ruta' })
+  @ApiResponse({ status: 404, description: 'Ruta no encontrada' })
+  async exportarRutaPdf(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.routesService.exportarRuta(id, 'pdf');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="ruta_${id}.pdf"`);
+    res.send(buffer);
   }
 }

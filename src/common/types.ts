@@ -104,6 +104,6 @@ export type PagoConRelacionesExport = Prisma.PagoGetPayload<{
   include: {
     cliente: { select: { nombres: true; apellidos: true; dni: true } };
     prestamo: { select: { numeroPrestamo: true } };
-    cobrador: { select: { nombres: true; apellidos: true } };
+    cobrador: { select: { nombres: true; apellidos: true; rol: true } };
   };
 }>;

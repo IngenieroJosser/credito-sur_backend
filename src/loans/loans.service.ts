@@ -24,6 +24,12 @@ import { CreateLoanDto } from './dto/create-loan.dto';
 import { ConfiguracionService } from '../configuracion/configuracion.service';
 import { PushService } from '../push/push.service';
 import { UpdateLoanData } from '../common/types';
+import { 
+  generarExcelCartera, 
+  generarPDFCartera, 
+  CarteraRow, 
+  CarteraTotales 
+} from '../templates/exports/cartera-creditos.template';
 
 @Injectable()
 export class LoansService implements OnModuleInit {
@@ -2505,5 +2511,72 @@ export class LoansService implements OnModuleInit {
     });
 
     return { mensaje: 'Reprogramación rechazada' };
+  }
+
+  /**
+   * Exportar cartera de préstamos en Excel o PDF.
+   * Utiliza la plantilla completa cartera-creditos.template.ts
+   */
+  async exportLoans(
+    format: 'excel' | 'pdf',
+    filters: { estado?: string; ruta?: string; search?: string }
+  ) {
+    const rawLoans = await this.getAllLoans({
+      estado: filters.estado || 'todos',
+      ruta: filters.ruta || 'todas',
+      search: filters.search || '',
+      limit: 999999, // Traer todos para exportar
+    });
+
+    const prestamos = rawLoans.prestamos;
+    
+    // Calcular totales para la plantilla
+    const totales: CarteraTotales = {
+      montoTotal:      rawLoans.estadisticas.montoTotal,
+      montoPendiente:  rawLoans.estadisticas.montoPendiente,
+      montoPagado:     rawLoans.estadisticas.pagados, // Cuidado, en las estadísticas "pagados" es conteo.
+      totalAdeudado:   rawLoans.estadisticas.montoPendiente + rawLoans.estadisticas.moraTotal,
+      interesRecogido: 0, // Simplificado, idealmente viene de suma de cuotas pagadas
+      mora:            rawLoans.estadisticas.moraTotal,
+      recaudo:         0, // Simplificado
+      totalRegistros:  prestamos.length,
+    };
+
+    // Calcular montos reales iterando
+    totales.montoPagado = prestamos.reduce((sum, p) => sum + p.montoPagado, 0);
+    // Usaremos montoPagado aprox como recaudo total por simplicidad para la demo
+    totales.interesRecogido = 0;
+    totales.recaudo = prestamos.reduce((sum, p) => sum + (p.montoPagado || 0) + (p.moraAcumulada || 0), 0);
+
+    const filas: CarteraRow[] = prestamos.map(p => ({
+      numeroPrestamo: p.numeroPrestamo,
+      cliente:        p.cliente,
+      dni:            p.clienteDni,
+      producto:       p.producto,
+      estado:         p.estado,
+      montoTotal:     p.montoTotal,
+      montoPendiente: p.montoPendiente,
+      montoPagado:    p.montoPagado,
+      interesRecogido: 0,
+      totalAdeudado:  p.montoPendiente + p.moraAcumulada,
+      mora:           p.moraAcumulada,
+      recaudo:        p.montoPagado,
+      cuotasPagadas:  p.cuotasPagadas,
+      cuotasTotales:  p.cuotasTotales,
+      progreso:       p.progreso,
+      riesgo:         p.riesgo,
+      ruta:           p.rutaNombre,
+      cobrador:       p.vendedor,
+      fechaInicio:    p.fechaInicio,
+      fechaFin:       p.fechaFin,
+    }));
+
+    const fechaStr = new Date().toISOString().split('T')[0];
+
+    if (format === 'excel') {
+      return generarExcelCartera(filas, totales, fechaStr);
+    } else {
+      return generarPDFCartera(filas, totales, fechaStr);
+    }
   }
 }

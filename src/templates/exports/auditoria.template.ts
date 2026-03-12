@@ -1,230 +1,322 @@
 /**
  * ============================================================================
- * PLANTILLA: LOG DE AUDITORÍA
+ * TEMPLATE: LOG DE AUDITORÍA
  * ============================================================================
- * Vista: /admin/auditoria
- * Endpoint: GET /audit/export?format=excel|pdf&startDate=&endDate=
- * Estado: ⬜ PENDIENTE — crear endpoint y método en audit.service.ts
- *
- * DISEÑO EXCEL (.xlsm):
- * ┌─────────────────────────────────────────────────────────────────────────┐
- * │  CRÉDITOS DEL SUR — LOG DE AUDITORÍA                                  │
- * │  Período: 01/01/2026 - 13/02/2026                                     │
- * ├──────────┬──────────┬────────────┬────────┬──────────┬────────────────┤
- * │  Fecha   │ Usuario  │   Acción   │Entidad │ID Entidad│   Detalle      │
- * │ 13/02/26 │ admin    │CREAR_PRÉST │Prestamo│ cl67qg5  │ Monto: 5M      │
- * │ 13/02/26 │ coord01  │APROBAR_CLI │Cliente │ ab12cd3  │ Aprobado       │
- * │ 12/02/26 │ admin    │ELIMINAR_ART│Producto│ xy89wz1  │ Archivado      │
- * ├──────────┴──────────┴────────────┴────────┴──────────┴────────────────┤
- * │ (continúa: Datos Anteriores, Datos Nuevos, IP, Nivel)                 │
- * ├───────────────────────────────────────────────────────────────────────┤
- * │ TOTAL REGISTROS: XX                                                   │
- * └───────────────────────────────────────────────────────────────────────┘
- *
- * Estilos Excel:
- * - Header row: fondo #475569 (slate-600), texto blanco, bold
- * - Columna Datos Anteriores/Nuevos: formato JSON compacto
- * - Fila resumen: bold
- *
- * DISEÑO PDF:
- * - Layout: Landscape, Letter, margin 30
- * - Título: 16pt "Créditos del Sur — Log de Auditoría"
- * - Subtítulo: Período de fechas
- * - Tabla: header fondo #475569, filas alternas #F8FAFC
- * - Columnas reducidas (sin datos JSON completos, solo resumen)
- *
- * IMPLEMENTACIÓN:
- * 1. Backend: audit.controller.ts → GET /audit/export
- * 2. Backend: audit.service.ts → exportAuditLog()
- *    - Reutilizar findAll() sin paginación
- * 3. Frontend: exportService.downloadFile('audit/export', params)
+ * Usado en: audit.service.ts → exportAuditLog()
+ * Endpoint: GET /audit/export?format=excel|pdf
  */
 
-<<<<<<< HEAD
-import ExcelJS from 'exceljs';
-
-=======
 import * as ExcelJS from 'exceljs';
->>>>>>> main
+import * as PDFDocument from 'pdfkit';
+import * as fs from 'fs';
+import * as path from 'path';
 
-export const AUDITORIA_COLUMNS: ExcelJS.Column[] = [
-  { header: 'Fecha', key: 'fecha', width: 20 },
-  { header: 'Usuario', key: 'usuario', width: 22 },
-  { header: 'Acción', key: 'accion', width: 22 },
-  { header: 'Entidad', key: 'entidad', width: 16 },
-  { header: 'ID Entidad', key: 'entidadId', width: 18 },
-  { header: 'Detalle', key: 'detalle', width: 40 },
-  { header: 'Datos Anteriores', key: 'datosAnteriores', width: 35 },
-  { header: 'Datos Nuevos', key: 'datosNuevos', width: 35 },
-] as any;
+// ─── Tipos ────────────────────────────────────────────────────────────────────
 
-export const AUDITORIA_HEADER_STYLE = {
-  font: { bold: true, color: { argb: 'FFFFFFFF' } },
-  fill: { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FF475569' } },
-  alignment: { horizontal: 'center' as const },
-};
-
-export const AUDITORIA_PDF_COLUMNS = [
-  { label: 'Fecha', width: 90 },
-  { label: 'Usuario', width: 100 },
-  { label: 'Acción', width: 110 },
-  { label: 'Entidad', width: 80 },
-  { label: 'ID Entidad', width: 90 },
-  { label: 'Detalle', width: 180 },
-];
-
-export const AUDITORIA_PDF_HEADER_COLOR = '#475569';
-export const AUDITORIA_PDF_ROW_ALT_COLOR = '#F8FAFC';
-<<<<<<< HEAD
-
-/**
- * codigo de exportación de auditoría
- */
-
-
-import { NextRequest, NextResponse } from "next/server";
-import ExcelJS from "exceljs";
-import { prisma } from "@/lib/prisma";
-import {
-  AUDITORIA_COLUMNS,
-  AUDITORIA_HEADER_STYLE
-} from "@/lib/templates/auditoria";
-
-function formatearFecha(fecha: Date) {
-  return new Intl.DateTimeFormat("es-CO").format(fecha);
+export interface AuditoriaRow {
+  fecha: Date | string;
+  usuario: string;
+  accion: string;
+  entidad: string;
+  entidadId: string;
+  datosAnteriores?: any;
+  datosNuevos?: any;
 }
 
-export async function GET(req: NextRequest) {
-  try {
-    const { searchParams } = new URL(req.url);
+// ─── Generador Excel ──────────────────────────────────────────────────────────
 
-    const startDate = searchParams.get("startDate");
-    const endDate = searchParams.get("endDate");
+export async function generarExcelAuditoria(
+  filas: AuditoriaRow[],
+  fecha: string,
+): Promise<{ data: Buffer; contentType: string; filename: string }> {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'Créditos del Sur';
+  workbook.created = new Date();
 
-    const where: any = {};
+  const ws = workbook.addWorksheet('Log de Auditoría', {
+    views: [{ state: 'frozen', ySplit: 4, showGridLines: false }],
+    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+    properties: { tabColor: { argb: 'FF475569' } }
+  });
 
-    if (startDate && endDate) {
-      where.fecha = {
-        gte: new Date(startDate),
-        lte: new Date(endDate),
-      };
+  ws.columns = [
+    { header: 'Fecha', key: 'fecha', width: 22 },
+    { header: 'Usuario', key: 'usuario', width: 28 },
+    { header: 'Acción', key: 'accion', width: 24 },
+    { header: 'Entidad', key: 'entidad', width: 18 },
+    { header: 'ID Entidad', key: 'entidadId', width: 20 },
+    { header: 'Datos Anteriores', key: 'datosAnteriores', width: 40 },
+    { header: 'Datos Nuevos', key: 'datosNuevos', width: 40 },
+  ] as any;
+
+  // Título
+  const titleRow = ws.addRow(['CRÉDITOS DEL SUR — LOG DE AUDITORÍA']);
+  titleRow.font = { bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+  titleRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF475569' } };
+  ws.mergeCells('A1:G1');
+  ws.getRow(1).height = 32;
+  ws.getRow(2).height = 22;
+
+  // Subtítulo
+  const subRow = ws.addRow([`Generado: ${new Date().toLocaleString('es-CO')}   |   Total registros: ${filas.length}`]);
+  subRow.font = { italic: true, size: 9, color: { argb: 'FF64748B' } };
+  ws.mergeCells('A2:G2');
+
+  ws.addRow([]);
+
+  // Encabezados
+  const headerRow = ws.getRow(4);
+  ws.columns.forEach((col: any, i: number) => {
+    const cell = headerRow.getCell(i + 1);
+    cell.value = col.header;
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF475569' } };
+    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+  });
+  headerRow.height = 22;
+  ws.autoFilter = { from: 'A4', to: 'G4' };
+
+  // Datos
+  filas.forEach((fila, idx) => {
+    const row = ws.addRow({
+      fecha: fila.fecha ? new Date(fila.fecha).toLocaleString('es-CO') : '',
+      usuario: fila.usuario || '',
+      accion: fila.accion?.replace(/_/g, ' ') || '',
+      entidad: fila.entidad || '',
+      entidadId: fila.entidadId || '',
+      datosAnteriores: fila.datosAnteriores
+        ? JSON.stringify(fila.datosAnteriores).substring(0, 150)
+        : '',
+      datosNuevos: fila.datosNuevos
+        ? JSON.stringify(fila.datosNuevos).substring(0, 150)
+        : '',
+    });
+
+    if (idx % 2 === 1) {
+      row.eachCell(cell => {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+      });
     }
+  });
 
-    const logs = await prisma.auditLog.findMany({
-      where,
-      orderBy: {
-        fecha: "desc",
-      },
+  ws.addRow([]);
+  const totalRow = ws.addRow({ fecha: `Total registros: ${filas.length}` });
+  ws.mergeCells(`A${totalRow.number}:G${totalRow.number}`);
+  totalRow.font = { bold: true };
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  return {
+    data: Buffer.from(buffer as ArrayBuffer),
+    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    filename: `auditoria-${fecha}.xlsx`,
+  };
+}
+
+// ─── Generador PDF ────────────────────────────────────────────────────────────
+
+export async function generarPDFAuditoria(
+  filas: AuditoriaRow[],
+  fecha: string,
+): Promise<{ data: Buffer; contentType: string; filename: string }> {
+  const doc = new PDFDocument({ layout: 'landscape', size: 'LETTER', margin: 30 });
+  const buffers: Buffer[] = [];
+  doc.on('data', (chunk: Buffer) => buffers.push(chunk));
+
+  const BLANCO     = '#FFFFFF';
+  const GRIS_CLR   = '#E2E8F0';
+  const GRIS_MED   = '#94A3B8';
+  const GRIS_TXT   = '#475569';
+  const SLATE_DARK = '#1E293B';
+  const SLATE_MED  = '#475569';
+  const SLATE_PALE = '#F1F5F9';
+  const AZUL_DARK  = '#1A5F8A';
+
+  const getLogoPath = () => {
+    const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
+    const pDev  = path.join(process.cwd(), 'src/assets/logo.png');
+    return fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
+  };
+
+  const drawWatermark = () => {
+    try {
+      const lp = getLogoPath();
+      if (lp) {
+        doc.save();
+        doc.opacity(0.08); 
+        const W = doc.page.width;
+        const H = doc.page.height;
+        doc.image(lp, (W - 300) / 2, (H - 300) / 2, { width: 300 });
+        doc.restore();
+      }
+    } catch(e) {}
+  };
+
+  let pageNumber = 1;
+
+  const drawPageHeader = (): number => {
+    const W = doc.page.width;
+
+    doc.fontSize(22).font('Helvetica-Bold').fillColor(SLATE_DARK)
+       .text('Créditos del Sur', 30, 25);
+    doc.fontSize(9).font('Helvetica').fillColor(SLATE_MED)
+       .text('REPORTE DE AUDITORÍA DE SISTEMA', 30, 52, { characterSpacing: 0.5 });
+
+    doc.roundedRect(W - 180, 20, 148, 44, 5).fillAndStroke(BLANCO, GRIS_CLR);
+    doc.fontSize(8).font('Helvetica-Bold').fillColor(GRIS_MED)
+       .text('FECHA GENERACIÓN', W - 180, 28, { width: 148, align: 'center' });
+    doc.fontSize(10).font('Helvetica-Bold').fillColor(SLATE_DARK)
+       .text(new Date().toLocaleDateString('es-CO'), W - 180, 40, { width: 148, align: 'center' });
+
+    const kW = (doc.page.width - 60) / 3;
+    const kY = 98;
+    [
+      { label: 'TOTAL DE REGISTROS', val: String(filas.length), bg: SLATE_PALE, color: SLATE_DARK },
+      { label: 'SISTEMA BASE', val: 'Créditos del Sur V1.0', bg: '#F0F4F8', color: GRIS_TXT },
+      { label: 'NIVEL DE ACCESO', val: 'Administrador / Sistema', bg: '#F0F4F8', color: GRIS_TXT },
+    ].forEach((m, i) => {
+      const mx = 30 + i * (kW + 4);
+      doc.roundedRect(mx, kY, kW, 44, 6).fillAndStroke(m.bg, GRIS_CLR);
+      doc.fontSize(7.5).font('Helvetica-Bold').fillColor(GRIS_MED)
+         .text(m.label, mx, kY + 10, { width: kW, align: 'center' });
+      doc.fontSize(11).font('Helvetica-Bold').fillColor(m.color)
+         .text(m.val, mx, kY + 23, { width: kW, align: 'center' });
     });
+    return kY + 58;
+  };
 
-    const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet("Log Auditoría", {
-      views: [{ state: "frozen", ySplit: 4 }]
+  const drawFooter = () => {
+    const W = doc.page.width;
+    const H = doc.page.height;
+    doc.fontSize(7).font('Helvetica').fillColor(GRIS_MED);
+    doc.text(`Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`, 0, H - 25, { align: 'right', width: W - 30 });
+  };
+
+  const cols = [
+    { label: 'Fecha', width: 90 },
+    { label: 'Usuario', width: 110 },
+    { label: 'Acción', width: 120 },
+    { label: 'Entidad', width: 80 },
+    { label: 'ID Entidad', width: 100 },
+    { label: 'Detalle (Nuevos / Cambio)', width: 232 },
+  ];
+
+  const tableLeft = 30;
+  const tableWidth = cols.reduce((s, c) => s + c.width, 0);
+
+  const drawTableHeader = (y: number): number => {
+    doc.rect(tableLeft, y, tableWidth, 24).fill(SLATE_MED);
+    doc.rect(tableLeft, y + 24, tableWidth, 2).fill(SLATE_DARK);
+    let x = tableLeft;
+    doc.fontSize(8).font('Helvetica-Bold').fillColor(BLANCO);
+    cols.forEach(col => {
+      doc.text(col.label, x + 4, y + 7, { width: col.width - 8, align: 'center' });
+      x += col.width;
     });
+    return y + 30;
+  };
 
-    sheet.columns = AUDITORIA_COLUMNS;
+  drawWatermark();
+  let y = drawPageHeader();
+  y = drawTableHeader(y);
 
-    const tituloRow = sheet.addRow([
-      "CRÉDITOS DEL SUR — LOG DE AUDITORÍA"
-    ]);
+  doc.font('Helvetica').fontSize(7.5);
 
-    tituloRow.font = { size: 16, bold: true };
-    sheet.mergeCells(`A1:H1`);
+  filas.forEach((fila, i) => {
+    let maxRowHeight = 17;
 
-    const periodoTexto =
-      startDate && endDate
-        ? `Período: ${formatearFecha(new Date(startDate))} - ${formatearFecha(
-            new Date(endDate)
-          )}`
-        : "Período: Todos los registros";
-
-    const periodoRow = sheet.addRow([periodoTexto]);
-
-    sheet.mergeCells(`A2:H2`);
-
-    sheet.addRow([]);
-
-    const headerRow = sheet.addRow(
-      AUDITORIA_COLUMNS.map((c) => c.header)
-    );
-
-    headerRow.eachCell((cell) => {
-      cell.font = AUDITORIA_HEADER_STYLE.font;
-      cell.fill = AUDITORIA_HEADER_STYLE.fill;
-      cell.alignment = AUDITORIA_HEADER_STYLE.alignment;
-    });
-
-    sheet.autoFilter = {
-      from: "A4",
-      to: "H4",
+    const limitStr = (str: string, maxLen: number) => {
+      if (!str) return '';
+      if (str.length <= maxLen) return str;
+      return str.substring(0, maxLen - 3) + '...';
     };
 
-    logs.forEach((log, index) => {
-      const row = sheet.addRow([
-        log.fecha,
-        log.usuario,
-        log.accion,
-        log.entidad,
-        log.entidadId,
-        log.detalle,
-        log.datosAnteriores
-          ? JSON.stringify(log.datosAnteriores)
-          : "",
-        log.datosNuevos
-          ? JSON.stringify(log.datosNuevos)
-          : "",
-      ]);
+    // Audit logs can have HUGE JSON blobs. We need to limit them to avoid multi-page single rows, but we give them a generous 500 chars instead of hard 50.
+    const detalle = fila.datosNuevos
+      ? limitStr(JSON.stringify(fila.datosNuevos), 500)
+      : (fila.datosAnteriores ? limitStr(JSON.stringify(fila.datosAnteriores), 500) : '');
 
-      if (index % 2 === 1) {
-        row.eachCell((cell) => {
-          cell.fill = {
-            type: "pattern",
-            pattern: "solid",
-            fgColor: { argb: "FFF8FAFC" },
-          };
-        });
+    const vals = [
+      fila.fecha ? new Date(fila.fecha).toLocaleString('es-CO') : '',
+      fila.usuario || '',
+      fila.accion?.replace(/_/g, ' ') || '',
+      fila.entidad || '',
+      fila.entidadId || '',
+      detalle,
+    ];
+
+    doc.font('Helvetica').fontSize(7.5);
+    vals.forEach((val, ci) => {
+      if (ci === 0 || ci === 1) doc.font('Helvetica-Bold');
+      const h = doc.heightOfString(val, { width: cols[ci].width - 8, lineBreak: true });
+      if (h + 8 > maxRowHeight) maxRowHeight = h + 8;
+      doc.font('Helvetica');
+    });
+
+    if (y + maxRowHeight > doc.page.height - 70) {
+      drawFooter();
+      pageNumber++;
+      doc.addPage();
+      drawWatermark();
+      y = drawPageHeader();
+      y = drawTableHeader(y);
+      doc.font('Helvetica').fontSize(7.5);
+    }
+
+    const baseBg = i % 2 === 0 ? BLANCO : SLATE_PALE;
+    doc.rect(tableLeft, y, tableWidth, maxRowHeight).fill(baseBg);
+    doc.moveTo(tableLeft, y + maxRowHeight)
+       .lineTo(tableLeft + tableWidth, y + maxRowHeight)
+       .strokeColor(GRIS_CLR).lineWidth(0.4).stroke();
+
+    let x = tableLeft;
+    vals.forEach((v, ci) => {
+      const align = 'left';
+
+      if (ci === 1) {
+         doc.font('Helvetica-Bold').fillColor(AZUL_DARK);
+      } else if (ci === 0) {
+         doc.font('Helvetica-Bold').fillColor(SLATE_DARK);
+      } else if (ci === 2) {
+         doc.font('Helvetica-Bold').fillColor(SLATE_MED);
+      } else {
+         doc.font('Helvetica').fillColor(GRIS_TXT);
       }
+
+      doc.text(v, x + 4, y + 4, { width: cols[ci].width - 8, align, lineBreak: true });
+      x += cols[ci].width;
     });
+    y += maxRowHeight;
+  });
 
-    sheet.addRow([]);
+  // Totales
+  y += 8;
+  doc.rect(tableLeft, y, tableWidth, 26).fill(SLATE_DARK);
 
-    const totalRow = sheet.addRow([
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      `TOTAL REGISTROS: ${logs.length}`,
-    ]);
+  doc.fontSize(8.5).font('Helvetica-Bold').fillColor(BLANCO);
+  doc.text(
+    `TOTAL REGISTROS DE AUDITORÍA: ${filas.length}`,
+    tableLeft + 6, y + 9,
+    { width: tableWidth - 10, align: 'center' }
+  );
 
-    totalRow.font = { bold: true };
+  y += 38;
+  doc.fontSize(7.5).font('Helvetica-Oblique').fillColor(GRIS_MED)
+     .text(
+       'Documento expedido por Créditos del Sur. Información de trazabilidad del sistema. Confidencial.',
+       tableLeft, y, { align: 'center', width: tableWidth }
+     );
 
-    sheet.columns.forEach((col) => {
-      if (!col.width) {
-        col.width = 20;
-      }
-    });
+  drawFooter();
 
-    const buffer = await workbook.xlsx.writeBuffer();
+  const buffer = await new Promise<Buffer>((resolve, reject) => {
+    doc.on('end', () => resolve(Buffer.concat(buffers)));
+    doc.on('error', reject);
+    doc.end();
+  });
 
-    return new NextResponse(buffer, {
-      headers: {
-        "Content-Type":
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition":
-          'attachment; filename="log_auditoria.xlsx"',
-      },
-    });
-  } catch (error) {
-    console.error(error);
-
-    return NextResponse.json(
-      { error: "Error al exportar auditoría" },
-      { status: 500 }
-    );
-  }
+  return {
+    data: buffer,
+    contentType: 'application/pdf',
+    filename: `auditoria-${fecha}.pdf`,
+  };
 }
-=======
->>>>>>> main

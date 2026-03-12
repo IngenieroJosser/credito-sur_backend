@@ -17,6 +17,9 @@ import { NotificacionesService } from '../notificaciones/notificaciones.service'
 import { AuditService } from '../audit/audit.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { PagoConRelacionesExport } from '../common/types';
+import { generarExcelPagos, generarPDFPagos, PagoRow, PagosTotales } from '../templates/exports/historial-pagos.template';
+import { CloudinaryService } from '../upload/cloudinary.service';
+
 
 @Injectable()
 export class PaymentsService {
@@ -27,6 +30,7 @@ export class PaymentsService {
     private notificacionesService: NotificacionesService,
     private auditService: AuditService,
     private notificacionesGateway: NotificacionesGateway,
+    private readonly cloudinaryService: CloudinaryService,
   ) {}
 
   /**
@@ -54,13 +58,20 @@ export class PaymentsService {
     return { capital, interes };
   }
 
-  async create(dto: CreatePaymentDto) {
-    // Validar que se proporcione el prestamoId
+  async create(dto: CreatePaymentDto, comprobante?: Express.Multer.File) {
+    // 1. Validar que se proporcione el prestamoId
     if (!dto.prestamoId) {
       throw new BadRequestException('El ID del préstamo es requerido');
     }
 
-    // Validar cobrador
+    // 2. Si el método es TRANSFERENCIA, el comprobante es OBLIGATORIO
+    if (dto.metodoPago === MetodoPago.TRANSFERENCIA && !comprobante) {
+      throw new BadRequestException(
+        'Para pagos por transferencia debe adjuntar el comprobante (imagen o PDF)',
+      );
+    }
+
+    // 3. Validar cobrador
     if (!dto.cobradorId) {
       throw new BadRequestException('El cobrador es requerido');
     }
@@ -83,7 +94,7 @@ export class PaymentsService {
           orderBy: { numeroCuota: 'asc' },
         },
         cliente: {
-          select: { id: true, nombres: true, apellidos: true },
+          select: { id: true, dni: true, nombres: true, apellidos: true },
         },
       },
     });
@@ -311,17 +322,88 @@ export class PaymentsService {
       },
     });
 
-    // Notificar
-    await this.notificacionesService.notifyCoordinator({
-      titulo: 'Pago Registrado',
-      mensaje: `Se registró un pago de ${montoTotal.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} para ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
+    // ── Subir comprobante de transferencia a Cloudinary ─────────────────────
+    // El comprobante queda dentro de la carpeta del cliente, igual que sus
+    // otros documentos: clientes/cc-{dni}-{nombre}-{apellido}-{last4}/comprobantes
+    if (comprobante && dto.metodoPago === MetodoPago.TRANSFERENCIA) {
+      try {
+        // Construir el label del cliente con el mismo patrón de upload.controller
+        const sanitize = (v?: string) =>
+          (v || '').toLowerCase()
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 60);
+
+        const dni       = (prestamo.cliente.dni || '').replace(/\D/g, '');
+        const dniLast4  = dni ? dni.slice(-4) : '';
+        const nombres   = sanitize(prestamo.cliente.nombres);
+        const apellidos = sanitize(prestamo.cliente.apellidos);
+        // Mismo formato que upload.controller: cc-{dni}-{nombres}-{apellidos}-{last4}
+        const clientLabel = [`cc-${dni}`, nombres, apellidos, dniLast4].filter(Boolean).join('-');
+
+        const cloudResult = await this.cloudinaryService.subirArchivo(comprobante, {
+          folder: `clientes/${clientLabel}/comprobantes-transferencia`,
+        });
+
+        await this.prisma.multimedia.create({
+          data: {
+            pagoId:               resultado.pago.id,
+            clienteId:            prestamo.clienteId,
+            tipoContenido:        'COMPROBANTE_TRANSFERENCIA' as any,
+            tipoArchivo:          comprobante.mimetype,
+            formato:              cloudResult.formato,
+            nombreOriginal:       comprobante.originalname,
+            nombreAlmacenamiento: cloudResult.publicId,
+            ruta:                 cloudResult.publicId,
+            url:                  cloudResult.url,
+            tamanoBytes:          cloudResult.tamanoBytes,
+            esPublico:            false,
+            esPrincipal:          true,
+            subidoPorId:          dto.cobradorId!,
+          },
+        });
+
+        this.logger.log(
+          `Comprobante de transferencia guardado para pago ${numeroPago} → Cloudinary: ${cloudResult.url}`,
+        );
+      } catch (err) {
+        // El pago ya está guardado en BD; el fallo del comprobante se registra
+        // en el log para que el coordinador pueda solicitarlo manualmente.
+        this.logger.error(
+          `Pago ${numeroPago} creado, pero falló la subida del comprobante: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    // Notificar a todos los aprobadores (SUPER_ADMIN, ADMIN, COORDINADOR, SUPERVISOR)
+    const metodoPagoStr = dto.metodoPago === 'TRANSFERENCIA' ? 'Transferencia' : 'Efectivo';
+    await this.notificacionesService.notifyApprovers({
+      titulo: `Pago Registrado — ${metodoPagoStr}`,
+      mensaje: `Se registró ${numeroPago} de ${montoTotal.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} para ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos} (${prestamo.numeroPrestamo})`,
       tipo: 'EXITO',
       entidad: 'PAGO',
       entidadId: resultado.pago.id,
       metadata: {
-        prestamoIdVal,
+        // Identificación del pago
+        pagoId:           resultado.pago.id,
+        numeroPago,
+        numeroPrestamo:   prestamo.numeroPrestamo,
+        prestamoId:       prestamoIdVal,
+        // Método y comprobante
+        metodoPago:       dto.metodoPago || 'EFECTIVO',
+        numeroReferencia: dto.numeroReferencia || null,
+        tieneComprobante: comprobante != null,
+        // Cliente
+        cliente:          `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
+        clienteId:        prestamo.clienteId,
+        clienteDni:       prestamo.cliente.dni || null,
+        // Montos
+        monto:            montoTotal,
         capitalRecuperado: capitalTotal,
         interesRecuperado: interesTotal,
+        saldoNuevo:       resultado.descomposicion.saldoNuevo,
+        saldoAnterior:    resultado.descomposicion.saldoAnterior,
+        prestamoQuedaPagado: resultado.descomposicion.prestamoQuedaPagado,
+        cuotasAfectadas:  resultado.descomposicion.cuotasAfectadas,
       },
     });
 
@@ -425,6 +507,22 @@ export class PaymentsService {
         cobrador: {
           select: { id: true, nombres: true, apellidos: true },
         },
+        // Incluir archivos multimedia (comprobantes de transferencia, etc.)
+        archivos: {
+          where: { estado: 'ACTIVO', eliminadoEn: null },
+          select: {
+            id: true,
+            tipoContenido: true,
+            tipoArchivo: true,
+            nombreOriginal: true,
+            url: true,
+            ruta: true,
+            formato: true,
+            tamanoBytes: true,
+            creadoEn: true,
+          },
+          orderBy: { creadoEn: 'asc' },
+        },
         recibo: true,
       },
     });
@@ -437,17 +535,18 @@ export class PaymentsService {
   }
 
   async exportPayments(
-    filters: { startDate?: string; endDate?: string; rutaId?: string },
+    filters: { startDate?: string; endDate?: string; rutaId?: string; prestamoId?: string },
     format: 'excel' | 'pdf',
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
-    const ExcelJS = await import('exceljs');
-    const PDFDocument = await import('pdfkit');
-
+    // 1. Solo consulta de BD
     const where: Prisma.PagoWhereInput = {};
+    if (filters.prestamoId) {
+      where.prestamoId = filters.prestamoId;
+    }
     if (filters.startDate || filters.endDate) {
       where.fechaPago = {};
-      if (filters.startDate) where.fechaPago.gte = new Date(filters.startDate);
-      if (filters.endDate) where.fechaPago.lte = new Date(filters.endDate);
+      if (filters.startDate) (where.fechaPago as any).gte = new Date(filters.startDate);
+      if (filters.endDate) (where.fechaPago as any).lte = new Date(filters.endDate);
     }
 
     const pagos = await this.prisma.pago.findMany({
@@ -455,117 +554,47 @@ export class PaymentsService {
       include: {
         cliente: { select: { nombres: true, apellidos: true, dni: true } },
         prestamo: { select: { numeroPrestamo: true } },
-        cobrador: { select: { nombres: true, apellidos: true } },
+        cobrador: { select: { nombres: true, apellidos: true, rol: true } },
       },
       orderBy: { fechaPago: 'desc' },
       take: 10000,
     });
 
     const fecha = new Date().toISOString().split('T')[0];
-    const totalRecaudado = pagos.reduce((s, p) => s + Number(p.montoTotal), 0);
 
-    if (format === 'excel') {
-      const workbook = new ExcelJS.Workbook();
-      const ws = workbook.addWorksheet('Historial de Pagos');
-      ws.columns = [
-        { header: 'Fecha', key: 'fecha', width: 18 },
-        { header: 'N° Pago', key: 'numeroPago', width: 14 },
-        { header: 'Cliente', key: 'cliente', width: 28 },
-        { header: 'Documento', key: 'documento', width: 15 },
-        { header: 'N° Préstamo', key: 'numeroPrestamo', width: 18 },
-        { header: 'Monto', key: 'monto', width: 16 },
-        { header: 'Capital', key: 'capital', width: 16 },
-        { header: 'Interés', key: 'interes', width: 16 },
-        { header: 'Método', key: 'metodo', width: 14 },
-        { header: 'Cobrador', key: 'cobrador', width: 22 },
-      ] as { header: string; key: string; width: number }[];
-      const headerRow = ws.getRow(1);
-      headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-      headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF7C3AED' } };
-      headerRow.alignment = { horizontal: 'center' };
+    // 2. Mapeo al tipo del template
+    const filas: PagoRow[] = pagos.map((p: PagoConRelacionesExport) => ({
+      fecha: p.fechaPago,
+      numeroPago: p.numeroPago || '',
+      cliente: p.cliente ? `${p.cliente.nombres} ${p.cliente.apellidos}` : '',
+      documento: p.cliente?.dni || '',
+      numeroPrestamo: p.prestamo?.numeroPrestamo || '',
+      montoTotal: Number(p.montoTotal),
+      metodoPago: p.metodoPago || '',
+      cobrador: p.cobrador ? `${p.cobrador.nombres} ${p.cobrador.apellidos}` : 'Admin',
+      esAbono: (p as any).esAbono ?? false,
+      capitalPagado: Number((p as any).capitalPagado || 0),
+      interesPagado: Number((p as any).interesPagado || 0),
+      moraPagada: Number((p as any).moraPagada || 0),
+      comentario: (p as any).notas || '',
+      origenCaja: !p.cobrador ? 'Admin' : p.cobrador.rol === 'PUNTO_DE_VENTA' ? 'P.Venta' : 'Ruta',
+    }));
 
-      pagos.forEach((p: PagoConRelacionesExport) => {
-        ws.addRow({
-          fecha: p.fechaPago ? new Date(p.fechaPago).toLocaleDateString('es-CO') : '',
-          numeroPago: p.numeroPago || '',
-          cliente: p.cliente ? `${p.cliente.nombres} ${p.cliente.apellidos}` : '',
-          documento: p.cliente?.dni || '',
-          numeroPrestamo: p.prestamo?.numeroPrestamo || '',
-          monto: Number(p.montoTotal),
-          capital: 0, // El campo calculado no está en el schema; viene de la descomposición al momento del pago
-          interes: 0,
-          metodo: p.metodoPago || '',
-          cobrador: p.cobrador ? `${p.cobrador.nombres} ${p.cobrador.apellidos}` : '',
-        });
-      });
-      ['monto', 'capital', 'interes'].forEach(k => { ws.getColumn(k).numFmt = '#,##0'; });
-      ws.addRow({});
-      const sr = ws.addRow({ fecha: 'TOTALES', monto: totalRecaudado, numeroPago: `${pagos.length} pagos` });
-      sr.font = { bold: true };
+    const totales: PagosTotales = {
+      totalRecaudado: filas.reduce((s, p) => s + p.montoTotal, 0),
+      totalPagos: filas.length,
+      totalCapital: filas.reduce((s, p) => s + (p.capitalPagado || 0), 0),
+      totalIntereses: filas.reduce((s, p) => s + (p.interesPagado || 0), 0),
+      totalMora: filas.reduce((s, p) => s + (p.moraPagada || 0), 0),
+      cantidadAbonos: filas.filter((p) => p.esAbono).length,
+      cantidadCuotasCompletas: filas.filter((p) => !p.esAbono).length,
+    };
 
-      const buffer = await workbook.xlsx.writeBuffer();
-      return {
-        data: Buffer.from(buffer as ArrayBuffer),
-        contentType: 'application/vnd.ms-excel.sheet.macroEnabled.12',
-        filename: `historial-pagos-${fecha}.xlsm`,
-      };
-    } else if (format === 'pdf') {
-      const doc = new PDFDocument({ layout: 'landscape', size: 'LETTER', margin: 30 });
-      const buffers: Buffer[] = [];
-      doc.on('data', buffers.push.bind(buffers));
+    // 3. Delegamos al template
+    if (format === 'excel') return generarExcelPagos(filas, totales, fecha);
+    if (format === 'pdf') return generarPDFPagos(filas, totales, fecha);
 
-      doc.fontSize(16).font('Helvetica-Bold').text('Créditos del Sur — Historial de Pagos', { align: 'center' });
-      doc.fontSize(9).font('Helvetica').text(`Generado: ${new Date().toLocaleString('es-CO')}`, { align: 'center' });
-      doc.moveDown(0.5);
-      doc.fontSize(8).font('Helvetica-Bold');
-      doc.text(`Total Pagos: ${pagos.length}  |  Total Recaudado: $${totalRecaudado.toLocaleString('es-CO')}`, { align: 'center' });
-      doc.moveDown(0.5);
-
-      const cols = [
-        { label: 'Fecha', width: 75 },
-        { label: 'N° Pago', width: 65 },
-        { label: 'Cliente', width: 120 },
-        { label: 'N° Préstamo', width: 80 },
-        { label: 'Monto', width: 80 },
-        { label: 'Capital', width: 75 },
-        { label: 'Interés', width: 70 },
-        { label: 'Método', width: 65 },
-        { label: 'Cobrador', width: 100 },
-      ];
-      const tableLeft = 30;
-      let y = doc.y + 5;
-      const rowH = 16;
-
-      doc.fontSize(7).font('Helvetica-Bold');
-      doc.rect(tableLeft, y, cols.reduce((s, c) => s + c.width, 0), rowH).fill('#7C3AED');
-      let x = tableLeft;
-      cols.forEach(col => { doc.fillColor('white').text(col.label, x + 2, y + 4, { width: col.width - 4 }); x += col.width; });
-      y += rowH;
-
-      doc.font('Helvetica').fontSize(7).fillColor('black');
-      pagos.forEach((p: PagoConRelacionesExport, i: number) => {
-        if (y > 560) { doc.addPage(); y = 30; }
-        if (i % 2 === 0) { doc.rect(tableLeft, y, cols.reduce((s, c) => s + c.width, 0), rowH).fill('#F5F3FF'); doc.fillColor('black'); }
-        x = tableLeft;
-        const rowData = [
-          p.fechaPago ? new Date(p.fechaPago).toLocaleDateString('es-CO') : '',
-          p.numeroPago || '',
-          p.cliente ? `${p.cliente.nombres} ${p.cliente.apellidos}`.substring(0, 22) : '',
-          p.prestamo?.numeroPrestamo || '',
-          `$${Number(p.montoTotal).toLocaleString('es-CO')}`,
-          `$${Number(0).toLocaleString('es-CO')}`, // campo calculado no está en schema
-          `$${Number(0).toLocaleString('es-CO')}`,
-          p.metodoPago || '',
-          p.cobrador ? `${p.cobrador.nombres} ${p.cobrador.apellidos}`.substring(0, 18) : '',
-        ];
-        rowData.forEach((val, ci) => { doc.text(val, x + 2, y + 4, { width: cols[ci].width - 4 }); x += cols[ci].width; });
-        y += rowH;
-      });
-
-      doc.end();
-      const buffer = await new Promise<Buffer>((resolve) => { doc.on('end', () => resolve(Buffer.concat(buffers))); });
-      return { data: buffer, contentType: 'application/pdf', filename: `historial-pagos-${fecha}.pdf` };
-    }
     throw new BadRequestException(`Formato no soportado: ${format}`);
   }
 }
+

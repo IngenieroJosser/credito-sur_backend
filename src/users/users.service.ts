@@ -291,10 +291,29 @@ export class UsersService {
       throw new NotFoundException(`Usuario con ID ${id} no encontrado`);
     }
 
-    // PROTECCIÓN: Solo el Superadmin puede modificar su propia información
+    // PROTECCIÓN: Un SUPER_ADMINISTRADOR solo puede ser modificado por:
+    //   1. Sí mismo (auto-modificación)
+    //   2. El SUPER_ADMINISTRADOR principal (tiene esPrincipal = true)
     if (usuario.rol === RolUsuario.SUPER_ADMINISTRADOR) {
-      if (!usuarioModificadorId || usuarioModificadorId !== id) {
-        throw new ForbiddenException('Solo el Superadministrador puede modificar su propia información');
+      // Auto-modificación siempre permitida
+      const esSelfEdit = usuarioModificadorId === id;
+
+      // Verificar si el modificador es el superadmin principal
+      let esPrincipalModificando = false;
+      if (usuarioModificadorId && !esSelfEdit) {
+        const modificador = await this.prisma.usuario.findUnique({
+          where: { id: usuarioModificadorId },
+          select: { rol: true, esPrincipal: true },
+        });
+        esPrincipalModificando =
+          modificador?.rol === RolUsuario.SUPER_ADMINISTRADOR &&
+          (modificador?.esPrincipal ?? false);
+      }
+
+      if (!esSelfEdit && !esPrincipalModificando) {
+        throw new ForbiddenException(
+          'Un Superadministrador solo puede ser modificado por sí mismo o por el Superadministrador principal',
+        );
       }
     }
 

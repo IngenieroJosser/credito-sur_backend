@@ -25,10 +25,12 @@ export class DashboardService {
         },
       });
 
+      // Cuentas en mora: sin filtro de período porque la mora es un estado ACTUAL del préstamo,
+      // no depende de cuándo se creó. Un préstamo creado hace 6 meses puede estar en mora hoy.
       const delinquentAccounts = await this.prisma.prestamo.count({
         where: { 
           estado: EstadoPrestamo.EN_MORA,
-          creadoEn: { gte: startDate, lte: endDate },
+          eliminadoEn: null,
         },
       });
 
@@ -78,7 +80,7 @@ export class DashboardService {
         },
       });
 
-      // Calcular recaudo del período (suma de pagos en el período)
+      // Recaudo del período: suma de cobros realizados (fechaPago = fecha real del cobro)
       const recaudo = await this.prisma.pago.aggregate({
         where: {
           fechaPago: { gte: startDate, lte: endDate },
@@ -86,6 +88,11 @@ export class DashboardService {
         _sum: {
           montoTotal: true,
         },
+      });
+
+      // Total de pagos en el período
+      const totalPagos = await this.prisma.pago.count({
+        where: { fechaPago: { gte: startDate, lte: endDate } },
       });
 
       // 2. Obtener aprobaciones pendientes (filtradas por período)
@@ -106,11 +113,11 @@ export class DashboardService {
       take: 5,
     });
 
-      // 3. Obtener cuentas en mora (filtradas por período)
+      // Cuentas en mora para el listado detallado: sin filtro de período
       const delinquentAccountsList = await this.prisma.prestamo.findMany({
       where: { 
         estado: EstadoPrestamo.EN_MORA,
-        creadoEn: { gte: startDate, lte: endDate },
+        eliminadoEn: null,
       },
       include: {
         cliente: {
@@ -133,7 +140,7 @@ export class DashboardService {
           take: 1,
         },
       },
-      take: 5,
+      take: 10,
     });
 
       // 4. Obtener actividad reciente (últimas aprobaciones procesadas) - filtradas por período
@@ -228,6 +235,7 @@ export class DashboardService {
           efficiency: parseFloat(efficiency.toFixed(1)),
           capitalPrestado: Number(capitalPrestado._sum?.monto || 0),
           recaudo: Number(recaudo._sum?.montoTotal || 0),
+          totalPagos,
         },
         trend: trendData,
         pendingApprovals: pendingApprovalsList.map((item) =>
@@ -292,7 +300,7 @@ export class DashboardService {
       const today = new Date();
       let groupBy: 'day' | 'week' | 'month' = 'day';
 
-      // Determinar cómo agrupar según el filtro
+      // Determinar cómo agrupar según el filtro de período
       switch (timeFilter) {
         case 'today':
           groupBy = 'day';
@@ -303,23 +311,20 @@ export class DashboardService {
         case 'month':
           groupBy = 'day';
           break;
-        case 'quarter':
-          groupBy = 'week';
+        case 'year':
+          groupBy = 'month';  // Año → agrupa por mes (12 barras)
           break;
         default:
           groupBy = 'day';
       }
 
-      // Obtener datos de pagos reales filtrados por el período
+      // Pagos del período agrupados por fechaPago (fecha real del cobro)
       const payments = await this.prisma.pago.groupBy({
         by: ['fechaPago'],
         where: {
           fechaPago: {
             gte: startDate,
             lte: endDate,
-          },
-          montoTotal: {
-            gt: 0,
           },
         },
         _sum: {
@@ -709,11 +714,10 @@ export class DashboardService {
         startDate.setHours(0, 0, 0, 0);
         endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
         break;
-      case 'quarter':
-        const quarter = Math.floor(today.getMonth() / 3);
-        startDate = new Date(today.getFullYear(), quarter * 3, 1);
+      case 'year':
+        startDate = new Date(today.getFullYear(), 0, 1);
         startDate.setHours(0, 0, 0, 0);
-        endDate = new Date(today.getFullYear(), (quarter + 1) * 3, 0, 23, 59, 59, 999);
+        endDate = new Date(today.getFullYear(), 11, 31, 23, 59, 59, 999);
         break;
       default:
         // Por defecto: mes actual
