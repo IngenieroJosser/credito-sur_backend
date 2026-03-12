@@ -12,8 +12,12 @@ import { CreateRouteDto } from './dto/create-route.dto';
 import { UpdateRouteDto } from './dto/update-route.dto';
 import { Prisma, EstadoPrestamo, EstadoCuota } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
-import * as ExcelJS from 'exceljs';
-import * as PDFDocument from 'pdfkit';
+import {
+  generarExcelRutaCobrador,
+  generarPDFRutaCobrador,
+  RutaCobradorRow,
+  RutaCobradorMeta,
+} from '../templates/exports';
 
 @Injectable()
 export class RoutesService {
@@ -1825,269 +1829,39 @@ export class RoutesService {
     const totalCuota = filas.reduce((s, f) => s + f.cuota, 0);
     const enMora   = filas.filter(f => f.semaforo === 'ROJO').length;
 
-    // ── 3. Generar Excel ──────────────────────────────────────────────────────
+    const fechaArchivo = new Date().toISOString().slice(0, 10);
+    const meta: RutaCobradorMeta = {
+      rutaNombre: ruta.nombre,
+      rutaCodigo: (ruta as any).codigo,
+      cobradorNombre,
+      fechaExport,
+      totalClientes: ruta.asignaciones.length,
+      enMora,
+      totalCuota,
+      totalSaldo,
+    };
+
+    const filasTpl: RutaCobradorRow[] = filas.map((f) => ({
+      nro: f.nro,
+      cliente: f.cliente,
+      cc: f.cc,
+      telefono: f.telefono,
+      direccion: f.direccion,
+      numeroPrestamo: f.numeroPrestamo,
+      cuota: f.cuota,
+      fechaCuota: f.fechaCuota,
+      saldo: f.saldo,
+      estadoPrestamo: f.estadoPrestamo,
+      diasMora: f.diasMora,
+      semaforo: f.semaforo,
+    }));
+
     if (formato === 'excel') {
-      const wb = new ExcelJS.Workbook();
-      wb.creator = 'Créditos del Sur';
-      wb.created = new Date();
-
-      const ws = wb.addWorksheet(`Ruta ${ruta.nombre}`, {
-        pageSetup: { fitToPage: true, fitToWidth: 1, orientation: 'landscape' },
-      });
-
-      // Paleta
-      const COLOR_HEADER  = '1E293B'; // slate-900
-      const COLOR_SUBHEAD = '334155'; // slate-700
-      const COLOR_VERDE   = 'D1FAE5'; // emerald-100
-      const COLOR_AMARILLO= 'FEF9C3'; // yellow-100
-      const COLOR_ROJO    = 'FEE2E2'; // red-100
-      const COLOR_ROJO_TXT= 'DC2626';
-      const COLOR_AMARI_TXT = '92400E';
-      const COLOR_VERDE_TXT = '065F46';
-
-      // Anchos de columna
-      ws.columns = [
-        { key: 'nro',     width: 5  },
-        { key: 'cliente', width: 26 },
-        { key: 'cc',      width: 14 },
-        { key: 'tel',     width: 14 },
-        { key: 'dir',     width: 30 },
-        { key: 'prest',   width: 14 },
-        { key: 'cuota',   width: 14 },
-        { key: 'fecha',   width: 14 },
-        { key: 'saldo',   width: 16 },
-        { key: 'estado',  width: 10 },
-        { key: 'diasMora',width: 10 },
-        { key: 'cobrado', width: 16 },
-        { key: 'notas',   width: 24 },
-      ];
-
-      // Fila 1: Título de la ruta
-      ws.mergeCells('A1:M1');
-      const titleCell = ws.getCell('A1');
-      titleCell.value = `CRÉDITOS DEL SUR — RUTA ${ruta.nombre.toUpperCase()} (${ruta.codigo})`;
-      titleCell.font  = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
-      titleCell.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${COLOR_HEADER}` } };
-      titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
-      ws.getRow(1).height = 28;
-
-      // Fila 2: Metadatos
-      ws.mergeCells('A2:M2');
-      const metaCell = ws.getCell('A2');
-      metaCell.value = `Cobrador: ${cobradorNombre}   |   Fecha: ${fechaExport}   |   Clientes: ${ruta.asignaciones.length}   |   En mora: ${enMora}`;
-      metaCell.font  = { size: 10, color: { argb: 'FFFFFFFF' } };
-      metaCell.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${COLOR_SUBHEAD}` } };
-      metaCell.alignment = { horizontal: 'center', vertical: 'middle' };
-      ws.getRow(2).height = 18;
-
-      // Fila 3: encabezados de columna
-      const headers = ['N°', 'Cliente', 'CC / DNI', 'Teléfono', 'Dirección',
-        'N° Préstamo', 'Cuota', 'Fecha Cuota', 'Saldo Total', 'Estado',
-        'Días Mora', 'Cobrado ✔', 'Notas'];
-      const hRow = ws.getRow(3);
-      hRow.height = 20;
-      headers.forEach((h, i) => {
-        const cell = hRow.getCell(i + 1);
-        cell.value = h;
-        cell.font  = { bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
-        cell.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF475569' } };
-        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-        cell.border = {
-          bottom: { style: 'thin', color: { argb: 'FF94A3B8' } },
-          right:  { style: 'thin', color: { argb: 'FF94A3B8' } },
-        };
-      });
-
-      // Formato moneda colombiana
-      const fmtCOP = (n: number) =>
-        new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(n);
-
-      // Filas de datos
-      filas.forEach((f, idx) => {
-        const row = ws.addRow([
-          f.nro,
-          f.cliente,
-          f.cc,
-          f.telefono,
-          f.direccion,
-          f.numeroPrestamo,
-          f.cuota   > 0 ? fmtCOP(f.cuota)   : '—',
-          f.fechaCuota,
-          f.saldo   > 0 ? fmtCOP(f.saldo)   : '—',
-          f.estadoPrestamo.replace('_', ' '),
-          f.diasMora > 0 ? f.diasMora : '',
-          '',  // Cobrado — vacío para llenar en campo
-          '',  // Notas
-        ]);
-        row.height = 18;
-
-        // Color de fila segun semáforo
-        let bgColor = idx % 2 === 0 ? 'FFF8FAFC' : 'FFFFFFFF';
-        if (f.semaforo === 'ROJO')    bgColor = `FF${COLOR_ROJO}`;
-        if (f.semaforo === 'AMARILLO') bgColor = `FF${COLOR_AMARILLO}`;
-
-        row.eachCell((cell, colNum) => {
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgColor } };
-          cell.alignment = { vertical: 'middle', wrapText: colNum === 5 };
-          cell.font = { size: 9 };
-          cell.border = {
-            bottom: { style: 'hair', color: { argb: 'FFE2E8F0' } },
-            right:  { style: 'hair', color: { argb: 'FFE2E8F0' } },
-          };
-
-          // Color texto en columna Estado y Días Mora
-          if (colNum === 10 || colNum === 11) {
-            if (f.semaforo === 'ROJO')     cell.font = { size: 9, bold: true, color: { argb: `FF${COLOR_ROJO_TXT}` } };
-            if (f.semaforo === 'AMARILLO') cell.font = { size: 9, bold: true, color: { argb: `FF${COLOR_AMARI_TXT}` } };
-            if (f.semaforo === 'VERDE')    cell.font = { size: 9, bold: true, color: { argb: `FF${COLOR_VERDE_TXT}` } };
-          }
-        });
-      });
-
-      // Fila de totales
-      const totRow = ws.addRow([
-        '', 'TOTALES', '', '', '',
-        `${filas.length} clientes`,
-        fmtCOP(totalCuota),
-        '',
-        fmtCOP(totalSaldo),
-        '',
-        `${enMora} en mora`,
-        '', '',
-      ]);
-      totRow.height = 22;
-      totRow.eachCell(cell => {
-        cell.font = { bold: true, size: 9 };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${COLOR_HEADER}` } };
-        cell.font = { bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
-        cell.alignment = { vertical: 'middle' };
-      });
-
-      // Congelar cabecera
-      ws.views = [{ state: 'frozen', xSplit: 0, ySplit: 3, activeCell: 'A4' }];
-
-      // Auto-filter
-      ws.autoFilter = { from: 'A3', to: 'M3' };
-
-      const buffer = await wb.xlsx.writeBuffer();
-      return Buffer.from(buffer);
+      const out = await generarExcelRutaCobrador(filasTpl, meta, fechaArchivo);
+      return out.data;
     }
 
-    // ── 4. Generar PDF ────────────────────────────────────────────────────────
-    return new Promise<Buffer>((resolve, reject) => {
-      const doc = new PDFDocument({
-        size: 'LETTER',
-        layout: 'landscape',
-        margins: { top: 40, bottom: 40, left: 36, right: 36 },
-      });
-
-      const chunks: Buffer[] = [];
-      doc.on('data', (c: Buffer) => chunks.push(c));
-      doc.on('end', () => resolve(Buffer.concat(chunks)));
-      doc.on('error', reject);
-
-      const W = doc.page.width - 72;
-
-      // Encabezado
-      doc.rect(36, 20, W, 32).fill('#1E293B');
-      doc.fillColor('#FFFFFF').fontSize(14).font('Helvetica-Bold')
-        .text(`CRÉDITOS DEL SUR — RUTA ${ruta.nombre.toUpperCase()} (${ruta.codigo})`,
-          40, 30, { width: W - 8, align: 'center' });
-
-      doc.moveDown(0.2);
-      doc.rect(36, 52, W, 18).fill('#334155');
-      doc.fillColor('#FFFFFF').fontSize(8)
-        .text(`Cobrador: ${cobradorNombre}   |   Fecha: ${fechaExport}   |   Total clientes: ${filas.length}   |   En mora: ${enMora}`,
-          40, 57, { width: W - 8, align: 'center' });
-
-      // Tabla — cabecera
-      const yTabla = 78;
-      const cols = [
-        { label: 'N°',          w: 25  },
-        { label: 'Cliente',     w: 130 },
-        { label: 'CC',          w: 70  },
-        { label: 'Teléfono',    w: 70  },
-        { label: 'N° Préstamo', w: 70  },
-        { label: 'Cuota',       w: 72  },
-        { label: 'Saldo',       w: 80  },
-        { label: 'Estado',      w: 55  },
-        { label: 'D. Mora',     w: 40  },
-        { label: 'Cobrado ✔',   w: 55  },
-      ];
-
-      // Cabecera tabla
-      let xCol = 36;
-      doc.rect(36, yTabla, W, 16).fill('#475569');
-      doc.fillColor('#FFFFFF').fontSize(7).font('Helvetica-Bold');
-      cols.forEach(col => {
-        doc.text(col.label, xCol + 2, yTabla + 4, { width: col.w - 4, align: 'center' });
-        xCol += col.w;
-      });
-
-      // Filas de datos
-      let y = yTabla + 16;
-      const ROW_H = 14;
-      doc.font('Helvetica').fontSize(6.5);
-
-      filas.forEach((f, idx) => {
-        if (y + ROW_H > doc.page.height - 50) {
-          doc.addPage({ layout: 'landscape', margins: { top: 40, bottom: 40, left: 36, right: 36 } });
-          y = 40;
-          // Repetir cabecera
-          let xc = 36;
-          doc.rect(36, y, W, 16).fill('#475569');
-          doc.fillColor('#FFFFFF').fontSize(7).font('Helvetica-Bold');
-          cols.forEach(col => {
-            doc.text(col.label, xc + 2, y + 4, { width: col.w - 4, align: 'center' });
-            xc += col.w;
-          });
-          y += 16;
-          doc.font('Helvetica').fontSize(6.5);
-        }
-
-        const bgColor = f.semaforo === 'ROJO' ? '#FEE2E2'
-          : f.semaforo === 'AMARILLO' ? '#FEF9C3'
-          : idx % 2 === 0 ? '#F8FAFC' : '#FFFFFF';
-        doc.rect(36, y, W, ROW_H).fill(bgColor);
-
-        const txtColor = f.semaforo === 'ROJO' ? '#DC2626'
-          : f.semaforo === 'AMARILLO' ? '#92400E'
-          : '#1E293B';
-
-        doc.fillColor(txtColor);
-        const vals = [
-          String(f.nro),
-          f.cliente,
-          f.cc,
-          f.telefono,
-          f.numeroPrestamo,
-          f.cuota > 0 ? `$${f.cuota.toLocaleString('es-CO')}` : '—',
-          f.saldo > 0 ? `$${f.saldo.toLocaleString('es-CO')}` : '—',
-          f.estadoPrestamo.replace('_', ' '),
-          f.diasMora > 0 ? String(f.diasMora) : '',
-          '',
-        ];
-        let xv = 36;
-        vals.forEach((v, i) => {
-          doc.text(v, xv + 2, y + 4, { width: cols[i].w - 4, align: i === 0 || i >= 5 ? 'center' : 'left', lineBreak: false });
-          xv += cols[i].w;
-        });
-
-        // Línea divisoria
-        doc.moveTo(36, y + ROW_H).lineTo(36 + W, y + ROW_H).strokeColor('#E2E8F0').lineWidth(0.3).stroke();
-        y += ROW_H;
-      });
-
-      // Pie de página con totales
-      const yPie = doc.page.height - 44;
-      doc.rect(36, yPie, W, 20).fill('#1E293B');
-      doc.fillColor('#FFFFFF').fontSize(8).font('Helvetica-Bold')
-        .text(
-          `Total cuotas: $${totalCuota.toLocaleString('es-CO')}   |   Total saldo: $${totalSaldo.toLocaleString('es-CO')}   |   Clientes: ${filas.length}   |   En mora: ${enMora}`,
-          40, yPie + 5, { width: W - 8, align: 'center' },
-        );
-
-      doc.end();
-    });
+    const out = await generarPDFRutaCobrador(filasTpl, meta, fechaArchivo);
+    return out.data;
   }
 }
