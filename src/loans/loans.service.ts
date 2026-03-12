@@ -2361,7 +2361,7 @@ export class LoansService implements OnModuleInit {
       SEMANAL: 6,
       QUINCENAL: 14,
       MENSUAL: 30,
-      DIARIO: 1,
+      DIARIO: 8,
     };
     const limite = limiteDias[prestamo.frecuenciaPago] ?? 30;
     if (diasDesdeHoy > limite) {
@@ -2530,23 +2530,17 @@ export class LoansService implements OnModuleInit {
 
     const prestamos = rawLoans.prestamos;
     
-    // Calcular totales para la plantilla
+    // Calcular totales para la plantilla basados exactamente en lo que se va a mostrar
     const totales: CarteraTotales = {
-      montoTotal:      rawLoans.estadisticas.montoTotal,
-      montoPendiente:  rawLoans.estadisticas.montoPendiente,
-      montoPagado:     rawLoans.estadisticas.pagados, // Cuidado, en las estadísticas "pagados" es conteo.
-      totalAdeudado:   rawLoans.estadisticas.montoPendiente + rawLoans.estadisticas.moraTotal,
-      interesRecogido: 0, // Simplificado, idealmente viene de suma de cuotas pagadas
-      mora:            rawLoans.estadisticas.moraTotal,
-      recaudo:         0, // Simplificado
+      montoTotal:      prestamos.reduce((sum, p) => sum + (p.montoTotal || 0), 0),
+      montoPendiente:  prestamos.reduce((sum, p) => sum + (p.montoPendiente || 0), 0),
+      montoPagado:     prestamos.reduce((sum, p) => sum + (p.montoPagado || 0), 0),
+      totalAdeudado:   prestamos.reduce((sum, p) => sum + ((p.montoPendiente || 0) + (p.moraAcumulada || 0)), 0),
+      interesRecogido: 0, // Se mantiene 0 por ahora según lógica actual
+      mora:            prestamos.reduce((sum, p) => sum + (p.moraAcumulada || 0), 0),
+      recaudo:         prestamos.reduce((sum, p) => sum + (p.montoPagado || 0) + (p.moraAcumulada || 0), 0),
       totalRegistros:  prestamos.length,
     };
-
-    // Calcular montos reales iterando
-    totales.montoPagado = prestamos.reduce((sum, p) => sum + p.montoPagado, 0);
-    // Usaremos montoPagado aprox como recaudo total por simplicidad para la demo
-    totales.interesRecogido = 0;
-    totales.recaudo = prestamos.reduce((sum, p) => sum + (p.montoPagado || 0) + (p.moraAcumulada || 0), 0);
 
     const filas: CarteraRow[] = prestamos.map(p => ({
       numeroPrestamo: p.numeroPrestamo,
@@ -2560,7 +2554,7 @@ export class LoansService implements OnModuleInit {
       interesRecogido: 0,
       totalAdeudado:  p.montoPendiente + p.moraAcumulada,
       mora:           p.moraAcumulada,
-      recaudo:        p.montoPagado,
+      recaudo:        p.montoPagado + p.moraAcumulada, // Consistente con el recaudo total
       cuotasPagadas:  p.cuotasPagadas,
       cuotasTotales:  p.cuotasTotales,
       progreso:       p.progreso,

@@ -116,27 +116,40 @@ export async function generarExcelVencidas(
   ws.getCell('F3').alignment = { horizontal: 'right' };
   ws.getRow(3).height = 16;
 
-  // Fila 4: Indicadores financieros en celdas individuales
+  // Fila 4-5: Indicadores financieros en celdas (KPIs)
+  ws.getRow(4).height = 16;
+  ws.getRow(5).height = 26;
+
   const kpis = [
-    { label: 'Saldo Vencido Total', val: totales.totalVencido, fmt: '"$"#,##0' },
-    { label: 'Monto Original',       val: totales.totalMontoOriginal, fmt: '"$"#,##0' },
-    { label: 'Intereses de Mora',    val: totales.totalInteresesMora, fmt: '"$"#,##0' },
-    { label: 'Promedio Días Venc.',  val: totales.diasPromedioVencimiento, fmt: '0' },
+    { label: 'Saldo Vencido Total', val: totales.totalVencido,        bg: 'FFF5F3FF', color: 'FF7C3AED' },
+    { label: 'Monto Original',       val: totales.totalMontoOriginal,  bg: 'FFF8FAFC', color: 'FF475569' },
+    { label: 'Intereses de Mora',    val: totales.totalInteresesMora, bg: 'FFF8FAFC', color: 'FF475569' },
+    { label: 'Promedio Días Venc.',  val: totales.diasPromedioVencimiento, bg: 'FFF5F3FF', color: 'FF7C3AED' },
   ];
-  for (let i = 0; i < kpis.length; i++) {
-    const colLabel = i * 2 + 1;
-    const colVal   = i * 2 + 2;
-    if (colLabel > 11) break;
-    const lCell = ws.getCell(4, colLabel);
-    const vCell = ws.getCell(4, colVal);
-    lCell.value = kpis[i].label;
-    lCell.font = { bold: true, size: 8, color: { argb: 'FF64748B' } };
-    vCell.value = kpis[i].val;
-    vCell.numFmt = kpis[i].fmt;
-    vCell.font = { bold: true, size: 9, color: { argb: 'FF7C3AED' } };
-    vCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F3FF' } };
-  }
-  ws.getRow(4).height = 18;
+
+  kpis.forEach((kpi, i) => {
+    const sc = i * 2 + 1;
+    const ec = i * 2 + 2;
+    const scL = String.fromCharCode(64 + sc);
+    const ecL = String.fromCharCode(64 + ec);
+
+    // Label Row (Row 4)
+    ws.mergeCells(`${scL}4:${ecL}4`);
+    const lc = ws.getCell(`${scL}4`);
+    lc.value = kpi.label;
+    lc.font = { bold: true, size: 8, color: { argb: 'FF64748B' } };
+    lc.alignment = { horizontal: 'center', vertical: 'middle' };
+    lc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: kpi.bg } };
+
+    // Value Row (Row 5)
+    ws.mergeCells(`${scL}5:${ecL}5`);
+    const vc = ws.getCell(`${scL}5`);
+    vc.value = kpi.val;
+    vc.numFmt = i < 3 ? '"$"#,##0' : '0';
+    vc.font = { bold: true, size: 14, color: { argb: kpi.color } };
+    vc.alignment = { horizontal: 'center', vertical: 'middle' };
+    vc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: kpi.bg } };
+  });
 
   // Fila 5: Encabezados de tabla
   const headers = ['N° Préstamo','Cliente','Documento','Fecha Vencim.','Días Vencidos',
@@ -199,17 +212,22 @@ export async function generarExcelVencidas(
   const totRow = ws.addRow([
     `TOTALES — ${totales.totalRegistros} cuentas vencidas`,
     '', '', '',
-    `Días prom: ${totales.diasPromedioVencimiento}`,
+    `${totales.diasPromedioVencimiento} días prom.`,
     totales.totalVencido,
     totales.totalMontoOriginal,
     totales.totalInteresesMora,
     '', '', '',
   ]);
-  totRow.height = 20;
+  totRow.height = 24;
   ws.mergeCells(`A${totRow.number}:D${totRow.number}`);
-  totRow.eachCell(cell => {
+  totRow.eachCell((cell, colNumber) => {
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E1B4B' } };
+    cell.border = {
+      top: { style: 'medium', color: { argb: 'FFFFFFFF' } },
+      right: { style: 'thin', color: { argb: 'FFFFFFFF' } },
+    };
+    if (colNumber === 1) cell.alignment = { horizontal: 'right', vertical: 'middle' };
   });
   totRow.getCell(6).numFmt = '"$"#,##0';
   totRow.getCell(7).numFmt = '"$"#,##0';

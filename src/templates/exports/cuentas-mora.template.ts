@@ -154,32 +154,42 @@ export async function generarExcelMora(
   ws.getCell('I3').alignment = { horizontal: 'right' };
   ws.getRow(3).height = 16;
 
-  // Fila 4: Resumen financiero en celdas
+  // Fila 4-5: Resumen financiero en celdas (KPIs)
+  ws.getRow(4).height = 16;
+  ws.getRow(5).height = 26;
+
   const moraKpis = [
-    { label: 'Mora Acumulada',     val: totales.totalMora,                fmt: '"$"#,##0' },
-    { label: 'Deuda Total',        val: totales.totalDeuda,               fmt: '"$"#,##0' },
-    { label: 'Capital Pendiente',  val: totales.totalCapitalPendiente ?? 0, fmt: '"$"#,##0' },
-    { label: 'Interés Pendiente',  val: totales.totalInteresesPendientes ?? 0, fmt: '"$"#,##0' },
+    { label: 'Mora Acumulada',     val: totales.totalMora,                bg: COLOR.rojoClaro, color: COLOR.rojo },
+    { label: 'Deuda Total',        val: totales.totalDeuda,               bg: COLOR.grisClaro, color: COLOR.grisTexto },
+    { label: 'Capital Pendiente',  val: totales.totalCapitalPendiente ?? 0, bg: COLOR.grisClaro, color: COLOR.grisTexto },
+    { label: 'Interés Pendiente',  val: totales.totalInteresesPendientes ?? 0, bg: COLOR.naranjaClaro, color: 'FFB45309' },
+    { label: 'Casos Críticos',     val: totales.totalCasosCriticos,       bg: COLOR.rojoClaro, color: COLOR.rojo },
+    { label: 'Int. Especial',      val: totales.totalCasosInteresEspecial ?? 0, bg: COLOR.amarillo, color: 'FFB45309' },
   ];
+
   moraKpis.forEach((kpi, i) => {
-    const colL = i * 2 + 1;
-    const colV = i * 2 + 2;
-    const lc = ws.getCell(4, colL);
-    const vc = ws.getCell(4, colV);
+    const sc = i * 2 + 1;
+    const ec = i * 2 + 2;
+    const scL = String.fromCharCode(64 + sc);
+    const ecL = String.fromCharCode(64 + ec);
+
+    // Label Row (Row 4)
+    ws.mergeCells(`${scL}4:${ecL}4`);
+    const lc = ws.getCell(`${scL}4`);
     lc.value = kpi.label;
-    lc.font = { bold: true, size: 8, color: { argb: COLOR.grisTexto } };
+    lc.font = { bold: true, size: 8, color: { argb: 'FF64748B' } };
+    lc.alignment = { horizontal: 'center', vertical: 'middle' };
+    lc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: kpi.bg } };
+
+    // Value Row (Row 5)
+    ws.mergeCells(`${scL}5:${ecL}5`);
+    const vc = ws.getCell(`${scL}5`);
     vc.value = kpi.val;
-    vc.numFmt = kpi.fmt;
-    vc.font = { bold: true, size: 9, color: { argb: COLOR.rojo } };
-    vc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.rojoClaro } };
+    vc.numFmt = i < 4 ? '"$"#,##0' : '0';
+    vc.font = { bold: true, size: 14, color: { argb: kpi.color } };
+    vc.alignment = { horizontal: 'center', vertical: 'middle' };
+    vc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: kpi.bg } };
   });
-  ws.mergeCells('I4:J4');
-  ws.getCell('I4').value = `Casos Críticos: ${totales.totalCasosCriticos}`;
-  ws.getCell('I4').font = { bold: true, size: 9, color: { argb: COLOR.rojo } };
-  ws.mergeCells('K4:P4');
-  ws.getCell('K4').value = `Int. Especial Aprobado: ${totales.totalCasosInteresEspecial ?? 0} casos`;
-  ws.getCell('K4').font = { bold: true, size: 8, color: { argb: 'FFB45309' } };
-  ws.getRow(4).height = 18;
 
   // Fila 5: Encabezados de columnas
   const headers = [
@@ -255,11 +265,16 @@ export async function generarExcelMora(
     totales.totalDeuda,
     '', '', '', '', '', '', '', '',
   ]);
-  totRow.height = 20;
+  totRow.height = 24;
   ws.mergeCells(`A${totRow.number}:D${totRow.number}`);
-  totRow.eachCell(cell => {
+  totRow.eachCell((cell, colNumber) => {
     cell.font = { bold: true, color: { argb: COLOR.blanco }, size: 10 };
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.gris } };
+    cell.border = {
+      top: { style: 'medium', color: { argb: COLOR.blanco } },
+      right: { style: 'thin', color: { argb: COLOR.blanco } },
+    };
+    if (colNumber === 1) cell.alignment = { horizontal: 'right', vertical: 'middle' };
   });
   [5, 6, 7, 8].forEach(c => {
     totRow.getCell(c).numFmt = '"$"#,##0';

@@ -141,7 +141,16 @@ export async function generarExcelContable(
   ws1.addRow([]);
   const totalRow = ws1.addRow({ nombre: 'TOTAL SALDOS', saldo: totalSaldo });
   ws1.mergeCells(`A${totalRow.number}:F${totalRow.number}`);
-  totalRow.font = { bold: true };
+  totalRow.height = 24;
+  totalRow.eachCell({ includeEmpty: true }, (cell) => {
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+    cell.border = {
+      top: { style: 'medium', color: { argb: 'FFFFFFFF' } },
+      right: { style: 'thin', color: { argb: 'FFFFFFFF' } },
+    };
+  });
+  totalRow.getCell(1).alignment = { horizontal: 'right', vertical: 'middle' };
   totalRow.getCell(7).numFmt = '"$"#,##0';
 
   // ── Hoja 2: Últimos Movimientos ──
