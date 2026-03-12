@@ -16,6 +16,7 @@ import {
   Res,
   UsePipes,
   ValidationPipe,
+  BadRequestException,
 } from '@nestjs/common';
 import { Response } from 'express';
 import {
@@ -54,7 +55,6 @@ export class LoansController {
     private readonly auditService: AuditService,
     private readonly approvalsService: ApprovalsService,
   ) {}
-
 
   @Get()
   @Roles(
@@ -166,6 +166,32 @@ export class LoansController {
       ruta,
       search,
     });
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.send(result.data);
+  }
+
+  @Get(':id/contrato')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.PUNTO_DE_VENTA,
+  )
+  @ApiOperation({ summary: 'Exportar contrato de crédito de artículo en PDF' })
+  @ApiQuery({ name: 'format', enum: ['pdf'], required: false })
+  @HttpCode(HttpStatus.OK)
+  async exportContrato(
+    @Res() res: Response,
+    @Param('id') id: string,
+    @Query('format', new DefaultValuePipe('pdf')) format: 'pdf',
+  ) {
+    if (format !== 'pdf') {
+      throw new BadRequestException('Formato no soportado');
+    }
+
+    const result = await this.loansService.generarContrato(id);
     res.setHeader('Content-Type', result.contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
     res.send(result.data);

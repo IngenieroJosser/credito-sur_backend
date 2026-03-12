@@ -510,10 +510,10 @@ export async function generarContratoPDF(
   };
 
   drawFooter();
-  doc.end();
-
-  const buffer = await new Promise<Buffer>(resolve => {
+  const buffer = await new Promise<Buffer>((resolve, reject) => {
     doc.on('end', () => resolve(Buffer.concat(buffers)));
+    doc.on('error', reject);
+    doc.end();
   });
 
   return {

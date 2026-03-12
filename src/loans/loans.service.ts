@@ -20,9 +20,9 @@ import {
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { AuditService } from '../audit/audit.service';
+import { PushService } from '../push/push.service';
 import { CreateLoanDto } from './dto/create-loan.dto';
 import { ConfiguracionService } from '../configuracion/configuracion.service';
-import { PushService } from '../push/push.service';
 import { UpdateLoanData } from '../common/types';
 import { 
   generarExcelCartera, 
@@ -30,6 +30,7 @@ import {
   CarteraRow, 
   CarteraTotales 
 } from '../templates/exports/cartera-creditos.template';
+import { ContratoData, generarContratoPDF } from '../templates/exports';
 
 @Injectable()
 export class LoansService implements OnModuleInit {
@@ -53,6 +54,101 @@ export class LoansService implements OnModuleInit {
     } catch (error) {
         this.logger.error(`❌ [AUTO-FIX] Error durante la corrección automática: ${error}`);
     }
+  }
+
+  async generarContrato(prestamoId: string) {
+    const prestamo = await this.prisma.prestamo.findUnique({
+      where: { id: prestamoId },
+      include: {
+        cliente: true,
+        producto: true,
+        precioProducto: true,
+        creadoPor: { select: { nombres: true, apellidos: true } },
+        cuotas: { orderBy: { numeroCuota: 'asc' } },
+      },
+    });
+
+    if (!prestamo) {
+      throw new NotFoundException('Préstamo no encontrado');
+    }
+
+    if (prestamo.tipoPrestamo !== 'ARTICULO') {
+      throw new BadRequestException('Este préstamo no corresponde a un crédito de artículo');
+    }
+
+    const fmtFecha = (d?: Date | null) =>
+      d ? new Date(d).toLocaleDateString('es-CO') : '';
+
+    const clienteNombre = `${prestamo.cliente?.nombres || ''} ${prestamo.cliente?.apellidos || ''}`.trim();
+    const vendedorNombre = `${prestamo.creadoPor?.nombres || ''} ${prestamo.creadoPor?.apellidos || ''}`.trim();
+
+    const precioContado = prestamo.precioProducto?.precio
+      ? Number(prestamo.precioProducto.precio)
+      : 0;
+    const abonoInicial = prestamo.cuotaInicial ? Number(prestamo.cuotaInicial) : 0;
+    const montoFinanciado = prestamo.monto ? Number(prestamo.monto) : 0;
+    const interesTotal = prestamo.interesTotal ? Number(prestamo.interesTotal) : 0;
+    const totalAPagar = montoFinanciado + interesTotal;
+
+    const cuotaPromedio = prestamo.cuotas?.length
+      ? Number(prestamo.cuotas[0].monto)
+      : 0;
+
+    const frecuencia = (() => {
+      switch (prestamo.frecuenciaPago) {
+        case 'SEMANAL': return 'SEMANAL' as const;
+        case 'QUINCENAL': return 'QUINCENAL' as const;
+        case 'MENSUAL': return 'MENSUAL' as const;
+        default: return undefined;
+      }
+    })();
+
+    let saldo = totalAPagar;
+    const cuotas = (prestamo.cuotas || []).map((c) => {
+      const valorCuota = Number(c.monto);
+      saldo = Math.max(0, saldo - valorCuota);
+      return {
+        numero: Number(c.numeroCuota),
+        fechaVenc: fmtFecha(c.fechaVencimiento),
+        capital: Number((c as any).montoCapital ?? 0),
+        interes: Number((c as any).montoInteres ?? 0),
+        valorCuota,
+        saldo,
+      };
+    });
+
+    const data: ContratoData = {
+      numeroPrestamo: prestamo.numeroPrestamo,
+      tipo: 'CREDITO',
+      fechaContrato: fmtFecha((prestamo as any).fechaInicio ?? prestamo.creadoEn),
+
+      clienteNombre,
+      clienteCedula: String((prestamo.cliente as any)?.dni ?? ''),
+      clienteTelefono: (prestamo.cliente as any)?.telefono ? String((prestamo.cliente as any)?.telefono) : undefined,
+      clienteDireccion: (prestamo.cliente as any)?.direccion ? String((prestamo.cliente as any)?.direccion) : undefined,
+
+      articulo: prestamo.producto?.nombre || 'Artículo',
+      marca: (prestamo.producto as any)?.marca ? String((prestamo.producto as any)?.marca) : undefined,
+      modelo: (prestamo.producto as any)?.modelo ? String((prestamo.producto as any)?.modelo) : undefined,
+
+      precioContado,
+      abonoInicial,
+      montoFinanciado,
+      tasaInteres: prestamo.tasaInteres ? Number(prestamo.tasaInteres) : 0,
+      interesTotal,
+      totalAPagar,
+
+      numeroCuotas: prestamo.cantidadCuotas ? Number(prestamo.cantidadCuotas) : undefined,
+      frecuencia,
+      valorCuota: cuotaPromedio,
+      fechaPrimerPago: prestamo.cuotas?.length ? fmtFecha(prestamo.cuotas[0].fechaVencimiento) : undefined,
+      fechaUltimoPago: prestamo.cuotas?.length ? fmtFecha(prestamo.cuotas[prestamo.cuotas.length - 1].fechaVencimiento) : undefined,
+      cuotas,
+
+      vendedorNombre: vendedorNombre || undefined,
+    };
+
+    return generarContratoPDF(data);
   }
 
   /**
