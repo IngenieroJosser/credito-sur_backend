@@ -8,6 +8,8 @@
 
 import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -223,7 +225,6 @@ export async function generarPDFContable(
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
 
   const BLANCO     = '#FFFFFF';
-  const GRIS_FONDO = '#F8FAFC';
   const GRIS_CLR   = '#E2E8F0';
   const GRIS_MED   = '#94A3B8';
   const GRIS_TXT   = '#475569';
@@ -235,9 +236,6 @@ export async function generarPDFContable(
   const NAR_SOFT   = '#FDE8D5';
 
   const fmtCOP   = (v: number) => `$${(v || 0).toLocaleString('es-CO')}`;
-
-  const fs = require('fs');
-  const path = require('path');
 
   const getLogoPath = () => {
     const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
@@ -502,10 +500,11 @@ export async function generarPDFContable(
      );
 
   drawFooter();
-  doc.end();
 
-  const buffer = await new Promise<Buffer>(resolve => {
+  const buffer = await new Promise<Buffer>((resolve, reject) => {
     doc.on('end', () => resolve(Buffer.concat(buffers)));
+    doc.on('error', reject);
+    doc.end();
   });
 
   return {

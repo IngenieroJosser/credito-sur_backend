@@ -8,6 +8,8 @@
 
 import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -239,7 +241,6 @@ export async function generarPDFVencidas(
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
 
   const BLANCO     = '#FFFFFF';
-  const GRIS_FONDO = '#F8FAFC';
   const GRIS_CLR   = '#E2E8F0';
   const GRIS_MED   = '#94A3B8';
   const GRIS_TXT   = '#475569';
@@ -250,9 +251,6 @@ export async function generarPDFVencidas(
   const ROJO_DARK  = '#DC2626';
 
   const fmtCOP   = (v: number) => `$${(v || 0).toLocaleString('es-CO')}`;
-
-  const fs = require('fs');
-  const path = require('path');
 
   const getLogoPath = () => {
     const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
@@ -314,36 +312,6 @@ export async function generarPDFVencidas(
     doc.fontSize(7).font('Helvetica').fillColor(GRIS_MED);
     doc.text(`Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`, 0, H - 25, { align: 'right', width: W - 30 });
   };
-
-  const cols = [
-    { label: 'N° Préstamo', width: 78 },
-    { label: 'Cliente',      width: 140 },
-    { label: 'Mto. Orig.',   width: 80 },
-    { label: 'Devuelto',     width: 80 },
-    { label: 'Fecha Venc.',  width: 62 },
-    { label: 'Días Venc.',   width: 55 },
-    { label: 'Saldo Pend.',  width: 80 },
-    { label: 'Int. Mora',    width: 70 },
-    { label: 'Riesgo',       width: 55 },
-    { label: 'Ruta',         width: 85 },
-  ];
-
-  /* 
-   The user original columns were:
-   { label: 'N° Préstamo', width: 78 },
-   { label: 'Cliente',      width: 110 },
-   { label: 'Fecha Venc.',  width: 62 },
-   { label: 'Días Venc.',   width: 55 },
-   { label: 'Saldo Pend.',  width: 80 },
-   { label: 'Mto. Orig.',   width: 80 },
-   { label: 'Int. Mora',    width: 70 },
-   { label: 'Riesgo',       width: 55 },
-   { label: 'Ruta',         width: 85 },
-  I will stick exactly to the original ones except width for Cliente 140!
-  Wait, to not change the exact columns requested, let me use the exact properties map:
-  [numeroPrestamo, cliente, fechaVencimiento, diasVencidos, saldoPendiente, montoOriginal, interesesMora, nivelRiesgo, ruta]. 
-  So:
-  */
 
   const realCols = [
     { label: 'N° Préstamo', width: 78 },
@@ -480,10 +448,11 @@ export async function generarPDFVencidas(
      );
 
   drawFooter();
-  doc.end();
 
-  const buffer = await new Promise<Buffer>(resolve => {
+  const buffer = await new Promise<Buffer>((resolve, reject) => {
     doc.on('end', () => resolve(Buffer.concat(buffers)));
+    doc.on('error', reject);
+    doc.end();
   });
 
   return {

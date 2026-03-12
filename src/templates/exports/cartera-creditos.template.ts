@@ -13,6 +13,8 @@
 
 import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -118,7 +120,7 @@ export async function generarExcelCartera(
     { key: 'diasVenc',       width: 11 },
   ] as any;
 
-  const numCols = 20;
+  const numCols = ws.columns.length;
   const lastColLetter = 'T';
 
   // F1 — Encabezado institucional
@@ -262,10 +264,6 @@ export async function generarExcelCartera(
       row.getCell(20).font = { bold: true, color: { argb: 'FFDC2626' } };
     }
 
-    // Fórmulas recomendadas
-    if ((fila.montoTotal || 0) > 0) {
-      row.getCell(14).value = { formula: 'H' + row.number + '/F' + row.number };
-    }
   });
 
   const endRow = 5 + filas.length;
@@ -401,7 +399,6 @@ export async function generarPDFCartera(
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
 
   const BLANCO     = '#FFFFFF';
-  const GRIS_FONDO = '#F8FAFC';
   const GRIS_CLR   = '#E2E8F0';
   const GRIS_MED   = '#94A3B8';
   const GRIS_TXT   = '#475569';
@@ -413,9 +410,6 @@ export async function generarPDFCartera(
   const NAR_SOFT   = '#FDE8D5';
 
   const fmtCOP   = (v: number) => `$${(v || 0).toLocaleString('es-CO')}`;
-
-  const fs = require('fs');
-  const path = require('path');
 
   const getLogoPath = () => {
     const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
@@ -591,6 +585,9 @@ export async function generarPDFCartera(
     { width: cols.slice(0, 3).reduce((s, c) => s + c.width, 0) - 10 }
   );
 
+  // NOTA: Los índices de totales empiezan en ci=3 y terminan en ci=8 (6 valores).
+  // Si en el futuro cambian la cantidad u orden de las columnas en "cols", 
+  // deben actualizar este array y sus anchos proporcionales.
   let tx = tableLeft + cols.slice(0, 3).reduce((s, c) => s + c.width, 0);
   [
     totales.montoTotal,
@@ -616,10 +613,11 @@ export async function generarPDFCartera(
      );
 
   drawFooter();
-  doc.end();
 
-  const buffer = await new Promise<Buffer>(resolve => {
+  const buffer = await new Promise<Buffer>((resolve, reject) => {
     doc.on('end', () => resolve(Buffer.concat(buffers)));
+    doc.on('error', reject);
+    doc.end();
   });
   return {
     data: buffer,

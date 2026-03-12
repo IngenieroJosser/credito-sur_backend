@@ -8,6 +8,8 @@
 
 import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -33,7 +35,7 @@ export interface ClienteExportRow {
 const COP = (n: number) =>
   new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(n);
 
-const RISGO_COLOR: Record<string, string> = {
+const RIESGO_COLOR: Record<string, string> = {
   ROJO: 'FFdc2626',
   AMARILLO: 'FFeab308',
   VERDE: 'FF22c55e',
@@ -54,7 +56,7 @@ export async function generarExcelClientes(
   workbook.created = new Date();
 
   const ws = workbook.addWorksheet('Clientes', {
-    views: [{ state: 'frozen', ySplit: 4 }],
+    views: [{ state: 'frozen', ySplit: 5 }],
     pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
   });
 
@@ -81,23 +83,24 @@ export async function generarExcelClientes(
   ws.mergeCells('A1:N1');
 
   // Subtítulo
-  const subRow = ws.addRow([
-    `Generado: ${new Date().toLocaleString('es-CO')}   |   Total clientes: ${filas.length}`,
-  ]);
-  subRow.font = { italic: true, size: 9, color: { argb: 'FF64748B' } };
-  ws.mergeCells('A2:N2');
-
+  ws.addRow(['LISTADO DE CLIENTES']);
   const c2 = ws.getCell('A2');
-  c2.value = 'LISTADO DE CLIENTES';
   c2.font = { bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
   c2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NARANJA } };
   c2.alignment = { horizontal: 'center', vertical: 'middle' };
-  ws.mergeCells('A2:N2'); // Re-merge after setting value to ensure it spans
+  ws.mergeCells('A2:N2');
+
+  // Metadata
+  const metaRow = ws.addRow([
+    `Generado: ${new Date().toLocaleString('es-CO')}   |   Total clientes: ${filas.length}`,
+  ]);
+  metaRow.font = { italic: true, size: 9, color: { argb: 'FF64748B' } };
+  ws.mergeCells('A3:N3');
 
   ws.addRow([]);
 
   // Encabezados
-  const headerRow = ws.getRow(4);
+  const headerRow = ws.getRow(5);
   ws.columns.forEach((col: any, i: number) => {
     const cell = headerRow.getCell(i + 1);
     cell.value = col.header;
@@ -109,7 +112,7 @@ export async function generarExcelClientes(
     };
   });
   headerRow.height = 24;
-  ws.autoFilter = { from: 'A4', to: 'N4' };
+  ws.autoFilter = { from: 'A5', to: 'N5' };
 
   // Datos
   filas.forEach((fila, idx) => {
@@ -143,7 +146,7 @@ export async function generarExcelClientes(
 
     // Color en celda de nivel de riesgo
     const riesgoCell = row.getCell(8);
-    const color = RISGO_COLOR[fila.nivelRiesgo] || 'FF64748B';
+    const color = RIESGO_COLOR[fila.nivelRiesgo] || 'FF64748B';
     riesgoCell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     riesgoCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: color } };
     riesgoCell.alignment = { horizontal: 'center' };
@@ -158,8 +161,8 @@ export async function generarExcelClientes(
   ws.addRow([]);
   const sumRow = ws.addRow([
     'TOTALES', '', '', '', '', '', '', '', '', '',
-    { formula: `SUM(K5:K${4 + filas.length})` }, // K column for montoTotal
-    { formula: `SUM(L5:L${4 + filas.length})` }, // L column for montoMora
+    { formula: `SUM(K6:K${5 + filas.length})` }, // K column for montoTotal
+    { formula: `SUM(L6:L${5 + filas.length})` }, // L column for montoMora
   ]);
   sumRow.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
   const mergeCell = sumRow.getCell(1);
@@ -199,7 +202,6 @@ export async function generarPDFClientes(
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
 
   const BLANCO     = '#FFFFFF';
-  const GRIS_FONDO = '#F8FAFC';
   const GRIS_CLR   = '#E2E8F0';
   const GRIS_MED   = '#94A3B8';
   const GRIS_TXT   = '#475569';
@@ -216,9 +218,6 @@ export async function generarPDFClientes(
   const AMARILLO_DARK = '#D97706';
   
   const fmtCOP   = (v: number) => `$${(v || 0).toLocaleString('es-CO')}`;
-
-  const fs = require('fs');
-  const path = require('path');
 
   const getLogoPath = () => {
     const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
@@ -423,10 +422,11 @@ export async function generarPDFClientes(
      );
 
   drawFooter();
-  doc.end();
 
-  const buffer = await new Promise<Buffer>(resolve => {
+  const buffer = await new Promise<Buffer>((resolve, reject) => {
     doc.on('end', () => resolve(Buffer.concat(buffers)));
+    doc.on('error', reject);
+    doc.end();
   });
 
   return {

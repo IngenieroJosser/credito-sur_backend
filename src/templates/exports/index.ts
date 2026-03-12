@@ -14,7 +14,8 @@
  * ✅ historial-pagos     → payments.service.ts → exportPayments()
  * ✅ reporte-contable    → accounting.service.ts → exportAccountingReport()
  * ✅ auditoria           → audit.service.ts → exportAuditLog()
- * ✅ contrato-credito    → loans.service.ts → generarContrato() (solo ARTICULO)
+ * ✅ clientes            → clients.service.ts → exportarClientes()
+ * ⬜ contrato-credito    → (solo exporta constantes)
  */
 
 export * from './cartera-creditos.template';
@@ -26,3 +27,4 @@ export * from './historial-pagos.template';
 export * from './reporte-contable.template';
 export * from './auditoria.template';
 export * from './contrato-credito-articulo.template';
+export * from './clientes.template';
