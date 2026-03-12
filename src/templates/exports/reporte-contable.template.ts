@@ -222,116 +222,288 @@ export async function generarPDFContable(
   const buffers: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
 
+  const BLANCO     = '#FFFFFF';
+  const GRIS_FONDO = '#F8FAFC';
+  const GRIS_CLR   = '#E2E8F0';
+  const GRIS_MED   = '#94A3B8';
+  const GRIS_TXT   = '#475569';
+  const AZUL_DARK  = '#1A5F8A';
+  const AZUL_MED   = '#2676AC';
+  const AZUL_PALE  = '#F0F9FF';
+  const NAR_DARK   = '#D95C0F';
+  const NAR_MED    = '#F07A28';
+  const NAR_SOFT   = '#FDE8D5';
+
+  const fmtCOP   = (v: number) => `$${(v || 0).toLocaleString('es-CO')}`;
+
   const fs = require('fs');
   const path = require('path');
+
+  const getLogoPath = () => {
+    const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
+    const pDev  = path.join(process.cwd(), 'src/assets/logo.png');
+    return fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
+  };
+
   const drawWatermark = () => {
     try {
-      const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
-      const pDev = path.join(process.cwd(), 'src/assets/logo.png');
-      const logoPath = fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
-      if (logoPath) {
+      const lp = getLogoPath();
+      if (lp) {
         doc.save();
-        doc.opacity(0.08); // Opacidad muy sutil y elegante
-        doc.image(logoPath, (doc.page.width - 300) / 2, (doc.page.height - 300) / 2, { width: 300 });
+        doc.opacity(0.08); 
+        const W = doc.page.width;
+        const H = doc.page.height;
+        doc.image(lp, (W - 300) / 2, (H - 300) / 2, { width: 300 });
         doc.restore();
       }
     } catch(e) {}
   };
 
-  drawWatermark();
+  let pageNumber = 1;
+
   const totalSaldo = cajas.reduce((s, c) => s + c.saldo, 0);
 
-  // Encabezado
-  doc.fontSize(16).font('Helvetica-Bold').fillColor('#004F7B')
-    .text('Créditos del Sur — Reporte Contable', { align: 'center' });
-  doc.fontSize(9).font('Helvetica').fillColor('#475569')
-    .text(`Generado: ${new Date().toLocaleString('es-CO')}`, { align: 'center' });
-  doc.moveDown(0.4);
-  doc.fontSize(8).font('Helvetica-Bold').fillColor('#1E293B');
-  doc.text(`Total Cajas: ${cajas.length}  |  Saldo Total: $${totalSaldo.toLocaleString('es-CO')}`, { align: 'center' });
-  doc.moveDown(0.5);
+  const drawPageHeader = (): number => {
+    const W = doc.page.width;
+
+    doc.fontSize(22).font('Helvetica-Bold').fillColor(AZUL_DARK)
+       .text('Créditos del Sur', 30, 25);
+    doc.fontSize(9).font('Helvetica').fillColor(NAR_MED)
+       .text('REPORTE CONTABLE', 30, 52, { characterSpacing: 0.5 });
+
+    doc.roundedRect(W - 180, 20, 148, 44, 5).fillAndStroke(BLANCO, GRIS_CLR);
+    doc.fontSize(8).font('Helvetica-Bold').fillColor(GRIS_MED)
+       .text('FECHA GENERACIÓN', W - 180, 28, { width: 148, align: 'center' });
+    doc.fontSize(10).font('Helvetica-Bold').fillColor(AZUL_DARK)
+       .text(new Date().toLocaleDateString('es-CO'), W - 180, 40, { width: 148, align: 'center' });
+
+    const kW = (doc.page.width - 60) / 3;
+    const kY = 98;
+    [
+      { label: 'TOTAL CAJAS',       val: String(cajas.length), bg: '#D6E9F5', color: AZUL_DARK, isNum: false },
+      { label: 'SALDO GLOBAL',      val: fmtCOP(totalSaldo), bg: NAR_SOFT, color: NAR_DARK, isNum: true },
+      { label: 'TRANSACCIONES',     val: String(transacciones.length), bg: '#F0F4F8', color: GRIS_TXT, isNum: false },
+    ].forEach((m, i) => {
+      const mx = 30 + i * (kW + 4);
+      doc.roundedRect(mx, kY, kW, 44, 6).fillAndStroke(m.bg, GRIS_CLR);
+      doc.fontSize(7.5).font('Helvetica-Bold').fillColor(GRIS_MED)
+         .text(m.label, mx, kY + 10, { width: kW, align: 'center' });
+      doc.fontSize(13).font('Helvetica-Bold').fillColor(m.color)
+         .text(m.val, mx, kY + 23, { width: kW, align: 'center' });
+    });
+    return kY + 58;
+  };
+
+  const drawFooter = () => {
+    const W = doc.page.width;
+    const H = doc.page.height;
+    doc.fontSize(7).font('Helvetica').fillColor(GRIS_MED);
+    doc.text(`Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`, 0, H - 25, { align: 'right', width: W - 30 });
+  };
+
+  drawWatermark();
+  let y = drawPageHeader();
 
   // ── Tabla: Estado de Cajas ──
-  doc.fontSize(11).font('Helvetica-Bold').fillColor('#004F7B').text('Estado de Cajas');
-  doc.moveDown(0.3);
+  doc.fontSize(12).font('Helvetica-Bold').fillColor(AZUL_DARK).text('Estado de Cajas', 30, y);
+  y += 18;
 
   const cajaCols = [
-    { label: 'Caja', width: 100 },
-    { label: 'Código', width: 80 },
+    { label: 'Caja', width: 110 },
+    { label: 'Código', width: 70 },
     { label: 'Tipo', width: 80 },
-    { label: 'Responsable', width: 130 },
-    { label: 'Ruta', width: 100 },
-    { label: 'Saldo', width: 100 },
+    { label: 'Responsable', width: 156 },
+    { label: 'Ruta', width: 110 },
+    { label: 'Saldo actual', width: 80 },
+    { label: 'Ingresos', width: 80 },
+    { label: 'Egresos', width: 80 },
   ];
 
   const tableLeft = 30;
-  const rowH = 16;
   const cajaTableWidth = cajaCols.reduce((s, c) => s + c.width, 0);
-  let y = doc.y + 5;
 
-  doc.fontSize(7).font('Helvetica-Bold');
-  doc.rect(tableLeft, y, cajaTableWidth, rowH).fill('#004F7B');
-  let x = tableLeft;
-  cajaCols.forEach(c => { doc.fillColor('white').text(c.label, x + 2, y + 4, { width: c.width - 4 }); x += c.width; });
-  y += rowH;
+  const drawCajaHeader = (cy: number): number => {
+    doc.rect(tableLeft, cy, cajaTableWidth, 24).fill(AZUL_MED);
+    doc.rect(tableLeft, cy + 24, cajaTableWidth, 2).fill(NAR_MED);
+    let x = tableLeft;
+    doc.fontSize(8).font('Helvetica-Bold').fillColor(BLANCO);
+    cajaCols.forEach(col => {
+      doc.text(col.label, x + 4, cy + 7, { width: col.width - 8, align: 'center' });
+      x += col.width;
+    });
+    return cy + 30;
+  };
 
-  doc.font('Helvetica').fontSize(7).fillColor('black');
+  y = drawCajaHeader(y);
+
   cajas.forEach((caja, i) => {
-    if (i % 2 === 0) { doc.rect(tableLeft, y, cajaTableWidth, rowH).fill('#F0F9FF'); doc.fillColor('black'); }
-    x = tableLeft;
-    [
-      caja.nombre, caja.codigo, caja.tipo, caja.responsable || 'Sin asignar',
-      caja.ruta || 'N/A', `$${(caja.saldo || 0).toLocaleString('es-CO')}`,
-    ].forEach((v, ci) => {
-      doc.text(v, x + 2, y + 4, { width: cajaCols[ci].width - 4 });
+    let maxRowHeight = 17;
+    const vals = [
+      caja.nombre || '',
+      caja.codigo || '',
+      caja.tipo || '',
+      caja.responsable || 'Sin asignar',
+      caja.ruta || 'N/A',
+      fmtCOP(caja.saldo || 0),
+      fmtCOP(caja.ingresosPeriodo || 0),
+      fmtCOP(caja.egresosPeriodo || 0),
+    ];
+
+    doc.font('Helvetica').fontSize(7.5);
+    vals.forEach((val, ci) => {
+      if (ci === 0 || ci === 3 || ci === 5) doc.font('Helvetica-Bold');
+      const h = doc.heightOfString(val, { width: cajaCols[ci].width - 8, lineBreak: true });
+      if (h + 8 > maxRowHeight) maxRowHeight = h + 8;
+      doc.font('Helvetica');
+    });
+
+    if (y + maxRowHeight > doc.page.height - 70) {
+      drawFooter();
+      pageNumber++;
+      doc.addPage();
+      drawWatermark();
+      y = drawPageHeader();
+      y = drawCajaHeader(y);
+      doc.font('Helvetica').fontSize(7.5);
+    }
+
+    const baseBg = i % 2 === 0 ? BLANCO : AZUL_PALE;
+    
+    doc.rect(tableLeft, y, cajaTableWidth, maxRowHeight).fill(baseBg);
+    doc.moveTo(tableLeft, y + maxRowHeight)
+       .lineTo(tableLeft + cajaTableWidth, y + maxRowHeight)
+       .strokeColor(GRIS_CLR).lineWidth(0.4).stroke();
+
+    let x = tableLeft;
+    vals.forEach((v, ci) => {
+      const align = ci >= 5 ? 'right' : (ci === 1 || ci === 2 ? 'center' : 'left');
+
+      if (ci === 5) {
+         doc.font('Helvetica-Bold').fillColor(AZUL_DARK);
+      } else if (ci === 0 || ci === 3) {
+         doc.font('Helvetica-Bold').fillColor(GRIS_TXT);
+      } else {
+         doc.font('Helvetica').fillColor(GRIS_TXT);
+      }
+
+      doc.text(v, x + 4, y + 4, { width: cajaCols[ci].width - 8, align, lineBreak: true });
       x += cajaCols[ci].width;
     });
-    y += rowH;
+    y += maxRowHeight;
   });
 
   // ── Tabla: Últimos Movimientos ──
   y += 20;
-  doc.y = y;
-  doc.fontSize(11).font('Helvetica-Bold').fillColor('#004F7B').text('Últimos Movimientos');
-  doc.moveDown(0.3);
+
+  if (y > doc.page.height - 120) {
+    drawFooter();
+    pageNumber++;
+    doc.addPage();
+    drawWatermark();
+    y = drawPageHeader();
+  }
+
+  doc.fontSize(12).font('Helvetica-Bold').fillColor(AZUL_DARK).text('Últimos Movimientos', 30, y);
+  y += 18;
 
   const movCols = [
     { label: 'Fecha', width: 110 },
-    { label: 'Tipo', width: 80 },
+    { label: 'Tipo', width: 70 },
     { label: 'Monto', width: 90 },
-    { label: 'Descripción', width: 200 },
-    { label: 'Caja', width: 100 },
-    { label: 'Usuario', width: 110 },
+    { label: 'Descripción', width: 236 },
+    { label: 'Caja', width: 120 },
+    { label: 'Usuario', width: 140 },
   ];
   const movTableWidth = movCols.reduce((s, c) => s + c.width, 0);
-  y = doc.y + 5;
 
-  doc.fontSize(7).font('Helvetica-Bold');
-  doc.rect(tableLeft, y, movTableWidth, rowH).fill('#004F7B');
-  x = tableLeft;
-  movCols.forEach(c => { doc.fillColor('white').text(c.label, x + 2, y + 4, { width: c.width - 4 }); x += c.width; });
-  y += rowH;
+  const drawMovHeader = (cy: number): number => {
+    doc.rect(tableLeft, cy, movTableWidth, 24).fill(AZUL_MED);
+    doc.rect(tableLeft, cy + 24, movTableWidth, 2).fill(NAR_MED);
+    let x = tableLeft;
+    doc.fontSize(8).font('Helvetica-Bold').fillColor(BLANCO);
+    movCols.forEach(col => {
+      doc.text(col.label, x + 4, cy + 7, { width: col.width - 8, align: 'center' });
+      x += col.width;
+    });
+    return cy + 30;
+  };
 
-  doc.font('Helvetica').fontSize(7).fillColor('black');
-  transacciones.slice(0, 40).forEach((t, i) => {
-    if (y > 540) { doc.addPage(); drawWatermark(); y = 30; }
-    if (i % 2 === 0) { doc.rect(tableLeft, y, movTableWidth, rowH).fill('#F0F9FF'); doc.fillColor('black'); }
-    x = tableLeft;
-    [
+  y = drawMovHeader(y);
+
+  transacciones.slice(0, 50).forEach((t, i) => {
+    let maxRowHeight = 17;
+    const vals = [
       t.fecha ? new Date(t.fecha).toLocaleString('es-CO') : '',
-      t.tipo,
-      `$${(t.monto || 0).toLocaleString('es-CO')}`,
-      (t.descripcion || '').substring(0, 35),
+      t.tipo || '',
+      fmtCOP(t.monto || 0),
+      t.descripcion || '',
       t.caja || '',
       t.usuario || '',
-    ].forEach((v, ci) => {
-      doc.text(v, x + 2, y + 4, { width: movCols[ci].width - 4 });
+    ];
+
+    doc.font('Helvetica').fontSize(7.5);
+    vals.forEach((val, ci) => {
+      if (ci === 1 || ci === 2 || ci === 3) doc.font('Helvetica-Bold');
+      const h = doc.heightOfString(val, { width: movCols[ci].width - 8, lineBreak: true });
+      if (h + 8 > maxRowHeight) maxRowHeight = h + 8;
+      doc.font('Helvetica');
+    });
+
+    if (y + maxRowHeight > doc.page.height - 70) {
+      drawFooter();
+      pageNumber++;
+      doc.addPage();
+      drawWatermark();
+      y = drawPageHeader();
+      y = drawMovHeader(y);
+      doc.font('Helvetica').fontSize(7.5);
+    }
+
+    const baseBg = i % 2 === 0 ? BLANCO : AZUL_PALE;
+    
+    doc.rect(tableLeft, y, movTableWidth, maxRowHeight).fill(baseBg);
+    doc.moveTo(tableLeft, y + maxRowHeight)
+       .lineTo(tableLeft + movTableWidth, y + maxRowHeight)
+       .strokeColor(GRIS_CLR).lineWidth(0.4).stroke();
+
+    let x = tableLeft;
+    vals.forEach((v, ci) => {
+      const align = ci === 2 ? 'right' : (ci === 1 ? 'center' : 'left');
+
+      if (ci === 1) {
+         doc.font('Helvetica-Bold').fillColor(t.tipo === 'INGRESO' ? '#059669' : '#DC2626');
+      } else if (ci === 2) {
+         doc.font('Helvetica-Bold').fillColor(AZUL_DARK);
+      } else if (ci === 3) {
+         doc.font('Helvetica-Bold').fillColor(GRIS_TXT);
+      } else {
+         doc.font('Helvetica').fillColor(GRIS_TXT);
+      }
+
+      doc.text(v, x + 4, y + 4, { width: movCols[ci].width - 8, align, lineBreak: true });
       x += movCols[ci].width;
     });
-    y += rowH;
+    y += maxRowHeight;
   });
 
+  y += 38;
+  if (y > doc.page.height - 80) {
+    drawFooter();
+    pageNumber++;
+    doc.addPage();
+    drawWatermark();
+    y = drawPageHeader();
+  }
+
+  doc.fontSize(7.5).font('Helvetica-Oblique').fillColor(GRIS_MED)
+     .text(
+       'Documento expedido por Créditos del Sur. Las cifras presentadas son definitivas y sujetas a revisión de auditoría. Solo se muestran las últimas 50 transacciones.',
+       tableLeft, y, { align: 'center', width: movTableWidth }
+     );
+
+  drawFooter();
   doc.end();
+
   const buffer = await new Promise<Buffer>(resolve => {
     doc.on('end', () => resolve(Buffer.concat(buffers)));
   });

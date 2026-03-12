@@ -191,112 +191,291 @@ export async function generarPDFFinanciero(
   distribucionGastos: FinancieroGasto[],
   fecha: string,
 ): Promise<{ data: Buffer; contentType: string; filename: string }> {
+  // Reporte Financiero in portrait mode by default, let's keep it Portrait or switch to Landscape?
+  // Let's keep it Portrait
   const doc = new PDFDocument({ layout: 'portrait', size: 'LETTER', margin: 40 });
   const buffers: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
 
+  const BLANCO     = '#FFFFFF';
+  const GRIS_FONDO = '#F8FAFC';
+  const GRIS_CLR   = '#E2E8F0';
+  const GRIS_MED   = '#94A3B8';
+  const GRIS_TXT   = '#475569';
+  const AZUL_DARK  = '#1A5F8A';
+  const AZUL_MED   = '#2676AC';
+  const AZUL_PALE  = '#F0F9FF';
+  const NAR_DARK   = '#D95C0F';
+  const NAR_MED    = '#F07A28';
+  const NAR_SOFT   = '#FDE8D5';
+  const VERDE_DARK = '#059669';
+  const VERDE_PALE = '#F0FDF4';
+  const ROJO_DARK  = '#DC2626';
+
+  const fmtCOP   = (v: number) => `$${(v || 0).toLocaleString('es-CO')}`;
+
   const fs = require('fs');
   const path = require('path');
+
+  const getLogoPath = () => {
+    const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
+    const pDev  = path.join(process.cwd(), 'src/assets/logo.png');
+    return fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
+  };
+
   const drawWatermark = () => {
     try {
-      const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
-      const pDev = path.join(process.cwd(), 'src/assets/logo.png');
-      const logoPath = fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
-      if (logoPath) {
+      const lp = getLogoPath();
+      if (lp) {
         doc.save();
-        doc.opacity(0.08); // Opacidad muy sutil y elegante
-        doc.image(logoPath, (doc.page.width - 300) / 2, (doc.page.height - 300) / 2, { width: 300 });
+        doc.opacity(0.08); 
+        const W = doc.page.width;
+        const H = doc.page.height;
+        doc.image(lp, (W - 300) / 2, (H - 300) / 2, { width: 300 });
         doc.restore();
       }
     } catch(e) {}
   };
 
+  let pageNumber = 1;
+
+  const drawPageHeader = (): number => {
+    const W = doc.page.width;
+
+    doc.fontSize(22).font('Helvetica-Bold').fillColor(AZUL_DARK)
+       .text('Créditos del Sur', 40, 30);
+    doc.fontSize(9).font('Helvetica').fillColor(VERDE_DARK)
+       .text('REPORTE FINANCIERO', 40, 57, { characterSpacing: 0.5 });
+
+    doc.roundedRect(W - 180, 25, 140, 44, 5).fillAndStroke(BLANCO, GRIS_CLR);
+    doc.fontSize(8).font('Helvetica-Bold').fillColor(GRIS_MED)
+       .text('FECHA GENERACIÓN', W - 180, 33, { width: 140, align: 'center' });
+    doc.fontSize(10).font('Helvetica-Bold').fillColor(AZUL_DARK)
+       .text(new Date().toLocaleDateString('es-CO'), W - 180, 45, { width: 140, align: 'center' });
+
+    const kW = (W - 80 - 12) / 4;
+    const kY = 100;
+    [
+      { label: 'INGRESOS TOTALES', val: fmtCOP(resumen.ingresos), bg: VERDE_PALE, color: VERDE_DARK },
+      { label: 'EGRESOS TOTALES',  val: fmtCOP(resumen.egresos), bg: '#FEF2F2', color: ROJO_DARK },
+      { label: 'UTILIDAD NETA',    val: fmtCOP(resumen.utilidad), bg: resumen.utilidad >= 0 ? VERDE_PALE : '#FEF2F2', color: resumen.utilidad >= 0 ? VERDE_DARK : ROJO_DARK },
+      { label: 'MARGEN DE GANANCIA',val: `${resumen.margen}%`, bg: '#F0F4F8', color: AZUL_DARK },
+    ].forEach((m, i) => {
+      const mx = 40 + i * (kW + 4);
+      doc.roundedRect(mx, kY, kW, 44, 6).fillAndStroke(m.bg, GRIS_CLR);
+      doc.fontSize(6.5).font('Helvetica-Bold').fillColor(GRIS_MED)
+         .text(m.label, mx, kY + 10, { width: kW, align: 'center' });
+      doc.fontSize(10).font('Helvetica-Bold').fillColor(m.color)
+         .text(m.val, mx, kY + 23, { width: kW, align: 'center' });
+    });
+    return kY + 65;
+  };
+
+  const drawFooter = () => {
+    const W = doc.page.width;
+    const H = doc.page.height;
+    doc.fontSize(7).font('Helvetica').fillColor(GRIS_MED);
+    doc.text(`Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`, 0, H - 25, { align: 'right', width: W - 40 });
+  };
+
   drawWatermark();
-  const totalGastos = distribucionGastos.reduce((s, g) => s + g.monto, 0);
+  let y = drawPageHeader();
 
-  // Encabezado
-  doc.fontSize(18).font('Helvetica-Bold').fillColor('#059669')
-    .text('Créditos del Sur — Reporte Financiero', { align: 'center' });
-  doc.fontSize(9).font('Helvetica').fillColor('#475569')
-    .text(`Generado: ${new Date().toLocaleString('es-CO')}`, { align: 'center' });
-  doc.moveDown(1);
-
-  // ── Sección 1: Resumen ──
-  doc.fontSize(12).font('Helvetica-Bold').fillColor('#059669').text('Resumen del Período');
-  doc.moveDown(0.3);
-
-  const resumenCols = [{ l: 'Concepto', w: 200 }, { l: 'Monto', w: 180 }];
-  let y = doc.y + 5;
-  doc.fontSize(9).font('Helvetica-Bold');
-  doc.rect(40, y, 380, 18).fill('#059669');
-  let x = 40;
-  resumenCols.forEach(c => { doc.fillColor('white').text(c.l, x + 4, y + 5, { width: c.w - 8 }); x += c.w; });
+  // ── Sección: Evolución Mensual ──
+  doc.fontSize(12).font('Helvetica-Bold').fillColor(AZUL_DARK).text('Evolución Mensual', 40, y);
   y += 18;
 
-  const resumenItems = [
-    { concepto: 'Ingresos Totales', monto: `$${resumen.ingresos.toLocaleString('es-CO')}` },
-    { concepto: 'Egresos Totales', monto: `$${resumen.egresos.toLocaleString('es-CO')}` },
-    { concepto: 'Utilidad Neta', monto: `$${resumen.utilidad.toLocaleString('es-CO')}` },
-    { concepto: 'Margen de Ganancia', monto: `${resumen.margen}%` },
-  ];
-
-  doc.font('Helvetica').fontSize(9).fillColor('black');
-  resumenItems.forEach((item, i) => {
-    if (i % 2 === 0) { doc.rect(40, y, 380, 18).fill('#F0FDF4'); doc.fillColor('black'); }
-    x = 40;
-    const color = item.concepto === 'Utilidad Neta' && resumen.utilidad < 0 ? '#DC2626' : 'black';
-    doc.fillColor('black').text(item.concepto, x + 4, y + 5, { width: resumenCols[0].w - 8 });
-    x += resumenCols[0].w;
-    doc.fillColor(color).text(item.monto, x + 4, y + 5, { width: resumenCols[1].w - 8 });
-    doc.fillColor('black');
-    y += 18;
-  });
-
-  doc.y = y + 20;
-  doc.moveDown(0.5);
-
-  // ── Sección 2: Evolución Mensual ──
-  doc.fontSize(12).font('Helvetica-Bold').fillColor('#059669').text('Evolución Mensual');
-  doc.moveDown(0.3);
-
   const mCols = [
-    { l: 'Mes', w: 80 }, { l: 'Ingresos', w: 120 }, { l: 'Egresos', w: 120 }, { l: 'Utilidad', w: 120 },
+    { label: 'Mes', width: 140 },
+    { label: 'Ingresos', width: 130 },
+    { label: 'Egresos', width: 130 },
+    { label: 'Utilidad', width: 132 },
   ];
-  y = doc.y + 5;
-  doc.fontSize(8).font('Helvetica-Bold');
-  doc.rect(40, y, mCols.reduce((s, c) => s + c.w, 0), 16).fill('#059669');
-  x = 40;
-  mCols.forEach(c => { doc.fillColor('white').text(c.l, x + 2, y + 4, { width: c.w - 4 }); x += c.w; });
-  y += 16;
+  const tableLeft = 40;
+  let tableWidth = mCols.reduce((s, c) => s + c.width, 0);
 
-  doc.font('Helvetica').fontSize(8).fillColor('black');
+  const drawMTableHeader = (cy: number): number => {
+    doc.rect(tableLeft, cy, tableWidth, 24).fill(AZUL_MED);
+    doc.rect(tableLeft, cy + 24, tableWidth, 2).fill(VERDE_DARK);
+    let x = tableLeft;
+    doc.fontSize(8).font('Helvetica-Bold').fillColor(BLANCO);
+    mCols.forEach(col => {
+      doc.text(col.label, x + 4, cy + 7, { width: col.width - 8, align: 'center' });
+      x += col.width;
+    });
+    return cy + 30;
+  };
+
+  y = drawMTableHeader(y);
+
   evolucionMensual.forEach((m, i) => {
-    if (y > 700) {
+    let maxRowHeight = 17;
+    const vals = [
+      m.mes || '',
+      fmtCOP(m.ingresos || 0),
+      fmtCOP(m.egresos || 0),
+      fmtCOP(m.utilidad || 0),
+    ];
+
+    doc.font('Helvetica').fontSize(8);
+    vals.forEach((val, ci) => {
+      if (ci === 0 || ci === 3) doc.font('Helvetica-Bold');
+      const h = doc.heightOfString(val, { width: mCols[ci].width - 8, lineBreak: true });
+      if (h + 8 > maxRowHeight) maxRowHeight = h + 8;
+      doc.font('Helvetica');
+    });
+
+    if (y + maxRowHeight > doc.page.height - 70) {
+      drawFooter();
+      pageNumber++;
       doc.addPage();
       drawWatermark();
-      y = 40;
+      y = drawPageHeader();
+      y = drawMTableHeader(y);
     }
-    if (i % 2 === 0) { doc.rect(40, y, mCols.reduce((s, c) => s + c.w, 0), 16).fill('#F0FDF4'); doc.fillColor('black'); }
-    x = 40;
-    [m.mes, `$${m.ingresos.toLocaleString('es-CO')}`, `$${m.egresos.toLocaleString('es-CO')}`, `$${m.utilidad.toLocaleString('es-CO')}`]
-      .forEach((v, ci) => { doc.text(v, x + 2, y + 4, { width: mCols[ci].w - 4 }); x += mCols[ci].w; });
-    y += 16;
+
+    const baseBg = i % 2 === 0 ? BLANCO : AZUL_PALE;
+    doc.rect(tableLeft, y, tableWidth, maxRowHeight).fill(baseBg);
+    doc.moveTo(tableLeft, y + maxRowHeight)
+       .lineTo(tableLeft + tableWidth, y + maxRowHeight)
+       .strokeColor(GRIS_CLR).lineWidth(0.4).stroke();
+
+    let x = tableLeft;
+    vals.forEach((v, ci) => {
+      const align = ci >= 1 ? 'right' : 'center';
+
+      if (ci === 3) {
+         doc.font('Helvetica-Bold').fillColor(m.utilidad >= 0 ? VERDE_DARK : ROJO_DARK);
+      } else if (ci === 0) {
+         doc.font('Helvetica-Bold').fillColor(GRIS_TXT);
+      } else {
+         doc.font('Helvetica').fillColor(GRIS_TXT);
+      }
+
+      doc.text(v, x + 4, y + 4, { width: mCols[ci].width - 8, align, lineBreak: true });
+      x += mCols[ci].width;
+    });
+    y += maxRowHeight;
   });
 
-  doc.y = y + 20;
-
-  // ── Sección 3: Distribución de Gastos ──
+  // ── Sección: Distribución de Gastos ──
   if (distribucionGastos.length > 0) {
-    doc.fontSize(12).font('Helvetica-Bold').fillColor('#059669').text('Distribución de Gastos');
-    doc.moveDown(0.3);
-    doc.fontSize(9).font('Helvetica').fillColor('#1E293B');
-    distribucionGastos.forEach(g => {
-      const pct = totalGastos > 0 ? ((g.monto / totalGastos) * 100).toFixed(1) : '0.0';
-      doc.text(`• ${g.categoria}: $${g.monto.toLocaleString('es-CO')} (${pct}%)`);
+    y += 20;
+    if (y > doc.page.height - 100) {
+      drawFooter();
+      pageNumber++;
+      doc.addPage();
+      drawWatermark();
+      y = drawPageHeader();
+    }
+
+    doc.fontSize(12).font('Helvetica-Bold').fillColor(AZUL_DARK).text('Distribución de Gastos', 40, y);
+    y += 18;
+
+    const gCols = [
+      { label: 'Categoría', width: 260 },
+      { label: 'Monto', width: 140 },
+      { label: 'Porcentaje', width: 132 },
+    ];
+    tableWidth = gCols.reduce((s, c) => s + c.width, 0);
+
+    const drawGTableHeader = (cy: number): number => {
+      doc.rect(tableLeft, cy, tableWidth, 24).fill(AZUL_MED);
+      doc.rect(tableLeft, cy + 24, tableWidth, 2).fill(NAR_MED);
+      let x = tableLeft;
+      doc.fontSize(8).font('Helvetica-Bold').fillColor(BLANCO);
+      gCols.forEach(col => {
+        doc.text(col.label, x + 4, cy + 7, { width: col.width - 8, align: 'center' });
+        x += col.width;
+      });
+      return cy + 30;
+    };
+
+    y = drawGTableHeader(y);
+    const totalGastos = distribucionGastos.reduce((s, g) => s + g.monto, 0);
+
+    distribucionGastos.forEach((g, i) => {
+      const pctStr = totalGastos > 0 ? ((g.monto / totalGastos) * 100).toFixed(1) + '%' : '0.0%';
+      let maxRowHeight = 17;
+      const vals = [
+        g.categoria || '',
+        fmtCOP(g.monto || 0),
+        pctStr,
+      ];
+
+      doc.font('Helvetica').fontSize(8);
+      vals.forEach((val, ci) => {
+        if (ci === 0 || ci === 1) doc.font('Helvetica-Bold');
+        const h = doc.heightOfString(val, { width: gCols[ci].width - 8, lineBreak: true });
+        if (h + 8 > maxRowHeight) maxRowHeight = h + 8;
+        doc.font('Helvetica');
+      });
+
+      if (y + maxRowHeight > doc.page.height - 70) {
+        drawFooter();
+        pageNumber++;
+        doc.addPage();
+        drawWatermark();
+        y = drawPageHeader();
+        y = drawGTableHeader(y);
+      }
+
+      const baseBg = i % 2 === 0 ? BLANCO : AZUL_PALE;
+      doc.rect(tableLeft, y, tableWidth, maxRowHeight).fill(baseBg);
+      doc.moveTo(tableLeft, y + maxRowHeight)
+         .lineTo(tableLeft + tableWidth, y + maxRowHeight)
+         .strokeColor(GRIS_CLR).lineWidth(0.4).stroke();
+
+      let x = tableLeft;
+      vals.forEach((v, ci) => {
+        const align = ci === 0 ? 'left' : (ci === 1 ? 'right' : 'center');
+
+        if (ci === 0) {
+           doc.font('Helvetica-Bold').fillColor(GRIS_TXT);
+        } else if (ci === 1) {
+           doc.font('Helvetica-Bold').fillColor(AZUL_DARK);
+        } else {
+           doc.font('Helvetica').fillColor(GRIS_TXT);
+        }
+
+        doc.text(v, x + 4, y + 4, { width: gCols[ci].width - 8, align, lineBreak: true });
+        x += gCols[ci].width;
+      });
+      y += maxRowHeight;
     });
+
+    // Fila total gastos
+    y += 8;
+    doc.rect(tableLeft, y, tableWidth, 26).fill(AZUL_DARK);
+    doc.rect(tableLeft, y, tableWidth, 2).fill(NAR_MED);
+
+    doc.fontSize(8.5).font('Helvetica-Bold').fillColor(BLANCO);
+    doc.text(`TOTAL GASTOS`, tableLeft + 6, y + 8, { width: gCols[0].width - 10 });
+
+    doc.fillColor(NAR_SOFT).font('Helvetica-Bold').fontSize(8);
+    doc.text(fmtCOP(totalGastos), tableLeft + gCols[0].width + 4, y + 9, { width: gCols[1].width - 8, align: 'right' });
+    doc.fillColor(BLANCO).text('100.0%', tableLeft + gCols[0].width + gCols[1].width + 4, y + 9, { width: gCols[2].width - 8, align: 'center' });
+
+    y += 38;
   }
 
+  if (y > doc.page.height - 60) {
+    drawFooter();
+    pageNumber++;
+    doc.addPage();
+    drawWatermark();
+    y = drawPageHeader();
+  }
+
+  doc.fontSize(7.5).font('Helvetica-Oblique').fillColor(GRIS_MED)
+     .text(
+       'Documento expedido por Créditos del Sur. Las cifras presentadas son definitivas y sujetas a revisión de auditoría.',
+       40, y, { align: 'center', width: doc.page.width - 80 }
+     );
+
+  drawFooter();
   doc.end();
+
   const buffer = await new Promise<Buffer>(resolve => {
     doc.on('end', () => resolve(Buffer.concat(buffers)));
   });
