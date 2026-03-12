@@ -56,8 +56,9 @@ export async function generarExcelClientes(
   workbook.created = new Date();
 
   const ws = workbook.addWorksheet('Clientes', {
-    views: [{ state: 'frozen', ySplit: 5 }],
+    views: [{ state: 'frozen', ySplit: 5, showGridLines: false }],
     pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+    properties: { tabColor: { argb: 'FF0ea5e9' } },
   });
 
   ws.columns = [
@@ -79,7 +80,8 @@ export async function generarExcelClientes(
 
   // Título
   const titleRow = ws.addRow(['CRÉDITOS DEL SUR — LISTADO DE CLIENTES']);
-  titleRow.font = { bold: true, size: 16, color: { argb: 'FF08557f' } };
+  titleRow.font = { bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+  titleRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: AZUL_OSCURO } };
   ws.mergeCells('A1:N1');
 
   // Subtítulo
@@ -96,6 +98,10 @@ export async function generarExcelClientes(
   ]);
   metaRow.font = { italic: true, size: 9, color: { argb: 'FF64748B' } };
   ws.mergeCells('A3:N3');
+
+  ws.getRow(1).height = 32;
+  ws.getRow(2).height = 22;
+  ws.getRow(3).height = 16;
 
   ws.addRow([]);
 

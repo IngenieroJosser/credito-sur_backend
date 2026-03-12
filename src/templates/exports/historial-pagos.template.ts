@@ -135,11 +135,10 @@ export async function generarExcelPagos(
 
   // ── Hoja 1: Detalle de pagos ──────────────────────────────────────────────
   const ws = workbook.addWorksheet('Historial de Pagos', {
-    views:     [{ state: 'frozen', ySplit: 9 }],
+    views:     [{ state: 'frozen', ySplit: 9, showGridLines: false }],
     pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+    properties: { tabColor: { argb: C.AZUL_DARK } },
   });
-
-  ws.views = [{ showGridLines: false }];
 
   // Anchos — generosos en Cliente y Cobrador para que quepan nombres completos
   ws.columns = [
@@ -369,8 +368,11 @@ export async function generarExcelPagos(
   //   sharp('logo.png').ensureAlpha().modulate().composite([{...}]).toFile('logo-watermark.png')
 
   // ── Hoja 2: Por cobrador ───────────────────────────────────────────────────
-  const ws2 = workbook.addWorksheet('Por Cobrador');
-  ws2.views = [{ showGridLines: false }];
+  const ws2 = workbook.addWorksheet('Por Cobrador', {
+    views: [{ state: 'frozen', ySplit: 4, showGridLines: false }],
+    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+    properties: { tabColor: { argb: C.NAR_MED } },
+  });
   ws2.getColumn('A').width = 38;
   ws2.getColumn('B').width = 16;
   ws2.getColumn('C').width = 22;

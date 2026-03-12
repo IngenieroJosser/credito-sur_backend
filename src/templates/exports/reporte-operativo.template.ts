@@ -49,7 +49,9 @@ export async function generarExcelOperativo(
 
   // ── Hoja 1: Rendimiento por Ruta ──
   const ws = workbook.addWorksheet('Rendimiento por Ruta', {
-    views: [{ state: 'frozen', ySplit: 4 }],
+    views: [{ state: 'frozen', ySplit: 4, showGridLines: false }],
+    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+    properties: { tabColor: { argb: 'FFEA580C' } }
   });
 
   ws.columns = [
@@ -65,8 +67,11 @@ export async function generarExcelOperativo(
 
   // Título
   const titleRow = ws.addRow(['CRÉDITOS DEL SUR — REPORTE OPERATIVO']);
-  titleRow.font = { bold: true, size: 16, color: { argb: 'FFEA580C' } };
+  titleRow.font = { bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+  titleRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEA580C' } };
   ws.mergeCells('A1:H1');
+  ws.getRow(1).height = 32;
+  ws.getRow(2).height = 22;
 
   // Período
   const periodoStr = resumen.fechaInicio && resumen.fechaFin
@@ -131,6 +136,7 @@ export async function generarExcelOperativo(
     nuevosPrestamos: resumen.totalPrestamosNuevos,
     nuevosClientes: resumen.totalAfiliaciones,
   });
+  ws.mergeCells(`A${totalRow.number}:B${totalRow.number}`);
   totalRow.font = { bold: true };
   colsMoneda.forEach(key => {
     const colIdx = ws.columns.findIndex((c: any) => c.key === key) + 1;
@@ -138,7 +144,11 @@ export async function generarExcelOperativo(
   });
 
   // ── Hoja 2: Resumen General ──
-  const ws2 = workbook.addWorksheet('Resumen General');
+  const ws2 = workbook.addWorksheet('Resumen General', {
+    views: [{ state: 'frozen', ySplit: 1, showGridLines: false }],
+    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+    properties: { tabColor: { argb: 'FF0f172a' } },
+  });
   ws2.columns = [
     { header: 'Indicador', key: 'indicador', width: 30 },
     { header: 'Valor', key: 'valor', width: 22 },

@@ -97,8 +97,9 @@ export async function generarExcelMora(
 
   // ── Hoja 1: Detalle de cuentas en mora ──────────────────────────────────────
   const ws = workbook.addWorksheet('Cuentas en Mora', {
-    views: [{ state: 'frozen', ySplit: 5, xSplit: 0 }],
+    views: [{ state: 'frozen', ySplit: 5, showGridLines: false }],
     pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+    properties: { tabColor: { argb: 'FFDC2626' } },
   });
 
   ws.columns = [
@@ -255,6 +256,7 @@ export async function generarExcelMora(
     '', '', '', '', '', '', '', '',
   ]);
   totRow.height = 20;
+  ws.mergeCells(`A${totRow.number}:D${totRow.number}`);
   totRow.eachCell(cell => {
     cell.font = { bold: true, color: { argb: COLOR.blanco }, size: 10 };
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.gris } };
@@ -265,7 +267,11 @@ export async function generarExcelMora(
   });
 
   // ── Hoja 2: Resumen por nivel de riesgo ──────────────────────────────────────
-  const wsResumen = workbook.addWorksheet('Resumen por Riesgo');
+  const wsResumen = workbook.addWorksheet('Resumen por Riesgo', {
+    views: [{ state: 'frozen', ySplit: 3, showGridLines: false }],
+    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+    properties: { tabColor: { argb: 'FFEF4444' } },
+  });
   wsResumen.columns = [
     { key: 'nivel', width: 22 },
     { key: 'casos', width: 12 },

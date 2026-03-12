@@ -56,7 +56,11 @@ export async function generarExcelContable(
   const totalSaldo = cajas.reduce((s, c) => s + c.saldo, 0);
 
   // ── Hoja 1: Estado de Cajas ──
-  const ws1 = workbook.addWorksheet('Estado de Cajas');
+  const ws1 = workbook.addWorksheet('Estado de Cajas', {
+    views: [{ state: 'frozen', ySplit: 4, showGridLines: false }],
+    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+    properties: { tabColor: { argb: 'FF004F7B' } }
+  });
   ws1.columns = [
     { header: 'Caja',            key: 'nombre',           width: 20 },
     { header: 'Código',          key: 'codigo',           width: 14 },
@@ -72,14 +76,18 @@ export async function generarExcelContable(
   ] as any;
 
   const t1 = ws1.addRow(['CRÉDITOS DEL SUR — ESTADO DE CAJAS']);
-  t1.font = { bold: true, size: 16, color: { argb: 'FF004F7B' } };
-  ws1.mergeCells('A1:F1');
+  t1.font = { bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+  t1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF004F7B' } };
+  ws1.mergeCells('A1:K1');
 
   const s1 = ws1.addRow([`Generado: ${new Date().toLocaleString('es-CO')}   |   Total cajas: ${cajas.length}`]);
   s1.font = { italic: true, size: 9, color: { argb: 'FF64748B' } };
-  ws1.mergeCells('A2:F2');
+  ws1.mergeCells('A2:K2');
 
   ws1.addRow([]);
+
+  ws1.getRow(1).height = 32;
+  ws1.getRow(2).height = 22;
 
   const h1 = ws1.getRow(4);
   ws1.columns.forEach((col: any, i: number) => {
@@ -90,7 +98,7 @@ export async function generarExcelContable(
     cell.alignment = { horizontal: 'center', vertical: 'middle' };
   });
   h1.height = 22;
-  ws1.autoFilter = { from: 'A4', to: 'F4' };
+  ws1.autoFilter = { from: 'A4', to: 'K4' };
 
   cajas.forEach((caja, idx) => {
     const row = ws1.addRow({
@@ -132,11 +140,16 @@ export async function generarExcelContable(
 
   ws1.addRow([]);
   const totalRow = ws1.addRow({ nombre: 'TOTAL SALDOS', saldo: totalSaldo });
+  ws1.mergeCells(`A${totalRow.number}:F${totalRow.number}`);
   totalRow.font = { bold: true };
-  totalRow.getCell(6).numFmt = '#,##0';
+  totalRow.getCell(7).numFmt = '"$"#,##0';
 
   // ── Hoja 2: Últimos Movimientos ──
-  const ws2 = workbook.addWorksheet('Movimientos');
+  const ws2 = workbook.addWorksheet('Movimientos', {
+    views: [{ state: 'frozen', ySplit: 3, showGridLines: false }],
+    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+    properties: { tabColor: { argb: 'FF0ea5e9' } }
+  });
   ws2.columns = [
     { header: 'Fecha',         key: 'fecha',         width: 20 },
     { header: 'Tipo',          key: 'tipo',          width: 14 },
@@ -151,8 +164,10 @@ export async function generarExcelContable(
   ] as any;
 
   const t2 = ws2.addRow(['Últimos Movimientos']);
-  t2.font = { bold: true, size: 14, color: { argb: 'FF004F7B' } };
-  ws2.mergeCells('A1:F1');
+  t2.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
+  t2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF004F7B' } };
+  ws2.mergeCells('A1:J1');
+  ws2.getRow(1).height = 28;
 
   ws2.addRow([]);
 
@@ -165,6 +180,7 @@ export async function generarExcelContable(
     cell.alignment = { horizontal: 'center' };
   });
   h2.height = 20;
+  ws2.autoFilter = { from: 'A3', to: 'J3' };
 
   transacciones.forEach((t, idx) => {
     const row = ws2.addRow({

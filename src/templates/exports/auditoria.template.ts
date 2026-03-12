@@ -34,7 +34,9 @@ export async function generarExcelAuditoria(
   workbook.created = new Date();
 
   const ws = workbook.addWorksheet('Log de Auditoría', {
-    views: [{ state: 'frozen', ySplit: 4 }],
+    views: [{ state: 'frozen', ySplit: 4, showGridLines: false }],
+    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+    properties: { tabColor: { argb: 'FF475569' } }
   });
 
   ws.columns = [
@@ -49,8 +51,11 @@ export async function generarExcelAuditoria(
 
   // Título
   const titleRow = ws.addRow(['CRÉDITOS DEL SUR — LOG DE AUDITORÍA']);
-  titleRow.font = { bold: true, size: 16, color: { argb: 'FF475569' } };
+  titleRow.font = { bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+  titleRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF475569' } };
   ws.mergeCells('A1:G1');
+  ws.getRow(1).height = 32;
+  ws.getRow(2).height = 22;
 
   // Subtítulo
   const subRow = ws.addRow([`Generado: ${new Date().toLocaleString('es-CO')}   |   Total registros: ${filas.length}`]);
@@ -96,6 +101,7 @@ export async function generarExcelAuditoria(
 
   ws.addRow([]);
   const totalRow = ws.addRow({ fecha: `Total registros: ${filas.length}` });
+  ws.mergeCells(`A${totalRow.number}:G${totalRow.number}`);
   totalRow.font = { bold: true };
 
   const buffer = await workbook.xlsx.writeBuffer();

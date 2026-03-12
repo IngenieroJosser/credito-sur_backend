@@ -69,8 +69,9 @@ export async function generarExcelVencidas(
 
   // ── Hoja 1: Detalle de cuentas vencidas ──────────────────────────────────────
   const ws = workbook.addWorksheet('Cuentas Vencidas', {
-    views: [{ state: 'frozen', ySplit: 5 }],
+    views: [{ state: 'frozen', ySplit: 5, showGridLines: false }],
     pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+    properties: { tabColor: { argb: 'FF7C3AED' } },
   });
 
   ws.columns = [
@@ -135,14 +136,6 @@ export async function generarExcelVencidas(
     vCell.font = { bold: true, size: 9, color: { argb: 'FF7C3AED' } };
     vCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F3FF' } };
   }
-  // Última KPI en K4
-  const lK = ws.getCell('J4');
-  lK.value = 'Días Promedio';
-  lK.font = { bold: true, size: 8, color: { argb: 'FF64748B' } };
-  const vK = ws.getCell('K4');
-  vK.value = totales.diasPromedioVencimiento;
-  vK.font = { bold: true, size: 9, color: { argb: 'FF7C3AED' } };
-  vK.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F3FF' } };
   ws.getRow(4).height = 18;
 
   // Fila 5: Encabezados de tabla
@@ -213,6 +206,7 @@ export async function generarExcelVencidas(
     '', '', '',
   ]);
   totRow.height = 20;
+  ws.mergeCells(`A${totRow.number}:D${totRow.number}`);
   totRow.eachCell(cell => {
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E1B4B' } };

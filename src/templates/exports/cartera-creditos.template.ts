@@ -64,7 +64,7 @@ const NARANJA    = 'FFF37920';
 const NARANJA_CLARO = 'FFFFEDD5';
 const GRIS_OSC   = 'FF1E293B';
 
-function colHdr(cell: ExcelJS.Cell): void {
+function colHdr(cell: ExcelJS.Cell, colNumber?: number): void {
   cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 9 };
   cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: AZUL } };
   cell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -72,6 +72,9 @@ function colHdr(cell: ExcelJS.Cell): void {
     bottom: { style: 'medium', color: { argb: 'FFFFFFFF' } },
     right:  { style: 'thin',   color: { argb: 'FFFFFFFF' } },
   };
+  if (colNumber && [6, 9, 13, 16].includes(colNumber)) {
+    cell.border.left = { style: 'medium', color: { argb: 'FFFFFFFF' } };
+  }
 }
 
 function fmtF(f: Date | string | undefined): string {
@@ -93,8 +96,9 @@ export async function generarExcelCartera(
 
   // ── Hoja 1: Detalle de cartera ────────────────────────────────────────────
   const ws = workbook.addWorksheet('Cartera de Créditos', {
-    views: [{ state: 'frozen', ySplit: 5, xSplit: 2 }],  // Congela N° y Cliente
+    views: [{ state: 'frozen', ySplit: 6, xSplit: 2, showGridLines: false }],
     pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+    properties: { tabColor: { argb: 'FF004F7B' } }
   });
 
   ws.columns = [
@@ -151,34 +155,43 @@ export async function generarExcelCartera(
   ws.getCell('H3').alignment = { horizontal: 'right' };
   ws.getRow(3).height = 16;
 
-  // F4 — KPIs financieros (cada uno en su celda)
-  const kpis: Array<{ label: string; val: number; fmt: string }> = [
-    { label: 'Capital Original',  val: totales.montoTotal,       fmt: '"$"#,##0' },
-    { label: 'Capital Actual',    val: totales.montoPendiente,   fmt: '"$"#,##0' },
-    { label: 'Capital Pagado',    val: totales.montoPagado,      fmt: '"$"#,##0' },
-    { label: 'Interés Recogido',  val: totales.interesRecogido,  fmt: '"$"#,##0' },
-    { label: 'Mora Total',        val: totales.mora,             fmt: '"$"#,##0' },
-    { label: 'Total Recaudo',     val: totales.recaudo,          fmt: '"$"#,##0' },
-    { label: 'Total Adeudado',    val: totales.totalAdeudado,    fmt: '"$"#,##0' },
-  ];
-  // Usar columnas A–G para labels, H–N para valores (2 cols por KPI)
-  kpis.forEach((kpi, i) => {
-    const colL = i * 2 + 1;
-    const colV = i * 2 + 2;
-    if (colV > numCols) return;
-    const lc = ws.getCell(4, colL);
-    const vc = ws.getCell(4, colV);
-    lc.value = kpi.label;
-    lc.font = { bold: true, size: 8, color: { argb: 'FF64748B' } };
-    vc.value = kpi.val;
-    vc.numFmt = kpi.fmt;
-    vc.font = { bold: true, size: 9, color: { argb: 'FF000000' } };
-    vc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NARANJA_CLARO } };
-    vc.alignment = { horizontal: 'right', vertical: 'middle' };
-  });
-  ws.getRow(4).height = 18;
+  // F4-5 — KPIs financieros
+  ws.getRow(4).height = 16;
+  ws.getRow(5).height = 26;
 
-  // F5 — Encabezados de tabla
+  const kpis = [
+    { label: 'CAPITAL ORIGINAL',  val: totales.montoTotal,       bg: 'FFD6E9F5', color: AZUL },
+    { label: 'CAPITAL ACTUAL',    val: totales.montoPendiente,   bg: 'FFF0F4F8', color: GRIS_OSC },
+    { label: 'CAPITAL PAGADO',    val: totales.montoPagado,      bg: 'FFF0F4F8', color: GRIS_OSC },
+    { label: 'INTERÉS RECOGIDO',  val: totales.interesRecogido,  bg: NARANJA_CLARO, color: NARANJA },
+    { label: 'MORA TOTAL',        val: totales.mora,             bg: 'FFFEF2F2', color: 'FFDC2626' },
+    { label: 'TOTAL RECAUDO',     val: totales.recaudo,          bg: 'FFD6E9F5', color: AZUL },
+    { label: 'TOTAL ADEUDADO',    val: totales.totalAdeudado,    bg: 'FFF0F4F8', color: GRIS_OSC },
+  ];
+
+  kpis.forEach((kpi, i) => {
+    const sc = i * 2 + 1;
+    const ec = i * 2 + 2;
+    const scLet = String.fromCharCode(64 + sc);
+    const ecLet = String.fromCharCode(64 + ec);
+
+    ws.mergeCells(`${scLet}4:${ecLet}4`);
+    const lc = ws.getCell(`${scLet}4`);
+    lc.value     = kpi.label;
+    lc.font      = { bold: true, size: 8, color: { argb: 'FF64748B' } };
+    lc.alignment = { horizontal: 'center', vertical: 'middle' };
+    lc.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: kpi.bg } };
+
+    ws.mergeCells(`${scLet}5:${ecLet}5`);
+    const vc = ws.getCell(`${scLet}5`);
+    vc.value      = kpi.val;
+    vc.numFmt     = '"$"#,##0';
+    vc.font       = { bold: true, size: 14, color: { argb: kpi.color } };
+    vc.alignment  = { horizontal: 'center', vertical: 'middle' };
+    vc.fill       = { type: 'pattern', pattern: 'solid', fgColor: { argb: kpi.bg } };
+  });
+
+  // F6 — Encabezados de tabla
   const headers = [
     'N° Préstamo', 'Cliente', 'Cédula', 'Producto', 'Estado',
     'Capital Orig.', 'Capital Actual', 'Capital Pagado', 'Interés Recog.',
@@ -186,10 +199,10 @@ export async function generarExcelCartera(
     'Cuotas', 'Progreso %', 'Riesgo', 'Ruta', 'Cobrador',
     'Fecha Inicio', 'Fecha Fin', 'Días Venc.',
   ];
-  const hRow = ws.getRow(5);
-  headers.forEach((h, i) => { const cell = hRow.getCell(i + 1); cell.value = h; colHdr(cell); });
-  hRow.height = 22;
-  ws.autoFilter = { from: 'A5', to: `${lastColLetter}5` };
+  ws.getRow(6).height = 22;
+  const hRow = ws.getRow(6);
+  headers.forEach((h, i) => { const cell = hRow.getCell(i + 1); cell.value = h; colHdr(cell, i + 1); });
+  ws.autoFilter = { from: 'A6', to: `${lastColLetter}6` };
 
   // Colores por riesgo
   const riesgoFill: Record<string, string> = {
@@ -236,8 +249,14 @@ export async function generarExcelCartera(
     }
 
     // Bordes
-    row.eachCell(cell => {
-      cell.border = { bottom: { style: 'hair', color: { argb: 'FFE2E8F0' } } };
+    row.eachCell((cell, colNumber) => {
+      cell.border = { 
+        bottom: { style: 'hair', color: { argb: 'FFE2E8F0' } },
+        right: { style: 'hair', color: { argb: 'FFE2E8F0' } },
+      };
+      if ([6, 9, 13, 16].includes(colNumber)) {
+        cell.border.left = { style: 'medium', color: { argb: 'FF94A3B8' } };
+      }
       cell.alignment = { ...cell.alignment, vertical: 'middle' };
     });
 
@@ -263,20 +282,22 @@ export async function generarExcelCartera(
     if ((fila.diasVencidos || 0) > 0) {
       row.getCell(20).font = { bold: true, color: { argb: 'FFDC2626' } };
     }
+    row.getCell(20).numFmt = '#,##0';
+    row.getCell(20).alignment = { horizontal: 'right', vertical: 'middle' };
 
   });
 
-  const endRow = 5 + filas.length;
+  const endRow = 6 + filas.length;
   // Fila de suma (fórmulas)
   const sumRow = ws.addRow([
     'TOTALES', '', '', '', '',
-    { formula: `SUM(F6:F${endRow})` }, // Capital Orig
-    { formula: `SUM(G6:G${endRow})` }, // Capital Actual
-    { formula: `SUM(H6:H${endRow})` }, // Capital Pagado
-    { formula: `SUM(I6:I${endRow})` }, // Interes Recogido
-    { formula: `SUM(J6:J${endRow})` }, // Mora
-    { formula: `SUM(K6:K${endRow})` }, // Recaudo
-    { formula: `SUM(L6:L${endRow})` }, // Total adeudado
+    { formula: `SUM(F7:F${endRow})` }, // Capital Orig
+    { formula: `SUM(G7:G${endRow})` }, // Capital Actual
+    { formula: `SUM(H7:H${endRow})` }, // Capital Pagado
+    { formula: `SUM(I7:I${endRow})` }, // Interes Recogido
+    { formula: `SUM(J7:J${endRow})` }, // Mora
+    { formula: `SUM(K7:K${endRow})` }, // Recaudo
+    { formula: `SUM(L7:L${endRow})` }, // Total adeudado
   ]);
   sumRow.height = 20;
   ws.mergeCells(`A${sumRow.number}:E${sumRow.number}`);
@@ -307,6 +328,7 @@ export async function generarExcelCartera(
     '', '', '', '', '', '', '', '',
   ]);
   totRow.height = 20;
+  ws.mergeCells(`A${totRow.number}:E${totRow.number}`);
   totRow.eachCell(cell => {
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GRIS_OSC } };
@@ -317,7 +339,11 @@ export async function generarExcelCartera(
   });
 
   // ── Hoja 2: Resumen por estado ────────────────────────────────────────────
-  const ws2 = workbook.addWorksheet('Resumen por Estado');
+  const ws2 = workbook.addWorksheet('Resumen por Estado', {
+    views: [{ showGridLines: false, state: 'frozen', ySplit: 3 }],
+    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+    properties: { tabColor: { argb: 'FFF37920' } },
+  });
   ws2.columns = [
     { key: 'estado',     width: 20 },
     { key: 'cantidad',   width: 12 },

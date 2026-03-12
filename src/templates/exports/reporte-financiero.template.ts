@@ -52,7 +52,11 @@ export async function generarExcelFinanciero(
     : 'Período no definido';
 
   // ── Hoja 1: Resumen Financiero ──
-  const ws1 = workbook.addWorksheet('Resumen Financiero');
+  const ws1 = workbook.addWorksheet('Resumen Financiero', {
+    views: [{ state: 'frozen', ySplit: 4, showGridLines: false }],
+    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+    properties: { tabColor: { argb: 'FF059669' } }
+  });
   ws1.columns = [
     { header: 'Concepto', key: 'concepto', width: 28 },
     { header: 'Monto', key: 'monto', width: 22 },
@@ -60,8 +64,11 @@ export async function generarExcelFinanciero(
   ] as any;
 
   const t1 = ws1.addRow(['CRÉDITOS DEL SUR — REPORTE FINANCIERO']);
-  t1.font = { bold: true, size: 16, color: { argb: 'FF059669' } };
+  t1.font = { bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+  t1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF059669' } };
   ws1.mergeCells('A1:C1');
+  ws1.getRow(1).height = 32;
+  ws1.getRow(2).height = 22;
 
   const s1 = ws1.addRow([`Período: ${periodoStr}`]);
   s1.font = { italic: true, size: 9, color: { argb: 'FF64748B' } };
@@ -70,6 +77,7 @@ export async function generarExcelFinanciero(
   ws1.addRow([]);
 
   const h1 = ws1.getRow(4);
+  ws1.autoFilter = { from: 'A4', to: 'C4' };
   ws1.columns.forEach((col: any, i: number) => {
     const cell = h1.getCell(i + 1);
     cell.value = col.header;
@@ -106,7 +114,11 @@ export async function generarExcelFinanciero(
   });
 
   // ── Hoja 2: Evolución Mensual ──
-  const ws2 = workbook.addWorksheet('Evolución Mensual');
+  const ws2 = workbook.addWorksheet('Evolución Mensual', {
+    views: [{ state: 'frozen', ySplit: 3, showGridLines: false }],
+    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+    properties: { tabColor: { argb: 'FF047857' } }
+  });
   ws2.columns = [
     { header: 'Mes', key: 'mes', width: 18 },
     { header: 'Ingresos', key: 'ingresos', width: 18 },
@@ -115,12 +127,15 @@ export async function generarExcelFinanciero(
   ] as any;
 
   const t2 = ws2.addRow(['Evolución Mensual']);
-  t2.font = { bold: true, size: 14, color: { argb: 'FF059669' } };
+  t2.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
+  t2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF059669' } };
   ws2.mergeCells('A1:D1');
+  ws2.getRow(1).height = 28;
 
   ws2.addRow([]);
 
   const h2 = ws2.getRow(3);
+  ws2.autoFilter = { from: 'A3', to: 'D3' };
   ws2.columns.forEach((col: any, i: number) => {
     const cell = h2.getCell(i + 1);
     cell.value = col.header;
@@ -144,7 +159,11 @@ export async function generarExcelFinanciero(
   });
 
   // ── Hoja 3: Distribución de Gastos ──
-  const ws3 = workbook.addWorksheet('Distribución Gastos');
+  const ws3 = workbook.addWorksheet('Distribución Gastos', {
+    views: [{ state: 'frozen', ySplit: 3, showGridLines: false }],
+    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+    properties: { tabColor: { argb: 'FF10b981' } }
+  });
   ws3.columns = [
     { header: 'Categoría', key: 'categoria', width: 28 },
     { header: 'Monto', key: 'monto', width: 18 },
@@ -152,12 +171,15 @@ export async function generarExcelFinanciero(
   ] as any;
 
   const t3 = ws3.addRow(['Distribución de Gastos']);
-  t3.font = { bold: true, size: 14, color: { argb: 'FF059669' } };
+  t3.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
+  t3.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF059669' } };
   ws3.mergeCells('A1:C1');
+  ws3.getRow(1).height = 28;
 
   ws3.addRow([]);
 
   const h3 = ws3.getRow(3);
+  ws3.autoFilter = { from: 'A3', to: 'C3' };
   ws3.columns.forEach((col: any, i: number) => {
     const cell = h3.getCell(i + 1);
     cell.value = col.header;
