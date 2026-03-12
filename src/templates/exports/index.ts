@@ -28,3 +28,4 @@ export * from './reporte-contable.template';
 export * from './auditoria.template';
 export * from './contrato-credito-articulo.template';
 export * from './clientes.template';
+export * from './ruta-cobrador.template';

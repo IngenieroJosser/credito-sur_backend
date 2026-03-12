@@ -22,6 +22,39 @@ export class ApprovalsService {
     private notificacionesGateway: NotificacionesGateway,
   ) {}
 
+  private async notifyCobradorGestionVencida(params: {
+    prestamoId: string;
+    titulo: string;
+    mensaje: string;
+    tipo?: string;
+    metadata?: any;
+  }) {
+    try {
+      const asignacion = await this.prisma.asignacionRuta.findFirst({
+        where: { cliente: { prestamos: { some: { id: params.prestamoId } } }, activa: true },
+        select: { ruta: { select: { cobradorId: true } } },
+      });
+
+      const cobradorId = asignacion?.ruta?.cobradorId;
+      if (!cobradorId) return;
+
+      await this.notificacionesService.create({
+        usuarioId: cobradorId,
+        titulo: params.titulo,
+        mensaje: params.mensaje,
+        tipo: params.tipo || 'SISTEMA',
+        entidad: 'Prestamo',
+        entidadId: params.prestamoId,
+        metadata: {
+          ...(params.metadata || {}),
+          prestamoId: params.prestamoId,
+        },
+      });
+    } catch (e) {
+      this.logger.warn('No se pudo notificar al cobrador por gestión vencida', e as any);
+    }
+  }
+
   async approveItem(id: string, _type: TipoAprobacion, aprobadoPorId?: string, notas?: string, editedData?: any) {
     const approval = await this.prisma.aprobacion.findUnique({
       where: { id },
@@ -299,6 +332,53 @@ export class ApprovalsService {
         revisadoEn: new Date(),
       },
     });
+
+    if (approval.tipoAprobacion === TipoAprobacion.PRORROGA_PAGO) {
+      try {
+        const data =
+          typeof approval.datosSolicitud === 'string'
+            ? JSON.parse(approval.datosSolicitud)
+            : approval.datosSolicitud;
+
+        if (data?.tipo === 'GESTION_VENCIDA' && data?.prestamoId) {
+          const nombreCliente = data?.clienteNombre || data?.cliente || 'Cliente';
+          const numeroPrestamo = data?.numeroPrestamo || '';
+          const decision = (data?.decision as string) || 'PRORROGAR';
+          const fechaOriginal = data?.fechaVencimientoOriginal ? new Date(data.fechaVencimientoOriginal) : null;
+
+          if (fechaOriginal && !isNaN(fechaOriginal.getTime())) {
+            try {
+              await this.prisma.prestamo.update({
+                where: { id: data.prestamoId },
+                data: { fechaFin: fechaOriginal },
+              });
+              this.notificacionesGateway.broadcastPrestamosActualizados({
+                accion: 'REVERTIR_PRORROGA',
+                prestamoId: data.prestamoId,
+              });
+            } catch {
+              // no interrumpir
+            }
+          }
+          await this.notifyCobradorGestionVencida({
+            prestamoId: data.prestamoId,
+            titulo: `Gestión de cuenta vencida rechazada — ${nombreCliente}${numeroPrestamo ? ` (${numeroPrestamo})` : ''}`,
+            mensaje: `La solicitud de ${decision === 'DEJAR_QUIETO' ? 'dejar quieto' : 'prórroga'} fue rechazada.${motivoRechazo ? ` Motivo: ${motivoRechazo}` : ''}`,
+            tipo: 'ADVERTENCIA',
+            metadata: {
+              tipo: 'GESTION_VENCIDA',
+              decision,
+              aprobado: false,
+              motivoRechazo: motivoRechazo || undefined,
+              rechazadoPorId,
+              aprobacionId: approval.id,
+            },
+          });
+        }
+      } catch {
+        // no interrumpir
+      }
+    }
 
     this.notificacionesGateway.broadcastAprobacionesActualizadas({
       accion: 'RECHAZAR',
@@ -894,6 +974,36 @@ export class ApprovalsService {
         },
       });
     });
+
+    if (data?.tipo === 'GESTION_VENCIDA' && data?.prestamoId) {
+      const nombreCliente = data?.clienteNombre || data?.cliente || 'Cliente';
+      const numeroPrestamo = data?.numeroPrestamo || '';
+      const dias = Number(data?.diasGracia || 0);
+      const montoInteres = Number(data?.montoInteres || 0);
+      const conMora = montoInteres > 0;
+      const decision = (data?.decision as string) || 'PRORROGAR';
+
+      const accionLabel = decision === 'DEJAR_QUIETO' ? 'dejar quieto' : 'prórroga';
+      const detalleMora = decision === 'DEJAR_QUIETO'
+        ? ''
+        : (conMora ? ` con mora ($${montoInteres.toLocaleString('es-CO')})` : ' sin mora');
+
+      await this.notifyCobradorGestionVencida({
+        prestamoId: data.prestamoId,
+        titulo: `Cuenta vencida gestionada — ${nombreCliente}${numeroPrestamo ? ` (${numeroPrestamo})` : ''}`,
+        mensaje: `Se aprobó ${accionLabel} por ${dias} días${detalleMora} para este cliente.`,
+        tipo: 'INFORMATIVO',
+        metadata: {
+          tipo: 'GESTION_VENCIDA',
+          decision,
+          diasGracia: dias,
+          montoInteres,
+          conMora,
+          aprobadoPorId: aprobadoPorId || approval.solicitadoPorId,
+          aprobacionId: approval.id,
+        },
+      });
+    }
 
     this.notificacionesGateway.broadcastPrestamosActualizados({
       accion: 'PRORROGA',

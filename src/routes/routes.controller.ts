@@ -143,6 +143,20 @@ export class RoutesController {
     return this.routesService.getSupervisores();
   }
 
+  @Get('cobradores/:id/creditos-asignados')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COBRADOR,
+  )
+  @ApiOperation({ summary: 'Listar créditos asignados a un cobrador (Mis clientes)' })
+  @ApiResponse({ status: 200, description: 'Listado de créditos asignados' })
+  listarCreditosAsignadosACobrador(@Param('id', ParseUUIDPipe) id: string) {
+    return this.routesService.listarCreditosAsignadosACobrador(id);
+  }
+
   @Get(':id')
   @Roles(
     RolUsuario.SUPERVISOR,
