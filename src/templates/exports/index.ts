@@ -29,3 +29,4 @@ export * from './auditoria.template';
 export * from './contrato-credito-articulo.template';
 export * from './clientes.template';
 export * from './ruta-cobrador.template';
+export * from './inventario.template';

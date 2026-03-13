@@ -240,6 +240,33 @@ export class LoansController {
     return this.loansService.getLoanById(id);
   }
 
+  @Get(':id/archived')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.CONTADOR,
+  )
+  @ApiOperation({
+    summary: 'Obtener un préstamo archivado por ID',
+    description: 'Obtiene los detalles de un préstamo incluso si está eliminado (soft delete).',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Préstamo encontrado',
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Préstamo no encontrado',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID del préstamo',
+  })
+  async getArchivedLoanById(@Param('id') id: string) {
+    return this.loansService.getLoanByIdIncludingArchived(id);
+  }
+
   @Get(':id/cuotas')
   @Roles(
     RolUsuario.SUPER_ADMINISTRADOR,

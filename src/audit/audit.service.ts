@@ -154,4 +154,20 @@ export class AuditService {
 
     throw new Error(`Formato no soportado: ${format}`);
   }
+
+  async hideArchivedItem(data: { entidad: string; entidadId: string }) {
+    return this.prisma.archivadoOculto.upsert({
+      where: { entidad_entidadId: { entidad: data.entidad, entidadId: data.entidadId } },
+      update: { ocultoEn: new Date() },
+      create: { entidad: data.entidad, entidadId: data.entidadId },
+    });
+  }
+
+  async listHiddenArchivedItems() {
+    return this.prisma.archivadoOculto.findMany({
+      select: { entidad: true, entidadId: true },
+      orderBy: { ocultoEn: 'desc' },
+      take: 5000,
+    });
+  }
 }

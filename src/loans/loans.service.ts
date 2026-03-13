@@ -740,6 +740,71 @@ export class LoansService implements OnModuleInit {
     }
   }
 
+  async getLoanByIdIncludingArchived(id: string) {
+    try {
+      const prestamo = await this.prisma.prestamo.findUnique({
+        where: {
+          id,
+        },
+        include: {
+          archivos: {
+            where: { estado: 'ACTIVO' },
+          },
+          cliente: {
+            include: {
+              archivos: true,
+              asignacionesRuta: {
+                where: { activa: true },
+                include: {
+                  ruta: true,
+                },
+              },
+            },
+          },
+          producto: true,
+          precioProducto: true,
+          cuotas: {
+            orderBy: { numeroCuota: 'asc' },
+          },
+          pagos: {
+            include: {
+              detalles: true,
+            },
+            orderBy: { fechaPago: 'desc' },
+          },
+          extensiones: {
+            orderBy: { creadoEn: 'desc' },
+          },
+          creadoPor: {
+            select: {
+              id: true,
+              nombres: true,
+              apellidos: true,
+              rol: true,
+            },
+          },
+          aprobadoPor: {
+            select: {
+              id: true,
+              nombres: true,
+              apellidos: true,
+              rol: true,
+            },
+          },
+        },
+      });
+
+      if (!prestamo) {
+        throw new NotFoundException('Préstamo no encontrado');
+      }
+
+      return prestamo;
+    } catch (error) {
+      this.logger.error(`Error getting archived loan ${id}:`, error);
+      throw error;
+    }
+  }
+
   async deleteLoan(id: string, userId: string) {
     try {
       // Verificar si el préstamo existe

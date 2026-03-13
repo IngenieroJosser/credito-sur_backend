@@ -216,6 +216,7 @@ async function seedRolesYPermisos() {
     { modulo: 'Finanzas', accion: 'arqueo', nombre: 'Arqueo de Caja', descripcion: 'Cierre de caja', icono: 'Landmark', ruta: '/contable/cierre-caja', orden: 31, esNavegable: true },
     { modulo: 'Finanzas', accion: 'articulos', nombre: 'Art\u00edculos (Inventario)', descripcion: 'Inventario', icono: 'Package', ruta: '/articulos', orden: 32, esNavegable: true },
     { modulo: 'Finanzas', accion: 'reportes-financieros', nombre: 'Reportes Financieros', descripcion: 'Balances', icono: 'BarChart3', ruta: '/reportes/financieros', orden: 33, esNavegable: true },
+    { modulo: 'Finanzas', accion: 'pagos-historial', nombre: 'Historial de pagos', descripcion: 'Cobranza y pagos registrados', icono: 'Banknote', ruta: '/pagos/historial', orden: 34, esNavegable: true },
 
     // Administraci\u00f3n
     { modulo: 'Administraci\u00f3n', accion: 'usuarios', nombre: 'Usuarios', descripcion: 'Gesti\u00f3n de usuarios', icono: 'User', ruta: '/admin/users', orden: 40, esNavegable: true },
@@ -268,7 +269,7 @@ async function seedRolesYPermisos() {
         'dashboard',
         'gestion-creditos', 'rutas',
         'clientes', 'cuentas-mora', 'cuentas-vencidas', 'archivados',
-        'contable', 'arqueo', 'articulos', 'reportes-financieros',
+        'contable', 'arqueo', 'articulos', 'reportes-financieros', 'pagos-historial',
         'auditoria',
         'reportes-operativos'
       ]
@@ -281,8 +282,9 @@ async function seedRolesYPermisos() {
       permisos: [
         'dashboard',
         'gestion-creditos', 'rutas',
-        'clientes', 'cuentas-mora', 'cuentas-vencidas',
+        'clientes', 'cuentas-mora', 'cuentas-vencidas', 'archivados',
         'articulos',
+        'pagos-historial',
         'reportes-operativos'
       ]
     },
@@ -318,7 +320,7 @@ async function seedRolesYPermisos() {
       permisos: [
         'dashboard',
         'cuentas-mora', 'cuentas-vencidas',
-        'contable', 'arqueo', 'articulos', 'reportes-financieros'
+        'contable', 'arqueo', 'articulos', 'reportes-financieros', 'pagos-historial'
       ]
     },
     {

@@ -7,10 +7,63 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateInventoryDto } from './dto/create-inventory.dto';
 import { UpdateInventoryDto } from './dto/update-inventory.dto';
 import { Prisma } from '@prisma/client';
+import {
+  generarExcelInventario,
+  generarPDFInventario,
+  type InventarioRow,
+  type InventarioTotales,
+} from '../templates/exports/inventario.template';
 
 @Injectable()
 export class InventoryService {
   constructor(private readonly prisma: PrismaService) {}
+
+  async exportarInventario(
+    format: 'excel' | 'pdf',
+  ): Promise<{ data: Buffer; contentType: string; filename: string }> {
+    const productos = await this.prisma.producto.findMany({
+      where: { eliminadoEn: null },
+      select: {
+        codigo: true,
+        nombre: true,
+        categoria: true,
+        marca: true,
+        modelo: true,
+        costo: true,
+        stock: true,
+        stockMinimo: true,
+        activo: true,
+        creadoEn: true,
+      },
+      orderBy: { creadoEn: 'desc' },
+    });
+
+    const filas: InventarioRow[] = productos.map((p) => ({
+      codigo: p.codigo,
+      nombre: p.nombre,
+      categoria: p.categoria,
+      marca: p.marca ?? null,
+      modelo: p.modelo ?? null,
+      costo: Number(p.costo) || 0,
+      stock: Number(p.stock) || 0,
+      stockMinimo: Number(p.stockMinimo) || 0,
+      activo: Boolean(p.activo),
+      creadoEn: p.creadoEn,
+    }));
+
+    const totales: InventarioTotales = {
+      totalProductos: filas.length,
+      totalValorInventario: filas.reduce(
+        (acc, f) => acc + (Number(f.costo) || 0) * (Number(f.stock) || 0),
+        0,
+      ),
+      productosBajoStock: filas.filter((f) => Number(f.stock) <= Number(f.stockMinimo)).length,
+    };
+
+    const fecha = new Date().toISOString().split('T')[0];
+    if (format === 'excel') return generarExcelInventario(filas, totales, fecha);
+    return generarPDFInventario(filas, totales, fecha);
+  }
 
   async getInventoryStats() {
     const totalReferencias = await this.prisma.producto.count({
@@ -309,6 +362,60 @@ export class InventoryService {
       data: {
         eliminadoEn: new Date(),
         activo: false,
+      },
+    });
+  }
+
+  async findArchived() {
+    return this.prisma.producto.findMany({
+      where: {
+        eliminadoEn: { not: null },
+        ocultoArchivadosEn: null,
+      },
+      include: {
+        precios: {
+          orderBy: { meses: 'asc' },
+        },
+      },
+      orderBy: { eliminadoEn: 'desc' },
+    });
+  }
+
+  async restore(id: string) {
+    const existingProduct = await this.prisma.producto.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    if (!existingProduct) throw new NotFoundException('Producto no encontrado');
+
+    return this.prisma.producto.update({
+      where: { id },
+      data: {
+        eliminadoEn: null,
+        ocultoArchivadosEn: null,
+        activo: true,
+      },
+    });
+  }
+
+  async hideArchived(id: string) {
+    const existingProduct = await this.prisma.producto.findUnique({
+      where: { id },
+      select: { id: true, eliminadoEn: true },
+    });
+
+    if (!existingProduct) throw new NotFoundException('Producto no encontrado');
+
+    // Solo aplica para elementos archivados
+    if (!existingProduct.eliminadoEn) {
+      throw new ConflictException('El producto no está archivado');
+    }
+
+    return this.prisma.producto.update({
+      where: { id },
+      data: {
+        ocultoArchivadosEn: new Date(),
       },
     });
   }

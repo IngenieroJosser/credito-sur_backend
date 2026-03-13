@@ -103,6 +103,20 @@ export class AuditController {
     res.send(result.data);
   }
 
+  @Get('hidden-archived')
+  @HttpCode(HttpStatus.OK)
+  listHiddenArchived() {
+    return this.auditService.listHiddenArchivedItems();
+  }
+
+  @Post('hide-archived')
+  @HttpCode(HttpStatus.OK)
+  hideArchived(
+    @Body() body: { entidad: string; entidadId: string },
+  ) {
+    return this.auditService.hideArchivedItem(body);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.auditService.findOne(id);

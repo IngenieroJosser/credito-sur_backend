@@ -25,6 +25,41 @@ import { CloudinaryService } from '../upload/cloudinary.service';
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
 
+  private async ensureCajaBanco(tx: Prisma.TransactionClient) {
+    const existing = await tx.caja.findUnique({
+      where: { codigo: 'CAJA-BANCO' },
+      select: { id: true, nombre: true, saldoActual: true },
+    });
+    if (existing?.id) return existing;
+
+    const adminUser = await tx.usuario.findFirst({
+      where: {
+        rol: { in: ['SUPER_ADMINISTRADOR', 'ADMIN'] as any },
+        estado: 'ACTIVO' as any,
+        eliminadoEn: null,
+      },
+      orderBy: { creadoEn: 'asc' },
+      select: { id: true },
+    });
+    if (!adminUser?.id) {
+      throw new BadRequestException(
+        'No existe un usuario ADMIN/SUPER_ADMIN activo para asignar la Caja Banco. Cree uno e intente nuevamente.',
+      );
+    }
+
+    return tx.caja.create({
+      data: {
+        codigo: 'CAJA-BANCO',
+        nombre: 'Caja Banco',
+        tipo: 'PRINCIPAL' as any,
+        responsableId: adminUser.id,
+        saldoActual: 0,
+        activa: true,
+      },
+      select: { id: true, nombre: true, saldoActual: true },
+    });
+  }
+
   constructor(
     private readonly prisma: PrismaService,
     private notificacionesService: NotificacionesService,
@@ -89,7 +124,7 @@ export class PaymentsService {
       include: {
         cuotas: {
           where: {
-            estado: { in: [EstadoCuota.PENDIENTE, EstadoCuota.VENCIDA] },
+            estado: { in: [EstadoCuota.PENDIENTE, EstadoCuota.PARCIAL, EstadoCuota.VENCIDA] },
           },
           orderBy: { numeroCuota: 'asc' },
         },
@@ -174,10 +209,17 @@ export class PaymentsService {
       const nuevoMontoPagado = yaPagado + montoAplicar;
       const cuotaCompleta = nuevoMontoPagado >= montoCuota;
 
+      // - Si la cuota era PENDIENTE y quedó incompleta, pasa a PARCIAL.
+      // - Si ya era VENCIDA, se mantiene VENCIDA aunque reciba abonos.
+      // Esto permite que los jobs de mora marquen PARCIAL → VENCIDA al pasar la fecha.
+      const nuevoEstadoCuota = cuotaCompleta
+        ? EstadoCuota.PAGADA
+        : (cuota.estado === EstadoCuota.PENDIENTE ? EstadoCuota.PARCIAL : cuota.estado);
+
       cuotasActualizar.push({
         id: cuota.id,
         montoPagado: nuevoMontoPagado,
-        estado: cuotaCompleta ? EstadoCuota.PAGADA : cuota.estado,
+        estado: nuevoEstadoCuota,
       });
 
       montoRestante -= montoAplicar;
@@ -261,13 +303,20 @@ export class PaymentsService {
         );
       }
 
-      const cajaRuta = await tx.caja.findFirst({
-        where: { rutaId: asignacion.rutaId, tipo: 'RUTA', activa: true },
-        select: { id: true, nombre: true, saldoActual: true },
-      });
-      if (!cajaRuta?.id) {
+      const esTransferencia = dto.metodoPago === MetodoPago.TRANSFERENCIA;
+
+      const cajaIngreso = esTransferencia
+        ? await this.ensureCajaBanco(tx)
+        : await tx.caja.findFirst({
+            where: { rutaId: asignacion.rutaId, tipo: 'RUTA', activa: true },
+            select: { id: true, nombre: true, saldoActual: true },
+          });
+
+      if (!cajaIngreso?.id) {
         throw new BadRequestException(
-          'No existe una caja de ruta activa asociada a la ruta del cliente',
+          esTransferencia
+            ? 'No existe la Caja Banco (CAJA-BANCO) y no se pudo crear automáticamente.'
+            : 'No existe una caja de ruta activa asociada a la ruta del cliente',
         );
       }
 
@@ -278,7 +327,7 @@ export class PaymentsService {
       await tx.transaccion.create({
         data: {
           numeroTransaccion: numeroTransaccionCaja,
-          cajaId: cajaRuta.id,
+          cajaId: cajaIngreso.id,
           tipo: TipoTransaccion.INGRESO,
           monto: montoTotal,
           descripcion: `Cobranza ${numeroPago}`,
@@ -289,7 +338,7 @@ export class PaymentsService {
       });
 
       await tx.caja.update({
-        where: { id: cajaRuta.id },
+        where: { id: cajaIngreso.id },
         data: { saldoActual: { increment: montoTotal } },
       });
 
