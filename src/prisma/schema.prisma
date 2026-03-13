@@ -218,6 +218,7 @@ model Producto {
   creadoEn      DateTime         @default(now())
   actualizadoEn DateTime         @updatedAt
   eliminadoEn   DateTime?
+  ocultoArchivadosEn DateTime?
   prestamos     Prestamo[]
   categoriaRel  Categoria?       @relation(fields: [categoriaId], references: [id])
   archivos      Multimedia[]     @relation("MultimediaProducto")
@@ -226,6 +227,8 @@ model Producto {
   @@index([codigo])
   @@index([categoria])
   @@index([activo])
+  @@index([eliminadoEn])
+  @@index([ocultoArchivadosEn])
 }
 
 model PrecioProducto {
@@ -599,6 +602,18 @@ model RegistroAuditoria {
   @@index([entidad, entidadId])
   @@index([creadoEn])
   @@map("registros_auditoria")
+}
+
+model ArchivadoOculto {
+  id        String   @id @default(uuid())
+  entidad   String   @db.VarChar(50)
+  entidadId String   @db.VarChar(100)
+  ocultoEn  DateTime @default(now())
+
+  @@unique([entidad, entidadId])
+  @@index([entidad])
+  @@index([ocultoEn])
+  @@map("archivados_ocultos")
 }
 
 model ColaSincronizacion {

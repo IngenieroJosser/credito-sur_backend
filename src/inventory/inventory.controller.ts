@@ -20,6 +20,11 @@ export class InventoryController {
     return this.inventoryService.getInventoryStats();
   }
 
+  @Get('archived')
+  findArchived() {
+    return this.inventoryService.findArchived();
+  }
+
   @Post()
   create(@Body() createInventoryDto: CreateInventoryDto) {
     return this.inventoryService.create(createInventoryDto);
@@ -41,6 +46,16 @@ export class InventoryController {
     @Body() updateInventoryDto: UpdateInventoryDto,
   ) {
     return this.inventoryService.update(id, updateInventoryDto);
+  }
+
+  @Patch(':id/restore')
+  restore(@Param('id') id: string) {
+    return this.inventoryService.restore(id);
+  }
+
+  @Patch(':id/hide-archived')
+  hideArchived(@Param('id') id: string) {
+    return this.inventoryService.hideArchived(id);
   }
 
   @Delete(':id')

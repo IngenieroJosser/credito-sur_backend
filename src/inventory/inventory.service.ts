@@ -312,4 +312,58 @@ export class InventoryService {
       },
     });
   }
+
+  async findArchived() {
+    return this.prisma.producto.findMany({
+      where: {
+        eliminadoEn: { not: null },
+        ocultoArchivadosEn: null,
+      },
+      include: {
+        precios: {
+          orderBy: { meses: 'asc' },
+        },
+      },
+      orderBy: { eliminadoEn: 'desc' },
+    });
+  }
+
+  async restore(id: string) {
+    const existingProduct = await this.prisma.producto.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    if (!existingProduct) throw new NotFoundException('Producto no encontrado');
+
+    return this.prisma.producto.update({
+      where: { id },
+      data: {
+        eliminadoEn: null,
+        ocultoArchivadosEn: null,
+        activo: true,
+      },
+    });
+  }
+
+  async hideArchived(id: string) {
+    const existingProduct = await this.prisma.producto.findUnique({
+      where: { id },
+      select: { id: true, eliminadoEn: true },
+    });
+
+    if (!existingProduct) throw new NotFoundException('Producto no encontrado');
+
+    // Solo aplica para elementos archivados
+    if (!existingProduct.eliminadoEn) {
+      throw new ConflictException('El producto no está archivado');
+    }
+
+    return this.prisma.producto.update({
+      where: { id },
+      data: {
+        ocultoArchivadosEn: new Date(),
+      },
+    });
+  }
 }

@@ -282,8 +282,9 @@ async function seedRolesYPermisos() {
       permisos: [
         'dashboard',
         'gestion-creditos', 'rutas',
-        'clientes', 'cuentas-mora', 'cuentas-vencidas',
+        'clientes', 'cuentas-mora', 'cuentas-vencidas', 'archivados',
         'articulos',
+        'pagos-historial',
         'reportes-operativos'
       ]
     },
