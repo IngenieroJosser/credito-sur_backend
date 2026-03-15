@@ -180,4 +180,12 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
       ...(payload || {}),
     });
   }
+
+  broadcastInventarioActualizado(payload?: any) {
+    this.logger.log('Emitiendo evento inventario_actualizado');
+    this.server.emit('inventario_actualizado', {
+      timestamp: new Date(),
+      ...(payload || {}),
+    });
+  }
 }
