@@ -13,10 +13,14 @@ import {
   type InventarioRow,
   type InventarioTotales,
 } from '../templates/exports/inventario.template';
+import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 
 @Injectable()
 export class InventoryService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificacionesGateway: NotificacionesGateway,
+  ) {}
 
   async exportarInventario(
     format: 'excel' | 'pdf',
@@ -171,6 +175,7 @@ export class InventoryService {
         },
       });
 
+      this.notificacionesGateway.broadcastInventarioActualizado({ action: 'create', product });
       return product;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -234,7 +239,7 @@ export class InventoryService {
 
     try {
       // Transaction to handle updates and nested prices
-      return await this.prisma.$transaction(async (tx) => {
+      const updatedProduct = await this.prisma.$transaction(async (tx) => {
         // Resolve Category
         let catName = updateInventoryDto.categoria;
         let catId: string | null | undefined = updateInventoryDto.categoriaId;
@@ -344,6 +349,9 @@ export class InventoryService {
           include: { precios: { orderBy: { meses: 'asc' } } },
         });
       });
+
+      this.notificacionesGateway.broadcastInventarioActualizado({ action: 'update', product: updatedProduct });
+      return updatedProduct;
     } catch (error) {
       throw error;
     }
@@ -357,13 +365,16 @@ export class InventoryService {
     if (!existingProduct) throw new NotFoundException('Producto no encontrado');
 
     // Soft delete
-    return await this.prisma.producto.update({
+    const deletedProduct = await this.prisma.producto.update({
       where: { id },
       data: {
         eliminadoEn: new Date(),
         activo: false,
       },
     });
+
+    this.notificacionesGateway.broadcastInventarioActualizado({ action: 'remove', id });
+    return deletedProduct;
   }
 
   async findArchived() {
@@ -389,7 +400,7 @@ export class InventoryService {
 
     if (!existingProduct) throw new NotFoundException('Producto no encontrado');
 
-    return this.prisma.producto.update({
+    const restoredProduct = await this.prisma.producto.update({
       where: { id },
       data: {
         eliminadoEn: null,
@@ -397,6 +408,9 @@ export class InventoryService {
         activo: true,
       },
     });
+
+    this.notificacionesGateway.broadcastInventarioActualizado({ action: 'restore', id });
+    return restoredProduct;
   }
 
   async hideArchived(id: string) {
@@ -412,11 +426,14 @@ export class InventoryService {
       throw new ConflictException('El producto no está archivado');
     }
 
-    return this.prisma.producto.update({
+    const hiddenProduct = await this.prisma.producto.update({
       where: { id },
       data: {
         ocultoArchivadosEn: new Date(),
       },
     });
+
+    this.notificacionesGateway.broadcastInventarioActualizado({ action: 'hideArchived', id });
+    return hiddenProduct;
   }
 }
