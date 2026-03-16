@@ -1,4 +1,11 @@
 "use strict";
+var __runInitializers = (this && this.__runInitializers) || function (thisArg, initializers, value) {
+    var useValue = arguments.length > 2;
+    for (var i = 0; i < initializers.length; i++) {
+        value = useValue ? initializers[i].call(thisArg, value) : initializers[i].call(thisArg);
+    }
+    return useValue ? value : void 0;
+};
 var __esDecorate = (this && this.__esDecorate) || function (ctor, descriptorIn, decorators, contextIn, initializers, extraInitializers) {
     function accept(f) { if (f !== void 0 && typeof f !== "function") throw new TypeError("Function expected"); return f; }
     var kind = contextIn.kind, key = kind === "getter" ? "get" : kind === "setter" ? "set" : "value";
@@ -25,13 +32,6 @@ var __esDecorate = (this && this.__esDecorate) || function (ctor, descriptorIn, 
     }
     if (target) Object.defineProperty(target, contextIn.name, descriptor);
     done = true;
-};
-var __runInitializers = (this && this.__runInitializers) || function (thisArg, initializers, value) {
-    var useValue = arguments.length > 2;
-    for (var i = 0; i < initializers.length; i++) {
-        value = useValue ? initializers[i].call(thisArg, value) : initializers[i].call(thisArg);
-    }
-    return useValue ? value : void 0;
 };
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
@@ -74,102 +74,52 @@ var __setFunctionName = (this && this.__setFunctionName) || function (f, name, p
     return Object.defineProperty(f, "name", { configurable: true, value: prefix ? "".concat(prefix, " ", name) : name });
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PrismaService = void 0;
+exports.DashboardController = void 0;
 var common_1 = require("@nestjs/common");
+var jwt_auth_guard_1 = require("../auth/guards/jwt-auth.guard");
+var roles_guard_1 = require("../auth/guards/roles.guard");
+var roles_decorator_1 = require("../auth/decorators/roles.decorator");
 var client_1 = require("@prisma/client");
-var adapter_pg_1 = require("@prisma/adapter-pg");
-var pg_1 = require("pg");
-var PrismaService = function () {
-    var _classDecorators = [(0, common_1.Injectable)()];
+var DashboardController = function () {
+    var _classDecorators = [(0, common_1.Controller)('dashboard'), (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard)];
     var _classDescriptor;
     var _classExtraInitializers = [];
     var _classThis;
-    var PrismaService = _classThis = /** @class */ (function () {
-        function PrismaService_1(eventEmitter) {
-            this.eventEmitter = eventEmitter;
-            var pool = new pg_1.Pool({
-                connectionString: process.env.DATABASE_URL,
-            });
-            var adapter = new adapter_pg_1.PrismaPg(pool);
-            var basePrisma = new client_1.PrismaClient({ adapter: adapter });
-            // Envolver PrismaClient para interceptar TODAS las escrituras de DB y disparar eventos
-            var prisma = basePrisma.$extends({
-                query: {
-                    $allModels: {
-                        $allOperations: function (_a) {
-                            return __awaiter(this, arguments, void 0, function (_b) {
-                                var result, watchActions;
-                                var operation = _b.operation, model = _b.model, args = _b.args, query = _b.query;
-                                return __generator(this, function (_c) {
-                                    switch (_c.label) {
-                                        case 0: return [4 /*yield*/, query(args)];
-                                        case 1:
-                                            result = _c.sent();
-                                            watchActions = ['create', 'update', 'delete', 'upsert', 'createMany', 'updateMany', 'deleteMany'];
-                                            if (watchActions.includes(operation) && model) {
-                                                // Lanzar evento asíncrono para BullMQ
-                                                // CRÍTICO: Si el Node que está corriendo y guardando estto en BD es el propio VPS Espejo en la NUBE
-                                                // NO debe volver a emitir el evento a BullMQ, o creará un bucle infinito recursivo de sincronización.
-                                                if (process.env.IS_MIRROR_VPS !== 'true') {
-                                                    eventEmitter.emit('database.write.success', {
-                                                        model: model,
-                                                        action: operation,
-                                                        data: result,
-                                                    });
-                                                }
-                                            }
-                                            return [2 /*return*/, result];
-                                    }
-                                });
-                            });
-                        }
-                    }
-                }
-            });
-            // Devolvemos un Proxy para que NestJS pueda inyectar PrismaService 
-            // y redirija cualquier llamada (this.prisma.user.findMany) al cliente extendido.
-            return new Proxy(this, {
-                get: function (target, prop) {
-                    if (prop in target)
-                        return target[prop];
-                    return prisma[prop];
-                }
-            });
+    var _instanceExtraInitializers = [];
+    var _getDashboardData_decorators;
+    var _getTrendData_decorators;
+    var DashboardController = _classThis = /** @class */ (function () {
+        function DashboardController_1(dashboardService) {
+            this.dashboardService = (__runInitializers(this, _instanceExtraInitializers), dashboardService);
         }
-        PrismaService_1.prototype.onModuleInit = function () {
+        DashboardController_1.prototype.getDashboardData = function (timeFilter) {
             return __awaiter(this, void 0, void 0, function () {
                 return __generator(this, function (_a) {
-                    switch (_a.label) {
-                        case 0: return [4 /*yield*/, this.$connect()];
-                        case 1:
-                            _a.sent();
-                            return [2 /*return*/];
-                    }
+                    return [2 /*return*/, this.dashboardService.getDashboardData(timeFilter)];
                 });
             });
         };
-        PrismaService_1.prototype.onModuleDestroy = function () {
+        DashboardController_1.prototype.getTrendData = function (timeFilter) {
             return __awaiter(this, void 0, void 0, function () {
                 return __generator(this, function (_a) {
-                    switch (_a.label) {
-                        case 0: return [4 /*yield*/, this.$disconnect()];
-                        case 1:
-                            _a.sent();
-                            return [2 /*return*/];
-                    }
+                    return [2 /*return*/, this.dashboardService.getTrendData(timeFilter)];
                 });
             });
         };
-        return PrismaService_1;
+        return DashboardController_1;
     }());
-    __setFunctionName(_classThis, "PrismaService");
+    __setFunctionName(_classThis, "DashboardController");
     (function () {
         var _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
+        _getDashboardData_decorators = [(0, common_1.Get)(), (0, roles_decorator_1.Roles)(client_1.RolUsuario.SUPER_ADMINISTRADOR, client_1.RolUsuario.ADMIN, client_1.RolUsuario.COORDINADOR, client_1.RolUsuario.SUPERVISOR, client_1.RolUsuario.PUNTO_DE_VENTA)];
+        _getTrendData_decorators = [(0, common_1.Get)('trend'), (0, roles_decorator_1.Roles)(client_1.RolUsuario.SUPER_ADMINISTRADOR, client_1.RolUsuario.ADMIN, client_1.RolUsuario.COORDINADOR, client_1.RolUsuario.SUPERVISOR, client_1.RolUsuario.PUNTO_DE_VENTA)];
+        __esDecorate(_classThis, null, _getDashboardData_decorators, { kind: "method", name: "getDashboardData", static: false, private: false, access: { has: function (obj) { return "getDashboardData" in obj; }, get: function (obj) { return obj.getDashboardData; } }, metadata: _metadata }, null, _instanceExtraInitializers);
+        __esDecorate(_classThis, null, _getTrendData_decorators, { kind: "method", name: "getTrendData", static: false, private: false, access: { has: function (obj) { return "getTrendData" in obj; }, get: function (obj) { return obj.getTrendData; } }, metadata: _metadata }, null, _instanceExtraInitializers);
         __esDecorate(null, _classDescriptor = { value: _classThis }, _classDecorators, { kind: "class", name: _classThis.name, metadata: _metadata }, null, _classExtraInitializers);
-        PrismaService = _classThis = _classDescriptor.value;
+        DashboardController = _classThis = _classDescriptor.value;
         if (_metadata) Object.defineProperty(_classThis, Symbol.metadata, { enumerable: true, configurable: true, writable: true, value: _metadata });
         __runInitializers(_classThis, _classExtraInitializers);
     })();
-    return PrismaService = _classThis;
+    return DashboardController = _classThis;
 }();
-exports.PrismaService = PrismaService;
+exports.DashboardController = DashboardController;

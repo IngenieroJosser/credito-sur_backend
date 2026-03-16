@@ -172,13 +172,15 @@ export class LoansController {
   }
 
   @Get(':id/contrato')
-  @Roles(
-    RolUsuario.SUPER_ADMINISTRADOR,
-    RolUsuario.ADMIN,
-    RolUsuario.COORDINADOR,
-    RolUsuario.SUPERVISOR,
-    RolUsuario.PUNTO_DE_VENTA,
-  )
+  // @Roles(
+  //  RolUsuario.SUPER_ADMINISTRADOR,
+  //  RolUsuario.ADMIN,
+  //  RolUsuario.COORDINADOR,
+  //  RolUsuario.SUPERVISOR,
+  //  RolUsuario.PUNTO_DE_VENTA,
+  //  RolUsuario.COBRADOR,
+  //  RolUsuario.CONTADOR,
+  // )
   @ApiOperation({ summary: 'Exportar contrato de crédito de artículo en PDF' })
   @ApiQuery({ name: 'format', enum: ['pdf'], required: false })
   @HttpCode(HttpStatus.OK)
@@ -191,10 +193,15 @@ export class LoansController {
       throw new BadRequestException('Formato no soportado');
     }
 
-    const result = await this.loansService.generarContrato(id);
-    res.setHeader('Content-Type', result.contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
-    res.send(result.data);
+    try {
+      const result = await this.loansService.generarContrato(id);
+      res.setHeader('Content-Type', result.contentType);
+      res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+      res.send(result.data);
+    } catch (e: any) {
+      console.error('PDF GENERATION ERROR: ' + e.message, e.stack);
+      throw e;
+    }
   }
 
   @Get(':id')

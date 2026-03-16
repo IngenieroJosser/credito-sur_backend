@@ -38,30 +38,36 @@ var __setFunctionName = (this && this.__setFunctionName) || function (f, name, p
     return Object.defineProperty(f, "name", { configurable: true, value: prefix ? "".concat(prefix, " ", name) : name });
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PrismaModule = void 0;
+exports.RoutesModule = void 0;
 var common_1 = require("@nestjs/common");
-var prisma_service_1 = require("./prisma.service");
-var PrismaModule = function () {
-    var _classDecorators = [(0, common_1.Global)(), (0, common_1.Module)({
-            providers: [prisma_service_1.PrismaService],
-            exports: [prisma_service_1.PrismaService],
+var routes_service_1 = require("./routes.service");
+var routes_controller_1 = require("./routes.controller");
+var prisma_module_1 = require("../prisma/prisma.module");
+var audit_module_1 = require("../audit/audit.module");
+var notificaciones_module_1 = require("../notificaciones/notificaciones.module");
+var RoutesModule = function () {
+    var _classDecorators = [(0, common_1.Module)({
+            imports: [prisma_module_1.PrismaModule, audit_module_1.AuditModule, notificaciones_module_1.NotificacionesModule],
+            controllers: [routes_controller_1.RoutesController],
+            providers: [routes_service_1.RoutesService],
+            exports: [routes_service_1.RoutesService],
         })];
     var _classDescriptor;
     var _classExtraInitializers = [];
     var _classThis;
-    var PrismaModule = _classThis = /** @class */ (function () {
-        function PrismaModule_1() {
+    var RoutesModule = _classThis = /** @class */ (function () {
+        function RoutesModule_1() {
         }
-        return PrismaModule_1;
+        return RoutesModule_1;
     }());
-    __setFunctionName(_classThis, "PrismaModule");
+    __setFunctionName(_classThis, "RoutesModule");
     (function () {
         var _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
         __esDecorate(null, _classDescriptor = { value: _classThis }, _classDecorators, { kind: "class", name: _classThis.name, metadata: _metadata }, null, _classExtraInitializers);
-        PrismaModule = _classThis = _classDescriptor.value;
+        RoutesModule = _classThis = _classDescriptor.value;
         if (_metadata) Object.defineProperty(_classThis, Symbol.metadata, { enumerable: true, configurable: true, writable: true, value: _metadata });
         __runInitializers(_classThis, _classExtraInitializers);
     })();
-    return PrismaModule = _classThis;
+    return RoutesModule = _classThis;
 }();
-exports.PrismaModule = PrismaModule;
+exports.RoutesModule = RoutesModule;

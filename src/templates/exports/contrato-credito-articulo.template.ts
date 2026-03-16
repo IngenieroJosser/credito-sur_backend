@@ -239,12 +239,9 @@ export async function generarContratoPDF(
     fieldLine('Marca / Modelo:', `${data.marca || '—'} / ${data.modelo || '—'}`);
   }
 
-  blankLine('Valor total del artículo:', ML,
-    data.precioContado ? `${fmtCOP(data.precioContado)}` : LINE);
-  blankLine('Abono inicial:', ML,
-    data.abonoInicial != null ? `${fmtCOP(data.abonoInicial)}` : LINE);
-  blankLine('Saldo a financiar:', ML,
-    data.montoFinanciado ? `${fmtCOP(data.montoFinanciado)}` : LINE);
+  fieldLine('Valor total del artículo:', data.precioContado ? `${fmtCOP(data.precioContado)}` : LINE);
+  fieldLine('Abono inicial:', data.abonoInicial != null ? `${fmtCOP(data.abonoInicial)}` : LINE);
+  fieldLine('Saldo a financiar:', data.montoFinanciado ? `${fmtCOP(data.montoFinanciado)}` : LINE);
 
   // ── SEGUNDA: FORMA DE PAGO ──────────────────────────────────────────────────
   sectionHeader('SEGUNDA – FORMA DE PAGO:');
@@ -265,21 +262,22 @@ export async function generarContratoPDF(
   doc.font('Helvetica-Bold').fontSize(10.5).fillColor(C.GRIS_TXT)
      .text('Número de cuotas:', ML, y, { continued: true });
   doc.font('Helvetica').fillColor(C.NEGRO)
-     .text(`  ${data.numeroCuotas ?? '______'}`, { continued: true });
+     .text(`  ${data.numeroCuotas ?? '______'}`);
 
-  let fx = ML + 200;
+  y = doc.y + 6;
+
+  let fxCheck = ML;
   freqs.forEach((f, i) => {
-    doc.rect(fx, y + 1, 9, 9).stroke(C.NEGRO);
+    doc.rect(fxCheck, y + 1, 9, 9).stroke(C.NEGRO);
     if (i === freqIdx) {
-      // Marcar el checkbox seleccionado
       doc.font('Helvetica-Bold').fontSize(9).fillColor(C.NEGRO)
-         .text('X', fx + 1.5, y + 1);
+         .text('X', fxCheck + 1.5, y + 1);
     }
     doc.font('Helvetica').fontSize(10.5).fillColor(C.NEGRO)
-       .text(`  ${f}`, fx + 12, y);
-    fx += 95;
+       .text(`  ${f}`, fxCheck + 12, y);
+    fxCheck += 110; 
   });
-  y = doc.y + 8;
+  y = doc.y + 10;
 
   blankLine('Valor de cada cuota:', ML,
     data.valorCuota ? `${fmtCOP(data.valorCuota)}` : LINE);
@@ -383,83 +381,8 @@ export async function generarContratoPDF(
      );
   y = doc.y + 4;
 
-  // ── TABLA DE CUOTAS (solo si es crédito y vienen cuotas) ────────────────────
-  if (esCredito && data.cuotas && data.cuotas.length > 0) {
-    checkPage(100);
-    y += 10;
-    doc.font('Helvetica-Bold').fontSize(10.5).fillColor(C.NEGRO)
-       .text('TABLA DE CUOTAS:', ML, y);
-    y = doc.y + 6;
-
-    const colW = [38, 88, 82, 82, 82, 88];  // N° | Fecha | Capital | Interés | Cuota | Saldo
-    const colLabels = ['N°', 'Fecha Venc.', 'Capital', 'Interés', 'Cuota', 'Saldo'];
-    const ROW_H = 16;
-
-    // Encabezado tabla
-    doc.rect(ML, y, TW, ROW_H).fill(C.AZUL_MED);
-    let cx = ML;
-    doc.font('Helvetica-Bold').fontSize(8).fillColor(C.BLANCO);
-    colLabels.forEach((lbl, i) => {
-      doc.text(lbl, cx + 2, y + 4, { width: colW[i] - 4, align: 'center' });
-      cx += colW[i];
-    });
-    y += ROW_H;
-
-    // Filas de cuotas
-    // Mostrar todas si ≤12, si no: primeras 6 + '...' + última
-    const cuotas = data.cuotas;
-    const toShow: Array<CuotaContrato | null> = cuotas.length <= 12
-      ? cuotas
-      : [...cuotas.slice(0, 6), null, cuotas[cuotas.length - 1]];
-
-    toShow.forEach((c, i) => {
-      checkPage(ROW_H + 10);
-      if (i % 2 === 0) {
-        doc.rect(ML, y, TW, ROW_H).fill(C.GRIS_FONDO);
-      } else {
-        doc.rect(ML, y, TW, ROW_H).fill(C.BLANCO);
-      }
-
-      doc.font('Helvetica').fontSize(8).fillColor(C.GRIS_TXT);
-      cx = ML;
-
-      if (c === null) {
-        // Fila de puntos suspensivos
-        doc.text('...', ML + TW / 2 - 10, y + 4);
-      } else {
-        const vals = [
-          String(c.numero),
-          c.fechaVenc,
-          fmtCOP(c.capital),
-          fmtCOP(c.interes),
-          fmtCOP(c.valorCuota),
-          fmtCOP(c.saldo),
-        ];
-        vals.forEach((v, vi) => {
-          const align = vi === 0 || vi === 1 ? 'center' : 'right';
-          doc.text(v, cx + 2, y + 4, { width: colW[vi] - 4, align });
-          cx += colW[vi];
-        });
-      }
-
-      // Borde inferior fila
-      doc.moveTo(ML, y + ROW_H)
-         .lineTo(ML + TW, y + ROW_H)
-         .strokeColor(C.GRIS_CLR).lineWidth(0.4).stroke();
-      y += ROW_H;
-    });
-
-    // Fila total
-    doc.rect(ML, y, TW, ROW_H + 2).fill(C.AZUL_DARK);
-    doc.font('Helvetica-Bold').fontSize(8).fillColor(C.BLANCO);
-    doc.text('TOTAL A PAGAR', ML + 2, y + 4,
-      { width: colW[0] + colW[1] + colW[2] + colW[3] - 4 });
-    const totalCuota = cuotas.reduce((a, c) => a + c.valorCuota, 0);
-    doc.text(fmtCOP(totalCuota), ML + colW[0] + colW[1] + colW[2] + colW[3],
-      y + 4, { width: colW[4] - 4, align: 'right' });
-    y += ROW_H + 2;
-    y += 10;
-  }
+  // ── TABLA DE CUOTAS - ELIMINADA POR SOLICITUD ──────────────────────────────
+  // (Lógica de tabla de amortización removida para simplificar el documento)
 
   // ── LUGAR Y FECHA DE FIRMA ───────────────────────────────────────────────────
   checkPage(160);
@@ -510,6 +433,7 @@ export async function generarContratoPDF(
   };
 
   drawFooter();
+
   const buffer = await new Promise<Buffer>((resolve, reject) => {
     doc.on('end', () => resolve(Buffer.concat(buffers)));
     doc.on('error', reject);

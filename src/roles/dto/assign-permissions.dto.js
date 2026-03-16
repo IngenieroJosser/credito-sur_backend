@@ -33,35 +33,31 @@ var __runInitializers = (this && this.__runInitializers) || function (thisArg, i
     }
     return useValue ? value : void 0;
 };
-var __setFunctionName = (this && this.__setFunctionName) || function (f, name, prefix) {
-    if (typeof name === "symbol") name = name.description ? "[".concat(name.description, "]") : "";
-    return Object.defineProperty(f, "name", { configurable: true, value: prefix ? "".concat(prefix, " ", name) : name });
-};
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PrismaModule = void 0;
-var common_1 = require("@nestjs/common");
-var prisma_service_1 = require("./prisma.service");
-var PrismaModule = function () {
-    var _classDecorators = [(0, common_1.Global)(), (0, common_1.Module)({
-            providers: [prisma_service_1.PrismaService],
-            exports: [prisma_service_1.PrismaService],
-        })];
-    var _classDescriptor;
-    var _classExtraInitializers = [];
-    var _classThis;
-    var PrismaModule = _classThis = /** @class */ (function () {
-        function PrismaModule_1() {
-        }
-        return PrismaModule_1;
-    }());
-    __setFunctionName(_classThis, "PrismaModule");
-    (function () {
-        var _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
-        __esDecorate(null, _classDescriptor = { value: _classThis }, _classDecorators, { kind: "class", name: _classThis.name, metadata: _metadata }, null, _classExtraInitializers);
-        PrismaModule = _classThis = _classDescriptor.value;
-        if (_metadata) Object.defineProperty(_classThis, Symbol.metadata, { enumerable: true, configurable: true, writable: true, value: _metadata });
-        __runInitializers(_classThis, _classExtraInitializers);
-    })();
-    return PrismaModule = _classThis;
+exports.AssignPermissionsDto = void 0;
+var class_validator_1 = require("class-validator");
+var swagger_1 = require("@nestjs/swagger");
+var AssignPermissionsDto = function () {
+    var _a;
+    var _permisosIds_decorators;
+    var _permisosIds_initializers = [];
+    var _permisosIds_extraInitializers = [];
+    return _a = /** @class */ (function () {
+            function AssignPermissionsDto() {
+                this.permisosIds = __runInitializers(this, _permisosIds_initializers, void 0);
+                __runInitializers(this, _permisosIds_extraInitializers);
+            }
+            return AssignPermissionsDto;
+        }()),
+        (function () {
+            var _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
+            _permisosIds_decorators = [(0, swagger_1.ApiProperty)({
+                    description: 'Array of Permission IDs to assign to the role',
+                    type: [String],
+                }), (0, class_validator_1.IsArray)(), (0, class_validator_1.IsString)({ each: true }), (0, class_validator_1.IsUUID)('4', { each: true })];
+            __esDecorate(null, null, _permisosIds_decorators, { kind: "field", name: "permisosIds", static: false, private: false, access: { has: function (obj) { return "permisosIds" in obj; }, get: function (obj) { return obj.permisosIds; }, set: function (obj, value) { obj.permisosIds = value; } }, metadata: _metadata }, _permisosIds_initializers, _permisosIds_extraInitializers);
+            if (_metadata) Object.defineProperty(_a, Symbol.metadata, { enumerable: true, configurable: true, writable: true, value: _metadata });
+        })(),
+        _a;
 }();
-exports.PrismaModule = PrismaModule;
+exports.AssignPermissionsDto = AssignPermissionsDto;

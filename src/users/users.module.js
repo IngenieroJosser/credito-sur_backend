@@ -38,30 +38,34 @@ var __setFunctionName = (this && this.__setFunctionName) || function (f, name, p
     return Object.defineProperty(f, "name", { configurable: true, value: prefix ? "".concat(prefix, " ", name) : name });
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PrismaModule = void 0;
+exports.UsersModule = void 0;
 var common_1 = require("@nestjs/common");
-var prisma_service_1 = require("./prisma.service");
-var PrismaModule = function () {
-    var _classDecorators = [(0, common_1.Global)(), (0, common_1.Module)({
-            providers: [prisma_service_1.PrismaService],
-            exports: [prisma_service_1.PrismaService],
+var users_service_1 = require("./users.service");
+var users_controller_1 = require("./users.controller");
+var audit_module_1 = require("../audit/audit.module");
+var UsersModule = function () {
+    var _classDecorators = [(0, common_1.Module)({
+            imports: [audit_module_1.AuditModule],
+            controllers: [users_controller_1.UsersController],
+            providers: [users_service_1.UsersService],
+            exports: [users_service_1.UsersService],
         })];
     var _classDescriptor;
     var _classExtraInitializers = [];
     var _classThis;
-    var PrismaModule = _classThis = /** @class */ (function () {
-        function PrismaModule_1() {
+    var UsersModule = _classThis = /** @class */ (function () {
+        function UsersModule_1() {
         }
-        return PrismaModule_1;
+        return UsersModule_1;
     }());
-    __setFunctionName(_classThis, "PrismaModule");
+    __setFunctionName(_classThis, "UsersModule");
     (function () {
         var _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
         __esDecorate(null, _classDescriptor = { value: _classThis }, _classDecorators, { kind: "class", name: _classThis.name, metadata: _metadata }, null, _classExtraInitializers);
-        PrismaModule = _classThis = _classDescriptor.value;
+        UsersModule = _classThis = _classDescriptor.value;
         if (_metadata) Object.defineProperty(_classThis, Symbol.metadata, { enumerable: true, configurable: true, writable: true, value: _metadata });
         __runInitializers(_classThis, _classExtraInitializers);
     })();
-    return PrismaModule = _classThis;
+    return UsersModule = _classThis;
 }();
-exports.PrismaModule = PrismaModule;
+exports.UsersModule = UsersModule;

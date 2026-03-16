@@ -38,30 +38,44 @@ var __setFunctionName = (this && this.__setFunctionName) || function (f, name, p
     return Object.defineProperty(f, "name", { configurable: true, value: prefix ? "".concat(prefix, " ", name) : name });
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PrismaModule = void 0;
+exports.RolesGuard = void 0;
 var common_1 = require("@nestjs/common");
-var prisma_service_1 = require("./prisma.service");
-var PrismaModule = function () {
-    var _classDecorators = [(0, common_1.Global)(), (0, common_1.Module)({
-            providers: [prisma_service_1.PrismaService],
-            exports: [prisma_service_1.PrismaService],
-        })];
+var client_1 = require("@prisma/client");
+var roles_decorator_1 = require("../decorators/roles.decorator");
+var RolesGuard = function () {
+    var _classDecorators = [(0, common_1.Injectable)()];
     var _classDescriptor;
     var _classExtraInitializers = [];
     var _classThis;
-    var PrismaModule = _classThis = /** @class */ (function () {
-        function PrismaModule_1() {
+    var RolesGuard = _classThis = /** @class */ (function () {
+        function RolesGuard_1(reflector) {
+            this.reflector = reflector;
         }
-        return PrismaModule_1;
+        RolesGuard_1.prototype.canActivate = function (context) {
+            var rolesRequeridos = this.reflector.getAllAndOverride(roles_decorator_1.CLAVE_ROLES, [context.getHandler(), context.getClass()]);
+            if (!rolesRequeridos || rolesRequeridos.length === 0) {
+                return true;
+            }
+            var request = context.switchToHttp().getRequest();
+            var usuario = request.user;
+            if (!usuario || !usuario.rol) {
+                return false;
+            }
+            if (usuario.rol === client_1.RolUsuario.SUPER_ADMINISTRADOR) {
+                return true;
+            }
+            return rolesRequeridos.includes(usuario.rol);
+        };
+        return RolesGuard_1;
     }());
-    __setFunctionName(_classThis, "PrismaModule");
+    __setFunctionName(_classThis, "RolesGuard");
     (function () {
         var _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
         __esDecorate(null, _classDescriptor = { value: _classThis }, _classDecorators, { kind: "class", name: _classThis.name, metadata: _metadata }, null, _classExtraInitializers);
-        PrismaModule = _classThis = _classDescriptor.value;
+        RolesGuard = _classThis = _classDescriptor.value;
         if (_metadata) Object.defineProperty(_classThis, Symbol.metadata, { enumerable: true, configurable: true, writable: true, value: _metadata });
         __runInitializers(_classThis, _classExtraInitializers);
     })();
-    return PrismaModule = _classThis;
+    return RolesGuard = _classThis;
 }();
-exports.PrismaModule = PrismaModule;
+exports.RolesGuard = RolesGuard;

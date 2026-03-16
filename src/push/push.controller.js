@@ -1,4 +1,11 @@
 "use strict";
+var __runInitializers = (this && this.__runInitializers) || function (thisArg, initializers, value) {
+    var useValue = arguments.length > 2;
+    for (var i = 0; i < initializers.length; i++) {
+        value = useValue ? initializers[i].call(thisArg, value) : initializers[i].call(thisArg);
+    }
+    return useValue ? value : void 0;
+};
 var __esDecorate = (this && this.__esDecorate) || function (ctor, descriptorIn, decorators, contextIn, initializers, extraInitializers) {
     function accept(f) { if (f !== void 0 && typeof f !== "function") throw new TypeError("Function expected"); return f; }
     var kind = contextIn.kind, key = kind === "getter" ? "get" : kind === "setter" ? "set" : "value";
@@ -25,13 +32,6 @@ var __esDecorate = (this && this.__esDecorate) || function (ctor, descriptorIn, 
     }
     if (target) Object.defineProperty(target, contextIn.name, descriptor);
     done = true;
-};
-var __runInitializers = (this && this.__runInitializers) || function (thisArg, initializers, value) {
-    var useValue = arguments.length > 2;
-    for (var i = 0; i < initializers.length; i++) {
-        value = useValue ? initializers[i].call(thisArg, value) : initializers[i].call(thisArg);
-    }
-    return useValue ? value : void 0;
 };
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
@@ -74,102 +74,59 @@ var __setFunctionName = (this && this.__setFunctionName) || function (f, name, p
     return Object.defineProperty(f, "name", { configurable: true, value: prefix ? "".concat(prefix, " ", name) : name });
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PrismaService = void 0;
+exports.PushController = void 0;
 var common_1 = require("@nestjs/common");
-var client_1 = require("@prisma/client");
-var adapter_pg_1 = require("@prisma/adapter-pg");
-var pg_1 = require("pg");
-var PrismaService = function () {
-    var _classDecorators = [(0, common_1.Injectable)()];
+var swagger_1 = require("@nestjs/swagger");
+var PushController = function () {
+    var _classDecorators = [(0, swagger_1.ApiTags)('Push Notifications'), (0, common_1.Controller)('push')];
     var _classDescriptor;
     var _classExtraInitializers = [];
     var _classThis;
-    var PrismaService = _classThis = /** @class */ (function () {
-        function PrismaService_1(eventEmitter) {
-            this.eventEmitter = eventEmitter;
-            var pool = new pg_1.Pool({
-                connectionString: process.env.DATABASE_URL,
-            });
-            var adapter = new adapter_pg_1.PrismaPg(pool);
-            var basePrisma = new client_1.PrismaClient({ adapter: adapter });
-            // Envolver PrismaClient para interceptar TODAS las escrituras de DB y disparar eventos
-            var prisma = basePrisma.$extends({
-                query: {
-                    $allModels: {
-                        $allOperations: function (_a) {
-                            return __awaiter(this, arguments, void 0, function (_b) {
-                                var result, watchActions;
-                                var operation = _b.operation, model = _b.model, args = _b.args, query = _b.query;
-                                return __generator(this, function (_c) {
-                                    switch (_c.label) {
-                                        case 0: return [4 /*yield*/, query(args)];
-                                        case 1:
-                                            result = _c.sent();
-                                            watchActions = ['create', 'update', 'delete', 'upsert', 'createMany', 'updateMany', 'deleteMany'];
-                                            if (watchActions.includes(operation) && model) {
-                                                // Lanzar evento asíncrono para BullMQ
-                                                // CRÍTICO: Si el Node que está corriendo y guardando estto en BD es el propio VPS Espejo en la NUBE
-                                                // NO debe volver a emitir el evento a BullMQ, o creará un bucle infinito recursivo de sincronización.
-                                                if (process.env.IS_MIRROR_VPS !== 'true') {
-                                                    eventEmitter.emit('database.write.success', {
-                                                        model: model,
-                                                        action: operation,
-                                                        data: result,
-                                                    });
-                                                }
-                                            }
-                                            return [2 /*return*/, result];
-                                    }
-                                });
-                            });
-                        }
-                    }
-                }
-            });
-            // Devolvemos un Proxy para que NestJS pueda inyectar PrismaService 
-            // y redirija cualquier llamada (this.prisma.user.findMany) al cliente extendido.
-            return new Proxy(this, {
-                get: function (target, prop) {
-                    if (prop in target)
-                        return target[prop];
-                    return prisma[prop];
-                }
-            });
+    var _instanceExtraInitializers = [];
+    var _subscribe_decorators;
+    var _unsubscribe_decorators;
+    var _send_decorators;
+    var PushController = _classThis = /** @class */ (function () {
+        function PushController_1(pushService) {
+            this.pushService = (__runInitializers(this, _instanceExtraInitializers), pushService);
         }
-        PrismaService_1.prototype.onModuleInit = function () {
+        PushController_1.prototype.subscribe = function (body) {
             return __awaiter(this, void 0, void 0, function () {
                 return __generator(this, function (_a) {
-                    switch (_a.label) {
-                        case 0: return [4 /*yield*/, this.$connect()];
-                        case 1:
-                            _a.sent();
-                            return [2 /*return*/];
-                    }
+                    return [2 /*return*/, this.pushService.subscribeUser(body.userId, body.subscription)];
                 });
             });
         };
-        PrismaService_1.prototype.onModuleDestroy = function () {
+        PushController_1.prototype.unsubscribe = function (endpoint) {
             return __awaiter(this, void 0, void 0, function () {
                 return __generator(this, function (_a) {
-                    switch (_a.label) {
-                        case 0: return [4 /*yield*/, this.$disconnect()];
-                        case 1:
-                            _a.sent();
-                            return [2 /*return*/];
-                    }
+                    return [2 /*return*/, this.pushService.unsubscribeUser(endpoint)];
                 });
             });
         };
-        return PrismaService_1;
+        PushController_1.prototype.send = function (data) {
+            return __awaiter(this, void 0, void 0, function () {
+                return __generator(this, function (_a) {
+                    return [2 /*return*/, this.pushService.sendPushNotification(data)];
+                });
+            });
+        };
+        return PushController_1;
     }());
-    __setFunctionName(_classThis, "PrismaService");
+    __setFunctionName(_classThis, "PushController");
     (function () {
         var _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
+        _subscribe_decorators = [(0, common_1.Post)('subscribe'), (0, swagger_1.ApiOperation)({ summary: 'Suscribir usuario a notificaciones push' })];
+        _unsubscribe_decorators = [(0, common_1.Delete)('unsubscribe/:endpoint'), (0, swagger_1.ApiOperation)({ summary: 'Desuscribir usuario de notificaciones push' })];
+        _send_decorators = [(0, common_1.Post)('send'), (0, swagger_1.ApiOperation)({ summary: 'Enviar notificación push' })];
+        __esDecorate(_classThis, null, _subscribe_decorators, { kind: "method", name: "subscribe", static: false, private: false, access: { has: function (obj) { return "subscribe" in obj; }, get: function (obj) { return obj.subscribe; } }, metadata: _metadata }, null, _instanceExtraInitializers);
+        __esDecorate(_classThis, null, _unsubscribe_decorators, { kind: "method", name: "unsubscribe", static: false, private: false, access: { has: function (obj) { return "unsubscribe" in obj; }, get: function (obj) { return obj.unsubscribe; } }, metadata: _metadata }, null, _instanceExtraInitializers);
+        __esDecorate(_classThis, null, _send_decorators, { kind: "method", name: "send", static: false, private: false, access: { has: function (obj) { return "send" in obj; }, get: function (obj) { return obj.send; } }, metadata: _metadata }, null, _instanceExtraInitializers);
         __esDecorate(null, _classDescriptor = { value: _classThis }, _classDecorators, { kind: "class", name: _classThis.name, metadata: _metadata }, null, _classExtraInitializers);
-        PrismaService = _classThis = _classDescriptor.value;
+        PushController = _classThis = _classDescriptor.value;
         if (_metadata) Object.defineProperty(_classThis, Symbol.metadata, { enumerable: true, configurable: true, writable: true, value: _metadata });
         __runInitializers(_classThis, _classExtraInitializers);
     })();
-    return PrismaService = _classThis;
+    return PushController = _classThis;
 }();
-exports.PrismaService = PrismaService;
+exports.PushController = PushController;

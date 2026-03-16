@@ -432,6 +432,7 @@ export class ReportsService {
 
     throw new Error(`Formato no soportado: ${formato}`);
   }
+
   async obtenerEstadisticasMora() {
     const [
       totalPrestamosMora,
@@ -500,116 +501,49 @@ export class ReportsService {
       saldoPendiente: { gt: 0 },
     };
 
-    // Aplicar filtros
     if (filtros.busqueda) {
       whereConditions.OR = [
-        {
-          cliente: {
-            nombres: {
-              contains: filtros.busqueda,
-              mode: 'insensitive',
-            },
-          },
-        },
-        {
-          cliente: {
-            apellidos: {
-              contains: filtros.busqueda,
-              mode: 'insensitive',
-            },
-          },
-        },
-        {
-          cliente: {
-            dni: {
-              contains: filtros.busqueda,
-              mode: 'insensitive',
-            },
-          },
-        },
-        {
-          numeroPrestamo: {
-            contains: filtros.busqueda,
-            mode: 'insensitive',
-          },
-        },
+        { cliente: { nombres: { contains: filtros.busqueda, mode: 'insensitive' } } },
+        { cliente: { apellidos: { contains: filtros.busqueda, mode: 'insensitive' } } },
+        { cliente: { dni: { contains: filtros.busqueda, mode: 'insensitive' } } },
+        { numeroPrestamo: { contains: filtros.busqueda, mode: 'insensitive' } },
       ];
     }
 
     if (filtros.nivelRiesgo) {
-      whereConditions.cliente = {
-        ...whereConditions.cliente,
-        nivelRiesgo: filtros.nivelRiesgo,
-      };
+      whereConditions.cliente = { ...whereConditions.cliente, nivelRiesgo: filtros.nivelRiesgo };
     }
 
     if (filtros.rutaId) {
       const clientesRuta = await this.prisma.asignacionRuta.findMany({
-        where: {
-          rutaId: filtros.rutaId,
-          activa: true,
-        },
+        where: { rutaId: filtros.rutaId, activa: true },
         select: { clienteId: true },
       });
-
-      const clienteIds = clientesRuta.map((cr) => cr.clienteId);
-      whereConditions.clienteId = { in: clienteIds };
+      whereConditions.clienteId = { in: clientesRuta.map((cr) => cr.clienteId) };
     }
 
-    // Obtener total de registros
-    const total = await this.prisma.prestamo.count({
-      where: whereConditions,
-    });
+    const total = await this.prisma.prestamo.count({ where: whereConditions });
 
-    // Obtener préstamos con relaciones
     const prestamos = await this.prisma.prestamo.findMany({
       where: whereConditions,
       skip,
       take: limite,
       include: {
         cliente: true,
-        cuotas: {
-          where: {
-            estado: 'VENCIDA',
-          },
-        },
+        cuotas: { where: { estado: 'VENCIDA' } },
       },
-      orderBy: [
-        {
-          fechaFin: 'asc',
-        },
-        {
-          saldoPendiente: 'desc',
-        },
-      ],
+      orderBy: [{ fechaFin: 'asc' }, { saldoPendiente: 'desc' }],
     });
 
-    // Enriquecer datos con información de ruta y cobrador
     const cuentasVencidas = await Promise.all(
       prestamos.map(async (prestamo) => {
-        // Obtener asignación de ruta activa del cliente
         const asignacion = await this.prisma.asignacionRuta.findFirst({
-          where: {
-            clienteId: prestamo.clienteId,
-            activa: true,
-          },
-          include: {
-            ruta: {
-              include: {
-                cobrador: true,
-              },
-            },
-          },
+          where: { clienteId: prestamo.clienteId, activa: true },
+          include: { ruta: { include: { cobrador: true } } },
         });
 
-        // Calcular días vencidos (desde fechaFin)
         const diasVencidos = differenceInDays(hoy, prestamo.fechaFin);
-
-        // Sumar cuotas vencidas para intereses de mora
-        const interesesMora = prestamo.cuotas.reduce(
-          (sum, cuota) => sum + cuota.montoInteresMora.toNumber(),
-          0,
-        );
+        const interesesMora = prestamo.cuotas.reduce((sum, cuota) => sum + cuota.montoInteresMora.toNumber(), 0);
 
         return {
           id: prestamo.id,
@@ -632,35 +566,17 @@ export class ReportsService {
       }),
     );
 
-    // Calcular totales
-    const totalVencido = cuentasVencidas.reduce(
-      (sum, c) => sum + c.saldoPendiente,
-      0,
-    );
-    const totalDiasVencidos = cuentasVencidas.reduce(
-      (sum, c) => sum + c.diasVencidos,
-      0,
-    );
-    const diasPromedioVencimiento =
-      cuentasVencidas.length > 0
-        ? Math.round(totalDiasVencidos / cuentasVencidas.length)
-        : 0;
-
     const totales: TotalesVencidasDto = {
-      totalVencido,
+      totalVencido: cuentasVencidas.reduce((sum, c) => sum + c.saldoPendiente, 0),
       totalRegistros: total,
-      diasPromedioVencimiento,
+      diasPromedioVencimiento: cuentasVencidas.length > 0
+        ? Math.round(cuentasVencidas.reduce((sum, c) => sum + c.diasVencidos, 0) / cuentasVencidas.length)
+        : 0,
       totalInteresesMora: cuentasVencidas.reduce((s, c: any) => s + (c.interesesMora || 0), 0),
       totalMontoOriginal: cuentasVencidas.reduce((s, c: any) => s + (c.montoOriginal || 0), 0),
     };
 
-    return {
-      cuentas: cuentasVencidas,
-      totales,
-      total,
-      pagina,
-      limite,
-    };
+    return { cuentas: cuentasVencidas, totales, total, pagina, limite };
   }
 
   async procesarDecisionCastigo(
@@ -673,10 +589,9 @@ export class ReportsService {
     });
 
     if (!prestamo) {
-      throw new Error('Préstamo no encontrado');
+      throw new Error('PrÃ©stamo no encontrado');
     }
 
-    // Buscar la primera cuota vencida o pendiente para vincular la prorroga
     let cuotaId: string | null = null;
     if (decisionDto.decision === 'PRORROGAR') {
       const cuotaVencida = await this.prisma.cuota.findFirst({
@@ -689,12 +604,13 @@ export class ReportsService {
       cuotaId = cuotaVencida?.id || null;
     }
 
-    // Usar el tipo de aprobacion correcto segun la decision
-    const tipoAprobacion = decisionDto.decision === 'PRORROGAR'
-      ? TipoAprobacion.PRORROGA_PAGO
-      : TipoAprobacion.BAJA_POR_PERDIDA;
+    let tipoAprobacion: TipoAprobacion;
+    if (decisionDto.decision === 'PRORROGAR' || decisionDto.decision === 'DEJAR_QUIETO') {
+      tipoAprobacion = TipoAprobacion.PRORROGA_PAGO;
+    } else {
+      tipoAprobacion = TipoAprobacion.BAJA_POR_PERDIDA;
+    }
 
-    // Crear registro de aprobacion
     const aprobacion = await this.prisma.aprobacion.create({
       data: {
         tipoAprobacion,
@@ -727,7 +643,6 @@ export class ReportsService {
       if (u) nombreUsuario = `${u.nombres} ${u.apellidos}`.trim() || nombreUsuario;
     } catch {}
 
-    // Solo notificar a aprobadores si NO es prorroga (la prorroga va directamente a revisiones sin notificacion)
     if (decisionDto.decision !== 'PRORROGAR') {
       try {
         await this.notificacionesService.notifyApprovers({
@@ -737,7 +652,7 @@ export class ReportsService {
           entidad: 'Aprobacion',
           entidadId: aprobacion.id,
           metadata: {
-            tipoAprobacion: 'BAJA_POR_PERDIDA',
+            tipoAprobacion: tipoAprobacion,
             prestamoId: decisionDto.prestamoId,
             decision: decisionDto.decision,
             montoInteres: decisionDto.montoInteres || 0,
@@ -754,7 +669,7 @@ export class ReportsService {
           entidad: 'Aprobacion',
           entidadId: aprobacion.id,
           metadata: {
-            tipoAprobacion: 'BAJA_POR_PERDIDA',
+            tipoAprobacion: tipoAprobacion,
             prestamoId: decisionDto.prestamoId,
             decision: decisionDto.decision,
           },
@@ -762,63 +677,10 @@ export class ReportsService {
       } catch {}
     }
 
-    // Actualizar estado del préstamo según la decisión
-    let nuevoEstado: EstadoPrestamo = prestamo.estado;
-
-    switch (decisionDto.decision) {
-      case 'CASTIGAR':
-        nuevoEstado = 'PERDIDA';
-        break;
-      case 'JURIDICO':
-        nuevoEstado = 'INCUMPLIDO';
-        break;
-      case 'PRORROGAR':
-        if (decisionDto.nuevaFechaVencimiento) {
-          // Actualizar fecha de vencimiento del préstamo
-          await this.prisma.prestamo.update({
-            where: { id: decisionDto.prestamoId },
-            data: {
-              fechaFin: new Date(decisionDto.nuevaFechaVencimiento),
-              estado: 'EN_MORA',
-            },
-          });
-        }
-        break;
-    }
-
-    if (decisionDto.decision !== 'PRORROGAR') {
-      await this.prisma.prestamo.update({
-        where: { id: decisionDto.prestamoId },
-        data: { estado: nuevoEstado },
-      });
-    }
-
-    // Si hay interés de mora, actualizar las cuotas
-    if (decisionDto.montoInteres && decisionDto.montoInteres > 0) {
-      const cuotasVencidas = await this.prisma.cuota.findMany({
-        where: {
-          prestamoId: decisionDto.prestamoId,
-          estado: 'VENCIDA',
-        },
-      });
-
-      // Distribuir el interés entre las cuotas vencidas
-      const interesPorCuota = decisionDto.montoInteres / cuotasVencidas.length;
-
-      for (const cuota of cuotasVencidas) {
-        await this.prisma.cuota.update({
-          where: { id: cuota.id },
-          data: {
-            montoInteresMora: { increment: interesPorCuota },
-          },
-        });
-      }
-    }
-
     return {
       mensaje: `Decisión de ${decisionDto.decision.toLowerCase()} procesada exitosamente`,
       aprobacionId: aprobacion.id,
-      nuevoEstado,
+      nuevoEstado: prestamo.estado,
     };
   }
 
@@ -826,12 +688,10 @@ export class ReportsService {
     formato: 'excel' | 'pdf',
     filtros: CuentasVencidasFiltrosDto,
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
-    // 1. Solo consulta de BD
     const data = await this.obtenerCuentasVencidas(filtros, 1, 10000);
     const cuentas = data.cuentas;
     const fecha = new Date().toISOString().split('T')[0];
 
-    // 2. Mapeo al tipo del template
     const filas: VencidasRow[] = cuentas.map((c: any) => ({
       numeroPrestamo: c.numeroPrestamo || '',
       cliente: typeof c.cliente === 'string' ? c.cliente : (c.cliente?.nombre || ''),
@@ -854,7 +714,6 @@ export class ReportsService {
       totalMontoOriginal: Number(data.totales?.totalMontoOriginal || 0),
     };
 
-    // 3. Delegamos al template
     if (formato === 'excel') return generarExcelVencidas(filas, totales, fecha);
     if (formato === 'pdf') return generarPDFVencidas(filas, totales, fecha);
 
@@ -866,14 +725,12 @@ export class ReportsService {
   ): Promise<OperationalReportResponse> {
     const { period, routeId, startDate, endDate } = filters;
 
-    // Calcular rango de fechas según el periodo
     const dateRange = calculateDateRange(
       period as TimeFilterPeriod,
       startDate,
       endDate,
     );
 
-    // Obtener rutas según filtro
     const routes = await this.prisma.ruta.findMany({
       where: {
         ...(routeId && { id: routeId }),
@@ -895,11 +752,9 @@ export class ReportsService {
       },
     });
 
-    // Obtener métricas para cada ruta
     const routePerformancePromises = routes.map(async (route) => {
       const clientIds = route.asignaciones.map((a) => a.cliente.id);
 
-      // 1. Recaudo de la ruta (Pagos + Cuotas Iniciales)
       const routePayments = await this.prisma.pago.aggregate({
         where: {
           clienteId: { in: clientIds },
@@ -913,7 +768,6 @@ export class ReportsService {
 
       const collected = Number(routePayments._sum.montoTotal || 0);
 
-      // 2. Préstamos Nuevos y Cuota Inicial de la ruta
       const routeNewLoansStats = await this.prisma.prestamo.aggregate({
         where: {
           clienteId: { in: clientIds },
@@ -934,7 +788,6 @@ export class ReportsService {
       const newLoansAmount = Number(routeNewLoansStats._sum.monto || 0);
       const collectedFromCuotaInicial = Number(routeNewLoansStats._sum.cuotaInicial || 0);
 
-      // 3. Clientes Nuevos de la ruta
       const newClients = await this.prisma.cliente.count({
         where: {
           asignacionesRuta: {
@@ -947,8 +800,6 @@ export class ReportsService {
         },
       });
 
-      // 4. Meta de la ruta (Cuotas vencidas + hoy + cuota inicial)
-      // Incluimos: 1. Lo que vence hoy, 2. Lo pendiente de antes, 3. Lo que era de antes pero se pagó hoy
       const routeDuePayments = await this.prisma.cuota.aggregate({
         where: {
           prestamo: {
@@ -957,19 +808,16 @@ export class ReportsService {
           },
           OR: [
             {
-              // Caso 1: Vence en este periodo
               fechaVencimiento: {
                 gte: dateRange.startDate,
                 lte: dateRange.endDate,
               },
             },
             {
-              // Caso 2: Pendiente/Vencido de antes
               estado: { in: ['PENDIENTE', 'PARCIAL', 'VENCIDA'] },
               fechaVencimiento: { lt: dateRange.startDate },
             },
             {
-              // Caso 3: Era de antes pero se pagó hoy (fija la meta retrospectivamente para eficiencia)
               estado: 'PAGADA',
               fechaVencimiento: { lt: dateRange.startDate },
               fechaPago: {
@@ -1008,9 +856,6 @@ export class ReportsService {
 
     const routePerformance = await Promise.all(routePerformancePromises);
 
-    // --- CÁLCULO DE MÉTRICAS GLOBALES (Independiente de las rutas para asegurar integridad) ---
-    
-    // 1. Recaudo Total Global (Incluye pagos y cuotas iniciales de todos los clientes)
     const globalPayments = await this.prisma.pago.aggregate({
       where: {
         fechaPago: {
@@ -1040,7 +885,6 @@ export class ReportsService {
     const totalMontoPrestamosNuevos = Number(globalNewLoansStats._sum.monto || 0);
     const totalPrestamosNuevos = globalNewLoansStats._count.id || 0;
 
-    // 2. Meta Global
     const globalDuePayments = await this.prisma.cuota.aggregate({
       where: {
         prestamo: {
@@ -1079,7 +923,6 @@ export class ReportsService {
 
     const porcentajeGlobal = totalMeta > 0 ? Math.round((totalRecaudo / totalMeta) * 100) : 0;
 
-    // 3. Nuevos Clientes Globales
     const totalAfiliaciones = await this.prisma.cliente.count({
       where: {
         creadoEn: {
@@ -1089,7 +932,6 @@ export class ReportsService {
       },
     });
 
-    // 4. Efectividad Promedio (Promedio de las eficiencias de las rutas)
     const efectividadPromedio =
       routePerformance.length > 0
         ? Math.round(
@@ -1145,7 +987,6 @@ export class ReportsService {
       filters.endDate,
     );
 
-    // Obtener clientes asignados a la ruta
     const assignments = await this.prisma.asignacionRuta.findMany({
       where: {
         rutaId: routeId,
@@ -1177,7 +1018,6 @@ export class ReportsService {
       },
     });
 
-    // Obtener pagos de la ruta en el periodo
     const clientIds = assignments.map((a) => a.cliente.id);
     const payments = await this.prisma.pago.findMany({
       where: {
@@ -1205,14 +1045,12 @@ export class ReportsService {
       },
     });
 
-    // Calcular estadísticas detalladas
     const totalCollected = payments.reduce(
       (sum, p) => sum + Number(p.montoTotal),
       0,
     );
     const paymentCount = payments.length;
 
-    // Agrupar pagos por día para gráfico
     const paymentsByDay = await this.prisma.$queryRaw`
       SELECT 
         DATE("fechaPago") as dia,
@@ -1271,11 +1109,9 @@ export class ReportsService {
     filters: GetOperationalReportDto,
     format: 'excel' | 'pdf',
   ): Promise<any> {
-    // 1. Solo consulta de BD
     const reportData = await this.getOperationalReport(filters);
     const fecha = new Date().toISOString().split('T')[0];
 
-    // 2. Mapeo al tipo del template
     const filas: OperativoRow[] = (reportData.rendimientoRutas || []).map((r: any) => ({
       ruta: r.ruta || '',
       cobrador: r.cobrador || '',
@@ -1298,18 +1134,17 @@ export class ReportsService {
       fechaFin: String(reportData.fechaFin || filters.endDate || ''),
     };
 
-    // 3. Delegamos al template
     if (format === 'excel') return generarExcelOperativo(filas, resumen, fecha);
     if (format === 'pdf') return generarPDFOperativo(filas, resumen, fecha);
 
     throw new Error(`Formato no soportado: ${format}`);
   }
+
   async exportFinancialReport(
     startDate: Date,
     endDate: Date,
     format: 'excel' | 'pdf',
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
-    // 1. Solo consulta de BD
     const [summary, monthly, expenses] = await Promise.all([
       this.getFinancialSummary(startDate, endDate),
       this.getMonthlyEvolution(startDate.getFullYear()),
@@ -1317,7 +1152,6 @@ export class ReportsService {
     ]);
     const fecha = new Date().toISOString().split('T')[0];
 
-    // 2. Delegamos al template (datos ya procesados por los mÃ©todos del servicio)
     if (format === 'excel') return generarExcelFinanciero(summary, monthly, expenses, fecha);
     if (format === 'pdf') return generarPDFFinanciero(summary, monthly, expenses, fecha);
 

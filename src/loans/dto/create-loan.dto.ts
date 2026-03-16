@@ -98,4 +98,7 @@ export class CreateLoanDto {
   @IsString()
   @IsOptional()
   garantia?: string;
+
+  @IsOptional()
+  esContado?: boolean;
 }
