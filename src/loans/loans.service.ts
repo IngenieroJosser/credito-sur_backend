@@ -2281,19 +2281,7 @@ export class LoansService implements OnModuleInit {
         },
       });
 
-      // 2. Agregar cliente a blacklist
-      await tx.cliente.update({
-        where: { id: prestamo.clienteId },
-        data: {
-          enListaNegra: true,
-          razonListaNegra: data.motivo,
-          fechaListaNegra: new Date(),
-          agregadoListaNegraPorId: data.archivarPorId,
-          nivelRiesgo: 'LISTA_NEGRA',
-        },
-      });
-      
-      // 3. Marcar aprobaciones pendientes como RECHAZADAS (específicamente las de este préstamo)
+      // 2. Marcar aprobaciones pendientes como RECHAZADAS (específicamente las de este préstamo)
       await tx.aprobacion.updateMany({
         where: {
           referenciaId: prestamoId,
@@ -2327,7 +2315,7 @@ export class LoansService implements OnModuleInit {
           data: {
             usuarioId: data.archivarPorId,
             titulo: 'Cuenta Archivada',
-            mensaje: `Préstamo ${prestamo.numeroPrestamo} archivado como pérdida. Cliente ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos} agregado a lista negra.`,
+            mensaje: `Préstamo ${prestamo.numeroPrestamo} archivado como pérdida (Cliente: ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}).`,
             tipo: 'ALERTA',
             entidad: 'Prestamo',
             entidadId: prestamoId,
