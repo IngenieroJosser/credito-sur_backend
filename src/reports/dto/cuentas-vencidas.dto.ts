@@ -117,7 +117,7 @@ export class DecisionCastigoDto {
 
   @ApiProperty()
   @IsString()
-  decision: 'CASTIGAR' | 'PRORROGAR' | 'JURIDICO';
+  decision: 'CASTIGAR' | 'PRORROGAR' | 'JURIDICO' | 'DEJAR_QUIETO';
 
   @ApiProperty({ required: false })
   @IsOptional()

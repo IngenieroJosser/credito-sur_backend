@@ -82,11 +82,11 @@ export class LoansService implements OnModuleInit {
     const clienteNombre = `${prestamo.cliente?.nombres || ''} ${prestamo.cliente?.apellidos || ''}`.trim();
     const vendedorNombre = `${prestamo.creadoPor?.nombres || ''} ${prestamo.creadoPor?.apellidos || ''}`.trim();
 
-    const precioContado = prestamo.precioProducto?.precio
-      ? Number(prestamo.precioProducto.precio)
-      : 0;
     const abonoInicial = prestamo.cuotaInicial ? Number(prestamo.cuotaInicial) : 0;
     const montoFinanciado = prestamo.monto ? Number(prestamo.monto) : 0;
+    const precioContado = prestamo.precioProducto?.precio
+      ? Number(prestamo.precioProducto.precio)
+      : (montoFinanciado + abonoInicial);
     const interesTotal = prestamo.interesTotal ? Number(prestamo.interesTotal) : 0;
     const totalAPagar = montoFinanciado + interesTotal;
 
@@ -704,6 +704,9 @@ export class LoansService implements OnModuleInit {
           pagos: {
             include: {
               detalles: true,
+              archivos: {
+                where: { estado: 'ACTIVO' },
+              },
             },
             orderBy: { fechaPago: 'desc' },
           },
@@ -769,6 +772,9 @@ export class LoansService implements OnModuleInit {
           pagos: {
             include: {
               detalles: true,
+              archivos: {
+                where: { estado: 'ACTIVO' },
+              },
             },
             orderBy: { fechaPago: 'desc' },
           },
@@ -1673,11 +1679,10 @@ export class LoansService implements OnModuleInit {
 
       // Para crédito por artículo
       if (data.tipoPrestamo === 'ARTICULO') {
-        if (!data.productoId || !data.precioProductoId) {
-          throw new BadRequestException(
-            'Para crédito por artículo se requiere productoId y precioProductoId',
-          );
+        if (!data.productoId) {
+          throw new BadRequestException('Para crédito por artículo se requiere productoId');
         }
+
 
         // Obtener el producto y precio del producto
         producto = await this.prisma.producto.findUnique({
@@ -1693,29 +1698,31 @@ export class LoansService implements OnModuleInit {
           throw new BadRequestException('Producto sin stock disponible');
         }
 
-        precioProducto = await this.prisma.precioProducto.findUnique({
-          where: { id: data.precioProductoId },
-        });
+        if (!data.esContado && data.precioProductoId) {
+          precioProducto = await this.prisma.precioProducto.findUnique({
+            where: { id: data.precioProductoId },
+          });
 
-        if (!precioProducto) {
-          throw new NotFoundException('Plan de precio no encontrado');
-        }
+          if (!precioProducto) {
+            throw new NotFoundException('Plan de precio no encontrado');
+          }
 
-        // Verificar que el precioProducto corresponda al producto - CORREGIDO: acceso seguro
-        if (
-          precioProducto.productoId &&
-          precioProducto.productoId !== data.productoId
-        ) {
-          throw new BadRequestException(
-            'El plan de precio no corresponde al producto seleccionado',
-          );
+          // Verificar que el precioProducto corresponda al producto - CORREGIDO: acceso seguro
+          if (
+            precioProducto.productoId &&
+            precioProducto.productoId !== data.productoId
+          ) {
+            throw new BadRequestException(
+              'El plan de precio no corresponde al producto seleccionado',
+            );
+          }
         }
 
         // Calcular monto a financiar (precio total - cuota inicial)
         const cuotaInicial = data.cuotaInicial || 0;
-        const precioTotal = precioProducto.precio
-          ? Number(precioProducto.precio)
-          : 0;
+        const precioTotal = (data.esContado || !precioProducto)
+          ? data.monto 
+          : (precioProducto.precio ? Number(precioProducto.precio) : 0);
         montoFinanciar = Math.max(0, precioTotal - cuotaInicial);
 
         if (cuotaInicial > precioTotal) {
@@ -1845,7 +1852,8 @@ export class LoansService implements OnModuleInit {
         monto: number;
         montoCapital: number;
         montoInteres: number;
-        estado: typeof EstadoCuota.PENDIENTE;
+        estado: any;
+        montoPagado?: number;
       }>;
 
       if (tipoAmort === TipoAmortizacion.FRANCESA) {
@@ -1867,7 +1875,8 @@ export class LoansService implements OnModuleInit {
             monto: cuota.monto,
             montoCapital: cuota.montoCapital,
             montoInteres: cuota.montoInteres,
-            estado: EstadoCuota.PENDIENTE,
+            estado: data.esContado ? EstadoCuota.PAGADA : EstadoCuota.PENDIENTE,
+            montoPagado: data.esContado ? cuota.monto : 0,
           };
         });
       } else {
@@ -1891,7 +1900,8 @@ export class LoansService implements OnModuleInit {
             monto: Math.round(montoCuota * 100) / 100,
             montoCapital: Math.round(montoCapitalCuota * 100) / 100,
             montoInteres: Math.round(montoInteresCuota * 100) / 100,
-            estado: EstadoCuota.PENDIENTE,
+            estado: data.esContado ? EstadoCuota.PAGADA : EstadoCuota.PENDIENTE,
+            montoPagado: data.esContado ? Math.round(montoCuota * 100) / 100 : 0,
           };
         });
       }
@@ -1921,12 +1931,13 @@ export class LoansService implements OnModuleInit {
           fechaInicio,
           fechaPrimerCobro: fechaPrimerCobroParsed,
           fechaFin,
-          estado: esAutoAprobado ? EstadoPrestamo.ACTIVO : EstadoPrestamo.PENDIENTE_APROBACION,
-          estadoAprobacion: esAutoAprobado ? EstadoAprobacion.APROBADO : EstadoAprobacion.PENDIENTE,
-          aprobadoPorId: esAutoAprobado ? data.creadoPorId : undefined,
+          estado: data.esContado ? EstadoPrestamo.PAGADO : (esAutoAprobado ? EstadoPrestamo.ACTIVO : EstadoPrestamo.PENDIENTE_APROBACION),
+          estadoAprobacion: data.esContado ? EstadoAprobacion.APROBADO : (esAutoAprobado ? EstadoAprobacion.APROBADO : EstadoAprobacion.PENDIENTE),
+          aprobadoPorId: data.esContado || esAutoAprobado ? data.creadoPorId : undefined,
           creadoPorId: data.creadoPorId,
           interesTotal,
-          saldoPendiente: montoTotal,
+          saldoPendiente: data.esContado ? 0 : montoTotal,
+          totalPagado: data.esContado ? montoTotal : 0,
           notas: (data.notas || (data as any).observaciones || (data as any).comentarios || (data as any).detalle || undefined) 
             ? String(data.notas || (data as any).observaciones || (data as any).comentarios || (data as any).detalle) 
             : undefined,
@@ -1955,7 +1966,7 @@ export class LoansService implements OnModuleInit {
       const startDate = new Date(fechaInicio);
       startDate.setHours(0, 0, 0, 0);
 
-      if (startDate.getTime() === today.getTime()) {
+      if (!data.esContado && startDate.getTime() === today.getTime()) {
         const rutaPreferida = cliente.asignacionesRuta?.find((a: any) => a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn);
 
         const rutaCobrador = !rutaPreferida && creador.rol === RolUsuario.COBRADOR
@@ -2011,6 +2022,30 @@ export class LoansService implements OnModuleInit {
 
       this.logger.log(`Loan created successfully: ${prestamo.id}, requiereAprobacion: ${esAutoAprobado}`);
 
+      if (data.esContado && prestamo.cuotas && prestamo.cuotas.length > 0) {
+        await this.prisma.pago.create({
+          data: {
+            prestamoId: prestamo.id,
+            registradoPorId: data.creadoPorId,
+            montoPagado: montoTotal,
+            fechaPago: new Date(),
+            metodoPago: 'EFECTIVO',
+            referenciaTx: 'VENTA_CONTADO',
+            notas: 'Pago íntegro automático por venta de contado',
+            estadoSincronizacion: 'PENDIENTE',
+            detalles: {
+              create: prestamo.cuotas.map((c: any) => ({
+                cuotaId: c.id,
+                montoAsignado: Number(c.monto),
+                montoCapitalAsignado: Number(c.montoCapital),
+                montoInteresAsignado: Number(c.montoInteres),
+                moraAsignada: 0,
+              }))
+            }
+          }
+        });
+      }
+
       const articuloNombre = (data as any).productoNombre || (prestamo as any).producto?.nombre || 'Artículo';
       const totalCuotasPrometidas = cantidadCuotas;
       const isFinanciamientoArticulo = data.tipoPrestamo === 'ARTICULO';
@@ -2048,12 +2083,12 @@ export class LoansService implements OnModuleInit {
             fechaPrimerCobro: (data as any).fechaPrimerCobro ? String((data as any).fechaPrimerCobro) : undefined,
           },
           montoSolicitud: prestamo.monto,
-          estado: esAutoAprobado ? EstadoAprobacion.APROBADO : EstadoAprobacion.PENDIENTE,
-          aprobadoPorId: esAutoAprobado ? data.creadoPorId : undefined,
+          estado: data.esContado || esAutoAprobado ? EstadoAprobacion.APROBADO : EstadoAprobacion.PENDIENTE,
+          aprobadoPorId: data.esContado || esAutoAprobado ? data.creadoPorId : undefined,
         },
       });
 
-      if (!esAutoAprobado) {
+      if (!esAutoAprobado && !data.esContado) {
         try {
           await this.notificacionesService.notifyApprovers({
             titulo: 'Nuevo crédito requiere aprobación',
@@ -2089,8 +2124,8 @@ export class LoansService implements OnModuleInit {
         } catch {}
       }
 
-      if (esAutoAprobado) {
-        // Notificar a administradores sobre préstamo aprobado automáticamente
+      if (esAutoAprobado || data.esContado) {
+        // Notificar a administradores sobre préstamo aprobado automáticamente o venta de contado
         const admins = await this.prisma.usuario.findMany({
           where: {
             rol: { in: [RolUsuario.ADMIN, RolUsuario.SUPER_ADMINISTRADOR] },
