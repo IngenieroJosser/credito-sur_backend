@@ -2315,7 +2315,7 @@ export class LoansService implements OnModuleInit {
           data: {
             usuarioId: data.archivarPorId,
             titulo: 'Cuenta Archivada',
-            mensaje: `Préstamo ${prestamo.numeroPrestamo} archivado como pérdida (Cliente: ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}).`,
+            mensaje: `Préstamo ${prestamo.numeroPrestamo} archivado como pérdida.`,
             tipo: 'ALERTA',
             entidad: 'Prestamo',
             entidadId: prestamoId,
