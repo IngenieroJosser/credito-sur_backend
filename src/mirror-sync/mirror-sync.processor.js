@@ -1,4 +1,19 @@
 "use strict";
+var __extends = (this && this.__extends) || (function () {
+    var extendStatics = function (d, b) {
+        extendStatics = Object.setPrototypeOf ||
+            ({ __proto__: [] } instanceof Array && function (d, b) { d.__proto__ = b; }) ||
+            function (d, b) { for (var p in b) if (Object.prototype.hasOwnProperty.call(b, p)) d[p] = b[p]; };
+        return extendStatics(d, b);
+    };
+    return function (d, b) {
+        if (typeof b !== "function" && b !== null)
+            throw new TypeError("Class extends value " + String(b) + " is not a constructor or null");
+        extendStatics(d, b);
+        function __() { this.constructor = d; }
+        d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+    };
+})();
 var __esDecorate = (this && this.__esDecorate) || function (ctor, descriptorIn, decorators, contextIn, initializers, extraInitializers) {
     function accept(f) { if (f !== void 0 && typeof f !== "function") throw new TypeError("Function expected"); return f; }
     var kind = contextIn.kind, key = kind === "getter" ? "get" : kind === "setter" ? "set" : "value";
@@ -74,102 +89,87 @@ var __setFunctionName = (this && this.__setFunctionName) || function (f, name, p
     return Object.defineProperty(f, "name", { configurable: true, value: prefix ? "".concat(prefix, " ", name) : name });
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PrismaService = void 0;
+exports.MirrorSyncProcessor = void 0;
+var bullmq_1 = require("@nestjs/bullmq");
 var common_1 = require("@nestjs/common");
-var client_1 = require("@prisma/client");
-var adapter_pg_1 = require("@prisma/adapter-pg");
-var pg_1 = require("pg");
-var PrismaService = function () {
-    var _classDecorators = [(0, common_1.Injectable)()];
+var MirrorSyncProcessor = function () {
+    var _classDecorators = [(0, bullmq_1.Processor)('mirror-sync-queue')];
     var _classDescriptor;
     var _classExtraInitializers = [];
     var _classThis;
-    var PrismaService = _classThis = /** @class */ (function () {
-        function PrismaService_1(eventEmitter) {
-            this.eventEmitter = eventEmitter;
-            var pool = new pg_1.Pool({
-                connectionString: process.env.DATABASE_URL,
-            });
-            var adapter = new adapter_pg_1.PrismaPg(pool);
-            var basePrisma = new client_1.PrismaClient({ adapter: adapter });
-            // Envolver PrismaClient para interceptar TODAS las escrituras de DB y disparar eventos
-            var prisma = basePrisma.$extends({
-                query: {
-                    $allModels: {
-                        $allOperations: function (_a) {
-                            return __awaiter(this, arguments, void 0, function (_b) {
-                                var result, watchActions;
-                                var operation = _b.operation, model = _b.model, args = _b.args, query = _b.query;
-                                return __generator(this, function (_c) {
-                                    switch (_c.label) {
-                                        case 0: return [4 /*yield*/, query(args)];
-                                        case 1:
-                                            result = _c.sent();
-                                            watchActions = ['create', 'update', 'delete', 'upsert', 'createMany', 'updateMany', 'deleteMany'];
-                                            if (watchActions.includes(operation) && model) {
-                                                // Lanzar evento asíncrono para BullMQ
-                                                // CRÍTICO: Si el Node que está corriendo y guardando estto en BD es el propio VPS Espejo en la NUBE
-                                                // NO debe volver a emitir el evento a BullMQ, o creará un bucle infinito recursivo de sincronización.
-                                                if (process.env.IS_MIRROR_VPS !== 'true') {
-                                                    eventEmitter.emit('database.write.success', {
-                                                        model: model,
-                                                        action: operation,
-                                                        data: result,
-                                                    });
-                                                }
-                                            }
-                                            return [2 /*return*/, result];
-                                    }
-                                });
-                            });
-                        }
-                    }
-                }
-            });
-            // Devolvemos un Proxy para que NestJS pueda inyectar PrismaService 
-            // y redirija cualquier llamada (this.prisma.user.findMany) al cliente extendido.
-            return new Proxy(this, {
-                get: function (target, prop) {
-                    if (prop in target)
-                        return target[prop];
-                    return prisma[prop];
-                }
-            });
+    var _classSuper = bullmq_1.WorkerHost;
+    var MirrorSyncProcessor = _classThis = /** @class */ (function (_super) {
+        __extends(MirrorSyncProcessor_1, _super);
+        function MirrorSyncProcessor_1(configService) {
+            var _this = _super.call(this) || this;
+            _this.configService = configService;
+            _this.logger = new common_1.Logger(MirrorSyncProcessor.name);
+            return _this;
         }
-        PrismaService_1.prototype.onModuleInit = function () {
+        MirrorSyncProcessor_1.prototype.process = function (job) {
             return __awaiter(this, void 0, void 0, function () {
-                return __generator(this, function (_a) {
-                    switch (_a.label) {
-                        case 0: return [4 /*yield*/, this.$connect()];
+                var _a, model, action, data, mirrorUrl, mirrorToken, baseUrl, endpointRegex, response, errText, error_1;
+                return __generator(this, function (_b) {
+                    switch (_b.label) {
+                        case 0:
+                            _a = job.data, model = _a.model, action = _a.action, data = _a.data;
+                            mirrorUrl = this.configService.get('MIRROR_VPS_URL');
+                            mirrorToken = this.configService.get('MIRROR_SYNC_TOKEN');
+                            if (!mirrorUrl || !mirrorToken) {
+                                // Ignoramos grácilmente la sincronización si las variables de entorno no están configuradas (EJ. Puesta en marcha o modo desarrollo 100% aislado)
+                                this.logger.debug('Sincronización abortada silente: Las variables MIRROR_VPS_URL o MIRROR_SYNC_TOKEN no han sido configuradas en el .env');
+                                return [2 /*return*/];
+                            }
+                            this.logger.log("Procesando env\u00EDo de sincronizaci\u00F3n espejo: ".concat(model, " [").concat(action, "] (Intento actual: ").concat(job.attemptsMade, ")"));
+                            baseUrl = mirrorUrl;
+                            if (baseUrl.endsWith('/'))
+                                baseUrl = baseUrl.slice(0, -1);
+                            endpointRegex = "".concat(baseUrl, "/api/v1/mirror-sync/receiver/").concat(model, "/").concat(action);
+                            _b.label = 1;
                         case 1:
-                            _a.sent();
-                            return [2 /*return*/];
+                            _b.trys.push([1, 5, , 6]);
+                            return [4 /*yield*/, fetch(endpointRegex, {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                        'Authorization': "Bearer ".concat(mirrorToken),
+                                        'X-Mirror-Sync-Engine': 'BullMQ-Engine-v1', // Firma de seguridad
+                                        'X-Mirror-Sync-Timestamp': Date.now().toString(), // Prevención de ataque por repetición (Replay Attack)
+                                    },
+                                    // Enviamos el Row crudo como payload a insertar o actualizar en la tabla espejo
+                                    body: JSON.stringify({ payload: data }),
+                                })];
+                        case 2:
+                            response = _b.sent();
+                            if (!!response.ok) return [3 /*break*/, 4];
+                            return [4 /*yield*/, response.text()];
+                        case 3:
+                            errText = _b.sent();
+                            throw new Error("Mirror VPS rechaz\u00F3 el payload con status Code HTTP ".concat(response.status, " - Motivo: ").concat(errText));
+                        case 4:
+                            this.logger.log("Sincronizaci\u00F3n ultra-r\u00E1pida exitosa contra el espejo: Modelo ".concat(model));
+                            return [3 /*break*/, 6];
+                        case 5:
+                            error_1 = _b.sent();
+                            this.logger.warn("Desconexi\u00F3n o fallo al insertar en el VPS para modelo ".concat(model, ": ").concat(error_1.message, " - El sistema reintentar\u00E1 con Backoff Exponencial en background."));
+                            // Relanza la excepción: Causa que BullMQ capture la falla, marque el Job rojo, y programe el retry automático en horas según la ecuación de tiempo.
+                            throw new Error("Fallo transmisi\u00F3n Mirror Sync: ".concat(error_1.message));
+                        case 6: return [2 /*return*/];
                     }
                 });
             });
         };
-        PrismaService_1.prototype.onModuleDestroy = function () {
-            return __awaiter(this, void 0, void 0, function () {
-                return __generator(this, function (_a) {
-                    switch (_a.label) {
-                        case 0: return [4 /*yield*/, this.$disconnect()];
-                        case 1:
-                            _a.sent();
-                            return [2 /*return*/];
-                    }
-                });
-            });
-        };
-        return PrismaService_1;
-    }());
-    __setFunctionName(_classThis, "PrismaService");
+        return MirrorSyncProcessor_1;
+    }(_classSuper));
+    __setFunctionName(_classThis, "MirrorSyncProcessor");
     (function () {
-        var _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
+        var _a;
+        var _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create((_a = _classSuper[Symbol.metadata]) !== null && _a !== void 0 ? _a : null) : void 0;
         __esDecorate(null, _classDescriptor = { value: _classThis }, _classDecorators, { kind: "class", name: _classThis.name, metadata: _metadata }, null, _classExtraInitializers);
-        PrismaService = _classThis = _classDescriptor.value;
+        MirrorSyncProcessor = _classThis = _classDescriptor.value;
         if (_metadata) Object.defineProperty(_classThis, Symbol.metadata, { enumerable: true, configurable: true, writable: true, value: _metadata });
         __runInitializers(_classThis, _classExtraInitializers);
     })();
-    return PrismaService = _classThis;
+    return MirrorSyncProcessor = _classThis;
 }();
-exports.PrismaService = PrismaService;
+exports.MirrorSyncProcessor = MirrorSyncProcessor;

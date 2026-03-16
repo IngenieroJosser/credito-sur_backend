@@ -1,4 +1,11 @@
 "use strict";
+var __runInitializers = (this && this.__runInitializers) || function (thisArg, initializers, value) {
+    var useValue = arguments.length > 2;
+    for (var i = 0; i < initializers.length; i++) {
+        value = useValue ? initializers[i].call(thisArg, value) : initializers[i].call(thisArg);
+    }
+    return useValue ? value : void 0;
+};
 var __esDecorate = (this && this.__esDecorate) || function (ctor, descriptorIn, decorators, contextIn, initializers, extraInitializers) {
     function accept(f) { if (f !== void 0 && typeof f !== "function") throw new TypeError("Function expected"); return f; }
     var kind = contextIn.kind, key = kind === "getter" ? "get" : kind === "setter" ? "set" : "value";
@@ -25,13 +32,6 @@ var __esDecorate = (this && this.__esDecorate) || function (ctor, descriptorIn, 
     }
     if (target) Object.defineProperty(target, contextIn.name, descriptor);
     done = true;
-};
-var __runInitializers = (this && this.__runInitializers) || function (thisArg, initializers, value) {
-    var useValue = arguments.length > 2;
-    for (var i = 0; i < initializers.length; i++) {
-        value = useValue ? initializers[i].call(thisArg, value) : initializers[i].call(thisArg);
-    }
-    return useValue ? value : void 0;
 };
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
@@ -74,102 +74,68 @@ var __setFunctionName = (this && this.__setFunctionName) || function (f, name, p
     return Object.defineProperty(f, "name", { configurable: true, value: prefix ? "".concat(prefix, " ", name) : name });
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PrismaService = void 0;
+exports.MirrorSyncService = void 0;
 var common_1 = require("@nestjs/common");
-var client_1 = require("@prisma/client");
-var adapter_pg_1 = require("@prisma/adapter-pg");
-var pg_1 = require("pg");
-var PrismaService = function () {
+var event_emitter_1 = require("@nestjs/event-emitter");
+var MirrorSyncService = function () {
     var _classDecorators = [(0, common_1.Injectable)()];
     var _classDescriptor;
     var _classExtraInitializers = [];
     var _classThis;
-    var PrismaService = _classThis = /** @class */ (function () {
-        function PrismaService_1(eventEmitter) {
-            this.eventEmitter = eventEmitter;
-            var pool = new pg_1.Pool({
-                connectionString: process.env.DATABASE_URL,
-            });
-            var adapter = new adapter_pg_1.PrismaPg(pool);
-            var basePrisma = new client_1.PrismaClient({ adapter: adapter });
-            // Envolver PrismaClient para interceptar TODAS las escrituras de DB y disparar eventos
-            var prisma = basePrisma.$extends({
-                query: {
-                    $allModels: {
-                        $allOperations: function (_a) {
-                            return __awaiter(this, arguments, void 0, function (_b) {
-                                var result, watchActions;
-                                var operation = _b.operation, model = _b.model, args = _b.args, query = _b.query;
-                                return __generator(this, function (_c) {
-                                    switch (_c.label) {
-                                        case 0: return [4 /*yield*/, query(args)];
-                                        case 1:
-                                            result = _c.sent();
-                                            watchActions = ['create', 'update', 'delete', 'upsert', 'createMany', 'updateMany', 'deleteMany'];
-                                            if (watchActions.includes(operation) && model) {
-                                                // Lanzar evento asíncrono para BullMQ
-                                                // CRÍTICO: Si el Node que está corriendo y guardando estto en BD es el propio VPS Espejo en la NUBE
-                                                // NO debe volver a emitir el evento a BullMQ, o creará un bucle infinito recursivo de sincronización.
-                                                if (process.env.IS_MIRROR_VPS !== 'true') {
-                                                    eventEmitter.emit('database.write.success', {
-                                                        model: model,
-                                                        action: operation,
-                                                        data: result,
-                                                    });
-                                                }
-                                            }
-                                            return [2 /*return*/, result];
-                                    }
-                                });
-                            });
-                        }
-                    }
-                }
-            });
-            // Devolvemos un Proxy para que NestJS pueda inyectar PrismaService 
-            // y redirija cualquier llamada (this.prisma.user.findMany) al cliente extendido.
-            return new Proxy(this, {
-                get: function (target, prop) {
-                    if (prop in target)
-                        return target[prop];
-                    return prisma[prop];
-                }
-            });
+    var _instanceExtraInitializers = [];
+    var _handleDatabaseWriteEvent_decorators;
+    var MirrorSyncService = _classThis = /** @class */ (function () {
+        function MirrorSyncService_1(syncQueue) {
+            this.syncQueue = (__runInitializers(this, _instanceExtraInitializers), syncQueue);
+            this.logger = new common_1.Logger(MirrorSyncService.name);
         }
-        PrismaService_1.prototype.onModuleInit = function () {
+        MirrorSyncService_1.prototype.handleDatabaseWriteEvent = function (payload) {
             return __awaiter(this, void 0, void 0, function () {
+                var excludedModels, err_1;
                 return __generator(this, function (_a) {
                     switch (_a.label) {
-                        case 0: return [4 /*yield*/, this.$connect()];
+                        case 0:
+                            excludedModels = ['SyncConflict', 'AuditLog', 'Session', 'PushSubscription'];
+                            if (excludedModels.includes(payload.model))
+                                return [2 /*return*/];
+                            _a.label = 1;
                         case 1:
+                            _a.trys.push([1, 3, , 4]);
+                            this.logger.debug("Encolando sync para ".concat(payload.model, " [").concat(payload.action, "]"));
+                            return [4 /*yield*/, this.syncQueue.add('sync-record', payload, {
+                                    // Reintentos con backoff progresivo (Si el VPS se cae, acumula días intentando)
+                                    attempts: 1000,
+                                    backoff: {
+                                        type: 'exponential',
+                                        delay: 5000,
+                                    },
+                                    removeOnComplete: true,
+                                    removeOnFail: false,
+                                })];
+                        case 2:
                             _a.sent();
-                            return [2 /*return*/];
+                            return [3 /*break*/, 4];
+                        case 3:
+                            err_1 = _a.sent();
+                            this.logger.error('Error crudo al insertar trabajo de sincronización en la cola BullMQ', err_1);
+                            return [3 /*break*/, 4];
+                        case 4: return [2 /*return*/];
                     }
                 });
             });
         };
-        PrismaService_1.prototype.onModuleDestroy = function () {
-            return __awaiter(this, void 0, void 0, function () {
-                return __generator(this, function (_a) {
-                    switch (_a.label) {
-                        case 0: return [4 /*yield*/, this.$disconnect()];
-                        case 1:
-                            _a.sent();
-                            return [2 /*return*/];
-                    }
-                });
-            });
-        };
-        return PrismaService_1;
+        return MirrorSyncService_1;
     }());
-    __setFunctionName(_classThis, "PrismaService");
+    __setFunctionName(_classThis, "MirrorSyncService");
     (function () {
         var _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
+        _handleDatabaseWriteEvent_decorators = [(0, event_emitter_1.OnEvent)('database.write.success')];
+        __esDecorate(_classThis, null, _handleDatabaseWriteEvent_decorators, { kind: "method", name: "handleDatabaseWriteEvent", static: false, private: false, access: { has: function (obj) { return "handleDatabaseWriteEvent" in obj; }, get: function (obj) { return obj.handleDatabaseWriteEvent; } }, metadata: _metadata }, null, _instanceExtraInitializers);
         __esDecorate(null, _classDescriptor = { value: _classThis }, _classDecorators, { kind: "class", name: _classThis.name, metadata: _metadata }, null, _classExtraInitializers);
-        PrismaService = _classThis = _classDescriptor.value;
+        MirrorSyncService = _classThis = _classDescriptor.value;
         if (_metadata) Object.defineProperty(_classThis, Symbol.metadata, { enumerable: true, configurable: true, writable: true, value: _metadata });
         __runInitializers(_classThis, _classExtraInitializers);
     })();
-    return PrismaService = _classThis;
+    return MirrorSyncService = _classThis;
 }();
-exports.PrismaService = PrismaService;
+exports.MirrorSyncService = MirrorSyncService;

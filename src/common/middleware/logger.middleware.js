@@ -38,30 +38,41 @@ var __setFunctionName = (this && this.__setFunctionName) || function (f, name, p
     return Object.defineProperty(f, "name", { configurable: true, value: prefix ? "".concat(prefix, " ", name) : name });
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PrismaModule = void 0;
+exports.LoggerMiddleware = void 0;
 var common_1 = require("@nestjs/common");
-var prisma_service_1 = require("./prisma.service");
-var PrismaModule = function () {
-    var _classDecorators = [(0, common_1.Global)(), (0, common_1.Module)({
-            providers: [prisma_service_1.PrismaService],
-            exports: [prisma_service_1.PrismaService],
-        })];
+var LoggerMiddleware = function () {
+    var _classDecorators = [(0, common_1.Injectable)()];
     var _classDescriptor;
     var _classExtraInitializers = [];
     var _classThis;
-    var PrismaModule = _classThis = /** @class */ (function () {
-        function PrismaModule_1() {
+    var LoggerMiddleware = _classThis = /** @class */ (function () {
+        function LoggerMiddleware_1() {
+            this.logger = new common_1.Logger('HTTP');
         }
-        return PrismaModule_1;
+        LoggerMiddleware_1.prototype.use = function (request, response, next) {
+            var _this = this;
+            var method = request.method, originalUrl = request.originalUrl, query = request.query, body = request.body;
+            var startTime = Date.now();
+            // Log request
+            this.logger.log("".concat(method, " ").concat(originalUrl, " - Query: ").concat(JSON.stringify(query), " - Body: ").concat(JSON.stringify(body)));
+            response.on('finish', function () {
+                var statusCode = response.statusCode;
+                var contentLength = response.get('content-length');
+                var responseTime = Date.now() - startTime;
+                _this.logger.log("".concat(method, " ").concat(originalUrl, " ").concat(statusCode, " ").concat(contentLength, " - ").concat(responseTime, "ms"));
+            });
+            next();
+        };
+        return LoggerMiddleware_1;
     }());
-    __setFunctionName(_classThis, "PrismaModule");
+    __setFunctionName(_classThis, "LoggerMiddleware");
     (function () {
         var _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
         __esDecorate(null, _classDescriptor = { value: _classThis }, _classDecorators, { kind: "class", name: _classThis.name, metadata: _metadata }, null, _classExtraInitializers);
-        PrismaModule = _classThis = _classDescriptor.value;
+        LoggerMiddleware = _classThis = _classDescriptor.value;
         if (_metadata) Object.defineProperty(_classThis, Symbol.metadata, { enumerable: true, configurable: true, writable: true, value: _metadata });
         __runInitializers(_classThis, _classExtraInitializers);
     })();
-    return PrismaModule = _classThis;
+    return LoggerMiddleware = _classThis;
 }();
-exports.PrismaModule = PrismaModule;
+exports.LoggerMiddleware = LoggerMiddleware;

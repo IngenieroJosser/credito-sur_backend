@@ -38,30 +38,36 @@ var __setFunctionName = (this && this.__setFunctionName) || function (f, name, p
     return Object.defineProperty(f, "name", { configurable: true, value: prefix ? "".concat(prefix, " ", name) : name });
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PrismaModule = void 0;
+exports.NotificacionesModule = void 0;
 var common_1 = require("@nestjs/common");
-var prisma_service_1 = require("./prisma.service");
-var PrismaModule = function () {
+var notificaciones_service_1 = require("./notificaciones.service");
+var prisma_module_1 = require("../prisma/prisma.module");
+var notificaciones_controller_1 = require("./notificaciones.controller");
+var notificaciones_gateway_1 = require("./notificaciones.gateway");
+var push_module_1 = require("../push/push.module");
+var NotificacionesModule = function () {
     var _classDecorators = [(0, common_1.Global)(), (0, common_1.Module)({
-            providers: [prisma_service_1.PrismaService],
-            exports: [prisma_service_1.PrismaService],
+            imports: [prisma_module_1.PrismaModule, push_module_1.PushModule],
+            controllers: [notificaciones_controller_1.NotificacionesController],
+            providers: [notificaciones_service_1.NotificacionesService, notificaciones_gateway_1.NotificacionesGateway],
+            exports: [notificaciones_service_1.NotificacionesService, notificaciones_gateway_1.NotificacionesGateway],
         })];
     var _classDescriptor;
     var _classExtraInitializers = [];
     var _classThis;
-    var PrismaModule = _classThis = /** @class */ (function () {
-        function PrismaModule_1() {
+    var NotificacionesModule = _classThis = /** @class */ (function () {
+        function NotificacionesModule_1() {
         }
-        return PrismaModule_1;
+        return NotificacionesModule_1;
     }());
-    __setFunctionName(_classThis, "PrismaModule");
+    __setFunctionName(_classThis, "NotificacionesModule");
     (function () {
         var _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
         __esDecorate(null, _classDescriptor = { value: _classThis }, _classDecorators, { kind: "class", name: _classThis.name, metadata: _metadata }, null, _classExtraInitializers);
-        PrismaModule = _classThis = _classDescriptor.value;
+        NotificacionesModule = _classThis = _classDescriptor.value;
         if (_metadata) Object.defineProperty(_classThis, Symbol.metadata, { enumerable: true, configurable: true, writable: true, value: _metadata });
         __runInitializers(_classThis, _classExtraInitializers);
     })();
-    return PrismaModule = _classThis;
+    return NotificacionesModule = _classThis;
 }();
-exports.PrismaModule = PrismaModule;
+exports.NotificacionesModule = NotificacionesModule;

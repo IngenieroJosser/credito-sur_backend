@@ -1,4 +1,14 @@
 "use strict";
+/**
+ * ============================================================================
+ * CloudinaryService
+ * ============================================================================
+ * Servicio centralizado para subir archivos a Cloudinary.
+ * Evita duplicar la lógica entre upload.controller.ts y payments.service.ts.
+ *
+ * Uso:
+ *   const result = await this.cloudinaryService.subirArchivo(file, { folder, tipoContenido });
+ */
 var __esDecorate = (this && this.__esDecorate) || function (ctor, descriptorIn, decorators, contextIn, initializers, extraInitializers) {
     function accept(f) { if (f !== void 0 && typeof f !== "function") throw new TypeError("Function expected"); return f; }
     var kind = contextIn.kind, key = kind === "getter" ? "get" : kind === "setter" ? "set" : "value";
@@ -74,73 +84,77 @@ var __setFunctionName = (this && this.__setFunctionName) || function (f, name, p
     return Object.defineProperty(f, "name", { configurable: true, value: prefix ? "".concat(prefix, " ", name) : name });
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PrismaService = void 0;
+exports.CloudinaryService = void 0;
 var common_1 = require("@nestjs/common");
-var client_1 = require("@prisma/client");
-var adapter_pg_1 = require("@prisma/adapter-pg");
-var pg_1 = require("pg");
-var PrismaService = function () {
+var cloudinary_1 = require("cloudinary");
+var CloudinaryService = function () {
     var _classDecorators = [(0, common_1.Injectable)()];
     var _classDescriptor;
     var _classExtraInitializers = [];
     var _classThis;
-    var PrismaService = _classThis = /** @class */ (function () {
-        function PrismaService_1(eventEmitter) {
-            this.eventEmitter = eventEmitter;
-            var pool = new pg_1.Pool({
-                connectionString: process.env.DATABASE_URL,
-            });
-            var adapter = new adapter_pg_1.PrismaPg(pool);
-            var basePrisma = new client_1.PrismaClient({ adapter: adapter });
-            // Envolver PrismaClient para interceptar TODAS las escrituras de DB y disparar eventos
-            var prisma = basePrisma.$extends({
-                query: {
-                    $allModels: {
-                        $allOperations: function (_a) {
-                            return __awaiter(this, arguments, void 0, function (_b) {
-                                var result, watchActions;
-                                var operation = _b.operation, model = _b.model, args = _b.args, query = _b.query;
-                                return __generator(this, function (_c) {
-                                    switch (_c.label) {
-                                        case 0: return [4 /*yield*/, query(args)];
-                                        case 1:
-                                            result = _c.sent();
-                                            watchActions = ['create', 'update', 'delete', 'upsert', 'createMany', 'updateMany', 'deleteMany'];
-                                            if (watchActions.includes(operation) && model) {
-                                                // Lanzar evento asíncrono para BullMQ
-                                                // CRÍTICO: Si el Node que está corriendo y guardando estto en BD es el propio VPS Espejo en la NUBE
-                                                // NO debe volver a emitir el evento a BullMQ, o creará un bucle infinito recursivo de sincronización.
-                                                if (process.env.IS_MIRROR_VPS !== 'true') {
-                                                    eventEmitter.emit('database.write.success', {
-                                                        model: model,
-                                                        action: operation,
-                                                        data: result,
-                                                    });
-                                                }
-                                            }
-                                            return [2 /*return*/, result];
-                                    }
-                                });
-                            });
-                        }
-                    }
-                }
-            });
-            // Devolvemos un Proxy para que NestJS pueda inyectar PrismaService 
-            // y redirija cualquier llamada (this.prisma.user.findMany) al cliente extendido.
-            return new Proxy(this, {
-                get: function (target, prop) {
-                    if (prop in target)
-                        return target[prop];
-                    return prisma[prop];
-                }
-            });
+    var CloudinaryService = _classThis = /** @class */ (function () {
+        function CloudinaryService_1() {
+            this.configurado = false;
         }
-        PrismaService_1.prototype.onModuleInit = function () {
+        CloudinaryService_1.prototype.configurar = function () {
+            if (this.configurado)
+                return;
+            var cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+            var apiKey = process.env.CLOUDINARY_API_KEY;
+            var apiSecret = process.env.CLOUDINARY_API_SECRET;
+            if (!cloudName || !apiKey || !apiSecret) {
+                throw new common_1.BadRequestException('Cloudinary no está configurado. Verifique las variables de entorno: ' +
+                    'CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET');
+            }
+            cloudinary_1.v2.config({ cloud_name: cloudName, api_key: apiKey, api_secret: apiSecret });
+            this.configurado = true;
+        };
+        /**
+         * Sube un archivo a Cloudinary y retorna la URL pública y el publicId.
+         */
+        CloudinaryService_1.prototype.subirArchivo = function (file_1) {
+            return __awaiter(this, arguments, void 0, function (file, options) {
+                var isHostedProd, rootFolder, subFolder, folder, resourceType, uploadResult;
+                if (options === void 0) { options = {}; }
+                return __generator(this, function (_a) {
+                    switch (_a.label) {
+                        case 0:
+                            this.configurar();
+                            isHostedProd = process.env.NODE_ENV === 'production' || Boolean(process.env.RENDER);
+                            rootFolder = process.env.CLOUDINARY_ROOT_FOLDER || (isHostedProd ? 'creditos-del-sur' : 'creditos-del-sur-local');
+                            subFolder = options.folder || 'general';
+                            folder = "".concat(rootFolder, "/").concat(subFolder);
+                            resourceType = file.mimetype.startsWith('video/') ? 'video' : 'auto';
+                            return [4 /*yield*/, new Promise(function (resolve, reject) {
+                                    var stream = cloudinary_1.v2.uploader.upload_stream({ folder: folder, resource_type: resourceType }, function (error, result) {
+                                        if (error)
+                                            return reject(new common_1.BadRequestException("Error al subir archivo a Cloudinary: ".concat(error.message)));
+                                        resolve(result);
+                                    });
+                                    stream.end(file.buffer);
+                                })];
+                        case 1:
+                            uploadResult = _a.sent();
+                            return [2 /*return*/, {
+                                    publicId: uploadResult.public_id,
+                                    url: uploadResult.secure_url,
+                                    formato: uploadResult.format || file.mimetype.split('/')[1] || 'bin',
+                                    tamanoBytes: uploadResult.bytes || file.size,
+                                }];
+                    }
+                });
+            });
+        };
+        /**
+         * Elimina un archivo de Cloudinary por su publicId.
+         */
+        CloudinaryService_1.prototype.eliminarArchivo = function (publicId) {
             return __awaiter(this, void 0, void 0, function () {
                 return __generator(this, function (_a) {
                     switch (_a.label) {
-                        case 0: return [4 /*yield*/, this.$connect()];
+                        case 0:
+                            this.configurar();
+                            return [4 /*yield*/, cloudinary_1.v2.uploader.destroy(publicId)];
                         case 1:
                             _a.sent();
                             return [2 /*return*/];
@@ -148,28 +162,16 @@ var PrismaService = function () {
                 });
             });
         };
-        PrismaService_1.prototype.onModuleDestroy = function () {
-            return __awaiter(this, void 0, void 0, function () {
-                return __generator(this, function (_a) {
-                    switch (_a.label) {
-                        case 0: return [4 /*yield*/, this.$disconnect()];
-                        case 1:
-                            _a.sent();
-                            return [2 /*return*/];
-                    }
-                });
-            });
-        };
-        return PrismaService_1;
+        return CloudinaryService_1;
     }());
-    __setFunctionName(_classThis, "PrismaService");
+    __setFunctionName(_classThis, "CloudinaryService");
     (function () {
         var _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
         __esDecorate(null, _classDescriptor = { value: _classThis }, _classDecorators, { kind: "class", name: _classThis.name, metadata: _metadata }, null, _classExtraInitializers);
-        PrismaService = _classThis = _classDescriptor.value;
+        CloudinaryService = _classThis = _classDescriptor.value;
         if (_metadata) Object.defineProperty(_classThis, Symbol.metadata, { enumerable: true, configurable: true, writable: true, value: _metadata });
         __runInitializers(_classThis, _classExtraInitializers);
     })();
-    return PrismaService = _classThis;
+    return CloudinaryService = _classThis;
 }();
-exports.PrismaService = PrismaService;
+exports.CloudinaryService = CloudinaryService;

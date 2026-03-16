@@ -38,30 +38,42 @@ var __setFunctionName = (this && this.__setFunctionName) || function (f, name, p
     return Object.defineProperty(f, "name", { configurable: true, value: prefix ? "".concat(prefix, " ", name) : name });
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PrismaModule = void 0;
+exports.BackupService = void 0;
 var common_1 = require("@nestjs/common");
-var prisma_service_1 = require("./prisma.service");
-var PrismaModule = function () {
-    var _classDecorators = [(0, common_1.Global)(), (0, common_1.Module)({
-            providers: [prisma_service_1.PrismaService],
-            exports: [prisma_service_1.PrismaService],
-        })];
+var BackupService = function () {
+    var _classDecorators = [(0, common_1.Injectable)()];
     var _classDescriptor;
     var _classExtraInitializers = [];
     var _classThis;
-    var PrismaModule = _classThis = /** @class */ (function () {
-        function PrismaModule_1() {
+    var BackupService = _classThis = /** @class */ (function () {
+        function BackupService_1(prisma) {
+            this.prisma = prisma;
         }
-        return PrismaModule_1;
+        BackupService_1.prototype.create = function (_createBackupDto) {
+            return 'This action adds a new backup';
+        };
+        BackupService_1.prototype.findAll = function () {
+            return "This action returns all backup";
+        };
+        BackupService_1.prototype.findOne = function (id) {
+            return "This action returns a #".concat(id, " backup");
+        };
+        BackupService_1.prototype.update = function (id, _updateBackupDto) {
+            return "This action updates a #".concat(id, " backup");
+        };
+        BackupService_1.prototype.remove = function (id) {
+            return "This action removes a #".concat(id, " backup");
+        };
+        return BackupService_1;
     }());
-    __setFunctionName(_classThis, "PrismaModule");
+    __setFunctionName(_classThis, "BackupService");
     (function () {
         var _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
         __esDecorate(null, _classDescriptor = { value: _classThis }, _classDecorators, { kind: "class", name: _classThis.name, metadata: _metadata }, null, _classExtraInitializers);
-        PrismaModule = _classThis = _classDescriptor.value;
+        BackupService = _classThis = _classDescriptor.value;
         if (_metadata) Object.defineProperty(_classThis, Symbol.metadata, { enumerable: true, configurable: true, writable: true, value: _metadata });
         __runInitializers(_classThis, _classExtraInitializers);
     })();
-    return PrismaModule = _classThis;
+    return BackupService = _classThis;
 }();
-exports.PrismaModule = PrismaModule;
+exports.BackupService = BackupService;
