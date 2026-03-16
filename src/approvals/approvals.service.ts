@@ -8,6 +8,7 @@ import {
   TipoTransaccion,
   FrecuenciaPago,
   TipoAmortizacion,
+  NivelRiesgo,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
@@ -83,6 +84,9 @@ export class ApprovalsService {
         break;
       case TipoAprobacion.PRORROGA_PAGO:
         await this.approvePaymentExtension(approval, aprobadoPorId);
+        break;
+      case TipoAprobacion.BAJA_POR_PERDIDA:
+        await this.approveLoanLoss(approval, aprobadoPorId, editedData);
         break;
       default:
         throw new BadRequestException('Tipo de aprobación no soportado');
@@ -920,11 +924,10 @@ export class ApprovalsService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      // 1. Crear el registro de extension de pago (sin cuotaId para evitar conflicto unique)
+      // 1. Crear el registro de extension de pago
       const extension = await tx.extensionPago.create({
         data: {
           prestamoId: data.prestamoId,
-          // cuotaId omitido aquí - se vincula abajo individualmente para evitar violación unique
           fechaVencimientoOriginal: fechaOriginal,
           nuevaFechaVencimiento: nuevaFecha,
           razon: data.comentarios || data.razon || 'Prorroga aprobada',
@@ -933,7 +936,6 @@ export class ApprovalsService {
       });
 
       // 2. Marcar TODAS las cuotas vencidas como PRORROGADA y actualizar su fecha
-      //    (updateMany no asigna extensionId para evitar conflicto @unique)
       await tx.cuota.updateMany({
         where: {
           prestamoId: data.prestamoId,
@@ -945,69 +947,144 @@ export class ApprovalsService {
         },
       });
 
-      // 3. Si hay una cuota específica y aún no tiene extensionId, vincularla
+      // 3. Si hay una cuota específica, vincularla
       if (data.cuotaId) {
-        const cuotaActual = await tx.cuota.findUnique({
+        await tx.cuota.update({
           where: { id: data.cuotaId },
-          select: { extensionId: true },
+          data: { extensionId: extension.id },
         });
-        if (!cuotaActual?.extensionId) {
-          await tx.cuota.update({
-            where: { id: data.cuotaId },
-            data: { extensionId: extension.id },
-          });
-          // Actualizar el extensionPago también con el cuotaId
-          await tx.extensionPago.update({
-            where: { id: extension.id },
-            data: { cuotaId: data.cuotaId },
-          });
-        }
       }
 
-      // 4. Cambiar estado del préstamo a ACTIVO para que salga de cuentas en mora
-      //    El job nocturno (LoansScheduler) lo volverá a marcar EN_MORA si la prórroga vence sin pago
+      // 4. Cambiar estado del préstamo a ACTIVO y actualizar fecha fin
       await tx.prestamo.update({
         where: { id: data.prestamoId },
         data: {
           fechaFin: nuevaFecha,
-          estado: 'ACTIVO',
+          estado: EstadoPrestamo.ACTIVO,
         },
       });
     });
 
-    if (data?.tipo === 'GESTION_VENCIDA' && data?.prestamoId) {
-      const nombreCliente = data?.clienteNombre || data?.cliente || 'Cliente';
-      const numeroPrestamo = data?.numeroPrestamo || '';
-      const dias = Number(data?.diasGracia || 0);
-      const montoInteres = Number(data?.montoInteres || 0);
-      const conMora = montoInteres > 0;
-      const decision = (data?.decision as string) || 'PRORROGAR';
-
-      const accionLabel = decision === 'DEJAR_QUIETO' ? 'dejar quieto' : 'prórroga';
-      const detalleMora = decision === 'DEJAR_QUIETO'
-        ? ''
-        : (conMora ? ` con mora ($${montoInteres.toLocaleString('es-CO')})` : ' sin mora');
+    try {
+      await this.notificacionesService.create({
+        usuarioId: approval.solicitadoPorId,
+        titulo: 'Prórroga Aprobada',
+        mensaje: `Tu solicitud de prórroga para el préstamo ${data.numeroPrestamo || ''} ha sido aprobada.`,
+        tipo: 'EXITO',
+        entidad: 'Prestamo',
+        entidadId: data.prestamoId,
+      });
 
       await this.notifyCobradorGestionVencida({
         prestamoId: data.prestamoId,
-        titulo: `Cuenta vencida gestionada — ${nombreCliente}${numeroPrestamo ? ` (${numeroPrestamo})` : ''}`,
-        mensaje: `Se aprobó ${accionLabel} por ${dias} días${detalleMora} para este cliente.`,
-        tipo: 'INFORMATIVO',
+        titulo: `Prórroga aprobada — ${data.clienteNombre || 'Cliente'}`,
+        mensaje: `La solicitud de prórroga para el préstamo ${data.numeroPrestamo || ''} fue aprobada. Nueva fecha: ${nuevaFecha.toLocaleDateString()}`,
+        tipo: 'EXITO',
         metadata: {
           tipo: 'GESTION_VENCIDA',
-          decision,
-          diasGracia: dias,
-          montoInteres,
-          conMora,
-          aprobadoPorId: aprobadoPorId || approval.solicitadoPorId,
+          decision: 'PRORROGAR',
+          aprobado: true,
           aprobacionId: approval.id,
         },
       });
+    } catch (e) {
+      this.logger.error('Error notifying extension approval:', e);
     }
 
     this.notificacionesGateway.broadcastPrestamosActualizados({
-      accion: 'PRORROGA',
-      prestamoId: approval.referenciaId,
+      accion: 'APROBAR_PRORROGA',
+      prestamoId: data.prestamoId,
+    });
+  }
+
+  private async approveLoanLoss(approval: any, aprobadoPorId?: string, editedData?: any) {
+    const data =
+      typeof approval.datosSolicitud === 'string'
+        ? JSON.parse(approval.datosSolicitud)
+        : approval.datosSolicitud;
+
+    const prestamoId = approval.referenciaId;
+
+    const prestamo = await this.prisma.prestamo.findUnique({
+      where: { id: prestamoId },
+      include: { cliente: true },
+    });
+
+    if (!prestamo) {
+      throw new NotFoundException('Préstamo no encontrado');
+    }
+
+    // Realizar operaciones en transacción
+    await this.prisma.$transaction(async (tx) => {
+      // 1. Marcar préstamo como PERDIDA
+      await tx.prestamo.update({
+        where: { id: prestamoId },
+        data: {
+          estado: EstadoPrestamo.PERDIDA,
+          eliminadoEn: new Date(),
+        },
+      });
+
+      // 2. Agregar cliente a blacklist
+      await tx.cliente.update({
+        where: { id: prestamo.clienteId },
+        data: {
+          enListaNegra: true,
+          razonListaNegra: data.comentarios || 'Archivado como pérdida por aprobación',
+          fechaListaNegra: new Date(),
+          agregadoListaNegraPorId: aprobadoPorId || approval.solicitadoPorId,
+          nivelRiesgo: NivelRiesgo.LISTA_NEGRA,
+        },
+      });
+
+      // 3. Marcar otras aprobaciones pendientes de este préstamo como RECHAZADAS
+      await tx.aprobacion.updateMany({
+        where: {
+          referenciaId: prestamoId,
+          estado: EstadoAprobacion.PENDIENTE,
+          id: { not: approval.id },
+        },
+        data: {
+          estado: EstadoAprobacion.RECHAZADO,
+          comentarios: 'Archivado automáticamente por aprobación de baja por pérdida',
+          revisadoEn: new Date(),
+        },
+      });
+    });
+
+    try {
+      await this.notificacionesService.create({
+        usuarioId: approval.solicitadoPorId,
+        titulo: 'Baja por Pérdida Aprobada',
+        mensaje: `La solicitud de baja por pérdida para el préstamo ${prestamo.numeroPrestamo} ha sido aprobada.`,
+        tipo: 'EXITO',
+        entidad: 'Prestamo',
+        entidadId: prestamoId,
+      });
+
+      await this.notifyCobradorGestionVencida({
+        prestamoId,
+        titulo: `Baja por pérdida aprobada — ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
+        mensaje: `La solicitud de baja por pérdida para el préstamo ${prestamo.numeroPrestamo} fue aprobada. El cliente ha sido enviado a lista negra.`,
+        tipo: 'ALERTA',
+        metadata: {
+          tipo: 'GESTION_VENCIDA',
+          decision: 'CASTIGAR',
+          aprobado: true,
+          aprobacionId: approval.id,
+        },
+      });
+    } catch (e) {
+      this.logger.error('Error notifying loan loss approval:', e);
+    }
+
+    this.notificacionesGateway.broadcastPrestamosActualizados({
+      accion: 'ARCHIVAR',
+      prestamoId,
+    });
+    this.notificacionesGateway.broadcastClientesActualizados({
+      accion: 'ACTUALIZAR',
+      clienteId: prestamo.clienteId,
     });
   }
 }

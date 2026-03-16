@@ -632,6 +632,9 @@ export class ClientsService {
             include: {
               prestamo: true,
               cobrador: true,
+              archivos: {
+                where: { estado: 'ACTIVO' },
+              },
               detalles: {
                 include: {
                   cuota: true,
