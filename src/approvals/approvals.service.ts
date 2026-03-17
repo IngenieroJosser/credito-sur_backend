@@ -8,7 +8,6 @@ import {
   TipoTransaccion,
   FrecuenciaPago,
   TipoAmortizacion,
-  NivelRiesgo,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
@@ -998,11 +997,6 @@ export class ApprovalsService {
   }
 
   private async approveLoanLoss(approval: any, aprobadoPorId?: string, editedData?: any) {
-    const data =
-      typeof approval.datosSolicitud === 'string'
-        ? JSON.parse(approval.datosSolicitud)
-        : approval.datosSolicitud;
-
     const prestamoId = approval.referenciaId;
 
     const prestamo = await this.prisma.prestamo.findUnique({
@@ -1025,19 +1019,7 @@ export class ApprovalsService {
         },
       });
 
-      // 2. Agregar cliente a blacklist
-      await tx.cliente.update({
-        where: { id: prestamo.clienteId },
-        data: {
-          enListaNegra: true,
-          razonListaNegra: data.comentarios || 'Archivado como pérdida por aprobación',
-          fechaListaNegra: new Date(),
-          agregadoListaNegraPorId: aprobadoPorId || approval.solicitadoPorId,
-          nivelRiesgo: NivelRiesgo.LISTA_NEGRA,
-        },
-      });
-
-      // 3. Marcar otras aprobaciones pendientes de este préstamo como RECHAZADAS
+      // 2. Marcar otras aprobaciones pendientes de este préstamo como RECHAZADAS
       await tx.aprobacion.updateMany({
         where: {
           referenciaId: prestamoId,
@@ -1065,7 +1047,7 @@ export class ApprovalsService {
       await this.notifyCobradorGestionVencida({
         prestamoId,
         titulo: `Baja por pérdida aprobada — ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
-        mensaje: `La solicitud de baja por pérdida para el préstamo ${prestamo.numeroPrestamo} fue aprobada. El cliente ha sido enviado a lista negra.`,
+        mensaje: `La solicitud de baja por pérdida para el préstamo ${prestamo.numeroPrestamo} fue aprobada.`,
         tipo: 'ALERTA',
         metadata: {
           tipo: 'GESTION_VENCIDA',

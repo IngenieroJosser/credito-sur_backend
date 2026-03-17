@@ -236,6 +236,38 @@ export class ReportsController {
     return this.reportsService.getOperationalReport(query);
   }
 
+  @Get('operational/export')
+  @Roles(
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
+  @ApiOperation({
+    summary: 'Exportar reporte operativo',
+    description: 'Exporta el reporte operativo en formato Excel o PDF',
+  })
+  @HttpCode(HttpStatus.OK)
+  async exportOperationalReport(
+    @Query() filters: GetOperationalReportDto,
+    @Query('format') format: 'excel' | 'pdf',
+    @Res() res: Response,
+  ) {
+    const result = await this.reportsService.exportOperationalReport(
+      filters,
+      format,
+    );
+
+    // Configurar headers para la descarga
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${result.filename}"`,
+    );
+
+    // Enviar el buffer como respuesta
+    res.send(result.data);
+  }
+
   @Get('operational/route-detail/:routeId')
   @Roles(
     RolUsuario.COORDINADOR,
@@ -286,38 +318,6 @@ export class ReportsController {
     const result = await this.reportsService.exportFinancialReport(start, end, format);
     res.setHeader('Content-Type', result.contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
-    res.send(result.data);
-  }
-
-  @Get('operational/export')
-  @Roles(
-    RolUsuario.COORDINADOR,
-    RolUsuario.ADMIN,
-    RolUsuario.SUPER_ADMINISTRADOR,
-  )
-  @ApiOperation({
-    summary: 'Exportar reporte operativo',
-    description: 'Exporta el reporte operativo en formato Excel o PDF',
-  })
-  @HttpCode(HttpStatus.OK)
-  async exportOperationalReport(
-    @Query() filters: GetOperationalReportDto,
-    @Query('format') format: 'excel' | 'pdf',
-    @Res() res: Response,
-  ) {
-    const result = await this.reportsService.exportOperationalReport(
-      filters,
-      format,
-    );
-
-    // Configurar headers para la descarga
-    res.setHeader('Content-Type', result.contentType);
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${result.filename}"`,
-    );
-
-    // Enviar el buffer como respuesta
     res.send(result.data);
   }
 }

@@ -72,6 +72,40 @@ export class ClientsController {
     });
   }
 
+  /**
+   * GET /clients/export?format=excel|pdf
+   * Exporta el listado completo de clientes con filtros opcionales.
+   * IMPORTANTE: Esta ruta debe estar ANTES de @Get(':id') para evitar conflictos.
+   */
+  @Get('export')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.CONTADOR,
+  )
+  @ApiOperation({ summary: 'Exportar listado de clientes en Excel o PDF' })
+  @ApiQuery({ name: 'format', enum: ['excel', 'pdf'], required: true })
+  @ApiQuery({ name: 'nivelRiesgo', required: false })
+  @ApiQuery({ name: 'ruta', required: false })
+  @ApiQuery({ name: 'search', required: false })
+  @HttpCode(HttpStatus.OK)
+  async exportarClientes(
+    @Res() res: Response,
+    @Query('format') format: 'excel' | 'pdf',
+    @Query('nivelRiesgo') nivelRiesgo?: string,
+    @Query('ruta') ruta?: string,
+    @Query('search') search?: string,
+  ) {
+    const result = await this.clientsService.exportarClientes(
+      format === 'pdf' ? 'pdf' : 'excel',
+      { nivelRiesgo, ruta, search },
+    );
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.send(result.data);
+  }
+
   @Get(':id')
   @Roles(
     RolUsuario.SUPER_ADMINISTRADOR,
@@ -188,38 +222,5 @@ export class ClientsController {
       body.cobradorId,
       body.diaSemana,
     );
-  }
-
-  /**
-   * GET /clients/export?format=excel|pdf
-   * Exporta el listado completo de clientes con filtros opcionales.
-   */
-  @Get('export')
-  @Roles(
-    RolUsuario.SUPER_ADMINISTRADOR,
-    RolUsuario.ADMIN,
-    RolUsuario.COORDINADOR,
-    RolUsuario.CONTADOR,
-  )
-  @ApiOperation({ summary: 'Exportar listado de clientes en Excel o PDF' })
-  @ApiQuery({ name: 'format', enum: ['excel', 'pdf'], required: true })
-  @ApiQuery({ name: 'nivelRiesgo', required: false })
-  @ApiQuery({ name: 'ruta', required: false })
-  @ApiQuery({ name: 'search', required: false })
-  @HttpCode(HttpStatus.OK)
-  async exportarClientes(
-    @Res() res: Response,
-    @Query('format') format: 'excel' | 'pdf',
-    @Query('nivelRiesgo') nivelRiesgo?: string,
-    @Query('ruta') ruta?: string,
-    @Query('search') search?: string,
-  ) {
-    const result = await this.clientsService.exportarClientes(
-      format === 'pdf' ? 'pdf' : 'excel',
-      { nivelRiesgo, ruta, search },
-    );
-    res.setHeader('Content-Type', result.contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
-    res.send(result.data);
   }
 }
