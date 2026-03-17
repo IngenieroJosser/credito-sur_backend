@@ -264,7 +264,7 @@ export class LoansService implements OnModuleInit {
     numeroCuota: number,
     frecuencia: FrecuenciaPago,
   ): Date {
-    const fecha = new Date(fechaBase.getTime());
+    const fecha = new Date(fechaBase);
     // Aseguramos que trabajamos con el inicio del día en UTC para evitar saltos por zona horaria
     fecha.setUTCHours(0, 0, 0, 0);
     
@@ -285,6 +285,90 @@ export class LoansService implements OnModuleInit {
         break;
     }
     return fecha;
+  }
+
+  private parseDateUTC(dateStr: string): Date {
+    const [year, month, day] = dateStr.split('-').map(Number);
+    return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+  }
+
+  private calculateLoanEndDate(fechaInicio: Date, plazoMeses: number): Date {
+    const fechaFin = new Date(fechaInicio);
+    fechaFin.setUTCHours(0, 0, 0, 0);
+    const mesesEfectivos = Math.max(1, plazoMeses);
+    fechaFin.setUTCMonth(fechaFin.getUTCMonth() + Math.floor(mesesEfectivos));
+    const decimales = mesesEfectivos - Math.floor(mesesEfectivos);
+    if (decimales > 0) {
+      fechaFin.setUTCDate(fechaFin.getUTCDate() + Math.round(decimales * 30));
+    }
+    return fechaFin;
+  }
+
+  private calculateInterestAndCuotas(
+    tipoAmortizacion: TipoAmortizacion,
+    monto: number,
+    tasaInteres: number,
+    cantidadCuotas: number,
+    plazoMeses: number,
+    frecuenciaPago: FrecuenciaPago,
+    fechaInicio: Date,
+    fechaPrimerCobro?: Date,
+    esContado: boolean = false,
+  ) {
+    let interesTotal = 0;
+    let cuotas = [];
+
+    const fechaBase = fechaPrimerCobro || fechaInicio;
+
+    if (tipoAmortizacion === TipoAmortizacion.FRANCESA) {
+      const amortizacion = this.calcularAmortizacionFrancesa(
+        monto,
+        tasaInteres,
+        cantidadCuotas,
+        plazoMeses,
+        frecuenciaPago,
+      );
+      interesTotal = amortizacion.interesTotal;
+      cuotas = amortizacion.tabla.map((cuota) => ({
+        numeroCuota: cuota.numeroCuota,
+        fechaVencimiento: this.calcularFechaVencimiento(
+          fechaBase,
+          cuota.numeroCuota,
+          frecuenciaPago,
+        ),
+        monto: cuota.monto,
+        montoCapital: cuota.montoCapital,
+        montoInteres: cuota.montoInteres,
+        estado: esContado ? EstadoCuota.PAGADA : EstadoCuota.PENDIENTE,
+        montoPagado: esContado ? cuota.monto : 0,
+      }));
+    } else {
+      const mesesInteres = Math.max(1, plazoMeses);
+      interesTotal = (monto * tasaInteres * mesesInteres) / 100;
+      const montoTotalSimple = monto + interesTotal;
+      const montoCuota =
+        cantidadCuotas > 0 ? montoTotalSimple / cantidadCuotas : 0;
+      const montoCapitalCuota =
+        cantidadCuotas > 0 ? monto / cantidadCuotas : 0;
+      const montoInteresCuota =
+        cantidadCuotas > 0 ? interesTotal / cantidadCuotas : 0;
+
+      cuotas = Array.from({ length: cantidadCuotas }, (_, i) => ({
+        numeroCuota: i + 1,
+        fechaVencimiento: this.calcularFechaVencimiento(
+          fechaBase,
+          i + 1,
+          frecuenciaPago,
+        ),
+        monto: Math.round(montoCuota * 100) / 100,
+        montoCapital: Math.round(montoCapitalCuota * 100) / 100,
+        montoInteres: Math.round(montoInteresCuota * 100) / 100,
+        estado: esContado ? EstadoCuota.PAGADA : EstadoCuota.PENDIENTE,
+        montoPagado: esContado ? Math.round(montoCuota * 100) / 100 : 0,
+      }));
+    }
+
+    return { interesTotal, cuotas };
   }
 
   async getAllLoans(filters: {
@@ -919,10 +1003,10 @@ export class LoansService implements OnModuleInit {
       if (updateData.tipoAmortizacion !== undefined) data.tipoAmortizacion = updateData.tipoAmortizacion;
       if (updateData.fechaInicio !== undefined) data.fechaInicio = new Date(updateData.fechaInicio);
       
-      const newMonto = data.monto !== undefined ? Number(data.monto) : Number(prestamo.monto);
-      const newTasa = data.tasaInteres !== undefined ? Number(data.tasaInteres) : Number(prestamo.tasaInteres);
-      const newPlazo = data.plazoMeses !== undefined ? Number(data.plazoMeses) : Number(prestamo.plazoMeses);
-      const newFechaInicio = data.fechaInicio !== undefined ? (data.fechaInicio as Date) : prestamo.fechaInicio;
+      const newMonto = data.monto === undefined ? Number(prestamo.monto) : Number(data.monto);
+      const newTasa = data.tasaInteres === undefined ? Number(prestamo.tasaInteres) : Number(data.tasaInteres);
+      const newPlazo = data.plazoMeses === undefined ? Number(prestamo.plazoMeses) : Number(data.plazoMeses);
+      const newFechaInicio = data.fechaInicio === undefined ? prestamo.fechaInicio : (data.fechaInicio as Date);
       const newInteresTotal = (newMonto * newTasa * newPlazo) / 100;
 
       const shouldRecalculateFinancing =
@@ -935,17 +1019,8 @@ export class LoansService implements OnModuleInit {
         data.interesTotal = newInteresTotal;
         data.saldoPendiente = (newMonto + newInteresTotal) - Number(prestamo.totalPagado || 0);
 
-        // Recalcular fechaFin con plazo mínimo de 1 mes
-        const fechaFin = new Date(newFechaInicio);
-        fechaFin.setUTCHours(0, 0, 0, 0);
-        
-        const mesesEfectivosUpdate = Math.max(1, newPlazo);
-        fechaFin.setUTCMonth(fechaFin.getUTCMonth() + Math.floor(mesesEfectivosUpdate));
-        const decimalesUpdate = mesesEfectivosUpdate - Math.floor(mesesEfectivosUpdate);
-        if (decimalesUpdate > 0) {
-          fechaFin.setUTCDate(fechaFin.getUTCDate() + Math.round(decimalesUpdate * 30));
-        }
-        data.fechaFin = fechaFin;
+        // Recalcular fechaFin con plazo mínimo de 1 mes usando helper
+        data.fechaFin = this.calculateLoanEndDate(newFechaInicio, newPlazo);
       }
 
       // Regenerate cuotas if cantidadCuotas, monto, tasaInteres, frecuenciaPago or tipoAmortizacion changed
@@ -973,57 +1048,23 @@ export class LoansService implements OnModuleInit {
           where: { prestamoId: id }
         });
 
-        // Generate new cuotas
-        let cuotasData: Array<{
-          prestamoId: string;
-          numeroCuota: number;
-          fechaVencimiento: Date;
-          monto: number;
-          montoCapital: number;
-          montoInteres: number;
-          estado: typeof EstadoCuota.PENDIENTE;
-        }>;
+        // Generate new cuotas using helper
+        const { cuotas: planCuotas } = this.calculateInterestAndCuotas(
+          tipoAmortizacion,
+          newMonto,
+          newTasa,
+          cantidadCuotas,
+          newPlazo,
+          frecuenciaPago,
+          newFechaInicio,
+          (prestamo as any).fechaPrimerCobro,
+          false // esContado
+        );
 
-      if (tipoAmortizacion === TipoAmortizacion.FRANCESA) {
-          const amortizacion = this.calcularAmortizacionFrancesa(
-            newMonto,
-            newTasa,
-            cantidadCuotas,
-            newPlazo,
-            frecuenciaPago,
-          );
-        cuotasData = amortizacion.tabla.map((cuota) => {
-          const fechaBase = (prestamo as any).fechaPrimerCobro || newFechaInicio;
-          const fechaVencimiento = this.calcularFechaVencimiento(fechaBase, cuota.numeroCuota, frecuenciaPago);
-          return {
-            prestamoId: id,
-            numeroCuota: cuota.numeroCuota,
-            fechaVencimiento,
-            monto: cuota.monto,
-            montoCapital: cuota.montoCapital,
-            montoInteres: cuota.montoInteres,
-            estado: EstadoCuota.PENDIENTE,
-          };
-        });
-      } else {
-        const montoTotalSimple = newMonto + newInteresTotal;
-        const montoCuota = cantidadCuotas > 0 ? montoTotalSimple / cantidadCuotas : 0;
-        const montoCapitalCuota = cantidadCuotas > 0 ? newMonto / cantidadCuotas : 0;
-        const montoInteresCuota = cantidadCuotas > 0 ? newInteresTotal / cantidadCuotas : 0;
-        cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => {
-          const fechaBase = (prestamo as any).fechaPrimerCobro || newFechaInicio;
-          const fechaVencimiento = this.calcularFechaVencimiento(fechaBase, i + 1, frecuenciaPago);
-          return {
-            prestamoId: id,
-            numeroCuota: i + 1,
-            fechaVencimiento,
-            monto: Math.round(montoCuota * 100) / 100,
-            montoCapital: Math.round(montoCapitalCuota * 100) / 100,
-            montoInteres: Math.round(montoInteresCuota * 100) / 100,
-            estado: EstadoCuota.PENDIENTE,
-          };
-        });
-      }
+        const cuotasData = planCuotas.map(c => ({
+          ...c,
+          prestamoId: id
+        }));
 
         // Create new cuotas
         await this.prisma.cuota.createMany({
@@ -1804,48 +1845,13 @@ export class LoansService implements OnModuleInit {
       const fechaActual = new Date();
       fechaActual.setUTCHours(0, 0, 0, 0);
       
-      let fechaInicio: Date;
-      if (data.fechaInicio) {
-        // Parsear fecha YYYY-MM-DD sin desplazamientos de zona horaria
-        const [year, month, day] = data.fechaInicio.split('-').map(Number);
-        fechaInicio = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
-      } else {
-        fechaInicio = fechaActual;
-      }
+      const fechaInicio = data.fechaInicio ? this.parseDateUTC(data.fechaInicio) : fechaActual;
       
-      // La fecha de vencimiento del préstamo (fechaFin) se basa estrictamente en el plazoMeses
-      const fechaFin = new Date(fechaInicio.getTime());
-      
-      // Regla de negocio: El plazo mínimo contractual siempre es de 1 mes para el vencimiento
-      const mesesEfectivos = Math.max(1, numPlazoMeses);
-      
-      if (mesesEfectivos > 0) {
-        // Usamos setUTCMonth para añadir meses calendario exactos
-        fechaFin.setUTCMonth(fechaFin.getUTCMonth() + Math.floor(mesesEfectivos));
-        // Si hay decimales (ej: 1.5 meses), añadimos los días proporcionales
-        const decimales = mesesEfectivos - Math.floor(mesesEfectivos);
-        if (decimales > 0) {
-          fechaFin.setUTCDate(fechaFin.getUTCDate() + Math.round(decimales * 30));
-        }
-        this.logger.log(`[FECHA FIN] Calculada por meses (${mesesEfectivos}): ${fechaFin.toISOString()}`);
-      } else {
-        // Fallback extremo si no hay meses efectivos (no debería pasar por el Math.max)
-        let diasFallback = 0;
-        switch (data.frecuenciaPago) {
-          case FrecuenciaPago.DIARIO: diasFallback = numCantidadCuotas; break;
-          case FrecuenciaPago.SEMANAL: diasFallback = numCantidadCuotas * 7; break;
-          case FrecuenciaPago.QUINCENAL: diasFallback = numCantidadCuotas * 15; break;
-          case FrecuenciaPago.MENSUAL: diasFallback = numCantidadCuotas * 30; break;
-        }
-        fechaFin.setUTCDate(fechaFin.getUTCDate() + diasFallback);
-        this.logger.log(`[FECHA FIN] Calculada por fallback (${diasFallback} días): ${fechaFin.toISOString()}`);
-      }
+      // La fecha de vencimiento del préstamo (fechaFin) se basa estrictamente en el plazoMeses usando helper
+      const fechaFin = this.calculateLoanEndDate(fechaInicio, numPlazoMeses);
 
       const fechaPrimerCobroParsed = data.fechaPrimerCobro
-        ? (() => {
-            const [y, m, d] = data.fechaPrimerCobro.split('-').map(Number);
-            return new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
-          })()
+        ? this.parseDateUTC(data.fechaPrimerCobro)
         : undefined;
 
       // Calcular cantidad de cuotas: Prioridad TOTAL al valor enviado por el usuario
@@ -1880,80 +1886,21 @@ export class LoansService implements OnModuleInit {
       
       this.logger.log(`[CUOTAS CALCULATION] Cantidad final de cuotas a crear: ${cantidadCuotas}`);
 
-      // Determinar tipo de amortización
       const tipoAmort = data.tipoAmortizacion || TipoAmortizacion.INTERES_SIMPLE;
       const tasaInteres = data.tasaInteres || 0;
 
-      let interesTotal: number;
-      let cuotasData: Array<{
-        numeroCuota: number;
-        fechaVencimiento: Date;
-        monto: number;
-        montoCapital: number;
-        montoInteres: number;
-        estado: any;
-        montoPagado?: number;
-      }>;
-
-      if (tipoAmort === TipoAmortizacion.FRANCESA) {
-        // Amortización francesa (cuota fija, interés decreciente mes a mes)
-        const amortizacion = this.calcularAmortizacionFrancesa(
+      const { interesTotal, cuotas: cuotasData } =
+        this.calculateInterestAndCuotas(
+          tipoAmort,
           montoFinanciar,
           tasaInteres,
           cantidadCuotas,
-          data.plazoMeses,
+          numPlazoMeses,
           data.frecuenciaPago,
+          fechaInicio,
+          fechaPrimerCobroParsed,
+          data.esContado,
         );
-        interesTotal = amortizacion.interesTotal;
-        cuotasData = amortizacion.tabla.map((cuota) => {
-          const fechaBase = data.fechaPrimerCobro 
-            ? (() => {
-                const [y, m, d] = data.fechaPrimerCobro.split('-').map(Number);
-                return new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
-              })()
-            : fechaInicio;
-          const fechaVencimiento = this.calcularFechaVencimiento(fechaBase, cuota.numeroCuota, data.frecuenciaPago);
-          return {
-            numeroCuota: cuota.numeroCuota,
-            fechaVencimiento,
-            monto: cuota.monto,
-            montoCapital: cuota.montoCapital,
-            montoInteres: cuota.montoInteres,
-            estado: data.esContado ? EstadoCuota.PAGADA : EstadoCuota.PENDIENTE,
-            montoPagado: data.esContado ? cuota.monto : 0,
-          };
-        });
-      } else {
-        // Interés simple (flat): capital × tasa mensual × numPlazoMeses (mínimo 1 mes)
-        const mesesInteres = Math.max(1, numPlazoMeses);
-        interesTotal = (montoFinanciar * tasaInteres * mesesInteres) / 100;
-        const montoTotalSimple = montoFinanciar + interesTotal;
-        const montoCuota = cantidadCuotas > 0 ? montoTotalSimple / cantidadCuotas : 0;
-        const montoCapitalCuota = cantidadCuotas > 0 ? montoFinanciar / cantidadCuotas : 0;
-        const montoInteresCuota = cantidadCuotas > 0 ? interesTotal / cantidadCuotas : 0;
-        
-        this.logger.log(`[LOAN CALCULATION] Capital: ${montoFinanciar}, Tasa: ${tasaInteres}%, Plazo: ${data.plazoMeses} meses`);
-        this.logger.log(`[LOAN CALCULATION] Interés Total: ${interesTotal}, Cuotas: ${cantidadCuotas}, Monto/Cuota: ${montoCuota}`);
-        
-        cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => {
-          const fechaBase = data.fechaPrimerCobro 
-            ? (() => {
-                const [y, m, d] = data.fechaPrimerCobro.split('-').map(Number);
-                return new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
-              })()
-            : fechaInicio;
-          const fechaVencimiento = this.calcularFechaVencimiento(fechaBase, i + 1, data.frecuenciaPago);
-          return {
-            numeroCuota: i + 1,
-            fechaVencimiento,
-            monto: Math.round(montoCuota * 100) / 100,
-            montoCapital: Math.round(montoCapitalCuota * 100) / 100,
-            montoInteres: Math.round(montoInteresCuota * 100) / 100,
-            estado: data.esContado ? EstadoCuota.PAGADA : EstadoCuota.PENDIENTE,
-            montoPagado: data.esContado ? Math.round(montoCuota * 100) / 100 : 0,
-          };
-        });
-      }
 
       const montoTotal = montoFinanciar + interesTotal;
 

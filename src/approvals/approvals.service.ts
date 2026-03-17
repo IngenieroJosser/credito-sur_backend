@@ -8,7 +8,6 @@ import {
   TipoTransaccion,
   FrecuenciaPago,
   TipoAmortizacion,
-  NivelRiesgo,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
@@ -998,11 +997,6 @@ export class ApprovalsService {
   }
 
   private async approveLoanLoss(approval: any, aprobadoPorId?: string, editedData?: any) {
-    const data =
-      typeof approval.datosSolicitud === 'string'
-        ? JSON.parse(approval.datosSolicitud)
-        : approval.datosSolicitud;
-
     const prestamoId = approval.referenciaId;
 
     const prestamo = await this.prisma.prestamo.findUnique({
