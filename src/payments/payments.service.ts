@@ -102,7 +102,7 @@ export class PaymentsService {
     // 2. Si el método es TRANSFERENCIA, el comprobante es OBLIGATORIO
     if (dto.metodoPago === MetodoPago.TRANSFERENCIA && !comprobante) {
       throw new BadRequestException(
-        'Para pagos por transferencia debe adjuntar el comprobante (imagen o PDF)',
+        'Para pagos por transferencia debe adjuntar el comprobante (imagen)',
       );
     }
 
@@ -119,7 +119,7 @@ export class PaymentsService {
     );
 
     // Obtener préstamo con cuotas pendientes
-    const prestamo = await this.prisma.prestamo.findUnique({
+    const prestamo = await this.prisma.prestamo.findFirst({
       where: { id: prestamoIdVal, eliminadoEn: null },
       include: {
         cuotas: {
@@ -428,7 +428,7 @@ export class PaymentsService {
     await this.notificacionesService.notifyApprovers({
       titulo: `Pago Registrado — ${metodoPagoStr}`,
       mensaje: `Se registró ${numeroPago} de ${montoTotal.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} para ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos} (${prestamo.numeroPrestamo})`,
-      tipo: 'EXITO',
+      tipo: 'PAGO',
       entidad: 'PAGO',
       entidadId: resultado.pago.id,
       metadata: {
