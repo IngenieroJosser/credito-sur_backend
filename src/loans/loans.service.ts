@@ -316,7 +316,15 @@ export class LoansService implements OnModuleInit {
     esContado: boolean = false,
   ) {
     let interesTotal = 0;
-    let cuotas = [];
+    let cuotas: Array<{
+      numeroCuota: number;
+      fechaVencimiento: Date;
+      monto: number;
+      montoCapital: number;
+      montoInteres: number;
+      estado: EstadoCuota;
+      montoPagado: number;
+    }> = [];
 
     const fechaBase = fechaPrimerCobro || fechaInicio;
 
@@ -1062,7 +1070,13 @@ export class LoansService implements OnModuleInit {
         );
 
         const cuotasData = planCuotas.map(c => ({
-          ...c,
+          numeroCuota: c.numeroCuota,
+          fechaVencimiento: c.fechaVencimiento,
+          monto: c.monto,
+          montoCapital: c.montoCapital,
+          montoInteres: c.montoInteres,
+          estado: c.estado,
+          montoPagado: c.montoPagado,
           prestamoId: id
         }));
 
