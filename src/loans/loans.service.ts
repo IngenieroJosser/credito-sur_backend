@@ -146,6 +146,19 @@ export class LoansService implements OnModuleInit {
       cuotas,
 
       vendedorNombre: vendedorNombre || undefined,
+
+      referencia1: (() => {
+        const nombre = (prestamo.cliente as any)?.referencia1Nombre;
+        const tel = (prestamo.cliente as any)?.referencia1Telefono;
+        if (nombre && tel) return `${nombre} – ${tel}`;
+        return nombre || tel || undefined;
+      })(),
+      referencia2: (() => {
+        const nombre = (prestamo.cliente as any)?.referencia2Nombre;
+        const tel = (prestamo.cliente as any)?.referencia2Telefono;
+        if (nombre && tel) return `${nombre} – ${tel}`;
+        return nombre || tel || undefined;
+      })(),
     };
 
     return generarContratoPDF(data);

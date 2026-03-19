@@ -169,6 +169,10 @@ model Cliente {
   telefono                  String               @db.VarChar(20)
   direccion                 String?
   referencia                String?
+  referencia1Nombre         String?
+  referencia1Telefono       String?
+  referencia2Nombre         String?
+  referencia2Telefono       String?
   nivelRiesgo               NivelRiesgo          @default(VERDE)
   puntaje                   Int                  @default(100)
   ultimaActualizacionRiesgo DateTime?

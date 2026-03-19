@@ -78,6 +78,22 @@ export class CreateClientDto {
   @IsOptional()
   referencia?: string;
 
+  @IsString()
+  @IsOptional()
+  referencia1Nombre?: string;
+
+  @IsString()
+  @IsOptional()
+  referencia1Telefono?: string;
+
+  @IsString()
+  @IsOptional()
+  referencia2Nombre?: string;
+
+  @IsString()
+  @IsOptional()
+  referencia2Telefono?: string;
+
   @IsEmail()
   @IsOptional()
   correo?: string;
