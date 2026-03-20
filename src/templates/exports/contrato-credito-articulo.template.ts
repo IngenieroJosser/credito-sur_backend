@@ -387,10 +387,11 @@ export async function generarContratoPDF(
   // ── LUGAR Y FECHA DE FIRMA ───────────────────────────────────────────────────
   checkPage(160);
   y += 18;
+  const lugarFechaText = `${CONTRATO_EMPRESA.ciudad}, a los ${data.fechaContrato || new Date().toLocaleDateString('es-CO')}`;
   doc.font('Helvetica-Bold').fontSize(10.5).fillColor(C.GRIS_TXT)
      .text('LUGAR Y FECHA DE FIRMA:', ML, y, { continued: true });
   doc.font('Helvetica').fillColor(C.NEGRO)
-     .text(`  ${'_'.repeat(44)}`);
+     .text(`  ${lugarFechaText}`);
   y = doc.y + 24;
 
   // ── FIRMAS ───────────────────────────────────────────────────────────────────
@@ -403,9 +404,9 @@ export async function generarContratoPDF(
      .text('FIRMA DEL CLIENTE', COL1, y);
   doc.font('Helvetica').fontSize(10.5).fillColor(C.NEGRO);
   let yF = doc.y + 4;
-  doc.text(`Nombre:  ${'_'.repeat(30)}`, COL1, yF);
+  doc.text(`Nombre:  ${data.clienteNombre || '_'.repeat(30)}`, COL1, yF);
   yF = doc.y + 4;
-  doc.text(`C.C. No.:  ${'_'.repeat(28)}`, COL1, yF);
+  doc.text(`C.C. No.:  ${data.clienteCedula || '_'.repeat(28)}`, COL1, yF);
   yF = doc.y + 4;
   doc.text(`Firma:  ${'_'.repeat(30)}`, COL1, yF);
 

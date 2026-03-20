@@ -146,6 +146,19 @@ export class LoansService implements OnModuleInit {
       cuotas,
 
       vendedorNombre: vendedorNombre || undefined,
+
+      referencia1: (() => {
+        const nombre = (prestamo.cliente as any)?.referencia1Nombre;
+        const tel = (prestamo.cliente as any)?.referencia1Telefono;
+        if (nombre && tel) return `${nombre} – ${tel}`;
+        return nombre || tel || undefined;
+      })(),
+      referencia2: (() => {
+        const nombre = (prestamo.cliente as any)?.referencia2Nombre;
+        const tel = (prestamo.cliente as any)?.referencia2Telefono;
+        if (nombre && tel) return `${nombre} – ${tel}`;
+        return nombre || tel || undefined;
+      })(),
     };
 
     return generarContratoPDF(data);
@@ -316,7 +329,15 @@ export class LoansService implements OnModuleInit {
     esContado: boolean = false,
   ) {
     let interesTotal = 0;
-    let cuotas = [];
+    let cuotas: Array<{
+      numeroCuota: number;
+      fechaVencimiento: Date;
+      monto: number;
+      montoCapital: number;
+      montoInteres: number;
+      estado: EstadoCuota;
+      montoPagado: number;
+    }> = [];
 
     const fechaBase = fechaPrimerCobro || fechaInicio;
 
@@ -1062,7 +1083,13 @@ export class LoansService implements OnModuleInit {
         );
 
         const cuotasData = planCuotas.map(c => ({
-          ...c,
+          numeroCuota: c.numeroCuota,
+          fechaVencimiento: c.fechaVencimiento,
+          monto: c.monto,
+          montoCapital: c.montoCapital,
+          montoInteres: c.montoInteres,
+          estado: c.estado,
+          montoPagado: c.montoPagado,
           prestamoId: id
         }));
 

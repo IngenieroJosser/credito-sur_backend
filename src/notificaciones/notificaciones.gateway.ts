@@ -10,6 +10,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Logger, forwardRef, Inject } from '@nestjs/common';
+import { OnEvent } from '@nestjs/event-emitter';
 import { NotificacionesService } from './notificaciones.service';
 
 @WebSocketGateway({
@@ -187,5 +188,17 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
       timestamp: new Date(),
       ...(payload || {}),
     });
+  }
+
+  /**
+   * Listener universal: cada vez que PrismaService crea una Aprobacion
+   * (sin importar el endpoint que la origine), se emite automáticamente
+   * el evento WebSocket a todos los clientes conectados.
+   * Esto actualiza el badge de revisiones pendientes en el sidebar en tiempo real.
+   */
+  @OnEvent('aprobacion.created')
+  handleAprobacionCreated(payload: any) {
+    this.logger.log('Aprobacion creada → broadcastAprobacionesActualizadas (via EventEmitter)');
+    this.broadcastAprobacionesActualizadas(payload?.data || {});
   }
 }
