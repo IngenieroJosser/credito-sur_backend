@@ -38,6 +38,7 @@ import { RolUsuario, TipoAprobacion } from '@prisma/client';
 import { CreateLoanDto } from './dto/create-loan.dto';
 import { ReprogramarCuotaDto } from './dto/reprogramar-cuota.dto';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
+import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { AuditService } from '../audit/audit.service';
 
 import { ApprovalsService } from '../approvals/approvals.service';
@@ -52,6 +53,7 @@ export class LoansController {
     private readonly moraService: MoraService,
     private readonly prisma: PrismaService,
     private readonly notificacionesService: NotificacionesService,
+    private readonly notificacionesGateway: NotificacionesGateway,
     private readonly auditService: AuditService,
     private readonly approvalsService: ApprovalsService,
   ) {}
@@ -857,6 +859,13 @@ export class LoansController {
       });
     } catch {}
 
+    // ⚡ Tiempo real: badge revisiones actualiza al instante
+    this.notificacionesGateway.broadcastAprobacionesActualizadas({
+      tipo: 'ASIGNAR_MORA',
+      prestamoId,
+      aprobacionId: aprobacion.id,
+    });
+
     return {
       mensaje: 'Mora pendiente de aprobación creada exitosamente',
       aprobacionId: aprobacion.id,
@@ -1063,6 +1072,14 @@ export class LoansController {
       });
     } catch {}
 
+    // ⚡ Tiempo real: notificar a todos los clientes conectados que hay una nueva revisión pendiente
+    this.notificacionesGateway.broadcastAprobacionesActualizadas({
+      tipo: 'GESTION_VENCIDA',
+      decision: body.decision,
+      prestamoId,
+      aprobacionId: aprobacion.id,
+    });
+
     return {
       mensaje: `Solicitud de ${LABEL_DECISION[body.decision]} enviada a revisión`,
       aprobacionId: aprobacion.id,
@@ -1194,6 +1211,13 @@ export class LoansController {
         },
       });
     } catch {}
+
+    // ⚡ Tiempo real: notificar a todos los clientes conectados que hay una nueva revisión pendiente
+    this.notificacionesGateway.broadcastAprobacionesActualizadas({
+      tipo: 'REPROGRAMACION_CUOTA',
+      prestamoId,
+      aprobacionId: aprobacion.id,
+    });
 
     return {
       mensaje: 'Solicitud de reprogramación enviada a revisión',
