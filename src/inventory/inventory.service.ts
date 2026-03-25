@@ -176,6 +176,7 @@ export class InventoryService {
       });
 
       this.notificacionesGateway.broadcastInventarioActualizado({ action: 'create', product });
+      this.notificacionesGateway.broadcastDashboardsActualizados({ accion: 'INVENTARIO_ACTUALIZADO' });
       return product;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -351,6 +352,7 @@ export class InventoryService {
       });
 
       this.notificacionesGateway.broadcastInventarioActualizado({ action: 'update', product: updatedProduct });
+      this.notificacionesGateway.broadcastDashboardsActualizados({ accion: 'INVENTARIO_ACTUALIZADO' });
       return updatedProduct;
     } catch (error) {
       throw error;
@@ -374,6 +376,7 @@ export class InventoryService {
     });
 
     this.notificacionesGateway.broadcastInventarioActualizado({ action: 'remove', id });
+    this.notificacionesGateway.broadcastDashboardsActualizados({ accion: 'INVENTARIO_ACTUALIZADO' });
     return deletedProduct;
   }
 
