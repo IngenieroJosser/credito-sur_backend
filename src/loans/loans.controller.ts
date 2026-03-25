@@ -1099,7 +1099,7 @@ export class LoansController {
   async solicitarReprogramacion(
     @Param('id') prestamoId: string,
     @Body() body: {
-      cuotaId: string;
+      cuotaId?: string;
       nuevaFecha: string;
       motivo: string;
     },
@@ -1108,121 +1108,13 @@ export class LoansController {
     const usuarioId: string = req.user?.sub || req.user?.id;
     if (!usuarioId) throw new Error('Usuario no autenticado');
 
-    const prestamo = await this.prisma.prestamo.findUnique({
-      where: { id: prestamoId },
-      include: { cliente: true },
-    });
-    if (!prestamo) throw new Error('Préstamo no encontrado');
-
-    const usuario = await this.prisma.usuario.findUnique({
-      where: { id: usuarioId },
-      select: { nombres: true, apellidos: true, rol: true },
-    });
-    const nombreUsuario = usuario ? `${usuario.nombres} ${usuario.apellidos}`.trim() : 'Usuario';
-    const nombreCliente = prestamo.cliente
-      ? `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`.trim()
-      : 'Cliente';
-
-    const cuota = await this.prisma.cuota.findUnique({
-      where: { id: body.cuotaId },
-      include: { prestamo: true },
-    });
-    if (!cuota) throw new Error('Cuota no encontrada');
-
-    const nuevaFechaCuota = new Date(body.nuevaFecha);
-    if (nuevaFechaCuota < new Date()) {
-      throw new Error('La nueva fecha de la cuota debe ser posterior a la fecha actual');
-    }
-
-    const aprobacion = await this.prisma.aprobacion.create({
-      data: {
-        tipoAprobacion: 'REPROGRAMACION_CUOTA' as TipoAprobacion,
-        solicitadoPorId: usuarioId,
-        referenciaId: prestamoId,
-        tablaReferencia: 'Prestamo',
-        montoSolicitud: cuota.monto,
-        datosSolicitud: {
-          tipo: 'REPROGRAMACION_CUOTA',
-          prestamoId,
-          cuotaId: body.cuotaId,
-          numeroPrestamo: prestamo.numeroPrestamo,
-          cliente: nombreCliente,
-          clienteNombre: nombreCliente,
-          saldoPendiente: Number(prestamo.saldoPendiente),
-          montoCuota: cuota.monto,
-          fechaVencimientoOriginal: cuota.fechaVencimiento ? new Date(cuota.fechaVencimiento).toISOString() : undefined,
-          nuevaFechaVencimiento: nuevaFechaCuota.toISOString(),
-          motivo: body.motivo,
-          solicitadoPor: nombreUsuario,
-          rolSolicitante: usuario?.rol,
-        } as any,
-      },
-    });
-
-    await this.auditService.create({
-      usuarioId,
-      accion: 'REPROGRAMACION_CUOTA',
-      entidad: 'Prestamo',
-      entidadId: prestamoId,
-      datosNuevos: {
-        aprobacionId: aprobacion.id,
-        cuotaId: body.cuotaId,
-        nuevaFechaVencimiento: nuevaFechaCuota.toISOString(),
-        motivo: body.motivo,
-      },
-      metadata: { endpoint: `POST /loans/${prestamoId}/reprogramacion` },
-    });
-
-    try {
-      await this.notificacionesService.notifyApprovers({
-        titulo: `Reprogramación de cuota — ${nombreCliente} (${prestamo.numeroPrestamo})`,
-        mensaje: `${nombreUsuario} solicitó reprogramar la cuota ${cuota.numeroCuota} del préstamo ${prestamo.numeroPrestamo} del cliente ${nombreCliente} para el ${nuevaFechaCuota.toLocaleDateString('es-CO')}.`,
-        tipo: 'INFO',
-        entidad: 'Aprobacion',
-        entidadId: aprobacion.id,
-        metadata: {
-          tipoAprobacion: 'REPROGRAMACION_CUOTA',
-          tipo: 'REPROGRAMACION_CUOTA',
-          prestamoId,
-          cuotaId: body.cuotaId,
-          numeroPrestamo: prestamo.numeroPrestamo,
-          cliente: nombreCliente,
-          saldoPendiente: Number(prestamo.saldoPendiente),
-          montoCuota: cuota.monto,
-          nuevaFechaVencimiento: nuevaFechaCuota.toISOString(),
-          motivo: body.motivo,
-          solicitadoPor: nombreUsuario,
-        },
-      });
-    } catch {}
-
-    try {
-      await this.notificacionesService.create({
-        usuarioId,
-        titulo: 'Solicitud de reprogramación enviada',
-        mensaje: 'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
-        tipo: 'INFORMATIVO',
-        entidad: 'Aprobacion',
-        entidadId: aprobacion.id,
-        metadata: {
-          tipoAprobacion: 'REPROGRAMACION_CUOTA',
-          tipo: 'REPROGRAMACION_CUOTA',
-          prestamoId,
-        },
-      });
-    } catch {}
-
-    // ⚡ Tiempo real: notificar a todos los clientes conectados que hay una nueva revisión pendiente
-    this.notificacionesGateway.broadcastAprobacionesActualizadas({
-      tipo: 'REPROGRAMACION_CUOTA',
+    return this.loansService.solicitarReprogramacion({
       prestamoId,
-      aprobacionId: aprobacion.id,
+      cuotaId: body.cuotaId,
+      nuevaFecha: body.nuevaFecha,
+      motivo: body.motivo,
+      solicitadoPorId: usuarioId,
     });
-
-    return {
-      mensaje: 'Solicitud de reprogramación enviada a revisión',
-      aprobacionId: aprobacion.id,
-    };
   }
 
   @Get('reprogramaciones-pendientes')
