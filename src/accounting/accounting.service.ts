@@ -1215,10 +1215,17 @@ export class AccountingService implements OnModuleInit {
     let rangeStart: Date;
     let rangeEnd: Date;
 
-    if (fechaInicio && fechaFin) {
+    if (fechaInicio) {
       rangeStart = new Date(fechaInicio.includes('T') ? fechaInicio : `${fechaInicio}T00:00:00`);
-      rangeEnd = new Date(fechaFin.includes('T') ? fechaFin : `${fechaFin}T23:59:59.999`);
+      if (fechaFin) {
+        rangeEnd = new Date(fechaFin.includes('T') ? fechaFin : `${fechaFin}T23:59:59.999`);
+      } else {
+        // Sin fechaFin: usar hasta ahora mismo (totales históricos hasta hoy)
+        rangeEnd = new Date();
+        rangeEnd.setHours(23, 59, 59, 999);
+      }
     } else {
+      // Sin ningún parámetro: solo hoy
       const hoy = new Date();
       rangeStart = new Date(hoy);
       rangeStart.setHours(0, 0, 0, 0);
