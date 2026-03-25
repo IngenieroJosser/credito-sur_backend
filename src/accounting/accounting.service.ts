@@ -1,4 +1,4 @@
-﻿import {
+import {
   Injectable,
   Logger,
   NotFoundException,
@@ -1141,6 +1141,71 @@ export class AccountingService implements OnModuleInit {
     };
   }
 
+
+  // =====================
+  // DESGLOSE CAJA (Efectivo vs Transferencia)
+  // =====================
+
+  /**
+   * Devuelve el desglose de pagos de una caja de ruta separando
+   * efectivo de transferencia para el cierre de caja del día.
+   * Consulta la tabla Pago directamente para obtener el metodoPago.
+   */
+  async getDesglosePagosCaja(cajaId: string, fecha?: string) {
+    const caja = await this.prisma.caja.findUnique({
+      where: { id: cajaId },
+      select: { rutaId: true, nombre: true, tipo: true },
+    });
+    if (!caja || !caja.rutaId) {
+      return { efectivo: 0, transferencia: 0, total: 0, fecha: null };
+    }
+
+    const baseDate = fecha ? new Date(fecha.includes('T') ? fecha : `${fecha}T00:00:00`) : new Date();
+    const rangeStart = new Date(baseDate);
+    rangeStart.setHours(0, 0, 0, 0);
+    const rangeEnd = new Date(baseDate);
+    rangeEnd.setHours(23, 59, 59, 999);
+
+    // Obtener los clienteIds asignados a esta ruta
+    const asignaciones = await this.prisma.asignacionRuta.findMany({
+      where: { rutaId: caja.rutaId, activa: true },
+      select: { clienteId: true },
+    });
+
+    if (asignaciones.length === 0) {
+      return { efectivo: 0, transferencia: 0, total: 0, fecha: rangeStart.toISOString() };
+    }
+
+    const clienteIds = asignaciones.map((a) => a.clienteId);
+
+    const pagos = await this.prisma.pago.findMany({
+      where: {
+        clienteId: { in: clienteIds },
+        fechaPago: { gte: rangeStart, lte: rangeEnd },
+      },
+      select: { montoTotal: true, metodoPago: true },
+    });
+
+    let efectivo = 0;
+    let transferencia = 0;
+
+    for (const p of pagos) {
+      const monto = Number(p.montoTotal || 0);
+      if (p.metodoPago === 'TRANSFERENCIA') {
+        transferencia += monto;
+      } else {
+        efectivo += monto;
+      }
+    }
+
+    return {
+      efectivo,
+      transferencia,
+      total: efectivo + transferencia,
+      fecha: rangeStart.toISOString(),
+      cajaNombre: caja.nombre,
+    };
+  }
 
   // =====================
   // RESUMEN FINANCIERO

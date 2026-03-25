@@ -113,6 +113,20 @@ export class AccountingController {
     return this.accountingService.consolidarCaja(id, req.user.id, body?.monto);
   }
 
+  @Get('cajas/:id/desglose-pagos')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.CONTADOR,
+    RolUsuario.COORDINADOR,
+  )
+  getDesglosePagosCaja(
+    @Param('id') id: string,
+    @Query('fecha') fecha?: string,
+  ) {
+    return this.accountingService.getDesglosePagosCaja(id, fecha);
+  }
+
   @Post('cajas/:id/arqueos')
   @Roles(
     RolUsuario.SUPER_ADMINISTRADOR,
