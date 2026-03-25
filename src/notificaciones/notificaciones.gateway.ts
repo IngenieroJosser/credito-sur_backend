@@ -12,6 +12,7 @@ import { Server, Socket } from 'socket.io';
 import { Logger, forwardRef, Inject } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { NotificacionesService } from './notificaciones.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 @WebSocketGateway({
   cors: {
@@ -32,6 +33,7 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
   constructor(
     @Inject(forwardRef(() => NotificacionesService))
     private notificacionesService: NotificacionesService,
+    private prisma: PrismaService,
   ) {}
 
   private logger: Logger = new Logger('NotificacionesGateway');
@@ -90,12 +92,43 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
    */
   @SubscribeMessage('ruta_completada_emit')
   async handleRutaCompletadaEmit(
-    @MessageBody() data: { rutaNombre: string, cobradorNombre: string, recaudo: number, efectividad: number, clientesFaltantes: number },
+    @MessageBody() data: { rutaNombre: string, cobradorNombre: string, recaudo: number, meta: number, efectividad: number, clientesFaltantes: number, rutaId?: string },
     @ConnectedSocket() client: Socket,
   ) {
     this.logger.log(`El cobrador completó la ruta: ${data.rutaNombre}`);
-    
-    // Alerta al Coordinador/Supervisor a través del servicio (Sistematizado + Push)
+
+    // 1. Registrar el cierre de ruta en BD (trazabilidad de descuadre)
+    try {
+      if (data.rutaId) {
+        const cajaDeLaRuta = await this.prisma.caja.findFirst({
+          where: { rutaId: data.rutaId, tipo: 'RUTA' },
+        });
+        if (cajaDeLaRuta) {
+          const hayDescuadre = data.recaudo < (data.meta || 0);
+          // Codificamos los datos en referenciaId igual que ARQUEO: RC|MT|EF|CF|CO
+          const referenciaId = `RC:${data.recaudo}|MT:${data.meta || 0}|EF:${data.efectividad}|CF:${data.clientesFaltantes}|CO:${data.cobradorNombre}`;
+          await this.prisma.transaccion.create({
+            data: {
+              numeroTransaccion: `CR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+              cajaId: cajaDeLaRuta.id,
+              tipo: 'TRANSFERENCIA',
+              monto: data.recaudo,
+              descripcion: hayDescuadre
+                ? `Cierre de ruta con descuadre: recaudó $${data.recaudo.toLocaleString('es-CO')} de $${(data.meta||0).toLocaleString('es-CO')} esperados (${data.efectividad}% META). Faltaron ${data.clientesFaltantes} clientes.`
+                : `Cierre de ruta exitoso: recaudó $${data.recaudo.toLocaleString('es-CO')} (${data.efectividad}% META). Todos los clientes visitados.`,
+              tipoReferencia: 'CIERRE_RUTA',
+              referenciaId,
+              creadoPorId: cajaDeLaRuta.responsableId, // Usamos el responsable de la caja como creador del cierre
+            },
+          });
+          this.logger.log(`Cierre de ruta registrado en caja ${cajaDeLaRuta.id} — descuadre: ${hayDescuadre}`);
+        }
+      }
+    } catch (err) {
+      this.logger.error('Error registrando cierre de ruta en BD:', err);
+    }
+
+    // 2. Alerta al Coordinador/Supervisor (Sistematizado + Push)
     await this.notificacionesService.notifyApprovers({
       titulo: 'Cierre de Ruta Completo',
       mensaje: `Cobrador: ${data.cobradorNombre} cerró la ruta ${data.rutaNombre}. Recaudo Final: $${data.recaudo.toLocaleString('es-CO')} (${data.efectividad}% META). ${data.clientesFaltantes > 0 ? 'Faltaron ' + data.clientesFaltantes + ' clientes' : 'Todos visitados'}.`,
@@ -197,8 +230,9 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
    * Esto actualiza el badge de revisiones pendientes en el sidebar en tiempo real.
    */
   @OnEvent('aprobacion.created')
-  handleAprobacionCreated(payload: any) {
-    this.logger.log('Aprobacion creada → broadcastAprobacionesActualizadas (via EventEmitter)');
+  @OnEvent('aprobacion.updated')
+  handleAprobacionChanged(payload: any) {
+    this.logger.log('Aprobacion creada/actualizada → broadcastAprobacionesActualizadas (via EventEmitter)');
     this.broadcastAprobacionesActualizadas(payload?.data || {});
   }
 }

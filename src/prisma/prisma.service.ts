@@ -34,12 +34,17 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
                 });
               }
 
-              // ⚡ Tiempo real universal: cuando se CREA cualquier Aprobacion,
+              //Tiempo real universal: cuando se CREA cualquier Aprobacion,
               // emitir evento para que el Gateway lo transmita via WebSocket.
               // Cubre TODO tipo de revisión: préstamos nuevos, reprogramaciones,
               // prórrogas, cuentas vencidas, solicitudes contables, etc.
-              if (model === 'Aprobacion' && operation === 'create') {
-                eventEmitter.emit('aprobacion.created', { data: result });
+              if (model === 'Aprobacion') {
+                if (operation === 'create' || operation === 'createMany') {
+                  eventEmitter.emit('aprobacion.created', { data: result });
+                }
+                if (operation === 'update' || operation === 'updateMany' || operation === 'upsert' || operation === 'delete' || operation === 'deleteMany') {
+                  eventEmitter.emit('aprobacion.updated', { data: result });
+                }
               }
             }
             

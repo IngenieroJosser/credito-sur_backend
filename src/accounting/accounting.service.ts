@@ -1411,6 +1411,7 @@ export class AccountingService implements OnModuleInit {
     if (!tipo || tipo === undefined) {
       or.push({ tipoReferencia: 'CONSOLIDACION', tipo: 'TRANSFERENCIA' });
       or.push({ tipoReferencia: 'ARQUEO' });
+      or.push({ tipoReferencia: 'CIERRE_RUTA' });
     } else if (tipo === 'CONSOLIDACION') {
       or.push({ tipoReferencia: 'CONSOLIDACION', tipo: 'TRANSFERENCIA' });
     } else if (tipo === 'ARQUEO') {
@@ -1467,7 +1468,47 @@ export class AccountingService implements OnModuleInit {
           cajaId: t.cajaId,
         };
       }
+      if (t.tipoReferencia === 'CIERRE_RUTA') {
+        // referenciaId: "RC:<recaudo>|MT:<meta>|EF:<efectividad>|CF:<clientesFaltantes>|CO:<cobrador>"
+        let recaudo = Number(t.monto);
+        let meta = 0;
+        let efectividad = 0;
+        let clientesFaltantes = 0;
+        let cobradorNombre = t.creadoPor ? `${t.creadoPor.nombres} ${t.creadoPor.apellidos}` : 'Sistema';
+        try {
+          const parts = (t.referenciaId || '').split('|');
+          for (const p of parts) {
+            const idx = p.indexOf(':');
+            const k = p.slice(0, idx);
+            const v = p.slice(idx + 1);
+            if (k === 'RC') recaudo = Number(v);
+            if (k === 'MT') meta = Number(v);
+            if (k === 'EF') efectividad = Number(v);
+            if (k === 'CF') clientesFaltantes = Number(v);
+            if (k === 'CO') cobradorNombre = v;
+          }
+        } catch (_) { void 0; }
+        const descuadre = meta > 0 && recaudo < meta;
+        return {
+          id: t.id,
+          fecha: t.fechaTransaccion.toISOString(),
+          caja: t.caja.nombre,
+          cajaTipo: t.caja.tipo,
+          responsable: cobradorNombre,
+          saldoSistema: meta,
+          saldoReal: recaudo,
+          diferencia: recaudo - meta,
+          estado: descuadre ? 'DESCUADRADA' : 'CUADRADA',
+          descripcion: t.descripcion,
+          tipo: 'CIERRE_RUTA',
+          efectividad,
+          clientesFaltantes,
+          referenciaId: t.referenciaId,
+          cajaId: t.cajaId,
+        };
+      }
       return {
+
         id: t.id,
         fecha: t.fechaTransaccion.toISOString(),
         caja: t.caja.nombre,
