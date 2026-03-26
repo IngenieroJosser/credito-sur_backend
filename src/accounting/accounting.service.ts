@@ -669,6 +669,15 @@ export class AccountingService implements OnModuleInit {
     if (cajaId) {
       where.cajaId = cajaId;
       if (tipo) where.tipo = tipo;
+    } else if (tipo === TipoTransaccion.INGRESO || tipo === TipoTransaccion.EGRESO) {
+      // Filtro global por tipo explícito (historial de ingresos/egresos del módulo contable)
+      where.tipo = tipo;
+      // Para ingresos globales, excluir transacciones internas que no son recaudo real
+      if (tipo === TipoTransaccion.INGRESO) {
+        where.NOT = {
+          tipoReferencia: { in: ['SOLICITUD_BASE', 'SOLICITUD_BASE_EFECTIVO', 'APERTURA_CAJA'] },
+        };
+      }
     } else {
       // Movimientos recientes (global): mostrar solo movimientos entre cajas.
       // Además, ocultar la "doble partida" de transferencias mostrando solo el lado TRX-IN.
@@ -1334,17 +1343,52 @@ export class AccountingService implements OnModuleInit {
         where: { estado: { in: ['ACTIVO', 'EN_MORA'] } },
         _sum: { monto: true },
       }),
-      this.prisma.caja.count({ where: { tipo: 'RUTA' } }),
+      // Total de rutas activas en el sistema
       this.prisma.caja.count({ where: { tipo: 'RUTA', activa: true } }),
+      // Rutas que AÚN NO han hecho recolección hoy (pendientes de cierre)
       this.prisma.caja.count({
-        where: { tipo: 'RUTA', saldoActual: { gt: 0 } },
-      }),
-      this.prisma.transaccion.count({
         where: {
-          ...whereHoy,
-          tipoReferencia: 'CONSOLIDACION',
-          tipo: 'TRANSFERENCIA',
-          caja: { tipo: 'RUTA' },
+          tipo: 'RUTA',
+          activa: true,
+          NOT: {
+            transacciones: {
+              some: {
+                tipoReferencia: 'RECOLECCION',
+                tipo: 'TRANSFERENCIA',
+                fechaTransaccion: { gte: inicioHoy, lte: finHoy },
+              },
+            },
+          },
+        },
+      }),
+      // Rutas pendientes de consolidación (igual a las que no han cerrado hoy)
+      this.prisma.caja.count({
+        where: {
+          tipo: 'RUTA',
+          activa: true,
+          NOT: {
+            transacciones: {
+              some: {
+                tipoReferencia: 'RECOLECCION',
+                tipo: 'TRANSFERENCIA',
+                fechaTransaccion: { gte: inicioHoy, lte: finHoy },
+              },
+            },
+          },
+        },
+      }),
+      // Rutas que SÍ consolidaron (hicieron recolección) hoy
+      this.prisma.caja.count({
+        where: {
+          tipo: 'RUTA',
+          activa: true,
+          transacciones: {
+            some: {
+              tipoReferencia: 'RECOLECCION',
+              tipo: 'TRANSFERENCIA',
+              fechaTransaccion: { gte: inicioHoy, lte: finHoy },
+            },
+          },
         },
       }),
     ]);
@@ -1364,11 +1408,10 @@ export class AccountingService implements OnModuleInit {
     const esUnSoloDia = duration < 24 * 60 * 60 * 1000; // Menos de 24 horas
     const usarComparacionAyer = esUnSoloDia;
 
+    // % de cierre = rutas que hicieron recolección hoy / total rutas activas
     const porcentajeCierres =
       totalRutasCount > 0
-        ? Math.round(
-            ((totalRutasCount - rutasAbiertasCount) / totalRutasCount) * 100,
-          )
+        ? Math.round((consolidacionesHoy / totalRutasCount) * 100)
         : 0;
 
     return {
