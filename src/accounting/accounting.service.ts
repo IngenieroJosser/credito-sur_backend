@@ -1,4 +1,4 @@
-﻿import {
+import {
   Injectable,
   Logger,
   NotFoundException,
@@ -1143,6 +1143,71 @@ export class AccountingService implements OnModuleInit {
 
 
   // =====================
+  // DESGLOSE CAJA (Efectivo vs Transferencia)
+  // =====================
+
+  /**
+   * Devuelve el desglose de pagos de una caja de ruta separando
+   * efectivo de transferencia para el cierre de caja del día.
+   * Consulta la tabla Pago directamente para obtener el metodoPago.
+   */
+  async getDesglosePagosCaja(cajaId: string, fecha?: string) {
+    const caja = await this.prisma.caja.findUnique({
+      where: { id: cajaId },
+      select: { rutaId: true, nombre: true, tipo: true },
+    });
+    if (!caja || !caja.rutaId) {
+      return { efectivo: 0, transferencia: 0, total: 0, fecha: null };
+    }
+
+    const baseDate = fecha ? new Date(fecha.includes('T') ? fecha : `${fecha}T00:00:00`) : new Date();
+    const rangeStart = new Date(baseDate);
+    rangeStart.setHours(0, 0, 0, 0);
+    const rangeEnd = new Date(baseDate);
+    rangeEnd.setHours(23, 59, 59, 999);
+
+    // Obtener los clienteIds asignados a esta ruta
+    const asignaciones = await this.prisma.asignacionRuta.findMany({
+      where: { rutaId: caja.rutaId, activa: true },
+      select: { clienteId: true },
+    });
+
+    if (asignaciones.length === 0) {
+      return { efectivo: 0, transferencia: 0, total: 0, fecha: rangeStart.toISOString() };
+    }
+
+    const clienteIds = asignaciones.map((a) => a.clienteId);
+
+    const pagos = await this.prisma.pago.findMany({
+      where: {
+        clienteId: { in: clienteIds },
+        fechaPago: { gte: rangeStart, lte: rangeEnd },
+      },
+      select: { montoTotal: true, metodoPago: true },
+    });
+
+    let efectivo = 0;
+    let transferencia = 0;
+
+    for (const p of pagos) {
+      const monto = Number(p.montoTotal || 0);
+      if (p.metodoPago === 'TRANSFERENCIA') {
+        transferencia += monto;
+      } else {
+        efectivo += monto;
+      }
+    }
+
+    return {
+      efectivo,
+      transferencia,
+      total: efectivo + transferencia,
+      fecha: rangeStart.toISOString(),
+      cajaNombre: caja.nombre,
+    };
+  }
+
+  // =====================
   // RESUMEN FINANCIERO
   // =====================
 
@@ -1150,10 +1215,17 @@ export class AccountingService implements OnModuleInit {
     let rangeStart: Date;
     let rangeEnd: Date;
 
-    if (fechaInicio && fechaFin) {
+    if (fechaInicio) {
       rangeStart = new Date(fechaInicio.includes('T') ? fechaInicio : `${fechaInicio}T00:00:00`);
-      rangeEnd = new Date(fechaFin.includes('T') ? fechaFin : `${fechaFin}T23:59:59.999`);
+      if (fechaFin) {
+        rangeEnd = new Date(fechaFin.includes('T') ? fechaFin : `${fechaFin}T23:59:59.999`);
+      } else {
+        // Sin fechaFin: usar hasta ahora mismo (totales históricos hasta hoy)
+        rangeEnd = new Date();
+        rangeEnd.setHours(23, 59, 59, 999);
+      }
     } else {
+      // Sin ningún parámetro: solo hoy
       const hoy = new Date();
       rangeStart = new Date(hoy);
       rangeStart.setHours(0, 0, 0, 0);
@@ -1339,6 +1411,7 @@ export class AccountingService implements OnModuleInit {
     if (!tipo || tipo === undefined) {
       or.push({ tipoReferencia: 'CONSOLIDACION', tipo: 'TRANSFERENCIA' });
       or.push({ tipoReferencia: 'ARQUEO' });
+      or.push({ tipoReferencia: 'CIERRE_RUTA' });
     } else if (tipo === 'CONSOLIDACION') {
       or.push({ tipoReferencia: 'CONSOLIDACION', tipo: 'TRANSFERENCIA' });
     } else if (tipo === 'ARQUEO') {
@@ -1395,7 +1468,47 @@ export class AccountingService implements OnModuleInit {
           cajaId: t.cajaId,
         };
       }
+      if (t.tipoReferencia === 'CIERRE_RUTA') {
+        // referenciaId: "RC:<recaudo>|MT:<meta>|EF:<efectividad>|CF:<clientesFaltantes>|CO:<cobrador>"
+        let recaudo = Number(t.monto);
+        let meta = 0;
+        let efectividad = 0;
+        let clientesFaltantes = 0;
+        let cobradorNombre = t.creadoPor ? `${t.creadoPor.nombres} ${t.creadoPor.apellidos}` : 'Sistema';
+        try {
+          const parts = (t.referenciaId || '').split('|');
+          for (const p of parts) {
+            const idx = p.indexOf(':');
+            const k = p.slice(0, idx);
+            const v = p.slice(idx + 1);
+            if (k === 'RC') recaudo = Number(v);
+            if (k === 'MT') meta = Number(v);
+            if (k === 'EF') efectividad = Number(v);
+            if (k === 'CF') clientesFaltantes = Number(v);
+            if (k === 'CO') cobradorNombre = v;
+          }
+        } catch (_) { void 0; }
+        const descuadre = meta > 0 && recaudo < meta;
+        return {
+          id: t.id,
+          fecha: t.fechaTransaccion.toISOString(),
+          caja: t.caja.nombre,
+          cajaTipo: t.caja.tipo,
+          responsable: cobradorNombre,
+          saldoSistema: meta,
+          saldoReal: recaudo,
+          diferencia: recaudo - meta,
+          estado: descuadre ? 'DESCUADRADA' : 'CUADRADA',
+          descripcion: t.descripcion,
+          tipo: 'CIERRE_RUTA',
+          efectividad,
+          clientesFaltantes,
+          referenciaId: t.referenciaId,
+          cajaId: t.cajaId,
+        };
+      }
       return {
+
         id: t.id,
         fecha: t.fechaTransaccion.toISOString(),
         caja: t.caja.nombre,

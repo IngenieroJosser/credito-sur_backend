@@ -83,6 +83,7 @@ export class ClientsService {
       accion: 'CREAR',
       clienteId: cliente.id,
     });
+    this.notificacionesGateway.broadcastDashboardsActualizados({ accion: 'CREAR_CLIENTE' });
 
     return cliente;
   }
@@ -1047,6 +1048,7 @@ export class ClientsService {
         accion: 'CREAR',
         clienteId: cliente.id,
       });
+      this.notificacionesGateway.broadcastDashboardsActualizados({ accion: 'CREAR_CLIENTE' });
 
       this.logger.log(`[DEBUG] Cliente creado con estado ${estadoInicial} (ID: ${cliente.id}) y aprobación creada (ID: ${aprobacion.id}).`);
       return {

@@ -146,6 +146,19 @@ export class LoansService implements OnModuleInit {
       cuotas,
 
       vendedorNombre: vendedorNombre || undefined,
+
+      referencia1: (() => {
+        const nombre = (prestamo.cliente as any)?.referencia1Nombre;
+        const tel = (prestamo.cliente as any)?.referencia1Telefono;
+        if (nombre && tel) return `${nombre} – ${tel}`;
+        return nombre || tel || undefined;
+      })(),
+      referencia2: (() => {
+        const nombre = (prestamo.cliente as any)?.referencia2Nombre;
+        const tel = (prestamo.cliente as any)?.referencia2Telefono;
+        if (nombre && tel) return `${nombre} – ${tel}`;
+        return nombre || tel || undefined;
+      })(),
     };
 
     return generarContratoPDF(data);
@@ -316,7 +329,15 @@ export class LoansService implements OnModuleInit {
     esContado: boolean = false,
   ) {
     let interesTotal = 0;
-    let cuotas = [];
+    let cuotas: Array<{
+      numeroCuota: number;
+      fechaVencimiento: Date;
+      monto: number;
+      montoCapital: number;
+      montoInteres: number;
+      estado: EstadoCuota;
+      montoPagado: number;
+    }> = [];
 
     const fechaBase = fechaPrimerCobro || fechaInicio;
 
@@ -1062,7 +1083,13 @@ export class LoansService implements OnModuleInit {
         );
 
         const cuotasData = planCuotas.map(c => ({
-          ...c,
+          numeroCuota: c.numeroCuota,
+          fechaVencimiento: c.fechaVencimiento,
+          monto: c.monto,
+          montoCapital: c.montoCapital,
+          montoInteres: c.montoInteres,
+          estado: c.estado,
+          montoPagado: c.montoPagado,
           prestamoId: id
         }));
 
@@ -2566,11 +2593,15 @@ export class LoansService implements OnModuleInit {
       throw new BadRequestException('La cuota ya fue pagada');
     }
 
-    // Validar límite de días según frecuencia
-    const nuevaFecha = new Date(data.nuevaFecha + 'T00:00:00.000Z');
-    const hoy = new Date();
-    hoy.setUTCHours(0, 0, 0, 0);
-    const diasDesdeHoy = Math.round((nuevaFecha.getTime() - hoy.getTime()) / 86_400_000);
+    // Ajuste de Zona Horaria (Colombia UTC-5) para calcular límite de días
+    const hoyLocal = new Date(new Date().getTime() - 5 * 3600 * 1000);
+    hoyLocal.setUTCHours(0, 0, 0, 0);
+
+    // Normalizar la nuevaFecha enviada por el frontend
+    const nuevaFechaStr = data.nuevaFecha.includes('T') ? data.nuevaFecha.split('T')[0] : data.nuevaFecha;
+    const nuevaFechaObj = new Date(nuevaFechaStr + 'T00:00:00.000Z');
+
+    const diasDesdeHoy = Math.round((nuevaFechaObj.getTime() - hoyLocal.getTime()) / 86_400_000);
 
     const limiteDias: Record<string, number> = {
       SEMANAL: 6,
@@ -2581,11 +2612,11 @@ export class LoansService implements OnModuleInit {
     const limite = limiteDias[prestamo.frecuenciaPago] ?? 30;
     if (diasDesdeHoy > limite) {
       throw new BadRequestException(
-        `La reprogramación para créditos ${prestamo.frecuenciaPago.toLowerCase()} no puede ser más de ${limite} días desde hoy`,
+        `La reprogramación para créditos ${prestamo.frecuenciaPago.toLowerCase()} no puede exceder ${limite} días desde hoy`,
       );
     }
     if (diasDesdeHoy < 0) {
-      throw new BadRequestException('La nueva fecha no puede ser anterior a hoy');
+      throw new BadRequestException('La nueva fecha no puede ser anterior a la fecha actual');
     }
 
     // Crear solicitud de aprobación
@@ -2638,6 +2669,30 @@ export class LoansService implements OnModuleInit {
     });
 
     this.logger.log(`Reprogramacion solicitada: cuota ${cuota.id} del prestamo ${data.prestamoId} -> ${data.nuevaFecha}`);
+
+    try {
+      await this.notificacionesService.create({
+        usuarioId: data.solicitadoPorId,
+        titulo: 'Solicitud de reprogramación enviada',
+        mensaje: 'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
+        tipo: 'INFORMATIVO',
+        entidad: 'Aprobacion',
+        entidadId: aprobacion.id,
+        metadata: {
+          tipoAprobacion: 'REPROGRAMACION_CUOTA',
+          tipo: 'REPROGRAMACION_CUOTA',
+          prestamoId: data.prestamoId,
+        },
+      });
+    } catch {}
+
+    // ⚡ Tiempo real: notificar a todos los clientes conectados
+    this.notificacionesGateway.broadcastAprobacionesActualizadas({
+      tipo: 'REPROGRAMACION_CUOTA',
+      prestamoId: data.prestamoId,
+      aprobacionId: aprobacion.id,
+    });
+
     return { mensaje: 'Solicitud de reprogramacion enviada para revision', aprobacion };
   }
 
