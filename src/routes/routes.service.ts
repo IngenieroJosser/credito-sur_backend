@@ -56,6 +56,129 @@ export class RoutesService {
 
   ) {}
 
+  private getInicioFinHoy() {
+    const inicio = new Date();
+    inicio.setHours(0, 0, 0, 0);
+    const fin = new Date();
+    fin.setHours(23, 59, 59, 999);
+    return { inicio, fin };
+  }
+
+  async getRutaActivadaHoy(rutaId: string) {
+    const ruta = await this.prisma.ruta.findFirst({
+      where: { id: rutaId, eliminadoEn: null },
+      select: { id: true },
+    });
+
+    if (!ruta) {
+      throw new NotFoundException('Ruta no encontrada');
+    }
+
+    const cajaRuta = await this.prisma.caja.findFirst({
+      where: { rutaId: rutaId, tipo: 'RUTA', activa: true },
+      select: { id: true },
+    });
+
+    if (!cajaRuta?.id) {
+      throw new NotFoundException('Caja de ruta no encontrada');
+    }
+
+    const { inicio, fin } = this.getInicioFinHoy();
+
+    const activacion = await this.prisma.transaccion.findFirst({
+      where: {
+        cajaId: cajaRuta.id,
+        tipoReferencia: 'ACTIVACION_RUTA',
+        fechaTransaccion: { gte: inicio, lte: fin },
+      },
+      select: { id: true, fechaTransaccion: true, creadoPorId: true },
+    });
+
+    return {
+      rutaId,
+      activadaHoy: !!activacion?.id,
+      activacionId: activacion?.id || null,
+      fechaActivacion: activacion?.fechaTransaccion?.toISOString() || null,
+      activadaPorId: activacion?.creadoPorId || null,
+    };
+  }
+
+  async activarRutaHoy(rutaId: string, userId?: string) {
+    if (!userId) {
+      throw new BadRequestException('Usuario inválido');
+    }
+
+    const ruta = await this.prisma.ruta.findFirst({
+      where: { id: rutaId, eliminadoEn: null },
+      select: { id: true, nombre: true, cobradorId: true },
+    });
+
+    if (!ruta) {
+      throw new NotFoundException('Ruta no encontrada');
+    }
+
+    const cajaRuta = await this.prisma.caja.findFirst({
+      where: { rutaId: rutaId, tipo: 'RUTA', activa: true },
+      select: { id: true },
+    });
+
+    if (!cajaRuta?.id) {
+      throw new NotFoundException('Caja de ruta no encontrada');
+    }
+
+    const { inicio, fin } = this.getInicioFinHoy();
+
+    const yaActivada = await this.prisma.transaccion.findFirst({
+      where: {
+        cajaId: cajaRuta.id,
+        tipoReferencia: 'ACTIVACION_RUTA',
+        fechaTransaccion: { gte: inicio, lte: fin },
+      },
+      select: { id: true, fechaTransaccion: true },
+    });
+
+    if (!yaActivada?.id) {
+      await this.prisma.transaccion.create({
+        data: {
+          numeroTransaccion: `AR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          cajaId: cajaRuta.id,
+          tipo: 'TRANSFERENCIA',
+          monto: 0,
+          descripcion: `Activación de ruta del día: ${ruta.nombre}`,
+          tipoReferencia: 'ACTIVACION_RUTA',
+          referenciaId: `RUTA:${ruta.id}`,
+          creadoPorId: userId,
+        },
+      });
+    }
+
+    if (ruta.cobradorId) {
+      await this.notificacionesService.create({
+        usuarioId: ruta.cobradorId,
+        titulo: 'Ruta Activada',
+        mensaje: `Se activó tu ruta ${ruta.nombre} para hoy. Ya puedes iniciar cobros.`,
+        tipo: 'RUTA',
+        entidad: 'Ruta',
+        entidadId: ruta.id,
+        metadata: { rutaId: ruta.id, activadaHoy: true },
+      });
+    }
+
+    this.notificacionesGateway.broadcastRutasActualizadas({
+      accion: 'ACTUALIZAR',
+      rutaId: ruta.id,
+    });
+    this.notificacionesGateway.broadcastDashboardsActualizados({});
+
+    return {
+      rutaId: ruta.id,
+      activadaHoy: true,
+      message: yaActivada?.id
+        ? 'La ruta ya estaba activada hoy'
+        : 'Ruta activada para hoy correctamente',
+    };
+  }
+
 
 
   async listarCreditosAsignadosACobrador(cobradorId: string) {
