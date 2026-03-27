@@ -2649,13 +2649,6 @@ export class LoansService implements OnModuleInit {
       select: { rol: true }
     });
 
-    const rolesAutoAprobacion = ['ADMIN', 'SUPER_ADMINISTRADOR', 'COORDINADOR'];
-    if (usuarioSolicitante && rolesAutoAprobacion.includes(usuarioSolicitante.rol)) {
-       await this.aprobarReprogramacion(aprobacion.id, data.solicitadoPorId);
-       this.logger.log(`Reprogramacion auto-aprobada: cuota ${cuota.id} del prestamo ${data.prestamoId} -> ${data.nuevaFecha}`);
-       return { mensaje: 'Reprogramación aprobada y aplicada automáticamente', aprobacion };
-    }
-
     const rolNameText = usuarioSolicitante?.rol === 'SUPERVISOR' ? 'Supervisor' : 'Cobrador Principal';
 
     // Notificar a aprobadores (ADMIN / COORDINADOR / SUPERVISOR)
