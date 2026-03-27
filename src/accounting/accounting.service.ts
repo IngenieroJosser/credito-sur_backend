@@ -75,6 +75,22 @@ export class AccountingService implements OnModuleInit {
             },
           });
           this.logger.log(`Caja por defecto creada: ${def.nombre} (${def.codigo})`);
+        } else {
+          // Si ya existe, la normalizamos para garantizar que aparezca en listados (getCajas filtra activa=true)
+          // y que tenga propiedades coherentes.
+          if (!existe.activa || existe.nombre !== def.nombre || existe.tipo !== def.tipo) {
+            await this.prisma.caja.update({
+              where: { id: existe.id },
+              data: {
+                nombre: def.nombre,
+                tipo: def.tipo,
+                activa: true,
+              },
+            });
+            this.logger.log(
+              `Caja por defecto normalizada: ${def.nombre} (${def.codigo})`,
+            );
+          }
         }
       }
     } catch (err) {
@@ -86,7 +102,45 @@ export class AccountingService implements OnModuleInit {
   // CAJAS
   // =====================
 
+  async getRutaCerradaHoy(rutaId: string) {
+    // Aseguramos cajas por defecto también de forma lazy.
+    await this.ensureCajasDefault();
+
+    const cajaRuta = await this.prisma.caja.findFirst({
+      where: { rutaId, tipo: 'RUTA', activa: true },
+      select: { id: true },
+    });
+
+    if (!cajaRuta?.id) {
+      throw new NotFoundException('Caja de ruta no encontrada');
+    }
+
+    const inicioHoy = new Date();
+    inicioHoy.setHours(0, 0, 0, 0);
+    const finHoy = new Date();
+    finHoy.setHours(23, 59, 59, 999);
+
+    const cierre = await this.prisma.transaccion.findFirst({
+      where: {
+        cajaId: cajaRuta.id,
+        tipoReferencia: 'CIERRE_RUTA',
+        fechaTransaccion: { gte: inicioHoy, lte: finHoy },
+      },
+      select: { id: true, fechaTransaccion: true },
+    });
+
+    return {
+      rutaId,
+      cerradaHoy: !!cierre?.id,
+      cierreId: cierre?.id || null,
+      fechaCierre: cierre?.fechaTransaccion?.toISOString() || null,
+    };
+  }
+
   async getCajas() {
+    // Aseguramos cajas por defecto también de forma lazy.
+    // onModuleInit puede no crearlas si al momento de arrancar no existía un ADMIN/SUPER_ADMIN activo.
+    await this.ensureCajasDefault();
     const cajas = await this.prisma.caja.findMany({
       where: { activa: true },
       include: {
@@ -201,8 +255,10 @@ export class AccountingService implements OnModuleInit {
   }
 
   async getCajaById(id: string) {
-    const caja = await this.prisma.caja.findUnique({
-      where: { id },
+    // Mantener consistencia con getCajas(): garantizar defaults antes de responder.
+    await this.ensureCajasDefault();
+    const caja = await this.prisma.caja.findFirst({
+      where: { id, activa: true },
       include: {
         responsable: {
           select: { id: true, nombres: true, apellidos: true },
@@ -1345,7 +1401,7 @@ export class AccountingService implements OnModuleInit {
       }),
       // Total de rutas activas en el sistema
       this.prisma.caja.count({ where: { tipo: 'RUTA', activa: true } }),
-      // Rutas que AÚN NO han hecho recolección hoy (pendientes de cierre)
+      // Rutas que AÚN NO han registrado cierre hoy (pendientes de cierre)
       this.prisma.caja.count({
         where: {
           tipo: 'RUTA',
@@ -1353,8 +1409,7 @@ export class AccountingService implements OnModuleInit {
           NOT: {
             transacciones: {
               some: {
-                tipoReferencia: 'RECOLECCION',
-                tipo: 'TRANSFERENCIA',
+                tipoReferencia: 'CIERRE_RUTA',
                 fechaTransaccion: { gte: inicioHoy, lte: finHoy },
               },
             },
@@ -1369,23 +1424,21 @@ export class AccountingService implements OnModuleInit {
           NOT: {
             transacciones: {
               some: {
-                tipoReferencia: 'RECOLECCION',
-                tipo: 'TRANSFERENCIA',
+                tipoReferencia: 'CIERRE_RUTA',
                 fechaTransaccion: { gte: inicioHoy, lte: finHoy },
               },
             },
           },
         },
       }),
-      // Rutas que SÍ consolidaron (hicieron recolección) hoy
+      // Rutas que SÍ cerraron hoy
       this.prisma.caja.count({
         where: {
           tipo: 'RUTA',
           activa: true,
           transacciones: {
             some: {
-              tipoReferencia: 'RECOLECCION',
-              tipo: 'TRANSFERENCIA',
+              tipoReferencia: 'CIERRE_RUTA',
               fechaTransaccion: { gte: inicioHoy, lte: finHoy },
             },
           },

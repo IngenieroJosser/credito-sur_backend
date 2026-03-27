@@ -104,6 +104,27 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
           where: { rutaId: data.rutaId, tipo: 'RUTA' },
         });
         if (cajaDeLaRuta) {
+          const inicioHoy = new Date();
+          inicioHoy.setHours(0, 0, 0, 0);
+          const finHoy = new Date();
+          finHoy.setHours(23, 59, 59, 999);
+
+          const yaCerroHoy = await this.prisma.transaccion.findFirst({
+            where: {
+              cajaId: cajaDeLaRuta.id,
+              tipoReferencia: 'CIERRE_RUTA',
+              fechaTransaccion: { gte: inicioHoy, lte: finHoy },
+            },
+            select: { id: true },
+          });
+
+          if (yaCerroHoy?.id) {
+            this.logger.warn(
+              `Cierre de ruta duplicado ignorado: rutaId=${data.rutaId} cajaId=${cajaDeLaRuta.id} transaccionId=${yaCerroHoy.id}`,
+            );
+            return;
+          }
+
           const hayDescuadre = data.recaudo < (data.meta || 0);
           // Codificamos los datos en referenciaId igual que ARQUEO: RC|MT|EF|CF|CO
           const referenciaId = `RC:${data.recaudo}|MT:${data.meta || 0}|EF:${data.efectividad}|CF:${data.clientesFaltantes}|CO:${data.cobradorNombre}`;

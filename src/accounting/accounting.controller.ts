@@ -338,6 +338,18 @@ export class AccountingController {
     );
   }
 
+  @Get('rutas/:rutaId/cierre-hoy')
+  @Roles(
+    RolUsuario.COBRADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
+  getRutaCerradaHoy(@Param('rutaId') rutaId: string) {
+    return this.accountingService.getRutaCerradaHoy(rutaId);
+  }
+
   @Get('export')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.CONTADOR)
   @HttpCode(HttpStatus.OK)
