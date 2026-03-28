@@ -1315,8 +1315,10 @@ export class AccountingService implements OnModuleInit {
     const [
       ingresosHoy,
       egresosHoy,
+      trasladosHoy,
       ingresosAyer,
       egresosAyer,
+      trasladosAyer,
       totalCajas,
       prestamosActivos,
       totalRutasCount,
@@ -1327,6 +1329,7 @@ export class AccountingService implements OnModuleInit {
       this.prisma.transaccion.aggregate({
         where: {
           ...whereHoy,
+          caja: { tipo: 'PRINCIPAL' },
           OR: [
             { tipo: 'INGRESO' },
             {
@@ -1346,19 +1349,22 @@ export class AccountingService implements OnModuleInit {
       this.prisma.transaccion.aggregate({
         where: {
           ...whereHoy,
-          OR: [
-            { tipo: 'EGRESO' },
-            {
-              tipo: 'TRANSFERENCIA',
-              numeroTransaccion: { startsWith: 'TRX-OUT' },
-            },
-          ],
+          tipo: 'EGRESO',
+        },
+        _sum: { monto: true },
+      }),
+      this.prisma.transaccion.aggregate({
+        where: {
+          ...whereHoy,
+          tipo: 'TRANSFERENCIA',
+          numeroTransaccion: { startsWith: 'TRX-OUT' },
         },
         _sum: { monto: true },
       }),
       this.prisma.transaccion.aggregate({
         where: {
           ...whereAyer,
+          caja: { tipo: 'PRINCIPAL' },
           OR: [
             { tipo: 'INGRESO' },
             {
@@ -1378,13 +1384,15 @@ export class AccountingService implements OnModuleInit {
       this.prisma.transaccion.aggregate({
         where: {
           ...whereAyer,
-          OR: [
-            { tipo: 'EGRESO' },
-            {
-              tipo: 'TRANSFERENCIA',
-              numeroTransaccion: { startsWith: 'TRX-OUT' },
-            },
-          ],
+          tipo: 'EGRESO',
+        },
+        _sum: { monto: true },
+      }),
+      this.prisma.transaccion.aggregate({
+        where: {
+          ...whereAyer,
+          tipo: 'TRANSFERENCIA',
+          numeroTransaccion: { startsWith: 'TRX-OUT' },
         },
         _sum: { monto: true },
       }),
@@ -1445,8 +1453,10 @@ export class AccountingService implements OnModuleInit {
 
     const ingresos = Number(ingresosHoy._sum.monto || 0);
     const egresos = Number(egresosHoy._sum.monto || 0);
+    const traslados = Number(trasladosHoy._sum.monto || 0);
     const ingresosAyerVal = Number(ingresosAyer._sum.monto || 0);
     const egresosAyerVal = Number(egresosAyer._sum.monto || 0);
+    const trasladosAyerVal = Number(trasladosAyer._sum.monto || 0);
 
     const calcularDiferencia = (actual: number, anterior: number) => {
       if (anterior === 0) return actual > 0 ? 100 : 0;
@@ -1467,6 +1477,7 @@ export class AccountingService implements OnModuleInit {
     return {
       ingresosHoy: ingresos,
       egresosHoy: egresos,
+      trasladosInternosHoy: traslados,
       gananciaNeta: ingresos - egresos,
       capitalEnCalle: Number(prestamosActivos._sum.monto || 0),
       saldoCajas: Number(totalCajas._sum.saldoActual || 0),
@@ -1481,8 +1492,10 @@ export class AccountingService implements OnModuleInit {
       fecha: inicioHoy.toISOString(),
       porcentajeIngresosVsAyer: usarComparacionAyer ? calcularDiferencia(ingresos, ingresosAyerVal) : null,
       porcentajeEgresosVsAyer: usarComparacionAyer ? calcularDiferencia(egresos, egresosAyerVal) : null,
+      porcentajeTrasladosVsAyer: usarComparacionAyer ? calcularDiferencia(traslados, trasladosAyerVal) : null,
       esIngresoPositivo: usarComparacionAyer ? ingresos >= ingresosAyerVal : true,
       esEgresoPositivo: usarComparacionAyer ? egresos <= egresosAyerVal : true,
+      esTrasladoPositivo: usarComparacionAyer ? traslados <= trasladosAyerVal : true,
     };
   }
 

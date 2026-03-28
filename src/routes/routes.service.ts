@@ -1579,7 +1579,10 @@ export class RoutesService {
       const efectivoEntregadoAgg = await this.prisma.transaccion.aggregate({
         where: {
           caja: { rutaId: id, tipo: 'RUTA' },
+          tipo: 'TRANSFERENCIA',
           tipoReferencia: 'RECOLECCION',
+          // Solo cuenta la salida real desde caja ruta (evita doble conteo con TRX-IN en caja destino)
+          numeroTransaccion: { startsWith: 'TRX-OUT-' },
         },
         _sum: { monto: true },
       });

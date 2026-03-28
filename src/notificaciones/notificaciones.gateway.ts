@@ -13,6 +13,7 @@ import { Logger, forwardRef, Inject } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { NotificacionesService } from './notificaciones.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { getBogotaStartEndOfDay } from '../utils/date-utils';
 
 @WebSocketGateway({
   cors: {
@@ -104,10 +105,7 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
           where: { rutaId: data.rutaId, tipo: 'RUTA' },
         });
         if (cajaDeLaRuta) {
-          const inicioHoy = new Date();
-          inicioHoy.setHours(0, 0, 0, 0);
-          const finHoy = new Date();
-          finHoy.setHours(23, 59, 59, 999);
+          const { startDate: inicioHoy, endDate: finHoy } = getBogotaStartEndOfDay(new Date());
 
           const yaCerroHoy = await this.prisma.transaccion.findFirst({
             where: {
@@ -133,7 +131,7 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
               numeroTransaccion: `CR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
               cajaId: cajaDeLaRuta.id,
               tipo: 'TRANSFERENCIA',
-              monto: data.recaudo,
+              monto: 0,
               descripcion: hayDescuadre
                 ? `Cierre de ruta con descuadre: recaudó $${data.recaudo.toLocaleString('es-CO')} de $${(data.meta||0).toLocaleString('es-CO')} esperados (${data.efectividad}% META). Faltaron ${data.clientesFaltantes} clientes.`
                 : `Cierre de ruta exitoso: recaudó $${data.recaudo.toLocaleString('es-CO')} (${data.efectividad}% META). Todos los clientes visitados.`,

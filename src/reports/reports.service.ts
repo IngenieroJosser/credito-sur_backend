@@ -22,7 +22,7 @@ import {
   OperationalReportResponse,
   RoutePerformanceDetail,
 } from './dto/responses-routes.dto';
-import { TimeFilterPeriod, calculateDateRange, getBogotaDayKey } from '../utils/date-utils';
+import { TimeFilterPeriod, calculateDateRange, getBogotaDayKey, getBogotaStartEndOfDay } from '../utils/date-utils';
 import { generarExcelMora, generarPDFMora, MoraRow, MoraTotales } from '../templates/exports/cuentas-mora.template';
 import { generarExcelVencidas, generarPDFVencidas, VencidasRow, VencidasTotales } from '../templates/exports/cuentas-vencidas.template';
 import { generarExcelOperativo, generarPDFOperativo, OperativoRow, OperativoResumen } from '../templates/exports/reporte-operativo.template';
@@ -37,8 +37,7 @@ export class ReportsService {
   ) {}
 
   async getFinancialSummary(startDate: Date, endDate: Date) {
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
+    const { endDate: end } = getBogotaStartEndOfDay(endDate);
 
     const ingresosResult = await this.prisma.pago.aggregate({
       _sum: { montoTotal: true },
@@ -118,8 +117,7 @@ export class ReportsService {
   }
 
   async getExpenseDistribution(startDate: Date, endDate: Date) {
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
+    const { endDate: end } = getBogotaStartEndOfDay(endDate);
 
     const gastos = await this.prisma.gasto.groupBy({
       by: ['tipoGasto'],
