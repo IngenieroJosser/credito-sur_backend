@@ -2,13 +2,14 @@ import {
   Controller,
   Get,
   Post,
-  Body,
   Patch,
   Delete,
   Param,
   Query,
+  Body,
   UseGuards,
   Request,
+  ParseUUIDPipe,
   UnauthorizedException,
   DefaultValuePipe,
   HttpCode,
@@ -67,6 +68,17 @@ export class AccountingController {
       );
     }
     return this.accountingService.createCaja(body, req.user.id);
+  }
+
+  @Post('cajas/ruta/:rutaId/asegurar')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.CONTADOR,
+    RolUsuario.COORDINADOR,
+  )
+  asegurarCajaRuta(@Param('rutaId', ParseUUIDPipe) rutaId: string) {
+    return this.accountingService.asegurarCajaRuta(rutaId);
   }
 
   @Patch('cajas/:id')

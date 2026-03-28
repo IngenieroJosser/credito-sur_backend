@@ -22,7 +22,7 @@ import {
   OperationalReportResponse,
   RoutePerformanceDetail,
 } from './dto/responses-routes.dto';
-import { TimeFilterPeriod, calculateDateRange } from '../utils/date-utils';
+import { TimeFilterPeriod, calculateDateRange, getBogotaDayKey } from '../utils/date-utils';
 import { generarExcelMora, generarPDFMora, MoraRow, MoraTotales } from '../templates/exports/cuentas-mora.template';
 import { generarExcelVencidas, generarPDFVencidas, VencidasRow, VencidasTotales } from '../templates/exports/cuentas-vencidas.template';
 import { generarExcelOperativo, generarPDFOperativo, OperativoRow, OperativoResumen } from '../templates/exports/reporte-operativo.template';
@@ -690,7 +690,7 @@ export class ReportsService {
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
     const data = await this.obtenerCuentasVencidas(filtros, 1, 10000);
     const cuentas = data.cuentas;
-    const fecha = new Date().toISOString().split('T')[0];
+    const fecha = getBogotaDayKey(new Date());
 
     const filas: VencidasRow[] = cuentas.map((c: any) => ({
       numeroPrestamo: c.numeroPrestamo || '',
