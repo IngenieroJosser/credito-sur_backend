@@ -442,8 +442,6 @@ export class RoutesService {
 
     }
 
-
-
     return {
 
       cobradorId,
@@ -453,6 +451,8 @@ export class RoutesService {
       data: filas,
 
     };
+
+
 
   }
 
@@ -982,6 +982,8 @@ export class RoutesService {
 
                     fechaVencimiento: { gte: dInicio, lte: dFin },
 
+                    estado: { not: 'PAGADA' },
+
                   },
 
                   _sum: { monto: true },
@@ -1002,7 +1004,7 @@ export class RoutesService {
 
                   _sum: { monto: true },
 
-                })
+                }),
 
               ]);
 
@@ -1010,7 +1012,9 @@ export class RoutesService {
 
               estadisticas.cobranzaDelDia = pagosHoy._sum.montoTotal?.toNumber() || 0;
 
-              estadisticas.metaDelDia = cuotasHoy._sum.monto?.toNumber() || 0;
+              const montoVencido = cuotasVencidasTotal._sum.monto?.toNumber() || 0;
+
+              estadisticas.metaDelDia = (cuotasHoy._sum.monto?.toNumber() || 0) + montoVencido;
 
 
 
@@ -1025,8 +1029,6 @@ export class RoutesService {
 
 
               const deudaTotal = prestamosActivos.reduce((acc, curr) => acc + curr.saldoPendiente.toNumber(), 0);
-
-              const montoVencido = cuotasVencidasTotal._sum.monto?.toNumber() || 0;
 
 
 
@@ -1462,6 +1464,30 @@ export class RoutesService {
 
             },
 
+            estado: { not: 'PAGADA' },
+
+          },
+
+          _sum: {
+
+            monto: true,
+
+          },
+
+        });
+
+
+
+        const cuotasVencidasTotalMeta = await this.prisma.cuota.aggregate({
+
+          where: {
+
+            prestamoId: { in: prestamosActivos.map((p) => p.id) },
+
+            fechaVencimiento: { lt: hoyInicio },
+
+            estado: { not: 'PAGADA' },
+
           },
 
           _sum: {
@@ -1486,7 +1512,9 @@ export class RoutesService {
 
         estadisticas.cobranzaDelDia = pagosHoy._sum.montoTotal?.toNumber() || 0;
 
-        estadisticas.metaDelDia = cuotasHoy._sum.monto?.toNumber() || 0;
+        const montoVencido = cuotasVencidasTotalMeta._sum.monto?.toNumber() || 0;
+
+        estadisticas.metaDelDia = (cuotasHoy._sum.monto?.toNumber() || 0) + montoVencido;
 
         estadisticas.totalDeuda = deudaTotal;
 
@@ -1554,13 +1582,13 @@ export class RoutesService {
 
 
 
-        const montoVencido = cuotasVencidasTotal._sum.monto?.toNumber() || 0;
+        const montoVencidoRiesgo = cuotasVencidasTotal._sum.monto?.toNumber() || 0;
 
         porcentajeMora =
 
           estadisticas.totalDeuda > 0
 
-            ? (montoVencido / estadisticas.totalDeuda) * 100
+            ? (montoVencidoRiesgo / estadisticas.totalDeuda) * 100
 
             : 0;
 
@@ -1576,6 +1604,21 @@ export class RoutesService {
 
       }
 
+      const { startDate: hoyInicio } = getBogotaStartEndOfDay(new Date());
+
+      const ultimoCierre = await this.prisma.transaccion.findFirst({
+        where: {
+          caja: { rutaId: id, tipo: 'RUTA' },
+          tipoReferencia: 'CIERRE_RUTA',
+        },
+        orderBy: { fechaTransaccion: 'desc' },
+        select: { fechaTransaccion: true },
+      });
+
+      const fechaDesde = ultimoCierre?.fechaTransaccion && ultimoCierre.fechaTransaccion > hoyInicio
+        ? ultimoCierre.fechaTransaccion
+        : hoyInicio;
+
       const efectivoEntregadoAgg = await this.prisma.transaccion.aggregate({
         where: {
           caja: { rutaId: id, tipo: 'RUTA' },
@@ -1583,6 +1626,7 @@ export class RoutesService {
           tipoReferencia: 'RECOLECCION',
           // Solo cuenta la salida real desde caja ruta (evita doble conteo con TRX-IN en caja destino)
           numeroTransaccion: { startsWith: 'TRX-OUT-' },
+          fechaTransaccion: { gte: fechaDesde },
         },
         _sum: { monto: true },
       });
