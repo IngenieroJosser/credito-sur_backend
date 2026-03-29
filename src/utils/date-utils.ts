@@ -6,6 +6,63 @@ export interface DateRange {
   days: number;
 }
 
+const BOGOTA_OFFSET_MS = -5 * 60 * 60 * 1000;
+
+function toBogotaPseudo(date: Date) {
+  // Convierte una fecha real (UTC) a una fecha "pseudo" donde los campos UTC representan hora Colombia.
+  // Colombia no tiene DST actualmente, offset fijo UTC-5.
+  return new Date(date.getTime() + BOGOTA_OFFSET_MS);
+}
+
+function fromBogotaPseudo(pseudo: Date) {
+  return new Date(pseudo.getTime() - BOGOTA_OFFSET_MS);
+}
+
+export function getBogotaDayKey(date: Date = new Date()): string {
+  const p = toBogotaPseudo(date);
+  const yyyy = p.getUTCFullYear();
+  const mm = String(p.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(p.getUTCDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+export function parseBogotaDayKey(key: string): { year: number; month: number; day: number } | null {
+  const m = /^\d{4}-\d{2}-\d{2}$/.exec(key);
+  if (!m) return null;
+  const [year, month, day] = key.split('-').map((n) => Number(n));
+  if (!year || !month || !day) return null;
+  return { year, month, day };
+}
+
+export function getBogotaStartEndOfDay(date: Date = new Date()): { startDate: Date; endDate: Date } {
+  const p = toBogotaPseudo(date);
+
+  const startPseudo = new Date(p);
+  startPseudo.setUTCHours(0, 0, 0, 0);
+
+  const endPseudo = new Date(p);
+  endPseudo.setUTCHours(23, 59, 59, 999);
+
+  return {
+    startDate: fromBogotaPseudo(startPseudo),
+    endDate: fromBogotaPseudo(endPseudo),
+  };
+}
+
+export function getBogotaStartEndOfDayFromKey(key: string): { startDate: Date; endDate: Date } {
+  const parsed = parseBogotaDayKey(key);
+  if (!parsed) {
+    return getBogotaStartEndOfDay(new Date());
+  }
+  const { year, month, day } = parsed;
+  const startPseudo = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+  const endPseudo = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
+  return {
+    startDate: fromBogotaPseudo(startPseudo),
+    endDate: fromBogotaPseudo(endPseudo),
+  };
+}
+
 export function calculateDateRange(
   period: TimeFilterPeriod,
   customStart?: string,
@@ -13,36 +70,61 @@ export function calculateDateRange(
 ): DateRange {
   const now = new Date();
   let startDate: Date;
-  let endDate: Date = new Date();
+  let endDate: Date;
 
   switch (period) {
     case 'today':
-      startDate = new Date(now.setHours(0, 0, 0, 0));
-      endDate = new Date(now.setHours(23, 59, 59, 999));
+      ({ startDate, endDate } = getBogotaStartEndOfDay(now));
       break;
     case 'week':
-      startDate = new Date(now);
-      startDate.setDate(now.getDate() - now.getDay());
-      startDate.setHours(0, 0, 0, 0);
-      endDate = new Date(now);
-      endDate.setDate(now.getDate() + (6 - now.getDay()));
-      endDate.setHours(23, 59, 59, 999);
+      {
+        const p = toBogotaPseudo(now);
+        const startPseudo = new Date(p);
+        startPseudo.setUTCDate(p.getUTCDate() - p.getUTCDay());
+        startPseudo.setUTCHours(0, 0, 0, 0);
+        const endPseudo = new Date(startPseudo);
+        endPseudo.setUTCDate(startPseudo.getUTCDate() + 6);
+        endPseudo.setUTCHours(23, 59, 59, 999);
+        startDate = fromBogotaPseudo(startPseudo);
+        endDate = fromBogotaPseudo(endPseudo);
+      }
       break;
     case 'month':
-      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-      endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+      {
+        const p = toBogotaPseudo(now);
+        const startPseudo = new Date(Date.UTC(p.getUTCFullYear(), p.getUTCMonth(), 1, 0, 0, 0, 0));
+        const endPseudo = new Date(Date.UTC(p.getUTCFullYear(), p.getUTCMonth() + 1, 0, 23, 59, 59, 999));
+        startDate = fromBogotaPseudo(startPseudo);
+        endDate = fromBogotaPseudo(endPseudo);
+      }
       break;
     case 'year':
-      startDate = new Date(now.getFullYear(), 0, 1);
-      endDate = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
+      {
+        const p = toBogotaPseudo(now);
+        const startPseudo = new Date(Date.UTC(p.getUTCFullYear(), 0, 1, 0, 0, 0, 0));
+        const endPseudo = new Date(Date.UTC(p.getUTCFullYear(), 11, 31, 23, 59, 59, 999));
+        startDate = fromBogotaPseudo(startPseudo);
+        endDate = fromBogotaPseudo(endPseudo);
+      }
       break;
     case 'custom':
-      startDate = customStart ? new Date(customStart) : new Date(now.setHours(0, 0, 0, 0));
-      endDate = customEnd ? new Date(customEnd) : new Date();
+      {
+        const startKey = customStart && /^\d{4}-\d{2}-\d{2}$/.test(customStart) ? customStart : getBogotaDayKey(now);
+        const endKey = customEnd && /^\d{4}-\d{2}-\d{2}$/.test(customEnd) ? customEnd : getBogotaDayKey(now);
+        const s = getBogotaStartEndOfDayFromKey(startKey);
+        const e = getBogotaStartEndOfDayFromKey(endKey);
+        startDate = s.startDate;
+        endDate = e.endDate;
+      }
       break;
     default:
-      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-      endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+      {
+        const p = toBogotaPseudo(now);
+        const startPseudo = new Date(Date.UTC(p.getUTCFullYear(), p.getUTCMonth(), 1, 0, 0, 0, 0));
+        const endPseudo = new Date(Date.UTC(p.getUTCFullYear(), p.getUTCMonth() + 1, 0, 23, 59, 59, 999));
+        startDate = fromBogotaPseudo(startPseudo);
+        endDate = fromBogotaPseudo(endPseudo);
+      }
   }
 
   // Asegurar que las fechas sean válidas

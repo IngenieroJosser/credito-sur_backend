@@ -13,6 +13,7 @@ import { Logger, forwardRef, Inject } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { NotificacionesService } from './notificaciones.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { getBogotaStartEndOfDay } from '../utils/date-utils';
 
 @WebSocketGateway({
   cors: {
@@ -104,6 +105,24 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
           where: { rutaId: data.rutaId, tipo: 'RUTA' },
         });
         if (cajaDeLaRuta) {
+          const { startDate: inicioHoy, endDate: finHoy } = getBogotaStartEndOfDay(new Date());
+
+          const yaCerroHoy = await this.prisma.transaccion.findFirst({
+            where: {
+              cajaId: cajaDeLaRuta.id,
+              tipoReferencia: 'CIERRE_RUTA',
+              fechaTransaccion: { gte: inicioHoy, lte: finHoy },
+            },
+            select: { id: true },
+          });
+
+          if (yaCerroHoy?.id) {
+            this.logger.warn(
+              `Cierre de ruta duplicado ignorado: rutaId=${data.rutaId} cajaId=${cajaDeLaRuta.id} transaccionId=${yaCerroHoy.id}`,
+            );
+            return;
+          }
+
           const hayDescuadre = data.recaudo < (data.meta || 0);
           // Codificamos los datos en referenciaId igual que ARQUEO: RC|MT|EF|CF|CO
           const referenciaId = `RC:${data.recaudo}|MT:${data.meta || 0}|EF:${data.efectividad}|CF:${data.clientesFaltantes}|CO:${data.cobradorNombre}`;
@@ -112,7 +131,7 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
               numeroTransaccion: `CR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
               cajaId: cajaDeLaRuta.id,
               tipo: 'TRANSFERENCIA',
-              monto: data.recaudo,
+              monto: 0,
               descripcion: hayDescuadre
                 ? `Cierre de ruta con descuadre: recaudó $${data.recaudo.toLocaleString('es-CO')} de $${(data.meta||0).toLocaleString('es-CO')} esperados (${data.efectividad}% META). Faltaron ${data.clientesFaltantes} clientes.`
                 : `Cierre de ruta exitoso: recaudó $${data.recaudo.toLocaleString('es-CO')} (${data.efectividad}% META). Todos los clientes visitados.`,

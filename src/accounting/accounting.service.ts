@@ -11,6 +11,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TipoCaja, TipoTransaccion, TipoAprobacion, EstadoAprobacion } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+import { getBogotaDayKey, getBogotaStartEndOfDay, getBogotaStartEndOfDayFromKey } from '../utils/date-utils';
 import { generarExcelContable, generarPDFContable, CajaRow, TransaccionRow } from '../templates/exports/reporte-contable.template';
 
 
@@ -29,6 +30,63 @@ export class AccountingService implements OnModuleInit {
 
   async onModuleInit() {
     await this.ensureCajasDefault();
+  }
+
+  private buildCodigoCajaRuta(codigoRuta: string) {
+    const base = `CAJA-${codigoRuta}`;
+    if (base.length <= 20) return base;
+    // 20 chars máx: "CAJA-" (5) + 10 + "-" (1) + 4 = 20
+    const start = codigoRuta.slice(0, 10);
+    const end = codigoRuta.slice(-4);
+    return `CAJA-${start}-${end}`;
+  }
+
+  async asegurarCajaRuta(rutaId: string) {
+    const ruta = await this.prisma.ruta.findFirst({
+      where: { id: rutaId, eliminadoEn: null },
+      select: { id: true, nombre: true, codigo: true, cobradorId: true },
+    });
+
+    if (!ruta) {
+      throw new NotFoundException('Ruta no encontrada');
+    }
+
+    if (!ruta.cobradorId) {
+      throw new BadRequestException('La ruta no tiene cobrador asignado');
+    }
+
+    const existente = await this.prisma.caja.findFirst({
+      where: { rutaId: ruta.id, tipo: 'RUTA', activa: true },
+      include: {
+        responsable: { select: { id: true, nombres: true, apellidos: true } },
+        ruta: { select: { id: true, nombre: true, codigo: true } },
+      },
+    });
+
+    if (existente?.id) {
+      return existente;
+    }
+
+    const codigoCaja = this.buildCodigoCajaRuta(ruta.codigo);
+    const nombreCaja = `Caja ${ruta.nombre}`;
+
+    const creada = await this.prisma.caja.create({
+      data: {
+        codigo: codigoCaja,
+        nombre: nombreCaja,
+        tipo: 'RUTA',
+        rutaId: ruta.id,
+        responsableId: ruta.cobradorId,
+        saldoActual: 0,
+        activa: true,
+      },
+      include: {
+        responsable: { select: { id: true, nombres: true, apellidos: true } },
+        ruta: { select: { id: true, nombre: true, codigo: true } },
+      },
+    });
+
+    return creada;
   }
 
   /**
@@ -75,6 +133,22 @@ export class AccountingService implements OnModuleInit {
             },
           });
           this.logger.log(`Caja por defecto creada: ${def.nombre} (${def.codigo})`);
+        } else {
+          // Si ya existe, la normalizamos para garantizar que aparezca en listados (getCajas filtra activa=true)
+          // y que tenga propiedades coherentes.
+          if (!existe.activa || existe.nombre !== def.nombre || existe.tipo !== def.tipo) {
+            await this.prisma.caja.update({
+              where: { id: existe.id },
+              data: {
+                nombre: def.nombre,
+                tipo: def.tipo,
+                activa: true,
+              },
+            });
+            this.logger.log(
+              `Caja por defecto normalizada: ${def.nombre} (${def.codigo})`,
+            );
+          }
         }
       }
     } catch (err) {
@@ -86,7 +160,42 @@ export class AccountingService implements OnModuleInit {
   // CAJAS
   // =====================
 
+  async getRutaCerradaHoy(rutaId: string) {
+    // Aseguramos cajas por defecto también de forma lazy.
+    await this.ensureCajasDefault();
+
+    const cajaRuta = await this.prisma.caja.findFirst({
+      where: { rutaId, tipo: 'RUTA', activa: true },
+      select: { id: true },
+    });
+
+    if (!cajaRuta?.id) {
+      throw new NotFoundException('Caja de ruta no encontrada');
+    }
+
+    const { startDate: inicioHoy, endDate: finHoy } = getBogotaStartEndOfDay(new Date());
+
+    const cierre = await this.prisma.transaccion.findFirst({
+      where: {
+        cajaId: cajaRuta.id,
+        tipoReferencia: 'CIERRE_RUTA',
+        fechaTransaccion: { gte: inicioHoy, lte: finHoy },
+      },
+      select: { id: true, fechaTransaccion: true },
+    });
+
+    return {
+      rutaId,
+      cerradaHoy: !!cierre?.id,
+      cierreId: cierre?.id || null,
+      fechaCierre: cierre?.fechaTransaccion?.toISOString() || null,
+    };
+  }
+
   async getCajas() {
+    // Aseguramos cajas por defecto también de forma lazy.
+    // onModuleInit puede no crearlas si al momento de arrancar no existía un ADMIN/SUPER_ADMIN activo.
+    await this.ensureCajasDefault();
     const cajas = await this.prisma.caja.findMany({
       where: { activa: true },
       include: {
@@ -103,77 +212,17 @@ export class AccountingService implements OnModuleInit {
       orderBy: { creadoEn: 'desc' },
     });
 
-    const ahora = new Date();
-    const fechaInicio = new Date(ahora);
-    fechaInicio.setHours(0, 0, 0, 0);
-    const fechaFin = new Date(ahora);
-    fechaFin.setHours(23, 59, 59, 999);
+    const { startDate: fechaInicio, endDate: fechaFin } = getBogotaStartEndOfDay(new Date());
 
     const cajasConSaldo = await Promise.all(
       cajas.map(async (caja) => {
         let saldoCalculado = Number(caja.saldoActual);
 
-        if (caja.tipo === 'RUTA' && caja.rutaId) {
-          const ingresos = await this.prisma.transaccion.aggregate({
-            where: {
-              cajaId: caja.id,
-              tipo: 'INGRESO',
-              fechaTransaccion: {
-                gte: fechaInicio,
-                lte: fechaFin,
-              },
-              NOT: {
-                OR: [
-                  { tipoReferencia: 'SOLICITUD_BASE' },
-                  { tipoReferencia: 'SOLICITUD_BASE_EFECTIVO' },
-                ],
-              },
-            },
-            _sum: {
-              monto: true,
-            },
-          });
-
-          const egresos = await this.prisma.transaccion.aggregate({
-            where: {
-              cajaId: caja.id,
-              tipo: 'EGRESO',
-              fechaTransaccion: {
-                gte: fechaInicio,
-                lte: fechaFin,
-              },
-            },
-            _sum: {
-              monto: true,
-            },
-          });
-
-          let recaudoDelDia = Number(ingresos._sum.monto || 0);
-          const gastosDelDia = Number(egresos._sum.monto || 0);
-
-          if (recaudoDelDia === 0) {
-            const asignaciones = await this.prisma.asignacionRuta.findMany({
-              where: { rutaId: caja.rutaId, activa: true },
-              select: { clienteId: true },
-            });
-
-            if (asignaciones.length > 0) {
-              const clienteIds = asignaciones.map((a) => a.clienteId);
-              const pagosAgg = await this.prisma.pago.aggregate({
-                where: {
-                  clienteId: { in: clienteIds },
-                  fechaPago: {
-                    gte: fechaInicio,
-                    lte: fechaFin,
-                  },
-                },
-                _sum: { montoTotal: true },
-              });
-              recaudoDelDia = Number(pagosAgg._sum.montoTotal || 0);
-            }
-          }
-
-          saldoCalculado = recaudoDelDia - gastosDelDia;
+        // Para cajas RUTA, el saldo debe reflejar el libro contable real (saldoActual).
+        // El cálculo "recaudo - gastos" del día ignora TRANSFERENCIA (ej. RECOLECCION),
+        // lo que hacía que al recolectar no se viera descontado en Gestión Contable.
+        if (caja.tipo === 'RUTA') {
+          saldoCalculado = Number(caja.saldoActual);
         }
 
         return {
@@ -201,8 +250,10 @@ export class AccountingService implements OnModuleInit {
   }
 
   async getCajaById(id: string) {
-    const caja = await this.prisma.caja.findUnique({
-      where: { id },
+    // Mantener consistencia con getCajas(): garantizar defaults antes de responder.
+    await this.ensureCajasDefault();
+    const caja = await this.prisma.caja.findFirst({
+      where: { id, activa: true },
       include: {
         responsable: {
           select: { id: true, nombres: true, apellidos: true },
@@ -448,6 +499,12 @@ export class AccountingService implements OnModuleInit {
     userId: string,
   ) {
     try {
+      if (data.tipo === 'RUTA') {
+        throw new ForbiddenException(
+          'Las cajas de ruta se crean automáticamente al crear la ruta. Si falta, use la opción de reparar/asegurar la caja de la ruta.',
+        );
+      }
+
       // 1. Validar Usuario actual y Permisos
       const currentUser = await this.prisma.usuario.findUnique({
         where: { id: userId },
@@ -486,18 +543,8 @@ export class AccountingService implements OnModuleInit {
         );
       }
 
-      // 3. Si es tipo RUTA, validar que la ruta exista (si se envió rutaId)
-      // Se usa 'undefined' para asegurar que rutaId vacío sea ignorado en la consulta
+      // Se usa 'undefined' para asegurar que rutaId vacío sea ignorado
       const rutaIdSanitizado = data.rutaId ? data.rutaId : undefined;
-
-      if (data.tipo === 'RUTA' && rutaIdSanitizado) {
-        const ruta = await this.prisma.ruta.findUnique({
-          where: { id: rutaIdSanitizado },
-        });
-        if (!ruta) {
-          throw new BadRequestException('La ruta especificada no existe');
-        }
-      }
 
       // Generar código único basándose en el último creado
       const lastCaja = await this.prisma.caja.findFirst({
@@ -763,16 +810,16 @@ export class AccountingService implements OnModuleInit {
     let rangeEnd: Date;
 
     if (fechaInicio && fechaFin) {
-      // Usar los rangos proporcionados, asegurando que cubran todo el día
-      // Agregamos la hora para que el constructor de Date lo trate como hora local del servidor
-      rangeStart = new Date(fechaInicio.includes('T') ? fechaInicio : `${fechaInicio}T00:00:00`);
-      rangeEnd = new Date(fechaFin.includes('T') ? fechaFin : `${fechaFin}T23:59:59.999`);
+      // Interpretar YYYY-MM-DD como día Colombia
+      const startKey = /^\d{4}-\d{2}-\d{2}$/.test(fechaInicio) ? fechaInicio : getBogotaDayKey(new Date(fechaInicio));
+      const endKey = /^\d{4}-\d{2}-\d{2}$/.test(fechaFin) ? fechaFin : getBogotaDayKey(new Date(fechaFin));
+      rangeStart = getBogotaStartEndOfDayFromKey(startKey).startDate;
+      rangeEnd = getBogotaStartEndOfDayFromKey(endKey).endDate;
     } else {
-      const baseDate = fecha ? new Date(fecha.includes('T') ? fecha : `${fecha}T00:00:00`) : new Date();
-      rangeStart = new Date(baseDate);
-      rangeStart.setHours(0, 0, 0, 0);
-      rangeEnd = new Date(baseDate);
-      rangeEnd.setHours(23, 59, 59, 999);
+      const key = fecha
+        ? (/^\d{4}-\d{2}-\d{2}$/.test(fecha) ? fecha : getBogotaDayKey(new Date(fecha)))
+        : getBogotaDayKey(new Date());
+      ({ startDate: rangeStart, endDate: rangeEnd } = getBogotaStartEndOfDayFromKey(key));
     }
 
     const caja = await this.prisma.caja.findFirst({
@@ -843,6 +890,12 @@ export class AccountingService implements OnModuleInit {
         ) {
           desembolsos += monto;
         } else {
+          otrosEgresos += monto;
+        }
+      } else if (t.tipo === 'TRANSFERENCIA') {
+        // Para el neto del período (recaudo - gastos - desembolsos), las recolecciones
+        // deben descontar porque representan dinero entregado desde la caja de ruta.
+        if (t.tipoReferencia === 'RECOLECCION') {
           otrosEgresos += monto;
         }
       }
@@ -1262,8 +1315,10 @@ export class AccountingService implements OnModuleInit {
     const [
       ingresosHoy,
       egresosHoy,
+      trasladosHoy,
       ingresosAyer,
       egresosAyer,
+      trasladosAyer,
       totalCajas,
       prestamosActivos,
       totalRutasCount,
@@ -1274,6 +1329,7 @@ export class AccountingService implements OnModuleInit {
       this.prisma.transaccion.aggregate({
         where: {
           ...whereHoy,
+          caja: { tipo: 'PRINCIPAL' },
           OR: [
             { tipo: 'INGRESO' },
             {
@@ -1293,19 +1349,22 @@ export class AccountingService implements OnModuleInit {
       this.prisma.transaccion.aggregate({
         where: {
           ...whereHoy,
-          OR: [
-            { tipo: 'EGRESO' },
-            {
-              tipo: 'TRANSFERENCIA',
-              numeroTransaccion: { startsWith: 'TRX-OUT' },
-            },
-          ],
+          tipo: 'EGRESO',
+        },
+        _sum: { monto: true },
+      }),
+      this.prisma.transaccion.aggregate({
+        where: {
+          ...whereHoy,
+          tipo: 'TRANSFERENCIA',
+          numeroTransaccion: { startsWith: 'TRX-OUT' },
         },
         _sum: { monto: true },
       }),
       this.prisma.transaccion.aggregate({
         where: {
           ...whereAyer,
+          caja: { tipo: 'PRINCIPAL' },
           OR: [
             { tipo: 'INGRESO' },
             {
@@ -1325,13 +1384,15 @@ export class AccountingService implements OnModuleInit {
       this.prisma.transaccion.aggregate({
         where: {
           ...whereAyer,
-          OR: [
-            { tipo: 'EGRESO' },
-            {
-              tipo: 'TRANSFERENCIA',
-              numeroTransaccion: { startsWith: 'TRX-OUT' },
-            },
-          ],
+          tipo: 'EGRESO',
+        },
+        _sum: { monto: true },
+      }),
+      this.prisma.transaccion.aggregate({
+        where: {
+          ...whereAyer,
+          tipo: 'TRANSFERENCIA',
+          numeroTransaccion: { startsWith: 'TRX-OUT' },
         },
         _sum: { monto: true },
       }),
@@ -1345,7 +1406,7 @@ export class AccountingService implements OnModuleInit {
       }),
       // Total de rutas activas en el sistema
       this.prisma.caja.count({ where: { tipo: 'RUTA', activa: true } }),
-      // Rutas que AÚN NO han hecho recolección hoy (pendientes de cierre)
+      // Rutas que AÚN NO han registrado cierre hoy (pendientes de cierre)
       this.prisma.caja.count({
         where: {
           tipo: 'RUTA',
@@ -1353,8 +1414,7 @@ export class AccountingService implements OnModuleInit {
           NOT: {
             transacciones: {
               some: {
-                tipoReferencia: 'RECOLECCION',
-                tipo: 'TRANSFERENCIA',
+                tipoReferencia: 'CIERRE_RUTA',
                 fechaTransaccion: { gte: inicioHoy, lte: finHoy },
               },
             },
@@ -1369,23 +1429,21 @@ export class AccountingService implements OnModuleInit {
           NOT: {
             transacciones: {
               some: {
-                tipoReferencia: 'RECOLECCION',
-                tipo: 'TRANSFERENCIA',
+                tipoReferencia: 'CIERRE_RUTA',
                 fechaTransaccion: { gte: inicioHoy, lte: finHoy },
               },
             },
           },
         },
       }),
-      // Rutas que SÍ consolidaron (hicieron recolección) hoy
+      // Rutas que SÍ cerraron hoy
       this.prisma.caja.count({
         where: {
           tipo: 'RUTA',
           activa: true,
           transacciones: {
             some: {
-              tipoReferencia: 'RECOLECCION',
-              tipo: 'TRANSFERENCIA',
+              tipoReferencia: 'CIERRE_RUTA',
               fechaTransaccion: { gte: inicioHoy, lte: finHoy },
             },
           },
@@ -1395,8 +1453,10 @@ export class AccountingService implements OnModuleInit {
 
     const ingresos = Number(ingresosHoy._sum.monto || 0);
     const egresos = Number(egresosHoy._sum.monto || 0);
+    const traslados = Number(trasladosHoy._sum.monto || 0);
     const ingresosAyerVal = Number(ingresosAyer._sum.monto || 0);
     const egresosAyerVal = Number(egresosAyer._sum.monto || 0);
+    const trasladosAyerVal = Number(trasladosAyer._sum.monto || 0);
 
     const calcularDiferencia = (actual: number, anterior: number) => {
       if (anterior === 0) return actual > 0 ? 100 : 0;
@@ -1417,6 +1477,7 @@ export class AccountingService implements OnModuleInit {
     return {
       ingresosHoy: ingresos,
       egresosHoy: egresos,
+      trasladosInternosHoy: traslados,
       gananciaNeta: ingresos - egresos,
       capitalEnCalle: Number(prestamosActivos._sum.monto || 0),
       saldoCajas: Number(totalCajas._sum.saldoActual || 0),
@@ -1431,8 +1492,10 @@ export class AccountingService implements OnModuleInit {
       fecha: inicioHoy.toISOString(),
       porcentajeIngresosVsAyer: usarComparacionAyer ? calcularDiferencia(ingresos, ingresosAyerVal) : null,
       porcentajeEgresosVsAyer: usarComparacionAyer ? calcularDiferencia(egresos, egresosAyerVal) : null,
+      porcentajeTrasladosVsAyer: usarComparacionAyer ? calcularDiferencia(traslados, trasladosAyerVal) : null,
       esIngresoPositivo: usarComparacionAyer ? ingresos >= ingresosAyerVal : true,
       esEgresoPositivo: usarComparacionAyer ? egresos <= egresosAyerVal : true,
+      esTrasladoPositivo: usarComparacionAyer ? traslados <= trasladosAyerVal : true,
     };
   }
 
