@@ -92,6 +92,7 @@ export class MoraService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
+    if (process.env.NODE_ENV !== 'production') return;
     this.logger.log('⏰ [MORA] Procesando mora automática al arranque...');
     try {
       const result = await this.procesarMoraAutomatica();

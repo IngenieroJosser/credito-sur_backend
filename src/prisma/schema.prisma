@@ -885,3 +885,36 @@ model ConfiguracionSistema {
 
   @@map("configuracion_sistema")
 }
+
+enum BackupTipo {
+  MANUAL
+  PROGRAMADO
+}
+
+enum BackupDestino {
+  LOCAL
+}
+
+enum BackupEstado {
+  EXITOSO
+  FALLIDO
+  EN_PROCESO
+}
+
+model BackupRun {
+  id          String        @id @default(uuid())
+  tipo        BackupTipo
+  destino     BackupDestino @default(LOCAL)
+  estado      BackupEstado  @default(EN_PROCESO)
+  filePath    String?       @db.VarChar(500)
+  fileSize    Int?
+  startedAt   DateTime      @default(now())
+  finishedAt  DateTime?
+  durationMs  Int?
+  error       String?
+  metadata    Json?
+
+  @@index([startedAt])
+  @@index([estado])
+  @@map("backup_runs")
+}

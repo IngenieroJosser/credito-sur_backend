@@ -2,15 +2,10 @@ import {
   Controller,
   Get,
   Post,
-  Body,
-  Patch,
-  Param,
-  Delete,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { BackupService } from './backup.service';
-import { CreateBackupDto } from './dto/create-backup.dto';
-import { UpdateBackupDto } from './dto/update-backup.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermisosGuard } from '../auth/guards/permisos.guard';
 import { Permisos } from '../auth/decorators/permisos.decorator';
@@ -21,28 +16,18 @@ import { Permisos } from '../auth/decorators/permisos.decorator';
 export class BackupController {
   constructor(private readonly backupService: BackupService) {}
 
-  @Post()
-  create(@Body() createBackupDto: CreateBackupDto) {
-    return this.backupService.create(createBackupDto);
+  @Get('status')
+  status() {
+    return this.backupService.getStatus();
   }
 
-  @Get()
-  findAll() {
-    return this.backupService.findAll();
+  @Get('history')
+  history(@Query('limit') limit?: string) {
+    return this.backupService.getHistory(limit ? Number(limit) : undefined);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.backupService.findOne(+id);
-  }
-
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() updateBackupDto: UpdateBackupDto) {
-    return this.backupService.update(+id, updateBackupDto);
-  }
-
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.backupService.remove(+id);
+  @Post('run')
+  run() {
+    return this.backupService.runManualBackup();
   }
 }
