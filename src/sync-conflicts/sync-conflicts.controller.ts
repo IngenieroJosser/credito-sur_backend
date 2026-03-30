@@ -5,6 +5,7 @@ import { UpdateSyncConflictDto } from './dto/update-sync-conflict.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { RolUsuario } from '@prisma/client';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('sync-conflicts')
@@ -17,26 +18,26 @@ export class SyncConflictsController {
     return this.syncConflictsService.create(createSyncConflictDto, req.user.id);
   }
 
-  @Roles('SUPER_ADMINISTRADOR', 'ADMIN', 'COORDINADOR')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
   @Get()
   findAll(@Request() req) {
     return this.syncConflictsService.findAll(req.user);
   }
 
-  @Roles('SUPER_ADMINISTRADOR', 'ADMIN', 'COORDINADOR')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
   @Get(':id')
   findOne(@Param('id') id: string, @Request() req) {
     return this.syncConflictsService.findOne(id, req.user);
   }
 
-  @Roles('SUPER_ADMINISTRADOR', 'ADMIN', 'COORDINADOR')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
   @Patch(':id/resolve')
   resolve(@Param('id') id: string, @Body('accion') accion: string, @Request() req) {
     const token = req.headers.authorization;
     return this.syncConflictsService.resolveConflict(id, accion, req.user.id, token);
   }
 
-  @Roles('SUPER_ADMINISTRADOR', 'ADMIN')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.syncConflictsService.remove(id);
