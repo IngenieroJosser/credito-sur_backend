@@ -5,6 +5,11 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 import helmet from 'helmet';
 import { SanitizePipe } from './common/pipes/sanitize.pipe';
 import { validateEnv } from './common/env.validation';
+import { createBullBoard } from '@bull-board/api';
+import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
+import { ExpressAdapter } from '@bull-board/express';
+import { getQueueToken } from '@nestjs/bullmq';
+import type { Request, Response, NextFunction } from 'express';
 
 async function bootstrap() {
   // Validar variables de entorno ANTES de crear la app
@@ -13,9 +18,49 @@ async function bootstrap() {
 
   const logger = new Logger('Bootstrap');
   const app = await NestFactory.create(AppModule, { logger: ['log', 'warn', 'error'] });
-  
+
   // Configurar prefijo global para la API
   app.setGlobalPrefix('api-credisur');
+
+  const bullBoardBasePath = '/api-credisur/configuracion/colas';
+  const expressAdapter = new ExpressAdapter();
+  expressAdapter.setBasePath(bullBoardBasePath);
+
+  const mirrorSyncQueue = app.get(getQueueToken('mirror-sync-queue'));
+
+  createBullBoard({
+    queues: [new BullMQAdapter(mirrorSyncQueue)],
+    serverAdapter: expressAdapter,
+  });
+
+  const httpServer = app.getHttpAdapter().getInstance();
+  httpServer.use(bullBoardBasePath, (req: Request, res: Response, next: NextFunction) => {
+    const user = process.env.BULLBOARD_USER;
+    const pass = process.env.BULLBOARD_PASS;
+
+    if (!user || !pass) {
+      return res.status(500).json({ message: 'Bull Board no configurado (BULLBOARD_USER/BULLBOARD_PASS)' });
+    }
+
+    const header = req.headers.authorization || '';
+    if (!header.startsWith('Basic ')) {
+      res.setHeader('WWW-Authenticate', 'Basic realm="Bull Board"');
+      return res.status(401).send('Unauthorized');
+    }
+
+    const decoded = Buffer.from(header.slice('Basic '.length), 'base64').toString('utf8');
+    const idx = decoded.indexOf(':');
+    const incomingUser = idx >= 0 ? decoded.slice(0, idx) : '';
+    const incomingPass = idx >= 0 ? decoded.slice(idx + 1) : '';
+
+    if (incomingUser !== user || incomingPass !== pass) {
+      res.setHeader('WWW-Authenticate', 'Basic realm="Bull Board"');
+      return res.status(401).send('Unauthorized');
+    }
+
+    return next();
+  });
+  httpServer.use(bullBoardBasePath, expressAdapter.getRouter());
 
   // Aplicar mitigaciones de seguridad XSS y Headers HTTP con Helmet
   app.use(helmet({
