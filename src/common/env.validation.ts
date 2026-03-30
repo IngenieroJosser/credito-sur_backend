@@ -67,11 +67,38 @@ const ENV_VARS: EnvVar[] = [
     validator: (v) => !isNaN(parseInt(v, 10)) && parseInt(v, 10) > 0,
     validatorMessage: 'Debe ser un número de puerto válido',
   },
+  {
+    key: 'REDIS_PORT',
+    required: false,
+    description: 'Puerto de Redis (default: 6379)',
+    validator: (v) => !isNaN(parseInt(v, 10)) && parseInt(v, 10) > 0,
+    validatorMessage: 'Debe ser un número de puerto válido',
+  },
 ];
 
 export function validateEnv(): void {
   const errors: string[] = [];
   const warnings: string[] = [];
+
+  const nodeEnv = (process.env.NODE_ENV || '').toLowerCase();
+  const isProduction = nodeEnv === 'production';
+
+  if (isProduction) {
+    const redisHost = process.env.REDIS_HOST;
+    const redisPassword = process.env.REDIS_PASSWORD;
+
+    if (!redisHost || redisHost.trim() === '') {
+      errors.push(
+        '❌ FALTA VARIABLE CRÍTICA: REDIS_HOST\n   → Host de Redis requerido en producción (BullMQ/colas)'
+      );
+    }
+
+    if (!redisPassword || redisPassword.trim() === '') {
+      errors.push(
+        '❌ FALTA VARIABLE CRÍTICA: REDIS_PASSWORD\n   → Password/Token de Redis requerido en producción (BullMQ/colas)'
+      );
+    }
+  }
 
   for (const envVar of ENV_VARS) {
     const value = process.env[envVar.key];
