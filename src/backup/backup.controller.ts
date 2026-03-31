@@ -2,18 +2,20 @@ import {
   Controller,
   Get,
   Post,
-  Body,
-  Patch,
   Param,
-  Delete,
+  Query,
+  Res,
+  BadRequestException,
+  NotFoundException,
   UseGuards,
 } from '@nestjs/common';
 import { BackupService } from './backup.service';
-import { CreateBackupDto } from './dto/create-backup.dto';
-import { UpdateBackupDto } from './dto/update-backup.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermisosGuard } from '../auth/guards/permisos.guard';
 import { Permisos } from '../auth/decorators/permisos.decorator';
+import { Response } from 'express';
+import { createReadStream, existsSync } from 'node:fs';
+import { basename, resolve } from 'node:path';
 
 @Controller('backup')
 @UseGuards(JwtAuthGuard, PermisosGuard)
@@ -21,28 +23,47 @@ import { Permisos } from '../auth/decorators/permisos.decorator';
 export class BackupController {
   constructor(private readonly backupService: BackupService) {}
 
-  @Post()
-  create(@Body() createBackupDto: CreateBackupDto) {
-    return this.backupService.create(createBackupDto);
+  @Get('status')
+  status() {
+    return this.backupService.getStatus();
   }
 
-  @Get()
-  findAll() {
-    return this.backupService.findAll();
+  @Get('history')
+  history(@Query('limit') limit?: string) {
+    return this.backupService.getHistory(limit ? Number(limit) : undefined);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.backupService.findOne(+id);
+  @Post('run')
+  run() {
+    return this.backupService.runManualBackup();
   }
 
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() updateBackupDto: UpdateBackupDto) {
-    return this.backupService.update(+id, updateBackupDto);
-  }
+  @Get(':id/download')
+  async download(
+    @Param('id') id: string,
+    @Query('type') type: 'dump' | 'xlsx',
+    @Res() res: Response,
+  ) {
+    if (type !== 'dump' && type !== 'xlsx') {
+      throw new BadRequestException('type debe ser dump o xlsx');
+    }
 
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.backupService.remove(+id);
+    const info = await this.backupService.getArtifactPath(id, type);
+    const absPath = resolve(info.path);
+    const baseDir = resolve(info.baseDir);
+    if (!absPath.startsWith(baseDir)) {
+      throw new BadRequestException('Ruta de archivo inválida');
+    }
+
+    if (!existsSync(absPath)) {
+      throw new NotFoundException('Archivo no encontrado');
+    }
+
+    res.setHeader('Content-Type', info.contentType);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${basename(absPath)}"`,
+    );
+    createReadStream(absPath).pipe(res);
   }
 }
