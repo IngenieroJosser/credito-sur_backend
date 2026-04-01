@@ -98,9 +98,18 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
   ) {
     this.logger.log(`El cobrador completó la ruta: ${data.rutaNombre}`);
 
+    const clientesFaltantesNum = Number(data.clientesFaltantes || 0);
+
     // 1. Registrar el cierre de ruta en BD (trazabilidad de descuadre)
     try {
       if (data.rutaId) {
+        // Regla: solo registrar "CIERRE_RUTA" cuando la ruta esté COMPLETADA.
+        // Si aún faltan clientes por cobrar/visitar, no se debe registrar el cierre en Movimientos.
+        if (clientesFaltantesNum > 0) {
+          this.logger.warn(
+            `Cierre de ruta NO registrado porque aún hay clientes faltantes: rutaId=${data.rutaId} faltantes=${clientesFaltantesNum}`,
+          );
+        } else {
         const cajaDeLaRuta = await this.prisma.caja.findFirst({
           where: { rutaId: data.rutaId, tipo: 'RUTA' },
         });
@@ -123,9 +132,12 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
             return;
           }
 
-          const hayDescuadre = data.recaudo < (data.meta || 0);
-          // Codificamos los datos en referenciaId igual que ARQUEO: RC|MT|EF|CF|CO
-          const referenciaId = `RC:${data.recaudo}|MT:${data.meta || 0}|EF:${data.efectividad}|CF:${data.clientesFaltantes}|CO:${data.cobradorNombre}`;
+          const saldoAlCierre = Number(cajaDeLaRuta.saldoActual || 0);
+          const hayDescuadre = saldoAlCierre > 0;
+          
+          // Codificamos los datos en referenciaId agregando SD
+          const referenciaId = `RC:${data.recaudo}|MT:${data.meta || 0}|EF:${data.efectividad}|CF:${data.clientesFaltantes}|CO:${data.cobradorNombre}|SD:${saldoAlCierre}`;
+          
           await this.prisma.transaccion.create({
             data: {
               numeroTransaccion: `CR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -133,14 +145,33 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
               tipo: 'TRANSFERENCIA',
               monto: 0,
               descripcion: hayDescuadre
-                ? `Cierre de ruta con descuadre: recaudó $${data.recaudo.toLocaleString('es-CO')} de $${(data.meta||0).toLocaleString('es-CO')} esperados (${data.efectividad}% META). Faltaron ${data.clientesFaltantes} clientes.`
-                : `Cierre de ruta exitoso: recaudó $${data.recaudo.toLocaleString('es-CO')} (${data.efectividad}% META). Todos los clientes visitados.`,
+                ? `Cierre de ruta con descuadre: el cobrador completó la ruta con $${saldoAlCierre.toLocaleString('es-CO')} retenidos (sin recolectar por el admin). Recaudó reportado: $${data.recaudo.toLocaleString('es-CO')}.`
+                : `Cierre de ruta exitoso: entregó todo el efectivo. Recaudó $${data.recaudo.toLocaleString('es-CO')} (${data.efectividad}% META).`,
               tipoReferencia: 'CIERRE_RUTA',
               referenciaId,
-              creadoPorId: cajaDeLaRuta.responsableId, // Usamos el responsable de la caja como creador del cierre
+              creadoPorId: cajaDeLaRuta.responsableId, 
             },
           });
+
+          // Regla de negocio: si hay descuadre de caja (dinero no entregado), se registra la deuda formal.
+          if (hayDescuadre) {
+            const deuda = saldoAlCierre;
+            const refDeuda = `DD:${deuda}|${referenciaId}`;
+            await this.prisma.transaccion.create({
+              data: {
+                numeroTransaccion: `DC-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+                cajaId: cajaDeLaRuta.id,
+                tipo: 'TRANSFERENCIA',
+                monto: 0,
+                descripcion: `Deuda del cobrador por cerrar ruta sin entregar el dinero recolectado: $${deuda.toLocaleString('es-CO')}`,
+                tipoReferencia: 'DEUDA_COBRADOR',
+                referenciaId: refDeuda,
+                creadoPorId: cajaDeLaRuta.responsableId,
+              },
+            });
+          }
           this.logger.log(`Cierre de ruta registrado en caja ${cajaDeLaRuta.id} — descuadre: ${hayDescuadre}`);
+        }
         }
       }
     } catch (err) {

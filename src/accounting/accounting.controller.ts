@@ -186,6 +186,11 @@ export class AccountingController {
     });
   }
 
+  @Get('transacciones/:id')
+  getTransaccionById(@Param('id', ParseUUIDPipe) id: string) {
+    return this.accountingService.getTransaccionById(id);
+  }
+
   @Post('transacciones')
   createTransaccion(
     @Request() req,
@@ -197,6 +202,7 @@ export class AccountingController {
       descripcion: string;
       tipoReferencia?: string;
       referenciaId?: string;
+      cajaOrigenId?: string;
     },
   ) {
     if (!req.user || !req.user.id) {
@@ -285,6 +291,8 @@ export class AccountingController {
       valor: number;
       rutaId: string;
       cobradorId: string;
+      categoriaId?: string;
+      esPersonal?: boolean;
     },
   ) {
     if (!req.user || !req.user.id) {
@@ -297,6 +305,8 @@ export class AccountingController {
       cobradorId: body.cobradorId,
       solicitadoPorId: req.user.id,
       tipoAprobacion: TipoAprobacion.GASTO,
+      categoriaId: body.categoriaId,
+      esPersonal: body.esPersonal,
     });
   }
 
@@ -374,4 +384,43 @@ export class AccountingController {
     res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
     res.send(result.data);
   }
+
+  // =====================
+  // DEUDAS DE COBRADORES
+  // =====================
+  @Get('deudas-cobradores')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.CONTADOR,
+  )
+  getDeudoresCobrador() {
+    return this.accountingService.getDeudoresCobrador();
+  }
+
+  @Post('deudas-cobradores/:cobradorId/abono')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.CONTADOR,
+  )
+  registrarAbonoDeuda(
+    @Param('cobradorId') cobradorId: string,
+    @Body() body: { monto: number; nota?: string },
+    @Request() req,
+  ) {
+    if (!req.user || !req.user.id) throw new UnauthorizedException('Usuario no autenticado');
+    // Ensure monto is parsing correctly
+    const montoClean = typeof body.monto === 'number' ? body.monto : Number(body.monto) || 0;
+    
+    return this.accountingService.registrarAbonoDeuda(
+      cobradorId,
+      montoClean,
+      body.nota || '',
+      req.user.id,
+    );
+  }
 }
+

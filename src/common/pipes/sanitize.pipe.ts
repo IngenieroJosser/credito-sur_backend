@@ -23,10 +23,25 @@ export class SanitizePipe implements PipeTransform {
   }
 
   private sanitizeString(value: string): string {
-    return sanitizeHtml(value, {
+    // Si no contiene caracteres que parezcan etiquetas HTML, devolver tal cual.
+    if (!/<[\w\/]+[^>]*>/.test(value)) {
+      return value;
+    }
+
+    const sanitized = sanitizeHtml(value, {
       allowedTags: [], // Strip all HTML tags
       allowedAttributes: {}, // Strip all attributes
       disallowedTagsMode: 'discard', // Totally remove the tags
     });
+
+    // Como medida adicional en caso de que quede algo codificado
+    return sanitized
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, "'")
+      .replace(/&#x27;/gi, "'")
+      .replace(/&nbsp;/gi, ' ');
   }
 }

@@ -211,12 +211,28 @@ export class UsersService {
       throw new NotFoundException(`Usuario con ID ${usuarioId} no encontrado`);
     }
 
-    // 2. Buscar IDs de los permisos basados en 'accion' (que es lo que manda el frontend)
+    // 2. Buscar permisos por 'accion' o por 'id'.
+    // En instalaciones reales puede venir una mezcla, y si no se encuentran todos
+    // no debemos "simular" éxito asignando 0.
+    const requested = (permisos || []).map((p) => String(p || '').trim()).filter(Boolean);
     const permisosDb = await this.prisma.permiso.findMany({
       where: {
-        accion: { in: permisos },
+        OR: [{ accion: { in: requested } }, { id: { in: requested } }],
       },
+      select: { id: true, accion: true },
     });
+
+    const encontrados = new Set<string>();
+    permisosDb.forEach((p) => {
+      encontrados.add(p.id);
+      encontrados.add(p.accion);
+    });
+    const faltantes = requested.filter((p) => !encontrados.has(p));
+    if (faltantes.length > 0) {
+      throw new BadRequestException(
+        `Uno o más permisos no existen en base de datos: ${faltantes.join(', ')}`,
+      );
+    }
 
     return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // 3. Limpiar permisos personalizados existentes
@@ -234,7 +250,21 @@ export class UsersService {
         });
       }
 
-      return { mensaje: 'Permisos actualizados correctamente' };
+      this.logger.log(
+        `Permisos actualizados para usuario ${usuarioId}: ${permisosDb.length} asignados de ${permisos.length} solicitados.`
+      );
+
+      return {
+        mensaje: 'Permisos actualizados correctamente',
+        asignados: permisosDb.length,
+      };
+    }).then((result) => {
+      // Notificar en tiempo real que el usuario fue actualizado (para refresh de sesión)
+      this.notificacionesGateway.broadcastUsuariosActualizados({
+        accion: 'PERMISOS_ACTUALIZADOS',
+        usuarioId,
+      });
+      return result;
     });
   }
 

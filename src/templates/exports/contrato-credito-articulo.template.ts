@@ -68,7 +68,7 @@ export interface ContratoData {
 
   // Cuotas
   numeroCuotas?:    number;
-  frecuencia?:      'SEMANAL' | 'QUINCENAL' | 'MENSUAL';
+  frecuencia?:      'DIARIO' | 'SEMANAL' | 'QUINCENAL' | 'MENSUAL';
   valorCuota?:      number;
   fechaPrimerPago?: string;
   fechaUltimoPago?: string;
@@ -248,16 +248,16 @@ export async function generarContratoPDF(
   doc.font('Helvetica').fontSize(10.5).fillColor(C.NEGRO)
      .text(
        'EL CLIENTE se compromete a pagar el saldo restante en cuotas acordadas de forma ' +
-       '(semanal / quincenal / mensual), según se haya pactado entre las partes, a través de ' +
+       '(diaria / semanal / quincenal / mensual), según se haya pactado entre las partes, a través de ' +
        'efectivo o transferencia bancaria.',
        ML, y, { width: TW, align: 'justify' }
      );
   y = doc.y + 10;
 
   // Fila: Número de cuotas + checkboxes frecuencia
-  const freqMap = { SEMANAL: 0, QUINCENAL: 1, MENSUAL: 2 };
+  const freqMap = { DIARIO: 0, SEMANAL: 1, QUINCENAL: 2, MENSUAL: 3 };
   const freqIdx = data.frecuencia ? freqMap[data.frecuencia] : -1;
-  const freqs   = ['Semanal', 'Quincenal', 'Mensual'];
+  const freqs   = ['Diaria', 'Semanal', 'Quincenal', 'Mensual'];
 
   doc.font('Helvetica-Bold').fontSize(10.5).fillColor(C.GRIS_TXT)
      .text('Número de cuotas:', ML, y, { continued: true });
@@ -275,7 +275,7 @@ export async function generarContratoPDF(
     }
     doc.font('Helvetica').fontSize(10.5).fillColor(C.NEGRO)
        .text(`  ${f}`, fxCheck + 12, y);
-    fxCheck += 110; 
+    fxCheck += 90; 
   });
   y = doc.y + 10;
 
@@ -387,7 +387,7 @@ export async function generarContratoPDF(
   // ── LUGAR Y FECHA DE FIRMA ───────────────────────────────────────────────────
   checkPage(160);
   y += 18;
-  const lugarFechaText = `${CONTRATO_EMPRESA.ciudad}, a los ${data.fechaContrato || new Date().toLocaleDateString('es-CO')}`;
+  const lugarFechaText = `${CONTRATO_EMPRESA.ciudad}, ${data.fechaContrato || new Date().toLocaleDateString('es-CO')}`;
   doc.font('Helvetica-Bold').fontSize(10.5).fillColor(C.GRIS_TXT)
      .text('LUGAR Y FECHA DE FIRMA:', ML, y, { continued: true });
   doc.font('Helvetica').fillColor(C.NEGRO)

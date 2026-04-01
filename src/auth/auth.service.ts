@@ -16,6 +16,105 @@ export class AuthService {
     private readonly prisma: PrismaService,
   ) {}
 
+  private async buildSessionForUser(usuario: {
+    id: string;
+    nombres: string;
+    apellidos?: string | null;
+    correo?: string | null;
+    rol: any;
+  }) {
+    // Obtener permisos dinámicos del usuario
+    const asignaciones = await this.prisma.asignacionRolUsuario.findMany({
+      where: { usuarioId: usuario.id },
+      include: {
+        rol: true,
+      },
+    });
+
+    // Obtener rutaDefault del primer rol asignado
+    const rolDinamico = asignaciones[0]?.rol;
+    const rutaDefault = rolDinamico?.rutaDefault || '/admin';
+
+    // Permisos personalizados del usuario (si existen, tienen precedencia)
+    const permisosPersonalizados = await this.prisma.asignacionPermisoUsuario.findMany({
+      where: { usuarioId: usuario.id },
+      include: { permiso: true },
+    });
+
+    // Obtener permisos completos con metadata de sidebar
+    const rolPermisos = await this.prisma.rolPermiso.findMany({
+      where: {
+        rolId: { in: asignaciones.map((a) => a.rolId) },
+      },
+      include: {
+        permiso: true,
+      },
+    });
+
+    const permisosEfectivos =
+      permisosPersonalizados.length > 0
+        ? permisosPersonalizados.map((p) => p.permiso)
+        : rolPermisos.map((rp) => rp.permiso);
+
+    // Aplanar permisos (solo acciones para JWT)
+    const uniquePermisos = [...new Set(permisosEfectivos.map((p) => p.accion))];
+
+    // Construir sidebar agrupado por módulo
+    const permisosUnicos = permisosEfectivos.filter(
+      (p, i, arr) => arr.findIndex((x) => x.id === p.id) === i,
+    );
+
+    const modulosMap = new Map<
+      string,
+      { nombre: string; permisos: typeof permisosUnicos }
+    >();
+    for (const p of permisosUnicos) {
+      if (!p.esNavegable) continue;
+      const grupo = modulosMap.get(p.modulo) || {
+        nombre: p.modulo,
+        permisos: [],
+      };
+      grupo.permisos.push(p);
+      modulosMap.set(p.modulo, grupo);
+    }
+
+    const sidebar = Array.from(modulosMap.entries()).map(
+      ([modulo, grupo]) => ({
+        modulo,
+        items: grupo.permisos
+          .sort((a, b) => a.orden - b.orden)
+          .map((p) => ({
+            id: p.accion,
+            nombre: p.nombre,
+            icono: p.icono,
+            ruta: p.ruta,
+            orden: p.orden,
+          })),
+      }),
+    );
+
+    const payload = {
+      sub: usuario.id,
+      nombres: usuario.nombres,
+      rol: usuario.rol,
+      permisos: uniquePermisos,
+    };
+
+    return {
+      access_token: this.jwtService.sign(payload),
+      usuario: {
+        id: usuario.id,
+        nombres: usuario.nombres,
+        apellidos: usuario.apellidos ?? undefined,
+        correo: usuario.correo ?? undefined,
+        rol: usuario.rol,
+        permisos: uniquePermisos,
+        rutaDefault,
+        sidebar,
+      },
+    };
+  }
+
   async validarUsuario(nombreUsuario: string, contrasena: string) {
     // Buscar por correo o nombres (case insensitive)
     const usuario = await this.prisma.usuario.findFirst({
@@ -61,98 +160,26 @@ export class AuthService {
       data: { ultimoIngreso: new Date() },
     });
 
-    // Obtener permisos dinámicos del usuario
-    const asignaciones = await this.prisma.asignacionRolUsuario.findMany({
-      where: { usuarioId: usuario.id },
-      include: {
+    return this.buildSessionForUser(usuario as any);
+  }
+
+  async refreshSession(userId: string) {
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        nombres: true,
+        apellidos: true,
+        correo: true,
         rol: true,
       },
     });
 
-    // Obtener rutaDefault del primer rol asignado
-    const rolDinamico = asignaciones[0]?.rol;
-    const rutaDefault = rolDinamico?.rutaDefault || '/admin';
-
-    // Permisos personalizados del usuario (si existen, tienen precedencia)
-    const permisosPersonalizados = await this.prisma.asignacionPermisoUsuario.findMany({
-      where: { usuarioId: usuario.id },
-      include: { permiso: true },
-    });
-
-    // Obtener permisos completos con metadata de sidebar
-    const rolPermisos = await this.prisma.rolPermiso.findMany({
-      where: {
-        rolId: { in: asignaciones.map((a) => a.rolId) },
-      },
-      include: {
-        permiso: true,
-      },
-    });
-
-    const permisosEfectivos =
-      permisosPersonalizados.length > 0
-        ? permisosPersonalizados.map((p) => p.permiso)
-        : rolPermisos.map((rp) => rp.permiso);
-
-    // Aplanar permisos (solo acciones para JWT)
-    const uniquePermisos = [...new Set(permisosEfectivos.map((p) => p.accion))];
-
-    // Construir sidebar agrupado por módulo
-    const permisosConMeta = permisosEfectivos;
-    const permisosUnicos = permisosConMeta.filter(
-      (p, i, arr) => arr.findIndex((x) => x.id === p.id) === i,
-    );
-
-    // Agrupar por módulo para el sidebar
-    const modulosMap = new Map<
-      string,
-      { nombre: string; permisos: typeof permisosUnicos }
-    >();
-    for (const p of permisosUnicos) {
-      if (!p.esNavegable) continue;
-      const grupo = modulosMap.get(p.modulo) || {
-        nombre: p.modulo,
-        permisos: [],
-      };
-      grupo.permisos.push(p);
-      modulosMap.set(p.modulo, grupo);
+    if (!usuario) {
+      throw new NotFoundException('Usuario no encontrado');
     }
 
-    const sidebar = Array.from(modulosMap.entries()).map(
-      ([modulo, grupo]) => ({
-        modulo,
-        items: grupo.permisos
-          .sort((a, b) => a.orden - b.orden)
-          .map((p) => ({
-            id: p.accion,
-            nombre: p.nombre,
-            icono: p.icono,
-            ruta: p.ruta,
-            orden: p.orden,
-          })),
-      }),
-    );
-
-    const payload = {
-      sub: usuario.id,
-      nombres: usuario.nombres,
-      rol: usuario.rol,
-      permisos: uniquePermisos,
-    };
-
-    return {
-      access_token: this.jwtService.sign(payload),
-      usuario: {
-        id: usuario.id,
-        nombres: usuario.nombres,
-        apellidos: usuario.apellidos,
-        correo: usuario.correo,
-        rol: usuario.rol,
-        permisos: uniquePermisos,
-        rutaDefault,
-        sidebar,
-      },
-    };
+    return this.buildSessionForUser(usuario as any);
   }
 
   async registrarUsuario(dto: CreateAuthDto) {
