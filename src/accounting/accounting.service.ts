@@ -41,6 +41,32 @@ export class AccountingService implements OnModuleInit {
     return `CAJA-${start}-${end}`;
   }
 
+  /**
+   * Mapea una fila de Prisma (Transaccion + includes) al DTO de respuesta.
+   * Centraliza la lógica duplicada entre getTransacciones y getTransaccionById.
+   */
+  private mapTransaccionRow(t: any) {
+    return {
+      id: t.id,
+      numero: t.numeroTransaccion,
+      fecha: t.fechaTransaccion.toISOString(),
+      tipo: t.tipo,
+      monto: Number(t.monto),
+      descripcion: t.descripcion,
+      caja: t.caja.nombre,
+      cajaId: t.cajaId,
+      cajaOrigenId: t.cajaOrigenId ?? undefined,
+      tipoReferencia: t.tipoReferencia ?? undefined,
+      referenciaId: t.referenciaId ?? undefined,
+      responsable: `${t.creadoPor.nombres} ${t.creadoPor.apellidos}`,
+      estado: 'APROBADO' as const,
+      origen: t.caja.tipo === 'RUTA' ? 'COBRADOR' : 'EMPRESA',
+      categoria: t.tipoReferencia || 'GENERAL',
+      rutaId: t.caja.rutaId,
+      cajaSaldo: Number(t.caja.saldoActual),
+    };
+  }
+
   async asegurarCajaRuta(rutaId: string) {
     const ruta = await this.prisma.ruta.findFirst({
       where: { id: rutaId, eliminadoEn: null },
@@ -827,22 +853,7 @@ export class AccountingService implements OnModuleInit {
     ]);
 
     return {
-      data: transacciones.map((t) => ({
-        id: t.id,
-        numero: t.numeroTransaccion,
-        fecha: t.fechaTransaccion.toISOString(),
-        tipo: t.tipo,
-        monto: Number(t.monto),
-        descripcion: t.descripcion,
-        caja: t.caja.nombre,
-        cajaId: t.cajaId,
-        responsable: `${t.creadoPor.nombres} ${t.creadoPor.apellidos}`,
-        estado: 'APROBADO', // Todas las trx en DB están aprobadas
-        origen: t.caja.tipo === 'RUTA' ? 'COBRADOR' : 'EMPRESA',
-        categoria: t.tipoReferencia || 'GENERAL',
-        rutaId: t.caja.rutaId,
-        cajaSaldo: Number(t.caja.saldoActual),
-      })),
+      data: transacciones.map((t) => this.mapTransaccionRow(t)),
       meta: {
         total,
         page,
@@ -876,22 +887,7 @@ export class AccountingService implements OnModuleInit {
 
       if (!t) throw new NotFoundException('Transacción no encontrada');
 
-      return {
-        id: t.id,
-        numero: t.numeroTransaccion,
-        fecha: t.fechaTransaccion.toISOString(),
-        tipo: t.tipo,
-        monto: Number(t.monto),
-        descripcion: t.descripcion,
-        caja: t.caja.nombre,
-        cajaId: t.cajaId,
-        responsable: `${t.creadoPor.nombres} ${t.creadoPor.apellidos}`,
-        estado: 'APROBADO',
-        origen: t.caja.tipo === 'RUTA' ? 'COBRADOR' : 'EMPRESA',
-        categoria: t.tipoReferencia || 'GENERAL',
-        rutaId: t.caja.rutaId,
-        cajaSaldo: Number(t.caja.saldoActual),
-      };
+      return this.mapTransaccionRow(t);
     } catch (error) {
       this.logger.error(`Error fetching transaccion by id: ${error.message}`, error.stack);
       throw error;

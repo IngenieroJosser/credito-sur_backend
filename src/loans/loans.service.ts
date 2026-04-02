@@ -48,7 +48,6 @@ export class LoansService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    // Ejecutar automáticamente la corrección de intereses al arrancar (Deploy en Render)
     this.logger.log('🔄 [AUTO-FIX] Verificando e iniciando corrección de intereses al arranque...');
     try {
         const result = await this.fixInterestCalculations();
@@ -56,6 +55,44 @@ export class LoansService implements OnModuleInit {
     } catch (error) {
         this.logger.error(`❌ [AUTO-FIX] Error durante la corrección automática: ${error}`);
     }
+  }
+
+  /**
+   * Construye el objeto metadata estándar para notificaciones de préstamo.
+   * Centraliza el bloque de campos repetido en notifyApprovers + notificacionesService.create
+   * dentro de createLoan.
+   */
+  private buildPrestamoNotifMetadata(params: {
+    prestamo: { id: string; numeroPrestamo: string; monto: any; fechaInicio?: Date | null };
+    data: { frecuenciaPago: any; cuotaInicial?: number; notas?: string; esContado?: boolean; tipoPrestamo: string };
+    cliente: { id: string };
+    cantidadCuotas: number;
+    numPlazoMeses: number;
+    articuloNombre: string;
+    isFinanciamientoArticulo: boolean;
+    precioArticuloTotal: number;
+    safeNumber: (v: any) => number;
+  }) {
+    const { prestamo, data, cliente, cantidadCuotas, numPlazoMeses, articuloNombre, isFinanciamientoArticulo, precioArticuloTotal, safeNumber } = params;
+    return {
+      tipoAprobacion: 'NUEVO_PRESTAMO',
+      prestamoId: prestamo.id,
+      clienteId: cliente.id,
+      numeroPrestamo: prestamo.numeroPrestamo,
+      monto: safeNumber(prestamo.monto),
+      tipoPrestamo: data.tipoPrestamo,
+      esContado: !!data.esContado,
+      articulo: String(articuloNombre).replace(/&amp;/gi, '&'),
+      valorArticulo: isFinanciamientoArticulo ? safeNumber(precioArticuloTotal) : safeNumber(prestamo.monto),
+      cuotas: safeNumber(cantidadCuotas),
+      cantidadCuotas: safeNumber(cantidadCuotas),
+      plazoMeses: numPlazoMeses,
+      frecuenciaPago: String(data.frecuenciaPago),
+      cuotaInicial: safeNumber(data.cuotaInicial),
+      notas: String(data.notas || ''),
+      fechaInicio: prestamo.fechaInicio ? prestamo.fechaInicio.toISOString() : undefined,
+      fecha: prestamo.fechaInicio ? prestamo.fechaInicio.toISOString() : undefined,
+    };
   }
 
   async generarContrato(prestamoId: string) {
@@ -2318,26 +2355,7 @@ export class LoansService implements OnModuleInit {
             tipo: 'PRESTAMO',
             entidad: 'Aprobacion',
             entidadId: aprobacion.id,
-            metadata: {
-              tipoAprobacion: 'NUEVO_PRESTAMO',
-              prestamoId: prestamo.id,
-              clienteId: cliente.id,
-              numeroPrestamo: prestamo.numeroPrestamo,
-              monto: safeNumber(prestamo.monto),
-              tipoPrestamo: data.tipoPrestamo,
-              // Campos adicionales para el detalle del modal
-              esContado: !!data.esContado,
-              articulo: String(articuloNombre).replace(/&amp;/gi, '&'),
-              valorArticulo: isFinanciamientoArticulo ? safeNumber(precioArticuloTotal) : safeNumber(prestamo.monto),
-              cuotas: safeNumber(cantidadCuotas),
-              cantidadCuotas: safeNumber(cantidadCuotas),
-              plazoMeses: numPlazoMeses,
-              frecuenciaPago: String(data.frecuenciaPago),
-              cuotaInicial: safeNumber(data.cuotaInicial),
-              notas: String(data.notas || ''),
-              fechaInicio: prestamo.fechaInicio ? prestamo.fechaInicio.toISOString() : undefined,
-              fecha: prestamo.fechaInicio ? prestamo.fechaInicio.toISOString() : undefined,
-            },
+            metadata: this.buildPrestamoNotifMetadata({ prestamo, data, cliente, cantidadCuotas, numPlazoMeses, articuloNombre, isFinanciamientoArticulo, precioArticuloTotal, safeNumber }),
           });
         } catch {}
 
@@ -2349,23 +2367,7 @@ export class LoansService implements OnModuleInit {
             tipo: 'INFORMATIVO',
             entidad: 'Aprobacion',
             entidadId: aprobacion.id,
-            metadata: {
-              tipoAprobacion: 'NUEVO_PRESTAMO',
-              prestamoId: prestamo.id,
-              numeroPrestamo: prestamo.numeroPrestamo,
-              monto: safeNumber(prestamo.monto),
-              esContado: !!data.esContado,
-              articulo: String(articuloNombre).replace(/&amp;/gi, '&'),
-              valorArticulo: isFinanciamientoArticulo ? safeNumber(precioArticuloTotal) : safeNumber(prestamo.monto),
-              cuotas: safeNumber(cantidadCuotas),
-              cantidadCuotas: safeNumber(cantidadCuotas),
-              plazoMeses: numPlazoMeses,
-              frecuenciaPago: String(data.frecuenciaPago),
-              cuotaInicial: safeNumber(data.cuotaInicial),
-              notas: String(data.notas || ''),
-              fechaInicio: prestamo.fechaInicio ? prestamo.fechaInicio.toISOString() : undefined,
-              fecha: prestamo.fechaInicio ? prestamo.fechaInicio.toISOString() : undefined,
-            },
+            metadata: this.buildPrestamoNotifMetadata({ prestamo, data, cliente, cantidadCuotas, numPlazoMeses, articuloNombre, isFinanciamientoArticulo, precioArticuloTotal, safeNumber }),
           });
         } catch {}
       }
