@@ -3329,27 +3329,10 @@ export class RoutesService {
           break;
         }
 
-        switch (prestamo.frecuenciaPago) {
-          case 'DIARIO':
-            if (diasHastaVencimiento <= 0) debeAparecerHoy = true;
-            break;
-
-          case 'SEMANAL':
-            if (diasHastaVencimiento <= 0) debeAparecerHoy = true;
-            break;
-
-          case 'QUINCENAL':
-            if (diasHastaVencimiento <= 0) debeAparecerHoy = true;
-            break;
-
-          case 'MENSUAL':
-            if (diasHastaVencimiento <= 0) debeAparecerHoy = true;
-            break;
-
-          default:
-            if (diasHastaVencimiento <= 0) debeAparecerHoy = true;
-            break;
-        }
+        // Todas las frecuencias tienen el mismo criterio: aparece hoy si la cuota vence hoy o antes.
+        // (El bloque if anterior ya cubre fechaEfectivaKey <= fechaConsultaKey con break;
+        //  este if protege el caso borde donde diasHastaVencimiento es 0 pero la clave aún no coincide.)
+        if (diasHastaVencimiento <= 0) debeAparecerHoy = true;
 
 
 

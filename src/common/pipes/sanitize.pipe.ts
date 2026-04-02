@@ -23,8 +23,10 @@ export class SanitizePipe implements PipeTransform {
   }
 
   private sanitizeString(value: string): string {
-    // Si no contiene caracteres que parezcan etiquetas HTML, devolver tal cual.
-    if (!/<[\w\/]+[^>]*>/.test(value)) {
+    // Early-return lineal O(n): si no hay ningún '<' no puede haber etiqueta HTML.
+    // Se evita la regex `/<[\w\/]+[^>]*>/` que era vulnerable a ReDoS por backtracking
+    // cuando el input contiene '<' sin '>' correspondiente (p.ej. `<aaaaaaa...`).
+    if (!value.includes('<')) {
       return value;
     }
 
