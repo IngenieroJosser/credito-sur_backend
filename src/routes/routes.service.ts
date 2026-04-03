@@ -1372,8 +1372,11 @@ export class RoutesService {
 
 
       // Calcular estadísticas detalladas
+      // IMPORTANTE: deduplicar para evitar doble conteo si un cliente tiene
+      // más de una asignación activa en la misma ruta.
+      const clientesIds = [...new Set(ruta.asignaciones.map((a) => a.clienteId))];
 
-      const clientesIds = ruta.asignaciones.map((a) => a.clienteId);
+
 
       const estadisticas = {
 

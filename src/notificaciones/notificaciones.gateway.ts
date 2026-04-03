@@ -103,13 +103,9 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
     // 1. Registrar el cierre de ruta en BD (trazabilidad de descuadre)
     try {
       if (data.rutaId) {
-        // Regla: solo registrar "CIERRE_RUTA" cuando la ruta esté COMPLETADA.
-        // Si aún faltan clientes por cobrar/visitar, no se debe registrar el cierre en Movimientos.
-        if (clientesFaltantesNum > 0) {
-          this.logger.warn(
-            `Cierre de ruta NO registrado porque aún hay clientes faltantes: rutaId=${data.rutaId} faltantes=${clientesFaltantesNum}`,
-          );
-        } else {
+        // Regla: registrar "CIERRE_RUTA" cuando el cobrador completa la ruta.
+        // Si aún faltan clientes por cobrar/visitar, se registra igual el cierre para
+        // indicar que el cobrador cerró su jornada.
         const cajaDeLaRuta = await this.prisma.caja.findFirst({
           where: { rutaId: data.rutaId, tipo: 'RUTA' },
         });
@@ -171,7 +167,6 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
             });
           }
           this.logger.log(`Cierre de ruta registrado en caja ${cajaDeLaRuta.id} — descuadre: ${hayDescuadre}`);
-        }
         }
       }
     } catch (err) {
