@@ -11,7 +11,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TipoCaja, TipoTransaccion, TipoAprobacion, EstadoAprobacion } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
-import { getBogotaDayKey, getBogotaStartEndOfDay, getBogotaStartEndOfDayFromKey } from '../utils/date-utils';
+import { getBogotaDayKey, getBogotaStartEndOfDay, getBogotaStartEndOfDayFromKey, calculateDateRange } from '../utils/date-utils';
 import { generarExcelContable, generarPDFContable, CajaRow, TransaccionRow } from '../templates/exports/reporte-contable.template';
 
 
@@ -817,17 +817,29 @@ export class AccountingService implements OnModuleInit {
       where.numeroTransaccion = { startsWith: 'TRX-IN' };
     }
     if (fechaInicio || fechaFin) {
-      where.fechaTransaccion = {};
-      if (fechaInicio) {
-        const start = new Date(fechaInicio.includes('T') ? fechaInicio : `${fechaInicio}T00:00:00`);
-        start.setHours(0, 0, 0, 0);
-        where.fechaTransaccion.gte = start;
-      }
-      if (fechaFin) {
-        const end = new Date(fechaFin.includes('T') ? fechaFin : `${fechaFin}T23:59:59.999`);
-        end.setHours(23, 59, 59, 999);
-        where.fechaTransaccion.lte = end;
-      }
+      const { startDate, endDate } = calculateDateRange(
+        'custom',
+        fechaInicio ? (fechaInicio.includes('T') ? fechaInicio.split('T')[0] : fechaInicio) : undefined,
+        fechaFin ? (fechaFin.includes('T') ? fechaFin.split('T')[0] : fechaFin) : undefined
+      );
+      where.fechaTransaccion = {
+        gte: startDate,
+        lte: endDate,
+      };
+    }
+
+    // Si el tipo es 'INGRESO', queremos incluir tanto INGRESOS reales como TRANSFERENCIAS TRX-IN
+    // que representan recolecciones de ruta (para que el listado coincida con el dashboard)
+    if (where.tipo === TipoTransaccion.INGRESO && !cajaId) {
+       delete where.tipo;
+       where.OR = [
+         { tipo: TipoTransaccion.INGRESO },
+         { tipo: TipoTransaccion.TRANSFERENCIA, numeroTransaccion: { startsWith: 'TRX-IN' } }
+       ];
+       // Seguir excluyendo bases si es ingreso global
+       where.NOT = {
+         tipoReferencia: { in: ['SOLICITUD_BASE', 'SOLICITUD_BASE_EFECTIVO', 'APERTURA_CAJA'] },
+       };
     }
 
     const [transacciones, total] = await Promise.all([
@@ -960,12 +972,16 @@ export class AccountingService implements OnModuleInit {
     let desembolsos = 0;
     let otrosIngresos = 0;
     let otrosEgresos = 0;
+    const recaudosPorReferencia: Record<string, number> = {};
 
     transacciones.forEach((t) => {
       const monto = Number(t.monto);
       if (t.tipo === 'INGRESO') {
-        if (t.tipoReferencia === 'PAGO') {
+        if (t.tipoReferencia === 'PAGO' || t.tipoReferencia === 'CUOTA_INICIAL') {
           cobranzaTrx += monto;
+          if (t.referenciaId) {
+            recaudosPorReferencia[t.referenciaId] = (recaudosPorReferencia[t.referenciaId] || 0) + monto;
+          }
         } else if (
           t.tipoReferencia === 'SOLICITUD_BASE_EFECTIVO' ||
           t.tipoReferencia === 'SOLICITUD_BASE' ||
@@ -990,8 +1006,6 @@ export class AccountingService implements OnModuleInit {
           otrosEgresos += monto;
         }
       } else if (t.tipo === 'TRANSFERENCIA') {
-        // Para el neto del período (recaudo - gastos - desembolsos), las recolecciones
-        // deben descontar porque representan dinero entregado desde la caja de ruta.
         if (t.tipoReferencia === 'RECOLECCION') {
           otrosEgresos += monto;
         }
@@ -999,7 +1013,6 @@ export class AccountingService implements OnModuleInit {
     });
 
     // 3. Fallback: Obtener pagos directamente de la tabla Pago si no hay transacciones de pago vinculadas
-    // Esto es útil para instalaciones donde la vinculación TRX <-> PAGO no esté activa o para auditoría.
     let cobranzaPagos = 0;
     if (cobranzaTrx === 0) {
       const asignaciones = await this.prisma.asignacionRuta.findMany({
@@ -1008,7 +1021,7 @@ export class AccountingService implements OnModuleInit {
       });
       const clienteIds = asignaciones.map((a) => a.clienteId);
 
-      const pagosAgg = await this.prisma.pago.aggregate({
+      const pagosList = await this.prisma.pago.findMany({
         where: {
           clienteId: { in: clienteIds },
           fechaPago: {
@@ -1016,30 +1029,32 @@ export class AccountingService implements OnModuleInit {
             lte: rangeEnd,
           },
         },
-        _sum: { montoTotal: true },
       });
-      cobranzaPagos = Number(pagosAgg._sum.montoTotal || 0);
+      
+      pagosList.forEach(p => {
+        const m = Number(p.montoTotal);
+        cobranzaPagos += m;
+        // En este fallback, usamos prestamoId como referencia
+        if (p.prestamoId) {
+          recaudosPorReferencia[p.prestamoId] = (recaudosPorReferencia[p.prestamoId] || 0) + m;
+        }
+      });
     }
 
-    // Decidimos qué usar para cobranza (preferimos transacciones si existen)
+    // Decidimos qué usar para cobranza
     const totalCobranza = cobranzaTrx > 0 ? cobranzaTrx : cobranzaPagos;
-    
-    // El "Recaudo" total es lo que entró por cobranza y otros conceptos (NO incluye la base operativa)
     const totalRecaudo = totalCobranza + otrosIngresos;
-    
-    // Los "Gastos" para el cobrador suelen ser los operativos
     const totalGastos = gastosOperativos + otrosEgresos;
-
-    // Saldo disponible (Neto del período)
     const saldoNetoPeriodo = totalRecaudo - totalGastos - desembolsos;
 
     return {
       rutaId,
       cajaId: caja.id,
       fecha: rangeStart.toISOString(),
-      saldoDisponible: Number(caja.saldoActual), // Saldo real en libros actual
+      saldoDisponible: Number(caja.saldoActual),
       recaudoDelDia: totalRecaudo, 
       cobranzaDelDia: totalCobranza,
+      recaudosPorReferencia,
       gastosDelDia: totalGastos,
       baseEfectivo: baseEfectivo,
       desembolsos: desembolsos,
@@ -1377,29 +1392,11 @@ export class AccountingService implements OnModuleInit {
   // =====================
 
   async getResumenFinanciero(fechaInicio?: string, fechaFin?: string) {
-    let rangeStart: Date;
-    let rangeEnd: Date;
-
-    if (fechaInicio) {
-      rangeStart = new Date(fechaInicio.includes('T') ? fechaInicio : `${fechaInicio}T00:00:00`);
-      if (fechaFin) {
-        rangeEnd = new Date(fechaFin.includes('T') ? fechaFin : `${fechaFin}T23:59:59.999`);
-      } else {
-        // Sin fechaFin: usar hasta ahora mismo (totales históricos hasta hoy)
-        rangeEnd = new Date();
-        rangeEnd.setHours(23, 59, 59, 999);
-      }
-    } else {
-      // Sin ningún parámetro: solo hoy
-      const hoy = new Date();
-      rangeStart = new Date(hoy);
-      rangeStart.setHours(0, 0, 0, 0);
-      rangeEnd = new Date(hoy);
-      rangeEnd.setHours(23, 59, 59, 999);
-    }
-
-    const inicioHoy = rangeStart;
-    const finHoy = rangeEnd;
+    const { startDate: inicioHoy, endDate: finHoy } = calculateDateRange(
+      'custom',
+      fechaInicio ? (fechaInicio.includes('T') ? fechaInicio.split('T')[0] : fechaInicio) : undefined,
+      fechaFin ? (fechaFin.includes('T') ? fechaFin.split('T')[0] : fechaFin) : undefined
+    );
 
     // Para "Ayer" o el período anterior, comparamos con un período de igual duración inmediatamente anterior
     const duration = finHoy.getTime() - inicioHoy.getTime();

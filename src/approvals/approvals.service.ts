@@ -756,36 +756,41 @@ export class ApprovalsService {
         if (cajaRuta) {
           const saldoCajaRuta = Number((cajaRuta as any).saldoActual || 0);
           const montoDesembolso = Number(prestamo.monto || 0);
-          if (montoDesembolso > 0 && saldoCajaRuta < montoDesembolso) {
+          const isArticuloLoan = String(prestamo.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
+
+          // Validación de saldo: Solo aplica si NO es un artículo (es decir, es efectivo)
+          if (!isArticuloLoan && montoDesembolso > 0 && saldoCajaRuta < montoDesembolso) {
             throw new BadRequestException(
               `Saldo insuficiente en la caja de ruta para desembolsar el préstamo. Caja: ${cajaRuta.nombre}. Saldo: ${saldoCajaRuta.toLocaleString('es-CO')}. Monto desembolso: ${montoDesembolso.toLocaleString('es-CO')}`,
             );
           }
 
-          // 3. Crear transacción de egreso (Desembolso)
-          await tx.transaccion.create({
-            data: {
-              numeroTransaccion: `T${Date.now()}`,
-              cajaId: cajaRuta.id,
-              tipo: TipoTransaccion.EGRESO,
-              monto: Number(prestamo.monto),
-              descripcion: `Desembolso de préstamo #${prestamo.numeroPrestamo} - Cliente: ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
-              creadoPorId: approval.solicitadoPorId,
-              aprobadoPorId: aprobadoPorId || undefined,
-              tipoReferencia: 'PRESTAMO',
-              referenciaId: prestamo.id,
-            },
-          });
+          // 3. Crear transacción de egreso (Desembolso) - Solo si NO es un artículo
+          if (!isArticuloLoan) {
+            await tx.transaccion.create({
+              data: {
+                numeroTransaccion: `T${Date.now()}`,
+                cajaId: cajaRuta.id,
+                tipo: TipoTransaccion.EGRESO,
+                monto: Number(prestamo.monto),
+                descripcion: `Desembolso de préstamo #${prestamo.numeroPrestamo} - Cliente: ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
+                creadoPorId: approval.solicitadoPorId,
+                aprobadoPorId: aprobadoPorId || undefined,
+                tipoReferencia: 'PRESTAMO',
+                referenciaId: prestamo.id,
+              },
+            });
 
-          // 4. Actualizar saldo de la caja
-          await tx.caja.update({
-            where: { id: cajaRuta.id },
-            data: {
-              saldoActual: {
-                decrement: prestamo.monto
+            // 4. Actualizar saldo de la caja
+            await tx.caja.update({
+              where: { id: cajaRuta.id },
+              data: {
+                saldoActual: {
+                  decrement: prestamo.monto
+                }
               }
-            }
-          });
+            });
+          }
         }
       }
     });
