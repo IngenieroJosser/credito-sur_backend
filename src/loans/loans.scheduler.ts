@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
+import { getBogotaStartEndOfDay } from '../utils/date-utils';
 
 /**
  * Job nocturno que revisa prórrogas expiradas y vuelve a marcar los préstamos
@@ -95,8 +96,7 @@ export class LoansScheduler {
   @Cron('10 0 * * *')
   async marcarCuotasVencidas() {
     this.logger.log('Marcando cuotas vencidas...');
-    const ahora = new Date();
-    ahora.setHours(0, 0, 0, 0);
+    const { startDate: ahora } = getBogotaStartEndOfDay(new Date());
 
     try {
       // Cuotas PENDIENTE/PARCIAL cuya fechaVencimiento ya pasó

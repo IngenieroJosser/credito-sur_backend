@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { PushService } from '../push/push.service';
+import { formatBogotaOffsetIso, getBogotaStartEndOfDay } from '../utils/date-utils';
 
 /**
  * Umbrales de días en mora para cada nivel de mora.
@@ -119,8 +120,7 @@ export class MoraService implements OnModuleInit {
    * 5. Broadcast WebSocket para refrescar el frontend
    */
   async procesarMoraAutomatica(): Promise<ResultadoProcesarMora> {
-    const hoy = new Date();
-    hoy.setHours(0, 0, 0, 0);
+    const { startDate: hoy } = getBogotaStartEndOfDay(new Date());
 
     const resultado: ResultadoProcesarMora = {
       cuotasVencidas: 0,
@@ -129,7 +129,7 @@ export class MoraService implements OnModuleInit {
       clientesRiesgoActualizado: 0,
       notificacionesEnviadas: 0,
       errores: [],
-      procesadoEn: new Date().toISOString(),
+      procesadoEn: formatBogotaOffsetIso(new Date()),
     };
 
     // ─── PASO 1: Marcar cuotas vencidas ──────────────────────────────────────
@@ -472,8 +472,7 @@ export class MoraService implements OnModuleInit {
    * (días en mora, nivel, etiqueta) sin modificar nada en DB.
    */
   async getResumenMoraCliente(clienteId: string) {
-    const hoy = new Date();
-    hoy.setHours(0, 0, 0, 0);
+    const { startDate: hoy } = getBogotaStartEndOfDay(new Date());
 
     const cliente = await this.prisma.cliente.findUnique({
       where: { id: clienteId },

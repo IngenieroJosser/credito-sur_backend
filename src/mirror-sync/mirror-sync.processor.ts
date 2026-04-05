@@ -3,7 +3,13 @@ import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-@Processor('mirror-sync-queue')
+@Processor('mirror-sync-queue', {
+  // Reduce polling agresivo cuando la cola está vacía (Upstash rate-limit).
+  // A costa de que el arranque de sync (0→1 jobs) pueda tardar un poco más.
+  drainDelay: Number(process.env.MIRROR_SYNC_DRAIN_DELAY_MS ?? 2000),
+  runRetryDelay: Number(process.env.MIRROR_SYNC_RUN_RETRY_DELAY_MS ?? 2000),
+  concurrency: Number(process.env.MIRROR_SYNC_CONCURRENCY ?? 1),
+})
 export class MirrorSyncProcessor extends WorkerHost {
   private readonly logger = new Logger(MirrorSyncProcessor.name);
 

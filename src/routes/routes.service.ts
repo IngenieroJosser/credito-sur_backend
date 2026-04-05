@@ -20,7 +20,7 @@ import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway'
 
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 
-import { getBogotaDayKey, getBogotaStartEndOfDay, getBogotaStartEndOfDayFromKey, getBogotaStartEndOfDayUTC } from '../utils/date-utils';
+import { formatBogotaOffsetIso, getBogotaDayKey, getBogotaStartEndOfDay, getBogotaStartEndOfDayFromKey } from '../utils/date-utils';
 
 import { CreateRouteDto } from './dto/create-route.dto';
 
@@ -107,7 +107,7 @@ export class RoutesService {
       rutaId,
       activadaHoy: !!activacion?.id,
       activacionId: activacion?.id || null,
-      fechaActivacion: activacion?.fechaTransaccion?.toISOString() || null,
+      fechaActivacion: activacion?.fechaTransaccion ? formatBogotaOffsetIso(activacion.fechaTransaccion) : null,
       activadaPorId: activacion?.creadoPorId || null,
     };
   }
@@ -343,7 +343,7 @@ export class RoutesService {
 
 
       const { endDate: hoyFin } = getBogotaStartEndOfDay(new Date());
-      const { endDate: hoyFinUTC } = getBogotaStartEndOfDayUTC(new Date());
+      const { endDate: hoyFinUTC } = getBogotaStartEndOfDay(new Date());
       const hoyKey = getBogotaDayKey(new Date());
 
       for (const p of prestamos) {
@@ -356,7 +356,7 @@ export class RoutesService {
           for (const c of p.cuotas) {
             if (!c.fechaVencimiento) continue;
             // Extraer la fecha literal de la cuota y compararla con hoyKey de Bogotá.
-            const cuotaKey = new Date(c.fechaVencimiento).toISOString().split('T')[0];
+            const cuotaKey = getBogotaDayKey(new Date(c.fechaVencimiento));
             if (cuotaKey <= hoyKey) {
               montoAcumulado += Number(c.monto);
               if (cuotaKey < hoyKey) esMoraAtrasada = true;
@@ -967,7 +967,7 @@ export class RoutesService {
 
             // Crear rango del día actual en UTC puro para compatibilidad con bd y agregados
 
-            const { startDate: dInicioUTC, endDate: dFinUTC } = getBogotaStartEndOfDayUTC(new Date());
+            const { startDate: dInicioUTC, endDate: dFinUTC } = getBogotaStartEndOfDay(new Date());
 
              // Para pagos se requiere la hora de bogotá normal (getBogotaStartEndOfDay)
              const { startDate: dInicioBogota, endDate: dFinBogota } = getBogotaStartEndOfDay(new Date());
@@ -1151,7 +1151,7 @@ export class RoutesService {
 
   async findOne(id: string) {
     try {
-      const { startDate: hoyInicioUTC } = getBogotaStartEndOfDayUTC(new Date());
+      const { startDate: hoyInicioUTC } = getBogotaStartEndOfDay(new Date());
 
       const ruta = await this.prisma.ruta.findFirst({
 
@@ -1404,7 +1404,7 @@ export class RoutesService {
 
         const pIds = prestamosActivos.map(p => p.id);
         const { startDate: hoyInicio, endDate: hoyFin } = getBogotaStartEndOfDay(new Date());
-        const { startDate: hoyInicioUTC } = getBogotaStartEndOfDayUTC(new Date());
+        const { startDate: hoyInicioUTC } = getBogotaStartEndOfDay(new Date());
 
         const [pagosRutaRaw, cuotasCriterio, cuotasInicialesHoy] = await Promise.all([
           this.prisma.pago.findMany({
@@ -1496,7 +1496,7 @@ export class RoutesService {
       }
 
       const { startDate: hoyInicio } = getBogotaStartEndOfDay(new Date());
-      const { endDate: hoyFinUTC } = getBogotaStartEndOfDayUTC(new Date());
+      const { endDate: hoyFinUTC } = getBogotaStartEndOfDay(new Date());
 
       const ultimoCierre = await this.prisma.transaccion.findFirst({
         where: {
@@ -1535,7 +1535,9 @@ export class RoutesService {
                let montoAcumulado = 0;
                let esMoraAtrasada = false;
                for (const c of p.cuotas) {
-                  const cuotaKey = new Date(c.fechaVencimiento).toISOString().split('T')[0];
+
+                  const cuotaKey = getBogotaDayKey(new Date(c.fechaVencimiento));
+
                   if (c.fechaVencimiento && cuotaKey <= hoyKey2 && c.estado !== 'PAGADA') {
                      montoAcumulado += Number(c.monto);
                      if (cuotaKey < hoyKey2) esMoraAtrasada = true;
@@ -2181,7 +2183,7 @@ export class RoutesService {
 
         // Meta de hoy (nominal: una cuota por crédito activo/mora/pagado hoy)
         (async () => {
-          const { startDate: hoyUTC } = getBogotaStartEndOfDayUTC(new Date());
+          const { startDate: hoyUTC } = getBogotaStartEndOfDay(new Date());
           const result = await this.prisma.cuota.groupBy({
             by: ['prestamoId'],
             where: {
@@ -3178,7 +3180,8 @@ export class RoutesService {
         // Calcular días de diferencia absoluta basándose en claves Bogotá
         const daysDiff = (dateStr: string) => {
           const [y, m, d] = dateStr.split('-').map(Number);
-          return Math.floor(Date.UTC(y, m - 1, d) / (1000 * 60 * 60 * 24));
+          const base = new Date(`${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}T12:00:00-05:00`);
+          return Math.floor(base.getTime() / 86_400_000);
         };
         const diasHastaVencimiento = daysDiff(fechaEfectivaKey) - daysDiff(fechaConsultaKey);
 
@@ -3719,7 +3722,7 @@ export class RoutesService {
 
 
 
-    const fechaArchivo = new Date().toISOString().slice(0, 10);
+    const fechaArchivo = getBogotaDayKey(new Date());
 
     const meta: RutaCobradorMeta = {
 

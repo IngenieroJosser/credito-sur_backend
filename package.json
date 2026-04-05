@@ -10,6 +10,7 @@
   },
   "scripts": {
     "build": "nest build",
+    "clean:src-js": "node -e \"const fs=require('fs');const path=require('path');const root=path.join(process.cwd(),'src');const exts=new Set(['.js','.js.map']);let removed=0;function walk(dir){for(const ent of fs.readdirSync(dir,{withFileTypes:true})){const p=path.join(dir,ent.name);if(ent.isDirectory()) walk(p); else {const ext=exts.has(path.extname(p))?path.extname(p): (p.endsWith('.js.map')?'.js.map':null); if(ext && (p.endsWith('.js')||p.endsWith('.js.map'))){fs.unlinkSync(p);removed++;}}}} if(fs.existsSync(root)) walk(root); console.log('Removed',removed,'files from src/**/*.js{,.map}');\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:prod": "npx prisma migrate deploy --schema src/prisma/schema.prisma && node dist/main.js",
