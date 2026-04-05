@@ -77,6 +77,14 @@ export class AuthController {
     return req.user;
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Get('refresh')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Refrescar sesión del usuario autenticado (permisos + sidebar + token)' })
+  refresh(@Request() req: { user: { id?: string } }) {
+    return this.authService.refreshSession(String(req.user?.id || ''));
+  }
+
   // Recuperacion de contrasena — acceso publico
   @Publico()
   @Post('forgot-password')

@@ -423,38 +423,31 @@ export class PaymentsService {
       }
     }
 
-    // Notificar a todos los aprobadores (SUPER_ADMIN, ADMIN, COORDINADOR, SUPERVISOR)
-    const metodoPagoStr = dto.metodoPago === 'TRANSFERENCIA' ? 'Transferencia' : 'Efectivo';
-    await this.notificacionesService.notifyApprovers({
-      titulo: `Pago Registrado — ${metodoPagoStr}`,
-      mensaje: `Se registró ${numeroPago} de ${montoTotal.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} para ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos} (${prestamo.numeroPrestamo})`,
-      tipo: 'PAGO',
-      entidad: 'PAGO',
-      entidadId: resultado.pago.id,
-      metadata: {
-        // Identificación del pago
-        pagoId:           resultado.pago.id,
-        numeroPago,
-        numeroPrestamo:   prestamo.numeroPrestamo,
-        prestamoId:       prestamoIdVal,
-        // Método y comprobante
-        metodoPago:       dto.metodoPago || 'EFECTIVO',
-        numeroReferencia: dto.numeroReferencia || null,
-        tieneComprobante: comprobante != null,
-        // Cliente
-        cliente:          `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
-        clienteId:        prestamo.clienteId,
-        clienteDni:       prestamo.cliente.dni || null,
-        // Montos
-        monto:            montoTotal,
-        capitalRecuperado: capitalTotal,
-        interesRecuperado: interesTotal,
-        saldoNuevo:       resultado.descomposicion.saldoNuevo,
-        saldoAnterior:    resultado.descomposicion.saldoAnterior,
-        prestamoQuedaPagado: resultado.descomposicion.prestamoQuedaPagado,
-        cuotasAfectadas:  resultado.descomposicion.cuotasAfectadas,
-      },
-    });
+    // Nota: Se omite la notificación de pago a todos los aprobadores
+    // para evitar ruido en el panel. El pago se refleja en tiempo real
+    // vía socket (broadcastPagosActualizados / broadcastPrestamosActualizados).
+    // Solo se notifica cuando es una transferencia que requiere verificación.
+    if (dto.metodoPago === 'TRANSFERENCIA') {
+      const metodoPagoStr = 'Transferencia';
+      await this.notificacionesService.notifyApprovers({
+        titulo: `Pago por Transferencia — Requiere Verificación`,
+        mensaje: `Se registró pago de ${montoTotal.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} para ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos} (${prestamo.numeroPrestamo}) por ${metodoPagoStr}. Adjunto comprobante.`,
+        tipo: 'PAGO',
+        entidad: 'PAGO',
+        entidadId: resultado.pago.id,
+        metadata: {
+          pagoId:           resultado.pago.id,
+          numeroPrestamo:   prestamo.numeroPrestamo,
+          prestamoId:       prestamoIdVal,
+          metodoPago:       dto.metodoPago || 'EFECTIVO',
+          numeroReferencia: dto.numeroReferencia || null,
+          tieneComprobante: comprobante != null,
+          cliente:          `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
+          clienteId:        prestamo.clienteId,
+          monto:            montoTotal,
+        },
+      });
+    }
 
     this.logger.log(
       `Pago ${numeroPago} registrado: capital=${capitalTotal.toFixed(2)}, interés=${interesTotal.toFixed(2)}, saldo=${resultado.descomposicion.saldoNuevo.toFixed(2)}`,
@@ -463,6 +456,8 @@ export class PaymentsService {
     this.notificacionesGateway.broadcastPagosActualizados({
       accion: 'CREAR',
       pagoId: resultado.pago.id,
+      prestamoId: prestamo.id,
+      clienteId: prestamo.clienteId,
     });
     this.notificacionesGateway.broadcastPrestamosActualizados({
       accion: 'PAGO',

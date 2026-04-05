@@ -280,10 +280,21 @@ export class ApprovalsService {
 
       if (approval.tipoAprobacion === TipoAprobacion.NUEVO_PRESTAMO && approval.referenciaId) {
         try {
-          await this.prisma.prestamo.update({
+          const prestamoRevertido = await this.prisma.prestamo.update({
             where: { id: approval.referenciaId },
             data: { estadoAprobacion: EstadoAprobacion.PENDIENTE, eliminadoEn: null },
+            include: { producto: true }
           });
+
+          // CORRECCIÓN: Volver a reservar el stock porque la solicitud vuelve a evaluación
+          if (prestamoRevertido.productoId && prestamoRevertido.producto?.stock !== undefined && prestamoRevertido.producto?.stock !== null) {
+            try {
+               await this.prisma.producto.update({
+                 where: { id: prestamoRevertido.productoId },
+                 data: { stock: { decrement: 1 } } // Decrementamos porque vuelve a reservarse
+               });
+            } catch(e) {}
+          }
         } catch (error) {
           this.logger.error(`Error revirtiendo préstamo ${approval.referenciaId}:`, error);
         }
@@ -392,14 +403,29 @@ export class ApprovalsService {
     // Operación específica por tipo de rechazo
     if (approval.tipoAprobacion === TipoAprobacion.NUEVO_PRESTAMO && approval.referenciaId) {
       try {
-        await this.prisma.prestamo.update({
+        const prestamoRechazado = await this.prisma.prestamo.update({
           where: { id: approval.referenciaId },
           data: {
             estadoAprobacion: EstadoAprobacion.RECHAZADO,
             aprobadoPorId: rechazadoPorId || undefined,
             eliminadoEn: new Date(), // Oculta el préstamo del listado
           },
+          include: {
+            producto: true,
+          }
         });
+
+        // CORRECCIÓN: Restablecer stock si el préstamo incluye un artículo físico (stock !== undefined)
+        if (prestamoRechazado.productoId && prestamoRechazado.producto?.stock !== undefined && prestamoRechazado.producto?.stock !== null) {
+          try {
+             await this.prisma.producto.update({
+               where: { id: prestamoRechazado.productoId },
+               data: { stock: { increment: 1 } }
+             });
+          } catch(e) {
+            this.logger.error(`Error devolviendo stock al rechazar el préstamo ${approval.referenciaId}:`, e);
+          }
+        }
       } catch (error) {
         this.logger.error(`Error actualizando préstamo rechazado ${approval.referenciaId}:`, error);
       }
@@ -471,6 +497,11 @@ export class ApprovalsService {
         telefono: data.telefono,
         direccion: data.direccion,
         correo: data.correo,
+        referencia: data.referencia,
+        referencia1Nombre: data.referencia1Nombre,
+        referencia1Telefono: data.referencia1Telefono,
+        referencia2Nombre: data.referencia2Nombre,
+        referencia2Telefono: data.referencia2Telefono,
       },
     });
 
@@ -491,6 +522,29 @@ export class ApprovalsService {
 
     // Ejecutar en una transacción
     await this.prisma.$transaction(async (tx) => {
+      const isArticulo = String((finalData as any)?.tipo || '').toUpperCase() === 'ARTICULO';
+      const cuotaInicial = finalData.cuotaInicial !== undefined ? Number(finalData.cuotaInicial) : undefined;
+
+      const montoNormalizado = (() => {
+        const monto = finalData.monto !== undefined ? Number(finalData.monto) : undefined;
+        const valorArticulo = finalData.valorArticulo !== undefined ? Number(finalData.valorArticulo) : undefined;
+
+        // Para ARTICULO: monto es "a financiar". Si solo llegó valorArticulo, derivamos con cuotaInicial.
+        if (isArticulo) {
+          if (monto !== undefined && !isNaN(monto)) return monto;
+          if (valorArticulo !== undefined && !isNaN(valorArticulo)) {
+            const ci = !isNaN(Number(cuotaInicial)) ? Number(cuotaInicial) : 0;
+            return Math.max(0, valorArticulo - ci);
+          }
+          return undefined;
+        }
+
+        // Para EFECTIVO: monto representa el capital del préstamo
+        if (monto !== undefined && !isNaN(monto)) return monto;
+        if (valorArticulo !== undefined && !isNaN(valorArticulo)) return valorArticulo;
+        return undefined;
+      })();
+
       // 1. Activar el préstamo (aplicando cambios si fueron editados)
       const prestamo = await tx.prestamo.update({
         where: { id: approval.referenciaId },
@@ -499,11 +553,11 @@ export class ApprovalsService {
           estadoAprobacion: EstadoAprobacion.APROBADO,
           aprobadoPorId: aprobadoPorId || undefined,
           // Actualizar campos financieros si cambiaron en la revisión
-          monto: finalData.monto || finalData.valorArticulo ? Number(finalData.monto || finalData.valorArticulo) : undefined,
+          monto: montoNormalizado,
           cantidadCuotas: finalData.cantidadCuotas || finalData.cuotas || finalData.numCuotas ? Number(finalData.cantidadCuotas || finalData.cuotas || finalData.numCuotas) : undefined,
           tasaInteres: finalData.porcentaje !== undefined ? Number(finalData.porcentaje) : undefined,
           frecuenciaPago: finalData.frecuenciaPago || undefined,
-          cuotaInicial: finalData.cuotaInicial !== undefined ? Number(finalData.cuotaInicial) : undefined,
+          cuotaInicial,
           fechaInicio: finalData.fechaInicio ? new Date(finalData.fechaInicio) : undefined,
           notas: finalData.notas || undefined,
         },
@@ -518,6 +572,67 @@ export class ApprovalsService {
           }
         }
       });
+
+      // Si es crédito de ARTICULO con cuota inicial, registrar abono a capital (no utilidad).
+      // Idempotente para evitar duplicación por reintentos.
+      try {
+        const cuotaInicialVal = Number(cuotaInicial || 0);
+        if (isArticulo && cuotaInicialVal > 0) {
+          const rutaId = prestamo.cliente?.asignacionesRuta?.[0]?.rutaId;
+          const cajaRuta = rutaId
+            ? await tx.caja.findFirst({
+                where: { rutaId, tipo: 'RUTA', activa: true },
+                select: { id: true },
+              })
+            : null;
+
+          const cajaPrincipal = !cajaRuta
+            ? await tx.caja.findFirst({
+                where: {
+                  activa: true,
+                  OR: [{ codigo: 'CAJA-PRINCIPAL' }, { tipo: 'PRINCIPAL' }],
+                },
+                select: { id: true },
+              })
+            : null;
+
+          const cajaIdDestino = cajaRuta?.id || cajaPrincipal?.id;
+          if (cajaIdDestino) {
+            const yaExiste = await tx.transaccion.findFirst({
+              where: {
+                cajaId: cajaIdDestino,
+                tipo: TipoTransaccion.INGRESO,
+                tipoReferencia: 'CUOTA_INICIAL',
+                referenciaId: prestamo.id,
+              },
+              select: { id: true },
+            });
+
+            if (!yaExiste?.id) {
+              await tx.transaccion.create({
+                data: {
+                  numeroTransaccion: `CI-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+                  cajaId: cajaIdDestino,
+                  tipo: TipoTransaccion.INGRESO,
+                  monto: cuotaInicialVal,
+                  descripcion: `Cuota inicial crédito artículo #${prestamo.numeroPrestamo}`,
+                  creadoPorId: approval.solicitadoPorId,
+                  aprobadoPorId: aprobadoPorId || undefined,
+                  tipoReferencia: 'CUOTA_INICIAL',
+                  referenciaId: prestamo.id,
+                },
+              });
+
+              await tx.caja.update({
+                where: { id: cajaIdDestino },
+                data: { saldoActual: { increment: cuotaInicialVal } },
+              });
+            }
+          }
+        }
+      } catch (_) {
+        // No interrumpimos aprobación por error contable accesorio.
+      }
 
       // Si se editaron datos financieros, es probable que las cuotas (instancias de Cuota) necesiten ser regeneradas
       // o ajustadas. Para simplificar, si hay cambios, recalculamos los montos.
@@ -634,34 +749,48 @@ export class ApprovalsService {
       const rutaId = prestamo.cliente?.asignacionesRuta?.[0]?.rutaId;
       if (rutaId) {
         const cajaRuta = await tx.caja.findFirst({
-          where: { rutaId, tipo: 'RUTA', activa: true }
+          where: { rutaId, tipo: 'RUTA', activa: true },
+          select: { id: true, nombre: true, saldoActual: true },
         });
 
         if (cajaRuta) {
-          // 3. Crear transacción de egreso (Desembolso)
-          await tx.transaccion.create({
-            data: {
-              numeroTransaccion: `T${Date.now()}`,
-              cajaId: cajaRuta.id,
-              tipo: TipoTransaccion.EGRESO,
-              monto: Number(prestamo.monto),
-              descripcion: `Desembolso de préstamo #${prestamo.numeroPrestamo} - Cliente: ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
-              creadoPorId: approval.solicitadoPorId,
-              aprobadoPorId: aprobadoPorId || undefined,
-              tipoReferencia: 'PRESTAMO',
-              referenciaId: prestamo.id,
-            },
-          });
+          const saldoCajaRuta = Number((cajaRuta as any).saldoActual || 0);
+          const montoDesembolso = Number(prestamo.monto || 0);
+          const isArticuloLoan = String(prestamo.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
 
-          // 4. Actualizar saldo de la caja
-          await tx.caja.update({
-            where: { id: cajaRuta.id },
-            data: {
-              saldoActual: {
-                decrement: prestamo.monto
+          // Validación de saldo: Solo aplica si NO es un artículo (es decir, es efectivo)
+          if (!isArticuloLoan && montoDesembolso > 0 && saldoCajaRuta < montoDesembolso) {
+            throw new BadRequestException(
+              `Saldo insuficiente en la caja de ruta para desembolsar el préstamo. Caja: ${cajaRuta.nombre}. Saldo: ${saldoCajaRuta.toLocaleString('es-CO')}. Monto desembolso: ${montoDesembolso.toLocaleString('es-CO')}`,
+            );
+          }
+
+          // 3. Crear transacción de egreso (Desembolso) - Solo si NO es un artículo
+          if (!isArticuloLoan) {
+            await tx.transaccion.create({
+              data: {
+                numeroTransaccion: `T${Date.now()}`,
+                cajaId: cajaRuta.id,
+                tipo: TipoTransaccion.EGRESO,
+                monto: Number(prestamo.monto),
+                descripcion: `Desembolso de préstamo #${prestamo.numeroPrestamo} - Cliente: ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
+                creadoPorId: approval.solicitadoPorId,
+                aprobadoPorId: aprobadoPorId || undefined,
+                tipoReferencia: 'PRESTAMO',
+                referenciaId: prestamo.id,
+              },
+            });
+
+            // 4. Actualizar saldo de la caja
+            await tx.caja.update({
+              where: { id: cajaRuta.id },
+              data: {
+                saldoActual: {
+                  decrement: prestamo.monto
+                }
               }
-            }
-          });
+            });
+          }
         }
       }
     });
@@ -718,6 +847,7 @@ export class ApprovalsService {
             }[data.tipoGasto] || 'OPERATIVO') as any,
           monto: data.monto,
           descripcion: data.descripcion,
+          categoriaId: data.categoriaId || undefined,
           aprobadoPorId: aprobadoPorId || undefined,
           estadoAprobacion: EstadoAprobacion.APROBADO,
         },
@@ -728,22 +858,22 @@ export class ApprovalsService {
         },
       });
 
-      // 2. Crear la Transacción financiera (Egreso para la caja)
+      // 2. Registrar egreso contable: gasto del cobrador = DEUDA_COBRADOR (no afecta utilidad)
       await tx.transaccion.create({
         data: {
-          numeroTransaccion: `T${Date.now()}`,
+          numeroTransaccion: `GTRX${Date.now()}`,
           cajaId: data.cajaId,
           tipo: TipoTransaccion.EGRESO,
           monto: data.monto,
           descripcion: `Gasto aprobado: ${data.descripcion}`,
           creadoPorId: approval.solicitadoPorId,
           aprobadoPorId: aprobadoPorId || undefined,
-          tipoReferencia: 'GASTO',
+          tipoReferencia: 'DEUDA_COBRADOR',
           referenciaId: newGasto.id,
         },
       });
 
-      // 3. Actualizar Saldo de la Caja
+      // 3. Actualizar saldo de caja
       await tx.caja.update({
         where: { id: data.cajaId },
         data: {

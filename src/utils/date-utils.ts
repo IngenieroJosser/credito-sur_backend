@@ -63,6 +63,14 @@ export function getBogotaStartEndOfDayFromKey(key: string): { startDate: Date; e
   };
 }
 
+export function getBogotaStartEndOfDayUTC(date: Date = new Date()): { startDate: Date; endDate: Date } {
+  const p = toBogotaPseudo(date);
+  return {
+    startDate: new Date(Date.UTC(p.getUTCFullYear(), p.getUTCMonth(), p.getUTCDate(), 0, 0, 0, 0)),
+    endDate: new Date(Date.UTC(p.getUTCFullYear(), p.getUTCMonth(), p.getUTCDate(), 23, 59, 59, 999))
+  };
+}
+
 export function calculateDateRange(
   period: TimeFilterPeriod,
   customStart?: string,

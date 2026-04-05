@@ -5,7 +5,9 @@ import {
   EstadoCuota,
   EstadoPrestamo,
   TipoAprobacion,
+  TipoTransaccion,
 } from '@prisma/client';
+import { calculateDateRange, TimeFilterPeriod as BogotaPeriod } from '../utils/date-utils';
 
 @Injectable()
 export class DashboardService {
@@ -69,10 +71,17 @@ export class DashboardService {
 
       const efficiency = totalLoans > 0 ? (paidLoans / totalLoans) * 100 : 0;
 
-      // Calcular capital prestado del período (suma de montos de préstamos creados en el período)
+      // Calcular capital prestado del período (suma de montos de préstamos aprobados/efectivos)
       const capitalPrestado = await this.prisma.prestamo.aggregate({
         where: {
           creadoEn: { gte: startDate, lte: endDate },
+          estado: {
+            in: [
+              EstadoPrestamo.ACTIVO,
+              EstadoPrestamo.PAGADO,
+              EstadoPrestamo.EN_MORA,
+            ],
+          },
           eliminadoEn: null,
         },
         _sum: {
@@ -81,14 +90,27 @@ export class DashboardService {
       });
 
       // Recaudo del período: suma de cobros realizados (fechaPago = fecha real del cobro)
-      const recaudo = await this.prisma.pago.aggregate({
-        where: {
-          fechaPago: { gte: startDate, lte: endDate },
-        },
-        _sum: {
-          montoTotal: true,
-        },
-      });
+      const resRecaudo = await Promise.all([
+        this.prisma.pago.aggregate({
+          where: {
+            fechaPago: { gte: startDate, lte: endDate },
+          },
+          _sum: {
+            montoTotal: true,
+          },
+        }),
+        // Incluir transacciones de tipo CUOTA_INICIAL que no están en la tabla Pago
+        this.prisma.transaccion.aggregate({
+          where: {
+            tipoReferencia: 'CUOTA_INICIAL',
+            tipo: TipoTransaccion.INGRESO,
+            fechaTransaccion: { gte: startDate, lte: endDate },
+          },
+          _sum: { monto: true },
+        }),
+      ]);
+
+      const recaudoTotal = Number(resRecaudo[0]._sum.montoTotal || 0) + Number(resRecaudo[1]._sum.monto || 0);
 
       // Total de pagos en el período
       const totalPagos = await this.prisma.pago.count({
@@ -192,25 +214,44 @@ export class DashboardService {
 
         if (user && ['COBRADOR', 'SUPERVISOR', 'COORDINADOR'].includes(user.rol)) {
           // Calcular eficiencia real: (recaudado / meta_periodo) * 100
-          const metaCobroRes = await this.prisma.cuota.aggregate({
-            where: {
-              fechaVencimiento: { gte: startDate, lte: endDate },
-              prestamo: {
-                cliente: {
-                  asignacionesRuta: {
-                    some: {
-                      cobradorId: item.cobradorId,
-                      activa: true
+          // Incluimos CUOTA_INICIAL tanto en recaudo como en meta para consistencia con RoutesService
+          const [metaCobroRes, cuotasInicialesRes, pagosRes] = await Promise.all([
+            this.prisma.cuota.aggregate({
+              where: {
+                fechaVencimiento: { gte: startDate, lte: endDate },
+                prestamo: {
+                  cliente: {
+                    asignacionesRuta: {
+                      some: {
+                        cobradorId: item.cobradorId,
+                        activa: true
+                      }
                     }
                   }
                 }
-              }
-            },
-            _sum: { monto: true }
-          });
+              },
+              _sum: { monto: true }
+            }),
+            this.prisma.transaccion.aggregate({
+              where: {
+                caja: { responsableId: item.cobradorId, tipo: 'RUTA' },
+                tipoReferencia: 'CUOTA_INICIAL',
+                tipo: TipoTransaccion.INGRESO,
+                fechaTransaccion: { gte: startDate, lte: endDate },
+              },
+              _sum: { monto: true }
+            }),
+            this.prisma.pago.aggregate({
+              where: {
+                cobradorId: item.cobradorId,
+                fechaPago: { gte: startDate, lte: endDate },
+              },
+              _sum: { montoTotal: true }
+            })
+          ]);
 
-          const montoMeta = Number(metaCobroRes._sum.monto || 0);
-          const collected = Number(item._sum.montoTotal || 0);
+          const montoMeta = Number(metaCobroRes._sum.monto || 0) + Number(cuotasInicialesRes._sum.monto || 0);
+          const collected = Number(pagosRes._sum.montoTotal || 0) + Number(cuotasInicialesRes._sum.monto || 0);
           
           // Si no hay meta, asumimos 100% de eficiencia si recaudó algo
           const efficiency = montoMeta > 0 
@@ -234,7 +275,7 @@ export class DashboardService {
           requestedBase: this.calculateRequestedBase(pendingApprovalsList),
           efficiency: parseFloat(efficiency.toFixed(1)),
           capitalPrestado: Number(capitalPrestado._sum?.monto || 0),
-          recaudo: Number(recaudo._sum?.montoTotal || 0),
+          recaudo: recaudoTotal,
           totalPagos,
         },
         trend: trendData,
@@ -683,49 +724,14 @@ export class DashboardService {
   }
 
   /**
-   * Calcula el rango de fechas según el filtro de período
+   * Calcula el rango de fechas según el filtro de período (Sincronizado con Bogotá)
    */
   private calculateDateRangeFromFilter(timeFilter: string): { startDate: Date; endDate: Date } {
-    const today = new Date();
-    let startDate: Date;
-    let endDate: Date = new Date(today);
-    endDate.setHours(23, 59, 59, 999);
+    const period = (['today', 'week', 'month', 'year'].includes(timeFilter) 
+      ? timeFilter 
+      : 'month') as BogotaPeriod;
 
-    switch (timeFilter) {
-      case 'today':
-        startDate = new Date(today);
-        startDate.setHours(0, 0, 0, 0);
-        endDate = new Date(today);
-        endDate.setHours(23, 59, 59, 999);
-        break;
-      case 'week':
-        startDate = new Date(today);
-        // Inicio de semana (domingo = 0)
-        const day = today.getDay();
-        // Calcular diferencia para llegar al domingo (día 0)
-        const diff = day === 0 ? 0 : -day; // Si es domingo, diff = 0; si no, retrocedemos días
-        startDate.setDate(today.getDate() + diff);
-        startDate.setHours(0, 0, 0, 0);
-        endDate = new Date(today);
-        endDate.setHours(23, 59, 59, 999);
-        break;
-      case 'month':
-        startDate = new Date(today.getFullYear(), today.getMonth(), 1);
-        startDate.setHours(0, 0, 0, 0);
-        endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
-        break;
-      case 'year':
-        startDate = new Date(today.getFullYear(), 0, 1);
-        startDate.setHours(0, 0, 0, 0);
-        endDate = new Date(today.getFullYear(), 11, 31, 23, 59, 59, 999);
-        break;
-      default:
-        // Por defecto: mes actual
-        startDate = new Date(today.getFullYear(), today.getMonth(), 1);
-        startDate.setHours(0, 0, 0, 0);
-        endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
-    }
-
+    const { startDate, endDate } = calculateDateRange(period);
     return { startDate, endDate };
   }
 }

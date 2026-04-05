@@ -173,6 +173,10 @@ export class ClientsController {
       correo?: string;
       direccion?: string;
       referencia?: string;
+      referencia1Nombre?: string;
+      referencia1Telefono?: string;
+      referencia2Nombre?: string;
+      referencia2Telefono?: string;
       nivelRiesgo?: string;
       puntaje?: number;
       archivos?: any[];
@@ -186,6 +190,10 @@ export class ClientsController {
       correo: body.correo,
       direccion: body.direccion,
       referencia: body.referencia,
+      referencia1Nombre: body.referencia1Nombre,
+      referencia1Telefono: body.referencia1Telefono,
+      referencia2Nombre: body.referencia2Nombre,
+      referencia2Telefono: body.referencia2Telefono,
       nivelRiesgo: body.nivelRiesgo as NivelRiesgo,
       archivos: body.archivos,
     });

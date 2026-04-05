@@ -20,7 +20,7 @@ import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway'
 
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 
-import { getBogotaDayKey, getBogotaStartEndOfDay, getBogotaStartEndOfDayFromKey } from '../utils/date-utils';
+import { getBogotaDayKey, getBogotaStartEndOfDay, getBogotaStartEndOfDayFromKey, getBogotaStartEndOfDayUTC } from '../utils/date-utils';
 
 import { CreateRouteDto } from './dto/create-route.dto';
 
@@ -286,9 +286,7 @@ export class RoutesService {
 
                   },
 
-                  orderBy: { numeroCuota: 'asc' },
-
-                  take: 1,
+                  take: 100,
 
                   select: {
 
@@ -344,12 +342,36 @@ export class RoutesService {
 
 
 
-      for (const p of prestamos) {
+      const { endDate: hoyFin } = getBogotaStartEndOfDay(new Date());
+      const { endDate: hoyFinUTC } = getBogotaStartEndOfDayUTC(new Date());
+      const hoyKey = getBogotaDayKey(new Date());
 
-        const proxima = p.cuotas?.[0] || null;
+      for (const p of prestamos) {
+        let proxima = p.cuotas?.[0] || null;
+        
+        if (p.cuotas && p.cuotas.length > 0) {
+          let montoAcumulado = 0;
+          let esMoraAtrasada = false;
+          
+          for (const c of p.cuotas) {
+            if (!c.fechaVencimiento) continue;
+            // Extraer la fecha literal de la cuota y compararla con hoyKey de Bogotá.
+            const cuotaKey = new Date(c.fechaVencimiento).toISOString().split('T')[0];
+            if (cuotaKey <= hoyKey) {
+              montoAcumulado += Number(c.monto);
+              if (cuotaKey < hoyKey) esMoraAtrasada = true;
+            }
+          }
+          
+          if (montoAcumulado > 0 && proxima) {
+             proxima = { ...proxima, monto: montoAcumulado };
+             if (esMoraAtrasada) {
+                proxima.estado = 'VENCIDA';
+             }
+          }
+        }
 
         const cuotaEnProrroga = proxima?.estado === 'PRORROGADA';
-
         const extension = p.extensiones?.[0] || null;
 
 
@@ -929,19 +951,12 @@ export class RoutesService {
             // Obtener préstamos activos y en mora
 
             const prestamosActivos = await this.prisma.prestamo.findMany({
-
               where: {
-
                 clienteId: { in: clientesIds },
-
-                estado: { in: ['ACTIVO', 'EN_MORA'] },
-
+                estado: { in: ['ACTIVO', 'EN_MORA', 'PAGADO'] }, // Incluir pagados para capturar recaudo de hoy
                 eliminadoEn: null,
-
               },
-
-              select: { id: true, saldoPendiente: true }
-
+              select: { id: true, saldoPendiente: true, monto: true, cantidadCuotas: true, frecuenciaPago: true }
             });
 
 
@@ -950,71 +965,70 @@ export class RoutesService {
 
 
 
-            // Crear rango del día actual (00:00:00 a 23:59:59)
+            // Crear rango del día actual en UTC puro para compatibilidad con bd y agregados
 
-            const { startDate: dInicio, endDate: dFin } = getBogotaStartEndOfDay(new Date());
+            const { startDate: dInicioUTC, endDate: dFinUTC } = getBogotaStartEndOfDayUTC(new Date());
 
+             // Para pagos se requiere la hora de bogotá normal (getBogotaStartEndOfDay)
+             const { startDate: dInicioBogota, endDate: dFinBogota } = getBogotaStartEndOfDay(new Date());
 
 
             if (pIds.length > 0) {
 
-              const [pagosHoy, cuotasHoy, cuotasVencidasTotal] = await Promise.all([
+              const resAgregados = await Promise.all([
 
-                this.prisma.pago.aggregate({
-
+                this.prisma.pago.findMany({
                   where: {
-
-                    prestamoId: { in: pIds },
-
-                    fechaPago: { gte: dInicio, lte: dFin },
-
+                    prestamo: {
+                      cliente: {
+                        asignacionesRuta: { some: { rutaId: ruta.id } }
+                      }
+                    },
+                    fechaPago: { gte: dInicioBogota, lte: dFinBogota }
                   },
-
-                  _sum: { montoTotal: true },
-
+                  select: { montoTotal: true }
                 }),
 
-                this.prisma.cuota.aggregate({
-
+                this.prisma.cuota.findMany({
                   where: {
-
                     prestamoId: { in: pIds },
-
-                    fechaVencimiento: { gte: dInicio, lte: dFin },
-
-                    estado: { not: 'PAGADA' },
-
-                  },
-
-                  _sum: { monto: true },
-
+                    fechaVencimiento: { lte: dInicioUTC },
+                    estado: { in: ['PENDIENTE', 'PAGADA', 'PARCIAL', 'VENCIDA', 'PRORROGADA'] }
+                  }
                 }),
 
-                this.prisma.cuota.aggregate({
-
+                // NUEVO: Considerar ingresos por cuota inicial en la meta del día
+                this.prisma.transaccion.aggregate({
                   where: {
-
-                    prestamoId: { in: pIds },
-
-                    fechaVencimiento: { lt: dInicio },
-
-                    estado: { not: 'PAGADA' },
-
+                    caja: { rutaId: ruta.id, activa: true },
+                    tipoReferencia: 'CUOTA_INICIAL',
+                    tipo: 'INGRESO',
+                    fechaTransaccion: { gte: dInicioBogota, lte: dFinBogota },
                   },
-
                   _sum: { monto: true },
-
                 }),
 
               ]);
 
+              const cuotasInicialesHoy = resAgregados[2];
+              const montoMetaInicial = Number(cuotasInicialesHoy?._sum?.monto || 0);
 
+              const pagosRutaRaw = resAgregados[0] as any[];
+              const cuotasCriterio = resAgregados[1] as any[];
+              
+              const cobranzaReal = pagosRutaRaw.reduce((sum, p) => sum + Number(p.montoTotal || 0), 0);
+              estadisticas.cobranzaDelDia = cobranzaReal + montoMetaInicial;
 
-              estadisticas.cobranzaDelDia = pagosHoy._sum.montoTotal?.toNumber() || 0;
+              // Calcular meta nominal (una cuota por préstamo con actividad o deuda hoy)
+              let metaNominal = 0;
+              pIds.forEach(pid => {
+                const cuotasPrestamo = cuotasCriterio.filter(c => c.prestamoId === pid);
+                if (cuotasPrestamo.length > 0) {
+                  metaNominal += Number(cuotasPrestamo[0].monto);
+                }
+              });
 
-              const montoVencido = cuotasVencidasTotal._sum.monto?.toNumber() || 0;
-
-              estadisticas.metaDelDia = (cuotasHoy._sum.monto?.toNumber() || 0) + montoVencido;
+              estadisticas.metaDelDia = metaNominal + montoMetaInicial;
 
 
 
@@ -1028,10 +1042,11 @@ export class RoutesService {
 
 
 
-              const deudaTotal = prestamosActivos.reduce((acc, curr) => acc + curr.saldoPendiente.toNumber(), 0);
+              const montoVencido = cuotasCriterio
+                .filter(c => c.estado !== 'PAGADA' && new Date(c.fechaVencimiento) < dInicioUTC)
+                .reduce((sum, c) => sum + Number(c.monto), 0);
 
-
-
+              const deudaTotal = prestamosActivos.reduce((acc, curr) => acc + Number(curr.saldoPendiente || 0), 0);
               porcentajeMora = deudaTotal > 0 ? (montoVencido / deudaTotal) * 100 : 0;
 
 
@@ -1135,8 +1150,8 @@ export class RoutesService {
 
 
   async findOne(id: string) {
-
     try {
+      const { startDate: hoyInicioUTC } = getBogotaStartEndOfDayUTC(new Date());
 
       const ruta = await this.prisma.ruta.findFirst({
 
@@ -1220,27 +1235,17 @@ export class RoutesService {
 
                         where: {
 
-                          estado: {
-
-                            in: [
-
-                              EstadoCuota.PENDIENTE,
-
-                              EstadoCuota.VENCIDA,
-
-                              EstadoCuota.PARCIAL,
-
-                              EstadoCuota.PRORROGADA,
-
-                            ],
-
-                          },
+                          OR: [
+                            { estado: { in: ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'] } },
+                            {
+                              estado: 'PAGADA',
+                              fechaVencimiento: { gte: hoyInicioUTC }
+                            }
+                          ]
 
                         },
 
-                        orderBy: { numeroCuota: 'asc' },
-
-                        take: 1,
+                        take: 100,
 
                         select: {
 
@@ -1353,8 +1358,11 @@ export class RoutesService {
 
 
       // Calcular estadísticas detalladas
+      // IMPORTANTE: deduplicar para evitar doble conteo si un cliente tiene
+      // más de una asignación activa en la misma ruta.
+      const clientesIds = [...new Set(ruta.asignaciones.map((a) => a.clienteId))];
 
-      const clientesIds = ruta.asignaciones.map((a) => a.clienteId);
+
 
       const estadisticas = {
 
@@ -1387,202 +1395,85 @@ export class RoutesService {
         // Obtener préstamos activos y en mora
 
         const prestamosActivos = await this.prisma.prestamo.findMany({
-
           where: {
-
             clienteId: { in: clientesIds },
-
-            estado: { in: ['ACTIVO', 'EN_MORA'] },
-
+            estado: { in: ['ACTIVO', 'EN_MORA', 'PAGADO'] },
             eliminadoEn: null,
-
-          },
-
-          include: {
-
-            cuotas: {
-
-              where: {
-
-                estado: 'PENDIENTE',
-
-              },
-
-            },
-
-          },
-
+          }
         });
 
-
-
+        const pIds = prestamosActivos.map(p => p.id);
         const { startDate: hoyInicio, endDate: hoyFin } = getBogotaStartEndOfDay(new Date());
+        const { startDate: hoyInicioUTC } = getBogotaStartEndOfDayUTC(new Date());
 
-
-
-        // Calcular cobranza del día
-
-        const pagosHoy = await this.prisma.pago.aggregate({
-
-          where: {
-
-            prestamoId: { in: prestamosActivos.map((p) => p.id) },
-
-            fechaPago: {
-
-              gte: hoyInicio,
-
-              lte: hoyFin,
-
+        const [pagosRutaRaw, cuotasCriterio, cuotasInicialesHoy] = await Promise.all([
+          this.prisma.pago.findMany({
+            where: {
+              prestamo: {
+                cliente: {
+                  asignacionesRuta: { some: { rutaId: id } }
+                }
+              },
+              fechaPago: { gte: hoyInicio, lte: hoyFin }
             },
-
-          },
-
-          _sum: {
-
-            montoTotal: true,
-
-          },
-
-        });
-
-
-
-        // Calcular cuotas vencidas hoy para la meta
-
-        const cuotasHoy = await this.prisma.cuota.aggregate({
-
-          where: {
-
-            prestamoId: { in: prestamosActivos.map((p) => p.id) },
-
-            fechaVencimiento: {
-
-              gte: hoyInicio,
-
-              lte: hoyFin,
-
+            select: { montoTotal: true }
+          }),
+          this.prisma.cuota.findMany({
+            where: {
+              prestamoId: { in: pIds },
+              fechaVencimiento: { lte: hoyInicioUTC },
+              estado: { in: ['PENDIENTE', 'PAGADA', 'PARCIAL', 'VENCIDA', 'PRORROGADA'] }
+            }
+          }),
+          this.prisma.transaccion.aggregate({
+            where: {
+              caja: { rutaId: id, activa: true },
+              tipoReferencia: 'CUOTA_INICIAL',
+              tipo: 'INGRESO',
+              fechaTransaccion: { gte: hoyInicio, lte: hoyFin },
             },
+            _sum: { monto: true },
+          }),
+        ]);
 
-            estado: { not: 'PAGADA' },
-
-          },
-
-          _sum: {
-
-            monto: true,
-
-          },
-
+        const montoMetaInicial = Number(cuotasInicialesHoy?._sum?.monto || 0);
+        const cobranzaReal = pagosRutaRaw.reduce((sum, p) => sum + Number(p.montoTotal || 0), 0);
+        
+        let metaNominal = 0;
+        pIds.forEach(pid => {
+          const cuotasPrestamo = cuotasCriterio.filter(c => c.prestamoId === pid);
+          if (cuotasPrestamo.length > 0) {
+            metaNominal += Number(cuotasPrestamo[0].monto);
+          }
         });
 
+        estadisticas.cobranzaDelDia = cobranzaReal + montoMetaInicial;
+        estadisticas.metaDelDia = metaNominal + montoMetaInicial;
 
-
-        const cuotasVencidasTotalMeta = await this.prisma.cuota.aggregate({
-
-          where: {
-
-            prestamoId: { in: prestamosActivos.map((p) => p.id) },
-
-            fechaVencimiento: { lt: hoyInicio },
-
-            estado: { not: 'PAGADA' },
-
-          },
-
-          _sum: {
-
-            monto: true,
-
-          },
-
-        });
-
-
-
-        // Calcular deuda total
-
-        const deudaTotal = prestamosActivos.reduce((total, prestamo) => {
-
-          return total + prestamo.saldoPendiente.toNumber();
-
-        }, 0);
-
-
-
-        estadisticas.cobranzaDelDia = pagosHoy._sum.montoTotal?.toNumber() || 0;
-
-        const montoVencido = cuotasVencidasTotalMeta._sum.monto?.toNumber() || 0;
-
-        estadisticas.metaDelDia = (cuotasHoy._sum.monto?.toNumber() || 0) + montoVencido;
+        const deudaTotal = prestamosActivos.reduce((total, p) => total + Number(p.saldoPendiente || 0), 0);
+        const montoVencido = cuotasCriterio
+          .filter(c => c.estado !== 'PAGADA' && new Date(c.fechaVencimiento) < hoyInicioUTC)
+          .reduce((sum, c) => sum + Number(c.monto), 0);
 
         estadisticas.totalDeuda = deudaTotal;
-
-        estadisticas.prestamosActivos = prestamosActivos.length;
-
-
+        estadisticas.prestamosActivos = prestamosActivos.filter(p => p.estado !== 'PAGADO').length;
 
         // Calcular avance diario
-
         if (estadisticas.metaDelDia > 0) {
-
-          avanceDiario =
-
-            (estadisticas.cobranzaDelDia / estadisticas.metaDelDia) * 100;
-
+          avanceDiario = (estadisticas.cobranzaDelDia / estadisticas.metaDelDia) * 100;
         }
 
-
-
         // Calcular clientes nuevos (últimos 7 días)
-
         const sieteDiasAtras = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-
         estadisticas.clientesNuevos = await this.prisma.asignacionRuta.count({
-
           where: {
-
             rutaId: id,
-
-            creadoEn: {
-
-              gte: sieteDiasAtras,
-
-            },
-
+            creadoEn: { gte: sieteDiasAtras },
             activa: true,
-
           },
-
         });
 
-
-
-        // Calcular cartera vencida total para riesgo
-
-        const cuotasVencidasTotal = await this.prisma.cuota.aggregate({
-
-          where: {
-
-            prestamoId: { in: prestamosActivos.map((p) => p.id) },
-
-            fechaVencimiento: { lt: hoyInicio },
-
-            estado: { not: 'PAGADA' },
-
-          },
-
-          _sum: {
-
-            monto: true,
-
-          },
-
-        });
-
-
-
-        const montoVencidoRiesgo = cuotasVencidasTotal._sum.monto?.toNumber() || 0;
+        const montoVencidoRiesgo = Number(montoVencido || 0);
 
         porcentajeMora =
 
@@ -1605,6 +1496,7 @@ export class RoutesService {
       }
 
       const { startDate: hoyInicio } = getBogotaStartEndOfDay(new Date());
+      const { endDate: hoyFinUTC } = getBogotaStartEndOfDayUTC(new Date());
 
       const ultimoCierre = await this.prisma.transaccion.findFirst({
         where: {
@@ -1631,6 +1523,33 @@ export class RoutesService {
         _sum: { monto: true },
       });
       const efectivoEntregadoTotal = Number(efectivoEntregadoAgg._sum?.monto || 0);
+
+      const hoyFinForMap = new Date(hoyFinUTC);
+
+      const hoyKey2 = getBogotaDayKey(new Date());
+
+      for (const asig of ruta.asignaciones) {
+         if (!asig.cliente || !asig.cliente.prestamos) continue;
+         for (const p of asig.cliente.prestamos) {
+            if (p.cuotas && p.cuotas.length > 0) {
+               let montoAcumulado = 0;
+               let esMoraAtrasada = false;
+               for (const c of p.cuotas) {
+                  const cuotaKey = new Date(c.fechaVencimiento).toISOString().split('T')[0];
+                  if (c.fechaVencimiento && cuotaKey <= hoyKey2 && c.estado !== 'PAGADA') {
+                     montoAcumulado += Number(c.monto);
+                     if (cuotaKey < hoyKey2) esMoraAtrasada = true;
+                  }
+               }
+               if (montoAcumulado > 0) {
+                  p.cuotas[0].monto = new Prisma.Decimal(montoAcumulado);
+                  if (esMoraAtrasada) {
+                     p.cuotas[0].estado = 'VENCIDA' as any;
+                  }
+               }
+            }
+         }
+      }
 
 
 
@@ -2260,46 +2179,19 @@ export class RoutesService {
 
 
 
-        // Meta de hoy (cuotas vencidas hoy)
-
+        // Meta de hoy (nominal: una cuota por crédito activo/mora/pagado hoy)
         (async () => {
-
-          const { startDate: hoyInicio, endDate: hoyFin } = getBogotaStartEndOfDay(new Date());
-
-
-
-          const result = await this.prisma.cuota.aggregate({
-
+          const { startDate: hoyUTC } = getBogotaStartEndOfDayUTC(new Date());
+          const result = await this.prisma.cuota.groupBy({
+            by: ['prestamoId'],
             where: {
-
-              fechaVencimiento: {
-
-                gte: hoyInicio,
-
-                lte: hoyFin,
-
-              },
-
-              prestamo: {
-
-                estado: { in: ['ACTIVO', 'EN_MORA'] },
-
-              },
-
+              fechaVencimiento: { lte: hoyUTC },
+              prestamo: { estado: { in: ['ACTIVO', 'EN_MORA', 'PAGADO'] } },
+              estado: { in: ['PENDIENTE', 'PAGADA', 'PARCIAL', 'VENCIDA', 'PRORROGADA'] }
             },
-
-            _sum: {
-
-              monto: true,
-
-            },
-
+            _max: { monto: true }
           });
-
-
-
-          return result._sum.monto?.toNumber() || 0;
-
+          return result.reduce((sum, r) => sum + (Number(r._max.monto) || 0), 0);
         })(),
 
       ]);
@@ -3190,7 +3082,8 @@ export class RoutesService {
 
               where: {
 
-                estado: { in: ['ACTIVO', 'EN_MORA'] },
+                estado: { in: ['ACTIVO', 'EN_MORA', 'PAGADO'] },
+                eliminadoEn: null,
 
               },
 
@@ -3199,9 +3092,19 @@ export class RoutesService {
                 cuotas: {
 
                   where: {
-
-                    estado: { in: ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'] },
-
+                    OR: [
+                      { 
+                        estado: { in: ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'] },
+                        fechaVencimiento: { lte: getBogotaStartEndOfDayFromKey(fechaKey).startDate }
+                      },
+                      { 
+                        estado: 'PAGADA',
+                        fechaPago: {
+                          gte: fechaConsulta,
+                          lte: getBogotaStartEndOfDayFromKey(fechaKey).endDate
+                        }
+                      }
+                    ]
                   },
 
                   orderBy: { fechaVencimiento: 'asc' },
@@ -3254,18 +3157,6 @@ export class RoutesService {
 
 
 
-        // Si el préstamo inicia hoy, debe aparecer hoy para empezar a cobrar.
-
-        if (fechaInicioPrestamo.getTime() === fechaConsulta.getTime()) {
-
-          debeAparecerHoy = true;
-
-          break;
-
-        }
-
-
-
         if (prestamo.cuotas.length === 0) continue;
 
 
@@ -3280,69 +3171,26 @@ export class RoutesService {
 
           : new Date(proximaCuota.fechaVencimiento);
 
-        const { startDate: fechaEfectiva } = getBogotaStartEndOfDay(fechaEfectivaRaw);
+        // Fecha efectiva normalizada para comparación de "día calendario" en Bogotá
+        const fechaEfectivaKey = getBogotaDayKey(fechaEfectivaRaw);
+        const fechaConsultaKey = getBogotaDayKey(fechaConsulta);
 
+        // Calcular días de diferencia absoluta basándose en claves Bogotá
+        const daysDiff = (dateStr: string) => {
+          const [y, m, d] = dateStr.split('-').map(Number);
+          return Math.floor(Date.UTC(y, m - 1, d) / (1000 * 60 * 60 * 24));
+        };
+        const diasHastaVencimiento = daysDiff(fechaEfectivaKey) - daysDiff(fechaConsultaKey);
 
-
-        // Si la cuota está vencida o prorrogada expirada, siempre aparece
-
-        if (fechaEfectiva <= fechaConsulta) {
-
+        if (fechaEfectivaKey <= fechaConsultaKey) {
           debeAparecerHoy = true;
-
           break;
-
         }
 
-
-
-        // Calcular si debe aparecer según frecuencia
-
-        const diasHastaVencimiento = Math.ceil(
-
-          (fechaEfectiva.getTime() - fechaConsulta.getTime()) /
-
-          (1000 * 60 * 60 * 24),
-
-        );
-
-
-
-        switch (prestamo.frecuenciaPago) {
-
-          case 'DIARIO':
-
-            // Aparece todos los días si tiene cuota pendiente
-
-            if (diasHastaVencimiento <= 1) debeAparecerHoy = true;
-
-            break;
-
-          case 'SEMANAL':
-
-            // Aparece 1 día antes del vencimiento
-
-            if (diasHastaVencimiento <= 1) debeAparecerHoy = true;
-
-            break;
-
-          case 'QUINCENAL':
-
-            // Aparece 1 día antes del vencimiento
-
-            if (diasHastaVencimiento <= 1) debeAparecerHoy = true;
-
-            break;
-
-          case 'MENSUAL':
-
-            // Aparece 2 días antes del vencimiento
-
-            if (diasHastaVencimiento <= 2) debeAparecerHoy = true;
-
-            break;
-
-        }
+        // Todas las frecuencias tienen el mismo criterio: aparece hoy si la cuota vence hoy o antes.
+        // (El bloque if anterior ya cubre fechaEfectivaKey <= fechaConsultaKey con break;
+        //  este if protege el caso borde donde diasHastaVencimiento es 0 pero la clave aún no coincide.)
+        if (diasHastaVencimiento <= 0) debeAparecerHoy = true;
 
 
 
@@ -3382,55 +3230,36 @@ export class RoutesService {
 
           },
 
-          prestamos: cliente.prestamos.map((p) => ({
-
-            id: p.id,
-
-            numeroPrestamo: p.numeroPrestamo,
-
-            monto: Number(p.monto),
-
-            saldoPendiente: Number(p.saldoPendiente),
-
-            frecuenciaPago: p.frecuenciaPago,
-
-            cantidadCuotas: p.cantidadCuotas,
-
-            estado: p.estado,
-
-            proximaCuota: p.cuotas[0]
-
-              ? {
-
-                numeroCuota: p.cuotas[0].numeroCuota,
-
-                fechaVencimiento: (
-
-                  p.cuotas[0].estado === 'PRORROGADA' && p.cuotas[0].fechaVencimientoProrroga
-
-                    ? p.cuotas[0].fechaVencimientoProrroga
-
-                    : p.cuotas[0].fechaVencimiento
-
-                ),
-
-                monto: Number(p.cuotas[0].monto),
-
-                estado: p.cuotas[0].estado,
-
-                enProrroga: p.cuotas[0].estado === 'PRORROGADA',
-
-                fechaOriginalVencimiento: p.cuotas[0].estado === 'PRORROGADA'
-
-                  ? p.cuotas[0].fechaVencimiento
-
-                  : undefined,
-
-              }
-
-              : null,
-
-          })),
+          prestamos: cliente.prestamos.map((p) => {
+            const montoTotalCuotas = p.cuotas.reduce((sum, c) => sum + Number(c.monto), 0);
+            return {
+              id: p.id,
+              numeroPrestamo: p.numeroPrestamo,
+              monto: Number(p.monto),
+              saldoPendiente: Number(p.saldoPendiente),
+              frecuenciaPago: p.frecuenciaPago,
+              cantidadCuotas: p.cantidadCuotas,
+              estado: p.estado,
+              proximaCuota: p.cuotas[0]
+                ? {
+                  numeroCuota: p.cuotas[0].numeroCuota,
+                  fechaVencimiento: (
+                    p.cuotas[0].estado === 'PRORROGADA' && p.cuotas[0].fechaVencimientoProrroga
+                      ? p.cuotas[0].fechaVencimientoProrroga
+                      : p.cuotas[0].fechaVencimiento
+                  ),
+                  monto: Number(p.cuotas[0].monto),
+                  montoTotalDeuda: montoTotalCuotas,
+                  montoNominal: Number(p.cuotas[0].monto),
+                  estado: p.cuotas[0].estado,
+                  enProrroga: p.cuotas[0].estado === 'PRORROGADA',
+                  fechaOriginalVencimiento: p.cuotas[0].estado === 'PRORROGADA'
+                    ? p.cuotas[0].fechaVencimiento
+                    : undefined,
+                }
+                : null,
+            };
+          }),
 
         });
 
@@ -3442,18 +3271,90 @@ export class RoutesService {
 
 
 
+    const totalEsperado = visitasDelDia.reduce((sum, v) => {
+      // La meta se basa en el monto nominal de la cuota (lo que corresponde pagar hoy)
+      const montoVisita = v.prestamos.reduce((pSum, p) => pSum + Number(p.proximaCuota?.montoNominal || 0), 0);
+      return sum + montoVisita;
+    }, 0);
+
+    // Calcular recaudo real de esa fecha para esa ruta
+    // Calcular recaudo real de esa fecha para la ruta basándose en los clientes identificados
+    const { startDate: fInicio, endDate: fFin } = getBogotaStartEndOfDayFromKey(fechaKey);
+    // Obtener TODOS los pagos vinculados a préstamos de esta ruta en la fecha,
+    // incluyendo clientes no programados hoy (sintéticos)
+    const pagosDeHoy = await this.prisma.pago.findMany({
+      where: {
+        prestamo: {
+          cliente: {
+            asignacionesRuta: {
+              some: { rutaId }
+            }
+          }
+        },
+        fechaPago: { gte: fInicio, lte: fFin }
+      },
+      select: { clienteId: true, montoTotal: true }
+    });
+
+    // Mapear pagos por cliente para asignar a visitas
+    const pagosPorCliente: Record<string, number> = {};
+    pagosDeHoy.forEach(p => {
+      pagosPorCliente[p.clienteId] = (pagosPorCliente[p.clienteId] || 0) + Number(p.montoTotal || 0);
+    });
+
+    // Enriquecer visitas con su recaudo individual del día
+    visitasDelDia.forEach(v => {
+      const cid = v.cliente?.id || v.clienteId;
+      v.recaudadoDelDia = pagosPorCliente[cid] || 0;
+    });
+
+    const recaudoFinal = pagosDeHoy.reduce((sum, p) => sum + Number(p.montoTotal || 0), 0);
+
+    // Buscar gastos de la ruta en ese día
+    const gastosRuta = await this.prisma.gasto.aggregate({
+      where: {
+        caja: { rutaId },
+        fechaGasto: { gte: fInicio, lte: fFin }
+      },
+      _sum: { monto: true }
+    });
+
+    const gastosFinal = Number(gastosRuta._sum.monto || 0);
+
+    const efectividad = totalEsperado > 0 
+      ? Math.round((recaudoFinal / totalEsperado) * 100) 
+      : (recaudoFinal > 0 ? 100 : 0);
+
+    const gestionadosCount = await this.prisma.pago.groupBy({
+      by: ['clienteId'],
+      where: {
+        prestamo: {
+          cliente: {
+            asignacionesRuta: {
+              some: { rutaId }
+            }
+          }
+        },
+        fechaPago: { gte: fInicio, lte: fFin }
+      }
+    });
+
+    const gestionados = gestionadosCount.length;
+
     return {
-
-      fecha: fechaConsulta.toISOString(),
-
+      fecha: fechaKey, // Clave de fecha Bogotá YYYY-MM-DD
       rutaId,
-
       totalVisitas: visitasDelDia.length,
-
+      resumen: {
+        recaudo: recaudoFinal,
+        meta: totalEsperado,
+        gastos: gastosFinal,
+        efectividad,
+        visitados: gestionados,
+        total: visitasDelDia.length
+      },
       visitas: visitasDelDia,
-
     };
-
   }
 
 
