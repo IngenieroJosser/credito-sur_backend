@@ -993,7 +993,7 @@ export class RoutesService {
                   where: {
                     prestamoId: { in: pIds },
                     fechaVencimiento: { lte: dInicioUTC },
-                    estado: { not: 'ANULADA' }
+                    estado: { in: ['PENDIENTE', 'PAGADA', 'PARCIAL', 'VENCIDA', 'PRORROGADA'] }
                   }
                 }),
 
@@ -1150,8 +1150,8 @@ export class RoutesService {
 
 
   async findOne(id: string) {
-
     try {
+      const { startDate: hoyInicioUTC } = getBogotaStartEndOfDayUTC(new Date());
 
       const ruta = await this.prisma.ruta.findFirst({
 
@@ -1235,21 +1235,13 @@ export class RoutesService {
 
                         where: {
 
-                          estado: {
-
-                            in: [
-
-                              EstadoCuota.PENDIENTE,
-
-                              EstadoCuota.VENCIDA,
-
-                              EstadoCuota.PARCIAL,
-
-                              EstadoCuota.PRORROGADA,
-
-                            ],
-
-                          },
+                          OR: [
+                            { estado: { in: ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'] } },
+                            {
+                              estado: 'PAGADA',
+                              fechaVencimiento: { gte: hoyInicioUTC }
+                            }
+                          ]
 
                         },
 
@@ -1430,7 +1422,7 @@ export class RoutesService {
             where: {
               prestamoId: { in: pIds },
               fechaVencimiento: { lte: hoyInicioUTC },
-              estado: { not: 'ANULADA' }
+              estado: { in: ['PENDIENTE', 'PAGADA', 'PARCIAL', 'VENCIDA', 'PRORROGADA'] }
             }
           }),
           this.prisma.transaccion.aggregate({
@@ -1481,11 +1473,7 @@ export class RoutesService {
           },
         });
 
-        const cuotasVencidasTotal = { _sum: { monto: montoVencido } };
-
-
-
-        const montoVencidoRiesgo = cuotasVencidasTotal._sum.monto?.toNumber() || 0;
+        const montoVencidoRiesgo = Number(montoVencido || 0);
 
         porcentajeMora =
 
@@ -1548,7 +1536,7 @@ export class RoutesService {
                let esMoraAtrasada = false;
                for (const c of p.cuotas) {
                   const cuotaKey = new Date(c.fechaVencimiento).toISOString().split('T')[0];
-                  if (c.fechaVencimiento && cuotaKey <= hoyKey2) {
+                  if (c.fechaVencimiento && cuotaKey <= hoyKey2 && c.estado !== 'PAGADA') {
                      montoAcumulado += Number(c.monto);
                      if (cuotaKey < hoyKey2) esMoraAtrasada = true;
                   }
@@ -2199,7 +2187,7 @@ export class RoutesService {
             where: {
               fechaVencimiento: { lte: hoyUTC },
               prestamo: { estado: { in: ['ACTIVO', 'EN_MORA', 'PAGADO'] } },
-              estado: { not: 'ANULADA' }
+              estado: { in: ['PENDIENTE', 'PAGADA', 'PARCIAL', 'VENCIDA', 'PRORROGADA'] }
             },
             _max: { monto: true }
           });
