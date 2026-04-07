@@ -129,7 +129,12 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
           }
 
           const saldoAlCierre = Number(cajaDeLaRuta.saldoActual || 0);
-          const hayDescuadre = saldoAlCierre > 0;
+          const deudaPorFaltantes = clientesFaltantesNum > 0
+            ? Math.max(Number(data.meta || 0) - Number(data.recaudo || 0), 0)
+            : 0;
+
+          const deudaTotal = Math.max(saldoAlCierre, 0) + Math.max(deudaPorFaltantes, 0);
+          const hayDescuadre = deudaTotal > 0;
           
           // Codificamos los datos en referenciaId agregando SD
           const referenciaId = `RC:${data.recaudo}|MT:${data.meta || 0}|EF:${data.efectividad}|CF:${data.clientesFaltantes}|CO:${data.cobradorNombre}|SD:${saldoAlCierre}`;
@@ -149,17 +154,17 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
             },
           });
 
-          // Regla de negocio: si hay descuadre de caja (dinero no entregado), se registra la deuda formal.
+          // Regla de negocio: si hay descuadre (dinero retenido o clientes faltantes), se registra la deuda formal.
           if (hayDescuadre) {
-            const deuda = saldoAlCierre;
-            const refDeuda = `DD:${deuda}|${referenciaId}`;
+            const deuda = deudaTotal;
+            const refDeuda = `DD:${deuda}|SD:${saldoAlCierre}|FD:${deudaPorFaltantes}|${referenciaId}`;
             await this.prisma.transaccion.create({
               data: {
                 numeroTransaccion: `DC-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
                 cajaId: cajaDeLaRuta.id,
-                tipo: 'TRANSFERENCIA',
-                monto: 0,
-                descripcion: `Deuda del cobrador por cerrar ruta sin entregar el dinero recolectado: $${deuda.toLocaleString('es-CO')}`,
+                tipo: 'EGRESO',
+                monto: deuda,
+                descripcion: `Deuda del cobrador por descuadre de cierre de ruta: $${deuda.toLocaleString('es-CO')}`,
                 tipoReferencia: 'DEUDA_COBRADOR',
                 referenciaId: refDeuda,
                 creadoPorId: cajaDeLaRuta.responsableId,

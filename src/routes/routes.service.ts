@@ -1585,6 +1585,47 @@ export class RoutesService {
                   }
                }
             }
+
+            // Enriquecer proximaCuota/fechaEfectiva en la respuesta (fuente autoritativa para frontend)
+            const cuotasList = Array.isArray((p as any)?.cuotas) ? (p as any).cuotas : [];
+            const extension = (p as any)?.extensiones?.[0] || null;
+            const isNoPagada = (c: any) => {
+              const s = String(c?.estado || '').toUpperCase();
+              return s !== 'PAGADA' && s !== 'PAGADO' && s !== 'ANULADA' && s !== 'ANULADO';
+            };
+            const getFechaEfectiva = (c: any): string | null => {
+              if (!c) return null;
+              const s = String(c?.estado || '').toUpperCase();
+              return (s === 'PRORROGADA' && c?.fechaVencimientoProrroga)
+                ? c.fechaVencimientoProrroga
+                : (c?.fechaVencimiento ?? null);
+            };
+
+            const cuotasSorted = [...cuotasList].sort((a: any, b: any) => {
+              const ak = getBogotaDayKey(new Date(getFechaEfectiva(a) || a?.fechaVencimiento));
+              const bk = getBogotaDayKey(new Date(getFechaEfectiva(b) || b?.fechaVencimiento));
+              return String(ak || '').localeCompare(String(bk || ''));
+            });
+            const prox = cuotasSorted.find(isNoPagada) || cuotasSorted[0] || null;
+
+            const cuotaEnProrroga = String(prox?.estado || '').toUpperCase() === 'PRORROGADA';
+            const fechaEfectiva =
+              (cuotaEnProrroga && prox?.fechaVencimientoProrroga)
+                ? prox.fechaVencimientoProrroga
+                : (extension?.nuevaFechaVencimiento ?? prox?.fechaVencimiento ?? null);
+
+            (p as any).fechaEfectiva = fechaEfectiva;
+            (p as any).proximaCuota = prox
+              ? {
+                id: prox.id,
+                numeroCuota: prox.numeroCuota,
+                monto: Number(prox.monto),
+                estado: prox.estado,
+                fechaVencimiento: prox.fechaVencimiento,
+                fechaVencimientoProrroga: prox.fechaVencimientoProrroga,
+                enProrroga: cuotaEnProrroga,
+              }
+              : null;
          }
       }
 
