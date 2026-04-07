@@ -231,9 +231,20 @@ export class PaymentsService {
       throw new BadRequestException('El cobrador es requerido');
     }
 
-    const fechaPagoBogota = dto.fechaPago
-      ? new Date(dto.fechaPago)
-      : new Date(formatBogotaOffsetIso(new Date()));
+    const rawFechaPago = (dto.fechaPago || '').toString().trim();
+    const fechaPagoBogota = (() => {
+      if (!rawFechaPago) return new Date(formatBogotaOffsetIso(new Date()));
+      const hasTz = /([zZ]|[+-]\d{2}:?\d{2})$/.test(rawFechaPago);
+      if (hasTz) return new Date(rawFechaPago);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(rawFechaPago)) {
+        return new Date(`${rawFechaPago}T00:00:00.000-05:00`);
+      }
+      // ISO sin zona horaria (ej: 2026-04-06T23:44 o 2026-04-06T23:44:10.123)
+      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(rawFechaPago)) {
+        return new Date(`${rawFechaPago}-05:00`);
+      }
+      return new Date(rawFechaPago);
+    })();
 
     // Crear pago y actualizar todo en una transacción
     const resultado = await this.prisma.$transaction(async (tx) => {

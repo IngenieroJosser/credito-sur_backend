@@ -415,66 +415,78 @@ export class DashboardService {
       cuotaInicialPorDiaKey.set(key, (cuotaInicialPorDiaKey.get(key) || 0) + Number(t.monto || 0));
     }
 
-    // 2) Meta nominal: cuota más antigua por préstamo hasta el ÚLTIMO día del rango
+    // 2) Meta nominal diaria (target)
+    // Regla consistente con RoutesService/daily-visits:
+    // - Por préstamo, contar 1 cuota si:
+    //   a) Existe una cuota NO pagada (pendiente/parcial/vencida/prorrogada) con fechaVencimiento <= inicio del día
+    //      -> tomar la más antigua.
+    //   b) Si NO existe deuda hasta ese día, contar una cuota PAGADA en ESE día (fechaPago en el día)
+    //      -> tomar la más antigua por fechaVencimiento para determinismo.
+    // - + ingresos por CUOTA_INICIAL del día.
     const { startDate: endDayStartUTC } = getBogotaStartEndOfDay(endDate);
-    const cuotasCandidatas = await this.prisma.cuota.findMany({
-      where: {
-        prestamo: {
-          estado: { in: [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA, EstadoPrestamo.PAGADO] },
-          eliminadoEn: null,
-        },
-        fechaVencimiento: { lte: endDayStartUTC },
-        estado: {
-          in: [
-            EstadoCuota.PENDIENTE,
-            EstadoCuota.PAGADA,
-            EstadoCuota.PARCIAL,
-            EstadoCuota.VENCIDA,
-            EstadoCuota.PRORROGADA,
-          ],
-        },
-      },
-      select: { prestamoId: true, fechaVencimiento: true, monto: true },
-      orderBy: [{ prestamoId: 'asc' }, { fechaVencimiento: 'asc' }],
-    });
 
-    const primerCuotaPorPrestamo = new Map<string, { ts: number; monto: number }>();
-    for (const c of cuotasCandidatas) {
+    const [cuotasNoPagadasHastaFin, cuotasPagadasEnRango] = await Promise.all([
+      this.prisma.cuota.findMany({
+        where: {
+          prestamo: {
+            estado: { in: [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA, EstadoPrestamo.PAGADO] },
+            eliminadoEn: null,
+          },
+          estado: {
+            in: [
+              EstadoCuota.PENDIENTE,
+              EstadoCuota.PARCIAL,
+              EstadoCuota.VENCIDA,
+              EstadoCuota.PRORROGADA,
+            ],
+          },
+          fechaVencimiento: { lte: endDayStartUTC },
+        },
+        select: { prestamoId: true, fechaVencimiento: true, monto: true },
+        orderBy: [{ prestamoId: 'asc' }, { fechaVencimiento: 'asc' }],
+      }),
+      this.prisma.cuota.findMany({
+        where: {
+          prestamo: {
+            estado: { in: [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA, EstadoPrestamo.PAGADO] },
+            eliminadoEn: null,
+          },
+          estado: EstadoCuota.PAGADA,
+          fechaPago: { gte: startDate, lte: endDate },
+        },
+        select: { prestamoId: true, fechaVencimiento: true, fechaPago: true, monto: true },
+        orderBy: [{ prestamoId: 'asc' }, { fechaVencimiento: 'asc' }],
+      }),
+    ]);
+
+    const firstUnpaidByPrestamo = new Map<string, { prestamoId: string; ts: number; monto: number }>();
+    for (const c of cuotasNoPagadasHastaFin) {
       if (!c.prestamoId) continue;
-      if (primerCuotaPorPrestamo.has(c.prestamoId)) continue;
-      primerCuotaPorPrestamo.set(c.prestamoId, {
+      const pid = String(c.prestamoId);
+      if (firstUnpaidByPrestamo.has(pid)) continue;
+      firstUnpaidByPrestamo.set(pid, {
+        prestamoId: pid,
         ts: new Date(c.fechaVencimiento).getTime(),
         monto: Number(c.monto || 0),
       });
     }
 
-    // Convertir a lista ordenada para prefijos acumulados
-    const firstCuotasSorted = Array.from(primerCuotaPorPrestamo.values())
+    const firstUnpaidSorted = Array.from(firstUnpaidByPrestamo.values())
       .filter((x) => x.monto > 0)
       .sort((a, b) => a.ts - b.ts);
 
-    const prefixSum: number[] = [];
-    for (let i = 0; i < firstCuotasSorted.length; i++) {
-      prefixSum[i] = (prefixSum[i - 1] || 0) + firstCuotasSorted[i].monto;
-    }
-
-    const metaNominalHasta = (dayStartUTC: Date) => {
-      const cutoff = dayStartUTC.getTime();
-      // upper bound: último índice con ts <= cutoff
-      let lo = 0;
-      let hi = firstCuotasSorted.length - 1;
-      let ans = -1;
-      while (lo <= hi) {
-        const mid = (lo + hi) >> 1;
-        if (firstCuotasSorted[mid].ts <= cutoff) {
-          ans = mid;
-          lo = mid + 1;
-        } else {
-          hi = mid - 1;
-        }
+    const pagadasPorDiaKey = new Map<string, Map<string, number>>();
+    for (const c of cuotasPagadasEnRango) {
+      if (!c.prestamoId || !c.fechaPago) continue;
+      const pid = String(c.prestamoId);
+      const { startDate: dStart } = getBogotaStartEndOfDay(new Date(c.fechaPago));
+      const dayKey = dStart.toISOString();
+      const dayMap = pagadasPorDiaKey.get(dayKey) || new Map<string, number>();
+      if (!dayMap.has(pid)) {
+        dayMap.set(pid, Number(c.monto || 0));
+        pagadasPorDiaKey.set(dayKey, dayMap);
       }
-      return ans >= 0 ? prefixSum[ans] : 0;
-    };
+    }
 
     if (groupBy === 'day') {
       // Agrupar por día
@@ -485,6 +497,10 @@ export class DashboardService {
 
       // Limitar a máximo 30 días para evitar sobrecarga, pero asegurar que incluya todos los días del período
       const maxDays = Math.min(daysDiff, 30);
+      let ptr = 0;
+      let sumUnpaid = 0;
+      const unpaidLoans = new Set<string>();
+
       for (let i = 0; i <= maxDays; i++) {
         const currentDate = new Date(startDate);
         currentDate.setDate(startDate.getDate() + i);
@@ -499,8 +515,26 @@ export class DashboardService {
         const cuotaInicialDia = cuotaInicialPorDiaKey.get(dayKey) || 0;
         const total = pagos + cuotaInicialDia;
 
-        const metaNominal = metaNominalHasta(dayStartBogota);
-        const target = metaNominal + cuotaInicialDia;
+        const cutoff = dayStartBogota.getTime();
+        while (ptr < firstUnpaidSorted.length && firstUnpaidSorted[ptr].ts <= cutoff) {
+          const it = firstUnpaidSorted[ptr];
+          if (!unpaidLoans.has(it.prestamoId)) {
+            unpaidLoans.add(it.prestamoId);
+            sumUnpaid += it.monto;
+          }
+          ptr++;
+        }
+
+        let sumPaidToday = 0;
+        const paidToday = pagadasPorDiaKey.get(dayKey);
+        if (paidToday) {
+          for (const [pid, monto] of paidToday.entries()) {
+            if (unpaidLoans.has(pid)) continue;
+            sumPaidToday += Number(monto || 0);
+          }
+        }
+
+        const target = sumUnpaid + sumPaidToday + cuotaInicialDia;
 
         // Crear etiqueta más descriptiva: día de semana + fecha
         const dayName = daysOfWeek[currentDate.getDay()];
@@ -523,6 +557,11 @@ export class DashboardService {
       const monthMapValue = new Map<string, number>();
       const monthMapTarget = new Map<string, number>();
 
+      // Acumulador incremental para meta nominal diaria a lo largo del año
+      let ptrMonth = 0;
+      let sumUnpaidMonth = 0;
+      const unpaidLoansMonth = new Set<string>();
+
       // Recorremos días dentro del rango para agregar de forma consistente (máx 366 días en year)
       const cursor = new Date(startDate);
       const { startDate: cStart } = getBogotaStartEndOfDay(cursor);
@@ -536,7 +575,27 @@ export class DashboardService {
         const pagos = pagosPorDiaKey.get(dayKey) || 0;
         const cuotaInicialDia = cuotaInicialPorDiaKey.get(dayKey) || 0;
         const value = pagos + cuotaInicialDia;
-        const target = metaNominalHasta(dayStartBogota) + cuotaInicialDia;
+
+        const cutoff = dayStartBogota.getTime();
+        while (ptrMonth < firstUnpaidSorted.length && firstUnpaidSorted[ptrMonth].ts <= cutoff) {
+          const it = firstUnpaidSorted[ptrMonth];
+          if (!unpaidLoansMonth.has(it.prestamoId)) {
+            unpaidLoansMonth.add(it.prestamoId);
+            sumUnpaidMonth += it.monto;
+          }
+          ptrMonth++;
+        }
+
+        let sumPaidToday = 0;
+        const paidToday = pagadasPorDiaKey.get(dayKey);
+        if (paidToday) {
+          for (const [pid, monto] of paidToday.entries()) {
+            if (unpaidLoansMonth.has(pid)) continue;
+            sumPaidToday += Number(monto || 0);
+          }
+        }
+
+        const target = sumUnpaidMonth + sumPaidToday + cuotaInicialDia;
 
         monthMapValue.set(monthKey, (monthMapValue.get(monthKey) || 0) + value);
         monthMapTarget.set(monthKey, (monthMapTarget.get(monthKey) || 0) + target);
