@@ -11,7 +11,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TipoCaja, TipoTransaccion, TipoAprobacion, EstadoAprobacion } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
-import { getBogotaDayKey, getBogotaStartEndOfDay, getBogotaStartEndOfDayFromKey, calculateDateRange } from '../utils/date-utils';
+import { calculateDateRange, formatBogotaOffsetIso, getBogotaDayKey, getBogotaStartEndOfDay, getBogotaStartEndOfDayFromKey } from '../utils/date-utils';
 import { generarExcelContable, generarPDFContable, CajaRow, TransaccionRow } from '../templates/exports/reporte-contable.template';
 
 
@@ -49,7 +49,7 @@ export class AccountingService implements OnModuleInit {
     return {
       id: t.id,
       numero: t.numeroTransaccion,
-      fecha: t.fechaTransaccion.toISOString(),
+      fecha: formatBogotaOffsetIso(t.fechaTransaccion),
       tipo: t.tipo,
       monto: Number(t.monto),
       descripcion: t.descripcion,
@@ -214,7 +214,7 @@ export class AccountingService implements OnModuleInit {
       rutaId,
       cerradaHoy: !!cierre?.id,
       cierreId: cierre?.id || null,
-      fechaCierre: cierre?.fechaTransaccion?.toISOString() || null,
+      fechaCierre: cierre?.fechaTransaccion ? formatBogotaOffsetIso(cierre.fechaTransaccion) : null,
     };
   }
 
@@ -267,7 +267,7 @@ export class AccountingService implements OnModuleInit {
           saldoMaximo: Number(caja.saldoMaximo),
           estado: caja.activa ? 'ABIERTA' : 'CERRADA',
           transacciones: caja._count.transacciones,
-          ultimaActualizacion: caja.actualizadoEn.toISOString(),
+          ultimaActualizacion: formatBogotaOffsetIso(caja.actualizadoEn),
         };
       }),
     );
@@ -314,7 +314,7 @@ export class AccountingService implements OnModuleInit {
       saldoMinimo: Number(caja.saldoMinimo) || 0,
       saldoMaximo: Number(caja.saldoMaximo) || 0,
       estado: caja.activa ? 'ABIERTA' : 'CERRADA',
-      ultimaActualizacion: caja.actualizadoEn.toISOString(),
+      ultimaActualizacion: formatBogotaOffsetIso(caja.actualizadoEn),
       transacciones: caja.transacciones,
     };
   }
@@ -949,8 +949,8 @@ export class AccountingService implements OnModuleInit {
         baseEfectivo: 0,
         desembolsos: 0,
         saldoDisponible: 0,
-        fechaInicio: rangeStart.toISOString(),
-        fechaFin: rangeEnd.toISOString(),
+        fechaInicio: formatBogotaOffsetIso(rangeStart),
+        fechaFin: formatBogotaOffsetIso(rangeEnd),
       };
     }
 
@@ -1050,7 +1050,7 @@ export class AccountingService implements OnModuleInit {
     return {
       rutaId,
       cajaId: caja.id,
-      fecha: rangeStart.toISOString(),
+      fecha: formatBogotaOffsetIso(rangeStart),
       saldoDisponible: Number(caja.saldoActual),
       recaudoDelDia: totalRecaudo, 
       cobranzaDelDia: totalCobranza,
@@ -1059,8 +1059,8 @@ export class AccountingService implements OnModuleInit {
       baseEfectivo: baseEfectivo,
       desembolsos: desembolsos,
       netoPeriodo: saldoNetoPeriodo,
-      fechaInicio: rangeStart.toISOString(),
-      fechaFin: rangeEnd.toISOString(),
+      fechaInicio: formatBogotaOffsetIso(rangeStart),
+      fechaFin: formatBogotaOffsetIso(rangeEnd),
       saldoCaja: Number(caja.saldoActual),
     };
   }
@@ -1341,10 +1341,8 @@ export class AccountingService implements OnModuleInit {
     }
 
     const baseDate = fecha ? new Date(fecha.includes('T') ? fecha : `${fecha}T00:00:00`) : new Date();
-    const rangeStart = new Date(baseDate);
-    rangeStart.setHours(0, 0, 0, 0);
-    const rangeEnd = new Date(baseDate);
-    rangeEnd.setHours(23, 59, 59, 999);
+    const fechaKey = getBogotaDayKey(baseDate);
+    const { startDate: rangeStart, endDate: rangeEnd } = getBogotaStartEndOfDayFromKey(fechaKey);
 
     // Obtener los clienteIds asignados a esta ruta
     const asignaciones = await this.prisma.asignacionRuta.findMany({
@@ -1353,7 +1351,7 @@ export class AccountingService implements OnModuleInit {
     });
 
     if (asignaciones.length === 0) {
-      return { efectivo: 0, transferencia: 0, total: 0, fecha: rangeStart.toISOString() };
+      return { efectivo: 0, transferencia: 0, total: 0, fecha: formatBogotaOffsetIso(rangeStart) };
     }
 
     const clienteIds = asignaciones.map((a) => a.clienteId);
@@ -1382,7 +1380,7 @@ export class AccountingService implements OnModuleInit {
       efectivo,
       transferencia,
       total: efectivo + transferencia,
-      fecha: rangeStart.toISOString(),
+      fecha: formatBogotaOffsetIso(rangeStart),
       cajaNombre: caja.nombre,
     };
   }
@@ -1676,7 +1674,7 @@ export class AccountingService implements OnModuleInit {
       rutasPendientesConsolidacion: rutasPendientesConsolidacion,
       consolidacionesHoy: consolidacionesHoy,
       porcentajeCierre: porcentajeCierres,
-      fecha: inicioHoy.toISOString(),
+      fecha: formatBogotaOffsetIso(inicioHoy),
       porcentajeIngresosVsAyer: usarComparacionAyer ? calcularDiferencia(ingresos, ingresosAyerVal) : null,
       porcentajeEgresosVsAyer: usarComparacionAyer ? calcularDiferencia(egresosOperativos, egresosAyerVal) : null,
       porcentajeCobranzaVsAyer: usarComparacionAyer ? calcularDiferencia(cobranza, cobranzaAyerVal) : null,
@@ -1753,7 +1751,7 @@ export class AccountingService implements OnModuleInit {
         }
         return {
           id: t.id,
-          fecha: t.fechaTransaccion.toISOString(),
+          fecha: formatBogotaOffsetIso(t.fechaTransaccion),
           caja: t.caja.nombre,
           responsable: `${t.creadoPor.nombres} ${t.creadoPor.apellidos}`,
           saldoSistema,
@@ -1791,7 +1789,7 @@ export class AccountingService implements OnModuleInit {
         const descuadre = saldoAlCierre > 0;
         return {
           id: t.id,
-          fecha: t.fechaTransaccion.toISOString(),
+          fecha: formatBogotaOffsetIso(t.fechaTransaccion),
           caja: t.caja.nombre,
           cajaTipo: t.caja.tipo,
           responsable: cobradorNombre,
@@ -1811,7 +1809,7 @@ export class AccountingService implements OnModuleInit {
       return {
 
         id: t.id,
-        fecha: t.fechaTransaccion.toISOString(),
+        fecha: formatBogotaOffsetIso(t.fechaTransaccion),
         caja: t.caja.nombre,
         responsable: `${t.creadoPor.nombres} ${t.creadoPor.apellidos}`,
         saldoSistema: Number(t.monto),
@@ -1914,14 +1912,12 @@ export class AccountingService implements OnModuleInit {
     if (fechaInicio || fechaFin) {
       where.fechaGasto = {};
       if (fechaInicio) {
-        const start = new Date(fechaInicio);
-        start.setHours(0, 0, 0, 0);
-        where.fechaGasto.gte = start;
+        const startKey = getBogotaDayKey(new Date(fechaInicio));
+        where.fechaGasto.gte = getBogotaStartEndOfDayFromKey(startKey).startDate;
       }
       if (fechaFin) {
-        const end = new Date(fechaFin);
-        end.setHours(23, 59, 59, 999);
-        where.fechaGasto.lte = end;
+        const endKey = getBogotaDayKey(new Date(fechaFin));
+        where.fechaGasto.lte = getBogotaStartEndOfDayFromKey(endKey).endDate;
       }
     }
 
@@ -1944,7 +1940,7 @@ export class AccountingService implements OnModuleInit {
       data: gastos.map((g) => ({
         id: g.id,
         numero: g.numeroGasto,
-        fecha: g.fechaGasto.toISOString(),
+        fecha: formatBogotaOffsetIso(g.fechaGasto),
         tipo: g.tipoGasto,
         monto: Number(g.monto),
         descripcion: g.descripcion,
@@ -1980,7 +1976,7 @@ export class AccountingService implements OnModuleInit {
       }),
     ]);
 
-    const fecha = new Date().toISOString().split('T')[0];
+    const fecha = getBogotaDayKey(new Date());
 
     // 2. Mapeo al tipo del template
     const filasCjas: CajaRow[] = cajas.map((c: any) => ({

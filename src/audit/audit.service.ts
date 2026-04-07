@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { generarExcelAuditoria, generarPDFAuditoria, AuditoriaRow } from '../templates/exports/auditoria.template';
 import { PrismaService } from '../prisma/prisma.service'; 
+import { getBogotaDayKey } from '../utils/date-utils';
 
 @Injectable()
 export class AuditService {
@@ -135,7 +136,7 @@ export class AuditService {
       },
     });
 
-    const fecha = new Date().toISOString().split('T')[0];
+    const fecha = getBogotaDayKey(new Date());
 
     // 2. Mapeo de datos al tipo del template
     const filas: AuditoriaRow[] = logs.map((l: any) => ({

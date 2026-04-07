@@ -23,6 +23,7 @@ import {
   RoutePerformanceDetail,
 } from './dto/responses-routes.dto';
 import { TimeFilterPeriod, calculateDateRange, getBogotaDayKey, getBogotaStartEndOfDay } from '../utils/date-utils';
+import { RoutesService } from '../routes/routes.service';
 import { generarExcelMora, generarPDFMora, MoraRow, MoraTotales } from '../templates/exports/cuentas-mora.template';
 import { generarExcelVencidas, generarPDFVencidas, VencidasRow, VencidasTotales } from '../templates/exports/cuentas-vencidas.template';
 import { generarExcelOperativo, generarPDFOperativo, OperativoRow, OperativoResumen } from '../templates/exports/reporte-operativo.template';
@@ -34,6 +35,7 @@ export class ReportsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificacionesService: NotificacionesService,
+    private readonly routesService: RoutesService,
   ) {}
 
   async getFinancialSummary(startDate: Date, endDate: Date) {
@@ -400,7 +402,7 @@ export class ReportsService {
     // 1. Solo consulta de BD
     const data = await this.obtenerPrestamosEnMora(filtros, 1, 10000);
     const prestamos = data.prestamos;
-    const fecha = new Date().toISOString().split('T')[0];
+    const fecha = getBogotaDayKey(new Date());
 
     // 2. Mapeo al tipo del template
     const filas: MoraRow[] = prestamos.map((p: any) => ({
@@ -722,6 +724,86 @@ export class ReportsService {
     filters: GetOperationalReportDto,
   ): Promise<OperationalReportResponse> {
     const { period, routeId, startDate, endDate } = filters;
+
+    // Para el reporte diario, el objetivo debe ser la meta REAL del día por ruta,
+    // igual a la vista del listado de rutas (metaDelDia/cobranzaDelDia/avanceDiario).
+    // Esto evita discrepancias y hace que el objetivo tenga sentido operativo.
+    if (period === 'today') {
+      const rutasListado = await this.routesService.findAll({ activa: true });
+      const rutas = (rutasListado as any)?.data || [];
+
+      const rutasFiltradas = routeId ? rutas.filter((r: any) => r.id === routeId) : rutas;
+      const { startDate: hoyInicio, endDate: hoyFin } = getBogotaStartEndOfDay(new Date());
+
+      const rendimientoRutas: RoutePerformanceDetail[] = await Promise.all(
+        rutasFiltradas.map(async (r: any) => {
+          const nuevosPrestamosAgg = await this.prisma.prestamo.aggregate({
+            where: {
+              creadoEn: { gte: hoyInicio, lte: hoyFin },
+              eliminadoEn: null,
+              estado: { in: [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA, EstadoPrestamo.PAGADO] },
+              cliente: {
+                asignacionesRuta: { some: { rutaId: r.id, activa: true } },
+              },
+            },
+            _sum: { monto: true },
+            _count: { id: true },
+          });
+
+          const nuevosPrestamos = nuevosPrestamosAgg._count.id || 0;
+          const montoNuevosPrestamos = Number(nuevosPrestamosAgg._sum.monto || 0);
+
+          const nuevosClientes = await this.prisma.cliente.count({
+            where: {
+              creadoEn: { gte: hoyInicio, lte: hoyFin },
+              asignacionesRuta: { some: { rutaId: r.id, activa: true } },
+            },
+          });
+
+          return {
+            id: r.id,
+            ruta: r.nombre,
+            cobrador: r.cobrador,
+            cobradorId: r.cobradorId,
+            meta: Number(r.metaDelDia || 0),
+            recaudado: Number(r.cobranzaDelDia || 0),
+            eficiencia: Number(r.avanceDiario || 0),
+            nuevosPrestamos,
+            nuevosClientes,
+            montoNuevosPrestamos,
+          } as any;
+        }),
+      );
+
+      const totalRecaudo = rendimientoRutas.reduce((sum, rr: any) => sum + Number(rr.recaudado || 0), 0);
+      const totalMeta = rendimientoRutas.reduce((sum, rr: any) => sum + Number(rr.meta || 0), 0);
+      const porcentajeGlobal = totalMeta > 0 ? Math.round((totalRecaudo / totalMeta) * 100) : 0;
+
+      const totalPrestamosNuevos = rendimientoRutas.reduce((sum, rr: any) => sum + Number(rr.nuevosPrestamos || 0), 0);
+      const totalAfiliaciones = rendimientoRutas.reduce((sum, rr: any) => sum + Number(rr.nuevosClientes || 0), 0);
+      const totalMontoPrestamosNuevos = rendimientoRutas.reduce(
+        (sum, rr: any) => sum + Number(rr.montoNuevosPrestamos || 0),
+        0,
+      );
+      const efectividadPromedio =
+        rendimientoRutas.length > 0
+          ? Math.round(rendimientoRutas.reduce((sum, rr: any) => sum + Number(rr.eficiencia || 0), 0) / rendimientoRutas.length)
+          : 0;
+
+      return {
+        totalRecaudo,
+        totalMeta,
+        porcentajeGlobal,
+        totalPrestamosNuevos,
+        totalAfiliaciones,
+        efectividadPromedio,
+        totalMontoPrestamosNuevos,
+        rendimientoRutas,
+        periodo: period,
+        fechaInicio: hoyInicio,
+        fechaFin: hoyFin,
+      };
+    }
 
     const dateRange = calculateDateRange(
       period as TimeFilterPeriod,
@@ -1108,7 +1190,7 @@ export class ReportsService {
     format: 'excel' | 'pdf',
   ): Promise<any> {
     const reportData = await this.getOperationalReport(filters);
-    const fecha = new Date().toISOString().split('T')[0];
+    const fecha = getBogotaDayKey(new Date());
 
     const filas: OperativoRow[] = (reportData.rendimientoRutas || []).map((r: any) => ({
       ruta: r.ruta || '',
@@ -1148,7 +1230,7 @@ export class ReportsService {
       this.getMonthlyEvolution(startDate.getFullYear()),
       this.getExpenseDistribution(startDate, endDate),
     ]);
-    const fecha = new Date().toISOString().split('T')[0];
+    const fecha = getBogotaDayKey(new Date());
 
     if (format === 'excel') return generarExcelFinanciero(summary, monthly, expenses, fecha);
     if (format === 'pdf') return generarPDFFinanciero(summary, monthly, expenses, fecha);

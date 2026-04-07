@@ -7,7 +7,7 @@ import {
   TipoAprobacion,
   TipoTransaccion,
 } from '@prisma/client';
-import { calculateDateRange, TimeFilterPeriod as BogotaPeriod } from '../utils/date-utils';
+import { calculateDateRange, getBogotaStartEndOfDay, TimeFilterPeriod as BogotaPeriod } from '../utils/date-utils';
 
 @Injectable()
 export class DashboardService {
@@ -338,7 +338,6 @@ export class DashboardService {
     try {
       // Usar el mismo cálculo de fechas que getDashboardData para consistencia
       const { startDate, endDate } = this.calculateDateRangeFromFilter(timeFilter);
-      const today = new Date();
       let groupBy: 'day' | 'week' | 'month' = 'day';
 
       // Determinar cómo agrupar según el filtro de período
@@ -359,52 +358,10 @@ export class DashboardService {
           groupBy = 'day';
       }
 
-      // Pagos del período agrupados por fechaPago (fecha real del cobro)
-      const payments = await this.prisma.pago.groupBy({
-        by: ['fechaPago'],
-        where: {
-          fechaPago: {
-            gte: startDate,
-            lte: endDate,
-          },
-        },
-        _sum: {
-          montoTotal: true,
-        },
-        orderBy: {
-          fechaPago: 'asc',
-        },
-      });
-
-      // Calcular metas dinámicamente basadas en promedio histórico de últimos 30 días
-      const thirtyDaysAgo = new Date(today);
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-      const historicalPayments = await this.prisma.pago.aggregate({
-        where: {
-          fechaPago: {
-            gte: thirtyDaysAgo,
-            lte: today,
-          },
-        },
-        _sum: {
-          montoTotal: true,
-        },
-      });
-
-      // Calcular promedio diario de los últimos 30 días
-      const totalHistorical = Number(historicalPayments._sum?.montoTotal || 0);
-      const dailyTarget = Math.round(totalHistorical / 30);
-      const weeklyTarget = dailyTarget * 7;
-
-      // Procesar y agrupar datos según el filtro
-      const processedData = this.processTrendData(
-        payments,
+      const processedData = await this.processTrendData(
         startDate,
         endDate,
         groupBy,
-        dailyTarget,
-        weeklyTarget,
       );
 
       return processedData;
@@ -414,15 +371,110 @@ export class DashboardService {
     }
   }
 
-  private processTrendData(
-    payments: any[],
+  private async processTrendData(
     startDate: Date,
     endDate: Date,
     groupBy: 'day' | 'week' | 'month',
-    dailyTarget: number,
-    weeklyTarget: number,
-  ): any[] {
+  ): Promise<any[]> {
     const result: any[] = [];
+
+    // Nota: el objetivo (target) debe ser una meta REAL del día.
+    // Para mantener consistencia con RoutesService (metaDelDia), tomamos:
+    // - Meta nominal: 1 cuota por préstamo (la más antigua en criterio) cuya fechaVencimiento <= inicio del día.
+    // - + ingresos por CUOTA_INICIAL del mismo día.
+    // Y en el recaudo (value) incluimos pagos + CUOTA_INICIAL del día.
+
+    // 1) Pagos y cuotas iniciales dentro del rango
+    const [payments, cuotaIniciales] = await Promise.all([
+      this.prisma.pago.findMany({
+        where: { fechaPago: { gte: startDate, lte: endDate } },
+        select: { fechaPago: true, montoTotal: true },
+      }),
+      this.prisma.transaccion.findMany({
+        where: {
+          tipoReferencia: 'CUOTA_INICIAL',
+          tipo: TipoTransaccion.INGRESO,
+          fechaTransaccion: { gte: startDate, lte: endDate },
+        },
+        select: { fechaTransaccion: true, monto: true },
+      }),
+    ]);
+
+    // Agrupar por día Bogotá (para sumar pagos y cuotas iniciales por día)
+    const pagosPorDiaKey = new Map<string, number>();
+    for (const p of payments) {
+      const { startDate: dStart } = getBogotaStartEndOfDay(new Date(p.fechaPago));
+      const key = dStart.toISOString();
+      pagosPorDiaKey.set(key, (pagosPorDiaKey.get(key) || 0) + Number(p.montoTotal || 0));
+    }
+
+    const cuotaInicialPorDiaKey = new Map<string, number>();
+    for (const t of cuotaIniciales) {
+      const { startDate: dStart } = getBogotaStartEndOfDay(new Date(t.fechaTransaccion));
+      const key = dStart.toISOString();
+      cuotaInicialPorDiaKey.set(key, (cuotaInicialPorDiaKey.get(key) || 0) + Number(t.monto || 0));
+    }
+
+    // 2) Meta nominal: cuota más antigua por préstamo hasta el ÚLTIMO día del rango
+    const { startDate: endDayStartUTC } = getBogotaStartEndOfDay(endDate);
+    const cuotasCandidatas = await this.prisma.cuota.findMany({
+      where: {
+        prestamo: {
+          estado: { in: [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA, EstadoPrestamo.PAGADO] },
+          eliminadoEn: null,
+        },
+        fechaVencimiento: { lte: endDayStartUTC },
+        estado: {
+          in: [
+            EstadoCuota.PENDIENTE,
+            EstadoCuota.PAGADA,
+            EstadoCuota.PARCIAL,
+            EstadoCuota.VENCIDA,
+            EstadoCuota.PRORROGADA,
+          ],
+        },
+      },
+      select: { prestamoId: true, fechaVencimiento: true, monto: true },
+      orderBy: [{ prestamoId: 'asc' }, { fechaVencimiento: 'asc' }],
+    });
+
+    const primerCuotaPorPrestamo = new Map<string, { ts: number; monto: number }>();
+    for (const c of cuotasCandidatas) {
+      if (!c.prestamoId) continue;
+      if (primerCuotaPorPrestamo.has(c.prestamoId)) continue;
+      primerCuotaPorPrestamo.set(c.prestamoId, {
+        ts: new Date(c.fechaVencimiento).getTime(),
+        monto: Number(c.monto || 0),
+      });
+    }
+
+    // Convertir a lista ordenada para prefijos acumulados
+    const firstCuotasSorted = Array.from(primerCuotaPorPrestamo.values())
+      .filter((x) => x.monto > 0)
+      .sort((a, b) => a.ts - b.ts);
+
+    const prefixSum: number[] = [];
+    for (let i = 0; i < firstCuotasSorted.length; i++) {
+      prefixSum[i] = (prefixSum[i - 1] || 0) + firstCuotasSorted[i].monto;
+    }
+
+    const metaNominalHasta = (dayStartUTC: Date) => {
+      const cutoff = dayStartUTC.getTime();
+      // upper bound: último índice con ts <= cutoff
+      let lo = 0;
+      let hi = firstCuotasSorted.length - 1;
+      let ans = -1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (firstCuotasSorted[mid].ts <= cutoff) {
+          ans = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      return ans >= 0 ? prefixSum[ans] : 0;
+    };
 
     if (groupBy === 'day') {
       // Agrupar por día
@@ -440,21 +492,15 @@ export class DashboardService {
         // No procesar días futuros
         if (currentDate > endDate) break;
 
-        const dayStart = new Date(currentDate);
-        dayStart.setHours(0, 0, 0, 0);
+        const { startDate: dayStartBogota } = getBogotaStartEndOfDay(currentDate);
+        const dayKey = dayStartBogota.toISOString();
 
-        const dayEnd = new Date(currentDate);
-        dayEnd.setHours(23, 59, 59, 999);
+        const pagos = pagosPorDiaKey.get(dayKey) || 0;
+        const cuotaInicialDia = cuotaInicialPorDiaKey.get(dayKey) || 0;
+        const total = pagos + cuotaInicialDia;
 
-        const dayPayments = payments.filter((p) => {
-          const paymentDate = new Date(p.fechaPago);
-          return paymentDate >= dayStart && paymentDate <= dayEnd;
-        });
-
-        const total = dayPayments.reduce(
-          (sum, p) => sum + parseFloat(p._sum.montoTotal?.toString() || '0'),
-          0,
-        );
+        const metaNominal = metaNominalHasta(dayStartBogota);
+        const target = metaNominal + cuotaInicialDia;
 
         // Crear etiqueta más descriptiva: día de semana + fecha
         const dayName = daysOfWeek[currentDate.getDay()];
@@ -465,62 +511,48 @@ export class DashboardService {
         result.push({
           label,
           value: total,
-          target: dailyTarget,
+          target,
         });
       }
     } else if (groupBy === 'week') {
-      // Agrupar por semana
-      const weeksDiff = Math.ceil(
-        (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24 * 7),
-      );
-      const weekLabels = ['Sem 1', 'Sem 2', 'Sem 3', 'Sem 4'];
-
-      for (let i = 0; i <= weeksDiff && i < 4; i++) {
-        const weekStart = new Date(startDate);
-        weekStart.setDate(startDate.getDate() + i * 7);
-
-        const weekEnd = new Date(weekStart);
-        weekEnd.setDate(weekStart.getDate() + 6);
-        weekEnd.setHours(23, 59, 59, 999);
-
-        const weekPayments = payments.filter((p) => {
-          const paymentDate = new Date(p.fechaPago);
-          return paymentDate >= weekStart && paymentDate <= weekEnd;
-        });
-
-        const total = weekPayments.reduce(
-          (sum, p) => sum + parseFloat(p._sum.montoTotal?.toString() || '0'),
-          0,
-        );
-
-        result.push({
-          label: weekLabels[i],
-          value: total,
-          target: weeklyTarget,
-        });
-      }
+      // Este modo no se usa actualmente (week agrupa en días), pero lo dejamos consistente.
+      // Si en el futuro se activa, se debe definir meta semanal como suma de metas diarias.
+      return [];
     } else if (groupBy === 'month') {
-      // Agrupar pagos por mes (YYYY-MM)
-      const monthMap = new Map<string, number>();
+      // Agrupar por mes sumando valores diarios (value y target)
+      const monthMapValue = new Map<string, number>();
+      const monthMapTarget = new Map<string, number>();
 
-      for (const payment of payments) {
-        const date = new Date(payment.fechaPago);
-        const key = `${date.getFullYear()}-${String(
-          date.getMonth() + 1,
-        ).padStart(2, '0')}`;
-        const total = parseFloat(payment._sum.montoTotal?.toString() || '0');
-        monthMap.set(key, (monthMap.get(key) || 0) + total);
+      // Recorremos días dentro del rango para agregar de forma consistente (máx 366 días en year)
+      const cursor = new Date(startDate);
+      const { startDate: cStart } = getBogotaStartEndOfDay(cursor);
+      cursor.setTime(cStart.getTime());
+
+      while (cursor <= endDate) {
+        const { startDate: dayStartBogota } = getBogotaStartEndOfDay(cursor);
+        const dayKey = dayStartBogota.toISOString();
+        const monthKey = `${dayStartBogota.getFullYear()}-${String(dayStartBogota.getMonth() + 1).padStart(2, '0')}`;
+
+        const pagos = pagosPorDiaKey.get(dayKey) || 0;
+        const cuotaInicialDia = cuotaInicialPorDiaKey.get(dayKey) || 0;
+        const value = pagos + cuotaInicialDia;
+        const target = metaNominalHasta(dayStartBogota) + cuotaInicialDia;
+
+        monthMapValue.set(monthKey, (monthMapValue.get(monthKey) || 0) + value);
+        monthMapTarget.set(monthKey, (monthMapTarget.get(monthKey) || 0) + target);
+
+        cursor.setDate(cursor.getDate() + 1);
       }
 
       // Generar puntos de tendencia por mes dentro del rango
       const current = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
-      current.setHours(0, 0, 0, 0);
+      const { startDate: currentStart } = getBogotaStartEndOfDay(current);
+      current.setTime(currentStart.getTime());
 
       while (current <= endDate) {
-        const key = `${current.getFullYear()}-${String(
-          current.getMonth() + 1,
-        ).padStart(2, '0')}`;
-        const total = monthMap.get(key) || 0;
+        const key = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}`;
+        const total = monthMapValue.get(key) || 0;
+        const target = monthMapTarget.get(key) || 0;
 
         const monthName = current.toLocaleDateString('es-CO', {
           month: 'short',
@@ -530,8 +562,7 @@ export class DashboardService {
         result.push({
           label,
           value: total,
-          // Para rangos largos usamos la meta semanal como referencia aproximada
-          target: weeklyTarget,
+          target,
         });
 
         // Avanzar al siguiente mes

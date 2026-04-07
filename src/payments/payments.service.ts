@@ -19,6 +19,7 @@ import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway'
 import { PagoConRelacionesExport } from '../common/types';
 import { generarExcelPagos, generarPDFPagos, PagoRow, PagosTotales } from '../templates/exports/historial-pagos.template';
 import { CloudinaryService } from '../upload/cloudinary.service';
+import { formatBogotaOffsetIso, getBogotaDayKey } from '../utils/date-utils';
 
 
 @Injectable()
@@ -230,6 +231,10 @@ export class PaymentsService {
       throw new BadRequestException('El cobrador es requerido');
     }
 
+    const fechaPagoBogota = dto.fechaPago
+      ? new Date(dto.fechaPago)
+      : new Date(formatBogotaOffsetIso(new Date()));
+
     // Crear pago y actualizar todo en una transacción
     const resultado = await this.prisma.$transaction(async (tx) => {
       // 1. Crear el registro de pago
@@ -239,7 +244,7 @@ export class PaymentsService {
           clienteId: clienteId,
           prestamoId: prestamoIdVal,
           cobradorId: cobradorIdVal,
-          fechaPago: dto.fechaPago ? new Date(dto.fechaPago) : new Date(),
+          fechaPago: fechaPagoBogota,
           montoTotal,
           metodoPago: dto.metodoPago || MetodoPago.EFECTIVO,
           numeroReferencia: dto.numeroReferencia,
@@ -264,7 +269,7 @@ export class PaymentsService {
             montoPagado: cuotaUpd.montoPagado,
             estado: cuotaUpd.estado,
             fechaPago:
-              cuotaUpd.estado === EstadoCuota.PAGADA ? new Date() : undefined,
+              cuotaUpd.estado === EstadoCuota.PAGADA ? fechaPagoBogota : undefined,
           },
         });
       }
@@ -279,6 +284,23 @@ export class PaymentsService {
       // Verificar si el préstamo queda pagado
       const prestamoQuedaPagado = nuevoSaldoPendiente <= 0;
 
+      // Si el préstamo estaba EN_MORA y ya no quedan cuotas VENCIDAS, debe volver a ACTIVO inmediatamente.
+      // Esto evita que un cliente que pagó cuota(s) atrasada(s) + la del día siga figurando en mora hasta el próximo job.
+      let nuevoEstadoPrestamo: EstadoPrestamo = prestamo.estado;
+      if (prestamoQuedaPagado) {
+        nuevoEstadoPrestamo = EstadoPrestamo.PAGADO;
+      } else if (prestamo.estado === EstadoPrestamo.EN_MORA) {
+        const vencidasRestantes = await tx.cuota.count({
+          where: {
+            prestamoId: prestamoIdVal,
+            estado: EstadoCuota.VENCIDA,
+          },
+        });
+        if (vencidasRestantes === 0) {
+          nuevoEstadoPrestamo = EstadoPrestamo.ACTIVO;
+        }
+      }
+
       await tx.prestamo.update({
         where: { id: prestamoIdVal },
         data: {
@@ -286,9 +308,7 @@ export class PaymentsService {
           capitalPagado: nuevoCapitalPagado,
           interesPagado: nuevoInteresPagado,
           saldoPendiente: Math.max(0, nuevoSaldoPendiente),
-          estado: prestamoQuedaPagado
-            ? EstadoPrestamo.PAGADO
-            : prestamo.estado,
+          estado: nuevoEstadoPrestamo,
           estadoSincronizacion: 'PENDIENTE',
         },
       });
@@ -604,7 +624,7 @@ export class PaymentsService {
       take: 10000,
     });
 
-    const fecha = new Date().toISOString().split('T')[0];
+    const fecha = getBogotaDayKey(new Date());
 
     // 2. Mapeo al tipo del template
     const filas: PagoRow[] = pagos.map((p: PagoConRelacionesExport) => ({

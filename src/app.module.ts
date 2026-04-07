@@ -26,6 +26,11 @@ import { MirrorSyncModule } from './mirror-sync/mirror-sync.module';
 import { BullModule } from '@nestjs/bullmq';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 
+const shouldEnableMirrorSync =
+  process.env.MIRROR_SYNC_ENABLED === 'true' &&
+  Boolean(process.env.MIRROR_VPS_URL) &&
+  Boolean(process.env.MIRROR_SYNC_TOKEN);
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -55,16 +60,20 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
     ConfiguracionModule,
     SyncConflictsModule,
     EventEmitterModule.forRoot(),
-    BullModule.forRoot({
-      connection: {
-        host: process.env.REDIS_HOST || 'localhost',
-        port: parseInt(process.env.REDIS_PORT || '6379'),
-        username: process.env.REDIS_USERNAME || undefined,
-        password: process.env.REDIS_PASSWORD || undefined,
-        tls: process.env.REDIS_TLS === 'true' ? {} : undefined,
-      },
-    }),
-    MirrorSyncModule,
+    ...(shouldEnableMirrorSync
+      ? [
+          BullModule.forRoot({
+            connection: {
+              host: process.env.REDIS_HOST || 'localhost',
+              port: parseInt(process.env.REDIS_PORT || '6379'),
+              username: process.env.REDIS_USERNAME || undefined,
+              password: process.env.REDIS_PASSWORD || undefined,
+              tls: process.env.REDIS_TLS === 'true' ? {} : undefined,
+            },
+          }),
+          MirrorSyncModule,
+        ]
+      : []),
   ],
   controllers: [],
   providers: [],

@@ -31,7 +31,14 @@ import {
   CarteraTotales 
 } from '../templates/exports/cartera-creditos.template';
 import { ContratoData, generarContratoPDF } from '../templates/exports';
-import { getBogotaStartEndOfDay } from '../utils/date-utils';
+import {
+  calculateDateRange,
+  formatBogotaOffsetIso,
+  getBogotaDayKey,
+  getBogotaWeekday,
+  getBogotaStartEndOfDay,
+  getBogotaStartEndOfDayFromKey,
+} from '../utils/date-utils';
 
 
 @Injectable()
@@ -90,8 +97,8 @@ export class LoansService implements OnModuleInit {
       frecuenciaPago: String(data.frecuenciaPago),
       cuotaInicial: safeNumber(data.cuotaInicial),
       notas: String(data.notas || ''),
-      fechaInicio: prestamo.fechaInicio ? prestamo.fechaInicio.toISOString() : undefined,
-      fecha: prestamo.fechaInicio ? prestamo.fechaInicio.toISOString() : undefined,
+      fechaInicio: prestamo.fechaInicio ? formatBogotaOffsetIso(prestamo.fechaInicio) : undefined,
+      fecha: prestamo.fechaInicio ? formatBogotaOffsetIso(prestamo.fechaInicio) : undefined,
     };
   }
 
@@ -317,18 +324,21 @@ export class LoansService implements OnModuleInit {
    * Para MENSUAL: si cae en domingo, se mueve al lunes siguiente.
    */
   private saltarDomingo(fecha: Date, frecuencia: FrecuenciaPago): Date {
-    // 0 = Domingo
-    if (fecha.getUTCDay() !== 0) return fecha;
+    // 0 = Domingo (en Bogotá)
+    if (getBogotaWeekday(fecha) !== 0) return fecha;
 
-    const ajustada = new Date(fecha);
+    const key = getBogotaDayKey(fecha);
+    if (!key) return fecha;
+
+    const shiftDays = (days: number) => new Date(`${key}T12:00:00-05:00`).getTime() + days * 86_400_000;
+
+    // Para diario/mensual: mover al lunes (siguiente día hábil)
     if (frecuencia === FrecuenciaPago.DIARIO || frecuencia === FrecuenciaPago.MENSUAL) {
-      // Para diario: mover al lunes (siguiente día hábil)
-      ajustada.setUTCDate(ajustada.getUTCDate() + 1);
-    } else {
-      // Para semanal/quincenal: mover al sábado (día hábil anterior)
-      ajustada.setUTCDate(ajustada.getUTCDate() - 1);
+      return new Date(shiftDays(1));
     }
-    return ajustada;
+
+    // Para semanal/quincenal: mover al sábado (día hábil anterior)
+    return new Date(shiftDays(-1));
   }
 
   private calcularFechaVencimiento(
@@ -336,50 +346,123 @@ export class LoansService implements OnModuleInit {
     numeroCuota: number,
     frecuencia: FrecuenciaPago,
   ): Date {
-    const fecha = new Date(fechaBase);
-    // Aseguramos que trabajamos con el inicio del día en UTC para evitar saltos por zona horaria
-    fecha.setUTCHours(0, 0, 0, 0);
-    
-    // Cambiado: offset = numeroCuota - 1 para que la primera cuota sea el mismo día de fechaBase
-    const offset = Math.max(0, numeroCuota - 1); 
+    const baseKey = getBogotaDayKey(fechaBase);
+    if (!baseKey) return fechaBase;
+
+    const offset = Math.max(0, numeroCuota - 1);
+
+    const toNoonBogota = (key: string) => new Date(`${key}T12:00:00-05:00`);
+
+    const addDaysSkippingSunday = (startKey: string, daysToAdd: number): string => {
+      let key = startKey;
+      let added = 0;
+      while (added < daysToAdd) {
+        const next = new Date(toNoonBogota(key).getTime() + 86_400_000);
+        const nextKey = getBogotaDayKey(next);
+        if (!nextKey) break;
+        key = nextKey;
+        if (getBogotaWeekday(next) !== 0) added++;
+      }
+      return key;
+    };
+
+    const addDaysPlain = (startKey: string, daysToAdd: number): string => {
+      const next = new Date(toNoonBogota(startKey).getTime() + daysToAdd * 86_400_000);
+      return getBogotaDayKey(next);
+    };
+
+    const addMonths = (startKey: string, monthsToAdd: number): string => {
+      const [yStr, mStr, dStr] = startKey.split('-');
+      const y = Number(yStr);
+      const m = Number(mStr);
+      const d = Number(dStr);
+      if (!y || !m || !d) return startKey;
+
+      const totalMonths = (m - 1) + monthsToAdd;
+      const newY = y + Math.floor(totalMonths / 12);
+      const newM0 = ((totalMonths % 12) + 12) % 12;
+      const newM = newM0 + 1;
+
+      // Clamp del día al último del mes
+      const firstNextMonth = newM === 12
+        ? new Date(`${newY + 1}-01-01T12:00:00-05:00`)
+        : new Date(`${newY}-${padStart2(newM + 1)}-01T12:00:00-05:00`);
+      const lastDay = new Date(firstNextMonth.getTime() - 86_400_000);
+      const lastKey = getBogotaDayKey(lastDay);
+      const lastDayNum = Number(lastKey.split('-')[2] || '0');
+      const safeDay = Math.min(d, lastDayNum || d);
+      return `${newY}-${padStart2(newM)}-${padStart2(safeDay)}`;
+    };
+
+    const padStart2 = (n: number) => String(n).padStart(2, '0');
+
+    let targetKey = baseKey;
+
     switch (frecuencia) {
       case FrecuenciaPago.DIARIO:
-        let diasAgregados = 0;
-        while (diasAgregados < offset) {
-          fecha.setUTCDate(fecha.getUTCDate() + 1);
-          if (fecha.getUTCDay() !== 0) {
-            diasAgregados++;
-          }
-        }
-        return this.saltarDomingo(fecha, frecuencia);
+        targetKey = addDaysSkippingSunday(baseKey, offset);
+        break;
       case FrecuenciaPago.SEMANAL:
-        fecha.setUTCDate(fecha.getUTCDate() + offset * 7);
-        return this.saltarDomingo(fecha, frecuencia);
+        targetKey = addDaysPlain(baseKey, offset * 7);
+        break;
       case FrecuenciaPago.QUINCENAL:
-        fecha.setUTCDate(fecha.getUTCDate() + offset * 15);
-        return this.saltarDomingo(fecha, frecuencia);
+        targetKey = addDaysPlain(baseKey, offset * 15);
+        break;
       case FrecuenciaPago.MENSUAL:
-        fecha.setUTCMonth(fecha.getUTCMonth() + offset);
-        return this.saltarDomingo(fecha, frecuencia);
+        targetKey = addMonths(baseKey, offset);
+        break;
+      default:
+        targetKey = baseKey;
     }
-    return fecha;
+
+    // devolver un instante al mediodía Bogotá; el consumidor compara por día con helpers Bogotá
+    return this.saltarDomingo(toNoonBogota(targetKey), frecuencia);
   }
 
-  private parseDateUTC(dateStr: string): Date {
-    const [year, month, day] = dateStr.split('-').map(Number);
-    return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+  private parseBogotaDayKey(dateStr: string): Date {
+    const key = String(dateStr || '').includes('T') ? String(dateStr).split('T')[0] : String(dateStr);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return new Date();
+    return new Date(`${key}T00:00:00-05:00`);
   }
 
   private calculateLoanEndDate(fechaInicio: Date, plazoMeses: number): Date {
-    const fechaFin = new Date(fechaInicio);
-    fechaFin.setUTCHours(0, 0, 0, 0);
+    const startKey = getBogotaDayKey(fechaInicio);
+    if (!startKey) return fechaInicio;
+
     const mesesEfectivos = Math.max(1, plazoMeses);
-    fechaFin.setUTCMonth(fechaFin.getUTCMonth() + Math.floor(mesesEfectivos));
-    const decimales = mesesEfectivos - Math.floor(mesesEfectivos);
+    const wholeMonths = Math.floor(mesesEfectivos);
+    const decimales = mesesEfectivos - wholeMonths;
+
+    // Reusar lógica mensual por key para evitar UTC
+    const addMonthsKey = (key: string, monthsToAdd: number): string => {
+      const [yStr, mStr, dStr] = key.split('-');
+      const y = Number(yStr);
+      const m = Number(mStr);
+      const d = Number(dStr);
+      if (!y || !m || !d) return key;
+      const totalMonths = (m - 1) + monthsToAdd;
+      const newY = y + Math.floor(totalMonths / 12);
+      const newM0 = ((totalMonths % 12) + 12) % 12;
+      const newM = newM0 + 1;
+      const pad2 = (n: number) => String(n).padStart(2, '0');
+      const firstNext = newM === 12
+        ? new Date(`${newY + 1}-01-01T12:00:00-05:00`)
+        : new Date(`${newY}-${pad2(newM + 1)}-01T12:00:00-05:00`);
+      const lastDay = new Date(firstNext.getTime() - 86_400_000);
+      const lastKey = getBogotaDayKey(lastDay);
+      const lastDayNum = Number(lastKey.split('-')[2] || '0');
+      const safeDay = Math.min(d, lastDayNum || d);
+      return `${newY}-${pad2(newM)}-${pad2(safeDay)}`;
+    };
+
+    let endKey = addMonthsKey(startKey, wholeMonths);
     if (decimales > 0) {
-      fechaFin.setUTCDate(fechaFin.getUTCDate() + Math.round(decimales * 30));
+      const base = new Date(`${endKey}T12:00:00-05:00`);
+      const shifted = new Date(base.getTime() + Math.round(decimales * 30) * 86_400_000);
+      endKey = getBogotaDayKey(shifted) || endKey;
     }
-    return fechaFin;
+
+    return new Date(`${endKey}T00:00:00-05:00`);
   }
 
   private calculateInterestAndCuotas(
@@ -745,7 +828,7 @@ export class LoansService implements OnModuleInit {
             numeroPrestamo: prestamo.numeroPrestamo || 'N/A',
             clienteId: prestamo.clienteId || '',
             cliente:
-              `${prestamo.cliente.nombres || ''} ${prestamo.cliente.apellidos || ''}`.trim(),
+              `${prestamo.cliente?.nombres || ''} ${prestamo.cliente?.apellidos || ''}`.trim(),
             clienteDni: prestamo.cliente.dni || '',
             clienteTelefono: prestamo.cliente.telefono || '',
             producto: prestamo.producto?.nombre || 'Préstamo en efectivo',
@@ -1384,7 +1467,9 @@ export class LoansService implements OnModuleInit {
 
       // Calcular fecha fin
       const fechaInicio = new Date(createLoanDto.fechaInicio);
-      fechaInicio.setHours(0, 0, 0, 0);
+      const fechaInicioKey = getBogotaDayKey(fechaInicio);
+      const { startDate: fechaInicioBogota } = getBogotaStartEndOfDayFromKey(fechaInicioKey);
+      fechaInicio.setTime(fechaInicioBogota.getTime());
       const fechaFin = new Date(fechaInicio);
       fechaFin.setMonth(fechaFin.getMonth() + createLoanDto.plazoMeses);
 
@@ -1392,7 +1477,9 @@ export class LoansService implements OnModuleInit {
         ? new Date(createLoanDto.fechaPrimerCobro)
         : undefined;
       if (fechaPrimerCobroParsed) {
-        fechaPrimerCobroParsed.setHours(0, 0, 0, 0);
+        const key = getBogotaDayKey(fechaPrimerCobroParsed);
+        const { startDate } = getBogotaStartEndOfDayFromKey(key);
+        fechaPrimerCobroParsed.setTime(startDate.getTime());
       }
 
       // Calcular cantidad de cuotas segun frecuencia
@@ -1689,10 +1776,8 @@ export class LoansService implements OnModuleInit {
       const fechaInicioOriginal = prestamoConCuotas?.fechaInicio
         ? new Date(prestamoConCuotas.fechaInicio)
         : null;
-      const inicioOriginalKey = fechaInicioOriginal
-        ? fechaInicioOriginal.toISOString().split('T')[0]
-        : null;
-      const aprobacionKey = aprobacionInicio.toISOString().split('T')[0];
+      const inicioOriginalKey = fechaInicioOriginal ? getBogotaDayKey(fechaInicioOriginal) : null;
+      const aprobacionKey = getBogotaDayKey(aprobacionInicio);
 
       if (inicioOriginalKey && inicioOriginalKey < aprobacionKey && prestamoConCuotas?.cuotas?.length) {
         // Reagendar: calcular nuevo cronograma desde hoy
@@ -1702,7 +1787,6 @@ export class LoansService implements OnModuleInit {
 
         if (cuotasPendientes.length > 0) {
           const nuevaFechaBase = new Date(aprobacionInicio);
-          nuevaFechaBase.setUTCHours(0, 0, 0, 0);
 
           const frecuencia = prestamoConCuotas.frecuenciaPago;
 
@@ -2096,16 +2180,15 @@ export class LoansService implements OnModuleInit {
       const plazoMesesPrisma = Math.max(1, Math.round(numPlazoMeses));
       
       // Calcular fechas
-      const fechaActual = new Date();
-      fechaActual.setUTCHours(0, 0, 0, 0);
+      const { startDate: fechaActual } = getBogotaStartEndOfDay(new Date());
       
-      const fechaInicio = data.fechaInicio ? this.parseDateUTC(data.fechaInicio) : fechaActual;
+      const fechaInicio = data.fechaInicio ? this.parseBogotaDayKey(data.fechaInicio) : fechaActual;
       
       // La fecha de vencimiento del préstamo (fechaFin) se basa estrictamente en el plazoMeses usando helper
       let fechaFin = this.calculateLoanEndDate(fechaInicio, numPlazoMeses);
 
       const fechaPrimerCobroParsed = data.fechaPrimerCobro
-        ? this.parseDateUTC(data.fechaPrimerCobro)
+        ? this.parseBogotaDayKey(data.fechaPrimerCobro)
         : undefined;
 
       // Calcular cantidad de cuotas: Prioridad TOTAL al valor enviado por el usuario
@@ -2216,10 +2299,10 @@ export class LoansService implements OnModuleInit {
         },
       });
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const startDate = new Date(fechaInicio);
-      startDate.setHours(0, 0, 0, 0);
+      const hoyKey = getBogotaDayKey(new Date());
+      const { startDate: today } = getBogotaStartEndOfDayFromKey(hoyKey);
+      const startKey = getBogotaDayKey(new Date(fechaInicio));
+      const { startDate: startDate } = getBogotaStartEndOfDayFromKey(startKey);
 
       if (!data.esContado && startDate.getTime() === today.getTime()) {
         const rutaPreferida = cliente.asignacionesRuta?.find((a: any) => a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn);
@@ -2339,7 +2422,7 @@ export class LoansService implements OnModuleInit {
               ? String(data.notas || (data as any).observaciones || (data as any).comentarios || (data as any).detalle) 
               : undefined,
             garantia: data.garantia ? String(data.garantia) : undefined,
-            fechaInicio: prestamo.fechaInicio ? prestamo.fechaInicio.toISOString() : undefined,
+            fechaInicio: prestamo.fechaInicio ? formatBogotaOffsetIso(prestamo.fechaInicio) : undefined,
             fechaPrimerCobro: (data as any).fechaPrimerCobro ? String((data as any).fechaPrimerCobro) : undefined,
             esContado: !!data.esContado,
           },
@@ -2407,8 +2490,8 @@ export class LoansService implements OnModuleInit {
               frecuenciaPago: String(data.frecuenciaPago),
               cuotaInicial: safeNumber(data.cuotaInicial),
               notas: String(data.notas || ''),
-              fechaInicio: prestamo.fechaInicio ? prestamo.fechaInicio.toISOString() : undefined,
-              fecha: prestamo.fechaInicio ? prestamo.fechaInicio.toISOString() : undefined, // Duplicado para compatibilidad
+              fechaInicio: prestamo.fechaInicio ? formatBogotaOffsetIso(prestamo.fechaInicio) : undefined,
+              fecha: prestamo.fechaInicio ? formatBogotaOffsetIso(prestamo.fechaInicio) : undefined, // Duplicado para compatibilidad
             }
           });
         }
@@ -2838,13 +2921,11 @@ export class LoansService implements OnModuleInit {
       throw new BadRequestException('La cuota ya fue pagada');
     }
 
-    // Ajuste de Zona Horaria (Colombia UTC-5) para calcular límite de días
-    const hoyLocal = new Date(new Date().getTime() - 5 * 3600 * 1000);
-    hoyLocal.setUTCHours(0, 0, 0, 0);
+    const { startDate: hoyLocal } = getBogotaStartEndOfDay(new Date());
 
     // Normalizar la nuevaFecha enviada por el frontend
     const nuevaFechaStr = data.nuevaFecha.includes('T') ? data.nuevaFecha.split('T')[0] : data.nuevaFecha;
-    const nuevaFechaObj = new Date(nuevaFechaStr + 'T00:00:00.000Z');
+    const nuevaFechaObj = new Date(`${nuevaFechaStr}T12:00:00-05:00`);
 
     const diasDesdeHoy = Math.round((nuevaFechaObj.getTime() - hoyLocal.getTime()) / 86_400_000);
 
@@ -2880,7 +2961,7 @@ export class LoansService implements OnModuleInit {
           numeroPrestamo: prestamo.numeroPrestamo,
           numeroCuota: cuota.numeroCuota,
           frecuenciaPago: prestamo.frecuenciaPago,
-          fechaVencimientoOriginal: cuota.fechaVencimiento.toISOString(),
+          fechaVencimientoOriginal: formatBogotaOffsetIso(cuota.fechaVencimiento),
           nuevaFecha: data.nuevaFecha,
           motivo: data.motivo,
           montoCuota: Number(cuota.monto),
@@ -3099,7 +3180,7 @@ export class LoansService implements OnModuleInit {
       fechaFin:       p.fechaFin,
     }));
 
-    const fechaStr = new Date().toISOString().split('T')[0];
+    const fechaStr = getBogotaDayKey(new Date());
 
     if (format === 'excel') {
       return generarExcelCartera(filas, totales, fechaStr);

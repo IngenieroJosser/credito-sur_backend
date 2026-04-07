@@ -42,6 +42,7 @@ import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway'
 import { AuditService } from '../audit/audit.service';
 
 import { ApprovalsService } from '../approvals/approvals.service';
+import { formatBogotaOffsetIso } from '../utils/date-utils';
 
 @ApiTags('loans')
 @ApiBearerAuth()
@@ -601,8 +602,6 @@ export class LoansController {
     return this.loansService.restoreLoan(id, userId);
   }
 
-
-
   @Post(':id/archive')
   @Roles(
     RolUsuario.SUPER_ADMINISTRADOR,
@@ -799,7 +798,7 @@ export class LoansController {
           cliente: nombreCliente,
           montoInteres: body.montoInteres,
           diasGracia: body.diasGracia,
-          fechaLimite: fechaLimite.toISOString(),
+          fechaLimite: formatBogotaOffsetIso(fechaLimite),
           comentarios: body.comentarios,
           saldoPendiente: Number(prestamo.saldoPendiente),
           asignadoPor: nombreUsuario,
@@ -869,7 +868,7 @@ export class LoansController {
     return {
       mensaje: 'Mora pendiente de aprobación creada exitosamente',
       aprobacionId: aprobacion.id,
-      fechaLimite: fechaLimite.toISOString(),
+      fechaLimite: formatBogotaOffsetIso(fechaLimite),
     };
   }
 
@@ -959,9 +958,9 @@ export class LoansController {
           saldoPendiente: Number(prestamo.saldoPendiente),
           montoInteres: Number(body.montoInteres || 0),
           diasGracia: body.decision === 'CASTIGAR' ? 0 : dias,
-          fechaVencimientoOriginal: prestamo.fechaFin ? new Date(prestamo.fechaFin).toISOString() : undefined,
+          fechaVencimientoOriginal: prestamo.fechaFin ? formatBogotaOffsetIso(new Date(prestamo.fechaFin)) : undefined,
           nuevaFechaVencimiento:
-            body.decision === 'PRORROGAR' ? nuevaFecha.toISOString() : undefined,
+            body.decision === 'PRORROGAR' ? formatBogotaOffsetIso(nuevaFecha) : undefined,
           comentarios: body.comentarios,
           gestionadoPor: nombreUsuario,
           rolGestor: usuario?.rol,

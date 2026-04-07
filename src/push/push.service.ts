@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as webpush from 'web-push';
+import { formatBogotaOffsetIso } from '../utils/date-utils';
 
 export interface SendPushNotificationDto {
   title: string;
@@ -75,7 +76,7 @@ export class PushService {
         tag: data.tag || 'general',
         data: {
           ...data.data,
-          timestamp: new Date().toISOString()
+          timestamp: formatBogotaOffsetIso(new Date())
         }
       };
 

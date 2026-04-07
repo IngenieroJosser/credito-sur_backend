@@ -12,6 +12,7 @@ import { promisify } from 'node:util';
 import { mkdir, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { BackupExcelService } from './backup-excel.service';
+import { formatBogotaOffsetIso } from '../utils/date-utils';
 
 const execFileAsync = promisify(execFile);
 
@@ -33,12 +34,12 @@ export class BackupService {
   }
 
   private buildBackupFilePath(runId: string): string {
-    const iso = new Date().toISOString().replace(/[:.]/g, '-');
+    const iso = formatBogotaOffsetIso(new Date()).replace(/[:.]/g, '-');
     return join(this.getBackupDir(), `backup_${iso}_${runId}.dump`);
   }
 
   private buildExcelFilePath(runId: string): string {
-    const iso = new Date().toISOString().replace(/[:.]/g, '-');
+    const iso = formatBogotaOffsetIso(new Date()).replace(/[:.]/g, '-');
     return join(this.getBackupDir(), `backup_${iso}_${runId}.xlsx`);
   }
 
