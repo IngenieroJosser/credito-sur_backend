@@ -1786,7 +1786,10 @@ export class AccountingService implements OnModuleInit {
             if (k === 'CO') cobradorNombre = v;
           }
         } catch (_) { void 0; }
-        const descuadre = saldoAlCierre > 0;
+        const deudaPorFaltantes = clientesFaltantes > 0
+          ? Math.max(Number(meta || 0) - Number(recaudo || 0), 0)
+          : 0;
+        const descuadre = saldoAlCierre > 0 || deudaPorFaltantes > 0;
         return {
           id: t.id,
           fecha: formatBogotaOffsetIso(t.fechaTransaccion),
@@ -2028,15 +2031,19 @@ export class AccountingService implements OnModuleInit {
       _count: { id: true },
     });
 
-    // 2. Traemos arqueos negativos: transacciones de tipo EGRESO con tipoReferencia ARQUEO
+    // 2. Traemos egresos que representan deuda del cobrador (arqueos negativos y deudas explícitas)
     const arqueos = await this.prisma.transaccion.findMany({
       where: {
-        tipoReferencia: 'ARQUEO',
-        tipo: 'EGRESO', // Cierre descuadrado en contra de la empresa
+        tipo: 'EGRESO',
+        OR: [
+          { tipoReferencia: 'ARQUEO' },
+          { tipoReferencia: 'DEUDA_COBRADOR' },
+        ],
       },
       select: {
         monto: true,
         cajaId: true,
+        tipoReferencia: true,
         caja: {
           select: {
             rutaId: true,
@@ -2102,7 +2109,7 @@ export class AccountingService implements OnModuleInit {
       deudaMap.set(cobradorId, {
         ...prev,
         descuadres: prev.descuadres + diferencia,
-        totalEventos: prev.totalEventos + 1, // 1 descuadre es un evento
+        totalEventos: prev.totalEventos + 1,
       });
     }
 

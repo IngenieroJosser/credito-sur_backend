@@ -160,11 +160,23 @@ export class ReportsService {
   ): Promise<PrestamosMoraResponseDto> {
     const skip = (pagina - 1) * limite;
 
+    const { startDate: hoyInicioUTC } = getBogotaStartEndOfDay(new Date());
+
     const whereConditions: any = {
       estado: { in: ['EN_MORA', 'ACTIVO'] },
       cuotas: {
         some: {
-          estado: { in: ['VENCIDA', 'PRORROGADA'] },
+          OR: [
+            { estado: { in: ['VENCIDA'] } },
+            {
+              estado: { in: ['PENDIENTE', 'PARCIAL', 'PRORROGADA'] },
+              fechaVencimiento: { lt: hoyInicioUTC },
+            },
+            {
+              estado: { in: ['PRORROGADA'] },
+              fechaVencimientoProrroga: { lt: hoyInicioUTC },
+            },
+          ],
         },
       },
     };
@@ -261,7 +273,17 @@ export class ReportsService {
         cliente: true,
         cuotas: {
           where: {
-            estado: { in: ['VENCIDA', 'PRORROGADA'] },
+            OR: [
+              { estado: { in: ['VENCIDA'] } },
+              {
+                estado: { in: ['PENDIENTE', 'PARCIAL', 'PRORROGADA'] },
+                fechaVencimiento: { lt: hoyInicioUTC },
+              },
+              {
+                estado: { in: ['PRORROGADA'] },
+                fechaVencimientoProrroga: { lt: hoyInicioUTC },
+              },
+            ],
           },
           orderBy: {
             fechaVencimiento: 'asc',
@@ -308,14 +330,21 @@ export class ReportsService {
           },
         });
 
-        // Calcular días de mora (desde la primera cuota vencida)
-        const primeraCuotaVencida = prestamo.cuotas[0];
-        const diasMora = primeraCuotaVencida
-          ? differenceInDays(new Date(), primeraCuotaVencida.fechaVencimiento)
+        const cuotas = (prestamo as any)?.cuotas || [];
+        const cuotaMasAntigua = cuotas.reduce((acc: any, c: any) => {
+          const eff = c?.estado === 'PRORROGADA' && c?.fechaVencimientoProrroga
+            ? new Date(c.fechaVencimientoProrroga)
+            : new Date(c.fechaVencimiento);
+          if (!acc) return { cuota: c, eff };
+          return eff < acc.eff ? { cuota: c, eff } : acc;
+        }, null as null | { cuota: any; eff: Date });
+
+        const diasMora = cuotaMasAntigua?.eff
+          ? Math.max(0, differenceInDays(hoyInicioUTC, cuotaMasAntigua.eff))
           : 0;
 
         // Calcular monto de mora (suma de intereses de mora de cuotas vencidas)
-        const montoMora = prestamo.cuotas.reduce(
+        const montoMora = cuotas.reduce(
           (sum, cuota) => sum + cuota.montoInteresMora.toNumber(),
           0,
         );
