@@ -2118,7 +2118,10 @@ export class AccountingService implements OnModuleInit {
       .map(([cobradorId, deuda]) => {
         const cobrador = cobradorMap.get(cobradorId);
         const abonosRealizados = abonosMap.get(cobradorId) || 0;
-        const totalDeudaReal = (deuda.gastosPersonales + deuda.descuadres) - abonosRealizados;
+        const totalDeudaRealRaw = (deuda.gastosPersonales + deuda.descuadres) - abonosRealizados;
+        // Los valores del módulo contable se manejan en pesos (enteros). Redondear evita
+        // que residuos decimales (p.ej. 0.02) aparezcan como "$0" pero cuenten como deuda.
+        const totalDeudaReal = Math.max(0, Math.round(Number(totalDeudaRealRaw || 0)));
         
         return {
           cobradorId,
@@ -2130,7 +2133,7 @@ export class AccountingService implements OnModuleInit {
           totalEventos: deuda.totalEventos,
         };
       })
-      .filter(d => d.totalDeuda > 0)
+      .filter(d => Number(d.totalDeuda || 0) > 0)
       .sort((a, b) => b.totalDeuda - a.totalDeuda);
   }
 
@@ -2143,23 +2146,32 @@ export class AccountingService implements OnModuleInit {
     cobradorId: string,
     monto: number,
     nota: string,
-    userId: string
+    userId: string,
+    cajaIdDestino?: string,
   ) {
     const cobrador = await this.prisma.usuario.findUnique({ where: { id: cobradorId } });
     if (!cobrador) throw new NotFoundException('Cobrador no encontrado');
 
-    // 1. Encontrar la "Caja Principal" para inyectar este dinero allí
-    const cajaPrincipal = await this.prisma.caja.findFirst({
-      where: { codigo: 'CAJA-PRINCIPAL' }
-    });
+    const montoClean = Number(monto || 0);
+    if (!(montoClean > 0)) throw new BadRequestException('Monto inválido');
 
-    if (!cajaPrincipal) throw new Error('No existe Caja Principal para registrar el ingreso');
+    // 1. Resolver caja destino (por defecto Caja Principal)
+    let cajaDestino = null as any
+    if (cajaIdDestino) {
+      cajaDestino = await this.prisma.caja.findUnique({ where: { id: cajaIdDestino } })
+      if (!cajaDestino) throw new NotFoundException('Caja destino no encontrada')
+    } else {
+      cajaDestino = await this.prisma.caja.findFirst({
+        where: { codigo: 'CAJA-PRINCIPAL' },
+      })
+      if (!cajaDestino) throw new Error('No existe Caja Principal para registrar el ingreso')
+    }
 
     // 2. Crear la transacción INGRESO
     return this.createTransaccion({
-      cajaId: cajaPrincipal.id,
+      cajaId: cajaDestino.id,
       tipo: TipoTransaccion.INGRESO,
-      monto,
+      monto: montoClean,
       descripcion: `Abono de deuda pendiente - Cobrador: ${cobrador.nombres} ${cobrador.apellidos}${nota ? ' - ' + nota : ''}`,
       creadoPorId: userId,
       tipoReferencia: 'ABONO_DEUDA',
