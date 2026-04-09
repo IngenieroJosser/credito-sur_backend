@@ -2129,19 +2129,26 @@ export class LoansService implements OnModuleInit {
         montoFinanciar = Math.max(0, precioTotal - cuotaInicial);
 
         // Persistir margen (Modelo A): se reconoce una sola vez al crear el crédito.
+
         // No afecta caja: solo se guarda para poder calcular utilidad operativa real en reportes.
         precioVentaArticulo = Number(precioTotal || 0);
         costoArticulo = producto?.costo != null ? Number(producto.costo) : 0;
         margenArticulo = Number(precioVentaArticulo) - Number(costoArticulo);
 
-        if (cuotaInicial > precioTotal) {
-          throw new BadRequestException(
-            'La cuota inicial no puede ser mayor al precio total',
+        if (Number(margenArticulo) < 0) {
+          this.logger.warn(
+            `[MARGEN NEGATIVO] Crédito ARTICULO: productoId=${producto?.id}, precioVenta=${precioVentaArticulo}, costo=${costoArticulo}, margen=${margenArticulo}`,
           );
         }
 
-        // Reducir stock del producto si existe la propiedad stock
-        if (producto.stock !== undefined) {
+        if (cuotaInicial > precioTotal) {
+          throw new BadRequestException(
+            'La cuota inicial no puede ser mayor al precio total del artículo.',
+          );
+        }
+
+        // Descontar stock solo si el producto maneja stock
+        if (producto.stock !== undefined && producto.stock !== null) {
           await this.prisma.producto.update({
             where: { id: data.productoId },
             data: { stock: { decrement: 1 } },
@@ -2249,6 +2256,13 @@ export class LoansService implements OnModuleInit {
           data.esContado,
         );
 
+      const cuotasDataFinal = data.esContado
+        ? cuotasData.map((c: any) => ({
+            ...c,
+            fechaPago: fechaInicio,
+          }))
+        : cuotasData;
+
       // Homogeneizar vencimiento del préstamo con el cronograma real
       if (cuotasData.length > 0) {
         fechaFin = new Date(cuotasData[cuotasData.length - 1].fechaVencimiento);
@@ -2294,7 +2308,7 @@ export class LoansService implements OnModuleInit {
             : undefined,
           garantia: data.garantia ? String(data.garantia) : undefined,
           cuotas: {
-            create: cuotasData,
+            create: cuotasDataFinal,
           },
         } as any,
         include: {

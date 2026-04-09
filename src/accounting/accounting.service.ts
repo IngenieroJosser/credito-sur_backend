@@ -1417,14 +1417,14 @@ export class AccountingService implements OnModuleInit {
       cobranzaHoyAgg,
       trasladosHoy,
       cuotaInicialHoyAgg,
-      margenArticulosHoyAgg,
+      cuotasPagadasArticuloHoy,
       ingresosAyer,
       egresosOperativosAyer,
       deudaCobradorAyerAgg,
       cobranzaAyerAgg,
       trasladosAyer,
       cuotaInicialAyerAgg,
-      margenArticulosAyerAgg,
+      cuotasPagadasArticuloAyer,
       totalCajas,
       prestamosActivos,
       totalRutasCount,
@@ -1496,13 +1496,23 @@ export class AccountingService implements OnModuleInit {
         },
         _sum: { monto: true },
       }),
-      this.prisma.prestamo.aggregate({
+      this.prisma.cuota.findMany({
         where: {
-          creadoEn: { gte: inicioHoy, lte: finHoy },
-          tipoPrestamo: 'ARTICULO',
-          eliminadoEn: null,
+          estado: 'PAGADA',
+          fechaPago: { gte: inicioHoy, lte: finHoy },
+          prestamo: {
+            tipoPrestamo: 'ARTICULO',
+            eliminadoEn: null,
+          },
         },
-        _sum: { margenArticulo: true },
+        select: {
+          prestamo: {
+            select: {
+              margenArticulo: true,
+              cantidadCuotas: true,
+            },
+          },
+        },
       }),
       this.prisma.transaccion.aggregate({
         where: {
@@ -1567,13 +1577,23 @@ export class AccountingService implements OnModuleInit {
         },
         _sum: { monto: true },
       }),
-      this.prisma.prestamo.aggregate({
+      this.prisma.cuota.findMany({
         where: {
-          creadoEn: { gte: inicioAnterior, lte: finAnterior },
-          tipoPrestamo: 'ARTICULO',
-          eliminadoEn: null,
+          estado: 'PAGADA',
+          fechaPago: { gte: inicioAnterior, lte: finAnterior },
+          prestamo: {
+            tipoPrestamo: 'ARTICULO',
+            eliminadoEn: null,
+          },
         },
-        _sum: { margenArticulo: true },
+        select: {
+          prestamo: {
+            select: {
+              margenArticulo: true,
+              cantidadCuotas: true,
+            },
+          },
+        },
       }),
       this.prisma.caja.aggregate({
         where: { activa: true },
@@ -1646,14 +1666,24 @@ export class AccountingService implements OnModuleInit {
     const cobranza = Number(cobranzaHoyAgg._sum.monto || 0);
     const traslados = Number(trasladosHoy._sum.monto || 0);
     const cuotaInicialHoy = Number(cuotaInicialHoyAgg._sum.monto || 0);
-    const margenArticulosHoy = Number((margenArticulosHoyAgg as any)?._sum?.margenArticulo || 0);
+    const margenArticulosHoy = (cuotasPagadasArticuloHoy || []).reduce((acc: number, c: any) => {
+      const margenTotal = Number(c?.prestamo?.margenArticulo || 0);
+      const totalCuotas = Number(c?.prestamo?.cantidadCuotas || 0);
+      if (!totalCuotas) return acc;
+      return acc + (margenTotal / totalCuotas);
+    }, 0);
     const ingresosAyerVal = Number(ingresosAyer._sum.monto || 0);
     const egresosAyerVal = Number(egresosOperativosAyer._sum.monto || 0);
     const deudaCobradorAyerVal = Number(deudaCobradorAyerAgg._sum.monto || 0);
     const cobranzaAyerVal = Number(cobranzaAyerAgg._sum.monto || 0);
     const trasladosAyerVal = Number(trasladosAyer._sum.monto || 0);
     const cuotaInicialAyerVal = Number(cuotaInicialAyerAgg._sum.monto || 0);
-    const margenArticulosAyerVal = Number((margenArticulosAyerAgg as any)?._sum?.margenArticulo || 0);
+    const margenArticulosAyerVal = (cuotasPagadasArticuloAyer || []).reduce((acc: number, c: any) => {
+      const margenTotal = Number(c?.prestamo?.margenArticulo || 0);
+      const totalCuotas = Number(c?.prestamo?.cantidadCuotas || 0);
+      if (!totalCuotas) return acc;
+      return acc + (margenTotal / totalCuotas);
+    }, 0);
 
     const calcularDiferencia = (actual: number, anterior: number) => {
       if (anterior === 0) return actual > 0 ? 100 : 0;
@@ -1680,7 +1710,7 @@ export class AccountingService implements OnModuleInit {
       cobranzaHoy: cobranza,
       // Egresos de cobrador que se registran como cuenta por cobrar (no afectan utilidad)
       deudaCobradorHoy: deudaCobrador,
-      // Margen de artículos vendidos (reconocido al crear el crédito de artículo, no por cuota)
+      // Margen de artículos (Modelo B): se reconoce proporcionalmente por cada cuota PAGADA dentro del período.
       margenArticulosHoy,
       // La utilidad real es (interés+mora) + margen artículos - egresos operativos
       utilidadReal: (Number(interesHoyAgg._sum.montoInteres || 0) + Number(interesHoyAgg._sum.montoInteresMora || 0) + margenArticulosHoy) - egresosOperativos,
