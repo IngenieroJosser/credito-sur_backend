@@ -408,7 +408,7 @@ export class AccountingController {
   )
   registrarAbonoDeuda(
     @Param('cobradorId') cobradorId: string,
-    @Body() body: { monto: number; nota?: string },
+    @Body() body: { monto: number; nota?: string; cajaIdDestino?: string },
     @Request() req,
   ) {
     if (!req.user || !req.user.id) throw new UnauthorizedException('Usuario no autenticado');
@@ -420,6 +420,7 @@ export class AccountingController {
       montoClean,
       body.nota || '',
       req.user.id,
+      body.cajaIdDestino,
     );
   }
 }
