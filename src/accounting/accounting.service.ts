@@ -1417,12 +1417,14 @@ export class AccountingService implements OnModuleInit {
       cobranzaHoyAgg,
       trasladosHoy,
       cuotaInicialHoyAgg,
+      margenArticulosHoyAgg,
       ingresosAyer,
       egresosOperativosAyer,
       deudaCobradorAyerAgg,
       cobranzaAyerAgg,
       trasladosAyer,
       cuotaInicialAyerAgg,
+      margenArticulosAyerAgg,
       totalCajas,
       prestamosActivos,
       totalRutasCount,
@@ -1494,6 +1496,14 @@ export class AccountingService implements OnModuleInit {
         },
         _sum: { monto: true },
       }),
+      this.prisma.prestamo.aggregate({
+        where: {
+          creadoEn: { gte: inicioHoy, lte: finHoy },
+          tipoPrestamo: 'ARTICULO',
+          eliminadoEn: null,
+        },
+        _sum: { margenArticulo: true },
+      }),
       this.prisma.transaccion.aggregate({
         where: {
           ...whereAyer,
@@ -1556,6 +1566,14 @@ export class AccountingService implements OnModuleInit {
           tipoReferencia: 'CUOTA_INICIAL',
         },
         _sum: { monto: true },
+      }),
+      this.prisma.prestamo.aggregate({
+        where: {
+          creadoEn: { gte: inicioAnterior, lte: finAnterior },
+          tipoPrestamo: 'ARTICULO',
+          eliminadoEn: null,
+        },
+        _sum: { margenArticulo: true },
       }),
       this.prisma.caja.aggregate({
         where: { activa: true },
@@ -1628,12 +1646,14 @@ export class AccountingService implements OnModuleInit {
     const cobranza = Number(cobranzaHoyAgg._sum.monto || 0);
     const traslados = Number(trasladosHoy._sum.monto || 0);
     const cuotaInicialHoy = Number(cuotaInicialHoyAgg._sum.monto || 0);
+    const margenArticulosHoy = Number((margenArticulosHoyAgg as any)?._sum?.margenArticulo || 0);
     const ingresosAyerVal = Number(ingresosAyer._sum.monto || 0);
     const egresosAyerVal = Number(egresosOperativosAyer._sum.monto || 0);
     const deudaCobradorAyerVal = Number(deudaCobradorAyerAgg._sum.monto || 0);
     const cobranzaAyerVal = Number(cobranzaAyerAgg._sum.monto || 0);
     const trasladosAyerVal = Number(trasladosAyer._sum.monto || 0);
     const cuotaInicialAyerVal = Number(cuotaInicialAyerAgg._sum.monto || 0);
+    const margenArticulosAyerVal = Number((margenArticulosAyerAgg as any)?._sum?.margenArticulo || 0);
 
     const calcularDiferencia = (actual: number, anterior: number) => {
       if (anterior === 0) return actual > 0 ? 100 : 0;
@@ -1660,10 +1680,12 @@ export class AccountingService implements OnModuleInit {
       cobranzaHoy: cobranza,
       // Egresos de cobrador que se registran como cuenta por cobrar (no afectan utilidad)
       deudaCobradorHoy: deudaCobrador,
-      // La utilidad real es la suma de intereses cobrados menos egresos operativos
-      utilidadReal: Number(interesHoyAgg._sum.montoInteres || 0) + Number(interesHoyAgg._sum.montoInteresMora || 0) - egresosOperativos,
+      // Margen de artículos vendidos (reconocido al crear el crédito de artículo, no por cuota)
+      margenArticulosHoy,
+      // La utilidad real es (interés+mora) + margen artículos - egresos operativos
+      utilidadReal: (Number(interesHoyAgg._sum.montoInteres || 0) + Number(interesHoyAgg._sum.montoInteresMora || 0) + margenArticulosHoy) - egresosOperativos,
       // La cuota inicial pertenece al Capital (Ingreso Bruto de Caja) y no a la Utilidad.
-      gananciaNeta: Number(interesHoyAgg._sum.montoInteres || 0) + Number(interesHoyAgg._sum.montoInteresMora || 0) - egresosOperativos,
+      gananciaNeta: (Number(interesHoyAgg._sum.montoInteres || 0) + Number(interesHoyAgg._sum.montoInteresMora || 0) + margenArticulosHoy) - egresosOperativos,
       capitalEnCalle: Number(prestamosActivos._sum.monto || 0),
       saldoCajas: Number(totalCajas._sum.saldoActual || 0),
       cajasAbiertasCount: await this.prisma.caja.count({
@@ -1679,12 +1701,14 @@ export class AccountingService implements OnModuleInit {
       porcentajeEgresosVsAyer: usarComparacionAyer ? calcularDiferencia(egresosOperativos, egresosAyerVal) : null,
       porcentajeCobranzaVsAyer: usarComparacionAyer ? calcularDiferencia(cobranza, cobranzaAyerVal) : null,
       porcentajeDeudaCobradorVsAyer: usarComparacionAyer ? calcularDiferencia(deudaCobrador, deudaCobradorAyerVal) : null,
+      porcentajeMargenArticulosVsAyer: usarComparacionAyer ? calcularDiferencia(margenArticulosHoy, margenArticulosAyerVal) : null,
       porcentajeTrasladosVsAyer: usarComparacionAyer ? calcularDiferencia(traslados, trasladosAyerVal) : null,
       porcentajeCuotaInicialVsAyer: usarComparacionAyer ? calcularDiferencia(cuotaInicialHoy, cuotaInicialAyerVal) : null,
       esIngresoPositivo: usarComparacionAyer ? ingresos >= ingresosAyerVal : true,
       esEgresoPositivo: usarComparacionAyer ? egresosOperativos <= egresosAyerVal : true,
       esCobranzaPositivo: usarComparacionAyer ? cobranza >= cobranzaAyerVal : true,
       esDeudaCobradorPositivo: usarComparacionAyer ? deudaCobrador <= deudaCobradorAyerVal : true,
+      esMargenArticulosPositivo: usarComparacionAyer ? margenArticulosHoy >= margenArticulosAyerVal : true,
       esTrasladoPositivo: usarComparacionAyer ? traslados <= trasladosAyerVal : true,
     };
   }

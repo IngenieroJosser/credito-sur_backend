@@ -2075,6 +2075,10 @@ export class LoansService implements OnModuleInit {
       let montoFinanciar = data.monto;
       let precioArticuloTotal = data.monto; // Precio total del artículo (sin descontar cuota inicial)
 
+      let precioVentaArticulo: number | null = null;
+      let costoArticulo: number | null = null;
+      let margenArticulo: number | null = null;
+
       // Para crédito por artículo
       if (data.tipoPrestamo === 'ARTICULO') {
         if (!data.productoId) {
@@ -2123,6 +2127,12 @@ export class LoansService implements OnModuleInit {
           : (precioProducto.precio ? Number(precioProducto.precio) : 0);
         precioArticuloTotal = precioTotal; // Guardar precio total para datosSolicitud
         montoFinanciar = Math.max(0, precioTotal - cuotaInicial);
+
+        // Persistir margen (Modelo A): se reconoce una sola vez al crear el crédito.
+        // No afecta caja: solo se guarda para poder calcular utilidad operativa real en reportes.
+        precioVentaArticulo = Number(precioTotal || 0);
+        costoArticulo = producto?.costo != null ? Number(producto.costo) : 0;
+        margenArticulo = Number(precioVentaArticulo) - Number(costoArticulo);
 
         if (cuotaInicial > precioTotal) {
           throw new BadRequestException(
@@ -2260,6 +2270,9 @@ export class LoansService implements OnModuleInit {
           tipoPrestamo: data.tipoPrestamo,
           tipoAmortizacion: tipoAmort,
           monto: montoFinanciar,
+          precioVentaArticulo,
+          costoArticulo,
+          margenArticulo,
           tasaInteres: tasaInteres,
           tasaInteresMora: data.tasaInteresMora || 2,
           plazoMeses: plazoMesesPrisma,
