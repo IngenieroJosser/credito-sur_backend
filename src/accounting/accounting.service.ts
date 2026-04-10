@@ -994,6 +994,16 @@ export class AccountingService implements OnModuleInit {
           otrosIngresos += monto;
         }
       } else if (t.tipo === 'EGRESO') {
+        // Estos movimientos son eventos internos de control / contabilidad y no deben verse como "egresos" operativos
+        // en el rendimiento diario de la ruta.
+        if (
+          t.tipoReferencia === 'DEUDA_COBRADOR' ||
+          t.tipoReferencia === 'CIERRE_RUTA' ||
+          t.tipoReferencia === 'ACTIVACION_RUTA'
+        ) {
+          return;
+        }
+
         if (t.tipoReferencia === 'GASTO') {
           gastosOperativos += monto;
         } else if (
@@ -1006,7 +1016,9 @@ export class AccountingService implements OnModuleInit {
           otrosEgresos += monto;
         }
       } else if (t.tipo === 'TRANSFERENCIA') {
-        if (t.tipoReferencia === 'RECOLECCION') {
+        const numero = String((t as any).numeroTransaccion || '').toUpperCase();
+        const esSalida = numero.startsWith('TRX-OUT');
+        if (esSalida) {
           otrosEgresos += monto;
         }
       }
