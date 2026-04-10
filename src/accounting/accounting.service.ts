@@ -1701,6 +1701,9 @@ export class AccountingService implements OnModuleInit {
         ? Math.round((consolidacionesHoy / totalRutasCount) * 100)
         : 0;
 
+    const interesHoy = Number((interesHoyAgg as any)?._sum?.montoInteres || 0);
+    const moraHoy = Number((interesHoyAgg as any)?._sum?.montoInteresMora || 0);
+
     return {
       ingresosHoy: ingresos,
       egresosHoy: egresosOperativos,
@@ -1712,10 +1715,13 @@ export class AccountingService implements OnModuleInit {
       deudaCobradorHoy: deudaCobrador,
       // Margen de artículos (Modelo B): se reconoce proporcionalmente por cada cuota PAGADA dentro del período.
       margenArticulosHoy,
+      // Utilidad financiera separada
+      interesHoy,
+      moraHoy,
       // La utilidad real es (interés+mora) + margen artículos - egresos operativos
-      utilidadReal: (Number(interesHoyAgg._sum.montoInteres || 0) + Number(interesHoyAgg._sum.montoInteresMora || 0) + margenArticulosHoy) - egresosOperativos,
+      utilidadReal: (interesHoy + moraHoy + margenArticulosHoy) - egresosOperativos,
       // La cuota inicial pertenece al Capital (Ingreso Bruto de Caja) y no a la Utilidad.
-      gananciaNeta: (Number(interesHoyAgg._sum.montoInteres || 0) + Number(interesHoyAgg._sum.montoInteresMora || 0) + margenArticulosHoy) - egresosOperativos,
+      gananciaNeta: (interesHoy + moraHoy + margenArticulosHoy) - egresosOperativos,
       capitalEnCalle: Number(prestamosActivos._sum.monto || 0),
       saldoCajas: Number(totalCajas._sum.saldoActual || 0),
       cajasAbiertasCount: await this.prisma.caja.count({
