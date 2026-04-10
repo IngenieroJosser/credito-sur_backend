@@ -2045,6 +2045,52 @@ export class LoansService implements OnModuleInit {
         throw new NotFoundException('Usuario creador no encontrado');
       }
 
+      // Regla (producción): un COBRADOR no puede solicitar un préstamo en efectivo
+      // si su caja de ruta no tiene saldo suficiente para el desembolso.
+      // Esto evita que el saldo de la caja quede negativo al aprobar/desembolsar.
+      const isArticulo = String(data.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
+      if (creador.rol === RolUsuario.COBRADOR && !isArticulo) {
+        const montoDesembolso = Number(data.monto || 0);
+        if (montoDesembolso > 0) {
+          const rutaCobrador = await this.prisma.ruta.findFirst({
+            where: {
+              eliminadoEn: null,
+              activa: true,
+              cobradorId: creador.id,
+            },
+            select: { id: true },
+          });
+
+          if (!rutaCobrador?.id) {
+            throw new BadRequestException(
+              'No tienes una ruta activa asignada para solicitar un crédito en efectivo.',
+            );
+          }
+
+          const cajaRuta = await this.prisma.caja.findFirst({
+            where: {
+              rutaId: rutaCobrador.id,
+              tipo: 'RUTA',
+              activa: true,
+            },
+            select: { id: true, nombre: true, saldoActual: true },
+          });
+
+          const saldoCajaRuta = Number((cajaRuta as any)?.saldoActual || 0);
+          if (!cajaRuta?.id) {
+            throw new BadRequestException(
+              'No existe una caja de ruta activa para tu ruta. Contacta al administrador.',
+            );
+          }
+
+          if (saldoCajaRuta < montoDesembolso) {
+            throw new BadRequestException(
+              `Saldo insuficiente en tu caja de ruta para solicitar este crédito. Caja: ${cajaRuta.nombre}. Saldo: ${saldoCajaRuta.toLocaleString('es-CO')}. Monto solicitado: ${montoDesembolso.toLocaleString('es-CO')}.`,
+            );
+          }
+        }
+      }
+
       // Verificación de idempotencia / prevención de duplicados
       // Buscar si existe un préstamo idéntico creado en los últimos 2 minutos
       const dosMinutosAtras = new Date(Date.now() - 2 * 60 * 1000);
