@@ -1849,7 +1849,9 @@ export class AccountingService implements OnModuleInit {
         const deudaPorFaltantes = clientesFaltantes > 0
           ? Math.max(Number(meta || 0) - Number(recaudo || 0), 0)
           : 0;
-        const descuadre = saldoAlCierre > 0 || deudaPorFaltantes > 0;
+        // Regla de negocio: saldoAlCierre (efectivo pendiente por recolectar) no es descuadre.
+        // Solo se considera descuadre cuando faltaron clientes/efectivo vs meta.
+        const descuadre = deudaPorFaltantes > 0;
         return {
           id: t.id,
           fecha: formatBogotaOffsetIso(t.fechaTransaccion),
