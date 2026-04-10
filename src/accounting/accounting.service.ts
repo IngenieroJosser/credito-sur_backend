@@ -2115,9 +2115,13 @@ export class AccountingService implements OnModuleInit {
         ],
       },
       select: {
+        id: true,
+        creadoEn: true,
         monto: true,
         cajaId: true,
         tipoReferencia: true,
+        referenciaId: true,
+        descripcion: true,
         caja: {
           select: {
             rutaId: true,
@@ -2165,6 +2169,10 @@ export class AccountingService implements OnModuleInit {
 
     // 4. Consolidar deudas por cobrador
     const deudaMap = new Map<string, { gastosPersonales: number; descuadres: number; totalEventos: number }>();
+    const eventosMap = new Map<
+      string,
+      Array<{ id: string; tipoReferencia: string; monto: number; fecha: Date; cajaId: string; referenciaId?: string; descripcion?: string }>
+    >();
 
     for (const g of gastosPersonales) {
       const prev = deudaMap.get(g.cobradorId) || { gastosPersonales: 0, descuadres: 0, totalEventos: 0 };
@@ -2178,6 +2186,36 @@ export class AccountingService implements OnModuleInit {
     for (const arqueo of arqueos) {
       const cobradorId = arqueo.caja?.ruta?.cobradorId;
       if (!cobradorId) continue;
+
+      // Evitar falsos positivos:
+      // 1) DEUDA_COBRADOR generada por cierres de ruta antiguos (basados en saldo retenido)
+      //    suele venir con metadata SD:... y FD:0 o sin FD. Eso NO debe contarse.
+      if (arqueo.tipoReferencia === 'DEUDA_COBRADOR' && typeof arqueo.referenciaId === 'string') {
+        const ref = arqueo.referenciaId
+        const tieneSaldoAlCierre = /\bSD:(\d+(?:\.\d+)?)\b/i.test(ref)
+        const matchFD = ref.match(/\bFD:(\d+(?:\.\d+)?)\b/i)
+        const fd = matchFD ? Number(matchFD[1] || 0) : null
+
+        if (tieneSaldoAlCierre && (fd == null || fd === 0)) {
+          continue
+        }
+      }
+
+      // 2) ARQUEO: solo debe generar deuda si la diferencia fue negativa (faltó efectivo).
+      //    Si no podemos detectar la diferencia, no lo contamos para no crear deudas falsas.
+      if (arqueo.tipoReferencia === 'ARQUEO' && typeof arqueo.referenciaId === 'string') {
+        const ref = arqueo.referenciaId
+        const matchDif = ref.match(/\bDIF:([\-\d.]+)\b/i)
+        if (!matchDif) {
+          continue
+        }
+        const dif = Number(matchDif[1])
+        // Si DIF >= 0 no hay deuda del cobrador
+        if (!(dif < 0)) {
+          continue
+        }
+      }
+
       const diferencia = Number(arqueo.monto || 0); // EGRESO significa dinero no devuelto
       const prev = deudaMap.get(cobradorId) || { gastosPersonales: 0, descuadres: 0, totalEventos: 0 };
       deudaMap.set(cobradorId, {
@@ -2185,6 +2223,18 @@ export class AccountingService implements OnModuleInit {
         descuadres: prev.descuadres + diferencia,
         totalEventos: prev.totalEventos + 1,
       });
+
+      const arr = eventosMap.get(cobradorId) || [];
+      arr.push({
+        id: String((arqueo as any).id),
+        tipoReferencia: String(arqueo.tipoReferencia || ''),
+        monto: Number(arqueo.monto || 0),
+        fecha: (arqueo as any).creadoEn as Date,
+        cajaId: String(arqueo.cajaId || ''),
+        referenciaId: (arqueo as any).referenciaId ?? undefined,
+        descripcion: (arqueo as any).descripcion ?? undefined,
+      });
+      eventosMap.set(cobradorId, arr);
     }
 
     // 5. Construir respuesta final restando abonos
@@ -2192,7 +2242,16 @@ export class AccountingService implements OnModuleInit {
       .map(([cobradorId, deuda]) => {
         const cobrador = cobradorMap.get(cobradorId);
         const abonosRealizados = abonosMap.get(cobradorId) || 0;
-        const totalDeudaRealRaw = (deuda.gastosPersonales + deuda.descuadres) - abonosRealizados;
+
+        // Aplicar abonos al desglose para que los subtotales concuerden con el total.
+        // Prioridad: descuadres (faltantes de ruta) -> gastos personales.
+        const abonoUsadoEnDescuadres = Math.min(Number(deuda.descuadres || 0), Number(abonosRealizados || 0));
+        const descuadresPendiente = Math.max(0, Number(deuda.descuadres || 0) - abonoUsadoEnDescuadres);
+        const abonoRestante = Math.max(0, Number(abonosRealizados || 0) - abonoUsadoEnDescuadres);
+        const abonoUsadoEnGastos = Math.min(Number(deuda.gastosPersonales || 0), abonoRestante);
+        const gastosPendiente = Math.max(0, Number(deuda.gastosPersonales || 0) - abonoUsadoEnGastos);
+
+        const totalDeudaRealRaw = descuadresPendiente + gastosPendiente;
         // Los valores del módulo contable se manejan en pesos (enteros). Redondear evita
         // que residuos decimales (p.ej. 0.02) aparezcan como "$0" pero cuenten como deuda.
         const totalDeudaReal = Math.max(0, Math.round(Number(totalDeudaRealRaw || 0)));
@@ -2202,9 +2261,10 @@ export class AccountingService implements OnModuleInit {
           nombreCobrador: cobrador ? `${cobrador.nombres} ${cobrador.apellidos}` : 'Desconocido',
           rol: cobrador?.rol || 'COBRADOR',
           totalDeuda: totalDeudaReal,
-          gastosPersonales: deuda.gastosPersonales,
-          descuadres: deuda.descuadres,
+          gastosPersonales: Math.max(0, Math.round(Number(gastosPendiente || 0))),
+          descuadres: Math.max(0, Math.round(Number(descuadresPendiente || 0))),
           totalEventos: deuda.totalEventos,
+          eventos: (eventosMap.get(cobradorId) || []).slice(0, 25),
         };
       })
       .filter(d => Number(d.totalDeuda || 0) > 0)
