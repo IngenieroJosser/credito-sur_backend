@@ -1014,11 +1014,9 @@ export class AccountingService {
           otrosEgresos += monto;
         }
       } else if (t.tipo === 'TRANSFERENCIA') {
-        const numero = String((t as any).numeroTransaccion || '').toUpperCase();
-        const esSalida = numero.startsWith('TRX-OUT');
-        if (esSalida) {
-          otrosEgresos += monto;
-        }
+        // Las transferencias (TRX-IN/TRX-OUT) NO deben contarse como "gastos" del día.
+        // Son movimientos internos entre cajas y contablemente ya se reflejan en saldoActual.
+        return;
       }
     });
 
@@ -1066,7 +1064,8 @@ export class AccountingService {
       cobranzaDelDia: totalCobranza,
       recaudosPorReferencia,
       gastosDelDia: totalGastos,
-      baseEfectivo: baseEfectivo,
+      // Base efectivo es el saldo acumulado de la caja de ruta (no debe reiniciarse diario)
+      baseEfectivo: Number(caja.saldoActual),
       desembolsos: desembolsos,
       netoPeriodo: saldoNetoPeriodo,
       fechaInicio: formatBogotaOffsetIso(rangeStart),
