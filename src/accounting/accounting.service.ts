@@ -975,7 +975,7 @@ export class AccountingService {
     transacciones.forEach((t) => {
       const monto = Number(t.monto);
       if (t.tipo === 'INGRESO') {
-        if (t.tipoReferencia === 'PAGO' || t.tipoReferencia === 'CUOTA_INICIAL') {
+        if (t.tipoReferencia === 'PAGO') {
           cobranzaTrx += monto;
           if (t.referenciaId) {
             recaudosPorReferencia[t.referenciaId] = (recaudosPorReferencia[t.referenciaId] || 0) + monto;
@@ -1020,15 +1020,16 @@ export class AccountingService {
       }
     });
 
-    // 3. Fallback: Obtener pagos directamente de la tabla Pago si no hay transacciones de pago vinculadas
+    // 3. Cobranza REAL del período: siempre desde la tabla Pago para incluir
+    // pagos por transferencia (CAJA-BANCO) y efectivo (caja ruta), sin doble conteo.
     let cobranzaPagos = 0;
-    if (cobranzaTrx === 0) {
-      const asignaciones = await this.prisma.asignacionRuta.findMany({
-        where: { rutaId, activa: true },
-        select: { clienteId: true },
-      });
-      const clienteIds = asignaciones.map((a) => a.clienteId);
+    const asignaciones = await this.prisma.asignacionRuta.findMany({
+      where: { rutaId, activa: true },
+      select: { clienteId: true },
+    });
+    const clienteIds = asignaciones.map((a) => a.clienteId);
 
+    if (clienteIds.length > 0) {
       const pagosList = await this.prisma.pago.findMany({
         where: {
           clienteId: { in: clienteIds },
@@ -1038,29 +1039,27 @@ export class AccountingService {
           },
         },
       });
-      
-      pagosList.forEach(p => {
+
+      pagosList.forEach((p) => {
         const m = Number(p.montoTotal);
         cobranzaPagos += m;
-        // En este fallback, usamos prestamoId como referencia
         if (p.prestamoId) {
           recaudosPorReferencia[p.prestamoId] = (recaudosPorReferencia[p.prestamoId] || 0) + m;
         }
       });
     }
 
-    // Decidimos qué usar para cobranza
-    const totalCobranza = cobranzaTrx > 0 ? cobranzaTrx : cobranzaPagos;
-    const totalRecaudo = totalCobranza + otrosIngresos;
+    const totalCobranza = cobranzaPagos;
+    const totalRecaudoAll = totalCobranza + otrosIngresos;
     const totalGastos = gastosOperativos + otrosEgresos;
-    const saldoNetoPeriodo = totalRecaudo - totalGastos - desembolsos;
+    const saldoNetoPeriodo = totalRecaudoAll - totalGastos - desembolsos;
 
     return {
       rutaId,
       cajaId: caja.id,
       fecha: formatBogotaOffsetIso(rangeStart),
       saldoDisponible: Number(caja.saldoActual),
-      recaudoDelDia: totalRecaudo, 
+      recaudoDelDia: totalCobranza, 
       cobranzaDelDia: totalCobranza,
       recaudosPorReferencia,
       gastosDelDia: totalGastos,

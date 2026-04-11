@@ -53,29 +53,6 @@ export class DashboardService {
         },
       });
 
-      // Cálculo de eficiencia (relación entre préstamos pagados vs totales) - filtrado por período
-      const totalLoans = await this.prisma.prestamo.count({
-        where: {
-          estado: {
-            in: [
-              EstadoPrestamo.ACTIVO,
-              EstadoPrestamo.PAGADO,
-              EstadoPrestamo.EN_MORA,
-            ],
-          },
-          creadoEn: { gte: startDate, lte: endDate },
-        },
-      });
-
-      const paidLoans = await this.prisma.prestamo.count({
-        where: { 
-          estado: EstadoPrestamo.PAGADO,
-          creadoEn: { gte: startDate, lte: endDate },
-        },
-      });
-
-      const efficiency = totalLoans > 0 ? (paidLoans / totalLoans) * 100 : 0;
-
       // Calcular capital prestado del período (suma de montos de préstamos aprobados/efectivos)
       const capitalPrestado = await this.prisma.prestamo.aggregate({
         where: {
@@ -116,6 +93,30 @@ export class DashboardService {
       ]);
 
       const recaudoTotal = Number(resRecaudo[0]._sum.montoTotal || 0) + Number(resRecaudo[1]._sum.monto || 0);
+
+      // Eficiencia: misma lógica de efectividad de cobrador (recaudo / meta)
+      // Meta = suma de cuotas con vencimiento en el período + CUOTA_INICIAL del período.
+      const metaCuotasRes = await this.prisma.cuota.aggregate({
+        where: {
+          fechaVencimiento: { gte: startDate, lte: endDate },
+          prestamo: {
+            eliminadoEn: null,
+            estado: {
+              in: [
+                EstadoPrestamo.ACTIVO,
+                EstadoPrestamo.EN_MORA,
+                EstadoPrestamo.PAGADO,
+              ],
+            },
+          },
+        },
+        _sum: { monto: true },
+      });
+
+      const metaTotal = Number(metaCuotasRes._sum?.monto || 0) + Number(resRecaudo[1]._sum.monto || 0);
+      const efficiency = metaTotal > 0
+        ? Math.min(100, (recaudoTotal / metaTotal) * 100)
+        : (recaudoTotal > 0 ? 100 : 0);
 
       // Total de pagos en el período
       const totalPagos = await this.prisma.pago.count({

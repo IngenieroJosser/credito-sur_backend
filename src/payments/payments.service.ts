@@ -11,6 +11,8 @@ import {
   EstadoCuota,
   MetodoPago,
   TipoTransaccion,
+  TipoAprobacion,
+  EstadoAprobacion,
   Prisma,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
@@ -250,7 +252,114 @@ export class PaymentsService {
       return new Date(rawFechaPago);
     })();
 
-    // Crear pago y actualizar todo en una transacción
+    // Si es TRANSFERENCIA, se crea una aprobación pendiente. El pago NO afecta el crédito
+    // hasta que sea aprobado en el módulo de Revisiones.
+    if (dto.metodoPago === MetodoPago.TRANSFERENCIA) {
+      const approval = await this.prisma.aprobacion.create({
+        data: {
+          tipoAprobacion: 'PAGO_TRANSFERENCIA' as any,
+          referenciaId: prestamoIdVal,
+          tablaReferencia: 'prestamos',
+          solicitadoPorId: cobradorIdVal,
+          estado: EstadoAprobacion.PENDIENTE,
+          montoSolicitud: montoTotal,
+          datosSolicitud: {
+            prestamoId: prestamoIdVal,
+            clienteId: prestamo.clienteId,
+            cobradorId: cobradorIdVal,
+            montoTotal,
+            fechaPago: formatBogotaOffsetIso(fechaPagoBogota),
+            numeroReferencia: dto.numeroReferencia || null,
+            notas: dto.notas || null,
+            metodoPago: 'TRANSFERENCIA',
+          },
+        },
+      });
+
+      // Subir comprobante y asociarlo a la aprobación.
+      try {
+        const sanitize = (v?: string) =>
+          (v || '')
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/(^-|-$)/g, '')
+            .slice(0, 60);
+
+        const dni = (prestamo.cliente.dni || '').replace(/\D/g, '');
+        const dniLast4 = dni ? dni.slice(-4) : '';
+        const nombres = sanitize(prestamo.cliente.nombres);
+        const apellidos = sanitize(prestamo.cliente.apellidos);
+        const clientLabel = [`cc-${dni}`, nombres, apellidos, dniLast4]
+          .filter(Boolean)
+          .join('-');
+
+        const cloudResult = await this.cloudinaryService.subirArchivo(comprobante!, {
+          folder: `clientes/${clientLabel}/comprobantes-transferencia`,
+        });
+
+        await this.prisma.multimedia.create({
+          data: {
+            prestamoId: prestamoIdVal,
+            clienteId: prestamo.clienteId,
+            entidad: 'APROBACION',
+            tipoContenido: 'COMPROBANTE_TRANSFERENCIA' as any,
+            tipoArchivo: comprobante!.mimetype,
+            formato: cloudResult.formato,
+            nombreOriginal: comprobante!.originalname,
+            nombreAlmacenamiento: cloudResult.publicId,
+            ruta: cloudResult.publicId,
+            url: cloudResult.url,
+            tamanoBytes: cloudResult.tamanoBytes,
+            esPublico: false,
+            esPrincipal: true,
+            subidoPorId: cobradorIdVal,
+          },
+        });
+      } catch (err) {
+        this.logger.error(
+          `Aprobación ${approval.id} creada, pero falló la subida del comprobante: ${(err as Error).message}`,
+        );
+      }
+
+      // Notificar aprobadores para verificación
+      await this.notificacionesService.notifyApprovers({
+        titulo: `Pago por Transferencia — Requiere Verificación`,
+        mensaje: `Se solicitó aprobación de pago por transferencia de ${montoTotal.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} para ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos} (${prestamo.numeroPrestamo}).`,
+        tipo: 'PAGO',
+        entidad: 'APROBACION',
+        entidadId: approval.id,
+        metadata: {
+          aprobacionId: approval.id,
+          tipoAprobacion: 'PAGO_TRANSFERENCIA',
+          prestamoId: prestamoIdVal,
+          numeroPrestamo: prestamo.numeroPrestamo,
+          cliente: `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
+          clienteId: prestamo.clienteId,
+          monto: montoTotal,
+          metodoPago: 'TRANSFERENCIA',
+          numeroReferencia: dto.numeroReferencia || null,
+          tieneComprobante: true,
+          pagoPendiente: true,
+        },
+      });
+
+      this.notificacionesGateway.broadcastDashboardsActualizados({});
+      this.notificacionesGateway.broadcastAprobacionesActualizadas({
+        accion: 'CREAR',
+        aprobacionId: approval.id,
+        tipoAprobacion: 'PAGO_TRANSFERENCIA' as any,
+      });
+
+      return {
+        pendingVerification: true,
+        aprobacionId: approval.id,
+        message: 'Pago por transferencia enviado a revisiones para verificación.',
+      };
+    }
+
+    // Crear pago y actualizar todo en una transacción (EFECTIVO)
     const resultado = await this.prisma.$transaction(async (tx) => {
       // 1. Crear el registro de pago
       const pago = await tx.pago.create({
@@ -338,20 +447,14 @@ export class PaymentsService {
         );
       }
 
-      const esTransferencia = dto.metodoPago === MetodoPago.TRANSFERENCIA;
-
-      const cajaIngreso = esTransferencia
-        ? await this.ensureCajaBanco(tx)
-        : await tx.caja.findFirst({
-            where: { rutaId: asignacion.rutaId, tipo: 'RUTA', activa: true },
-            select: { id: true, nombre: true, saldoActual: true },
-          });
+      const cajaIngreso = await tx.caja.findFirst({
+        where: { rutaId: asignacion.rutaId, tipo: 'RUTA', activa: true },
+        select: { id: true, nombre: true, saldoActual: true },
+      });
 
       if (!cajaIngreso?.id) {
         throw new BadRequestException(
-          esTransferencia
-            ? 'No existe la Caja Banco (CAJA-BANCO) y no se pudo crear automáticamente.'
-            : 'No existe una caja de ruta activa asociada a la ruta del cliente',
+          'No existe una caja de ruta activa asociada a la ruta del cliente',
         );
       }
 
@@ -406,83 +509,7 @@ export class PaymentsService {
       },
     });
 
-    // ── Subir comprobante de transferencia a Cloudinary ─────────────────────
-    // El comprobante queda dentro de la carpeta del cliente, igual que sus
-    // otros documentos: clientes/cc-{dni}-{nombre}-{apellido}-{last4}/comprobantes
-    if (comprobante && dto.metodoPago === MetodoPago.TRANSFERENCIA) {
-      try {
-        // Construir el label del cliente con el mismo patrón de upload.controller
-        const sanitize = (v?: string) =>
-          (v || '').toLowerCase()
-            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-            .replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 60);
-
-        const dni       = (prestamo.cliente.dni || '').replace(/\D/g, '');
-        const dniLast4  = dni ? dni.slice(-4) : '';
-        const nombres   = sanitize(prestamo.cliente.nombres);
-        const apellidos = sanitize(prestamo.cliente.apellidos);
-        // Mismo formato que upload.controller: cc-{dni}-{nombres}-{apellidos}-{last4}
-        const clientLabel = [`cc-${dni}`, nombres, apellidos, dniLast4].filter(Boolean).join('-');
-
-        const cloudResult = await this.cloudinaryService.subirArchivo(comprobante, {
-          folder: `clientes/${clientLabel}/comprobantes-transferencia`,
-        });
-
-        await this.prisma.multimedia.create({
-          data: {
-            pagoId:               resultado.pago.id,
-            clienteId:            prestamo.clienteId,
-            tipoContenido:        'COMPROBANTE_TRANSFERENCIA' as any,
-            tipoArchivo:          comprobante.mimetype,
-            formato:              cloudResult.formato,
-            nombreOriginal:       comprobante.originalname,
-            nombreAlmacenamiento: cloudResult.publicId,
-            ruta:                 cloudResult.publicId,
-            url:                  cloudResult.url,
-            tamanoBytes:          cloudResult.tamanoBytes,
-            esPublico:            false,
-            esPrincipal:          true,
-            subidoPorId:          dto.cobradorId!,
-          },
-        });
-
-        this.logger.log(
-          `Comprobante de transferencia guardado para pago ${numeroPago} → Cloudinary: ${cloudResult.url}`,
-        );
-      } catch (err) {
-        // El pago ya está guardado en BD; el fallo del comprobante se registra
-        // en el log para que el coordinador pueda solicitarlo manualmente.
-        this.logger.error(
-          `Pago ${numeroPago} creado, pero falló la subida del comprobante: ${(err as Error).message}`,
-        );
-      }
-    }
-
-    // Nota: Se omite la notificación de pago a todos los aprobadores
-    // para evitar ruido en el panel. El pago se refleja en tiempo real
-    // vía socket (broadcastPagosActualizados / broadcastPrestamosActualizados).
-    // Solo se notifica cuando es una transferencia que requiere verificación.
-    if (dto.metodoPago === 'TRANSFERENCIA') {
-      const metodoPagoStr = 'Transferencia';
-      await this.notificacionesService.notifyApprovers({
-        titulo: `Pago por Transferencia — Requiere Verificación`,
-        mensaje: `Se registró pago de ${montoTotal.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} para ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos} (${prestamo.numeroPrestamo}) por ${metodoPagoStr}. Adjunto comprobante.`,
-        tipo: 'PAGO',
-        entidad: 'PAGO',
-        entidadId: resultado.pago.id,
-        metadata: {
-          pagoId:           resultado.pago.id,
-          numeroPrestamo:   prestamo.numeroPrestamo,
-          prestamoId:       prestamoIdVal,
-          metodoPago:       dto.metodoPago || 'EFECTIVO',
-          numeroReferencia: dto.numeroReferencia || null,
-          tieneComprobante: comprobante != null,
-          cliente:          `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
-          clienteId:        prestamo.clienteId,
-          monto:            montoTotal,
-        },
-      });
-    }
+    // Para EFECTIVO no se genera revisión.
 
     this.logger.log(
       `Pago ${numeroPago} registrado: capital=${capitalTotal.toFixed(2)}, interés=${interesTotal.toFixed(2)}, saldo=${resultado.descomposicion.saldoNuevo.toFixed(2)}`,

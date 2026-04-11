@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "TipoAprobacion" ADD VALUE 'PAGO_TRANSFERENCIA';
