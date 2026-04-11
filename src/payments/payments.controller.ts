@@ -119,4 +119,10 @@ export class PaymentsController {
   findOne(@Param('id') id: string) {
     return this.paymentsService.findOne(id);
   }
+
+  @Post('reconcile/:pagoId')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
+  async reconcilePayment(@Param('pagoId') pagoId: string) {
+    return this.paymentsService.reconcilePayment(pagoId);
+  }
 }

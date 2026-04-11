@@ -164,22 +164,14 @@ export class ReportsService {
 
     const whereConditions: any = {
       estado: { in: ['EN_MORA', 'ACTIVO'] },
-      cuotas: {
-        some: {
-          OR: [
-            { estado: { in: ['VENCIDA'] } },
-            {
-              estado: { in: ['PENDIENTE', 'PARCIAL', 'PRORROGADA'] },
-              fechaVencimiento: { lt: hoyInicioUTC },
-            },
-            {
-              estado: { in: ['PRORROGADA'] },
-              fechaVencimientoProrroga: { lt: hoyInicioUTC },
-            },
-          ],
-        },
-      },
     };
+
+    // Solo considerar mora real basada en cuotas VENCIDAS (o préstamos ya marcados EN_MORA).
+    // Esto evita falsos positivos cuando el negocio “acumula” el exigible del día siguiente.
+    whereConditions.OR = [
+      { estado: 'EN_MORA' },
+      { cuotas: { some: { estado: { in: ['VENCIDA'] } } } },
+    ];
 
     // Aplicar filtros
     if (filtros.busqueda) {
@@ -273,17 +265,7 @@ export class ReportsService {
         cliente: true,
         cuotas: {
           where: {
-            OR: [
-              { estado: { in: ['VENCIDA'] } },
-              {
-                estado: { in: ['PENDIENTE', 'PARCIAL', 'PRORROGADA'] },
-                fechaVencimiento: { lt: hoyInicioUTC },
-              },
-              {
-                estado: { in: ['PRORROGADA'] },
-                fechaVencimientoProrroga: { lt: hoyInicioUTC },
-              },
-            ],
+            estado: { in: ['VENCIDA'] },
           },
           orderBy: {
             fechaVencimiento: 'asc',
@@ -376,7 +358,7 @@ export class ReportsService {
           montoMora,
           montoTotalDeuda: prestamo.saldoPendiente.toNumber(),
           montoOriginal: prestamo.monto.toNumber(),
-          cuotasVencidas: prestamo.cuotas.length,
+          cuotasVencidas: cuotas.length,
           ruta: asignacion?.ruta?.nombre || 'Sin asignar',
           cobrador: asignacion?.ruta?.cobrador
             ? `${asignacion.ruta.cobrador.nombres} ${asignacion.ruta.cobrador.apellidos}`

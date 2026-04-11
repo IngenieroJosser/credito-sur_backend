@@ -208,7 +208,11 @@ export class PaymentsService {
       });
 
       const nuevoMontoPagado = yaPagado + montoAplicar;
-      const cuotaCompleta = nuevoMontoPagado >= montoCuota;
+      // Tolerancia de 1 peso para evitar que redondeos (ej: 3333.33) dejen
+      // la cuota como PARCIAL/VENCIDA aunque el pago en UI sea 3.333.
+      const COP_TOLERANCE = 1;
+      const cuotaCompleta = nuevoMontoPagado >= (montoCuota - COP_TOLERANCE);
+      const montoPagadoFinal = cuotaCompleta ? montoCuota : nuevoMontoPagado;
 
       // - Si la cuota era PENDIENTE y quedó incompleta, pasa a PARCIAL.
       // - Si ya era VENCIDA, se mantiene VENCIDA aunque reciba abonos.
@@ -219,7 +223,7 @@ export class PaymentsService {
 
       cuotasActualizar.push({
         id: cuota.id,
-        montoPagado: nuevoMontoPagado,
+        montoPagado: montoPagadoFinal,
         estado: nuevoEstadoCuota,
       });
 
@@ -607,6 +611,151 @@ export class PaymentsService {
     }
 
     return pago;
+  }
+
+  async reconcilePayment(pagoId: string): Promise<{
+    pagoId: string;
+    numeroPago: string;
+    cuotasActualizadas: { cuotaId: string; numeroCuota: number; estadoAntes: string }[];
+    cuotasOmitidas: { cuotaId: string; numeroCuota: number; razon: string }[];
+    prestamoEstadoAntes: string;
+    prestamoEstadoDespues: string;
+  }> {
+    const pago = await this.prisma.pago.findUnique({
+      where: { id: pagoId },
+      include: {
+        detalles: true,
+      },
+    });
+
+    if (!pago) {
+      throw new NotFoundException(`Pago ${pagoId} no encontrado`);
+    }
+
+    if (!pago.detalles?.length) {
+      throw new BadRequestException(
+        `El pago ${pago.numeroPago} no tiene detalles de cuotas asociados`,
+      );
+    }
+
+    const prestamo = await this.prisma.prestamo.findUnique({
+      where: { id: pago.prestamoId },
+      select: { id: true, estado: true },
+    });
+
+    if (!prestamo) {
+      throw new NotFoundException(
+        `Préstamo asociado al pago ${pago.numeroPago} no encontrado`,
+      );
+    }
+
+    const cuotasActualizadas: {
+      cuotaId: string;
+      numeroCuota: number;
+      estadoAntes: string;
+    }[] = [];
+    const cuotasOmitidas: { cuotaId: string; numeroCuota: number; razon: string }[] = [];
+    const prestamoEstadoAntes = String(prestamo.estado);
+    let prestamoEstadoDespues = prestamoEstadoAntes;
+
+    const COP_TOLERANCE = 1;
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const detalle of pago.detalles) {
+        const cuota = await tx.cuota.findUnique({
+          where: { id: detalle.cuotaId },
+          select: {
+            id: true,
+            numeroCuota: true,
+            monto: true,
+            montoPagado: true,
+            estado: true,
+          },
+        });
+
+        if (!cuota) {
+          cuotasOmitidas.push({
+            cuotaId: detalle.cuotaId,
+            numeroCuota: 0,
+            razon: 'Cuota no encontrada en BD',
+          });
+          continue;
+        }
+
+        if (cuota.estado === EstadoCuota.PAGADA) {
+          cuotasOmitidas.push({
+            cuotaId: cuota.id,
+            numeroCuota: Number(cuota.numeroCuota || 0),
+            razon: 'Ya estaba PAGADA',
+          });
+          continue;
+        }
+
+        const montoCuota = Number(cuota.monto || 0);
+        const montoPagadoActual = Number(cuota.montoPagado || 0);
+        const montoDetalle = Number((detalle as any).monto || 0);
+        const nuevoMontoPagado = montoPagadoActual + montoDetalle;
+        const cuotaCompleta = nuevoMontoPagado >= (montoCuota - COP_TOLERANCE);
+
+        if (!cuotaCompleta) {
+          cuotasOmitidas.push({
+            cuotaId: cuota.id,
+            numeroCuota: Number(cuota.numeroCuota || 0),
+            razon: `Pago insuficiente: ${nuevoMontoPagado.toFixed(2)} de ${montoCuota.toFixed(2)}`,
+          });
+          continue;
+        }
+
+        await tx.cuota.update({
+          where: { id: cuota.id },
+          data: {
+            estado: EstadoCuota.PAGADA,
+            montoPagado: montoCuota,
+            fechaPago: pago.fechaPago,
+          },
+        });
+
+        cuotasActualizadas.push({
+          cuotaId: cuota.id,
+          numeroCuota: Number(cuota.numeroCuota || 0),
+          estadoAntes: String(cuota.estado),
+        });
+      }
+
+      if (
+        cuotasActualizadas.length > 0 &&
+        prestamo.estado === EstadoPrestamo.EN_MORA
+      ) {
+        const vencidasRestantes = await tx.cuota.count({
+          where: {
+            prestamoId: prestamo.id,
+            estado: EstadoCuota.VENCIDA,
+          },
+        });
+
+        if (vencidasRestantes === 0) {
+          await tx.prestamo.update({
+            where: { id: prestamo.id },
+            data: { estado: EstadoPrestamo.ACTIVO },
+          });
+          prestamoEstadoDespues = EstadoPrestamo.ACTIVO;
+        }
+      }
+    });
+
+    this.logger.log(
+      `Reconciliación ${pago.numeroPago}: ${cuotasActualizadas.length} cuotas cerradas, ` +
+        `${cuotasOmitidas.length} omitidas. Préstamo: ${prestamoEstadoAntes} → ${prestamoEstadoDespues}`,
+    );
+
+    return {
+      pagoId: pago.id,
+      numeroPago: pago.numeroPago,
+      cuotasActualizadas,
+      cuotasOmitidas,
+      prestamoEstadoAntes,
+      prestamoEstadoDespues,
+    };
   }
 
   async exportPayments(

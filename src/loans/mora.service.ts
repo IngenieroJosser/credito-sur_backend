@@ -7,7 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { PushService } from '../push/push.service';
-import { formatBogotaOffsetIso, getBogotaStartEndOfDay } from '../utils/date-utils';
+import { formatBogotaOffsetIso, getBogotaDayKey, getBogotaStartEndOfDay } from '../utils/date-utils';
 
 /**
  * Umbrales de días en mora para cada nivel de mora.
@@ -120,7 +120,8 @@ export class MoraService implements OnModuleInit {
    * 5. Broadcast WebSocket para refrescar el frontend
    */
   async procesarMoraAutomatica(): Promise<ResultadoProcesarMora> {
-    const { startDate: hoy } = getBogotaStartEndOfDay(new Date());
+    const hoyKeyBogota = getBogotaDayKey(new Date());
+    const hoy = hoyKeyBogota ? new Date(`${hoyKeyBogota}T00:00:00.000Z`) : new Date();
 
     const resultado: ResultadoProcesarMora = {
       cuotasVencidas: 0,
@@ -465,6 +466,84 @@ export class MoraService implements OnModuleInit {
     }
 
     return resultado;
+  }
+
+  async repararFalsosVencidosHoy(params?: {
+    prestamoId?: string;
+    dryRun?: boolean;
+  }): Promise<{
+    dayKeyBogota: string;
+    cuotasDetectadas: number;
+    cuotasReparadas: number;
+    prestamosReactivados: number;
+  }> {
+    const dryRun = params?.dryRun === true;
+
+    const hoyKeyBogota = getBogotaDayKey(new Date());
+    if (!hoyKeyBogota) {
+      throw new Error('No se pudo calcular el dayKey de Bogotá');
+    }
+
+    const inicioHoyUTC = new Date(`${hoyKeyBogota}T00:00:00.000Z`);
+    const inicioMananaUTC = new Date(inicioHoyUTC.getTime() + 86_400_000);
+
+    // Se considera "falso vencido": cuota marcada VENCIDA el mismo día calendario (Bogotá)
+    // con montoPagado=0 (no hay abonos) → típicamente por corte de fecha.
+    const whereCuotas: any = {
+      estado: 'VENCIDA',
+      montoPagado: 0,
+      fechaVencimiento: {
+        gte: inicioHoyUTC,
+        lt: inicioMananaUTC,
+      },
+      prestamo: {
+        eliminadoEn: null,
+      },
+    };
+    if (params?.prestamoId) whereCuotas.prestamoId = params.prestamoId;
+
+    const cuotasDetectadas = await this.prisma.cuota.count({ where: whereCuotas });
+    let cuotasReparadas = 0;
+    if (!dryRun && cuotasDetectadas > 0) {
+      const upd = await this.prisma.cuota.updateMany({
+        where: whereCuotas,
+        data: { estado: 'PENDIENTE' },
+      });
+      cuotasReparadas = upd.count;
+    }
+
+    let prestamosReactivados = 0;
+    if (!dryRun) {
+      const prestamosEnMora = await this.prisma.prestamo.findMany({
+        where: {
+          ...(params?.prestamoId ? { id: params.prestamoId } : {}),
+          estado: 'EN_MORA',
+          eliminadoEn: null,
+          cuotas: { none: { estado: 'VENCIDA' } },
+          saldoPendiente: { gt: 0 },
+        },
+        select: { id: true },
+      });
+
+      if (prestamosEnMora.length > 0) {
+        await this.prisma.prestamo.updateMany({
+          where: { id: { in: prestamosEnMora.map((p) => p.id) } },
+          data: { estado: 'ACTIVO' },
+        });
+        prestamosReactivados = prestamosEnMora.length;
+      }
+    }
+
+    this.logger.log(
+      `[MORA][REPAIR] day=${hoyKeyBogota} dryRun=${dryRun} cuotasDetectadas=${cuotasDetectadas} cuotasReparadas=${cuotasReparadas} prestamosReactivados=${prestamosReactivados}`,
+    );
+
+    return {
+      dayKeyBogota: hoyKeyBogota,
+      cuotasDetectadas,
+      cuotasReparadas,
+      prestamosReactivados,
+    };
   }
 
   /**
