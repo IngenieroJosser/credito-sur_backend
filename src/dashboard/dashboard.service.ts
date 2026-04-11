@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { differenceInDays } from 'date-fns';
 import {
   EstadoAprobacion,
   EstadoCuota,
@@ -7,7 +8,7 @@ import {
   TipoAprobacion,
   TipoTransaccion,
 } from '@prisma/client';
-import { calculateDateRange, getBogotaStartEndOfDay, TimeFilterPeriod as BogotaPeriod } from '../utils/date-utils';
+import { calculateDateRange, getBogotaDayKey, getBogotaStartEndOfDay, TimeFilterPeriod as BogotaPeriod } from '../utils/date-utils';
 
 @Injectable()
 export class DashboardService {
@@ -18,6 +19,15 @@ export class DashboardService {
   async getDashboardData(timeFilter: string) {
     try {
       const { startDate, endDate } = this.calculateDateRangeFromFilter(timeFilter);
+      const { startDate: hoyInicioBogota } = getBogotaStartEndOfDay(new Date());
+      const hoyKeyBogota = getBogotaDayKey(new Date());
+
+      const utcDateKey = (d: Date): string => {
+        const y = d.getUTCFullYear();
+        const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(d.getUTCDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      };
 
       // 1. Obtener métricas principales filtradas por período
       const pendingApprovals = await this.prisma.aprobacion.count({
@@ -29,12 +39,7 @@ export class DashboardService {
 
       // Cuentas en mora: sin filtro de período porque la mora es un estado ACTUAL del préstamo,
       // no depende de cuándo se creó. Un préstamo creado hace 6 meses puede estar en mora hoy.
-      const delinquentAccounts = await this.prisma.prestamo.count({
-        where: { 
-          estado: EstadoPrestamo.EN_MORA,
-          eliminadoEn: null,
-        },
-      });
+      // Importante: evitar falsos positivos por fechas guardadas en UTC (cuotas que vencen HOY).
 
       // Base solicitada (suma de aprobaciones pendientes de tipo SOLICITUD_BASE_EFECTIVO)
       const _requestedBaseResult = await this.prisma.aprobacion.aggregate({
@@ -136,34 +141,53 @@ export class DashboardService {
     });
 
       // Cuentas en mora para el listado detallado: sin filtro de período
-      const delinquentAccountsList = await this.prisma.prestamo.findMany({
-      where: { 
-        estado: EstadoPrestamo.EN_MORA,
-        eliminadoEn: null,
-      },
-      include: {
-        cliente: {
-          select: {
-            nombres: true,
-            apellidos: true,
-            asignacionesRuta: {
-              where: { activa: true },
-              include: {
-                ruta: { select: { nombre: true } },
-                cobrador: { select: { nombres: true, apellidos: true } }
+      const delinquentAccountsListRaw = await this.prisma.prestamo.findMany({
+        where: {
+          estado: EstadoPrestamo.EN_MORA,
+          eliminadoEn: null,
+        },
+        include: {
+          cliente: {
+            select: {
+              nombres: true,
+              apellidos: true,
+              asignacionesRuta: {
+                where: { activa: true },
+                include: {
+                  ruta: { select: { nombre: true } },
+                  cobrador: { select: { nombres: true, apellidos: true } },
+                },
+                take: 1,
               },
-              take: 1
-            }
+            },
+          },
+          cuotas: {
+            where: { estado: EstadoCuota.VENCIDA },
+            orderBy: { fechaVencimiento: 'asc' },
+            take: 20,
           },
         },
-        cuotas: {
-          where: { estado: EstadoCuota.VENCIDA },
-          orderBy: { fechaVencimiento: 'desc' },
-          take: 1,
-        },
-      },
-      take: 10,
-    });
+        take: 50,
+      });
+
+      const delinquentAccountsList = delinquentAccountsListRaw
+        .map((loan: any) => {
+          const cuotas = Array.isArray(loan?.cuotas) ? loan.cuotas : [];
+          const cuotasVencidasReal = cuotas.filter((c: any) => {
+            const eff = c?.fechaVencimientoProrroga
+              ? new Date(c.fechaVencimientoProrroga)
+              : new Date(c.fechaVencimiento);
+            if (!eff || isNaN(eff.getTime())) return false;
+            const key = utcDateKey(eff);
+            return !!key && key < hoyKeyBogota;
+          });
+          if (cuotasVencidasReal.length === 0) return null;
+          return { ...loan, cuotas: cuotasVencidasReal };
+        })
+        .filter(Boolean)
+        .slice(0, 10);
+
+      const delinquentAccounts = delinquentAccountsList.length;
 
       // 4. Obtener actividad reciente (últimas aprobaciones procesadas) - filtradas por período
       const recentActivityList = await this.prisma.aprobacion.findMany({
@@ -283,7 +307,7 @@ export class DashboardService {
           this.mapApproval(item),
         ),
         delinquentAccounts: delinquentAccountsList.map((item) =>
-          this.mapDelinquentAccount(item),
+          this.mapDelinquentAccount(item, hoyInicioBogota),
         ),
         recentActivity: recentActivityList.map((item) =>
           this.mapRecentActivity(item),
@@ -725,13 +749,16 @@ export class DashboardService {
     }
   }
 
-  private mapDelinquentAccount(loan: any) {
+  private mapDelinquentAccount(loan: any, hoyInicioBogota: Date) {
     const cuotaVencida = loan.cuotas[0];
-    const daysLate = cuotaVencida
-      ? Math.ceil(
-          (Date.now() - new Date(cuotaVencida.fechaVencimiento).getTime()) /
-            (1000 * 60 * 60 * 24),
-        )
+    const eff = cuotaVencida
+      ? (cuotaVencida?.fechaVencimientoProrroga
+          ? new Date(cuotaVencida.fechaVencimientoProrroga)
+          : new Date(cuotaVencida.fechaVencimiento))
+      : null;
+
+    const daysLate = eff && !isNaN(eff.getTime())
+      ? Math.max(0, differenceInDays(hoyInicioBogota, eff))
       : 0;
 
     const asignacion = loan.cliente.asignacionesRuta?.[0];

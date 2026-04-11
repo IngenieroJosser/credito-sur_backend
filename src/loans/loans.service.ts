@@ -690,6 +690,7 @@ export class LoansService implements OnModuleInit {
                 numeroCuota: true,
                 estado: true,
                 fechaVencimiento: true,
+                fechaVencimientoProrroga: true,
                 monto: true,
                 montoPagado: true,
                 montoInteresMora: true,
@@ -761,6 +762,14 @@ export class LoansService implements OnModuleInit {
       ]);
 
       // Transformar datos para el frontend de forma segura
+      const hoyKeyBogota = getBogotaDayKey(new Date());
+      const utcDateKey = (d: Date): string => {
+        const y = d.getUTCFullYear();
+        const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(d.getUTCDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      };
+
       const prestamosTransformados = prestamos.map((prestamo) => {
         try {
           // Calcular campos adicionales
@@ -769,9 +778,18 @@ export class LoansService implements OnModuleInit {
             (c) => c.estado === EstadoCuota.PAGADA,
           ).length;
           const cuotasTotales = cuotas.length;
-          const cuotasVencidas = cuotas.filter(
-            (c) => c.estado === EstadoCuota.VENCIDA,
-          ).length;
+
+          const cuotasVencidasReal = cuotas.filter((c: any) => {
+            if (c.estado !== EstadoCuota.VENCIDA) return false;
+            const eff = c?.fechaVencimientoProrroga
+              ? new Date(c.fechaVencimientoProrroga)
+              : new Date(c.fechaVencimiento);
+            if (!eff || isNaN(eff.getTime())) return false;
+            const key = utcDateKey(eff);
+            return !!key && key < hoyKeyBogota;
+          });
+
+          const cuotasVencidas = cuotasVencidasReal.length;
 
           // Manejar valores numéricos de forma segura
           const monto = Number(prestamo.monto) || 0;
@@ -784,12 +802,15 @@ export class LoansService implements OnModuleInit {
           const montoPagado = totalPagado;
 
           // Calcular mora acumulada de forma segura
-          const moraAcumulada = cuotas.reduce((sum, cuota) => {
-            if (cuota.estado === EstadoCuota.VENCIDA) {
-              return sum + (Number(cuota.montoInteresMora) || 0);
-            }
-            return sum;
-          }, 0);
+          const moraAcumulada = cuotasVencidasReal.reduce(
+            (sum: number, cuota: any) => sum + (Number(cuota.montoInteresMora) || 0),
+            0,
+          );
+
+          const estado =
+            prestamo.estado === EstadoPrestamo.EN_MORA && cuotasVencidas === 0
+              ? EstadoPrestamo.ACTIVO
+              : (prestamo.estado || EstadoPrestamo.BORRADOR);
 
           // Determinar tipo de producto
           let tipoProducto = 'efectivo';
@@ -845,7 +866,7 @@ export class LoansService implements OnModuleInit {
             cuotasPagadas,
             cuotasTotales,
             cuotasVencidas,
-            estado: prestamo.estado || EstadoPrestamo.BORRADOR,
+            estado,
             riesgo: prestamo.cliente.nivelRiesgo || NivelRiesgo.VERDE,
             ruta: rutaAsignada,
             rutaNombre,

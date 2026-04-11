@@ -160,14 +160,25 @@ export class ReportsService {
   ): Promise<PrestamosMoraResponseDto> {
     const skip = (pagina - 1) * limite;
 
-    const { startDate: hoyInicioUTC } = getBogotaStartEndOfDay(new Date());
+    const { startDate: hoyInicioBogota } = getBogotaStartEndOfDay(new Date());
+    const hoyKeyBogota = getBogotaDayKey(new Date());
+
+    const utcDateKey = (d: Date): string => {
+      const y = d.getUTCFullYear();
+      const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(d.getUTCDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    };
 
     const whereConditions: any = {
       estado: { in: ['EN_MORA', 'ACTIVO'] },
     };
 
-    // Solo considerar mora real basada en cuotas VENCIDAS (o préstamos ya marcados EN_MORA).
-    // Esto evita falsos positivos cuando el negocio “acumula” el exigible del día siguiente.
+    // Nota importante:
+    // Las fechas de vencimiento en BD pueden estar guardadas en UTC 00:00:00,
+    // lo cual al convertirlas a Bogotá podría “correr” al día anterior y generar
+    // falsos positivos. Por eso aquí SOLO filtramos por estado VENCIDA en Prisma
+    // y aplicamos la regla de "vencida si fechaKey < hoyKeyBogota" en memoria.
     whereConditions.OR = [
       { estado: 'EN_MORA' },
       { cuotas: { some: { estado: { in: ['VENCIDA'] } } } },
@@ -251,8 +262,8 @@ export class ReportsService {
       whereConditions.clienteId = { in: clienteIds };
     }
 
-    // Obtener total de registros
-    const total = await this.prisma.prestamo.count({
+    // Obtener total bruto de registros (antes del filtro en memoria)
+    const _totalRaw = await this.prisma.prestamo.count({
       where: whereConditions,
     });
 
@@ -295,7 +306,7 @@ export class ReportsService {
     });
 
     // Enriquecer datos con información de ruta y cobrador
-    const prestamosEnriquecidos = await Promise.all(
+    const prestamosEnriquecidosRaw = await Promise.all(
       prestamos.map(async (prestamo) => {
         // Obtener asignación de ruta activa del cliente
         const asignacion = await this.prisma.asignacionRuta.findFirst({
@@ -313,8 +324,17 @@ export class ReportsService {
         });
 
         const cuotas = (prestamo as any)?.cuotas || [];
-        const cuotaMasAntigua = cuotas.reduce((acc: any, c: any) => {
-          const eff = c?.estado === 'PRORROGADA' && c?.fechaVencimientoProrroga
+        const cuotasVencidas = cuotas.filter((c: any) => {
+          const eff = c?.fechaVencimientoProrroga
+            ? new Date(c.fechaVencimientoProrroga)
+            : new Date(c.fechaVencimiento);
+          if (!eff || isNaN(eff.getTime())) return false;
+          const key = utcDateKey(eff);
+          return !!key && key < hoyKeyBogota;
+        });
+
+        const cuotaMasAntigua = cuotasVencidas.reduce((acc: any, c: any) => {
+          const eff = c?.fechaVencimientoProrroga
             ? new Date(c.fechaVencimientoProrroga)
             : new Date(c.fechaVencimiento);
           if (!acc) return { cuota: c, eff };
@@ -322,11 +342,11 @@ export class ReportsService {
         }, null as null | { cuota: any; eff: Date });
 
         const diasMora = cuotaMasAntigua?.eff
-          ? Math.max(0, differenceInDays(hoyInicioUTC, cuotaMasAntigua.eff))
+          ? Math.max(0, differenceInDays(hoyInicioBogota, cuotaMasAntigua.eff))
           : 0;
 
         // Calcular monto de mora (suma de intereses de mora de cuotas vencidas)
-        const montoMora = cuotas.reduce(
+        const montoMora = cuotasVencidas.reduce(
           (sum, cuota) => sum + cuota.montoInteresMora.toNumber(),
           0,
         );
@@ -343,6 +363,11 @@ export class ReportsService {
           ? Math.ceil((new Date(extension.nuevaFechaVencimiento).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
           : undefined;
 
+        const tieneMoraReal = cuotasVencidas.length > 0 || diasMora > 0 || montoMora > 0;
+        // Excluir falsos positivos (incluye casos donde el préstamo quedó EN_MORA
+        // por un error histórico o por cuotas que vencen HOY).
+        if (!tieneMoraReal) return null;
+
         return {
           id: prestamo.id,
           numeroPrestamo: prestamo.numeroPrestamo,
@@ -358,7 +383,7 @@ export class ReportsService {
           montoMora,
           montoTotalDeuda: prestamo.saldoPendiente.toNumber(),
           montoOriginal: prestamo.monto.toNumber(),
-          cuotasVencidas: cuotas.length,
+          cuotasVencidas: cuotasVencidas.length,
           ruta: asignacion?.ruta?.nombre || 'Sin asignar',
           cobrador: asignacion?.ruta?.cobrador
             ? `${asignacion.ruta.cobrador.nombres} ${asignacion.ruta.cobrador.apellidos}`
@@ -376,6 +401,9 @@ export class ReportsService {
         } as PrestamoMoraDto;
       }),
     );
+
+    const prestamosEnriquecidos = prestamosEnriquecidosRaw.filter(Boolean) as PrestamoMoraDto[];
+    const total = prestamosEnriquecidos.length;
 
     // Calcular totales
     const totalMora = prestamosEnriquecidos.reduce(
