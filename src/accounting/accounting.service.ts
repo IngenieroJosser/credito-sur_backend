@@ -1,22 +1,20 @@
 import {
   Injectable,
   Logger,
-  NotFoundException,
   BadRequestException,
   ForbiddenException,
+  NotFoundException,
   UnauthorizedException,
-  OnModuleInit,
 } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service'; 
-import { TipoCaja, TipoTransaccion, TipoAprobacion, EstadoAprobacion } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
+import { EstadoAprobacion, Prisma, TipoAprobacion, TipoCaja, TipoTransaccion } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { calculateDateRange, formatBogotaOffsetIso, getBogotaDayKey, getBogotaStartEndOfDay, getBogotaStartEndOfDayFromKey } from '../utils/date-utils';
 import { generarExcelContable, generarPDFContable, CajaRow, TransaccionRow } from '../templates/exports/reporte-contable.template';
 
-
 @Injectable()
-export class AccountingService implements OnModuleInit {
+export class AccountingService {
   private readonly logger = new Logger(AccountingService.name);
 
   constructor(
@@ -2296,9 +2294,14 @@ export class AccountingService implements OnModuleInit {
       if (!cajaDestino) throw new NotFoundException('Caja destino no encontrada')
     } else {
       cajaDestino = await this.prisma.caja.findFirst({
-        where: { codigo: 'CAJA-PRINCIPAL' },
+        where: { codigo: 'CAJA-OFICINA' },
       })
-      if (!cajaDestino) throw new Error('No existe Caja Principal para registrar el ingreso')
+      if (!cajaDestino) {
+        cajaDestino = await this.prisma.caja.findFirst({
+          where: { codigo: 'CAJA-PRINCIPAL' },
+        })
+      }
+      if (!cajaDestino) throw new Error('No existe Caja Oficina/Caja Principal para registrar el ingreso')
     }
 
     // 2. Crear la transacción INGRESO
@@ -2311,6 +2314,124 @@ export class AccountingService implements OnModuleInit {
       tipoReferencia: 'ABONO_DEUDA',
       referenciaId: `${cobradorId}|${cobrador.nombres} ${cobrador.apellidos}`, // Guardamos ID y Nombre para facilitar auditoría
     });
+  }
+
+  async repararCajaOficinaIngresosMalAsignados(params?: { dryRun?: boolean }) {
+    const dryRun = Boolean(params?.dryRun);
+
+    const cajaOficina = await this.prisma.caja.findFirst({
+      where: { activa: true, codigo: 'CAJA-OFICINA' },
+      select: { id: true, codigo: true },
+    });
+    if (!cajaOficina) throw new NotFoundException('Caja Oficina no encontrada');
+
+    const cajasOrigen = await this.prisma.caja.findMany({
+      where: {
+        activa: true,
+        codigo: { in: ['CAJA-PRINCIPAL', 'CAJA-BANCO'] },
+      },
+      select: { id: true, codigo: true },
+    });
+
+    const cajasOrigenIds = cajasOrigen.map((c) => c.id);
+    if (!cajasOrigenIds.length) {
+      return {
+        dryRun,
+        cajaOficinaId: cajaOficina.id,
+        movimientosEncontrados: 0,
+        movimientosMovidos: 0,
+        deltaPorCaja: {},
+      };
+    }
+
+    const refs = ['CUOTA_INICIAL', 'ABONO_DEUDA'] as const;
+
+    const transacciones = await this.prisma.transaccion.findMany({
+      where: {
+        cajaId: { in: cajasOrigenIds },
+        tipoReferencia: { in: refs as unknown as string[] },
+      },
+      select: {
+        id: true,
+        cajaId: true,
+        tipo: true,
+        monto: true,
+        tipoReferencia: true,
+      },
+      orderBy: { fechaTransaccion: 'asc' },
+    });
+
+    const deltaPorCaja: Record<string, Prisma.Decimal> = {};
+    const deltaOficina = new Prisma.Decimal(0);
+    let deltaOficinaAcc = deltaOficina;
+
+    for (const t of transacciones) {
+      const monto = new Prisma.Decimal(t.monto as any);
+      const tipo = String(t.tipo || '').toUpperCase();
+
+      let deltaOrigen = new Prisma.Decimal(0);
+      let deltaDestino = new Prisma.Decimal(0);
+
+      if (tipo === 'INGRESO') {
+        deltaOrigen = monto.mul(-1);
+        deltaDestino = monto;
+      } else if (tipo === 'EGRESO') {
+        deltaOrigen = monto;
+        deltaDestino = monto.mul(-1);
+      } else {
+        continue;
+      }
+
+      deltaPorCaja[t.cajaId] = (deltaPorCaja[t.cajaId] || new Prisma.Decimal(0)).add(deltaOrigen);
+      deltaOficinaAcc = deltaOficinaAcc.add(deltaDestino);
+    }
+
+    deltaPorCaja[cajaOficina.id] = (deltaPorCaja[cajaOficina.id] || new Prisma.Decimal(0)).add(deltaOficinaAcc);
+
+    if (dryRun) {
+      return {
+        dryRun,
+        cajaOficinaId: cajaOficina.id,
+        movimientosEncontrados: transacciones.length,
+        movimientosMovidos: 0,
+        deltaPorCaja: Object.fromEntries(
+          Object.entries(deltaPorCaja).map(([k, v]) => [k, v.toNumber()]),
+        ),
+        transaccionesIds: transacciones.map((t) => t.id),
+      };
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.transaccion.updateMany({
+        where: {
+          cajaId: { in: cajasOrigenIds },
+          tipoReferencia: { in: refs as unknown as string[] },
+        },
+        data: { cajaId: cajaOficina.id },
+      });
+
+      for (const [cajaId, delta] of Object.entries(deltaPorCaja)) {
+        if (delta.isZero()) continue;
+        await tx.caja.update({
+          where: { id: cajaId },
+          data: {
+            saldoActual: {
+              increment: delta,
+            },
+          },
+        });
+      }
+    });
+
+    return {
+      dryRun,
+      cajaOficinaId: cajaOficina.id,
+      movimientosEncontrados: transacciones.length,
+      movimientosMovidos: transacciones.length,
+      deltaPorCaja: Object.fromEntries(
+        Object.entries(deltaPorCaja).map(([k, v]) => [k, v.toNumber()]),
+      ),
+    };
   }
 }
 

@@ -1629,6 +1629,14 @@ export class LoansService implements OnModuleInit {
               })
             : null;
 
+          const cajaOficina = await this.prisma.caja.findFirst({
+            where: {
+              activa: true,
+              codigo: 'CAJA-OFICINA',
+            },
+            select: { id: true },
+          });
+
           const cajaPrincipal = await this.prisma.caja.findFirst({
             where: {
               activa: true,
@@ -1638,9 +1646,9 @@ export class LoansService implements OnModuleInit {
             select: { id: true },
           });
 
-          // Determinar caja destino: Para Cuota Inicial en tienda siempre a Caja Principal,
-          // si por algún motivo no hay Principal, a la caja de la ruta.
-          const cajaIdDestino = cajaPrincipal?.id || cajaRuta?.id;
+          // Determinar caja destino: Cuota Inicial debe registrarse en Caja Oficina.
+          // Si no existe, usar Caja Principal; si no existe, la caja de ruta.
+          const cajaIdDestino = cajaOficina?.id || cajaPrincipal?.id || cajaRuta?.id;
 
           if (cajaIdDestino) {
             const yaExiste = await this.prisma.transaccion.findFirst({

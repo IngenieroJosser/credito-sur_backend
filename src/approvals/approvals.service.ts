@@ -586,6 +586,11 @@ export class ApprovalsService {
               })
             : null;
 
+          const cajaOficina = await tx.caja.findFirst({
+            where: { activa: true, codigo: 'CAJA-OFICINA' },
+            select: { id: true },
+          });
+
           const cajaPrincipal = !cajaRuta
             ? await tx.caja.findFirst({
                 where: {
@@ -596,7 +601,7 @@ export class ApprovalsService {
               })
             : null;
 
-          const cajaIdDestino = cajaRuta?.id || cajaPrincipal?.id;
+          const cajaIdDestino = cajaOficina?.id || cajaRuta?.id || cajaPrincipal?.id;
           if (cajaIdDestino) {
             const yaExiste = await tx.transaccion.findFirst({
               where: {
