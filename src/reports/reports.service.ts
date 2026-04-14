@@ -163,6 +163,26 @@ export class ReportsService {
     const { startDate: hoyInicioBogota } = getBogotaStartEndOfDay(new Date());
     const hoyKeyBogota = getBogotaDayKey(new Date());
 
+    const diasMoraDiarioExcluyendoDomingos = (startKey: string, endKey: string): number => {
+      // Cuenta los días transcurridos DESPUÉS del vencimiento hasta hoy inclusive,
+      // excluyendo domingos (no se cobra).
+      //
+      // Importante: usamos llaves YYYY-MM-DD (UTC key para vencimientos + hoyKeyBogota)
+      // y construimos fechas en Bogotá al mediodía para evitar desfases por zona horaria.
+      if (!startKey || !endKey) return 0;
+      const cur = new Date(`${startKey}T12:00:00-05:00`);
+      const endD = new Date(`${endKey}T12:00:00-05:00`);
+      if (isNaN(cur.getTime()) || isNaN(endD.getTime())) return 0;
+
+      let count = 0;
+      cur.setDate(cur.getDate() + 1);
+      while (cur.getTime() <= endD.getTime()) {
+        if (cur.getDay() !== 0) count++;
+        cur.setDate(cur.getDate() + 1);
+      }
+      return count;
+    };
+
     const utcDateKey = (d: Date): string => {
       const y = d.getUTCFullYear();
       const m = String(d.getUTCMonth() + 1).padStart(2, '0');
@@ -341,9 +361,16 @@ export class ReportsService {
           return eff < acc.eff ? { cuota: c, eff } : acc;
         }, null as null | { cuota: any; eff: Date });
 
-        const diasMora = cuotaMasAntigua?.eff
-          ? Math.max(0, differenceInDays(hoyInicioBogota, cuotaMasAntigua.eff))
-          : 0;
+        const cuotaMasAntiguaKey = cuotaMasAntigua?.eff ? utcDateKey(cuotaMasAntigua.eff) : '';
+
+        const diasMora = (() => {
+          if (!cuotaMasAntiguaKey) return 0;
+          const frecuencia = String((prestamo as any)?.frecuenciaPago || '').toUpperCase();
+          if (frecuencia === 'DIARIO') {
+            return diasMoraDiarioExcluyendoDomingos(cuotaMasAntiguaKey, hoyKeyBogota || '');
+          }
+          return Math.max(0, differenceInDays(hoyInicioBogota, cuotaMasAntigua.eff));
+        })();
 
         // Calcular monto de mora (suma de intereses de mora de cuotas vencidas)
         const montoMora = cuotasVencidas.reduce(
