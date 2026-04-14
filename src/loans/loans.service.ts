@@ -45,6 +45,11 @@ import {
 export class LoansService implements OnModuleInit {
   private readonly logger = new Logger(LoansService.name);
 
+  private trunc2(n: number): number {
+    if (!Number.isFinite(n)) return 0;
+    return Math.trunc(n * 100) / 100;
+  }
+
   constructor(
     private prisma: PrismaService,
     private notificacionesService: NotificacionesService,
@@ -261,14 +266,14 @@ export class LoansService implements OnModuleInit {
     if (tasaPeriodo === 0) {
       const cuotaFija = capital / numCuotas;
       return {
-        cuotaFija: Math.round(cuotaFija * 100) / 100,
+        cuotaFija: this.trunc2(cuotaFija),
         interesTotal: 0,
         tabla: Array.from({ length: numCuotas }, (_, i) => ({
           numeroCuota: i + 1,
-          montoCapital: Math.round((capital / numCuotas) * 100) / 100,
+          montoCapital: this.trunc2((capital / numCuotas)),
           montoInteres: 0,
-          monto: Math.round(cuotaFija * 100) / 100,
-          saldoRestante: Math.round((capital - (capital / numCuotas) * (i + 1)) * 100) / 100,
+          monto: this.trunc2(cuotaFija),
+          saldoRestante: this.trunc2((capital - (capital / numCuotas) * (i + 1))),
         })),
       };
     }
@@ -303,16 +308,16 @@ export class LoansService implements OnModuleInit {
 
       tabla.push({
         numeroCuota: i + 1,
-        montoCapital: Math.round(capitalPeriodo * 100) / 100,
-        montoInteres: Math.round(interesPeriodo * 100) / 100,
-        monto: Math.round(montoCuota * 100) / 100,
-        saldoRestante: Math.round(saldo * 100) / 100,
+        montoCapital: this.trunc2(capitalPeriodo),
+        montoInteres: this.trunc2(interesPeriodo),
+        monto: this.trunc2(montoCuota),
+        saldoRestante: this.trunc2(saldo),
       });
     }
 
     return {
-      cuotaFija: Math.round(cuotaFija * 100) / 100,
-      interesTotal: Math.round(interesTotalAcumulado * 100) / 100,
+      cuotaFija: this.trunc2(cuotaFija),
+      interesTotal: this.trunc2(interesTotalAcumulado),
       tabla,
     };
   }
@@ -529,15 +534,15 @@ export class LoansService implements OnModuleInit {
           fechaPrimerCobro ? i + 1 : i + 2,
           frecuenciaPago,
         ),
-        monto: Math.round(montoCuota * 100) / 100,
-        montoCapital: Math.round(montoCapitalCuota * 100) / 100,
-        montoInteres: Math.round(montoInteresCuota * 100) / 100,
+        monto: this.trunc2(montoCuota),
+        montoCapital: this.trunc2(montoCapitalCuota),
+        montoInteres: this.trunc2(montoInteresCuota),
         estado: esContado ? EstadoCuota.PAGADA : EstadoCuota.PENDIENTE,
-        montoPagado: esContado ? Math.round(montoCuota * 100) / 100 : 0,
+        montoPagado: esContado ? this.trunc2(montoCuota) : 0,
       }));
     }
 
-    return { interesTotal, cuotas };
+    return { interesTotal: this.trunc2(interesTotal), cuotas };
   }
 
   async getAllLoans(filters: {
@@ -1569,9 +1574,9 @@ export class LoansService implements OnModuleInit {
           return {
             numeroCuota: i + 1,
             fechaVencimiento,
-            monto: Math.round(montoCuota * 100) / 100,
-            montoCapital: Math.round(montoCapitalCuota * 100) / 100,
-            montoInteres: Math.round(montoInteresCuota * 100) / 100,
+            monto: this.trunc2(montoCuota),
+            montoCapital: this.trunc2(montoCapitalCuota),
+            montoInteres: this.trunc2(montoInteresCuota),
             estado: EstadoCuota.PENDIENTE,
           };
         });
@@ -1604,8 +1609,8 @@ export class LoansService implements OnModuleInit {
           estado: EstadoPrestamo.PENDIENTE_APROBACION,
           estadoAprobacion: EstadoAprobacion.PENDIENTE,
           creadoPorId: createLoanDto.creadoPorId,
-          interesTotal,
-          saldoPendiente: createLoanDto.monto + interesTotal - (createLoanDto.cuotaInicial || 0),
+          interesTotal: this.trunc2(interesTotal),
+          saldoPendiente: this.trunc2(createLoanDto.monto + interesTotal - (createLoanDto.cuotaInicial || 0)),
           notas: createLoanDto.notas ? String(createLoanDto.notas) : undefined,
           garantia: createLoanDto.garantia ? String(createLoanDto.garantia) : undefined,
           cuotas: {
@@ -2935,7 +2940,7 @@ export class LoansService implements OnModuleInit {
         }
         
         // INTERES SIMPLE: I = C * i * t
-        const interesCorrecto = Math.round((capital * (tasaMensual / 100) * plazoMeses) * 100) / 100;
+        const interesCorrecto = this.trunc2((capital * (tasaMensual / 100) * plazoMeses));
         const interesActual = Number(loan.interesTotal);
 
         // Verificar discrepancia significativa (> $100 pesos)
@@ -2967,7 +2972,7 @@ export class LoansService implements OnModuleInit {
           );
           
           if (cuotasAjustables.length > 0) {
-            const ajustePorCuota = Math.round((diferenciaInteres / cuotasAjustables.length) * 100) / 100;
+            const ajustePorCuota = this.trunc2((diferenciaInteres / cuotasAjustables.length));
             
             // Aplicar ajuste
             for (const cuota of cuotasAjustables) {
