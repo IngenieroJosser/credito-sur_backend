@@ -133,7 +133,10 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
             ? Math.max(Number(data.meta || 0) - Number(data.recaudo || 0), 0)
             : 0;
 
-          const deudaTotal = Math.max(saldoAlCierre, 0) + Math.max(deudaPorFaltantes, 0);
+          // Regla de negocio: El saldoActual en caja ruta NO se considera descuadre automáticamente.
+          // Normalmente representa efectivo pendiente por recolectar por el admin.
+          // El descuadre real (deuda del cobrador) se registra cuando faltaron clientes/efectivo.
+          const deudaTotal = Math.max(deudaPorFaltantes, 0);
           const hayDescuadre = deudaTotal > 0;
           
           // Codificamos los datos en referenciaId agregando SD

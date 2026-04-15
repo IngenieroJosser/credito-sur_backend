@@ -10,6 +10,7 @@ import {
   UseGuards,
   ParseIntPipe,
   DefaultValuePipe,
+  ParseBoolPipe,
   HttpCode,
   HttpStatus,
   Request,
@@ -735,6 +736,24 @@ export class LoansController {
   })
   async getResumenMoraCliente(@Param('clienteId') clienteId: string) {
     return this.moraService.getResumenMoraCliente(clienteId);
+  }
+
+  @Post('mora/repair-falsos-vencidos-hoy')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Reparar falsos vencidos del día (Bogotá)',
+    description:
+      'Revierte cuotas marcadas como VENCIDA en el día actual (Bogotá) con montoPagado=0 a PENDIENTE ' +
+      'y reactiva préstamos EN_MORA que queden sin cuotas VENCIDA. Útil para corregir falsos positivos por corte de fecha.',
+  })
+  @ApiQuery({ name: 'prestamoId', required: false, type: String })
+  @ApiQuery({ name: 'dryRun', required: false, type: Boolean })
+  async repararFalsosVencidosHoy(
+    @Query('prestamoId') prestamoId?: string,
+    @Query('dryRun', new DefaultValuePipe(false), ParseBoolPipe) dryRun?: boolean,
+  ) {
+    return this.moraService.repararFalsosVencidosHoy({ prestamoId, dryRun });
   }
 
   // ─────────────────────────────────────────────────────────────────────

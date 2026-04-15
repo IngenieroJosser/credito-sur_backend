@@ -404,11 +404,10 @@ export class AccountingController {
     RolUsuario.SUPER_ADMINISTRADOR,
     RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
-    RolUsuario.CONTADOR,
   )
   registrarAbonoDeuda(
     @Param('cobradorId') cobradorId: string,
-    @Body() body: { monto: number; nota?: string; cajaIdDestino?: string },
+    @Body() body: { monto: number; nota: string; cajaIdDestino?: string },
     @Request() req,
   ) {
     if (!req.user || !req.user.id) throw new UnauthorizedException('Usuario no autenticado');
@@ -417,11 +416,21 @@ export class AccountingController {
     
     return this.accountingService.registrarAbonoDeuda(
       cobradorId,
-      montoClean,
-      body.nota || '',
+      body.monto,
+      body.nota,
       req.user.id,
       body.cajaIdDestino,
     );
   }
-}
 
+  @Post('reparaciones/caja-oficina-ingresos')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  repararCajaOficinaIngresosMalAsignados(
+    @Query('dryRun') dryRun?: string,
+  ) {
+    return this.accountingService.repararCajaOficinaIngresosMalAsignados({
+      dryRun: dryRun === '1' || String(dryRun || '').toLowerCase() === 'true',
+    });
+  }
+}

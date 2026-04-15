@@ -6,11 +6,13 @@ import {
   EstadoCuota,
   TipoAprobacion,
   TipoTransaccion,
+  MetodoPago,
   FrecuenciaPago,
   TipoAmortizacion,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+import { formatBogotaOffsetIso } from '../utils/date-utils';
 
 @Injectable()
 export class ApprovalsService {
@@ -21,6 +23,41 @@ export class ApprovalsService {
     private notificacionesService: NotificacionesService,
     private notificacionesGateway: NotificacionesGateway,
   ) {}
+
+  private async ensureCajaBanco(tx: any) {
+    const existing = await tx.caja.findUnique({
+      where: { codigo: 'CAJA-BANCO' },
+      select: { id: true, nombre: true, saldoActual: true },
+    });
+    if (existing?.id) return existing;
+
+    const adminUser = await tx.usuario.findFirst({
+      where: {
+        rol: { in: ['SUPER_ADMINISTRADOR', 'ADMIN'] as any },
+        estado: 'ACTIVO' as any,
+        eliminadoEn: null,
+      },
+      orderBy: { creadoEn: 'asc' },
+      select: { id: true },
+    });
+    if (!adminUser?.id) {
+      throw new BadRequestException(
+        'No existe un usuario ADMIN/SUPER_ADMIN activo para asignar la Caja Banco. Cree uno e intente nuevamente.',
+      );
+    }
+
+    return tx.caja.create({
+      data: {
+        codigo: 'CAJA-BANCO',
+        nombre: 'Caja Banco',
+        tipo: 'PRINCIPAL' as any,
+        responsableId: adminUser.id,
+        saldoActual: 0,
+        activa: true,
+      },
+      select: { id: true, nombre: true, saldoActual: true },
+    });
+  }
 
   private async notifyCobradorGestionVencida(params: {
     prestamoId: string;
@@ -87,6 +124,9 @@ export class ApprovalsService {
       case TipoAprobacion.BAJA_POR_PERDIDA:
         await this.approveLoanLoss(approval, aprobadoPorId, editedData);
         break;
+      case 'PAGO_TRANSFERENCIA' as any:
+        await this.approveTransferPayment(approval, aprobadoPorId);
+        break;
       default:
         throw new BadRequestException('Tipo de aprobación no soportado');
     }
@@ -111,6 +151,191 @@ export class ApprovalsService {
     this.logger.log(`Aprobación ${id} procesada por ${aprobadoPorId || 'desconocido'} (tipo: ${approval.tipoAprobacion})`);
 
     return { success: true, message: 'Aprobación procesada exitosamente' };
+  }
+
+  private async approveTransferPayment(approval: any, aprobadoPorId?: string) {
+    const data = typeof approval.datosSolicitud === 'string'
+      ? JSON.parse(approval.datosSolicitud)
+      : approval.datosSolicitud;
+
+    const prestamoId = String(data?.prestamoId || approval.referenciaId || '');
+    const cobradorId = String(data?.cobradorId || approval.solicitadoPorId || '');
+    const montoTotal = Number(data?.montoTotal || approval.montoSolicitud || 0);
+    const rawFechaPago = String(data?.fechaPago || '');
+
+    if (!prestamoId || !cobradorId || !montoTotal || montoTotal <= 0) {
+      throw new BadRequestException('Datos insuficientes para aprobar pago por transferencia');
+    }
+
+    const fechaPagoBogota = (() => {
+      if (!rawFechaPago) return new Date(formatBogotaOffsetIso(new Date()));
+      const hasTz = /([zZ]|[+-]\d{2}:?\d{2})$/.test(rawFechaPago);
+      if (hasTz) return new Date(rawFechaPago);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(rawFechaPago)) {
+        return new Date(`${rawFechaPago}T00:00:00.000-05:00`);
+      }
+      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(rawFechaPago)) {
+        return new Date(`${rawFechaPago}-05:00`);
+      }
+      return new Date(rawFechaPago);
+    })();
+
+    const prestamo = await this.prisma.prestamo.findFirst({
+      where: { id: prestamoId, eliminadoEn: null },
+      include: {
+        cuotas: {
+          where: { estado: { in: [EstadoCuota.PENDIENTE, EstadoCuota.PARCIAL, EstadoCuota.VENCIDA] } },
+          orderBy: { numeroCuota: 'asc' },
+        },
+        cliente: { select: { id: true } },
+      },
+    });
+
+    if (!prestamo) throw new NotFoundException('Préstamo no encontrado');
+    if (![EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA].includes(prestamo.estado as any)) {
+      throw new BadRequestException(`No se puede aplicar pago: préstamo en estado ${prestamo.estado}`);
+    }
+
+    // Distribuir pago entre cuotas pendientes
+    const detallesPago: { cuotaId: string; monto: number; montoCapital: number; montoInteres: number; montoInteresMora: number }[] = [];
+    let restante = montoTotal;
+
+    const tasaInteres = Number((prestamo as any).tasaInteres || 0);
+    const descomponer = (m: number) => {
+      if (tasaInteres <= 0) return { capital: m, interes: 0 };
+      const divisor = 100 + tasaInteres;
+      return { capital: (m * 100) / divisor, interes: (m * tasaInteres) / divisor };
+    };
+
+    let capitalTotal = 0;
+    let interesTotal = 0;
+
+    const cuotasActualizar: { id: string; montoPagado: number; estado: any }[] = [];
+    for (const cuota of prestamo.cuotas || []) {
+      if (restante <= 0) break;
+      const montoCuota = Number((cuota as any).monto || 0);
+      const yaPagado = Number((cuota as any).montoPagado || 0);
+      const pendiente = montoCuota - yaPagado;
+      if (pendiente <= 0) continue;
+
+      const aplicar = Math.min(restante, pendiente);
+      const { capital, interes } = descomponer(aplicar);
+      capitalTotal += capital;
+      interesTotal += interes;
+      detallesPago.push({
+        cuotaId: cuota.id,
+        monto: aplicar,
+        montoCapital: capital,
+        montoInteres: interes,
+        montoInteresMora: 0,
+      });
+
+      const nuevoMontoPagado = yaPagado + aplicar;
+      const COP_TOLERANCE = 1;
+      const completa = nuevoMontoPagado >= (montoCuota - COP_TOLERANCE);
+      const montoPagadoFinal = completa ? montoCuota : nuevoMontoPagado;
+      const nuevoEstado = completa
+        ? EstadoCuota.PAGADA
+        : ((cuota as any).estado === EstadoCuota.PENDIENTE ? EstadoCuota.PARCIAL : (cuota as any).estado);
+      cuotasActualizar.push({ id: cuota.id, montoPagado: montoPagadoFinal, estado: nuevoEstado });
+      restante -= aplicar;
+    }
+
+    const count = await this.prisma.pago.count();
+    const numeroPago = `PAG-${String(count + 1).padStart(6, '0')}`;
+
+    await this.prisma.$transaction(async (tx) => {
+      const pago = await tx.pago.create({
+        data: {
+          numeroPago,
+          clienteId: prestamo.clienteId,
+          prestamoId: prestamo.id,
+          cobradorId,
+          fechaPago: fechaPagoBogota,
+          montoTotal,
+          metodoPago: MetodoPago.TRANSFERENCIA,
+          numeroReferencia: data?.numeroReferencia || null,
+          notas: data?.notas || null,
+          detalles: { create: detallesPago as any },
+        },
+        select: { id: true },
+      });
+
+      for (const upd of cuotasActualizar) {
+        await tx.cuota.update({
+          where: { id: upd.id },
+          data: {
+            montoPagado: upd.montoPagado,
+            estado: upd.estado,
+            fechaPago: upd.estado === EstadoCuota.PAGADA ? fechaPagoBogota : undefined,
+          },
+        });
+      }
+
+      // Actualizar préstamo
+      const nuevoSaldo = Math.max(0, Number((prestamo as any).saldoPendiente || 0) - montoTotal);
+      const prestamoQuedaPagado = nuevoSaldo <= 0;
+      let nuevoEstadoPrestamo: any = prestamo.estado;
+      if (prestamoQuedaPagado) nuevoEstadoPrestamo = EstadoPrestamo.PAGADO;
+      else if (prestamo.estado === EstadoPrestamo.EN_MORA) {
+        const vencidasRestantes = await tx.cuota.count({ where: { prestamoId: prestamo.id, estado: EstadoCuota.VENCIDA } });
+        if (vencidasRestantes === 0) nuevoEstadoPrestamo = EstadoPrestamo.ACTIVO;
+      }
+
+      await tx.prestamo.update({
+        where: { id: prestamo.id },
+        data: {
+          totalPagado: Number((prestamo as any).totalPagado || 0) + montoTotal,
+          capitalPagado: Number((prestamo as any).capitalPagado || 0) + capitalTotal,
+          interesPagado: Number((prestamo as any).interesPagado || 0) + interesTotal,
+          saldoPendiente: nuevoSaldo,
+          estado: nuevoEstadoPrestamo,
+          estadoSincronizacion: 'PENDIENTE' as any,
+        },
+      });
+
+      // Registrar transacción en CAJA-BANCO
+      const cajaBanco = await this.ensureCajaBanco(tx);
+      const numeroTransaccionCaja = `TRX-IN-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      await tx.transaccion.create({
+        data: {
+          numeroTransaccion: numeroTransaccionCaja,
+          cajaId: cajaBanco.id,
+          tipo: TipoTransaccion.INGRESO,
+          monto: montoTotal,
+          descripcion: `Cobranza ${numeroPago} (Transferencia verificada)` ,
+          creadoPorId: cobradorId,
+          aprobadoPorId: aprobadoPorId || null,
+          tipoReferencia: 'PAGO',
+          referenciaId: numeroPago,
+        },
+      });
+      await tx.caja.update({
+        where: { id: cajaBanco.id },
+        data: { saldoActual: { increment: montoTotal } },
+      });
+
+      // Vincular comprobante (si existe) al pago real
+      try {
+        const comprobante = await tx.multimedia.findFirst({
+          where: {
+            prestamoId: prestamo.id,
+            clienteId: prestamo.clienteId,
+            entidad: 'APROBACION',
+            tipoContenido: 'COMPROBANTE_TRANSFERENCIA' as any,
+            estado: 'ACTIVO' as any,
+            eliminadoEn: null,
+          },
+          orderBy: { creadoEn: 'desc' },
+          select: { id: true },
+        });
+        if (comprobante?.id) {
+          await tx.multimedia.update({ where: { id: comprobante.id }, data: { pagoId: pago.id } });
+        }
+      } catch {
+        // ignore
+      }
+    });
   }
 
   /**
@@ -586,6 +811,11 @@ export class ApprovalsService {
               })
             : null;
 
+          const cajaOficina = await tx.caja.findFirst({
+            where: { activa: true, codigo: 'CAJA-OFICINA' },
+            select: { id: true },
+          });
+
           const cajaPrincipal = !cajaRuta
             ? await tx.caja.findFirst({
                 where: {
@@ -596,7 +826,7 @@ export class ApprovalsService {
               })
             : null;
 
-          const cajaIdDestino = cajaRuta?.id || cajaPrincipal?.id;
+          const cajaIdDestino = cajaOficina?.id || cajaRuta?.id || cajaPrincipal?.id;
           if (cajaIdDestino) {
             const yaExiste = await tx.transaccion.findFirst({
               where: {

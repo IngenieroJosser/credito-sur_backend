@@ -1,22 +1,20 @@
 import {
   Injectable,
   Logger,
-  NotFoundException,
   BadRequestException,
   ForbiddenException,
+  NotFoundException,
   UnauthorizedException,
-  OnModuleInit,
 } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service'; 
-import { TipoCaja, TipoTransaccion, TipoAprobacion, EstadoAprobacion } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
+import { EstadoAprobacion, Prisma, TipoAprobacion, TipoCaja, TipoTransaccion } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { calculateDateRange, formatBogotaOffsetIso, getBogotaDayKey, getBogotaStartEndOfDay, getBogotaStartEndOfDayFromKey } from '../utils/date-utils';
 import { generarExcelContable, generarPDFContable, CajaRow, TransaccionRow } from '../templates/exports/reporte-contable.template';
 
-
 @Injectable()
-export class AccountingService implements OnModuleInit {
+export class AccountingService {
   private readonly logger = new Logger(AccountingService.name);
 
   constructor(
@@ -977,7 +975,7 @@ export class AccountingService implements OnModuleInit {
     transacciones.forEach((t) => {
       const monto = Number(t.monto);
       if (t.tipo === 'INGRESO') {
-        if (t.tipoReferencia === 'PAGO' || t.tipoReferencia === 'CUOTA_INICIAL') {
+        if (t.tipoReferencia === 'PAGO') {
           cobranzaTrx += monto;
           if (t.referenciaId) {
             recaudosPorReferencia[t.referenciaId] = (recaudosPorReferencia[t.referenciaId] || 0) + monto;
@@ -994,6 +992,16 @@ export class AccountingService implements OnModuleInit {
           otrosIngresos += monto;
         }
       } else if (t.tipo === 'EGRESO') {
+        // Estos movimientos son eventos internos de control / contabilidad y no deben verse como "egresos" operativos
+        // en el rendimiento diario de la ruta.
+        if (
+          t.tipoReferencia === 'DEUDA_COBRADOR' ||
+          t.tipoReferencia === 'CIERRE_RUTA' ||
+          t.tipoReferencia === 'ACTIVACION_RUTA'
+        ) {
+          return;
+        }
+
         if (t.tipoReferencia === 'GASTO') {
           gastosOperativos += monto;
         } else if (
@@ -1006,21 +1014,22 @@ export class AccountingService implements OnModuleInit {
           otrosEgresos += monto;
         }
       } else if (t.tipo === 'TRANSFERENCIA') {
-        if (t.tipoReferencia === 'RECOLECCION') {
-          otrosEgresos += monto;
-        }
+        // Las transferencias (TRX-IN/TRX-OUT) NO deben contarse como "gastos" del día.
+        // Son movimientos internos entre cajas y contablemente ya se reflejan en saldoActual.
+        return;
       }
     });
 
-    // 3. Fallback: Obtener pagos directamente de la tabla Pago si no hay transacciones de pago vinculadas
+    // 3. Cobranza REAL del período: siempre desde la tabla Pago para incluir
+    // pagos por transferencia (CAJA-BANCO) y efectivo (caja ruta), sin doble conteo.
     let cobranzaPagos = 0;
-    if (cobranzaTrx === 0) {
-      const asignaciones = await this.prisma.asignacionRuta.findMany({
-        where: { rutaId, activa: true },
-        select: { clienteId: true },
-      });
-      const clienteIds = asignaciones.map((a) => a.clienteId);
+    const asignaciones = await this.prisma.asignacionRuta.findMany({
+      where: { rutaId, activa: true },
+      select: { clienteId: true },
+    });
+    const clienteIds = asignaciones.map((a) => a.clienteId);
 
+    if (clienteIds.length > 0) {
       const pagosList = await this.prisma.pago.findMany({
         where: {
           clienteId: { in: clienteIds },
@@ -1030,33 +1039,32 @@ export class AccountingService implements OnModuleInit {
           },
         },
       });
-      
-      pagosList.forEach(p => {
+
+      pagosList.forEach((p) => {
         const m = Number(p.montoTotal);
         cobranzaPagos += m;
-        // En este fallback, usamos prestamoId como referencia
         if (p.prestamoId) {
           recaudosPorReferencia[p.prestamoId] = (recaudosPorReferencia[p.prestamoId] || 0) + m;
         }
       });
     }
 
-    // Decidimos qué usar para cobranza
-    const totalCobranza = cobranzaTrx > 0 ? cobranzaTrx : cobranzaPagos;
-    const totalRecaudo = totalCobranza + otrosIngresos;
+    const totalCobranza = cobranzaPagos;
+    const totalRecaudoAll = totalCobranza + otrosIngresos;
     const totalGastos = gastosOperativos + otrosEgresos;
-    const saldoNetoPeriodo = totalRecaudo - totalGastos - desembolsos;
+    const saldoNetoPeriodo = totalRecaudoAll - totalGastos - desembolsos;
 
     return {
       rutaId,
       cajaId: caja.id,
       fecha: formatBogotaOffsetIso(rangeStart),
       saldoDisponible: Number(caja.saldoActual),
-      recaudoDelDia: totalRecaudo, 
+      recaudoDelDia: totalCobranza, 
       cobranzaDelDia: totalCobranza,
       recaudosPorReferencia,
       gastosDelDia: totalGastos,
-      baseEfectivo: baseEfectivo,
+      // Base efectivo es el saldo acumulado de la caja de ruta (no debe reiniciarse diario)
+      baseEfectivo: Number(caja.saldoActual),
       desembolsos: desembolsos,
       netoPeriodo: saldoNetoPeriodo,
       fechaInicio: formatBogotaOffsetIso(rangeStart),
@@ -1701,6 +1709,9 @@ export class AccountingService implements OnModuleInit {
         ? Math.round((consolidacionesHoy / totalRutasCount) * 100)
         : 0;
 
+    const interesHoy = Number((interesHoyAgg as any)?._sum?.montoInteres || 0);
+    const moraHoy = Number((interesHoyAgg as any)?._sum?.montoInteresMora || 0);
+
     return {
       ingresosHoy: ingresos,
       egresosHoy: egresosOperativos,
@@ -1712,10 +1723,13 @@ export class AccountingService implements OnModuleInit {
       deudaCobradorHoy: deudaCobrador,
       // Margen de artículos (Modelo B): se reconoce proporcionalmente por cada cuota PAGADA dentro del período.
       margenArticulosHoy,
+      // Utilidad financiera separada
+      interesHoy,
+      moraHoy,
       // La utilidad real es (interés+mora) + margen artículos - egresos operativos
-      utilidadReal: (Number(interesHoyAgg._sum.montoInteres || 0) + Number(interesHoyAgg._sum.montoInteresMora || 0) + margenArticulosHoy) - egresosOperativos,
+      utilidadReal: (interesHoy + moraHoy + margenArticulosHoy) - egresosOperativos,
       // La cuota inicial pertenece al Capital (Ingreso Bruto de Caja) y no a la Utilidad.
-      gananciaNeta: (Number(interesHoyAgg._sum.montoInteres || 0) + Number(interesHoyAgg._sum.montoInteresMora || 0) + margenArticulosHoy) - egresosOperativos,
+      gananciaNeta: (interesHoy + moraHoy + margenArticulosHoy) - egresosOperativos,
       capitalEnCalle: Number(prestamosActivos._sum.monto || 0),
       saldoCajas: Number(totalCajas._sum.saldoActual || 0),
       cajasAbiertasCount: await this.prisma.caja.count({
@@ -1843,7 +1857,9 @@ export class AccountingService implements OnModuleInit {
         const deudaPorFaltantes = clientesFaltantes > 0
           ? Math.max(Number(meta || 0) - Number(recaudo || 0), 0)
           : 0;
-        const descuadre = saldoAlCierre > 0 || deudaPorFaltantes > 0;
+        // Regla de negocio: saldoAlCierre (efectivo pendiente por recolectar) no es descuadre.
+        // Solo se considera descuadre cuando faltaron clientes/efectivo vs meta.
+        const descuadre = deudaPorFaltantes > 0;
         return {
           id: t.id,
           fecha: formatBogotaOffsetIso(t.fechaTransaccion),
@@ -2095,9 +2111,13 @@ export class AccountingService implements OnModuleInit {
         ],
       },
       select: {
+        id: true,
+        creadoEn: true,
         monto: true,
         cajaId: true,
         tipoReferencia: true,
+        referenciaId: true,
+        descripcion: true,
         caja: {
           select: {
             rutaId: true,
@@ -2145,6 +2165,10 @@ export class AccountingService implements OnModuleInit {
 
     // 4. Consolidar deudas por cobrador
     const deudaMap = new Map<string, { gastosPersonales: number; descuadres: number; totalEventos: number }>();
+    const eventosMap = new Map<
+      string,
+      Array<{ id: string; tipoReferencia: string; monto: number; fecha: Date; cajaId: string; referenciaId?: string; descripcion?: string }>
+    >();
 
     for (const g of gastosPersonales) {
       const prev = deudaMap.get(g.cobradorId) || { gastosPersonales: 0, descuadres: 0, totalEventos: 0 };
@@ -2158,6 +2182,36 @@ export class AccountingService implements OnModuleInit {
     for (const arqueo of arqueos) {
       const cobradorId = arqueo.caja?.ruta?.cobradorId;
       if (!cobradorId) continue;
+
+      // Evitar falsos positivos:
+      // 1) DEUDA_COBRADOR generada por cierres de ruta antiguos (basados en saldo retenido)
+      //    suele venir con metadata SD:... y FD:0 o sin FD. Eso NO debe contarse.
+      if (arqueo.tipoReferencia === 'DEUDA_COBRADOR' && typeof arqueo.referenciaId === 'string') {
+        const ref = arqueo.referenciaId
+        const tieneSaldoAlCierre = /\bSD:(\d+(?:\.\d+)?)\b/i.test(ref)
+        const matchFD = ref.match(/\bFD:(\d+(?:\.\d+)?)\b/i)
+        const fd = matchFD ? Number(matchFD[1] || 0) : null
+
+        if (tieneSaldoAlCierre && (fd == null || fd === 0)) {
+          continue
+        }
+      }
+
+      // 2) ARQUEO: solo debe generar deuda si la diferencia fue negativa (faltó efectivo).
+      //    Si no podemos detectar la diferencia, no lo contamos para no crear deudas falsas.
+      if (arqueo.tipoReferencia === 'ARQUEO' && typeof arqueo.referenciaId === 'string') {
+        const ref = arqueo.referenciaId
+        const matchDif = ref.match(/\bDIF:([\-\d.]+)\b/i)
+        if (!matchDif) {
+          continue
+        }
+        const dif = Number(matchDif[1])
+        // Si DIF >= 0 no hay deuda del cobrador
+        if (!(dif < 0)) {
+          continue
+        }
+      }
+
       const diferencia = Number(arqueo.monto || 0); // EGRESO significa dinero no devuelto
       const prev = deudaMap.get(cobradorId) || { gastosPersonales: 0, descuadres: 0, totalEventos: 0 };
       deudaMap.set(cobradorId, {
@@ -2165,6 +2219,18 @@ export class AccountingService implements OnModuleInit {
         descuadres: prev.descuadres + diferencia,
         totalEventos: prev.totalEventos + 1,
       });
+
+      const arr = eventosMap.get(cobradorId) || [];
+      arr.push({
+        id: String((arqueo as any).id),
+        tipoReferencia: String(arqueo.tipoReferencia || ''),
+        monto: Number(arqueo.monto || 0),
+        fecha: (arqueo as any).creadoEn as Date,
+        cajaId: String(arqueo.cajaId || ''),
+        referenciaId: (arqueo as any).referenciaId ?? undefined,
+        descripcion: (arqueo as any).descripcion ?? undefined,
+      });
+      eventosMap.set(cobradorId, arr);
     }
 
     // 5. Construir respuesta final restando abonos
@@ -2172,7 +2238,16 @@ export class AccountingService implements OnModuleInit {
       .map(([cobradorId, deuda]) => {
         const cobrador = cobradorMap.get(cobradorId);
         const abonosRealizados = abonosMap.get(cobradorId) || 0;
-        const totalDeudaRealRaw = (deuda.gastosPersonales + deuda.descuadres) - abonosRealizados;
+
+        // Aplicar abonos al desglose para que los subtotales concuerden con el total.
+        // Prioridad: descuadres (faltantes de ruta) -> gastos personales.
+        const abonoUsadoEnDescuadres = Math.min(Number(deuda.descuadres || 0), Number(abonosRealizados || 0));
+        const descuadresPendiente = Math.max(0, Number(deuda.descuadres || 0) - abonoUsadoEnDescuadres);
+        const abonoRestante = Math.max(0, Number(abonosRealizados || 0) - abonoUsadoEnDescuadres);
+        const abonoUsadoEnGastos = Math.min(Number(deuda.gastosPersonales || 0), abonoRestante);
+        const gastosPendiente = Math.max(0, Number(deuda.gastosPersonales || 0) - abonoUsadoEnGastos);
+
+        const totalDeudaRealRaw = descuadresPendiente + gastosPendiente;
         // Los valores del módulo contable se manejan en pesos (enteros). Redondear evita
         // que residuos decimales (p.ej. 0.02) aparezcan como "$0" pero cuenten como deuda.
         const totalDeudaReal = Math.max(0, Math.round(Number(totalDeudaRealRaw || 0)));
@@ -2182,9 +2257,10 @@ export class AccountingService implements OnModuleInit {
           nombreCobrador: cobrador ? `${cobrador.nombres} ${cobrador.apellidos}` : 'Desconocido',
           rol: cobrador?.rol || 'COBRADOR',
           totalDeuda: totalDeudaReal,
-          gastosPersonales: deuda.gastosPersonales,
-          descuadres: deuda.descuadres,
+          gastosPersonales: Math.max(0, Math.round(Number(gastosPendiente || 0))),
+          descuadres: Math.max(0, Math.round(Number(descuadresPendiente || 0))),
           totalEventos: deuda.totalEventos,
+          eventos: (eventosMap.get(cobradorId) || []).slice(0, 25),
         };
       })
       .filter(d => Number(d.totalDeuda || 0) > 0)
@@ -2216,9 +2292,14 @@ export class AccountingService implements OnModuleInit {
       if (!cajaDestino) throw new NotFoundException('Caja destino no encontrada')
     } else {
       cajaDestino = await this.prisma.caja.findFirst({
-        where: { codigo: 'CAJA-PRINCIPAL' },
+        where: { codigo: 'CAJA-OFICINA' },
       })
-      if (!cajaDestino) throw new Error('No existe Caja Principal para registrar el ingreso')
+      if (!cajaDestino) {
+        cajaDestino = await this.prisma.caja.findFirst({
+          where: { codigo: 'CAJA-PRINCIPAL' },
+        })
+      }
+      if (!cajaDestino) throw new Error('No existe Caja Oficina/Caja Principal para registrar el ingreso')
     }
 
     // 2. Crear la transacción INGRESO
@@ -2231,6 +2312,124 @@ export class AccountingService implements OnModuleInit {
       tipoReferencia: 'ABONO_DEUDA',
       referenciaId: `${cobradorId}|${cobrador.nombres} ${cobrador.apellidos}`, // Guardamos ID y Nombre para facilitar auditoría
     });
+  }
+
+  async repararCajaOficinaIngresosMalAsignados(params?: { dryRun?: boolean }) {
+    const dryRun = Boolean(params?.dryRun);
+
+    const cajaOficina = await this.prisma.caja.findFirst({
+      where: { activa: true, codigo: 'CAJA-OFICINA' },
+      select: { id: true, codigo: true },
+    });
+    if (!cajaOficina) throw new NotFoundException('Caja Oficina no encontrada');
+
+    const cajasOrigen = await this.prisma.caja.findMany({
+      where: {
+        activa: true,
+        codigo: { in: ['CAJA-PRINCIPAL', 'CAJA-BANCO'] },
+      },
+      select: { id: true, codigo: true },
+    });
+
+    const cajasOrigenIds = cajasOrigen.map((c) => c.id);
+    if (!cajasOrigenIds.length) {
+      return {
+        dryRun,
+        cajaOficinaId: cajaOficina.id,
+        movimientosEncontrados: 0,
+        movimientosMovidos: 0,
+        deltaPorCaja: {},
+      };
+    }
+
+    const refs = ['CUOTA_INICIAL', 'ABONO_DEUDA'] as const;
+
+    const transacciones = await this.prisma.transaccion.findMany({
+      where: {
+        cajaId: { in: cajasOrigenIds },
+        tipoReferencia: { in: refs as unknown as string[] },
+      },
+      select: {
+        id: true,
+        cajaId: true,
+        tipo: true,
+        monto: true,
+        tipoReferencia: true,
+      },
+      orderBy: { fechaTransaccion: 'asc' },
+    });
+
+    const deltaPorCaja: Record<string, Prisma.Decimal> = {};
+    const deltaOficina = new Prisma.Decimal(0);
+    let deltaOficinaAcc = deltaOficina;
+
+    for (const t of transacciones) {
+      const monto = new Prisma.Decimal(t.monto as any);
+      const tipo = String(t.tipo || '').toUpperCase();
+
+      let deltaOrigen = new Prisma.Decimal(0);
+      let deltaDestino = new Prisma.Decimal(0);
+
+      if (tipo === 'INGRESO') {
+        deltaOrigen = monto.mul(-1);
+        deltaDestino = monto;
+      } else if (tipo === 'EGRESO') {
+        deltaOrigen = monto;
+        deltaDestino = monto.mul(-1);
+      } else {
+        continue;
+      }
+
+      deltaPorCaja[t.cajaId] = (deltaPorCaja[t.cajaId] || new Prisma.Decimal(0)).add(deltaOrigen);
+      deltaOficinaAcc = deltaOficinaAcc.add(deltaDestino);
+    }
+
+    deltaPorCaja[cajaOficina.id] = (deltaPorCaja[cajaOficina.id] || new Prisma.Decimal(0)).add(deltaOficinaAcc);
+
+    if (dryRun) {
+      return {
+        dryRun,
+        cajaOficinaId: cajaOficina.id,
+        movimientosEncontrados: transacciones.length,
+        movimientosMovidos: 0,
+        deltaPorCaja: Object.fromEntries(
+          Object.entries(deltaPorCaja).map(([k, v]) => [k, v.toNumber()]),
+        ),
+        transaccionesIds: transacciones.map((t) => t.id),
+      };
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.transaccion.updateMany({
+        where: {
+          cajaId: { in: cajasOrigenIds },
+          tipoReferencia: { in: refs as unknown as string[] },
+        },
+        data: { cajaId: cajaOficina.id },
+      });
+
+      for (const [cajaId, delta] of Object.entries(deltaPorCaja)) {
+        if (delta.isZero()) continue;
+        await tx.caja.update({
+          where: { id: cajaId },
+          data: {
+            saldoActual: {
+              increment: delta,
+            },
+          },
+        });
+      }
+    });
+
+    return {
+      dryRun,
+      cajaOficinaId: cajaOficina.id,
+      movimientosEncontrados: transacciones.length,
+      movimientosMovidos: transacciones.length,
+      deltaPorCaja: Object.fromEntries(
+        Object.entries(deltaPorCaja).map(([k, v]) => [k, v.toNumber()]),
+      ),
+    };
   }
 }
 

@@ -45,6 +45,11 @@ import {
 export class LoansService implements OnModuleInit {
   private readonly logger = new Logger(LoansService.name);
 
+  private trunc2(n: number): number {
+    if (!Number.isFinite(n)) return 0;
+    return Math.trunc(n * 100) / 100;
+  }
+
   constructor(
     private prisma: PrismaService,
     private notificacionesService: NotificacionesService,
@@ -261,14 +266,14 @@ export class LoansService implements OnModuleInit {
     if (tasaPeriodo === 0) {
       const cuotaFija = capital / numCuotas;
       return {
-        cuotaFija: Math.round(cuotaFija * 100) / 100,
+        cuotaFija: this.trunc2(cuotaFija),
         interesTotal: 0,
         tabla: Array.from({ length: numCuotas }, (_, i) => ({
           numeroCuota: i + 1,
-          montoCapital: Math.round((capital / numCuotas) * 100) / 100,
+          montoCapital: this.trunc2((capital / numCuotas)),
           montoInteres: 0,
-          monto: Math.round(cuotaFija * 100) / 100,
-          saldoRestante: Math.round((capital - (capital / numCuotas) * (i + 1)) * 100) / 100,
+          monto: this.trunc2(cuotaFija),
+          saldoRestante: this.trunc2((capital - (capital / numCuotas) * (i + 1))),
         })),
       };
     }
@@ -303,16 +308,16 @@ export class LoansService implements OnModuleInit {
 
       tabla.push({
         numeroCuota: i + 1,
-        montoCapital: Math.round(capitalPeriodo * 100) / 100,
-        montoInteres: Math.round(interesPeriodo * 100) / 100,
-        monto: Math.round(montoCuota * 100) / 100,
-        saldoRestante: Math.round(saldo * 100) / 100,
+        montoCapital: this.trunc2(capitalPeriodo),
+        montoInteres: this.trunc2(interesPeriodo),
+        monto: this.trunc2(montoCuota),
+        saldoRestante: this.trunc2(saldo),
       });
     }
 
     return {
-      cuotaFija: Math.round(cuotaFija * 100) / 100,
-      interesTotal: Math.round(interesTotalAcumulado * 100) / 100,
+      cuotaFija: this.trunc2(cuotaFija),
+      interesTotal: this.trunc2(interesTotalAcumulado),
       tabla,
     };
   }
@@ -529,15 +534,15 @@ export class LoansService implements OnModuleInit {
           fechaPrimerCobro ? i + 1 : i + 2,
           frecuenciaPago,
         ),
-        monto: Math.round(montoCuota * 100) / 100,
-        montoCapital: Math.round(montoCapitalCuota * 100) / 100,
-        montoInteres: Math.round(montoInteresCuota * 100) / 100,
+        monto: this.trunc2(montoCuota),
+        montoCapital: this.trunc2(montoCapitalCuota),
+        montoInteres: this.trunc2(montoInteresCuota),
         estado: esContado ? EstadoCuota.PAGADA : EstadoCuota.PENDIENTE,
-        montoPagado: esContado ? Math.round(montoCuota * 100) / 100 : 0,
+        montoPagado: esContado ? this.trunc2(montoCuota) : 0,
       }));
     }
 
-    return { interesTotal, cuotas };
+    return { interesTotal: this.trunc2(interesTotal), cuotas };
   }
 
   async getAllLoans(filters: {
@@ -690,6 +695,7 @@ export class LoansService implements OnModuleInit {
                 numeroCuota: true,
                 estado: true,
                 fechaVencimiento: true,
+                fechaVencimientoProrroga: true,
                 monto: true,
                 montoPagado: true,
                 montoInteresMora: true,
@@ -761,6 +767,14 @@ export class LoansService implements OnModuleInit {
       ]);
 
       // Transformar datos para el frontend de forma segura
+      const hoyKeyBogota = getBogotaDayKey(new Date());
+      const utcDateKey = (d: Date): string => {
+        const y = d.getUTCFullYear();
+        const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(d.getUTCDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      };
+
       const prestamosTransformados = prestamos.map((prestamo) => {
         try {
           // Calcular campos adicionales
@@ -769,9 +783,18 @@ export class LoansService implements OnModuleInit {
             (c) => c.estado === EstadoCuota.PAGADA,
           ).length;
           const cuotasTotales = cuotas.length;
-          const cuotasVencidas = cuotas.filter(
-            (c) => c.estado === EstadoCuota.VENCIDA,
-          ).length;
+
+          const cuotasVencidasReal = cuotas.filter((c: any) => {
+            if (c.estado !== EstadoCuota.VENCIDA) return false;
+            const eff = c?.fechaVencimientoProrroga
+              ? new Date(c.fechaVencimientoProrroga)
+              : new Date(c.fechaVencimiento);
+            if (!eff || isNaN(eff.getTime())) return false;
+            const key = utcDateKey(eff);
+            return !!key && key < hoyKeyBogota;
+          });
+
+          const cuotasVencidas = cuotasVencidasReal.length;
 
           // Manejar valores numéricos de forma segura
           const monto = Number(prestamo.monto) || 0;
@@ -784,12 +807,15 @@ export class LoansService implements OnModuleInit {
           const montoPagado = totalPagado;
 
           // Calcular mora acumulada de forma segura
-          const moraAcumulada = cuotas.reduce((sum, cuota) => {
-            if (cuota.estado === EstadoCuota.VENCIDA) {
-              return sum + (Number(cuota.montoInteresMora) || 0);
-            }
-            return sum;
-          }, 0);
+          const moraAcumulada = cuotasVencidasReal.reduce(
+            (sum: number, cuota: any) => sum + (Number(cuota.montoInteresMora) || 0),
+            0,
+          );
+
+          const estado =
+            prestamo.estado === EstadoPrestamo.EN_MORA && cuotasVencidas === 0
+              ? EstadoPrestamo.ACTIVO
+              : (prestamo.estado || EstadoPrestamo.BORRADOR);
 
           // Determinar tipo de producto
           let tipoProducto = 'efectivo';
@@ -845,7 +871,7 @@ export class LoansService implements OnModuleInit {
             cuotasPagadas,
             cuotasTotales,
             cuotasVencidas,
-            estado: prestamo.estado || EstadoPrestamo.BORRADOR,
+            estado,
             riesgo: prestamo.cliente.nivelRiesgo || NivelRiesgo.VERDE,
             ruta: rutaAsignada,
             rutaNombre,
@@ -1548,9 +1574,9 @@ export class LoansService implements OnModuleInit {
           return {
             numeroCuota: i + 1,
             fechaVencimiento,
-            monto: Math.round(montoCuota * 100) / 100,
-            montoCapital: Math.round(montoCapitalCuota * 100) / 100,
-            montoInteres: Math.round(montoInteresCuota * 100) / 100,
+            monto: this.trunc2(montoCuota),
+            montoCapital: this.trunc2(montoCapitalCuota),
+            montoInteres: this.trunc2(montoInteresCuota),
             estado: EstadoCuota.PENDIENTE,
           };
         });
@@ -1583,8 +1609,8 @@ export class LoansService implements OnModuleInit {
           estado: EstadoPrestamo.PENDIENTE_APROBACION,
           estadoAprobacion: EstadoAprobacion.PENDIENTE,
           creadoPorId: createLoanDto.creadoPorId,
-          interesTotal,
-          saldoPendiente: createLoanDto.monto + interesTotal - (createLoanDto.cuotaInicial || 0),
+          interesTotal: this.trunc2(interesTotal),
+          saldoPendiente: this.trunc2(createLoanDto.monto + interesTotal - (createLoanDto.cuotaInicial || 0)),
           notas: createLoanDto.notas ? String(createLoanDto.notas) : undefined,
           garantia: createLoanDto.garantia ? String(createLoanDto.garantia) : undefined,
           cuotas: {
@@ -1629,6 +1655,14 @@ export class LoansService implements OnModuleInit {
               })
             : null;
 
+          const cajaOficina = await this.prisma.caja.findFirst({
+            where: {
+              activa: true,
+              codigo: 'CAJA-OFICINA',
+            },
+            select: { id: true },
+          });
+
           const cajaPrincipal = await this.prisma.caja.findFirst({
             where: {
               activa: true,
@@ -1638,9 +1672,9 @@ export class LoansService implements OnModuleInit {
             select: { id: true },
           });
 
-          // Determinar caja destino: Para Cuota Inicial en tienda siempre a Caja Principal,
-          // si por algún motivo no hay Principal, a la caja de la ruta.
-          const cajaIdDestino = cajaPrincipal?.id || cajaRuta?.id;
+          // Determinar caja destino: Cuota Inicial debe registrarse en Caja Oficina.
+          // Si no existe, usar Caja Principal; si no existe, la caja de ruta.
+          const cajaIdDestino = cajaOficina?.id || cajaPrincipal?.id || cajaRuta?.id;
 
           if (cajaIdDestino) {
             const yaExiste = await this.prisma.transaccion.findFirst({
@@ -2043,6 +2077,52 @@ export class LoansService implements OnModuleInit {
 
       if (!creador) {
         throw new NotFoundException('Usuario creador no encontrado');
+      }
+
+      // Regla (producción): un COBRADOR no puede solicitar un préstamo en efectivo
+      // si su caja de ruta no tiene saldo suficiente para el desembolso.
+      // Esto evita que el saldo de la caja quede negativo al aprobar/desembolsar.
+      const isArticulo = String(data.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
+      if (creador.rol === RolUsuario.COBRADOR && !isArticulo) {
+        const montoDesembolso = Number(data.monto || 0);
+        if (montoDesembolso > 0) {
+          const rutaCobrador = await this.prisma.ruta.findFirst({
+            where: {
+              eliminadoEn: null,
+              activa: true,
+              cobradorId: creador.id,
+            },
+            select: { id: true },
+          });
+
+          if (!rutaCobrador?.id) {
+            throw new BadRequestException(
+              'No tienes una ruta activa asignada para solicitar un crédito en efectivo.',
+            );
+          }
+
+          const cajaRuta = await this.prisma.caja.findFirst({
+            where: {
+              rutaId: rutaCobrador.id,
+              tipo: 'RUTA',
+              activa: true,
+            },
+            select: { id: true, nombre: true, saldoActual: true },
+          });
+
+          const saldoCajaRuta = Number((cajaRuta as any)?.saldoActual || 0);
+          if (!cajaRuta?.id) {
+            throw new BadRequestException(
+              'No existe una caja de ruta activa para tu ruta. Contacta al administrador.',
+            );
+          }
+
+          if (saldoCajaRuta < montoDesembolso) {
+            throw new BadRequestException(
+              `Saldo insuficiente en tu caja de ruta para solicitar este crédito. Caja: ${cajaRuta.nombre}. Saldo: ${saldoCajaRuta.toLocaleString('es-CO')}. Monto solicitado: ${montoDesembolso.toLocaleString('es-CO')}.`,
+            );
+          }
+        }
       }
 
       // Verificación de idempotencia / prevención de duplicados
@@ -2860,7 +2940,7 @@ export class LoansService implements OnModuleInit {
         }
         
         // INTERES SIMPLE: I = C * i * t
-        const interesCorrecto = Math.round((capital * (tasaMensual / 100) * plazoMeses) * 100) / 100;
+        const interesCorrecto = this.trunc2((capital * (tasaMensual / 100) * plazoMeses));
         const interesActual = Number(loan.interesTotal);
 
         // Verificar discrepancia significativa (> $100 pesos)
@@ -2892,7 +2972,7 @@ export class LoansService implements OnModuleInit {
           );
           
           if (cuotasAjustables.length > 0) {
-            const ajustePorCuota = Math.round((diferenciaInteres / cuotasAjustables.length) * 100) / 100;
+            const ajustePorCuota = this.trunc2((diferenciaInteres / cuotasAjustables.length));
             
             // Aplicar ajuste
             for (const cuota of cuotasAjustables) {
