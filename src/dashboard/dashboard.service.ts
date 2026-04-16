@@ -141,11 +141,27 @@ export class DashboardService {
       take: 5,
     });
 
-      // Cuentas en mora para el listado detallado: sin filtro de período
+      // Cuentas en mora para el listado detallado: sin filtro de período.
+      // Importante: NO dependemos solo de `prestamo.estado = EN_MORA` porque el job
+      // automático puede no haber corrido aún. También detectamos mora por cuotas
+      // no pagadas vencidas (PENDIENTE/PARCIAL/VENCIDA) comparando por llave de fecha Bogotá.
       const delinquentAccountsListRaw = await this.prisma.prestamo.findMany({
         where: {
-          estado: EstadoPrestamo.EN_MORA,
           eliminadoEn: null,
+          estado: { in: [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA] },
+          OR: [
+            { estado: EstadoPrestamo.EN_MORA },
+            {
+              cuotas: {
+                some: {
+                  estado: { in: [EstadoCuota.PENDIENTE, EstadoCuota.PARCIAL, EstadoCuota.VENCIDA] },
+                  // Filtro preliminar por fecha (evita traer demasiadas filas). Luego se valida en memoria
+                  // con la fecha efectiva (prórroga si existe) y la llave Bogotá.
+                  fechaVencimiento: { lt: hoyInicioBogota },
+                },
+              },
+            },
+          ],
         },
         include: {
           cliente: {
@@ -163,9 +179,9 @@ export class DashboardService {
             },
           },
           cuotas: {
-            where: { estado: EstadoCuota.VENCIDA },
+            where: { estado: { in: [EstadoCuota.PENDIENTE, EstadoCuota.PARCIAL, EstadoCuota.VENCIDA] } },
             orderBy: { fechaVencimiento: 'asc' },
-            take: 20,
+            take: 50,
           },
         },
         take: 50,
@@ -175,6 +191,9 @@ export class DashboardService {
         .map((loan: any) => {
           const cuotas = Array.isArray(loan?.cuotas) ? loan.cuotas : [];
           const cuotasVencidasReal = cuotas.filter((c: any) => {
+            if (!c) return false;
+            const st = String(c?.estado || '').toUpperCase();
+            if (st === 'PAGADA' || st === 'PAGADO' || st === 'ANULADA' || st === 'ANULADO') return false;
             const eff = c?.fechaVencimientoProrroga
               ? new Date(c.fechaVencimientoProrroga)
               : new Date(c.fechaVencimiento);
@@ -182,13 +201,59 @@ export class DashboardService {
             const key = utcDateKey(eff);
             return !!key && key < hoyKeyBogota;
           });
+
+          // Si el préstamo está EN_MORA pero no hay cuotas realmente vencidas, lo excluimos
+          // para evitar falsos positivos históricos (mismo criterio del reporte).
           if (cuotasVencidasReal.length === 0) return null;
           return { ...loan, cuotas: cuotasVencidasReal };
         })
         .filter(Boolean)
         .slice(0, 10);
 
-      const delinquentAccounts = delinquentAccountsList.length;
+      // Conteo total de cuentas en mora: usar una consulta amplia + validación en memoria.
+      // Nota: mantenemos un límite razonable para no degradar el dashboard.
+      const delinquentAccountsCountRaw = await this.prisma.prestamo.findMany({
+        where: {
+          eliminadoEn: null,
+          estado: { in: [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA] },
+          OR: [
+            { estado: EstadoPrestamo.EN_MORA },
+            {
+              cuotas: {
+                some: {
+                  estado: { in: [EstadoCuota.PENDIENTE, EstadoCuota.PARCIAL, EstadoCuota.VENCIDA] },
+                  fechaVencimiento: { lt: hoyInicioBogota },
+                },
+              },
+            },
+          ],
+        },
+        select: {
+          id: true,
+          cuotas: {
+            where: { estado: { in: [EstadoCuota.PENDIENTE, EstadoCuota.PARCIAL, EstadoCuota.VENCIDA] } },
+            select: { estado: true, fechaVencimiento: true, fechaVencimientoProrroga: true },
+            take: 50,
+          },
+        },
+        take: 500,
+      });
+
+      const delinquentAccounts = delinquentAccountsCountRaw.reduce((acc: number, loan: any) => {
+        const cuotas = Array.isArray(loan?.cuotas) ? loan.cuotas : [];
+        const tieneVencidaReal = cuotas.some((c: any) => {
+          if (!c) return false;
+          const st = String(c?.estado || '').toUpperCase();
+          if (st === 'PAGADA' || st === 'PAGADO' || st === 'ANULADA' || st === 'ANULADO') return false;
+          const eff = c?.fechaVencimientoProrroga
+            ? new Date(c.fechaVencimientoProrroga)
+            : new Date(c.fechaVencimiento);
+          if (!eff || isNaN(eff.getTime())) return false;
+          const key = utcDateKey(eff);
+          return !!key && key < hoyKeyBogota;
+        });
+        return tieneVencidaReal ? (acc + 1) : acc;
+      }, 0);
 
       // 4. Obtener actividad reciente (últimas aprobaciones procesadas) - filtradas por período
       const recentActivityList = await this.prisma.aprobacion.findMany({
