@@ -195,13 +195,22 @@ export class ReportsService {
     };
 
     // Nota importante:
-    // Las fechas de vencimiento en BD pueden estar guardadas en UTC 00:00:00,
-    // lo cual al convertirlas a Bogotá podría “correr” al día anterior y generar
-    // falsos positivos. Por eso aquí SOLO filtramos por estado VENCIDA en Prisma
-    // y aplicamos la regla de "vencida si fechaKey < hoyKeyBogota" en memoria.
+    // No dependemos únicamente de que el job marque la cuota como VENCIDA.
+    // Para el reporte (y para que sea consistente con ruta/dashboard), consideramos
+    // cuotas no pagadas (PENDIENTE/PARCIAL/VENCIDA) y validamos en memoria con
+    // la fecha efectiva (prórroga si existe) contra la llave Bogotá.
     whereConditions.OR = [
       { estado: 'EN_MORA' },
-      { cuotas: { some: { estado: { in: ['VENCIDA'] } } } },
+      {
+        cuotas: {
+          some: {
+            estado: { in: ['PENDIENTE', 'PARCIAL', 'VENCIDA'] },
+            // Filtro preliminar por fecha (evita traer demasiadas filas). Luego se valida en memoria
+            // con la fecha efectiva (prórroga si existe) y la llave Bogotá.
+            fechaVencimiento: { lt: hoyInicioBogota },
+          },
+        },
+      },
     ];
 
     // Aplicar filtros
@@ -296,7 +305,7 @@ export class ReportsService {
         cliente: true,
         cuotas: {
           where: {
-            estado: { in: ['VENCIDA'] },
+            estado: { in: ['PENDIENTE', 'PARCIAL', 'VENCIDA'] },
           },
           orderBy: {
             fechaVencimiento: 'asc',
@@ -369,7 +378,15 @@ export class ReportsService {
           if (frecuencia === 'DIARIO') {
             return diasMoraDiarioExcluyendoDomingos(cuotaMasAntiguaKey, hoyKeyBogota || '');
           }
-          return Math.max(0, differenceInDays(hoyInicioBogota, cuotaMasAntigua.eff));
+          // Para frecuencias NO diarias, usamos llaves YYYY-MM-DD y fechas a mediodía Bogotá
+          // para evitar desfases por hora/zona (UTC vs Bogotá) que pueden dar 0d aunque
+          // la cuota ya esté vencida por llave.
+          const parseKeyToBogotaMidday = (key: string) => new Date(`${key}T12:00:00-05:00`);
+          const start = parseKeyToBogotaMidday(cuotaMasAntiguaKey);
+          const end = parseKeyToBogotaMidday(hoyKeyBogota || '');
+          if (isNaN(start.getTime()) || isNaN(end.getTime())) return 0;
+          const diff = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+          return diff > 0 ? diff : 0;
         })();
 
         // Calcular monto de mora (suma de intereses de mora de cuotas vencidas)
