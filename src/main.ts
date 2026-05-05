@@ -120,6 +120,7 @@ async function bootstrap() {
       'https://credito-sur-frontend.onrender.com',
       'https://creditos-del-sur.vercel.app',
     ],
+    exposedHeaders: ['Content-Disposition', 'Content-Type', 'Content-Length'],
     credentials: true,
   });
     
