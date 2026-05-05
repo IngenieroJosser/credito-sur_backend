@@ -1,21 +1,20 @@
-﻿import {
+import {
   Injectable,
   Logger,
-  NotFoundException,
   BadRequestException,
   ForbiddenException,
+  NotFoundException,
   UnauthorizedException,
-  OnModuleInit,
 } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service'; 
-import { TipoCaja, TipoTransaccion, TipoAprobacion, EstadoAprobacion } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
+import { EstadoAprobacion, Prisma, TipoAprobacion, TipoCaja, TipoTransaccion } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+import { calculateDateRange, formatBogotaOffsetIso, getBogotaDayKey, getBogotaStartEndOfDay, getBogotaStartEndOfDayFromKey } from '../utils/date-utils';
 import { generarExcelContable, generarPDFContable, CajaRow, TransaccionRow } from '../templates/exports/reporte-contable.template';
 
-
 @Injectable()
-export class AccountingService implements OnModuleInit {
+export class AccountingService {
   private readonly logger = new Logger(AccountingService.name);
 
   constructor(
@@ -29,6 +28,89 @@ export class AccountingService implements OnModuleInit {
 
   async onModuleInit() {
     await this.ensureCajasDefault();
+  }
+
+  private buildCodigoCajaRuta(codigoRuta: string) {
+    const base = `CAJA-${codigoRuta}`;
+    if (base.length <= 20) return base;
+    // 20 chars máx: "CAJA-" (5) + 10 + "-" (1) + 4 = 20
+    const start = codigoRuta.slice(0, 10);
+    const end = codigoRuta.slice(-4);
+    return `CAJA-${start}-${end}`;
+  }
+
+  /**
+   * Mapea una fila de Prisma (Transaccion + includes) al DTO de respuesta.
+   * Centraliza la lógica duplicada entre getTransacciones y getTransaccionById.
+   */
+  private mapTransaccionRow(t: any) {
+    return {
+      id: t.id,
+      numero: t.numeroTransaccion,
+      fecha: formatBogotaOffsetIso(t.fechaTransaccion),
+      tipo: t.tipo,
+      monto: Number(t.monto),
+      descripcion: t.descripcion,
+      caja: t.caja.nombre,
+      cajaId: t.cajaId,
+      cajaOrigenId: t.cajaOrigenId ?? undefined,
+      tipoReferencia: t.tipoReferencia ?? undefined,
+      referenciaId: t.referenciaId ?? undefined,
+      responsable: `${t.creadoPor.nombres} ${t.creadoPor.apellidos}`,
+      estado: 'APROBADO' as const,
+      origen: t.caja.tipo === 'RUTA' ? 'COBRADOR' : 'EMPRESA',
+      categoria: t.tipoReferencia || 'GENERAL',
+      rutaId: t.caja.rutaId,
+      cajaSaldo: Number(t.caja.saldoActual),
+    };
+  }
+
+  async asegurarCajaRuta(rutaId: string) {
+    const ruta = await this.prisma.ruta.findFirst({
+      where: { id: rutaId, eliminadoEn: null },
+      select: { id: true, nombre: true, codigo: true, cobradorId: true },
+    });
+
+    if (!ruta) {
+      throw new NotFoundException('Ruta no encontrada');
+    }
+
+    if (!ruta.cobradorId) {
+      throw new BadRequestException('La ruta no tiene cobrador asignado');
+    }
+
+    const existente = await this.prisma.caja.findFirst({
+      where: { rutaId: ruta.id, tipo: 'RUTA', activa: true },
+      include: {
+        responsable: { select: { id: true, nombres: true, apellidos: true } },
+        ruta: { select: { id: true, nombre: true, codigo: true } },
+      },
+    });
+
+    if (existente?.id) {
+      return existente;
+    }
+
+    const codigoCaja = this.buildCodigoCajaRuta(ruta.codigo);
+    const nombreCaja = `Caja ${ruta.nombre}`;
+
+    const creada = await this.prisma.caja.create({
+      data: {
+        codigo: codigoCaja,
+        nombre: nombreCaja,
+        tipo: 'RUTA',
+        rutaId: ruta.id,
+        responsableId: ruta.cobradorId,
+        saldoActual: 0,
+        activa: true,
+      },
+      include: {
+        responsable: { select: { id: true, nombres: true, apellidos: true } },
+        ruta: { select: { id: true, nombre: true, codigo: true } },
+      },
+    });
+
+    return creada;
   }
 
   /**
@@ -75,6 +157,22 @@ export class AccountingService implements OnModuleInit {
             },
           });
           this.logger.log(`Caja por defecto creada: ${def.nombre} (${def.codigo})`);
+        } else {
+          // Si ya existe, la normalizamos para garantizar que aparezca en listados (getCajas filtra activa=true)
+          // y que tenga propiedades coherentes.
+          if (!existe.activa || existe.nombre !== def.nombre || existe.tipo !== def.tipo) {
+            await this.prisma.caja.update({
+              where: { id: existe.id },
+              data: {
+                nombre: def.nombre,
+                tipo: def.tipo,
+                activa: true,
+              },
+            });
+            this.logger.log(
+              `Caja por defecto normalizada: ${def.nombre} (${def.codigo})`,
+            );
+          }
         }
       }
     } catch (err) {
@@ -86,7 +184,42 @@ export class AccountingService implements OnModuleInit {
   // CAJAS
   // =====================
 
+  async getRutaCerradaHoy(rutaId: string) {
+    // Aseguramos cajas por defecto también de forma lazy.
+    await this.ensureCajasDefault();
+
+    const cajaRuta = await this.prisma.caja.findFirst({
+      where: { rutaId, tipo: 'RUTA', activa: true },
+      select: { id: true },
+    });
+
+    if (!cajaRuta?.id) {
+      throw new NotFoundException('Caja de ruta no encontrada');
+    }
+
+    const { startDate: inicioHoy, endDate: finHoy } = getBogotaStartEndOfDay(new Date());
+
+    const cierre = await this.prisma.transaccion.findFirst({
+      where: {
+        cajaId: cajaRuta.id,
+        tipoReferencia: 'CIERRE_RUTA',
+        fechaTransaccion: { gte: inicioHoy, lte: finHoy },
+      },
+      select: { id: true, fechaTransaccion: true },
+    });
+
+    return {
+      rutaId,
+      cerradaHoy: !!cierre?.id,
+      cierreId: cierre?.id || null,
+      fechaCierre: cierre?.fechaTransaccion ? formatBogotaOffsetIso(cierre.fechaTransaccion) : null,
+    };
+  }
+
   async getCajas() {
+    // Aseguramos cajas por defecto también de forma lazy.
+    // onModuleInit puede no crearlas si al momento de arrancar no existía un ADMIN/SUPER_ADMIN activo.
+    await this.ensureCajasDefault();
     const cajas = await this.prisma.caja.findMany({
       where: { activa: true },
       include: {
@@ -103,77 +236,17 @@ export class AccountingService implements OnModuleInit {
       orderBy: { creadoEn: 'desc' },
     });
 
-    const ahora = new Date();
-    const fechaInicio = new Date(ahora);
-    fechaInicio.setHours(0, 0, 0, 0);
-    const fechaFin = new Date(ahora);
-    fechaFin.setHours(23, 59, 59, 999);
+    const { startDate: fechaInicio, endDate: fechaFin } = getBogotaStartEndOfDay(new Date());
 
     const cajasConSaldo = await Promise.all(
       cajas.map(async (caja) => {
         let saldoCalculado = Number(caja.saldoActual);
 
-        if (caja.tipo === 'RUTA' && caja.rutaId) {
-          const ingresos = await this.prisma.transaccion.aggregate({
-            where: {
-              cajaId: caja.id,
-              tipo: 'INGRESO',
-              fechaTransaccion: {
-                gte: fechaInicio,
-                lte: fechaFin,
-              },
-              NOT: {
-                OR: [
-                  { tipoReferencia: 'SOLICITUD_BASE' },
-                  { tipoReferencia: 'SOLICITUD_BASE_EFECTIVO' },
-                ],
-              },
-            },
-            _sum: {
-              monto: true,
-            },
-          });
-
-          const egresos = await this.prisma.transaccion.aggregate({
-            where: {
-              cajaId: caja.id,
-              tipo: 'EGRESO',
-              fechaTransaccion: {
-                gte: fechaInicio,
-                lte: fechaFin,
-              },
-            },
-            _sum: {
-              monto: true,
-            },
-          });
-
-          let recaudoDelDia = Number(ingresos._sum.monto || 0);
-          const gastosDelDia = Number(egresos._sum.monto || 0);
-
-          if (recaudoDelDia === 0) {
-            const asignaciones = await this.prisma.asignacionRuta.findMany({
-              where: { rutaId: caja.rutaId, activa: true },
-              select: { clienteId: true },
-            });
-
-            if (asignaciones.length > 0) {
-              const clienteIds = asignaciones.map((a) => a.clienteId);
-              const pagosAgg = await this.prisma.pago.aggregate({
-                where: {
-                  clienteId: { in: clienteIds },
-                  fechaPago: {
-                    gte: fechaInicio,
-                    lte: fechaFin,
-                  },
-                },
-                _sum: { montoTotal: true },
-              });
-              recaudoDelDia = Number(pagosAgg._sum.montoTotal || 0);
-            }
-          }
-
-          saldoCalculado = recaudoDelDia - gastosDelDia;
+        // Para cajas RUTA, el saldo debe reflejar el libro contable real (saldoActual).
+        // El cálculo "recaudo - gastos" del día ignora TRANSFERENCIA (ej. RECOLECCION),
+        // lo que hacía que al recolectar no se viera descontado en Gestión Contable.
+        if (caja.tipo === 'RUTA') {
+          saldoCalculado = Number(caja.saldoActual);
         }
 
         return {
@@ -192,7 +265,7 @@ export class AccountingService implements OnModuleInit {
           saldoMaximo: Number(caja.saldoMaximo),
           estado: caja.activa ? 'ABIERTA' : 'CERRADA',
           transacciones: caja._count.transacciones,
-          ultimaActualizacion: caja.actualizadoEn.toISOString(),
+          ultimaActualizacion: formatBogotaOffsetIso(caja.actualizadoEn),
         };
       }),
     );
@@ -201,8 +274,10 @@ export class AccountingService implements OnModuleInit {
   }
 
   async getCajaById(id: string) {
-    const caja = await this.prisma.caja.findUnique({
-      where: { id },
+    // Mantener consistencia con getCajas(): garantizar defaults antes de responder.
+    await this.ensureCajasDefault();
+    const caja = await this.prisma.caja.findFirst({
+      where: { id, activa: true },
       include: {
         responsable: {
           select: { id: true, nombres: true, apellidos: true },
@@ -237,7 +312,7 @@ export class AccountingService implements OnModuleInit {
       saldoMinimo: Number(caja.saldoMinimo) || 0,
       saldoMaximo: Number(caja.saldoMaximo) || 0,
       estado: caja.activa ? 'ABIERTA' : 'CERRADA',
-      ultimaActualizacion: caja.actualizadoEn.toISOString(),
+      ultimaActualizacion: formatBogotaOffsetIso(caja.actualizadoEn),
       transacciones: caja.transacciones,
     };
   }
@@ -253,6 +328,8 @@ export class AccountingService implements OnModuleInit {
     cobradorId: string;
     solicitadoPorId: string;
     tipoAprobacion: TipoAprobacion;
+    categoriaId?: string;
+    esPersonal?: boolean;
   }) {
     const cajaRuta = await this.prisma.caja.findFirst({
       where: {
@@ -266,6 +343,70 @@ export class AccountingService implements OnModuleInit {
       throw new NotFoundException('Caja de ruta no encontrada para registrar el gasto');
     }
 
+    // Buscar nombre del solicitante
+    const solicitante = await this.prisma.usuario.findUnique({
+      where: { id: data.solicitadoPorId },
+      select: { nombres: true, apellidos: true },
+    });
+    const nombreSolicitante = solicitante
+      ? `${solicitante.nombres} ${solicitante.apellidos}`.trim()
+      : 'Cobrador';
+
+    // ======== 1. SI ES GASTO OPERATIVO (GASTAR DIRECTAMENTE DE LA RUTA) ========
+    if (!data.esPersonal) {
+      await this.prisma.$transaction(async (tx) => {
+        // 1. Crear Gasto
+        const newGasto = await tx.gasto.create({
+          data: {
+            numeroGasto: `G${Date.now()}`,
+            rutaId: data.rutaId,
+            cobradorId: data.cobradorId,
+            cajaId: cajaRuta.id,
+            tipoGasto: 'OPERATIVO',
+            monto: data.monto,
+            descripcion: data.descripcion,
+            categoriaId: data.categoriaId || undefined,
+            aprobadoPorId: data.solicitadoPorId,
+            estadoAprobacion: EstadoAprobacion.APROBADO,
+          },
+        });
+
+        // 2. Registrar egreso en caja
+        await tx.transaccion.create({
+          data: {
+            numeroTransaccion: `GTRX${Date.now()}`,
+            cajaId: cajaRuta.id,
+            tipo: TipoTransaccion.EGRESO,
+            monto: data.monto,
+            descripcion: `Gasto de ruta directo: ${data.descripcion}`,
+            creadoPorId: data.solicitadoPorId,
+            tipoReferencia: 'DEUDA_COBRADOR',
+            referenciaId: newGasto.id,
+          },
+        });
+
+        // 3. Actualizar caja
+        await tx.caja.update({
+          where: { id: cajaRuta.id },
+          data: {
+            saldoActual: { decrement: data.monto },
+            gastosDelDia: { increment: data.monto },
+          },
+        });
+      });
+
+      this.notificacionesGateway.broadcastDashboardsActualizados({
+        origen: 'GASTO',
+        rutaId: data.rutaId,
+      });
+
+      return {
+        success: true,
+        message: 'Gasto registrado correctamente en caja',
+      };
+    }
+
+    // ======== 2. SI ES GASTO PERSONAL (ENVIAR SOLICITUD A REVISIONES) ========
     const aprobacion = await this.prisma.aprobacion.create({
       data: {
         tipoAprobacion: data.tipoAprobacion,
@@ -280,23 +421,15 @@ export class AccountingService implements OnModuleInit {
           tipoGasto: 'OPERATIVO',
           monto: data.monto,
           descripcion: data.descripcion,
+          categoriaId: data.categoriaId,
         },
         montoSolicitud: data.monto,
       },
     });
 
-    // Buscar nombre del solicitante para mostrar en la notificación
-    const solicitante = await this.prisma.usuario.findUnique({
-      where: { id: data.solicitadoPorId },
-      select: { nombres: true, apellidos: true },
-    });
-    const nombreSolicitante = solicitante
-      ? `${solicitante.nombres} ${solicitante.apellidos}`.trim()
-      : 'Cobrador';
-
     await this.notificacionesService.notifyApprovers({
-      titulo: 'Nuevo Gasto Requiere Aprobación',
-      mensaje: `${nombreSolicitante} ha registrado un gasto por ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}.`,
+      titulo: 'Nuevo Gasto Personal Requiere Aprobación',
+      mensaje: `${nombreSolicitante} ha solicitado ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} como adelanto/gasto personal.`,
       tipo: 'GASTO',
       entidad: 'Aprobacion',
       entidadId: aprobacion.id,
@@ -308,6 +441,7 @@ export class AccountingService implements OnModuleInit {
         monto: data.monto,
         descripcion: data.descripcion,
         solicitadoPor: nombreSolicitante,
+        categoriaId: data.categoriaId,
       },
     });
 
@@ -315,7 +449,7 @@ export class AccountingService implements OnModuleInit {
       await this.notificacionesService.create({
         usuarioId: data.solicitadoPorId,
         titulo: 'Solicitud enviada',
-        mensaje: 'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
+        mensaje: 'Tu solicitud de gasto personal fue enviada con éxito (pendiente).',
         tipo: 'INFORMATIVO',
         entidad: 'Aprobacion',
         entidadId: aprobacion.id,
@@ -448,6 +582,12 @@ export class AccountingService implements OnModuleInit {
     userId: string,
   ) {
     try {
+      if (data.tipo === 'RUTA') {
+        throw new ForbiddenException(
+          'Las cajas de ruta se crean automáticamente al crear la ruta. Si falta, use la opción de reparar/asegurar la caja de la ruta.',
+        );
+      }
+
       // 1. Validar Usuario actual y Permisos
       const currentUser = await this.prisma.usuario.findUnique({
         where: { id: userId },
@@ -486,18 +626,8 @@ export class AccountingService implements OnModuleInit {
         );
       }
 
-      // 3. Si es tipo RUTA, validar que la ruta exista (si se envió rutaId)
-      // Se usa 'undefined' para asegurar que rutaId vacío sea ignorado en la consulta
+      // Se usa 'undefined' para asegurar que rutaId vacío sea ignorado
       const rutaIdSanitizado = data.rutaId ? data.rutaId : undefined;
-
-      if (data.tipo === 'RUTA' && rutaIdSanitizado) {
-        const ruta = await this.prisma.ruta.findUnique({
-          where: { id: rutaIdSanitizado },
-        });
-        if (!ruta) {
-          throw new BadRequestException('La ruta especificada no existe');
-        }
-      }
 
       // Generar código único basándose en el último creado
       const lastCaja = await this.prisma.caja.findFirst({
@@ -669,6 +799,15 @@ export class AccountingService implements OnModuleInit {
     if (cajaId) {
       where.cajaId = cajaId;
       if (tipo) where.tipo = tipo;
+    } else if (tipo === TipoTransaccion.INGRESO || tipo === TipoTransaccion.EGRESO) {
+      // Filtro global por tipo explícito (historial de ingresos/egresos del módulo contable)
+      where.tipo = tipo;
+      // Para ingresos globales, excluir transacciones internas que no son recaudo real
+      if (tipo === TipoTransaccion.INGRESO) {
+        where.NOT = {
+          tipoReferencia: { in: ['SOLICITUD_BASE', 'SOLICITUD_BASE_EFECTIVO', 'APERTURA_CAJA'] },
+        };
+      }
     } else {
       // Movimientos recientes (global): mostrar solo movimientos entre cajas.
       // Además, ocultar la "doble partida" de transferencias mostrando solo el lado TRX-IN.
@@ -676,17 +815,29 @@ export class AccountingService implements OnModuleInit {
       where.numeroTransaccion = { startsWith: 'TRX-IN' };
     }
     if (fechaInicio || fechaFin) {
-      where.fechaTransaccion = {};
-      if (fechaInicio) {
-        const start = new Date(fechaInicio.includes('T') ? fechaInicio : `${fechaInicio}T00:00:00`);
-        start.setHours(0, 0, 0, 0);
-        where.fechaTransaccion.gte = start;
-      }
-      if (fechaFin) {
-        const end = new Date(fechaFin.includes('T') ? fechaFin : `${fechaFin}T23:59:59.999`);
-        end.setHours(23, 59, 59, 999);
-        where.fechaTransaccion.lte = end;
-      }
+      const { startDate, endDate } = calculateDateRange(
+        'custom',
+        fechaInicio ? (fechaInicio.includes('T') ? fechaInicio.split('T')[0] : fechaInicio) : undefined,
+        fechaFin ? (fechaFin.includes('T') ? fechaFin.split('T')[0] : fechaFin) : undefined
+      );
+      where.fechaTransaccion = {
+        gte: startDate,
+        lte: endDate,
+      };
+    }
+
+    // Si el tipo es 'INGRESO', queremos incluir tanto INGRESOS reales como TRANSFERENCIAS TRX-IN
+    // que representan recolecciones de ruta (para que el listado coincida con el dashboard)
+    if (where.tipo === TipoTransaccion.INGRESO && !cajaId) {
+       delete where.tipo;
+       where.OR = [
+         { tipo: TipoTransaccion.INGRESO },
+         { tipo: TipoTransaccion.TRANSFERENCIA, numeroTransaccion: { startsWith: 'TRX-IN' } }
+       ];
+       // Seguir excluyendo bases si es ingreso global
+       where.NOT = {
+         tipoReferencia: { in: ['SOLICITUD_BASE', 'SOLICITUD_BASE_EFECTIVO', 'APERTURA_CAJA'] },
+       };
     }
 
     const [transacciones, total] = await Promise.all([
@@ -712,22 +863,7 @@ export class AccountingService implements OnModuleInit {
     ]);
 
     return {
-      data: transacciones.map((t) => ({
-        id: t.id,
-        numero: t.numeroTransaccion,
-        fecha: t.fechaTransaccion.toISOString(),
-        tipo: t.tipo,
-        monto: Number(t.monto),
-        descripcion: t.descripcion,
-        caja: t.caja.nombre,
-        cajaId: t.cajaId,
-        responsable: `${t.creadoPor.nombres} ${t.creadoPor.apellidos}`,
-        estado: 'APROBADO', // Todas las trx en DB están aprobadas
-        origen: t.caja.tipo === 'RUTA' ? 'COBRADOR' : 'EMPRESA',
-        categoria: t.tipoReferencia || 'GENERAL',
-        rutaId: t.caja.rutaId,
-        cajaSaldo: Number(t.caja.saldoActual),
-      })),
+      data: transacciones.map((t) => this.mapTransaccionRow(t)),
       meta: {
         total,
         page,
@@ -737,6 +873,33 @@ export class AccountingService implements OnModuleInit {
     };
     } catch (error) {
       this.logger.error(`Error fetching transacciones: ${error.message}`, error.stack);
+      throw error;
+    }
+  }
+
+  async getTransaccionById(id: string) {
+    try {
+      const t = await this.prisma.transaccion.findUnique({
+        where: { id },
+        include: {
+          caja: {
+            select: {
+              nombre: true,
+              codigo: true,
+              tipo: true,
+              rutaId: true,
+              saldoActual: true,
+            },
+          },
+          creadoPor: { select: { nombres: true, apellidos: true } },
+        },
+      });
+
+      if (!t) throw new NotFoundException('Transacción no encontrada');
+
+      return this.mapTransaccionRow(t);
+    } catch (error) {
+      this.logger.error(`Error fetching transaccion by id: ${error.message}`, error.stack);
       throw error;
     }
   }
@@ -754,16 +917,16 @@ export class AccountingService implements OnModuleInit {
     let rangeEnd: Date;
 
     if (fechaInicio && fechaFin) {
-      // Usar los rangos proporcionados, asegurando que cubran todo el día
-      // Agregamos la hora para que el constructor de Date lo trate como hora local del servidor
-      rangeStart = new Date(fechaInicio.includes('T') ? fechaInicio : `${fechaInicio}T00:00:00`);
-      rangeEnd = new Date(fechaFin.includes('T') ? fechaFin : `${fechaFin}T23:59:59.999`);
+      // Interpretar YYYY-MM-DD como día Colombia
+      const startKey = /^\d{4}-\d{2}-\d{2}$/.test(fechaInicio) ? fechaInicio : getBogotaDayKey(new Date(fechaInicio));
+      const endKey = /^\d{4}-\d{2}-\d{2}$/.test(fechaFin) ? fechaFin : getBogotaDayKey(new Date(fechaFin));
+      rangeStart = getBogotaStartEndOfDayFromKey(startKey).startDate;
+      rangeEnd = getBogotaStartEndOfDayFromKey(endKey).endDate;
     } else {
-      const baseDate = fecha ? new Date(fecha.includes('T') ? fecha : `${fecha}T00:00:00`) : new Date();
-      rangeStart = new Date(baseDate);
-      rangeStart.setHours(0, 0, 0, 0);
-      rangeEnd = new Date(baseDate);
-      rangeEnd.setHours(23, 59, 59, 999);
+      const key = fecha
+        ? (/^\d{4}-\d{2}-\d{2}$/.test(fecha) ? fecha : getBogotaDayKey(new Date(fecha)))
+        : getBogotaDayKey(new Date());
+      ({ startDate: rangeStart, endDate: rangeEnd } = getBogotaStartEndOfDayFromKey(key));
     }
 
     const caja = await this.prisma.caja.findFirst({
@@ -784,8 +947,8 @@ export class AccountingService implements OnModuleInit {
         baseEfectivo: 0,
         desembolsos: 0,
         saldoDisponible: 0,
-        fechaInicio: rangeStart.toISOString(),
-        fechaFin: rangeEnd.toISOString(),
+        fechaInicio: formatBogotaOffsetIso(rangeStart),
+        fechaFin: formatBogotaOffsetIso(rangeEnd),
       };
     }
 
@@ -807,12 +970,16 @@ export class AccountingService implements OnModuleInit {
     let desembolsos = 0;
     let otrosIngresos = 0;
     let otrosEgresos = 0;
+    const recaudosPorReferencia: Record<string, number> = {};
 
     transacciones.forEach((t) => {
       const monto = Number(t.monto);
       if (t.tipo === 'INGRESO') {
         if (t.tipoReferencia === 'PAGO') {
           cobranzaTrx += monto;
+          if (t.referenciaId) {
+            recaudosPorReferencia[t.referenciaId] = (recaudosPorReferencia[t.referenciaId] || 0) + monto;
+          }
         } else if (
           t.tipoReferencia === 'SOLICITUD_BASE_EFECTIVO' ||
           t.tipoReferencia === 'SOLICITUD_BASE' ||
@@ -825,6 +992,16 @@ export class AccountingService implements OnModuleInit {
           otrosIngresos += monto;
         }
       } else if (t.tipo === 'EGRESO') {
+        // Estos movimientos son eventos internos de control / contabilidad y no deben verse como "egresos" operativos
+        // en el rendimiento diario de la ruta.
+        if (
+          t.tipoReferencia === 'DEUDA_COBRADOR' ||
+          t.tipoReferencia === 'CIERRE_RUTA' ||
+          t.tipoReferencia === 'ACTIVACION_RUTA'
+        ) {
+          return;
+        }
+
         if (t.tipoReferencia === 'GASTO') {
           gastosOperativos += monto;
         } else if (
@@ -836,20 +1013,24 @@ export class AccountingService implements OnModuleInit {
         } else {
           otrosEgresos += monto;
         }
+      } else if (t.tipo === 'TRANSFERENCIA') {
+        // Las transferencias (TRX-IN/TRX-OUT) NO deben contarse como "gastos" del día.
+        // Son movimientos internos entre cajas y contablemente ya se reflejan en saldoActual.
+        return;
       }
     });
 
-    // 3. Fallback: Obtener pagos directamente de la tabla Pago si no hay transacciones de pago vinculadas
-    // Esto es útil para instalaciones donde la vinculación TRX <-> PAGO no esté activa o para auditoría.
+    // 3. Cobranza REAL del período: siempre desde la tabla Pago para incluir
+    // pagos por transferencia (CAJA-BANCO) y efectivo (caja ruta), sin doble conteo.
     let cobranzaPagos = 0;
-    if (cobranzaTrx === 0) {
-      const asignaciones = await this.prisma.asignacionRuta.findMany({
-        where: { rutaId, activa: true },
-        select: { clienteId: true },
-      });
-      const clienteIds = asignaciones.map((a) => a.clienteId);
+    const asignaciones = await this.prisma.asignacionRuta.findMany({
+      where: { rutaId, activa: true },
+      select: { clienteId: true },
+    });
+    const clienteIds = asignaciones.map((a) => a.clienteId);
 
-      const pagosAgg = await this.prisma.pago.aggregate({
+    if (clienteIds.length > 0) {
+      const pagosList = await this.prisma.pago.findMany({
         where: {
           clienteId: { in: clienteIds },
           fechaPago: {
@@ -857,36 +1038,37 @@ export class AccountingService implements OnModuleInit {
             lte: rangeEnd,
           },
         },
-        _sum: { montoTotal: true },
       });
-      cobranzaPagos = Number(pagosAgg._sum.montoTotal || 0);
+
+      pagosList.forEach((p) => {
+        const m = Number(p.montoTotal);
+        cobranzaPagos += m;
+        if (p.prestamoId) {
+          recaudosPorReferencia[p.prestamoId] = (recaudosPorReferencia[p.prestamoId] || 0) + m;
+        }
+      });
     }
 
-    // Decidimos qué usar para cobranza (preferimos transacciones si existen)
-    const totalCobranza = cobranzaTrx > 0 ? cobranzaTrx : cobranzaPagos;
-    
-    // El "Recaudo" total es lo que entró por cobranza y otros conceptos (NO incluye la base operativa)
-    const totalRecaudo = totalCobranza + otrosIngresos;
-    
-    // Los "Gastos" para el cobrador suelen ser los operativos
+    const totalCobranza = cobranzaPagos;
+    const totalRecaudoAll = totalCobranza + otrosIngresos;
     const totalGastos = gastosOperativos + otrosEgresos;
-
-    // Saldo disponible (Neto del período)
-    const saldoNetoPeriodo = totalRecaudo - totalGastos - desembolsos;
+    const saldoNetoPeriodo = totalRecaudoAll - totalGastos - desembolsos;
 
     return {
       rutaId,
       cajaId: caja.id,
-      fecha: rangeStart.toISOString(),
-      saldoDisponible: Number(caja.saldoActual), // Saldo real en libros actual
-      recaudoDelDia: totalRecaudo, 
+      fecha: formatBogotaOffsetIso(rangeStart),
+      saldoDisponible: Number(caja.saldoActual),
+      recaudoDelDia: totalCobranza, 
       cobranzaDelDia: totalCobranza,
+      recaudosPorReferencia,
       gastosDelDia: totalGastos,
-      baseEfectivo: baseEfectivo,
+      // Base efectivo es el saldo acumulado de la caja de ruta (no debe reiniciarse diario)
+      baseEfectivo: Number(caja.saldoActual),
       desembolsos: desembolsos,
       netoPeriodo: saldoNetoPeriodo,
-      fechaInicio: rangeStart.toISOString(),
-      fechaFin: rangeEnd.toISOString(),
+      fechaInicio: formatBogotaOffsetIso(rangeStart),
+      fechaFin: formatBogotaOffsetIso(rangeEnd),
       saldoCaja: Number(caja.saldoActual),
     };
   }
@@ -918,6 +1100,12 @@ export class AccountingService implements OnModuleInit {
         throw new BadRequestException(
           `Saldo insuficiente. Disponible: $${saldoInfo.saldoDisponible.toLocaleString()}, Recaudo del día: $${saldoInfo.recaudoDelDia.toLocaleString()}, Gastos del día: $${saldoInfo.gastosDelDia.toLocaleString()}`,
         );
+      }
+
+      // Regla de negocio: los egresos realizados por el cobrador en su ruta se consideran deuda del cobrador
+      // (cuenta por cobrar), por lo que no deben afectar la utilidad del negocio.
+      if (!data.tipoReferencia) {
+        data.tipoReferencia = 'DEUDA_COBRADOR';
       }
     }
 
@@ -1143,26 +1331,78 @@ export class AccountingService implements OnModuleInit {
 
 
   // =====================
+  // DESGLOSE CAJA (Efectivo vs Transferencia)
+  // =====================
+
+  /**
+   * Devuelve el desglose de pagos de una caja de ruta separando
+   * efectivo de transferencia para el cierre de caja del día.
+   * Consulta la tabla Pago directamente para obtener el metodoPago.
+   */
+  async getDesglosePagosCaja(cajaId: string, fecha?: string) {
+    const caja = await this.prisma.caja.findUnique({
+      where: { id: cajaId },
+      select: { rutaId: true, nombre: true, tipo: true },
+    });
+    if (!caja || !caja.rutaId) {
+      return { efectivo: 0, transferencia: 0, total: 0, fecha: null };
+    }
+
+    const baseDate = fecha ? new Date(fecha.includes('T') ? fecha : `${fecha}T00:00:00`) : new Date();
+    const fechaKey = getBogotaDayKey(baseDate);
+    const { startDate: rangeStart, endDate: rangeEnd } = getBogotaStartEndOfDayFromKey(fechaKey);
+
+    // Obtener los clienteIds asignados a esta ruta
+    const asignaciones = await this.prisma.asignacionRuta.findMany({
+      where: { rutaId: caja.rutaId, activa: true },
+      select: { clienteId: true },
+    });
+
+    if (asignaciones.length === 0) {
+      return { efectivo: 0, transferencia: 0, total: 0, fecha: formatBogotaOffsetIso(rangeStart) };
+    }
+
+    const clienteIds = asignaciones.map((a) => a.clienteId);
+
+    const pagos = await this.prisma.pago.findMany({
+      where: {
+        clienteId: { in: clienteIds },
+        fechaPago: { gte: rangeStart, lte: rangeEnd },
+      },
+      select: { montoTotal: true, metodoPago: true },
+    });
+
+    let efectivo = 0;
+    let transferencia = 0;
+
+    for (const p of pagos) {
+      const monto = Number(p.montoTotal || 0);
+      if (p.metodoPago === 'TRANSFERENCIA') {
+        transferencia += monto;
+      } else {
+        efectivo += monto;
+      }
+    }
+
+    return {
+      efectivo,
+      transferencia,
+      total: efectivo + transferencia,
+      fecha: formatBogotaOffsetIso(rangeStart),
+      cajaNombre: caja.nombre,
+    };
+  }
+
+  // =====================
   // RESUMEN FINANCIERO
   // =====================
 
   async getResumenFinanciero(fechaInicio?: string, fechaFin?: string) {
-    let rangeStart: Date;
-    let rangeEnd: Date;
-
-    if (fechaInicio && fechaFin) {
-      rangeStart = new Date(fechaInicio.includes('T') ? fechaInicio : `${fechaInicio}T00:00:00`);
-      rangeEnd = new Date(fechaFin.includes('T') ? fechaFin : `${fechaFin}T23:59:59.999`);
-    } else {
-      const hoy = new Date();
-      rangeStart = new Date(hoy);
-      rangeStart.setHours(0, 0, 0, 0);
-      rangeEnd = new Date(hoy);
-      rangeEnd.setHours(23, 59, 59, 999);
-    }
-
-    const inicioHoy = rangeStart;
-    const finHoy = rangeEnd;
+    const { startDate: inicioHoy, endDate: finHoy } = calculateDateRange(
+      'custom',
+      fechaInicio ? (fechaInicio.includes('T') ? fechaInicio.split('T')[0] : fechaInicio) : undefined,
+      fechaFin ? (fechaFin.includes('T') ? fechaFin.split('T')[0] : fechaFin) : undefined
+    );
 
     // Para "Ayer" o el período anterior, comparamos con un período de igual duración inmediatamente anterior
     const duration = finHoy.getTime() - inicioHoy.getTime();
@@ -1177,22 +1417,34 @@ export class AccountingService implements OnModuleInit {
       fechaTransaccion: { gte: inicioAnterior, lte: finAnterior },
     };
 
-    // Ingresos y egresos del día y de ayer (Incluyendo transferencias/consolidaciones)
+    // Ingresos y egresos del período y del período anterior
     const [
       ingresosHoy,
-      egresosHoy,
+      egresosOperativosHoy,
+      deudaCobradorHoyAgg,
+      cobranzaHoyAgg,
+      trasladosHoy,
+      cuotaInicialHoyAgg,
+      cuotasPagadasArticuloHoy,
       ingresosAyer,
-      egresosAyer,
+      egresosOperativosAyer,
+      deudaCobradorAyerAgg,
+      cobranzaAyerAgg,
+      trasladosAyer,
+      cuotaInicialAyerAgg,
+      cuotasPagadasArticuloAyer,
       totalCajas,
       prestamosActivos,
       totalRutasCount,
       rutasAbiertasCount,
       rutasPendientesConsolidacion,
       consolidacionesHoy,
+      interesHoyAgg,
     ] = await Promise.all([
       this.prisma.transaccion.aggregate({
         where: {
           ...whereHoy,
+          caja: { tipo: 'PRINCIPAL' },
           OR: [
             { tipo: 'INGRESO' },
             {
@@ -1204,6 +1456,7 @@ export class AccountingService implements OnModuleInit {
             OR: [
               { tipoReferencia: 'SOLICITUD_BASE' },
               { tipoReferencia: 'SOLICITUD_BASE_EFECTIVO' },
+              { tipoReferencia: 'CUOTA_INICIAL' },
             ],
           },
         },
@@ -1212,19 +1465,67 @@ export class AccountingService implements OnModuleInit {
       this.prisma.transaccion.aggregate({
         where: {
           ...whereHoy,
-          OR: [
-            { tipo: 'EGRESO' },
-            {
-              tipo: 'TRANSFERENCIA',
-              numeroTransaccion: { startsWith: 'TRX-OUT' },
-            },
-          ],
+          tipo: 'EGRESO',
+          NOT: {
+            tipoReferencia: 'DEUDA_COBRADOR',
+          },
         },
         _sum: { monto: true },
       }),
       this.prisma.transaccion.aggregate({
         where: {
+          ...whereHoy,
+          tipo: 'EGRESO',
+          tipoReferencia: 'DEUDA_COBRADOR',
+        },
+        _sum: { monto: true },
+      }),
+      this.prisma.transaccion.aggregate({
+        where: {
+          ...whereHoy,
+          tipo: 'INGRESO',
+          tipoReferencia: { in: ['PAGO', 'ABONO'] },
+        },
+        _sum: { monto: true },
+      }),
+      this.prisma.transaccion.aggregate({
+        where: {
+          ...whereHoy,
+          tipo: 'TRANSFERENCIA',
+          numeroTransaccion: { startsWith: 'TRX-OUT' },
+        },
+        _sum: { monto: true },
+      }),
+      this.prisma.transaccion.aggregate({
+        where: {
+          ...whereHoy,
+          tipo: 'INGRESO',
+          tipoReferencia: 'CUOTA_INICIAL',
+        },
+        _sum: { monto: true },
+      }),
+      this.prisma.cuota.findMany({
+        where: {
+          estado: 'PAGADA',
+          fechaPago: { gte: inicioHoy, lte: finHoy },
+          prestamo: {
+            tipoPrestamo: 'ARTICULO',
+            eliminadoEn: null,
+          },
+        },
+        select: {
+          prestamo: {
+            select: {
+              margenArticulo: true,
+              cantidadCuotas: true,
+            },
+          },
+        },
+      }),
+      this.prisma.transaccion.aggregate({
+        where: {
           ...whereAyer,
+          caja: { tipo: 'PRINCIPAL' },
           OR: [
             { tipo: 'INGRESO' },
             {
@@ -1236,6 +1537,7 @@ export class AccountingService implements OnModuleInit {
             OR: [
               { tipoReferencia: 'SOLICITUD_BASE' },
               { tipoReferencia: 'SOLICITUD_BASE_EFECTIVO' },
+              { tipoReferencia: 'CUOTA_INICIAL' },
             ],
           },
         },
@@ -1244,15 +1546,62 @@ export class AccountingService implements OnModuleInit {
       this.prisma.transaccion.aggregate({
         where: {
           ...whereAyer,
-          OR: [
-            { tipo: 'EGRESO' },
-            {
-              tipo: 'TRANSFERENCIA',
-              numeroTransaccion: { startsWith: 'TRX-OUT' },
-            },
-          ],
+          tipo: 'EGRESO',
+          NOT: {
+            tipoReferencia: 'DEUDA_COBRADOR',
+          },
         },
         _sum: { monto: true },
+      }),
+      this.prisma.transaccion.aggregate({
+        where: {
+          ...whereAyer,
+          tipo: 'EGRESO',
+          tipoReferencia: 'DEUDA_COBRADOR',
+        },
+        _sum: { monto: true },
+      }),
+      this.prisma.transaccion.aggregate({
+        where: {
+          ...whereAyer,
+          tipo: 'INGRESO',
+          tipoReferencia: { in: ['PAGO', 'ABONO'] },
+        },
+        _sum: { monto: true },
+      }),
+      this.prisma.transaccion.aggregate({
+        where: {
+          ...whereAyer,
+          tipo: 'TRANSFERENCIA',
+          numeroTransaccion: { startsWith: 'TRX-OUT' },
+        },
+        _sum: { monto: true },
+      }),
+      this.prisma.transaccion.aggregate({
+        where: {
+          ...whereAyer,
+          tipo: 'INGRESO',
+          tipoReferencia: 'CUOTA_INICIAL',
+        },
+        _sum: { monto: true },
+      }),
+      this.prisma.cuota.findMany({
+        where: {
+          estado: 'PAGADA',
+          fechaPago: { gte: inicioAnterior, lte: finAnterior },
+          prestamo: {
+            tipoPrestamo: 'ARTICULO',
+            eliminadoEn: null,
+          },
+        },
+        select: {
+          prestamo: {
+            select: {
+              margenArticulo: true,
+              cantidadCuotas: true,
+            },
+          },
+        },
       }),
       this.prisma.caja.aggregate({
         where: { activa: true },
@@ -1262,25 +1611,87 @@ export class AccountingService implements OnModuleInit {
         where: { estado: { in: ['ACTIVO', 'EN_MORA'] } },
         _sum: { monto: true },
       }),
-      this.prisma.caja.count({ where: { tipo: 'RUTA' } }),
+      // Total de rutas activas en el sistema
       this.prisma.caja.count({ where: { tipo: 'RUTA', activa: true } }),
+      // Rutas que AÚN NO han registrado cierre hoy (pendientes de cierre)
       this.prisma.caja.count({
-        where: { tipo: 'RUTA', saldoActual: { gt: 0 } },
-      }),
-      this.prisma.transaccion.count({
         where: {
-          ...whereHoy,
-          tipoReferencia: 'CONSOLIDACION',
-          tipo: 'TRANSFERENCIA',
-          caja: { tipo: 'RUTA' },
+          tipo: 'RUTA',
+          activa: true,
+          NOT: {
+            transacciones: {
+              some: {
+                tipoReferencia: 'CIERRE_RUTA',
+                fechaTransaccion: { gte: inicioHoy, lte: finHoy },
+              },
+            },
+          },
+        },
+      }),
+      // Rutas pendientes de consolidación (igual a las que no han cerrado hoy)
+      this.prisma.caja.count({
+        where: {
+          tipo: 'RUTA',
+          activa: true,
+          NOT: {
+            transacciones: {
+              some: {
+                tipoReferencia: 'CIERRE_RUTA',
+                fechaTransaccion: { gte: inicioHoy, lte: finHoy },
+              },
+            },
+          },
+        },
+      }),
+      // Rutas que SÍ cerraron hoy
+      this.prisma.caja.count({
+        where: {
+          tipo: 'RUTA',
+          activa: true,
+          transacciones: {
+            some: {
+              tipoReferencia: 'CIERRE_RUTA',
+              fechaTransaccion: { gte: inicioHoy, lte: finHoy },
+            },
+          },
+        },
+      }),
+      // Intereses de pagos registrados hoy
+      this.prisma.detallePago.aggregate({
+        where: {
+          creadoEn: { gte: inicioHoy, lte: finHoy },
+        },
+        _sum: {
+          montoInteres: true,
+          montoInteresMora: true,
         },
       }),
     ]);
 
     const ingresos = Number(ingresosHoy._sum.monto || 0);
-    const egresos = Number(egresosHoy._sum.monto || 0);
+    const egresosOperativos = Number(egresosOperativosHoy._sum.monto || 0);
+    const deudaCobrador = Number(deudaCobradorHoyAgg._sum.monto || 0);
+    const cobranza = Number(cobranzaHoyAgg._sum.monto || 0);
+    const traslados = Number(trasladosHoy._sum.monto || 0);
+    const cuotaInicialHoy = Number(cuotaInicialHoyAgg._sum.monto || 0);
+    const margenArticulosHoy = (cuotasPagadasArticuloHoy || []).reduce((acc: number, c: any) => {
+      const margenTotal = Number(c?.prestamo?.margenArticulo || 0);
+      const totalCuotas = Number(c?.prestamo?.cantidadCuotas || 0);
+      if (!totalCuotas) return acc;
+      return acc + (margenTotal / totalCuotas);
+    }, 0);
     const ingresosAyerVal = Number(ingresosAyer._sum.monto || 0);
-    const egresosAyerVal = Number(egresosAyer._sum.monto || 0);
+    const egresosAyerVal = Number(egresosOperativosAyer._sum.monto || 0);
+    const deudaCobradorAyerVal = Number(deudaCobradorAyerAgg._sum.monto || 0);
+    const cobranzaAyerVal = Number(cobranzaAyerAgg._sum.monto || 0);
+    const trasladosAyerVal = Number(trasladosAyer._sum.monto || 0);
+    const cuotaInicialAyerVal = Number(cuotaInicialAyerAgg._sum.monto || 0);
+    const margenArticulosAyerVal = (cuotasPagadasArticuloAyer || []).reduce((acc: number, c: any) => {
+      const margenTotal = Number(c?.prestamo?.margenArticulo || 0);
+      const totalCuotas = Number(c?.prestamo?.cantidadCuotas || 0);
+      if (!totalCuotas) return acc;
+      return acc + (margenTotal / totalCuotas);
+    }, 0);
 
     const calcularDiferencia = (actual: number, anterior: number) => {
       if (anterior === 0) return actual > 0 ? 100 : 0;
@@ -1292,17 +1703,33 @@ export class AccountingService implements OnModuleInit {
     const esUnSoloDia = duration < 24 * 60 * 60 * 1000; // Menos de 24 horas
     const usarComparacionAyer = esUnSoloDia;
 
+    // % de cierre = rutas que hicieron recolección hoy / total rutas activas
     const porcentajeCierres =
       totalRutasCount > 0
-        ? Math.round(
-            ((totalRutasCount - rutasAbiertasCount) / totalRutasCount) * 100,
-          )
+        ? Math.round((consolidacionesHoy / totalRutasCount) * 100)
         : 0;
+
+    const interesHoy = Number((interesHoyAgg as any)?._sum?.montoInteres || 0);
+    const moraHoy = Number((interesHoyAgg as any)?._sum?.montoInteresMora || 0);
 
     return {
       ingresosHoy: ingresos,
-      egresosHoy: egresos,
-      gananciaNeta: ingresos - egresos,
+      egresosHoy: egresosOperativos,
+      trasladosInternosHoy: traslados,
+      cuotaInicialHoy,
+      // Cobranza (PAGO/ABONO). Es el recaudo real del negocio.
+      cobranzaHoy: cobranza,
+      // Egresos de cobrador que se registran como cuenta por cobrar (no afectan utilidad)
+      deudaCobradorHoy: deudaCobrador,
+      // Margen de artículos (Modelo B): se reconoce proporcionalmente por cada cuota PAGADA dentro del período.
+      margenArticulosHoy,
+      // Utilidad financiera separada
+      interesHoy,
+      moraHoy,
+      // La utilidad real es (interés+mora) + margen artículos - egresos operativos
+      utilidadReal: (interesHoy + moraHoy + margenArticulosHoy) - egresosOperativos,
+      // La cuota inicial pertenece al Capital (Ingreso Bruto de Caja) y no a la Utilidad.
+      gananciaNeta: (interesHoy + moraHoy + margenArticulosHoy) - egresosOperativos,
       capitalEnCalle: Number(prestamosActivos._sum.monto || 0),
       saldoCajas: Number(totalCajas._sum.saldoActual || 0),
       cajasAbiertasCount: await this.prisma.caja.count({
@@ -1313,11 +1740,20 @@ export class AccountingService implements OnModuleInit {
       rutasPendientesConsolidacion: rutasPendientesConsolidacion,
       consolidacionesHoy: consolidacionesHoy,
       porcentajeCierre: porcentajeCierres,
-      fecha: inicioHoy.toISOString(),
+      fecha: formatBogotaOffsetIso(inicioHoy),
       porcentajeIngresosVsAyer: usarComparacionAyer ? calcularDiferencia(ingresos, ingresosAyerVal) : null,
-      porcentajeEgresosVsAyer: usarComparacionAyer ? calcularDiferencia(egresos, egresosAyerVal) : null,
+      porcentajeEgresosVsAyer: usarComparacionAyer ? calcularDiferencia(egresosOperativos, egresosAyerVal) : null,
+      porcentajeCobranzaVsAyer: usarComparacionAyer ? calcularDiferencia(cobranza, cobranzaAyerVal) : null,
+      porcentajeDeudaCobradorVsAyer: usarComparacionAyer ? calcularDiferencia(deudaCobrador, deudaCobradorAyerVal) : null,
+      porcentajeMargenArticulosVsAyer: usarComparacionAyer ? calcularDiferencia(margenArticulosHoy, margenArticulosAyerVal) : null,
+      porcentajeTrasladosVsAyer: usarComparacionAyer ? calcularDiferencia(traslados, trasladosAyerVal) : null,
+      porcentajeCuotaInicialVsAyer: usarComparacionAyer ? calcularDiferencia(cuotaInicialHoy, cuotaInicialAyerVal) : null,
       esIngresoPositivo: usarComparacionAyer ? ingresos >= ingresosAyerVal : true,
-      esEgresoPositivo: usarComparacionAyer ? egresos <= egresosAyerVal : true,
+      esEgresoPositivo: usarComparacionAyer ? egresosOperativos <= egresosAyerVal : true,
+      esCobranzaPositivo: usarComparacionAyer ? cobranza >= cobranzaAyerVal : true,
+      esDeudaCobradorPositivo: usarComparacionAyer ? deudaCobrador <= deudaCobradorAyerVal : true,
+      esMargenArticulosPositivo: usarComparacionAyer ? margenArticulosHoy >= margenArticulosAyerVal : true,
+      esTrasladoPositivo: usarComparacionAyer ? traslados <= trasladosAyerVal : true,
     };
   }
 
@@ -1339,6 +1775,7 @@ export class AccountingService implements OnModuleInit {
     if (!tipo || tipo === undefined) {
       or.push({ tipoReferencia: 'CONSOLIDACION', tipo: 'TRANSFERENCIA' });
       or.push({ tipoReferencia: 'ARQUEO' });
+      or.push({ tipoReferencia: 'CIERRE_RUTA' });
     } else if (tipo === 'CONSOLIDACION') {
       or.push({ tipoReferencia: 'CONSOLIDACION', tipo: 'TRANSFERENCIA' });
     } else if (tipo === 'ARQUEO') {
@@ -1382,7 +1819,7 @@ export class AccountingService implements OnModuleInit {
         }
         return {
           id: t.id,
-          fecha: t.fechaTransaccion.toISOString(),
+          fecha: formatBogotaOffsetIso(t.fechaTransaccion),
           caja: t.caja.nombre,
           responsable: `${t.creadoPor.nombres} ${t.creadoPor.apellidos}`,
           saldoSistema,
@@ -1395,9 +1832,57 @@ export class AccountingService implements OnModuleInit {
           cajaId: t.cajaId,
         };
       }
+      if (t.tipoReferencia === 'CIERRE_RUTA') {
+        // referenciaId: "RC:<recaudo>|MT:<meta>|EF:<efectividad>|CF:<clientesFaltantes>|CO:<cobrador>|SD:<saldoCierre>"
+        let recaudo = Number(t.monto);
+        let meta = 0;
+        let efectividad = 0;
+        let clientesFaltantes = 0;
+        let saldoAlCierre = 0;
+        let cobradorNombre = t.creadoPor ? `${t.creadoPor.nombres} ${t.creadoPor.apellidos}` : 'Sistema';
+        try {
+          const parts = (t.referenciaId || '').split('|');
+          for (const p of parts) {
+            const idx = p.indexOf(':');
+            const k = p.slice(0, idx);
+            const v = p.slice(idx + 1);
+            if (k === 'RC') recaudo = Number(v);
+            if (k === 'MT') meta = Number(v);
+            if (k === 'EF') efectividad = Number(v);
+            if (k === 'CF') clientesFaltantes = Number(v);
+            if (k === 'SD') saldoAlCierre = Number(v);
+            if (k === 'CO') cobradorNombre = v;
+          }
+        } catch (_) { void 0; }
+        const deudaPorFaltantes = clientesFaltantes > 0
+          ? Math.max(Number(meta || 0) - Number(recaudo || 0), 0)
+          : 0;
+        // Regla de negocio: saldoAlCierre (efectivo pendiente por recolectar) no es descuadre.
+        // Solo se considera descuadre cuando faltaron clientes/efectivo vs meta.
+        const descuadre = deudaPorFaltantes > 0;
+        return {
+          id: t.id,
+          fecha: formatBogotaOffsetIso(t.fechaTransaccion),
+          caja: t.caja.nombre,
+          cajaTipo: t.caja.tipo,
+          responsable: cobradorNombre,
+          saldoSistema: meta,
+          saldoReal: recaudo,
+          deudaFisica: saldoAlCierre,
+          diferencia: recaudo - meta,
+          estado: descuadre ? 'DESCUADRADA' : 'CUADRADA',
+          descripcion: t.descripcion,
+          tipo: 'CIERRE_RUTA',
+          efectividad,
+          clientesFaltantes,
+          referenciaId: t.referenciaId,
+          cajaId: t.cajaId,
+        };
+      }
       return {
+
         id: t.id,
-        fecha: t.fechaTransaccion.toISOString(),
+        fecha: formatBogotaOffsetIso(t.fechaTransaccion),
         caja: t.caja.nombre,
         responsable: `${t.creadoPor.nombres} ${t.creadoPor.apellidos}`,
         saldoSistema: Number(t.monto),
@@ -1500,14 +1985,12 @@ export class AccountingService implements OnModuleInit {
     if (fechaInicio || fechaFin) {
       where.fechaGasto = {};
       if (fechaInicio) {
-        const start = new Date(fechaInicio);
-        start.setHours(0, 0, 0, 0);
-        where.fechaGasto.gte = start;
+        const startKey = getBogotaDayKey(new Date(fechaInicio));
+        where.fechaGasto.gte = getBogotaStartEndOfDayFromKey(startKey).startDate;
       }
       if (fechaFin) {
-        const end = new Date(fechaFin);
-        end.setHours(23, 59, 59, 999);
-        where.fechaGasto.lte = end;
+        const endKey = getBogotaDayKey(new Date(fechaFin));
+        where.fechaGasto.lte = getBogotaStartEndOfDayFromKey(endKey).endDate;
       }
     }
 
@@ -1530,7 +2013,7 @@ export class AccountingService implements OnModuleInit {
       data: gastos.map((g) => ({
         id: g.id,
         numero: g.numeroGasto,
-        fecha: g.fechaGasto.toISOString(),
+        fecha: formatBogotaOffsetIso(g.fechaGasto),
         tipo: g.tipoGasto,
         monto: Number(g.monto),
         descripcion: g.descripcion,
@@ -1566,7 +2049,7 @@ export class AccountingService implements OnModuleInit {
       }),
     ]);
 
-    const fecha = new Date().toISOString().split('T')[0];
+    const fecha = getBogotaDayKey(new Date());
 
     // 2. Mapeo al tipo del template
     const filasCjas: CajaRow[] = cajas.map((c: any) => ({
@@ -1593,5 +2076,362 @@ export class AccountingService implements OnModuleInit {
 
     throw new Error(`Formato no soportado: ${format}`);
   }
+
+  /**
+   * =====================================================
+   * DEUDAS DE COBRADORES
+   * =====================================================
+   * Consolida las deudas de cada cobrador a nivel de persona,
+   * no de caja. Las fuentes son:
+   *   1. Gastos con tipoGasto = 'PERSONAL' aprobados (adelantos de nómina).
+   *   2. Diferencias negativas en arqueos (diferencia < 0 = cobrador debe plata).
+   * =====================================================
+   */
+  async getDeudoresCobrador() {
+    // 1. Traemos todos los gastos que hayan sido designados como deuda/personal si existe una forma, por ahora usamos 'OTRO' o simplemente los omitimos para no cobrar gastos operativos.
+    // Usaremos TipoGasto 'OTRO' como convención para gastos personales cargables al cobrador si es necesario, o transacciones con DEUDA_COBRADOR.
+    // Por seguridad, solo sumamos los descuadres de ARQUEO para evitar cobrarles gasolina/operación si no tenemos la distinción clara.
+    const gastosPersonales = await this.prisma.gasto.groupBy({
+      by: ['cobradorId'],
+      where: {
+        tipoGasto: { in: ['OTRO'] }, 
+        estadoAprobacion: 'APROBADO',
+      },
+      _sum: { monto: true },
+      _count: { id: true },
+    });
+
+    // 2. Traemos egresos que representan deuda del cobrador (arqueos negativos y deudas explícitas)
+    const arqueos = await this.prisma.transaccion.findMany({
+      where: {
+        tipo: 'EGRESO',
+        OR: [
+          { tipoReferencia: 'ARQUEO' },
+          { tipoReferencia: 'DEUDA_COBRADOR' },
+        ],
+      },
+      select: {
+        id: true,
+        creadoEn: true,
+        monto: true,
+        cajaId: true,
+        tipoReferencia: true,
+        referenciaId: true,
+        descripcion: true,
+        caja: {
+          select: {
+            rutaId: true,
+            ruta: { select: { cobradorId: true } },
+          },
+        },
+      },
+    });
+
+    // 2.5 Traemos los abonos ya registrados para descontarlos de la deuda
+    const abonos = await this.prisma.transaccion.groupBy({
+      by: ['referenciaId'],
+      where: {
+        tipoReferencia: 'ABONO_DEUDA',
+        tipo: 'INGRESO',
+      },
+      _sum: { monto: true },
+    });
+    const abonosMap = new Map<string, number>();
+    for (const a of abonos) {
+      if (!a.referenciaId) continue;
+      const refCobradorId = a.referenciaId.split('|')[0];
+      const actual = abonosMap.get(refCobradorId) || 0;
+      abonosMap.set(refCobradorId, actual + Number(a._sum.monto || 0));
+    }
+
+    // 3. Traemos los cobradores implicados
+    const cobradorIds = [
+      ...new Set([
+        ...gastosPersonales.map(g => g.cobradorId),
+        ...arqueos.map(a => a.caja?.ruta?.cobradorId).filter(Boolean) as string[],
+        ...abonos.map(a => a.referenciaId ? a.referenciaId.split('|')[0] : null).filter(Boolean) as string[],
+      ])
+    ];
+
+    if (cobradorIds.length === 0) return [];
+
+    const cobradores = await this.prisma.usuario.findMany({
+      where: { id: { in: cobradorIds } },
+      select: { id: true, nombres: true, apellidos: true, rol: true },
+    });
+    const cobradorMap = new Map<string, { id: string; nombres: string; apellidos: string; rol: string }>(
+      cobradores.map(c => [c.id, c as { id: string; nombres: string; apellidos: string; rol: string }])
+    );
+
+    // 4. Consolidar deudas por cobrador
+    const deudaMap = new Map<string, { gastosPersonales: number; descuadres: number; totalEventos: number }>();
+    const eventosMap = new Map<
+      string,
+      Array<{ id: string; tipoReferencia: string; monto: number; fecha: Date; cajaId: string; referenciaId?: string; descripcion?: string }>
+    >();
+
+    for (const g of gastosPersonales) {
+      const prev = deudaMap.get(g.cobradorId) || { gastosPersonales: 0, descuadres: 0, totalEventos: 0 };
+      deudaMap.set(g.cobradorId, {
+        ...prev,
+        gastosPersonales: prev.gastosPersonales + Number(g._sum.monto || 0),
+        totalEventos: prev.totalEventos + (g._count.id || 0),
+      });
+    }
+
+    for (const arqueo of arqueos) {
+      const cobradorId = arqueo.caja?.ruta?.cobradorId;
+      if (!cobradorId) continue;
+
+      // Evitar falsos positivos:
+      // 1) DEUDA_COBRADOR generada por cierres de ruta antiguos (basados en saldo retenido)
+      //    suele venir con metadata SD:... y FD:0 o sin FD. Eso NO debe contarse.
+      if (arqueo.tipoReferencia === 'DEUDA_COBRADOR' && typeof arqueo.referenciaId === 'string') {
+        const ref = arqueo.referenciaId
+        const tieneSaldoAlCierre = /\bSD:(\d+(?:\.\d+)?)\b/i.test(ref)
+        const matchFD = ref.match(/\bFD:(\d+(?:\.\d+)?)\b/i)
+        const fd = matchFD ? Number(matchFD[1] || 0) : null
+
+        if (tieneSaldoAlCierre && (fd == null || fd === 0)) {
+          continue
+        }
+      }
+
+      // 2) ARQUEO: solo debe generar deuda si la diferencia fue negativa (faltó efectivo).
+      //    Si no podemos detectar la diferencia, no lo contamos para no crear deudas falsas.
+      if (arqueo.tipoReferencia === 'ARQUEO' && typeof arqueo.referenciaId === 'string') {
+        const ref = arqueo.referenciaId
+        const matchDif = ref.match(/\bDIF:([\-\d.]+)\b/i)
+        if (!matchDif) {
+          continue
+        }
+        const dif = Number(matchDif[1])
+        // Si DIF >= 0 no hay deuda del cobrador
+        if (!(dif < 0)) {
+          continue
+        }
+      }
+
+      const diferencia = Number(arqueo.monto || 0); // EGRESO significa dinero no devuelto
+      const prev = deudaMap.get(cobradorId) || { gastosPersonales: 0, descuadres: 0, totalEventos: 0 };
+      deudaMap.set(cobradorId, {
+        ...prev,
+        descuadres: prev.descuadres + diferencia,
+        totalEventos: prev.totalEventos + 1,
+      });
+
+      const arr = eventosMap.get(cobradorId) || [];
+      arr.push({
+        id: String((arqueo as any).id),
+        tipoReferencia: String(arqueo.tipoReferencia || ''),
+        monto: Number(arqueo.monto || 0),
+        fecha: (arqueo as any).creadoEn as Date,
+        cajaId: String(arqueo.cajaId || ''),
+        referenciaId: (arqueo as any).referenciaId ?? undefined,
+        descripcion: (arqueo as any).descripcion ?? undefined,
+      });
+      eventosMap.set(cobradorId, arr);
+    }
+
+    // 5. Construir respuesta final restando abonos
+    return Array.from(deudaMap.entries())
+      .map(([cobradorId, deuda]) => {
+        const cobrador = cobradorMap.get(cobradorId);
+        const abonosRealizados = abonosMap.get(cobradorId) || 0;
+
+        // Aplicar abonos al desglose para que los subtotales concuerden con el total.
+        // Prioridad: descuadres (faltantes de ruta) -> gastos personales.
+        const abonoUsadoEnDescuadres = Math.min(Number(deuda.descuadres || 0), Number(abonosRealizados || 0));
+        const descuadresPendiente = Math.max(0, Number(deuda.descuadres || 0) - abonoUsadoEnDescuadres);
+        const abonoRestante = Math.max(0, Number(abonosRealizados || 0) - abonoUsadoEnDescuadres);
+        const abonoUsadoEnGastos = Math.min(Number(deuda.gastosPersonales || 0), abonoRestante);
+        const gastosPendiente = Math.max(0, Number(deuda.gastosPersonales || 0) - abonoUsadoEnGastos);
+
+        const totalDeudaRealRaw = descuadresPendiente + gastosPendiente;
+        // Los valores del módulo contable se manejan en pesos (enteros). Redondear evita
+        // que residuos decimales (p.ej. 0.02) aparezcan como "$0" pero cuenten como deuda.
+        const totalDeudaReal = Math.max(0, Math.round(Number(totalDeudaRealRaw || 0)));
+        
+        return {
+          cobradorId,
+          nombreCobrador: cobrador ? `${cobrador.nombres} ${cobrador.apellidos}` : 'Desconocido',
+          rol: cobrador?.rol || 'COBRADOR',
+          totalDeuda: totalDeudaReal,
+          gastosPersonales: Math.max(0, Math.round(Number(gastosPendiente || 0))),
+          descuadres: Math.max(0, Math.round(Number(descuadresPendiente || 0))),
+          totalEventos: deuda.totalEventos,
+          eventos: (eventosMap.get(cobradorId) || []).slice(0, 25),
+        };
+      })
+      .filter(d => Number(d.totalDeuda || 0) > 0)
+      .sort((a, b) => b.totalDeuda - a.totalDeuda);
+  }
+
+  /**
+   * =====================================================
+   * REGISTRAR ABONO (PAGO FÍSICO DE DEUDA DE COBRADOR)
+   * =====================================================
+   */
+  async registrarAbonoDeuda(
+    cobradorId: string,
+    monto: number,
+    nota: string,
+    userId: string,
+    cajaIdDestino?: string,
+  ) {
+    const cobrador = await this.prisma.usuario.findUnique({ where: { id: cobradorId } });
+    if (!cobrador) throw new NotFoundException('Cobrador no encontrado');
+
+    const montoClean = Number(monto || 0);
+    if (!(montoClean > 0)) throw new BadRequestException('Monto inválido');
+
+    // 1. Resolver caja destino (por defecto Caja Principal)
+    let cajaDestino = null as any
+    if (cajaIdDestino) {
+      cajaDestino = await this.prisma.caja.findUnique({ where: { id: cajaIdDestino } })
+      if (!cajaDestino) throw new NotFoundException('Caja destino no encontrada')
+    } else {
+      cajaDestino = await this.prisma.caja.findFirst({
+        where: { codigo: 'CAJA-OFICINA' },
+      })
+      if (!cajaDestino) {
+        cajaDestino = await this.prisma.caja.findFirst({
+          where: { codigo: 'CAJA-PRINCIPAL' },
+        })
+      }
+      if (!cajaDestino) throw new Error('No existe Caja Oficina/Caja Principal para registrar el ingreso')
+    }
+
+    // 2. Crear la transacción INGRESO
+    return this.createTransaccion({
+      cajaId: cajaDestino.id,
+      tipo: TipoTransaccion.INGRESO,
+      monto: montoClean,
+      descripcion: `Abono de deuda pendiente - Cobrador: ${cobrador.nombres} ${cobrador.apellidos}${nota ? ' - ' + nota : ''}`,
+      creadoPorId: userId,
+      tipoReferencia: 'ABONO_DEUDA',
+      referenciaId: `${cobradorId}|${cobrador.nombres} ${cobrador.apellidos}`, // Guardamos ID y Nombre para facilitar auditoría
+    });
+  }
+
+  async repararCajaOficinaIngresosMalAsignados(params?: { dryRun?: boolean }) {
+    const dryRun = Boolean(params?.dryRun);
+
+    const cajaOficina = await this.prisma.caja.findFirst({
+      where: { activa: true, codigo: 'CAJA-OFICINA' },
+      select: { id: true, codigo: true },
+    });
+    if (!cajaOficina) throw new NotFoundException('Caja Oficina no encontrada');
+
+    const cajasOrigen = await this.prisma.caja.findMany({
+      where: {
+        activa: true,
+        codigo: { in: ['CAJA-PRINCIPAL', 'CAJA-BANCO'] },
+      },
+      select: { id: true, codigo: true },
+    });
+
+    const cajasOrigenIds = cajasOrigen.map((c) => c.id);
+    if (!cajasOrigenIds.length) {
+      return {
+        dryRun,
+        cajaOficinaId: cajaOficina.id,
+        movimientosEncontrados: 0,
+        movimientosMovidos: 0,
+        deltaPorCaja: {},
+      };
+    }
+
+    const refs = ['CUOTA_INICIAL', 'ABONO_DEUDA'] as const;
+
+    const transacciones = await this.prisma.transaccion.findMany({
+      where: {
+        cajaId: { in: cajasOrigenIds },
+        tipoReferencia: { in: refs as unknown as string[] },
+      },
+      select: {
+        id: true,
+        cajaId: true,
+        tipo: true,
+        monto: true,
+        tipoReferencia: true,
+      },
+      orderBy: { fechaTransaccion: 'asc' },
+    });
+
+    const deltaPorCaja: Record<string, Prisma.Decimal> = {};
+    const deltaOficina = new Prisma.Decimal(0);
+    let deltaOficinaAcc = deltaOficina;
+
+    for (const t of transacciones) {
+      const monto = new Prisma.Decimal(t.monto as any);
+      const tipo = String(t.tipo || '').toUpperCase();
+
+      let deltaOrigen = new Prisma.Decimal(0);
+      let deltaDestino = new Prisma.Decimal(0);
+
+      if (tipo === 'INGRESO') {
+        deltaOrigen = monto.mul(-1);
+        deltaDestino = monto;
+      } else if (tipo === 'EGRESO') {
+        deltaOrigen = monto;
+        deltaDestino = monto.mul(-1);
+      } else {
+        continue;
+      }
+
+      deltaPorCaja[t.cajaId] = (deltaPorCaja[t.cajaId] || new Prisma.Decimal(0)).add(deltaOrigen);
+      deltaOficinaAcc = deltaOficinaAcc.add(deltaDestino);
+    }
+
+    deltaPorCaja[cajaOficina.id] = (deltaPorCaja[cajaOficina.id] || new Prisma.Decimal(0)).add(deltaOficinaAcc);
+
+    if (dryRun) {
+      return {
+        dryRun,
+        cajaOficinaId: cajaOficina.id,
+        movimientosEncontrados: transacciones.length,
+        movimientosMovidos: 0,
+        deltaPorCaja: Object.fromEntries(
+          Object.entries(deltaPorCaja).map(([k, v]) => [k, v.toNumber()]),
+        ),
+        transaccionesIds: transacciones.map((t) => t.id),
+      };
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.transaccion.updateMany({
+        where: {
+          cajaId: { in: cajasOrigenIds },
+          tipoReferencia: { in: refs as unknown as string[] },
+        },
+        data: { cajaId: cajaOficina.id },
+      });
+
+      for (const [cajaId, delta] of Object.entries(deltaPorCaja)) {
+        if (delta.isZero()) continue;
+        await tx.caja.update({
+          where: { id: cajaId },
+          data: {
+            saldoActual: {
+              increment: delta,
+            },
+          },
+        });
+      }
+    });
+
+    return {
+      dryRun,
+      cajaOficinaId: cajaOficina.id,
+      movimientosEncontrados: transacciones.length,
+      movimientosMovidos: transacciones.length,
+      deltaPorCaja: Object.fromEntries(
+        Object.entries(deltaPorCaja).map(([k, v]) => [k, v.toNumber()]),
+      ),
+    };
+  }
 }
+
+
 

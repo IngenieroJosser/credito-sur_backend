@@ -4,6 +4,11 @@
  */
 import { FrecuenciaPago } from '@prisma/client';
 
+function trunc2(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  return Math.trunc(n * 100) / 100;
+}
+
 // ── Tipos ──────────────────────────────────────────────────────────────────────
 
 export interface FilaAmortizacion {
@@ -61,14 +66,14 @@ export function calcularAmortizacionFrancesa(
   if (tasaPeriodo === 0) {
     const cuotaFija = capital / numCuotas;
     return {
-      cuotaFija: Math.round(cuotaFija * 100) / 100,
+      cuotaFija: trunc2(cuotaFija),
       interesTotal: 0,
       tabla: Array.from({ length: numCuotas }, (_, i) => ({
         numeroCuota: i + 1,
-        montoCapital: Math.round((capital / numCuotas) * 100) / 100,
+        montoCapital: trunc2((capital / numCuotas)),
         montoInteres: 0,
-        monto: Math.round(cuotaFija * 100) / 100,
-        saldoRestante: Math.round((capital - (capital / numCuotas) * (i + 1)) * 100) / 100,
+        monto: trunc2(cuotaFija),
+        saldoRestante: trunc2((capital - (capital / numCuotas) * (i + 1))),
       })),
     };
   }
@@ -88,16 +93,16 @@ export function calcularAmortizacionFrancesa(
     interesTotalAcumulado += interesPeriodo;
     tabla.push({
       numeroCuota: i + 1,
-      montoCapital: Math.round(capitalPeriodo * 100) / 100,
-      montoInteres: Math.round(interesPeriodo * 100) / 100,
-      monto: Math.round((capitalPeriodo + interesPeriodo) * 100) / 100,
-      saldoRestante: Math.round(saldo * 100) / 100,
+      montoCapital: trunc2(capitalPeriodo),
+      montoInteres: trunc2(interesPeriodo),
+      monto: trunc2((capitalPeriodo + interesPeriodo)),
+      saldoRestante: trunc2(saldo),
     });
   }
 
   return {
-    cuotaFija: Math.round(cuotaFija * 100) / 100,
-    interesTotal: Math.round(interesTotalAcumulado * 100) / 100,
+    cuotaFija: trunc2(cuotaFija),
+    interesTotal: trunc2(interesTotalAcumulado),
     tabla,
   };
 }
@@ -127,21 +132,21 @@ export function calcularInteresSimple(
   const tabla: FilaAmortizacion[] = [];
 
   for (let i = 0; i < numCuotas; i++) {
-    const montoInteres = Math.round(interesPorCuota * 100) / 100;
-    const montoCapital = Math.round(capitalPorCuota * 100) / 100;
+    const montoInteres = trunc2(interesPorCuota);
+    const montoCapital = trunc2(capitalPorCuota);
     saldo = Math.max(0, saldo - montoCapital);
     tabla.push({
       numeroCuota: i + 1,
       montoCapital,
       montoInteres,
-      monto: Math.round(cuotaFija * 100) / 100,
-      saldoRestante: Math.round(saldo * 100) / 100,
+      monto: trunc2(cuotaFija),
+      saldoRestante: trunc2(saldo),
     });
   }
 
   return {
-    cuotaFija: Math.round(cuotaFija * 100) / 100,
-    interesTotal: Math.round(interesPorCuota * numCuotas * 100) / 100,
+    cuotaFija: trunc2(cuotaFija),
+    interesTotal: trunc2(interesPorCuota * numCuotas),
     tabla,
   };
 }

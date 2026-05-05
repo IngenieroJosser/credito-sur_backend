@@ -83,6 +83,7 @@ export class ClientsService {
       accion: 'CREAR',
       clienteId: cliente.id,
     });
+    this.notificacionesGateway.broadcastDashboardsActualizados({ accion: 'CREAR_CLIENTE' });
 
     return cliente;
   }
@@ -490,6 +491,10 @@ export class ClientsService {
             correo: cliente.correo,
             direccion: cliente.direccion,
             referencia: cliente.referencia,
+            referencia1Nombre: cliente.referencia1Nombre,
+            referencia1Telefono: cliente.referencia1Telefono,
+            referencia2Nombre: cliente.referencia2Nombre,
+            referencia2Telefono: cliente.referencia2Telefono,
             nivelRiesgo: cliente.nivelRiesgo,
             puntaje: cliente.puntaje,
             enListaNegra: cliente.enListaNegra,
@@ -515,6 +520,10 @@ export class ClientsService {
             correo: cliente.correo || '',
             direccion: cliente.direccion || '',
             referencia: cliente.referencia || '',
+            referencia1Nombre: cliente.referencia1Nombre || '',
+            referencia1Telefono: cliente.referencia1Telefono || '',
+            referencia2Nombre: cliente.referencia2Nombre || '',
+            referencia2Telefono: cliente.referencia2Telefono || '',
             nivelRiesgo: cliente.nivelRiesgo || 'VERDE',
             puntaje: cliente.puntaje || 50,
             enListaNegra: cliente.enListaNegra || false,
@@ -544,6 +553,10 @@ export class ClientsService {
           correo: datos.correo || '',
           direccion: datos.direccion || '',
           referencia: datos.referencia || '',
+          referencia1Nombre: datos.referencia1Nombre || '',
+          referencia1Telefono: datos.referencia1Telefono || '',
+          referencia2Nombre: datos.referencia2Nombre || '',
+          referencia2Telefono: datos.referencia2Telefono || '',
           nivelRiesgo: 'VERDE',
           puntaje: 100,
           enListaNegra: false,
@@ -768,6 +781,10 @@ export class ClientsService {
               correo: data.correo,
               direccion: data.direccion,
               referencia: data.referencia,
+              referencia1Nombre: data.referencia1Nombre,
+              referencia1Telefono: data.referencia1Telefono,
+              referencia2Nombre: data.referencia2Nombre,
+              referencia2Telefono: data.referencia2Telefono,
               creadoPorId: solicitadoPorId,
             },
           });
@@ -826,6 +843,10 @@ export class ClientsService {
                 correo: data.correo,
                 direccion: data.direccion,
                 referencia: data.referencia,
+                referencia1Nombre: data.referencia1Nombre,
+                referencia1Telefono: data.referencia1Telefono,
+                referencia2Nombre: data.referencia2Nombre,
+                referencia2Telefono: data.referencia2Telefono,
                 archivos: data.archivos || [],
               }),
               ...(autoAprobar ? { aprobadoPorId: solicitadoPorId, revisadoEn: new Date() } : {}),
@@ -934,6 +955,10 @@ export class ClientsService {
           correo: data.correo,
           direccion: data.direccion,
           referencia: data.referencia,
+          referencia1Nombre: data.referencia1Nombre,
+          referencia1Telefono: data.referencia1Telefono,
+          referencia2Nombre: data.referencia2Nombre,
+          referencia2Telefono: data.referencia2Telefono,
           creadoPorId: solicitadoPorId,
           estadoAprobacion: estadoInicial,
           nivelRiesgo: 'VERDE',
@@ -986,6 +1011,10 @@ export class ClientsService {
             correo: data.correo,
             direccion: data.direccion,
             referencia: data.referencia,
+            referencia1Nombre: data.referencia1Nombre,
+            referencia1Telefono: data.referencia1Telefono,
+            referencia2Nombre: data.referencia2Nombre,
+            referencia2Telefono: data.referencia2Telefono,
             archivos: data.archivos || [],
           }),
           ...(autoAprobar ? { aprobadoPorId: solicitadoPorId, revisadoEn: new Date() } : {})
@@ -1047,6 +1076,7 @@ export class ClientsService {
         accion: 'CREAR',
         clienteId: cliente.id,
       });
+      this.notificacionesGateway.broadcastDashboardsActualizados({ accion: 'CREAR_CLIENTE' });
 
       this.logger.log(`[DEBUG] Cliente creado con estado ${estadoInicial} (ID: ${cliente.id}) y aprobación creada (ID: ${aprobacion.id}).`);
       return {
@@ -1064,7 +1094,14 @@ export class ClientsService {
 
         // Unique constraint (e.g. dni/codigo)
         if (error.code === 'P2002') {
-          throw new ConflictException('Ya existe un cliente con esos datos.');
+          const target = (error.meta?.target as string[]) || [];
+          if (target.includes('dni')) {
+            throw new ConflictException(`Ya existe un cliente registrado con el documento: ${data.dni}.`);
+          }
+          if (target.includes('codigo')) {
+             throw new ConflictException(`Ya existe un cliente con el código generado automáticamente. Por favor reintente registrarlo.`);
+          }
+          throw new ConflictException('Ya existe un cliente con esos datos (DNI o Código duplicado).');
         }
 
         // FK constraint (e.g. creadoPorId/aprobadoPorId/subidoPorId)
@@ -1270,6 +1307,10 @@ export class ClientsService {
       correo?: string;
       direccion?: string;
       referencia?: string;
+      referencia1Nombre?: string;
+      referencia1Telefono?: string;
+      referencia2Nombre?: string;
+      referencia2Telefono?: string;
       nivelRiesgo?: NivelRiesgo;
       puntaje?: number;
       archivos?: any[];

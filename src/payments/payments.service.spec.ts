@@ -15,6 +15,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+import { CloudinaryService } from '../upload/cloudinary.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { EstadoCuota, EstadoPrestamo, MetodoPago } from '@prisma/client';
 
@@ -106,7 +107,7 @@ function buildMockPrisma(overrides: Record<string, unknown> = {}) {
 
   return {
     prestamo: {
-      findUnique: jest.fn().mockResolvedValue(PRESTAMO_ACTIVO),
+      findFirst: jest.fn().mockResolvedValue(PRESTAMO_ACTIVO),
     },
     pago: {
       count: jest.fn().mockResolvedValue(0),
@@ -136,6 +137,7 @@ describe('PaymentsService', () => {
         { provide: NotificacionesService, useValue: mockNotificacionesService },
         { provide: AuditService, useValue: mockAuditService },
         { provide: NotificacionesGateway, useValue: mockNotificacionesGateway },
+        { provide: CloudinaryService, useValue: { subirArchivo: jest.fn() } },
       ],
     }).compile();
 
@@ -171,7 +173,7 @@ describe('PaymentsService', () => {
     });
 
     it('con tasa 0%: todo el monto es capital, interés = 0', async () => {
-      (prisma.prestamo.findUnique as jest.Mock).mockResolvedValue({
+      (prisma.prestamo.findFirst as jest.Mock).mockResolvedValue({
         ...PRESTAMO_ACTIVO,
         tasaInteres: 0,
       });
@@ -230,7 +232,7 @@ describe('PaymentsService', () => {
 
     it('marca el préstamo como PAGADO cuando el saldo llega a ≤ 0', async () => {
       // Monto igual al saldo pendiente → préstamo queda saldado
-      (prisma.prestamo.findUnique as jest.Mock).mockResolvedValue({
+      (prisma.prestamo.findFirst as jest.Mock).mockResolvedValue({
         ...PRESTAMO_ACTIVO,
         saldoPendiente: 110000,
         cuotas: [
@@ -278,14 +280,14 @@ describe('PaymentsService', () => {
     });
 
     it('lanza NotFoundException si el préstamo no existe', async () => {
-      (prisma.prestamo.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.prestamo.findFirst as jest.Mock).mockResolvedValue(null);
       await expect(
         service.create({ prestamoId: 'no-existe', cobradorId: 'cobrador-1', montoTotal: 100000 }),
       ).rejects.toThrow(NotFoundException);
     });
 
     it('lanza BadRequestException si el préstamo está en estado PAGADO', async () => {
-      (prisma.prestamo.findUnique as jest.Mock).mockResolvedValue({
+      (prisma.prestamo.findFirst as jest.Mock).mockResolvedValue({
         ...PRESTAMO_ACTIVO,
         estado: EstadoPrestamo.PAGADO,
       });

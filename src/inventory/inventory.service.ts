@@ -14,6 +14,7 @@ import {
   type InventarioTotales,
 } from '../templates/exports/inventario.template';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+import { getBogotaDayKey } from '../utils/date-utils';
 
 @Injectable()
 export class InventoryService {
@@ -64,7 +65,7 @@ export class InventoryService {
       productosBajoStock: filas.filter((f) => Number(f.stock) <= Number(f.stockMinimo)).length,
     };
 
-    const fecha = new Date().toISOString().split('T')[0];
+    const fecha = getBogotaDayKey(new Date());
     if (format === 'excel') return generarExcelInventario(filas, totales, fecha);
     return generarPDFInventario(filas, totales, fecha);
   }
@@ -176,6 +177,7 @@ export class InventoryService {
       });
 
       this.notificacionesGateway.broadcastInventarioActualizado({ action: 'create', product });
+      this.notificacionesGateway.broadcastDashboardsActualizados({ accion: 'INVENTARIO_ACTUALIZADO' });
       return product;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -351,6 +353,7 @@ export class InventoryService {
       });
 
       this.notificacionesGateway.broadcastInventarioActualizado({ action: 'update', product: updatedProduct });
+      this.notificacionesGateway.broadcastDashboardsActualizados({ accion: 'INVENTARIO_ACTUALIZADO' });
       return updatedProduct;
     } catch (error) {
       throw error;
@@ -374,6 +377,7 @@ export class InventoryService {
     });
 
     this.notificacionesGateway.broadcastInventarioActualizado({ action: 'remove', id });
+    this.notificacionesGateway.broadcastDashboardsActualizados({ accion: 'INVENTARIO_ACTUALIZADO' });
     return deletedProduct;
   }
 

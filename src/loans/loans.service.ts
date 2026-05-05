@@ -31,10 +31,24 @@ import {
   CarteraTotales 
 } from '../templates/exports/cartera-creditos.template';
 import { ContratoData, generarContratoPDF } from '../templates/exports';
+import {
+  calculateDateRange,
+  formatBogotaOffsetIso,
+  getBogotaDayKey,
+  getBogotaWeekday,
+  getBogotaStartEndOfDay,
+  getBogotaStartEndOfDayFromKey,
+} from '../utils/date-utils';
+
 
 @Injectable()
 export class LoansService implements OnModuleInit {
   private readonly logger = new Logger(LoansService.name);
+
+  private trunc2(n: number): number {
+    if (!Number.isFinite(n)) return 0;
+    return Math.trunc(n * 100) / 100;
+  }
 
   constructor(
     private prisma: PrismaService,
@@ -46,7 +60,6 @@ export class LoansService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    // Ejecutar automáticamente la corrección de intereses al arrancar (Deploy en Render)
     this.logger.log('🔄 [AUTO-FIX] Verificando e iniciando corrección de intereses al arranque...');
     try {
         const result = await this.fixInterestCalculations();
@@ -54,6 +67,44 @@ export class LoansService implements OnModuleInit {
     } catch (error) {
         this.logger.error(`❌ [AUTO-FIX] Error durante la corrección automática: ${error}`);
     }
+  }
+
+  /**
+   * Construye el objeto metadata estándar para notificaciones de préstamo.
+   * Centraliza el bloque de campos repetido en notifyApprovers + notificacionesService.create
+   * dentro de createLoan.
+   */
+  private buildPrestamoNotifMetadata(params: {
+    prestamo: { id: string; numeroPrestamo: string; monto: any; fechaInicio?: Date | null };
+    data: { frecuenciaPago: any; cuotaInicial?: number; notas?: string; esContado?: boolean; tipoPrestamo: string };
+    cliente: { id: string };
+    cantidadCuotas: number;
+    numPlazoMeses: number;
+    articuloNombre: string;
+    isFinanciamientoArticulo: boolean;
+    precioArticuloTotal: number;
+    safeNumber: (v: any) => number;
+  }) {
+    const { prestamo, data, cliente, cantidadCuotas, numPlazoMeses, articuloNombre, isFinanciamientoArticulo, precioArticuloTotal, safeNumber } = params;
+    return {
+      tipoAprobacion: 'NUEVO_PRESTAMO',
+      prestamoId: prestamo.id,
+      clienteId: cliente.id,
+      numeroPrestamo: prestamo.numeroPrestamo,
+      monto: safeNumber(prestamo.monto),
+      tipoPrestamo: data.tipoPrestamo,
+      esContado: !!data.esContado,
+      articulo: String(articuloNombre).replace(/&amp;/gi, '&'),
+      valorArticulo: isFinanciamientoArticulo ? safeNumber(precioArticuloTotal) : safeNumber(prestamo.monto),
+      cuotas: safeNumber(cantidadCuotas),
+      cantidadCuotas: safeNumber(cantidadCuotas),
+      plazoMeses: numPlazoMeses,
+      frecuenciaPago: String(data.frecuenciaPago),
+      cuotaInicial: safeNumber(data.cuotaInicial),
+      notas: String(data.notas || ''),
+      fechaInicio: prestamo.fechaInicio ? formatBogotaOffsetIso(prestamo.fechaInicio) : undefined,
+      fecha: prestamo.fechaInicio ? formatBogotaOffsetIso(prestamo.fechaInicio) : undefined,
+    };
   }
 
   async generarContrato(prestamoId: string) {
@@ -76,11 +127,20 @@ export class LoansService implements OnModuleInit {
       throw new BadRequestException('Este préstamo no corresponde a un crédito de artículo');
     }
 
+    const fechaParsed = prestamo.fechaInicio ?? prestamo.creadoEn;
+    const fmtFechaFormatoLargo = (d: Date) => {
+      const meses = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+      return `${d.getDate()} de ${meses[d.getMonth()]} de ${d.getFullYear()}`;
+    };
+
     const fmtFecha = (d?: Date | null) =>
       d ? new Date(d).toLocaleDateString('es-CO') : '';
 
     const clienteNombre = `${prestamo.cliente?.nombres || ''} ${prestamo.cliente?.apellidos || ''}`.trim();
     const vendedorNombre = `${prestamo.creadoPor?.nombres || ''} ${prestamo.creadoPor?.apellidos || ''}`.trim();
+
+    const ref1 = [(prestamo.cliente as any)?.referencia1Nombre, (prestamo.cliente as any)?.referencia1Telefono].filter(Boolean).join(' - ');
+    const ref2 = [(prestamo.cliente as any)?.referencia2Nombre, (prestamo.cliente as any)?.referencia2Telefono].filter(Boolean).join(' - ');
 
     const abonoInicial = prestamo.cuotaInicial ? Number(prestamo.cuotaInicial) : 0;
     const montoFinanciado = prestamo.monto ? Number(prestamo.monto) : 0;
@@ -96,9 +156,10 @@ export class LoansService implements OnModuleInit {
 
     const frecuencia = (() => {
       switch (prestamo.frecuenciaPago) {
-        case 'SEMANAL': return 'SEMANAL' as const;
-        case 'QUINCENAL': return 'QUINCENAL' as const;
-        case 'MENSUAL': return 'MENSUAL' as const;
+        case 'DIARIO': return 'DIARIO' as any;
+        case 'SEMANAL': return 'SEMANAL' as any;
+        case 'QUINCENAL': return 'QUINCENAL' as any;
+        case 'MENSUAL': return 'MENSUAL' as any;
         default: return undefined;
       }
     })();
@@ -120,12 +181,14 @@ export class LoansService implements OnModuleInit {
     const data: ContratoData = {
       numeroPrestamo: prestamo.numeroPrestamo,
       tipo: 'CREDITO',
-      fechaContrato: fmtFecha((prestamo as any).fechaInicio ?? prestamo.creadoEn),
+      fechaContrato: fmtFechaFormatoLargo(new Date(fechaParsed)),
 
       clienteNombre,
       clienteCedula: String((prestamo.cliente as any)?.dni ?? ''),
       clienteTelefono: (prestamo.cliente as any)?.telefono ? String((prestamo.cliente as any)?.telefono) : undefined,
       clienteDireccion: (prestamo.cliente as any)?.direccion ? String((prestamo.cliente as any)?.direccion) : undefined,
+      referencia1: ref1 || undefined,
+      referencia2: ref2 || undefined,
 
       articulo: prestamo.producto?.nombre || 'Artículo',
       marca: (prestamo.producto as any)?.marca ? String((prestamo.producto as any)?.marca) : undefined,
@@ -203,14 +266,14 @@ export class LoansService implements OnModuleInit {
     if (tasaPeriodo === 0) {
       const cuotaFija = capital / numCuotas;
       return {
-        cuotaFija: Math.round(cuotaFija * 100) / 100,
+        cuotaFija: this.trunc2(cuotaFija),
         interesTotal: 0,
         tabla: Array.from({ length: numCuotas }, (_, i) => ({
           numeroCuota: i + 1,
-          montoCapital: Math.round((capital / numCuotas) * 100) / 100,
+          montoCapital: this.trunc2((capital / numCuotas)),
           montoInteres: 0,
-          monto: Math.round(cuotaFija * 100) / 100,
-          saldoRestante: Math.round((capital - (capital / numCuotas) * (i + 1)) * 100) / 100,
+          monto: this.trunc2(cuotaFija),
+          saldoRestante: this.trunc2((capital - (capital / numCuotas) * (i + 1))),
         })),
       };
     }
@@ -245,18 +308,42 @@ export class LoansService implements OnModuleInit {
 
       tabla.push({
         numeroCuota: i + 1,
-        montoCapital: Math.round(capitalPeriodo * 100) / 100,
-        montoInteres: Math.round(interesPeriodo * 100) / 100,
-        monto: Math.round(montoCuota * 100) / 100,
-        saldoRestante: Math.round(saldo * 100) / 100,
+        montoCapital: this.trunc2(capitalPeriodo),
+        montoInteres: this.trunc2(interesPeriodo),
+        monto: this.trunc2(montoCuota),
+        saldoRestante: this.trunc2(saldo),
       });
     }
 
     return {
-      cuotaFija: Math.round(cuotaFija * 100) / 100,
-      interesTotal: Math.round(interesTotalAcumulado * 100) / 100,
+      cuotaFija: this.trunc2(cuotaFija),
+      interesTotal: this.trunc2(interesTotalAcumulado),
       tabla,
     };
+  }
+
+  /**
+   * Avanza la fecha al siguiente día hábil si cae en domingo.
+   * Para pagos DIARIO: si cae en domingo, se mueve al lunes siguiente.
+   * Para SEMANAL/QUINCENAL: si cae en domingo, se mueve al sábado anterior.
+   * Para MENSUAL: si cae en domingo, se mueve al lunes siguiente.
+   */
+  private saltarDomingo(fecha: Date, frecuencia: FrecuenciaPago): Date {
+    // 0 = Domingo (en Bogotá)
+    if (getBogotaWeekday(fecha) !== 0) return fecha;
+
+    const key = getBogotaDayKey(fecha);
+    if (!key) return fecha;
+
+    const shiftDays = (days: number) => new Date(`${key}T12:00:00-05:00`).getTime() + days * 86_400_000;
+
+    // Para diario/mensual: mover al lunes (siguiente día hábil)
+    if (frecuencia === FrecuenciaPago.DIARIO || frecuencia === FrecuenciaPago.MENSUAL) {
+      return new Date(shiftDays(1));
+    }
+
+    // Para semanal/quincenal: mover al sábado (día hábil anterior)
+    return new Date(shiftDays(-1));
   }
 
   private calcularFechaVencimiento(
@@ -264,23 +351,198 @@ export class LoansService implements OnModuleInit {
     numeroCuota: number,
     frecuencia: FrecuenciaPago,
   ): Date {
-    const fecha = new Date(fechaBase);
+    const baseKey = getBogotaDayKey(fechaBase);
+    if (!baseKey) return fechaBase;
+
     const offset = Math.max(0, numeroCuota - 1);
+
+    const toNoonBogota = (key: string) => new Date(`${key}T12:00:00-05:00`);
+
+    const addDaysSkippingSunday = (startKey: string, daysToAdd: number): string => {
+      let key = startKey;
+      let added = 0;
+      while (added < daysToAdd) {
+        const next = new Date(toNoonBogota(key).getTime() + 86_400_000);
+        const nextKey = getBogotaDayKey(next);
+        if (!nextKey) break;
+        key = nextKey;
+        if (getBogotaWeekday(next) !== 0) added++;
+      }
+      return key;
+    };
+
+    const addDaysPlain = (startKey: string, daysToAdd: number): string => {
+      const next = new Date(toNoonBogota(startKey).getTime() + daysToAdd * 86_400_000);
+      return getBogotaDayKey(next);
+    };
+
+    const addMonths = (startKey: string, monthsToAdd: number): string => {
+      const [yStr, mStr, dStr] = startKey.split('-');
+      const y = Number(yStr);
+      const m = Number(mStr);
+      const d = Number(dStr);
+      if (!y || !m || !d) return startKey;
+
+      const totalMonths = (m - 1) + monthsToAdd;
+      const newY = y + Math.floor(totalMonths / 12);
+      const newM0 = ((totalMonths % 12) + 12) % 12;
+      const newM = newM0 + 1;
+
+      // Clamp del día al último del mes
+      const firstNextMonth = newM === 12
+        ? new Date(`${newY + 1}-01-01T12:00:00-05:00`)
+        : new Date(`${newY}-${padStart2(newM + 1)}-01T12:00:00-05:00`);
+      const lastDay = new Date(firstNextMonth.getTime() - 86_400_000);
+      const lastKey = getBogotaDayKey(lastDay);
+      const lastDayNum = Number(lastKey.split('-')[2] || '0');
+      const safeDay = Math.min(d, lastDayNum || d);
+      return `${newY}-${padStart2(newM)}-${padStart2(safeDay)}`;
+    };
+
+    const padStart2 = (n: number) => String(n).padStart(2, '0');
+
+    let targetKey = baseKey;
+
     switch (frecuencia) {
       case FrecuenciaPago.DIARIO:
-        fecha.setDate(fecha.getDate() + offset);
+        targetKey = addDaysSkippingSunday(baseKey, offset);
         break;
       case FrecuenciaPago.SEMANAL:
-        fecha.setDate(fecha.getDate() + offset * 7);
+        targetKey = addDaysPlain(baseKey, offset * 7);
         break;
       case FrecuenciaPago.QUINCENAL:
-        fecha.setDate(fecha.getDate() + offset * 15);
+        targetKey = addDaysPlain(baseKey, offset * 15);
         break;
       case FrecuenciaPago.MENSUAL:
-        fecha.setMonth(fecha.getMonth() + offset);
+        targetKey = addMonths(baseKey, offset);
         break;
+      default:
+        targetKey = baseKey;
     }
-    return fecha;
+
+    // devolver un instante al mediodía Bogotá; el consumidor compara por día con helpers Bogotá
+    return this.saltarDomingo(toNoonBogota(targetKey), frecuencia);
+  }
+
+  private parseBogotaDayKey(dateStr: string): Date {
+    const key = String(dateStr || '').includes('T') ? String(dateStr).split('T')[0] : String(dateStr);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return new Date();
+    return new Date(`${key}T00:00:00-05:00`);
+  }
+
+  private calculateLoanEndDate(fechaInicio: Date, plazoMeses: number): Date {
+    const startKey = getBogotaDayKey(fechaInicio);
+    if (!startKey) return fechaInicio;
+
+    const mesesEfectivos = Math.max(1, plazoMeses);
+    const wholeMonths = Math.floor(mesesEfectivos);
+    const decimales = mesesEfectivos - wholeMonths;
+
+    // Reusar lógica mensual por key para evitar UTC
+    const addMonthsKey = (key: string, monthsToAdd: number): string => {
+      const [yStr, mStr, dStr] = key.split('-');
+      const y = Number(yStr);
+      const m = Number(mStr);
+      const d = Number(dStr);
+      if (!y || !m || !d) return key;
+      const totalMonths = (m - 1) + monthsToAdd;
+      const newY = y + Math.floor(totalMonths / 12);
+      const newM0 = ((totalMonths % 12) + 12) % 12;
+      const newM = newM0 + 1;
+      const pad2 = (n: number) => String(n).padStart(2, '0');
+      const firstNext = newM === 12
+        ? new Date(`${newY + 1}-01-01T12:00:00-05:00`)
+        : new Date(`${newY}-${pad2(newM + 1)}-01T12:00:00-05:00`);
+      const lastDay = new Date(firstNext.getTime() - 86_400_000);
+      const lastKey = getBogotaDayKey(lastDay);
+      const lastDayNum = Number(lastKey.split('-')[2] || '0');
+      const safeDay = Math.min(d, lastDayNum || d);
+      return `${newY}-${pad2(newM)}-${pad2(safeDay)}`;
+    };
+
+    let endKey = addMonthsKey(startKey, wholeMonths);
+    if (decimales > 0) {
+      const base = new Date(`${endKey}T12:00:00-05:00`);
+      const shifted = new Date(base.getTime() + Math.round(decimales * 30) * 86_400_000);
+      endKey = getBogotaDayKey(shifted) || endKey;
+    }
+
+    return new Date(`${endKey}T00:00:00-05:00`);
+  }
+
+  private calculateInterestAndCuotas(
+    tipoAmortizacion: TipoAmortizacion,
+    monto: number,
+    tasaInteres: number,
+    cantidadCuotas: number,
+    plazoMeses: number,
+    frecuenciaPago: FrecuenciaPago,
+    fechaInicio: Date,
+    fechaPrimerCobro?: Date,
+    esContado: boolean = false,
+  ) {
+    let interesTotal = 0;
+    let cuotas: Array<{
+      numeroCuota: number;
+      fechaVencimiento: Date;
+      monto: number;
+      montoCapital: number;
+      montoInteres: number;
+      estado: EstadoCuota;
+      montoPagado: number;
+    }> = [];
+
+    const fechaBase = fechaPrimerCobro || fechaInicio;
+
+    if (tipoAmortizacion === TipoAmortizacion.FRANCESA) {
+      const amortizacion = this.calcularAmortizacionFrancesa(
+        monto,
+        tasaInteres,
+        cantidadCuotas,
+        plazoMeses,
+        frecuenciaPago,
+      );
+      interesTotal = amortizacion.interesTotal;
+      cuotas = amortizacion.tabla.map((cuota) => ({
+        numeroCuota: cuota.numeroCuota,
+        fechaVencimiento: this.calcularFechaVencimiento(
+          fechaBase,
+          fechaPrimerCobro ? cuota.numeroCuota : cuota.numeroCuota + 1,
+          frecuenciaPago,
+        ),
+        monto: cuota.monto,
+        montoCapital: cuota.montoCapital,
+        montoInteres: cuota.montoInteres,
+        estado: esContado ? EstadoCuota.PAGADA : EstadoCuota.PENDIENTE,
+        montoPagado: esContado ? cuota.monto : 0,
+      }));
+    } else {
+      const mesesInteres = Math.max(1, plazoMeses);
+      interesTotal = (monto * tasaInteres * mesesInteres) / 100;
+      const montoTotalSimple = monto + interesTotal;
+      const montoCuota =
+        cantidadCuotas > 0 ? montoTotalSimple / cantidadCuotas : 0;
+      const montoCapitalCuota =
+        cantidadCuotas > 0 ? monto / cantidadCuotas : 0;
+      const montoInteresCuota =
+        cantidadCuotas > 0 ? interesTotal / cantidadCuotas : 0;
+
+      cuotas = Array.from({ length: cantidadCuotas }, (_, i) => ({
+        numeroCuota: i + 1,
+        fechaVencimiento: this.calcularFechaVencimiento(
+          fechaBase,
+          fechaPrimerCobro ? i + 1 : i + 2,
+          frecuenciaPago,
+        ),
+        monto: this.trunc2(montoCuota),
+        montoCapital: this.trunc2(montoCapitalCuota),
+        montoInteres: this.trunc2(montoInteresCuota),
+        estado: esContado ? EstadoCuota.PAGADA : EstadoCuota.PENDIENTE,
+        montoPagado: esContado ? this.trunc2(montoCuota) : 0,
+      }));
+    }
+
+    return { interesTotal: this.trunc2(interesTotal), cuotas };
   }
 
   async getAllLoans(filters: {
@@ -433,6 +695,7 @@ export class LoansService implements OnModuleInit {
                 numeroCuota: true,
                 estado: true,
                 fechaVencimiento: true,
+                fechaVencimientoProrroga: true,
                 monto: true,
                 montoPagado: true,
                 montoInteresMora: true,
@@ -443,6 +706,7 @@ export class LoansService implements OnModuleInit {
                 id: true,
                 nombres: true,
                 apellidos: true,
+                rol: true,
               },
             },
           },
@@ -503,6 +767,14 @@ export class LoansService implements OnModuleInit {
       ]);
 
       // Transformar datos para el frontend de forma segura
+      const hoyKeyBogota = getBogotaDayKey(new Date());
+      const utcDateKey = (d: Date): string => {
+        const y = d.getUTCFullYear();
+        const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(d.getUTCDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      };
+
       const prestamosTransformados = prestamos.map((prestamo) => {
         try {
           // Calcular campos adicionales
@@ -511,9 +783,18 @@ export class LoansService implements OnModuleInit {
             (c) => c.estado === EstadoCuota.PAGADA,
           ).length;
           const cuotasTotales = cuotas.length;
-          const cuotasVencidas = cuotas.filter(
-            (c) => c.estado === EstadoCuota.VENCIDA,
-          ).length;
+
+          const cuotasVencidasReal = cuotas.filter((c: any) => {
+            if (c.estado !== EstadoCuota.VENCIDA) return false;
+            const eff = c?.fechaVencimientoProrroga
+              ? new Date(c.fechaVencimientoProrroga)
+              : new Date(c.fechaVencimiento);
+            if (!eff || isNaN(eff.getTime())) return false;
+            const key = utcDateKey(eff);
+            return !!key && key < hoyKeyBogota;
+          });
+
+          const cuotasVencidas = cuotasVencidasReal.length;
 
           // Manejar valores numéricos de forma segura
           const monto = Number(prestamo.monto) || 0;
@@ -526,12 +807,15 @@ export class LoansService implements OnModuleInit {
           const montoPagado = totalPagado;
 
           // Calcular mora acumulada de forma segura
-          const moraAcumulada = cuotas.reduce((sum, cuota) => {
-            if (cuota.estado === EstadoCuota.VENCIDA) {
-              return sum + (Number(cuota.montoInteresMora) || 0);
-            }
-            return sum;
-          }, 0);
+          const moraAcumulada = cuotasVencidasReal.reduce(
+            (sum: number, cuota: any) => sum + (Number(cuota.montoInteresMora) || 0),
+            0,
+          );
+
+          const estado =
+            prestamo.estado === EstadoPrestamo.EN_MORA && cuotasVencidas === 0
+              ? EstadoPrestamo.ACTIVO
+              : (prestamo.estado || EstadoPrestamo.BORRADOR);
 
           // Determinar tipo de producto
           let tipoProducto = 'efectivo';
@@ -570,7 +854,7 @@ export class LoansService implements OnModuleInit {
             numeroPrestamo: prestamo.numeroPrestamo || 'N/A',
             clienteId: prestamo.clienteId || '',
             cliente:
-              `${prestamo.cliente.nombres || ''} ${prestamo.cliente.apellidos || ''}`.trim(),
+              `${prestamo.cliente?.nombres || ''} ${prestamo.cliente?.apellidos || ''}`.trim(),
             clienteDni: prestamo.cliente.dni || '',
             clienteTelefono: prestamo.cliente.telefono || '',
             producto: prestamo.producto?.nombre || 'Préstamo en efectivo',
@@ -587,11 +871,13 @@ export class LoansService implements OnModuleInit {
             cuotasPagadas,
             cuotasTotales,
             cuotasVencidas,
-            estado: prestamo.estado || EstadoPrestamo.BORRADOR,
+            estado,
             riesgo: prestamo.cliente.nivelRiesgo || NivelRiesgo.VERDE,
             ruta: rutaAsignada,
             rutaNombre,
             vendedor: prestamo.creadoPor?.nombres || 'Sin asignar',
+            vendedorRol: (prestamo.creadoPor as any)?.rol || '',
+            creadoPorRol: (prestamo.creadoPor as any)?.rol || '',
             fechaInicio: prestamo.fechaInicio || new Date(),
             fechaFin: prestamo.fechaFin || new Date(),
             creadoEn: prestamo.creadoEn || new Date(),
@@ -915,13 +1201,17 @@ export class LoansService implements OnModuleInit {
       if (updateData.tipoAmortizacion !== undefined) data.tipoAmortizacion = updateData.tipoAmortizacion;
       if (updateData.fechaInicio !== undefined) data.fechaInicio = new Date(updateData.fechaInicio);
       
-      const newMonto = data.monto !== undefined ? Number(data.monto) : Number(prestamo.monto);
-      const newTasa = data.tasaInteres !== undefined ? Number(data.tasaInteres) : Number(prestamo.tasaInteres);
-      const newInteresTotal = (newMonto * newTasa) / 100;
+      const newMonto = data.monto === undefined ? Number(prestamo.monto) : Number(data.monto);
+      const newTasa = data.tasaInteres === undefined ? Number(prestamo.tasaInteres) : Number(data.tasaInteres);
+      const newPlazo = data.plazoMeses === undefined ? Number(prestamo.plazoMeses) : Number(data.plazoMeses);
+      const newFechaInicio = data.fechaInicio === undefined ? prestamo.fechaInicio : (data.fechaInicio as Date);
+      const newInteresTotal = (newMonto * newTasa * newPlazo) / 100;
 
       const shouldRecalculateFinancing =
         data.monto !== undefined ||
-        data.tasaInteres !== undefined;
+        data.tasaInteres !== undefined ||
+        data.plazoMeses !== undefined ||
+        data.fechaInicio !== undefined;
 
       if (shouldRecalculateFinancing) {
         data.interesTotal = newInteresTotal;
@@ -953,57 +1243,34 @@ export class LoansService implements OnModuleInit {
           where: { prestamoId: id }
         });
 
-        // Generate new cuotas
-        let cuotasData: Array<{
-          prestamoId: string;
-          numeroCuota: number;
-          fechaVencimiento: Date;
-          monto: number;
-          montoCapital: number;
-          montoInteres: number;
-          estado: typeof EstadoCuota.PENDIENTE;
-        }>;
+        // Generate new cuotas using helper
+        const { cuotas: planCuotas } = this.calculateInterestAndCuotas(
+          tipoAmortizacion,
+          newMonto,
+          newTasa,
+          cantidadCuotas,
+          newPlazo,
+          frecuenciaPago,
+          newFechaInicio,
+          (prestamo as any).fechaPrimerCobro,
+          false // esContado
+        );
 
-        if (tipoAmortizacion === TipoAmortizacion.FRANCESA) {
-          const amortizacion = this.calcularAmortizacionFrancesa(
-            newMonto,
-            newTasa,
-            cantidadCuotas,
-            prestamo.plazoMeses,
-            frecuenciaPago,
-          );
-          cuotasData = amortizacion.tabla.map((cuota) => {
-            const fechaBase = (prestamo as any).fechaPrimerCobro || prestamo.fechaInicio;
-            const fechaVencimiento = this.calcularFechaVencimiento(fechaBase, cuota.numeroCuota, frecuenciaPago);
-            return {
-              prestamoId: id,
-              numeroCuota: cuota.numeroCuota,
-              fechaVencimiento,
-              monto: cuota.monto,
-              montoCapital: cuota.montoCapital,
-              montoInteres: cuota.montoInteres,
-              estado: EstadoCuota.PENDIENTE,
-            };
-          });
-        } else {
-          const montoTotalSimple = newMonto + newInteresTotal;
-          const montoCuota = cantidadCuotas > 0 ? montoTotalSimple / cantidadCuotas : 0;
-          const montoCapitalCuota = cantidadCuotas > 0 ? newMonto / cantidadCuotas : 0;
-          const montoInteresCuota = cantidadCuotas > 0 ? newInteresTotal / cantidadCuotas : 0;
-          cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => {
-            const fechaBase = (prestamo as any).fechaPrimerCobro || prestamo.fechaInicio;
-            const fechaVencimiento = this.calcularFechaVencimiento(fechaBase, i + 1, frecuenciaPago);
-            return {
-              prestamoId: id,
-              numeroCuota: i + 1,
-              fechaVencimiento,
-              monto: Math.round(montoCuota * 100) / 100,
-              montoCapital: Math.round(montoCapitalCuota * 100) / 100,
-              montoInteres: Math.round(montoInteresCuota * 100) / 100,
-              estado: EstadoCuota.PENDIENTE,
-            };
-          });
+        // Homogeneizar vencimiento del préstamo con el cronograma real
+        if (planCuotas.length > 0) {
+          data.fechaFin = new Date(planCuotas[planCuotas.length - 1].fechaVencimiento);
         }
+
+        const cuotasData = planCuotas.map(c => ({
+          numeroCuota: c.numeroCuota,
+          fechaVencimiento: c.fechaVencimiento,
+          monto: c.monto,
+          montoCapital: c.montoCapital,
+          montoInteres: c.montoInteres,
+          estado: c.estado,
+          montoPagado: c.montoPagado,
+          prestamoId: id
+        }));
 
         // Create new cuotas
         await this.prisma.cuota.createMany({
@@ -1226,7 +1493,9 @@ export class LoansService implements OnModuleInit {
 
       // Calcular fecha fin
       const fechaInicio = new Date(createLoanDto.fechaInicio);
-      fechaInicio.setHours(0, 0, 0, 0);
+      const fechaInicioKey = getBogotaDayKey(fechaInicio);
+      const { startDate: fechaInicioBogota } = getBogotaStartEndOfDayFromKey(fechaInicioKey);
+      fechaInicio.setTime(fechaInicioBogota.getTime());
       const fechaFin = new Date(fechaInicio);
       fechaFin.setMonth(fechaFin.getMonth() + createLoanDto.plazoMeses);
 
@@ -1234,7 +1503,9 @@ export class LoansService implements OnModuleInit {
         ? new Date(createLoanDto.fechaPrimerCobro)
         : undefined;
       if (fechaPrimerCobroParsed) {
-        fechaPrimerCobroParsed.setHours(0, 0, 0, 0);
+        const key = getBogotaDayKey(fechaPrimerCobroParsed);
+        const { startDate } = getBogotaStartEndOfDayFromKey(key);
+        fechaPrimerCobroParsed.setTime(startDate.getTime());
       }
 
       // Calcular cantidad de cuotas segun frecuencia
@@ -1303,13 +1574,18 @@ export class LoansService implements OnModuleInit {
           return {
             numeroCuota: i + 1,
             fechaVencimiento,
-            monto: Math.round(montoCuota * 100) / 100,
-            montoCapital: Math.round(montoCapitalCuota * 100) / 100,
-            montoInteres: Math.round(montoInteresCuota * 100) / 100,
+            monto: this.trunc2(montoCuota),
+            montoCapital: this.trunc2(montoCapitalCuota),
+            montoInteres: this.trunc2(montoInteresCuota),
             estado: EstadoCuota.PENDIENTE,
           };
         });
       }
+
+      // Homogeneizar vencimiento del préstamo con el cronograma real
+      const fechaFinReal = cuotasData.length > 0
+        ? new Date(cuotasData[cuotasData.length - 1].fechaVencimiento)
+        : fechaFin;
 
       // Crear prestamo con cuotas
       const prestamo = await this.prisma.prestamo.create({
@@ -1329,12 +1605,12 @@ export class LoansService implements OnModuleInit {
           cantidadCuotas,
           fechaInicio,
           fechaPrimerCobro: fechaPrimerCobroParsed,
-          fechaFin,
+          fechaFin: fechaFinReal,
           estado: EstadoPrestamo.PENDIENTE_APROBACION,
           estadoAprobacion: EstadoAprobacion.PENDIENTE,
           creadoPorId: createLoanDto.creadoPorId,
-          interesTotal,
-          saldoPendiente: createLoanDto.monto + interesTotal - (createLoanDto.cuotaInicial || 0),
+          interesTotal: this.trunc2(interesTotal),
+          saldoPendiente: this.trunc2(createLoanDto.monto + interesTotal - (createLoanDto.cuotaInicial || 0)),
           notas: createLoanDto.notas ? String(createLoanDto.notas) : undefined,
           garantia: createLoanDto.garantia ? String(createLoanDto.garantia) : undefined,
           cuotas: {
@@ -1356,10 +1632,95 @@ export class LoansService implements OnModuleInit {
         },
       });
 
+      // Registrar CUOTA INICIAL como abono a capital (no utilidad) cuando es crédito por ARTICULO.
+      // Se registra como transacción de INGRESO y se excluye de ganancia neta en el resumen financiero.
+      try {
+        const isArticulo = String(createLoanDto.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
+        const cuotaInicial = Number(createLoanDto.cuotaInicial || 0);
+        if (isArticulo && cuotaInicial > 0) {
+          // Determinar caja destino: preferimos caja de la ruta del cliente; si no existe, Caja Principal.
+          const rutaCliente = await this.prisma.asignacionRuta.findFirst({
+            where: {
+              clienteId: createLoanDto.clienteId,
+              activa: true,
+              ruta: { activa: true, eliminadoEn: null },
+            },
+            select: { rutaId: true },
+          });
+
+          const cajaRuta = rutaCliente?.rutaId
+            ? await this.prisma.caja.findFirst({
+                where: { rutaId: rutaCliente.rutaId, tipo: 'RUTA', activa: true },
+                select: { id: true },
+              })
+            : null;
+
+          const cajaOficina = await this.prisma.caja.findFirst({
+            where: {
+              activa: true,
+              codigo: 'CAJA-OFICINA',
+            },
+            select: { id: true },
+          });
+
+          const cajaPrincipal = await this.prisma.caja.findFirst({
+            where: {
+              activa: true,
+              OR: [{ codigo: 'CAJA-PRINCIPAL' }, { tipo: 'PRINCIPAL' }],
+            },
+            orderBy: [{ codigo: 'asc' as any }],
+            select: { id: true },
+          });
+
+          // Determinar caja destino: Cuota Inicial debe registrarse en Caja Oficina.
+          // Si no existe, usar Caja Principal; si no existe, la caja de ruta.
+          const cajaIdDestino = cajaOficina?.id || cajaPrincipal?.id || cajaRuta?.id;
+
+          if (cajaIdDestino) {
+            const yaExiste = await this.prisma.transaccion.findFirst({
+              where: {
+                cajaId: cajaIdDestino,
+                tipo: 'INGRESO',
+                tipoReferencia: 'CUOTA_INICIAL',
+                referenciaId: prestamo.id,
+              },
+              select: { id: true },
+            });
+
+            if (!yaExiste?.id) {
+              const countTrx = await this.prisma.transaccion.count();
+              const numeroTransaccion = `TRX-${Date.now().toString().slice(-8)}-${(countTrx + 1).toString().padStart(4, '0')}`;
+              await this.prisma.$transaction([
+                this.prisma.transaccion.create({
+                  data: {
+                    numeroTransaccion,
+                    cajaId: cajaIdDestino,
+                    tipo: 'INGRESO',
+                    monto: cuotaInicial,
+                    descripcion: `Cuota inicial crédito artículo #${prestamo.numeroPrestamo}`,
+                    creadoPorId: createLoanDto.creadoPorId,
+                    tipoReferencia: 'CUOTA_INICIAL',
+                    referenciaId: prestamo.id,
+                  },
+                }),
+                this.prisma.caja.update({
+                  where: { id: cajaIdDestino },
+                  data: { saldoActual: { increment: cuotaInicial } },
+                }),
+              ]);
+            }
+          }
+        }
+      } catch (e) {
+        // No bloqueamos la creación del préstamo por un fallo contable accesorio.
+        this.logger.error('Error registrando cuota inicial como transacción:', e);
+      }
+
       this.logger.log(`Loan created successfully: ${prestamo.id} (${tipoAmort})`);
 
       // Crear solicitud de aprobación automáticamente
       const aprobacion = await this.prisma.aprobacion.create({
+        // ... (rest of the code remains the same)
         data: {
           tipoAprobacion: TipoAprobacion.NUEVO_PRESTAMO,
           referenciaId: prestamo.id,
@@ -1369,6 +1730,10 @@ export class LoansService implements OnModuleInit {
             prestamoId: prestamo.id,
             clienteId: prestamo.clienteId,
             monto: prestamo.monto,
+            tipoPrestamo: prestamo.tipoPrestamo,
+            saldoPendiente: prestamo.saldoPendiente,
+            valorArticulo: prestamo.saldoPendiente + prestamo.cuotaInicial,
+            cuotaInicial: prestamo.cuotaInicial,
             plazoMeses: prestamo.plazoMeses,
             tasaInteres: prestamo.tasaInteres,
             frecuenciaPago: prestamo.frecuenciaPago,
@@ -1430,6 +1795,60 @@ export class LoansService implements OnModuleInit {
         throw new Error(
           'El préstamo no está en estado pendiente de aprobación',
         );
+      }
+
+      const { startDate: aprobacionInicio } = getBogotaStartEndOfDay(new Date());
+
+      const prestamoConCuotas = await this.prisma.prestamo.findUnique({
+        where: { id },
+        include: { cuotas: { orderBy: { numeroCuota: 'asc' } } },
+      });
+
+      // Si la fechaInicio del préstamo está en el pasado (fue creado ayer o antes),
+      // reagendamos todas las cuotas PENDIENTES desde la fecha de aprobación (hoy).
+      // Así el cliente no aparece en mora por el tiempo que pasó en aprobación.
+      const fechaInicioOriginal = prestamoConCuotas?.fechaInicio
+        ? new Date(prestamoConCuotas.fechaInicio)
+        : null;
+      const inicioOriginalKey = fechaInicioOriginal ? getBogotaDayKey(fechaInicioOriginal) : null;
+      const aprobacionKey = getBogotaDayKey(aprobacionInicio);
+
+      if (inicioOriginalKey && inicioOriginalKey < aprobacionKey && prestamoConCuotas?.cuotas?.length) {
+        // Reagendar: calcular nuevo cronograma desde hoy
+        const cuotasPendientes = prestamoConCuotas.cuotas.filter(
+          (c) => c.estado === EstadoCuota.PENDIENTE || c.estado === EstadoCuota.VENCIDA
+        );
+
+        if (cuotasPendientes.length > 0) {
+          const nuevaFechaBase = new Date(aprobacionInicio);
+
+          const frecuencia = prestamoConCuotas.frecuenciaPago;
+
+          for (let i = 0; i < cuotasPendientes.length; i++) {
+            const nuevaFechaVenc = this.calcularFechaVencimiento(nuevaFechaBase, i + 1, frecuencia);
+            await this.prisma.cuota.update({
+              where: { id: cuotasPendientes[i].id },
+              data: {
+                fechaVencimiento: nuevaFechaVenc,
+                estado: EstadoCuota.PENDIENTE,
+              },
+            });
+          }
+
+          // Actualizar fechaInicio y fechaFin del préstamo
+          const nuevaFechaFin = this.calcularFechaVencimiento(
+            nuevaFechaBase,
+            cuotasPendientes.length,
+            frecuencia,
+          );
+          await this.prisma.prestamo.update({
+            where: { id },
+            data: {
+              fechaInicio: nuevaFechaBase,
+              fechaFin: nuevaFechaFin,
+            },
+          });
+        }
       }
 
       const prestamoActualizado = await this.prisma.prestamo.update({
@@ -1549,6 +1968,18 @@ export class LoansService implements OnModuleInit {
         },
       });
 
+      // CORRECCIÓN: Restablecer stock si el préstamo incluye un artículo físico (stock !== undefined)
+      if (prestamoRechazado.productoId && prestamoRechazado.producto?.stock !== undefined && prestamoRechazado.producto?.stock !== null) {
+        try {
+           await this.prisma.producto.update({
+             where: { id: prestamoRechazado.productoId },
+             data: { stock: { increment: 1 } }
+           });
+        } catch(e) {
+          this.logger.error(`Error devolviendo stock al rechazar el préstamo ${id}:`, e);
+        }
+      }
+
       // Actualizar la aprobación
       await this.prisma.aprobacion.updateMany({
         where: {
@@ -1648,6 +2079,52 @@ export class LoansService implements OnModuleInit {
         throw new NotFoundException('Usuario creador no encontrado');
       }
 
+      // Regla (producción): un COBRADOR no puede solicitar un préstamo en efectivo
+      // si su caja de ruta no tiene saldo suficiente para el desembolso.
+      // Esto evita que el saldo de la caja quede negativo al aprobar/desembolsar.
+      const isArticulo = String(data.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
+      if (creador.rol === RolUsuario.COBRADOR && !isArticulo) {
+        const montoDesembolso = Number(data.monto || 0);
+        if (montoDesembolso > 0) {
+          const rutaCobrador = await this.prisma.ruta.findFirst({
+            where: {
+              eliminadoEn: null,
+              activa: true,
+              cobradorId: creador.id,
+            },
+            select: { id: true },
+          });
+
+          if (!rutaCobrador?.id) {
+            throw new BadRequestException(
+              'No tienes una ruta activa asignada para solicitar un crédito en efectivo.',
+            );
+          }
+
+          const cajaRuta = await this.prisma.caja.findFirst({
+            where: {
+              rutaId: rutaCobrador.id,
+              tipo: 'RUTA',
+              activa: true,
+            },
+            select: { id: true, nombre: true, saldoActual: true },
+          });
+
+          const saldoCajaRuta = Number((cajaRuta as any)?.saldoActual || 0);
+          if (!cajaRuta?.id) {
+            throw new BadRequestException(
+              'No existe una caja de ruta activa para tu ruta. Contacta al administrador.',
+            );
+          }
+
+          if (saldoCajaRuta < montoDesembolso) {
+            throw new BadRequestException(
+              `Saldo insuficiente en tu caja de ruta para solicitar este crédito. Caja: ${cajaRuta.nombre}. Saldo: ${saldoCajaRuta.toLocaleString('es-CO')}. Monto solicitado: ${montoDesembolso.toLocaleString('es-CO')}.`,
+            );
+          }
+        }
+      }
+
       // Verificación de idempotencia / prevención de duplicados
       // Buscar si existe un préstamo idéntico creado en los últimos 2 minutos
       const dosMinutosAtras = new Date(Date.now() - 2 * 60 * 1000);
@@ -1676,6 +2153,11 @@ export class LoansService implements OnModuleInit {
       let producto: any = null;
       let precioProducto: any = null;
       let montoFinanciar = data.monto;
+      let precioArticuloTotal = data.monto; // Precio total del artículo (sin descontar cuota inicial)
+
+      let precioVentaArticulo: number | null = null;
+      let costoArticulo: number | null = null;
+      let margenArticulo: number | null = null;
 
       // Para crédito por artículo
       if (data.tipoPrestamo === 'ARTICULO') {
@@ -1723,16 +2205,30 @@ export class LoansService implements OnModuleInit {
         const precioTotal = (data.esContado || !precioProducto)
           ? data.monto 
           : (precioProducto.precio ? Number(precioProducto.precio) : 0);
+        precioArticuloTotal = precioTotal; // Guardar precio total para datosSolicitud
         montoFinanciar = Math.max(0, precioTotal - cuotaInicial);
 
-        if (cuotaInicial > precioTotal) {
-          throw new BadRequestException(
-            'La cuota inicial no puede ser mayor al precio total',
+        // Persistir margen (Modelo A): se reconoce una sola vez al crear el crédito.
+
+        // No afecta caja: solo se guarda para poder calcular utilidad operativa real en reportes.
+        precioVentaArticulo = Number(precioTotal || 0);
+        costoArticulo = producto?.costo != null ? Number(producto.costo) : 0;
+        margenArticulo = Number(precioVentaArticulo) - Number(costoArticulo);
+
+        if (Number(margenArticulo) < 0) {
+          this.logger.warn(
+            `[MARGEN NEGATIVO] Crédito ARTICULO: productoId=${producto?.id}, precioVenta=${precioVentaArticulo}, costo=${costoArticulo}, margen=${margenArticulo}`,
           );
         }
 
-        // Reducir stock del producto si existe la propiedad stock
-        if (producto.stock !== undefined) {
+        if (cuotaInicial > precioTotal) {
+          throw new BadRequestException(
+            'La cuota inicial no puede ser mayor al precio total del artículo.',
+          );
+        }
+
+        // Descontar stock solo si el producto maneja stock
+        if (producto.stock !== undefined && producto.stock !== null) {
           await this.prisma.producto.update({
             where: { id: data.productoId },
             data: { stock: { decrement: 1 } },
@@ -1781,33 +2277,16 @@ export class LoansService implements OnModuleInit {
       const plazoMesesPrisma = Math.max(1, Math.round(numPlazoMeses));
       
       // Calcular fechas
-      const fechaInicio = new Date(data.fechaInicio);
-      fechaInicio.setHours(0, 0, 0, 0);
-      const fechaFin = new Date(fechaInicio);
+      const { startDate: fechaActual } = getBogotaStartEndOfDay(new Date());
       
-      if (Number.isInteger(numPlazoMeses) && numPlazoMeses > 0) {
-        fechaFin.setMonth(fechaFin.getMonth() + numPlazoMeses);
-      } else if (numPlazoMeses > 0) {
-        const diasTotales = Math.round(numPlazoMeses * 30);
-        fechaFin.setDate(fechaFin.getDate() + diasTotales);
-      } else {
-        // Fallback si no hay plazoMonths pero hay cuotas y frecuencia
-        let diasFallback = 0;
-        switch (data.frecuenciaPago) {
-          case FrecuenciaPago.DIARIO: diasFallback = numCantidadCuotas; break;
-          case FrecuenciaPago.SEMANAL: diasFallback = numCantidadCuotas * 7; break;
-          case FrecuenciaPago.QUINCENAL: diasFallback = numCantidadCuotas * 15; break;
-          case FrecuenciaPago.MENSUAL: diasFallback = numCantidadCuotas * 30; break;
-        }
-        fechaFin.setDate(fechaFin.getDate() + diasFallback);
-      }
+      const fechaInicio = data.fechaInicio ? this.parseBogotaDayKey(data.fechaInicio) : fechaActual;
+      
+      // La fecha de vencimiento del préstamo (fechaFin) se basa estrictamente en el plazoMeses usando helper
+      let fechaFin = this.calculateLoanEndDate(fechaInicio, numPlazoMeses);
 
       const fechaPrimerCobroParsed = data.fechaPrimerCobro
-        ? new Date(data.fechaPrimerCobro)
+        ? this.parseBogotaDayKey(data.fechaPrimerCobro)
         : undefined;
-      if (fechaPrimerCobroParsed) {
-        fechaPrimerCobroParsed.setHours(0, 0, 0, 0);
-      }
 
       // Calcular cantidad de cuotas: Prioridad TOTAL al valor enviado por el usuario
       let cantidadCuotas = numCantidadCuotas;
@@ -1841,69 +2320,32 @@ export class LoansService implements OnModuleInit {
       
       this.logger.log(`[CUOTAS CALCULATION] Cantidad final de cuotas a crear: ${cantidadCuotas}`);
 
-      // Determinar tipo de amortización
       const tipoAmort = data.tipoAmortizacion || TipoAmortizacion.INTERES_SIMPLE;
       const tasaInteres = data.tasaInteres || 0;
 
-      let interesTotal: number;
-      let cuotasData: Array<{
-        numeroCuota: number;
-        fechaVencimiento: Date;
-        monto: number;
-        montoCapital: number;
-        montoInteres: number;
-        estado: any;
-        montoPagado?: number;
-      }>;
-
-      if (tipoAmort === TipoAmortizacion.FRANCESA) {
-        // Amortización francesa (cuota fija, interés decreciente mes a mes)
-        const amortizacion = this.calcularAmortizacionFrancesa(
+      const { interesTotal, cuotas: cuotasData } =
+        this.calculateInterestAndCuotas(
+          tipoAmort,
           montoFinanciar,
           tasaInteres,
           cantidadCuotas,
-          data.plazoMeses,
+          numPlazoMeses,
           data.frecuenciaPago,
+          fechaInicio,
+          fechaPrimerCobroParsed,
+          data.esContado,
         );
-        interesTotal = amortizacion.interesTotal;
-        cuotasData = amortizacion.tabla.map((cuota) => {
-          const fechaBase = data.fechaPrimerCobro ? new Date(data.fechaPrimerCobro) : fechaInicio;
-          const fechaVencimiento = this.calcularFechaVencimiento(fechaBase, cuota.numeroCuota, data.frecuenciaPago);
-          return {
-            numeroCuota: cuota.numeroCuota,
-            fechaVencimiento,
-            monto: cuota.monto,
-            montoCapital: cuota.montoCapital,
-            montoInteres: cuota.montoInteres,
-            estado: data.esContado ? EstadoCuota.PAGADA : EstadoCuota.PENDIENTE,
-            montoPagado: data.esContado ? cuota.monto : 0,
-          };
-        });
-      } else {
-        // Interés simple (flat): capital × tasa mensual × numPlazoMeses (mínimo 1 mes)
-        const mesesInteres = Math.max(1, numPlazoMeses);
-        interesTotal = (montoFinanciar * tasaInteres * mesesInteres) / 100;
-        const montoTotalSimple = montoFinanciar + interesTotal;
-        const montoCuota = cantidadCuotas > 0 ? montoTotalSimple / cantidadCuotas : 0;
-        const montoCapitalCuota = cantidadCuotas > 0 ? montoFinanciar / cantidadCuotas : 0;
-        const montoInteresCuota = cantidadCuotas > 0 ? interesTotal / cantidadCuotas : 0;
-        
-        this.logger.log(`[LOAN CALCULATION] Capital: ${montoFinanciar}, Tasa: ${tasaInteres}%, Plazo: ${data.plazoMeses} meses`);
-        this.logger.log(`[LOAN CALCULATION] Interés Total: ${interesTotal}, Cuotas: ${cantidadCuotas}, Monto/Cuota: ${montoCuota}`);
-        
-        cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => {
-          const fechaBase = data.fechaPrimerCobro ? new Date(data.fechaPrimerCobro) : fechaInicio;
-          const fechaVencimiento = this.calcularFechaVencimiento(fechaBase, i + 1, data.frecuenciaPago);
-          return {
-            numeroCuota: i + 1,
-            fechaVencimiento,
-            monto: Math.round(montoCuota * 100) / 100,
-            montoCapital: Math.round(montoCapitalCuota * 100) / 100,
-            montoInteres: Math.round(montoInteresCuota * 100) / 100,
-            estado: data.esContado ? EstadoCuota.PAGADA : EstadoCuota.PENDIENTE,
-            montoPagado: data.esContado ? Math.round(montoCuota * 100) / 100 : 0,
-          };
-        });
+
+      const cuotasDataFinal = data.esContado
+        ? cuotasData.map((c: any) => ({
+            ...c,
+            fechaPago: fechaInicio,
+          }))
+        : cuotasData;
+
+      // Homogeneizar vencimiento del préstamo con el cronograma real
+      if (cuotasData.length > 0) {
+        fechaFin = new Date(cuotasData[cuotasData.length - 1].fechaVencimiento);
       }
 
       const montoTotal = montoFinanciar + interesTotal;
@@ -1922,6 +2364,9 @@ export class LoansService implements OnModuleInit {
           tipoPrestamo: data.tipoPrestamo,
           tipoAmortizacion: tipoAmort,
           monto: montoFinanciar,
+          precioVentaArticulo,
+          costoArticulo,
+          margenArticulo,
           tasaInteres: tasaInteres,
           tasaInteresMora: data.tasaInteresMora || 2,
           plazoMeses: plazoMesesPrisma,
@@ -1943,7 +2388,7 @@ export class LoansService implements OnModuleInit {
             : undefined,
           garantia: data.garantia ? String(data.garantia) : undefined,
           cuotas: {
-            create: cuotasData,
+            create: cuotasDataFinal,
           },
         } as any,
         include: {
@@ -1961,10 +2406,10 @@ export class LoansService implements OnModuleInit {
         },
       });
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const startDate = new Date(fechaInicio);
-      startDate.setHours(0, 0, 0, 0);
+      const hoyKey = getBogotaDayKey(new Date());
+      const { startDate: today } = getBogotaStartEndOfDayFromKey(hoyKey);
+      const startKey = getBogotaDayKey(new Date(fechaInicio));
+      const { startDate: startDate } = getBogotaStartEndOfDayFromKey(startKey);
 
       if (!data.esContado && startDate.getTime() === today.getTime()) {
         const rutaPreferida = cliente.asignacionesRuta?.find((a: any) => a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn);
@@ -2069,8 +2514,12 @@ export class LoansService implements OnModuleInit {
             telefono: String(cliente.telefono),
             monto: safeNumber(prestamo.monto),
             tipo: String(data.tipoPrestamo),
-            articulo: String(articuloNombre),
-            valorArticulo: safeNumber((data as any).valorArticulo || (safeNumber(data.monto) + safeNumber(data.cuotaInicial))), 
+            // Sanitizar el nombre del artículo: reemplazar & HTML por símbolo natural
+            articulo: String(articuloNombre).replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>'),
+            // valorArticulo = precio total del artículo (incluye cuota inicial + monto financiado)
+            valorArticulo: isFinanciamientoArticulo
+              ? safeNumber((data as any).valorArticulo || precioArticuloTotal)
+              : safeNumber(prestamo.monto),
             cuotas: safeNumber(totalCuotasPrometidas),
             plazoMeses: numPlazoMeses, // GUARDAR EL FLOAT (Ej: 0.4) para que la aprobación no lo redondee a 1.
             porcentaje: safeNumber(isFinanciamientoArticulo ? 0 : tasaInteres),
@@ -2080,9 +2529,12 @@ export class LoansService implements OnModuleInit {
               ? String(data.notas || (data as any).observaciones || (data as any).comentarios || (data as any).detalle) 
               : undefined,
             garantia: data.garantia ? String(data.garantia) : undefined,
+            fechaInicio: prestamo.fechaInicio ? formatBogotaOffsetIso(prestamo.fechaInicio) : undefined,
             fechaPrimerCobro: (data as any).fechaPrimerCobro ? String((data as any).fechaPrimerCobro) : undefined,
+            esContado: !!data.esContado,
           },
-          montoSolicitud: prestamo.monto,
+          // montoSolicitud = precio total del artículo, o monto del préstamo en efectivo
+          montoSolicitud: isFinanciamientoArticulo ? precioArticuloTotal : safeNumber(prestamo.monto),
           estado: data.esContado || esAutoAprobado ? EstadoAprobacion.APROBADO : EstadoAprobacion.PENDIENTE,
           aprobadoPorId: data.esContado || esAutoAprobado ? data.creadoPorId : undefined,
         },
@@ -2096,14 +2548,7 @@ export class LoansService implements OnModuleInit {
             tipo: 'PRESTAMO',
             entidad: 'Aprobacion',
             entidadId: aprobacion.id,
-            metadata: {
-              tipoAprobacion: 'NUEVO_PRESTAMO',
-              prestamoId: prestamo.id,
-              clienteId: cliente.id,
-              numeroPrestamo: prestamo.numeroPrestamo,
-              monto: safeNumber(prestamo.monto),
-              tipoPrestamo: data.tipoPrestamo,
-            },
+            metadata: this.buildPrestamoNotifMetadata({ prestamo, data, cliente, cantidadCuotas, numPlazoMeses, articuloNombre, isFinanciamientoArticulo, precioArticuloTotal, safeNumber }),
           });
         } catch {}
 
@@ -2115,11 +2560,7 @@ export class LoansService implements OnModuleInit {
             tipo: 'INFORMATIVO',
             entidad: 'Aprobacion',
             entidadId: aprobacion.id,
-            metadata: {
-              tipoAprobacion: 'NUEVO_PRESTAMO',
-              prestamoId: prestamo.id,
-              numeroPrestamo: prestamo.numeroPrestamo,
-            },
+            metadata: this.buildPrestamoNotifMetadata({ prestamo, data, cliente, cantidadCuotas, numPlazoMeses, articuloNombre, isFinanciamientoArticulo, precioArticuloTotal, safeNumber }),
           });
         } catch {}
       }
@@ -2137,11 +2578,28 @@ export class LoansService implements OnModuleInit {
         for (const admin of admins) {
           await this.notificacionesService.create({
             usuarioId: admin.id,
-            titulo: 'Préstamo Aprobado Automáticamente',
-            mensaje: `${creador.nombres} ${creador.apellidos} creó y aprobó automáticamente un préstamo para ${cliente.nombres} ${cliente.apellidos} por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
+            titulo: data.esContado ? 'Nueva Venta de Contado' : 'Préstamo Aprobado Automáticamente',
+            mensaje: data.esContado 
+              ? `${creador.nombres} realizó una venta de contado para ${cliente.nombres} ${cliente.apellidos} por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`
+              : `${creador.nombres} ${creador.apellidos} creó y aprobó automáticamente un préstamo para ${cliente.nombres} ${cliente.apellidos} por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
             tipo: 'SISTEMA',
             entidad: 'PRESTAMO',
             entidadId: prestamo.id,
+            metadata: {
+              esContado: !!data.esContado,
+              articulo: String(articuloNombre).replace(/&amp;/gi, '&'),
+              valorArticulo: isFinanciamientoArticulo ? safeNumber(precioArticuloTotal) : safeNumber(prestamo.monto),
+              monto: safeNumber(prestamo.monto),
+              clienteId: cliente.id,
+              numeroPrestamo: prestamo.numeroPrestamo,
+              cuotas: safeNumber(totalCuotasPrometidas),
+              plazoMeses: numPlazoMeses,
+              frecuenciaPago: String(data.frecuenciaPago),
+              cuotaInicial: safeNumber(data.cuotaInicial),
+              notas: String(data.notas || ''),
+              fechaInicio: prestamo.fechaInicio ? formatBogotaOffsetIso(prestamo.fechaInicio) : undefined,
+              fecha: prestamo.fechaInicio ? formatBogotaOffsetIso(prestamo.fechaInicio) : undefined, // Duplicado para compatibilidad
+            }
           });
         }
 
@@ -2281,19 +2739,7 @@ export class LoansService implements OnModuleInit {
         },
       });
 
-      // 2. Agregar cliente a blacklist
-      await tx.cliente.update({
-        where: { id: prestamo.clienteId },
-        data: {
-          enListaNegra: true,
-          razonListaNegra: data.motivo,
-          fechaListaNegra: new Date(),
-          agregadoListaNegraPorId: data.archivarPorId,
-          nivelRiesgo: 'LISTA_NEGRA',
-        },
-      });
-      
-      // 3. Marcar aprobaciones pendientes como RECHAZADAS (específicamente las de este préstamo)
+      // 2. Marcar aprobaciones pendientes como RECHAZADAS (específicamente las de este préstamo)
       await tx.aprobacion.updateMany({
         where: {
           referenciaId: prestamoId,
@@ -2327,7 +2773,7 @@ export class LoansService implements OnModuleInit {
           data: {
             usuarioId: data.archivarPorId,
             titulo: 'Cuenta Archivada',
-            mensaje: `Préstamo ${prestamo.numeroPrestamo} archivado como pérdida. Cliente ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos} agregado a lista negra.`,
+            mensaje: `Préstamo ${prestamo.numeroPrestamo} archivado como pérdida.`,
             tipo: 'ALERTA',
             entidad: 'Prestamo',
             entidadId: prestamoId,
@@ -2494,7 +2940,7 @@ export class LoansService implements OnModuleInit {
         }
         
         // INTERES SIMPLE: I = C * i * t
-        const interesCorrecto = Math.round((capital * (tasaMensual / 100) * plazoMeses) * 100) / 100;
+        const interesCorrecto = this.trunc2((capital * (tasaMensual / 100) * plazoMeses));
         const interesActual = Number(loan.interesTotal);
 
         // Verificar discrepancia significativa (> $100 pesos)
@@ -2526,7 +2972,7 @@ export class LoansService implements OnModuleInit {
           );
           
           if (cuotasAjustables.length > 0) {
-            const ajustePorCuota = Math.round((diferenciaInteres / cuotasAjustables.length) * 100) / 100;
+            const ajustePorCuota = this.trunc2((diferenciaInteres / cuotasAjustables.length));
             
             // Aplicar ajuste
             for (const cuota of cuotasAjustables) {
@@ -2582,11 +3028,13 @@ export class LoansService implements OnModuleInit {
       throw new BadRequestException('La cuota ya fue pagada');
     }
 
-    // Validar límite de días según frecuencia
-    const nuevaFecha = new Date(data.nuevaFecha + 'T00:00:00.000Z');
-    const hoy = new Date();
-    hoy.setUTCHours(0, 0, 0, 0);
-    const diasDesdeHoy = Math.round((nuevaFecha.getTime() - hoy.getTime()) / 86_400_000);
+    const { startDate: hoyLocal } = getBogotaStartEndOfDay(new Date());
+
+    // Normalizar la nuevaFecha enviada por el frontend
+    const nuevaFechaStr = data.nuevaFecha.includes('T') ? data.nuevaFecha.split('T')[0] : data.nuevaFecha;
+    const nuevaFechaObj = new Date(`${nuevaFechaStr}T12:00:00-05:00`);
+
+    const diasDesdeHoy = Math.round((nuevaFechaObj.getTime() - hoyLocal.getTime()) / 86_400_000);
 
     const limiteDias: Record<string, number> = {
       SEMANAL: 6,
@@ -2597,11 +3045,11 @@ export class LoansService implements OnModuleInit {
     const limite = limiteDias[prestamo.frecuenciaPago] ?? 30;
     if (diasDesdeHoy > limite) {
       throw new BadRequestException(
-        `La reprogramación para créditos ${prestamo.frecuenciaPago.toLowerCase()} no puede ser más de ${limite} días desde hoy`,
+        `La reprogramación para créditos ${prestamo.frecuenciaPago.toLowerCase()} no puede exceder ${limite} días desde hoy`,
       );
     }
     if (diasDesdeHoy < 0) {
-      throw new BadRequestException('La nueva fecha no puede ser anterior a hoy');
+      throw new BadRequestException('La nueva fecha no puede ser anterior a la fecha actual');
     }
 
     // Crear solicitud de aprobación
@@ -2620,7 +3068,7 @@ export class LoansService implements OnModuleInit {
           numeroPrestamo: prestamo.numeroPrestamo,
           numeroCuota: cuota.numeroCuota,
           frecuenciaPago: prestamo.frecuenciaPago,
-          fechaVencimientoOriginal: cuota.fechaVencimiento.toISOString(),
+          fechaVencimientoOriginal: formatBogotaOffsetIso(cuota.fechaVencimiento),
           nuevaFecha: data.nuevaFecha,
           motivo: data.motivo,
           montoCuota: Number(cuota.monto),
@@ -2633,13 +3081,6 @@ export class LoansService implements OnModuleInit {
       where: { id: data.solicitadoPorId },
       select: { rol: true }
     });
-
-    const rolesAutoAprobacion = ['ADMIN', 'SUPER_ADMINISTRADOR', 'COORDINADOR'];
-    if (usuarioSolicitante && rolesAutoAprobacion.includes(usuarioSolicitante.rol)) {
-       await this.aprobarReprogramacion(aprobacion.id, data.solicitadoPorId);
-       this.logger.log(`Reprogramacion auto-aprobada: cuota ${cuota.id} del prestamo ${data.prestamoId} -> ${data.nuevaFecha}`);
-       return { mensaje: 'Reprogramación aprobada y aplicada automáticamente', aprobacion };
-    }
 
     const rolNameText = usuarioSolicitante?.rol === 'SUPERVISOR' ? 'Supervisor' : 'Cobrador Principal';
 
@@ -2654,6 +3095,30 @@ export class LoansService implements OnModuleInit {
     });
 
     this.logger.log(`Reprogramacion solicitada: cuota ${cuota.id} del prestamo ${data.prestamoId} -> ${data.nuevaFecha}`);
+
+    try {
+      await this.notificacionesService.create({
+        usuarioId: data.solicitadoPorId,
+        titulo: 'Solicitud de reprogramación enviada',
+        mensaje: 'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
+        tipo: 'INFORMATIVO',
+        entidad: 'Aprobacion',
+        entidadId: aprobacion.id,
+        metadata: {
+          tipoAprobacion: 'REPROGRAMACION_CUOTA',
+          tipo: 'REPROGRAMACION_CUOTA',
+          prestamoId: data.prestamoId,
+        },
+      });
+    } catch {}
+
+    // ⚡ Tiempo real: notificar a todos los clientes conectados
+    this.notificacionesGateway.broadcastAprobacionesActualizadas({
+      tipo: 'REPROGRAMACION_CUOTA',
+      prestamoId: data.prestamoId,
+      aprobacionId: aprobacion.id,
+    });
+
     return { mensaje: 'Solicitud de reprogramacion enviada para revision', aprobacion };
   }
 
@@ -2822,7 +3287,7 @@ export class LoansService implements OnModuleInit {
       fechaFin:       p.fechaFin,
     }));
 
-    const fechaStr = new Date().toISOString().split('T')[0];
+    const fechaStr = getBogotaDayKey(new Date());
 
     if (format === 'excel') {
       return generarExcelCartera(filas, totales, fechaStr);

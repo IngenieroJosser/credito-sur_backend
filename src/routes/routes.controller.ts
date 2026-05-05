@@ -8,6 +8,7 @@ import {
   Delete,
   Query,
   UseGuards,
+  Request,
   ParseUUIDPipe,
   HttpCode,
   HttpStatus,
@@ -223,6 +224,34 @@ export class RoutesController {
   @ApiResponse({ status: 404, description: 'Ruta no encontrada' })
   toggleActive(@Param('id', ParseUUIDPipe) id: string) {
     return this.routesService.toggleActive(id);
+  }
+
+  @Get(':id/activacion-hoy')
+  @Roles(
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.COBRADOR,
+  )
+  @ApiOperation({ summary: 'Consultar si la ruta está activada hoy' })
+  @ApiResponse({ status: 200, description: 'Estado de activación diaria' })
+  getActivacionHoy(@Param('id', ParseUUIDPipe) id: string) {
+    return this.routesService.getRutaActivadaHoy(id);
+  }
+
+  @Post(':id/activar-hoy')
+  @Roles(
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Activar la ruta para el día de hoy (manual)' })
+  @ApiResponse({ status: 200, description: 'Ruta activada hoy' })
+  activarHoy(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
+    return this.routesService.activarRutaHoy(id, req.user?.id);
   }
 
   @Post(':id/assign-client')

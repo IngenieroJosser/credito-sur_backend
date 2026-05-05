@@ -169,6 +169,10 @@ model Cliente {
   telefono                  String               @db.VarChar(20)
   direccion                 String?
   referencia                String?
+  referencia1Nombre         String?
+  referencia1Telefono       String?
+  referencia2Nombre         String?
+  referencia2Telefono       String?
   nivelRiesgo               NivelRiesgo          @default(VERDE)
   puntaje                   Int                  @default(100)
   ultimaActualizacionRiesgo DateTime?
@@ -257,6 +261,10 @@ model Prestamo {
   tipoPrestamo         String               @db.VarChar(20)
   tipoAmortizacion     TipoAmortizacion     @default(INTERES_SIMPLE)
   monto                Decimal              @db.Decimal(12, 2)
+  // Para créditos de artículo: valores para calcular y persistir la utilidad por margen (sin afectar caja)
+  precioVentaArticulo  Decimal?             @db.Decimal(12, 2)
+  costoArticulo        Decimal?             @db.Decimal(12, 2)
+  margenArticulo       Decimal?             @db.Decimal(12, 2)
   tasaInteres          Decimal              @db.Decimal(5, 2)
   tasaInteresMora      Decimal              @db.Decimal(5, 2)
   plazoMeses           Int
@@ -821,6 +829,7 @@ enum TipoAprobacion {
   NUEVO_PRESTAMO
   GASTO
   SOLICITUD_BASE_EFECTIVO
+  PAGO_TRANSFERENCIA
   PRORROGA_PAGO
   BAJA_POR_PERDIDA
   REPROGRAMACION_CUOTA
@@ -880,4 +889,37 @@ model ConfiguracionSistema {
   actualizadoPorId      String?
 
   @@map("configuracion_sistema")
+}
+
+enum BackupTipo {
+  MANUAL
+  PROGRAMADO
+}
+
+enum BackupDestino {
+  LOCAL
+}
+
+enum BackupEstado {
+  EXITOSO
+  FALLIDO
+  EN_PROCESO
+}
+
+model BackupRun {
+  id          String        @id @default(uuid())
+  tipo        BackupTipo
+  destino     BackupDestino @default(LOCAL)
+  estado      BackupEstado  @default(EN_PROCESO)
+  filePath    String?       @db.VarChar(500)
+  fileSize    Int?
+  startedAt   DateTime      @default(now())
+  finishedAt  DateTime?
+  durationMs  Int?
+  error       String?
+  metadata    Json?
+
+  @@index([startedAt])
+  @@index([estado])
+  @@map("backup_runs")
 }

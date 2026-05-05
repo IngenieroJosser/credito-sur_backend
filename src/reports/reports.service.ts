@@ -22,7 +22,8 @@ import {
   OperationalReportResponse,
   RoutePerformanceDetail,
 } from './dto/responses-routes.dto';
-import { TimeFilterPeriod, calculateDateRange } from '../utils/date-utils';
+import { TimeFilterPeriod, calculateDateRange, getBogotaDayKey, getBogotaStartEndOfDay } from '../utils/date-utils';
+import { RoutesService } from '../routes/routes.service';
 import { generarExcelMora, generarPDFMora, MoraRow, MoraTotales } from '../templates/exports/cuentas-mora.template';
 import { generarExcelVencidas, generarPDFVencidas, VencidasRow, VencidasTotales } from '../templates/exports/cuentas-vencidas.template';
 import { generarExcelOperativo, generarPDFOperativo, OperativoRow, OperativoResumen } from '../templates/exports/reporte-operativo.template';
@@ -34,11 +35,11 @@ export class ReportsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificacionesService: NotificacionesService,
+    private readonly routesService: RoutesService,
   ) {}
 
   async getFinancialSummary(startDate: Date, endDate: Date) {
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
+    const { endDate: end } = getBogotaStartEndOfDay(endDate);
 
     const ingresosResult = await this.prisma.pago.aggregate({
       _sum: { montoTotal: true },
@@ -118,8 +119,7 @@ export class ReportsService {
   }
 
   async getExpenseDistribution(startDate: Date, endDate: Date) {
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
+    const { endDate: end } = getBogotaStartEndOfDay(endDate);
 
     const gastos = await this.prisma.gasto.groupBy({
       by: ['tipoGasto'],
@@ -160,14 +160,58 @@ export class ReportsService {
   ): Promise<PrestamosMoraResponseDto> {
     const skip = (pagina - 1) * limite;
 
+    const { startDate: hoyInicioBogota } = getBogotaStartEndOfDay(new Date());
+    const hoyKeyBogota = getBogotaDayKey(new Date());
+
+    const diasMoraDiarioExcluyendoDomingos = (startKey: string, endKey: string): number => {
+      // Cuenta los días transcurridos DESPUÉS del vencimiento hasta hoy inclusive,
+      // excluyendo domingos (no se cobra).
+      //
+      // Importante: usamos llaves YYYY-MM-DD (UTC key para vencimientos + hoyKeyBogota)
+      // y construimos fechas en Bogotá al mediodía para evitar desfases por zona horaria.
+      if (!startKey || !endKey) return 0;
+      const cur = new Date(`${startKey}T12:00:00-05:00`);
+      const endD = new Date(`${endKey}T12:00:00-05:00`);
+      if (isNaN(cur.getTime()) || isNaN(endD.getTime())) return 0;
+
+      let count = 0;
+      cur.setDate(cur.getDate() + 1);
+      while (cur.getTime() <= endD.getTime()) {
+        if (cur.getDay() !== 0) count++;
+        cur.setDate(cur.getDate() + 1);
+      }
+      return count;
+    };
+
+    const utcDateKey = (d: Date): string => {
+      const y = d.getUTCFullYear();
+      const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(d.getUTCDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    };
+
     const whereConditions: any = {
       estado: { in: ['EN_MORA', 'ACTIVO'] },
-      cuotas: {
-        some: {
-          estado: { in: ['VENCIDA', 'PRORROGADA'] },
+    };
+
+    // Nota importante:
+    // No dependemos únicamente de que el job marque la cuota como VENCIDA.
+    // Para el reporte (y para que sea consistente con ruta/dashboard), consideramos
+    // cuotas no pagadas (PENDIENTE/PARCIAL/VENCIDA) y validamos en memoria con
+    // la fecha efectiva (prórroga si existe) contra la llave Bogotá.
+    whereConditions.OR = [
+      { estado: 'EN_MORA' },
+      {
+        cuotas: {
+          some: {
+            estado: { in: ['PENDIENTE', 'PARCIAL', 'VENCIDA'] },
+            // Filtro preliminar por fecha (evita traer demasiadas filas). Luego se valida en memoria
+            // con la fecha efectiva (prórroga si existe) y la llave Bogotá.
+            fechaVencimiento: { lt: hoyInicioBogota },
+          },
         },
       },
-    };
+    ];
 
     // Aplicar filtros
     if (filtros.busqueda) {
@@ -247,8 +291,8 @@ export class ReportsService {
       whereConditions.clienteId = { in: clienteIds };
     }
 
-    // Obtener total de registros
-    const total = await this.prisma.prestamo.count({
+    // Obtener total bruto de registros (antes del filtro en memoria)
+    const _totalRaw = await this.prisma.prestamo.count({
       where: whereConditions,
     });
 
@@ -261,7 +305,7 @@ export class ReportsService {
         cliente: true,
         cuotas: {
           where: {
-            estado: { in: ['VENCIDA', 'PRORROGADA'] },
+            estado: { in: ['PENDIENTE', 'PARCIAL', 'VENCIDA'] },
           },
           orderBy: {
             fechaVencimiento: 'asc',
@@ -291,7 +335,7 @@ export class ReportsService {
     });
 
     // Enriquecer datos con información de ruta y cobrador
-    const prestamosEnriquecidos = await Promise.all(
+    const prestamosEnriquecidosRaw = await Promise.all(
       prestamos.map(async (prestamo) => {
         // Obtener asignación de ruta activa del cliente
         const asignacion = await this.prisma.asignacionRuta.findFirst({
@@ -308,14 +352,45 @@ export class ReportsService {
           },
         });
 
-        // Calcular días de mora (desde la primera cuota vencida)
-        const primeraCuotaVencida = prestamo.cuotas[0];
-        const diasMora = primeraCuotaVencida
-          ? differenceInDays(new Date(), primeraCuotaVencida.fechaVencimiento)
-          : 0;
+        const cuotas = (prestamo as any)?.cuotas || [];
+        const cuotasVencidas = cuotas.filter((c: any) => {
+          const eff = c?.fechaVencimientoProrroga
+            ? new Date(c.fechaVencimientoProrroga)
+            : new Date(c.fechaVencimiento);
+          if (!eff || isNaN(eff.getTime())) return false;
+          const key = utcDateKey(eff);
+          return !!key && key < hoyKeyBogota;
+        });
+
+        const cuotaMasAntigua = cuotasVencidas.reduce((acc: any, c: any) => {
+          const eff = c?.fechaVencimientoProrroga
+            ? new Date(c.fechaVencimientoProrroga)
+            : new Date(c.fechaVencimiento);
+          if (!acc) return { cuota: c, eff };
+          return eff < acc.eff ? { cuota: c, eff } : acc;
+        }, null as null | { cuota: any; eff: Date });
+
+        const cuotaMasAntiguaKey = cuotaMasAntigua?.eff ? utcDateKey(cuotaMasAntigua.eff) : '';
+
+        const diasMora = (() => {
+          if (!cuotaMasAntiguaKey) return 0;
+          const frecuencia = String((prestamo as any)?.frecuenciaPago || '').toUpperCase();
+          if (frecuencia === 'DIARIO') {
+            return diasMoraDiarioExcluyendoDomingos(cuotaMasAntiguaKey, hoyKeyBogota || '');
+          }
+          // Para frecuencias NO diarias, usamos llaves YYYY-MM-DD y fechas a mediodía Bogotá
+          // para evitar desfases por hora/zona (UTC vs Bogotá) que pueden dar 0d aunque
+          // la cuota ya esté vencida por llave.
+          const parseKeyToBogotaMidday = (key: string) => new Date(`${key}T12:00:00-05:00`);
+          const start = parseKeyToBogotaMidday(cuotaMasAntiguaKey);
+          const end = parseKeyToBogotaMidday(hoyKeyBogota || '');
+          if (isNaN(start.getTime()) || isNaN(end.getTime())) return 0;
+          const diff = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+          return diff > 0 ? diff : 0;
+        })();
 
         // Calcular monto de mora (suma de intereses de mora de cuotas vencidas)
-        const montoMora = prestamo.cuotas.reduce(
+        const montoMora = cuotasVencidas.reduce(
           (sum, cuota) => sum + cuota.montoInteresMora.toNumber(),
           0,
         );
@@ -332,6 +407,11 @@ export class ReportsService {
           ? Math.ceil((new Date(extension.nuevaFechaVencimiento).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
           : undefined;
 
+        const tieneMoraReal = cuotasVencidas.length > 0 || diasMora > 0 || montoMora > 0;
+        // Excluir falsos positivos (incluye casos donde el préstamo quedó EN_MORA
+        // por un error histórico o por cuotas que vencen HOY).
+        if (!tieneMoraReal) return null;
+
         return {
           id: prestamo.id,
           numeroPrestamo: prestamo.numeroPrestamo,
@@ -347,7 +427,7 @@ export class ReportsService {
           montoMora,
           montoTotalDeuda: prestamo.saldoPendiente.toNumber(),
           montoOriginal: prestamo.monto.toNumber(),
-          cuotasVencidas: prestamo.cuotas.length,
+          cuotasVencidas: cuotasVencidas.length,
           ruta: asignacion?.ruta?.nombre || 'Sin asignar',
           cobrador: asignacion?.ruta?.cobrador
             ? `${asignacion.ruta.cobrador.nombres} ${asignacion.ruta.cobrador.apellidos}`
@@ -365,6 +445,9 @@ export class ReportsService {
         } as PrestamoMoraDto;
       }),
     );
+
+    const prestamosEnriquecidos = prestamosEnriquecidosRaw.filter(Boolean) as PrestamoMoraDto[];
+    const total = prestamosEnriquecidos.length;
 
     // Calcular totales
     const totalMora = prestamosEnriquecidos.reduce(
@@ -402,7 +485,7 @@ export class ReportsService {
     // 1. Solo consulta de BD
     const data = await this.obtenerPrestamosEnMora(filtros, 1, 10000);
     const prestamos = data.prestamos;
-    const fecha = new Date().toISOString().split('T')[0];
+    const fecha = getBogotaDayKey(new Date());
 
     // 2. Mapeo al tipo del template
     const filas: MoraRow[] = prestamos.map((p: any) => ({
@@ -690,7 +773,7 @@ export class ReportsService {
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
     const data = await this.obtenerCuentasVencidas(filtros, 1, 10000);
     const cuentas = data.cuentas;
-    const fecha = new Date().toISOString().split('T')[0];
+    const fecha = getBogotaDayKey(new Date());
 
     const filas: VencidasRow[] = cuentas.map((c: any) => ({
       numeroPrestamo: c.numeroPrestamo || '',
@@ -724,6 +807,86 @@ export class ReportsService {
     filters: GetOperationalReportDto,
   ): Promise<OperationalReportResponse> {
     const { period, routeId, startDate, endDate } = filters;
+
+    // Para el reporte diario, el objetivo debe ser la meta REAL del día por ruta,
+    // igual a la vista del listado de rutas (metaDelDia/cobranzaDelDia/avanceDiario).
+    // Esto evita discrepancias y hace que el objetivo tenga sentido operativo.
+    if (period === 'today') {
+      const rutasListado = await this.routesService.findAll({ activa: true });
+      const rutas = (rutasListado as any)?.data || [];
+
+      const rutasFiltradas = routeId ? rutas.filter((r: any) => r.id === routeId) : rutas;
+      const { startDate: hoyInicio, endDate: hoyFin } = getBogotaStartEndOfDay(new Date());
+
+      const rendimientoRutas: RoutePerformanceDetail[] = await Promise.all(
+        rutasFiltradas.map(async (r: any) => {
+          const nuevosPrestamosAgg = await this.prisma.prestamo.aggregate({
+            where: {
+              creadoEn: { gte: hoyInicio, lte: hoyFin },
+              eliminadoEn: null,
+              estado: { in: [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA, EstadoPrestamo.PAGADO] },
+              cliente: {
+                asignacionesRuta: { some: { rutaId: r.id, activa: true } },
+              },
+            },
+            _sum: { monto: true },
+            _count: { id: true },
+          });
+
+          const nuevosPrestamos = nuevosPrestamosAgg._count.id || 0;
+          const montoNuevosPrestamos = Number(nuevosPrestamosAgg._sum.monto || 0);
+
+          const nuevosClientes = await this.prisma.cliente.count({
+            where: {
+              creadoEn: { gte: hoyInicio, lte: hoyFin },
+              asignacionesRuta: { some: { rutaId: r.id, activa: true } },
+            },
+          });
+
+          return {
+            id: r.id,
+            ruta: r.nombre,
+            cobrador: r.cobrador,
+            cobradorId: r.cobradorId,
+            meta: Number(r.metaDelDia || 0),
+            recaudado: Number(r.cobranzaDelDia || 0),
+            eficiencia: Number(r.avanceDiario || 0),
+            nuevosPrestamos,
+            nuevosClientes,
+            montoNuevosPrestamos,
+          } as any;
+        }),
+      );
+
+      const totalRecaudo = rendimientoRutas.reduce((sum, rr: any) => sum + Number(rr.recaudado || 0), 0);
+      const totalMeta = rendimientoRutas.reduce((sum, rr: any) => sum + Number(rr.meta || 0), 0);
+      const porcentajeGlobal = totalMeta > 0 ? Math.round((totalRecaudo / totalMeta) * 100) : 0;
+
+      const totalPrestamosNuevos = rendimientoRutas.reduce((sum, rr: any) => sum + Number(rr.nuevosPrestamos || 0), 0);
+      const totalAfiliaciones = rendimientoRutas.reduce((sum, rr: any) => sum + Number(rr.nuevosClientes || 0), 0);
+      const totalMontoPrestamosNuevos = rendimientoRutas.reduce(
+        (sum, rr: any) => sum + Number(rr.montoNuevosPrestamos || 0),
+        0,
+      );
+      const efectividadPromedio =
+        rendimientoRutas.length > 0
+          ? Math.round(rendimientoRutas.reduce((sum, rr: any) => sum + Number(rr.eficiencia || 0), 0) / rendimientoRutas.length)
+          : 0;
+
+      return {
+        totalRecaudo,
+        totalMeta,
+        porcentajeGlobal,
+        totalPrestamosNuevos,
+        totalAfiliaciones,
+        efectividadPromedio,
+        totalMontoPrestamosNuevos,
+        rendimientoRutas,
+        periodo: period,
+        fechaInicio: hoyInicio,
+        fechaFin: hoyFin,
+      };
+    }
 
     const dateRange = calculateDateRange(
       period as TimeFilterPeriod,
@@ -1110,7 +1273,7 @@ export class ReportsService {
     format: 'excel' | 'pdf',
   ): Promise<any> {
     const reportData = await this.getOperationalReport(filters);
-    const fecha = new Date().toISOString().split('T')[0];
+    const fecha = getBogotaDayKey(new Date());
 
     const filas: OperativoRow[] = (reportData.rendimientoRutas || []).map((r: any) => ({
       ruta: r.ruta || '',
@@ -1150,7 +1313,7 @@ export class ReportsService {
       this.getMonthlyEvolution(startDate.getFullYear()),
       this.getExpenseDistribution(startDate, endDate),
     ]);
-    const fecha = new Date().toISOString().split('T')[0];
+    const fecha = getBogotaDayKey(new Date());
 
     if (format === 'excel') return generarExcelFinanciero(summary, monthly, expenses, fecha);
     if (format === 'pdf') return generarPDFFinanciero(summary, monthly, expenses, fecha);

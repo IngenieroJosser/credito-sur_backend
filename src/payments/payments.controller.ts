@@ -35,16 +35,17 @@ export class PaymentsController {
   @ApiOperation({
     summary: 'Registrar un pago',
     description:
-      'Si metodoPago=TRANSFERENCIA, se debe adjuntar el campo "comprobante" (imagen o PDF) obligatoriamente.',
+      'Si metodoPago=TRANSFERENCIA, se debe adjuntar el campo "comprobante" (imagen) obligatoriamente.',
   })
   @ApiConsumes('multipart/form-data')
   @UseInterceptors(
     FileInterceptor('comprobante', {
       storage: require('multer').memoryStorage(),
       fileFilter: (_req: any, file: Express.Multer.File, cb: any) => {
-        if (!file.originalname.match(/\.(jpg|jpeg|png|gif|pdf)$/i)) {
+        // Soporte para más formatos de imagen comunes en móviles (webp, heic, heif)
+        if (!file.originalname.match(/\.(jpg|jpeg|png|gif|webp|heic|heif)$/i)) {
           return cb(
-            new BadRequestException('El comprobante debe ser una imagen (JPG, PNG) o PDF'),
+            new BadRequestException('El comprobante debe ser una imagen (JPG, PNG, WEBP, HEIC)'),
             false,
           );
         }
@@ -63,9 +64,7 @@ export class PaymentsController {
       prestamoId: createPaymentDto.prestamoId?.toString(),
       clienteId:  createPaymentDto.clienteId?.toString(),
       cobradorId: createPaymentDto.cobradorId?.toString() || req.user?.id,
-      montoTotal: typeof createPaymentDto.montoTotal === 'string'
-        ? parseFloat(createPaymentDto.montoTotal)
-        : createPaymentDto.montoTotal,
+      montoTotal: Number(createPaymentDto.montoTotal),
     };
 
     if (!dto.cobradorId && req.user?.id) {
@@ -119,5 +118,11 @@ export class PaymentsController {
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.paymentsService.findOne(id);
+  }
+
+  @Post('reconcile/:pagoId')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
+  async reconcilePayment(@Param('pagoId') pagoId: string) {
+    return this.paymentsService.reconcilePayment(pagoId);
   }
 }
