@@ -4,11 +4,20 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificacionesGateway } from './notificaciones.gateway';
 import { PushService } from '../push/push.service';
 import { RolUsuario } from '@prisma/client';
-import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { Logger } from '@nestjs/common';
+import {
+  describe,
+  it,
+  expect,
+  jest,
+  beforeEach,
+  afterEach,
+} from '@jest/globals';
 
 describe('NotificacionesService', () => {
   let service: NotificacionesService;
   let prismaService: PrismaService;
+  let loggerErrorSpy: jest.SpiedFunction<typeof Logger.prototype.error>;
 
   // Mock de PrismaService
   const mockPrismaService = {
@@ -33,6 +42,19 @@ describe('NotificacionesService', () => {
   };
 
   beforeEach(async () => {
+    mockPrismaService.notificacion.create.mockResolvedValue({
+      id: 'notif-123',
+      usuarioId: 'user-123',
+      titulo: 'Test Notificacion',
+      mensaje: 'Test Mensaje',
+      tipo: 'SISTEMA',
+      metadata: { nivel: undefined },
+    });
+    mockPushService.sendPushNotification.mockResolvedValue(undefined);
+    loggerErrorSpy = jest
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation(() => undefined);
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         NotificacionesService,
@@ -56,6 +78,7 @@ describe('NotificacionesService', () => {
   });
 
   afterEach(() => {
+    loggerErrorSpy.mockRestore();
     jest.clearAllMocks();
   });
 
@@ -78,17 +101,17 @@ describe('NotificacionesService', () => {
           usuarioId: data.usuarioId,
           titulo: data.titulo,
           mensaje: data.mensaje,
-          tipo: 'INFO',
+          tipo: 'SISTEMA',
           entidad: undefined,
           entidadId: undefined,
-          metadata: {},
+          metadata: { nivel: undefined },
         },
       });
     });
 
     it('should handle errors gracefully (log only)', async () => {
       // Configuramos el mock para lanzar error
-      (prismaService.notificacion.create as any).mockRejectedValue(
+      mockPrismaService.notificacion.create.mockRejectedValue(
         new Error('DB Error'),
       );
 
@@ -110,9 +133,7 @@ describe('NotificacionesService', () => {
         { id: 'coord-1', rol: RolUsuario.COORDINADOR },
         { id: 'coord-2', rol: RolUsuario.COORDINADOR },
       ];
-      (prismaService.usuario.findMany as any).mockResolvedValue(
-        mockCoordinators,
-      );
+      mockPrismaService.usuario.findMany.mockResolvedValue(mockCoordinators);
 
       const data = {
         titulo: 'Alerta Coordinador',
@@ -134,7 +155,7 @@ describe('NotificacionesService', () => {
     });
 
     it('should do nothing if no coordinators found', async () => {
-      (prismaService.usuario.findMany as any).mockResolvedValue([]);
+      mockPrismaService.usuario.findMany.mockResolvedValue([]);
 
       await service.notifyCoordinator({
         titulo: 'Test',

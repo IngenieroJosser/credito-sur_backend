@@ -7,6 +7,8 @@ import { CreateAuthDto } from './dto/create-auth.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import * as nodemailer from 'nodemailer';
 import { ForgotPasswordDto, VerifyResetCodeDto } from './dto/forgot-password.dto';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Injectable()
 export class AuthService {
@@ -299,6 +301,7 @@ export class AuthService {
     const smtpPort = parseInt(process.env.SMTP_PORT || '587');
     const smtpUser = process.env.SMTP_USER;
     const smtpPass = process.env.SMTP_PASS;
+
     const smtpFrom = process.env.SMTP_FROM || smtpUser;
 
     if (!smtpHost || !smtpUser || !smtpPass) {
@@ -314,21 +317,98 @@ export class AuthService {
       auth: { user: smtpUser, pass: smtpPass },
     });
 
+    const brandBlue = '#08557f';
+    const brandOrange = '#fb851b';
+
+    const getLogoDataUri = (): string => {
+      try {
+        const prod = path.join(process.cwd(), 'dist/assets/logo.png');
+        const dev = path.join(process.cwd(), 'src/assets/logo.png');
+        const p = fs.existsSync(prod) ? prod : fs.existsSync(dev) ? dev : '';
+        if (!p) return '';
+        const buf = fs.readFileSync(p);
+        return `data:image/png;base64,${buf.toString('base64')}`;
+      } catch {
+        return '';
+      }
+    };
+
+    const baseUrl = (process.env.FRONTEND_URL || '').replace(/\/$/, '');
+    const logoUrlFallback = baseUrl ? `${baseUrl}/logo.png` : '';
+    const logoSrc = getLogoDataUri() || logoUrlFallback;
+
     await transporter.sendMail({
       from: `"Créditos del Sur" <${smtpFrom}>`,
       to: correo,
       subject: 'Código de recuperación de contraseña',
+
       html: `
-        <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 30px; background: #f8fafc; border-radius: 12px;">
-          <h2 style="color: #1e293b; margin-bottom: 8px;">Recuperación de contraseña</h2>
-          <p style="color: #64748b;">Hola <strong>${nombre}</strong>, recibimos una solicitud para restablecer tu contraseña.</p>
-          <div style="background: #fff; border: 2px solid #e2e8f0; border-radius: 10px; padding: 24px; text-align: center; margin: 24px 0;">
-            <p style="color: #64748b; font-size: 14px; margin: 0 0 8px 0;">Tu código de verificación es:</p>
-            <div style="font-size: 42px; font-weight: 900; letter-spacing: 12px; color: #0f172a; font-family: monospace;">${codigo}</div>
-          </div>
-          <p style="color: #64748b; font-size: 13px;">Este código expira en <strong>15 minutos</strong>. Si no solicitaste este cambio, ignora este correo.</p>
-          <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;">
-          <p style="color: #94a3b8; font-size: 12px; text-align: center;">Créditos del Sur — Sistema de Gestión</p>
+        <div style="background:#f6f8fb; padding:24px 12px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:560px; margin:0 auto; border-collapse:collapse;">
+            <tr>
+              <td style="padding:0;">
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse; overflow:hidden; border-radius:18px;">
+                  <tr>
+                    <td style="padding:18px 20px; background:${brandBlue};">
+                      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;">
+                        <tr>
+                          <td style="vertical-align:middle;">
+                            ${logoSrc ? `<img src="${logoSrc}" alt="Créditos del Sur" width="56" height="56" style="display:block; border-radius:12px; background:#ffffff; padding:8px;" />` : ''}
+                          </td>
+                          <td style="vertical-align:middle; padding-left:12px;">
+                            <div style="font-family:Arial, sans-serif; font-size:16px; font-weight:800; color:#ffffff; line-height:1.2;">Créditos del Sur</div>
+                            <div style="font-family:Arial, sans-serif; font-size:12px; font-weight:700; color:rgba(255,255,255,0.85); letter-spacing:0.3px;">Recuperación de contraseña</div>
+                          </td>
+
+                          <td style="vertical-align:middle; text-align:right;">
+                            <span style="display:inline-block; background:${brandOrange}; color:#111827; font-family:Arial, sans-serif; font-size:11px; font-weight:900; padding:8px 10px; border-radius:999px;">CÓDIGO OTP</span>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+
+                  <tr>
+                    <td style="background:#ffffff; padding:22px 20px 12px 20px;">
+                      <div style="font-family:Arial, sans-serif; font-size:14px; color:#0f172a; line-height:1.6;">
+                        Hola <strong>${nombre}</strong>,
+                        <br />
+                        recibimos una solicitud para restablecer tu contraseña.
+                      </div>
+                    </td>
+                  </tr>
+
+                  <tr>
+                    <td style="background:#ffffff; padding:0 20px 18px 20px;">
+                      <div style="border:1px solid #e5e7eb; border-radius:16px; padding:18px; background:#f8fafc; text-align:center;">
+                        <div style="font-family:Arial, sans-serif; font-size:12px; font-weight:800; color:#475569; letter-spacing:0.6px; text-transform:uppercase; margin-bottom:10px;">Tu código de verificación</div>
+                        <div style="font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size:44px; font-weight:900; letter-spacing:10px; color:#0f172a;">${codigo}</div>
+                        <div style="font-family:Arial, sans-serif; font-size:12px; color:#64748b; margin-top:12px;">Este código expira en <strong>15 minutos</strong>.</div>
+                      </div>
+                    </td>
+                  </tr>
+
+                  <tr>
+                    <td style="background:#ffffff; padding:0 20px 18px 20px;">
+                      <div style="font-family:Arial, sans-serif; font-size:12px; color:#64748b; line-height:1.6;">
+                        Si no solicitaste este cambio, puedes ignorar este correo.
+                      </div>
+                    </td>
+                  </tr>
+
+                  <tr>
+                    <td style="background:#ffffff; padding:16px 20px; border-top:1px solid #eef2f7;">
+                      <div style="font-family:Arial, sans-serif; font-size:11px; color:#94a3b8; line-height:1.4; text-align:center;">
+                        Créditos del Sur — Sistema de Gestión
+                        <br />
+                        <span style="color:#cbd5e1;">No respondas a este correo.</span>
+                      </div>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
         </div>
       `,
     });
