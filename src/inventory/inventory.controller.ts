@@ -11,6 +11,7 @@ import {
   DefaultValuePipe,
   HttpCode,
   HttpStatus,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { InventoryService } from './inventory.service';
@@ -19,7 +20,7 @@ import { UpdateInventoryDto } from './dto/update-inventory.dto';
 
 @Controller('inventory')
 export class InventoryController {
-  constructor(private readonly inventoryService: InventoryService) {}
+  constructor(private readonly inventoryService: InventoryService) { }
 
   @Get('stats')
   getInventoryStats() {
@@ -49,8 +50,13 @@ export class InventoryController {
   }
 
   @Get()
-  findAll() {
-    return this.inventoryService.findAll();
+  async findAll() {
+    try {
+      return await this.inventoryService.findAll();
+    } catch (error) {
+      console.error('Error en GET /inventory:', error);
+      throw new InternalServerErrorException('Error al obtener productos');
+    }
   }
 
   @Get(':id')

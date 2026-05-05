@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "TipoContenidoMultimedia" ADD VALUE 'COMPROBANTE_TRANSFERENCIA';
