@@ -160,6 +160,13 @@ export class PaymentsService {
     }
 
     const montoTotal = dto.montoTotal;
+
+    if (montoTotal > Number(prestamo.saldoPendiente) + 1) {
+      throw new BadRequestException(
+        `El monto del pago ($${montoTotal}) no puede ser mayor al saldo pendiente del préstamo ($${prestamo.saldoPendiente})`,
+      );
+    }
+
     const tasaInteres = Number(prestamo.tasaInteres);
 
     // Descomponer el pago total en capital e interés (fórmula Excel)
