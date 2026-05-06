@@ -128,6 +128,8 @@ export class ClientsController {
     RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
     RolUsuario.PUNTO_DE_VENTA,
+    RolUsuario.COBRADOR,
+    RolUsuario.SUPERVISOR,
   )
   async createClient(@Body() body: CreateClientDto) {
     this.logger.log(`Creando cliente con datos: ${JSON.stringify(body)}`);

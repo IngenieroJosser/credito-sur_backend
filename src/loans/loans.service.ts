@@ -720,7 +720,12 @@ export class LoansService implements OnModuleInit {
       this.logger.log(`Found ${prestamos.length} loans, total: ${total}`);
 
       // Calcular estadísticas globales (sin filtros de eliminados)
-      const whereStats = { eliminadoEn: null };
+      const whereStats = { 
+        eliminadoEn: null,
+        estado: {
+          notIn: [EstadoPrestamo.BORRADOR, EstadoPrestamo.PENDIENTE_APROBACION]
+        }
+      };
 
       const [
         totalPrestamos,
