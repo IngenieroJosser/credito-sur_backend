@@ -1,7 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ClientsService } from './clients.service';
-import { PrismaService } from '../prisma/prisma.service'; 
-
+import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
+import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+import { ConfiguracionService } from '../configuracion/configuracion.service';
 
 describe('ClientsService', () => {
   let service: ClientsService;
@@ -11,12 +14,18 @@ describe('ClientsService', () => {
     cliente: {
       count: jest.fn(),
       create: jest.fn(),
+      findFirst: jest.fn(),
       findMany: jest.fn(),
       findUnique: jest.fn(),
     },
     usuario: {
       findFirst: jest.fn(),
     },
+  };
+
+  const mockNotificacionesGateway = {
+    broadcastClientesActualizados: jest.fn(),
+    broadcastDashboardsActualizados: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -26,6 +35,22 @@ describe('ClientsService', () => {
         {
           provide: PrismaService,
           useValue: mockPrismaService,
+        },
+        {
+          provide: AuditService,
+          useValue: {},
+        },
+        {
+          provide: NotificacionesService,
+          useValue: {},
+        },
+        {
+          provide: NotificacionesGateway,
+          useValue: mockNotificacionesGateway,
+        },
+        {
+          provide: ConfiguracionService,
+          useValue: {},
         },
       ],
     }).compile();
@@ -44,6 +69,8 @@ describe('ClientsService', () => {
 
   describe('create', () => {
     it('should create a client with auto-generated code', async () => {
+      (prismaService.cliente.findFirst as jest.Mock).mockResolvedValue(null);
+
       // 1. Mock count para que retorne 10 (el siguiente será 11 -> C-0011)
       (prismaService.cliente.count as jest.Mock).mockResolvedValue(10);
 
@@ -90,6 +117,7 @@ describe('ClientsService', () => {
     });
 
     it('should throw error if no creator user found', async () => {
+      (prismaService.cliente.findFirst as jest.Mock).mockResolvedValue(null);
       (prismaService.cliente.count as jest.Mock).mockResolvedValue(0);
       (prismaService.usuario.findFirst as jest.Mock).mockResolvedValue(null);
 

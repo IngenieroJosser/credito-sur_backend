@@ -7,6 +7,7 @@ import {
   Param,
   Delete,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { CategoriasService } from './categorias.service';
 import {
@@ -14,9 +15,11 @@ import {
   UpdateCategoriaDto,
 } from './dto/create-categoria.dto';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @ApiTags('Categorias')
 @Controller('categorias')
+@UseGuards(JwtAuthGuard)
 export class CategoriasController {
   constructor(private readonly categoriasService: CategoriasService) {}
 

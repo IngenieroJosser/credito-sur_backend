@@ -11,14 +11,16 @@ import {
   DefaultValuePipe,
   HttpCode,
   HttpStatus,
-  InternalServerErrorException,
+  UseGuards,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { InventoryService } from './inventory.service';
 import { CreateInventoryDto } from './dto/create-inventory.dto';
 import { UpdateInventoryDto } from './dto/update-inventory.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('inventory')
+@UseGuards(JwtAuthGuard)
 export class InventoryController {
   constructor(private readonly inventoryService: InventoryService) { }
 
@@ -45,7 +47,10 @@ export class InventoryController {
   ) {
     const result = await this.inventoryService.exportarInventario(format);
     res.setHeader('Content-Type', result.contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${result.filename}"`,
+    );
     res.send(result.data);
   }
 

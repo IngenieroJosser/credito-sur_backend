@@ -14,6 +14,8 @@
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:prod": "npx prisma migrate deploy --schema src/prisma/schema.prisma && node dist/main.js",
+    "lint": "eslint \"{src,test}/**/*.ts\"",
+    "test": "jest",
     "seed": "ts-node -r tsconfig-paths/register src/prisma/seed.ts",
     "postinstall": "prisma generate --schema src/prisma/schema.prisma"
   },
