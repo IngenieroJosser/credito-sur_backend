@@ -38,6 +38,9 @@ export class UsersController {
     RolUsuario.SUPER_ADMINISTRADOR,
     RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COBRADOR,
+    RolUsuario.PUNTO_DE_VENTA,
   )
   obtenerTodos() {
     return this.usersService.obtenerTodos();
