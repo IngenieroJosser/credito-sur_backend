@@ -12,6 +12,7 @@ import {
   HttpCode,
   HttpStatus,
   UseGuards,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { InventoryService } from './inventory.service';
