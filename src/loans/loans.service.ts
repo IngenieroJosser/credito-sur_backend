@@ -1871,6 +1871,16 @@ export class LoansService implements OnModuleInit {
         },
       });
 
+      // Descontar stock si es un préstamo de artículo (y maneja stock)
+      if (prestamoActualizado.tipoPrestamo === 'ARTICULO' && prestamoActualizado.productoId) {
+        if (prestamoActualizado.producto?.stock !== undefined && prestamoActualizado.producto?.stock !== null) {
+          await this.prisma.producto.update({
+            where: { id: prestamoActualizado.productoId },
+            data: { stock: { decrement: 1 } },
+          });
+        }
+      }
+
       // Actualizar la aprobación
       await this.prisma.aprobacion.updateMany({
         where: {
@@ -1972,18 +1982,6 @@ export class LoansService implements OnModuleInit {
           producto: true,
         },
       });
-
-      // CORRECCIÓN: Restablecer stock si el préstamo incluye un artículo físico (stock !== undefined)
-      if (prestamoRechazado.productoId && prestamoRechazado.producto?.stock !== undefined && prestamoRechazado.producto?.stock !== null) {
-        try {
-           await this.prisma.producto.update({
-             where: { id: prestamoRechazado.productoId },
-             data: { stock: { increment: 1 } }
-           });
-        } catch(e) {
-          this.logger.error(`Error devolviendo stock al rechazar el préstamo ${id}:`, e);
-        }
-      }
 
       // Actualizar la aprobación
       await this.prisma.aprobacion.updateMany({
@@ -2246,14 +2244,6 @@ export class LoansService implements OnModuleInit {
             'La cuota inicial no puede ser mayor al precio total del artículo.',
           );
         }
-
-        // Descontar stock solo si el producto maneja stock
-        if (producto.stock !== undefined && producto.stock !== null) {
-          await this.prisma.producto.update({
-            where: { id: data.productoId },
-            data: { stock: { decrement: 1 } },
-          });
-        }
       }
 
       // Generar número de préstamo/crédito
@@ -2425,6 +2415,16 @@ export class LoansService implements OnModuleInit {
           },
         },
       });
+
+      // Descontar stock si el préstamo es de artículo y ha sido APROBADO inmediatamente
+      if (prestamo.tipoPrestamo === 'ARTICULO' && prestamo.estadoAprobacion === EstadoAprobacion.APROBADO) {
+        if (prestamo.productoId && prestamo.producto?.stock !== undefined && prestamo.producto?.stock !== null) {
+          await this.prisma.producto.update({
+            where: { id: prestamo.productoId },
+            data: { stock: { decrement: 1 } },
+          });
+        }
+      }
 
       const hoyKey = getBogotaDayKey(new Date());
       const { startDate: today } = getBogotaStartEndOfDayFromKey(hoyKey);
