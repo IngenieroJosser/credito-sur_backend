@@ -1871,6 +1871,16 @@ export class LoansService implements OnModuleInit {
         },
       });
 
+      // Descontar stock si es un préstamo de artículo (y maneja stock)
+      if (prestamoActualizado.tipoPrestamo === 'ARTICULO' && prestamoActualizado.productoId) {
+        if (prestamoActualizado.producto?.stock !== undefined && prestamoActualizado.producto?.stock !== null) {
+          await this.prisma.producto.update({
+            where: { id: prestamoActualizado.productoId },
+            data: { stock: { decrement: 1 } },
+          });
+        }
+      }
+
       // Actualizar la aprobación
       await this.prisma.aprobacion.updateMany({
         where: {
@@ -1973,18 +1983,6 @@ export class LoansService implements OnModuleInit {
         },
       });
 
-      // CORRECCIÓN: Restablecer stock si el préstamo incluye un artículo físico (stock !== undefined)
-      if (prestamoRechazado.productoId && prestamoRechazado.producto?.stock !== undefined && prestamoRechazado.producto?.stock !== null) {
-        try {
-           await this.prisma.producto.update({
-             where: { id: prestamoRechazado.productoId },
-             data: { stock: { increment: 1 } }
-           });
-        } catch(e) {
-          this.logger.error(`Error devolviendo stock al rechazar el préstamo ${id}:`, e);
-        }
-      }
-
       // Actualizar la aprobación
       await this.prisma.aprobacion.updateMany({
         where: {
@@ -2084,22 +2082,25 @@ export class LoansService implements OnModuleInit {
         throw new NotFoundException('Usuario creador no encontrado');
       }
 
-      // Validar que haya capital en el sistema (Caja de Oficina)
-      const cajaOficina = await this.prisma.caja.findFirst({
-        where: { codigo: 'CAJA-OFICINA', activa: true },
-        select: { saldoActual: true },
-      });
+      const isArticulo = String(data.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
 
-      if (!cajaOficina || Number(cajaOficina.saldoActual) <= 0) {
-        throw new BadRequestException(
-          'No hay capital en la caja de oficina. No se puede realizar ningún crédito.',
-        );
+      // Validar que haya capital en el sistema (Caja de Oficina) solo para préstamos que no son artículos
+      if (!isArticulo) {
+        const cajaOficina = await this.prisma.caja.findFirst({
+          where: { codigo: 'CAJA-OFICINA', activa: true },
+          select: { saldoActual: true },
+        });
+
+        if (!cajaOficina || Number(cajaOficina.saldoActual) <= 0) {
+          throw new BadRequestException(
+            'No hay capital en la caja de oficina. No se puede realizar ningún crédito.',
+          );
+        }
       }
 
       // Regla (producción): un COBRADOR no puede solicitar un préstamo en efectivo
       // si su caja de ruta no tiene saldo suficiente para el desembolso.
       // Esto evita que el saldo de la caja quede negativo al aprobar/desembolsar.
-      const isArticulo = String(data.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
       if (creador.rol === RolUsuario.COBRADOR && !isArticulo) {
         const montoDesembolso = Number(data.monto || 0);
         if (montoDesembolso > 0) {
@@ -2242,14 +2243,6 @@ export class LoansService implements OnModuleInit {
           throw new BadRequestException(
             'La cuota inicial no puede ser mayor al precio total del artículo.',
           );
-        }
-
-        // Descontar stock solo si el producto maneja stock
-        if (producto.stock !== undefined && producto.stock !== null) {
-          await this.prisma.producto.update({
-            where: { id: data.productoId },
-            data: { stock: { decrement: 1 } },
-          });
         }
       }
 
@@ -2422,6 +2415,16 @@ export class LoansService implements OnModuleInit {
           },
         },
       });
+
+      // Descontar stock si el préstamo es de artículo y ha sido APROBADO inmediatamente
+      if (prestamo.tipoPrestamo === 'ARTICULO' && prestamo.estadoAprobacion === EstadoAprobacion.APROBADO) {
+        if (prestamo.productoId && prestamo.producto?.stock !== undefined && prestamo.producto?.stock !== null) {
+          await this.prisma.producto.update({
+            where: { id: prestamo.productoId },
+            data: { stock: { decrement: 1 } },
+          });
+        }
+      }
 
       const hoyKey = getBogotaDayKey(new Date());
       const { startDate: today } = getBogotaStartEndOfDayFromKey(hoyKey);

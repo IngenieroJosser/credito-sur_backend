@@ -19,6 +19,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolUsuario } from '@prisma/client';
 import { CloudinaryService } from './cloudinary.service';
+import { Publico } from '../auth/decorators/public.decorator';
 
 // ─── Tipos de archivos permitidos ─────────────────────────────────────────────
 const EXTENSIONES_PERMITIDAS = /\.(jpg|jpeg|png|gif|mp4|webm|pdf)$/i;
@@ -35,6 +36,8 @@ export class UploadController {
     RolUsuario.SUPER_ADMINISTRADOR,
     RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COBRADOR,
   )
   @ApiOperation({ summary: 'Subir un archivo (imagen, video o PDF) a Cloudinary' })
   @ApiConsumes('multipart/form-data')
@@ -111,6 +114,7 @@ export class UploadController {
     };
   }
 
+  @Publico()
   @Get(':filename')
   @ApiOperation({ summary: 'Obtener un archivo subido localmente' })
   serveFile(@Param('filename') filename: string, @Res() res: Response) {
