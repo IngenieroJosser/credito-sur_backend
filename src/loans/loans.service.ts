@@ -2084,22 +2084,25 @@ export class LoansService implements OnModuleInit {
         throw new NotFoundException('Usuario creador no encontrado');
       }
 
-      // Validar que haya capital en el sistema (Caja de Oficina)
-      const cajaOficina = await this.prisma.caja.findFirst({
-        where: { codigo: 'CAJA-OFICINA', activa: true },
-        select: { saldoActual: true },
-      });
+      const isArticulo = String(data.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
 
-      if (!cajaOficina || Number(cajaOficina.saldoActual) <= 0) {
-        throw new BadRequestException(
-          'No hay capital en la caja de oficina. No se puede realizar ningún crédito.',
-        );
+      // Validar que haya capital en el sistema (Caja de Oficina) solo para préstamos que no son artículos
+      if (!isArticulo) {
+        const cajaOficina = await this.prisma.caja.findFirst({
+          where: { codigo: 'CAJA-OFICINA', activa: true },
+          select: { saldoActual: true },
+        });
+
+        if (!cajaOficina || Number(cajaOficina.saldoActual) <= 0) {
+          throw new BadRequestException(
+            'No hay capital en la caja de oficina. No se puede realizar ningún crédito.',
+          );
+        }
       }
 
       // Regla (producción): un COBRADOR no puede solicitar un préstamo en efectivo
       // si su caja de ruta no tiene saldo suficiente para el desembolso.
       // Esto evita que el saldo de la caja quede negativo al aprobar/desembolsar.
-      const isArticulo = String(data.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
       if (creador.rol === RolUsuario.COBRADOR && !isArticulo) {
         const montoDesembolso = Number(data.monto || 0);
         if (montoDesembolso > 0) {
