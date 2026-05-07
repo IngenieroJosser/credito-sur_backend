@@ -80,22 +80,26 @@ async function bootstrap() {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'"], // unsafe-inline necesario frecuentemente para frameworks frontend/swagger
+        scriptSrc: ["'self'", "'unsafe-inline'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", "data:", "blob:", "https:"],
+        imgSrc: ["'self'", "data:", "blob:", "https:", "http:"],
         connectSrc: [
           "'self'", 
           "https://fcm.googleapis.com", 
           "https://credito-sur-backend.onrender.com",
           "https://credito-sur-frontend.onrender.com",
           "http://localhost:3000",
-          "http://127.0.0.1:3000"
+          "http://127.0.0.1:3000",
+          "http://localhost:3001",
+          "http://127.0.0.1:3001"
         ], 
         workerSrc: ["'self'"],
         manifestSrc: ["'self'"],
       },
     },
     crossOriginEmbedderPolicy: false,
+    crossOriginOpenerPolicy: false,
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
   }));
   
   app.useGlobalPipes(

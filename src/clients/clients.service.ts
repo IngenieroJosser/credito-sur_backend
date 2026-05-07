@@ -985,7 +985,10 @@ export class ClientsService {
               archivo.url ||
               archivo.path ||
               (archivo.nombreAlmacenamiento
-                ? `/uploads/${archivo.nombreAlmacenamiento}`
+                ? archivo.nombreAlmacenamiento.includes('/') ||
+                  archivo.nombreAlmacenamiento.length > 20
+                  ? archivo.nombreAlmacenamiento
+                  : `/uploads/${archivo.nombreAlmacenamiento}`
                 : null),
             tamanoBytes: archivo.tamanoBytes,
             subidoPorId: solicitadoPorId,
