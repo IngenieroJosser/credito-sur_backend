@@ -64,12 +64,16 @@ export class ClientsController {
     @Query('nivelRiesgo') nivelRiesgo: string,
     @Query('ruta') ruta: string,
     @Query('search') search: string,
+    @Request() req: any,
   ) {
-    return this.clientsService.getAllClients({
-      nivelRiesgo: nivelRiesgo || 'all',
-      ruta: ruta || '',
-      search: search || '',
-    });
+    return this.clientsService.getAllClients(
+      {
+        nivelRiesgo: nivelRiesgo || 'all',
+        ruta: ruta || '',
+        search: search || '',
+      },
+      req.user,
+    );
   }
 
   /**
@@ -116,8 +120,8 @@ export class ClientsController {
     RolUsuario.CONTADOR,
     RolUsuario.PUNTO_DE_VENTA,
   )
-  async getClientById(@Param('id') id: string) {
-    return this.clientsService.getClientById(id);
+  async getClientById(@Param('id') id: string, @Request() req: any) {
+    return this.clientsService.getClientById(id, req.user);
   }
 
   private readonly logger = new Logger(ClientsController.name);

@@ -14,6 +14,7 @@ import {
   TipoAprobacion,
   EstadoAprobacion,
   RolUsuario,
+  TipoTransaccion,
   TipoAmortizacion,
   Prisma,
 } from '@prisma/client';
@@ -24,6 +25,7 @@ import { PushService } from '../push/push.service';
 import { CreateLoanDto } from './dto/create-loan.dto';
 import { ConfiguracionService } from '../configuracion/configuracion.service';
 import { UpdateLoanData } from '../common/types';
+import { LedgerService } from '../accounting/ledger.service';
 import { 
   generarExcelCartera, 
   generarPDFCartera, 
@@ -45,6 +47,27 @@ import {
 export class LoansService implements OnModuleInit {
   private readonly logger = new Logger(LoansService.name);
 
+  private isCollector(actor?: { rol?: RolUsuario | string } | null) {
+    return String(actor?.rol || '').toUpperCase() === RolUsuario.COBRADOR;
+  }
+
+  private collectorLoanScope(actor?: { id?: string; rol?: RolUsuario | string } | null): Prisma.PrestamoWhereInput {
+    if (!this.isCollector(actor) || !actor?.id) return {};
+    return {
+      cliente: {
+        asignacionesRuta: {
+          some: {
+            activa: true,
+            OR: [
+              { cobradorId: actor.id } as any,
+              { ruta: { cobradorId: actor.id } } as any,
+            ],
+          },
+        },
+      },
+    };
+  }
+
   private trunc2(n: number): number {
     if (!Number.isFinite(n)) return 0;
     return Math.trunc(n * 100) / 100;
@@ -57,6 +80,7 @@ export class LoansService implements OnModuleInit {
     private pushService: PushService,
     private notificacionesGateway: NotificacionesGateway,
     private configuracionService: ConfiguracionService,
+    private ledgerService: LedgerService,
   ) {}
 
   async onModuleInit() {
@@ -105,6 +129,157 @@ export class LoansService implements OnModuleInit {
       fechaInicio: prestamo.fechaInicio ? formatBogotaOffsetIso(prestamo.fechaInicio) : undefined,
       fecha: prestamo.fechaInicio ? formatBogotaOffsetIso(prestamo.fechaInicio) : undefined,
     };
+  }
+
+  async registrarImpactoContablePrestamoAprobado(prestamo: {
+    id: string;
+    numeroPrestamo: string;
+    clienteId: string;
+    tipoPrestamo: string;
+    monto: any;
+    cuotaInicial?: any;
+    precioVentaArticulo?: any;
+    costoArticulo?: any;
+    creadoPorId: string;
+  }) {
+    const tipoPrestamo = String(prestamo.tipoPrestamo || '').toUpperCase();
+    const isArticulo = tipoPrestamo === 'ARTICULO';
+    const referenceType = isArticulo ? 'VENTA_ARTICULO' : 'DESEMBOLSO';
+    const existingEntry = await (this.prisma as any).journalEntry?.findFirst?.({
+      where: { referenceType, referenceId: prestamo.id },
+      select: { id: true },
+    });
+    if (existingEntry?.id) return;
+
+    if (isArticulo) {
+      const cajaDestino = await this.prisma.caja.findFirst({
+        where: {
+          activa: true,
+          OR: [
+            { codigo: 'CAJA-OFICINA' },
+            { codigo: 'CAJA-PRINCIPAL' },
+            { tipo: 'PRINCIPAL' as any },
+          ],
+        },
+        orderBy: [{ codigo: 'asc' as any }],
+        select: { id: true, codigo: true, tipo: true },
+      });
+
+      const cuotaInicial = Number(prestamo.cuotaInicial || 0);
+      if (cuotaInicial > 0 && cajaDestino?.id) {
+        const yaExiste = await this.prisma.transaccion.findFirst({
+          where: {
+            cajaId: cajaDestino.id,
+            tipo: TipoTransaccion.INGRESO,
+            tipoReferencia: 'CUOTA_INICIAL',
+            referenciaId: prestamo.id,
+          },
+          select: { id: true },
+        });
+
+        if (!yaExiste?.id) {
+          const countTrx = await this.prisma.transaccion.count();
+          await this.prisma.transaccion.create({
+            data: {
+              numeroTransaccion: `TRX-${Date.now().toString().slice(-8)}-${(countTrx + 1).toString().padStart(4, '0')}`,
+              cajaId: cajaDestino.id,
+              tipo: TipoTransaccion.INGRESO,
+              monto: cuotaInicial,
+              descripcion: `Cuota inicial crédito artículo #${prestamo.numeroPrestamo}`,
+              creadoPorId: prestamo.creadoPorId,
+              tipoReferencia: 'CUOTA_INICIAL',
+              referenciaId: prestamo.id,
+            },
+          });
+        }
+      }
+
+      await this.ledgerService.registrarVentaArticulo({
+        prestamoId: prestamo.id,
+        precioVenta: Number(prestamo.precioVentaArticulo || 0),
+        costoArticulo: Number(prestamo.costoArticulo || 0),
+        montoFinanciado: Number(prestamo.monto || 0),
+        cuotaInicial,
+        cajaId: cajaDestino?.id,
+        accountCodeCaja: cajaDestino?.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1',
+        createdBy: prestamo.creadoPorId,
+      });
+      return;
+    }
+
+    const creador = await this.prisma.usuario.findUnique({
+      where: { id: prestamo.creadoPorId },
+      select: { rol: true },
+    });
+    const rutaCobrador = creador?.rol === RolUsuario.COBRADOR
+      ? await this.prisma.ruta.findFirst({
+        where: {
+          cobradorId: prestamo.creadoPorId,
+          activa: true,
+          eliminadoEn: null,
+        },
+        select: { id: true },
+      })
+      : null;
+    const cajaRuta = rutaCobrador?.id
+      ? await this.prisma.caja.findFirst({
+        where: { activa: true, tipo: 'RUTA' as any, rutaId: rutaCobrador.id },
+        select: { id: true, tipo: true, codigo: true, saldoActual: true },
+      })
+      : null;
+    const cajaOrigen = cajaRuta ?? await this.prisma.caja.findFirst({
+      where: { activa: true, codigo: 'CAJA-OFICINA' },
+      select: { id: true, tipo: true, codigo: true, saldoActual: true },
+    }) ?? await this.prisma.caja.findFirst({
+      where: {
+        activa: true,
+        OR: [
+          { codigo: 'CAJA-PRINCIPAL' },
+          { tipo: 'PRINCIPAL' as any },
+        ],
+      },
+      orderBy: { creadoEn: 'asc' as any },
+      select: { id: true, tipo: true, codigo: true, saldoActual: true },
+    });
+
+    if (!cajaOrigen?.id) {
+      throw new BadRequestException('No existe una caja activa para desembolsar el préstamo autoaprobado.');
+    }
+
+    const monto = Number(prestamo.monto || 0);
+    const yaExiste = await this.prisma.transaccion.findFirst({
+      where: {
+        cajaId: cajaOrigen.id,
+        tipo: TipoTransaccion.EGRESO,
+        tipoReferencia: 'PRESTAMO',
+        referenciaId: prestamo.id,
+      },
+      select: { id: true },
+    });
+
+    if (!yaExiste?.id) {
+      const countTrx = await this.prisma.transaccion.count();
+      await this.prisma.transaccion.create({
+        data: {
+          numeroTransaccion: `TRX-${Date.now().toString().slice(-8)}-${(countTrx + 1).toString().padStart(4, '0')}`,
+          cajaId: cajaOrigen.id,
+          tipo: TipoTransaccion.EGRESO,
+          monto,
+          descripcion: `Desembolso de préstamo #${prestamo.numeroPrestamo}`,
+          creadoPorId: prestamo.creadoPorId,
+          tipoReferencia: 'PRESTAMO',
+          referenciaId: prestamo.id,
+        },
+      });
+    }
+
+    await this.ledgerService.registrarDesembolso({
+      prestamoId: prestamo.id,
+      monto,
+      cajaOrigenId: cajaOrigen.id,
+      accountCodeOrigen: cajaRuta?.id === cajaOrigen.id ? '1.2.1' : cajaOrigen.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1',
+      createdBy: prestamo.creadoPorId,
+    });
   }
 
   async generarContrato(prestamoId: string) {
@@ -425,7 +600,17 @@ export class LoansService implements OnModuleInit {
   }
 
   private parseBogotaDayKey(dateStr: string): Date {
-    const key = String(dateStr || '').includes('T') ? String(dateStr).split('T')[0] : String(dateStr);
+    const raw = String(dateStr || '').trim();
+    if (raw.includes('T')) {
+      const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw);
+      const normalized = hasTimezone
+        ? raw
+        : `${raw.length === 16 ? `${raw}:00` : raw}-05:00`;
+      const parsed = new Date(normalized);
+      if (!isNaN(parsed.getTime())) return parsed;
+    }
+
+    const key = raw;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return new Date();
     return new Date(`${key}T00:00:00-05:00`);
   }
@@ -552,7 +737,7 @@ export class LoansService implements OnModuleInit {
     tipo?: string;
     page?: number;
     limit?: number;
-  }) {
+  }, actor?: { id?: string; rol?: RolUsuario | string } | null) {
     try {
       this.logger.log(`Getting loans with filters: ${JSON.stringify(filters)}`);
 
@@ -570,6 +755,7 @@ export class LoansService implements OnModuleInit {
       // Construir filtros de forma segura
       const where: Prisma.PrestamoWhereInput = {
         eliminadoEn: null, // Solo préstamos no eliminados
+        ...this.collectorLoanScope(actor),
       };
 
       // Filtro por tipo de préstamo
@@ -590,8 +776,10 @@ export class LoansService implements OnModuleInit {
       // Filtro por ruta (usando asignaciones de ruta)
       if (ruta !== 'todas' && ruta !== '') {
         where.cliente = {
+          ...(where.cliente as any || {}),
           asignacionesRuta: {
             some: {
+              ...(((where.cliente as any)?.asignacionesRuta?.some) || {}),
               rutaId: ruta,
               activa: true,
             },
@@ -722,6 +910,7 @@ export class LoansService implements OnModuleInit {
       // Calcular estadísticas globales (sin filtros de eliminados)
       const whereStats = { 
         eliminadoEn: null,
+        ...this.collectorLoanScope(actor),
         estado: {
           notIn: [EstadoPrestamo.BORRADOR, EstadoPrestamo.PENDIENTE_APROBACION]
         }
@@ -965,12 +1154,13 @@ export class LoansService implements OnModuleInit {
     }
   }
 
-  async getLoanById(id: string) {
+  async getLoanById(id: string, actor?: { id?: string; rol?: RolUsuario | string } | null) {
     try {
-      const prestamo = await this.prisma.prestamo.findUnique({
+      const prestamo = await this.prisma.prestamo.findFirst({
         where: {
           id,
           eliminadoEn: null, // Solo si no está eliminado
+          ...this.collectorLoanScope(actor),
         },
         include: {
           archivos: {
@@ -1161,6 +1351,212 @@ export class LoansService implements OnModuleInit {
     } catch (error) {
       this.logger.error(`Error deleting loan ${id}:`, error);
       throw error;
+    }
+  }
+
+  private async reversarImpactoContableArticuloArchivado(
+    tx: any,
+    prestamo: any,
+    userId: string,
+  ) {
+    if (String(prestamo.tipoPrestamo || '').toUpperCase() !== 'ARTICULO') return;
+
+    const asientoVenta = await tx.journalEntry.findFirst({
+      where: {
+        referenceType: 'VENTA_ARTICULO',
+        referenceId: prestamo.id,
+      },
+      include: { lines: true },
+    });
+
+    if (!asientoVenta?.id) return;
+
+    const asientoReverso = await tx.journalEntry.findFirst({
+      where: {
+        referenceType: 'AJUSTE',
+        referenceId: `ARCHIVO:${prestamo.id}`,
+      },
+      select: { id: true },
+    });
+
+    if (asientoReverso?.id) return;
+
+    const linesOriginales = asientoVenta.lines || [];
+    const cajaLine = linesOriginales.find((line: any) => line.cajaId);
+    const cuotaInicial = linesOriginales
+      .filter((line: any) => line.cajaId)
+      .reduce((sum: number, line: any) => {
+        return sum + Number(line.debitAmount || 0) - Number(line.creditAmount || 0);
+      }, 0);
+    const precioVenta = linesOriginales
+      .filter((line: any) => String(line.accountCode || '').startsWith('3.'))
+      .reduce((sum: number, line: any) => {
+        return sum + Number(line.creditAmount || 0) - Number(line.debitAmount || 0);
+      }, 0);
+    const montoFinanciado = linesOriginales
+      .filter((line: any) => String(line.accountCode || '') === '1.3.1')
+      .reduce((sum: number, line: any) => {
+        return sum + Number(line.debitAmount || 0) - Number(line.creditAmount || 0);
+      }, 0);
+    const costoArticulo = linesOriginales
+      .filter((line: any) => String(line.accountCode || '') === '5.1')
+      .reduce((sum: number, line: any) => {
+        return sum + Number(line.debitAmount || 0) - Number(line.creditAmount || 0);
+      }, 0);
+
+    const trxCuotaInicial = cuotaInicial > 0
+      ? await tx.transaccion.findFirst({
+          where: {
+            tipo: TipoTransaccion.INGRESO,
+            tipoReferencia: 'CUOTA_INICIAL',
+            referenciaId: prestamo.id,
+          },
+          select: { id: true, cajaId: true },
+        })
+      : null;
+    const cajaId = cajaLine?.cajaId || trxCuotaInicial?.cajaId;
+
+    if (cuotaInicial > 0 && cajaId) {
+      const countTrx = await tx.transaccion.count();
+      await tx.transaccion.create({
+        data: {
+          numeroTransaccion: `REV-${Date.now().toString().slice(-8)}-${(countTrx + 1).toString().padStart(4, '0')}`,
+          cajaId,
+          tipo: TipoTransaccion.EGRESO,
+          monto: cuotaInicial,
+          descripcion: `Reverso cuota inicial por archivo crédito artículo #${prestamo.numeroPrestamo}`,
+          creadoPorId: userId,
+          tipoReferencia: 'REVERSO_CUOTA_INICIAL',
+          referenciaId: prestamo.id,
+        },
+      });
+    }
+
+    const lines: any[] = [];
+    if (precioVenta > 0) {
+      lines.push({ accountCode: '3.4', debitAmount: precioVenta });
+    }
+    if (cuotaInicial > 0 && cajaId) {
+      lines.push({
+        accountCode: cajaLine?.accountCode || '1.1.1',
+        creditAmount: cuotaInicial,
+        cajaId,
+        cajaDelta: -cuotaInicial,
+      });
+    }
+    if (montoFinanciado > 0) {
+      lines.push({ accountCode: '1.3.1', creditAmount: montoFinanciado });
+    }
+    if (costoArticulo > 0) {
+      lines.push(
+        { accountCode: '1.5', debitAmount: costoArticulo },
+        { accountCode: '5.1', creditAmount: costoArticulo },
+      );
+    }
+
+    if (lines.length >= 2) {
+      await this.ledgerService.registrarAsiento(
+        {
+          referenceType: 'AJUSTE',
+          referenceId: `ARCHIVO:${prestamo.id}`,
+          description: `Reverso venta de artículo por archivo de crédito #${prestamo.numeroPrestamo}`,
+          createdBy: userId,
+          lines,
+        },
+        tx,
+      );
+    }
+  }
+
+  private async restaurarImpactoContableArticuloArchivado(
+    tx: any,
+    prestamo: any,
+    userId: string,
+  ) {
+    if (String(prestamo.tipoPrestamo || '').toUpperCase() !== 'ARTICULO') return;
+
+    const asientoArchivo = await tx.journalEntry.findFirst({
+      where: {
+        referenceType: 'AJUSTE',
+        referenceId: `ARCHIVO:${prestamo.id}`,
+      },
+      include: { lines: true },
+    });
+
+    if (!asientoArchivo?.id) return;
+
+    const asientoRestauracion = await tx.journalEntry.findFirst({
+      where: {
+        referenceType: 'AJUSTE',
+        referenceId: `RESTAURACION_ARCHIVO:${prestamo.id}`,
+      },
+      select: { id: true },
+    });
+
+    if (asientoRestauracion?.id) return;
+
+    const cajaLine = (asientoArchivo.lines || []).find((line: any) => line.cajaId);
+    const cuotaInicial = cajaLine
+      ? Math.abs(Number(cajaLine.creditAmount || 0) - Number(cajaLine.debitAmount || 0))
+      : 0;
+
+    if (cuotaInicial > 0 && cajaLine?.cajaId) {
+      const yaExiste = await tx.transaccion.findFirst({
+        where: {
+          tipo: TipoTransaccion.INGRESO,
+          tipoReferencia: 'RESTAURACION_CUOTA_INICIAL',
+          referenciaId: prestamo.id,
+        },
+        select: { id: true },
+      });
+
+      if (!yaExiste?.id) {
+        const countTrx = await tx.transaccion.count();
+        await tx.transaccion.create({
+          data: {
+            numeroTransaccion: `RES-${Date.now().toString().slice(-8)}-${(countTrx + 1).toString().padStart(4, '0')}`,
+            cajaId: cajaLine.cajaId,
+            tipo: TipoTransaccion.INGRESO,
+            monto: cuotaInicial,
+            descripcion: `Restauración cuota inicial crédito artículo #${prestamo.numeroPrestamo}`,
+            creadoPorId: userId,
+            tipoReferencia: 'RESTAURACION_CUOTA_INICIAL',
+            referenciaId: prestamo.id,
+          },
+        });
+      }
+    }
+
+    const lines = (asientoArchivo.lines || [])
+      .map((line: any) => {
+        const debitAmount = Number(line.debitAmount || 0);
+        const creditAmount = Number(line.creditAmount || 0);
+        const restoredLine: any = {
+          accountCode: line.accountCode,
+        };
+
+        if (creditAmount > 0) restoredLine.debitAmount = creditAmount;
+        if (debitAmount > 0) restoredLine.creditAmount = debitAmount;
+        if (line.cajaId) {
+          restoredLine.cajaId = line.cajaId;
+          restoredLine.cajaDelta = -Number(line.cajaDelta || 0);
+        }
+
+        return restoredLine;
+      })
+      .filter((line: any) => Number(line.debitAmount || 0) > 0 || Number(line.creditAmount || 0) > 0);
+
+    if (lines.length >= 2) {
+      await this.ledgerService.registrarAsiento(
+        {
+          referenceType: 'AJUSTE',
+          referenceId: `RESTAURACION_ARCHIVO:${prestamo.id}`,
+          description: `Restauración venta de artículo por crédito #${prestamo.numeroPrestamo}`,
+          createdBy: userId,
+          lines,
+        },
+        tx,
+      );
     }
   }
 
@@ -1453,13 +1849,19 @@ export class LoansService implements OnModuleInit {
         throw new Error('El préstamo no está eliminado');
       }
 
-      const prestamoRestaurado = await this.prisma.prestamo.update({
-        where: { id },
-        data: {
-          estado: EstadoPrestamo.ACTIVO,
-          eliminadoEn: null,
-          estadoSincronizacion: 'PENDIENTE',
-        },
+      const prestamoRestaurado = await this.prisma.$transaction(async (tx) => {
+        const restaurado = await tx.prestamo.update({
+          where: { id },
+          data: {
+            estado: EstadoPrestamo.ACTIVO,
+            eliminadoEn: null,
+            estadoSincronizacion: 'PENDIENTE',
+          },
+        });
+
+        await this.restaurarImpactoContableArticuloArchivado(tx, prestamo, userId);
+
+        return restaurado;
       });
 
       // Auditoría
@@ -1471,6 +1873,12 @@ export class LoansService implements OnModuleInit {
         datosAnteriores: { eliminadoEn: prestamo.eliminadoEn },
         datosNuevos: { eliminadoEn: null },
       });
+
+      this.notificacionesGateway.broadcastPrestamosActualizados({
+        accion: 'RESTAURAR',
+        prestamoId: prestamo.id,
+      });
+      this.notificacionesGateway.broadcastDashboardsActualizados({});
 
       return prestamoRestaurado;
     } catch (error) {
@@ -1497,10 +1905,7 @@ export class LoansService implements OnModuleInit {
       const numeroPrestamo = `PRES-${String(count + 1).padStart(6, '0')}`;
 
       // Calcular fecha fin
-      const fechaInicio = new Date(createLoanDto.fechaInicio);
-      const fechaInicioKey = getBogotaDayKey(fechaInicio);
-      const { startDate: fechaInicioBogota } = getBogotaStartEndOfDayFromKey(fechaInicioKey);
-      fechaInicio.setTime(fechaInicioBogota.getTime());
+      const fechaInicio = this.parseBogotaDayKey(createLoanDto.fechaInicio);
       const fechaFin = new Date(fechaInicio);
       fechaFin.setMonth(fechaFin.getMonth() + createLoanDto.plazoMeses);
 
@@ -1638,87 +2043,101 @@ export class LoansService implements OnModuleInit {
       });
 
       // Registrar CUOTA INICIAL como abono a capital (no utilidad) cuando es crédito por ARTICULO.
-      // Se registra como transacción de INGRESO y se excluye de ganancia neta en el resumen financiero.
-      try {
-        const isArticulo = String(createLoanDto.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
-        const cuotaInicial = Number(createLoanDto.cuotaInicial || 0);
-        if (isArticulo && cuotaInicial > 0) {
-          // Determinar caja destino: preferimos caja de la ruta del cliente; si no existe, Caja Principal.
-          const rutaCliente = await this.prisma.asignacionRuta.findFirst({
-            where: {
-              clienteId: createLoanDto.clienteId,
-              activa: true,
-              ruta: { activa: true, eliminadoEn: null },
-            },
-            select: { rutaId: true },
-          });
+      // Se registra como transacción de INGRESO y reduce la cartera por cobrar.
+      const isArticulo = String(createLoanDto.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
+      const cuotaInicial = Number(createLoanDto.cuotaInicial || 0);
+      if (isArticulo && cuotaInicial > 0) {
+        // Determinar caja destino: preferimos caja de la ruta del cliente; si no existe, Caja Principal.
+        const rutaCliente = await this.prisma.asignacionRuta.findFirst({
+          where: {
+            clienteId: createLoanDto.clienteId,
+            activa: true,
+            ruta: { activa: true, eliminadoEn: null },
+          },
+          select: { rutaId: true },
+        });
 
-          const cajaRuta = rutaCliente?.rutaId
-            ? await this.prisma.caja.findFirst({
-                where: { rutaId: rutaCliente.rutaId, tipo: 'RUTA', activa: true },
-                select: { id: true },
-              })
-            : null;
-
-          const cajaOficina = await this.prisma.caja.findFirst({
-            where: {
-              activa: true,
-              codigo: 'CAJA-OFICINA',
-            },
-            select: { id: true },
-          });
-
-          const cajaPrincipal = await this.prisma.caja.findFirst({
-            where: {
-              activa: true,
-              OR: [{ codigo: 'CAJA-PRINCIPAL' }, { tipo: 'PRINCIPAL' }],
-            },
-            orderBy: [{ codigo: 'asc' as any }],
-            select: { id: true },
-          });
-
-          // Determinar caja destino: Cuota Inicial debe registrarse en Caja Oficina.
-          // Si no existe, usar Caja Principal; si no existe, la caja de ruta.
-          const cajaIdDestino = cajaOficina?.id || cajaPrincipal?.id || cajaRuta?.id;
-
-          if (cajaIdDestino) {
-            const yaExiste = await this.prisma.transaccion.findFirst({
-              where: {
-                cajaId: cajaIdDestino,
-                tipo: 'INGRESO',
-                tipoReferencia: 'CUOTA_INICIAL',
-                referenciaId: prestamo.id,
-              },
+        const cajaRuta = rutaCliente?.rutaId
+          ? await this.prisma.caja.findFirst({
+              where: { rutaId: rutaCliente.rutaId, tipo: 'RUTA', activa: true },
               select: { id: true },
-            });
+            })
+          : null;
 
-            if (!yaExiste?.id) {
-              const countTrx = await this.prisma.transaccion.count();
-              const numeroTransaccion = `TRX-${Date.now().toString().slice(-8)}-${(countTrx + 1).toString().padStart(4, '0')}`;
-              await this.prisma.$transaction([
-                this.prisma.transaccion.create({
-                  data: {
-                    numeroTransaccion,
-                    cajaId: cajaIdDestino,
-                    tipo: 'INGRESO',
-                    monto: cuotaInicial,
-                    descripcion: `Cuota inicial crédito artículo #${prestamo.numeroPrestamo}`,
-                    creadoPorId: createLoanDto.creadoPorId,
-                    tipoReferencia: 'CUOTA_INICIAL',
-                    referenciaId: prestamo.id,
-                  },
-                }),
-                this.prisma.caja.update({
-                  where: { id: cajaIdDestino },
-                  data: { saldoActual: { increment: cuotaInicial } },
-                }),
-              ]);
-            }
+        const cajaOficina = await this.prisma.caja.findFirst({
+          where: {
+            activa: true,
+            codigo: 'CAJA-OFICINA',
+          },
+          select: { id: true, codigo: true },
+        });
+
+        const cajaPrincipal = await this.prisma.caja.findFirst({
+          where: {
+            activa: true,
+            OR: [{ codigo: 'CAJA-PRINCIPAL' }, { tipo: 'PRINCIPAL' }],
+          },
+          orderBy: [{ codigo: 'asc' as any }],
+          select: { id: true, codigo: true },
+        });
+
+        // Determinar caja destino: Cuota Inicial debe registrarse en Caja Oficina.
+        // Si no existe, usar Caja Principal; si no existe, la caja de ruta.
+        const cajaDestino = cajaOficina || cajaPrincipal || cajaRuta;
+        const cajaIdDestino = cajaDestino?.id;
+
+        if (cajaIdDestino) {
+          const yaExiste = await this.prisma.transaccion.findFirst({
+            where: {
+              cajaId: cajaIdDestino,
+              tipo: 'INGRESO',
+              tipoReferencia: 'CUOTA_INICIAL',
+              referenciaId: prestamo.id,
+            },
+            select: { id: true },
+          });
+
+          if (!yaExiste?.id) {
+            const countTrx = await this.prisma.transaccion.count();
+            const numeroTransaccion = `TRX-${Date.now().toString().slice(-8)}-${(countTrx + 1).toString().padStart(4, '0')}`;
+            await this.prisma.$transaction(async (tx) => {
+              await tx.transaccion.create({
+                data: {
+                  numeroTransaccion,
+                  cajaId: cajaIdDestino,
+                  tipo: 'INGRESO',
+                  monto: cuotaInicial,
+                  descripcion: `Cuota inicial crédito artículo #${prestamo.numeroPrestamo}`,
+                  creadoPorId: createLoanDto.creadoPorId,
+                  tipoReferencia: 'CUOTA_INICIAL',
+                  referenciaId: prestamo.id,
+                },
+              });
+
+              await this.ledgerService.registrarAsiento(
+                {
+                  referenceType: 'PAGO',
+                  referenceId: prestamo.id,
+                  description: `Cuota inicial crédito artículo #${prestamo.numeroPrestamo}`,
+                  createdBy: createLoanDto.creadoPorId,
+                  lines: [
+                    {
+                      accountCode: cajaDestino?.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1',
+                      debitAmount: cuotaInicial,
+                      cajaId: cajaIdDestino,
+                      cajaDelta: +cuotaInicial,
+                    },
+                    {
+                      accountCode: '1.3.1',
+                      creditAmount: cuotaInicial,
+                    },
+                  ],
+                },
+                tx as any,
+              );
+            });
           }
         }
-      } catch (e) {
-        // No bloqueamos la creación del préstamo por un fallo contable accesorio.
-        this.logger.error('Error registrando cuota inicial como transacción:', e);
       }
 
       this.logger.log(`Loan created successfully: ${prestamo.id} (${tipoAmort})`);
@@ -2031,8 +2450,20 @@ export class LoansService implements OnModuleInit {
     }
   }
 
-  async getLoanCuotas(prestamoId: string) {
+  async getLoanCuotas(prestamoId: string, actor?: { id?: string; rol?: RolUsuario | string } | null) {
     try {
+      if (this.isCollector(actor)) {
+        const prestamo = await this.prisma.prestamo.findFirst({
+          where: {
+            id: prestamoId,
+            eliminadoEn: null,
+            ...this.collectorLoanScope(actor),
+          },
+          select: { id: true },
+        });
+        if (!prestamo?.id) throw new NotFoundException('Préstamo no encontrado');
+      }
+
       const cuotas = await this.prisma.cuota.findMany({
         where: { prestamoId },
         orderBy: { numeroCuota: 'asc' },
@@ -2426,6 +2857,20 @@ export class LoansService implements OnModuleInit {
         }
       }
 
+      if (prestamo.estadoAprobacion === EstadoAprobacion.APROBADO) {
+        await this.registrarImpactoContablePrestamoAprobado({
+          id: prestamo.id,
+          numeroPrestamo: prestamo.numeroPrestamo,
+          clienteId: prestamo.clienteId,
+          tipoPrestamo: prestamo.tipoPrestamo,
+          monto: prestamo.monto,
+          cuotaInicial: prestamo.cuotaInicial,
+          precioVentaArticulo: (prestamo as any).precioVentaArticulo,
+          costoArticulo: (prestamo as any).costoArticulo,
+          creadoPorId: data.creadoPorId,
+        });
+      }
+
       const hoyKey = getBogotaDayKey(new Date());
       const { startDate: today } = getBogotaStartEndOfDayFromKey(hoyKey);
       const startKey = getBogotaDayKey(new Date(fechaInicio));
@@ -2745,7 +3190,20 @@ export class LoansService implements OnModuleInit {
     }
 
     if (prestamo.estado === 'PERDIDA') {
-      throw new BadRequestException('Este préstamo ya está archivado como pérdida');
+      if (String(prestamo.tipoPrestamo || '').toUpperCase() !== 'ARTICULO') {
+        throw new BadRequestException('Este préstamo ya está archivado como pérdida');
+      }
+
+      await this.prisma.$transaction(async (tx) => {
+        await this.reversarImpactoContableArticuloArchivado(tx, prestamo, data.archivarPorId);
+      });
+
+      return {
+        message: 'Préstamo ya archivado; reversa contable verificada',
+        prestamoId,
+        clienteId: prestamo.clienteId,
+        montoPerdida: Number(prestamo.saldoPendiente),
+      };
     }
 
     // Realizar operaciones en transacción
@@ -2758,6 +3216,8 @@ export class LoansService implements OnModuleInit {
           eliminadoEn: new Date(),
         },
       });
+
+      await this.reversarImpactoContableArticuloArchivado(tx, prestamo, data.archivarPorId);
 
       // 2. Marcar aprobaciones pendientes como RECHAZADAS (específicamente las de este préstamo)
       await tx.aprobacion.updateMany({

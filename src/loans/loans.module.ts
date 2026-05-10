@@ -10,11 +10,11 @@ import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 import { AuditModule } from '../audit/audit.module';
 import { PushModule } from '../push/push.module';
 import { ConfiguracionModule } from '../configuracion/configuracion.module';
-
 import { ApprovalsModule } from '../approvals/approvals.module';
+import { AccountingModule } from '../accounting/accounting.module';
 
 @Module({
-  imports: [PrismaModule, NotificacionesModule, AuditModule, PushModule, ConfiguracionModule, ApprovalsModule],
+  imports: [PrismaModule, NotificacionesModule, AuditModule, PushModule, ConfiguracionModule, ApprovalsModule, AccountingModule],
   controllers: [LoansController],
   providers: [LoansService, MoraService, PrismaService, LoansScheduler],
   exports: [LoansService, MoraService],

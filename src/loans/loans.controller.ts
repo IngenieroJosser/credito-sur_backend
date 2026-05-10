@@ -135,14 +135,17 @@ export class LoansController {
     // Validar límite máximo
     const safeLimit = Math.min(limit, 100); // Máximo 100 por página
 
-    return this.loansService.getAllLoans({
-      estado,
-      ruta,
-      search,
-      tipo,
-      page,
-      limit: safeLimit,
-    });
+    return this.loansService.getAllLoans(
+      {
+        estado,
+        ruta,
+        search,
+        tipo,
+        page,
+        limit: safeLimit,
+      },
+      req.user,
+    );
   }
 
   @Get('export')
@@ -247,8 +250,8 @@ export class LoansController {
     description: 'ID del préstamo',
     example: 'cl67qg5e80001c8ibw3d2q7p8',
   })
-  async getLoanById(@Param('id') id: string) {
-    return this.loansService.getLoanById(id);
+  async getLoanById(@Param('id') id: string, @Request() req) {
+    return this.loansService.getLoanById(id, req.user);
   }
 
   @Get(':id/archived')
@@ -305,8 +308,8 @@ export class LoansController {
     description: 'ID del préstamo',
     example: 'cl67qg5e80001c8ibw3d2q7p8',
   })
-  async getLoanCuotas(@Param('id') id: string) {
-    return this.loansService.getLoanCuotas(id);
+  async getLoanCuotas(@Param('id') id: string, @Request() req) {
+    return this.loansService.getLoanCuotas(id, req.user);
   }
 
   @Post()

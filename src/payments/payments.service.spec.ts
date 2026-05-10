@@ -16,8 +16,9 @@ import { NotificacionesService } from '../notificaciones/notificaciones.service'
 import { AuditService } from '../audit/audit.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { CloudinaryService } from '../upload/cloudinary.service';
+import { LedgerService } from '../accounting/ledger.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { EstadoCuota, EstadoPrestamo, MetodoPago } from '@prisma/client';
+import { EstadoCuota, EstadoPrestamo, MetodoPago, RolUsuario } from '@prisma/client';
 
 // ─────────────────────────────────────────────
 // Mocks de los servicios de soporte (no críticos para estos tests)
@@ -35,6 +36,10 @@ const mockNotificacionesGateway = {
   broadcastPrestamosActualizados: jest.fn(),
   broadcastRutasActualizadas: jest.fn(),
   broadcastDashboardsActualizados: jest.fn(),
+};
+
+const mockLedgerService = {
+  registrarPago: jest.fn().mockResolvedValue(undefined),
 };
 
 // ─────────────────────────────────────────────
@@ -111,6 +116,7 @@ function buildMockPrisma(overrides: Record<string, unknown> = {}) {
     },
     pago: {
       count: jest.fn().mockResolvedValue(0),
+      findFirst: jest.fn().mockResolvedValue(PAGO_CREADO),
       findMany: jest.fn().mockResolvedValue([]),
       findUnique: jest.fn().mockResolvedValue(PAGO_CREADO),
     },
@@ -138,6 +144,7 @@ describe('PaymentsService', () => {
         { provide: AuditService, useValue: mockAuditService },
         { provide: NotificacionesGateway, useValue: mockNotificacionesGateway },
         { provide: CloudinaryService, useValue: { subirArchivo: jest.fn() } },
+        { provide: LedgerService, useValue: mockLedgerService },
       ],
     }).compile();
 
@@ -261,6 +268,66 @@ describe('PaymentsService', () => {
       await service.create(dto);
       expect(mockAuditService.create).toHaveBeenCalledWith(
         expect.objectContaining({ accion: 'REGISTRAR_PAGO' }),
+      );
+    });
+  });
+
+  describe('findAll — alcance por rol', () => {
+    it('limita la consulta de pagos del cobrador a su propio id', async () => {
+      await service.findAll(
+        { prestamoId: 'prestamo-1', limit: 50 },
+        { id: 'cobrador-propio', rol: RolUsuario.COBRADOR } as any,
+      );
+
+      expect(prisma.pago.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            prestamoId: 'prestamo-1',
+            cobradorId: 'cobrador-propio',
+          },
+        }),
+      );
+      expect(prisma.pago.count).toHaveBeenCalledWith({
+        where: {
+          prestamoId: 'prestamo-1',
+          cobradorId: 'cobrador-propio',
+        },
+      });
+    });
+  });
+
+  describe('findOne — alcance por rol', () => {
+    it('limita el detalle de pago del cobrador a su propio id', async () => {
+      await service.findOne(
+        'pago-1',
+        { id: 'cobrador-propio', rol: RolUsuario.COBRADOR } as any,
+      );
+
+      expect(prisma.pago.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            id: 'pago-1',
+            cobradorId: 'cobrador-propio',
+          },
+        }),
+      );
+    });
+  });
+
+  describe('create — alcance por rol', () => {
+    it('ignora un cobradorId ajeno cuando el actor es cobrador', async () => {
+      await service.create(
+        { prestamoId: 'prestamo-1', cobradorId: 'cobrador-ajeno', montoTotal: 110000 },
+        undefined,
+        { id: 'cobrador-propio', rol: RolUsuario.COBRADOR } as any,
+      );
+
+      expect(prisma._txMock.pago.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            cobradorId: 'cobrador-propio',
+          }),
+        }),
       );
     });
   });

@@ -80,20 +80,24 @@ export class RoutesController {
     @Query('activa') activa?: string,
     @Query('cobradorId') cobradorId?: string,
     @Query('supervisorId') supervisorId?: string,
+    @Request() req?,
   ) {
     const skip =
       page && limit ? (parseInt(page) - 1) * parseInt(limit) : undefined;
     const take = limit ? parseInt(limit) : undefined;
     const activaBool = activa ? activa === 'true' : undefined;
 
-    return this.routesService.findAll({
-      skip,
-      take,
-      search,
-      activa: activaBool,
-      cobradorId,
-      supervisorId,
-    });
+    return this.routesService.findAll(
+      {
+        skip,
+        take,
+        search,
+        activa: activaBool,
+        cobradorId,
+        supervisorId,
+      },
+      req.user,
+    );
   }
 
   @Get('statistics')
@@ -154,8 +158,11 @@ export class RoutesController {
   )
   @ApiOperation({ summary: 'Listar créditos asignados a un cobrador (Mis clientes)' })
   @ApiResponse({ status: 200, description: 'Listado de créditos asignados' })
-  listarCreditosAsignadosACobrador(@Param('id', ParseUUIDPipe) id: string) {
-    return this.routesService.listarCreditosAsignadosACobrador(id);
+  listarCreditosAsignadosACobrador(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Request() req,
+  ) {
+    return this.routesService.listarCreditosAsignadosACobrador(id, req.user);
   }
 
   @Get(':id')
@@ -169,8 +176,8 @@ export class RoutesController {
   @ApiOperation({ summary: 'Obtener una ruta por ID' })
   @ApiResponse({ status: 200, description: 'Ruta obtenida exitosamente' })
   @ApiResponse({ status: 404, description: 'Ruta no encontrada' })
-  findOne(@Param('id', ParseUUIDPipe) id: string) {
-    return this.routesService.findOne(id);
+  findOne(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
+    return this.routesService.findOne(id, req.user);
   }
 
   @Patch(':id')
@@ -236,8 +243,8 @@ export class RoutesController {
   )
   @ApiOperation({ summary: 'Consultar si la ruta está activada hoy' })
   @ApiResponse({ status: 200, description: 'Estado de activación diaria' })
-  getActivacionHoy(@Param('id', ParseUUIDPipe) id: string) {
-    return this.routesService.getRutaActivadaHoy(id);
+  getActivacionHoy(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
+    return this.routesService.getRutaActivadaHoy(id, req.user);
   }
 
   @Post(':id/activar-hoy')
@@ -347,8 +354,9 @@ export class RoutesController {
   getDailyVisits(
     @Param('id', ParseUUIDPipe) id: string,
     @Query('fecha') fecha?: string,
+    @Request() req?,
   ) {
-    return this.routesService.getDailyVisits(id, fecha);
+    return this.routesService.getDailyVisits(id, fecha, req.user);
   }
 
   @Patch(':id/reorder')
@@ -365,8 +373,9 @@ export class RoutesController {
   updateClientOrder(
     @Param('id', ParseUUIDPipe) id: string,
     @Body('orden') orden: Array<{ clienteId: string; orden: number }>,
+    @Request() req,
   ) {
-    return this.routesService.updateClientOrder(id, orden);
+    return this.routesService.updateClientOrder(id, orden, req.user);
   }
 
   // ── Exportación de ruta ────────────────────────────────────────────────────
@@ -385,8 +394,9 @@ export class RoutesController {
   async exportarRutaExcel(
     @Param('id', ParseUUIDPipe) id: string,
     @Res() res: Response,
+    @Request() req,
   ) {
-    const buffer = await this.routesService.exportarRuta(id, 'excel');
+    const buffer = await this.routesService.exportarRuta(id, 'excel', req.user);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="ruta_${id}.xlsx"`);
     res.send(buffer);
@@ -406,8 +416,9 @@ export class RoutesController {
   async exportarRutaPdf(
     @Param('id', ParseUUIDPipe) id: string,
     @Res() res: Response,
+    @Request() req,
   ) {
-    const buffer = await this.routesService.exportarRuta(id, 'pdf');
+    const buffer = await this.routesService.exportarRuta(id, 'pdf', req.user);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="ruta_${id}.pdf"`);
     res.send(buffer);

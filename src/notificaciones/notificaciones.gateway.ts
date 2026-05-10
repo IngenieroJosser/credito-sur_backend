@@ -288,4 +288,17 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
     this.logger.log('Aprobacion creada/actualizada → broadcastAprobacionesActualizadas (via EventEmitter)');
     this.broadcastAprobacionesActualizadas(payload?.data || {});
   }
+
+  @OnEvent('database.write.success')
+  handleArchivedDatabaseWrite(payload: any) {
+    const model = String(payload?.model || '');
+    if (model !== 'RegistroAuditoria' && model !== 'ArchivadoOculto') return;
+
+    this.logger.log(`Cambio en ${model} -> broadcastDashboardsActualizados para archivados/auditoria`);
+    this.broadcastDashboardsActualizados({
+      action: 'archived_audit_updated',
+      model,
+      data: payload?.data,
+    });
+  }
 }
