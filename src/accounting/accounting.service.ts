@@ -12,6 +12,7 @@ import { NotificacionesService } from '../notificaciones/notificaciones.service'
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { calculateDateRange, formatBogotaOffsetIso, getBogotaDayKey, getBogotaStartEndOfDay, getBogotaStartEndOfDayFromKey } from '../utils/date-utils';
 import { generarExcelContable, generarPDFContable, CajaRow, TransaccionRow } from '../templates/exports/reporte-contable.template';
+import { LedgerService, ReferenceTypeContable } from './ledger.service';
 
 @Injectable()
 export class AccountingService {
@@ -21,6 +22,7 @@ export class AccountingService {
     private readonly prisma: PrismaService,
     private readonly notificacionesService: NotificacionesService,
     private readonly notificacionesGateway: NotificacionesGateway,
+    private readonly ledgerService: LedgerService,
   ) {}
 
   // Codigos reservados para las cajas que no se pueden eliminar
@@ -330,6 +332,8 @@ export class AccountingService {
     tipoAprobacion: TipoAprobacion;
     categoriaId?: string;
     esPersonal?: boolean;
+    comprobanteUrl?: string;
+    fotoRecibo?: string;
   }) {
     const cajaRuta = await this.prisma.caja.findFirst({
       where: {
@@ -352,7 +356,90 @@ export class AccountingService {
       ? `${solicitante.nombres} ${solicitante.apellidos}`.trim()
       : 'Cobrador';
 
-    // ======== 1. SI ES GASTO OPERATIVO (GASTAR DIRECTAMENTE DE LA RUTA) ========
+    const comprobanteGasto = data.comprobanteUrl || data.fotoRecibo || '';
+
+    const crearAprobacionGasto = async (requiereComprobante: boolean) => {
+      const aprobacion = await this.prisma.aprobacion.create({
+        data: {
+          tipoAprobacion: data.tipoAprobacion,
+          referenciaId: cajaRuta.id,
+          tablaReferencia: 'Gasto',
+          solicitadoPorId: data.solicitadoPorId,
+          estado: EstadoAprobacion.PENDIENTE,
+          datosSolicitud: {
+            rutaId: data.rutaId,
+            cobradorId: data.cobradorId,
+            cajaId: cajaRuta.id,
+            tipoGasto: data.esPersonal ? 'OTRO' : 'OPERATIVO',
+            monto: data.monto,
+            descripcion: data.descripcion,
+            categoriaId: data.categoriaId,
+            fotoRecibo: comprobanteGasto || undefined,
+            requiereComprobante,
+          },
+          montoSolicitud: data.monto,
+        },
+      });
+
+      await this.notificacionesService.notifyApprovers({
+        titulo: requiereComprobante
+          ? 'Gasto Requiere Comprobante'
+          : 'Nuevo Gasto Personal Requiere Aprobación',
+        mensaje: `${nombreSolicitante} ha solicitado ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} como ${data.esPersonal ? 'gasto personal' : 'gasto operativo'}.`,
+        tipo: 'GASTO',
+        entidad: 'Aprobacion',
+        entidadId: aprobacion.id,
+        metadata: {
+          tipoAprobacion: 'GASTO',
+          rutaId: data.rutaId,
+          cajaId: cajaRuta.id,
+          cobradorId: data.cobradorId,
+          monto: data.monto,
+          descripcion: data.descripcion,
+          solicitadoPor: nombreSolicitante,
+          categoriaId: data.categoriaId,
+          requiereComprobante,
+        },
+      });
+
+      try {
+        await this.notificacionesService.create({
+          usuarioId: data.solicitadoPorId,
+          titulo: 'Solicitud enviada',
+          mensaje: requiereComprobante
+            ? 'Tu gasto fue enviado a revisión porque requiere comprobante antes de afectar la caja.'
+            : 'Tu solicitud de gasto personal fue enviada con éxito (pendiente).',
+          tipo: 'INFORMATIVO',
+          entidad: 'Aprobacion',
+          entidadId: aprobacion.id,
+          metadata: {
+            tipoAprobacion: data.tipoAprobacion,
+            rutaId: data.rutaId,
+            cajaId: cajaRuta.id,
+          },
+        });
+      } catch {}
+
+      this.notificacionesGateway.broadcastDashboardsActualizados({
+        origen: 'GASTO',
+        rutaId: data.rutaId,
+      });
+
+      return {
+        success: true,
+        message: requiereComprobante
+          ? 'Gasto enviado a revisión: se requiere comprobante antes de afectar la caja'
+          : 'Gasto registrado y enviado para aprobación del coordinador',
+        approvalId: aprobacion.id,
+      };
+    };
+
+    // Sin comprobante no se afecta caja ni ledger, incluso para gastos operativos directos.
+    if (!comprobanteGasto || data.esPersonal) {
+      return crearAprobacionGasto(!comprobanteGasto);
+    }
+
+    // ======== 1. GASTO OPERATIVO CON COMPROBANTE (GASTAR DIRECTAMENTE DE LA RUTA) ========
     if (!data.esPersonal) {
       await this.prisma.$transaction(async (tx) => {
         // 1. Crear Gasto
@@ -365,6 +452,7 @@ export class AccountingService {
             tipoGasto: 'OPERATIVO',
             monto: data.monto,
             descripcion: data.descripcion,
+            fotoRecibo: comprobanteGasto,
             categoriaId: data.categoriaId || undefined,
             aprobadoPorId: data.solicitadoPorId,
             estadoAprobacion: EstadoAprobacion.APROBADO,
@@ -380,19 +468,33 @@ export class AccountingService {
             monto: data.monto,
             descripcion: `Gasto de ruta directo: ${data.descripcion}`,
             creadoPorId: data.solicitadoPorId,
-            tipoReferencia: 'DEUDA_COBRADOR',
+            tipoReferencia: 'GASTO',
             referenciaId: newGasto.id,
           },
         });
 
-        // 3. Actualizar caja
-        await tx.caja.update({
-          where: { id: cajaRuta.id },
-          data: {
-            saldoActual: { decrement: data.monto },
-            gastosDelDia: { increment: data.monto },
+        // 3. Registrar asiento contable (Ledger mueve el saldo de la caja)
+        await this.ledgerService.registrarAsiento(
+          {
+            referenceType: 'GASTO',
+            referenceId:   newGasto.id,
+            description:   `Gasto de ruta directo: ${data.descripcion}`,
+            createdBy:     data.solicitadoPorId,
+            lines: [
+              {
+                accountCode: '4.1', // Gastos de Ruta
+                debitAmount:  Number(data.monto),
+              },
+              {
+                accountCode:  '1.2.1', // Caja Ruta
+                creditAmount:  Number(data.monto),
+                cajaId:        cajaRuta.id,
+                cajaDelta:    -Number(data.monto),
+              },
+            ],
           },
-        });
+          tx as any,
+        );
       });
 
       this.notificacionesGateway.broadcastDashboardsActualizados({
@@ -405,72 +507,6 @@ export class AccountingService {
         message: 'Gasto registrado correctamente en caja',
       };
     }
-
-    // ======== 2. SI ES GASTO PERSONAL (ENVIAR SOLICITUD A REVISIONES) ========
-    const aprobacion = await this.prisma.aprobacion.create({
-      data: {
-        tipoAprobacion: data.tipoAprobacion,
-        referenciaId: cajaRuta.id,
-        tablaReferencia: 'Gasto',
-        solicitadoPorId: data.solicitadoPorId,
-        estado: EstadoAprobacion.PENDIENTE,
-        datosSolicitud: {
-          rutaId: data.rutaId,
-          cobradorId: data.cobradorId,
-          cajaId: cajaRuta.id,
-          tipoGasto: 'OPERATIVO',
-          monto: data.monto,
-          descripcion: data.descripcion,
-          categoriaId: data.categoriaId,
-        },
-        montoSolicitud: data.monto,
-      },
-    });
-
-    await this.notificacionesService.notifyApprovers({
-      titulo: 'Nuevo Gasto Personal Requiere Aprobación',
-      mensaje: `${nombreSolicitante} ha solicitado ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} como adelanto/gasto personal.`,
-      tipo: 'GASTO',
-      entidad: 'Aprobacion',
-      entidadId: aprobacion.id,
-      metadata: {
-        tipoAprobacion: 'GASTO',
-        rutaId: data.rutaId,
-        cajaId: cajaRuta.id,
-        cobradorId: data.cobradorId,
-        monto: data.monto,
-        descripcion: data.descripcion,
-        solicitadoPor: nombreSolicitante,
-        categoriaId: data.categoriaId,
-      },
-    });
-
-    try {
-      await this.notificacionesService.create({
-        usuarioId: data.solicitadoPorId,
-        titulo: 'Solicitud enviada',
-        mensaje: 'Tu solicitud de gasto personal fue enviada con éxito (pendiente).',
-        tipo: 'INFORMATIVO',
-        entidad: 'Aprobacion',
-        entidadId: aprobacion.id,
-        metadata: {
-          tipoAprobacion: data.tipoAprobacion,
-          rutaId: data.rutaId,
-          cajaId: cajaRuta.id,
-        },
-      });
-    } catch {}
-
-    this.notificacionesGateway.broadcastDashboardsActualizados({
-      origen: 'GASTO',
-      rutaId: data.rutaId,
-    });
-
-    return {
-      success: true,
-      message: 'Gasto registrado y enviado para aprobación del coordinador',
-      approvalId: aprobacion.id,
-    };
   }
 
   async solicitarBase(data: {
@@ -653,7 +689,7 @@ export class AccountingService {
             tipo: data.tipo,
             rutaId: rutaIdSanitizado,
             responsableId: data.responsableId,
-            saldoActual: data.saldoInicial || 0,
+            saldoActual: 0,
           },
           include: {
             responsable: { select: { nombres: true, apellidos: true } },
@@ -677,6 +713,29 @@ export class AccountingService {
               referenciaId: nuevaCaja.codigo,
             },
           });
+
+          await this.ledgerService.registrarAsiento(
+            {
+              referenceType: 'APERTURA',
+              referenceId: nuevaCaja.id,
+              description: `Saldo inicial de apertura de caja ${nuevaCaja.nombre}`,
+              isOpening: true,
+              createdBy: userId,
+              lines: [
+                {
+                  accountCode: nuevaCaja.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1',
+                  debitAmount: data.saldoInicial,
+                  cajaId: nuevaCaja.id,
+                  cajaDelta: +data.saldoInicial,
+                },
+                {
+                  accountCode: '2.1',
+                  creditAmount: data.saldoInicial,
+                },
+              ],
+            },
+            tx as any,
+          );
         }
 
         return nuevaCaja;
@@ -715,6 +774,12 @@ export class AccountingService {
     const caja = await this.prisma.caja.findUnique({ where: { id } });
     if (!caja) throw new NotFoundException('Caja no encontrada');
 
+    if (data.saldoActual !== undefined) {
+      throw new BadRequestException(
+        'El saldo de una caja no se puede editar directamente. Registre un asiento de AJUSTE para modificarlo.',
+      );
+    }
+
     // Las cajas por defecto NO pueden desactivarse ni renombrarse, solo cambiar responsable
     if (AccountingService.CODIGOS_DEFAULT.includes(caja.codigo as any)) {
       if (data.activa === false) {
@@ -723,12 +788,11 @@ export class AccountingService {
       if (data.nombre && data.nombre !== caja.nombre) {
         throw new ForbiddenException(`El nombre de la caja "${caja.nombre}" no puede modificarse.`);
       }
-      // Solo se permite actualizar responsableId y saldoActual
+      // Solo se permite actualizar el responsable; los saldos se ajustan por ledger.
       return this.prisma.caja.update({
         where: { id },
         data: {
           responsableId: data.responsableId,
-          saldoActual: data.saldoActual,
         },
       });
     }
@@ -772,6 +836,167 @@ export class AccountingService {
   // =====================
   // TRANSACCIONES / MOVIMIENTOS
   // =====================
+
+  async getMovimientosLedger(filtros: {
+    fechaInicio?: string;
+    fechaFin?: string;
+    tipo?: string;
+    cajaId?: string;
+    accountCode?: string;
+    accountPrefix?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    const {
+      fechaInicio,
+      fechaFin,
+      tipo,
+      cajaId,
+      accountCode,
+      accountPrefix,
+      page = 1,
+      limit = 50,
+    } = filtros;
+    const skip = (page - 1) * limit;
+    const where: any = {};
+    const lineFilters: any[] = [];
+
+    if (tipo && tipo !== 'TODOS') {
+      where.referenceType = tipo;
+    }
+    if (fechaInicio || fechaFin) {
+      where.createdAt = {};
+      if (fechaInicio) {
+        const inicioKey = fechaInicio.includes('T') ? fechaInicio.split('T')[0] : fechaInicio;
+        where.createdAt.gte = getBogotaStartEndOfDayFromKey(inicioKey).startDate;
+      }
+      if (fechaFin) {
+        const finKey = fechaFin.includes('T') ? fechaFin.split('T')[0] : fechaFin;
+        where.createdAt.lte = getBogotaStartEndOfDayFromKey(finKey).endDate;
+      }
+    }
+    if (cajaId) {
+      lineFilters.push({ cajaId });
+    }
+    if (accountCode) {
+      lineFilters.push({ accountCode });
+    } else if (accountPrefix) {
+      lineFilters.push({ accountCode: { startsWith: accountPrefix } });
+    }
+    if (lineFilters.length === 1) {
+      where.lines = { some: lineFilters[0] };
+    } else if (lineFilters.length > 1) {
+      where.lines = { some: { AND: lineFilters } };
+    }
+
+    const [entries, total] = await Promise.all([
+      this.prisma.journalEntry.findMany({
+        where,
+        include: {
+          lines: {
+            include: {
+              account: { select: { code: true, name: true, type: true } },
+              caja: { select: { id: true, nombre: true, codigo: true, tipo: true } },
+            },
+            orderBy: { accountCode: 'asc' },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.journalEntry.count({ where }),
+    ]);
+
+    const data = entries.map((entry: any) => {
+      const totalDebito = entry.lines.reduce(
+        (sum: number, line: any) => sum + Number(line.debitAmount || 0),
+        0,
+      );
+      const totalCredito = entry.lines.reduce(
+        (sum: number, line: any) => sum + Number(line.creditAmount || 0),
+        0,
+      );
+      const lineasCaja = cajaId
+        ? entry.lines.filter((line: any) => line.cajaId === cajaId)
+        : entry.lines.filter((line: any) => line.cajaId);
+      const debitoCaja = lineasCaja.reduce(
+        (sum: number, line: any) => sum + Number(line.debitAmount || 0),
+        0,
+      );
+      const creditoCaja = lineasCaja.reduce(
+        (sum: number, line: any) => sum + Number(line.creditAmount || 0),
+        0,
+      );
+      const impactoCaja = debitoCaja - creditoCaja;
+      const resultadoIngresos = entry.lines.reduce(
+        (sum: number, line: any) =>
+          String(line.accountCode || '').startsWith('3.')
+            ? sum + Number(line.creditAmount || 0) - Number(line.debitAmount || 0)
+            : sum,
+        0,
+      );
+      const resultadoEgresosCostos = entry.lines.reduce(
+        (sum: number, line: any) =>
+          String(line.accountCode || '').startsWith('4.') || String(line.accountCode || '').startsWith('5.')
+            ? sum + Number(line.debitAmount || 0) - Number(line.creditAmount || 0)
+            : sum,
+        0,
+      );
+      const impactoResultado = resultadoIngresos - resultadoEgresosCostos;
+      const cuentaPrincipal =
+        (entry.referenceType === 'AJUSTE' && impactoCaja !== 0 ? lineasCaja[0] : null) ||
+        entry.lines.find((line: any) => String(line.accountCode || '').startsWith('3.')) ||
+        entry.lines.find((line: any) => String(line.accountCode || '').startsWith('4.')) ||
+        entry.lines.find((line: any) => String(line.accountCode || '').startsWith('5.')) ||
+        entry.lines.find((line: any) => line.cajaId) ||
+        entry.lines[0];
+
+      return {
+        id: entry.id,
+        fecha: formatBogotaOffsetIso(entry.createdAt),
+        tipo: entry.referenceType,
+        referenciaId: entry.referenceId,
+        descripcion: entry.description,
+        creadoPorId: entry.createdBy,
+        totalDebito,
+        totalCredito,
+        direction: impactoCaja > 0 ? 'IN' : impactoCaja < 0 ? 'OUT' : impactoResultado >= 0 ? 'IN' : 'OUT',
+        impactoCaja,
+        impactoResultado,
+        accountCode: cuentaPrincipal?.accountCode || null,
+        accountName: cuentaPrincipal?.account?.name || cuentaPrincipal?.accountCode || null,
+        caja: lineasCaja[0]?.caja?.nombre || null,
+        cajaId: lineasCaja[0]?.cajaId || null,
+        cuadrado: Math.abs(totalDebito - totalCredito) < 0.01,
+        lineas: entry.lines.map((line: any) => ({
+          id: line.id,
+          accountCode: line.accountCode,
+          accountName: line.account?.name || line.accountCode,
+          debitAmount: Number(line.debitAmount || 0),
+          creditAmount: Number(line.creditAmount || 0),
+          cajaId: line.cajaId,
+          caja: line.caja?.nombre || null,
+          direction: line.cajaId
+            ? Number(line.debitAmount || 0) >= Number(line.creditAmount || 0) ? 'IN' : 'OUT'
+            : null,
+        })),
+      };
+    });
+
+    const pagination = {
+      total,
+      pagina: page,
+      limite: limit,
+      totalPaginas: Math.ceil(total / limit),
+    };
+
+    return {
+      data,
+      paginacion: pagination,
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
+  }
 
   async getTransacciones(filtros: {
     cajaId?: string;
@@ -1082,6 +1307,7 @@ export class AccountingService {
     tipoReferencia?: string;
     referenciaId?: string;
     cajaOrigenId?: string;
+    accountCode?: string;
   }) {
     const count = await this.prisma.transaccion.count();
     const numeroTransaccion = `TRX-${Date.now().toString().slice(-8)}-${(count + 1).toString().padStart(4, '0')}`;
@@ -1148,28 +1374,27 @@ export class AccountingService {
           },
         });
 
-        // 3. Actualizar Saldos
-        await tx.caja.update({
-          where: { id: data.cajaOrigenId },
-          data: { saldoActual: { decrement: data.monto } },
-        });
-
-        await tx.caja.update({
-          where: { id: data.cajaId },
-          data: { saldoActual: { increment: data.monto } },
-        });
+        // 3. Registrar asiento contable de consolidación (Ledger mueve los saldos)
+        const accountCodeDestino = caja.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1';
+        await this.ledgerService.registrarConsolidacion(
+          {
+            referenceId:   numeroReferencia,
+            monto:         data.monto,
+            cajaOrigenId:  data.cajaOrigenId as string,
+            cajaDestinoId: data.cajaId,
+            accountCodeDestino,
+            createdBy:     data.creadoPorId as string,
+          },
+          tx as any,
+        );
 
         return transaccion;
       });
     }
 
-    const nuevoSaldo =
-      data.tipo === 'INGRESO'
-        ? Number(caja.saldoActual) + data.monto
-        : Number(caja.saldoActual) - data.monto;
-
-    const [transaccion] = await this.prisma.$transaction([
-      this.prisma.transaccion.create({
+    const transaccion = await this.prisma.$transaction(async (tx) => {
+      // 1. Crear transacción histórica
+      const t = await tx.transaccion.create({
         data: {
           numeroTransaccion,
           cajaId: data.cajaId,
@@ -1180,12 +1405,75 @@ export class AccountingService {
           tipoReferencia: data.tipoReferencia,
           referenciaId: data.referenciaId,
         },
-      }),
-      this.prisma.caja.update({
-        where: { id: data.cajaId },
-        data: { saldoActual: nuevoSaldo },
-      }),
-    ]);
+      });
+
+      // 2. Registrar asiento contable (Ledger mueve el saldo de la caja)
+      const isIngreso = data.tipo === 'INGRESO';
+      const validReferenceTypes = new Set<ReferenceTypeContable>([
+        'PAGO',
+        'DESEMBOLSO',
+        'GASTO',
+        'VENTA_ARTICULO',
+        'BASE',
+        'CONSOLIDACION',
+        'ARQUEO',
+        'ABONO_DEUDA',
+        'APERTURA',
+        'AJUSTE',
+        'CASTIGO_CARTERA',
+        'INGRESO',
+        'EGRESO',
+      ]);
+      const refUpper = String(data.tipoReferencia || '').toUpperCase();
+      const refType: ReferenceTypeContable = validReferenceTypes.has(refUpper as ReferenceTypeContable)
+        ? refUpper as ReferenceTypeContable
+        : isIngreso
+          ? 'INGRESO'
+          : 'EGRESO';
+      
+      // Si el usuario especifica una cuenta, la usamos como contrapartida. 
+      // Si no, usamos las cuentas genéricas por concepto (3.3 Otros Ingresos / 4.x Otros Gastos).
+      const contrapartidaDefecto = isIngreso
+        ? '3.3'
+        : refUpper === 'DEUDA_COBRADOR'
+          ? '1.4.1'
+          : (caja.tipo === 'RUTA' ? '4.1' : '4.2');
+      const accountCodeContrapartida = data.accountCode || contrapartidaDefecto;
+
+      await this.ledgerService.registrarAsiento(
+        {
+          referenceType: refType,
+          referenceId:   data.referenciaId || t.id,
+          description:   data.descripcion,
+          createdBy:     data.creadoPorId,
+          lines: [
+            {
+              accountCode: isIngreso 
+                ? (caja.tipo === 'RUTA' ? '1.2.1' : (caja.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1')) 
+                : accountCodeContrapartida,
+              debitAmount: data.monto,
+              ...(isIngreso ? {
+                cajaId: data.cajaId,
+                cajaDelta: +data.monto,
+              } : {})
+            },
+            {
+              accountCode: isIngreso 
+                ? accountCodeContrapartida
+                : (caja.tipo === 'RUTA' ? '1.2.1' : (caja.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1')),
+              creditAmount: data.monto,
+              ...(!isIngreso ? {
+                cajaId: data.cajaId,
+                cajaDelta: -data.monto,
+              } : {})
+            }
+          ]
+        },
+        tx as any
+      );
+
+      return t;
+    });
 
     try {
       if (data.tipo === 'EGRESO' && caja.tipo === 'RUTA') {
@@ -1278,17 +1566,19 @@ export class AccountingService {
         },
       });
 
-      // Descontar de la caja origen
-      await tx.caja.update({
-        where: { id: cajaOrigen.id },
-        data: { saldoActual: { decrement: montoATransferir } },
-      });
-
-      // Acreditar en la caja de oficina
-      await tx.caja.update({
-        where: { id: cajaDestino.id },
-        data: { saldoActual: { increment: montoATransferir } },
-      });
+      // Asiento contable de Partida Doble (Ledger mueve los saldos)
+      const accountCodeDestino = cajaDestino.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1';
+      await this.ledgerService.registrarConsolidacion(
+        {
+          referenceId:   numeroRef,
+          monto:         montoATransferir,
+          cajaOrigenId:  cajaOrigen.id,
+          cajaDestinoId: cajaDestino.id,
+          accountCodeDestino,
+          createdBy:     administradorId,
+        },
+        tx as any,
+      );
 
       return { egreso, ingreso };
     });
@@ -1404,6 +1694,359 @@ export class AccountingService {
       fechaFin ? (fechaFin.includes('T') ? fechaFin.split('T')[0] : fechaFin) : undefined
     );
 
+    const ledgerDuration = finHoy.getTime() - inicioHoy.getTime();
+    const ledgerInicioAnterior = new Date(inicioHoy.getTime() - ledgerDuration - 1);
+    const ledgerFinAnterior = new Date(inicioHoy.getTime() - 1);
+
+    const ledgerPeriodWhere = (start: Date, end: Date, accountPrefix: string) => ({
+      accountCode: { startsWith: accountPrefix },
+      journalEntry: {
+        isOpening: false,
+        createdAt: { gte: start, lte: end },
+      },
+    });
+    const ledgerIncomeOperativoWhere = (start: Date, end: Date) => ({
+      accountCode: { startsWith: '3.' },
+      NOT: { accountCode: { startsWith: '3.4' } },
+      journalEntry: {
+        isOpening: false,
+        createdAt: { gte: start, lte: end },
+      },
+    });
+    const ledgerCashIncomeWhere = (start: Date, end: Date) => ({
+      OR: [
+        { accountCode: { startsWith: '1.1' } },
+        { accountCode: { startsWith: '1.2' } },
+      ],
+      debitAmount: { gt: 0 },
+      journalEntry: {
+        isOpening: false,
+        referenceType: { in: ['PAGO', 'INGRESO', 'VENTA_ARTICULO'] },
+        createdAt: { gte: start, lte: end },
+      },
+    });
+    const cuotaInicialIngresoWhere = (start: Date, end: Date) => ({
+      fechaTransaccion: { gte: start, lte: end },
+      tipo: TipoTransaccion.INGRESO,
+      tipoReferencia: { in: ['CUOTA_INICIAL', 'RESTAURACION_CUOTA_INICIAL'] },
+    });
+    const cuotaInicialReversoWhere = (start: Date, end: Date) => ({
+      fechaTransaccion: { gte: start, lte: end },
+      tipo: TipoTransaccion.EGRESO,
+      tipoReferencia: 'REVERSO_CUOTA_INICIAL',
+    });
+
+    const [
+      ingresosCajaHoyLedger,
+      ingresosHoyLedger,
+      interesesHoyLedger,
+      moraHoyLedger,
+      otrosIngresosHoyLedger,
+      articulosHoyLedger,
+      gastosHoyLedger,
+      costosHoyLedger,
+      carteraLedger,
+      deudaCobradorLedger,
+      cobranzaHoyLedger,
+      ingresosCajaAyerLedger,
+      ingresosAyerLedger,
+      gastosAyerLedger,
+      costosAyerLedger,
+      totalCajasLedger,
+      totalRutasCountLedger,
+      rutasAbiertasCountLedger,
+      rutasPendientesConsolidacionLedger,
+      consolidacionesHoyLedger,
+      cajasAbiertasCountLedger,
+      cuotaInicialHoyIngresoAggLedger,
+      cuotaInicialHoyReversoAggLedger,
+      cuotaInicialAyerIngresoAggLedger,
+      cuotaInicialAyerReversoAggLedger,
+    ] = await Promise.all([
+      this.prisma.journalLine.aggregate({
+        where: ledgerCashIncomeWhere(inicioHoy, finHoy),
+        _sum: { debitAmount: true },
+      }),
+      this.prisma.journalLine.aggregate({
+        where: ledgerIncomeOperativoWhere(inicioHoy, finHoy),
+        _sum: { creditAmount: true, debitAmount: true },
+      }),
+      this.prisma.journalLine.aggregate({
+        where: ledgerPeriodWhere(inicioHoy, finHoy, '3.1'),
+        _sum: { creditAmount: true, debitAmount: true },
+      }),
+      this.prisma.journalLine.aggregate({
+        where: ledgerPeriodWhere(inicioHoy, finHoy, '3.2'),
+        _sum: { creditAmount: true, debitAmount: true },
+      }),
+      this.prisma.journalLine.aggregate({
+        where: ledgerPeriodWhere(inicioHoy, finHoy, '3.3'),
+        _sum: { creditAmount: true, debitAmount: true },
+      }),
+      this.prisma.journalLine.aggregate({
+        where: ledgerPeriodWhere(inicioHoy, finHoy, '3.4'),
+        _sum: { creditAmount: true, debitAmount: true },
+      }),
+      this.prisma.journalLine.aggregate({
+        where: ledgerPeriodWhere(inicioHoy, finHoy, '4.'),
+        _sum: { debitAmount: true, creditAmount: true },
+      }),
+      this.prisma.journalLine.aggregate({
+        where: ledgerPeriodWhere(inicioHoy, finHoy, '5.'),
+        _sum: { debitAmount: true, creditAmount: true },
+      }),
+      this.prisma.journalLine.aggregate({
+        where: { accountCode: { startsWith: '1.3' } },
+        _sum: { debitAmount: true, creditAmount: true },
+      }),
+      this.prisma.journalLine.aggregate({
+        where: { accountCode: { startsWith: '1.4' } },
+        _sum: { debitAmount: true, creditAmount: true },
+      }),
+      this.prisma.journalLine.aggregate({
+        where: {
+          OR: [
+            { accountCode: { startsWith: '1.1' } },
+            { accountCode: { startsWith: '1.2' } },
+          ],
+          journalEntry: {
+            isOpening: false,
+            referenceType: 'PAGO',
+            createdAt: { gte: inicioHoy, lte: finHoy },
+          },
+        },
+        _sum: { debitAmount: true },
+      }),
+      this.prisma.journalLine.aggregate({
+        where: ledgerCashIncomeWhere(ledgerInicioAnterior, ledgerFinAnterior),
+        _sum: { debitAmount: true },
+      }),
+      this.prisma.journalLine.aggregate({
+        where: ledgerIncomeOperativoWhere(ledgerInicioAnterior, ledgerFinAnterior),
+        _sum: { creditAmount: true, debitAmount: true },
+      }),
+      this.prisma.journalLine.aggregate({
+        where: ledgerPeriodWhere(ledgerInicioAnterior, ledgerFinAnterior, '4.'),
+        _sum: { debitAmount: true, creditAmount: true },
+      }),
+      this.prisma.journalLine.aggregate({
+        where: ledgerPeriodWhere(ledgerInicioAnterior, ledgerFinAnterior, '5.'),
+        _sum: { debitAmount: true, creditAmount: true },
+      }),
+      this.prisma.caja.aggregate({
+        where: { activa: true },
+        _sum: { saldoActual: true },
+      }),
+      this.prisma.caja.count({ where: { tipo: 'RUTA', activa: true } }),
+      this.prisma.caja.count({
+        where: {
+          tipo: 'RUTA',
+          activa: true,
+          NOT: {
+            transacciones: {
+              some: {
+                tipoReferencia: 'CIERRE_RUTA',
+                fechaTransaccion: { gte: inicioHoy, lte: finHoy },
+              },
+            },
+          },
+        },
+      }),
+      this.prisma.caja.count({
+        where: {
+          tipo: 'RUTA',
+          activa: true,
+          NOT: {
+            transacciones: {
+              some: {
+                tipoReferencia: 'CIERRE_RUTA',
+                fechaTransaccion: { gte: inicioHoy, lte: finHoy },
+              },
+            },
+          },
+        },
+      }),
+      this.prisma.caja.count({
+        where: {
+          tipo: 'RUTA',
+          activa: true,
+          transacciones: {
+            some: {
+              tipoReferencia: 'CIERRE_RUTA',
+              fechaTransaccion: { gte: inicioHoy, lte: finHoy },
+            },
+          },
+        },
+      }),
+      this.prisma.caja.count({ where: { activa: true } }),
+      this.prisma.transaccion.aggregate({
+        where: cuotaInicialIngresoWhere(inicioHoy, finHoy),
+        _sum: { monto: true },
+      }),
+      this.prisma.transaccion.aggregate({
+        where: cuotaInicialReversoWhere(inicioHoy, finHoy),
+        _sum: { monto: true },
+      }),
+      this.prisma.transaccion.aggregate({
+        where: cuotaInicialIngresoWhere(ledgerInicioAnterior, ledgerFinAnterior),
+        _sum: { monto: true },
+      }),
+      this.prisma.transaccion.aggregate({
+        where: cuotaInicialReversoWhere(ledgerInicioAnterior, ledgerFinAnterior),
+        _sum: { monto: true },
+      }),
+    ]);
+
+    const ingresosCajaLedger = Number(ingresosCajaHoyLedger._sum.debitAmount || 0);
+    const ingresosLedger =
+      Number(ingresosHoyLedger._sum.creditAmount || 0) -
+      Number(ingresosHoyLedger._sum.debitAmount || 0);
+    const interesesLedger =
+      Number(interesesHoyLedger._sum.creditAmount || 0) -
+      Number(interesesHoyLedger._sum.debitAmount || 0);
+    const moraLedger =
+      Number(moraHoyLedger._sum.creditAmount || 0) -
+      Number(moraHoyLedger._sum.debitAmount || 0);
+    const otrosIngresosLedger =
+      Number(otrosIngresosHoyLedger._sum.creditAmount || 0) -
+      Number(otrosIngresosHoyLedger._sum.debitAmount || 0);
+    const articulosLedger =
+      Number(articulosHoyLedger._sum.creditAmount || 0) -
+      Number(articulosHoyLedger._sum.debitAmount || 0);
+    const egresosLedger =
+      Number(gastosHoyLedger._sum.debitAmount || 0) -
+      Number(gastosHoyLedger._sum.creditAmount || 0);
+    const costosLedger =
+      Number(costosHoyLedger._sum.debitAmount || 0) -
+      Number(costosHoyLedger._sum.creditAmount || 0);
+    const cobranzaLedger = Number(cobranzaHoyLedger._sum.debitAmount || 0);
+    const ingresosCajaAyerLedgerVal = Number(ingresosCajaAyerLedger._sum.debitAmount || 0);
+    const ingresosAyerLedgerVal =
+      Number(ingresosAyerLedger._sum.creditAmount || 0) -
+      Number(ingresosAyerLedger._sum.debitAmount || 0);
+    const egresosAyerLedgerVal =
+      Number(gastosAyerLedger._sum.debitAmount || 0) -
+      Number(gastosAyerLedger._sum.creditAmount || 0);
+    const costosAyerLedgerVal =
+      Number(costosAyerLedger._sum.debitAmount || 0) -
+      Number(costosAyerLedger._sum.creditAmount || 0);
+    const cuotaInicialLedger =
+      Number(cuotaInicialHoyIngresoAggLedger._sum.monto || 0) -
+      Number(cuotaInicialHoyReversoAggLedger._sum.monto || 0);
+    const cuotaInicialAyerLedgerVal =
+      Number(cuotaInicialAyerIngresoAggLedger._sum.monto || 0) -
+      Number(cuotaInicialAyerReversoAggLedger._sum.monto || 0);
+    const capitalEnCalleLedger =
+      Number(carteraLedger._sum.debitAmount || 0) -
+      Number(carteraLedger._sum.creditAmount || 0);
+    const deudaCobradorLedgerVal =
+      Number(deudaCobradorLedger._sum.debitAmount || 0) -
+      Number(deudaCobradorLedger._sum.creditAmount || 0);
+
+    const calcularDiferenciaLedger = (actual: number, anterior: number) => {
+      if (anterior === 0) return actual > 0 ? 100 : 0;
+      return Number((((actual - anterior) / anterior) * 100).toFixed(2));
+    };
+
+    // ── Provisión de Cartera ───────────────────────────────────────────────────
+    // Calculada sobre el saldo pendiente ACTUAL de préstamos en distintos
+    // estados de incumplimiento (independiente del rango de fechas del reporte).
+    // Tasas estándar para microcréditos Colombia:
+    //   EN_MORA     → 20 %  (1-90 días, en recuperación)
+    //   INCUMPLIDO  → 60 %  (90-180 días, alto riesgo)
+    //   PERDIDA     → 100 % (>180 días / irrecuperable)
+    const [carteraEnMoraAgg, carteraIncumplidaAgg, carteraPerdidaAgg] =
+      await Promise.all([
+        this.prisma.prestamo.aggregate({
+          where: { estado: 'EN_MORA', eliminadoEn: null },
+          _sum: { saldoPendiente: true },
+        }),
+        this.prisma.prestamo.aggregate({
+          where: { estado: 'INCUMPLIDO', eliminadoEn: null },
+          _sum: { saldoPendiente: true },
+        }),
+        this.prisma.prestamo.aggregate({
+          where: { estado: 'PERDIDA', eliminadoEn: null },
+          _sum: { saldoPendiente: true },
+        }),
+      ]);
+
+    const saldoEnMora      = Number(carteraEnMoraAgg._sum.saldoPendiente      || 0);
+    const saldoIncumplido  = Number(carteraIncumplidaAgg._sum.saldoPendiente  || 0);
+    const saldoPerdida     = Number(carteraPerdidaAgg._sum.saldoPendiente      || 0);
+    const cartaraTotalMora = saldoEnMora + saldoIncumplido + saldoPerdida;
+
+    const provisionEnMora     = saldoEnMora     * 0.20;
+    const provisionIncumplida = saldoIncumplido * 0.60;
+    const provisionPerdida    = saldoPerdida    * 1.00;
+    const provisionTotal      = provisionEnMora + provisionIncumplida + provisionPerdida;
+
+    const esUnSoloDiaLedger = ledgerDuration < 24 * 60 * 60 * 1000;
+    const porcentajeCierreLedger =
+      totalRutasCountLedger > 0
+        ? Math.round((consolidacionesHoyLedger / totalRutasCountLedger) * 100)
+        : 0;
+    const margenArticulosLedger = articulosLedger - costosLedger;
+    const ingresosDevengadosLedger = interesesLedger + moraLedger + margenArticulosLedger;
+    // Utilidad Operativa devengada = Interés + Mora + Margen de artículos − Gastos Operativos.
+    // Aportes, inyecciones de capital y otros ingresos externos no son ganancia operativa.
+    const utilidadOperativaLedger = ingresosDevengadosLedger - egresosLedger;
+    // Utilidad Neta = Utilidad Operativa − Provisión de Cartera
+    const utilidadNetaLedger = utilidadOperativaLedger - provisionTotal;
+
+    return {
+      // Ingreso operativo del periodo. No incluye cartera futura, cuota inicial ni desembolsos.
+      ingresosHoy: ingresosLedger,
+      // Entrada física de caja, útil para conciliación de efectivo.
+      entradasCajaHoy: ingresosCajaLedger,
+      // Ingreso contable devengado para margen/utilidad.
+      ingresosDevengadosHoy: ingresosDevengadosLedger,
+      egresosHoy: egresosLedger,
+      costosVentasHoy: costosLedger,
+      trasladosInternosHoy: 0,
+      cuotaInicialHoy: cuotaInicialLedger,
+      cobranzaHoy: cobranzaLedger,
+      deudaCobradorHoy: deudaCobradorLedgerVal,
+      margenArticulosHoy: margenArticulosLedger,
+      ingresosArticulosHoy: articulosLedger,
+      interesHoy: interesesLedger,
+      moraHoy: moraLedger,
+      otrosIngresosHoy: otrosIngresosLedger,
+      utilidadOperativa: utilidadOperativaLedger,
+      provisionCarteraEnMora: provisionEnMora,
+      provisionCarteraIncumplida: provisionIncumplida,
+      provisionCarteraPerdida: provisionPerdida,
+      provisionCarteraTotal: provisionTotal,
+      carteraTotalEnMora: cartaraTotalMora,
+      saldoCarteraEnMora: saldoEnMora,
+      saldoCarteraIncumplida: saldoIncumplido,
+      saldoCarteraPerdida: saldoPerdida,
+      utilidadReal: utilidadNetaLedger,
+      gananciaNeta: utilidadNetaLedger,
+      capitalEnCalle: capitalEnCalleLedger,
+      saldoCajas: Number(totalCajasLedger._sum.saldoActual || 0),
+      cajasAbiertasCount: cajasAbiertasCountLedger,
+      rutasTotales: totalRutasCountLedger,
+      rutasAbiertas: rutasAbiertasCountLedger,
+      rutasPendientesConsolidacion: rutasPendientesConsolidacionLedger,
+      consolidacionesHoy: consolidacionesHoyLedger,
+      porcentajeCierre: porcentajeCierreLedger,
+      fecha: formatBogotaOffsetIso(inicioHoy),
+      porcentajeIngresosVsAyer: esUnSoloDiaLedger ? calcularDiferenciaLedger(ingresosLedger, ingresosAyerLedgerVal) : null,
+      porcentajeEgresosVsAyer: esUnSoloDiaLedger ? calcularDiferenciaLedger(egresosLedger + costosLedger, egresosAyerLedgerVal + costosAyerLedgerVal) : null,
+      porcentajeCobranzaVsAyer: esUnSoloDiaLedger ? calcularDiferenciaLedger(cobranzaLedger, ingresosCajaAyerLedgerVal) : null,
+      porcentajeDeudaCobradorVsAyer: null,
+      porcentajeMargenArticulosVsAyer: null,
+      porcentajeTrasladosVsAyer: null,
+      porcentajeCuotaInicialVsAyer: esUnSoloDiaLedger ? calcularDiferenciaLedger(cuotaInicialLedger, cuotaInicialAyerLedgerVal) : null,
+      esIngresoPositivo: esUnSoloDiaLedger ? ingresosLedger >= ingresosAyerLedgerVal : true,
+      esEgresoPositivo: esUnSoloDiaLedger ? (egresosLedger + costosLedger) <= (egresosAyerLedgerVal + costosAyerLedgerVal) : true,
+      esCobranzaPositivo: esUnSoloDiaLedger ? cobranzaLedger >= ingresosCajaAyerLedgerVal : true,
+      esDeudaCobradorPositivo: true,
+      esMargenArticulosPositivo: true,
+      esTrasladoPositivo: true,
+    };
+
     // Para "Ayer" o el período anterior, comparamos con un período de igual duración inmediatamente anterior
     const duration = finHoy.getTime() - inicioHoy.getTime();
     const inicioAnterior = new Date(inicioHoy.getTime() - duration - 1);
@@ -1453,11 +2096,9 @@ export class AccountingService {
             },
           ],
           NOT: {
-            OR: [
-              { tipoReferencia: 'SOLICITUD_BASE' },
-              { tipoReferencia: 'SOLICITUD_BASE_EFECTIVO' },
-              { tipoReferencia: 'CUOTA_INICIAL' },
-            ],
+            tipoReferencia: {
+              in: ['SOLICITUD_BASE', 'SOLICITUD_BASE_EFECTIVO', 'CUOTA_INICIAL', 'RESTAURACION_CUOTA_INICIAL', 'ABONO_DEUDA'],
+            },
           },
         },
         _sum: { monto: true },
@@ -1467,7 +2108,9 @@ export class AccountingService {
           ...whereHoy,
           tipo: 'EGRESO',
           NOT: {
-            tipoReferencia: 'DEUDA_COBRADOR',
+            tipoReferencia: {
+              in: ['DEUDA_COBRADOR', 'SOLICITUD_BASE', 'SOLICITUD_BASE_EFECTIVO', 'TRANSFERENCIA_INTERNA'],
+            },
           },
         },
         _sum: { monto: true },
@@ -1500,7 +2143,7 @@ export class AccountingService {
         where: {
           ...whereHoy,
           tipo: 'INGRESO',
-          tipoReferencia: 'CUOTA_INICIAL',
+          tipoReferencia: { in: ['CUOTA_INICIAL', 'RESTAURACION_CUOTA_INICIAL'] },
         },
         _sum: { monto: true },
       }),
@@ -1538,6 +2181,7 @@ export class AccountingService {
               { tipoReferencia: 'SOLICITUD_BASE' },
               { tipoReferencia: 'SOLICITUD_BASE_EFECTIVO' },
               { tipoReferencia: 'CUOTA_INICIAL' },
+              { tipoReferencia: 'RESTAURACION_CUOTA_INICIAL' },
             ],
           },
         },
@@ -1581,7 +2225,7 @@ export class AccountingService {
         where: {
           ...whereAyer,
           tipo: 'INGRESO',
-          tipoReferencia: 'CUOTA_INICIAL',
+          tipoReferencia: { in: ['CUOTA_INICIAL', 'RESTAURACION_CUOTA_INICIAL'] },
         },
         _sum: { monto: true },
       }),
@@ -1911,6 +2555,96 @@ export class AccountingService {
     return mapped;
   }
 
+  private async assertNoOfflinePendienteAntesArqueo(caja: any, cierreTimestamp: Date) {
+    const usuarioIds = [caja?.responsableId].filter(Boolean);
+    const pendingSyncCount = await this.prisma.colaSincronizacion.count({
+      where: {
+        estado: { in: ['PENDIENTE', 'ERROR', 'CONFLICTO'] as any },
+        creadoEn: { lte: cierreTimestamp },
+        ...(usuarioIds.length ? { usuarioCreadorId: { in: usuarioIds } } : {}),
+      },
+    });
+
+    const pendingConflictCount = await this.prisma.syncConflict.count({
+      where: {
+        estadoResolucion: 'PENDIENTE',
+        creadoEn: { lte: cierreTimestamp },
+        ...(usuarioIds.length ? { creadoPorId: { in: usuarioIds } } : {}),
+      },
+    });
+
+    if (pendingSyncCount > 0 || pendingConflictCount > 0) {
+      throw new BadRequestException(
+        `No se puede registrar el arqueo: existen ${pendingSyncCount + pendingConflictCount} registros offline/conflictos pendientes anteriores al cierre.`,
+      );
+    }
+  }
+
+  private async getCandidatosSobranteRuta(caja: any, cierreTimestamp: Date) {
+    if (!caja?.rutaId) {
+      return [];
+    }
+
+    const diaKey = getBogotaDayKey(cierreTimestamp);
+    const { startDate: inicioHoy, endDate: finHoy } = getBogotaStartEndOfDayFromKey(diaKey);
+    const inicioAyer = new Date(inicioHoy.getTime() - 86_400_000);
+
+    const cuotas = await this.prisma.cuota.findMany({
+      where: {
+        fechaVencimiento: { gte: inicioAyer, lte: finHoy },
+        estado: { in: ['PENDIENTE', 'VENCIDA', 'PARCIAL'] as any },
+        prestamo: {
+          estado: { in: ['ACTIVO', 'EN_MORA'] as any },
+          eliminadoEn: null,
+          cliente: {
+            asignacionesRuta: {
+              some: {
+                rutaId: caja.rutaId,
+                activa: true,
+              },
+            },
+          },
+        },
+      },
+      include: {
+        prestamo: {
+          select: {
+            id: true,
+            numeroPrestamo: true,
+            cliente: {
+              select: { id: true, nombres: true, apellidos: true },
+            },
+            pagos: {
+              orderBy: { fechaPago: 'desc' },
+              take: 1,
+              select: { fechaPago: true },
+            },
+          },
+        },
+      },
+      orderBy: { fechaVencimiento: 'asc' },
+      take: 25,
+    });
+
+    return cuotas
+      .filter((cuota: any) => {
+        const ultimoPago = cuota?.prestamo?.pagos?.[0]?.fechaPago;
+        return !ultimoPago || new Date(ultimoPago).getTime() < inicioHoy.getTime();
+      })
+      .map((cuota: any) => ({
+        cuotaId: cuota.id,
+        numeroCuota: cuota.numeroCuota,
+        fechaVencimiento: formatBogotaOffsetIso(cuota.fechaVencimiento),
+        monto: Number(cuota.monto || 0),
+        montoPagado: Number(cuota.montoPagado || 0),
+        saldoCuota: Math.max(0, Number(cuota.monto || 0) - Number(cuota.montoPagado || 0)),
+        prestamoId: cuota.prestamo.id,
+        numeroPrestamo: cuota.prestamo.numeroPrestamo,
+        clienteId: cuota.prestamo.cliente.id,
+        cliente: `${cuota.prestamo.cliente.nombres} ${cuota.prestamo.cliente.apellidos}`.trim(),
+      }));
+  }
+
   async registrarArqueo(
     cajaId: string,
     data: {
@@ -1923,6 +2657,9 @@ export class AccountingService {
   ) {
     const caja = await this.prisma.caja.findUnique({ where: { id: cajaId } });
     if (!caja) throw new NotFoundException('Caja no encontrada');
+
+    const cierreTimestamp = new Date();
+    await this.assertNoOfflinePendienteAntesArqueo(caja, cierreTimestamp);
 
     const montoAjuste = Math.abs(Number(data.diferencia || 0));
     const referenciaId = `SS:${Number(data.saldoSistema)}|ER:${Number(data.efectivoReal)}|DF:${Number(data.diferencia)}`;
@@ -1947,20 +2684,53 @@ export class AccountingService {
       });
     }
 
+    const candidatosSobrante = Number(data.diferencia) > 0
+      ? await this.getCandidatosSobranteRuta(caja, cierreTimestamp)
+      : [];
+
     // Con diferencia: registrar ajuste como ingreso/egreso para cuadrar
     const tipoAjuste =
       Number(data.diferencia) > 0
         ? TipoTransaccion.INGRESO
         : TipoTransaccion.EGRESO;
 
-    return this.createTransaccion({
-      cajaId,
-      tipo: tipoAjuste,
-      monto: montoAjuste,
-      descripcion,
-      creadoPorId: userId,
-      tipoReferencia: 'ARQUEO',
-      referenciaId,
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Crear transacción histórica
+      const transaccion = await tx.transaccion.create({
+        data: {
+          numeroTransaccion: `ARQ-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          cajaId,
+          tipo: tipoAjuste,
+          monto: montoAjuste,
+          descripcion,
+          creadoPorId: userId,
+          tipoReferencia: 'ARQUEO',
+          referenciaId,
+        },
+      });
+
+      // 2. Registrar asiento contable y ajustar saldo
+      await this.ledgerService.registrarArqueoDescuadre(
+        {
+          arqueoId:   transaccion.id,
+          diferencia: Number(data.diferencia),
+          cajaId,
+          createdBy:  userId,
+        },
+        tx as any,
+      );
+
+      return {
+        ...transaccion,
+        ...(Number(data.diferencia) > 0
+          ? {
+              alertaSobrante: {
+                mensaje: 'Hay sobrante de efectivo. Revise posibles clientes en mora reciente de esta ruta.',
+                candidatos: candidatosSobrante,
+              },
+            }
+          : {}),
+      };
     });
   }
 
@@ -2029,8 +2799,7 @@ export class AccountingService {
   async exportAccountingReport(
     format: 'excel' | 'pdf',
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
-    // 1. Solo consulta de BD
-    const [cajas, transacciones] = await Promise.all([
+    const [cajas, journalEntries] = await Promise.all([
       this.prisma.caja.findMany({
         where: { activa: true },
         include: {
@@ -2039,19 +2808,52 @@ export class AccountingService {
         },
         orderBy: { creadoEn: 'desc' },
       }),
-      this.prisma.transaccion.findMany({
+      this.prisma.journalEntry.findMany({
         include: {
-          caja: { select: { nombre: true } },
-          creadoPor: { select: { nombres: true, apellidos: true } },
+          lines: {
+            include: {
+              account: { select: { name: true } },
+            },
+            orderBy: { accountCode: 'asc' },
+          },
         },
-        orderBy: { creadoEn: 'desc' },
+        orderBy: { createdAt: 'desc' },
         take: 500,
       }),
     ]);
 
+    const usuarioIds = [...new Set(journalEntries.map((entry: any) => entry.createdBy).filter(Boolean))];
+    const cajaIds = [
+      ...new Set(
+        journalEntries
+          .flatMap((entry: any) => entry.lines || [])
+          .map((line: any) => line.cajaId)
+          .filter(Boolean),
+      ),
+    ];
+
+    const [usuarios, cajasMovimientos] = await Promise.all([
+      usuarioIds.length
+        ? this.prisma.usuario.findMany({
+            where: { id: { in: usuarioIds } },
+            select: { id: true, nombres: true, apellidos: true },
+          })
+        : Promise.resolve([]),
+      cajaIds.length
+        ? this.prisma.caja.findMany({
+            where: { id: { in: cajaIds } },
+            select: { id: true, nombre: true, tipo: true },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const usuariosMap = new Map(usuarios.map((u: any) => [u.id, `${u.nombres} ${u.apellidos}`]));
+    const cajasMap = new Map<string, { id: string; nombre: string; tipo: TipoCaja }>(
+      cajasMovimientos.map((c: any) => [c.id, c]),
+    );
+
     const fecha = getBogotaDayKey(new Date());
 
-    // 2. Mapeo al tipo del template
     const filasCjas: CajaRow[] = cajas.map((c: any) => ({
       nombre: c.nombre,
       codigo: c.codigo,
@@ -2059,18 +2861,34 @@ export class AccountingService {
       responsable: c.responsable ? `${c.responsable.nombres} ${c.responsable.apellidos}` : 'Sin asignar',
       ruta: c.ruta?.nombre || 'N/A',
       saldo: Number(c.saldoActual),
+      tipoCaja: c.tipo === 'RUTA' ? 'COBRADOR' : c.codigo === 'CAJA-PRINCIPAL' ? 'PRINCIPAL' : 'EMPRESA',
     }));
 
-    const filasTransacciones: TransaccionRow[] = transacciones.map((t: any) => ({
-      fecha: t.creadoEn,
-      tipo: t.tipo,
-      monto: Number(t.monto),
-      descripcion: t.descripcion || '',
-      caja: t.caja?.nombre || '',
-      usuario: t.creadoPor ? `${t.creadoPor.nombres} ${t.creadoPor.apellidos}` : '',
-    }));
+    const filasTransacciones: TransaccionRow[] = journalEntries.map((entry: any) => {
+      const totalDebito = (entry.lines || []).reduce(
+        (sum: number, line: any) => sum + Number(line.debitAmount || 0),
+        0,
+      );
+      const cajasEntry = (entry.lines || [])
+        .map((line: any) => line.cajaId ? cajasMap.get(line.cajaId)?.nombre : null)
+        .filter(Boolean);
+      const cuentas = (entry.lines || [])
+        .map((line: any) => `${line.accountCode} ${line.account?.name || ''}`.trim())
+        .join(' / ');
 
-    // 3. Delegamos al template
+      return {
+        fecha: entry.createdAt,
+        tipo: entry.referenceType,
+        monto: totalDebito,
+        descripcion: entry.description || cuentas,
+        caja: [...new Set(cajasEntry)].join(', '),
+        usuario: usuariosMap.get(entry.createdBy) || entry.createdBy || '',
+        tipoCaja: '',
+        estadoAprobacion: 'APROBADO',
+        metodoPago: '',
+      };
+    });
+
     if (format === 'excel') return generarExcelContable(filasCjas, filasTransacciones, fecha);
     if (format === 'pdf') return generarPDFContable(filasCjas, filasTransacciones, fecha);
 
@@ -2088,182 +2906,128 @@ export class AccountingService {
    * =====================================================
    */
   async getDeudoresCobrador() {
-    // 1. Traemos todos los gastos que hayan sido designados como deuda/personal si existe una forma, por ahora usamos 'OTRO' o simplemente los omitimos para no cobrar gastos operativos.
-    // Usaremos TipoGasto 'OTRO' como convención para gastos personales cargables al cobrador si es necesario, o transacciones con DEUDA_COBRADOR.
-    // Por seguridad, solo sumamos los descuadres de ARQUEO para evitar cobrarles gasolina/operación si no tenemos la distinción clara.
-    const gastosPersonales = await this.prisma.gasto.groupBy({
-      by: ['cobradorId'],
-      where: {
-        tipoGasto: { in: ['OTRO'] }, 
-        estadoAprobacion: 'APROBADO',
-      },
-      _sum: { monto: true },
-      _count: { id: true },
-    });
-
-    // 2. Traemos egresos que representan deuda del cobrador (arqueos negativos y deudas explícitas)
-    const arqueos = await this.prisma.transaccion.findMany({
-      where: {
-        tipo: 'EGRESO',
-        OR: [
-          { tipoReferencia: 'ARQUEO' },
-          { tipoReferencia: 'DEUDA_COBRADOR' },
-        ],
-      },
-      select: {
-        id: true,
-        creadoEn: true,
-        monto: true,
-        cajaId: true,
-        tipoReferencia: true,
-        referenciaId: true,
-        descripcion: true,
-        caja: {
+    const debtLines = await this.prisma.journalLine.findMany({
+      where: { accountCode: { startsWith: '1.4' } },
+      include: {
+        journalEntry: {
           select: {
-            rutaId: true,
-            ruta: { select: { cobradorId: true } },
+            id: true,
+            referenceType: true,
+            referenceId: true,
+            description: true,
+            createdAt: true,
           },
         },
       },
+      orderBy: { journalEntry: { createdAt: 'desc' } },
     });
 
-    // 2.5 Traemos los abonos ya registrados para descontarlos de la deuda
-    const abonos = await this.prisma.transaccion.groupBy({
-      by: ['referenciaId'],
-      where: {
-        tipoReferencia: 'ABONO_DEUDA',
-        tipo: 'INGRESO',
-      },
-      _sum: { monto: true },
-    });
-    const abonosMap = new Map<string, number>();
-    for (const a of abonos) {
-      if (!a.referenciaId) continue;
-      const refCobradorId = a.referenciaId.split('|')[0];
-      const actual = abonosMap.get(refCobradorId) || 0;
-      abonosMap.set(refCobradorId, actual + Number(a._sum.monto || 0));
-    }
+    if (debtLines.length === 0) return [];
 
-    // 3. Traemos los cobradores implicados
-    const cobradorIds = [
-      ...new Set([
-        ...gastosPersonales.map(g => g.cobradorId),
-        ...arqueos.map(a => a.caja?.ruta?.cobradorId).filter(Boolean) as string[],
-        ...abonos.map(a => a.referenciaId ? a.referenciaId.split('|')[0] : null).filter(Boolean) as string[],
-      ])
+    const arqueoReferenceIds = [
+      ...new Set(
+        debtLines
+          .filter((line: any) => line.journalEntry?.referenceType === 'ARQUEO')
+          .map((line: any) => line.journalEntry?.referenceId)
+          .filter(Boolean),
+      ),
     ];
 
+    const arqueoTransacciones = arqueoReferenceIds.length
+      ? await this.prisma.transaccion.findMany({
+          where: { id: { in: arqueoReferenceIds } },
+          select: {
+            id: true,
+            cajaId: true,
+            descripcion: true,
+            caja: {
+              select: {
+                ruta: { select: { cobradorId: true } },
+              },
+            },
+          },
+        })
+      : [];
+
+    const transaccionMap = new Map(arqueoTransacciones.map((t: any) => [t.id, t]));
+    const deudaMap = new Map<string, { descuadres: number; gastosPersonales: number; totalEventos: number }>();
+    const eventosMap = new Map<
+      string,
+      Array<{ id: string; tipoReferencia: string; monto: number; fecha: Date; cajaId: string; referenciaId?: string; descripcion?: string }>
+    >();
+
+    const ensureDebt = (cobradorId: string) => {
+      const prev = deudaMap.get(cobradorId) || { descuadres: 0, gastosPersonales: 0, totalEventos: 0 };
+      deudaMap.set(cobradorId, prev);
+      return prev;
+    };
+
+    for (const line of debtLines as any[]) {
+      const entry = line.journalEntry;
+      if (!entry) continue;
+
+      let cobradorId: string | null = null;
+      let cajaId = '';
+      let descripcion = entry.description || '';
+
+      if (entry.referenceType === 'ABONO_DEUDA') {
+        cobradorId = String(entry.referenceId || '').split('|')[0] || null;
+      } else if (entry.referenceType === 'ARQUEO') {
+        const trx: any = transaccionMap.get(entry.referenceId);
+        cobradorId = trx?.caja?.ruta?.cobradorId || null;
+        cajaId = trx?.cajaId || '';
+        descripcion = descripcion || trx?.descripcion || '';
+      }
+
+      if (!cobradorId) continue;
+
+      const debit = Number(line.debitAmount || 0);
+      const credit = Number(line.creditAmount || 0);
+      const delta = debit - credit;
+      const prev = ensureDebt(cobradorId);
+      prev.descuadres += delta;
+      prev.totalEventos += 1;
+      deudaMap.set(cobradorId, prev);
+
+      const arr = eventosMap.get(cobradorId) || [];
+      arr.push({
+        id: entry.id,
+        tipoReferencia: String(entry.referenceType),
+        monto: Math.abs(delta),
+        fecha: entry.createdAt,
+        cajaId,
+        referenciaId: entry.referenceId,
+        descripcion,
+      });
+      eventosMap.set(cobradorId, arr);
+    }
+
+    const cobradorIds = [...deudaMap.keys()];
     if (cobradorIds.length === 0) return [];
 
     const cobradores = await this.prisma.usuario.findMany({
       where: { id: { in: cobradorIds } },
       select: { id: true, nombres: true, apellidos: true, rol: true },
     });
-    const cobradorMap = new Map<string, { id: string; nombres: string; apellidos: string; rol: string }>(
-      cobradores.map(c => [c.id, c as { id: string; nombres: string; apellidos: string; rol: string }])
-    );
+    const cobradorMap = new Map(cobradores.map((c: any) => [c.id, c]));
 
-    // 4. Consolidar deudas por cobrador
-    const deudaMap = new Map<string, { gastosPersonales: number; descuadres: number; totalEventos: number }>();
-    const eventosMap = new Map<
-      string,
-      Array<{ id: string; tipoReferencia: string; monto: number; fecha: Date; cajaId: string; referenciaId?: string; descripcion?: string }>
-    >();
-
-    for (const g of gastosPersonales) {
-      const prev = deudaMap.get(g.cobradorId) || { gastosPersonales: 0, descuadres: 0, totalEventos: 0 };
-      deudaMap.set(g.cobradorId, {
-        ...prev,
-        gastosPersonales: prev.gastosPersonales + Number(g._sum.monto || 0),
-        totalEventos: prev.totalEventos + (g._count.id || 0),
-      });
-    }
-
-    for (const arqueo of arqueos) {
-      const cobradorId = arqueo.caja?.ruta?.cobradorId;
-      if (!cobradorId) continue;
-
-      // Evitar falsos positivos:
-      // 1) DEUDA_COBRADOR generada por cierres de ruta antiguos (basados en saldo retenido)
-      //    suele venir con metadata SD:... y FD:0 o sin FD. Eso NO debe contarse.
-      if (arqueo.tipoReferencia === 'DEUDA_COBRADOR' && typeof arqueo.referenciaId === 'string') {
-        const ref = arqueo.referenciaId
-        const tieneSaldoAlCierre = /\bSD:(\d+(?:\.\d+)?)\b/i.test(ref)
-        const matchFD = ref.match(/\bFD:(\d+(?:\.\d+)?)\b/i)
-        const fd = matchFD ? Number(matchFD[1] || 0) : null
-
-        if (tieneSaldoAlCierre && (fd == null || fd === 0)) {
-          continue
-        }
-      }
-
-      // 2) ARQUEO: solo debe generar deuda si la diferencia fue negativa (faltó efectivo).
-      //    Si no podemos detectar la diferencia, no lo contamos para no crear deudas falsas.
-      if (arqueo.tipoReferencia === 'ARQUEO' && typeof arqueo.referenciaId === 'string') {
-        const ref = arqueo.referenciaId
-        const matchDif = ref.match(/\bDIF:([\-\d.]+)\b/i)
-        if (!matchDif) {
-          continue
-        }
-        const dif = Number(matchDif[1])
-        // Si DIF >= 0 no hay deuda del cobrador
-        if (!(dif < 0)) {
-          continue
-        }
-      }
-
-      const diferencia = Number(arqueo.monto || 0); // EGRESO significa dinero no devuelto
-      const prev = deudaMap.get(cobradorId) || { gastosPersonales: 0, descuadres: 0, totalEventos: 0 };
-      deudaMap.set(cobradorId, {
-        ...prev,
-        descuadres: prev.descuadres + diferencia,
-        totalEventos: prev.totalEventos + 1,
-      });
-
-      const arr = eventosMap.get(cobradorId) || [];
-      arr.push({
-        id: String((arqueo as any).id),
-        tipoReferencia: String(arqueo.tipoReferencia || ''),
-        monto: Number(arqueo.monto || 0),
-        fecha: (arqueo as any).creadoEn as Date,
-        cajaId: String(arqueo.cajaId || ''),
-        referenciaId: (arqueo as any).referenciaId ?? undefined,
-        descripcion: (arqueo as any).descripcion ?? undefined,
-      });
-      eventosMap.set(cobradorId, arr);
-    }
-
-    // 5. Construir respuesta final restando abonos
     return Array.from(deudaMap.entries())
       .map(([cobradorId, deuda]) => {
-        const cobrador = cobradorMap.get(cobradorId);
-        const abonosRealizados = abonosMap.get(cobradorId) || 0;
-
-        // Aplicar abonos al desglose para que los subtotales concuerden con el total.
-        // Prioridad: descuadres (faltantes de ruta) -> gastos personales.
-        const abonoUsadoEnDescuadres = Math.min(Number(deuda.descuadres || 0), Number(abonosRealizados || 0));
-        const descuadresPendiente = Math.max(0, Number(deuda.descuadres || 0) - abonoUsadoEnDescuadres);
-        const abonoRestante = Math.max(0, Number(abonosRealizados || 0) - abonoUsadoEnDescuadres);
-        const abonoUsadoEnGastos = Math.min(Number(deuda.gastosPersonales || 0), abonoRestante);
-        const gastosPendiente = Math.max(0, Number(deuda.gastosPersonales || 0) - abonoUsadoEnGastos);
-
-        const totalDeudaRealRaw = descuadresPendiente + gastosPendiente;
-        // Los valores del módulo contable se manejan en pesos (enteros). Redondear evita
-        // que residuos decimales (p.ej. 0.02) aparezcan como "$0" pero cuenten como deuda.
-        const totalDeudaReal = Math.max(0, Math.round(Number(totalDeudaRealRaw || 0)));
-        
+        const cobrador: any = cobradorMap.get(cobradorId);
+        const descuadres = Math.max(0, Math.round(Number(deuda.descuadres || 0)));
+        const gastosPersonales = Math.max(0, Math.round(Number(deuda.gastosPersonales || 0)));
         return {
           cobradorId,
           nombreCobrador: cobrador ? `${cobrador.nombres} ${cobrador.apellidos}` : 'Desconocido',
           rol: cobrador?.rol || 'COBRADOR',
-          totalDeuda: totalDeudaReal,
-          gastosPersonales: Math.max(0, Math.round(Number(gastosPendiente || 0))),
-          descuadres: Math.max(0, Math.round(Number(descuadresPendiente || 0))),
+          totalDeuda: descuadres + gastosPersonales,
+          gastosPersonales,
+          descuadres,
           totalEventos: deuda.totalEventos,
           eventos: (eventosMap.get(cobradorId) || []).slice(0, 25),
         };
       })
-      .filter(d => Number(d.totalDeuda || 0) > 0)
+      .filter((d) => Number(d.totalDeuda || 0) > 0)
       .sort((a, b) => b.totalDeuda - a.totalDeuda);
   }
 
@@ -2302,20 +3066,48 @@ export class AccountingService {
       if (!cajaDestino) throw new Error('No existe Caja Oficina/Caja Principal para registrar el ingreso')
     }
 
-    // 2. Crear la transacción INGRESO
-    return this.createTransaccion({
-      cajaId: cajaDestino.id,
-      tipo: TipoTransaccion.INGRESO,
-      monto: montoClean,
-      descripcion: `Abono de deuda pendiente - Cobrador: ${cobrador.nombres} ${cobrador.apellidos}${nota ? ' - ' + nota : ''}`,
-      creadoPorId: userId,
-      tipoReferencia: 'ABONO_DEUDA',
-      referenciaId: `${cobradorId}|${cobrador.nombres} ${cobrador.apellidos}`, // Guardamos ID y Nombre para facilitar auditoría
+    // 2. Ejecutar transacción contable
+    return this.prisma.$transaction(async (tx) => {
+      // a. Crear la transacción INGRESO (histórico)
+      const transaccion = await tx.transaccion.create({
+        data: {
+          numeroTransaccion: `ABN-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          cajaId: cajaDestino.id,
+          tipo: TipoTransaccion.INGRESO,
+          monto: montoClean,
+          descripcion: `Abono de deuda pendiente - Cobrador: ${cobrador.nombres} ${cobrador.apellidos}${nota ? ' - ' + nota : ''}`,
+          creadoPorId: userId,
+          tipoReferencia: 'ABONO_DEUDA',
+          referenciaId: `${cobradorId}|${cobrador.nombres} ${cobrador.apellidos}`,
+        },
+      });
+
+      // b. Registrar asiento contable (Ledger mueve el saldo de la caja)
+      await this.ledgerService.registrarAbonoDeuda(
+        {
+          cobradorId,
+          monto:       montoClean,
+          cajaId:      cajaDestino.id,
+          accountCode: cajaDestino.tipo === 'RUTA' ? '1.2.1' : '1.1.1',
+          createdBy:   userId,
+        },
+        tx as any,
+      );
+
+      return transaccion;
     });
   }
 
   async repararCajaOficinaIngresosMalAsignados(params?: { dryRun?: boolean }) {
     const dryRun = Boolean(params?.dryRun);
+
+    const existenAsientos = await this.prisma.journalEntry.count();
+    if (existenAsientos > 0 && !dryRun) {
+      throw new BadRequestException(
+        'Esta reparación solo puede ejecutarse en datos pre-Ledger. ' +
+          'El libro mayor ya tiene asientos. Use dryRun=true para auditar sin modificar.',
+      );
+    }
 
     const cajaOficina = await this.prisma.caja.findFirst({
       where: { activa: true, codigo: 'CAJA-OFICINA' },
@@ -2430,6 +3222,235 @@ export class AccountingService {
         Object.entries(deltaPorCaja).map(([k, v]) => [k, v.toNumber()]),
       ),
     };
+  }
+
+  async migrarHistoricoLedger(params: { dryRun: boolean; userId: string }) {
+    const firstEntry = await this.prisma.journalEntry.findFirst({
+      orderBy: { createdAt: 'asc' },
+      select: { createdAt: true },
+    });
+
+    const fechaCorte = firstEntry?.createdAt ?? null;
+    const where: any = {};
+    if (fechaCorte) {
+      where.fechaTransaccion = { lt: fechaCorte };
+    }
+
+    const transacciones = await this.prisma.transaccion.findMany({
+      where,
+      include: {
+        caja: { select: { id: true, codigo: true, tipo: true, nombre: true } },
+      },
+      orderBy: { fechaTransaccion: 'asc' },
+      take: 10000,
+    });
+
+    const existingEntries = await this.prisma.journalEntry.findMany({
+      select: { referenceType: true, referenceId: true },
+    });
+    const existingKeys = new Set(
+      existingEntries.map((e: any) => `${e.referenceType}:${e.referenceId}`),
+    );
+
+    const mapReferenceType = (tipoReferencia?: string | null, tipo?: string) => {
+      const ref = String(tipoReferencia || '').toUpperCase();
+      if (ref === 'PAGO' || ref === 'ABONO') return 'PAGO';
+      if (ref === 'GASTO') return 'GASTO';
+      if (ref === 'PRESTAMO') return 'DESEMBOLSO';
+      if (ref === 'RECOLECCION' || ref === 'CONSOLIDACION') return 'CONSOLIDACION';
+      if (ref === 'SOLICITUD_BASE' || ref === 'SOLICITUD_BASE_EFECTIVO') return 'BASE';
+      if (ref === 'ABONO_DEUDA') return 'ABONO_DEUDA';
+      if (ref === 'ARQUEO') return 'ARQUEO';
+      if (ref === 'CUOTA_INICIAL') return 'AJUSTE';
+      return 'AJUSTE';
+    };
+
+    const candidatos: any[] = [];
+    let omitidosPorAsientoExistente = 0;
+    let omitidosSinReferencia = 0;
+    let omitidosNoSoportados = 0;
+
+    for (const t of transacciones as any[]) {
+      const referenceType = mapReferenceType(t.tipoReferencia, t.tipo);
+      const referenceId = t.referenciaId || t.id;
+      if (!referenceId) {
+        omitidosSinReferencia++;
+        continue;
+      }
+
+      if (existingKeys.has(`${referenceType}:${referenceId}`)) {
+        omitidosPorAsientoExistente++;
+        continue;
+      }
+
+      if (String(t.tipo).toUpperCase() === 'TRANSFERENCIA') {
+        omitidosNoSoportados++;
+        continue;
+      }
+
+      candidatos.push({
+        transaccionId: t.id,
+        referenceType,
+        referenceId,
+        tipo: t.tipo,
+        tipoReferencia: t.tipoReferencia,
+        cajaId: t.cajaId,
+        caja: t.caja?.nombre,
+        monto: Number(t.monto || 0),
+        fechaTransaccion: t.fechaTransaccion,
+      });
+    }
+
+    if (!params.dryRun) {
+      await this.prisma.$transaction(async (tx) => {
+        for (const c of candidatos) {
+          const transaccion = (transacciones as any[]).find((t) => t.id === c.transaccionId);
+          if (!transaccion) continue;
+
+          const monto = Number(transaccion.monto || 0);
+          if (!(monto > 0)) continue;
+
+          const cajaAccount =
+            transaccion.caja?.tipo === 'RUTA'
+              ? '1.2.1'
+              : (transaccion.caja?.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1');
+          const isIngreso = String(transaccion.tipo).toUpperCase() === 'INGRESO';
+          const contrapartida = c.referenceType === 'ABONO_DEUDA'
+            ? '1.4.1'
+            : isIngreso
+              ? '3.3'
+              : (transaccion.caja?.tipo === 'RUTA' ? '4.1' : '4.2');
+
+          await this.ledgerService.registrarAsiento(
+            {
+              referenceType: c.referenceType,
+              referenceId: c.referenceId,
+              description: `[Migración histórica] ${transaccion.descripcion || c.tipoReferencia || c.tipo}`,
+              createdBy: params.userId,
+              lines: isIngreso
+                ? [
+                    {
+                      accountCode: cajaAccount,
+                      debitAmount: monto,
+                      cajaId: transaccion.cajaId,
+                      cajaDelta: 0,
+                    },
+                    {
+                      accountCode: contrapartida,
+                      creditAmount: monto,
+                    },
+                  ]
+                : [
+                    {
+                      accountCode: contrapartida,
+                      debitAmount: monto,
+                    },
+                    {
+                      accountCode: cajaAccount,
+                      creditAmount: monto,
+                      cajaId: transaccion.cajaId,
+                      cajaDelta: 0,
+                    },
+                  ],
+            },
+            tx as any,
+          );
+        }
+      });
+    }
+
+    const totalMontoCandidatos = candidatos.reduce((sum, c) => sum + Number(c.monto || 0), 0);
+
+    return {
+      dryRun: params.dryRun,
+      fechaCorte: fechaCorte ? fechaCorte.toISOString() : null,
+      totalHistoricoLeido: transacciones.length,
+      totalCandidatos: candidatos.length,
+      totalMontoCandidatos,
+      omitidosPorAsientoExistente,
+      omitidosSinReferencia,
+      omitidosNoSoportados,
+      aplicados: params.dryRun ? 0 : candidatos.length,
+      candidatos: candidatos.slice(0, 100),
+    };
+  }
+
+  /**
+   * Asiento de Apertura (Día Cero)
+   * Migra los saldos actuales de Cajas y Cartera al libro mayor.
+   * SOLO puede ejecutarse si el libro está vacío.
+   */
+  async ejecutarAperturaContable(userId: string) {
+    const existingEntries = await this.prisma.journalEntry.count();
+    if (existingEntries > 0) {
+      throw new BadRequestException('El libro contable ya contiene registros. No se puede realizar la apertura.');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Obtener saldos de Cajas
+      const cajas = await tx.caja.findMany({ where: { activa: true } });
+      const lineasCajas = cajas.map(c => ({
+        accountCode:  c.tipo === 'RUTA' ? '1.2.1' : (c.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1'),
+        debitAmount:  Number(c.saldoActual),
+        cajaId:       c.id,
+        cajaDelta:    0, // El saldo ya existe en la tabla Caja, no queremos incrementarlo doble
+      })).filter(l => l.debitAmount > 0);
+
+      // 2. Obtener Cartera Vigente (Capital pendiente)
+      const prestamos = await tx.prestamo.findMany({
+        where: { estado: { in: ['ACTIVO', 'EN_MORA'] }, eliminadoEn: null },
+        select: { saldoPendiente: true }
+      });
+
+      const totalCartera = prestamos.reduce(
+        (acc, p) => acc + Number(p.saldoPendiente || 0),
+        0
+      );
+
+      const lineaCartera = {
+        accountCode: '1.3.1',
+        debitAmount: totalCartera,
+      };
+
+      // 3. Obtener Deuda Cobradores
+      const deudores = await this.getDeudoresCobrador();
+      let totalDeudaCobradores = 0;
+      deudores.forEach(d => totalDeudaCobradores += d.totalDeuda);
+
+      const lineaDeuda = {
+        accountCode: '1.4.1',
+        debitAmount: totalDeudaCobradores,
+      };
+
+      // 4. Sumar todo para el Patrimonio (Contrapartida)
+      const totalDebitos = lineasCajas.reduce((acc, l) => acc + (l.debitAmount || 0), 0) +
+                           (lineaCartera.debitAmount || 0) +
+                           (lineaDeuda.debitAmount || 0);
+
+      if (totalDebitos === 0) {
+        throw new BadRequestException('No hay saldos positivos para realizar la apertura.');
+      }
+
+      const lines = [
+        ...lineasCajas,
+        lineaCartera,
+        lineaDeuda,
+        {
+          accountCode: '2.1', // Capital Social / Patrimonio
+          creditAmount: totalDebitos,
+        }
+      ].filter(l => (l.debitAmount || 0) > 0 || (l.creditAmount || 0) > 0);
+
+      // 5. Registrar Asiento
+      return this.ledgerService.registrarAsiento({
+        referenceType: 'APERTURA',
+        referenceId:   'DAY-ZERO',
+        description:   'Asiento de apertura: Migración de saldos iniciales a Partida Doble',
+        isOpening:     true,
+        createdBy:     userId,
+        lines,
+      }, tx as any);
+    });
   }
 }
 

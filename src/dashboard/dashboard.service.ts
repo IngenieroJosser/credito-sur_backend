@@ -71,31 +71,13 @@ export class DashboardService {
         },
       });
 
-      // Recaudo del período: suma de cobros realizados (fechaPago = fecha real del cobro)
-      const resRecaudo = await Promise.all([
-        this.prisma.pago.aggregate({
-          where: {
-            fechaPago: { gte: startDate, lte: endDate },
-          },
-          _sum: {
-            montoTotal: true,
-          },
-        }),
-        // Incluir transacciones de tipo CUOTA_INICIAL que no están en la tabla Pago
-        this.prisma.transaccion.aggregate({
-          where: {
-            tipoReferencia: 'CUOTA_INICIAL',
-            tipo: TipoTransaccion.INGRESO,
-            fechaTransaccion: { gte: startDate, lte: endDate },
-          },
-          _sum: { monto: true },
-        }),
-      ]);
-
-      const recaudoTotal = Number(resRecaudo[0]._sum.montoTotal || 0) + Number(resRecaudo[1]._sum.monto || 0);
+      // Recaudo del período: fuente contable oficial desde ledger.
+      // Se toma únicamente cobranza de pagos (PAGO) contra cajas/bancos.
+      const recaudoTotal = await this.getLedgerCobranzaTotal(startDate, endDate);
 
       // Eficiencia: misma lógica de efectividad de cobrador (recaudo / meta)
-      // Meta = suma de cuotas con vencimiento en el período + CUOTA_INICIAL del período.
+      // Meta = suma de cuotas con vencimiento en el período. Las cuotas iniciales
+      // se reportan aparte en contabilidad y no inflan la cobranza de pagos.
       const metaCuotasRes = await this.prisma.cuota.aggregate({
         where: {
           fechaVencimiento: { gte: startDate, lte: endDate },
@@ -113,7 +95,7 @@ export class DashboardService {
         _sum: { monto: true },
       });
 
-      const metaTotal = Number(metaCuotasRes._sum?.monto || 0) + Number(resRecaudo[1]._sum.monto || 0);
+      const metaTotal = Number(metaCuotasRes._sum?.monto || 0);
       const efficiency = metaTotal > 0
         ? Math.min(100, (recaudoTotal / metaTotal) * 100)
         : (recaudoTotal > 0 ? 100 : 0);
@@ -468,41 +450,28 @@ export class DashboardService {
   ): Promise<any[]> {
     const result: any[] = [];
 
-    // Nota: el objetivo (target) debe ser una meta REAL del día.
-    // Para mantener consistencia con RoutesService (metaDelDia), tomamos:
+    // Nota: el valor de cobros debe salir del ledger contable.
+    // Para mantener consistencia con RoutesService (metaDelDia), el objetivo toma:
     // - Meta nominal: 1 cuota por préstamo (la más antigua en criterio) cuya fechaVencimiento <= inicio del día.
-    // - + ingresos por CUOTA_INICIAL del mismo día.
-    // Y en el recaudo (value) incluimos pagos + CUOTA_INICIAL del día.
+    // La cuota inicial queda fuera de esta tendencia porque contabilidad la expone separada de cobranza.
 
-    // 1) Pagos y cuotas iniciales dentro del rango
-    const [payments, cuotaIniciales] = await Promise.all([
-      this.prisma.pago.findMany({
-        where: { fechaPago: { gte: startDate, lte: endDate } },
-        select: { fechaPago: true, montoTotal: true },
-      }),
-      this.prisma.transaccion.findMany({
-        where: {
-          tipoReferencia: 'CUOTA_INICIAL',
-          tipo: TipoTransaccion.INGRESO,
-          fechaTransaccion: { gte: startDate, lte: endDate },
-        },
-        select: { fechaTransaccion: true, monto: true },
-      }),
-    ]);
+    // 1) Cobros contables dentro del rango
+    const ledgerCobros = await this.prisma.journalLine.findMany({
+      where: this.getLedgerCobranzaWhere(startDate, endDate),
+      select: {
+        debitAmount: true,
+        journalEntry: { select: { createdAt: true } },
+      },
+    });
 
-    // Agrupar por día Bogotá (para sumar pagos y cuotas iniciales por día)
+    // Agrupar por día Bogotá
     const pagosPorDiaKey = new Map<string, number>();
-    for (const p of payments) {
-      const { startDate: dStart } = getBogotaStartEndOfDay(new Date(p.fechaPago));
+    for (const line of ledgerCobros) {
+      const createdAt = (line as any)?.journalEntry?.createdAt;
+      if (!createdAt) continue;
+      const { startDate: dStart } = getBogotaStartEndOfDay(new Date(createdAt));
       const key = dStart.toISOString();
-      pagosPorDiaKey.set(key, (pagosPorDiaKey.get(key) || 0) + Number(p.montoTotal || 0));
-    }
-
-    const cuotaInicialPorDiaKey = new Map<string, number>();
-    for (const t of cuotaIniciales) {
-      const { startDate: dStart } = getBogotaStartEndOfDay(new Date(t.fechaTransaccion));
-      const key = dStart.toISOString();
-      cuotaInicialPorDiaKey.set(key, (cuotaInicialPorDiaKey.get(key) || 0) + Number(t.monto || 0));
+      pagosPorDiaKey.set(key, (pagosPorDiaKey.get(key) || 0) + Number((line as any).debitAmount || 0));
     }
 
     // 2) Meta nominal diaria (target)
@@ -512,7 +481,6 @@ export class DashboardService {
     //      -> tomar la más antigua.
     //   b) Si NO existe deuda hasta ese día, contar una cuota PAGADA en ESE día (fechaPago en el día)
     //      -> tomar la más antigua por fechaVencimiento para determinismo.
-    // - + ingresos por CUOTA_INICIAL del día.
     const { startDate: endDayStartUTC } = getBogotaStartEndOfDay(endDate);
 
     const [cuotasNoPagadasHastaFin, cuotasPagadasEnRango] = await Promise.all([
@@ -602,8 +570,7 @@ export class DashboardService {
         const dayKey = dayStartBogota.toISOString();
 
         const pagos = pagosPorDiaKey.get(dayKey) || 0;
-        const cuotaInicialDia = cuotaInicialPorDiaKey.get(dayKey) || 0;
-        const total = pagos + cuotaInicialDia;
+        const total = pagos;
 
         const cutoff = dayStartBogota.getTime();
         while (ptr < firstUnpaidSorted.length && firstUnpaidSorted[ptr].ts <= cutoff) {
@@ -624,7 +591,7 @@ export class DashboardService {
           }
         }
 
-        const target = sumUnpaid + sumPaidToday + cuotaInicialDia;
+        const target = sumUnpaid + sumPaidToday;
 
         // Crear etiqueta más descriptiva: día de semana + fecha
         const dayName = daysOfWeek[currentDate.getDay()];
@@ -663,8 +630,7 @@ export class DashboardService {
         const monthKey = `${dayStartBogota.getFullYear()}-${String(dayStartBogota.getMonth() + 1).padStart(2, '0')}`;
 
         const pagos = pagosPorDiaKey.get(dayKey) || 0;
-        const cuotaInicialDia = cuotaInicialPorDiaKey.get(dayKey) || 0;
-        const value = pagos + cuotaInicialDia;
+        const value = pagos;
 
         const cutoff = dayStartBogota.getTime();
         while (ptrMonth < firstUnpaidSorted.length && firstUnpaidSorted[ptrMonth].ts <= cutoff) {
@@ -685,7 +651,7 @@ export class DashboardService {
           }
         }
 
-        const target = sumUnpaidMonth + sumPaidToday + cuotaInicialDia;
+        const target = sumUnpaidMonth + sumPaidToday;
 
         monthMapValue.set(monthKey, (monthMapValue.get(monthKey) || 0) + value);
         monthMapTarget.set(monthKey, (monthMapTarget.get(monthKey) || 0) + target);
@@ -725,6 +691,29 @@ export class DashboardService {
   private getSampleTrendData(): any[] {
     // Devolvemos array vacío para evitar datos ficticios en producción
     return [];
+  }
+
+  private getLedgerCobranzaWhere(startDate: Date, endDate: Date) {
+    return {
+      OR: [
+        { accountCode: { startsWith: '1.1' } },
+        { accountCode: { startsWith: '1.2' } },
+      ],
+      debitAmount: { gt: 0 },
+      journalEntry: {
+        isOpening: false,
+        referenceType: 'PAGO',
+        createdAt: { gte: startDate, lte: endDate },
+      },
+    };
+  }
+
+  private async getLedgerCobranzaTotal(startDate: Date, endDate: Date): Promise<number> {
+    const res = await this.prisma.journalLine.aggregate({
+      where: this.getLedgerCobranzaWhere(startDate, endDate),
+      _sum: { debitAmount: true },
+    });
+    return Number(res._sum.debitAmount || 0);
   }
 
   private mapApproval(approval: any) {

@@ -48,6 +48,7 @@ model Usuario {
   asignacionesRuta        AsignacionRuta[]
   cajasResponsable        Caja[]
   itemsColaSincronizacion ColaSincronizacion[]
+  journalEntriesCreadas   JournalEntry[]             @relation("JournalEntryCreatedBy")
   extensionesPago         ExtensionPago[]
   archivosSubidos         Multimedia[]               @relation("MultimediaSubidoPor")
   archivosAsociados       Multimedia[]               @relation("MultimediaUsuario")
@@ -518,6 +519,7 @@ model Caja {
   actualizadoEn DateTime      @updatedAt
   gastos        Gasto[]
   transacciones Transaccion[]
+  journalLines  JournalLine[]
   responsable   Usuario       @relation(fields: [responsableId], references: [id])
   ruta          Ruta?         @relation(fields: [rutaId], references: [id])
 
@@ -922,4 +924,79 @@ model BackupRun {
   @@index([startedAt])
   @@index([estado])
   @@map("backup_runs")
+}
+
+enum AccountType {
+  ACTIVO
+  PASIVO
+  PATRIMONIO
+  INGRESOS
+  GASTOS
+  COSTOS
+}
+
+enum Nature {
+  DEBITORA
+  ACREEDORA
+}
+
+enum ReferenceTypeContable {
+  PAGO
+  DESEMBOLSO
+  GASTO
+  VENTA_ARTICULO
+  BASE
+  CONSOLIDACION
+  ARQUEO
+  ABONO_DEUDA
+  APERTURA
+  AJUSTE
+  CASTIGO_CARTERA
+  INGRESO
+  EGRESO
+}
+
+model Account {
+  code        String        @id
+  name        String
+  type        AccountType
+  nature      Nature
+  description String?
+  isActive    Boolean       @default(true)
+  lines       JournalLine[]
+
+  @@map("cuentas_contables")
+}
+
+model JournalEntry {
+  id            String                @id @default(uuid())
+  referenceType ReferenceTypeContable
+  referenceId   String
+  description   String?
+  isOpening     Boolean               @default(false)
+  createdAt     DateTime              @default(now())
+  createdBy     String
+  createdByUser Usuario                @relation("JournalEntryCreatedBy", fields: [createdBy], references: [id])
+  lines         JournalLine[]
+
+  @@index([referenceType, referenceId])
+  @@index([createdAt])
+  @@map("asientos_contables")
+}
+
+model JournalLine {
+  id             String       @id @default(uuid())
+  journalEntryId String
+  journalEntry   JournalEntry @relation(fields: [journalEntryId], references: [id])
+  accountCode    String
+  account        Account      @relation(fields: [accountCode], references: [code])
+  debitAmount    Decimal?     @db.Decimal(15,2)
+  creditAmount   Decimal?     @db.Decimal(15,2)
+  cajaId         String?
+  caja           Caja?        @relation(fields: [cajaId], references: [id])
+
+  @@index([journalEntryId])
+  @@index([accountCode])
+  @@index([cajaId])
+  @@map("asientos_lineas")
 }

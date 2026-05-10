@@ -24,6 +24,25 @@ import {
 export class ClientsService {
   private readonly logger = new Logger(ClientsService.name);
 
+  private isCollector(actor?: { rol?: RolUsuario | string } | null) {
+    return String(actor?.rol || '').toUpperCase() === RolUsuario.COBRADOR;
+  }
+
+  private collectorClientScope(actor?: { id?: string; rol?: RolUsuario | string } | null): Prisma.ClienteWhereInput {
+    if (!this.isCollector(actor) || !actor?.id) return {};
+    return {
+      asignacionesRuta: {
+        some: {
+          activa: true,
+          OR: [
+            { cobradorId: actor.id } as any,
+            { ruta: { cobradorId: actor.id } } as any,
+          ],
+        },
+      },
+    };
+  }
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
@@ -269,7 +288,7 @@ export class ClientsService {
     nivelRiesgo?: string;
     ruta?: string;
     search?: string;
-  }) {
+  }, actor?: { id?: string; rol?: RolUsuario | string } | null) {
     try {
       this.logger.log(
         `Getting clients with filters: ${JSON.stringify(filters)}`,
@@ -280,6 +299,7 @@ export class ClientsService {
       // Construir filtros de forma segura
       const where: any = {
         eliminadoEn: null, // Solo clientes no eliminados
+        ...this.collectorClientScope(actor),
       };
 
       // Filtro por nivel de riesgo
@@ -296,6 +316,7 @@ export class ClientsService {
       if (ruta && ruta !== '') {
         where.asignacionesRuta = {
           some: {
+            ...((where.asignacionesRuta?.some) || {}),
             rutaId: ruta,
             activa: true,
           },
@@ -382,13 +403,15 @@ export class ClientsService {
       const aprobacionesPendientes: any[] = [];
 
       // Calcular estadísticas (Restaurado)
+      const statsScope = this.collectorClientScope(actor);
       const totalClientes = await this.prisma.cliente.count({
-        where: { eliminadoEn: null },
+        where: { eliminadoEn: null, ...statsScope },
       });
 
       const buenComportamiento = await this.prisma.cliente.count({
         where: {
           eliminadoEn: null,
+          ...statsScope,
           nivelRiesgo: 'VERDE',
           puntaje: { gte: 80 },
         },
@@ -397,12 +420,13 @@ export class ClientsService {
       const enRiesgo = await this.prisma.cliente.count({
         where: {
           eliminadoEn: null,
+          ...statsScope,
           OR: [{ nivelRiesgo: 'ROJO' }, { nivelRiesgo: 'LISTA_NEGRA' }],
         },
       });
 
       const promedioScore = await this.prisma.cliente.aggregate({
-        where: { eliminadoEn: null },
+        where: { eliminadoEn: null, ...statsScope },
         _avg: {
           puntaje: true,
         },
@@ -606,13 +630,14 @@ export class ClientsService {
     }
   }
 
-  async getClientById(id: string) {
+  async getClientById(id: string, actor?: { id?: string; rol?: RolUsuario | string } | null) {
     this.logger.log(`[DEBUG] getClientById called with ID: ${id}`);
     try {
-      const cliente = await this.prisma.cliente.findUnique({
+      const cliente = await this.prisma.cliente.findFirst({
         where: {
           id,
           eliminadoEn: null,
+          ...this.collectorClientScope(actor),
         },
         include: {
           asignacionesRuta: {
@@ -688,6 +713,10 @@ export class ClientsService {
       }
 
       if (!cliente) {
+        if (this.isCollector(actor)) {
+          throw new NotFoundException('Cliente no encontrado');
+        }
+
         this.logger.log(
           `[DEBUG] Cliente no encontrado en tabla principal, buscando en aprobaciones: ${id}`,
         );

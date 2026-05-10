@@ -14,6 +14,7 @@ import {
   TipoAprobacion,
   EstadoAprobacion,
   Prisma,
+  RolUsuario,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { AuditService } from '../audit/audit.service';
@@ -22,11 +23,20 @@ import { PagoConRelacionesExport } from '../common/types';
 import { generarExcelPagos, generarPDFPagos, PagoRow, PagosTotales } from '../templates/exports/historial-pagos.template';
 import { CloudinaryService } from '../upload/cloudinary.service';
 import { formatBogotaOffsetIso, getBogotaDayKey } from '../utils/date-utils';
+import { LedgerService } from '../accounting/ledger.service';
 
+type PaymentActor = {
+  id?: string;
+  rol?: RolUsuario | string;
+} | null | undefined;
 
 @Injectable()
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
+
+  private isCollector(actor: PaymentActor) {
+    return String(actor?.rol || '').toUpperCase() === RolUsuario.COBRADOR;
+  }
 
   private async ensureCajaBanco(tx: Prisma.TransactionClient) {
     const existing = await tx.caja.findUnique({
@@ -69,6 +79,7 @@ export class PaymentsService {
     private auditService: AuditService,
     private notificacionesGateway: NotificacionesGateway,
     private readonly cloudinaryService: CloudinaryService,
+    private readonly ledgerService: LedgerService,
   ) {}
 
   /**
@@ -96,29 +107,34 @@ export class PaymentsService {
     return { capital, interes };
   }
 
-  async create(dto: CreatePaymentDto, comprobante?: Express.Multer.File) {
+  async create(dto: CreatePaymentDto, comprobante?: Express.Multer.File, actor?: PaymentActor) {
+    const paymentDto = {
+      ...dto,
+      cobradorId: this.isCollector(actor) && actor?.id ? actor.id : dto.cobradorId,
+    };
+
     // 1. Validar que se proporcione el prestamoId
-    if (!dto.prestamoId) {
+    if (!paymentDto.prestamoId) {
       throw new BadRequestException('El ID del préstamo es requerido');
     }
 
     // 2. Si el método es TRANSFERENCIA, el comprobante es OBLIGATORIO
-    if (dto.metodoPago === MetodoPago.TRANSFERENCIA && !comprobante) {
+    if (paymentDto.metodoPago === MetodoPago.TRANSFERENCIA && !comprobante) {
       throw new BadRequestException(
         'Para pagos por transferencia debe adjuntar el comprobante (imagen)',
       );
     }
 
     // 3. Validar cobrador
-    if (!dto.cobradorId) {
+    if (!paymentDto.cobradorId) {
       throw new BadRequestException('El cobrador es requerido');
     }
 
-    const prestamoIdVal = dto.prestamoId;
-    const cobradorIdVal = dto.cobradorId;
+    const prestamoIdVal = paymentDto.prestamoId;
+    const cobradorIdVal = paymentDto.cobradorId;
 
     this.logger.log(
-      `Registrando pago: préstamo=${prestamoIdVal}, monto=${dto.montoTotal}`,
+      `Registrando pago: préstamo=${prestamoIdVal}, monto=${paymentDto.montoTotal}`,
     );
 
     // Obtener préstamo con cuotas pendientes
@@ -142,7 +158,7 @@ export class PaymentsService {
     }
 
     // Usar el clienteId del préstamo si no se proporciona
-    const clienteId = dto.clienteId || prestamo.clienteId;
+    const clienteId = paymentDto.clienteId || prestamo.clienteId;
 
     if (
       prestamo.estado !== EstadoPrestamo.ACTIVO &&
@@ -159,7 +175,7 @@ export class PaymentsService {
       );
     }
 
-    const montoTotal = dto.montoTotal;
+    const montoTotal = paymentDto.montoTotal;
 
     if (montoTotal > Number(prestamo.saldoPendiente) + 1) {
       throw new BadRequestException(
@@ -169,15 +185,12 @@ export class PaymentsService {
 
     const tasaInteres = Number(prestamo.tasaInteres);
 
-    // Descomponer el pago total en capital e interés (fórmula Excel)
-    const { capital: capitalTotal, interes: interesTotal } =
-      this.descomponerPago(montoTotal, tasaInteres);
 
     // Generar número de pago
     const count = await this.prisma.pago.count();
     const numeroPago = `PAG-${String(count + 1).padStart(6, '0')}`;
 
-    // Distribuir el pago entre cuotas pendientes (orden cronológico)
+    // Distribuir el pago entre cuotas pendientes (Siguiendo Prelación: Mora -> Interés -> Capital)
     const detallesPago: {
       cuotaId: string;
       monto: number;
@@ -187,6 +200,11 @@ export class PaymentsService {
     }[] = [];
 
     let montoRestante = montoTotal;
+    
+    let capitalTotal = 0;
+    let interesTotal = 0;
+    let moraTotal = 0;
+
     const cuotasActualizar: {
       id: string;
       montoPagado: number;
@@ -202,49 +220,88 @@ export class PaymentsService {
 
       if (pendienteCuota <= 0) continue;
 
-      const montoAplicar = Math.min(montoRestante, pendienteCuota);
-      const { capital: capCuota, interes: intCuota } = this.descomponerPago(
-        montoAplicar,
-        tasaInteres,
-      );
+      // 1. Calcular componentes de esta cuota
+      const cCapital = Number(cuota.montoCapital);
+      const cInteres = Number(cuota.montoInteres);
+      const cMora    = Number(cuota.montoInteresMora);
 
-      detallesPago.push({
-        cuotaId: cuota.id,
-        monto: montoAplicar,
-        montoCapital: capCuota,
-        montoInteres: intCuota,
-        montoInteresMora: 0,
-      });
+      // 2. Determinar qué falta por pagar de la jerarquía
+      let tempYaPagado = yaPagado;
 
-      const nuevoMontoPagado = yaPagado + montoAplicar;
-      // Tolerancia de 1 peso para evitar que redondeos (ej: 3333.33) dejen
-      // la cuota como PARCIAL/VENCIDA aunque el pago en UI sea 3.333.
-      const COP_TOLERANCE = 1;
-      const cuotaCompleta = nuevoMontoPagado >= (montoCuota - COP_TOLERANCE);
-      const montoPagadoFinal = cuotaCompleta ? montoCuota : nuevoMontoPagado;
+      const yaPagadoMora = Math.min(tempYaPagado, cMora);
+      tempYaPagado -= yaPagadoMora;
+      
+      const yaPagadoInteres = Math.min(tempYaPagado, cInteres);
+      tempYaPagado -= yaPagadoInteres;
 
-      // - Si la cuota era PENDIENTE y quedó incompleta, pasa a PARCIAL.
-      // - Si ya era VENCIDA, se mantiene VENCIDA aunque reciba abonos.
-      // Esto permite que los jobs de mora marquen PARCIAL → VENCIDA al pasar la fecha.
-      const nuevoEstadoCuota = cuotaCompleta
-        ? EstadoCuota.PAGADA
-        : (cuota.estado === EstadoCuota.PENDIENTE ? EstadoCuota.PARCIAL : cuota.estado);
+      const yaPagadoCapital = Math.min(tempYaPagado, cCapital);
+      
+      const faltaMora    = cMora - yaPagadoMora;
+      const faltaInteres = cInteres - yaPagadoInteres;
+      const faltaCapital = cCapital - yaPagadoCapital;
 
-      cuotasActualizar.push({
-        id: cuota.id,
-        montoPagado: montoPagadoFinal,
-        estado: nuevoEstadoCuota,
-      });
+      // 3. Aplicar pago siguiendo la prelación
+      let pagoAplicadoMora = 0;
+      let pagoAplicadoInteres = 0;
+      let pagoAplicadoCapital = 0;
 
-      montoRestante -= montoAplicar;
+      // 3a. Mora
+      const aplicarMora = Math.min(montoRestante, faltaMora);
+      pagoAplicadoMora = aplicarMora;
+      montoRestante -= aplicarMora;
+      moraTotal += aplicarMora;
+
+      // 3b. Interés
+      const aplicarInteres = Math.min(montoRestante, faltaInteres);
+      pagoAplicadoInteres = aplicarInteres;
+      montoRestante -= aplicarInteres;
+      interesTotal += aplicarInteres;
+
+      // 3c. Capital
+      const aplicarCapital = Math.min(montoRestante, faltaCapital);
+      pagoAplicadoCapital = aplicarCapital;
+      montoRestante -= aplicarCapital;
+      capitalTotal += aplicarCapital;
+
+      const totalAplicadoCuota = pagoAplicadoMora + pagoAplicadoInteres + pagoAplicadoCapital;
+
+      if (totalAplicadoCuota > 0) {
+        detallesPago.push({
+          cuotaId: cuota.id,
+          monto: totalAplicadoCuota,
+          montoCapital: pagoAplicadoCapital,
+          montoInteres: pagoAplicadoInteres,
+          montoInteresMora: pagoAplicadoMora,
+        });
+
+        const nuevoMontoPagado = yaPagado + totalAplicadoCuota;
+        const COP_TOLERANCE = 1;
+        const cuotaCompleta = nuevoMontoPagado >= (montoCuota - COP_TOLERANCE);
+        const montoPagadoFinal = cuotaCompleta ? montoCuota : nuevoMontoPagado;
+
+        const nuevoEstadoCuota = cuotaCompleta
+          ? EstadoCuota.PAGADA
+          : (cuota.estado === EstadoCuota.PENDIENTE ? EstadoCuota.PARCIAL : cuota.estado);
+
+        cuotasActualizar.push({
+          id: cuota.id,
+          montoPagado: montoPagadoFinal,
+          estado: nuevoEstadoCuota,
+        });
+      }
     }
 
+    // Fix exactitud decimal para el Ledger
+    const interesTotalFinal = Math.round(interesTotal * 100) / 100;
+    const moraTotalFinal    = Math.round(moraTotal * 100) / 100;
+    const capitalTotalFinal = Math.round((montoTotal - interesTotalFinal - moraTotalFinal) * 100) / 100;
+
     // Validar cobrador
-    if (!dto.cobradorId) {
+    if (!paymentDto.cobradorId) {
       throw new BadRequestException('El cobrador es requerido');
     }
 
-    const rawFechaPago = (dto.fechaPago || '').toString().trim();
+    const rawFechaPago = (paymentDto.fechaPago || '').toString().trim();
     const fechaPagoBogota = (() => {
       if (!rawFechaPago) return new Date(formatBogotaOffsetIso(new Date()));
       const hasTz = /([zZ]|[+-]\d{2}:?\d{2})$/.test(rawFechaPago);
@@ -261,7 +318,7 @@ export class PaymentsService {
 
     // Si es TRANSFERENCIA, se crea una aprobación pendiente. El pago NO afecta el crédito
     // hasta que sea aprobado en el módulo de Revisiones.
-    if (dto.metodoPago === MetodoPago.TRANSFERENCIA) {
+    if (paymentDto.metodoPago === MetodoPago.TRANSFERENCIA) {
       const approval = await this.prisma.aprobacion.create({
         data: {
           tipoAprobacion: 'PAGO_TRANSFERENCIA' as any,
@@ -276,8 +333,8 @@ export class PaymentsService {
             cobradorId: cobradorIdVal,
             montoTotal,
             fechaPago: formatBogotaOffsetIso(fechaPagoBogota),
-            numeroReferencia: dto.numeroReferencia || null,
-            notas: dto.notas || null,
+            numeroReferencia: paymentDto.numeroReferencia || null,
+            notas: paymentDto.notas || null,
             metodoPago: 'TRANSFERENCIA',
           },
         },
@@ -346,7 +403,7 @@ export class PaymentsService {
           clienteId: prestamo.clienteId,
           monto: montoTotal,
           metodoPago: 'TRANSFERENCIA',
-          numeroReferencia: dto.numeroReferencia || null,
+          numeroReferencia: paymentDto.numeroReferencia || null,
           tieneComprobante: true,
           pagoPendiente: true,
         },
@@ -377,9 +434,9 @@ export class PaymentsService {
           cobradorId: cobradorIdVal,
           fechaPago: fechaPagoBogota,
           montoTotal,
-          metodoPago: dto.metodoPago || MetodoPago.EFECTIVO,
-          numeroReferencia: dto.numeroReferencia,
-          notas: dto.notas,
+          metodoPago: paymentDto.metodoPago || MetodoPago.EFECTIVO,
+          numeroReferencia: paymentDto.numeroReferencia,
+          notas: paymentDto.notas,
           detalles: {
             create: detallesPago,
           },
@@ -482,10 +539,21 @@ export class PaymentsService {
         },
       });
 
-      await tx.caja.update({
-        where: { id: cajaIngreso.id },
-        data: { saldoActual: { increment: montoTotal } },
-      });
+      // Asiento contable de Partida Doble
+      // Débito: 1.2.1 Caja Ruta (+montoTotal) | Crédito: 1.3.1 Cartera + 3.1 Interés + 3.2 Mora
+      // LedgerService actualiza saldoActual de la caja en la misma transacción (cajaDelta=+montoTotal)
+      await this.ledgerService.registrarPago(
+        {
+          pagoId:       pago.id,
+          cajaRutaId:   cajaIngreso.id,
+          montoCapital: capitalTotalFinal,
+          montoInteres: interesTotalFinal,
+          montoMora:    moraTotalFinal,
+          metodoPago:   pago.metodoPago,
+          createdBy:    cobradorIdVal,
+        },
+        tx as any,
+      );
 
       return {
         pago,
@@ -503,7 +571,7 @@ export class PaymentsService {
 
     // Auditoría
     await this.auditService.create({
-      usuarioId: dto.cobradorId,
+      usuarioId: paymentDto.cobradorId,
       accion: 'REGISTRAR_PAGO',
       entidad: 'Pago',
       entidadId: resultado.pago.id,
@@ -511,8 +579,9 @@ export class PaymentsService {
         numeroPago,
         prestamoIdVal,
         montoTotal,
-        capitalRecuperado: capitalTotal,
-        interesRecuperado: interesTotal,
+        capitalRecuperado: capitalTotalFinal,
+        interesRecuperado: interesTotalFinal,
+        moraRecuperada:    moraTotalFinal,
       },
     });
 
@@ -545,13 +614,14 @@ export class PaymentsService {
     clienteId?: string;
     page?: number;
     limit?: number;
-  }) {
+  }, actor?: PaymentActor) {
     const { prestamoId, clienteId, page = 1, limit = 20 } = filters || {};
     const skip = (page - 1) * limit;
 
     const where: Prisma.PagoWhereInput = {};
     if (prestamoId) where.prestamoId = prestamoId;
     if (clienteId) where.clienteId = clienteId;
+    if (this.isCollector(actor) && actor?.id) where.cobradorId = actor.id;
 
     const [pagos, total] = await Promise.all([
       this.prisma.pago.findMany({
@@ -592,9 +662,12 @@ export class PaymentsService {
     };
   }
 
-  async findOne(id: string) {
-    const pago = await this.prisma.pago.findUnique({
-      where: { id },
+  async findOne(id: string, actor?: PaymentActor) {
+    const where: Prisma.PagoWhereInput = { id };
+    if (this.isCollector(actor) && actor?.id) where.cobradorId = actor.id;
+
+    const pago = await this.prisma.pago.findFirst({
+      where,
       include: {
         detalles: {
           include: {

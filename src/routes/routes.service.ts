@@ -8,6 +8,8 @@ import {
 
   BadRequestException,
 
+  ForbiddenException,
+
   InternalServerErrorException,
 
 } from '@nestjs/common';
@@ -26,7 +28,7 @@ import { CreateRouteDto } from './dto/create-route.dto';
 
 import { UpdateRouteDto } from './dto/update-route.dto';
 
-import { Prisma, EstadoPrestamo, EstadoCuota } from '@prisma/client';
+import { Prisma, EstadoPrestamo, EstadoCuota, RolUsuario } from '@prisma/client';
 
 import {
 
@@ -39,6 +41,11 @@ import {
   RutaCobradorMeta,
 
 } from '../templates/exports';
+
+type RouteActor = {
+  id?: string;
+  rol?: RolUsuario | string;
+} | null | undefined;
 
 
 
@@ -73,7 +80,34 @@ export class RoutesService {
     return { inicio: startDate, fin: endDate };
   }
 
-  async getRutaActivadaHoy(rutaId: string) {
+  private isCollector(actor: RouteActor) {
+    return String(actor?.rol || '').toUpperCase() === RolUsuario.COBRADOR;
+  }
+
+  private assertCollectorOwnUser(cobradorId: string, actor?: RouteActor) {
+    if (!this.isCollector(actor)) return;
+    if (actor?.id && actor.id === cobradorId) return;
+    throw new ForbiddenException('No tienes permiso para consultar información de otro cobrador.');
+  }
+
+  private async assertCollectorOwnRoute(rutaId: string, actor?: RouteActor) {
+    if (!this.isCollector(actor)) return;
+    const ruta = await this.prisma.ruta.findFirst({
+      where: {
+        id: rutaId,
+        eliminadoEn: null,
+        cobradorId: actor?.id,
+      },
+      select: { id: true },
+    });
+    if (!ruta?.id) {
+      throw new ForbiddenException('No tienes permiso para acceder a esta ruta.');
+    }
+  }
+
+  async getRutaActivadaHoy(rutaId: string, actor?: RouteActor) {
+    await this.assertCollectorOwnRoute(rutaId, actor);
+
     const ruta = await this.prisma.ruta.findFirst({
       where: { id: rutaId, eliminadoEn: null },
       select: { id: true },
@@ -190,7 +224,9 @@ export class RoutesService {
 
 
 
-  async listarCreditosAsignadosACobrador(cobradorId: string) {
+  async listarCreditosAsignadosACobrador(cobradorId: string, actor?: RouteActor) {
+
+    this.assertCollectorOwnUser(cobradorId, actor);
 
     const asignaciones = await this.prisma.asignacionRuta.findMany({
 
@@ -742,11 +778,12 @@ export class RoutesService {
 
     supervisorId?: string;
 
-  }) {
+  }, actor?: RouteActor) {
 
-    const { skip, take, search, activa, cobradorId, supervisorId } =
+    const { skip, take, search, activa, supervisorId } =
 
       options || {};
+    const cobradorId = this.isCollector(actor) ? actor?.id : options?.cobradorId;
 
 
 
@@ -1230,8 +1267,10 @@ export class RoutesService {
 
 
 
-  async findOne(id: string) {
+  async findOne(id: string, actor?: RouteActor) {
     try {
+      await this.assertCollectorOwnRoute(id, actor);
+
       const { startDate: hoyInicioUTC } = getBogotaStartEndOfDay(new Date());
 
       const ruta = await this.prisma.ruta.findFirst({
@@ -1661,7 +1700,7 @@ export class RoutesService {
 
     } catch (error) {
 
-      if (error instanceof NotFoundException) throw error;
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) throw error;
 
 
 
@@ -3126,7 +3165,9 @@ export class RoutesService {
 
    */
 
-  async getDailyVisits(rutaId: string, fecha?: string) {
+  async getDailyVisits(rutaId: string, fecha?: string, actor?: RouteActor) {
+
+    await this.assertCollectorOwnRoute(rutaId, actor);
 
     const fechaKey = (() => {
       if (!fecha) return getBogotaDayKey(new Date());
@@ -3450,9 +3491,13 @@ export class RoutesService {
 
     reorderData: Array<{ clienteId: string; orden: number }>,
 
+    actor?: RouteActor,
+
   ) {
 
     try {
+      await this.assertCollectorOwnRoute(rutaId, actor);
+
 
       // Verificar que la ruta existe
 
@@ -3540,7 +3585,9 @@ export class RoutesService {
 
    */
 
-  async exportarRuta(rutaId: string, formato: 'excel' | 'pdf'): Promise<Buffer> {
+  async exportarRuta(rutaId: string, formato: 'excel' | 'pdf', actor?: RouteActor): Promise<Buffer> {
+
+    await this.assertCollectorOwnRoute(rutaId, actor);
 
     // ── 1. Consultar ruta con todos los datos necesarios ──────────────────────
 

@@ -5,6 +5,7 @@ import { AuditService } from '../audit/audit.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { ConfiguracionService } from '../configuracion/configuracion.service';
+import { RolUsuario } from '@prisma/client';
 
 describe('ClientsService', () => {
   let service: ClientsService;
@@ -13,6 +14,7 @@ describe('ClientsService', () => {
   const mockPrismaService = {
     cliente: {
       count: jest.fn(),
+      aggregate: jest.fn(),
       create: jest.fn(),
       findFirst: jest.fn(),
       findMany: jest.fn(),
@@ -128,6 +130,67 @@ describe('ClientsService', () => {
           dni: '123',
         } as any),
       ).rejects.toThrow('No existen usuarios en el sistema');
+    });
+  });
+
+  describe('role scoping', () => {
+    it('forces client list queries from collectors to clients assigned to their routes', async () => {
+      (prismaService.cliente.findMany as jest.Mock).mockResolvedValue([]);
+      (prismaService.cliente.count as jest.Mock).mockResolvedValue(0);
+      (prismaService.cliente.aggregate as jest.Mock).mockResolvedValue({ _avg: { puntaje: 0 } });
+
+      await service.getAllClients(
+        { nivelRiesgo: 'all', ruta: '', search: '' },
+        { id: 'cobrador-propio', rol: RolUsuario.COBRADOR } as any,
+      );
+
+      expect(prismaService.cliente.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            eliminadoEn: null,
+            asignacionesRuta: expect.objectContaining({
+              some: expect.objectContaining({
+                activa: true,
+              }),
+            }),
+          }),
+        }),
+      );
+      expect(prismaService.cliente.count).toHaveBeenCalledWith({
+        where: expect.objectContaining({
+          eliminadoEn: null,
+          asignacionesRuta: expect.objectContaining({
+            some: expect.objectContaining({
+              activa: true,
+            }),
+          }),
+        }),
+      });
+    });
+
+    it('does not return client detail to a collector when the client is not assigned to them', async () => {
+      (prismaService.cliente.findFirst as jest.Mock).mockResolvedValue(null);
+
+      await expect(
+        service.getClientById(
+          'cliente-ajeno',
+          { id: 'cobrador-propio', rol: RolUsuario.COBRADOR } as any,
+        ),
+      ).rejects.toThrow('Cliente no encontrado');
+
+      expect(prismaService.cliente.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: 'cliente-ajeno',
+            eliminadoEn: null,
+            asignacionesRuta: expect.objectContaining({
+              some: expect.objectContaining({
+                activa: true,
+              }),
+            }),
+          }),
+        }),
+      );
     });
   });
 });

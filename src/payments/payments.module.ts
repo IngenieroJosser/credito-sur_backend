@@ -5,9 +5,10 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 import { AuditModule } from '../audit/audit.module';
 import { UploadModule } from '../upload/upload.module';
+import { AccountingModule } from '../accounting/accounting.module';
 
 @Module({
-  imports: [PrismaModule, NotificacionesModule, AuditModule, UploadModule],
+  imports: [PrismaModule, NotificacionesModule, AuditModule, UploadModule, AccountingModule],
   controllers: [PaymentsController],
   providers: [PaymentsService],
   exports: [PaymentsService],

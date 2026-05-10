@@ -71,7 +71,7 @@ export class PaymentsController {
       dto.cobradorId = req.user.id;
     }
 
-    return this.paymentsService.create(dto as CreatePaymentDto, comprobante);
+    return this.paymentsService.create(dto as CreatePaymentDto, comprobante, req.user);
   }
 
   @Get()
@@ -80,13 +80,17 @@ export class PaymentsController {
     @Query('clienteId') clienteId?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Request() req?: any,
   ) {
-    return this.paymentsService.findAll({
-      prestamoId,
-      clienteId,
-      page: page ? parseInt(page, 10) : undefined,
-      limit: limit ? parseInt(limit, 10) : undefined,
-    });
+    return this.paymentsService.findAll(
+      {
+        prestamoId,
+        clienteId,
+        page: page ? parseInt(page, 10) : undefined,
+        limit: limit ? parseInt(limit, 10) : undefined,
+      },
+      req?.user,
+    );
   }
 
   @Get('export')
@@ -116,8 +120,8 @@ export class PaymentsController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.paymentsService.findOne(id);
+  findOne(@Param('id') id: string, @Request() req?: any) {
+    return this.paymentsService.findOne(id, req?.user);
   }
 
   @Post('reconcile/:pagoId')

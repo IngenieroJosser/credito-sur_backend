@@ -9,10 +9,12 @@ import {
   MetodoPago,
   FrecuenciaPago,
   TipoAmortizacion,
+  RolUsuario,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { formatBogotaOffsetIso } from '../utils/date-utils';
+import { LedgerService } from '../accounting/ledger.service';
 
 @Injectable()
 export class ApprovalsService {
@@ -22,6 +24,7 @@ export class ApprovalsService {
     private prisma: PrismaService,
     private notificacionesService: NotificacionesService,
     private notificacionesGateway: NotificacionesGateway,
+    private readonly ledgerService: LedgerService,
   ) {}
 
   private async ensureCajaBanco(tx: any) {
@@ -196,50 +199,105 @@ export class ApprovalsService {
       throw new BadRequestException(`No se puede aplicar pago: préstamo en estado ${prestamo.estado}`);
     }
 
-    // Distribuir pago entre cuotas pendientes
-    const detallesPago: { cuotaId: string; monto: number; montoCapital: number; montoInteres: number; montoInteresMora: number }[] = [];
+    // Distribuir pago entre cuotas pendientes (Siguiendo Prelación: Mora -> Interés -> Capital)
+    const detallesPago: { 
+      cuotaId: string; 
+      monto: number; 
+      montoCapital: number; 
+      montoInteres: number; 
+      montoInteresMora: number 
+    }[] = [];
     let restante = montoTotal;
-
-    const tasaInteres = Number((prestamo as any).tasaInteres || 0);
-    const descomponer = (m: number) => {
-      if (tasaInteres <= 0) return { capital: m, interes: 0 };
-      const divisor = 100 + tasaInteres;
-      return { capital: (m * 100) / divisor, interes: (m * tasaInteres) / divisor };
-    };
 
     let capitalTotal = 0;
     let interesTotal = 0;
+    let moraTotal = 0;
 
     const cuotasActualizar: { id: string; montoPagado: number; estado: any }[] = [];
+    
     for (const cuota of prestamo.cuotas || []) {
       if (restante <= 0) break;
-      const montoCuota = Number((cuota as any).monto || 0);
-      const yaPagado = Number((cuota as any).montoPagado || 0);
+
+      const montoCuota = Number(cuota.monto);
+      const yaPagado = Number(cuota.montoPagado);
       const pendiente = montoCuota - yaPagado;
       if (pendiente <= 0) continue;
 
-      const aplicar = Math.min(restante, pendiente);
-      const { capital, interes } = descomponer(aplicar);
-      capitalTotal += capital;
-      interesTotal += interes;
-      detallesPago.push({
-        cuotaId: cuota.id,
-        monto: aplicar,
-        montoCapital: capital,
-        montoInteres: interes,
-        montoInteresMora: 0,
-      });
+      // 1. Calcular componentes de esta cuota
+      const cCapital = Number(cuota.montoCapital);
+      const cInteres = Number(cuota.montoInteres);
+      const cMora    = Number(cuota.montoInteresMora);
 
-      const nuevoMontoPagado = yaPagado + aplicar;
-      const COP_TOLERANCE = 1;
-      const completa = nuevoMontoPagado >= (montoCuota - COP_TOLERANCE);
-      const montoPagadoFinal = completa ? montoCuota : nuevoMontoPagado;
-      const nuevoEstado = completa
-        ? EstadoCuota.PAGADA
-        : ((cuota as any).estado === EstadoCuota.PENDIENTE ? EstadoCuota.PARCIAL : (cuota as any).estado);
-      cuotasActualizar.push({ id: cuota.id, montoPagado: montoPagadoFinal, estado: nuevoEstado });
-      restante -= aplicar;
+      // 2. Determinar qué falta por pagar (estimación simple basada en montoPagado acumulado)
+      // En una implementación real más compleja, buscaríamos la suma de DetallesPago previos.
+      // Aquí asumimos que el montoPagado se aplicó siguiendo el mismo orden.
+      let pagoAplicadoMora = 0;
+      let pagoAplicadoInteres = 0;
+      let pagoAplicadoCapital = 0;
+
+      let tempYaPagado = yaPagado;
+
+      // Descontar lo ya pagado de la jerarquía
+      const yaPagadoMora = Math.min(tempYaPagado, cMora);
+      tempYaPagado -= yaPagadoMora;
+      
+      const yaPagadoInteres = Math.min(tempYaPagado, cInteres);
+      tempYaPagado -= yaPagadoInteres;
+
+      const yaPagadoCapital = Math.min(tempYaPagado, cCapital);
+      
+      // Lo que falta cubrir en esta cuota
+      const faltaMora    = cMora - yaPagadoMora;
+      const faltaInteres = cInteres - yaPagadoInteres;
+      const faltaCapital = cCapital - yaPagadoCapital;
+
+      // 3. Aplicar pago actual siguiendo la prelación
+      // 3a. Mora
+      const aplicarMora = Math.min(restante, faltaMora);
+      pagoAplicadoMora = aplicarMora;
+      restante -= aplicarMora;
+      moraTotal += aplicarMora;
+
+      // 3b. Interés
+      const aplicarInteres = Math.min(restante, faltaInteres);
+      pagoAplicadoInteres = aplicarInteres;
+      restante -= aplicarInteres;
+      interesTotal += aplicarInteres;
+
+      // 3c. Capital
+      const aplicarCapital = Math.min(restante, faltaCapital);
+      pagoAplicadoCapital = aplicarCapital;
+      restante -= aplicarCapital;
+      capitalTotal += aplicarCapital;
+
+      const totalAplicadoCuota = pagoAplicadoMora + pagoAplicadoInteres + pagoAplicadoCapital;
+
+      if (totalAplicadoCuota > 0) {
+        detallesPago.push({
+          cuotaId: cuota.id,
+          monto: totalAplicadoCuota,
+          montoCapital: pagoAplicadoCapital,
+          montoInteres: pagoAplicadoInteres,
+          montoInteresMora: pagoAplicadoMora,
+        });
+
+        const nuevoMontoPagado = yaPagado + totalAplicadoCuota;
+        const COP_TOLERANCE = 1;
+        const completa = nuevoMontoPagado >= (montoCuota - COP_TOLERANCE);
+        const montoPagadoFinal = completa ? montoCuota : nuevoMontoPagado;
+        const nuevoEstado = completa
+          ? EstadoCuota.PAGADA
+          : (cuota.estado === EstadoCuota.PENDIENTE ? EstadoCuota.PARCIAL : cuota.estado);
+        
+        cuotasActualizar.push({ id: cuota.id, montoPagado: montoPagadoFinal, estado: nuevoEstado });
+      }
     }
+
+    // Bug 5 Fix: Ajustar para garantizar exactitud decimal (Débito === Crédito)
+    // Redondeamos interés y mora, y calculamos el capital como residuo exacto.
+    const interesTotalFinal = Math.round(interesTotal * 100) / 100;
+    const moraTotalFinal    = Math.round(moraTotal * 100) / 100;
+    const capitalTotalFinal = Math.round((montoTotal - interesTotalFinal - moraTotalFinal) * 100) / 100;
 
     const count = await this.prisma.pago.count();
     const numeroPago = `PAG-${String(count + 1).padStart(6, '0')}`;
@@ -310,10 +368,39 @@ export class ApprovalsService {
           referenciaId: numeroPago,
         },
       });
-      await tx.caja.update({
-        where: { id: cajaBanco.id },
-        data: { saldoActual: { increment: montoTotal } },
-      });
+
+      // Asiento contable de Partida Doble
+      // Débito:  1.1.2 Cuentas Bancarias (Transferencia)
+      // Crédito: 1.3.1 Cartera Vigente + 3.1 Intereses + 3.2 Mora
+      await this.ledgerService.registrarAsiento(
+        {
+          referenceType: 'PAGO',
+          referenceId:   pago.id,
+          description:   `Pago transferencia verificada ${numeroPago}`,
+          createdBy:     aprobadoPorId || cobradorId,
+          lines: [
+            {
+              accountCode: '1.1.2',   // Cuentas Bancarias
+              debitAmount:  montoTotal,
+              cajaId:       cajaBanco.id,
+              cajaDelta:    montoTotal,
+            },
+            {
+              accountCode:  '1.3.1',
+              creditAmount:  capitalTotalFinal,
+            },
+            ...(interesTotalFinal > 0 ? [{
+              accountCode:  '3.1',
+              creditAmount:  interesTotalFinal,
+            }] : []),
+            ...(moraTotalFinal > 0 ? [{
+              accountCode:  '3.2',
+              creditAmount:  moraTotalFinal,
+            }] : []),
+          ],
+        },
+        tx as any,
+      );
 
       // Vincular comprobante (si existe) al pago real
       try {
@@ -770,6 +857,14 @@ export class ApprovalsService {
         return undefined;
       })();
 
+      // 0. Capturar estado previo para ajustes (Bug Gap 4 Fix)
+      const prestamoPrevio = await tx.prestamo.findUnique({
+        where: { id: approval.referenciaId },
+        select: { estado: true, monto: true },
+      });
+      const fueActivo = prestamoPrevio?.estado === EstadoPrestamo.ACTIVO || prestamoPrevio?.estado === EstadoPrestamo.EN_MORA;
+      const montoOriginal = Number(prestamoPrevio?.monto || 0);
+
       // 1. Activar el préstamo (aplicando cambios si fueron editados)
       const prestamo = await tx.prestamo.update({
         where: { id: approval.referenciaId },
@@ -798,70 +893,103 @@ export class ApprovalsService {
         }
       });
 
-      // Si es crédito de ARTICULO con cuota inicial, registrar abono a capital (no utilidad).
+      // Si es crédito de ARTICULO, registrar la venta completa separando ingreso, costo e inventario.
       // Idempotente para evitar duplicación por reintentos.
-      try {
-        const cuotaInicialVal = Number(cuotaInicial || 0);
-        if (isArticulo && cuotaInicialVal > 0) {
-          const rutaId = prestamo.cliente?.asignacionesRuta?.[0]?.rutaId;
-          const cajaRuta = rutaId
-            ? await tx.caja.findFirst({
-                where: { rutaId, tipo: 'RUTA', activa: true },
-                select: { id: true },
-              })
-            : null;
+      const cuotaInicialVal = Number(cuotaInicial || 0);
+      if (isArticulo && !fueActivo) {
+        const rutaId = prestamo.cliente?.asignacionesRuta?.[0]?.rutaId;
+        const cajaRuta = rutaId
+          ? await tx.caja.findFirst({
+              where: { rutaId, tipo: 'RUTA', activa: true },
+              select: { id: true, codigo: true },
+            })
+          : null;
 
-          const cajaOficina = await tx.caja.findFirst({
-            where: { activa: true, codigo: 'CAJA-OFICINA' },
-            select: { id: true },
-          });
+        const cajaOficina = await tx.caja.findFirst({
+          where: { activa: true, codigo: 'CAJA-OFICINA' },
+          select: { id: true, codigo: true },
+        });
 
-          const cajaPrincipal = !cajaRuta
-            ? await tx.caja.findFirst({
-                where: {
-                  activa: true,
-                  OR: [{ codigo: 'CAJA-PRINCIPAL' }, { tipo: 'PRINCIPAL' }],
-                },
-                select: { id: true },
-              })
-            : null;
-
-          const cajaIdDestino = cajaOficina?.id || cajaRuta?.id || cajaPrincipal?.id;
-          if (cajaIdDestino) {
-            const yaExiste = await tx.transaccion.findFirst({
+        const cajaPrincipal = !cajaRuta
+          ? await tx.caja.findFirst({
               where: {
-                cajaId: cajaIdDestino,
-                tipo: TipoTransaccion.INGRESO,
-                tipoReferencia: 'CUOTA_INICIAL',
-                referenciaId: prestamo.id,
+                activa: true,
+                OR: [{ codigo: 'CAJA-PRINCIPAL' }, { tipo: 'PRINCIPAL' }],
               },
-              select: { id: true },
-            });
+              select: { id: true, codigo: true },
+            })
+          : null;
 
-            if (!yaExiste?.id) {
-              await tx.transaccion.create({
-                data: {
-                  numeroTransaccion: `CI-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        const cajaDestino = cajaOficina || cajaRuta || cajaPrincipal;
+        const cajaIdDestino = cajaDestino?.id;
+        const asientoVentaExistente = await tx.journalEntry.findFirst({
+          where: {
+            referenceType: 'VENTA_ARTICULO' as any,
+            referenceId: prestamo.id,
+          },
+          select: { id: true },
+        });
+
+        if (!asientoVentaExistente?.id) {
+          if (cuotaInicialVal > 0 && !cajaIdDestino) {
+            throw new BadRequestException('No se encontró una caja activa para registrar la cuota inicial del artículo.');
+          }
+
+          const yaExiste = cuotaInicialVal > 0 && cajaIdDestino
+            ? await tx.transaccion.findFirst({
+                where: {
                   cajaId: cajaIdDestino,
                   tipo: TipoTransaccion.INGRESO,
-                  monto: cuotaInicialVal,
-                  descripcion: `Cuota inicial crédito artículo #${prestamo.numeroPrestamo}`,
-                  creadoPorId: approval.solicitadoPorId,
-                  aprobadoPorId: aprobadoPorId || undefined,
                   tipoReferencia: 'CUOTA_INICIAL',
                   referenciaId: prestamo.id,
                 },
-              });
+                select: { id: true },
+              })
+            : null;
 
-              await tx.caja.update({
-                where: { id: cajaIdDestino },
-                data: { saldoActual: { increment: cuotaInicialVal } },
-              });
-            }
+          if (cuotaInicialVal > 0 && cajaIdDestino && !yaExiste?.id) {
+            await tx.transaccion.create({
+              data: {
+                numeroTransaccion: `CI-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+                cajaId: cajaIdDestino,
+                tipo: TipoTransaccion.INGRESO,
+                monto: cuotaInicialVal,
+                descripcion: `Cuota inicial crédito artículo #${prestamo.numeroPrestamo}`,
+                creadoPorId: approval.solicitadoPorId,
+                aprobadoPorId: aprobadoPorId || undefined,
+                tipoReferencia: 'CUOTA_INICIAL',
+                referenciaId: prestamo.id,
+              },
+            });
           }
+
+          const precioVentaArticulo = Number(
+            (prestamo as any).precioVentaArticulo ||
+            finalData.valorArticulo ||
+            finalData.precioVentaArticulo ||
+            (Number(prestamo.monto || 0) + cuotaInicialVal),
+          );
+          const costoArticulo = Number(
+            (prestamo as any).costoArticulo ||
+            finalData.costoArticulo ||
+            finalData.costo ||
+            0,
+          );
+
+          await this.ledgerService.registrarVentaArticulo(
+            {
+              prestamoId: prestamo.id,
+              precioVenta: precioVentaArticulo,
+              costoArticulo,
+              montoFinanciado: Number(prestamo.monto || 0),
+              cuotaInicial: cuotaInicialVal,
+              cajaId: cajaIdDestino,
+              accountCodeCaja: cajaDestino?.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1',
+              createdBy: aprobadoPorId || approval.solicitadoPorId,
+            },
+            tx as any,
+          );
         }
-      } catch (_) {
-        // No interrumpimos aprobación por error contable accesorio.
       }
 
       // Si se editaron datos financieros, es probable que las cuotas (instancias de Cuota) necesiten ser regeneradas
@@ -975,53 +1103,92 @@ export class ApprovalsService {
         });
       }
 
-      // 2. Buscar la caja de la ruta para registrar el desembolso
-      const rutaId = prestamo.cliente?.asignacionesRuta?.[0]?.rutaId;
-      if (rutaId) {
-        const cajaRuta = await tx.caja.findFirst({
-          where: { rutaId, tipo: 'RUTA', activa: true },
-          select: { id: true, nombre: true, saldoActual: true },
+      const montoDesembolso = Number(prestamo.monto || 0);
+      const isArticuloLoan = String(prestamo.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
+
+      if (!isArticuloLoan && !fueActivo) {
+        const solicitante = await tx.usuario.findFirst({
+          where: { id: approval.solicitadoPorId },
+          select: { rol: true },
+        });
+        const rutaAsignadaId = (prestamo as any)?.cliente?.asignacionesRuta?.[0]?.rutaId;
+        const cajaRuta = solicitante?.rol === RolUsuario.COBRADOR && rutaAsignadaId
+          ? await tx.caja.findFirst({
+            where: { activa: true, tipo: 'RUTA', rutaId: rutaAsignadaId },
+            select: { id: true, codigo: true, nombre: true, saldoActual: true },
+          })
+          : null;
+        const cajaDesembolso = cajaRuta ?? await tx.caja.findFirst({
+          where: { activa: true, codigo: 'CAJA-OFICINA' },
+          select: { id: true, codigo: true, nombre: true, saldoActual: true },
+        }) ?? await tx.caja.findFirst({
+          where: {
+            activa: true,
+            OR: [{ codigo: 'CAJA-PRINCIPAL' }, { tipo: 'PRINCIPAL' }],
+          },
+          orderBy: { creadoEn: 'asc' },
+          select: { id: true, codigo: true, nombre: true, saldoActual: true },
         });
 
-        if (cajaRuta) {
-          const saldoCajaRuta = Number((cajaRuta as any).saldoActual || 0);
-          const montoDesembolso = Number(prestamo.monto || 0);
-          const isArticuloLoan = String(prestamo.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
-
-          // Validación de saldo: Solo aplica si NO es un artículo (es decir, es efectivo)
-          if (!isArticuloLoan && montoDesembolso > 0 && saldoCajaRuta < montoDesembolso) {
-            throw new BadRequestException(
-              `Saldo insuficiente en la caja de ruta para desembolsar el préstamo. Caja: ${cajaRuta.nombre}. Saldo: ${saldoCajaRuta.toLocaleString('es-CO')}. Monto desembolso: ${montoDesembolso.toLocaleString('es-CO')}`,
-            );
-          }
-
-          // 3. Crear transacción de egreso (Desembolso) - Solo si NO es un artículo
-          if (!isArticuloLoan) {
-            await tx.transaccion.create({
-              data: {
-                numeroTransaccion: `T${Date.now()}`,
-                cajaId: cajaRuta.id,
-                tipo: TipoTransaccion.EGRESO,
-                monto: Number(prestamo.monto),
-                descripcion: `Desembolso de préstamo #${prestamo.numeroPrestamo} - Cliente: ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
-                creadoPorId: approval.solicitadoPorId,
-                aprobadoPorId: aprobadoPorId || undefined,
-                tipoReferencia: 'PRESTAMO',
-                referenciaId: prestamo.id,
-              },
-            });
-
-            // 4. Actualizar saldo de la caja
-            await tx.caja.update({
-              where: { id: cajaRuta.id },
-              data: {
-                saldoActual: {
-                  decrement: prestamo.monto
-                }
-              }
-            });
-          }
+        if (!cajaDesembolso?.id) {
+          throw new BadRequestException('No existe una caja activa para desembolsar el préstamo.');
         }
+
+        const saldoCajaDesembolso = Number((cajaDesembolso as any).saldoActual || 0);
+        if (montoDesembolso > 0 && saldoCajaDesembolso < montoDesembolso) {
+          throw new BadRequestException(
+            `Saldo insuficiente en la caja para desembolsar el préstamo. Caja: ${cajaDesembolso.nombre}. Saldo: ${saldoCajaDesembolso.toLocaleString('es-CO')}. Monto desembolso: ${montoDesembolso.toLocaleString('es-CO')}`,
+          );
+        }
+        const accountCodeDesembolso = cajaRuta?.id === cajaDesembolso.id
+          ? '1.2.1'
+          : cajaDesembolso.codigo === 'CAJA-BANCO'
+            ? '1.1.2'
+            : '1.1.1';
+
+        await tx.transaccion.create({
+          data: {
+            numeroTransaccion: `T${Date.now()}`,
+            cajaId: cajaDesembolso.id,
+            tipo: TipoTransaccion.EGRESO,
+            monto: montoDesembolso,
+            descripcion: `Desembolso de préstamo #${prestamo.numeroPrestamo} - Cliente: ${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
+            creadoPorId: approval.solicitadoPorId,
+            aprobadoPorId: aprobadoPorId || undefined,
+            tipoReferencia: 'PRESTAMO',
+            referenciaId: prestamo.id,
+          },
+        });
+
+        await this.ledgerService.registrarAsiento(
+          {
+            referenceType: 'DESEMBOLSO',
+            referenceId:   prestamo.id,
+            description:   `Desembolso préstamo #${prestamo.numeroPrestamo} - $${montoDesembolso.toLocaleString('es-CO')}`,
+            createdBy:     aprobadoPorId || approval.solicitadoPorId,
+            lines: [
+              {
+                accountCode: '1.3.1',
+                debitAmount:  montoDesembolso,
+              },
+              {
+                accountCode:  accountCodeDesembolso,
+                creditAmount:  montoDesembolso,
+                cajaId:        cajaDesembolso.id,
+                cajaDelta:    -montoDesembolso,
+              },
+            ],
+          },
+          tx as any,
+        );
+      }
+
+      if (fueActivo && Number(prestamo.monto) !== montoOriginal) {
+        await this.ledgerService.registrarAjusteCartera({
+          prestamoId: prestamo.id,
+          montoDiferencia: Number(prestamo.monto) - montoOriginal,
+          createdBy: aprobadoPorId || approval.solicitadoPorId,
+        }, tx as any);
       }
     });
 
@@ -1098,20 +1265,35 @@ export class ApprovalsService {
           descripcion: `Gasto aprobado: ${data.descripcion}`,
           creadoPorId: approval.solicitadoPorId,
           aprobadoPorId: aprobadoPorId || undefined,
-          tipoReferencia: 'DEUDA_COBRADOR',
+          tipoReferencia: 'GASTO',
           referenciaId: newGasto.id,
         },
       });
 
-      // 3. Actualizar saldo de caja
-      await tx.caja.update({
-        where: { id: data.cajaId },
-        data: {
-          saldoActual: {
-            decrement: data.monto,
-          },
+      // Asiento contable de Partida Doble (patrón correcto: Ledger mueve el saldo)
+      // Débito: 4.1 Gastos de Ruta (consume patrimonio)
+      // Crédito: 1.2.1 Caja Ruta (sale el efectivo) — cajaDelta real
+      await this.ledgerService.registrarAsiento(
+        {
+          referenceType: 'GASTO',
+          referenceId:   newGasto.id,
+          description:   `Gasto aprobado: ${data.descripcion}`,
+          createdBy:     aprobadoPorId || approval.solicitadoPorId,
+          lines: [
+            {
+              accountCode: '4.1',
+              debitAmount:  Number(data.monto),
+            },
+            {
+              accountCode:  '1.2.1',
+              creditAmount:  Number(data.monto),
+              cajaId:        data.cajaId,
+              cajaDelta:    -Number(data.monto), // Ledger decrementa el saldo
+            },
+          ],
         },
-      });
+        tx as any,
+      );
 
       return [newGasto];
     });
@@ -1190,17 +1372,7 @@ export class ApprovalsService {
         },
       });
 
-      // 4. Actualizar Saldo de la Caja Principal
-      await tx.caja.update({
-        where: { id: cajaPrincipal.id },
-        data: {
-          saldoActual: {
-            decrement: monto,
-          },
-        },
-      });
-
-      // 5. Crear transacción de ingreso a la caja de ruta (The target cash box)
+      // 5. Crear transacción de ingreso a la caja de ruta
       const newTrx = await tx.transaccion.create({
         data: {
           numeroTransaccion: `TRX-IN-${Date.now()}`,
@@ -1215,15 +1387,31 @@ export class ApprovalsService {
         },
       });
 
-      // 6. Actualizar Saldo de la Caja de Ruta
-      await tx.caja.update({
-        where: { id: data.cajaId },
-        data: {
-          saldoActual: {
-            increment: monto,
-          },
+      // Asiento contable de Partida Doble (patrón correcto: Ledger mueve ambos saldos)
+      const accountCodePrincipal = cajaPrincipal.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1';
+      await this.ledgerService.registrarAsiento(
+        {
+          referenceType: 'BASE',
+          referenceId:   approval.id,
+          description:   `Base efectivo: ${data.descripcion}`,
+          createdBy:     aprobadoPorId || approval.solicitadoPorId,
+          lines: [
+            {
+              accountCode: '1.2.1',
+              debitAmount:  monto,
+              cajaId:       data.cajaId,
+              cajaDelta:   +monto,  // Caja Ruta RECIBE
+            },
+            {
+              accountCode:  accountCodePrincipal,
+              creditAmount:  monto,
+              cajaId:        cajaPrincipal.id,
+              cajaDelta:    -monto,  // Caja Principal ENTREGA
+            },
+          ],
         },
-      });
+        tx as any,
+      );
 
       return newTrx;
     });
@@ -1392,6 +1580,16 @@ export class ApprovalsService {
           revisadoEn: new Date(),
         },
       });
+
+      // 3. Registrar castigo de cartera en el Ledger (Bug Gap 2 Fix)
+      const saldoCapital = Number(prestamo.saldoPendiente);
+      if (saldoCapital > 0) {
+        await this.ledgerService.registrarBajaCartera({
+          prestamoId: prestamo.id,
+          monto:      saldoCapital,
+          createdBy:  aprobadoPorId || approval.solicitadoPorId,
+        }, tx as any);
+      }
     });
 
     try {

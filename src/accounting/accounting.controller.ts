@@ -95,7 +95,6 @@ export class AccountingController {
       nombre?: string;
       responsableId?: string;
       activa?: boolean;
-      saldoActual?: number;
     },
   ) {
     return this.accountingService.updateCaja(id, body);
@@ -167,6 +166,29 @@ export class AccountingController {
   // TRANSACCIONES / MOVIMIENTOS
   // =====================
 
+  @Get('ledger/movimientos')
+  getMovimientosLedger(
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
+    @Query('tipo') tipo?: string,
+    @Query('cajaId') cajaId?: string,
+    @Query('accountCode') accountCode?: string,
+    @Query('accountPrefix') accountPrefix?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.accountingService.getMovimientosLedger({
+      fechaInicio,
+      fechaFin,
+      tipo,
+      cajaId,
+      accountCode,
+      accountPrefix,
+      page: page ? parseInt(page) : 1,
+      limit: limit ? parseInt(limit) : 50,
+    });
+  }
+
   @Get('transacciones')
   getTransacciones(
     @Query('cajaId') cajaId?: string,
@@ -203,6 +225,7 @@ export class AccountingController {
       tipoReferencia?: string;
       referenciaId?: string;
       cajaOrigenId?: string;
+      accountCode?: string; // Código de cuenta de contrapartida (opcional)
     },
   ) {
     if (!req.user || !req.user.id) {
@@ -293,6 +316,8 @@ export class AccountingController {
       cobradorId: string;
       categoriaId?: string;
       esPersonal?: boolean;
+      comprobanteUrl?: string;
+      fotoRecibo?: string;
     },
   ) {
     if (!req.user || !req.user.id) {
@@ -307,6 +332,8 @@ export class AccountingController {
       tipoAprobacion: TipoAprobacion.GASTO,
       categoriaId: body.categoriaId,
       esPersonal: body.esPersonal,
+      comprobanteUrl: body.comprobanteUrl,
+      fotoRecibo: body.fotoRecibo,
     });
   }
 
@@ -432,5 +459,34 @@ export class AccountingController {
     return this.accountingService.repararCajaOficinaIngresosMalAsignados({
       dryRun: dryRun === '1' || String(dryRun || '').toLowerCase() === 'true',
     });
+  }
+
+  @Post('migration-ledger/dry-run')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  migracionLedgerDryRun(@Request() req) {
+    if (!req.user || !req.user.id) throw new UnauthorizedException();
+    return this.accountingService.migrarHistoricoLedger({
+      dryRun: true,
+      userId: req.user.id,
+    });
+  }
+
+  @Post('migration-ledger/apply')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  migracionLedgerApply(@Request() req) {
+    if (!req.user || !req.user.id) throw new UnauthorizedException();
+    return this.accountingService.migrarHistoricoLedger({
+      dryRun: false,
+      userId: req.user.id,
+    });
+  }
+
+  @Post('apertura-day-zero')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
+  ejecutarAperturaContable(@Request() req) {
+    if (!req.user || !req.user.id) throw new UnauthorizedException();
+    return this.accountingService.ejecutarAperturaContable(req.user.id);
   }
 }

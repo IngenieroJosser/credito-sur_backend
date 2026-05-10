@@ -1,0 +1,3 @@
+-- AlterEnum
+ALTER TYPE "ReferenceTypeContable" ADD VALUE IF NOT EXISTS 'INGRESO';
+ALTER TYPE "ReferenceTypeContable" ADD VALUE IF NOT EXISTS 'EGRESO';
