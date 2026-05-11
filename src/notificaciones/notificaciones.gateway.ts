@@ -133,10 +133,11 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
             ? Math.max(Number(data.meta || 0) - Number(data.recaudo || 0), 0)
             : 0;
 
-          // Regla de negocio: El saldoActual en caja ruta NO se considera descuadre automáticamente.
-          // Normalmente representa efectivo pendiente por recolectar por el admin.
-          // El descuadre real (deuda del cobrador) se registra cuando faltaron clientes/efectivo.
-          const deudaTotal = Math.max(deudaPorFaltantes, 0);
+          // Regla de negocio: el saldo en caja de la ruta al cierre es dinero del cobrador
+          // que aún no ha entregado. Se registra como deuda pendiente (descuadre).
+          // Cuando el admin/coordinador recolecte ese dinero (consolide la caja),
+          // la deuda desaparece automáticamente.
+          const deudaTotal = Math.max(deudaPorFaltantes + saldoAlCierre, 0);
           const hayDescuadre = deudaTotal > 0;
           
           // Codificamos los datos en referenciaId agregando SD
@@ -149,8 +150,8 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
               tipo: 'TRANSFERENCIA',
               monto: 0,
               descripcion: hayDescuadre
-                ? `Cierre de ruta con descuadre: el cobrador completó la ruta con $${saldoAlCierre.toLocaleString('es-CO')} retenidos (sin recolectar por el admin). Recaudó reportado: $${data.recaudo.toLocaleString('es-CO')}.`
-                : `Cierre de ruta exitoso: entregó todo el efectivo. Recaudó $${data.recaudo.toLocaleString('es-CO')} (${data.efectividad}% META).`,
+                ? `Cierre de ruta con descuadre: $${deudaTotal.toLocaleString('es-CO')} pendientes (saldo en caja: $${saldoAlCierre.toLocaleString('es-CO')}, faltantes: $${deudaPorFaltantes.toLocaleString('es-CO')}). Recaudó: $${data.recaudo.toLocaleString('es-CO')}.`
+                : `Cierre de ruta exitoso: sin saldo pendiente. Recaudó $${data.recaudo.toLocaleString('es-CO')} (${data.efectividad}% META).`,
               tipoReferencia: 'CIERRE_RUTA',
               referenciaId,
               creadoPorId: cajaDeLaRuta.responsableId, 
@@ -167,7 +168,7 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
                 cajaId: cajaDeLaRuta.id,
                 tipo: 'EGRESO',
                 monto: deuda,
-                descripcion: `Deuda del cobrador por descuadre de cierre de ruta: $${deuda.toLocaleString('es-CO')}`,
+                descripcion: `Deuda del cobrador por cierre de ruta: $${deuda.toLocaleString('es-CO')} (saldo en caja: $${saldoAlCierre.toLocaleString('es-CO')}, faltantes: $${deudaPorFaltantes.toLocaleString('es-CO')})`,
                 tipoReferencia: 'DEUDA_COBRADOR',
                 referenciaId: refDeuda,
                 creadoPorId: cajaDeLaRuta.responsableId,

@@ -278,7 +278,7 @@ export class RoutesService {
 
                 eliminadoEn: null,
 
-                estado: { in: ['ACTIVO', 'EN_MORA'] },
+                estado: { in: ['ACTIVO', 'EN_MORA', 'PAGADO', 'INCUMPLIDO', 'PERDIDA'] },
 
               },
 

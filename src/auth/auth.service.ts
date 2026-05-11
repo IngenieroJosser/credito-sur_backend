@@ -53,10 +53,11 @@ export class AuthService {
       },
     });
 
-    const permisosEfectivos =
-      permisosPersonalizados.length > 0
-        ? permisosPersonalizados.map((p) => p.permiso)
-        : rolPermisos.map((rp) => rp.permiso);
+    // Fusionar permisos del rol + permisos personalizados (ambas fuentes, sin reemplazar)
+    const permisosEfectivos = [
+      ...rolPermisos.map((rp) => rp.permiso),
+      ...permisosPersonalizados.map((p) => p.permiso),
+    ];
 
     // Aplanar permisos (solo acciones para JWT)
     const uniquePermisos = [...new Set(permisosEfectivos.map((p) => p.accion))];
@@ -68,13 +69,13 @@ export class AuthService {
 
     const modulosMap = new Map<
       string,
-      { nombre: string; permisos: typeof permisosUnicos }
+      { nombre: string; permisos: any[] }
     >();
     for (const p of permisosUnicos) {
       if (!p.esNavegable) continue;
       const grupo = modulosMap.get(p.modulo) || {
         nombre: p.modulo,
-        permisos: [],
+        permisos: [] as any[],
       };
       grupo.permisos.push(p);
       modulosMap.set(p.modulo, grupo);
