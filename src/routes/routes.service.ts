@@ -1,4 +1,4 @@
-﻿import {
+import {
 
   Injectable,
 
@@ -332,6 +332,10 @@ export class RoutesService {
 
                     monto: true,
 
+                    // BUG-13 FIX: incluir montoPagado para que el frontend pueda calcular
+                    // el exigible correcto descontando abonos parciales.
+                    montoPagado: true,
+
                     estado: true,
 
                     fechaVencimiento: true,
@@ -378,7 +382,6 @@ export class RoutesService {
 
 
 
-      const { endDate: hoyFin } = getBogotaStartEndOfDay(new Date());
       const { endDate: hoyFinUTC } = getBogotaStartEndOfDay(new Date());
       const hoyKey = getBogotaDayKey(new Date());
 
@@ -399,6 +402,18 @@ export class RoutesService {
             }
           }
           
+          // BUG-10 FIX: encontrar la cuota más antigua vencida (no necesariamente cuotas[0])
+          // para que proximaCuota.id y numeroCuota sean los de la cuota real exigible.
+          // DEFECTO-A FIX: fallback '9999-12-31' (no 0) para cuotas sin fechaVencimiento:
+          // new Date(0) = '1969-12-31' las ordenaría primero (como las más antiguas), lo cual
+          // las convertiría en 'proxima' incorrecto. Con '9999-12-31' van al final del sort.
+          const cuotasMasAntigua = [...p.cuotas].sort((a, b) => {
+            const ak = getBogotaDayKey(new Date(a.fechaVencimiento || '9999-12-31'));
+            const bk = getBogotaDayKey(new Date(b.fechaVencimiento || '9999-12-31'));
+            return String(ak).localeCompare(String(bk));
+          });
+          proxima = cuotasMasAntigua[0] || proxima;
+
           if (montoAcumulado > 0 && proxima) {
              proxima = { ...proxima, monto: montoAcumulado };
              if (esMoraAtrasada) {
@@ -1002,12 +1017,11 @@ export class RoutesService {
 
 
 
-            // Crear rango del día actual en UTC puro para compatibilidad con bd y agregados
-
-            const { startDate: dInicioUTC, endDate: dFinUTC } = getBogotaStartEndOfDay(new Date());
-
-             // Para pagos se requiere la hora de bogotá normal (getBogotaStartEndOfDay)
-             const { startDate: dInicioBogota, endDate: dFinBogota } = getBogotaStartEndOfDay(new Date());
+            // Rango del día actual en Bogotá (límites UTC ajustados a -05:00).
+            // Una sola llamada: startDate/endDate ya representan los límites del día bogotano en UTC.
+            const { startDate: dInicioBogota, endDate: dFinBogota } = getBogotaStartEndOfDay(new Date());
+            const dInicioUTC = dInicioBogota;
+            const dFinUTC = dFinBogota;
 
 
             if (pIds.length > 0) {
@@ -1518,8 +1532,10 @@ export class RoutesService {
           .filter((p) => p && p.eliminadoEn == null);
 
         const pIds = prestamosActivos.map(p => p.id);
+        // Una sola llamada: getBogotaStartEndOfDay devuelve límites del día bogotano en UTC.
         const { startDate: dInicioBogota, endDate: dFinBogota } = getBogotaStartEndOfDay(new Date());
-        const { startDate: dInicioUTC, endDate: dFinUTC } = getBogotaStartEndOfDay(new Date());
+        const dInicioUTC = dInicioBogota;
+        const dFinUTC = dFinBogota;
 
         if (pIds.length > 0) {
           const resAgregados = await Promise.all([
@@ -1690,8 +1706,9 @@ export class RoutesService {
 
       }
 
-      const { startDate: hoyInicio } = getBogotaStartEndOfDay(new Date());
-      const { endDate: hoyFinUTC } = getBogotaStartEndOfDay(new Date());
+      // BUG-01 FIX (instancia 3): una sola llamada con alias para hoyInicio y hoyFinUTC.
+      const { startDate: hoyInicio, endDate: hoyFinUTC } = getBogotaStartEndOfDay(new Date());
+
 
       const ultimoCierre = await this.prisma.transaccion.findFirst({
         where: {
@@ -1726,22 +1743,16 @@ export class RoutesService {
       for (const asig of ruta.asignaciones) {
          if (!asig.cliente || !asig.cliente.prestamos) continue;
          for (const p of asig.cliente.prestamos) {
+            // BUG-02 FIX: calcular monto acumulado sin mutar el objeto Prisma.
+            // El monto/estado se inyecta directamente al construir proximaCuota más abajo.
+            let _montoAcumuladoHoy = 0;
+            let _esMoraAtrasada = false;
             if (p.cuotas && p.cuotas.length > 0) {
-               let montoAcumulado = 0;
-               let esMoraAtrasada = false;
                for (const c of p.cuotas) {
-
                   const cuotaKey = getBogotaDayKey(new Date(c.fechaVencimiento));
-
                   if (c.fechaVencimiento && cuotaKey <= hoyKey2 && c.estado !== 'PAGADA') {
-                     montoAcumulado += Number(c.monto);
-                     if (cuotaKey < hoyKey2) esMoraAtrasada = true;
-                  }
-               }
-               if (montoAcumulado > 0) {
-                  p.cuotas[0].monto = new Prisma.Decimal(montoAcumulado);
-                  if (esMoraAtrasada) {
-                     p.cuotas[0].estado = 'VENCIDA' as any;
+                     _montoAcumuladoHoy += Number(c.monto);
+                     if (cuotaKey < hoyKey2) _esMoraAtrasada = true;
                   }
                }
             }
@@ -1775,12 +1786,13 @@ export class RoutesService {
                 : (extension?.nuevaFechaVencimiento ?? prox?.fechaVencimiento ?? null);
 
             (p as any).fechaEfectiva = fechaEfectiva;
+            // BUG-02 FIX: usar monto acumulado (sin mutar) y estado calculado localmente.
             (p as any).proximaCuota = prox
               ? {
                 id: prox.id,
                 numeroCuota: prox.numeroCuota,
-                monto: Number(prox.monto),
-                estado: prox.estado,
+                monto: _montoAcumuladoHoy > 0 ? _montoAcumuladoHoy : Number(prox.monto),
+                estado: (_esMoraAtrasada && _montoAcumuladoHoy > 0) ? 'VENCIDA' : prox.estado,
                 fechaVencimiento: prox.fechaVencimiento,
                 fechaVencimientoProrroga: prox.fechaVencimientoProrroga,
                 enProrroga: cuotaEnProrroga,
@@ -2420,16 +2432,17 @@ export class RoutesService {
         // Meta de hoy (nominal: una cuota por crédito activo/mora/pagado hoy)
         (async () => {
           const { startDate: hoyUTC } = getBogotaStartEndOfDay(new Date());
+          // BUG-07 FIX: usar _sum en vez de _max para reflejar la meta real (cuotas acumuladas).
           const result = await this.prisma.cuota.groupBy({
             by: ['prestamoId'],
             where: {
               fechaVencimiento: { lte: hoyUTC },
               prestamo: { estado: { in: ['ACTIVO', 'EN_MORA', 'PAGADO'] } },
-              estado: { in: ['PENDIENTE', 'PAGADA', 'PARCIAL', 'VENCIDA', 'PRORROGADA'] }
+              estado: { in: ['PENDIENTE', 'PARCIAL', 'VENCIDA', 'PRORROGADA'] }
             },
-            _max: { monto: true }
+            _sum: { monto: true }
           });
-          return result.reduce((sum, r) => sum + (Number(r._max.monto) || 0), 0);
+          return result.reduce((sum, r) => sum + (Number(r._sum.monto) || 0), 0);
         })(),
 
       ]);
@@ -3012,41 +3025,39 @@ export class RoutesService {
 
 
 
-      // Mover el cliente
-
-      await this.prisma.$transaction([
-
-        // Desactivar la asignación actual
-
-        this.prisma.asignacionRuta.update({
-
+      // BUG-15 FIX: Mover el cliente en una sola transacción que también actualiza el
+      // cobradorId en los préstamos activos. Sin esto, los pagos del nuevo cobrador
+      // no se reflejan correctamente en sus estadísticas de recaudo.
+      await this.prisma.$transaction(async (tx) => {
+        // 1. Desactivar la asignación actual
+        await tx.asignacionRuta.update({
           where: { id: asignacionActual.id },
-
           data: { activa: false },
+        });
 
-        }),
-
-        // Crear nueva asignación en la ruta destino
-
-        this.prisma.asignacionRuta.create({
-
+        // 2. Crear nueva asignación en la ruta destino
+        await tx.asignacionRuta.create({
           data: {
-
             rutaId: toRutaId,
-
             clienteId: clientId,
-
             cobradorId: rutaDestino.cobradorId,
-
             ordenVisita: (maxOrdenDestino._max.ordenVisita || 0) + 1,
-
             activa: true,
-
           },
+        });
 
-        }),
-
-      ]);
+        // 3. Actualizar cobradorId en préstamos activos/en mora del cliente
+        if (rutaDestino.cobradorId) {
+          await tx.prestamo.updateMany({
+            where: {
+              clienteId: clientId,
+              estado: { in: ['ACTIVO', 'EN_MORA'] },
+              eliminadoEn: null,
+            },
+            data: { cobradorId: rutaDestino.cobradorId },
+          });
+        }
+      });
 
 
 
