@@ -111,7 +111,7 @@ export async function generarExcelGastos(
   // Título principal
   worksheet.mergeCells('A1:I1');
   const titleCell = worksheet.getCell('A1');
-  titleCell.value = 'HISTORIAL DE GASTOS';
+  titleCell.value = 'HISTORIAL DE PAGOS Y GASTOS';
   titleCell.font = { bold: true, size: 16, color: { argb: C.AZUL_DARK }, name: 'Calibri' };
   titleCell.alignment = { horizontal: 'center' };
 
@@ -257,7 +257,7 @@ export async function generarPDFGastos(
     doc.fontSize(22).font('Helvetica-Bold').fillColor('#1A5F8A')
        .text('Créditos del Sur', 30, 25);
     doc.fontSize(9).font('Helvetica').fillColor('#F07A28')
-       .text('HISTORIAL DE GASTOS', 30, 52, { characterSpacing: 0.5 });
+       .text('HISTORIAL DE PAGOS Y GASTOS', 30, 52, { characterSpacing: 0.5 });
 
     // Bloque fecha (derecha)
     doc.roundedRect(W - 180, 20, 148, 44, 5)
@@ -275,17 +275,18 @@ export async function generarPDFGastos(
     const startX = (W - totalW) / 2;
 
     [
-      { label: 'TOTAL GASTOS',     val: totales.totalGastos,         color: AZUL_DARK, bg: '#D6E9F5' },
-      { label: 'OPERATIVOS',      val: totales.totalOperativos ?? 0, color: GRIS_TXT,  bg: '#F0F4F8' },
-      { label: 'PERSONALES',      val: totales.totalPersonales ?? 0, color: NAR_DARK,  bg: '#FDE8D5' },
-      { label: 'CANTIDAD',        val: totales.cantidadGastos,       color: GRIS_TXT,  bg: '#F0F4F8' },
+      { label: 'TOTAL GASTOS',     val: totales.totalGastos,         color: AZUL_DARK, bg: '#D6E9F5', fmt: 'money' },
+      { label: 'OPERATIVOS',      val: totales.totalOperativos ?? 0, color: GRIS_TXT,  bg: '#F0F4F8', fmt: 'money' },
+      { label: 'PERSONALES',      val: totales.totalPersonales ?? 0, color: NAR_DARK,  bg: '#FDE8D5', fmt: 'money' },
+      { label: 'CANTIDAD',        val: totales.cantidadGastos,       color: GRIS_TXT,  bg: '#F0F4F8', fmt: 'count' },
     ].forEach((m, i) => {
       const mx = startX + i * (metW + gap);
       doc.roundedRect(mx, metY, metW, 44, 6).fillAndStroke(m.bg, GRIS_CLR);
       doc.fontSize(7.5).font('Helvetica-Bold').fillColor(GRIS_MED)
          .text(m.label, mx, metY + 10, { width: metW, align: 'center' });
+      const displayVal = m.fmt === 'count' ? String(m.val) : fmtCOP(m.val);
       doc.fontSize(13).font('Helvetica-Bold').fillColor(m.color)
-         .text(fmtCOP(m.val), mx, metY + 23, { width: metW, align: 'center' });
+         .text(displayVal, mx, metY + 23, { width: metW, align: 'center' });
     });
 
     return metY + 58;
@@ -304,101 +305,143 @@ export async function generarPDFGastos(
     { label: 'Estado',       width: 55  },
   ];
   const tableLeft  = 28;
-  const rowHeight  = 20;
-  const maxRowsPerPage = 35;
+  const tableWidth = cols.reduce((s, c) => s + c.width, 0);
 
-  // ── Función para dibujar fila ───────────────────────────────────────────────
-  const drawRow = (row: GastoRow, y: number, isHeader: boolean = false) => {
+  const drawTableHeader = (y: number): number => {
+    doc.rect(tableLeft, y, tableWidth, 24).fill(AZUL_MED);
+    doc.rect(tableLeft, y + 24, tableWidth, 2).fill(NAR_MED);
+
     let x = tableLeft;
-    const bg = isHeader ? AZUL_MED : (filas.indexOf(row) % 2 === 0 ? '#F7FAFC' : BLANCO);
-    const textColor = isHeader ? BLANCO : GRIS_TXT;
-    const font = isHeader ? 'Helvetica-Bold' : 'Helvetica';
-    const fontSize = isHeader ? 8 : 7.5;
-
-    cols.forEach((col, i) => {
-      const cellWidth = col.width;
-      doc.rect(x, y, cellWidth, rowHeight).fill(bg);
-      if (!isHeader) {
-        doc.rect(x, y, cellWidth, rowHeight).stroke(GRIS_CLR);
-      }
-
-      doc.fontSize(fontSize).font(font).fillColor(textColor);
-      let text = '';
-      switch (col.label) {
-        case 'Fecha': text = fmtFecha(row.fecha); break;
-        case 'N° Gasto': text = row.numero.slice(-6); break;
-        case 'Cobrador': text = row.cobrador.slice(0, 12); break;
-        case 'Ruta': text = row.ruta.slice(0, 10); break;
-        case 'Tipo': text = row.tipo.slice(0, 8); break;
-        case 'Categoría': text = (row.categoria || '-').slice(0, 10); break;
-        case 'Descripción': text = row.descripcion.slice(0, 18); break;
-        case 'Monto': text = fmtCOP(row.monto); break;
-        case 'Estado': text = row.estado; break;
-        default: text = '';
-      }
-      doc.text(text, x + 4, y + rowHeight / 2 + 2, { width: cellWidth - 8, align: col.label === 'Monto' ? 'right' : 'left' });
-      x += cellWidth;
+    doc.fontSize(8).font('Helvetica-Bold').fillColor(BLANCO);
+    cols.forEach(col => {
+      doc.text(col.label, x + 4, y + 7, { width: col.width - 8, align: 'center' });
+      x += col.width;
     });
+    return y + 30;
   };
 
-  // ── Dibujar contenido ───────────────────────────────────────────────────────
+  // ── Pie de página ─────────────────────────────────────────────────────────
+  const drawFooter = () => {
+    const W = doc.page.width;
+    const H = doc.page.height;
+    doc.fontSize(7).font('Helvetica').fillColor(GRIS_MED);
+    doc.text(`Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`, 0, H - 25, { align: 'right', width: W - 30 });
+  };
+
+  // ── Primera página ────────────────────────────────────────────────────────
   drawWatermark();
-  const tableTop = drawPageHeader();
+  let y = drawPageHeader();
+  y     = drawTableHeader(y);
 
-  // Header de tabla
-  let x = tableLeft;
-  cols.forEach(col => {
-    doc.rect(x, tableTop, col.width, rowHeight).fill(AZUL_MED);
-    doc.fontSize(8).font('Helvetica-Bold').fillColor(BLANCO)
-       .text(col.label, x + 4, tableTop + rowHeight / 2 + 2, { width: col.width - 8, align: 'center' });
-    x += col.width;
-  });
+  doc.font('Helvetica').fontSize(7.5);
 
-  // Filas de datos
-  let currentY = tableTop + rowHeight;
-  let rowsOnPage = 0;
+  // ── Filas de datos ────────────────────────────────────────────────────────
+  filas.forEach((fila, i) => {
 
-  filas.forEach((row, index) => {
-    if (rowsOnPage >= maxRowsPerPage) {
+    let maxRowHeight = 17;
+    const rowVals = [
+      fmtFecha(fila.fecha),
+      fila.numero.slice(-6),
+      fila.cobrador,
+      fila.ruta,
+      fila.tipo,
+      fila.categoria || 'Sin categoría',
+      fila.descripcion,
+      fmtCOP(fila.monto),
+      fila.estado,
+    ];
+
+    doc.font('Helvetica').fontSize(7.5);
+    rowVals.forEach((val, ci) => {
+      const isBold = ci === 2 || ci === 7;
+      if (isBold) doc.font('Helvetica-Bold');
+      const h = doc.heightOfString(val, { width: cols[ci].width - 8, lineBreak: true });
+      if (h + 8 > maxRowHeight) maxRowHeight = h + 8;
+      doc.font('Helvetica');
+    });
+
+    // Nueva página si no hay espacio
+    if (y + maxRowHeight > doc.page.height - 70) {
+      drawFooter();
+      pageNumber++;
       doc.addPage();
       drawWatermark();
-      currentY = drawPageHeader();
-      
-      // Header en nueva página
-      x = tableLeft;
-      cols.forEach(col => {
-        doc.rect(x, currentY, col.width, rowHeight).fill(AZUL_MED);
-        doc.fontSize(8).font('Helvetica-Bold').fillColor(BLANCO)
-           .text(col.label, x + 4, currentY + rowHeight / 2 + 2, { width: col.width - 8, align: 'center' });
-        x += col.width;
-      });
-      currentY += rowHeight;
-      rowsOnPage = 0;
+      y = drawPageHeader();
+      y = drawTableHeader(y);
+      doc.font('Helvetica').fontSize(7.5);
     }
 
-    drawRow(row, currentY);
-    currentY += rowHeight;
-    rowsOnPage++;
-  });
+    // Fondo de fila alterno
+    const par = i % 2 === 0;
+    doc.rect(tableLeft, y, tableWidth, maxRowHeight).fill(par ? BLANCO : AZUL_PALE);
 
-  // Total al final
-  doc.rect(tableLeft, currentY, cols.reduce((sum, c) => sum + c.width, 0), rowHeight).fill(NAR_SOFT);
-  doc.fontSize(9).font('Helvetica-Bold').fillColor(NAR_DARK)
-     .text('TOTAL GASTOS:', tableLeft + 4, currentY + rowHeight / 2 + 2);
-  doc.fontSize(9).font('Helvetica-Bold').fillColor(NAR_DARK)
-     .text(fmtCOP(totales.totalGastos), tableLeft + cols.slice(0, 7).reduce((sum, c) => sum + c.width, 0) - 4, currentY + rowHeight / 2 + 2, { align: 'right' });
+    // Línea separadora
+    doc.moveTo(tableLeft, y + maxRowHeight)
+       .lineTo(tableLeft + tableWidth, y + maxRowHeight)
+       .strokeColor(GRIS_CLR).lineWidth(0.4).stroke();
 
-  doc.end();
+    let x = tableLeft;
+    rowVals.forEach((val, ci) => {
+      const isMoneyCol = ci === 7;
+      const align      = isMoneyCol ? 'right' : (ci === 4 || ci === 8 ? 'center' : 'left');
 
-  return new Promise((resolve) => {
-    doc.on('end', () => {
-      resolve({
-        data: Buffer.concat(buffers),
-        contentType: 'application/pdf',
-        filename: `gastos_${fecha}.pdf`,
-      });
+      if (ci === 7) {
+        doc.font('Helvetica-Bold').fillColor(NAR_DARK);
+      } else if (ci === 4) {
+        doc.font('Helvetica-Bold').fillColor(fila.tipo === 'OPERATIVO' ? AZUL_DARK : NAR_DARK);
+      } else if (ci === 2) {
+        doc.font('Helvetica-Bold').fillColor(AZUL_DARK);
+      } else if (ci === 8) {
+        doc.font('Helvetica').fillColor(GRIS_MED);
+      } else {
+        doc.font('Helvetica').fillColor(GRIS_TXT);
+      }
+
+      doc.text(val, x + 4, y + 4, { width: cols[ci].width - 8, align, lineBreak: true });
+      x += cols[ci].width;
     });
+
+    y += maxRowHeight;
   });
+
+  // ── Fila totales ──────────────────────────────────────────────────────────
+  y += 8;
+  doc.rect(tableLeft, y, tableWidth, 26).fill(AZUL_DARK);
+  doc.rect(tableLeft, y, tableWidth, 2).fill(NAR_MED);
+
+  doc.fontSize(8.5).font('Helvetica-Bold').fillColor(BLANCO);
+  doc.text(
+    `TOTAL GENERAL  /  ${totales.cantidadGastos} gastos`,
+    tableLeft + 6, y + 8,
+    { width: cols.slice(0, 7).reduce((s, c) => s + c.width, 0) - 10 }
+  );
+
+  let tx = tableLeft + cols.slice(0, 7).reduce((s, c) => s + c.width, 0);
+  doc.fillColor(NAR_MED).font('Helvetica-Bold').fontSize(9);
+  doc.text(fmtCOP(totales.totalGastos), tx + 4, y + 7,
+    { width: cols[7].width - 8, align: 'right', lineBreak: false });
+
+  // ── Nota al pie ───────────────────────────────────────────────────────────
+  y += 38;
+  doc.fontSize(7.5).font('Helvetica-Oblique').fillColor(GRIS_MED)
+     .text(
+       'Documento expedido por Créditos del Sur. Las cifras presentadas son definitivas y sujetas a revisión de auditoría.',
+       tableLeft, y, { align: 'center', width: tableWidth }
+     );
+
+  drawFooter();
+
+  const buffer = await new Promise<Buffer>((resolve, reject) => {
+    doc.on('end', () => resolve(Buffer.concat(buffers)));
+    doc.on('error', reject);
+    doc.end();
+  });
+
+  return {
+    data:        buffer,
+    contentType: 'application/pdf',
+    filename:    `gastos_${fecha}.pdf`,
+  };
 }
 
 // ─── Helper para logo ───────────────────────────────────────────────────────────
