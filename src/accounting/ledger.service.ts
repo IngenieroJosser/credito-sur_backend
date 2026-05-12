@@ -499,7 +499,7 @@ export class LedgerService {
       {
         referenceType: 'ARQUEO',
         referenceId:   params.arqueoId,
-        description:   `Desucre de arqueo — ${diferencia > 0 ? 'sobrante' : 'faltante'} de $${abs}`,
+        description:   `Descuadre de arqueo — ${diferencia > 0 ? 'sobrante' : 'faltante'} de $${abs}`,
         createdBy:     params.createdBy,
         lines,
       },

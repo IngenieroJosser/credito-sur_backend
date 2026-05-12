@@ -1960,7 +1960,7 @@ export class LoansService implements OnModuleInit {
         );
         interesTotal = amortizacion.interesTotal;
         cuotasData = amortizacion.tabla.map((cuota) => {
-          const fechaBase = createLoanDto.fechaPrimerCobro ? new Date(createLoanDto.fechaPrimerCobro) : fechaInicio;
+          const fechaBase = fechaPrimerCobroParsed || fechaInicio;
           const fechaVencimiento = this.calcularFechaVencimiento(fechaBase, cuota.numeroCuota, createLoanDto.frecuenciaPago);
           return {
             numeroCuota: cuota.numeroCuota,
@@ -1979,7 +1979,7 @@ export class LoansService implements OnModuleInit {
         const montoCapitalCuota = cantidadCuotas > 0 ? createLoanDto.monto / cantidadCuotas : 0;
         const montoInteresCuota = cantidadCuotas > 0 ? interesTotal / cantidadCuotas : 0;
         cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => {
-          const fechaBase = createLoanDto.fechaPrimerCobro ? new Date(createLoanDto.fechaPrimerCobro) : fechaInicio;
+          const fechaBase = fechaPrimerCobroParsed || fechaInicio;
           const fechaVencimiento = this.calcularFechaVencimiento(fechaBase, i + 1, createLoanDto.frecuenciaPago);
           return {
             numeroCuota: i + 1,

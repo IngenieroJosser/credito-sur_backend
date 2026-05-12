@@ -41,6 +41,7 @@ export class UsersController {
     RolUsuario.SUPERVISOR,
     RolUsuario.COBRADOR,
     RolUsuario.PUNTO_DE_VENTA,
+    RolUsuario.CONTADOR,
   )
   obtenerTodos() {
     return this.usersService.obtenerTodos();

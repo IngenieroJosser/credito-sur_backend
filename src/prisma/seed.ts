@@ -263,7 +263,7 @@ async function seedRolesYPermisos() {
     { modulo: 'Finanzas', accion: 'arqueo', nombre: 'Arqueo de Caja', descripcion: 'Cierre de caja', icono: 'Landmark', ruta: '/contable/cierre-caja', orden: 31, esNavegable: true },
     { modulo: 'Finanzas', accion: 'articulos', nombre: 'Art\u00edculos (Inventario)', descripcion: 'Inventario', icono: 'Package', ruta: '/articulos', orden: 32, esNavegable: true },
     { modulo: 'Finanzas', accion: 'reportes-financieros', nombre: 'Reportes Financieros', descripcion: 'Balances', icono: 'BarChart3', ruta: '/reportes/financieros', orden: 33, esNavegable: true },
-    { modulo: 'Finanzas', accion: 'pagos-historial', nombre: 'Historial de pagos', descripcion: 'Cobranza y pagos registrados', icono: 'Banknote', ruta: '/pagos/historial', orden: 34, esNavegable: true },
+    { modulo: 'Finanzas', accion: 'pagos-historial', nombre: 'Historial de Pagos y Gastos', descripcion: 'Cobranza, pagos y gastos registrados', icono: 'Banknote', ruta: '/pagos/historial', orden: 34, esNavegable: true },
 
     // Administraci\u00f3n
     { modulo: 'Administraci\u00f3n', accion: 'usuarios', nombre: 'Usuarios', descripcion: 'Gesti\u00f3n de usuarios', icono: 'User', ruta: '/admin/users', orden: 40, esNavegable: true },
@@ -286,6 +286,16 @@ async function seedRolesYPermisos() {
 
     // Solicitudes
     { modulo: 'Cobranza', accion: 'solicitudes', nombre: 'Solicitudes', descripcion: 'Solicitudes pendientes', icono: 'ClipboardList', ruta: '/cobranzas/solicitudes', orden: 72, esNavegable: true },
+
+    // ── Permisos granulares (verificados por ProtectedPage en el frontend) ──
+    // Estos NO son navegables (no generan ítems de sidebar) pero son
+    // requeridos por <ProtectedPage permiso="..."> para acceso a páginas.
+    { modulo: 'Contable', accion: 'CONTABLE_VIEW', nombre: 'Ver Módulo Contable', descripcion: 'Permite acceder al módulo contable y financiero.', icono: 'Calculator', ruta: '/contable', orden: 30, esNavegable: false },
+    { modulo: 'CuentasVencidas', accion: 'CUENTAS_VENCIDAS_VIEW', nombre: 'Ver Cuentas Vencidas', descripcion: 'Permite acceder al módulo de cuentas vencidas.', icono: 'FileX2', ruta: '/cuentas-vencidas', orden: 22, esNavegable: false },
+    { modulo: 'Articulos', accion: 'ARTICULOS_VIEW', nombre: 'Ver Artículos', descripcion: 'Permite acceder al catálogo de artículos e inventario.', icono: 'Package', ruta: '/articulos', orden: 32, esNavegable: false },
+    { modulo: 'Reportes', accion: 'REPORTES_FINANCIEROS_VIEW', nombre: 'Ver Reportes Financieros', descripcion: 'Permite acceder a reportes financieros.', icono: 'BarChart3', ruta: '/reportes/financieros', orden: 33, esNavegable: false },
+    { modulo: 'CreditosArticulos', accion: 'CREDITOS_ARTICULOS_VIEW', nombre: 'Ver Créditos de Artículos', descripcion: 'Permite acceder al módulo de créditos de artículos.', icono: 'ShoppingBag', ruta: '/creditos-articulos', orden: 15, esNavegable: false },
+    { modulo: 'Auditoria', accion: 'AUDIT_VIEW', nombre: 'Ver Auditoría', descripcion: 'Permite acceder al módulo de auditoría.', icono: 'FileText', ruta: '/admin/auditoria', orden: 41, esNavegable: false },
   ];
 
   // Upsert Permisos
@@ -318,7 +328,10 @@ async function seedRolesYPermisos() {
         'clientes', 'cuentas-mora', 'cuentas-vencidas', 'archivados',
         'contable', 'arqueo', 'articulos', 'reportes-financieros', 'pagos-historial',
         'auditoria',
-        'reportes-operativos'
+        'reportes-operativos',
+        // Granulares (ProtectedPage)
+        'CONTABLE_VIEW', 'CUENTAS_VENCIDAS_VIEW', 'ARTICULOS_VIEW',
+        'REPORTES_FINANCIEROS_VIEW', 'AUDIT_VIEW',
       ]
     },
     {
@@ -332,7 +345,9 @@ async function seedRolesYPermisos() {
         'clientes', 'cuentas-mora', 'cuentas-vencidas', 'archivados',
         'articulos',
         'pagos-historial',
-        'reportes-operativos'
+        'reportes-operativos',
+        // Granulares (ProtectedPage)
+        'CUENTAS_VENCIDAS_VIEW', 'ARTICULOS_VIEW',
       ]
     },
     {
@@ -345,7 +360,9 @@ async function seedRolesYPermisos() {
         'rutas',
         'clientes', 'cuentas-mora',
         'creditos-articulos',
-        'reportes-operativos'
+        'reportes-operativos',
+        // Granulares (ProtectedPage)
+        'CREDITOS_ARTICULOS_VIEW',
       ]
     },
     {
@@ -367,7 +384,9 @@ async function seedRolesYPermisos() {
       permisos: [
         'dashboard',
         'cuentas-mora', 'cuentas-vencidas',
-        'contable', 'arqueo', 'articulos', 'reportes-financieros', 'pagos-historial'
+        'contable', 'arqueo', 'articulos', 'reportes-financieros', 'pagos-historial',
+        // Granulares (ProtectedPage)
+        'CONTABLE_VIEW', 'CUENTAS_VENCIDAS_VIEW', 'ARTICULOS_VIEW', 'REPORTES_FINANCIEROS_VIEW',
       ]
     },
     {
@@ -379,7 +398,9 @@ async function seedRolesYPermisos() {
         'dashboard',
         'creditos-articulos',
         'articulos',
-        'clientes'
+        'clientes',
+        // Granulares (ProtectedPage)
+        'CREDITOS_ARTICULOS_VIEW', 'ARTICULOS_VIEW',
       ]
     }
   ];

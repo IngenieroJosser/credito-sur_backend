@@ -299,6 +299,26 @@ export class AccountingController {
     });
   }
 
+  @Get('gastos/export')
+  @Roles(
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.CONTADOR,
+  )
+  async exportGastos(
+    @Query('format') format: 'excel' | 'pdf',
+    @Res() res: Response,
+    @Query('rutaId') rutaId?: string,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
+  ) {
+    const result = await this.accountingService.exportGastos(format, { rutaId, fechaInicio, fechaFin });
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.send(result.data);
+  }
+
   @Post('gastos')
   @Roles(
     RolUsuario.COBRADOR,

@@ -12,6 +12,7 @@ import { NotificacionesService } from '../notificaciones/notificaciones.service'
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { calculateDateRange, formatBogotaOffsetIso, getBogotaDayKey, getBogotaStartEndOfDay, getBogotaStartEndOfDayFromKey } from '../utils/date-utils';
 import { generarExcelContable, generarPDFContable, CajaRow, TransaccionRow } from '../templates/exports/reporte-contable.template';
+import { generarExcelGastos, generarPDFGastos, GastoRow, GastosTotales } from '../templates/exports/gastos-export.template';
 import { LedgerService, ReferenceTypeContable } from './ledger.service';
 
 @Injectable()
@@ -2501,9 +2502,9 @@ export class AccountingService {
         const deudaPorFaltantes = clientesFaltantes > 0
           ? Math.max(Number(meta || 0) - Number(recaudo || 0), 0)
           : 0;
-        // Regla de negocio: saldoAlCierre (efectivo pendiente por recolectar) no es descuadre.
-        // Solo se considera descuadre cuando faltaron clientes/efectivo vs meta.
-        const descuadre = deudaPorFaltantes > 0;
+        // Regla de negocio: saldoAlCierre (efectivo en caja de ruta) es dinero del cobrador
+        // que aún no ha entregado. Se considera descuadre/deuda pendiente.
+        const descuadre = deudaPorFaltantes > 0 || saldoAlCierre > 0;
         return {
           id: t.id,
           fecha: formatBogotaOffsetIso(t.fechaTransaccion),
@@ -2773,6 +2774,7 @@ export class AccountingService {
           cobrador: { select: { nombres: true, apellidos: true } },
           ruta: { select: { nombre: true } },
           caja: { select: { nombre: true } },
+          categoria: { select: { nombre: true } },
         },
         orderBy: { fechaGasto: 'desc' },
       }),
@@ -2787,9 +2789,11 @@ export class AccountingService {
         tipo: g.tipoGasto,
         monto: Number(g.monto),
         descripcion: g.descripcion,
+        cobradorId: g.cobradorId,
         cobrador: `${g.cobrador.nombres} ${g.cobrador.apellidos}`,
         ruta: g.ruta?.nombre || 'Sin ruta',
         caja: g.caja.nombre,
+        categoria: (g as any).categoria?.nombre || null,
         estado: g.estadoAprobacion,
       })),
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
@@ -2895,6 +2899,62 @@ export class AccountingService {
     throw new Error(`Formato no soportado: ${format}`);
   }
 
+  async exportGastos(
+    format: 'excel' | 'pdf',
+    filters: { rutaId?: string; fechaInicio?: string; fechaFin?: string },
+  ): Promise<{ data: Buffer; contentType: string; filename: string }> {
+    const where: any = {};
+    if (filters.rutaId) where.rutaId = filters.rutaId;
+    if (filters.fechaInicio || filters.fechaFin) {
+      where.fechaGasto = {};
+      if (filters.fechaInicio) {
+        const startKey = getBogotaDayKey(new Date(filters.fechaInicio));
+        where.fechaGasto.gte = getBogotaStartEndOfDayFromKey(startKey).startDate;
+      }
+      if (filters.fechaFin) {
+        const endKey = getBogotaDayKey(new Date(filters.fechaFin));
+        where.fechaGasto.lte = getBogotaStartEndOfDayFromKey(endKey).endDate;
+      }
+    }
+
+    const gastos = await this.prisma.gasto.findMany({
+      where,
+      include: {
+        cobrador: { select: { nombres: true, apellidos: true } },
+        ruta: { select: { nombre: true } },
+        categoria: { select: { nombre: true } },
+      },
+      orderBy: { fechaGasto: 'desc' },
+      take: 5000,
+    });
+
+    const filasGastos: GastoRow[] = gastos.map((g) => ({
+      numero: g.numeroGasto,
+      fecha: formatBogotaOffsetIso(g.fechaGasto),
+      cobrador: `${g.cobrador.nombres} ${g.cobrador.apellidos}`,
+      ruta: g.ruta?.nombre || 'Sin ruta',
+      tipo: g.tipoGasto,
+      categoria: (g as any).categoria?.nombre || null,
+      descripcion: g.descripcion,
+      monto: Number(g.monto),
+      estado: g.estadoAprobacion,
+    }));
+
+    const totales: GastosTotales = {
+      totalGastos: filasGastos.reduce((sum, g) => sum + g.monto, 0),
+      cantidadGastos: filasGastos.length,
+      totalOperativos: filasGastos.filter(g => g.tipo === 'OPERATIVO').reduce((sum, g) => sum + g.monto, 0),
+      totalPersonales: filasGastos.filter(g => g.tipo === 'PERSONAL').reduce((sum, g) => sum + g.monto, 0),
+    };
+
+    const fecha = getBogotaDayKey(new Date());
+
+    if (format === 'excel') return generarExcelGastos(filasGastos, totales, fecha);
+    if (format === 'pdf') return generarPDFGastos(filasGastos, totales, fecha);
+
+    throw new Error(`Formato no soportado: ${format}`);
+  }
+
   /**
    * =====================================================
    * DEUDAS DE COBRADORES
@@ -2922,34 +2982,28 @@ export class AccountingService {
       orderBy: { journalEntry: { createdAt: 'desc' } },
     });
 
-    if (debtLines.length === 0) return [];
-
-    const arqueoReferenceIds = [
-      ...new Set(
-        debtLines
-          .filter((line: any) => line.journalEntry?.referenceType === 'ARQUEO')
-          .map((line: any) => line.journalEntry?.referenceId)
-          .filter(Boolean),
-      ),
-    ];
-
-    const arqueoTransacciones = arqueoReferenceIds.length
-      ? await this.prisma.transaccion.findMany({
-          where: { id: { in: arqueoReferenceIds } },
+    // También buscar deudas registradas directamente en Transaccion (cierre de ruta vía gateway)
+    // Incluye CIERRE_RUTA para capturar cierres previos que no generaron DEUDA_COBRADOR
+    const deudaTransacciones = await this.prisma.transaccion.findMany({
+      where: { tipoReferencia: { in: ['DEUDA_COBRADOR', 'ABONO_DEUDA', 'CIERRE_RUTA'] } },
+      select: {
+        id: true,
+        cajaId: true,
+        monto: true,
+        descripcion: true,
+        tipoReferencia: true,
+        referenciaId: true,
+        fechaTransaccion: true,
+        tipo: true,
+        caja: {
           select: {
-            id: true,
-            cajaId: true,
-            descripcion: true,
-            caja: {
-              select: {
-                ruta: { select: { cobradorId: true } },
-              },
-            },
+            ruta: { select: { cobradorId: true } },
           },
-        })
-      : [];
+        },
+      },
+      orderBy: { fechaTransaccion: 'desc' },
+    });
 
-    const transaccionMap = new Map(arqueoTransacciones.map((t: any) => [t.id, t]));
     const deudaMap = new Map<string, { descuadres: number; gastosPersonales: number; totalEventos: number }>();
     const eventosMap = new Map<
       string,
@@ -2962,28 +3016,137 @@ export class AccountingService {
       return prev;
     };
 
-    for (const line of debtLines as any[]) {
-      const entry = line.journalEntry;
-      if (!entry) continue;
+    // 1. Procesar líneas del ledger (flujo contable normal)
+    if (debtLines.length > 0) {
+      const arqueoReferenceIds = [
+        ...new Set(
+          debtLines
+            .filter((line: any) => line.journalEntry?.referenceType === 'ARQUEO')
+            .map((line: any) => line.journalEntry?.referenceId)
+            .filter(Boolean),
+        ),
+      ];
 
+      const arqueoTransacciones = arqueoReferenceIds.length
+        ? await this.prisma.transaccion.findMany({
+            where: { id: { in: arqueoReferenceIds } },
+            select: {
+              id: true,
+              cajaId: true,
+              descripcion: true,
+              caja: {
+                select: {
+                  ruta: { select: { cobradorId: true } },
+                },
+              },
+            },
+          })
+        : [];
+
+      const transaccionMap = new Map(arqueoTransacciones.map((t: any) => [t.id, t]));
+
+      for (const line of debtLines as any[]) {
+        const entry = line.journalEntry;
+        if (!entry) continue;
+
+        let cobradorId: string | null = null;
+        let cajaId = '';
+        let descripcion = entry.description || '';
+
+        if (entry.referenceType === 'ABONO_DEUDA') {
+          cobradorId = String(entry.referenceId || '').split('|')[0] || null;
+        } else if (entry.referenceType === 'ARQUEO') {
+          const trx: any = transaccionMap.get(entry.referenceId);
+          cobradorId = trx?.caja?.ruta?.cobradorId || null;
+          cajaId = trx?.cajaId || '';
+          descripcion = descripcion || trx?.descripcion || '';
+        }
+
+        if (!cobradorId) continue;
+
+        const debit = Number(line.debitAmount || 0);
+        const credit = Number(line.creditAmount || 0);
+        const delta = debit - credit;
+        const prev = ensureDebt(cobradorId);
+        prev.descuadres += delta;
+        prev.totalEventos += 1;
+        deudaMap.set(cobradorId, prev);
+
+        const arr = eventosMap.get(cobradorId) || [];
+        arr.push({
+          id: entry.id,
+          tipoReferencia: String(entry.referenceType),
+          monto: Math.abs(delta),
+          fecha: entry.createdAt,
+          cajaId,
+          referenciaId: entry.referenceId,
+          descripcion,
+        });
+        eventosMap.set(cobradorId, arr);
+      }
+    }
+
+    // 2. Procesar transacciones directas de DEUDA_COBRADOR / ABONO_DEUDA / CIERRE_RUTA
+    // Solo contar las que NO tienen entrada correspondiente en el ledger (evitar doble conteo)
+    const ledgerRefIds = new Set(
+      debtLines
+        .filter((line: any) =>
+          line.journalEntry?.referenceType === 'DEUDA_COBRADOR' ||
+          line.journalEntry?.referenceType === 'ABONO_DEUDA'
+        )
+        .map((line: any) => line.journalEntry?.referenceId)
+        .filter(Boolean),
+    );
+
+    // Track which CIERRE_RUTA ids already have a corresponding DEUDA_COBRADOR (avoid double count)
+    const cierreIdsConDeuda = new Set(
+      deudaTransacciones
+        .filter((t: any) => String(t.tipoReferencia) === 'DEUDA_COBRADOR' && t.referenciaId)
+        .map((t: any) => {
+          // Extraer el referenciaId del cierre del campo DD del DEUDA_COBRADOR
+          const match = String(t.referenciaId || '').match(/DD:\d+\|SD:\d+\|FD:\d+\|(.+)/);
+          return match ? match[1] : null;
+        })
+        .filter(Boolean),
+    );
+
+    for (const trx of deudaTransacciones) {
+      const tipoRef = String(trx.tipoReferencia);
+      const isAbono = tipoRef === 'ABONO_DEUDA';
+      const isCierreRuta = tipoRef === 'CIERRE_RUTA';
       let cobradorId: string | null = null;
-      let cajaId = '';
-      let descripcion = entry.description || '';
+      let montoDeuda = 0;
 
-      if (entry.referenceType === 'ABONO_DEUDA') {
-        cobradorId = String(entry.referenceId || '').split('|')[0] || null;
-      } else if (entry.referenceType === 'ARQUEO') {
-        const trx: any = transaccionMap.get(entry.referenceId);
-        cobradorId = trx?.caja?.ruta?.cobradorId || null;
-        cajaId = trx?.cajaId || '';
-        descripcion = descripcion || trx?.descripcion || '';
+      if (isAbono) {
+        // ABONO_DEUDA: referenciaId = "cobradorId|nombre"
+        cobradorId = String(trx.referenciaId || '').split('|')[0] || null;
+      } else if (isCierreRuta) {
+        // CIERRE_RUTA: obtener cobradorId desde la caja/ruta
+        cobradorId = (trx as any)?.caja?.ruta?.cobradorId || null;
+        // Extraer saldo al cierre del referenciaId (formato: RC:x|MT:x|EF:x|CF:x|CO:x|SD:xxx)
+        if (cobradorId && trx.referenciaId) {
+          const sdMatch = String(trx.referenciaId).match(/SD:(\d+)/);
+          const saldoAlCierre = sdMatch ? Number(sdMatch[1]) : 0;
+          // Solo registrar como deuda si hay saldo pendiente y NO hay DEUDA_COBRADOR ya registrada
+          if (saldoAlCierre > 0 && !cierreIdsConDeuda.has(trx.referenciaId)) {
+            montoDeuda = saldoAlCierre;
+          }
+        }
+      } else {
+        // DEUDA_COBRADOR: obtener cobradorId desde la caja/ruta
+        cobradorId = (trx as any)?.caja?.ruta?.cobradorId || null;
       }
 
       if (!cobradorId) continue;
 
-      const debit = Number(line.debitAmount || 0);
-      const credit = Number(line.creditAmount || 0);
-      const delta = debit - credit;
+      // Si ya existe en el ledger con el mismo referenciaId, no contar dos veces
+      if (trx.referenciaId && ledgerRefIds.has(trx.referenciaId)) continue;
+
+      const monto = isCierreRuta ? montoDeuda : Number(trx.monto || 0);
+      if (monto <= 0 && !isAbono) continue;
+      if (isCierreRuta && montoDeuda <= 0) continue;
+
+      const delta = isAbono ? -monto : monto;
       const prev = ensureDebt(cobradorId);
       prev.descuadres += delta;
       prev.totalEventos += 1;
@@ -2991,13 +3154,13 @@ export class AccountingService {
 
       const arr = eventosMap.get(cobradorId) || [];
       arr.push({
-        id: entry.id,
-        tipoReferencia: String(entry.referenceType),
+        id: trx.id,
+        tipoReferencia: tipoRef,
         monto: Math.abs(delta),
-        fecha: entry.createdAt,
-        cajaId,
-        referenciaId: entry.referenceId,
-        descripcion,
+        fecha: trx.fechaTransaccion,
+        cajaId: trx.cajaId || '',
+        referenciaId: trx.referenciaId,
+        descripcion: trx.descripcion || '',
       });
       eventosMap.set(cobradorId, arr);
     }
