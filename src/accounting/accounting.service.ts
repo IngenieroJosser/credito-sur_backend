@@ -12,7 +12,7 @@ import { NotificacionesService } from '../notificaciones/notificaciones.service'
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { calculateDateRange, formatBogotaOffsetIso, getBogotaDayKey, getBogotaStartEndOfDay, getBogotaStartEndOfDayFromKey } from '../utils/date-utils';
 import { generarExcelContable, generarPDFContable, CajaRow, TransaccionRow } from '../templates/exports/reporte-contable.template';
-import { generarExcelGastos, generarPDFGastos, GastoRow } from '../templates/exports/gastos-export.template';
+import { generarExcelGastos, generarPDFGastos, GastoRow, GastosTotales } from '../templates/exports/gastos-export.template';
 import { LedgerService, ReferenceTypeContable } from './ledger.service';
 
 @Injectable()
@@ -2940,10 +2940,17 @@ export class AccountingService {
       estado: g.estadoAprobacion,
     }));
 
+    const totales: GastosTotales = {
+      totalGastos: filasGastos.reduce((sum, g) => sum + g.monto, 0),
+      cantidadGastos: filasGastos.length,
+      totalOperativos: filasGastos.filter(g => g.tipo === 'OPERATIVO').reduce((sum, g) => sum + g.monto, 0),
+      totalPersonales: filasGastos.filter(g => g.tipo === 'PERSONAL').reduce((sum, g) => sum + g.monto, 0),
+    };
+
     const fecha = getBogotaDayKey(new Date());
 
-    if (format === 'excel') return generarExcelGastos(filasGastos, fecha);
-    if (format === 'pdf') return generarPDFGastos(filasGastos, fecha);
+    if (format === 'excel') return generarExcelGastos(filasGastos, totales, fecha);
+    if (format === 'pdf') return generarPDFGastos(filasGastos, totales, fecha);
 
     throw new Error(`Formato no soportado: ${format}`);
   }
