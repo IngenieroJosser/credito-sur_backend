@@ -12,6 +12,7 @@ import { NotificacionesService } from '../notificaciones/notificaciones.service'
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { calculateDateRange, formatBogotaOffsetIso, getBogotaDayKey, getBogotaStartEndOfDay, getBogotaStartEndOfDayFromKey } from '../utils/date-utils';
 import { generarExcelContable, generarPDFContable, CajaRow, TransaccionRow } from '../templates/exports/reporte-contable.template';
+import { generarExcelGastos, generarPDFGastos, GastoRow } from '../templates/exports/gastos-export.template';
 import { LedgerService, ReferenceTypeContable } from './ledger.service';
 
 @Injectable()
@@ -2894,6 +2895,55 @@ export class AccountingService {
 
     if (format === 'excel') return generarExcelContable(filasCjas, filasTransacciones, fecha);
     if (format === 'pdf') return generarPDFContable(filasCjas, filasTransacciones, fecha);
+
+    throw new Error(`Formato no soportado: ${format}`);
+  }
+
+  async exportGastos(
+    format: 'excel' | 'pdf',
+    filters: { rutaId?: string; fechaInicio?: string; fechaFin?: string },
+  ): Promise<{ data: Buffer; contentType: string; filename: string }> {
+    const where: any = {};
+    if (filters.rutaId) where.rutaId = filters.rutaId;
+    if (filters.fechaInicio || filters.fechaFin) {
+      where.fechaGasto = {};
+      if (filters.fechaInicio) {
+        const startKey = getBogotaDayKey(new Date(filters.fechaInicio));
+        where.fechaGasto.gte = getBogotaStartEndOfDayFromKey(startKey).startDate;
+      }
+      if (filters.fechaFin) {
+        const endKey = getBogotaDayKey(new Date(filters.fechaFin));
+        where.fechaGasto.lte = getBogotaStartEndOfDayFromKey(endKey).endDate;
+      }
+    }
+
+    const gastos = await this.prisma.gasto.findMany({
+      where,
+      include: {
+        cobrador: { select: { nombres: true, apellidos: true } },
+        ruta: { select: { nombre: true } },
+        categoria: { select: { nombre: true } },
+      },
+      orderBy: { fechaGasto: 'desc' },
+      take: 5000,
+    });
+
+    const filasGastos: GastoRow[] = gastos.map((g) => ({
+      numero: g.numeroGasto,
+      fecha: formatBogotaOffsetIso(g.fechaGasto),
+      cobrador: `${g.cobrador.nombres} ${g.cobrador.apellidos}`,
+      ruta: g.ruta?.nombre || 'Sin ruta',
+      tipo: g.tipoGasto,
+      categoria: (g as any).categoria?.nombre || null,
+      descripcion: g.descripcion,
+      monto: Number(g.monto),
+      estado: g.estadoAprobacion,
+    }));
+
+    const fecha = getBogotaDayKey(new Date());
+
+    if (format === 'excel') return generarExcelGastos(filasGastos, fecha);
+    if (format === 'pdf') return generarPDFGastos(filasGastos, fecha);
 
     throw new Error(`Formato no soportado: ${format}`);
   }
