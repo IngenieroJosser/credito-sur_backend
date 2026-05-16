@@ -24,6 +24,7 @@ import { PushModule } from './push/push.module';
 import { ConfiguracionModule } from './configuracion/configuracion.module';
 import { SyncConflictsModule } from './sync-conflicts/sync-conflicts.module';
 import { MirrorSyncModule } from './mirror-sync/mirror-sync.module';
+import { OutboxModule } from './outbox/outbox.module';
 import { BullModule } from '@nestjs/bullmq';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 
@@ -61,6 +62,7 @@ const shouldEnableMirrorSync =
     ConfiguracionModule,
     SyncConflictsModule,
     IntegrityModule,
+    OutboxModule,
     EventEmitterModule.forRoot(),
     ...(shouldEnableMirrorSync
       ? [
