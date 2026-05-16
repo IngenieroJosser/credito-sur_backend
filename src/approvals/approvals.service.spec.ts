@@ -58,7 +58,7 @@ function buildPrismaMock() {
       update: jest.fn().mockResolvedValue({}),
     },
     journalEntry: { findFirst: jest.fn().mockResolvedValue(null) },
-    usuario: { findFirst: jest.fn() },
+    usuario: { findFirst: jest.fn(), findUnique: jest.fn().mockResolvedValue(null) },
     multimedia: {
       findFirst: jest.fn().mockResolvedValue(null),
       update: jest.fn().mockResolvedValue({}),
@@ -96,6 +96,9 @@ function buildPrismaMock() {
     },
     pago: { count: jest.fn().mockResolvedValue(0) },
     asignacionRuta: { findFirst: jest.fn().mockResolvedValue(null) },
+    cliente: { update: jest.fn().mockResolvedValue({}) },
+    producto: { update: jest.fn().mockResolvedValue({}) },
+    usuario: { findUnique: jest.fn().mockResolvedValue(null) },
     notificacion: { create: jest.fn().mockResolvedValue({}) },
     $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
     _tx: tx,
@@ -305,6 +308,28 @@ describe('ApprovalsService financial ledger controls', () => {
 
     expect(prisma._tx.transaccion.create).not.toHaveBeenCalled();
     expect(mockLedger.registrarAsiento).not.toHaveBeenCalled();
+  });
+
+  it('no ejecuta un rechazo si otro usuario ya tomó la aprobación primero', async () => {
+    const prisma = buildPrismaMock();
+    prisma.aprobacion.findUnique.mockResolvedValue({
+      id: 'approval-1',
+      tipoAprobacion: 'GASTO',
+      referenciaId: 'gasto-1',
+      tablaReferencia: 'gastos',
+      solicitadoPorId: 'cobrador-1',
+      estado: 'PENDIENTE',
+      datosSolicitud: { descripcion: 'Transporte' },
+    });
+    prisma.aprobacion.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      makeService(prisma).rejectItem('approval-1', 'GASTO' as any, 'admin-1', 'Duplicado'),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(prisma.aprobacion.update).not.toHaveBeenCalled();
+    expect(mockNotifications.create).not.toHaveBeenCalled();
+    expect(mockGateway.broadcastAprobacionesActualizadas).not.toHaveBeenCalled();
   });
 
   it('registra venta de artículo separando ingreso, costo, inventario y cuota inicial', async () => {
