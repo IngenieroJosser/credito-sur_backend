@@ -694,8 +694,11 @@ export class ApprovalsService {
       throw new BadRequestException(`Esta solicitud ya fue procesada (estado: ${approval.estado})`);
     }
 
-    await this.prisma.aprobacion.update({
-      where: { id },
+    const claimed = await this.prisma.aprobacion.updateMany({
+      where: {
+        id,
+        estado: EstadoAprobacion.PENDIENTE,
+      },
       data: {
         estado: EstadoAprobacion.RECHAZADO,
         aprobadoPorId: rechazadoPorId || undefined,
@@ -703,6 +706,10 @@ export class ApprovalsService {
         revisadoEn: new Date(),
       },
     });
+
+    if (claimed.count !== 1) {
+      throw new BadRequestException('Esta solicitud ya fue tomada por otro usuario');
+    }
 
     if (approval.tipoAprobacion === TipoAprobacion.PRORROGA_PAGO) {
       try {

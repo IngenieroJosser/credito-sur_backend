@@ -3689,20 +3689,27 @@ export class LoansService implements OnModuleInit {
 
     const datos = aprobacion.datosSolicitud as Record<string, any>;
 
-    // Aplicar la nueva fecha a la cuota
-    await this.prisma.cuota.update({
-      where: { id: datos.cuotaId || aprobacion.referenciaId },
-      data: { fechaVencimiento: new Date(datos.nuevaFecha.includes('T') ? datos.nuevaFecha : datos.nuevaFecha + 'T12:00:00.000Z') },
-    });
+    await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.aprobacion.updateMany({
+        where: {
+          id: aprobacionId,
+          estado: EstadoAprobacion.PENDIENTE,
+        },
+        data: {
+          estado: EstadoAprobacion.APROBADO,
+          aprobadoPorId,
+          revisadoEn: new Date(),
+        },
+      });
 
-    // Actualizar estado de la aprobación
-    await this.prisma.aprobacion.update({
-      where: { id: aprobacionId },
-      data: {
-        estado: EstadoAprobacion.APROBADO,
-        aprobadoPorId,
-        revisadoEn: new Date(),
-      },
+      if (claimed.count !== 1) {
+        throw new BadRequestException('Esta solicitud ya fue tomada por otro usuario');
+      }
+
+      await tx.cuota.update({
+        where: { id: datos.cuotaId || aprobacion.referenciaId },
+        data: { fechaVencimiento: new Date(datos.nuevaFecha.includes('T') ? datos.nuevaFecha : datos.nuevaFecha + 'T12:00:00.000Z') },
+      });
     });
 
     // Notificar al cobrador que solicitó
@@ -3736,8 +3743,11 @@ export class LoansService implements OnModuleInit {
 
     const datos = aprobacion.datosSolicitud as Record<string, any>;
 
-    await this.prisma.aprobacion.update({
-      where: { id: aprobacionId },
+    const claimed = await this.prisma.aprobacion.updateMany({
+      where: {
+        id: aprobacionId,
+        estado: EstadoAprobacion.PENDIENTE,
+      },
       data: {
         estado: EstadoAprobacion.RECHAZADO,
         aprobadoPorId: rechazadoPorId,
@@ -3745,6 +3755,10 @@ export class LoansService implements OnModuleInit {
         comentarios: comentarios || null,
       },
     });
+
+    if (claimed.count !== 1) {
+      throw new BadRequestException('Esta solicitud ya fue tomada por otro usuario');
+    }
 
     // Notificar al cobrador
     await this.notificacionesService.create({

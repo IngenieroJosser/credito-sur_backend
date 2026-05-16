@@ -1,5 +1,5 @@
-import { ConflictException } from '@nestjs/common';
-import { RolUsuario, TipoTransaccion } from '@prisma/client';
+import { BadRequestException, ConflictException } from '@nestjs/common';
+import { EstadoAprobacion, RolUsuario, TipoTransaccion } from '@prisma/client';
 import { LoansService } from './loans.service';
 
 const mockNotifications = {
@@ -12,6 +12,7 @@ const mockGateway = {
   broadcastPrestamosActualizados: jest.fn(),
   broadcastDashboardsActualizados: jest.fn(),
   broadcastRutasActualizadas: jest.fn(),
+  broadcastAprobacionesActualizadas: jest.fn(),
 };
 const mockConfig = { shouldAutoApproveCredits: jest.fn().mockResolvedValue(true) };
 const mockLedger = {
@@ -317,6 +318,66 @@ describe('LoansService accounting impact for approved loans', () => {
     expect(service.generarNumeroPrestamo('ARTICULO')).toMatch(/^ART-\d+-[0-9a-f-]{8}$/);
     expect(service.generarNumeroPrestamo('EFECTIVO')).toMatch(/^PRES-\d+-[0-9a-f-]{8}$/);
     expect(prisma.prestamo.count).not.toHaveBeenCalled();
+  });
+});
+
+describe('LoansService reprogramacion concurrency controls', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  const makeReprogramacionPrisma = () => ({
+    aprobacion: {
+      findUnique: jest.fn().mockResolvedValue({
+        id: 'aprobacion-1',
+        estado: EstadoAprobacion.PENDIENTE,
+        solicitadoPorId: 'cobrador-1',
+        referenciaId: 'cuota-1',
+        datosSolicitud: {
+          cuotaId: 'cuota-1',
+          clienteNombre: 'Ana Rojas',
+          nuevaFecha: '2026-05-20',
+        },
+      }),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      update: jest.fn().mockResolvedValue({}),
+    },
+    cuota: {
+      update: jest.fn().mockResolvedValue({}),
+    },
+    $transaction: jest.fn().mockImplementation((cb: any) =>
+      cb({
+        aprobacion: {
+          updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
+        cuota: {
+          update: jest.fn().mockResolvedValue({}),
+        },
+      }),
+    ),
+  });
+
+  it('no aplica una reprogramación si otro usuario ya tomó la aprobación', async () => {
+    const prisma = makeReprogramacionPrisma();
+
+    await expect(
+      makeService(prisma).aprobarReprogramacion('aprobacion-1', 'admin-1'),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(prisma.cuota.update).not.toHaveBeenCalled();
+    expect(prisma.aprobacion.update).not.toHaveBeenCalled();
+    expect(mockNotifications.create).not.toHaveBeenCalled();
+  });
+
+  it('no rechaza una reprogramación si otro usuario ya tomó la aprobación', async () => {
+    const prisma = makeReprogramacionPrisma();
+
+    await expect(
+      makeService(prisma).rechazarReprogramacion('aprobacion-1', 'admin-1', 'No aplica'),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(prisma.aprobacion.update).not.toHaveBeenCalled();
+    expect(mockNotifications.create).not.toHaveBeenCalled();
   });
 });
 

@@ -23,6 +23,7 @@ async function bootstrap() {
 
   const logger = new Logger('Bootstrap');
   const app = await NestFactory.create(AppModule, { logger: ['log', 'warn', 'error'] });
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
 
   // Configurar prefijo global para la API
   app.setGlobalPrefix('api-credisur');
