@@ -1,5 +1,5 @@
-import { ForbiddenException } from '@nestjs/common';
-import { RolUsuario } from '@prisma/client';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
+import { Prisma, RolUsuario } from '@prisma/client';
 import { RoutesService } from './routes.service';
 
 const makeService = (prisma: any) =>
@@ -182,5 +182,38 @@ describe('RoutesService role scoping', () => {
     );
     expect(tx.transaccion.create).not.toHaveBeenCalled();
     expect(prisma.transaccion.create).not.toHaveBeenCalled();
+  });
+
+  it('convierte el índice único de asignación activa en ConflictException legible', async () => {
+    const prisma = {
+      ruta: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'ruta-1',
+          nombre: 'Ruta 1',
+          cobradorId: 'cobrador-1',
+        }),
+      },
+      cliente: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'cliente-1',
+          nombres: 'Ana',
+          apellidos: 'Perez',
+        }),
+      },
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
+        create: jest.fn().mockRejectedValue(
+          new Prisma.PrismaClientKnownRequestError(
+            'Unique constraint failed on active route assignment',
+            { code: 'P2002', clientVersion: 'test' },
+          ),
+        ),
+      },
+    };
+
+    await expect(
+      makeService(prisma).assignClient('ruta-1', 'cliente-1', 'cobrador-1'),
+    ).rejects.toBeInstanceOf(ConflictException);
   });
 });

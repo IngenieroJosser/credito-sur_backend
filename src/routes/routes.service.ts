@@ -2800,6 +2800,12 @@ export class RoutesService {
 
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
 
+        if (error.code === 'P2002') {
+
+          throw new ConflictException('El cliente ya está asignado a esta ruta');
+
+        }
+
         if (error.code === 'P2003') {
 
           throw new BadRequestException('Relación inválida');

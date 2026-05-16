@@ -69,7 +69,11 @@ function buildPrismaMock(overrides: Record<string, any> = {}) {
       findFirst: jest.fn().mockResolvedValue({ id: 'ruta-1', cobradorId: 'cobrador-1' }),
     },
     aprobacion: {
+      findFirst: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockResolvedValue({ id: 'approval-1' }),
+    },
+    gasto: {
+      findFirst: jest.fn().mockResolvedValue(null),
     },
     usuario: {
       findUnique: jest.fn().mockResolvedValue({ nombres: 'Cobra', apellidos: 'Dor' }),
@@ -88,6 +92,7 @@ function buildPrismaMock(overrides: Record<string, any> = {}) {
       aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 0 } }),
       count: jest.fn().mockResolvedValue(0),
       create: jest.fn().mockResolvedValue({ id: 'trx-zero', tipoReferencia: 'ARQUEO' }),
+      findFirst: jest.fn().mockResolvedValue(null),
       findMany: jest.fn().mockResolvedValue([]),
     },
     prestamo: {
@@ -535,6 +540,56 @@ describe('AccountingService financial ledger controls', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(mockLedger.registrarAsiento).not.toHaveBeenCalled();
     expect(result).toMatchObject({ success: true, approvalId: 'approval-1' });
+  });
+
+  it('retorna la aprobación existente al reintentar un gasto offline con la misma idempotencyKey', async () => {
+    const prisma = buildPrismaMock();
+    prisma.aprobacion.findFirst.mockResolvedValue({
+      id: 'approval-existente-1',
+      estado: EstadoAprobacion.PENDIENTE,
+    });
+
+    const result = await makeService(prisma).registrarGasto({
+      descripcion: 'Gasolina',
+      monto: 25000,
+      rutaId: 'ruta-1',
+      cobradorId: 'cobrador-1',
+      solicitadoPorId: 'cobrador-1',
+      tipoAprobacion: TipoAprobacion.GASTO,
+      esPersonal: false,
+      idempotencyKey: 'offline-gasto-1',
+    } as any);
+
+    expect(result).toMatchObject({
+      success: true,
+      approvalId: 'approval-existente-1',
+      idempotentReplay: true,
+    });
+    expect(prisma.aprobacion.create).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('retorna la transacción existente al reintentar un movimiento con la misma idempotencyKey', async () => {
+    const prisma = buildPrismaMock();
+    prisma.transaccion.findFirst.mockResolvedValue({
+      id: 'trx-existente-1',
+      idempotencyKey: 'offline-trx-1',
+    });
+
+    const result = await makeService(prisma).createTransaccion({
+      cajaId: 'caja-ruta-1',
+      tipo: TipoTransaccion.INGRESO,
+      monto: 30000,
+      descripcion: 'Ingreso manual',
+      creadoPorId: 'admin-1',
+      idempotencyKey: 'offline-trx-1',
+    } as any);
+
+    expect(result).toMatchObject({
+      id: 'trx-existente-1',
+      idempotentReplay: true,
+    });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   it('bloquea el arqueo cuando hay cola offline pendiente anterior o igual al cierre', async () => {

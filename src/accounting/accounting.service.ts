@@ -335,7 +335,37 @@ export class AccountingService {
     esPersonal?: boolean;
     comprobanteUrl?: string;
     fotoRecibo?: string;
+    idempotencyKey?: string;
   }) {
+    const idempotencyKey = data.idempotencyKey?.toString().trim() || undefined;
+
+    if (idempotencyKey) {
+      const gastoExistente = await this.prisma.gasto.findFirst({
+        where: { idempotencyKey },
+      });
+      if (gastoExistente) {
+        return {
+          success: true,
+          gastoId: gastoExistente.id,
+          idempotentReplay: true,
+          message: 'Gasto ya registrado previamente',
+        };
+      }
+
+      const aprobacionExistente = await this.prisma.aprobacion.findFirst({
+        where: { idempotencyKey },
+        select: { id: true, estado: true },
+      });
+      if (aprobacionExistente) {
+        return {
+          success: true,
+          approvalId: aprobacionExistente.id,
+          idempotentReplay: true,
+          message: 'Solicitud de gasto ya enviada previamente',
+        };
+      }
+    }
+
     const cajaRuta = await this.prisma.caja.findFirst({
       where: {
         rutaId: data.rutaId,
@@ -363,6 +393,7 @@ export class AccountingService {
       const aprobacion = await this.prisma.aprobacion.create({
         data: {
           tipoAprobacion: data.tipoAprobacion,
+          idempotencyKey,
           referenciaId: cajaRuta.id,
           tablaReferencia: 'Gasto',
           solicitadoPorId: data.solicitadoPorId,
@@ -377,6 +408,7 @@ export class AccountingService {
             categoriaId: data.categoriaId,
             fotoRecibo: comprobanteGasto || undefined,
             requiereComprobante,
+            idempotencyKey: idempotencyKey || null,
           },
           montoSolicitud: data.monto,
         },
@@ -447,6 +479,7 @@ export class AccountingService {
         const newGasto = await tx.gasto.create({
           data: {
             numeroGasto: `G${Date.now()}`,
+            idempotencyKey,
             rutaId: data.rutaId,
             cobradorId: data.cobradorId,
             cajaId: cajaRuta.id,
@@ -464,6 +497,7 @@ export class AccountingService {
         await tx.transaccion.create({
           data: {
             numeroTransaccion: `GTRX${Date.now()}`,
+            idempotencyKey: idempotencyKey ? `${idempotencyKey}:trx` : undefined,
             cajaId: cajaRuta.id,
             tipo: TipoTransaccion.EGRESO,
             monto: data.monto,
@@ -1309,7 +1343,21 @@ export class AccountingService {
     referenciaId?: string;
     cajaOrigenId?: string;
     accountCode?: string;
+    idempotencyKey?: string;
   }) {
+    const idempotencyKey = data.idempotencyKey?.toString().trim() || undefined;
+    if (idempotencyKey) {
+      const transaccionExistente = await this.prisma.transaccion.findFirst({
+        where: { idempotencyKey },
+      });
+      if (transaccionExistente) {
+        return {
+          ...transaccionExistente,
+          idempotentReplay: true,
+        };
+      }
+    }
+
     const count = await this.prisma.transaccion.count();
     const numeroTransaccion = `TRX-${Date.now().toString().slice(-8)}-${(count + 1).toString().padStart(4, '0')}`;
 
@@ -1351,6 +1399,7 @@ export class AccountingService {
         await tx.transaccion.create({
           data: {
             numeroTransaccion: `TRX-OUT-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            idempotencyKey: idempotencyKey ? `${idempotencyKey}:out` : undefined,
             cajaId: cajaOrigenId,
             tipo: TipoTransaccion.TRANSFERENCIA,
             monto: data.monto,
@@ -1365,6 +1414,7 @@ export class AccountingService {
         const transaccion = await tx.transaccion.create({
           data: {
             numeroTransaccion: `TRX-IN-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            idempotencyKey,
             cajaId: data.cajaId,
             tipo: TipoTransaccion.TRANSFERENCIA,
             monto: data.monto,
@@ -1398,6 +1448,7 @@ export class AccountingService {
       const t = await tx.transaccion.create({
         data: {
           numeroTransaccion,
+          idempotencyKey,
           cajaId: data.cajaId,
           tipo: data.tipo,
           monto: data.monto,

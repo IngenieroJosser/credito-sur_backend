@@ -226,6 +226,7 @@ export class AccountingController {
       referenciaId?: string;
       cajaOrigenId?: string;
       accountCode?: string; // Código de cuenta de contrapartida (opcional)
+      idempotencyKey?: string;
     },
   ) {
     if (!req.user || !req.user.id) {
@@ -338,6 +339,7 @@ export class AccountingController {
       esPersonal?: boolean;
       comprobanteUrl?: string;
       fotoRecibo?: string;
+      idempotencyKey?: string;
     },
   ) {
     if (!req.user || !req.user.id) {
@@ -354,6 +356,7 @@ export class AccountingController {
       esPersonal: body.esPersonal,
       comprobanteUrl: body.comprobanteUrl,
       fotoRecibo: body.fotoRecibo,
+      idempotencyKey: body.idempotencyKey,
     });
   }
 

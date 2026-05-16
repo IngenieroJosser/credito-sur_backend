@@ -535,6 +535,7 @@ model Caja {
 model Transaccion {
   id                   String               @id @default(uuid())
   numeroTransaccion    String               @unique @db.VarChar(50)
+  idempotencyKey       String?              @unique @db.VarChar(100)
   cajaId               String
   tipo                 TipoTransaccion
   monto                Decimal              @db.Decimal(12, 2)
@@ -564,6 +565,7 @@ model Transaccion {
 model Gasto {
   id                   String               @id @default(uuid())
   numeroGasto          String               @unique @db.VarChar(50)
+  idempotencyKey       String?              @unique @db.VarChar(100)
   rutaId               String?
   cobradorId           String
   cajaId               String
