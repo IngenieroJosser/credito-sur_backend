@@ -3,6 +3,7 @@ import {
   NotFoundException,
   Logger,
   BadRequestException,
+  ConflictException,
   OnModuleInit,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -1591,6 +1592,12 @@ export class LoansService implements OnModuleInit {
         throw new NotFoundException('Préstamo no encontrado');
       }
 
+      if ((updateData as any)?.version != null && Number((updateData as any).version) !== Number((prestamo as any).version || 1)) {
+        throw new ConflictException(
+          'El préstamo fue actualizado por otro usuario. Recarga la información antes de guardar.',
+        );
+      }
+
       const datosAnteriores = {
         monto: prestamo.monto,
         tasaInteres: prestamo.tasaInteres,
@@ -1603,7 +1610,10 @@ export class LoansService implements OnModuleInit {
 
       // Build update payload - only allow safe fields
       // Record tipado con los campos permitidos del schema
-      const data: Record<string, unknown> = { estadoSincronizacion: 'PENDIENTE' };
+      const data: Record<string, unknown> = {
+        estadoSincronizacion: 'PENDIENTE',
+        version: { increment: 1 },
+      };
 
       if (updateData.monto !== undefined) data.monto = updateData.monto;
       if (updateData.tasaInteres !== undefined) data.tasaInteres = updateData.tasaInteres;
@@ -2498,6 +2508,29 @@ export class LoansService implements OnModuleInit {
       this.logger.log(
         `Creating loan for client ${data.clienteId}, type: ${data.tipoPrestamo}. Data: ${JSON.stringify(data)}`,
       );
+      const idempotencyKey = (data as any).idempotencyKey?.toString().trim() || undefined;
+
+      if (idempotencyKey) {
+        const prestamoExistente = await this.prisma.prestamo.findFirst({
+          where: { idempotencyKey },
+          select: { id: true, numeroPrestamo: true },
+        });
+
+        if (prestamoExistente) {
+          const aprobacionExistente = await this.prisma.aprobacion.findFirst({
+            where: { idempotencyKey },
+            select: { id: true, referenciaId: true },
+          });
+
+          return {
+            mensaje: 'Préstamo ya registrado previamente.',
+            prestamoId: prestamoExistente.id,
+            numeroPrestamo: prestamoExistente.numeroPrestamo,
+            aprobacionId: aprobacionExistente?.id || null,
+            idempotentReplay: true,
+          };
+        }
+      }
 
       // Verificar que el cliente existe
       const cliente = await this.prisma.cliente.findUnique({
@@ -2813,6 +2846,7 @@ export class LoansService implements OnModuleInit {
       const prestamo = await this.prisma.prestamo.create({
         data: {
           numeroPrestamo,
+          idempotencyKey,
           clienteId: data.clienteId,
           productoId: data.productoId,
           precioProductoId: data.precioProductoId,
@@ -2980,6 +3014,7 @@ export class LoansService implements OnModuleInit {
       const aprobacion = await this.prisma.aprobacion.create({
         data: {
           tipoAprobacion: TipoAprobacion.NUEVO_PRESTAMO,
+          idempotencyKey,
           referenciaId: prestamo.id,
           tablaReferencia: 'Prestamo',
           solicitadoPorId: data.creadoPorId,
@@ -3008,6 +3043,7 @@ export class LoansService implements OnModuleInit {
             fechaInicio: prestamo.fechaInicio ? formatBogotaOffsetIso(prestamo.fechaInicio) : undefined,
             fechaPrimerCobro: (data as any).fechaPrimerCobro ? String((data as any).fechaPrimerCobro) : undefined,
             esContado: !!data.esContado,
+            idempotencyKey: idempotencyKey || null,
           },
           // montoSolicitud = precio total del artículo, o monto del préstamo en efectivo
           montoSolicitud: isFinanciamientoArticulo ? precioArticuloTotal : safeNumber(prestamo.monto),

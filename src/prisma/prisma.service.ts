@@ -25,6 +25,30 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
             const watchActions = ['create', 'update', 'delete', 'upsert', 'createMany', 'updateMany', 'deleteMany'];
             
             if (watchActions.includes(operation as string) && model) {
+              if (model !== 'OutboxEvent') {
+                const aggregateId =
+                  (result as any)?.id ||
+                  (Array.isArray(result) ? undefined : (args as any)?.where?.id) ||
+                  undefined;
+
+                (basePrisma as any).outboxEvent
+                  ?.create({
+                    data: {
+                      eventType: `${model}.${operation}`,
+                      aggregateType: model,
+                      aggregateId,
+                      payload: {
+                        model,
+                        action: operation,
+                        data: result,
+                      },
+                    },
+                  })
+                  .catch((error: Error) => {
+                    console.error('[OUTBOX] Error creando evento:', error.message);
+                  });
+              }
+
               // Lanzar evento asíncrono para BullMQ
               if (process.env.IS_MIRROR_VPS !== 'true') {
                 eventEmitter.emit('database.write.success', {

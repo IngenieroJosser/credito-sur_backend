@@ -101,4 +101,12 @@ export class CreateLoanDto {
 
   @IsOptional()
   esContado?: boolean;
+
+  @IsString()
+  @IsOptional()
+  idempotencyKey?: string;
+
+  @IsNumber()
+  @IsOptional()
+  version?: number;
 }

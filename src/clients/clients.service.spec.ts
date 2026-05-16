@@ -5,6 +5,7 @@ import { AuditService } from '../audit/audit.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { ConfiguracionService } from '../configuracion/configuracion.service';
+import { ConflictException } from '@nestjs/common';
 import { RolUsuario } from '@prisma/client';
 
 describe('ClientsService', () => {
@@ -19,9 +20,20 @@ describe('ClientsService', () => {
       findFirst: jest.fn(),
       findMany: jest.fn(),
       findUnique: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+    },
+    aprobacion: {
+      findFirst: jest.fn(),
+      create: jest.fn(),
+    },
+    multimedia: {
+      updateMany: jest.fn(),
+      createMany: jest.fn(),
     },
     usuario: {
       findFirst: jest.fn(),
+      findUnique: jest.fn(),
     },
   };
 
@@ -130,6 +142,53 @@ describe('ClientsService', () => {
           dni: '123',
         } as any),
       ).rejects.toThrow('No existen usuarios en el sistema');
+    });
+
+    it('returns the existing approval when the same idempotencyKey is retried', async () => {
+      (prismaService.cliente.findFirst as jest.Mock).mockResolvedValue({
+        id: 'cliente-existente',
+        idempotencyKey: 'offline-cliente-1',
+        eliminadoEn: null,
+      });
+      (mockPrismaService.aprobacion.findFirst as jest.Mock).mockResolvedValue({
+        id: 'approval-existente',
+        referenciaId: 'cliente-existente',
+      });
+
+      const result = await service.createClient({
+        nombres: 'Ana',
+        apellidos: 'Perez',
+        dni: '12345678',
+        telefono: '3001234567',
+        idempotencyKey: 'offline-cliente-1',
+      } as any);
+
+      expect(result).toMatchObject({
+        aprobacionId: 'approval-existente',
+        clienteId: 'cliente-existente',
+        idempotentReplay: true,
+      });
+      expect(prismaService.cliente.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updateClient concurrency', () => {
+    it('rejects stale updates when version does not match', async () => {
+      (prismaService.cliente.findUnique as jest.Mock).mockResolvedValue({
+        id: 'cliente-1',
+        version: 3,
+        creadoPorId: 'admin-1',
+        eliminadoEn: null,
+      });
+
+      await expect(
+        service.updateClient('cliente-1', {
+          nombres: 'Ana Maria',
+          version: 2,
+        } as any),
+      ).rejects.toBeInstanceOf(ConflictException);
+
+      expect(prismaService.cliente.update).not.toHaveBeenCalled();
     });
   });
 

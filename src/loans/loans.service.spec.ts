@@ -1,3 +1,4 @@
+import { ConflictException } from '@nestjs/common';
 import { RolUsuario, TipoTransaccion } from '@prisma/client';
 import { LoansService } from './loans.service';
 
@@ -213,6 +214,66 @@ describe('LoansService accounting impact for approved loans', () => {
         createdBy: 'admin-1',
       }),
     );
+  });
+
+  it('retorna el préstamo existente al reintentar creación con la misma idempotencyKey', async () => {
+    const prisma = {
+      prestamo: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'prestamo-existente-1',
+          numeroPrestamo: 'PRES-EXISTENTE',
+          idempotencyKey: 'offline-loan-1',
+        }),
+      },
+      aprobacion: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'approval-loan-1',
+          referenciaId: 'prestamo-existente-1',
+        }),
+      },
+    };
+
+    const result = await makeService(prisma).createLoan({
+      clienteId: 'cliente-1',
+      tipoPrestamo: 'EFECTIVO',
+      monto: 100000,
+      tasaInteres: 10,
+      tasaInteresMora: 2,
+      plazoMeses: 1,
+      frecuenciaPago: 'MENSUAL' as any,
+      fechaInicio: '2026-05-15',
+      creadoPorId: 'admin-1',
+      idempotencyKey: 'offline-loan-1',
+    } as any);
+
+    expect(result).toMatchObject({
+      prestamoId: 'prestamo-existente-1',
+      aprobacionId: 'approval-loan-1',
+      idempotentReplay: true,
+    });
+  });
+
+  it('rechaza edición de préstamo si la versión enviada está vieja', async () => {
+    const prisma = {
+      prestamo: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'prestamo-1',
+          version: 4,
+          monto: 100000,
+          tasaInteres: 10,
+          plazoMeses: 1,
+          frecuenciaPago: 'MENSUAL',
+          estado: 'ACTIVO',
+        }),
+        update: jest.fn(),
+      },
+    };
+
+    await expect(
+      makeService(prisma).updateLoan('prestamo-1', { monto: 120000, version: 3 } as any, 'admin-1'),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(prisma.prestamo.update).not.toHaveBeenCalled();
   });
 
   it('descuenta stock con una actualización condicional para evitar inventario negativo', async () => {
