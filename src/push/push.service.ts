@@ -114,9 +114,9 @@ export class PushService {
     }
   }
 
-  async subscribeUser(userId: string, subscription: any): Promise<void> {
+  async subscribeUser(userId: string, subscription: any) {
     try {
-      await this.prisma.pushSubscription.upsert({
+      const saved = await this.prisma.pushSubscription.upsert({
         where: { endpoint: subscription.endpoint },
         update: {
           usuarioId: userId,
@@ -134,15 +134,45 @@ export class PushService {
       });
 
       this.logger.log(`User ${userId} subscribed to push notifications`);
+      return {
+        id: saved.id,
+        userId: saved.usuarioId,
+        endpoint: saved.endpoint,
+        createdAt: saved.creadoEn,
+      };
     } catch (error) {
       this.logger.error('Error subscribing user:', error);
+      throw error;
     }
   }
 
-  async unsubscribeUser(endpoint: string): Promise<void> {
+  async getUserSubscriptions(userId: string) {
+    const subscriptions = await this.prisma.pushSubscription.findMany({
+      where: {
+        usuarioId: userId,
+        activa: true,
+      },
+      select: {
+        id: true,
+        usuarioId: true,
+        endpoint: true,
+        creadoEn: true,
+      },
+      orderBy: { creadoEn: 'desc' },
+    });
+
+    return subscriptions.map((subscription) => ({
+      id: subscription.id,
+      userId: subscription.usuarioId,
+      endpoint: subscription.endpoint,
+      createdAt: subscription.creadoEn,
+    }));
+  }
+
+  async unsubscribeUser(endpoint: string, userId: string): Promise<void> {
     try {
-      await this.prisma.pushSubscription.update({
-        where: { endpoint },
+      await this.prisma.pushSubscription.updateMany({
+        where: { endpoint, usuarioId: userId },
         data: { activa: false }
       });
 

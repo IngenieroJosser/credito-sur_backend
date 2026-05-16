@@ -23,14 +23,18 @@ import {
 } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { RolesGuard } from './guards/roles.guard';
 import { Publico } from './decorators/public.decorator';
+import { Roles } from './decorators/roles.decorator';
+import { RolUsuario } from '@prisma/client';
 
 @ApiTags('Gestión de autenticación')
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
-  @Publico()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
   @Get()
   @ApiOperation({ summary: 'Listar usuarios registrados' })
   obtenerTodosLosUsuarios() {

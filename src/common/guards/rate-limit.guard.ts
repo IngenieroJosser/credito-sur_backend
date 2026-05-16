@@ -99,17 +99,19 @@ export class RateLimitGuard implements CanActivate {
   }
 
   private resolveClientKey(request: Request): string {
-    const forwardedFor = request.headers?.['x-forwarded-for'];
-    const forwardedIp = Array.isArray(forwardedFor)
-      ? forwardedFor[0]
-      : forwardedFor?.split(',')[0]?.trim();
-
     return (
-      forwardedIp ||
       request.ip ||
       request.socket?.remoteAddress ||
+      this.resolveForwardedIp(request) ||
       'unknown'
     );
+  }
+
+  private resolveForwardedIp(request: Request): string | undefined {
+    const forwardedFor = request.headers?.['x-forwarded-for'];
+    return Array.isArray(forwardedFor)
+      ? forwardedFor[0]
+      : forwardedFor?.split(',')[0]?.trim();
   }
 
   private readPositiveInt(name: string, fallback: number): number {
