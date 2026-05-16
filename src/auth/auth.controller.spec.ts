@@ -21,4 +21,15 @@ describe('AuthController security metadata', () => {
       RolUsuario.COORDINADOR,
     ]));
   });
+
+  it('does not expose registration as a public endpoint', () => {
+    const handler = AuthController.prototype.registrar;
+    const isPublic = Reflect.getMetadata(CLAVE_PUBLICO, handler);
+    const guards = Reflect.getMetadata(GUARDS_METADATA, handler) || [];
+    const roles = Reflect.getMetadata(CLAVE_ROLES, handler) || [];
+
+    expect(isPublic).toBeUndefined();
+    expect(guards).toEqual(expect.arrayContaining([JwtAuthGuard, RolesGuard]));
+    expect(roles).toEqual([RolUsuario.SUPER_ADMINISTRADOR]);
+  });
 });
