@@ -26,7 +26,9 @@ import { SyncConflictsModule } from './sync-conflicts/sync-conflicts.module';
 import { MirrorSyncModule } from './mirror-sync/mirror-sync.module';
 import { OutboxModule } from './outbox/outbox.module';
 import { BullModule } from '@nestjs/bullmq';
+import { APP_GUARD } from '@nestjs/core';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { RateLimitGuard } from './common/guards/rate-limit.guard';
 
 const shouldEnableMirrorSync =
   process.env.MIRROR_SYNC_ENABLED === 'true' &&
@@ -80,6 +82,11 @@ const shouldEnableMirrorSync =
       : []),
   ],
   controllers: [],
-  providers: [],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: RateLimitGuard,
+    },
+  ],
 })
 export class AppModule {}
