@@ -23,9 +23,33 @@ const mockLedger = {
 
 function buildPrismaMock() {
   const tx = {
+    $queryRaw: jest.fn().mockResolvedValue([]),
     pago: { create: jest.fn().mockResolvedValue({ id: 'pago-transfer-1' }) },
     cuota: { update: jest.fn().mockResolvedValue({}), count: jest.fn().mockResolvedValue(0) },
-    prestamo: { update: jest.fn().mockResolvedValue({}) },
+    prestamo: {
+      findFirst: jest.fn().mockResolvedValue({
+        id: 'prestamo-1',
+        clienteId: 'cliente-1',
+        estado: EstadoPrestamo.ACTIVO,
+        saldoPendiente: 100000,
+        totalPagado: 0,
+        capitalPagado: 0,
+        interesPagado: 0,
+        cuotas: [
+          {
+            id: 'cuota-1',
+            monto: 100000,
+            montoPagado: 0,
+            montoCapital: 80000,
+            montoInteres: 15000,
+            montoInteresMora: 5000,
+            estado: EstadoCuota.VENCIDA,
+          },
+        ],
+        cliente: { id: 'cliente-1' },
+      }),
+      update: jest.fn().mockResolvedValue({}),
+    },
     transaccion: { create: jest.fn().mockResolvedValue({ id: 'trx-bank-1' }) },
     caja: {
       findUnique: jest.fn().mockResolvedValue({ id: 'caja-banco', nombre: 'Caja Banco', saldoActual: 0 }),
@@ -42,6 +66,11 @@ function buildPrismaMock() {
   };
 
   return {
+    aprobacion: {
+      findUnique: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      update: jest.fn().mockResolvedValue({}),
+    },
     prestamo: {
       findFirst: jest.fn().mockResolvedValue({
         id: 'prestamo-1',
@@ -127,6 +156,155 @@ describe('ApprovalsService financial ledger controls', () => {
         datosSolicitud: { montoTotal: 0 },
       }),
     ).rejects.toThrow(BadRequestException);
+  });
+
+  it('aplica pago por transferencia usando el préstamo fresco dentro de la transacción', async () => {
+    const prisma = buildPrismaMock();
+    prisma.prestamo.findFirst.mockResolvedValue({
+      id: 'prestamo-1',
+      clienteId: 'cliente-1',
+      estado: EstadoPrestamo.ACTIVO,
+      saldoPendiente: 100000,
+      totalPagado: 0,
+      capitalPagado: 0,
+      interesPagado: 0,
+      cuotas: [
+        {
+          id: 'cuota-1',
+          monto: 100000,
+          montoPagado: 0,
+          montoCapital: 80000,
+          montoInteres: 15000,
+          montoInteresMora: 5000,
+          estado: EstadoCuota.VENCIDA,
+        },
+      ],
+      cliente: { id: 'cliente-1' },
+    });
+    prisma._tx.prestamo.findFirst.mockResolvedValue({
+      id: 'prestamo-1',
+      clienteId: 'cliente-1',
+      estado: EstadoPrestamo.ACTIVO,
+      saldoPendiente: 60000,
+      totalPagado: 40000,
+      capitalPagado: 30000,
+      interesPagado: 10000,
+      cuotas: [
+        {
+          id: 'cuota-1',
+          monto: 100000,
+          montoPagado: 40000,
+          montoCapital: 80000,
+          montoInteres: 15000,
+          montoInteresMora: 5000,
+          estado: EstadoCuota.PARCIAL,
+        },
+      ],
+      cliente: { id: 'cliente-1' },
+    });
+
+    await (makeService(prisma) as any).approveTransferPayment({
+      id: 'approval-1',
+      referenciaId: 'prestamo-1',
+      solicitadoPorId: 'cobrador-1',
+      montoSolicitud: 50000,
+      datosSolicitud: {
+        prestamoId: 'prestamo-1',
+        cobradorId: 'cobrador-1',
+        montoTotal: 50000,
+        metodoPago: MetodoPago.TRANSFERENCIA,
+      },
+    }, 'admin-1');
+
+    expect(prisma._tx.$queryRaw).toHaveBeenCalled();
+    expect(prisma._tx.prestamo.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          totalPagado: 90000,
+          saldoPendiente: 10000,
+        }),
+      }),
+    );
+  });
+
+  it('genera número de pago de transferencia sin depender de count + 1', async () => {
+    const prisma = buildPrismaMock();
+
+    await (makeService(prisma) as any).approveTransferPayment({
+      id: 'approval-1',
+      referenciaId: 'prestamo-1',
+      solicitadoPorId: 'cobrador-1',
+      montoSolicitud: 100000,
+      datosSolicitud: {
+        prestamoId: 'prestamo-1',
+        cobradorId: 'cobrador-1',
+        montoTotal: 100000,
+        metodoPago: MetodoPago.TRANSFERENCIA,
+      },
+    }, 'admin-1');
+
+    expect(prisma.pago.count).not.toHaveBeenCalled();
+    expect(prisma._tx.pago.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          numeroPago: expect.stringMatching(/^PAG-\d+-[0-9a-f-]{8}$/),
+        }),
+      }),
+    );
+  });
+
+  it('conserva idempotencyKey al convertir una transferencia aprobada en pago', async () => {
+    const prisma = buildPrismaMock();
+
+    await (makeService(prisma) as any).approveTransferPayment({
+      id: 'approval-1',
+      idempotencyKey: 'offline-transfer-1',
+      referenciaId: 'prestamo-1',
+      solicitadoPorId: 'cobrador-1',
+      montoSolicitud: 100000,
+      datosSolicitud: {
+        prestamoId: 'prestamo-1',
+        cobradorId: 'cobrador-1',
+        montoTotal: 100000,
+        metodoPago: MetodoPago.TRANSFERENCIA,
+      },
+    }, 'admin-1');
+
+    expect(prisma._tx.pago.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          idempotencyKey: 'offline-transfer-1',
+        }),
+      }),
+    );
+  });
+
+  it('no ejecuta una aprobación si otro usuario ya la tomó primero', async () => {
+    const prisma = buildPrismaMock();
+    prisma.aprobacion.findUnique.mockResolvedValue({
+      id: 'approval-1',
+      tipoAprobacion: 'GASTO',
+      referenciaId: 'gasto-1',
+      tablaReferencia: 'gastos',
+      solicitadoPorId: 'cobrador-1',
+      estado: 'PENDIENTE',
+      datosSolicitud: {
+        rutaId: 'ruta-1',
+        cobradorId: 'cobrador-1',
+        cajaId: 'caja-1',
+        tipoGasto: 'OPERATIVO',
+        monto: 10000,
+        descripcion: 'Transporte',
+      },
+    });
+    prisma.aprobacion.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      makeService(prisma).approveItem('approval-1', 'GASTO' as any, 'admin-1'),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(prisma._tx.transaccion.create).not.toHaveBeenCalled();
+    expect(mockLedger.registrarAsiento).not.toHaveBeenCalled();
   });
 
   it('registra venta de artículo separando ingreso, costo, inventario y cuota inicial', async () => {

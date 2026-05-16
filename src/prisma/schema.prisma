@@ -163,6 +163,8 @@ model AsignacionPermisoUsuario {
 model Cliente {
   id                        String               @id @default(uuid())
   codigo                    String               @unique @db.VarChar(20)
+  idempotencyKey            String?              @unique @db.VarChar(100)
+  version                   Int                  @default(1)
   dni                       String               @unique @db.VarChar(20)
   nombres                   String               @db.VarChar(100)
   apellidos                 String               @db.VarChar(100)
@@ -256,6 +258,8 @@ model PrecioProducto {
 model Prestamo {
   id                   String               @id @default(uuid())
   numeroPrestamo       String               @unique @db.VarChar(50)
+  idempotencyKey        String?              @unique @db.VarChar(100)
+  version              Int                  @default(1)
   clienteId            String
   productoId           String?
   precioProductoId     String?
@@ -362,6 +366,7 @@ model ExtensionPago {
 model Pago {
   id                   String               @id @default(uuid())
   numeroPago           String               @unique @db.VarChar(50)
+  idempotencyKey       String?              @unique @db.VarChar(100)
   clienteId            String
   prestamoId           String
   cobradorId           String
@@ -478,6 +483,7 @@ model AsignacionRuta {
 model Aprobacion {
   id                   String               @id @default(uuid())
   tipoAprobacion       TipoAprobacion
+  idempotencyKey       String?              @unique @db.VarChar(100)
   referenciaId         String
   tablaReferencia      String               @db.VarChar(50)
   solicitadoPorId      String
@@ -533,6 +539,7 @@ model Caja {
 model Transaccion {
   id                   String               @id @default(uuid())
   numeroTransaccion    String               @unique @db.VarChar(50)
+  idempotencyKey       String?              @unique @db.VarChar(100)
   cajaId               String
   tipo                 TipoTransaccion
   monto                Decimal              @db.Decimal(12, 2)
@@ -562,6 +569,7 @@ model Transaccion {
 model Gasto {
   id                   String               @id @default(uuid())
   numeroGasto          String               @unique @db.VarChar(50)
+  idempotencyKey       String?              @unique @db.VarChar(100)
   rutaId               String?
   cobradorId           String
   cajaId               String
@@ -612,6 +620,24 @@ model RegistroAuditoria {
   @@index([entidad, entidadId])
   @@index([creadoEn])
   @@map("registros_auditoria")
+}
+
+model OutboxEvent {
+  id             String    @id @default(uuid())
+  eventType      String    @db.VarChar(100)
+  aggregateType  String    @db.VarChar(100)
+  aggregateId    String?   @db.VarChar(100)
+  payload        Json
+  status         String    @default("PENDING") @db.VarChar(20)
+  attempts       Int       @default(0)
+  lastError      String?
+  processedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status, createdAt])
+  @@index([aggregateType, aggregateId])
+  @@map("outbox_events")
 }
 
 model ArchivadoOculto {

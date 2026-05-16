@@ -48,4 +48,9 @@ export class CreatePaymentDto {
   @IsString()
   @IsOptional()
   notas?: string;
+
+  @IsString()
+  @IsOptional()
+  @Transform(({ value }) => value?.toString().trim())
+  idempotencyKey?: string;
 }

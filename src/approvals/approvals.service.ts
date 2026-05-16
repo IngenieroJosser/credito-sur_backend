@@ -15,6 +15,7 @@ import { NotificacionesService } from '../notificaciones/notificaciones.service'
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { formatBogotaOffsetIso } from '../utils/date-utils';
 import { LedgerService } from '../accounting/ledger.service';
+import { randomUUID } from 'crypto';
 
 @Injectable()
 export class ApprovalsService {
@@ -95,6 +96,88 @@ export class ApprovalsService {
     }
   }
 
+  private generarNumeroPago() {
+    return `PAG-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  }
+
+  private calcularAplicacionPago(prestamo: any, montoTotal: number) {
+    const detallesPago: {
+      cuotaId: string;
+      monto: number;
+      montoCapital: number;
+      montoInteres: number;
+      montoInteresMora: number;
+    }[] = [];
+    let restante = montoTotal;
+    let capitalTotal = 0;
+    let interesTotal = 0;
+    let moraTotal = 0;
+    const cuotasActualizar: { id: string; montoPagado: number; estado: any }[] = [];
+
+    for (const cuota of prestamo.cuotas || []) {
+      if (restante <= 0) break;
+
+      const montoCuota = Number(cuota.monto);
+      const yaPagado = Number(cuota.montoPagado);
+      const pendiente = montoCuota - yaPagado;
+      if (pendiente <= 0) continue;
+
+      const cCapital = Number(cuota.montoCapital);
+      const cInteres = Number(cuota.montoInteres);
+      const cMora = Number(cuota.montoInteresMora);
+
+      let tempYaPagado = yaPagado;
+      const yaPagadoMora = Math.min(tempYaPagado, cMora);
+      tempYaPagado -= yaPagadoMora;
+      const yaPagadoInteres = Math.min(tempYaPagado, cInteres);
+      tempYaPagado -= yaPagadoInteres;
+      const yaPagadoCapital = Math.min(tempYaPagado, cCapital);
+
+      const faltaMora = cMora - yaPagadoMora;
+      const faltaInteres = cInteres - yaPagadoInteres;
+      const faltaCapital = cCapital - yaPagadoCapital;
+
+      const pagoAplicadoMora = Math.min(restante, faltaMora);
+      restante -= pagoAplicadoMora;
+      moraTotal += pagoAplicadoMora;
+
+      const pagoAplicadoInteres = Math.min(restante, faltaInteres);
+      restante -= pagoAplicadoInteres;
+      interesTotal += pagoAplicadoInteres;
+
+      const pagoAplicadoCapital = Math.min(restante, faltaCapital);
+      restante -= pagoAplicadoCapital;
+      capitalTotal += pagoAplicadoCapital;
+
+      const totalAplicadoCuota =
+        pagoAplicadoMora + pagoAplicadoInteres + pagoAplicadoCapital;
+
+      if (totalAplicadoCuota > 0) {
+        detallesPago.push({
+          cuotaId: cuota.id,
+          monto: totalAplicadoCuota,
+          montoCapital: pagoAplicadoCapital,
+          montoInteres: pagoAplicadoInteres,
+          montoInteresMora: pagoAplicadoMora,
+        });
+
+        const nuevoMontoPagado = yaPagado + totalAplicadoCuota;
+        const COP_TOLERANCE = 1;
+        const completa = nuevoMontoPagado >= montoCuota - COP_TOLERANCE;
+        const montoPagadoFinal = completa ? montoCuota : nuevoMontoPagado;
+        const nuevoEstado = completa
+          ? EstadoCuota.PAGADA
+          : cuota.estado === EstadoCuota.PENDIENTE
+            ? EstadoCuota.PARCIAL
+            : cuota.estado;
+
+        cuotasActualizar.push({ id: cuota.id, montoPagado: montoPagadoFinal, estado: nuevoEstado });
+      }
+    }
+
+    return { detallesPago, cuotasActualizar, capitalTotal, interesTotal, moraTotal };
+  }
+
   async approveItem(id: string, _type: TipoAprobacion, aprobadoPorId?: string, notas?: string, editedData?: any) {
     const approval = await this.prisma.aprobacion.findUnique({
       where: { id },
@@ -108,34 +191,11 @@ export class ApprovalsService {
       throw new BadRequestException(`Esta solicitud ya fue procesada (estado: ${approval.estado})`);
     }
 
-    switch (approval.tipoAprobacion) {
-      case TipoAprobacion.NUEVO_CLIENTE:
-        await this.approveNewClient(approval);
-        break;
-      case TipoAprobacion.NUEVO_PRESTAMO:
-        await this.approveNewLoan(approval, aprobadoPorId, editedData);
-        break;
-      case TipoAprobacion.GASTO:
-        await this.approveExpense(approval, aprobadoPorId);
-        break;
-      case TipoAprobacion.SOLICITUD_BASE_EFECTIVO:
-        await this.approveCashBase(approval, aprobadoPorId);
-        break;
-      case TipoAprobacion.PRORROGA_PAGO:
-        await this.approvePaymentExtension(approval, aprobadoPorId);
-        break;
-      case TipoAprobacion.BAJA_POR_PERDIDA:
-        await this.approveLoanLoss(approval, aprobadoPorId, editedData);
-        break;
-      case 'PAGO_TRANSFERENCIA' as any:
-        await this.approveTransferPayment(approval, aprobadoPorId);
-        break;
-      default:
-        throw new BadRequestException('Tipo de aprobación no soportado');
-    }
-
-    await this.prisma.aprobacion.update({
-      where: { id },
+    const claimed = await this.prisma.aprobacion.updateMany({
+      where: {
+        id,
+        estado: EstadoAprobacion.PENDIENTE,
+      },
       data: {
         estado: EstadoAprobacion.APROBADO,
         aprobadoPorId: aprobadoPorId || undefined,
@@ -144,6 +204,52 @@ export class ApprovalsService {
         revisadoEn: new Date(),
       },
     });
+
+    if (claimed.count !== 1) {
+      throw new BadRequestException('Esta solicitud ya fue tomada por otro usuario');
+    }
+
+    try {
+      switch (approval.tipoAprobacion) {
+        case TipoAprobacion.NUEVO_CLIENTE:
+          await this.approveNewClient(approval);
+          break;
+        case TipoAprobacion.NUEVO_PRESTAMO:
+          await this.approveNewLoan(approval, aprobadoPorId, editedData);
+          break;
+        case TipoAprobacion.GASTO:
+          await this.approveExpense(approval, aprobadoPorId);
+          break;
+        case TipoAprobacion.SOLICITUD_BASE_EFECTIVO:
+          await this.approveCashBase(approval, aprobadoPorId);
+          break;
+        case TipoAprobacion.PRORROGA_PAGO:
+          await this.approvePaymentExtension(approval, aprobadoPorId);
+          break;
+        case TipoAprobacion.BAJA_POR_PERDIDA:
+          await this.approveLoanLoss(approval, aprobadoPorId, editedData);
+          break;
+        case 'PAGO_TRANSFERENCIA' as any:
+          await this.approveTransferPayment(approval, aprobadoPorId);
+          break;
+        default:
+          throw new BadRequestException('Tipo de aprobación no soportado');
+      }
+    } catch (error) {
+      await this.prisma.aprobacion.update({
+        where: { id },
+        data: {
+          estado: EstadoAprobacion.PENDIENTE,
+          aprobadoPorId: null,
+          comentarios: notas
+            ? `${notas} | Error al procesar: ${(error as Error).message}`
+            : `Error al procesar: ${(error as Error).message}`,
+          datosAprobados: undefined,
+          revisadoEn: null,
+        },
+      });
+      throw error;
+    }
 
     this.notificacionesGateway.broadcastAprobacionesActualizadas({
       accion: 'APROBAR',
@@ -165,6 +271,9 @@ export class ApprovalsService {
     const cobradorId = String(data?.cobradorId || approval.solicitadoPorId || '');
     const montoTotal = Number(data?.montoTotal || approval.montoSolicitud || 0);
     const rawFechaPago = String(data?.fechaPago || '');
+    const idempotencyKey = (data?.idempotencyKey || approval.idempotencyKey || '')
+      .toString()
+      .trim() || undefined;
 
     if (!prestamoId || !cobradorId || !montoTotal || montoTotal <= 0) {
       throw new BadRequestException('Datos insuficientes para aprobar pago por transferencia');
@@ -199,115 +308,51 @@ export class ApprovalsService {
       throw new BadRequestException(`No se puede aplicar pago: préstamo en estado ${prestamo.estado}`);
     }
 
-    // Distribuir pago entre cuotas pendientes (Siguiendo Prelación: Mora -> Interés -> Capital)
-    const detallesPago: { 
-      cuotaId: string; 
-      monto: number; 
-      montoCapital: number; 
-      montoInteres: number; 
-      montoInteresMora: number 
-    }[] = [];
-    let restante = montoTotal;
-
-    let capitalTotal = 0;
-    let interesTotal = 0;
-    let moraTotal = 0;
-
-    const cuotasActualizar: { id: string; montoPagado: number; estado: any }[] = [];
-    
-    for (const cuota of prestamo.cuotas || []) {
-      if (restante <= 0) break;
-
-      const montoCuota = Number(cuota.monto);
-      const yaPagado = Number(cuota.montoPagado);
-      const pendiente = montoCuota - yaPagado;
-      if (pendiente <= 0) continue;
-
-      // 1. Calcular componentes de esta cuota
-      const cCapital = Number(cuota.montoCapital);
-      const cInteres = Number(cuota.montoInteres);
-      const cMora    = Number(cuota.montoInteresMora);
-
-      // 2. Determinar qué falta por pagar (estimación simple basada en montoPagado acumulado)
-      // En una implementación real más compleja, buscaríamos la suma de DetallesPago previos.
-      // Aquí asumimos que el montoPagado se aplicó siguiendo el mismo orden.
-      let pagoAplicadoMora = 0;
-      let pagoAplicadoInteres = 0;
-      let pagoAplicadoCapital = 0;
-
-      let tempYaPagado = yaPagado;
-
-      // Descontar lo ya pagado de la jerarquía
-      const yaPagadoMora = Math.min(tempYaPagado, cMora);
-      tempYaPagado -= yaPagadoMora;
-      
-      const yaPagadoInteres = Math.min(tempYaPagado, cInteres);
-      tempYaPagado -= yaPagadoInteres;
-
-      const yaPagadoCapital = Math.min(tempYaPagado, cCapital);
-      
-      // Lo que falta cubrir en esta cuota
-      const faltaMora    = cMora - yaPagadoMora;
-      const faltaInteres = cInteres - yaPagadoInteres;
-      const faltaCapital = cCapital - yaPagadoCapital;
-
-      // 3. Aplicar pago actual siguiendo la prelación
-      // 3a. Mora
-      const aplicarMora = Math.min(restante, faltaMora);
-      pagoAplicadoMora = aplicarMora;
-      restante -= aplicarMora;
-      moraTotal += aplicarMora;
-
-      // 3b. Interés
-      const aplicarInteres = Math.min(restante, faltaInteres);
-      pagoAplicadoInteres = aplicarInteres;
-      restante -= aplicarInteres;
-      interesTotal += aplicarInteres;
-
-      // 3c. Capital
-      const aplicarCapital = Math.min(restante, faltaCapital);
-      pagoAplicadoCapital = aplicarCapital;
-      restante -= aplicarCapital;
-      capitalTotal += aplicarCapital;
-
-      const totalAplicadoCuota = pagoAplicadoMora + pagoAplicadoInteres + pagoAplicadoCapital;
-
-      if (totalAplicadoCuota > 0) {
-        detallesPago.push({
-          cuotaId: cuota.id,
-          monto: totalAplicadoCuota,
-          montoCapital: pagoAplicadoCapital,
-          montoInteres: pagoAplicadoInteres,
-          montoInteresMora: pagoAplicadoMora,
-        });
-
-        const nuevoMontoPagado = yaPagado + totalAplicadoCuota;
-        const COP_TOLERANCE = 1;
-        const completa = nuevoMontoPagado >= (montoCuota - COP_TOLERANCE);
-        const montoPagadoFinal = completa ? montoCuota : nuevoMontoPagado;
-        const nuevoEstado = completa
-          ? EstadoCuota.PAGADA
-          : (cuota.estado === EstadoCuota.PENDIENTE ? EstadoCuota.PARCIAL : cuota.estado);
-        
-        cuotasActualizar.push({ id: cuota.id, montoPagado: montoPagadoFinal, estado: nuevoEstado });
-      }
-    }
-
-    // Bug 5 Fix: Ajustar para garantizar exactitud decimal (Débito === Crédito)
-    // Redondeamos interés y mora, y calculamos el capital como residuo exacto.
-    const interesTotalFinal = Math.round(interesTotal * 100) / 100;
-    const moraTotalFinal    = Math.round(moraTotal * 100) / 100;
-    const capitalTotalFinal = Math.round((montoTotal - interesTotalFinal - moraTotalFinal) * 100) / 100;
-
-    const count = await this.prisma.pago.count();
-    const numeroPago = `PAG-${String(count + 1).padStart(6, '0')}`;
+    const numeroPago = this.generarNumeroPago();
 
     await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Prestamo" WHERE id = ${prestamoId} FOR UPDATE`;
+
+      const prestamoActual = await tx.prestamo.findFirst({
+        where: { id: prestamoId, eliminadoEn: null },
+        include: {
+          cuotas: {
+            where: { estado: { in: [EstadoCuota.PENDIENTE, EstadoCuota.PARCIAL, EstadoCuota.VENCIDA] } },
+            orderBy: { numeroCuota: 'asc' },
+          },
+          cliente: { select: { id: true } },
+        },
+      });
+
+      if (!prestamoActual) throw new NotFoundException('Préstamo no encontrado');
+      if (![EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA].includes(prestamoActual.estado as any)) {
+        throw new BadRequestException(`No se puede aplicar pago: préstamo en estado ${prestamoActual.estado}`);
+      }
+      if (montoTotal > Number((prestamoActual as any).saldoPendiente || 0) + 1) {
+        throw new BadRequestException(
+          `El monto del pago (${montoTotal}) no puede ser mayor al saldo pendiente del préstamo (${prestamoActual.saldoPendiente})`,
+        );
+      }
+
+      const {
+        detallesPago,
+        cuotasActualizar,
+        capitalTotal,
+        interesTotal,
+        moraTotal,
+      } = this.calcularAplicacionPago(prestamoActual, montoTotal);
+
+      const interesTotalFinal = Math.round(interesTotal * 100) / 100;
+      const moraTotalFinal = Math.round(moraTotal * 100) / 100;
+      const capitalTotalFinal =
+        Math.round((montoTotal - interesTotalFinal - moraTotalFinal) * 100) / 100;
+
       const pago = await tx.pago.create({
         data: {
           numeroPago,
-          clienteId: prestamo.clienteId,
-          prestamoId: prestamo.id,
+          idempotencyKey,
+          clienteId: prestamoActual.clienteId,
+          prestamoId: prestamoActual.id,
           cobradorId,
           fechaPago: fechaPagoBogota,
           montoTotal,
@@ -331,21 +376,21 @@ export class ApprovalsService {
       }
 
       // Actualizar préstamo
-      const nuevoSaldo = Math.max(0, Number((prestamo as any).saldoPendiente || 0) - montoTotal);
+      const nuevoSaldo = Math.max(0, Number((prestamoActual as any).saldoPendiente || 0) - montoTotal);
       const prestamoQuedaPagado = nuevoSaldo <= 0;
-      let nuevoEstadoPrestamo: any = prestamo.estado;
+      let nuevoEstadoPrestamo: any = prestamoActual.estado;
       if (prestamoQuedaPagado) nuevoEstadoPrestamo = EstadoPrestamo.PAGADO;
-      else if (prestamo.estado === EstadoPrestamo.EN_MORA) {
-        const vencidasRestantes = await tx.cuota.count({ where: { prestamoId: prestamo.id, estado: EstadoCuota.VENCIDA } });
+      else if (prestamoActual.estado === EstadoPrestamo.EN_MORA) {
+        const vencidasRestantes = await tx.cuota.count({ where: { prestamoId: prestamoActual.id, estado: EstadoCuota.VENCIDA } });
         if (vencidasRestantes === 0) nuevoEstadoPrestamo = EstadoPrestamo.ACTIVO;
       }
 
       await tx.prestamo.update({
-        where: { id: prestamo.id },
+        where: { id: prestamoActual.id },
         data: {
-          totalPagado: Number((prestamo as any).totalPagado || 0) + montoTotal,
-          capitalPagado: Number((prestamo as any).capitalPagado || 0) + capitalTotal,
-          interesPagado: Number((prestamo as any).interesPagado || 0) + interesTotal,
+          totalPagado: Number((prestamoActual as any).totalPagado || 0) + montoTotal,
+          capitalPagado: Number((prestamoActual as any).capitalPagado || 0) + capitalTotal,
+          interesPagado: Number((prestamoActual as any).interesPagado || 0) + interesTotal,
           saldoPendiente: nuevoSaldo,
           estado: nuevoEstadoPrestamo,
           estadoSincronizacion: 'PENDIENTE' as any,

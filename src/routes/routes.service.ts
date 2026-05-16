@@ -171,17 +171,21 @@ export class RoutesService {
 
     const { inicio, fin } = this.getInicioFinHoy();
 
-    const yaActivada = await this.prisma.transaccion.findFirst({
-      where: {
-        cajaId: cajaRuta.id,
-        tipoReferencia: 'ACTIVACION_RUTA',
-        fechaTransaccion: { gte: inicio, lte: fin },
-      },
-      select: { id: true, fechaTransaccion: true },
-    });
+    const yaActivada = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "cajas" WHERE id = ${cajaRuta.id} FOR UPDATE`;
 
-    if (!yaActivada?.id) {
-      await this.prisma.transaccion.create({
+      const activacionExistente = await tx.transaccion.findFirst({
+        where: {
+          cajaId: cajaRuta.id,
+          tipoReferencia: 'ACTIVACION_RUTA',
+          fechaTransaccion: { gte: inicio, lte: fin },
+        },
+        select: { id: true, fechaTransaccion: true },
+      });
+
+      if (activacionExistente?.id) return activacionExistente;
+
+      return tx.transaccion.create({
         data: {
           numeroTransaccion: `AR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
           cajaId: cajaRuta.id,
@@ -192,8 +196,9 @@ export class RoutesService {
           referenciaId: `RUTA:${ruta.id}`,
           creadoPorId: userId,
         },
+        select: { id: true, fechaTransaccion: true },
       });
-    }
+    });
 
     if (ruta.cobradorId) {
       await this.notificacionesService.create({
@@ -2794,6 +2799,12 @@ export class RoutesService {
     } catch (error) {
 
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
+
+        if (error.code === 'P2002') {
+
+          throw new ConflictException('El cliente ya está asignado a esta ruta');
+
+        }
 
         if (error.code === 'P2003') {
 

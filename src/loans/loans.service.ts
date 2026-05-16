@@ -3,6 +3,7 @@ import {
   NotFoundException,
   Logger,
   BadRequestException,
+  ConflictException,
   OnModuleInit,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -41,6 +42,7 @@ import {
   getBogotaStartEndOfDay,
   getBogotaStartEndOfDayFromKey,
 } from '../utils/date-utils';
+import { randomUUID } from 'crypto';
 
 
 @Injectable()
@@ -71,6 +73,26 @@ export class LoansService implements OnModuleInit {
   private trunc2(n: number): number {
     if (!Number.isFinite(n)) return 0;
     return Math.trunc(n * 100) / 100;
+  }
+
+  async descontarStockSiDisponible(productoId: string, tx?: any) {
+    const prisma = tx || this.prisma;
+    const result = await prisma.producto.updateMany({
+      where: {
+        id: productoId,
+        stock: { gt: 0 },
+      },
+      data: { stock: { decrement: 1 } },
+    });
+
+    if (result.count !== 1) {
+      throw new BadRequestException('Producto sin stock disponible');
+    }
+  }
+
+  generarNumeroPrestamo(tipoPrestamo: string) {
+    const prefix = String(tipoPrestamo || '').toUpperCase() === 'ARTICULO' ? 'ART' : 'PRES';
+    return `${prefix}-${Date.now()}-${randomUUID().slice(0, 8)}`;
   }
 
   constructor(
@@ -1570,6 +1592,12 @@ export class LoansService implements OnModuleInit {
         throw new NotFoundException('Préstamo no encontrado');
       }
 
+      if ((updateData as any)?.version != null && Number((updateData as any).version) !== Number((prestamo as any).version || 1)) {
+        throw new ConflictException(
+          'El préstamo fue actualizado por otro usuario. Recarga la información antes de guardar.',
+        );
+      }
+
       const datosAnteriores = {
         monto: prestamo.monto,
         tasaInteres: prestamo.tasaInteres,
@@ -1582,7 +1610,10 @@ export class LoansService implements OnModuleInit {
 
       // Build update payload - only allow safe fields
       // Record tipado con los campos permitidos del schema
-      const data: Record<string, unknown> = { estadoSincronizacion: 'PENDIENTE' };
+      const data: Record<string, unknown> = {
+        estadoSincronizacion: 'PENDIENTE',
+        version: { increment: 1 },
+      };
 
       if (updateData.monto !== undefined) data.monto = updateData.monto;
       if (updateData.tasaInteres !== undefined) data.tasaInteres = updateData.tasaInteres;
@@ -1901,8 +1932,7 @@ export class LoansService implements OnModuleInit {
       }
 
       // Generar numero de prestamo
-      const count = await this.prisma.prestamo.count();
-      const numeroPrestamo = `PRES-${String(count + 1).padStart(6, '0')}`;
+      const numeroPrestamo = this.generarNumeroPrestamo(createLoanDto.tipoPrestamo);
 
       // Calcular fecha fin
       const fechaInicio = this.parseBogotaDayKey(createLoanDto.fechaInicio);
@@ -2293,10 +2323,7 @@ export class LoansService implements OnModuleInit {
       // Descontar stock si es un préstamo de artículo (y maneja stock)
       if (prestamoActualizado.tipoPrestamo === 'ARTICULO' && prestamoActualizado.productoId) {
         if (prestamoActualizado.producto?.stock !== undefined && prestamoActualizado.producto?.stock !== null) {
-          await this.prisma.producto.update({
-            where: { id: prestamoActualizado.productoId },
-            data: { stock: { decrement: 1 } },
-          });
+          await this.descontarStockSiDisponible(prestamoActualizado.productoId);
         }
       }
 
@@ -2481,6 +2508,29 @@ export class LoansService implements OnModuleInit {
       this.logger.log(
         `Creating loan for client ${data.clienteId}, type: ${data.tipoPrestamo}. Data: ${JSON.stringify(data)}`,
       );
+      const idempotencyKey = (data as any).idempotencyKey?.toString().trim() || undefined;
+
+      if (idempotencyKey) {
+        const prestamoExistente = await this.prisma.prestamo.findFirst({
+          where: { idempotencyKey },
+          select: { id: true, numeroPrestamo: true },
+        });
+
+        if (prestamoExistente) {
+          const aprobacionExistente = await this.prisma.aprobacion.findFirst({
+            where: { idempotencyKey },
+            select: { id: true, referenciaId: true },
+          });
+
+          return {
+            mensaje: 'Préstamo ya registrado previamente.',
+            prestamoId: prestamoExistente.id,
+            numeroPrestamo: prestamoExistente.numeroPrestamo,
+            aprobacionId: aprobacionExistente?.id || null,
+            idempotentReplay: true,
+          };
+        }
+      }
 
       // Verificar que el cliente existe
       const cliente = await this.prisma.cliente.findUnique({
@@ -2678,10 +2728,7 @@ export class LoansService implements OnModuleInit {
       }
 
       // Generar número de préstamo/crédito
-      const count = await this.prisma.prestamo.count();
-      const tipo = (data.tipoPrestamo || '').toUpperCase();
-      const prefix = tipo === 'ARTICULO' ? 'ART' : 'PRES';
-      const numeroPrestamo = `${prefix}-${String(count + 1).padStart(6, '0')}`;
+      const numeroPrestamo = this.generarNumeroPrestamo(data.tipoPrestamo);
 
       // Para el cálculo de cuotas y fechas, usamos el plazo real
       // EXTRAER DE FORMA INFALIBLE: recorremos todos los campos posibles en orden
@@ -2799,6 +2846,7 @@ export class LoansService implements OnModuleInit {
       const prestamo = await this.prisma.prestamo.create({
         data: {
           numeroPrestamo,
+          idempotencyKey,
           clienteId: data.clienteId,
           productoId: data.productoId,
           precioProductoId: data.precioProductoId,
@@ -2850,10 +2898,7 @@ export class LoansService implements OnModuleInit {
       // Descontar stock si el préstamo es de artículo y ha sido APROBADO inmediatamente
       if (prestamo.tipoPrestamo === 'ARTICULO' && prestamo.estadoAprobacion === EstadoAprobacion.APROBADO) {
         if (prestamo.productoId && prestamo.producto?.stock !== undefined && prestamo.producto?.stock !== null) {
-          await this.prisma.producto.update({
-            where: { id: prestamo.productoId },
-            data: { stock: { decrement: 1 } },
-          });
+          await this.descontarStockSiDisponible(prestamo.productoId);
         }
       }
 
@@ -2969,6 +3014,7 @@ export class LoansService implements OnModuleInit {
       const aprobacion = await this.prisma.aprobacion.create({
         data: {
           tipoAprobacion: TipoAprobacion.NUEVO_PRESTAMO,
+          idempotencyKey,
           referenciaId: prestamo.id,
           tablaReferencia: 'Prestamo',
           solicitadoPorId: data.creadoPorId,
@@ -2997,6 +3043,7 @@ export class LoansService implements OnModuleInit {
             fechaInicio: prestamo.fechaInicio ? formatBogotaOffsetIso(prestamo.fechaInicio) : undefined,
             fechaPrimerCobro: (data as any).fechaPrimerCobro ? String((data as any).fechaPrimerCobro) : undefined,
             esContado: !!data.esContado,
+            idempotencyKey: idempotencyKey || null,
           },
           // montoSolicitud = precio total del artículo, o monto del préstamo en efectivo
           montoSolicitud: isFinanciamientoArticulo ? precioArticuloTotal : safeNumber(prestamo.monto),

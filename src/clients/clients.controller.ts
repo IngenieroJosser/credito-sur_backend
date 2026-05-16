@@ -187,6 +187,7 @@ export class ClientsController {
       puntaje?: number;
       archivos?: any[];
       creadoPorId?: string;
+      version?: number;
     },
   ) {
     return this.clientsService.updateClient(id, {
@@ -201,7 +202,9 @@ export class ClientsController {
       referencia2Nombre: body.referencia2Nombre,
       referencia2Telefono: body.referencia2Telefono,
       nivelRiesgo: body.nivelRiesgo as NivelRiesgo,
+      puntaje: body.puntaje,
       archivos: body.archivos,
+      version: body.version,
     });
   }
 

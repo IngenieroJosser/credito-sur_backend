@@ -24,6 +24,7 @@ import { generarExcelPagos, generarPDFPagos, PagoRow, PagosTotales } from '../te
 import { CloudinaryService } from '../upload/cloudinary.service';
 import { formatBogotaOffsetIso, getBogotaDayKey } from '../utils/date-utils';
 import { LedgerService } from '../accounting/ledger.service';
+import { randomUUID } from 'crypto';
 
 type PaymentActor = {
   id?: string;
@@ -107,11 +108,162 @@ export class PaymentsService {
     return { capital, interes };
   }
 
+  private generarNumeroPago() {
+    return `PAG-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  }
+
+  private normalizeIdempotencyKey(value?: string | null) {
+    const key = value?.toString().trim();
+    return key || undefined;
+  }
+
+  private buildIdempotentPaymentReplay(pago: any) {
+    const montoTotal = Number(pago?.montoTotal || 0);
+    const capitalRecuperado = (pago?.detalles || []).reduce(
+      (sum: number, detalle: any) => sum + Number(detalle?.montoCapital || 0),
+      0,
+    );
+    const interesRecuperado = (pago?.detalles || []).reduce(
+      (sum: number, detalle: any) => sum + Number(detalle?.montoInteres || 0),
+      0,
+    );
+    const saldoNuevo = Number(pago?.prestamo?.saldoPendiente || 0);
+
+    return {
+      pago,
+      descomposicion: {
+        montoTotal,
+        capitalRecuperado,
+        interesRecuperado,
+        saldoAnterior: saldoNuevo + montoTotal,
+        saldoNuevo,
+        cuotasAfectadas: pago?.detalles?.length || 0,
+        prestamoQuedaPagado: saldoNuevo <= 0,
+      },
+      idempotentReplay: true,
+    };
+  }
+
+  private async findPagoByIdempotencyKey(idempotencyKey?: string) {
+    if (!idempotencyKey) return null;
+    return this.prisma.pago.findFirst({
+      where: { idempotencyKey },
+      include: {
+        detalles: true,
+        cliente: {
+          select: { id: true, nombres: true, apellidos: true },
+        },
+        prestamo: {
+          select: { id: true, saldoPendiente: true },
+        },
+      },
+    });
+  }
+
+  private calcularAplicacionPago(prestamo: any, montoTotal: number) {
+    const detallesPago: {
+      cuotaId: string;
+      monto: number;
+      montoCapital: number;
+      montoInteres: number;
+      montoInteresMora: number;
+    }[] = [];
+
+    let montoRestante = montoTotal;
+    let capitalTotal = 0;
+    let interesTotal = 0;
+    let moraTotal = 0;
+
+    const cuotasActualizar: {
+      id: string;
+      montoPagado: number;
+      estado: EstadoCuota;
+    }[] = [];
+
+    for (const cuota of prestamo.cuotas || []) {
+      if (montoRestante <= 0) break;
+
+      const montoCuota = Number(cuota.monto);
+      const yaPagado = Number(cuota.montoPagado);
+      const pendienteCuota = montoCuota - yaPagado;
+
+      if (pendienteCuota <= 0) continue;
+
+      const cCapital = Number(cuota.montoCapital);
+      const cInteres = Number(cuota.montoInteres);
+      const cMora = Number(cuota.montoInteresMora);
+
+      let tempYaPagado = yaPagado;
+
+      const yaPagadoMora = Math.min(tempYaPagado, cMora);
+      tempYaPagado -= yaPagadoMora;
+
+      const yaPagadoInteres = Math.min(tempYaPagado, cInteres);
+      tempYaPagado -= yaPagadoInteres;
+
+      const yaPagadoCapital = Math.min(tempYaPagado, cCapital);
+
+      const faltaMora = cMora - yaPagadoMora;
+      const faltaInteres = cInteres - yaPagadoInteres;
+      const faltaCapital = cCapital - yaPagadoCapital;
+
+      const pagoAplicadoMora = Math.min(montoRestante, faltaMora);
+      montoRestante -= pagoAplicadoMora;
+      moraTotal += pagoAplicadoMora;
+
+      const pagoAplicadoInteres = Math.min(montoRestante, faltaInteres);
+      montoRestante -= pagoAplicadoInteres;
+      interesTotal += pagoAplicadoInteres;
+
+      const pagoAplicadoCapital = Math.min(montoRestante, faltaCapital);
+      montoRestante -= pagoAplicadoCapital;
+      capitalTotal += pagoAplicadoCapital;
+
+      const totalAplicadoCuota =
+        pagoAplicadoMora + pagoAplicadoInteres + pagoAplicadoCapital;
+
+      if (totalAplicadoCuota > 0) {
+        detallesPago.push({
+          cuotaId: cuota.id,
+          monto: totalAplicadoCuota,
+          montoCapital: pagoAplicadoCapital,
+          montoInteres: pagoAplicadoInteres,
+          montoInteresMora: pagoAplicadoMora,
+        });
+
+        const nuevoMontoPagado = yaPagado + totalAplicadoCuota;
+        const COP_TOLERANCE = 1;
+        const cuotaCompleta = nuevoMontoPagado >= montoCuota - COP_TOLERANCE;
+        const montoPagadoFinal = cuotaCompleta ? montoCuota : nuevoMontoPagado;
+
+        const nuevoEstadoCuota = cuotaCompleta
+          ? EstadoCuota.PAGADA
+          : cuota.estado === EstadoCuota.PENDIENTE
+            ? EstadoCuota.PARCIAL
+            : cuota.estado;
+
+        cuotasActualizar.push({
+          id: cuota.id,
+          montoPagado: montoPagadoFinal,
+          estado: nuevoEstadoCuota,
+        });
+      }
+    }
+
+    return { detallesPago, cuotasActualizar, capitalTotal, interesTotal, moraTotal };
+  }
+
   async create(dto: CreatePaymentDto, comprobante?: Express.Multer.File, actor?: PaymentActor) {
     const paymentDto = {
       ...dto,
       cobradorId: this.isCollector(actor) && actor?.id ? actor.id : dto.cobradorId,
     };
+    const idempotencyKey = this.normalizeIdempotencyKey(paymentDto.idempotencyKey);
+
+    const pagoExistente = await this.findPagoByIdempotencyKey(idempotencyKey);
+    if (pagoExistente) {
+      return this.buildIdempotentPaymentReplay(pagoExistente);
+    }
 
     // 1. Validar que se proporcione el prestamoId
     if (!paymentDto.prestamoId) {
@@ -186,9 +338,7 @@ export class PaymentsService {
     const tasaInteres = Number(prestamo.tasaInteres);
 
 
-    // Generar número de pago
-    const count = await this.prisma.pago.count();
-    const numeroPago = `PAG-${String(count + 1).padStart(6, '0')}`;
+    const numeroPago = this.generarNumeroPago();
 
     // Distribuir el pago entre cuotas pendientes (Siguiendo Prelación: Mora -> Interés -> Capital)
     const detallesPago: {
@@ -319,9 +469,26 @@ export class PaymentsService {
     // Si es TRANSFERENCIA, se crea una aprobación pendiente. El pago NO afecta el crédito
     // hasta que sea aprobado en el módulo de Revisiones.
     if (paymentDto.metodoPago === MetodoPago.TRANSFERENCIA) {
+      const aprobacionExistente = idempotencyKey
+        ? await this.prisma.aprobacion.findFirst({
+            where: { idempotencyKey },
+            select: { id: true, estado: true },
+          })
+        : null;
+
+      if (aprobacionExistente) {
+        return {
+          pendingVerification: true,
+          aprobacionId: aprobacionExistente.id,
+          idempotentReplay: true,
+          message: 'Pago por transferencia ya estaba enviado a revisiones.',
+        };
+      }
+
       const approval = await this.prisma.aprobacion.create({
         data: {
           tipoAprobacion: 'PAGO_TRANSFERENCIA' as any,
+          idempotencyKey,
           referenciaId: prestamoIdVal,
           tablaReferencia: 'prestamos',
           solicitadoPorId: cobradorIdVal,
@@ -336,6 +503,7 @@ export class PaymentsService {
             numeroReferencia: paymentDto.numeroReferencia || null,
             notas: paymentDto.notas || null,
             metodoPago: 'TRANSFERENCIA',
+            idempotencyKey: idempotencyKey || null,
           },
         },
       });
@@ -425,10 +593,60 @@ export class PaymentsService {
 
     // Crear pago y actualizar todo en una transacción (EFECTIVO)
     const resultado = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Prestamo" WHERE id = ${prestamoIdVal} FOR UPDATE`;
+
+      const prestamoActual = await tx.prestamo.findFirst({
+        where: { id: prestamoIdVal, eliminadoEn: null },
+        include: {
+          cuotas: {
+            where: {
+              estado: { in: [EstadoCuota.PENDIENTE, EstadoCuota.PARCIAL, EstadoCuota.VENCIDA] },
+            },
+            orderBy: { numeroCuota: 'asc' },
+          },
+          cliente: {
+            select: { id: true, dni: true, nombres: true, apellidos: true },
+          },
+        },
+      });
+
+      if (!prestamoActual) {
+        throw new NotFoundException('Préstamo no encontrado');
+      }
+
+      if (
+        prestamoActual.estado !== EstadoPrestamo.ACTIVO &&
+        prestamoActual.estado !== EstadoPrestamo.EN_MORA
+      ) {
+        throw new BadRequestException(
+          `No se puede registrar pago: el préstamo está en estado ${prestamoActual.estado}`,
+        );
+      }
+
+      if (montoTotal > Number(prestamoActual.saldoPendiente) + 1) {
+        throw new BadRequestException(
+          `El monto del pago ($${montoTotal}) no puede ser mayor al saldo pendiente del préstamo ($${prestamoActual.saldoPendiente})`,
+        );
+      }
+
+      const {
+        detallesPago: detallesPagoActuales,
+        cuotasActualizar: cuotasActualizarActuales,
+        capitalTotal: capitalTotalActual,
+        interesTotal: interesTotalActual,
+        moraTotal: moraTotalActual,
+      } = this.calcularAplicacionPago(prestamoActual, montoTotal);
+
+      const interesTotalFinalActual = Math.round(interesTotalActual * 100) / 100;
+      const moraTotalFinalActual = Math.round(moraTotalActual * 100) / 100;
+      const capitalTotalFinalActual =
+        Math.round((montoTotal - interesTotalFinalActual - moraTotalFinalActual) * 100) / 100;
+
       // 1. Crear el registro de pago
       const pago = await tx.pago.create({
         data: {
           numeroPago,
+          idempotencyKey,
           clienteId: clienteId,
           prestamoId: prestamoIdVal,
           cobradorId: cobradorIdVal,
@@ -438,7 +656,7 @@ export class PaymentsService {
           numeroReferencia: paymentDto.numeroReferencia,
           notas: paymentDto.notas,
           detalles: {
-            create: detallesPago,
+            create: detallesPagoActuales,
           },
         },
         include: {
@@ -450,7 +668,7 @@ export class PaymentsService {
       });
 
       // 2. Actualizar cada cuota afectada
-      for (const cuotaUpd of cuotasActualizar) {
+      for (const cuotaUpd of cuotasActualizarActuales) {
         await tx.cuota.update({
           where: { id: cuotaUpd.id },
           data: {
@@ -463,21 +681,21 @@ export class PaymentsService {
       }
 
       // 3. Actualizar saldos del préstamo
-      const nuevoTotalPagado = Number(prestamo.totalPagado) + montoTotal;
-      const nuevoCapitalPagado = Number(prestamo.capitalPagado) + capitalTotal;
-      const nuevoInteresPagado = Number(prestamo.interesPagado) + interesTotal;
+      const nuevoTotalPagado = Number(prestamoActual.totalPagado) + montoTotal;
+      const nuevoCapitalPagado = Number(prestamoActual.capitalPagado) + capitalTotalActual;
+      const nuevoInteresPagado = Number(prestamoActual.interesPagado) + interesTotalActual;
       const nuevoSaldoPendiente =
-        Number(prestamo.saldoPendiente) - montoTotal;
+        Number(prestamoActual.saldoPendiente) - montoTotal;
 
       // Verificar si el préstamo queda pagado
       const prestamoQuedaPagado = nuevoSaldoPendiente <= 0;
 
       // Si el préstamo estaba EN_MORA y ya no quedan cuotas VENCIDAS, debe volver a ACTIVO inmediatamente.
       // Esto evita que un cliente que pagó cuota(s) atrasada(s) + la del día siga figurando en mora hasta el próximo job.
-      let nuevoEstadoPrestamo: EstadoPrestamo = prestamo.estado;
+      let nuevoEstadoPrestamo: EstadoPrestamo = prestamoActual.estado;
       if (prestamoQuedaPagado) {
         nuevoEstadoPrestamo = EstadoPrestamo.PAGADO;
-      } else if (prestamo.estado === EstadoPrestamo.EN_MORA) {
+      } else if (prestamoActual.estado === EstadoPrestamo.EN_MORA) {
         const vencidasRestantes = await tx.cuota.count({
           where: {
             prestamoId: prestamoIdVal,
@@ -546,9 +764,9 @@ export class PaymentsService {
         {
           pagoId:       pago.id,
           cajaRutaId:   cajaIngreso.id,
-          montoCapital: capitalTotalFinal,
-          montoInteres: interesTotalFinal,
-          montoMora:    moraTotalFinal,
+          montoCapital: capitalTotalFinalActual,
+          montoInteres: interesTotalFinalActual,
+          montoMora:    moraTotalFinalActual,
           metodoPago:   pago.metodoPago,
           createdBy:    cobradorIdVal,
         },
@@ -559,11 +777,11 @@ export class PaymentsService {
         pago,
         descomposicion: {
           montoTotal,
-          capitalRecuperado: capitalTotal,
-          interesRecuperado: interesTotal,
-          saldoAnterior: Number(prestamo.saldoPendiente),
+          capitalRecuperado: capitalTotalActual,
+          interesRecuperado: interesTotalActual,
+          saldoAnterior: Number(prestamoActual.saldoPendiente),
           saldoNuevo: Math.max(0, nuevoSaldoPendiente),
-          cuotasAfectadas: cuotasActualizar.length,
+          cuotasAfectadas: cuotasActualizarActuales.length,
           prestamoQuedaPagado,
         },
       };
@@ -579,16 +797,25 @@ export class PaymentsService {
         numeroPago,
         prestamoIdVal,
         montoTotal,
-        capitalRecuperado: capitalTotalFinal,
-        interesRecuperado: interesTotalFinal,
-        moraRecuperada:    moraTotalFinal,
+        capitalRecuperado:
+          Math.round(Number(resultado.descomposicion.capitalRecuperado || 0) * 100) / 100,
+        interesRecuperado:
+          Math.round(Number(resultado.descomposicion.interesRecuperado || 0) * 100) / 100,
+        moraRecuperada:
+          Math.round(
+            Number(
+              montoTotal -
+                Number(resultado.descomposicion.capitalRecuperado || 0) -
+                Number(resultado.descomposicion.interesRecuperado || 0),
+            ) * 100,
+          ) / 100,
       },
     });
 
     // Para EFECTIVO no se genera revisión.
 
     this.logger.log(
-      `Pago ${numeroPago} registrado: capital=${capitalTotal.toFixed(2)}, interés=${interesTotal.toFixed(2)}, saldo=${resultado.descomposicion.saldoNuevo.toFixed(2)}`,
+      `Pago ${numeroPago} registrado: capital=${Number(resultado.descomposicion.capitalRecuperado).toFixed(2)}, interés=${Number(resultado.descomposicion.interesRecuperado).toFixed(2)}, saldo=${resultado.descomposicion.saldoNuevo.toFixed(2)}`,
     );
 
     this.notificacionesGateway.broadcastPagosActualizados({

@@ -16,10 +16,16 @@ const mockLedger = {
   registrarAsiento: jest.fn().mockResolvedValue({ id: 'journal-1' }),
   registrarArqueoDescuadre: jest.fn().mockResolvedValue({ id: 'journal-2' }),
   registrarVentaArticulo: jest.fn().mockResolvedValue({ id: 'journal-venta-articulo' }),
+  registrarConsolidacion: jest.fn().mockResolvedValue({ id: 'journal-consolidacion' }),
 };
 
 function buildPrismaMock(overrides: Record<string, any> = {}) {
   const tx = {
+    $queryRaw: jest.fn().mockResolvedValue([]),
+    caja: {
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+    },
     transaccion: {
       create: jest.fn().mockResolvedValue({ id: 'trx-1', tipoReferencia: 'ARQUEO' }),
     },
@@ -63,7 +69,11 @@ function buildPrismaMock(overrides: Record<string, any> = {}) {
       findFirst: jest.fn().mockResolvedValue({ id: 'ruta-1', cobradorId: 'cobrador-1' }),
     },
     aprobacion: {
+      findFirst: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockResolvedValue({ id: 'approval-1' }),
+    },
+    gasto: {
+      findFirst: jest.fn().mockResolvedValue(null),
     },
     usuario: {
       findUnique: jest.fn().mockResolvedValue({ nombres: 'Cobra', apellidos: 'Dor' }),
@@ -82,6 +92,7 @@ function buildPrismaMock(overrides: Record<string, any> = {}) {
       aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 0 } }),
       count: jest.fn().mockResolvedValue(0),
       create: jest.fn().mockResolvedValue({ id: 'trx-zero', tipoReferencia: 'ARQUEO' }),
+      findFirst: jest.fn().mockResolvedValue(null),
       findMany: jest.fn().mockResolvedValue([]),
     },
     prestamo: {
@@ -198,6 +209,39 @@ describe('AccountingService financial ledger controls', () => {
     expect(result.gananciaNeta).toBe(80000);
     expect(result.capitalEnCalle).toBe(650000);
     expect(result.deudaCobradorHoy).toBe(40000);
+  });
+
+  it('revalida el saldo de caja dentro de la transacción al consolidar', async () => {
+    const prisma = buildPrismaMock();
+    prisma.caja.findUnique.mockResolvedValue({
+      id: 'caja-ruta-1',
+      nombre: 'Caja Ruta 1',
+      tipo: 'RUTA',
+      saldoActual: 100000,
+      ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+    });
+    prisma.caja.findFirst.mockResolvedValue({
+      id: 'caja-oficina',
+      nombre: 'Caja Oficina',
+      codigo: 'CAJA-OFICINA',
+      tipo: 'PRINCIPAL',
+      saldoActual: 0,
+    });
+    prisma._tx.caja.findUnique.mockResolvedValue({
+      id: 'caja-ruta-1',
+      nombre: 'Caja Ruta 1',
+      tipo: 'RUTA',
+      saldoActual: 30000,
+      ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+    });
+
+    await expect(
+      makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(prisma._tx.$queryRaw).toHaveBeenCalled();
+    expect(prisma._tx.transaccion.create).not.toHaveBeenCalled();
+    expect(mockLedger.registrarAsiento).not.toHaveBeenCalled();
   });
 
   it('calcula utilidad operativa y neta separando ingresos, gastos y costos desde ledger', async () => {
@@ -496,6 +540,56 @@ describe('AccountingService financial ledger controls', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(mockLedger.registrarAsiento).not.toHaveBeenCalled();
     expect(result).toMatchObject({ success: true, approvalId: 'approval-1' });
+  });
+
+  it('retorna la aprobación existente al reintentar un gasto offline con la misma idempotencyKey', async () => {
+    const prisma = buildPrismaMock();
+    prisma.aprobacion.findFirst.mockResolvedValue({
+      id: 'approval-existente-1',
+      estado: EstadoAprobacion.PENDIENTE,
+    });
+
+    const result = await makeService(prisma).registrarGasto({
+      descripcion: 'Gasolina',
+      monto: 25000,
+      rutaId: 'ruta-1',
+      cobradorId: 'cobrador-1',
+      solicitadoPorId: 'cobrador-1',
+      tipoAprobacion: TipoAprobacion.GASTO,
+      esPersonal: false,
+      idempotencyKey: 'offline-gasto-1',
+    } as any);
+
+    expect(result).toMatchObject({
+      success: true,
+      approvalId: 'approval-existente-1',
+      idempotentReplay: true,
+    });
+    expect(prisma.aprobacion.create).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('retorna la transacción existente al reintentar un movimiento con la misma idempotencyKey', async () => {
+    const prisma = buildPrismaMock();
+    prisma.transaccion.findFirst.mockResolvedValue({
+      id: 'trx-existente-1',
+      idempotencyKey: 'offline-trx-1',
+    });
+
+    const result = await makeService(prisma).createTransaccion({
+      cajaId: 'caja-ruta-1',
+      tipo: TipoTransaccion.INGRESO,
+      monto: 30000,
+      descripcion: 'Ingreso manual',
+      creadoPorId: 'admin-1',
+      idempotencyKey: 'offline-trx-1',
+    } as any);
+
+    expect(result).toMatchObject({
+      id: 'trx-existente-1',
+      idempotentReplay: true,
+    });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   it('bloquea el arqueo cuando hay cola offline pendiente anterior o igual al cierre', async () => {

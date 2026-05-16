@@ -128,6 +128,14 @@ export class CreateClientDto {
   @IsOptional()
   creadoPorId?: string;
 
+  @IsString()
+  @IsOptional()
+  idempotencyKey?: string;
+
+  @IsNumber()
+  @IsOptional()
+  version?: number;
+
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })

@@ -760,6 +760,29 @@ export class ClientsService {
   async createClient(data: CreateClientDto) {
     this.logger.log(`[DEBUG] createClient llamado para documento: ${data.dni}`);
     try {
+      const idempotencyKey = data.idempotencyKey?.toString().trim() || undefined;
+
+      if (idempotencyKey) {
+        const clientePorClave = await this.prisma.cliente.findFirst({
+          where: { idempotencyKey },
+        });
+
+        if (clientePorClave) {
+          const aprobacionPorClave = await this.prisma.aprobacion.findFirst({
+            where: { idempotencyKey },
+            select: { id: true, referenciaId: true },
+          });
+
+          return {
+            mensaje: 'Cliente ya registrado previamente.',
+            aprobacionId: aprobacionPorClave?.id || null,
+            clienteId: clientePorClave.id,
+            clienteCodigo: clientePorClave.codigo,
+            idempotentReplay: true,
+          };
+        }
+      }
+
       // Validar si ya existe un cliente con ese documento
       const clienteExistente = await this.prisma.cliente.findFirst({
         where: { dni: data.dni },
@@ -815,6 +838,7 @@ export class ClientsService {
               referencia2Nombre: data.referencia2Nombre,
               referencia2Telefono: data.referencia2Telefono,
               creadoPorId: solicitadoPorId,
+              idempotencyKey,
             },
           });
 
@@ -860,6 +884,7 @@ export class ClientsService {
           const aprobacion = await this.prisma.aprobacion.create({
             data: {
               tipoAprobacion: 'NUEVO_CLIENTE',
+              idempotencyKey,
               referenciaId: clienteRestaurado.id,
               tablaReferencia: 'Cliente',
               solicitadoPorId: solicitadoPorId,
@@ -877,6 +902,7 @@ export class ClientsService {
                 referencia2Nombre: data.referencia2Nombre,
                 referencia2Telefono: data.referencia2Telefono,
                 archivos: data.archivos || [],
+                idempotencyKey: idempotencyKey || null,
               }),
               ...(autoAprobar ? { aprobadoPorId: solicitadoPorId, revisadoEn: new Date() } : {}),
             },
@@ -977,6 +1003,7 @@ export class ClientsService {
       const cliente = await this.prisma.cliente.create({
         data: {
           codigo,
+          idempotencyKey,
           dni: data.dni,
           nombres: data.nombres,
           apellidos: data.apellidos,
@@ -1031,6 +1058,7 @@ export class ClientsService {
       const aprobacion = await this.prisma.aprobacion.create({
         data: {
           tipoAprobacion: 'NUEVO_CLIENTE',
+          idempotencyKey,
           referenciaId: cliente.id,
           tablaReferencia: 'Cliente',
           solicitadoPorId: solicitadoPorId,
@@ -1048,6 +1076,7 @@ export class ClientsService {
             referencia2Nombre: data.referencia2Nombre,
             referencia2Telefono: data.referencia2Telefono,
             archivos: data.archivos || [],
+            idempotencyKey: idempotencyKey || null,
           }),
           ...(autoAprobar ? { aprobadoPorId: solicitadoPorId, revisadoEn: new Date() } : {})
         },
@@ -1346,6 +1375,7 @@ export class ClientsService {
       nivelRiesgo?: NivelRiesgo;
       puntaje?: number;
       archivos?: any[];
+      version?: number;
     },
   ) {
     try {
@@ -1360,14 +1390,21 @@ export class ClientsService {
         throw new NotFoundException('Cliente no encontrado');
       }
 
+      if (data.version != null && Number(data.version) !== Number((cliente as any).version || 1)) {
+        throw new ConflictException(
+          'El cliente fue actualizado por otro usuario. Recarga la información antes de guardar.',
+        );
+      }
+
       // Separar archivos de los datos del cliente
-      const { archivos, ...clientData } = data;
+      const { archivos, version: _version, ...clientData } = data;
 
       // Actualizar datos básicos del cliente
       const clienteActualizado = await this.prisma.cliente.update({
         where: { id },
         data: {
           ...clientData,
+          version: { increment: 1 },
           ultimaActualizacionRiesgo:
             clientData.nivelRiesgo || clientData.puntaje ? new Date() : undefined,
         },
