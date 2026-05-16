@@ -41,6 +41,7 @@ import {
   getBogotaStartEndOfDay,
   getBogotaStartEndOfDayFromKey,
 } from '../utils/date-utils';
+import { randomUUID } from 'crypto';
 
 
 @Injectable()
@@ -71,6 +72,26 @@ export class LoansService implements OnModuleInit {
   private trunc2(n: number): number {
     if (!Number.isFinite(n)) return 0;
     return Math.trunc(n * 100) / 100;
+  }
+
+  async descontarStockSiDisponible(productoId: string, tx?: any) {
+    const prisma = tx || this.prisma;
+    const result = await prisma.producto.updateMany({
+      where: {
+        id: productoId,
+        stock: { gt: 0 },
+      },
+      data: { stock: { decrement: 1 } },
+    });
+
+    if (result.count !== 1) {
+      throw new BadRequestException('Producto sin stock disponible');
+    }
+  }
+
+  generarNumeroPrestamo(tipoPrestamo: string) {
+    const prefix = String(tipoPrestamo || '').toUpperCase() === 'ARTICULO' ? 'ART' : 'PRES';
+    return `${prefix}-${Date.now()}-${randomUUID().slice(0, 8)}`;
   }
 
   constructor(
@@ -1901,8 +1922,7 @@ export class LoansService implements OnModuleInit {
       }
 
       // Generar numero de prestamo
-      const count = await this.prisma.prestamo.count();
-      const numeroPrestamo = `PRES-${String(count + 1).padStart(6, '0')}`;
+      const numeroPrestamo = this.generarNumeroPrestamo(createLoanDto.tipoPrestamo);
 
       // Calcular fecha fin
       const fechaInicio = this.parseBogotaDayKey(createLoanDto.fechaInicio);
@@ -2293,10 +2313,7 @@ export class LoansService implements OnModuleInit {
       // Descontar stock si es un préstamo de artículo (y maneja stock)
       if (prestamoActualizado.tipoPrestamo === 'ARTICULO' && prestamoActualizado.productoId) {
         if (prestamoActualizado.producto?.stock !== undefined && prestamoActualizado.producto?.stock !== null) {
-          await this.prisma.producto.update({
-            where: { id: prestamoActualizado.productoId },
-            data: { stock: { decrement: 1 } },
-          });
+          await this.descontarStockSiDisponible(prestamoActualizado.productoId);
         }
       }
 
@@ -2678,10 +2695,7 @@ export class LoansService implements OnModuleInit {
       }
 
       // Generar número de préstamo/crédito
-      const count = await this.prisma.prestamo.count();
-      const tipo = (data.tipoPrestamo || '').toUpperCase();
-      const prefix = tipo === 'ARTICULO' ? 'ART' : 'PRES';
-      const numeroPrestamo = `${prefix}-${String(count + 1).padStart(6, '0')}`;
+      const numeroPrestamo = this.generarNumeroPrestamo(data.tipoPrestamo);
 
       // Para el cálculo de cuotas y fechas, usamos el plazo real
       // EXTRAER DE FORMA INFALIBLE: recorremos todos los campos posibles en orden
@@ -2850,10 +2864,7 @@ export class LoansService implements OnModuleInit {
       // Descontar stock si el préstamo es de artículo y ha sido APROBADO inmediatamente
       if (prestamo.tipoPrestamo === 'ARTICULO' && prestamo.estadoAprobacion === EstadoAprobacion.APROBADO) {
         if (prestamo.productoId && prestamo.producto?.stock !== undefined && prestamo.producto?.stock !== null) {
-          await this.prisma.producto.update({
-            where: { id: prestamo.productoId },
-            data: { stock: { decrement: 1 } },
-          });
+          await this.descontarStockSiDisponible(prestamo.productoId);
         }
       }
 

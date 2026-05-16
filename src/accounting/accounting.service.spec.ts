@@ -16,10 +16,16 @@ const mockLedger = {
   registrarAsiento: jest.fn().mockResolvedValue({ id: 'journal-1' }),
   registrarArqueoDescuadre: jest.fn().mockResolvedValue({ id: 'journal-2' }),
   registrarVentaArticulo: jest.fn().mockResolvedValue({ id: 'journal-venta-articulo' }),
+  registrarConsolidacion: jest.fn().mockResolvedValue({ id: 'journal-consolidacion' }),
 };
 
 function buildPrismaMock(overrides: Record<string, any> = {}) {
   const tx = {
+    $queryRaw: jest.fn().mockResolvedValue([]),
+    caja: {
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+    },
     transaccion: {
       create: jest.fn().mockResolvedValue({ id: 'trx-1', tipoReferencia: 'ARQUEO' }),
     },
@@ -198,6 +204,39 @@ describe('AccountingService financial ledger controls', () => {
     expect(result.gananciaNeta).toBe(80000);
     expect(result.capitalEnCalle).toBe(650000);
     expect(result.deudaCobradorHoy).toBe(40000);
+  });
+
+  it('revalida el saldo de caja dentro de la transacción al consolidar', async () => {
+    const prisma = buildPrismaMock();
+    prisma.caja.findUnique.mockResolvedValue({
+      id: 'caja-ruta-1',
+      nombre: 'Caja Ruta 1',
+      tipo: 'RUTA',
+      saldoActual: 100000,
+      ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+    });
+    prisma.caja.findFirst.mockResolvedValue({
+      id: 'caja-oficina',
+      nombre: 'Caja Oficina',
+      codigo: 'CAJA-OFICINA',
+      tipo: 'PRINCIPAL',
+      saldoActual: 0,
+    });
+    prisma._tx.caja.findUnique.mockResolvedValue({
+      id: 'caja-ruta-1',
+      nombre: 'Caja Ruta 1',
+      tipo: 'RUTA',
+      saldoActual: 30000,
+      ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+    });
+
+    await expect(
+      makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(prisma._tx.$queryRaw).toHaveBeenCalled();
+    expect(prisma._tx.transaccion.create).not.toHaveBeenCalled();
+    expect(mockLedger.registrarAsiento).not.toHaveBeenCalled();
   });
 
   it('calcula utilidad operativa y neta separando ingresos, gastos y costos desde ledger', async () => {

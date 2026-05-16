@@ -65,6 +65,7 @@ export class PaymentsController {
       clienteId:  createPaymentDto.clienteId?.toString(),
       cobradorId: createPaymentDto.cobradorId?.toString() || req.user?.id,
       montoTotal: Number(createPaymentDto.montoTotal),
+      idempotencyKey: createPaymentDto.idempotencyKey?.toString().trim(),
     };
 
     if (!dto.cobradorId && req.user?.id) {

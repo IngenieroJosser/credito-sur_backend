@@ -362,6 +362,7 @@ model ExtensionPago {
 model Pago {
   id                   String               @id @default(uuid())
   numeroPago           String               @unique @db.VarChar(50)
+  idempotencyKey       String?              @unique @db.VarChar(100)
   clienteId            String
   prestamoId           String
   cobradorId           String
@@ -478,6 +479,7 @@ model AsignacionRuta {
 model Aprobacion {
   id                   String               @id @default(uuid())
   tipoAprobacion       TipoAprobacion
+  idempotencyKey       String?              @unique @db.VarChar(100)
   referenciaId         String
   tablaReferencia      String               @db.VarChar(50)
   solicitadoPorId      String

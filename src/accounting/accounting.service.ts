@@ -1508,13 +1508,13 @@ export class AccountingService {
     if (!cajaOrigen) throw new NotFoundException('Caja origen no encontrada');
 
     const saldoDisponible = Number(cajaOrigen.saldoActual);
-    const montoATransferir = montoRecolectar && montoRecolectar > 0 ? montoRecolectar : saldoDisponible;
+    const montoATransferirSolicitado = montoRecolectar && montoRecolectar > 0 ? montoRecolectar : saldoDisponible;
 
-    if (montoATransferir <= 0) {
+    if (montoATransferirSolicitado <= 0) {
       throw new BadRequestException('El monto a recolectar debe ser mayor a cero');
     }
-    if (montoATransferir > saldoDisponible) {
-      throw new BadRequestException(`El monto (${montoATransferir}) supera el saldo disponible (${saldoDisponible})`);
+    if (montoATransferirSolicitado > saldoDisponible) {
+      throw new BadRequestException(`El monto (${montoATransferirSolicitado}) supera el saldo disponible (${saldoDisponible})`);
     }
 
     // 2. Buscar Caja de Oficina como destino
@@ -1536,11 +1536,33 @@ export class AccountingService {
       throw new BadRequestException('No se puede recolectar desde la caja destino');
 
     const numeroRef = `RECOL-${Date.now().toString().slice(-8)}`;
-    const esTotal = montoATransferir === saldoDisponible;
+    const esTotal = montoATransferirSolicitado === saldoDisponible;
     const rutaNombre = (cajaOrigen as any).ruta?.nombre || cajaOrigen.nombre;
 
     // 3. Ejecutar Transaccion Atomica
     const resultado = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "cajas" WHERE id = ${cajaOrigen.id} FOR UPDATE`;
+
+      const cajaOrigenActual = await tx.caja.findUnique({
+        where: { id: cajaOrigen.id },
+        include: { ruta: { select: { nombre: true, id: true } } },
+      });
+      if (!cajaOrigenActual) throw new NotFoundException('Caja origen no encontrada');
+
+      const saldoDisponibleActual = Number(cajaOrigenActual.saldoActual);
+      const montoATransferir = montoRecolectar && montoRecolectar > 0
+        ? montoRecolectar
+        : saldoDisponibleActual;
+
+      if (montoATransferir <= 0) {
+        throw new BadRequestException('El monto a recolectar debe ser mayor a cero');
+      }
+      if (montoATransferir > saldoDisponibleActual) {
+        throw new BadRequestException(
+          `El monto (${montoATransferir}) supera el saldo disponible (${saldoDisponibleActual})`,
+        );
+      }
+
       const egreso = await tx.transaccion.create({
         data: {
           numeroTransaccion: `TRX-OUT-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -1581,12 +1603,12 @@ export class AccountingService {
         tx as any,
       );
 
-      return { egreso, ingreso };
+      return { egreso, ingreso, montoATransferir };
     });
 
     // 4. Notificacion puramente informativa (no va a revisiones)
     try {
-      const montoFmt = montoATransferir.toLocaleString('es-CO', { style: 'currency', currency: 'COP' });
+      const montoFmt = resultado.montoATransferir.toLocaleString('es-CO', { style: 'currency', currency: 'COP' });
       await this.notificacionesService.notifyCoordinator({
         titulo: 'Recoleccion de Dinero Registrada',
         mensaje: `Se recolectaron ${montoFmt} de la ruta "${rutaNombre}" hacia ${cajaDestino.nombre}. Referencia: ${numeroRef}.`,
@@ -1596,7 +1618,7 @@ export class AccountingService {
         metadata: {
           cajaOrigenId: cajaOrigen.id,
           cajaDestinoId: cajaDestino.id,
-          monto: montoATransferir,
+          monto: resultado.montoATransferir,
           numeroRef,
           administradorId,
           esTotal,
@@ -1608,13 +1630,13 @@ export class AccountingService {
 
     // 5. Auditoria
     this.logger.log(
-      `[RECOLECCION] ${numeroRef} | Admin: ${administradorId} | Origen: ${cajaOrigen.nombre} (${cajaOrigenId}) | Destino: ${cajaDestino.nombre} | Monto: ${montoATransferir} | Tipo: ${esTotal ? 'TOTAL' : 'PARCIAL'}`
+      `[RECOLECCION] ${numeroRef} | Admin: ${administradorId} | Origen: ${cajaOrigen.nombre} (${cajaOrigenId}) | Destino: ${cajaDestino.nombre} | Monto: ${resultado.montoATransferir} | Tipo: ${esTotal ? 'TOTAL' : 'PARCIAL'}`
     );
 
     return {
       origen: cajaOrigen.nombre,
       destino: cajaDestino.nombre,
-      monto: montoATransferir,
+      monto: resultado.montoATransferir,
       numeroRef,
       transacciones: [resultado.egreso.id, resultado.ingreso.id],
     };

@@ -6,8 +6,11 @@ const makeService = (prisma: any) =>
   new RoutesService(
     prisma,
     {} as any,
-    {} as any,
-    {} as any,
+    {
+      broadcastRutasActualizadas: jest.fn(),
+      broadcastDashboardsActualizados: jest.fn(),
+    } as any,
+    { create: jest.fn().mockResolvedValue({}) } as any,
   );
 
 describe('RoutesService role scoping', () => {
@@ -138,5 +141,46 @@ describe('RoutesService role scoping', () => {
     });
     expect(prisma.caja.findFirst).not.toHaveBeenCalled();
     expect(prisma.transaccion.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('bloquea la caja y revalida activación dentro de la transacción al activar ruta', async () => {
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      transaccion: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'activacion-existente' }),
+        create: jest.fn().mockResolvedValue({ id: 'activacion-nueva' }),
+      },
+    };
+    const prisma = {
+      ruta: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'ruta-1',
+          nombre: 'Ruta 1',
+          cobradorId: 'cobrador-1',
+        }),
+      },
+      caja: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'caja-ruta-1' }),
+      },
+      transaccion: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'activacion-fuera' }),
+      },
+      $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
+    };
+
+    await makeService(prisma).activarRutaHoy('ruta-1', 'admin-1');
+
+    expect(tx.$queryRaw).toHaveBeenCalled();
+    expect(tx.transaccion.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          cajaId: 'caja-ruta-1',
+          tipoReferencia: 'ACTIVACION_RUTA',
+        }),
+      }),
+    );
+    expect(tx.transaccion.create).not.toHaveBeenCalled();
+    expect(prisma.transaccion.create).not.toHaveBeenCalled();
   });
 });

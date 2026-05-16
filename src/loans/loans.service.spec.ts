@@ -214,6 +214,49 @@ describe('LoansService accounting impact for approved loans', () => {
       }),
     );
   });
+
+  it('descuenta stock con una actualización condicional para evitar inventario negativo', async () => {
+    const prisma = {
+      producto: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+    };
+
+    await (makeService(prisma) as any).descontarStockSiDisponible('producto-1');
+
+    expect(prisma.producto.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'producto-1',
+        stock: { gt: 0 },
+      },
+      data: { stock: { decrement: 1 } },
+    });
+  });
+
+  it('rechaza el descuento de stock cuando otro proceso agotó el inventario', async () => {
+    const prisma = {
+      producto: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+    };
+
+    await expect(
+      (makeService(prisma) as any).descontarStockSiDisponible('producto-1'),
+    ).rejects.toThrow('Producto sin stock disponible');
+  });
+
+  it('genera número de préstamo sin depender de count + 1', () => {
+    const prisma = {
+      prestamo: {
+        count: jest.fn(),
+      },
+    };
+    const service = makeService(prisma) as any;
+
+    expect(service.generarNumeroPrestamo('ARTICULO')).toMatch(/^ART-\d+-[0-9a-f-]{8}$/);
+    expect(service.generarNumeroPrestamo('EFECTIVO')).toMatch(/^PRES-\d+-[0-9a-f-]{8}$/);
+    expect(prisma.prestamo.count).not.toHaveBeenCalled();
+  });
 });
 
 describe('LoansService role scoping', () => {
