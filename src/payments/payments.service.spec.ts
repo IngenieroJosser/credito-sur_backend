@@ -114,6 +114,11 @@ const PAGO_EXISTENTE = {
 
 const CAJA_ACTIVA = { id: 'caja-1', nombre: 'Caja Ruta 1', saldoActual: 0 };
 const ASIGNACION_RUTA = { rutaId: 'ruta-1' };
+const ASIGNACION_RUTA_CON_COBRADOR = {
+  rutaId: 'ruta-1',
+  cobradorId: 'cobrador-ruta',
+  ruta: { cobradorId: 'cobrador-ruta' },
+};
 
 // ─────────────────────────────────────────────
 // Mock de PrismaService — simula transacciones
@@ -138,6 +143,9 @@ function buildMockPrisma(overrides: Record<string, unknown> = {}) {
   return {
     prestamo: {
       findFirst: jest.fn().mockResolvedValue(PRESTAMO_ACTIVO),
+    },
+    asignacionRuta: {
+      findFirst: jest.fn().mockResolvedValue(ASIGNACION_RUTA_CON_COBRADOR),
     },
     pago: {
       count: jest.fn().mockResolvedValue(0),
@@ -423,6 +431,56 @@ describe('PaymentsService', () => {
         }),
       );
     });
+
+    it('atribuye al cobrador de la ruta activa cuando un admin registra el pago sin cobradorId', async () => {
+      await service.create(
+        { prestamoId: 'prestamo-1', montoTotal: 110000 },
+        undefined,
+        { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+      );
+
+      expect(prisma._txMock.pago.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            cobradorId: 'cobrador-ruta',
+          }),
+        }),
+      );
+      expect(prisma._txMock.transaccion.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            creadoPorId: 'cobrador-ruta',
+          }),
+        }),
+      );
+      expect(mockLedgerService.registrarPago).toHaveBeenCalledWith(
+        expect.objectContaining({
+          createdBy: 'cobrador-ruta',
+        }),
+        expect.anything(),
+      );
+      expect(mockAuditService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          usuarioId: 'cobrador-ruta',
+        }),
+      );
+    });
+
+    it('reemplaza el id del admin por el cobrador de la ruta activa si llega como cobradorId', async () => {
+      await service.create(
+        { prestamoId: 'prestamo-1', cobradorId: 'admin-1', montoTotal: 110000 },
+        undefined,
+        { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+      );
+
+      expect(prisma._txMock.pago.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            cobradorId: 'cobrador-ruta',
+          }),
+        }),
+      );
+    });
   });
 
   describe('create — idempotencia', () => {
@@ -478,7 +536,9 @@ describe('PaymentsService', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('lanza BadRequestException si no se proporciona cobradorId', async () => {
+    it('lanza BadRequestException si no se proporciona cobradorId ni existe ruta activa para deducirlo', async () => {
+      (prisma.asignacionRuta.findFirst as jest.Mock).mockResolvedValue(null);
+
       await expect(
         service.create({ prestamoId: 'prestamo-1', cobradorId: '', montoTotal: 100000 }),
       ).rejects.toThrow(BadRequestException);

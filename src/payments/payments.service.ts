@@ -277,13 +277,8 @@ export class PaymentsService {
       );
     }
 
-    // 3. Validar cobrador
-    if (!paymentDto.cobradorId) {
-      throw new BadRequestException('El cobrador es requerido');
-    }
-
     const prestamoIdVal = paymentDto.prestamoId;
-    const cobradorIdVal = paymentDto.cobradorId;
+    let cobradorIdVal = paymentDto.cobradorId;
 
     this.logger.log(
       `Registrando pago: préstamo=${prestamoIdVal}, monto=${paymentDto.montoTotal}`,
@@ -325,6 +320,25 @@ export class PaymentsService {
       throw new BadRequestException(
         'El cliente no corresponde al préstamo indicado',
       );
+    }
+
+    if (
+      !this.isCollector(actor) &&
+      (!cobradorIdVal || (actor?.id && cobradorIdVal === actor.id))
+    ) {
+      const asignacionActiva = await this.prisma.asignacionRuta.findFirst({
+        where: { clienteId: prestamo.clienteId, activa: true },
+        select: {
+          cobradorId: true,
+          ruta: { select: { cobradorId: true } },
+        },
+      });
+      cobradorIdVal =
+        asignacionActiva?.cobradorId || asignacionActiva?.ruta?.cobradorId;
+    }
+
+    if (!cobradorIdVal) {
+      throw new BadRequestException('El cobrador es requerido');
     }
 
     const montoTotal = paymentDto.montoTotal;
@@ -447,7 +461,7 @@ export class PaymentsService {
     const capitalTotalFinal = Math.round((montoTotal - interesTotalFinal - moraTotalFinal) * 100) / 100;
 
     // Validar cobrador
-    if (!paymentDto.cobradorId) {
+    if (!cobradorIdVal) {
       throw new BadRequestException('El cobrador es requerido');
     }
 
@@ -789,7 +803,7 @@ export class PaymentsService {
 
     // Auditoría
     await this.auditService.create({
-      usuarioId: paymentDto.cobradorId,
+      usuarioId: cobradorIdVal,
       accion: 'REGISTRAR_PAGO',
       entidad: 'Pago',
       entidadId: resultado.pago.id,

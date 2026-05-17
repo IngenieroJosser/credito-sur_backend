@@ -63,12 +63,14 @@ export class PaymentsController {
       ...createPaymentDto,
       prestamoId: createPaymentDto.prestamoId?.toString(),
       clienteId:  createPaymentDto.clienteId?.toString(),
-      cobradorId: createPaymentDto.cobradorId?.toString() || req.user?.id,
+      cobradorId:
+        createPaymentDto.cobradorId?.toString() ||
+        (req.user?.rol === RolUsuario.COBRADOR ? req.user?.id : undefined),
       montoTotal: Number(createPaymentDto.montoTotal),
       idempotencyKey: createPaymentDto.idempotencyKey?.toString().trim(),
     };
 
-    if (!dto.cobradorId && req.user?.id) {
+    if (!dto.cobradorId && req.user?.rol === RolUsuario.COBRADOR && req.user?.id) {
       dto.cobradorId = req.user.id;
     }
 
