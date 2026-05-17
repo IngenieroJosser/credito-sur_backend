@@ -112,6 +112,10 @@ export class PaymentsService {
     return `PAG-${Date.now()}-${randomUUID().slice(0, 8)}`;
   }
 
+  private generarNumeroTransaccion(prefix = 'TRX') {
+    return `${prefix}-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  }
+
   private normalizeIdempotencyKey(value?: string | null) {
     const key = value?.toString().trim();
     return key || undefined;
@@ -277,13 +281,8 @@ export class PaymentsService {
       );
     }
 
-    // 3. Validar cobrador
-    if (!paymentDto.cobradorId) {
-      throw new BadRequestException('El cobrador es requerido');
-    }
-
     const prestamoIdVal = paymentDto.prestamoId;
-    const cobradorIdVal = paymentDto.cobradorId;
+    let cobradorIdVal = paymentDto.cobradorId;
 
     this.logger.log(
       `Registrando pago: préstamo=${prestamoIdVal}, monto=${paymentDto.montoTotal}`,
@@ -325,6 +324,25 @@ export class PaymentsService {
       throw new BadRequestException(
         'El cliente no corresponde al préstamo indicado',
       );
+    }
+
+    if (
+      !this.isCollector(actor) &&
+      (!cobradorIdVal || (actor?.id && cobradorIdVal === actor.id))
+    ) {
+      const asignacionActiva = await this.prisma.asignacionRuta.findFirst({
+        where: { clienteId: prestamo.clienteId, activa: true },
+        select: {
+          cobradorId: true,
+          ruta: { select: { cobradorId: true } },
+        },
+      });
+      cobradorIdVal =
+        asignacionActiva?.cobradorId || asignacionActiva?.ruta?.cobradorId;
+    }
+
+    if (!cobradorIdVal) {
+      throw new BadRequestException('El cobrador es requerido');
     }
 
     const montoTotal = paymentDto.montoTotal;
@@ -447,7 +465,7 @@ export class PaymentsService {
     const capitalTotalFinal = Math.round((montoTotal - interesTotalFinal - moraTotalFinal) * 100) / 100;
 
     // Validar cobrador
-    if (!paymentDto.cobradorId) {
+    if (!cobradorIdVal) {
       throw new BadRequestException('El cobrador es requerido');
     }
 
@@ -720,7 +738,14 @@ export class PaymentsService {
       });
 
       const asignacion = await tx.asignacionRuta.findFirst({
-        where: { clienteId, activa: true },
+        where: {
+          clienteId,
+          activa: true,
+          OR: [
+            { cobradorId: cobradorIdVal },
+            { ruta: { cobradorId: cobradorIdVal } },
+          ],
+        },
         select: { rutaId: true },
       });
       if (!asignacion?.rutaId) {
@@ -740,9 +765,7 @@ export class PaymentsService {
         );
       }
 
-      const numeroTransaccionCaja = `TRX-IN-${Date.now()}-${Math.floor(
-        Math.random() * 1000,
-      )}`;
+      const numeroTransaccionCaja = this.generarNumeroTransaccion('TRX-IN');
 
       await tx.transaccion.create({
         data: {
@@ -789,7 +812,7 @@ export class PaymentsService {
 
     // Auditoría
     await this.auditService.create({
-      usuarioId: paymentDto.cobradorId,
+      usuarioId: cobradorIdVal,
       accion: 'REGISTRAR_PAGO',
       entidad: 'Pago',
       entidadId: resultado.pago.id,

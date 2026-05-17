@@ -2004,56 +2004,72 @@ export class RoutesService {
 
     try {
 
-      const updatedRoute = await this.prisma.ruta.update({
+      const updatedRoute = await this.prisma.$transaction(async (tx) => {
+        const route = await tx.ruta.update({
 
-        where: { id },
+          where: { id },
 
-        data: updateRouteDto,
+          data: updateRouteDto,
 
-        include: {
+          include: {
 
-          cobrador: {
+            cobrador: {
 
-            select: {
+              select: {
 
-              id: true,
+                id: true,
 
-              nombres: true,
+                nombres: true,
 
-              apellidos: true,
+                apellidos: true,
 
-              correo: true,
+                correo: true,
 
-              telefono: true,
+                telefono: true,
 
-              rol: true,
+                rol: true,
+
+              },
+
+            },
+
+            supervisor: {
+
+              select: {
+
+                id: true,
+
+                nombres: true,
+
+                apellidos: true,
+
+                correo: true,
+
+                telefono: true,
+
+                rol: true,
+
+              },
 
             },
 
           },
 
-          supervisor: {
+        });
 
-            select: {
+        if (updateRouteDto.cobradorId && updateRouteDto.cobradorId !== existingRoute.cobradorId) {
+          await tx.asignacionRuta.updateMany({
+            where: { rutaId: id, activa: true },
+            data: { cobradorId: updateRouteDto.cobradorId },
+          });
 
-              id: true,
+          await tx.caja.updateMany({
+            where: { rutaId: id, tipo: 'RUTA', activa: true },
+            data: { responsableId: updateRouteDto.cobradorId },
+          });
+        }
 
-              nombres: true,
-
-              apellidos: true,
-
-              correo: true,
-
-              telefono: true,
-
-              rol: true,
-
-            },
-
-          },
-
-        },
-
+        return route;
       });
 
 
@@ -2725,6 +2741,7 @@ export class RoutesService {
 
 
       const nuevoOrden = (maxOrden._max.ordenVisita || 0) + 1;
+      const assignmentCobradorId = ruta.cobradorId;
 
 
 
@@ -2738,7 +2755,7 @@ export class RoutesService {
 
           clienteId,
 
-          cobradorId,
+          cobradorId: assignmentCobradorId,
 
           ordenVisita: nuevoOrden,
 
@@ -2772,11 +2789,11 @@ export class RoutesService {
 
 
 
-      if (cobradorId) {
+      if (assignmentCobradorId) {
 
         await this.notificacionesService.create({
 
-          usuarioId: cobradorId,
+          usuarioId: assignmentCobradorId,
 
           titulo: 'Nuevo Cliente Asignado',
 

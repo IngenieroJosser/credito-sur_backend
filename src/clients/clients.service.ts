@@ -1549,6 +1549,17 @@ export class ClientsService {
     diaSemana?: number,
   ) {
     try {
+      const ruta = await this.prisma.ruta.findUnique({
+        where: { id: rutaId },
+        select: { id: true, cobradorId: true },
+      });
+
+      if (!ruta?.id) {
+        throw new NotFoundException('Ruta no encontrada');
+      }
+
+      const assignmentCobradorId = ruta.cobradorId || cobradorId;
+
       // Verificar si ya existe una asignación activa
       const asignacionExistente = await this.prisma.asignacionRuta.findFirst({
         where: {
@@ -1570,7 +1581,7 @@ export class ClientsService {
         data: {
           rutaId,
           clienteId,
-          cobradorId,
+          cobradorId: assignmentCobradorId,
           diaSemana,
           ordenVisita: 0,
           activa: true,

@@ -31,6 +31,14 @@ describe('ClientsService', () => {
       updateMany: jest.fn(),
       createMany: jest.fn(),
     },
+    asignacionRuta: {
+      findFirst: jest.fn(),
+      update: jest.fn(),
+      create: jest.fn(),
+    },
+    ruta: {
+      findUnique: jest.fn(),
+    },
     usuario: {
       findFirst: jest.fn(),
       findUnique: jest.fn(),
@@ -250,6 +258,34 @@ describe('ClientsService', () => {
           }),
         }),
       );
+    });
+  });
+
+  describe('assignToRoute', () => {
+    it('usa el cobrador real de la ruta aunque el body traiga otro cobradorId', async () => {
+      (prismaService.asignacionRuta.findFirst as jest.Mock).mockResolvedValue(null);
+      (mockPrismaService.ruta.findUnique as jest.Mock).mockResolvedValue({
+        id: 'ruta-1',
+        cobradorId: 'cobrador-ruta',
+      });
+      (mockPrismaService.asignacionRuta.create as jest.Mock).mockResolvedValue({
+        id: 'asignacion-1',
+        cobradorId: 'cobrador-ruta',
+      });
+
+      await service.assignToRoute(
+        'cliente-1',
+        'ruta-1',
+        'cobrador-equivocado',
+      );
+
+      expect(mockPrismaService.asignacionRuta.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          rutaId: 'ruta-1',
+          clienteId: 'cliente-1',
+          cobradorId: 'cobrador-ruta',
+        }),
+      });
     });
   });
 });

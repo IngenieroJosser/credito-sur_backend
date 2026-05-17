@@ -50,10 +50,37 @@ function buildPrismaMock() {
       }),
       update: jest.fn().mockResolvedValue({}),
     },
+    asignacionRuta: {
+      findFirst: jest.fn().mockResolvedValue({
+        cobradorId: 'cobrador-1',
+        ruta: { cobradorId: 'cobrador-1' },
+      }),
+    },
+    ruta: {
+      findFirst: jest.fn().mockResolvedValue({
+        id: 'ruta-1',
+        cobradorId: 'cobrador-1',
+      }),
+    },
     transaccion: { create: jest.fn().mockResolvedValue({ id: 'trx-bank-1' }) },
+    gasto: {
+      create: jest.fn().mockResolvedValue({
+        id: 'gasto-1',
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+        caja: { id: 'caja-ruta-1', nombre: 'Caja Ruta 1' },
+        cobrador: { id: 'cobrador-1', nombres: 'Cobra', apellidos: 'Dor' },
+      }),
+    },
     caja: {
       findUnique: jest.fn().mockResolvedValue({ id: 'caja-banco', nombre: 'Caja Banco', saldoActual: 0 }),
-      findFirst: jest.fn(),
+      findFirst: jest.fn().mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        rutaId: 'ruta-1',
+        responsableId: 'cobrador-1',
+        saldoActual: 500000,
+      }),
       create: jest.fn(),
       update: jest.fn().mockResolvedValue({}),
     },
@@ -279,6 +306,137 @@ describe('ApprovalsService financial ledger controls', () => {
           idempotencyKey: 'offline-transfer-1',
         }),
       }),
+    );
+  });
+
+  it('aprueba transferencia usando el cobrador activo de la ruta aunque la solicitud traiga otro usuario', async () => {
+    const prisma = buildPrismaMock();
+    prisma._tx.asignacionRuta.findFirst.mockResolvedValue({
+      cobradorId: 'cobrador-real',
+      ruta: { cobradorId: 'cobrador-real' },
+    });
+
+    await (makeService(prisma) as any).approveTransferPayment({
+      id: 'approval-1',
+      referenciaId: 'prestamo-1',
+      solicitadoPorId: 'admin-1',
+      montoSolicitud: 100000,
+      datosSolicitud: {
+        prestamoId: 'prestamo-1',
+        cobradorId: 'admin-1',
+        montoTotal: 100000,
+        metodoPago: MetodoPago.TRANSFERENCIA,
+      },
+    }, 'admin-1');
+
+    expect(prisma._tx.pago.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          cobradorId: 'cobrador-real',
+        }),
+      }),
+    );
+    expect(prisma._tx.transaccion.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          tipoReferencia: 'PAGO',
+          creadoPorId: 'cobrador-real',
+        }),
+      }),
+    );
+  });
+
+  it('aprueba gasto usando la caja y cobrador activos de la ruta aunque la solicitud esté vieja', async () => {
+    const prisma = buildPrismaMock();
+
+    await (makeService(prisma) as any).approveExpense({
+      id: 'approval-gasto-1',
+      solicitadoPorId: 'cobrador-viejo',
+      datosSolicitud: {
+        rutaId: 'ruta-1',
+        cobradorId: 'cobrador-viejo',
+        cajaId: 'caja-vieja',
+        tipoGasto: 'OPERATIVO',
+        monto: 25000,
+        descripcion: 'Gasolina',
+      },
+    }, 'admin-1');
+
+    expect(prisma._tx.gasto.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          rutaId: 'ruta-1',
+          cobradorId: 'cobrador-1',
+          cajaId: 'caja-ruta-1',
+        }),
+      }),
+    );
+    expect(mockLedger.registrarAsiento).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceType: 'GASTO',
+        lines: expect.arrayContaining([
+          expect.objectContaining({
+            accountCode: '1.2.1',
+            cajaId: 'caja-ruta-1',
+            cajaDelta: -25000,
+          }),
+        ]),
+      }),
+      prisma._tx,
+    );
+  });
+
+  it('aprueba base de efectivo hacia la caja activa de la ruta aunque la solicitud traiga otra caja', async () => {
+    const prisma = buildPrismaMock();
+    prisma._tx.caja.findFirst
+      .mockResolvedValueOnce({
+        id: 'caja-principal',
+        codigo: 'CAJA-PRINCIPAL',
+        nombre: 'Caja Principal',
+        tipo: 'PRINCIPAL',
+        saldoActual: 500000,
+      })
+      .mockResolvedValueOnce({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        rutaId: 'ruta-1',
+        responsableId: 'cobrador-1',
+      });
+
+    await (makeService(prisma) as any).approveCashBase({
+      id: 'approval-base-1',
+      solicitadoPorId: 'cobrador-1',
+      datosSolicitud: {
+        rutaId: 'ruta-1',
+        cobradorId: 'cobrador-viejo',
+        cajaId: 'caja-vieja',
+        monto: 50000,
+        descripcion: 'Base inicial',
+      },
+    }, 'admin-1');
+
+    expect(prisma._tx.transaccion.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          cajaId: 'caja-ruta-1',
+          tipo: 'INGRESO',
+          tipoReferencia: 'SOLICITUD_BASE',
+        }),
+      }),
+    );
+    expect(mockLedger.registrarAsiento).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceType: 'BASE',
+        lines: expect.arrayContaining([
+          expect.objectContaining({
+            accountCode: '1.2.1',
+            cajaId: 'caja-ruta-1',
+            cajaDelta: 50000,
+          }),
+        ]),
+      }),
+      prisma._tx,
     );
   });
 
