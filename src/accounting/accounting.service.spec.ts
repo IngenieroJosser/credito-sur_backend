@@ -542,6 +542,70 @@ describe('AccountingService financial ledger controls', () => {
     expect(result).toMatchObject({ success: true, approvalId: 'approval-1' });
   });
 
+  it('guarda solicitudes de gasto con el cobrador real de la ruta aunque el body traiga otro usuario', async () => {
+    const prisma = buildPrismaMock();
+
+    await makeService(prisma).registrarGasto({
+      descripcion: 'Gasolina',
+      monto: 25000,
+      rutaId: 'ruta-1',
+      cobradorId: 'admin-1',
+      solicitadoPorId: 'admin-1',
+      tipoAprobacion: TipoAprobacion.GASTO,
+      esPersonal: false,
+    });
+
+    expect(prisma.aprobacion.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          datosSolicitud: expect.objectContaining({
+            rutaId: 'ruta-1',
+            cobradorId: 'cobrador-1',
+            cajaId: 'caja-ruta-1',
+          }),
+        }),
+      }),
+    );
+    expect(mockNotifications.notifyApprovers).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          cobradorId: 'cobrador-1',
+        }),
+      }),
+    );
+  });
+
+  it('guarda solicitudes de base con el cobrador real de la ruta aunque el body traiga otro usuario', async () => {
+    const prisma = buildPrismaMock();
+
+    await makeService(prisma).solicitarBase({
+      descripcion: 'Base inicial',
+      monto: 50000,
+      rutaId: 'ruta-1',
+      cobradorId: 'admin-1',
+      solicitadoPorId: 'admin-1',
+    });
+
+    expect(prisma.aprobacion.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          datosSolicitud: expect.objectContaining({
+            rutaId: 'ruta-1',
+            cobradorId: 'cobrador-1',
+            cajaId: 'caja-ruta-1',
+          }),
+        }),
+      }),
+    );
+    expect(mockNotifications.notifyApprovers).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          cobradorId: 'cobrador-1',
+        }),
+      }),
+    );
+  });
+
   it('retorna la aprobación existente al reintentar un gasto offline con la misma idempotencyKey', async () => {
     const prisma = buildPrismaMock();
     prisma.aprobacion.findFirst.mockResolvedValue({
@@ -590,6 +654,27 @@ describe('AccountingService financial ledger controls', () => {
       idempotentReplay: true,
     });
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('genera números de transacción sin depender de count + 1', async () => {
+    const prisma = buildPrismaMock();
+
+    await makeService(prisma).createTransaccion({
+      cajaId: 'caja-ruta-1',
+      tipo: TipoTransaccion.INGRESO,
+      monto: 30000,
+      descripcion: 'Ingreso manual',
+      creadoPorId: 'admin-1',
+    } as any);
+
+    expect(prisma.transaccion.count).not.toHaveBeenCalled();
+    expect(prisma._tx.transaccion.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          numeroTransaccion: expect.stringMatching(/^TRX-\d+-[0-9a-f]{8}$/),
+        }),
+      }),
+    );
   });
 
   it('bloquea el arqueo cuando hay cola offline pendiente anterior o igual al cierre', async () => {

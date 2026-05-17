@@ -14,6 +14,7 @@ import { calculateDateRange, formatBogotaOffsetIso, getBogotaDayKey, getBogotaSt
 import { generarExcelContable, generarPDFContable, CajaRow, TransaccionRow } from '../templates/exports/reporte-contable.template';
 import { generarExcelGastos, generarPDFGastos, GastoRow, GastosTotales } from '../templates/exports/gastos-export.template';
 import { LedgerService, ReferenceTypeContable } from './ledger.service';
+import { randomUUID } from 'crypto';
 
 @Injectable()
 export class AccountingService {
@@ -40,6 +41,10 @@ export class AccountingService {
     const start = codigoRuta.slice(0, 10);
     const end = codigoRuta.slice(-4);
     return `CAJA-${start}-${end}`;
+  }
+
+  private generarNumeroTransaccion(prefix = 'TRX') {
+    return `${prefix}-${Date.now()}-${randomUUID().slice(0, 8)}`;
   }
 
   /**
@@ -114,6 +119,38 @@ export class AccountingService {
     });
 
     return creada;
+  }
+
+  private async resolveActiveRouteCashContext(rutaId: string) {
+    const ruta = await this.prisma.ruta.findFirst({
+      where: { id: rutaId, eliminadoEn: null },
+      select: { id: true, cobradorId: true },
+    });
+
+    if (!ruta?.id) {
+      throw new NotFoundException('Ruta no encontrada');
+    }
+    if (!ruta.cobradorId) {
+      throw new BadRequestException('La ruta no tiene cobrador asignado');
+    }
+
+    const cajaRuta = await this.prisma.caja.findFirst({
+      where: {
+        rutaId: ruta.id,
+        tipo: 'RUTA',
+        activa: true,
+      },
+    });
+
+    if (!cajaRuta) {
+      throw new NotFoundException('Caja de ruta no encontrada');
+    }
+
+    return {
+      rutaId: ruta.id,
+      cobradorId: ruta.cobradorId,
+      cajaRuta,
+    };
   }
 
   /**
@@ -366,17 +403,7 @@ export class AccountingService {
       }
     }
 
-    const cajaRuta = await this.prisma.caja.findFirst({
-      where: {
-        rutaId: data.rutaId,
-        tipo: 'RUTA',
-        activa: true,
-      },
-    });
-
-    if (!cajaRuta) {
-      throw new NotFoundException('Caja de ruta no encontrada para registrar el gasto');
-    }
+    const { rutaId, cobradorId, cajaRuta } = await this.resolveActiveRouteCashContext(data.rutaId);
 
     // Buscar nombre del solicitante
     const solicitante = await this.prisma.usuario.findUnique({
@@ -399,8 +426,8 @@ export class AccountingService {
           solicitadoPorId: data.solicitadoPorId,
           estado: EstadoAprobacion.PENDIENTE,
           datosSolicitud: {
-            rutaId: data.rutaId,
-            cobradorId: data.cobradorId,
+            rutaId,
+            cobradorId,
             cajaId: cajaRuta.id,
             tipoGasto: data.esPersonal ? 'OTRO' : 'OPERATIVO',
             monto: data.monto,
@@ -424,9 +451,9 @@ export class AccountingService {
         entidadId: aprobacion.id,
         metadata: {
           tipoAprobacion: 'GASTO',
-          rutaId: data.rutaId,
+          rutaId,
           cajaId: cajaRuta.id,
-          cobradorId: data.cobradorId,
+          cobradorId,
           monto: data.monto,
           descripcion: data.descripcion,
           solicitadoPor: nombreSolicitante,
@@ -447,7 +474,7 @@ export class AccountingService {
           entidadId: aprobacion.id,
           metadata: {
             tipoAprobacion: data.tipoAprobacion,
-            rutaId: data.rutaId,
+            rutaId,
             cajaId: cajaRuta.id,
           },
         });
@@ -455,7 +482,7 @@ export class AccountingService {
 
       this.notificacionesGateway.broadcastDashboardsActualizados({
         origen: 'GASTO',
-        rutaId: data.rutaId,
+        rutaId,
       });
 
       return {
@@ -478,10 +505,10 @@ export class AccountingService {
         // 1. Crear Gasto
         const newGasto = await tx.gasto.create({
           data: {
-            numeroGasto: `G${Date.now()}`,
+            numeroGasto: `G${Date.now()}-${randomUUID().slice(0, 8)}`,
             idempotencyKey,
-            rutaId: data.rutaId,
-            cobradorId: data.cobradorId,
+            rutaId,
+            cobradorId,
             cajaId: cajaRuta.id,
             tipoGasto: 'OPERATIVO',
             monto: data.monto,
@@ -496,7 +523,7 @@ export class AccountingService {
         // 2. Registrar egreso en caja
         await tx.transaccion.create({
           data: {
-            numeroTransaccion: `GTRX${Date.now()}`,
+            numeroTransaccion: this.generarNumeroTransaccion('GTRX'),
             idempotencyKey: idempotencyKey ? `${idempotencyKey}:trx` : undefined,
             cajaId: cajaRuta.id,
             tipo: TipoTransaccion.EGRESO,
@@ -534,7 +561,7 @@ export class AccountingService {
 
       this.notificacionesGateway.broadcastDashboardsActualizados({
         origen: 'GASTO',
-        rutaId: data.rutaId,
+        rutaId,
       });
 
       return {
@@ -551,19 +578,7 @@ export class AccountingService {
     cobradorId: string;
     solicitadoPorId: string;
   }) {
-    const cajaRuta = await this.prisma.caja.findFirst({
-      where: {
-        rutaId: data.rutaId,
-        tipo: 'RUTA',
-        activa: true,
-      },
-    });
-
-    if (!cajaRuta) {
-      throw new NotFoundException(
-        'Caja de ruta no encontrada para registrar la base',
-      );
-    }
+    const { rutaId, cobradorId, cajaRuta } = await this.resolveActiveRouteCashContext(data.rutaId);
 
     const aprobacion = await this.prisma.aprobacion.create({
       data: {
@@ -573,8 +588,8 @@ export class AccountingService {
         solicitadoPorId: data.solicitadoPorId,
         estado: EstadoAprobacion.PENDIENTE,
         datosSolicitud: {
-          rutaId: data.rutaId,
-          cobradorId: data.cobradorId,
+          rutaId,
+          cobradorId,
           cajaId: cajaRuta.id,
           monto: data.monto,
           descripcion: data.descripcion,
@@ -605,9 +620,9 @@ export class AccountingService {
       entidadId: aprobacion.id,
       metadata: {
         tipoAprobacion: 'SOLICITUD_BASE_EFECTIVO',
-        rutaId: data.rutaId,
+        rutaId,
         cajaId: cajaRuta.id,
-        cobradorId: data.cobradorId,
+        cobradorId,
         monto: data.monto,
         descripcion: data.descripcion,
         solicitadoPor: nombreSolicitanteBase,
@@ -624,7 +639,7 @@ export class AccountingService {
         entidadId: aprobacion.id,
         metadata: {
           tipoAprobacion: 'SOLICITUD_BASE_EFECTIVO',
-          rutaId: data.rutaId,
+          rutaId,
           cajaId: cajaRuta.id,
         },
       });
@@ -632,7 +647,7 @@ export class AccountingService {
 
     this.notificacionesGateway.broadcastDashboardsActualizados({
       origen: 'BASE',
-      rutaId: data.rutaId,
+      rutaId,
     });
 
     return {
@@ -733,8 +748,7 @@ export class AccountingService {
 
         // 2. Si hay saldo inicial > 0, registrar el movimiento de apertura
         if (data.saldoInicial && data.saldoInicial > 0) {
-          const count = await tx.transaccion.count();
-          const numeroTransaccion = `TRX-${Date.now().toString().slice(-8)}-${(count + 1).toString().padStart(4, '0')}`;
+          const numeroTransaccion = this.generarNumeroTransaccion();
 
           await tx.transaccion.create({
             data: {
@@ -1358,8 +1372,7 @@ export class AccountingService {
       }
     }
 
-    const count = await this.prisma.transaccion.count();
-    const numeroTransaccion = `TRX-${Date.now().toString().slice(-8)}-${(count + 1).toString().padStart(4, '0')}`;
+    const numeroTransaccion = this.generarNumeroTransaccion();
 
     // Actualizar saldo de la caja (Destino)
     const caja = await this.prisma.caja.findUnique({
@@ -1398,7 +1411,7 @@ export class AccountingService {
         // 1. Salida de la caja origen
         await tx.transaccion.create({
           data: {
-            numeroTransaccion: `TRX-OUT-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            numeroTransaccion: this.generarNumeroTransaccion('TRX-OUT'),
             idempotencyKey: idempotencyKey ? `${idempotencyKey}:out` : undefined,
             cajaId: cajaOrigenId,
             tipo: TipoTransaccion.TRANSFERENCIA,
@@ -1413,7 +1426,7 @@ export class AccountingService {
         // 2. Entrada a la caja destino
         const transaccion = await tx.transaccion.create({
           data: {
-            numeroTransaccion: `TRX-IN-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            numeroTransaccion: this.generarNumeroTransaccion('TRX-IN'),
             idempotencyKey,
             cajaId: data.cajaId,
             tipo: TipoTransaccion.TRANSFERENCIA,
@@ -1586,7 +1599,7 @@ export class AccountingService {
     if (cajaDestino.id === cajaOrigen.id)
       throw new BadRequestException('No se puede recolectar desde la caja destino');
 
-    const numeroRef = `RECOL-${Date.now().toString().slice(-8)}`;
+    const numeroRef = this.generarNumeroTransaccion('RECOL');
     const esTotal = montoATransferirSolicitado === saldoDisponible;
     const rutaNombre = (cajaOrigen as any).ruta?.nombre || cajaOrigen.nombre;
 
@@ -1616,7 +1629,7 @@ export class AccountingService {
 
       const egreso = await tx.transaccion.create({
         data: {
-          numeroTransaccion: `TRX-OUT-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          numeroTransaccion: this.generarNumeroTransaccion('TRX-OUT'),
           cajaId: cajaOrigen.id,
           tipo: TipoTransaccion.TRANSFERENCIA,
           monto: montoATransferir,
@@ -1629,7 +1642,7 @@ export class AccountingService {
 
       const ingreso = await tx.transaccion.create({
         data: {
-          numeroTransaccion: `TRX-IN-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          numeroTransaccion: this.generarNumeroTransaccion('TRX-IN'),
           cajaId: cajaDestino.id,
           tipo: TipoTransaccion.TRANSFERENCIA,
           monto: montoATransferir,
@@ -2746,7 +2759,7 @@ export class AccountingService {
     if (montoAjuste === 0) {
       return this.prisma.transaccion.create({
         data: {
-          numeroTransaccion: `ARQ-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          numeroTransaccion: this.generarNumeroTransaccion('ARQ'),
           cajaId,
           tipo: TipoTransaccion.TRANSFERENCIA,
           monto: 0,
@@ -2772,7 +2785,7 @@ export class AccountingService {
       // 1. Crear transacción histórica
       const transaccion = await tx.transaccion.create({
         data: {
-          numeroTransaccion: `ARQ-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          numeroTransaccion: this.generarNumeroTransaccion('ARQ'),
           cajaId,
           tipo: tipoAjuste,
           monto: montoAjuste,
@@ -3307,7 +3320,7 @@ export class AccountingService {
       // a. Crear la transacción INGRESO (histórico)
       const transaccion = await tx.transaccion.create({
         data: {
-          numeroTransaccion: `ABN-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          numeroTransaccion: this.generarNumeroTransaccion('ABN'),
           cajaId: cajaDestino.id,
           tipo: TipoTransaccion.INGRESO,
           monto: montoClean,

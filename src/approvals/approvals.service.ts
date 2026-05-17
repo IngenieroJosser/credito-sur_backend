@@ -63,6 +63,86 @@ export class ApprovalsService {
     });
   }
 
+  private async resolvePaymentCobradorForClient(
+    db: any,
+    clienteId: string,
+    requestedCobradorId?: string,
+  ) {
+    const select = {
+      cobradorId: true,
+      ruta: { select: { cobradorId: true } },
+    };
+
+    const matchingAssignment = requestedCobradorId
+      ? await db.asignacionRuta?.findFirst({
+        where: {
+          clienteId,
+          activa: true,
+          OR: [
+            { cobradorId: requestedCobradorId },
+            { ruta: { cobradorId: requestedCobradorId } },
+          ],
+        },
+        select,
+      })
+      : null;
+
+    const activeAssignment = matchingAssignment || await db.asignacionRuta?.findFirst({
+      where: { clienteId, activa: true },
+      select,
+    });
+
+    return activeAssignment?.ruta?.cobradorId
+      || activeAssignment?.cobradorId
+      || requestedCobradorId;
+  }
+
+  private async resolveActiveRouteCashContext(
+    db: any,
+    params: { rutaId?: string; cajaId?: string },
+  ) {
+    let rutaId = params.rutaId || '';
+
+    if (!rutaId && params.cajaId) {
+      const caja = await db.caja.findUnique?.({
+        where: { id: params.cajaId },
+        select: { rutaId: true },
+      });
+      rutaId = caja?.rutaId || '';
+    }
+
+    if (!rutaId) {
+      throw new BadRequestException('La solicitud no tiene una ruta válida');
+    }
+
+    const ruta = await db.ruta.findFirst({
+      where: { id: rutaId, eliminadoEn: null },
+      select: { id: true, cobradorId: true },
+    });
+
+    if (!ruta?.id) {
+      throw new NotFoundException('Ruta no encontrada');
+    }
+    if (!ruta.cobradorId) {
+      throw new BadRequestException('La ruta no tiene cobrador asignado');
+    }
+
+    const cajaRuta = await db.caja.findFirst({
+      where: { rutaId: ruta.id, tipo: 'RUTA' as any, activa: true },
+      select: { id: true, nombre: true, rutaId: true, responsableId: true },
+    });
+
+    if (!cajaRuta?.id) {
+      throw new NotFoundException('Caja de ruta activa no encontrada');
+    }
+
+    return {
+      rutaId: ruta.id,
+      cobradorId: ruta.cobradorId,
+      cajaId: cajaRuta.id,
+    };
+  }
+
   private async notifyCobradorGestionVencida(params: {
     prestamoId: string;
     titulo: string;
@@ -98,6 +178,10 @@ export class ApprovalsService {
 
   private generarNumeroPago() {
     return `PAG-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  }
+
+  private generarNumeroTransaccion(prefix = 'TRX') {
+    return `${prefix}-${Date.now()}-${randomUUID().slice(0, 8)}`;
   }
 
   private calcularAplicacionPago(prestamo: any, montoTotal: number) {
@@ -268,14 +352,14 @@ export class ApprovalsService {
       : approval.datosSolicitud;
 
     const prestamoId = String(data?.prestamoId || approval.referenciaId || '');
-    const cobradorId = String(data?.cobradorId || approval.solicitadoPorId || '');
+    const requestedCobradorId = String(data?.cobradorId || approval.solicitadoPorId || '');
     const montoTotal = Number(data?.montoTotal || approval.montoSolicitud || 0);
     const rawFechaPago = String(data?.fechaPago || '');
     const idempotencyKey = (data?.idempotencyKey || approval.idempotencyKey || '')
       .toString()
       .trim() || undefined;
 
-    if (!prestamoId || !cobradorId || !montoTotal || montoTotal <= 0) {
+    if (!prestamoId || !requestedCobradorId || !montoTotal || montoTotal <= 0) {
       throw new BadRequestException('Datos insuficientes para aprobar pago por transferencia');
     }
 
@@ -332,6 +416,15 @@ export class ApprovalsService {
         throw new BadRequestException(
           `El monto del pago (${montoTotal}) no puede ser mayor al saldo pendiente del préstamo (${prestamoActual.saldoPendiente})`,
         );
+      }
+
+      const cobradorId = await this.resolvePaymentCobradorForClient(
+        tx,
+        prestamoActual.clienteId,
+        requestedCobradorId,
+      );
+      if (!cobradorId) {
+        throw new BadRequestException('No se pudo determinar el cobrador de la ruta para este pago');
       }
 
       const {
@@ -399,7 +492,7 @@ export class ApprovalsService {
 
       // Registrar transacción en CAJA-BANCO
       const cajaBanco = await this.ensureCajaBanco(tx);
-      const numeroTransaccionCaja = `TRX-IN-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      const numeroTransaccionCaja = this.generarNumeroTransaccion('TRX-IN');
       await tx.transaccion.create({
         data: {
           numeroTransaccion: numeroTransaccionCaja,
@@ -1002,7 +1095,7 @@ export class ApprovalsService {
           if (cuotaInicialVal > 0 && cajaIdDestino && !yaExiste?.id) {
             await tx.transaccion.create({
               data: {
-                numeroTransaccion: `CI-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+                numeroTransaccion: this.generarNumeroTransaccion('CI'),
                 cajaId: cajaIdDestino,
                 tipo: TipoTransaccion.INGRESO,
                 monto: cuotaInicialVal,
@@ -1200,7 +1293,7 @@ export class ApprovalsService {
 
         await tx.transaccion.create({
           data: {
-            numeroTransaccion: `T${Date.now()}`,
+            numeroTransaccion: this.generarNumeroTransaccion('T'),
             cajaId: cajaDesembolso.id,
             tipo: TipoTransaccion.EGRESO,
             monto: montoDesembolso,
@@ -1281,12 +1374,16 @@ export class ApprovalsService {
     // Procesar en una transacción de base de datos para asegurar consistencia
     const [gasto] = await this.prisma.$transaction(async (tx) => {
       // 1. Crear el registro de Gasto
+      const routeCash = await this.resolveActiveRouteCashContext(tx, {
+        rutaId: data.rutaId,
+        cajaId: data.cajaId,
+      });
       const newGasto = await tx.gasto.create({
         data: {
           numeroGasto: `G${Date.now()}`,
-          rutaId: data.rutaId,
-          cobradorId: data.cobradorId,
-          cajaId: data.cajaId,
+          rutaId: routeCash.rutaId,
+          cobradorId: routeCash.cobradorId,
+          cajaId: routeCash.cajaId,
           tipoGasto:
             ({
               GASTO_OPERATIVO: 'OPERATIVO',
@@ -1310,8 +1407,8 @@ export class ApprovalsService {
       // 2. Registrar egreso contable: gasto del cobrador = DEUDA_COBRADOR (no afecta utilidad)
       await tx.transaccion.create({
         data: {
-          numeroTransaccion: `GTRX${Date.now()}`,
-          cajaId: data.cajaId,
+          numeroTransaccion: this.generarNumeroTransaccion('GTRX'),
+          cajaId: routeCash.cajaId,
           tipo: TipoTransaccion.EGRESO,
           monto: data.monto,
           descripcion: `Gasto aprobado: ${data.descripcion}`,
@@ -1339,7 +1436,7 @@ export class ApprovalsService {
             {
               accountCode:  '1.2.1',
               creditAmount:  Number(data.monto),
-              cajaId:        data.cajaId,
+              cajaId:        routeCash.cajaId,
               cajaDelta:    -Number(data.monto), // Ledger decrementa el saldo
             },
           ],
@@ -1387,6 +1484,8 @@ export class ApprovalsService {
         ? JSON.parse(approval.datosSolicitud)
         : approval.datosSolicitud;
 
+    let resolvedCashBaseCajaId = String(data.cajaId || '');
+
     // Procesar en una transacción de base de datos
     const trx = await this.prisma.$transaction(async (tx) => {
       // 1. Buscar la Caja Principal (origen del capital)
@@ -1399,6 +1498,11 @@ export class ApprovalsService {
       }
 
       const monto = Number(data.monto);
+      const routeCash = await this.resolveActiveRouteCashContext(tx, {
+        rutaId: data.rutaId,
+        cajaId: data.cajaId,
+      });
+      resolvedCashBaseCajaId = routeCash.cajaId;
 
       // 2. Verificar fondos en Caja Principal
       if (Number(cajaPrincipal.saldoActual) < monto) {
@@ -1412,11 +1516,11 @@ export class ApprovalsService {
       // 3. Crear transacción de salida (EGRESO) desde la Caja Principal
       await tx.transaccion.create({
         data: {
-          numeroTransaccion: `TRX-OUT-${Date.now()}`,
+          numeroTransaccion: this.generarNumeroTransaccion('TRX-OUT'),
           cajaId: cajaPrincipal.id,
           tipo: TipoTransaccion.EGRESO,
           monto: monto,
-          descripcion: `Entrega de base operativa a Ruta (Caja ID: ${data.cajaId}) - Solicitud #${approval.id}`,
+          descripcion: `Entrega de base operativa a Ruta (Caja ID: ${routeCash.cajaId}) - Solicitud #${approval.id}`,
           creadoPorId: aprobadoPorId || approval.solicitadoPorId,
           aprobadoPorId: aprobadoPorId || undefined,
           tipoReferencia: 'SOLICITUD_BASE',
@@ -1427,8 +1531,8 @@ export class ApprovalsService {
       // 5. Crear transacción de ingreso a la caja de ruta
       const newTrx = await tx.transaccion.create({
         data: {
-          numeroTransaccion: `TRX-IN-${Date.now()}`,
-          cajaId: data.cajaId,
+          numeroTransaccion: this.generarNumeroTransaccion('TRX-IN'),
+          cajaId: resolvedCashBaseCajaId,
           tipo: TipoTransaccion.INGRESO,
           monto: monto,
           descripcion: `Base de efectivo recibida - ${data.descripcion}`,
@@ -1451,7 +1555,7 @@ export class ApprovalsService {
             {
               accountCode: '1.2.1',
               debitAmount:  monto,
-              cajaId:       data.cajaId,
+              cajaId:       routeCash.cajaId,
               cajaDelta:   +monto,  // Caja Ruta RECIBE
             },
             {
@@ -1476,7 +1580,7 @@ export class ApprovalsService {
         entidad: 'TRANSACCION',
         entidadId: trx.id,
         metadata: {
-          cajaId: data.cajaId,
+          cajaId: resolvedCashBaseCajaId,
           monto: data.monto,
           solicitadoPorId: approval.solicitadoPorId,
           aprobadoPorId: aprobadoPorId,
@@ -1490,7 +1594,7 @@ export class ApprovalsService {
         entidad: 'TRANSACCION',
         entidadId: trx.id,
         metadata: {
-          cajaId: data.cajaId,
+          cajaId: resolvedCashBaseCajaId,
         },
       });
     } catch (error) {

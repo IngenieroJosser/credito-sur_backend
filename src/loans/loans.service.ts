@@ -33,6 +33,7 @@ import {
   CarteraRow, 
   CarteraTotales 
 } from '../templates/exports/cartera-creditos.template';
+import { randomUUID } from 'crypto';
 import { ContratoData, generarContratoPDF } from '../templates/exports';
 import {
   calculateDateRange,
@@ -42,7 +43,6 @@ import {
   getBogotaStartEndOfDay,
   getBogotaStartEndOfDayFromKey,
 } from '../utils/date-utils';
-import { randomUUID } from 'crypto';
 
 
 @Injectable()
@@ -104,6 +104,10 @@ export class LoansService implements OnModuleInit {
     private configuracionService: ConfiguracionService,
     private ledgerService: LedgerService,
   ) {}
+
+  private generarNumeroTransaccion(prefix = 'TRX') {
+    return `${prefix}-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  }
 
   async onModuleInit() {
     this.logger.log('🔄 [AUTO-FIX] Verificando e iniciando corrección de intereses al arranque...');
@@ -200,10 +204,9 @@ export class LoansService implements OnModuleInit {
         });
 
         if (!yaExiste?.id) {
-          const countTrx = await this.prisma.transaccion.count();
           await this.prisma.transaccion.create({
             data: {
-              numeroTransaccion: `TRX-${Date.now().toString().slice(-8)}-${(countTrx + 1).toString().padStart(4, '0')}`,
+              numeroTransaccion: this.generarNumeroTransaccion(),
               cajaId: cajaDestino.id,
               tipo: TipoTransaccion.INGRESO,
               monto: cuotaInicial,
@@ -280,10 +283,9 @@ export class LoansService implements OnModuleInit {
     });
 
     if (!yaExiste?.id) {
-      const countTrx = await this.prisma.transaccion.count();
       await this.prisma.transaccion.create({
         data: {
-          numeroTransaccion: `TRX-${Date.now().toString().slice(-8)}-${(countTrx + 1).toString().padStart(4, '0')}`,
+          numeroTransaccion: this.generarNumeroTransaccion(),
           cajaId: cajaOrigen.id,
           tipo: TipoTransaccion.EGRESO,
           monto,
@@ -1439,10 +1441,9 @@ export class LoansService implements OnModuleInit {
     const cajaId = cajaLine?.cajaId || trxCuotaInicial?.cajaId;
 
     if (cuotaInicial > 0 && cajaId) {
-      const countTrx = await tx.transaccion.count();
       await tx.transaccion.create({
         data: {
-          numeroTransaccion: `REV-${Date.now().toString().slice(-8)}-${(countTrx + 1).toString().padStart(4, '0')}`,
+          numeroTransaccion: this.generarNumeroTransaccion('REV'),
           cajaId,
           tipo: TipoTransaccion.EGRESO,
           monto: cuotaInicial,
@@ -1533,10 +1534,9 @@ export class LoansService implements OnModuleInit {
       });
 
       if (!yaExiste?.id) {
-        const countTrx = await tx.transaccion.count();
         await tx.transaccion.create({
           data: {
-            numeroTransaccion: `RES-${Date.now().toString().slice(-8)}-${(countTrx + 1).toString().padStart(4, '0')}`,
+            numeroTransaccion: this.generarNumeroTransaccion('RES'),
             cajaId: cajaLine.cajaId,
             tipo: TipoTransaccion.INGRESO,
             monto: cuotaInicial,
@@ -2128,8 +2128,7 @@ export class LoansService implements OnModuleInit {
           });
 
           if (!yaExiste?.id) {
-            const countTrx = await this.prisma.transaccion.count();
-            const numeroTransaccion = `TRX-${Date.now().toString().slice(-8)}-${(countTrx + 1).toString().padStart(4, '0')}`;
+            const numeroTransaccion = this.generarNumeroTransaccion();
             await this.prisma.$transaction(async (tx) => {
               await tx.transaccion.create({
                 data: {

@@ -112,6 +112,10 @@ export class PaymentsService {
     return `PAG-${Date.now()}-${randomUUID().slice(0, 8)}`;
   }
 
+  private generarNumeroTransaccion(prefix = 'TRX') {
+    return `${prefix}-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  }
+
   private normalizeIdempotencyKey(value?: string | null) {
     const key = value?.toString().trim();
     return key || undefined;
@@ -761,9 +765,7 @@ export class PaymentsService {
         );
       }
 
-      const numeroTransaccionCaja = `TRX-IN-${Date.now()}-${Math.floor(
-        Math.random() * 1000,
-      )}`;
+      const numeroTransaccionCaja = this.generarNumeroTransaccion('TRX-IN');
 
       await tx.transaccion.create({
         data: {
