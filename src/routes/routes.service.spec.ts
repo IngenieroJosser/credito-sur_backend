@@ -216,4 +216,93 @@ describe('RoutesService role scoping', () => {
       makeService(prisma).assignClient('ruta-1', 'cliente-1', 'cobrador-1'),
     ).rejects.toBeInstanceOf(ConflictException);
   });
+
+  it('asigna clientes usando el cobrador real de la ruta aunque el body traiga otro cobradorId', async () => {
+    const prisma = {
+      ruta: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'ruta-1',
+          nombre: 'Ruta 1',
+          cobradorId: 'cobrador-ruta',
+        }),
+      },
+      cliente: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'cliente-1',
+          nombres: 'Ana',
+          apellidos: 'Perez',
+        }),
+      },
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
+        create: jest.fn().mockResolvedValue({
+          id: 'asignacion-1',
+          clienteId: 'cliente-1',
+          cobradorId: 'cobrador-ruta',
+          cliente: { nombres: 'Ana', apellidos: 'Perez' },
+        }),
+      },
+    };
+
+    await makeService(prisma).assignClient('ruta-1', 'cliente-1', 'cobrador-equivocado');
+
+    expect(prisma.asignacionRuta.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          rutaId: 'ruta-1',
+          clienteId: 'cliente-1',
+          cobradorId: 'cobrador-ruta',
+        }),
+      }),
+    );
+  });
+
+  it('al cambiar el cobrador de una ruta sincroniza asignaciones activas y responsable de caja', async () => {
+    const tx = {
+      ruta: {
+        update: jest.fn().mockResolvedValue({
+          id: 'ruta-1',
+          codigo: 'R-1',
+          nombre: 'Ruta 1',
+          cobradorId: 'cobrador-nuevo',
+          cobrador: { id: 'cobrador-nuevo', nombres: 'Nuevo', apellidos: 'Cobrador' },
+          supervisor: null,
+        }),
+      },
+      asignacionRuta: {
+        updateMany: jest.fn().mockResolvedValue({ count: 2 }),
+      },
+      caja: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+    };
+    const prisma = {
+      ruta: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'ruta-1',
+          codigo: 'R-1',
+          nombre: 'Ruta 1',
+          cobradorId: 'cobrador-anterior',
+        }),
+        update: jest.fn(),
+      },
+      usuario: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'cobrador-nuevo' }),
+      },
+      $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
+    };
+
+    await makeService(prisma).update('ruta-1', { cobradorId: 'cobrador-nuevo' } as any);
+
+    expect(tx.ruta.update).toHaveBeenCalled();
+    expect(tx.asignacionRuta.updateMany).toHaveBeenCalledWith({
+      where: { rutaId: 'ruta-1', activa: true },
+      data: { cobradorId: 'cobrador-nuevo' },
+    });
+    expect(tx.caja.updateMany).toHaveBeenCalledWith({
+      where: { rutaId: 'ruta-1', tipo: 'RUTA', activa: true },
+      data: { responsableId: 'cobrador-nuevo' },
+    });
+  });
 });

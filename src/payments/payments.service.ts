@@ -734,7 +734,14 @@ export class PaymentsService {
       });
 
       const asignacion = await tx.asignacionRuta.findFirst({
-        where: { clienteId, activa: true },
+        where: {
+          clienteId,
+          activa: true,
+          OR: [
+            { cobradorId: cobradorIdVal },
+            { ruta: { cobradorId: cobradorIdVal } },
+          ],
+        },
         select: { rutaId: true },
       });
       if (!asignacion?.rutaId) {

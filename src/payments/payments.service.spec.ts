@@ -481,6 +481,26 @@ describe('PaymentsService', () => {
         }),
       );
     });
+
+    it('busca la caja de la asignación activa que coincide con el cobrador del pago', async () => {
+      await service.create({
+        prestamoId: 'prestamo-1',
+        cobradorId: 'cobrador-1',
+        montoTotal: 110000,
+      });
+
+      expect(prisma._txMock.asignacionRuta.findFirst).toHaveBeenCalledWith({
+        where: {
+          clienteId: 'cliente-1',
+          activa: true,
+          OR: [
+            { cobradorId: 'cobrador-1' },
+            { ruta: { cobradorId: 'cobrador-1' } },
+          ],
+        },
+        select: { rutaId: true },
+      });
+    });
   });
 
   describe('create — idempotencia', () => {

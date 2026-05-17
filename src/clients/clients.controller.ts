@@ -135,10 +135,12 @@ export class ClientsController {
     RolUsuario.COBRADOR,
     RolUsuario.SUPERVISOR,
   )
-  async createClient(@Body() body: CreateClientDto) {
+  async createClient(@Body() body: CreateClientDto, @Request() req: any) {
     this.logger.log(`Creando cliente con datos: ${JSON.stringify(body)}`);
-    // Si viene creadoPorId en el body, lo usamos, si no el service intentará buscar uno (hack actual)
-    return this.clientsService.createClient(body);
+    return this.clientsService.createClient({
+      ...body,
+      creadoPorId: req.user?.id || req.user?.sub,
+    });
   }
 
   @Post('approve/:id')
@@ -146,10 +148,11 @@ export class ClientsController {
   async approveClient(
     @Param('id') id: string,
     @Body() body: { aprobadoPorId: string; datosAprobados?: any },
+    @Request() req: any,
   ) {
     return this.clientsService.approveClient(
       id,
-      body.aprobadoPorId,
+      req.user?.id || req.user?.sub,
       body.datosAprobados,
     );
   }
@@ -159,10 +162,11 @@ export class ClientsController {
   async rejectClient(
     @Param('id') id: string,
     @Body() body: { rechazadoPorId: string; razon?: string },
+    @Request() req: any,
   ) {
     return this.clientsService.rejectClient(
       id,
-      body.rechazadoPorId,
+      req.user?.id || req.user?.sub,
       body.razon,
     );
   }
