@@ -17,6 +17,7 @@
     "lint": "eslint \"{src,test}/**/*.ts\"",
     "test": "jest",
     "seed": "ts-node -r tsconfig-paths/register src/prisma/seed.ts",
+    "revert:payment": "node scripts/revert-payment.js",
     "postinstall": "prisma generate --schema src/prisma/schema.prisma"
   },
   "dependencies": {

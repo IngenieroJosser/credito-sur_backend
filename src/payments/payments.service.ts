@@ -149,6 +149,11 @@ export class PaymentsService {
     return key || undefined;
   }
 
+  private formatCopForConflict(value: number) {
+    const rounded = Math.round(Number(value || 0));
+    return rounded.toLocaleString('es-CO');
+  }
+
   private buildIdempotentPaymentReplay(pago: any) {
     const montoTotal = Number(pago?.montoTotal || 0);
     const capitalRecuperado = (pago?.detalles || []).reduce(
@@ -316,14 +321,14 @@ export class PaymentsService {
       Math.abs(pendienteActual - montoCuotaEsperado) > COP_TOLERANCE
     ) {
       throw new ConflictException(
-        `La cuota pendiente cambió de $${montoCuotaEsperado} a $${pendienteActual}. Actualiza la ruta antes de registrar el pago.`,
+        `La cuota pendiente cambió de $${this.formatCopForConflict(montoCuotaEsperado)} a $${this.formatCopForConflict(pendienteActual)}. Actualiza la ruta antes de registrar el pago.`,
       );
     }
 
     const montoTotal = Number(paymentDto.montoTotal || 0);
     if (montoTotal > pendienteActual + COP_TOLERANCE) {
       throw new ConflictException(
-        `El pago excede la cuota pendiente actual ($${pendienteActual}). Actualiza la ruta antes de registrar el pago.`,
+        `El pago excede la cuota pendiente actual ($${this.formatCopForConflict(pendienteActual)}). Actualiza la ruta antes de registrar el pago.`,
       );
     }
   }
