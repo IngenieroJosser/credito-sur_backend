@@ -4,6 +4,8 @@ import {
   IsOptional,
   IsEnum,
   IsDateString,
+  IsIn,
+  IsInt,
   Min,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
@@ -53,4 +55,20 @@ export class CreatePaymentDto {
   @IsOptional()
   @Transform(({ value }) => value?.toString().trim())
   idempotencyKey?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => value?.toString().toUpperCase())
+  @IsIn(['PAGO', 'ABONO'], { message: 'tipoRegistro debe ser PAGO o ABONO' })
+  tipoRegistro?: 'PAGO' | 'ABONO';
+
+  @IsOptional()
+  @IsInt({ message: 'cuotaNumeroEsperada debe ser un número entero' })
+  @Type(() => Number)
+  cuotaNumeroEsperada?: number;
+
+  @IsOptional()
+  @IsNumber({}, { message: 'montoCuotaEsperado debe ser un número válido' })
+  @Min(1, { message: 'montoCuotaEsperado debe ser mayor a 0' })
+  @Type(() => Number)
+  montoCuotaEsperado?: number;
 }

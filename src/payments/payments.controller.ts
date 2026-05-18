@@ -68,6 +68,15 @@ export class PaymentsController {
         (req.user?.rol === RolUsuario.COBRADOR ? req.user?.id : undefined),
       montoTotal: Number(createPaymentDto.montoTotal),
       idempotencyKey: createPaymentDto.idempotencyKey?.toString().trim(),
+      tipoRegistro: createPaymentDto.tipoRegistro?.toString().toUpperCase() as any,
+      cuotaNumeroEsperada:
+        createPaymentDto.cuotaNumeroEsperada != null
+          ? Number(createPaymentDto.cuotaNumeroEsperada)
+          : undefined,
+      montoCuotaEsperado:
+        createPaymentDto.montoCuotaEsperado != null
+          ? Number(createPaymentDto.montoCuotaEsperado)
+          : undefined,
     };
 
     if (!dto.cobradorId && req.user?.rol === RolUsuario.COBRADOR && req.user?.id) {
