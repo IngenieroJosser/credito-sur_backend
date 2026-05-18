@@ -1001,24 +1001,45 @@ export class RoutesService {
 
           let avanceDiario = 0;
 
+          if (clientesIds.length === 0) {
+            return {
+              ...ruta,
+              ...estadisticas,
+              nivelRiesgo,
+              porcentajeMora,
+              avanceDiario,
+              cobrador: `${ruta.cobrador.nombres} ${ruta.cobrador.apellidos}`,
+              estado: ruta.activa ? 'ACTIVA' : 'INACTIVA',
+              frecuenciaVisita: 'DIARIO',
+            };
+          }
+
 
 
           if (clientesIds.length > 0) {
 
-            // Obtener préstamos activos y en mora
-
-            const prestamosActivos = await this.prisma.prestamo.findMany({
+            // Para la META: solo préstamos activos/en mora
+            const prestamosParaMeta = await this.prisma.prestamo.findMany({
               where: {
                 clienteId: { in: clientesIds },
-                estado: { in: ['ACTIVO', 'EN_MORA', 'PAGADO'] }, // Incluir pagados para capturar recaudo de hoy
+                estado: { in: ['ACTIVO', 'EN_MORA'] }, // ✅ sin PAGADO
                 eliminadoEn: null,
               },
               select: { id: true, saldoPendiente: true, monto: true, cantidadCuotas: true, frecuenciaPago: true }
             });
 
+            // Para el RECAUDO: incluir PAGADO para capturar pagos de hoy
+            const prestamosActivos = await this.prisma.prestamo.findMany({
+              where: {
+                clienteId: { in: clientesIds },
+                estado: { in: ['ACTIVO', 'EN_MORA', 'PAGADO'] },
+                eliminadoEn: null,
+              },
+              select: { id: true, frecuenciaPago: true }
+            });
 
-
-            const pIds = prestamosActivos.map(p => p.id);
+            const pIds = prestamosActivos.map(p => p.id); // para query de pagos (recaudo)
+            const pIdsParaMeta = prestamosParaMeta.map(p => p.id); // para query de cuotas (meta)
 
 
 
@@ -1047,7 +1068,7 @@ export class RoutesService {
 
                 this.prisma.cuota.findMany({
                   where: {
-                    prestamoId: { in: pIds },
+                    prestamoId: { in: pIdsParaMeta },
                     OR: [
                       {
                         estado: { in: ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'] },
@@ -1099,7 +1120,7 @@ export class RoutesService {
                 primeraCuotaPorPrestamo.set(pid, monto);
               }
 
-              const diariosIds = prestamosActivos
+              const diariosIds = prestamosParaMeta
                 .filter((p) => {
                   const freq = String(p.frecuenciaPago || '').toUpperCase();
                   return freq === 'DIARIO' || freq === 'DIA';
@@ -1155,7 +1176,7 @@ export class RoutesService {
               // Regla de meta HOY consistente con el detalle de ruta:
               // - DIARIO: siempre se visita y se espera el monto de su primera cuota NO pagada (aunque sea futura)
               // - SEMANA/QUINCENA/MES: solo si hay cuota vencida/hoy (<= inicio del día) o pagada hoy
-              for (const p of prestamosActivos) {
+              for (const p of prestamosParaMeta) {
                 const pid = String(p.id);
                 const freq = String(p.frecuenciaPago || '').toUpperCase();
                 if (freq === 'DIARIO' || freq === 'DIA') {
@@ -1183,7 +1204,7 @@ export class RoutesService {
                 .filter(c => c.estado !== 'PAGADA' && new Date(c.fechaVencimiento) < dInicioUTC)
                 .reduce((sum, c) => sum + Number(c.monto), 0);
 
-              const deudaTotal = prestamosActivos.reduce((acc, curr) => acc + Number(curr.saldoPendiente || 0), 0);
+              const deudaTotal = prestamosParaMeta.reduce((acc, curr) => acc + Number(curr.saldoPendiente || 0), 0);
               porcentajeMora = deudaTotal > 0 ? (montoVencido / deudaTotal) * 100 : 0;
 
 
