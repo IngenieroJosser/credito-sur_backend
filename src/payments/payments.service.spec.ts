@@ -113,7 +113,11 @@ const PAGO_EXISTENTE = {
 };
 
 const CAJA_ACTIVA = { id: 'caja-1', nombre: 'Caja Ruta 1', saldoActual: 0 };
-const ASIGNACION_RUTA = { rutaId: 'ruta-1' };
+const ASIGNACION_RUTA = {
+  rutaId: 'ruta-1',
+  cobradorId: 'cobrador-ruta',
+  ruta: { cobradorId: 'cobrador-ruta' },
+};
 const ASIGNACION_RUTA_CON_COBRADOR = {
   rutaId: 'ruta-1',
   cobradorId: 'cobrador-ruta',
@@ -482,12 +486,39 @@ describe('PaymentsService', () => {
       );
     });
 
+    it('reemplaza cualquier cobradorId enviado por roles de oficina con el cobrador real de la ruta activa', async () => {
+      await service.create(
+        {
+          prestamoId: 'prestamo-1',
+          cobradorId: 'usuario-oficina-equivocado',
+          montoTotal: 110000,
+        },
+        undefined,
+        { id: 'supervisor-1', rol: RolUsuario.SUPERVISOR } as any,
+      );
+
+      expect(prisma._txMock.pago.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            cobradorId: 'cobrador-ruta',
+          }),
+        }),
+      );
+      expect(prisma._txMock.transaccion.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            creadoPorId: 'cobrador-ruta',
+          }),
+        }),
+      );
+    });
+
     it('busca la caja de la asignación activa que coincide con el cobrador del pago', async () => {
       await service.create({
         prestamoId: 'prestamo-1',
         cobradorId: 'cobrador-1',
         montoTotal: 110000,
-      });
+      }, undefined, { id: 'cobrador-1', rol: RolUsuario.COBRADOR } as any);
 
       expect(prisma._txMock.asignacionRuta.findFirst).toHaveBeenCalledWith({
         where: {
@@ -498,7 +529,11 @@ describe('PaymentsService', () => {
             { ruta: { cobradorId: 'cobrador-1' } },
           ],
         },
-        select: { rutaId: true },
+        select: {
+          rutaId: true,
+          cobradorId: true,
+          ruta: { select: { cobradorId: true } },
+        },
       });
     });
   });
@@ -562,6 +597,17 @@ describe('PaymentsService', () => {
       await expect(
         service.create({ prestamoId: 'prestamo-1', cobradorId: '', montoTotal: 100000 }),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    it('lanza BadRequestException si el monto no es finito para evitar errores 500 de Prisma', async () => {
+      await expect(
+        service.create({
+          prestamoId: 'prestamo-1',
+          cobradorId: 'cobrador-1',
+          montoTotal: Number.NaN,
+        } as any),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
     it('lanza NotFoundException si el préstamo no existe', async () => {

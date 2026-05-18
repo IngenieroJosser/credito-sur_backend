@@ -326,10 +326,7 @@ export class PaymentsService {
       );
     }
 
-    if (
-      !this.isCollector(actor) &&
-      (!cobradorIdVal || (actor?.id && cobradorIdVal === actor.id))
-    ) {
+    if (!this.isCollector(actor)) {
       const asignacionActiva = await this.prisma.asignacionRuta.findFirst({
         where: { clienteId: prestamo.clienteId, activa: true },
         select: {
@@ -345,7 +342,11 @@ export class PaymentsService {
       throw new BadRequestException('El cobrador es requerido');
     }
 
-    const montoTotal = paymentDto.montoTotal;
+    const montoTotal = Number(paymentDto.montoTotal);
+
+    if (!Number.isFinite(montoTotal) || montoTotal <= 0) {
+      throw new BadRequestException('El monto del pago debe ser un número mayor a cero');
+    }
 
     if (montoTotal > Number(prestamo.saldoPendiente) + 1) {
       throw new BadRequestException(
@@ -660,6 +661,51 @@ export class PaymentsService {
       const capitalTotalFinalActual =
         Math.round((montoTotal - interesTotalFinalActual - moraTotalFinalActual) * 100) / 100;
 
+      const asignacion = await tx.asignacionRuta.findFirst({
+        where: this.isCollector(actor)
+          ? {
+              clienteId,
+              activa: true,
+              OR: [
+                { cobradorId: cobradorIdVal },
+                { ruta: { cobradorId: cobradorIdVal } },
+              ],
+            }
+          : {
+              clienteId,
+              activa: true,
+            },
+        select: {
+          rutaId: true,
+          cobradorId: true,
+          ruta: { select: { cobradorId: true } },
+        },
+      });
+      if (!asignacion?.rutaId) {
+        throw new BadRequestException(
+          'El cliente no tiene una ruta asignada activa para registrar el pago',
+        );
+      }
+
+      if (!this.isCollector(actor)) {
+        cobradorIdVal = asignacion.ruta?.cobradorId || asignacion.cobradorId;
+      }
+
+      if (!cobradorIdVal) {
+        throw new BadRequestException('El cobrador es requerido');
+      }
+
+      const cajaIngreso = await tx.caja.findFirst({
+        where: { rutaId: asignacion.rutaId, tipo: 'RUTA', activa: true },
+        select: { id: true, nombre: true, saldoActual: true },
+      });
+
+      if (!cajaIngreso?.id) {
+        throw new BadRequestException(
+          'No existe una caja de ruta activa asociada a la ruta del cliente',
+        );
+      }
+
       // 1. Crear el registro de pago
       const pago = await tx.pago.create({
         data: {
@@ -736,34 +782,6 @@ export class PaymentsService {
           estadoSincronizacion: 'PENDIENTE',
         },
       });
-
-      const asignacion = await tx.asignacionRuta.findFirst({
-        where: {
-          clienteId,
-          activa: true,
-          OR: [
-            { cobradorId: cobradorIdVal },
-            { ruta: { cobradorId: cobradorIdVal } },
-          ],
-        },
-        select: { rutaId: true },
-      });
-      if (!asignacion?.rutaId) {
-        throw new BadRequestException(
-          'El cliente no tiene una ruta asignada activa para registrar el pago',
-        );
-      }
-
-      const cajaIngreso = await tx.caja.findFirst({
-        where: { rutaId: asignacion.rutaId, tipo: 'RUTA', activa: true },
-        select: { id: true, nombre: true, saldoActual: true },
-      });
-
-      if (!cajaIngreso?.id) {
-        throw new BadRequestException(
-          'No existe una caja de ruta activa asociada a la ruta del cliente',
-        );
-      }
 
       const numeroTransaccionCaja = this.generarNumeroTransaccion('TRX-IN');
 
