@@ -285,6 +285,49 @@ export class PaymentsService {
     return { detallesPago, cuotasActualizar, capitalTotal, interesTotal, moraTotal };
   }
 
+  private validatePagoIntentAgainstCurrentCuota(paymentDto: CreatePaymentDto, prestamoActual: any) {
+    if (paymentDto.tipoRegistro !== 'PAGO') return;
+
+    const cuotaActual = (prestamoActual?.cuotas || [])[0];
+    if (!cuotaActual) {
+      throw new ConflictException(
+        'La cuota ya no está pendiente. Actualiza la ruta antes de registrar el pago.',
+      );
+    }
+
+    const cuotaNumeroEsperada = Number(paymentDto.cuotaNumeroEsperada || 0);
+    if (
+      cuotaNumeroEsperada > 0 &&
+      Number(cuotaActual.numeroCuota || 0) !== cuotaNumeroEsperada
+    ) {
+      throw new ConflictException(
+        `La cuota #${cuotaNumeroEsperada} ya fue modificada o pagada. Actualiza la ruta antes de registrar otro pago.`,
+      );
+    }
+
+    const montoCuota = Number(cuotaActual.monto || 0);
+    const montoPagado = Number(cuotaActual.montoPagado || 0);
+    const pendienteActual = Math.max(0, montoCuota - montoPagado);
+    const montoCuotaEsperado = Number(paymentDto.montoCuotaEsperado || 0);
+    const COP_TOLERANCE = 1;
+
+    if (
+      montoCuotaEsperado > 0 &&
+      Math.abs(pendienteActual - montoCuotaEsperado) > COP_TOLERANCE
+    ) {
+      throw new ConflictException(
+        `La cuota pendiente cambió de $${montoCuotaEsperado} a $${pendienteActual}. Actualiza la ruta antes de registrar el pago.`,
+      );
+    }
+
+    const montoTotal = Number(paymentDto.montoTotal || 0);
+    if (montoTotal > pendienteActual + COP_TOLERANCE) {
+      throw new ConflictException(
+        `El pago excede la cuota pendiente actual ($${pendienteActual}). Actualiza la ruta antes de registrar el pago.`,
+      );
+    }
+  }
+
   async create(dto: CreatePaymentDto, comprobante?: Express.Multer.File, actor?: PaymentActor) {
     const paymentDto = {
       ...dto,
@@ -675,6 +718,8 @@ export class PaymentsService {
           `El monto del pago ($${montoTotal}) no puede ser mayor al saldo pendiente del préstamo ($${prestamoActual.saldoPendiente})`,
         );
       }
+
+      this.validatePagoIntentAgainstCurrentCuota(paymentDto, prestamoActual);
 
       const {
         detallesPago: detallesPagoActuales,

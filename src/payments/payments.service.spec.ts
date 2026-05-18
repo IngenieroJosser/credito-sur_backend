@@ -17,7 +17,7 @@ import { AuditService } from '../audit/audit.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { CloudinaryService } from '../upload/cloudinary.service';
 import { LedgerService } from '../accounting/ledger.service';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { EstadoCuota, EstadoPrestamo, MetodoPago, Prisma, RolUsuario } from '@prisma/client';
 
 // ─────────────────────────────────────────────
@@ -653,6 +653,35 @@ describe('PaymentsService', () => {
           montoTotal: 110000,
         }),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    it('lanza ConflictException si otro usuario ya pagó la cuota esperada antes de confirmar', async () => {
+      (prisma._txMock.prestamo.findFirst as jest.Mock).mockResolvedValue({
+        ...PRESTAMO_ACTIVO,
+        cuotas: [
+          {
+            ...PRESTAMO_ACTIVO.cuotas[1],
+            id: 'cuota-2',
+            numeroCuota: 2,
+            monto: 270000,
+            montoPagado: 0,
+          },
+        ],
+      });
+
+      await expect(
+        service.create({
+          prestamoId: 'prestamo-1',
+          cobradorId: 'cobrador-1',
+          montoTotal: 270000,
+          tipoRegistro: 'PAGO',
+          cuotaNumeroEsperada: 1,
+          montoCuotaEsperado: 270000,
+        } as any),
+      ).rejects.toThrow(ConflictException);
+
+      expect(prisma._txMock.pago.create).not.toHaveBeenCalled();
+      expect(prisma._txMock.cuota.update).not.toHaveBeenCalled();
     });
   });
 });
