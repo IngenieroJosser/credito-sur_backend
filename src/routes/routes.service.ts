@@ -1222,6 +1222,11 @@ export class RoutesService {
 
 
 
+          if (estadisticas.clientesAsignados === 0) {
+            estadisticas.metaDelDia = 0;
+            estadisticas.cobranzaDelDia = 0;
+          }
+
           return {
 
             ...ruta,
