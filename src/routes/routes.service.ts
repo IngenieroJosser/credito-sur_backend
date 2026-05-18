@@ -1037,7 +1037,7 @@ export class RoutesService {
                   where: {
                     prestamo: {
                       cliente: {
-                        asignacionesRuta: { some: { rutaId: ruta.id } }
+                        asignacionesRuta: { some: { rutaId: ruta.id, activa: true } }
                       }
                     },
                     fechaPago: { gte: dInicioBogota, lte: dFinBogota }
@@ -1548,7 +1548,7 @@ export class RoutesService {
               where: {
                 prestamo: {
                   cliente: {
-                    asignacionesRuta: { some: { rutaId: id } },
+                    asignacionesRuta: { some: { rutaId: id, activa: true } },
                   },
                 },
                 fechaPago: { gte: dInicioBogota, lte: dFinBogota },
@@ -2702,89 +2702,107 @@ export class RoutesService {
 
 
 
-      // Verificar si el cliente ya está asignado a esta ruta
-
-      const existingAssignment = await this.prisma.asignacionRuta.findFirst({
-
-        where: {
-
-          clienteId,
-
-          rutaId,
-
-          activa: true,
-
-        },
-
-      });
-
-
-
-      if (existingAssignment) {
-
-        throw new ConflictException('El cliente ya está asignado a esta ruta');
-
-      }
-
-
-
-      // Obtener el orden de visita más alto y agregar uno
-
-      const maxOrden = await this.prisma.asignacionRuta.aggregate({
-
-        where: { rutaId, activa: true },
-
-        _max: { ordenVisita: true },
-
-      });
-
-
-
-      const nuevoOrden = (maxOrden._max.ordenVisita || 0) + 1;
       const assignmentCobradorId = ruta.cobradorId;
 
 
 
-      // Crear la asignación
-
-      const asignacion = await this.prisma.asignacionRuta.create({
-
-        data: {
-
-          rutaId,
-
-          clienteId,
-
-          cobradorId: assignmentCobradorId,
-
-          ordenVisita: nuevoOrden,
-
-          activa: true,
-
-        },
-
-        include: {
-
-          cliente: {
-
-            select: {
-
-              id: true,
-
-              nombres: true,
-
-              apellidos: true,
-
-              dni: true,
-
-              telefono: true,
-
-            },
-
+      const asignacion = await this.prisma.$transaction(async (tx) => {
+        const existingAssignment = await tx.asignacionRuta.findFirst({
+          where: {
+            clienteId,
+            rutaId,
+            activa: true,
           },
+        });
 
-        },
+        if (existingAssignment) {
+          await tx.asignacionRuta.updateMany({
+            where: {
+              clienteId,
+              activa: true,
+              id: { not: existingAssignment.id },
+            },
+            data: { activa: false },
+          });
 
+          const updated = await tx.asignacionRuta.update({
+            where: { id: existingAssignment.id },
+            data: {
+              cobradorId: assignmentCobradorId,
+              activa: true,
+            },
+            include: {
+              cliente: {
+                select: {
+                  id: true,
+                  nombres: true,
+                  apellidos: true,
+                  dni: true,
+                  telefono: true,
+                },
+              },
+            },
+          });
+
+          if (assignmentCobradorId) {
+            await tx.prestamo.updateMany({
+              where: {
+                clienteId,
+                estado: { in: ['ACTIVO', 'EN_MORA'] },
+                eliminadoEn: null,
+              },
+              data: { cobradorId: assignmentCobradorId },
+            });
+          }
+
+          return updated;
+        }
+
+        await tx.asignacionRuta.updateMany({
+          where: { clienteId, activa: true },
+          data: { activa: false },
+        });
+
+        const maxOrden = await tx.asignacionRuta.aggregate({
+          where: { rutaId, activa: true },
+          _max: { ordenVisita: true },
+        });
+
+        const nuevoOrden = (maxOrden._max.ordenVisita || 0) + 1;
+
+        const created = await tx.asignacionRuta.create({
+          data: {
+            rutaId,
+            clienteId,
+            cobradorId: assignmentCobradorId,
+            ordenVisita: nuevoOrden,
+            activa: true,
+          },
+          include: {
+            cliente: {
+              select: {
+                id: true,
+                nombres: true,
+                apellidos: true,
+                dni: true,
+                telefono: true,
+              },
+            },
+          },
+        });
+
+        if (assignmentCobradorId) {
+          await tx.prestamo.updateMany({
+            where: {
+              clienteId,
+              estado: { in: ['ACTIVO', 'EN_MORA'] },
+              eliminadoEn: null,
+            },
+            data: { cobradorId: assignmentCobradorId },
+          });
+        }
+
+        return created;
       });
 
 
@@ -3011,70 +3029,54 @@ export class RoutesService {
 
 
 
-      // Verificar si ya está asignado a la ruta destino
-
-      const existingInDestination = await this.prisma.asignacionRuta.findFirst({
-
-        where: {
-
-          clienteId: clientId,
-
-          rutaId: toRutaId,
-
-          activa: true,
-
-        },
-
-      });
-
-
-
-      if (existingInDestination) {
-
-        throw new ConflictException(
-
-          'El cliente ya está asignado a la ruta destino',
-
-        );
-
-      }
-
-
-
-      // Obtener el orden de visita más alto en la ruta destino
-
-      const maxOrdenDestino = await this.prisma.asignacionRuta.aggregate({
-
-        where: { rutaId: toRutaId, activa: true },
-
-        _max: { ordenVisita: true },
-
-      });
-
-
-
       // BUG-15 FIX: Mover el cliente en una sola transacción que también actualiza el
       // cobradorId en los préstamos activos. Sin esto, los pagos del nuevo cobrador
       // no se reflejan correctamente en sus estadísticas de recaudo.
       await this.prisma.$transaction(async (tx) => {
-        // 1. Desactivar la asignación actual
-        await tx.asignacionRuta.update({
-          where: { id: asignacionActual.id },
-          data: { activa: false },
-        });
-
-        // 2. Crear nueva asignación en la ruta destino
-        await tx.asignacionRuta.create({
-          data: {
-            rutaId: toRutaId,
+        const existingInDestination = await tx.asignacionRuta.findFirst({
+          where: {
             clienteId: clientId,
-            cobradorId: rutaDestino.cobradorId,
-            ordenVisita: (maxOrdenDestino._max.ordenVisita || 0) + 1,
+            rutaId: toRutaId,
             activa: true,
           },
         });
 
-        // 3. Actualizar cobradorId en préstamos activos/en mora del cliente
+        await tx.asignacionRuta.updateMany({
+          where: {
+            clienteId: clientId,
+            activa: true,
+            ...(existingInDestination
+              ? { id: { not: existingInDestination.id } }
+              : {}),
+          },
+          data: { activa: false },
+        });
+
+        if (existingInDestination) {
+          await tx.asignacionRuta.update({
+            where: { id: existingInDestination.id },
+            data: {
+              cobradorId: rutaDestino.cobradorId,
+              activa: true,
+            },
+          });
+        } else {
+          const maxOrdenDestino = await tx.asignacionRuta.aggregate({
+            where: { rutaId: toRutaId, activa: true },
+            _max: { ordenVisita: true },
+          });
+
+          await tx.asignacionRuta.create({
+            data: {
+              rutaId: toRutaId,
+              clienteId: clientId,
+              cobradorId: rutaDestino.cobradorId,
+              ordenVisita: (maxOrdenDestino._max.ordenVisita || 0) + 1,
+              activa: true,
+            },
+          });
+        }
+
         if (rutaDestino.cobradorId) {
           await tx.prestamo.updateMany({
             where: {
@@ -3144,12 +3146,8 @@ export class RoutesService {
   /**
 
    * Mueve un crédito específico de un cliente a otra ruta.
-
-   * Como la asignación es por cliente, esto crea una nueva asignación del cliente
-
-   * en la ruta destino sin eliminar la original, permitiendo que el cliente
-
-   * aparezca en rutas distintas según el tipo/frecuencia de cada crédito.
+   * La asignación operativa es por cliente, así que el cliente debe quedar
+   * activo solo en la ruta destino.
 
    */
 
@@ -3179,48 +3177,45 @@ export class RoutesService {
 
 
 
-      const yaAsignado = await this.prisma.asignacionRuta.findFirst({
+      await this.prisma.$transaction(async (tx) => {
+        const yaAsignado = await tx.asignacionRuta.findFirst({
+          where: { clienteId: prestamo.clienteId, rutaId: toRutaId, activa: true },
+        });
 
-        where: { clienteId: prestamo.clienteId, rutaId: toRutaId, activa: true },
+        await tx.asignacionRuta.updateMany({
+          where: {
+            clienteId: prestamo.clienteId,
+            activa: true,
+            ...(yaAsignado ? { id: { not: yaAsignado.id } } : {}),
+          },
+          data: { activa: false },
+        });
 
-      });
+        if (yaAsignado) {
+          await tx.asignacionRuta.update({
+            where: { id: yaAsignado.id },
+            data: {
+              cobradorId: rutaDestino.cobradorId,
+              activa: true,
+            },
+          });
+          return;
+        }
 
+        const maxOrden = await tx.asignacionRuta.aggregate({
+          where: { rutaId: toRutaId, activa: true },
+          _max: { ordenVisita: true },
+        });
 
-
-      if (yaAsignado) {
-
-        return { message: 'El cliente ya está asignado a esa ruta' };
-
-      }
-
-
-
-      const maxOrden = await this.prisma.asignacionRuta.aggregate({
-
-        where: { rutaId: toRutaId, activa: true },
-
-        _max: { ordenVisita: true },
-
-      });
-
-
-
-      await this.prisma.asignacionRuta.create({
-
-        data: {
-
-          rutaId: toRutaId,
-
-          clienteId: prestamo.clienteId,
-
-          cobradorId: rutaDestino.cobradorId,
-
-          ordenVisita: (maxOrden._max.ordenVisita || 0) + 1,
-
-          activa: true,
-
-        },
-
+        await tx.asignacionRuta.create({
+          data: {
+            rutaId: toRutaId,
+            clienteId: prestamo.clienteId,
+            cobradorId: rutaDestino.cobradorId,
+            ordenVisita: (maxOrden._max.ordenVisita || 0) + 1,
+            activa: true,
+          },
+        });
       });
 
 
@@ -3567,7 +3562,7 @@ export class RoutesService {
         prestamo: {
           cliente: {
             asignacionesRuta: {
-              some: { rutaId }
+              some: { rutaId, activa: true }
             }
           }
         },
@@ -3611,7 +3606,7 @@ export class RoutesService {
         prestamo: {
           cliente: {
             asignacionesRuta: {
-              some: { rutaId }
+              some: { rutaId, activa: true }
             }
           }
         },
