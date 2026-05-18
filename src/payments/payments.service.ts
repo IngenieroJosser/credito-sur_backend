@@ -2,6 +2,8 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ConflictException,
+  HttpException,
   Logger,
 } from '@nestjs/common';
 import { CreatePaymentDto } from './dto/create-payment.dto';
@@ -37,6 +39,29 @@ export class PaymentsService {
 
   private isCollector(actor: PaymentActor) {
     return String(actor?.rol || '').toUpperCase() === RolUsuario.COBRADOR;
+  }
+
+  private rethrowKnownPaymentError(error: unknown): never {
+    if (error instanceof HttpException) {
+      throw error;
+    }
+
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === 'P2002') {
+        throw new ConflictException('El pago ya fue registrado previamente');
+      }
+      if (error.code === 'P2003') {
+        throw new BadRequestException(
+          'Relación inválida al registrar el pago. Verifica que el préstamo, cliente, cobrador y caja de ruta existan y estén activos.',
+        );
+      }
+      if (error.code === 'P2025') {
+        throw new NotFoundException('No se encontró un registro requerido para registrar el pago');
+      }
+    }
+
+    this.logger.error('Error inesperado registrando pago', error as any);
+    throw error;
   }
 
   private async ensureCajaBanco(tx: Prisma.TransactionClient) {
@@ -826,32 +851,38 @@ export class PaymentsService {
           prestamoQuedaPagado,
         },
       };
-    });
+    }).catch((error) => this.rethrowKnownPaymentError(error));
 
     // Auditoría
-    await this.auditService.create({
-      usuarioId: cobradorIdVal,
-      accion: 'REGISTRAR_PAGO',
-      entidad: 'Pago',
-      entidadId: resultado.pago.id,
-      datosNuevos: {
-        numeroPago,
-        prestamoIdVal,
-        montoTotal,
-        capitalRecuperado:
-          Math.round(Number(resultado.descomposicion.capitalRecuperado || 0) * 100) / 100,
-        interesRecuperado:
-          Math.round(Number(resultado.descomposicion.interesRecuperado || 0) * 100) / 100,
-        moraRecuperada:
-          Math.round(
-            Number(
-              montoTotal -
-                Number(resultado.descomposicion.capitalRecuperado || 0) -
-                Number(resultado.descomposicion.interesRecuperado || 0),
-            ) * 100,
-          ) / 100,
-      },
-    });
+    try {
+      await this.auditService.create({
+        usuarioId: cobradorIdVal,
+        accion: 'REGISTRAR_PAGO',
+        entidad: 'Pago',
+        entidadId: resultado.pago.id,
+        datosNuevos: {
+          numeroPago,
+          prestamoIdVal,
+          montoTotal,
+          capitalRecuperado:
+            Math.round(Number(resultado.descomposicion.capitalRecuperado || 0) * 100) / 100,
+          interesRecuperado:
+            Math.round(Number(resultado.descomposicion.interesRecuperado || 0) * 100) / 100,
+          moraRecuperada:
+            Math.round(
+              Number(
+                montoTotal -
+                  Number(resultado.descomposicion.capitalRecuperado || 0) -
+                  Number(resultado.descomposicion.interesRecuperado || 0),
+              ) * 100,
+            ) / 100,
+        },
+      });
+    } catch (error) {
+      this.logger.error(
+        `Pago ${resultado.pago.id} registrado, pero falló auditoría: ${(error as Error)?.message || error}`,
+      );
+    }
 
     // Para EFECTIVO no se genera revisión.
 
@@ -859,20 +890,26 @@ export class PaymentsService {
       `Pago ${numeroPago} registrado: capital=${Number(resultado.descomposicion.capitalRecuperado).toFixed(2)}, interés=${Number(resultado.descomposicion.interesRecuperado).toFixed(2)}, saldo=${resultado.descomposicion.saldoNuevo.toFixed(2)}`,
     );
 
-    this.notificacionesGateway.broadcastPagosActualizados({
-      accion: 'CREAR',
-      pagoId: resultado.pago.id,
-      prestamoId: prestamo.id,
-      clienteId: prestamo.clienteId,
-    });
-    this.notificacionesGateway.broadcastPrestamosActualizados({
-      accion: 'PAGO',
-      prestamoId: prestamoIdVal,
-    });
-    this.notificacionesGateway.broadcastRutasActualizadas({
-      accion: 'PAGO',
-    });
-    this.notificacionesGateway.broadcastDashboardsActualizados({});
+    try {
+      this.notificacionesGateway.broadcastPagosActualizados({
+        accion: 'CREAR',
+        pagoId: resultado.pago.id,
+        prestamoId: prestamo.id,
+        clienteId: prestamo.clienteId,
+      });
+      this.notificacionesGateway.broadcastPrestamosActualizados({
+        accion: 'PAGO',
+        prestamoId: prestamoIdVal,
+      });
+      this.notificacionesGateway.broadcastRutasActualizadas({
+        accion: 'PAGO',
+      });
+      this.notificacionesGateway.broadcastDashboardsActualizados({});
+    } catch (error) {
+      this.logger.error(
+        `Pago ${resultado.pago.id} registrado, pero falló broadcast: ${(error as Error)?.message || error}`,
+      );
+    }
 
     return resultado;
   }

@@ -18,7 +18,7 @@ import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway'
 import { CloudinaryService } from '../upload/cloudinary.service';
 import { LedgerService } from '../accounting/ledger.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { EstadoCuota, EstadoPrestamo, MetodoPago, RolUsuario } from '@prisma/client';
+import { EstadoCuota, EstadoPrestamo, MetodoPago, Prisma, RolUsuario } from '@prisma/client';
 
 // ─────────────────────────────────────────────
 // Mocks de los servicios de soporte (no críticos para estos tests)
@@ -608,6 +608,23 @@ describe('PaymentsService', () => {
         } as any),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('convierte errores de relación inválida de Prisma en BadRequest legible', async () => {
+      prisma._txMock.pago.create.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('Foreign key failed', {
+          code: 'P2003',
+          clientVersion: 'test',
+        }),
+      );
+
+      await expect(
+        service.create({
+          prestamoId: 'prestamo-1',
+          cobradorId: 'cobrador-1',
+          montoTotal: 110000,
+        }),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('lanza NotFoundException si el préstamo no existe', async () => {
