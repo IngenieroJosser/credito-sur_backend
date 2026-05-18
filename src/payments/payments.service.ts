@@ -51,6 +51,9 @@ export class PaymentsService {
         throw new ConflictException('El pago ya fue registrado previamente');
       }
       if (error.code === 'P2003') {
+        this.logger.error(
+          `Relación inválida al registrar pago: ${JSON.stringify(error.meta ?? {})}`,
+        );
         throw new BadRequestException(
           'Relación inválida al registrar el pago. Verifica que el préstamo, cliente, cobrador y caja de ruta existan y estén activos.',
         );
