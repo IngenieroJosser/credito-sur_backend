@@ -963,9 +963,21 @@ export class PaymentsService {
       this.prisma.pago.findMany({
         where,
         include: {
-          detalles: true,
+          detalles: {
+            include: {
+              cuota: {
+                select: {
+                  id: true,
+                  numeroCuota: true,
+                  monto: true,
+                  montoPagado: true,
+                  estado: true,
+                },
+              },
+            },
+          },
           cliente: {
-            select: { id: true, nombres: true, apellidos: true, dni: true },
+            select: { id: true, nombres: true, apellidos: true, dni: true, direccion: true, telefono: true, nivelRiesgo: true },
           },
           prestamo: {
             select: {
@@ -974,6 +986,9 @@ export class PaymentsService {
               monto: true,
               tasaInteres: true,
               saldoPendiente: true,
+              cantidadCuotas: true,
+              frecuenciaPago: true,
+              tipoPrestamo: true,
             },
           },
           cobrador: {
