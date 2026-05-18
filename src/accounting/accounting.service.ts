@@ -1849,6 +1849,7 @@ export class AccountingService {
       cuotaInicialHoyReversoAggLedger,
       cuotaInicialAyerIngresoAggLedger,
       cuotaInicialAyerReversoAggLedger,
+      carteraActivaPrestamos,
     ] = await Promise.all([
       this.prisma.journalLine.aggregate({
         where: ledgerCashIncomeWhere(inicioHoy, finHoy),
@@ -1982,6 +1983,14 @@ export class AccountingService {
         where: cuotaInicialReversoWhere(ledgerInicioAnterior, ledgerFinAnterior),
         _sum: { monto: true },
       }),
+      this.prisma.prestamo.aggregate({
+        where: {
+          eliminadoEn: null,
+          saldoPendiente: { gt: 0 },
+          estado: { notIn: ['BORRADOR', 'PENDIENTE_APROBACION', 'PAGADO'] },
+        },
+        _sum: { saldoPendiente: true },
+      }),
     ]);
 
     const ingresosCajaLedger = Number(ingresosCajaHoyLedger._sum.debitAmount || 0);
@@ -2023,9 +2032,7 @@ export class AccountingService {
     const cuotaInicialAyerLedgerVal =
       Number(cuotaInicialAyerIngresoAggLedger._sum.monto || 0) -
       Number(cuotaInicialAyerReversoAggLedger._sum.monto || 0);
-    const capitalEnCalleLedger =
-      Number(carteraLedger._sum.debitAmount || 0) -
-      Number(carteraLedger._sum.creditAmount || 0);
+    const capitalEnCallePrestamos = Number(carteraActivaPrestamos._sum.saldoPendiente || 0);
     const deudaCobradorLedgerVal =
       Number(deudaCobradorLedger._sum.debitAmount || 0) -
       Number(deudaCobradorLedger._sum.creditAmount || 0);
@@ -2110,7 +2117,7 @@ export class AccountingService {
       saldoCarteraPerdida: saldoPerdida,
       utilidadReal: utilidadNetaLedger,
       gananciaNeta: utilidadNetaLedger,
-      capitalEnCalle: capitalEnCalleLedger,
+      capitalEnCalle: capitalEnCallePrestamos,
       saldoCajas: Number(totalCajasLedger._sum.saldoActual || 0),
       cajasAbiertasCount: cajasAbiertasCountLedger,
       rutasTotales: totalRutasCountLedger,

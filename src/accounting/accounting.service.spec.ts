@@ -188,6 +188,9 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { creditAmount: 80000 } }) // ingresos periodo anterior
       .mockResolvedValueOnce({ _sum: { debitAmount: 20000 } }) // gastos periodo anterior
       .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }); // costos periodo anterior
+    prisma.prestamo.aggregate
+      .mockResolvedValueOnce({ _sum: { saldoPendiente: 650000 } }) // cartera activa real
+      .mockResolvedValue({ _sum: { saldoPendiente: 0 } }); // provisiones
 
     const result = await makeService(prisma).getResumenFinanciero('2026-05-08', '2026-05-08') as any;
 
@@ -208,6 +211,15 @@ describe('AccountingService financial ledger controls', () => {
     expect(result.egresosHoy).toBe(35000);
     expect(result.gananciaNeta).toBe(80000);
     expect(result.capitalEnCalle).toBe(650000);
+    expect(prisma.prestamo.aggregate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          saldoPendiente: { gt: 0 },
+          estado: { notIn: ['BORRADOR', 'PENDIENTE_APROBACION', 'PAGADO'] },
+        }),
+        _sum: { saldoPendiente: true },
+      }),
+    );
     expect(result.deudaCobradorHoy).toBe(40000);
   });
 
