@@ -954,7 +954,7 @@ export class ReportsService {
       const newClients = await this.prisma.cliente.count({
         where: {
           asignacionesRuta: {
-            some: { rutaId: route.id },
+            some: { rutaId: route.id, activa: true },
           },
           creadoEn: {
             gte: dateRange.startDate,

@@ -34,7 +34,12 @@ describe('ClientsService', () => {
     asignacionRuta: {
       findFirst: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
+      aggregate: jest.fn(),
       create: jest.fn(),
+    },
+    prestamo: {
+      updateMany: jest.fn(),
     },
     ruta: {
       findUnique: jest.fn(),
@@ -43,6 +48,7 @@ describe('ClientsService', () => {
       findFirst: jest.fn(),
       findUnique: jest.fn(),
     },
+    $transaction: jest.fn((cb: any) => cb(mockPrismaService)),
   };
 
   const mockNotificacionesGateway = {
@@ -264,6 +270,10 @@ describe('ClientsService', () => {
   describe('assignToRoute', () => {
     it('usa el cobrador real de la ruta aunque el body traiga otro cobradorId', async () => {
       (prismaService.asignacionRuta.findFirst as jest.Mock).mockResolvedValue(null);
+      (prismaService.asignacionRuta.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+      (prismaService.asignacionRuta.aggregate as jest.Mock).mockResolvedValue({
+        _max: { ordenVisita: 0 },
+      });
       (mockPrismaService.ruta.findUnique as jest.Mock).mockResolvedValue({
         id: 'ruta-1',
         cobradorId: 'cobrador-ruta',
@@ -285,6 +295,51 @@ describe('ClientsService', () => {
           clienteId: 'cliente-1',
           cobradorId: 'cobrador-ruta',
         }),
+      });
+    });
+
+    it('desactiva todas las asignaciones activas previas antes de asignar a otra ruta', async () => {
+      (mockPrismaService.ruta.findUnique as jest.Mock).mockResolvedValue({
+        id: 'ruta-destino',
+        cobradorId: 'cobrador-destino',
+      });
+      (mockPrismaService.asignacionRuta.findFirst as jest.Mock).mockResolvedValue(null);
+      (mockPrismaService.asignacionRuta.updateMany as jest.Mock).mockResolvedValue({
+        count: 2,
+      });
+      (mockPrismaService.asignacionRuta.aggregate as jest.Mock).mockResolvedValue({
+        _max: { ordenVisita: 4 },
+      });
+      (mockPrismaService.asignacionRuta.create as jest.Mock).mockResolvedValue({
+        id: 'asignacion-destino',
+      });
+
+      await service.assignToRoute(
+        'cliente-1',
+        'ruta-destino',
+        'cobrador-equivocado',
+      );
+
+      expect(mockPrismaService.asignacionRuta.updateMany).toHaveBeenCalledWith({
+        where: { clienteId: 'cliente-1', activa: true },
+        data: { activa: false },
+      });
+      expect(mockPrismaService.asignacionRuta.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          clienteId: 'cliente-1',
+          rutaId: 'ruta-destino',
+          cobradorId: 'cobrador-destino',
+          ordenVisita: 5,
+          activa: true,
+        }),
+      });
+      expect(mockPrismaService.prestamo.updateMany).toHaveBeenCalledWith({
+        where: {
+          clienteId: 'cliente-1',
+          estado: { in: ['ACTIVO', 'EN_MORA'] },
+          eliminadoEn: null,
+        },
+        data: { cobradorId: 'cobrador-destino' },
       });
     });
   });

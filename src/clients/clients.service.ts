@@ -1560,32 +1560,73 @@ export class ClientsService {
 
       const assignmentCobradorId = ruta.cobradorId || cobradorId;
 
-      // Verificar si ya existe una asignación activa
-      const asignacionExistente = await this.prisma.asignacionRuta.findFirst({
-        where: {
-          clienteId,
-          activa: true,
-        },
-      });
+      return await this.prisma.$transaction(async (tx) => {
+        const asignacionDestino = await tx.asignacionRuta.findFirst({
+          where: { clienteId, rutaId, activa: true },
+        });
 
-      if (asignacionExistente) {
-        // Desactivar asignación anterior
-        await this.prisma.asignacionRuta.update({
-          where: { id: asignacionExistente.id },
+        if (asignacionDestino) {
+          await tx.asignacionRuta.updateMany({
+            where: {
+              clienteId,
+              activa: true,
+              id: { not: asignacionDestino.id },
+            },
+            data: { activa: false },
+          });
+
+          const asignacion = await tx.asignacionRuta.update({
+            where: { id: asignacionDestino.id },
+            data: {
+              cobradorId: assignmentCobradorId,
+              diaSemana,
+              activa: true,
+            },
+          });
+
+          await tx.prestamo.updateMany({
+            where: {
+              clienteId,
+              estado: { in: ['ACTIVO', 'EN_MORA'] },
+              eliminadoEn: null,
+            },
+            data: { cobradorId: assignmentCobradorId },
+          });
+
+          return asignacion;
+        }
+
+        await tx.asignacionRuta.updateMany({
+          where: { clienteId, activa: true },
           data: { activa: false },
         });
-      }
 
-      // Crear nueva asignación
-      return await this.prisma.asignacionRuta.create({
-        data: {
-          rutaId,
-          clienteId,
-          cobradorId: assignmentCobradorId,
-          diaSemana,
-          ordenVisita: 0,
-          activa: true,
-        },
+        const maxOrden = await tx.asignacionRuta.aggregate({
+          where: { rutaId, activa: true },
+          _max: { ordenVisita: true },
+        });
+
+        const asignacion = await tx.asignacionRuta.create({
+          data: {
+            rutaId,
+            clienteId,
+            cobradorId: assignmentCobradorId,
+            diaSemana,
+            ordenVisita: (maxOrden._max.ordenVisita || 0) + 1,
+            activa: true,
+          },
+        });
+
+        await tx.prestamo.updateMany({
+          where: {
+            clienteId,
+            estado: { in: ['ACTIVO', 'EN_MORA'] },
+            eliminadoEn: null,
+          },
+          data: { cobradorId: assignmentCobradorId },
+        });
+
+        return asignacion;
       });
     } catch (error) {
       this.logger.error(`Error assigning client ${clienteId} to route:`, error);

@@ -939,6 +939,36 @@ export class LoansService implements OnModuleInit {
           notIn: [EstadoPrestamo.BORRADOR, EstadoPrestamo.PENDIENTE_APROBACION]
         }
       };
+      const overdueCuotaScope = {
+        cuotas: {
+          some: {
+            estado: EstadoCuota.VENCIDA,
+            OR: [
+              {
+                fechaVencimientoProrroga: null,
+                fechaVencimiento: { lte: new Date() },
+              },
+              {
+                fechaVencimientoProrroga: { lte: new Date() },
+              },
+            ],
+          },
+        },
+      };
+      const moraStatsWhere = {
+        ...whereStats,
+        saldoPendiente: { gt: 0 },
+        OR: [
+          { estado: EstadoPrestamo.EN_MORA },
+          overdueCuotaScope,
+        ],
+      };
+      const activosStatsWhere = {
+        ...whereStats,
+        estado: EstadoPrestamo.ACTIVO,
+        saldoPendiente: { gt: 0 },
+        NOT: overdueCuotaScope,
+      };
 
       const [
         totalPrestamos,
@@ -951,12 +981,8 @@ export class LoansService implements OnModuleInit {
         moraTotal,
       ] = await Promise.all([
         this.prisma.prestamo.count({ where: whereStats }),
-        this.prisma.prestamo.count({
-          where: { ...whereStats, estado: EstadoPrestamo.ACTIVO },
-        }),
-        this.prisma.prestamo.count({
-          where: { ...whereStats, estado: EstadoPrestamo.EN_MORA },
-        }),
+        this.prisma.prestamo.count({ where: activosStatsWhere }),
+        this.prisma.prestamo.count({ where: moraStatsWhere }),
         this.prisma.prestamo.count({
           where: { ...whereStats, estado: EstadoPrestamo.INCUMPLIDO },
         }),
@@ -970,14 +996,12 @@ export class LoansService implements OnModuleInit {
           where: whereStats,
           _sum: {
             monto: true,
+            interesTotal: true,
             saldoPendiente: true,
           },
         }),
         this.prisma.prestamo.aggregate({
-          where: {
-            ...whereStats,
-            estado: EstadoPrestamo.EN_MORA,
-          },
+          where: moraStatsWhere,
           _sum: {
             saldoPendiente: true,
           },
@@ -1141,7 +1165,7 @@ export class LoansService implements OnModuleInit {
           morosos: (incumplidos || 0) + (perdida || 0),
           pagados: pagados || 0,
           cancelados: perdida || 0,
-          montoTotal: Number(totales._sum?.monto || 0),
+          montoTotal: Number(totales._sum?.monto || 0) + Number((totales._sum as any)?.interesTotal || 0),
           montoPendiente: Number(totales._sum?.saldoPendiente || 0),
           moraTotal: Number(moraTotal._sum?.saldoPendiente || 0),
         },

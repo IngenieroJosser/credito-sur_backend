@@ -429,6 +429,97 @@ describe('LoansService role scoping', () => {
     });
   });
 
+  it('calcula estadísticas de mora por cuotas vencidas aunque el estado siga ACTIVO', async () => {
+    const prisma = {
+      prestamo: {
+        findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(0),
+        aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 0, saldoPendiente: 0 } }),
+      },
+    };
+    const service = makeService(prisma);
+
+    await service.getAllLoans(
+      { estado: 'todos', ruta: 'todas', search: '', tipo: 'todos', page: 1, limit: 8 },
+      { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+    );
+
+    expect(prisma.prestamo.count).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        OR: expect.arrayContaining([
+          { estado: 'EN_MORA' },
+          expect.objectContaining({
+            cuotas: expect.objectContaining({
+              some: expect.objectContaining({
+                estado: 'VENCIDA',
+              }),
+            }),
+          }),
+        ]),
+      }),
+    });
+    expect(prisma.prestamo.count).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        estado: 'ACTIVO',
+        NOT: expect.objectContaining({
+          cuotas: expect.objectContaining({
+            some: expect.objectContaining({
+              estado: 'VENCIDA',
+            }),
+          }),
+        }),
+      }),
+    });
+    expect(prisma.prestamo.aggregate).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        OR: expect.arrayContaining([
+          { estado: 'EN_MORA' },
+          expect.objectContaining({
+            cuotas: expect.objectContaining({
+              some: expect.objectContaining({
+                estado: 'VENCIDA',
+              }),
+            }),
+          }),
+        ]),
+      }),
+      _sum: {
+        saldoPendiente: true,
+      },
+    });
+  });
+
+  it('calcula cartera con capital más interés para coincidir con la columna Monto', async () => {
+    const prisma = {
+      prestamo: {
+        findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(0),
+        aggregate: jest.fn()
+          .mockResolvedValueOnce({ _sum: { monto: 8200000, interesTotal: 1000000, saldoPendiente: 8852000 } })
+          .mockResolvedValueOnce({ _sum: { saldoPendiente: 8452000 } }),
+      },
+    };
+    const service = makeService(prisma);
+
+    const result = await service.getAllLoans(
+      { estado: 'todos', ruta: 'todas', search: '', tipo: 'todos', page: 1, limit: 8 },
+      { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+    );
+
+    expect(prisma.prestamo.aggregate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _sum: expect.objectContaining({
+          monto: true,
+          interesTotal: true,
+          saldoPendiente: true,
+        }),
+      }),
+    );
+    expect(result.estadisticas.montoTotal).toBe(9200000);
+    expect(result.estadisticas.montoPendiente).toBe(8852000);
+    expect(result.estadisticas.moraTotal).toBe(8452000);
+  });
+
   it('does not return loan detail to a collector when the loan is not assigned to them', async () => {
     const prisma = {
       prestamo: {
