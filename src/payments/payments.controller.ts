@@ -131,6 +131,37 @@ export class PaymentsController {
     res.send(result.data);
   }
 
+  @Get('repair/candidates')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
+  findRepairCandidates(
+    @Query('amount') amount?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('cliente') cliente?: string,
+  ) {
+    return this.paymentsService.findRepairCandidates({
+      amount: amount ? Number(amount) : undefined,
+      from,
+      to,
+      cliente,
+    });
+  }
+
+  @Post('repair/revert/:pagoId')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
+  async revertPayment(
+    @Param('pagoId') pagoId: string,
+    @Body() body: { confirmPagoId?: string; motivo?: string },
+    @Request() req: any,
+  ) {
+    return this.paymentsService.revertPaymentForRepair({
+      pagoId,
+      confirmPagoId: body?.confirmPagoId,
+      motivo: body?.motivo,
+      actor: req?.user,
+    });
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string, @Request() req?: any) {
     return this.paymentsService.findOne(id, req?.user);

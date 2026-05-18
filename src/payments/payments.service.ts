@@ -149,11 +149,6 @@ export class PaymentsService {
     return key || undefined;
   }
 
-  private formatCopForConflict(value: number) {
-    const rounded = Math.round(Number(value || 0));
-    return rounded.toLocaleString('es-CO');
-  }
-
   private buildIdempotentPaymentReplay(pago: any) {
     const montoTotal = Number(pago?.montoTotal || 0);
     const capitalRecuperado = (pago?.detalles || []).reduce(
@@ -310,27 +305,10 @@ export class PaymentsService {
       );
     }
 
-    const montoCuota = Number(cuotaActual.monto || 0);
-    const montoPagado = Number(cuotaActual.montoPagado || 0);
-    const pendienteActual = Math.max(0, montoCuota - montoPagado);
-    const montoCuotaEsperado = Number(paymentDto.montoCuotaEsperado || 0);
-    const COP_TOLERANCE = 1;
-
-    if (
-      montoCuotaEsperado > 0 &&
-      Math.abs(pendienteActual - montoCuotaEsperado) > COP_TOLERANCE
-    ) {
-      throw new ConflictException(
-        `La cuota pendiente cambió de $${this.formatCopForConflict(montoCuotaEsperado)} a $${this.formatCopForConflict(pendienteActual)}. Actualiza la ruta antes de registrar el pago.`,
-      );
-    }
-
-    const montoTotal = Number(paymentDto.montoTotal || 0);
-    if (montoTotal > pendienteActual + COP_TOLERANCE) {
-      throw new ConflictException(
-        `El pago excede la cuota pendiente actual ($${this.formatCopForConflict(pendienteActual)}). Actualiza la ruta antes de registrar el pago.`,
-      );
-    }
+    // Si sigue siendo la misma cuota, permitimos registrar el valor recibido aunque
+    // esa cuota tenga un abono parcial: el excedente se aplica a las siguientes cuotas.
+    // El bloqueo crítico es cuando la cuota esperada ya avanzó/cambió, porque ahí sí
+    // se trata de una vista vieja o de un doble clic contra una cuota ya cerrada.
   }
 
   async create(dto: CreatePaymentDto, comprobante?: Express.Multer.File, actor?: PaymentActor) {
@@ -1284,6 +1262,272 @@ export class PaymentsService {
     if (format === 'pdf') return generarPDFPagos(filas, totales, fecha);
 
     throw new BadRequestException(`Formato no soportado: ${format}`);
+  }
+
+  async findRepairCandidates(filters: {
+    amount?: number;
+    from?: string;
+    to?: string;
+    cliente?: string;
+  }) {
+    const where: Prisma.PagoWhereInput = {};
+
+    if (Number.isFinite(Number(filters.amount || 0)) && Number(filters.amount || 0) > 0) {
+      where.montoTotal = Number(filters.amount);
+    }
+
+    if (filters.from || filters.to) {
+      where.fechaPago = {};
+      if (filters.from) {
+        (where.fechaPago as any).gte = new Date(`${filters.from}T00:00:00-05:00`);
+      }
+      if (filters.to) {
+        (where.fechaPago as any).lte = new Date(`${filters.to}T23:59:59-05:00`);
+      }
+    }
+
+    if (filters.cliente?.trim()) {
+      const search = filters.cliente.trim();
+      where.cliente = {
+        OR: [
+          { nombres: { contains: search, mode: 'insensitive' } },
+          { apellidos: { contains: search, mode: 'insensitive' } },
+        ],
+      };
+    }
+
+    const pagos = await this.prisma.pago.findMany({
+      where,
+      include: {
+        cliente: { select: { id: true, nombres: true, apellidos: true } },
+        prestamo: { select: { id: true, numeroPrestamo: true, saldoPendiente: true } },
+        detalles: {
+          include: {
+            cuota: { select: { id: true, numeroCuota: true, monto: true, montoPagado: true, estado: true } },
+          },
+        },
+      },
+      orderBy: { fechaPago: 'desc' },
+      take: 25,
+    });
+
+    return {
+      candidatos: pagos.map((p: any) => ({
+        id: p.id,
+        numeroPago: p.numeroPago,
+        fechaPago: p.fechaPago,
+        montoTotal: Number(p.montoTotal || 0),
+        cliente: p.cliente
+          ? `${p.cliente.nombres || ''} ${p.cliente.apellidos || ''}`.trim()
+          : p.clienteId,
+        prestamoId: p.prestamoId,
+        numeroPrestamo: p.prestamo?.numeroPrestamo,
+        saldoPrestamo: Number(p.prestamo?.saldoPendiente || 0),
+        cuotas: (p.detalles || []).map((d: any) => ({
+          cuotaId: d.cuotaId,
+          numeroCuota: d.cuota?.numeroCuota,
+          montoAplicado: Number(d.monto || 0),
+          cuotaMonto: Number(d.cuota?.monto || 0),
+          cuotaPagadoActual: Number(d.cuota?.montoPagado || 0),
+          cuotaEstadoActual: d.cuota?.estado,
+        })),
+      })),
+    };
+  }
+
+  private getCuotaStateAfterRevert(cuota: any, nextPaid: number) {
+    const amount = Number(cuota?.monto || 0);
+    if (nextPaid >= amount - 1) {
+      return { estado: EstadoCuota.PAGADA, fechaPago: cuota?.fechaPago || null };
+    }
+    if (nextPaid > 0) {
+      return { estado: EstadoCuota.PARCIAL, fechaPago: null };
+    }
+    const due = cuota?.fechaVencimientoProrroga || cuota?.fechaVencimiento;
+    const isOverdue = due ? new Date(due).getTime() < Date.now() : false;
+    return { estado: isOverdue ? EstadoCuota.VENCIDA : EstadoCuota.PENDIENTE, fechaPago: null };
+  }
+
+  async revertPaymentForRepair(params: {
+    pagoId: string;
+    confirmPagoId?: string;
+    motivo?: string;
+    actor?: PaymentActor;
+  }) {
+    const pagoId = params.pagoId?.trim();
+    if (!pagoId) throw new BadRequestException('Falta pagoId');
+    if (params.confirmPagoId !== pagoId) {
+      throw new BadRequestException('Para reversar, confirmPagoId debe ser igual al pagoId');
+    }
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Pago" WHERE id = ${pagoId} FOR UPDATE`;
+
+      const pago = await tx.pago.findUnique({
+        where: { id: pagoId },
+        include: {
+          detalles: true,
+          prestamo: true,
+          cliente: { select: { nombres: true, apellidos: true } },
+        },
+      });
+      if (!pago) throw new NotFoundException('Pago no encontrado');
+
+      const reverseId = `REVERSO-${pago.id}`;
+      const existingReverse = await tx.journalEntry.findFirst({
+        where: { referenceType: 'AJUSTE', referenceId: reverseId },
+        select: { id: true },
+      });
+      if (existingReverse) {
+        throw new ConflictException(`Este pago ya fue reversado (${existingReverse.id})`);
+      }
+
+      await tx.$queryRaw`SELECT id FROM "Prestamo" WHERE id = ${pago.prestamoId} FOR UPDATE`;
+
+      const detalles = await tx.detallePago.findMany({
+        where: { pagoId: pago.id },
+        include: { cuota: true },
+      });
+      if (!detalles.length) {
+        throw new BadRequestException('El pago no tiene detalles de cuotas; no se puede reversar automáticamente.');
+      }
+
+      const montoTotal = Number(pago.montoTotal || 0);
+      const capitalTotal = detalles.reduce((s: number, d: any) => s + Number(d.montoCapital || 0), 0);
+      const interesTotal = detalles.reduce((s: number, d: any) => s + Number(d.montoInteres || 0), 0);
+      const moraTotal = detalles.reduce((s: number, d: any) => s + Number(d.montoInteresMora || 0), 0);
+
+      for (const detalle of detalles) {
+        await tx.$queryRaw`SELECT id FROM "cuotas" WHERE id = ${detalle.cuotaId} FOR UPDATE`;
+        const cuota = await tx.cuota.findUnique({ where: { id: detalle.cuotaId } });
+        if (!cuota) throw new NotFoundException(`Cuota ${detalle.cuotaId} no encontrada`);
+
+        const nextPaid = Math.max(0, Number(cuota.montoPagado || 0) - Number(detalle.monto || 0));
+        const nextState = this.getCuotaStateAfterRevert(cuota, nextPaid);
+        await tx.cuota.update({
+          where: { id: cuota.id },
+          data: {
+            montoPagado: nextPaid,
+            estado: nextState.estado,
+            fechaPago: nextState.fechaPago,
+          },
+        });
+      }
+
+      const cuotasVencidas = await tx.cuota.count({
+        where: { prestamoId: pago.prestamoId, estado: EstadoCuota.VENCIDA },
+      });
+      const saldoDespues = Number(pago.prestamo.saldoPendiente || 0) + montoTotal;
+      const estadoDespues =
+        pago.prestamo.estado === EstadoPrestamo.INCUMPLIDO || pago.prestamo.estado === EstadoPrestamo.PERDIDA
+          ? pago.prestamo.estado
+          : cuotasVencidas > 0
+            ? EstadoPrestamo.EN_MORA
+            : EstadoPrestamo.ACTIVO;
+
+      await tx.prestamo.update({
+        where: { id: pago.prestamoId },
+        data: {
+          totalPagado: Math.max(0, Number(pago.prestamo.totalPagado || 0) - montoTotal),
+          capitalPagado: Math.max(0, Number(pago.prestamo.capitalPagado || 0) - capitalTotal),
+          interesPagado: Math.max(0, Number(pago.prestamo.interesPagado || 0) - interesTotal),
+          interesMoraPagado: Math.max(0, Number(pago.prestamo.interesMoraPagado || 0) - moraTotal),
+          saldoPendiente: saldoDespues,
+          estado: estadoDespues,
+          version: { increment: 1 },
+          estadoSincronizacion: 'PENDIENTE',
+        },
+      });
+
+      const originalTransaccion = await tx.transaccion.findFirst({
+        where: { tipoReferencia: 'PAGO', referenciaId: pago.numeroPago },
+      });
+      if (originalTransaccion) {
+        await tx.transaccion.create({
+          data: {
+            numeroTransaccion: this.generarNumeroTransaccion('TRX-REV'),
+            cajaId: originalTransaccion.cajaId,
+            tipo: TipoTransaccion.EGRESO,
+            monto: montoTotal,
+            descripcion: `Reverso pago ${pago.numeroPago}`,
+            notas: params.motivo || 'Reverso administrativo de pago duplicado o incorrecto',
+            creadoPorId: params.actor?.id || pago.cobradorId,
+            tipoReferencia: 'REVERSO_PAGO',
+            referenciaId: pago.numeroPago,
+          },
+        });
+      }
+
+      const originalEntry = await tx.journalEntry.findFirst({
+        where: { referenceType: 'PAGO', referenceId: pago.id },
+        include: { lines: true },
+      });
+      if (originalEntry) {
+        await tx.journalEntry.create({
+          data: {
+            referenceType: 'AJUSTE',
+            referenceId: reverseId,
+            description: `Reverso administrativo de pago ${pago.numeroPago}`,
+            createdBy: params.actor?.id || pago.cobradorId,
+            lines: {
+              create: originalEntry.lines.map((line: any) => ({
+                accountCode: line.accountCode,
+                debitAmount: line.creditAmount || null,
+                creditAmount: line.debitAmount || null,
+                cajaId: line.cajaId || null,
+              })),
+            },
+          },
+        });
+
+        for (const line of originalEntry.lines as any[]) {
+          if (!line.cajaId) continue;
+          const originalDelta = Number(line.debitAmount || 0) - Number(line.creditAmount || 0);
+          if (originalDelta === 0) continue;
+          await tx.caja.update({
+            where: { id: line.cajaId },
+            data: { saldoActual: { decrement: originalDelta } },
+          });
+        }
+      } else if (originalTransaccion) {
+        await tx.caja.update({
+          where: { id: originalTransaccion.cajaId },
+          data: { saldoActual: { decrement: montoTotal } },
+        });
+      }
+
+      await tx.recibo.deleteMany({ where: { pagoId: pago.id } });
+      await tx.multimedia.deleteMany({ where: { pagoId: pago.id } });
+      await tx.detallePago.deleteMany({ where: { pagoId: pago.id } });
+      await tx.pago.delete({ where: { id: pago.id } });
+
+      return {
+        pagoId: pago.id,
+        numeroPago: pago.numeroPago,
+        cliente: pago.cliente
+          ? `${pago.cliente.nombres || ''} ${pago.cliente.apellidos || ''}`.trim()
+          : pago.clienteId,
+        montoReversado: montoTotal,
+        cuotasAfectadas: detalles.length,
+        saldoPrestamo: saldoDespues,
+      };
+    });
+
+    await this.auditService.create({
+      usuarioId: params.actor?.id || '',
+      accion: 'REVERSAR_PAGO',
+      entidad: 'Pago',
+      entidadId: pagoId,
+      datosNuevos: result,
+      metadata: {
+        motivo: params.motivo,
+        endpoint: `/payments/repair/revert/${pagoId}`,
+      },
+    }).catch((error) => {
+      this.logger.warn(`No se pudo registrar auditoría de reverso de pago ${pagoId}: ${error?.message || error}`);
+    });
+
+    return result;
   }
 }
 

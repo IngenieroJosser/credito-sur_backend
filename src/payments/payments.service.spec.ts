@@ -683,5 +683,41 @@ describe('PaymentsService', () => {
       expect(prisma._txMock.pago.create).not.toHaveBeenCalled();
       expect(prisma._txMock.cuota.update).not.toHaveBeenCalled();
     });
+
+    it('permite completar una cuota con abono parcial si el numero de cuota no cambio', async () => {
+      (prisma._txMock.prestamo.findFirst as jest.Mock).mockResolvedValue({
+        ...PRESTAMO_ACTIVO,
+        cuotas: [
+          {
+            ...PRESTAMO_ACTIVO.cuotas[0],
+            id: 'cuota-1',
+            numeroCuota: 1,
+            monto: 92000,
+            montoPagado: 90000,
+          },
+          {
+            ...PRESTAMO_ACTIVO.cuotas[1],
+            id: 'cuota-2',
+            numeroCuota: 2,
+            monto: 92000,
+            montoPagado: 0,
+          },
+        ],
+      });
+
+      await expect(
+        service.create({
+          prestamoId: 'prestamo-1',
+          cobradorId: 'cobrador-1',
+          montoTotal: 92000,
+          tipoRegistro: 'PAGO',
+          cuotaNumeroEsperada: 1,
+          montoCuotaEsperado: 92000,
+        } as any),
+      ).resolves.toBeDefined();
+
+      expect(prisma._txMock.pago.create).toHaveBeenCalled();
+      expect(prisma._txMock.cuota.update).toHaveBeenCalled();
+    });
   });
 });
