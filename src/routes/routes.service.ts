@@ -1131,19 +1131,39 @@ export class RoutesService {
 
               const metaDiariaPorPrestamo = new Map<string, number>();
               if (diariosIds.length > 0) {
-                const cuotasDiariasVencidasAgg = await this.prisma.cuota.groupBy({
-                  by: ['prestamoId'],
-                  where: {
-                    prestamoId: { in: diariosIds },
-                    estado: { in: ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'] },
-                    fechaVencimiento: { lte: dInicioUTC },
-                  },
-                  _sum: { monto: true },
-                });
+                // getDailyVisits incluye PAGADA hoy en montoTotalDeuda para préstamos en mora.
+                // Replicamos: sumar vencidas + pagadas hoy, pero solo si hay deuda vencida.
+                const [cuotasDiariasVencidasAgg, cuotasDiariasPagadasHoyAgg] = await Promise.all([
+                  this.prisma.cuota.groupBy({
+                    by: ['prestamoId'],
+                    where: {
+                      prestamoId: { in: diariosIds },
+                      estado: { in: ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'] },
+                      fechaVencimiento: { lte: dInicioUTC },
+                    },
+                    _sum: { monto: true },
+                  }),
+                  this.prisma.cuota.groupBy({
+                    by: ['prestamoId'],
+                    where: {
+                      prestamoId: { in: diariosIds },
+                      estado: 'PAGADA',
+                      fechaPago: { gte: dInicioBogota, lte: dFinBogota },
+                    },
+                    _sum: { monto: true },
+                  }),
+                ]);
+
+                const pagadasHoyMap = new Map<string, number>();
+                for (const row of cuotasDiariasPagadasHoyAgg as any[]) {
+                  pagadasHoyMap.set(String(row.prestamoId), Number(row?._sum?.monto || 0));
+                }
 
                 for (const row of cuotasDiariasVencidasAgg as any[]) {
                   const pid = String(row.prestamoId);
-                  metaDiariaPorPrestamo.set(pid, Number(row?._sum?.monto || 0));
+                  const deuda = Number(row?._sum?.monto || 0);
+                  const pagadaHoy = Number(pagadasHoyMap.get(pid) || 0);
+                  metaDiariaPorPrestamo.set(pid, deuda + pagadaHoy);
                 }
               }
 
