@@ -500,7 +500,7 @@ export class DashboardService {
           },
           fechaVencimiento: { lte: endDayStartUTC },
         },
-        select: { prestamoId: true, fechaVencimiento: true, monto: true },
+        select: { prestamoId: true, fechaVencimiento: true, monto: true, montoPagado: true },
         orderBy: [{ prestamoId: 'asc' }, { fechaVencimiento: 'asc' }],
       }),
       this.prisma.cuota.findMany({
@@ -522,10 +522,14 @@ export class DashboardService {
       if (!c.prestamoId) continue;
       const pid = String(c.prestamoId);
       if (firstUnpaidByPrestamo.has(pid)) continue;
+      const montoFull = Number(c.monto || 0);
+      const montoPagado = Number(c.montoPagado || 0);
+      const montoPendiente = c.estado === EstadoCuota.PARCIAL ? Math.max(0, montoFull - montoPagado) : montoFull;
+      if (montoPendiente <= 0) continue;
       firstUnpaidByPrestamo.set(pid, {
         prestamoId: pid,
         ts: new Date(c.fechaVencimiento).getTime(),
-        monto: Number(c.monto || 0),
+        monto: montoPendiente,
       });
     }
 
@@ -601,8 +605,8 @@ export class DashboardService {
         
         result.push({
           label,
-          value: Math.round(total),
-          target: Math.round(target),
+          value: total,
+          target,
         });
       }
     } else if (groupBy === 'week') {
@@ -676,8 +680,8 @@ export class DashboardService {
 
         result.push({
           label,
-          value: Math.round(total),
-          target: Math.round(target),
+          value: total,
+          target,
         });
 
         // Avanzar al siguiente mes
