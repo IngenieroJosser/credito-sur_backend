@@ -1071,7 +1071,7 @@ export class RoutesService {
                     prestamoId: { in: pIdsParaMeta },
                     estado: { notIn: ['ANULADA', 'ANULADO'] },
                   },
-                  select: { prestamoId: true, fechaVencimiento: true, fechaPago: true, estado: true, monto: true },
+                  select: { prestamoId: true, fechaVencimiento: true, fechaPago: true, estado: true, monto: true, montoPagado: true },
                   orderBy: [{ prestamoId: 'asc' }, { fechaVencimiento: 'asc' }],
                 }),
 
@@ -1125,9 +1125,11 @@ export class RoutesService {
                 const vtoKey = getBogotaDayKey(new Date(c.fechaVencimiento));
                 if (vtoKey > hoyBogotaKey) continue;
                 const pid = String(c.prestamoId);
-                const monto = Number(c.monto || 0);
-                if (monto <= 0) continue;
-                acumuladoPorPrestamo.set(pid, (acumuladoPorPrestamo.get(pid) || 0) + monto);
+                const montoFull = Number(c.monto || 0);
+                const montoPagado = Number(c.montoPagado || 0);
+                const montoPendiente = c.estado === 'PARCIAL' ? Math.max(0, montoFull - montoPagado) : montoFull;
+                if (montoPendiente <= 0) continue;
+                acumuladoPorPrestamo.set(pid, (acumuladoPorPrestamo.get(pid) || 0) + montoPendiente);
               }
 
               for (const p of prestamosParaMeta) {
