@@ -1139,7 +1139,7 @@ export class RoutesService {
                     where: {
                       prestamoId: { in: diariosIds },
                       estado: { in: ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'] },
-                      fechaVencimiento: { lte: dInicioUTC },
+                      fechaVencimiento: { lte: dFinUTC },
                     },
                     _sum: { monto: true },
                   }),
