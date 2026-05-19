@@ -601,8 +601,8 @@ export class DashboardService {
         
         result.push({
           label,
-          value: total,
-          target,
+          value: Math.round(total),
+          target: Math.round(target),
         });
       }
     } else if (groupBy === 'week') {
@@ -676,8 +676,8 @@ export class DashboardService {
 
         result.push({
           label,
-          value: total,
-          target,
+          value: Math.round(total),
+          target: Math.round(target),
         });
 
         // Avanzar al siguiente mes

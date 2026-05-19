@@ -1111,9 +1111,11 @@ export class RoutesService {
                 if (c.estado === 'PAGADA') continue;
                 const vtoKey = getBogotaDayKey(new Date(c.fechaVencimiento));
                 if (vtoKey > hoyBogotaKey) continue;
-                const monto = Number(c.monto || 0);
-                if (monto <= 0) continue;
-                primeraCuotaPorPrestamo.set(pid, monto);
+                const montoFull = Number(c.monto || 0);
+                const montoPagado = Number(c.montoPagado || 0);
+                const montoPendiente = c.estado === 'PARCIAL' ? Math.max(0, montoFull - montoPagado) : montoFull;
+                if (montoPendiente <= 0) continue;
+                primeraCuotaPorPrestamo.set(pid, montoPendiente);
               }
 
               // Calcular meta nominal: misma lógica que computeMontoNominalHastaHoyFromCuotas.
