@@ -1069,18 +1069,9 @@ export class RoutesService {
                 this.prisma.cuota.findMany({
                   where: {
                     prestamoId: { in: pIdsParaMeta },
-                    OR: [
-                      {
-                        estado: { in: ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'] },
-                        fechaVencimiento: { lte: dFinUTC },
-                      },
-                      {
-                        estado: 'PAGADA',
-                        fechaPago: { gte: dInicioBogota, lte: dFinBogota },
-                      },
-                    ],
+                    estado: { notIn: ['ANULADA', 'ANULADO'] },
                   },
-                  select: { prestamoId: true, fechaVencimiento: true, fechaPago: true, fechaVencimientoProrroga: true, estado: true, monto: true },
+                  select: { prestamoId: true, fechaVencimiento: true, fechaPago: true, estado: true, monto: true },
                   orderBy: [{ prestamoId: 'asc' }, { fechaVencimiento: 'asc' }],
                 }),
 
@@ -1123,17 +1114,16 @@ export class RoutesService {
               }
 
               // Calcular meta nominal: misma lógica que computeMontoNominalHastaHoyFromCuotas.
-              // Acumular TODAS las cuotas NO pagadas con vencimiento <= hoy (dFinUTC = fin del día).
-              // Las PAGADA se excluyen completamente (no solo la primera).
+              // Usa TODAS las cuotas del préstamo (sin pre-filtrar por fecha) y filtra en memoria:
+              // - Excluir PAGADA (isCuotaNoPagada)
+              // - Solo cuotas con vtoKey <= hoyBogotaKey (comparación de strings de fecha)
+              const hoyBogotaKey = getBogotaDayKey(new Date());
               const acumuladoPorPrestamo = new Map<string, number>();
               for (const c of cuotasCriterio) {
                 if (!c?.prestamoId) continue;
                 if (c.estado === 'PAGADA') continue;
-                // PRORROGADA: usar fechaVencimientoProrroga como fecha efectiva (igual que resolveFechaEfectivaCuota)
-                const fechaEfectiva = c.estado === 'PRORROGADA' && (c as any).fechaVencimientoProrroga
-                  ? new Date((c as any).fechaVencimientoProrroga)
-                  : new Date(c.fechaVencimiento);
-                if (fechaEfectiva > dFinUTC) continue;
+                const vtoKey = new Date(c.fechaVencimiento).toISOString().split('T')[0];
+                if (vtoKey > hoyBogotaKey) continue;
                 const pid = String(c.prestamoId);
                 const monto = Number(c.monto || 0);
                 if (monto <= 0) continue;
