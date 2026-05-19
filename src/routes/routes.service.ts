@@ -1072,7 +1072,7 @@ export class RoutesService {
                     OR: [
                       {
                         estado: { in: ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'] },
-                        fechaVencimiento: { lte: dInicioUTC },
+                        fechaVencimiento: { lte: dFinUTC },
                       },
                       {
                         estado: 'PAGADA',
@@ -1122,24 +1122,16 @@ export class RoutesService {
                 primeraCuotaPorPrestamo.set(pid, monto);
               }
 
-              // Calcular meta nominal: misma lógica que getDailyVisits + computeRutaHoyUiStatsFromVisitas.
-              // Usamos cuotasCriterio que ya tiene los mismos filtros que getDailyVisits.
-              // - Si la primera cuota del préstamo es PAGADA → préstamo "pagado" hoy → se salta.
-              // - Si no → se suma el acumulado de todas sus cuotas (vencidas + pagadas hoy).
+              // Calcular meta nominal: misma lógica que computeMontoNominalHastaHoyFromCuotas.
+              // Acumular TODAS las cuotas NO pagadas con vencimiento <= hoy (dFinUTC = fin del día).
+              // Las PAGADA se excluyen completamente (no solo la primera).
               const acumuladoPorPrestamo = new Map<string, number>();
-              const primeraPagada = new Set<string>();
               for (const c of cuotasCriterio) {
                 if (!c?.prestamoId) continue;
+                if (c.estado === 'PAGADA') continue;
                 const pid = String(c.prestamoId);
                 const monto = Number(c.monto || 0);
-                if (!acumuladoPorPrestamo.has(pid)) {
-                  if (c.estado === 'PAGADA') {
-                    primeraPagada.add(pid);
-                    continue;
-                  }
-                  acumuladoPorPrestamo.set(pid, 0);
-                }
-                if (primeraPagada.has(pid)) continue;
+                if (monto <= 0) continue;
                 acumuladoPorPrestamo.set(pid, (acumuladoPorPrestamo.get(pid) || 0) + monto);
               }
 
@@ -1158,7 +1150,6 @@ export class RoutesService {
               console.log(`[META DEBUG] Ruta: ${ruta.nombre}`, {
                 metaNominal,
                 acumuladoPorPrestamo: [...acumuladoPorPrestamo.entries()].map(([k, v]) => ({ prestamoId: k, monto: v })),
-                primeraPagada: [...primeraPagada],
                 primeraCuotaPorPrestamo: [...primeraCuotaPorPrestamo.entries()].map(([k, v]) => ({ prestamoId: k, monto: v })),
                 metaDelDia: estadisticas.metaDelDia,
                 cobranzaDelDia: estadisticas.cobranzaDelDia,
