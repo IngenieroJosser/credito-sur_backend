@@ -1122,60 +1122,32 @@ export class RoutesService {
                 primeraCuotaPorPrestamo.set(pid, monto);
               }
 
-              const diariosIds = prestamosParaMeta
-                .filter((p) => {
-                  const freq = String(p.frecuenciaPago || '').toUpperCase();
-                  return freq === 'DIARIO' || freq === 'DIA';
-                })
-                .map((p) => p.id);
-
-              const metaDiariaPorPrestamo = new Map<string, number>();
-              if (diariosIds.length > 0) {
-                // getDailyVisits incluye PAGADA hoy en montoTotalDeuda para préstamos en mora.
-                // Replicamos: sumar vencidas + pagadas hoy, pero solo si hay deuda vencida.
-                const [cuotasDiariasVencidasAgg, cuotasDiariasPagadasHoyAgg] = await Promise.all([
-                  this.prisma.cuota.groupBy({
-                    by: ['prestamoId'],
-                    where: {
-                      prestamoId: { in: diariosIds },
-                      estado: { in: ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'] },
-                      fechaVencimiento: { lte: dFinUTC },
-                    },
-                    _sum: { monto: true },
-                  }),
-                  this.prisma.cuota.groupBy({
-                    by: ['prestamoId'],
-                    where: {
-                      prestamoId: { in: diariosIds },
-                      estado: 'PAGADA',
-                      fechaPago: { gte: dInicioBogota, lte: dFinBogota },
-                    },
-                    _sum: { monto: true },
-                  }),
-                ]);
-
-                const pagadasHoyMap = new Map<string, number>();
-                for (const row of cuotasDiariasPagadasHoyAgg as any[]) {
-                  pagadasHoyMap.set(String(row.prestamoId), Number(row?._sum?.monto || 0));
+              // Calcular meta nominal: misma lógica que getDailyVisits + computeRutaHoyUiStatsFromVisitas.
+              // Usamos cuotasCriterio que ya tiene los mismos filtros que getDailyVisits.
+              // - Si la primera cuota del préstamo es PAGADA → préstamo "pagado" hoy → se salta.
+              // - Si no → se suma el acumulado de todas sus cuotas (vencidas + pagadas hoy).
+              const acumuladoPorPrestamo = new Map<string, number>();
+              const primeraPagada = new Set<string>();
+              for (const c of cuotasCriterio) {
+                if (!c?.prestamoId) continue;
+                const pid = String(c.prestamoId);
+                const monto = Number(c.monto || 0);
+                if (!acumuladoPorPrestamo.has(pid)) {
+                  if (c.estado === 'PAGADA') {
+                    primeraPagada.add(pid);
+                    continue;
+                  }
+                  acumuladoPorPrestamo.set(pid, 0);
                 }
-
-                console.log('[META DEBUG] cuotasDiariasPagadasHoyAgg raw:', JSON.stringify(cuotasDiariasPagadasHoyAgg));
-                console.log('[META DEBUG] pagadasHoyMap:', [...pagadasHoyMap.entries()].map(([k, v]) => ({ prestamoId: k, monto: v })));
-                console.log('[META DEBUG] cuotasDiariasVencidasAgg raw:', JSON.stringify(cuotasDiariasVencidasAgg));
-
-                for (const row of cuotasDiariasVencidasAgg as any[]) {
-                  const pid = String(row.prestamoId);
-                  const deuda = Number(row?._sum?.monto || 0);
-                  const pagadaHoy = Number(pagadasHoyMap.get(pid) || 0);
-                  metaDiariaPorPrestamo.set(pid, deuda + pagadaHoy);
-                }
+                if (primeraPagada.has(pid)) continue;
+                acumuladoPorPrestamo.set(pid, (acumuladoPorPrestamo.get(pid) || 0) + monto);
               }
 
               for (const p of prestamosParaMeta) {
                 const pid = String(p.id);
                 const freq = String(p.frecuenciaPago || '').toUpperCase();
                 if (freq === 'DIARIO' || freq === 'DIA') {
-                  metaNominal += Number(metaDiariaPorPrestamo.get(pid) || 0);
+                  metaNominal += Number(acumuladoPorPrestamo.get(pid) || 0);
                   continue;
                 }
                 metaNominal += Number(primeraCuotaPorPrestamo.get(pid) || 0);
@@ -1185,10 +1157,9 @@ export class RoutesService {
 
               console.log(`[META DEBUG] Ruta: ${ruta.nombre}`, {
                 metaNominal,
-                prestamosParaMetaCount: prestamosParaMeta.length,
-                prestamosParaMetaIds: prestamosParaMeta.map(p => ({ id: p.id, freq: p.frecuenciaPago, saldo: Number(p.saldoPendiente), estado: (p as any).estado })),
+                acumuladoPorPrestamo: [...acumuladoPorPrestamo.entries()].map(([k, v]) => ({ prestamoId: k, monto: v })),
+                primeraPagada: [...primeraPagada],
                 primeraCuotaPorPrestamo: [...primeraCuotaPorPrestamo.entries()].map(([k, v]) => ({ prestamoId: k, monto: v })),
-                metaDiariaPorPrestamo: [...metaDiariaPorPrestamo.entries()].map(([k, v]) => ({ prestamoId: k, monto: v })),
                 metaDelDia: estadisticas.metaDelDia,
                 cobranzaDelDia: estadisticas.cobranzaDelDia,
               });
@@ -3536,6 +3507,7 @@ export class RoutesService {
 
           prestamos: cliente.prestamos.map((p) => {
             const montoTotalCuotas = p.cuotas.reduce((sum, c) => sum + Number(c.monto), 0);
+            console.log(`[DAILY_VISITS DEBUG] prestamo=${p.id} freq=${p.frecuenciaPago} estado=${p.estado} cuotasCount=${p.cuotas.length} montoTotalCuotas=${montoTotalCuotas} cuotas=${JSON.stringify(p.cuotas.map((c: any) => ({ num: c.numeroCuota, estado: c.estado, monto: Number(c.monto), venc: c.fechaVencimiento, pago: c.fechaPago })))}`);
             return {
               id: p.id,
               numeroPrestamo: p.numeroPrestamo,
