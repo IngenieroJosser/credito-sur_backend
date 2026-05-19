@@ -509,7 +509,7 @@ export class LoansService implements OnModuleInit {
         numeroCuota: i + 1,
         montoCapital: this.trunc2(capitalPeriodo),
         montoInteres: this.trunc2(interesPeriodo),
-        monto: this.trunc2(montoCuota),
+        monto: i === numCuotas - 1 ? capitalPeriodo + interesPeriodo : this.trunc2(montoCuota),
         saldoRestante: this.trunc2(saldo),
       });
     }
@@ -736,19 +736,35 @@ export class LoansService implements OnModuleInit {
       const montoInteresCuota =
         cantidadCuotas > 0 ? interesTotal / cantidadCuotas : 0;
 
-      cuotas = Array.from({ length: cantidadCuotas }, (_, i) => ({
-        numeroCuota: i + 1,
-        fechaVencimiento: this.calcularFechaVencimiento(
-          fechaBase,
-          fechaPrimerCobro ? i + 1 : i + 2,
-          frecuenciaPago,
-        ),
-        monto: this.trunc2(montoCuota),
-        montoCapital: this.trunc2(montoCapitalCuota),
-        montoInteres: this.trunc2(montoInteresCuota),
-        estado: esContado ? EstadoCuota.PAGADA : EstadoCuota.PENDIENTE,
-        montoPagado: esContado ? this.trunc2(montoCuota) : 0,
-      }));
+      const capitalTruncado = this.trunc2(montoCapitalCuota);
+      const interesTruncado = this.trunc2(montoInteresCuota);
+      const cuotaTruncada = this.trunc2(montoCuota);
+
+      cuotas = Array.from({ length: cantidadCuotas }, (_, i) => {
+        const esUltima = i === cantidadCuotas - 1;
+
+        const capitalAcumulado = capitalTruncado * (cantidadCuotas - 1);
+        const capitalUltima = esUltima ? monto - capitalAcumulado : capitalTruncado;
+
+        const interesAcumulado = interesTruncado * (cantidadCuotas - 1);
+        const interesUltima = esUltima ? interesTotal - interesAcumulado : interesTruncado;
+
+        const montoUltima = capitalUltima + interesUltima;
+
+        return {
+          numeroCuota: i + 1,
+          fechaVencimiento: this.calcularFechaVencimiento(
+            fechaBase,
+            fechaPrimerCobro ? i + 1 : i + 2,
+            frecuenciaPago,
+          ),
+          monto: esUltima ? montoUltima : cuotaTruncada,
+          montoCapital: capitalUltima,
+          montoInteres: interesUltima,
+          estado: esContado ? EstadoCuota.PAGADA : EstadoCuota.PENDIENTE,
+          montoPagado: esContado ? (esUltima ? montoUltima : cuotaTruncada) : 0,
+        };
+      });
     }
 
     return { interesTotal: this.trunc2(interesTotal), cuotas };
