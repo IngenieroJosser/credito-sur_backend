@@ -1069,7 +1069,6 @@ export class RoutesService {
                 this.prisma.cuota.findMany({
                   where: {
                     prestamoId: { in: pIdsParaMeta },
-                    estado: { notIn: ['ANULADA', 'ANULADO'] },
                   },
                   select: { prestamoId: true, fechaVencimiento: true, fechaPago: true, estado: true, monto: true, montoPagado: true },
                   orderBy: [{ prestamoId: 'asc' }, { fechaVencimiento: 'asc' }],
