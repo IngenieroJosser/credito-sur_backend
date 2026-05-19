@@ -1101,12 +1101,16 @@ export class RoutesService {
               // - DEMÁS: primera cuota NO pagada con vencimiento <= inicio del día
               let metaNominal = 0;
 
+              const hoyBogotaKey = getBogotaDayKey(new Date());
+
               const primeraCuotaPorPrestamo = new Map<string, number>();
               for (const c of cuotasCriterio) {
                 if (!c?.prestamoId) continue;
                 const pid = String(c.prestamoId);
                 if (primeraCuotaPorPrestamo.has(pid)) continue;
                 if (c.estado === 'PAGADA') continue;
+                const vtoKey = getBogotaDayKey(new Date(c.fechaVencimiento));
+                if (vtoKey > hoyBogotaKey) continue;
                 const monto = Number(c.monto || 0);
                 if (monto <= 0) continue;
                 primeraCuotaPorPrestamo.set(pid, monto);
@@ -1116,7 +1120,6 @@ export class RoutesService {
               // Usa TODAS las cuotas del préstamo (sin pre-filtrar por fecha) y filtra en memoria:
               // - Excluir PAGADA (isCuotaNoPagada)
               // - Solo cuotas con vtoKey <= hoyBogotaKey (comparación de strings de fecha)
-              const hoyBogotaKey = getBogotaDayKey(new Date());
               const acumuladoPorPrestamo = new Map<string, number>();
               for (const c of cuotasCriterio) {
                 if (!c?.prestamoId) continue;
