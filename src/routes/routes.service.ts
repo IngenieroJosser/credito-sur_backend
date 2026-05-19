@@ -1159,6 +1159,10 @@ export class RoutesService {
                   pagadasHoyMap.set(String(row.prestamoId), Number(row?._sum?.monto || 0));
                 }
 
+                console.log('[META DEBUG] cuotasDiariasPagadasHoyAgg raw:', JSON.stringify(cuotasDiariasPagadasHoyAgg));
+                console.log('[META DEBUG] pagadasHoyMap:', [...pagadasHoyMap.entries()].map(([k, v]) => ({ prestamoId: k, monto: v })));
+                console.log('[META DEBUG] cuotasDiariasVencidasAgg raw:', JSON.stringify(cuotasDiariasVencidasAgg));
+
                 for (const row of cuotasDiariasVencidasAgg as any[]) {
                   const pid = String(row.prestamoId);
                   const deuda = Number(row?._sum?.monto || 0);
