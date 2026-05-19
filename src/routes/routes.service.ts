@@ -1122,7 +1122,7 @@ export class RoutesService {
               for (const c of cuotasCriterio) {
                 if (!c?.prestamoId) continue;
                 if (c.estado === 'PAGADA') continue;
-                const vtoKey = new Date(c.fechaVencimiento).toISOString().split('T')[0];
+                const vtoKey = getBogotaDayKey(new Date(c.fechaVencimiento));
                 if (vtoKey > hoyBogotaKey) continue;
                 const pid = String(c.prestamoId);
                 const monto = Number(c.monto || 0);
