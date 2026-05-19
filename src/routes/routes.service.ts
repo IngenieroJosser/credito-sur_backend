@@ -1080,7 +1080,7 @@ export class RoutesService {
                       },
                     ],
                   },
-                  select: { prestamoId: true, fechaVencimiento: true, fechaPago: true, estado: true, monto: true },
+                  select: { prestamoId: true, fechaVencimiento: true, fechaPago: true, fechaVencimientoProrroga: true, estado: true, monto: true },
                   orderBy: [{ prestamoId: 'asc' }, { fechaVencimiento: 'asc' }],
                 }),
 
@@ -1129,6 +1129,11 @@ export class RoutesService {
               for (const c of cuotasCriterio) {
                 if (!c?.prestamoId) continue;
                 if (c.estado === 'PAGADA') continue;
+                // PRORROGADA: usar fechaVencimientoProrroga como fecha efectiva (igual que resolveFechaEfectivaCuota)
+                const fechaEfectiva = c.estado === 'PRORROGADA' && (c as any).fechaVencimientoProrroga
+                  ? new Date((c as any).fechaVencimientoProrroga)
+                  : new Date(c.fechaVencimiento);
+                if (fechaEfectiva > dFinUTC) continue;
                 const pid = String(c.prestamoId);
                 const monto = Number(c.monto || 0);
                 if (monto <= 0) continue;
