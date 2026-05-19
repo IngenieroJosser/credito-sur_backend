@@ -1188,7 +1188,28 @@ export class RoutesService {
 
               estadisticas.metaDelDia = metaNominal + montoMetaInicial;
 
-
+              console.log(`[META DEBUG] Ruta: ${ruta.nombre}`, {
+                montoMetaInicial: Number(resAgregados[2]?._sum?.monto || 0),
+                metaNominal: (() => {
+                  let mn = 0;
+                  for (const p of prestamosParaMeta) {
+                    const pid = String(p.id);
+                    const freq = String(p.frecuenciaPago || '').toUpperCase();
+                    if (freq === 'DIARIO' || freq === 'DIA') {
+                      mn += Number(metaDiariaPorPrestamo.get(pid) || 0);
+                    } else {
+                      mn += Number(primeraCuotaPorPrestamo.get(pid) || 0);
+                    }
+                  }
+                  return mn;
+                })(),
+                prestamosParaMetaCount: prestamosParaMeta.length,
+                prestamosParaMetaIds: prestamosParaMeta.map(p => ({ id: p.id, freq: p.frecuenciaPago, saldo: Number(p.saldoPendiente), estado: (p as any).estado })),
+                primeraCuotaPorPrestamo: [...primeraCuotaPorPrestamo.entries()].map(([k, v]) => ({ prestamoId: k, monto: v })),
+                metaDiariaPorPrestamo: [...metaDiariaPorPrestamo.entries()].map(([k, v]) => ({ prestamoId: k, monto: v })),
+                metaDelDia: estadisticas.metaDelDia,
+                cobranzaDelDia: estadisticas.cobranzaDelDia,
+              });
 
               // Calcular AVANCE DIARIO
 
