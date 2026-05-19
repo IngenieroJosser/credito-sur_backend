@@ -1061,7 +1061,11 @@ export class LoansService implements OnModuleInit {
           const totalPagado = Number(prestamo.totalPagado) || 0;
 
           const montoTotal = monto + interesTotal;
-          const montoPendiente = saldoPendiente;
+          // Si todas las cuotas están pagadas, el monto pendiente es 0 (fix bug redondeo)
+          // Truncar a entero (0 decimales) para COP que no usa centavos
+          const montoPendiente = cuotasPagadas === cuotasTotales 
+            ? 0 
+            : Math.trunc(saldoPendiente);
           const montoPagado = totalPagado;
 
           // Calcular mora acumulada de forma segura
@@ -1182,7 +1186,7 @@ export class LoansService implements OnModuleInit {
           pagados: pagados || 0,
           cancelados: perdida || 0,
           montoTotal: Number(totales._sum?.monto || 0) + Number((totales._sum as any)?.interesTotal || 0),
-          montoPendiente: Number(totales._sum?.saldoPendiente || 0),
+          montoPendiente: Math.trunc(Number(totales._sum?.saldoPendiente || 0)),
           moraTotal: Number(moraTotal._sum?.saldoPendiente || 0),
         },
         paginacion: {
