@@ -1,7 +1,15 @@
 import { PrismaClient, EstadoCuota, EstadoPrestamo, TipoAmortizacion, FrecuenciaPago } from '@prisma/client';
 import { Logger } from '@nestjs/common';
+import * as dotenv from 'dotenv';
+import { Pool } from 'pg';
+import { PrismaPg } from '@prisma/adapter-pg';
 
-const prisma = new PrismaClient();
+// Cargar variables de entorno
+dotenv.config();
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const adapter = new PrismaPg(pool);
+const prisma = new PrismaClient({ adapter });
 const logger = new Logger('FixLoanRoundingError');
 
 /**
