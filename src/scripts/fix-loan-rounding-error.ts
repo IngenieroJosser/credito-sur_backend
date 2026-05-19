@@ -13,11 +13,8 @@ const logger = new Logger('FixLoanRoundingError');
  * SOLUCIÓN: Recalcular las cuotas afectadas usando la lógica corregida donde
  * la última cuota absorbe el residuo de redondeo.
  * 
- * EJECUCIÓN:
- * 1. Identificar préstamos con el bug
- * 2. Recalcular cuotas con fix
- * 3. Actualizar cuotas y saldos pendientes
- * 4. Manejar préstamos con pagos realizados (solo ajustar cuotas futuras)
+ * EJECUCIÓN AUTOMÁTICA: Se ejecuta en start:prod antes de iniciar el servidor.
+ * Si falla, loggea el error pero NO detiene el deploy.
  */
 
 // Helper functions copiadas de loans.service.ts
@@ -143,168 +140,166 @@ function calcularAmortizacionSimpleCorregida(
 async function main() {
   logger.log('🚀 Iniciando migración para corregir error de redondeo en préstamos...');
 
-  // 1. Identificar préstamos con el bug
-  logger.log('📊 Identificando préstamos afectados...');
-  
-  const prestamos = await prisma.prestamo.findMany({
-    where: {
-      eliminadoEn: null,
-      estado: { in: [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA] },
-    },
-    include: {
-      cuotas: {
-        orderBy: { numeroCuota: 'asc' },
-        select: {
-          id: true,
-          numeroCuota: true,
-          monto: true,
-          montoCapital: true,
-          montoInteres: true,
-          montoPagado: true,
-          estado: true,
+  try {
+    // 1. Identificar préstamos con el bug
+    logger.log('📊 Identificando préstamos afectados...');
+    
+    const prestamos = await prisma.prestamo.findMany({
+      where: {
+        eliminadoEn: null,
+        estado: { in: [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA] },
+      },
+      include: {
+        cuotas: {
+          orderBy: { numeroCuota: 'asc' },
+          select: {
+            id: true,
+            numeroCuota: true,
+            monto: true,
+            montoCapital: true,
+            montoInteres: true,
+            montoPagado: true,
+            estado: true,
+          },
         },
       },
-    },
-  });
+    });
 
-  logger.log(`🔍 Encontrados ${prestamos.length} préstamos activos`);
+    logger.log(`🔍 Encontrados ${prestamos.length} préstamos activos`);
 
-  const prestamosAfectados: Array<{
-    prestamo: any;
-    diferenciaCapital: number;
-    cuotasRecalculadas: CuotaRecalculada[];
-  }> = [];
+    const prestamosAfectados: Array<{
+      prestamo: any;
+      diferenciaCapital: number;
+      cuotasRecalculadas: CuotaRecalculada[];
+    }> = [];
 
-  for (const prestamo of prestamos) {
-    const montoPrestamo = Number(prestamo.monto);
-    const capitalTotalCuotas = prestamo.cuotas.reduce(
-      (sum, c) => sum + Number(c.montoCapital),
-      0
-    );
+    for (const prestamo of prestamos) {
+      const montoPrestamo = Number(prestamo.monto);
+      const capitalTotalCuotas = prestamo.cuotas.reduce(
+        (sum, c) => sum + Number(c.montoCapital),
+        0
+      );
 
-    // Verificar si hay diferencia de redondeo (más de 0.01 indica bug)
-    const diferencia = Math.abs(capitalTotalCuotas - montoPrestamo);
-    
-    if (diferencia > 0.01) {
-      logger.log(`⚠️  Préstamo ${prestamo.numeroPrestamo} afectado: diferencia de capital = $${diferencia.toFixed(2)}`);
+      // Verificar si hay diferencia de redondeo (más de 0.01 indica bug)
+      const diferencia = Math.abs(capitalTotalCuotas - montoPrestamo);
       
-      // Recalcular cuotas con el fix
-      let cuotasRecalculadas: CuotaRecalculada[] = [];
-      
-      if (prestamo.tipoAmortizacion === TipoAmortizacion.FRANCESA) {
-        cuotasRecalculadas = calcularAmortizacionFrancesaCorregida(
-          montoPrestamo,
-          Number(prestamo.tasaInteres),
-          prestamo.cantidadCuotas,
-          prestamo.plazoMeses,
-          prestamo.frecuenciaPago,
-        );
-      } else {
-        cuotasRecalculadas = calcularAmortizacionSimpleCorregida(
-          montoPrestamo,
-          Number(prestamo.tasaInteres),
-          prestamo.cantidadCuotas,
-          prestamo.plazoMeses,
-        );
-      }
-
-      prestamosAfectados.push({
-        prestamo,
-        diferenciaCapital: diferencia,
-        cuotasRecalculadas,
-      });
-    }
-  }
-
-  logger.log(`✅ Encontrados ${prestamosAfectados.length} préstamos con el bug de redondeo`);
-
-  if (prestamosAfectados.length === 0) {
-    logger.log('🎉 No se encontraron préstamos afectados. Migración completa.');
-    await prisma.$disconnect();
-    return;
-  }
-
-  // 2. Mostrar resumen y pedir confirmación
-  logger.log('📋 Resumen de préstamos a corregir:');
-  for (const { prestamo, diferenciaCapital } of prestamosAfectados) {
-    const pagosRealizados = prestamo.cuotas.filter(c => c.estado === EstadoCuota.PAGADA).length;
-    logger.log(
-      `  - ${prestamo.numeroPrestamo}: diferencia $${diferenciaCapital.toFixed(2)}, ` +
-      `${pagosRealizados}/${prestamo.cantidadCuotas} cuotas pagadas`
-    );
-  }
-
-  // 3. Ejecutar corrección
-  logger.log('🔧 Iniciando corrección de cuotas...');
-  
-  let corregidos = 0;
-  let omitidos = 0;
-
-  for (const { prestamo, cuotasRecalculadas } of prestamosAfectados) {
-    try {
-      // Verificar si hay pagos realizados
-      const cuotasPagadas = prestamo.cuotas.filter(c => c.estado === EstadoCuota.PAGADA);
-      const cuotasPendientes = prestamo.cuotas.filter(c => c.estado !== EstadoCuota.PAGADA);
-
-      if (cuotasPagadas.length > 0) {
-        logger.warn(`⚠️  Préstamo ${prestamo.numeroPrestamo} tiene ${cuotasPagadas.length} cuotas pagadas - OMITIENDO por seguridad`);
-        omitidos++;
-        continue;
-      }
-
-      // Solo corregir préstamos sin pagos para evitar inconsistencias
-      logger.log(`🔄 Corrigiendo préstamo ${prestamo.numeroPrestamo}...`);
-
-      await prisma.$transaction(async (tx) => {
-        // Actualizar cada cuota
-        for (const cuotaRecalculada of cuotasRecalculadas) {
-          await tx.cuota.updateMany({
-            where: {
-              prestamoId: prestamo.id,
-              numeroCuota: cuotaRecalculada.numeroCuota,
-            },
-            data: {
-              monto: cuotaRecalculada.monto,
-              montoCapital: cuotaRecalculada.montoCapital,
-              montoInteres: cuotaRecalculada.montoInteres,
-            },
-          });
+      if (diferencia > 0.01) {
+        logger.log(`⚠️  Préstamo ${prestamo.numeroPrestamo} afectado: diferencia de capital = $${diferencia.toFixed(2)}`);
+        
+        // Recalcular cuotas con el fix
+        let cuotasRecalculadas: CuotaRecalculada[] = [];
+        
+        if (prestamo.tipoAmortizacion === TipoAmortizacion.FRANCESA) {
+          cuotasRecalculadas = calcularAmortizacionFrancesaCorregida(
+            montoPrestamo,
+            Number(prestamo.tasaInteres),
+            prestamo.cantidadCuotas,
+            prestamo.plazoMeses,
+            prestamo.frecuenciaPago,
+          );
+        } else {
+          cuotasRecalculadas = calcularAmortizacionSimpleCorregida(
+            montoPrestamo,
+            Number(prestamo.tasaInteres),
+            prestamo.cantidadCuotas,
+            prestamo.plazoMeses,
+          );
         }
 
-        // Recalcular saldo pendiente
-        const nuevoSaldoPendiente = cuotasRecalculadas.reduce(
-          (sum, c) => sum + (c.montoCapital + c.montoInteres),
-          0
-        );
-
-        await tx.prestamo.update({
-          where: { id: prestamo.id },
-          data: {
-            saldoPendiente: nuevoSaldoPendiente,
-          },
+        prestamosAfectados.push({
+          prestamo,
+          diferenciaCapital: diferencia,
+          cuotasRecalculadas,
         });
-      });
-
-      corregidos++;
-      logger.log(`✅ Préstamo ${prestamo.numeroPrestamo} corregido exitosamente`);
-
-    } catch (error) {
-      logger.error(`❌ Error corrigiendo préstamo ${prestamo.numeroPrestamo}:`, error);
+      }
     }
+
+    logger.log(`✅ Encontrados ${prestamosAfectados.length} préstamos con el bug de redondeo`);
+
+    if (prestamosAfectados.length === 0) {
+      logger.log('🎉 No se encontraron préstamos afectados. Migración completa.');
+      await prisma.$disconnect();
+      return;
+    }
+
+    // 2. Ejecutar corrección
+    logger.log('🔧 Iniciando corrección de cuotas...');
+    
+    let corregidos = 0;
+    let omitidos = 0;
+
+    for (const { prestamo, cuotasRecalculadas } of prestamosAfectados) {
+      try {
+        // Verificar si hay pagos realizados
+        const cuotasPagadas = prestamo.cuotas.filter(c => c.estado === EstadoCuota.PAGADA);
+
+        if (cuotasPagadas.length > 0) {
+          logger.warn(`⚠️  Préstamo ${prestamo.numeroPrestamo} tiene ${cuotasPagadas.length} cuotas pagadas - OMITIENDO por seguridad`);
+          omitidos++;
+          continue;
+        }
+
+        // Solo corregir préstamos sin pagos para evitar inconsistencias
+        logger.log(`🔄 Corrigiendo préstamo ${prestamo.numeroPrestamo}...`);
+
+        await prisma.$transaction(async (tx) => {
+          // Actualizar cada cuota
+          for (const cuotaRecalculada of cuotasRecalculadas) {
+            await tx.cuota.updateMany({
+              where: {
+                prestamoId: prestamo.id,
+                numeroCuota: cuotaRecalculada.numeroCuota,
+              },
+              data: {
+                monto: cuotaRecalculada.monto,
+                montoCapital: cuotaRecalculada.montoCapital,
+                montoInteres: cuotaRecalculada.montoInteres,
+              },
+            });
+          }
+
+          // Recalcular saldo pendiente
+          const nuevoSaldoPendiente = cuotasRecalculadas.reduce(
+            (sum, c) => sum + (c.montoCapital + c.montoInteres),
+            0
+          );
+
+          await tx.prestamo.update({
+            where: { id: prestamo.id },
+            data: {
+              saldoPendiente: nuevoSaldoPendiente,
+            },
+          });
+        });
+
+        corregidos++;
+        logger.log(`✅ Préstamo ${prestamo.numeroPrestamo} corregido exitosamente`);
+
+      } catch (error) {
+        logger.error(`❌ Error corrigiendo préstamo ${prestamo.numeroPrestamo}:`, error);
+      }
+    }
+
+    logger.log('📊 Resumen final:');
+    logger.log(`  - Préstamos afectados: ${prestamosAfectados.length}`);
+    logger.log(`  - Corregidos: ${corregidos}`);
+    logger.log(`  - Omitidos (con pagos): ${omitidos}`);
+    logger.log(`  - Fallidos: ${prestamosAfectados.length - corregidos - omitidos}`);
+
+    await prisma.$disconnect();
+    logger.log('🎉 Migración completada exitosamente');
+
+  } catch (error) {
+    logger.error('❌ Error en la migración:', error);
+    logger.warn('⚠️  La migración falló pero el servidor continuará iniciando...');
+    await prisma.$disconnect();
+    // NO lanzar el error para no detener el deploy
   }
-
-  logger.log('📊 Resumen final:');
-  logger.log(`  - Préstamos afectados: ${prestamosAfectados.length}`);
-  logger.log(`  - Corregidos: ${corregidos}`);
-  logger.log(`  - Omitidos (con pagos): ${omitidos}`);
-  logger.log(`  - Fallidos: ${prestamosAfectados.length - corregidos - omitidos}`);
-
-  await prisma.$disconnect();
-  logger.log('🎉 Migración completada');
 }
 
 main()
   .catch((error) => {
     logger.error('❌ Error fatal en la migración:', error);
-    process.exit(1);
+    // NO hacer process.exit(1) para no detener el deploy
+    process.exit(0);
   });
