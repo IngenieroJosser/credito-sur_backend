@@ -1106,9 +1106,11 @@ export class RoutesService {
               const cobranzaReal = pagosRutaRaw.reduce((sum, p) => sum + Number(p.montoTotal || 0), 0);
               estadisticas.cobranzaDelDia = cobranzaReal + montoMetaInicial;
 
-              // Calcular meta nominal: primera cuota NO pagada por préstamo.
-              // Consistente con getDailyVisits + computeRutaHoyUiStatsFromVisitas.
+              // Calcular meta nominal consistente con getDailyVisits + computeRutaHoyUiStatsFromVisitas:
+              // - DIARIO: suma acumulada de todas las cuotas vencidas (<= inicio del día)
+              // - DEMÁS: primera cuota NO pagada con vencimiento <= inicio del día
               let metaNominal = 0;
+
               const primeraCuotaPorPrestamo = new Map<string, number>();
               for (const c of cuotasCriterio) {
                 if (!c?.prestamoId) continue;
@@ -1120,8 +1122,38 @@ export class RoutesService {
                 primeraCuotaPorPrestamo.set(pid, monto);
               }
 
+              const diariosIds = prestamosParaMeta
+                .filter((p) => {
+                  const freq = String(p.frecuenciaPago || '').toUpperCase();
+                  return freq === 'DIARIO' || freq === 'DIA';
+                })
+                .map((p) => p.id);
+
+              const metaDiariaPorPrestamo = new Map<string, number>();
+              if (diariosIds.length > 0) {
+                const cuotasDiariasVencidasAgg = await this.prisma.cuota.groupBy({
+                  by: ['prestamoId'],
+                  where: {
+                    prestamoId: { in: diariosIds },
+                    estado: { in: ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'] },
+                    fechaVencimiento: { lte: dInicioUTC },
+                  },
+                  _sum: { monto: true },
+                });
+
+                for (const row of cuotasDiariasVencidasAgg as any[]) {
+                  const pid = String(row.prestamoId);
+                  metaDiariaPorPrestamo.set(pid, Number(row?._sum?.monto || 0));
+                }
+              }
+
               for (const p of prestamosParaMeta) {
                 const pid = String(p.id);
+                const freq = String(p.frecuenciaPago || '').toUpperCase();
+                if (freq === 'DIARIO' || freq === 'DIA') {
+                  metaNominal += Number(metaDiariaPorPrestamo.get(pid) || 0);
+                  continue;
+                }
                 metaNominal += Number(primeraCuotaPorPrestamo.get(pid) || 0);
               }
 
@@ -1132,6 +1164,7 @@ export class RoutesService {
                 prestamosParaMetaCount: prestamosParaMeta.length,
                 prestamosParaMetaIds: prestamosParaMeta.map(p => ({ id: p.id, freq: p.frecuenciaPago, saldo: Number(p.saldoPendiente), estado: (p as any).estado })),
                 primeraCuotaPorPrestamo: [...primeraCuotaPorPrestamo.entries()].map(([k, v]) => ({ prestamoId: k, monto: v })),
+                metaDiariaPorPrestamo: [...metaDiariaPorPrestamo.entries()].map(([k, v]) => ({ prestamoId: k, monto: v })),
                 metaDelDia: estadisticas.metaDelDia,
                 cobranzaDelDia: estadisticas.cobranzaDelDia,
               });
