@@ -437,11 +437,7 @@ export class LoansService implements OnModuleInit {
       return { cuotaFija: 0, interesTotal: 0, tabla: [] };
     }
 
-    // Convertir tasa mensual (%) a tasa mensual decimal
     const tasaMensual = tasaTotal / 100;
-
-    // Convertir a tasa por período de forma compuesta
-    // (1 + i_m)^(fracción) - 1
     let fraccionMes = 1;
     switch (frecuencia) {
       case FrecuenciaPago.DIARIO:
@@ -461,25 +457,31 @@ export class LoansService implements OnModuleInit {
 
     const tasaPeriodo = Math.pow(1 + tasaMensual, fraccionMes) - 1;
 
-    // Si la tasa es 0, amortización lineal pura
     if (tasaPeriodo === 0) {
-      const cuotaFija = capital / numCuotas;
-      return {
-        cuotaFija: this.trunc2(cuotaFija),
-        interesTotal: 0,
-        tabla: Array.from({ length: numCuotas }, (_, i) => ({
+      const cuotaFija = Math.round(capital / numCuotas);
+      let saldo = capital;
+      const tabla = Array.from({ length: numCuotas }, (_, i) => {
+        const esUltima = i === numCuotas - 1;
+        const montoCapital = esUltima ? saldo : Math.floor(capital / numCuotas);
+        saldo = Math.max(0, saldo - montoCapital);
+        return {
           numeroCuota: i + 1,
-          montoCapital: this.trunc2((capital / numCuotas)),
+          montoCapital,
           montoInteres: 0,
-          monto: this.trunc2(cuotaFija),
-          saldoRestante: this.trunc2((capital - (capital / numCuotas) * (i + 1))),
-        })),
+          monto: montoCapital,
+          saldoRestante: saldo,
+        };
+      });
+
+      return {
+        cuotaFija,
+        interesTotal: 0,
+        tabla,
       };
     }
 
-    // Fórmula francesa: C = P × r / (1 - (1+r)^-n)
-    const cuotaFija =
-      (capital * tasaPeriodo) / (1 - Math.pow(1 + tasaPeriodo, -numCuotas));
+    const cuotaFijaDecimal = (capital * tasaPeriodo) / (1 - Math.pow(1 + tasaPeriodo, -numCuotas));
+    const cuotaFija = Math.round(cuotaFijaDecimal);
 
     let saldo = capital;
     let interesTotalAcumulado = 0;
@@ -492,31 +494,27 @@ export class LoansService implements OnModuleInit {
     }> = [];
 
     for (let i = 0; i < numCuotas; i++) {
-      const interesPeriodo = saldo * tasaPeriodo;
-      let capitalPeriodo = cuotaFija - interesPeriodo;
-
-      // Última cuota: ajustar para cerrar el saldo exacto
-      if (i === numCuotas - 1) {
-        capitalPeriodo = saldo;
-      }
-
+      const esUltima = i === numCuotas - 1;
+      const interesPeriodo = Math.round(saldo * tasaPeriodo);
+      
+      let capitalPeriodo = esUltima ? saldo : cuotaFija - interesPeriodo;
+      capitalPeriodo = Math.min(saldo, Math.max(0, capitalPeriodo));
+      
       saldo = Math.max(0, saldo - capitalPeriodo);
       interesTotalAcumulado += interesPeriodo;
-
-      const montoCuota = capitalPeriodo + interesPeriodo;
-
+      
       tabla.push({
         numeroCuota: i + 1,
-        montoCapital: this.trunc2(capitalPeriodo),
-        montoInteres: this.trunc2(interesPeriodo),
-        monto: i === numCuotas - 1 ? capitalPeriodo + interesPeriodo : this.trunc2(montoCuota),
-        saldoRestante: this.trunc2(saldo),
+        montoCapital: capitalPeriodo,
+        montoInteres: interesPeriodo,
+        monto: capitalPeriodo + interesPeriodo,
+        saldoRestante: saldo,
       });
     }
 
     return {
-      cuotaFija: this.trunc2(cuotaFija),
-      interesTotal: this.trunc2(interesTotalAcumulado),
+      cuotaFija,
+      interesTotal: interesTotalAcumulado,
       tabla,
     };
   }
@@ -727,29 +725,24 @@ export class LoansService implements OnModuleInit {
       }));
     } else {
       const mesesInteres = Math.max(1, plazoMeses);
-      interesTotal = (monto * tasaInteres * mesesInteres) / 100;
-      const montoTotalSimple = monto + interesTotal;
-      const montoCuota =
-        cantidadCuotas > 0 ? montoTotalSimple / cantidadCuotas : 0;
-      const montoCapitalCuota =
-        cantidadCuotas > 0 ? monto / cantidadCuotas : 0;
-      const montoInteresCuota =
-        cantidadCuotas > 0 ? interesTotal / cantidadCuotas : 0;
+      interesTotal = Math.round((monto * tasaInteres * mesesInteres) / 100);
+      
+      const baseCapital = Math.floor(monto / cantidadCuotas);
+      const baseInteres = Math.floor(interesTotal / cantidadCuotas);
 
-      const capitalTruncado = this.trunc2(montoCapitalCuota);
-      const interesTruncado = this.trunc2(montoInteresCuota);
-      const cuotaTruncada = this.trunc2(montoCuota);
+      let capitalRestante = monto;
+      let interesRestante = interesTotal;
 
       cuotas = Array.from({ length: cantidadCuotas }, (_, i) => {
         const esUltima = i === cantidadCuotas - 1;
 
-        const capitalAcumulado = capitalTruncado * (cantidadCuotas - 1);
-        const capitalUltima = esUltima ? monto - capitalAcumulado : capitalTruncado;
+        const capitalCuota = esUltima ? capitalRestante : baseCapital;
+        const interesCuota = esUltima ? interesRestante : baseInteres;
 
-        const interesAcumulado = interesTruncado * (cantidadCuotas - 1);
-        const interesUltima = esUltima ? interesTotal - interesAcumulado : interesTruncado;
+        capitalRestante = Math.max(0, capitalRestante - capitalCuota);
+        interesRestante = Math.max(0, interesRestante - interesCuota);
 
-        const montoUltima = capitalUltima + interesUltima;
+        const montoCuota = capitalCuota + interesCuota;
 
         return {
           numeroCuota: i + 1,
@@ -758,16 +751,16 @@ export class LoansService implements OnModuleInit {
             fechaPrimerCobro ? i + 1 : i + 2,
             frecuenciaPago,
           ),
-          monto: esUltima ? montoUltima : cuotaTruncada,
-          montoCapital: capitalUltima,
-          montoInteres: interesUltima,
+          monto: montoCuota,
+          montoCapital: capitalCuota,
+          montoInteres: interesCuota,
           estado: esContado ? EstadoCuota.PAGADA : EstadoCuota.PENDIENTE,
-          montoPagado: esContado ? (esUltima ? montoUltima : cuotaTruncada) : 0,
+          montoPagado: esContado ? montoCuota : 0,
         };
       });
     }
 
-    return { interesTotal: this.trunc2(interesTotal), cuotas };
+    return { interesTotal: Math.round(interesTotal), cuotas };
   }
 
   async getAllLoans(filters: {
@@ -1683,24 +1676,15 @@ export class LoansService implements OnModuleInit {
       const newFechaInicio = data.fechaInicio === undefined ? prestamo.fechaInicio : (data.fechaInicio as Date);
       const newInteresTotal = (newMonto * newTasa * newPlazo) / 100;
 
-      const shouldRecalculateFinancing =
-        data.monto !== undefined ||
-        data.tasaInteres !== undefined ||
-        data.plazoMeses !== undefined ||
-        data.fechaInicio !== undefined;
-
-      if (shouldRecalculateFinancing) {
-        data.interesTotal = newInteresTotal;
-        data.saldoPendiente = (newMonto + newInteresTotal) - Number(prestamo.totalPagado || 0);
-      }
-
-      // Regenerate cuotas if cantidadCuotas, monto, tasaInteres, frecuenciaPago or tipoAmortizacion changed
+      // Regenerate cuotas if cantidadCuotas, monto, tasaInteres, frecuenciaPago, tipoAmortizacion, plazoMeses or fechaInicio changed
       const shouldRegenerateCuotas = (
         data.cantidadCuotas !== undefined || 
         data.monto !== undefined || 
         data.tasaInteres !== undefined || 
         data.frecuenciaPago !== undefined ||
-        data.tipoAmortizacion !== undefined
+        data.tipoAmortizacion !== undefined ||
+        data.plazoMeses !== undefined ||
+        data.fechaInicio !== undefined
       );
 
       if (shouldRegenerateCuotas) {
@@ -1720,7 +1704,7 @@ export class LoansService implements OnModuleInit {
         });
 
         // Generate new cuotas using helper
-        const { cuotas: planCuotas } = this.calculateInterestAndCuotas(
+        const { cuotas: planCuotas, interesTotal: planInteresTotal } = this.calculateInterestAndCuotas(
           tipoAmortizacion,
           newMonto,
           newTasa,
@@ -1754,6 +1738,20 @@ export class LoansService implements OnModuleInit {
         });
 
         data.cantidadCuotas = cantidadCuotas;
+        data.interesTotal = planInteresTotal;
+        data.saldoPendiente = (newMonto + planInteresTotal) - Number(prestamo.totalPagado || 0);
+      } else {
+        const shouldRecalculateFinancing =
+          data.monto !== undefined ||
+          data.tasaInteres !== undefined ||
+          data.plazoMeses !== undefined ||
+          data.fechaInicio !== undefined;
+
+        if (shouldRecalculateFinancing) {
+          const roundedInteres = Math.round(newInteresTotal);
+          data.interesTotal = roundedInteres;
+          data.saldoPendiente = (newMonto + roundedInteres) - Number(prestamo.totalPagado || 0);
+        }
       }
 
       const prestamoActualizado = await this.prisma.prestamo.update({
@@ -2047,24 +2045,34 @@ export class LoansService implements OnModuleInit {
         });
       } else {
         // Interés simple (flat): capital × tasa mensual × plazoMeses (simple)
-        interesTotal = (createLoanDto.monto * tasaInteres * createLoanDto.plazoMeses) / 100;
-        const montoTotal = createLoanDto.monto + interesTotal;
-        const montoCuota = cantidadCuotas > 0 ? montoTotal / cantidadCuotas : 0;
-        const montoCapitalCuota = cantidadCuotas > 0 ? createLoanDto.monto / cantidadCuotas : 0;
-        const montoInteresCuota = cantidadCuotas > 0 ? interesTotal / cantidadCuotas : 0;
+        interesTotal = Math.round((createLoanDto.monto * tasaInteres * createLoanDto.plazoMeses) / 100);
+        const baseCapital = Math.floor(createLoanDto.monto / cantidadCuotas);
+        const baseInteres = Math.floor(interesTotal / cantidadCuotas);
+        let capitalRestante = createLoanDto.monto;
+
         cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => {
+          const esUltima = i === cantidadCuotas - 1;
           const fechaBase = fechaPrimerCobroParsed || fechaInicio;
           const fechaVencimiento = this.calcularFechaVencimiento(fechaBase, i + 1, createLoanDto.frecuenciaPago);
+
+          const capitalCuota = esUltima ? capitalRestante : baseCapital;
+          const interesCuota = esUltima 
+            ? interesTotal - (baseInteres * (cantidadCuotas - 1)) 
+            : baseInteres;
+
+          capitalRestante = Math.max(0, capitalRestante - capitalCuota);
+
           return {
             numeroCuota: i + 1,
             fechaVencimiento,
-            monto: this.trunc2(montoCuota),
-            montoCapital: this.trunc2(montoCapitalCuota),
-            montoInteres: this.trunc2(montoInteresCuota),
+            monto: capitalCuota + interesCuota,
+            montoCapital: capitalCuota,
+            montoInteres: interesCuota,
             estado: EstadoCuota.PENDIENTE,
           };
         });
       }
+
 
       // Homogeneizar vencimiento del préstamo con el cronograma real
       const fechaFinReal = cuotasData.length > 0
@@ -2093,8 +2101,8 @@ export class LoansService implements OnModuleInit {
           estado: EstadoPrestamo.PENDIENTE_APROBACION,
           estadoAprobacion: EstadoAprobacion.PENDIENTE,
           creadoPorId: createLoanDto.creadoPorId,
-          interesTotal: this.trunc2(interesTotal),
-          saldoPendiente: this.trunc2(createLoanDto.monto + interesTotal - (createLoanDto.cuotaInicial || 0)),
+          interesTotal: Math.round(interesTotal),
+          saldoPendiente: Math.round(createLoanDto.monto + interesTotal - (createLoanDto.cuotaInicial || 0)),
           notas: createLoanDto.notas ? String(createLoanDto.notas) : undefined,
           garantia: createLoanDto.garantia ? String(createLoanDto.garantia) : undefined,
           cuotas: {
