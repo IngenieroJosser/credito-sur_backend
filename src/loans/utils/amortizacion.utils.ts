@@ -64,45 +64,58 @@ export function calcularAmortizacionFrancesa(
   const tasaPeriodo = tasaPorPeriodo(tasaTotal, frecuencia);
 
   if (tasaPeriodo === 0) {
-    const cuotaFija = capital / numCuotas;
-    return {
-      cuotaFija: trunc2(cuotaFija),
-      interesTotal: 0,
-      tabla: Array.from({ length: numCuotas }, (_, i) => ({
+    const cuotaFija = Math.round(capital / numCuotas);
+    let saldo = capital;
+    const tabla = Array.from({ length: numCuotas }, (_, i) => {
+      const esUltima = i === numCuotas - 1;
+      const montoCapital = esUltima ? saldo : Math.floor(capital / numCuotas);
+      saldo = Math.max(0, saldo - montoCapital);
+      return {
         numeroCuota: i + 1,
-        montoCapital: trunc2((capital / numCuotas)),
+        montoCapital,
         montoInteres: 0,
-        monto: trunc2(cuotaFija),
-        saldoRestante: trunc2((capital - (capital / numCuotas) * (i + 1))),
-      })),
+        monto: montoCapital,
+        saldoRestante: saldo,
+      };
+    });
+
+    return {
+      cuotaFija,
+      interesTotal: 0,
+      tabla,
     };
   }
 
   // Fórmula francesa: C = P × r / (1 - (1+r)^-n)
-  const cuotaFija = (capital * tasaPeriodo) / (1 - Math.pow(1 + tasaPeriodo, -numCuotas));
+  const cuotaFijaDecimal = (capital * tasaPeriodo) / (1 - Math.pow(1 + tasaPeriodo, -numCuotas));
+  const cuotaFija = Math.round(cuotaFijaDecimal);
 
   let saldo = capital;
   let interesTotalAcumulado = 0;
   const tabla: FilaAmortizacion[] = [];
 
   for (let i = 0; i < numCuotas; i++) {
-    const interesPeriodo = saldo * tasaPeriodo;
-    let capitalPeriodo = cuotaFija - interesPeriodo;
-    if (i === numCuotas - 1) capitalPeriodo = saldo; // Ajuste última cuota
+    const esUltima = i === numCuotas - 1;
+    const interesPeriodo = Math.round(saldo * tasaPeriodo);
+    
+    let capitalPeriodo = esUltima ? saldo : cuotaFija - interesPeriodo;
+    capitalPeriodo = Math.min(saldo, Math.max(0, capitalPeriodo));
+    
     saldo = Math.max(0, saldo - capitalPeriodo);
     interesTotalAcumulado += interesPeriodo;
+    
     tabla.push({
       numeroCuota: i + 1,
-      montoCapital: trunc2(capitalPeriodo),
-      montoInteres: trunc2(interesPeriodo),
-      monto: trunc2((capitalPeriodo + interesPeriodo)),
-      saldoRestante: trunc2(saldo),
+      montoCapital: capitalPeriodo,
+      montoInteres: interesPeriodo,
+      monto: capitalPeriodo + interesPeriodo,
+      saldoRestante: saldo,
     });
   }
 
   return {
-    cuotaFija: trunc2(cuotaFija),
-    interesTotal: trunc2(interesTotalAcumulado),
+    cuotaFija,
+    interesTotal: interesTotalAcumulado,
     tabla,
   };
 }
@@ -124,29 +137,37 @@ export function calcularInteresSimple(
   }
 
   const tasaPeriodo = tasaPorPeriodo(tasaMensualPct, frecuencia);
-  const interesPorCuota = capital * tasaPeriodo;
-  const capitalPorCuota = capital / numCuotas;
-  const cuotaFija = capitalPorCuota + interesPorCuota;
+  const interesTotal = Math.round(capital * tasaPeriodo * numCuotas);
+  
+  const baseCapital = Math.floor(capital / numCuotas);
+  const baseInteres = Math.floor(interesTotal / numCuotas);
+  const cuotaFija = baseCapital + baseInteres;
 
   let saldo = capital;
   const tabla: FilaAmortizacion[] = [];
 
   for (let i = 0; i < numCuotas; i++) {
-    const montoInteres = trunc2(interesPorCuota);
-    const montoCapital = trunc2(capitalPorCuota);
+    const esUltima = i === numCuotas - 1;
+    
+    const montoCapital = esUltima ? saldo : baseCapital;
+    const montoInteres = esUltima 
+      ? interesTotal - (baseInteres * (numCuotas - 1)) 
+      : baseInteres;
+    
     saldo = Math.max(0, saldo - montoCapital);
+    
     tabla.push({
       numeroCuota: i + 1,
       montoCapital,
       montoInteres,
-      monto: trunc2(cuotaFija),
-      saldoRestante: trunc2(saldo),
+      monto: montoCapital + montoInteres,
+      saldoRestante: saldo,
     });
   }
 
   return {
-    cuotaFija: trunc2(cuotaFija),
-    interesTotal: trunc2(interesPorCuota * numCuotas),
+    cuotaFija,
+    interesTotal,
     tabla,
   };
 }
