@@ -25,24 +25,24 @@ if (!connectionString) {
   connectionString = "postgresql://postgres:%23Erickmanuel238@127.0.0.1:5432/credito_sur?schema=public";
 }
 
-console.log("[Migration] Iniciando regularización matemática de decimales...");
+console.log("[Migration] Iniciando regularización matemática de decimales (Reconstrucción Completa y Segura)...");
 const client = new Client({ connectionString });
 
 async function main() {
   await client.connect();
   console.log("[Migration] ✅ Conexión establecida a la base de datos.");
 
-  // 1. Obtener todos los préstamos activos, en mora y pendientes de aprobación
+  // 1. Obtener todos los préstamos activos, en mora, pendientes y pagados (para sanar historial)
   const loansRes = await client.query(`
     SELECT id, "numeroPrestamo", monto, "interesTotal", "totalPagado", 
            "capitalPagado", "interesPagado", "interesMoraPagado", 
            "saldoPendiente", "cuotaInicial", estado
     FROM "Prestamo"
-    WHERE estado IN ('ACTIVO', 'EN_MORA', 'PENDIENTE_APROBACION')
+    WHERE estado IN ('ACTIVO', 'EN_MORA', 'PENDIENTE_APROBACION', 'PAGADO')
       AND "eliminadoEn" IS NULL
   `);
 
-  console.log(`[Migration] Encontrados ${loansRes.rows.length} préstamos activos/en mora/pendientes.`);
+  console.log(`[Migration] Encontrados ${loansRes.rows.length} préstamos para regularizar.`);
 
   let correctedCount = 0;
 
@@ -64,6 +64,12 @@ async function main() {
       continue;
     }
 
+    // Verificar si todas las cuotas de este préstamo ya están pagadas
+    const todasLasCuotasPagas = cuotas.every(c => {
+      const est = String(c.estado || '').toUpperCase();
+      return est === 'PAGADA' || est === 'PAGADO';
+    });
+
     // Iniciar transacción para este préstamo
     await client.query('BEGIN');
 
@@ -74,7 +80,9 @@ async function main() {
 
       let sumCapitalExceptLast = 0;
       let sumInteresExceptLast = 0;
-      let totalMontoPagado = 0;
+      
+      let sumCapitalPagado = 0;
+      let sumInteresPagado = 0;
 
       // 1. Redondear cuotas 1 a n-1
       for (let i = 0; i < cuotas.length; i++) {
@@ -95,10 +103,23 @@ async function main() {
         }
 
         const targetMontoCuota = targetCap + targetInt;
-        const targetPagadoCuota = Math.round(Number(c.montoPagado));
-        const targetMoraCuota = Math.round(Number(c.montoInteresMora || 0));
+        let targetPagadoCuota = Math.round(Number(c.montoPagado));
+        
+        // Si la cuota ya está completamente pagada, su monto pagado debe ser exactamente igual a su nuevo monto total
+        const estadoUpper = String(c.estado || '').toUpperCase();
+        if (estadoUpper === 'PAGADO' || estadoUpper === 'PAGADA') {
+          targetPagadoCuota = targetMontoCuota;
+        }
 
-        totalMontoPagado += targetPagadoCuota;
+        // Calcular la porción de capital e interés pagada en esta cuota
+        // Los pagos amortizan primero interés y luego capital
+        const cuotaInteresPagado = Math.min(targetInt, targetPagadoCuota);
+        const cuotaCapitalPagado = Math.max(0, targetPagadoCuota - cuotaInteresPagado);
+
+        sumCapitalPagado += cuotaCapitalPagado;
+        sumInteresPagado += cuotaInteresPagado;
+
+        const targetMoraCuota = Math.round(Number(c.montoInteresMora || 0));
 
         // Actualizar cuota en la base de datos
         await client.query(`
@@ -110,29 +131,45 @@ async function main() {
       }
 
       // 2. Calcular los nuevos totales redondeados del préstamo
-      const finalTotalPagado = totalMontoPagado;
-      const finalSaldoPendiente = Math.max(0, (targetMonto + targetInteresTotal) - finalTotalPagado);
+      let finalTotalPagado = sumCapitalPagado + sumInteresPagado;
+      let finalSaldoPendiente = Math.max(0, (targetMonto + targetInteresTotal) - finalTotalPagado);
 
-      const finalCapitalPagado = Math.round(Number(loan.capitalPagado));
-      const finalInteresPagado = Math.round(Number(loan.interesPagado));
+      let finalCapitalPagado = sumCapitalPagado;
+      let finalInteresPagado = sumInteresPagado;
       const finalInteresMoraPagado = Math.round(Number(loan.interesMoraPagado));
+
+      let finalEstado = loan.estado;
+
+      // Si todas las cuotas están pagadas OR el saldo pendiente es muy pequeño (residuo <= 100 COP), asegurar cierre absoluto
+      if (todasLasCuotasPagas || finalSaldoPendiente <= 100) {
+        finalSaldoPendiente = 0;
+        finalCapitalPagado = targetMonto;
+        finalInteresPagado = targetInteresTotal;
+        finalTotalPagado = targetMonto + targetInteresTotal;
+        if (finalEstado === 'ACTIVO' || finalEstado === 'EN_MORA') {
+          finalEstado = 'PAGADO';
+        }
+      }
 
       // Actualizar el préstamo en la base de datos
       await client.query(`
         UPDATE "Prestamo"
         SET monto = $1, "interesTotal" = $2, "saldoPendiente" = $3, 
             "totalPagado" = $4, "capitalPagado" = $5, "interesPagado" = $6, 
-            "interesMoraPagado" = $7, "cuotaInicial" = $8
-        WHERE id = $9
+            "interesMoraPagado" = $7, "cuotaInicial" = $8, estado = $9
+        WHERE id = $10
       `, [
         targetMonto, targetInteresTotal, finalSaldoPendiente, 
         finalTotalPagado, finalCapitalPagado, finalInteresPagado, 
-        finalInteresMoraPagado, targetCuotaInicial, loanId
+        finalInteresMoraPagado, targetCuotaInicial, finalEstado, loanId
       ]);
 
       await client.query('COMMIT');
       correctedCount++;
-      console.log(`[Migration] ✅ Préstamo ${numPrestamo} regularizado exitosamente. Saldo: ${finalSaldoPendiente}`);
+      console.log(`[Migration] ✅ Préstamo ${numPrestamo} regularizado exitosamente.`);
+      console.log(`            -> Capital Pagado: ${finalCapitalPagado} / ${targetMonto}`);
+      console.log(`            -> Interés Pagado: ${finalInteresPagado} / ${targetInteresTotal}`);
+      console.log(`            -> Saldo Pendiente: ${finalSaldoPendiente}, Estado: ${finalEstado}`);
     } catch (err) {
       await client.query('ROLLBACK');
       console.error(`[Migration] ❌ Error al procesar préstamo ${numPrestamo}:`, err);
