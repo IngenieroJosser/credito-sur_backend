@@ -90,9 +90,21 @@ export class LoansService implements OnModuleInit {
     }
   }
 
-  generarNumeroPrestamo(tipoPrestamo: string) {
+  async generarNumeroPrestamo(tipoPrestamo: string) {
     const prefix = String(tipoPrestamo || '').toUpperCase() === 'ARTICULO' ? 'ART' : 'PRES';
-    return `${prefix}-${Date.now()}-${randomUUID().slice(0, 8)}`;
+    const lastLoan = await this.prisma.prestamo.findFirst({
+      where: { numeroPrestamo: { startsWith: `${prefix}-` } },
+      orderBy: { numeroPrestamo: 'desc' },
+    });
+    
+    let currentNumber = 1;
+    if (lastLoan) {
+      const parts = lastLoan.numeroPrestamo.split('-');
+      if (parts.length === 2 && !isNaN(Number(parts[1]))) {
+        currentNumber = parseInt(parts[1], 10) + 1;
+      }
+    }
+    return `${prefix}-${String(currentNumber).padStart(6, '0')}`;
   }
 
   constructor(
@@ -1974,7 +1986,7 @@ export class LoansService implements OnModuleInit {
       }
 
       // Generar numero de prestamo
-      const numeroPrestamo = this.generarNumeroPrestamo(createLoanDto.tipoPrestamo);
+      const numeroPrestamo = await this.generarNumeroPrestamo(createLoanDto.tipoPrestamo);
 
       // Calcular fecha fin
       const fechaInicio = this.parseBogotaDayKey(createLoanDto.fechaInicio);
@@ -2237,7 +2249,7 @@ export class LoansService implements OnModuleInit {
             monto: prestamo.monto,
             tipoPrestamo: prestamo.tipoPrestamo,
             saldoPendiente: prestamo.saldoPendiente,
-            valorArticulo: prestamo.saldoPendiente + prestamo.cuotaInicial,
+            valorArticulo: Number(prestamo.saldoPendiente || 0) + Number(prestamo.cuotaInicial || 0),
             cuotaInicial: prestamo.cuotaInicial,
             plazoMeses: prestamo.plazoMeses,
             tasaInteres: prestamo.tasaInteres,
@@ -2269,7 +2281,11 @@ export class LoansService implements OnModuleInit {
         accion: 'CREAR_PRESTAMO',
         entidad: 'Prestamo',
         entidadId: prestamo.id,
-        datosNuevos: prestamo,
+        datosNuevos: { 
+          id: prestamo.id,
+          monto: Number(prestamo.monto),
+          clienteId: prestamo.clienteId
+        },
         metadata: { clienteId: createLoanDto.clienteId },
       });
 
@@ -2779,7 +2795,7 @@ export class LoansService implements OnModuleInit {
       }
 
       // Generar número de préstamo/crédito
-      const numeroPrestamo = this.generarNumeroPrestamo(data.tipoPrestamo);
+      const numeroPrestamo = await this.generarNumeroPrestamo(data.tipoPrestamo);
 
       // Para el cálculo de cuotas y fechas, usamos el plazo real
       // EXTRAER DE FORMA INFALIBLE: recorremos todos los campos posibles en orden
