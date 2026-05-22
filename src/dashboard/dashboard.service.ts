@@ -500,7 +500,7 @@ export class DashboardService {
           },
           fechaVencimiento: { lte: endDayEndUTC },
         },
-        select: { prestamoId: true, fechaVencimiento: true, monto: true, montoPagado: true },
+        select: { prestamoId: true, fechaVencimiento: true, monto: true, montoPagado: true, estado: true },
         orderBy: [{ prestamoId: 'asc' }, { fechaVencimiento: 'asc' }],
       }),
       this.prisma.cuota.findMany({
