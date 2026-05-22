@@ -481,7 +481,7 @@ export class DashboardService {
     //      -> tomar la más antigua.
     //   b) Si NO existe deuda hasta ese día, contar una cuota PAGADA en ESE día (fechaPago en el día)
     //      -> tomar la más antigua por fechaVencimiento para determinismo.
-    const { startDate: endDayStartUTC } = getBogotaStartEndOfDay(endDate);
+    const { startDate: endDayStartUTC, endDate: endDayEndUTC } = getBogotaStartEndOfDay(endDate);
 
     const [cuotasNoPagadasHastaFin, cuotasPagadasEnRango] = await Promise.all([
       this.prisma.cuota.findMany({
@@ -498,7 +498,7 @@ export class DashboardService {
               EstadoCuota.PRORROGADA,
             ],
           },
-          fechaVencimiento: { lte: endDayStartUTC },
+          fechaVencimiento: { lte: endDayEndUTC },
         },
         select: { prestamoId: true, fechaVencimiento: true, monto: true, montoPagado: true },
         orderBy: [{ prestamoId: 'asc' }, { fechaVencimiento: 'asc' }],
@@ -570,13 +570,13 @@ export class DashboardService {
         // No procesar días futuros
         if (currentDate > endDate) break;
 
-        const { startDate: dayStartBogota } = getBogotaStartEndOfDay(currentDate);
+        const { startDate: dayStartBogota, endDate: dayEndBogota } = getBogotaStartEndOfDay(currentDate);
         const dayKey = dayStartBogota.toISOString();
 
         const pagos = pagosPorDiaKey.get(dayKey) || 0;
         const total = pagos;
 
-        const cutoff = dayStartBogota.getTime();
+        const cutoff = dayEndBogota.getTime();
         while (ptr < firstUnpaidSorted.length && firstUnpaidSorted[ptr].ts <= cutoff) {
           const it = firstUnpaidSorted[ptr];
           if (!unpaidLoans.has(it.prestamoId)) {
@@ -629,14 +629,14 @@ export class DashboardService {
       cursor.setTime(cStart.getTime());
 
       while (cursor <= endDate) {
-        const { startDate: dayStartBogota } = getBogotaStartEndOfDay(cursor);
+        const { startDate: dayStartBogota, endDate: dayEndBogota } = getBogotaStartEndOfDay(cursor);
         const dayKey = dayStartBogota.toISOString();
         const monthKey = `${dayStartBogota.getFullYear()}-${String(dayStartBogota.getMonth() + 1).padStart(2, '0')}`;
 
         const pagos = pagosPorDiaKey.get(dayKey) || 0;
         const value = pagos;
 
-        const cutoff = dayStartBogota.getTime();
+        const cutoff = dayEndBogota.getTime();
         while (ptrMonth < firstUnpaidSorted.length && firstUnpaidSorted[ptrMonth].ts <= cutoff) {
           const it = firstUnpaidSorted[ptrMonth];
           if (!unpaidLoansMonth.has(it.prestamoId)) {
