@@ -1018,14 +1018,48 @@ export class RoutesService {
 
           if (clientesIds.length > 0) {
 
-            // Para la META: solo préstamos activos/en mora
-            const prestamosParaMeta = await this.prisma.prestamo.findMany({
+            // Obtener registros de visita del día para excluir clientes ausentes de la meta
+            const hoyKey2 = getBogotaDayKey(new Date());
+            const registrosVisitas = await this.prisma.registroVisita.findMany({
+              where: {
+                rutaId: ruta.id,
+                fechaVisita: hoyKey2,
+              },
+            });
+
+            // Obtener pagos de hoy para excluir ausentes que ya pagaron
+            const { startDate: inicioHoy, endDate: finHoy } = getBogotaStartEndOfDay(new Date());
+            const pagosHoy = await this.prisma.pago.findMany({
               where: {
                 clienteId: { in: clientesIds },
+                fechaPago: {
+                  gte: inicioHoy,
+                  lte: finHoy,
+                },
+              },
+              select: {
+                clienteId: true,
+              },
+            });
+            const clientesConPagoHoy = new Set(
+              pagosHoy.map((p) => p.clienteId),
+            );
+
+            const clientesAusentes = new Set(
+              registrosVisitas
+                .filter((r) => r.estadoVisita === 'ausente')
+                .filter((r) => !clientesConPagoHoy.has(r.clienteId))
+                .map((r) => r.clienteId)
+            );
+
+            // Para la META: solo préstamos activos/en mora, excluyendo clientes ausentes
+            const prestamosParaMeta = await this.prisma.prestamo.findMany({
+              where: {
+                clienteId: { in: clientesIds.filter((id) => !clientesAusentes.has(id)) },
                 estado: { in: ['ACTIVO', 'EN_MORA'] }, // ✅ sin PAGADO
                 eliminadoEn: null,
               },
-              select: { id: true, saldoPendiente: true, monto: true, cantidadCuotas: true, frecuenciaPago: true }
+              select: { id: true, saldoPendiente: true, monto: true, cantidadCuotas: true, frecuenciaPago: true, clienteId: true }
             });
 
             // Para el RECAUDO: incluir PAGADO para capturar pagos de hoy
@@ -1523,8 +1557,43 @@ export class RoutesService {
 
       if (clientesIds.length > 0) {
 
-        // Obtener préstamos activos y en mora
+        // Obtener registros de visita del día para excluir clientes ausentes de la meta
+        const hoyKey2 = getBogotaDayKey(new Date());
+        const registrosVisitas = await this.prisma.registroVisita.findMany({
+          where: {
+            rutaId: id,
+            fechaVisita: hoyKey2,
+          },
+        });
+
+        // Obtener pagos de hoy para excluir ausentes que ya pagaron
+        const { startDate: inicioHoy, endDate: finHoy } = getBogotaStartEndOfDay(new Date());
+        const pagosHoy = await this.prisma.pago.findMany({
+          where: {
+            clienteId: { in: clientesIds },
+            fechaPago: {
+              gte: inicioHoy,
+              lte: finHoy,
+            },
+          },
+          select: {
+            clienteId: true,
+          },
+        });
+        const clientesConPagoHoy = new Set(
+          pagosHoy.map((p) => p.clienteId),
+        );
+
+        const clientesAusentes = new Set(
+          registrosVisitas
+            .filter((r) => r.estadoVisita === 'ausente')
+            .filter((r) => !clientesConPagoHoy.has(r.clienteId))
+            .map((r) => r.clienteId)
+        );
+
+        // Obtener préstamos activos y en mora, excluyendo clientes ausentes
         const prestamosActivos = ruta.asignaciones
+          .filter((a) => !clientesAusentes.has(a.clienteId))
           .flatMap((a) => a?.cliente?.prestamos || [])
           .filter((p) => p && p.eliminadoEn == null);
 
@@ -1737,7 +1806,23 @@ export class RoutesService {
 
       const hoyKey2 = getBogotaDayKey(new Date());
 
-      for (const asig of ruta.asignaciones) {
+      const registrosVisitas = await this.prisma.registroVisita.findMany({
+        where: {
+          rutaId: id,
+          fechaVisita: hoyKey2,
+        },
+      });
+      const visitasMap = new Map(registrosVisitas.map((r) => [r.clienteId, r as any]));
+
+      const asignaciones: any[] = ruta.asignaciones;
+      for (const asig of asignaciones) {
+         const reg = visitasMap.get(asig.clienteId);
+         if (reg) {
+            // @ts-ignore - Prisma type inference issue, properties exist at runtime
+            asig.estadoVisita = reg.estadoVisita;
+            // @ts-ignore - Prisma type inference issue, properties exist at runtime
+            asig.notasVisita = reg.notas;
+         }
          if (!asig.cliente || !asig.cliente.prestamos) continue;
          for (const p of asig.cliente.prestamos) {
             // BUG-02 FIX: calcular monto acumulado sin mutar el objeto Prisma.
@@ -3539,11 +3624,14 @@ export class RoutesService {
 
 
 
-    const totalEsperado = visitasDelDia.reduce((sum, v) => {
-      // La meta se basa en el monto nominal de la cuota (lo que corresponde pagar hoy)
-      const montoVisita = v.prestamos.reduce((pSum, p) => pSum + Number(p.proximaCuota?.montoNominal || 0), 0);
-      return sum + montoVisita;
-    }, 0);
+    // Obtener los registros de visita (ej: ausentes) de hoy
+    const registrosVisitas = await this.prisma.registroVisita.findMany({
+      where: {
+        rutaId,
+        fechaVisita: fechaKey
+      }
+    });
+    const visitasMap = new Map(registrosVisitas.map(r => [r.clienteId, r as any]));
 
     // Calcular recaudo real de esa fecha para esa ruta
     // Calcular recaudo real de esa fecha para la ruta basándose en los clientes identificados
@@ -3570,10 +3658,48 @@ export class RoutesService {
       pagosPorCliente[p.clienteId] = (pagosPorCliente[p.clienteId] || 0) + Number(p.montoTotal || 0);
     });
 
-    // Enriquecer visitas con su recaudo individual del día
+    const totalEsperado = visitasDelDia.reduce((sum, v) => {
+      const cid = v.cliente?.id || v.clienteId;
+      const registro: any = visitasMap.get(cid);
+      
+      // Si está ausente y no pagó nada, descontamos de la meta
+      if (registro?.estadoVisita === 'ausente' && (pagosPorCliente[cid] || 0) === 0) {
+        return sum; // No suma a la meta
+      }
+
+      // La meta se basa en el monto nominal de la cuota (lo que corresponde pagar hoy)
+      const montoVisita = v.prestamos.reduce((pSum, p) => pSum + Number(p.proximaCuota?.montoNominal || 0), 0);
+      return sum + montoVisita;
+    }, 0);
+
+
+
+    // Enriquecer visitas con su recaudo individual del día y su estado de visita (ausente)
     visitasDelDia.forEach(v => {
       const cid = v.cliente?.id || v.clienteId;
+      // @ts-ignore - Prisma type inference issue, properties exist at runtime
       v.recaudadoDelDia = pagosPorCliente[cid] || 0;
+
+      const registro = visitasMap.get(cid);
+      if (registro) {
+        // @ts-ignore - Prisma type inference issue, properties exist at runtime
+        v.estadoVisita = registro.estadoVisita;
+        // @ts-ignore - Prisma type inference issue, properties exist at runtime
+        v.notasVisita = registro.notas;
+      }
+    });
+
+    // Filtrar saldados sin actividad para no inflar el total de la ruta ni ensuciar la data
+    const visitasDelDiaFinales = visitasDelDia.filter(v => {
+      const cid = v.cliente?.id || v.clienteId;
+      // @ts-ignore - Prisma type inference issue, properties exist at runtime
+      const tuvoActividad = (v.recaudadoDelDia || 0) > 0 || v.estadoVisita === 'ausente';
+      
+      const todosPagados = v.prestamos.every(p => p.estado === 'PAGADO');
+      const saldoTotal = v.prestamos.reduce((sum, p) => sum + Number(p.saldoPendiente || 0), 0);
+      const isSaldado = todosPagados && saldoTotal <= 0;
+      
+      return !(isSaldado && !tuvoActividad);
     });
 
     const recaudoFinal = pagosDeHoy.reduce((sum, p) => sum + Number(p.montoTotal || 0), 0);
@@ -3593,35 +3719,24 @@ export class RoutesService {
       ? Math.round((recaudoFinal / totalEsperado) * 100) 
       : (recaudoFinal > 0 ? 100 : 0);
 
-    const gestionadosCount = await this.prisma.pago.groupBy({
-      by: ['clienteId'],
-      where: {
-        prestamo: {
-          cliente: {
-            asignacionesRuta: {
-              some: { rutaId, activa: true }
-            }
-          }
-        },
-        fechaPago: { gte: fInicio, lte: fFin }
-      }
-    });
-
-    const gestionados = gestionadosCount.length;
+    const gestionadosPagos = Object.keys(pagosPorCliente).length;
+    // Añadimos a los gestionados aquellos que tienen registro de visita PERO no tienen pago hoy
+    const gestionadosAusentes = registrosVisitas.filter(r => r.estadoVisita === 'ausente' && !(pagosPorCliente[r.clienteId] > 0)).length;
+    const gestionados = gestionadosPagos + gestionadosAusentes;
 
     return {
       fecha: fechaKey, // Clave de fecha Bogotá YYYY-MM-DD
       rutaId,
-      totalVisitas: visitasDelDia.length,
+      totalVisitas: visitasDelDiaFinales.length,
       resumen: {
         recaudo: recaudoFinal,
         meta: totalEsperado,
         gastos: gastosFinal,
         efectividad,
         visitados: gestionados,
-        total: visitasDelDia.length
+        total: visitasDelDiaFinales.length
       },
-      visitas: visitasDelDia,
+      visitas: visitasDelDiaFinales,
     };
   }
 
@@ -3853,11 +3968,41 @@ export class RoutesService {
 
       semaforo: 'VERDE' | 'AMARILLO' | 'ROJO';
 
+      estadoVisita?: string | null;
+
+      notasVisita?: string | null;
+
     }
 
 
 
     const { startDate: hoy } = getBogotaStartEndOfDay(new Date());
+
+    const fechaKey = getBogotaDayKey(hoy);
+
+    type VisitaRuta = {
+      clienteId: string;
+      fechaVisita: string;
+      estadoVisita: string;
+      notas: string | null;
+    };
+
+    const registrosVisitas = await this.prisma.registroVisita.findMany({
+      where: {
+        rutaId,
+        fechaVisita: fechaKey,
+      },
+      select: {
+        clienteId: true,
+        fechaVisita: true,
+        estadoVisita: true,
+        notas: true,
+      },
+    });
+
+    const visitasMap = new Map<string, VisitaRuta>(
+      registrosVisitas.map((r: VisitaRuta) => [r.clienteId, r]),
+    );
 
     const filas: FilaRuta[] = [];
 
@@ -3868,6 +4013,8 @@ export class RoutesService {
     for (const asig of ruta.asignaciones) {
 
       const c = asig.cliente;
+
+      const gestionRuta = visitasMap.get(c.id);
 
       const prestamosActivos = c.prestamos;
 
@@ -3902,6 +4049,10 @@ export class RoutesService {
           diasMora: 0,
 
           semaforo: 'VERDE',
+
+          estadoVisita: gestionRuta?.estadoVisita || null,
+
+          notasVisita: gestionRuta?.notas || null,
 
         });
 
@@ -3968,6 +4119,10 @@ export class RoutesService {
           diasMora,
 
           semaforo,
+
+          estadoVisita: gestionRuta?.estadoVisita || null,
+
+          notasVisita: gestionRuta?.notas || null,
 
         });
 
@@ -4043,6 +4198,10 @@ export class RoutesService {
 
       semaforo: f.semaforo,
 
+      estadoVisita: f.estadoVisita,
+
+      notasVisita: f.notasVisita,
+
     }));
 
 
@@ -4060,9 +4219,44 @@ export class RoutesService {
     const out = await generarPDFRutaCobrador(filasTpl, meta, fechaArchivo);
 
     return out.data;
-
   }
 
-}
+  /**
+   * Registra una visita en la ruta para el día (ej: cliente ausente)
+   */
+  async registrarVisita(
+    rutaId: string,
+    clienteId: string,
+    estadoVisita: string,
+    notas: string,
+    actor?: RouteActor
+  ) {
+    await this.assertCollectorOwnRoute(rutaId, actor);
+    
+    const { startDate } = getBogotaStartEndOfDay(new Date());
+    const fechaKey = getBogotaDayKey(startDate);
 
+    return this.prisma.registroVisita.upsert({
+      where: {
+        rutaId_clienteId_fechaVisita: {
+          rutaId,
+          clienteId,
+          fechaVisita: fechaKey
+        }
+      },
+      create: {
+        rutaId,
+        clienteId,
+        cobradorId: actor?.id as string,
+        fechaVisita: fechaKey,
+        estadoVisita,
+        notas
+      },
+      update: {
+        estadoVisita,
+        notas
+      }
+    });
+  }
+}
 

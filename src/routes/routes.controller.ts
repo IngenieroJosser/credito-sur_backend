@@ -423,4 +423,24 @@ export class RoutesController {
     res.setHeader('Content-Disposition', `attachment; filename="ruta_${id}.pdf"`);
     res.send(buffer);
   }
+
+  @Post(':id/clientes/:clienteId/visita')
+  @Roles(
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.COBRADOR,
+  )
+  @ApiOperation({ summary: 'Registrar visita (ej: ausente) para un cliente en la ruta' })
+  @ApiResponse({ status: 201, description: 'Visita registrada exitosamente' })
+  registrarVisita(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('clienteId', ParseUUIDPipe) clienteId: string,
+    @Body('estadoVisita') estadoVisita: string,
+    @Body('notas') notas: string,
+    @Request() req
+  ) {
+    return this.routesService.registrarVisita(id, clienteId, estadoVisita, notas, req.user);
+  }
 }

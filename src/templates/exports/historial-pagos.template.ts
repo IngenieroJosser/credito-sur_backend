@@ -29,6 +29,8 @@ export interface PagoRow {
   esAbono: boolean;
   comentario?: string;
   origenCaja?: string;
+  estadoVisita?: string | null;
+  notasVisita?: string | null;
 }
 
 export interface PagosTotales {
@@ -74,6 +76,24 @@ function fmtFecha(f: Date | string): string {
 
 function fmtCOP(val: number): string {
   return `$${(val || 0).toLocaleString('es-CO')}`;
+}
+
+function fmtEstadoVisita(estado?: string | null, notas?: string | null): string {
+  const e = String(estado || '').toLowerCase();
+  const n = String(notas || '').trim();
+
+  if (e === 'ausente') {
+    return n ? `AUSENTE - ${n}` : 'AUSENTE';
+  }
+
+  if (n.toLowerCase().includes('ausencia anulada')) {
+    return n;
+  }
+
+  if (e === 'pagado') return 'GESTIÓN CERRADA';
+  if (e === 'pendiente') return 'GESTIÓN REABIERTA';
+
+  return '';
 }
 
 function solidFill(argb: string): ExcelJS.Fill {
@@ -155,11 +175,12 @@ export async function generarExcelPagos(
     { key: 'metodo',       width: 14 },
     { key: 'cobrador',     width: 36 },   // ← amplio
     { key: 'origenCaja',   width: 15 },
+    { key: 'estadoVisita', width: 14 },
     { key: 'comentario',   width: 32 },
   ] as ExcelJS.Column[];
 
   const LAST = 'N';
-  const NCOLS = 14;
+  const NCOLS = 15;
 
   // ── Fila 1: Banda azul decorativa ─────────────────────────────────────────
   ws.getRow(1).height = 6;
@@ -251,7 +272,7 @@ export async function generarExcelPagos(
   // ── Fila 9: Encabezados tabla ─────────────────────────────────────────────
   ws.getRow(9).height = 28;
   const headers = ['Fecha','N° Pago','N° Préstamo','Cliente','Documento',
-    'Tipo','Monto Total','Capital','Interés','Mora','Método','Cobrador','Caja/P.V.','Comentario'];
+    'Tipo','Monto Total','Capital','Interés','Mora','Método','Cobrador','Caja/P.V.','Estado Visita','Comentario'];
   headers.forEach((h, i) => applyHeader(ws.getCell(9, i + 1)));
   headers.forEach((h, i) => { ws.getCell(9, i + 1).value = h; });
   ws.autoFilter = { from: 'A9', to: `${LAST}9` };
@@ -277,6 +298,7 @@ export async function generarExcelPagos(
       fila.metodoPago,
       fila.cobrador,
       fila.origenCaja     || '',
+      fmtEstadoVisita(fila.estadoVisita, fila.notasVisita),
       fila.comentario     ?? '',
     ];
 
@@ -544,17 +566,18 @@ export async function generarPDFPagos(
 
   // ── Configuración de columnas tabla ───────────────────────────────────────
   const cols = [
-    { label: 'Fecha',        width: 53  },
-    { label: 'N° Pago',      width: 53  },
-    { label: 'N° Préstamo',  width: 63  },
-    { label: 'Cliente',      width: 125 }, // Ya no truncamos
-    { label: 'Tipo',         width: 48  }, // Nueva columna para ABONO / CUOTA
-    { label: 'Monto Total',  width: 68  },
-    { label: 'Capital',      width: 60  },
-    { label: 'Interés',      width: 60  },
-    { label: 'Método',       width: 55  },
-    { label: 'Cobrador',     width: 90  }, 
-    { label: 'Caja/P.V.',    width: 45  },
+    { label: 'Fecha',        width: 50  },
+    { label: 'N° Pago',      width: 50  },
+    { label: 'N° Préstamo',  width: 60  },
+    { label: 'Cliente',      width: 115 },
+    { label: 'Tipo',         width: 44  },
+    { label: 'Monto Total',  width: 62  },
+    { label: 'Capital',      width: 55  },
+    { label: 'Interés',      width: 55  },
+    { label: 'Método',       width: 52  },
+    { label: 'Cobrador',     width: 78  },
+    { label: 'Caja/P.V.',    width: 42  },
+    { label: 'Gestión',      width: 65  },
   ];
   const tableLeft  = 28;
   const tableWidth = cols.reduce((s, c) => s + c.width, 0);
@@ -605,7 +628,8 @@ export async function generarPDFPagos(
       fmtCOP(fila.interesPagado  ?? 0),
       fila.metodoPago      || '',
       fila.cobrador        || '',
-      fila.origenCaja      || '', 
+      fila.origenCaja      || '',
+      fmtEstadoVisita(fila.estadoVisita, fila.notasVisita),
     ];
 
     doc.font('Helvetica').fontSize(7.5); // Asegurar fuente para medir
@@ -640,7 +664,7 @@ export async function generarPDFPagos(
     let x = tableLeft;
     rowVals.forEach((val, ci) => {
       const isMoneyCol = ci >= 5 && ci <= 7;
-      const align      = isMoneyCol ? 'right' : (ci === 4 || ci === 10 ? 'center' : 'left');
+      const align      = isMoneyCol ? 'right' : (ci === 4 || ci === 10 || ci === 11 ? 'center' : 'left');
 
       if (ci === 5) {
         // Monto total: amarillo si abono o azul si cuota
@@ -656,6 +680,9 @@ export async function generarPDFPagos(
         doc.font('Helvetica').fillColor(GRIS_TXT); // Cobrador
       } else if (ci === 10) {
         doc.font('Helvetica-Bold').fillColor(NAR_MED); // Caja/PV
+      } else if (ci === 11) {
+        const esAusente = String(fila.estadoVisita || '').toLowerCase() === 'ausente';
+        doc.font('Helvetica-Bold').fillColor(esAusente ? '#E11D48' : GRIS_MED);
       } else {
         doc.font('Helvetica').fillColor(ci === 3 ? AZUL_DARK : GRIS_TXT);
         if (ci === 3) doc.font('Helvetica-Bold');

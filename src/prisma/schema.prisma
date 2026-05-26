@@ -60,6 +60,7 @@ model Usuario {
 
   syncConflictsCreados    SyncConflict[]             @relation("SyncConflictCreadoPor")
   syncConflictsResueltos  SyncConflict[]             @relation("SyncConflictResueltoPor")
+  registrosVisitas        RegistroVisita[]           @relation("VisitasRegistradas")
 
   @@index([correo])
   @@index([rol])
@@ -200,6 +201,7 @@ model Cliente {
   prestamos                 Prestamo[]
   asignacionesRuta          AsignacionRuta[]
   archivos                  Multimedia[]         @relation("MultimediaCliente")
+  registrosVisitas          RegistroVisita[]
 
   @@index([dni])
   @@index([nivelRiesgo])
@@ -370,6 +372,7 @@ model Pago {
   clienteId            String
   prestamoId           String
   cobradorId           String
+  rutaId               String?
   fechaPago            DateTime             @default(now())
   montoTotal           Decimal              @db.Decimal(10, 2)
   metodoPago           MetodoPago
@@ -382,6 +385,7 @@ model Pago {
   cliente              Cliente              @relation(fields: [clienteId], references: [id])
   cobrador             Usuario              @relation(fields: [cobradorId], references: [id])
   prestamo             Prestamo             @relation(fields: [prestamoId], references: [id])
+  ruta                 Ruta?                @relation(fields: [rutaId], references: [id])
   detalles             DetallePago[]
   archivos             Multimedia[]         @relation("MultimediaPago")
   recibo               Recibo?
@@ -390,6 +394,7 @@ model Pago {
   @@index([clienteId])
   @@index([prestamoId])
   @@index([cobradorId])
+  @@index([rutaId])
   @@index([fechaPago])
   @@index([estadoSincronizacion])
 }
@@ -445,6 +450,8 @@ model Ruta {
   gastos        Gasto[]
   asignaciones  AsignacionRuta[]
   cajas         Caja[]
+  registrosVisitas RegistroVisita[]
+  pagos         Pago[]
   cobrador      Usuario          @relation("RutaCobrador", fields: [cobradorId], references: [id])
   supervisor    Usuario?         @relation("RutaSupervisor", fields: [supervisorId], references: [id])
 
@@ -1025,4 +1032,24 @@ model JournalLine {
   @@index([accountCode])
   @@index([cajaId])
   @@map("asientos_lineas")
+}
+
+model RegistroVisita {
+  id            String   @id @default(uuid())
+  rutaId        String
+  clienteId     String
+  prestamoId    String?
+  cobradorId    String
+  fechaVisita   String   @db.VarChar(10) // Formato 'YYYY-MM-DD' en Bogotá
+  estadoVisita  String   @db.VarChar(50) // Ejemplo: 'ausente'
+  notas         String?  @db.Text
+  creadoEn      DateTime @default(now())
+  
+  cliente       Cliente  @relation(fields: [clienteId], references: [id])
+  cobrador      Usuario  @relation("VisitasRegistradas", fields: [cobradorId], references: [id])
+  ruta          Ruta     @relation(fields: [rutaId], references: [id])
+
+  @@unique([rutaId, clienteId, fechaVisita])
+  @@index([rutaId, fechaVisita])
+  @@map("registros_visitas")
 }

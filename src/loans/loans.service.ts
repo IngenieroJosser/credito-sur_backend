@@ -1290,6 +1290,101 @@ export class LoansService implements OnModuleInit {
         throw new NotFoundException('Préstamo no encontrado');
       }
 
+      // Obtener registros de visita del cliente para mostrar estado de ausencia en plan de pagos
+      const resolveFechaGestionCuota = (cuota: any) => {
+        return cuota.fechaVencimientoProrroga
+          || cuota.fechaVencimiento
+          || cuota.fecha
+          || null;
+      };
+
+      const fechasCuotas = Array.from(
+        new Set(
+          (prestamo.cuotas || [])
+            .map((cuota: any) => {
+              const fechaGestion = resolveFechaGestionCuota(cuota);
+              return fechaGestion ? getBogotaDayKey(fechaGestion) : null;
+            })
+            .filter(Boolean),
+        ),
+      );
+
+      type VisitaConRelaciones = {
+        fechaVisita: string;
+        estadoVisita: string;
+        notas: string | null;
+        creadoEn: Date;
+        ruta: {
+          id: string;
+          nombre: string;
+          codigo: string;
+        } | null;
+        cobrador: {
+          id: string;
+          nombres: string;
+          apellidos: string;
+        } | null;
+      };
+
+      const registrosVisitas = fechasCuotas.length > 0
+        ? await this.prisma.registroVisita.findMany({
+            where: {
+              clienteId: prestamo.clienteId,
+              fechaVisita: { in: fechasCuotas },
+            },
+            select: {
+              fechaVisita: true,
+              estadoVisita: true,
+              notas: true,
+              creadoEn: true,
+              ruta: {
+                select: {
+                  id: true,
+                  nombre: true,
+                  codigo: true,
+                },
+              },
+              cobrador: {
+                select: {
+                  id: true,
+                  nombres: true,
+                  apellidos: true,
+                },
+              },
+            },
+          })
+        : [];
+
+      const visitasMap = new Map(
+        registrosVisitas.map((r: VisitaConRelaciones) => [r.fechaVisita, r]),
+      );
+
+      // Agregar estadoVisita a cada cuota
+      prestamo.cuotas = prestamo.cuotas.map((cuota: any) => {
+        const fechaGestion = resolveFechaGestionCuota(cuota);
+        const fechaKey = fechaGestion ? getBogotaDayKey(fechaGestion) : null;
+        const gestion = fechaKey
+          ? (visitasMap.get(fechaKey) as VisitaConRelaciones | undefined)
+          : undefined;
+
+        return {
+          ...cuota,
+          estadoVisita: gestion?.estadoVisita || null,
+          notasVisita: gestion?.notas || null,
+          fechaVisita: gestion?.fechaVisita || null,
+          rutaVisita: gestion?.ruta
+            ? {
+                id: gestion.ruta.id,
+                nombre: gestion.ruta.nombre,
+                codigo: gestion.ruta.codigo,
+              }
+            : null,
+          cobradorVisita: gestion?.cobrador
+            ? `${gestion.cobrador.nombres || ''} ${gestion.cobrador.apellidos || ''}`.trim()
+            : null,
+        };
+      });
+
       return prestamo;
     } catch (error) {
       this.logger.error(`Error getting loan ${id}:`, error);
