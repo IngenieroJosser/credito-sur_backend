@@ -35,6 +35,8 @@ export interface RutaCobradorRow {
   estadoPrestamo: string;
   diasMora:       number;
   semaforo:       'VERDE' | 'AMARILLO' | 'ROJO';
+  estadoVisita?:  string | null;
+  notasVisita?:   string | null;
 }
 
 export interface RutaCobradorMeta {
@@ -67,6 +69,24 @@ const C = {
 
 const fmtCOP = (v: number) => `$${(v || 0).toLocaleString('es-CO')}`;
 
+function fmtEstadoVisita(estado?: string | null, notas?: string | null): string {
+  const e = String(estado || '').toLowerCase();
+  const n = String(notas || '').trim();
+
+  if (e === 'ausente') {
+    return n ? `AUSENTE - ${n}` : 'AUSENTE';
+  }
+
+  if (n.toLowerCase().includes('ausencia anulada')) {
+    return n;
+  }
+
+  if (e === 'pagado') return 'GESTIÓN CERRADA';
+  if (e === 'pendiente') return 'GESTIÓN REABIERTA';
+
+  return '';
+}
+
 function getLogoPath(): string | null {
   const prod = path.join(process.cwd(), 'dist/assets/logo.png');
   const dev  = path.join(process.cwd(), 'src/assets/logo.png');
@@ -83,12 +103,13 @@ const PDF_COLS = [
   { label: 'CC',        w:  62, align: 'center' as const },
   { label: 'Teléfono',  w:  66, align: 'center' as const },
   { label: 'Dirección', w: 104, align: 'left'   as const },
-  { label: 'Préstamo',  w:  82, align: 'center' as const },  // 82pt: evita wrap en códigos tipo PR-DEMO-MORA-01
+  { label: 'Préstamo',  w:  82, align: 'center' as const },
   { label: 'Cuota',     w:  62, align: 'right'  as const },
   { label: 'Fecha',     w:  56, align: 'center' as const },
   { label: 'Saldo',     w:  68, align: 'right'  as const },
   { label: 'Estado',    w:  58, align: 'center' as const },
   { label: 'Mora',      w:  38, align: 'center' as const },
+  { label: 'Gestión',   w:  65, align: 'center' as const },
 ];
 
 const TABLE_LEFT  = 30;
@@ -123,6 +144,7 @@ export async function generarExcelRutaCobrador(
     { header: 'Saldo',       key: 'saldo',          width: 16 },
     { header: 'Estado',      key: 'estadoPrestamo', width: 13 },
     { header: 'Días Mora',   key: 'diasMora',       width: 10 },
+    { header: 'Gestión Ruta', key: 'gestionRuta',   width: 18 },
     { header: 'Cobrado ✔',   key: 'cobrado',        width: 14 },
     { header: 'Notas',       key: 'notas',          width: 22 },
   ] as any;
@@ -133,7 +155,7 @@ export async function generarExcelRutaCobrador(
   ]);
   title.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
   title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
-  ws.mergeCells('A1:M1');
+  ws.mergeCells('A1:N1');
   ws.getRow(1).height = 26;
 
   const subtitle = ws.addRow([
@@ -142,7 +164,7 @@ export async function generarExcelRutaCobrador(
   ]);
   subtitle.font = { size: 10, color: { argb: 'FFFFFFFF' } };
   subtitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } };
-  ws.mergeCells('A2:M2');
+  ws.mergeCells('A2:N2');
   ws.getRow(2).height = 18;
 
   ws.addRow([]);
@@ -174,6 +196,7 @@ export async function generarExcelRutaCobrador(
       saldo:          f.saldo,
       estadoPrestamo: f.estadoPrestamo?.replace(/_/g, ' ') || '',
       diasMora:       f.diasMora,
+      gestionRuta:    fmtEstadoVisita(f.estadoVisita, f.notasVisita),
       cobrado:        '',
       notas:          '',
     } as any);
@@ -343,6 +366,7 @@ export async function generarPDFRutaCobrador(
       fila.saldo > 0  ? fmtCOP(fila.saldo)  : '—',
       (fila.estadoPrestamo || '').replace(/_/g, ' '),
       fila.diasMora > 0 ? `${fila.diasMora}d` : '',
+      fmtEstadoVisita(fila.estadoVisita, fila.notasVisita),
     ];
 
     // Altura dinámica
@@ -391,6 +415,9 @@ export async function generarPDFRutaCobrador(
         doc.font('Helvetica-Bold').fillColor(C.ROJO_DARK);
       } else if (ci === 10 && fila.semaforo === 'AMARILLO') {
         doc.font('Helvetica-Bold').fillColor(C.AMARILLO_DARK);
+      } else if (ci === 11) {
+        const esAusente = String(fila.estadoVisita || '').toLowerCase() === 'ausente';
+        doc.font('Helvetica-Bold').fillColor(esAusente ? '#E11D48' : C.GRIS_MED);
       } else {
         doc.font(ci === 1 ? 'Helvetica-Bold' : 'Helvetica').fillColor(C.GRIS_TXT);
       }

@@ -1,0 +1,10 @@
+ALTER TABLE "Pago"
+ADD COLUMN IF NOT EXISTS "rutaId" TEXT;
+
+ALTER TABLE "Pago"
+ADD CONSTRAINT "Pago_rutaId_fkey"
+FOREIGN KEY ("rutaId") REFERENCES "rutas"("id")
+ON DELETE SET NULL
+ON UPDATE CASCADE;
+
+CREATE INDEX IF NOT EXISTS "Pago_rutaId_idx" ON "Pago"("rutaId");

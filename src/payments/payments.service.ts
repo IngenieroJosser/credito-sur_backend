@@ -24,7 +24,7 @@ import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway'
 import { PagoConRelacionesExport } from '../common/types';
 import { generarExcelPagos, generarPDFPagos, PagoRow, PagosTotales } from '../templates/exports/historial-pagos.template';
 import { CloudinaryService } from '../upload/cloudinary.service';
-import { formatBogotaOffsetIso, getBogotaDayKey } from '../utils/date-utils';
+import { formatBogotaOffsetIso, getBogotaDayKey, getBogotaStartEndOfDay, getBogotaStartEndOfDayFromKey } from '../utils/date-utils';
 import { LedgerService } from '../accounting/ledger.service';
 import { randomUUID } from 'crypto';
 
@@ -770,6 +770,7 @@ export class PaymentsService {
           clienteId: clienteId,
           prestamoId: prestamoIdVal,
           cobradorId: cobradorIdVal,
+          rutaId: asignacion.rutaId,
           fechaPago: fechaPagoBogota,
           montoTotal,
           metodoPago: paymentDto.metodoPago || MetodoPago.EFECTIVO,
@@ -784,6 +785,30 @@ export class PaymentsService {
           cliente: {
             select: { id: true, nombres: true, apellidos: true },
           },
+        },
+      });
+
+      // 1.5. Limpiar estado de ausente si el cliente estaba marcado como ausente
+      const fechaKey = getBogotaDayKey(fechaPagoBogota);
+
+      const estadoVisitaPostPago =
+        paymentDto.tipoRegistro === 'PAGO'
+          ? 'pagado'
+          : 'pendiente';
+
+      await tx.registroVisita.updateMany({
+        where: {
+          clienteId: clienteId,
+          fechaVisita: fechaKey,
+          estadoVisita: 'ausente',
+          ...(cobradorIdVal ? { rutaId: asignacion.rutaId } : {}),
+        },
+        data: {
+          estadoVisita: estadoVisitaPostPago,
+          notas:
+            paymentDto.tipoRegistro === 'PAGO'
+              ? 'Ausencia anulada automáticamente por registro de pago.'
+              : 'Ausencia anulada automáticamente por registro de abono.',
         },
       });
 
@@ -1225,10 +1250,24 @@ export class PaymentsService {
     if (filters.prestamoId) {
       where.prestamoId = filters.prestamoId;
     }
+    if (filters.rutaId) {
+      where.rutaId = filters.rutaId;
+    }
     if (filters.startDate || filters.endDate) {
-      where.fechaPago = {};
-      if (filters.startDate) (where.fechaPago as any).gte = new Date(filters.startDate);
-      if (filters.endDate) (where.fechaPago as any).lte = new Date(filters.endDate);
+      const startKey = filters.startDate || filters.endDate;
+      const endKey = filters.endDate || filters.startDate;
+
+      if (!startKey || !endKey) {
+        throw new BadRequestException('Debe proporcionar al menos una fecha de inicio o fin');
+      }
+
+      const { startDate } = getBogotaStartEndOfDayFromKey(startKey);
+      const { endDate } = getBogotaStartEndOfDayFromKey(endKey);
+
+      where.fechaPago = {
+        gte: startDate,
+        lte: endDate,
+      };
     }
 
     const pagos = await this.prisma.pago.findMany({
@@ -1242,25 +1281,83 @@ export class PaymentsService {
       take: 10000,
     });
 
-    const fecha = getBogotaDayKey(new Date());
+    const fecha = (() => {
+      if (filters.startDate && filters.endDate && filters.startDate !== filters.endDate) {
+        return `${filters.startDate} a ${filters.endDate}`;
+      }
+
+      return filters.startDate
+        || filters.endDate
+        || getBogotaDayKey(new Date());
+    })();
+
+    // Obtener registros de visita para mostrar estado de ausencia
+    const clienteIds = Array.from(
+      new Set(pagos.map((p) => p.clienteId).filter(Boolean)),
+    );
+
+    const fechasPago = Array.from(
+      new Set(
+        pagos
+          .map((p) => getBogotaDayKey(p.fechaPago))
+          .filter(Boolean),
+      ),
+    );
+
+    const registrosVisitas = clienteIds.length > 0 && fechasPago.length > 0
+      ? await this.prisma.registroVisita.findMany({
+          where: {
+            clienteId: { in: clienteIds },
+            fechaVisita: { in: fechasPago },
+            ...(filters.rutaId ? { rutaId: filters.rutaId } : {}),
+          },
+          select: {
+            clienteId: true,
+            fechaVisita: true,
+            estadoVisita: true,
+            notas: true,
+          },
+        })
+      : [];
+
+    type VisitaPago = {
+      clienteId: string;
+      fechaVisita: string;
+      estadoVisita: string;
+      notas: string | null;
+    };
+
+    const visitasMap = new Map<string, VisitaPago>(
+      registrosVisitas.map((r: VisitaPago) => [
+        `${r.clienteId}|${r.fechaVisita}`,
+        r,
+      ]),
+    );
 
     // 2. Mapeo al tipo del template
-    const filas: PagoRow[] = pagos.map((p: PagoConRelacionesExport) => ({
-      fecha: p.fechaPago,
-      numeroPago: p.numeroPago || '',
-      cliente: p.cliente ? `${p.cliente.nombres} ${p.cliente.apellidos}` : '',
-      documento: p.cliente?.dni || '',
-      numeroPrestamo: p.prestamo?.numeroPrestamo || '',
-      montoTotal: Number(p.montoTotal),
-      metodoPago: p.metodoPago || '',
-      cobrador: p.cobrador ? `${p.cobrador.nombres} ${p.cobrador.apellidos}` : 'Admin',
-      esAbono: (p as any).esAbono ?? false,
-      capitalPagado: Number((p as any).capitalPagado || 0),
-      interesPagado: Number((p as any).interesPagado || 0),
-      moraPagada: Number((p as any).moraPagada || 0),
-      comentario: (p as any).notas || '',
-      origenCaja: !p.cobrador ? 'Admin' : p.cobrador.rol === 'PUNTO_DE_VENTA' ? 'P.Venta' : 'Ruta',
-    }));
+    const filas: PagoRow[] = pagos.map((p: PagoConRelacionesExport) => {
+      const fechaPagoKey = getBogotaDayKey(p.fechaPago);
+      const gestion = visitasMap.get(`${p.clienteId}|${fechaPagoKey}`);
+
+      return {
+        fecha: p.fechaPago,
+        numeroPago: p.numeroPago || '',
+        cliente: p.cliente ? `${p.cliente.nombres} ${p.cliente.apellidos}` : '',
+        documento: p.cliente?.dni || '',
+        numeroPrestamo: p.prestamo?.numeroPrestamo || '',
+        montoTotal: Number(p.montoTotal),
+        metodoPago: p.metodoPago || '',
+        cobrador: p.cobrador ? `${p.cobrador.nombres} ${p.cobrador.apellidos}` : 'Admin',
+        esAbono: (p as any).esAbono ?? false,
+        capitalPagado: Number((p as any).capitalPagado || 0),
+        interesPagado: Number((p as any).interesPagado || 0),
+        moraPagada: Number((p as any).moraPagada || 0),
+        comentario: (p as any).notas || '',
+        origenCaja: !p.cobrador ? 'Admin' : p.cobrador.rol === 'PUNTO_DE_VENTA' ? 'P.Venta' : 'Ruta',
+        estadoVisita: gestion?.estadoVisita || null,
+        notasVisita: gestion?.notas || null,
+      };
+    });
 
     const totales: PagosTotales = {
       totalRecaudado: filas.reduce((s, p) => s + p.montoTotal, 0),
