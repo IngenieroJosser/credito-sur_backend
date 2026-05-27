@@ -105,6 +105,43 @@ export class RoutesService {
     }
   }
 
+  private async buscarTransaccionCajaDia(cajaId: string, inicio: Date, fin: Date) {
+    const porDiaBogota = await this.prisma.transaccion.findFirst({
+      where: {
+        cajaId,
+        fechaTransaccion: {
+          gte: inicio,
+          lt: fin,
+        },
+      },
+      select: {
+        id: true,
+        fechaTransaccion: true,
+        creadoPorId: true,
+        tipoReferencia: true,
+      },
+    });
+
+    if (porDiaBogota?.id) return porDiaBogota;
+
+    const hoyUtcDate = new Date().toISOString().slice(0, 10);
+
+    const porFechaDb = await this.prisma.$queryRaw<Array<{
+      id: string;
+      fechaTransaccion: Date;
+      creadoPorId: string | null;
+      tipoReferencia: string | null;
+    }>>`
+      SELECT id, "fechaTransaccion", "creadoPorId", "tipoReferencia"
+      FROM "transacciones"
+      WHERE "cajaId" = ${cajaId}
+        AND ("fechaTransaccion"::date) = ${hoyUtcDate}::date
+      LIMIT 1
+    `;
+
+    return porFechaDb[0] || null;
+  }
+
   async getRutaActivadaHoy(rutaId: string, actor?: RouteActor) {
     await this.assertCollectorOwnRoute(rutaId, actor);
 
@@ -128,21 +165,7 @@ export class RoutesService {
 
     const { inicio, fin } = this.getInicioFinHoy();
 
-    const transaccionCajaHoy = await this.prisma.transaccion.findFirst({
-      where: {
-        cajaId: cajaRuta.id,
-        fechaTransaccion: {
-          gte: inicio,
-          lt: fin,
-        },
-      },
-      select: {
-        id: true,
-        fechaTransaccion: true,
-        creadoPorId: true,
-        tipoReferencia: true,
-      },
-    });
+    const transaccionCajaHoy = await this.buscarTransaccionCajaDia(cajaRuta.id, inicio, fin);
 
     return {
       rutaId,
@@ -179,23 +202,6 @@ export class RoutesService {
     }
 
     const { inicio, fin } = this.getInicioFinHoy();
-
-    const buscarTransaccionCajaHoy = async () => {
-      return this.prisma.transaccion.findFirst({
-        where: {
-          cajaId: cajaRuta.id,
-          fechaTransaccion: {
-            gte: inicio,
-            lt: fin,
-          },
-        },
-        select: {
-          id: true,
-          fechaTransaccion: true,
-          tipoReferencia: true,
-        },
-      });
-    };
 
     let resultadoActivacion: {
       id: string;
@@ -259,7 +265,7 @@ export class RoutesService {
       });
     } catch (error: any) {
       if (error?.code === 'P2002') {
-        const existenteCajaDia = await buscarTransaccionCajaHoy();
+        const existenteCajaDia = await this.buscarTransaccionCajaDia(cajaRuta.id, inicio, fin);
 
         if (existenteCajaDia?.id) {
           resultadoActivacion = {
