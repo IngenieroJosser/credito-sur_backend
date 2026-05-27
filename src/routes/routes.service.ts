@@ -4236,7 +4236,7 @@ export class RoutesService {
     const { startDate } = getBogotaStartEndOfDay(new Date());
     const fechaKey = getBogotaDayKey(startDate);
 
-    return this.prisma.registroVisita.upsert({
+    const resultado = await this.prisma.registroVisita.upsert({
       where: {
         rutaId_clienteId_fechaVisita: {
           rutaId,
@@ -4257,6 +4257,16 @@ export class RoutesService {
         notas
       }
     });
+
+    // Emitir evento para sincronización en tiempo real
+    this.notificacionesGateway.broadcastRutasActualizadas({
+      accion: 'VISITA_REGISTRADA',
+      rutaId,
+      clienteId,
+      estadoVisita,
+    });
+
+    return resultado;
   }
 }
 
