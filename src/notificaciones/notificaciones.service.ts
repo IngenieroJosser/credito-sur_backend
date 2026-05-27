@@ -231,6 +231,8 @@ export class NotificacionesService {
                 if (p) {
                     const bInic = Number(p.cuotaInicial || 0);
                     const rInic = Number((datos as any).cuotaInicial || 0);
+                    const interesTotal = Number(p.interesTotal || 0);
+                    const tasaInteres = Number(p.tasaInteres || 0);
                     
                     datosExtra = {
                       cedula: String(p.cliente.dni),
@@ -244,7 +246,7 @@ export class NotificacionesService {
                       plazoMeses: p.plazoMeses,
                       tipoAmortizacion: p.tipoAmortizacion,
                       cuotaInicial: bInic || rInic || 0,
-                      porcentaje: Number(p.tasaInteres || 0),
+                      porcentaje: tasaInteres,
                       notas: p.notas || (datos as any).notas || (datos as any).observaciones || (datos as any).comentarios || undefined,
                       planesArticulo: Array.isArray(p.producto?.precios)
                         ? p.producto?.precios
@@ -254,6 +256,10 @@ export class NotificacionesService {
                               precioTotal: Number(pr.precio),
                             }))
                         : undefined,
+                      // Agregar campos para cálculo de proyección de recaudo en frontend
+                      montoTotal: Number(p.monto) + interesTotal,
+                      interesTotal,
+                      tasaInteres,
                     };
                 }
               }
