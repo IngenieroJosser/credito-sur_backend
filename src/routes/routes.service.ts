@@ -124,22 +124,29 @@ export class RoutesService {
 
     if (porDiaBogota?.id) return porDiaBogota;
 
-    const hoyUtcDate = new Date().toISOString().slice(0, 10);
+    // Fallback: buscar por rango UTC completo del día
+    const hoyUtcInicio = new Date();
+    hoyUtcInicio.setUTCHours(0, 0, 0, 0);
+    const hoyUtcFin = new Date();
+    hoyUtcFin.setUTCHours(23, 59, 59, 999);
 
-    const porFechaDb = await this.prisma.$queryRaw<Array<{
-      id: string;
-      fechaTransaccion: Date;
-      creadoPorId: string | null;
-      tipoReferencia: string | null;
-    }>>`
-      SELECT id, "fechaTransaccion", "creadoPorId", "tipoReferencia"
-      FROM "transacciones"
-      WHERE "cajaId" = ${cajaId}
-        AND ("fechaTransaccion"::date) = ${hoyUtcDate}::date
-      LIMIT 1
-    `;
+    const porUtc = await this.prisma.transaccion.findFirst({
+      where: {
+        cajaId,
+        fechaTransaccion: {
+          gte: hoyUtcInicio,
+          lte: hoyUtcFin,
+        },
+      },
+      select: {
+        id: true,
+        fechaTransaccion: true,
+        creadoPorId: true,
+        tipoReferencia: true,
+      },
+    });
 
-    return porFechaDb[0] || null;
+    return porUtc || null;
   }
 
   async getRutaActivadaHoy(rutaId: string, actor?: RouteActor) {
