@@ -128,21 +128,30 @@ export class RoutesService {
 
     const { inicio, fin } = this.getInicioFinHoy();
 
-    const activacion = await this.prisma.transaccion.findFirst({
+    const transaccionCajaHoy = await this.prisma.transaccion.findFirst({
       where: {
         cajaId: cajaRuta.id,
-        tipoReferencia: 'ACTIVACION_RUTA',
-        fechaTransaccion: { gte: inicio, lte: fin },
+        fechaTransaccion: {
+          gte: inicio,
+          lt: fin,
+        },
       },
-      select: { id: true, fechaTransaccion: true, creadoPorId: true },
+      select: {
+        id: true,
+        fechaTransaccion: true,
+        creadoPorId: true,
+        tipoReferencia: true,
+      },
     });
 
     return {
       rutaId,
-      activadaHoy: !!activacion?.id,
-      activacionId: activacion?.id || null,
-      fechaActivacion: activacion?.fechaTransaccion ? formatBogotaOffsetIso(activacion.fechaTransaccion) : null,
-      activadaPorId: activacion?.creadoPorId || null,
+      activadaHoy: !!transaccionCajaHoy?.id,
+      activacionId: transaccionCajaHoy?.id || null,
+      activacionReal: transaccionCajaHoy?.tipoReferencia === 'ACTIVACION_RUTA',
+      tipoReferenciaActivacion: transaccionCajaHoy?.tipoReferencia || null,
+      fechaActivacion: transaccionCajaHoy?.fechaTransaccion ? formatBogotaOffsetIso(transaccionCajaHoy.fechaTransaccion) : null,
+      activadaPorId: transaccionCajaHoy?.creadoPorId || null,
     };
   }
 
@@ -171,22 +180,36 @@ export class RoutesService {
 
     const { inicio, fin } = this.getInicioFinHoy();
 
-    const yaActivada = await this.prisma.$transaction(async (tx) => {
+    const resultadoActivacion = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "cajas" WHERE id = ${cajaRuta.id} FOR UPDATE`;
 
-      const activacionExistente = await tx.transaccion.findFirst({
+      // Buscar cualquier transacción de la caja en el día (no solo ACTIVACION_RUTA)
+      const transaccionCajaHoy = await tx.transaccion.findFirst({
         where: {
           cajaId: cajaRuta.id,
-          tipoReferencia: 'ACTIVACION_RUTA',
-          fechaTransaccion: { gte: inicio, lte: fin },
+          fechaTransaccion: {
+            gte: inicio,
+            lt: fin,
+          },
         },
-        select: { id: true, fechaTransaccion: true },
+        select: {
+          id: true,
+          fechaTransaccion: true,
+          tipoReferencia: true,
+        },
       });
 
-      if (activacionExistente?.id) return activacionExistente;
+      if (transaccionCajaHoy?.id) {
+        return {
+          id: transaccionCajaHoy.id,
+          fechaTransaccion: transaccionCajaHoy.fechaTransaccion,
+          tipoReferencia: transaccionCajaHoy.tipoReferencia,
+          creadaAhora: false,
+        };
+      }
 
       try {
-        return await tx.transaccion.create({
+        const creada = await tx.transaccion.create({
           data: {
             numeroTransaccion: `AR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
             cajaId: cajaRuta.id,
@@ -199,26 +222,44 @@ export class RoutesService {
           },
           select: { id: true, fechaTransaccion: true },
         });
+        return {
+          id: creada.id,
+          fechaTransaccion: creada.fechaTransaccion,
+          tipoReferencia: 'ACTIVACION_RUTA',
+          creadaAhora: true,
+        };
       } catch (error: any) {
         if (error?.code === 'P2002') {
-          // Unique constraint failed - buscar transacción existente después del race condition
-          const existenteDespuesDeRace = await tx.transaccion.findFirst({
+          // Unique constraint failed - buscar cualquier transacción de la caja en el día
+          const existenteCajaDia = await tx.transaccion.findFirst({
             where: {
               cajaId: cajaRuta.id,
-              tipoReferencia: 'ACTIVACION_RUTA',
-              fechaTransaccion: { gte: inicio, lte: fin },
+              fechaTransaccion: {
+                gte: inicio,
+                lt: fin,
+              },
             },
-            select: { id: true, fechaTransaccion: true },
+            select: {
+              id: true,
+              fechaTransaccion: true,
+              tipoReferencia: true,
+            },
           });
-          if (existenteDespuesDeRace?.id) {
-            return existenteDespuesDeRace;
+
+          if (existenteCajaDia?.id) {
+            return {
+              id: existenteCajaDia.id,
+              fechaTransaccion: existenteCajaDia.fechaTransaccion,
+              tipoReferencia: existenteCajaDia.tipoReferencia,
+              creadaAhora: false,
+            };
           }
         }
         throw error;
       }
     });
 
-    if (ruta.cobradorId) {
+    if (ruta.cobradorId && resultadoActivacion.creadaAhora) {
       await this.notificacionesService.create({
         usuarioId: ruta.cobradorId,
         titulo: 'Ruta Activada',
@@ -236,12 +277,19 @@ export class RoutesService {
     });
     this.notificacionesGateway.broadcastDashboardsActualizados({});
 
+    const activacionReal = resultadoActivacion.tipoReferencia === 'ACTIVACION_RUTA';
+
     return {
       rutaId: ruta.id,
       activadaHoy: true,
-      message: yaActivada?.id
-        ? 'La ruta ya estaba activada hoy'
-        : 'Ruta activada para hoy correctamente',
+      activacionId: resultadoActivacion.id,
+      activacionReal,
+      tipoReferenciaActivacion: resultadoActivacion.tipoReferencia,
+      message: resultadoActivacion.creadaAhora
+        ? 'Ruta activada para hoy correctamente'
+        : activacionReal
+          ? 'La ruta ya estaba activada hoy'
+          : 'La ruta ya tiene movimiento de caja hoy; se considera operativa para evitar duplicidad por restricción de base de datos.',
     };
   }
 
