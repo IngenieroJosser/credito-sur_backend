@@ -3276,6 +3276,12 @@ export class LoansService implements OnModuleInit {
               valorArticulo: isFinanciamientoArticulo ? safeNumber(precioArticuloTotal) : safeNumber(prestamo.monto),
               monto: safeNumber(prestamo.monto),
               clienteId: cliente.id,
+              cliente: `${cliente.nombres || ''} ${cliente.apellidos || ''}`.trim(),
+              nombreCliente: `${cliente.nombres || ''} ${cliente.apellidos || ''}`.trim(),
+              clienteNombre: `${cliente.nombres || ''} ${cliente.apellidos || ''}`.trim(),
+              cedula: String(cliente.dni || ''),
+              dni: String(cliente.dni || ''),
+              telefono: String(cliente.telefono || ''),
               numeroPrestamo: prestamo.numeroPrestamo,
               cuotas: safeNumber(totalCuotasPrometidas),
               plazoMeses: numPlazoMeses,
@@ -3284,6 +3290,11 @@ export class LoansService implements OnModuleInit {
               notas: String(data.notas || ''),
               fechaInicio: prestamo.fechaInicio ? formatBogotaOffsetIso(prestamo.fechaInicio) : undefined,
               fecha: prestamo.fechaInicio ? formatBogotaOffsetIso(prestamo.fechaInicio) : undefined, // Duplicado para compatibilidad
+              montoTotal: montoFinanciar + interesTotal,
+              interesTotal: safeNumber(interesTotal),
+              tasaInteres: safeNumber(tasaInteres),
+              totalAPagar: montoFinanciar + interesTotal,
+              totalPagar: montoFinanciar + interesTotal,
             }
           });
         }
