@@ -1,18 +1,18 @@
 const { spawnSync } = require('child_process');
 
 const migrationsToResolve = [
-  '20260515103000_add_concurrency_unique_guards',
-  'add_registros_visitas_table',
+  { name: '20260515103000_add_concurrency_unique_guards', action: '--rolled-back' },
+  { name: 'add_registros_visitas_table', action: '--applied' },
 ];
 
-for (const migrationName of migrationsToResolve) {
+for (const { name: migrationName, action } of migrationsToResolve) {
   const result = spawnSync(
     process.platform === 'win32' ? 'npx.cmd' : 'npx',
     [
       'prisma',
       'migrate',
       'resolve',
-      '--rolled-back',
+      action,
       migrationName,
       '--schema',
       'src/prisma/schema.prisma',
@@ -21,7 +21,7 @@ for (const migrationName of migrationsToResolve) {
   );
 
   if (result.status === 0) {
-    console.log(`[migrate] Marked ${migrationName} as rolled back.`);
+    console.log(`[migrate] Marked ${migrationName} as ${action.replace('--', '')}.`);
   } else {
     console.log(
       `[migrate] ${migrationName} was not in a failed state, continuing with migrate deploy.`,
