@@ -1062,6 +1062,11 @@ export class RoutesService {
               select: { id: true, saldoPendiente: true, monto: true, cantidadCuotas: true, frecuenciaPago: true, clienteId: true }
             });
 
+            // Si todos los clientes están ausentes, la meta es 0
+            if (clientesAusentes.size === clientesIds.length || prestamosParaMeta.length === 0) {
+              estadisticas.metaDelDia = 0;
+            }
+
             // Para el RECAUDO: incluir PAGADO para capturar pagos de hoy
             const prestamosActivos = await this.prisma.prestamo.findMany({
               where: {
@@ -4236,7 +4241,7 @@ export class RoutesService {
     const { startDate } = getBogotaStartEndOfDay(new Date());
     const fechaKey = getBogotaDayKey(startDate);
 
-    return this.prisma.registroVisita.upsert({
+    const resultado = await this.prisma.registroVisita.upsert({
       where: {
         rutaId_clienteId_fechaVisita: {
           rutaId,
@@ -4257,6 +4262,16 @@ export class RoutesService {
         notas
       }
     });
+
+    // Emitir evento para sincronización en tiempo real
+    this.notificacionesGateway.broadcastRutasActualizadas({
+      accion: 'VISITA_REGISTRADA',
+      rutaId,
+      clienteId,
+      estadoVisita,
+    });
+
+    return resultado;
   }
 }
 
