@@ -185,19 +185,37 @@ export class RoutesService {
 
       if (activacionExistente?.id) return activacionExistente;
 
-      return tx.transaccion.create({
-        data: {
-          numeroTransaccion: `AR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-          cajaId: cajaRuta.id,
-          tipo: 'TRANSFERENCIA',
-          monto: 0,
-          descripcion: `Activación de ruta del día: ${ruta.nombre}`,
-          tipoReferencia: 'ACTIVACION_RUTA',
-          referenciaId: `RUTA:${ruta.id}`,
-          creadoPorId: userId,
-        },
-        select: { id: true, fechaTransaccion: true },
-      });
+      try {
+        return await tx.transaccion.create({
+          data: {
+            numeroTransaccion: `AR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            cajaId: cajaRuta.id,
+            tipo: 'TRANSFERENCIA',
+            monto: 0,
+            descripcion: `Activación de ruta del día: ${ruta.nombre}`,
+            tipoReferencia: 'ACTIVACION_RUTA',
+            referenciaId: `RUTA:${ruta.id}`,
+            creadoPorId: userId,
+          },
+          select: { id: true, fechaTransaccion: true },
+        });
+      } catch (error: any) {
+        if (error?.code === 'P2002') {
+          // Unique constraint failed - buscar transacción existente después del race condition
+          const existenteDespuesDeRace = await tx.transaccion.findFirst({
+            where: {
+              cajaId: cajaRuta.id,
+              tipoReferencia: 'ACTIVACION_RUTA',
+              fechaTransaccion: { gte: inicio, lte: fin },
+            },
+            select: { id: true, fechaTransaccion: true },
+          });
+          if (existenteDespuesDeRace?.id) {
+            return existenteDespuesDeRace;
+          }
+        }
+        throw error;
+      }
     });
 
     if (ruta.cobradorId) {
