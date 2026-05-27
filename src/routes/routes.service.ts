@@ -170,7 +170,7 @@ export class RoutesService {
     }
 
     const cajaRuta = await this.prisma.caja.findFirst({
-      where: { rutaId: rutaId, tipo: 'RUTA', activa: true },
+      where: { rutaId, tipo: 'RUTA', activa: true },
       select: { id: true },
     });
 
@@ -180,11 +180,8 @@ export class RoutesService {
 
     const { inicio, fin } = this.getInicioFinHoy();
 
-    const resultadoActivacion = await this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM "cajas" WHERE id = ${cajaRuta.id} FOR UPDATE`;
-
-      // Buscar cualquier transacción de la caja en el día (no solo ACTIVACION_RUTA)
-      const transaccionCajaHoy = await tx.transaccion.findFirst({
+    const buscarTransaccionCajaHoy = async () => {
+      return this.prisma.transaccion.findFirst({
         where: {
           cajaId: cajaRuta.id,
           fechaTransaccion: {
@@ -198,17 +195,43 @@ export class RoutesService {
           tipoReferencia: true,
         },
       });
+    };
 
-      if (transaccionCajaHoy?.id) {
-        return {
-          id: transaccionCajaHoy.id,
-          fechaTransaccion: transaccionCajaHoy.fechaTransaccion,
-          tipoReferencia: transaccionCajaHoy.tipoReferencia,
-          creadaAhora: false,
-        };
-      }
+    let resultadoActivacion: {
+      id: string;
+      fechaTransaccion: Date;
+      tipoReferencia: string | null;
+      creadaAhora: boolean;
+    };
 
-      try {
+    try {
+      resultadoActivacion = await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "cajas" WHERE id = ${cajaRuta.id} FOR UPDATE`;
+
+        const transaccionCajaHoy = await tx.transaccion.findFirst({
+          where: {
+            cajaId: cajaRuta.id,
+            fechaTransaccion: {
+              gte: inicio,
+              lt: fin,
+            },
+          },
+          select: {
+            id: true,
+            fechaTransaccion: true,
+            tipoReferencia: true,
+          },
+        });
+
+        if (transaccionCajaHoy?.id) {
+          return {
+            id: transaccionCajaHoy.id,
+            fechaTransaccion: transaccionCajaHoy.fechaTransaccion,
+            tipoReferencia: transaccionCajaHoy.tipoReferencia,
+            creadaAhora: false,
+          };
+        }
+
         const creada = await tx.transaccion.create({
           data: {
             numeroTransaccion: `AR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -220,44 +243,40 @@ export class RoutesService {
             referenciaId: `RUTA:${ruta.id}`,
             creadoPorId: userId,
           },
-          select: { id: true, fechaTransaccion: true },
+          select: {
+            id: true,
+            fechaTransaccion: true,
+            tipoReferencia: true,
+          },
         });
+
         return {
           id: creada.id,
           fechaTransaccion: creada.fechaTransaccion,
-          tipoReferencia: 'ACTIVACION_RUTA',
+          tipoReferencia: creada.tipoReferencia,
           creadaAhora: true,
         };
-      } catch (error: any) {
-        if (error?.code === 'P2002') {
-          // Unique constraint failed - buscar cualquier transacción de la caja en el día
-          const existenteCajaDia = await tx.transaccion.findFirst({
-            where: {
-              cajaId: cajaRuta.id,
-              fechaTransaccion: {
-                gte: inicio,
-                lt: fin,
-              },
-            },
-            select: {
-              id: true,
-              fechaTransaccion: true,
-              tipoReferencia: true,
-            },
-          });
+      });
+    } catch (error: any) {
+      if (error?.code === 'P2002') {
+        const existenteCajaDia = await buscarTransaccionCajaHoy();
 
-          if (existenteCajaDia?.id) {
-            return {
-              id: existenteCajaDia.id,
-              fechaTransaccion: existenteCajaDia.fechaTransaccion,
-              tipoReferencia: existenteCajaDia.tipoReferencia,
-              creadaAhora: false,
-            };
-          }
+        if (existenteCajaDia?.id) {
+          resultadoActivacion = {
+            id: existenteCajaDia.id,
+            fechaTransaccion: existenteCajaDia.fechaTransaccion,
+            tipoReferencia: existenteCajaDia.tipoReferencia,
+            creadaAhora: false,
+          };
+        } else {
+          throw new ConflictException(
+            'La caja ya tiene una transacción registrada para hoy, pero no fue posible recuperarla.',
+          );
         }
+      } else {
         throw error;
       }
-    });
+    }
 
     if (ruta.cobradorId && resultadoActivacion.creadaAhora) {
       await this.notificacionesService.create({
@@ -275,6 +294,7 @@ export class RoutesService {
       accion: 'ACTUALIZAR',
       rutaId: ruta.id,
     });
+
     this.notificacionesGateway.broadcastDashboardsActualizados({});
 
     const activacionReal = resultadoActivacion.tipoReferencia === 'ACTIVACION_RUTA';
