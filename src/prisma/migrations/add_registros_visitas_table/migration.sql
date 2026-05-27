@@ -14,9 +14,9 @@ CREATE TABLE "registros_visitas" (
 );
 
 -- Create foreign key constraints
-ALTER TABLE "registros_visitas" ADD CONSTRAINT "registros_visitas_clienteId_fkey" FOREIGN KEY ("clienteId") REFERENCES "clientes"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "registros_visitas" ADD CONSTRAINT "registros_visitas_clienteId_fkey" FOREIGN KEY ("clienteId") REFERENCES "Cliente"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
-ALTER TABLE "registros_visitas" ADD CONSTRAINT "registros_visitas_cobradorId_fkey" FOREIGN KEY ("cobradorId") REFERENCES "usuarios"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "registros_visitas" ADD CONSTRAINT "registros_visitas_cobradorId_fkey" FOREIGN KEY ("cobradorId") REFERENCES "Usuario"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 ALTER TABLE "registros_visitas" ADD CONSTRAINT "registros_visitas_rutaId_fkey" FOREIGN KEY ("rutaId") REFERENCES "rutas"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
