@@ -139,19 +139,26 @@ export class LoansService implements OnModuleInit {
   private buildPrestamoNotifMetadata(params: {
     prestamo: { id: string; numeroPrestamo: string; monto: any; fechaInicio?: Date | null };
     data: { frecuenciaPago: any; cuotaInicial?: number; notas?: string; esContado?: boolean; tipoPrestamo: string };
-    cliente: { id: string };
+    cliente: { id: string; nombres?: string | null; apellidos?: string | null; dni?: string | null; telefono?: string | null };
     cantidadCuotas: number;
     numPlazoMeses: number;
     articuloNombre: string;
     isFinanciamientoArticulo: boolean;
     precioArticuloTotal: number;
     safeNumber: (v: any) => number;
+    interesTotal?: number;
+    tasaInteres?: number;
   }) {
-    const { prestamo, data, cliente, cantidadCuotas, numPlazoMeses, articuloNombre, isFinanciamientoArticulo, precioArticuloTotal, safeNumber } = params;
+    const { prestamo, data, cliente, cantidadCuotas, numPlazoMeses, articuloNombre, isFinanciamientoArticulo, precioArticuloTotal, safeNumber, interesTotal, tasaInteres } = params;
     return {
       tipoAprobacion: 'NUEVO_PRESTAMO',
       prestamoId: prestamo.id,
       clienteId: cliente.id,
+
+      cliente: `${cliente.nombres || ''} ${cliente.apellidos || ''}`.trim(),
+      cedula: String(cliente.dni || ''),
+      telefono: String(cliente.telefono || ''),
+
       numeroPrestamo: prestamo.numeroPrestamo,
       monto: safeNumber(prestamo.monto),
       tipoPrestamo: data.tipoPrestamo,
@@ -166,6 +173,10 @@ export class LoansService implements OnModuleInit {
       notas: String(data.notas || ''),
       fechaInicio: prestamo.fechaInicio ? formatBogotaOffsetIso(prestamo.fechaInicio) : undefined,
       fecha: prestamo.fechaInicio ? formatBogotaOffsetIso(prestamo.fechaInicio) : undefined,
+      // Agregar campos para cálculo de proyección de recaudo en frontend
+      montoTotal: safeNumber(prestamo.monto) + safeNumber(interesTotal),
+      interesTotal: safeNumber(interesTotal),
+      tasaInteres: safeNumber(tasaInteres),
     };
   }
 
@@ -3222,7 +3233,7 @@ export class LoansService implements OnModuleInit {
             tipo: 'PRESTAMO',
             entidad: 'Aprobacion',
             entidadId: aprobacion.id,
-            metadata: this.buildPrestamoNotifMetadata({ prestamo, data, cliente, cantidadCuotas, numPlazoMeses, articuloNombre, isFinanciamientoArticulo, precioArticuloTotal, safeNumber }),
+            metadata: this.buildPrestamoNotifMetadata({ prestamo, data, cliente, cantidadCuotas, numPlazoMeses, articuloNombre, isFinanciamientoArticulo, precioArticuloTotal, safeNumber, interesTotal, tasaInteres }),
           });
         } catch {}
 
@@ -3234,7 +3245,7 @@ export class LoansService implements OnModuleInit {
             tipo: 'INFORMATIVO',
             entidad: 'Aprobacion',
             entidadId: aprobacion.id,
-            metadata: this.buildPrestamoNotifMetadata({ prestamo, data, cliente, cantidadCuotas, numPlazoMeses, articuloNombre, isFinanciamientoArticulo, precioArticuloTotal, safeNumber }),
+            metadata: this.buildPrestamoNotifMetadata({ prestamo, data, cliente, cantidadCuotas, numPlazoMeses, articuloNombre, isFinanciamientoArticulo, precioArticuloTotal, safeNumber, interesTotal, tasaInteres }),
           });
         } catch {}
       }
