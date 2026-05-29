@@ -38,6 +38,7 @@ export class NotificacionesGateway
     @Inject(forwardRef(() => NotificacionesService))
     private notificacionesService: NotificacionesService,
     private prisma: PrismaService,
+    @Inject(forwardRef(() => RoutesService))
     private routesService: RoutesService,
   ) {}
 
