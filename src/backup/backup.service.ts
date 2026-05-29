@@ -81,7 +81,7 @@ export class BackupService {
     }
 
     const baseDir = this.getBackupDir();
-    const artifacts = run?.metadata?.artifacts as any | undefined;
+    const artifacts = run?.metadata?.artifacts;
 
     const dumpPath = artifacts?.dump?.path || run?.filePath;
     const xlsxPath = artifacts?.xlsx?.path;
@@ -135,11 +135,17 @@ export class BackupService {
       const startedMs = Date.now();
 
       const dumpStartedMs = Date.now();
-      let dumpInfo: { path: string; size: number; elapsedMs: number } | null = null;
+      let dumpInfo: { path: string; size: number; elapsedMs: number } | null =
+        null;
       let dumpError: { message: string; hint?: string } | null = null;
 
       try {
-        const args = ['--format=c', '--file', filePath, process.env.DATABASE_URL];
+        const args = [
+          '--format=c',
+          '--file',
+          filePath,
+          process.env.DATABASE_URL,
+        ];
         await execFileAsync(this.getPgDumpPath(), args, {
           timeout: 15 * 60 * 1000,
           maxBuffer: 1024 * 1024,
@@ -151,18 +157,22 @@ export class BackupService {
           elapsedMs: Date.now() - dumpStartedMs,
         };
       } catch (err: any) {
-        const message = err?.message ? String(err.message) : 'Error ejecutando pg_dump';
+        const message = err?.message
+          ? String(err.message)
+          : 'Error ejecutando pg_dump';
         const isPgDumpNotFound = err?.code === 'ENOENT';
-        const hint =
-          isPgDumpNotFound
-            ? `No se encontró pg_dump. Instala PostgreSQL client tools o configura PG_DUMP_PATH (actual: ${this.getPgDumpPath()}).`
-            : undefined;
+        const hint = isPgDumpNotFound
+          ? `No se encontró pg_dump. Instala PostgreSQL client tools o configura PG_DUMP_PATH (actual: ${this.getPgDumpPath()}).`
+          : undefined;
         dumpError = { message, hint };
-        this.logger.warn(`[backup] dump falló: ${hint ? `${hint} ` : ''}${message}`);
+        this.logger.warn(
+          `[backup] dump falló: ${hint ? `${hint} ` : ''}${message}`,
+        );
       }
 
       const excelStartedMs = Date.now();
-      const excel = await this.backupExcelService.exportSnapshotToXlsx(excelPath);
+      const excel =
+        await this.backupExcelService.exportSnapshotToXlsx(excelPath);
 
       const finishedAt = new Date();
       const durationMs = finishedAt.getTime() - startedAt.getTime();
@@ -179,9 +189,9 @@ export class BackupService {
           finishedAt,
           durationMs,
           error: excelOk
-            ? (dumpError
-                ? `[pg_dump no disponible] ${dumpError.hint ?? dumpError.message}`
-                : null)
+            ? dumpError
+              ? `[pg_dump no disponible] ${dumpError.hint ?? dumpError.message}`
+              : null
             : 'Backup fallido: no se pudo generar el Excel',
           metadata: {
             pgDumpPath: this.getPgDumpPath(),
@@ -215,15 +225,18 @@ export class BackupService {
     } catch (err: any) {
       const finishedAt = new Date();
       const durationMs = finishedAt.getTime() - startedAt.getTime();
-      const message = err?.message ? String(err.message) : 'Error ejecutando pg_dump';
+      const message = err?.message
+        ? String(err.message)
+        : 'Error ejecutando pg_dump';
 
       const isPgDumpNotFound = err?.code === 'ENOENT';
-      const hint =
-        isPgDumpNotFound
-          ? `No se encontró pg_dump. Instala PostgreSQL client tools o configura PG_DUMP_PATH (actual: ${this.getPgDumpPath()}).`
-          : undefined;
+      const hint = isPgDumpNotFound
+        ? `No se encontró pg_dump. Instala PostgreSQL client tools o configura PG_DUMP_PATH (actual: ${this.getPgDumpPath()}).`
+        : undefined;
 
-      this.logger.warn(`[backup] fallo backup manual: ${hint ? `${hint} ` : ''}${message}`);
+      this.logger.warn(
+        `[backup] fallo backup manual: ${hint ? `${hint} ` : ''}${message}`,
+      );
 
       await (this.prisma as any).backupRun.update({
         where: { id: run.id },
@@ -251,7 +264,9 @@ export class BackupService {
         );
       }
 
-      throw new InternalServerErrorException('No se pudo ejecutar el backup (pg_dump)');
+      throw new InternalServerErrorException(
+        'No se pudo ejecutar el backup (pg_dump)',
+      );
     }
   }
 }

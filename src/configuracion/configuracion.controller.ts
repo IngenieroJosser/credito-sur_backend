@@ -1,4 +1,12 @@
-import { Controller, Get, Put, Body, UseGuards, Req, Optional } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Put,
+  Body,
+  UseGuards,
+  Req,
+  Optional,
+} from '@nestjs/common';
 import { ConfiguracionService } from './configuracion.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -34,7 +42,10 @@ export class ConfiguracionController {
     },
     @Req() req: any,
   ) {
-    return this.configuracionService.updateConfiguracion(data, req.user?.userId);
+    return this.configuracionService.updateConfiguracion(
+      data,
+      req.user?.userId,
+    );
   }
 
   @Get('colas/status')
@@ -44,7 +55,8 @@ export class ConfiguracionController {
       return {
         queue: 'mirror-sync-queue',
         enabled: false,
-        reason: 'BullMQ/MirrorSync no está habilitado en este entorno (MIRROR_SYNC_ENABLED=false o faltan variables).',
+        reason:
+          'BullMQ/MirrorSync no está habilitado en este entorno (MIRROR_SYNC_ENABLED=false o faltan variables).',
         timestamp: formatBogotaOffsetIso(new Date()),
       };
     }
@@ -76,10 +88,12 @@ export class ConfiguracionController {
           finishedOn: job.finishedOn ?? null,
           attemptsMade: job.attemptsMade,
           failedReason: job.failedReason ?? null,
-          stacktrace: Array.isArray(job.stacktrace) ? job.stacktrace.slice(0, 3) : [],
+          stacktrace: Array.isArray(job.stacktrace)
+            ? job.stacktrace.slice(0, 3)
+            : [],
           data: job.data ?? null,
-          model: (job.data as any)?.model ?? null,
-          action: (job.data as any)?.action ?? null,
+          model: job.data?.model ?? null,
+          action: job.data?.action ?? null,
         }));
       }),
     );

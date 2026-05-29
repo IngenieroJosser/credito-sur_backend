@@ -45,7 +45,9 @@ export class PaymentsController {
         // Soporte para más formatos de imagen comunes en móviles (webp, heic, heif)
         if (!file.originalname.match(/\.(jpg|jpeg|png|gif|webp|heic|heif)$/i)) {
           return cb(
-            new BadRequestException('El comprobante debe ser una imagen (JPG, PNG, WEBP, HEIC)'),
+            new BadRequestException(
+              'El comprobante debe ser una imagen (JPG, PNG, WEBP, HEIC)',
+            ),
             false,
           );
         }
@@ -62,13 +64,15 @@ export class PaymentsController {
     const dto = {
       ...createPaymentDto,
       prestamoId: createPaymentDto.prestamoId?.toString(),
-      clienteId:  createPaymentDto.clienteId?.toString(),
+      clienteId: createPaymentDto.clienteId?.toString(),
       cobradorId:
         createPaymentDto.cobradorId?.toString() ||
         (req.user?.rol === RolUsuario.COBRADOR ? req.user?.id : undefined),
       montoTotal: Number(createPaymentDto.montoTotal),
       idempotencyKey: createPaymentDto.idempotencyKey?.toString().trim(),
-      tipoRegistro: createPaymentDto.tipoRegistro?.toString().toUpperCase() as any,
+      tipoRegistro: createPaymentDto.tipoRegistro
+        ?.toString()
+        .toUpperCase() as any,
       cuotaNumeroEsperada:
         createPaymentDto.cuotaNumeroEsperada != null
           ? Number(createPaymentDto.cuotaNumeroEsperada)
@@ -79,11 +83,19 @@ export class PaymentsController {
           : undefined,
     };
 
-    if (!dto.cobradorId && req.user?.rol === RolUsuario.COBRADOR && req.user?.id) {
+    if (
+      !dto.cobradorId &&
+      req.user?.rol === RolUsuario.COBRADOR &&
+      req.user?.id
+    ) {
       dto.cobradorId = req.user.id;
     }
 
-    return this.paymentsService.create(dto as CreatePaymentDto, comprobante, req.user);
+    return this.paymentsService.create(
+      dto as CreatePaymentDto,
+      comprobante,
+      req.user,
+    );
   }
 
   @Get()
@@ -123,11 +135,19 @@ export class PaymentsController {
     @Res() res: Response,
   ) {
     const result = await this.paymentsService.exportPayments(
-      { startDate: startDate || undefined, endDate: endDate || undefined, rutaId: rutaId || undefined, prestamoId: prestamoId || undefined },
+      {
+        startDate: startDate || undefined,
+        endDate: endDate || undefined,
+        rutaId: rutaId || undefined,
+        prestamoId: prestamoId || undefined,
+      },
       format,
     );
     res.setHeader('Content-Type', result.contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${result.filename}"`,
+    );
     res.send(result.data);
   }
 

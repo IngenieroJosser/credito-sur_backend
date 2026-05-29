@@ -22,16 +22,29 @@ import { NotificacionesService } from '../notificaciones/notificaciones.service'
 import { AuditService } from '../audit/audit.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { PagoConRelacionesExport } from '../common/types';
-import { generarExcelPagos, generarPDFPagos, PagoRow, PagosTotales } from '../templates/exports/historial-pagos.template';
+import {
+  generarExcelPagos,
+  generarPDFPagos,
+  PagoRow,
+  PagosTotales,
+} from '../templates/exports/historial-pagos.template';
 import { CloudinaryService } from '../upload/cloudinary.service';
-import { formatBogotaOffsetIso, getBogotaDayKey, getBogotaStartEndOfDay, getBogotaStartEndOfDayFromKey } from '../utils/date-utils';
+import {
+  formatBogotaOffsetIso,
+  getBogotaDayKey,
+  getBogotaStartEndOfDay,
+  getBogotaStartEndOfDayFromKey,
+} from '../utils/date-utils';
 import { LedgerService } from '../accounting/ledger.service';
 import { randomUUID } from 'crypto';
 
-type PaymentActor = {
-  id?: string;
-  rol?: RolUsuario | string;
-} | null | undefined;
+type PaymentActor =
+  | {
+      id?: string;
+      rol?: RolUsuario | string;
+    }
+  | null
+  | undefined;
 
 @Injectable()
 export class PaymentsService {
@@ -59,7 +72,9 @@ export class PaymentsService {
         );
       }
       if (error.code === 'P2025') {
-        throw new NotFoundException('No se encontró un registro requerido para registrar el pago');
+        throw new NotFoundException(
+          'No se encontró un registro requerido para registrar el pago',
+        );
       }
     }
 
@@ -282,10 +297,19 @@ export class PaymentsService {
       }
     }
 
-    return { detallesPago, cuotasActualizar, capitalTotal, interesTotal, moraTotal };
+    return {
+      detallesPago,
+      cuotasActualizar,
+      capitalTotal,
+      interesTotal,
+      moraTotal,
+    };
   }
 
-  private validatePagoIntentAgainstCurrentCuota(paymentDto: CreatePaymentDto, prestamoActual: any) {
+  private validatePagoIntentAgainstCurrentCuota(
+    paymentDto: CreatePaymentDto,
+    prestamoActual: any,
+  ) {
     if (paymentDto.tipoRegistro !== 'PAGO') return;
 
     const cuotaActual = (prestamoActual?.cuotas || [])[0];
@@ -311,12 +335,19 @@ export class PaymentsService {
     // se trata de una vista vieja o de un doble clic contra una cuota ya cerrada.
   }
 
-  async create(dto: CreatePaymentDto, comprobante?: Express.Multer.File, actor?: PaymentActor) {
+  async create(
+    dto: CreatePaymentDto,
+    comprobante?: Express.Multer.File,
+    actor?: PaymentActor,
+  ) {
     const paymentDto = {
       ...dto,
-      cobradorId: this.isCollector(actor) && actor?.id ? actor.id : dto.cobradorId,
+      cobradorId:
+        this.isCollector(actor) && actor?.id ? actor.id : dto.cobradorId,
     };
-    const idempotencyKey = this.normalizeIdempotencyKey(paymentDto.idempotencyKey);
+    const idempotencyKey = this.normalizeIdempotencyKey(
+      paymentDto.idempotencyKey,
+    );
 
     const pagoExistente = await this.findPagoByIdempotencyKey(idempotencyKey);
     if (pagoExistente) {
@@ -348,7 +379,13 @@ export class PaymentsService {
       include: {
         cuotas: {
           where: {
-            estado: { in: [EstadoCuota.PENDIENTE, EstadoCuota.PARCIAL, EstadoCuota.VENCIDA] },
+            estado: {
+              in: [
+                EstadoCuota.PENDIENTE,
+                EstadoCuota.PARCIAL,
+                EstadoCuota.VENCIDA,
+              ],
+            },
           },
           orderBy: { numeroCuota: 'asc' },
         },
@@ -399,7 +436,9 @@ export class PaymentsService {
     const montoTotal = Number(paymentDto.montoTotal);
 
     if (!Number.isFinite(montoTotal) || montoTotal <= 0) {
-      throw new BadRequestException('El monto del pago debe ser un número mayor a cero');
+      throw new BadRequestException(
+        'El monto del pago debe ser un número mayor a cero',
+      );
     }
 
     if (montoTotal > Number(prestamo.saldoPendiente) + 1) {
@@ -409,7 +448,6 @@ export class PaymentsService {
     }
 
     const tasaInteres = Number(prestamo.tasaInteres);
-
 
     const numeroPago = this.generarNumeroPago();
 
@@ -423,7 +461,7 @@ export class PaymentsService {
     }[] = [];
 
     let montoRestante = montoTotal;
-    
+
     let capitalTotal = 0;
     let interesTotal = 0;
     let moraTotal = 0;
@@ -446,20 +484,20 @@ export class PaymentsService {
       // 1. Calcular componentes de esta cuota
       const cCapital = Number(cuota.montoCapital);
       const cInteres = Number(cuota.montoInteres);
-      const cMora    = Number(cuota.montoInteresMora);
+      const cMora = Number(cuota.montoInteresMora);
 
       // 2. Determinar qué falta por pagar de la jerarquía
       let tempYaPagado = yaPagado;
 
       const yaPagadoMora = Math.min(tempYaPagado, cMora);
       tempYaPagado -= yaPagadoMora;
-      
+
       const yaPagadoInteres = Math.min(tempYaPagado, cInteres);
       tempYaPagado -= yaPagadoInteres;
 
       const yaPagadoCapital = Math.min(tempYaPagado, cCapital);
-      
-      const faltaMora    = cMora - yaPagadoMora;
+
+      const faltaMora = cMora - yaPagadoMora;
       const faltaInteres = cInteres - yaPagadoInteres;
       const faltaCapital = cCapital - yaPagadoCapital;
 
@@ -486,7 +524,8 @@ export class PaymentsService {
       montoRestante -= aplicarCapital;
       capitalTotal += aplicarCapital;
 
-      const totalAplicadoCuota = pagoAplicadoMora + pagoAplicadoInteres + pagoAplicadoCapital;
+      const totalAplicadoCuota =
+        pagoAplicadoMora + pagoAplicadoInteres + pagoAplicadoCapital;
 
       if (totalAplicadoCuota > 0) {
         detallesPago.push({
@@ -499,12 +538,14 @@ export class PaymentsService {
 
         const nuevoMontoPagado = yaPagado + totalAplicadoCuota;
         const COP_TOLERANCE = 1;
-        const cuotaCompleta = nuevoMontoPagado >= (montoCuota - COP_TOLERANCE);
+        const cuotaCompleta = nuevoMontoPagado >= montoCuota - COP_TOLERANCE;
         const montoPagadoFinal = cuotaCompleta ? montoCuota : nuevoMontoPagado;
 
         const nuevoEstadoCuota = cuotaCompleta
           ? EstadoCuota.PAGADA
-          : (cuota.estado === EstadoCuota.PENDIENTE ? EstadoCuota.PARCIAL : cuota.estado);
+          : cuota.estado === EstadoCuota.PENDIENTE
+            ? EstadoCuota.PARCIAL
+            : cuota.estado;
 
         cuotasActualizar.push({
           id: cuota.id,
@@ -516,8 +557,9 @@ export class PaymentsService {
 
     // Fix exactitud decimal para el Ledger
     const interesTotalFinal = Math.round(interesTotal * 100) / 100;
-    const moraTotalFinal    = Math.round(moraTotal * 100) / 100;
-    const capitalTotalFinal = Math.round((montoTotal - interesTotalFinal - moraTotalFinal) * 100) / 100;
+    const moraTotalFinal = Math.round(moraTotal * 100) / 100;
+    const capitalTotalFinal =
+      Math.round((montoTotal - interesTotalFinal - moraTotalFinal) * 100) / 100;
 
     // Validar cobrador
     if (!cobradorIdVal) {
@@ -600,9 +642,12 @@ export class PaymentsService {
           .filter(Boolean)
           .join('-');
 
-        const cloudResult = await this.cloudinaryService.subirArchivo(comprobante!, {
-          folder: `clientes/${clientLabel}/comprobantes-transferencia`,
-        });
+        const cloudResult = await this.cloudinaryService.subirArchivo(
+          comprobante!,
+          {
+            folder: `clientes/${clientLabel}/comprobantes-transferencia`,
+          },
+        );
 
         await this.prisma.multimedia.create({
           data: {
@@ -660,254 +705,269 @@ export class PaymentsService {
       return {
         pendingVerification: true,
         aprobacionId: approval.id,
-        message: 'Pago por transferencia enviado a revisiones para verificación.',
+        message:
+          'Pago por transferencia enviado a revisiones para verificación.',
       };
     }
 
     // Crear pago y actualizar todo en una transacción (EFECTIVO)
-    const resultado = await this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM "Prestamo" WHERE id = ${prestamoIdVal} FOR UPDATE`;
+    const resultado = await this.prisma
+      .$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Prestamo" WHERE id = ${prestamoIdVal} FOR UPDATE`;
 
-      const prestamoActual = await tx.prestamo.findFirst({
-        where: { id: prestamoIdVal, eliminadoEn: null },
-        include: {
-          cuotas: {
-            where: {
-              estado: { in: [EstadoCuota.PENDIENTE, EstadoCuota.PARCIAL, EstadoCuota.VENCIDA] },
+        const prestamoActual = await tx.prestamo.findFirst({
+          where: { id: prestamoIdVal, eliminadoEn: null },
+          include: {
+            cuotas: {
+              where: {
+                estado: {
+                  in: [
+                    EstadoCuota.PENDIENTE,
+                    EstadoCuota.PARCIAL,
+                    EstadoCuota.VENCIDA,
+                  ],
+                },
+              },
+              orderBy: { numeroCuota: 'asc' },
             },
-            orderBy: { numeroCuota: 'asc' },
-          },
-          cliente: {
-            select: { id: true, dni: true, nombres: true, apellidos: true },
-          },
-        },
-      });
-
-      if (!prestamoActual) {
-        throw new NotFoundException('Préstamo no encontrado');
-      }
-
-      if (
-        prestamoActual.estado !== EstadoPrestamo.ACTIVO &&
-        prestamoActual.estado !== EstadoPrestamo.EN_MORA
-      ) {
-        throw new BadRequestException(
-          `No se puede registrar pago: el préstamo está en estado ${prestamoActual.estado}`,
-        );
-      }
-
-      if (montoTotal > Number(prestamoActual.saldoPendiente) + 1) {
-        throw new BadRequestException(
-          `El monto del pago ($${montoTotal}) no puede ser mayor al saldo pendiente del préstamo ($${prestamoActual.saldoPendiente})`,
-        );
-      }
-
-      this.validatePagoIntentAgainstCurrentCuota(paymentDto, prestamoActual);
-
-      const {
-        detallesPago: detallesPagoActuales,
-        cuotasActualizar: cuotasActualizarActuales,
-        capitalTotal: capitalTotalActual,
-        interesTotal: interesTotalActual,
-        moraTotal: moraTotalActual,
-      } = this.calcularAplicacionPago(prestamoActual, montoTotal);
-
-      const interesTotalFinalActual = Math.round(interesTotalActual * 100) / 100;
-      const moraTotalFinalActual = Math.round(moraTotalActual * 100) / 100;
-      const capitalTotalFinalActual =
-        Math.round((montoTotal - interesTotalFinalActual - moraTotalFinalActual) * 100) / 100;
-
-      const asignacion = await tx.asignacionRuta.findFirst({
-        where: this.isCollector(actor)
-          ? {
-              clienteId,
-              activa: true,
-              OR: [
-                { cobradorId: cobradorIdVal },
-                { ruta: { cobradorId: cobradorIdVal } },
-              ],
-            }
-          : {
-              clienteId,
-              activa: true,
+            cliente: {
+              select: { id: true, dni: true, nombres: true, apellidos: true },
             },
-        select: {
-          rutaId: true,
-          cobradorId: true,
-          ruta: { select: { cobradorId: true } },
-        },
-      });
-      if (!asignacion?.rutaId) {
-        throw new BadRequestException(
-          'El cliente no tiene una ruta asignada activa para registrar el pago',
-        );
-      }
-
-      if (!this.isCollector(actor)) {
-        cobradorIdVal = asignacion.ruta?.cobradorId || asignacion.cobradorId;
-      }
-
-      if (!cobradorIdVal) {
-        throw new BadRequestException('El cobrador es requerido');
-      }
-
-      const cajaIngreso = await tx.caja.findFirst({
-        where: { rutaId: asignacion.rutaId, tipo: 'RUTA', activa: true },
-        select: { id: true, nombre: true, saldoActual: true },
-      });
-
-      if (!cajaIngreso?.id) {
-        throw new BadRequestException(
-          'No existe una caja de ruta activa asociada a la ruta del cliente',
-        );
-      }
-
-      // 1. Crear el registro de pago
-      const pago = await tx.pago.create({
-        data: {
-          numeroPago,
-          idempotencyKey,
-          clienteId: clienteId,
-          prestamoId: prestamoIdVal,
-          cobradorId: cobradorIdVal,
-          rutaId: asignacion.rutaId,
-          fechaPago: fechaPagoBogota,
-          montoTotal,
-          metodoPago: paymentDto.metodoPago || MetodoPago.EFECTIVO,
-          numeroReferencia: paymentDto.numeroReferencia,
-          notas: paymentDto.notas,
-          detalles: {
-            create: detallesPagoActuales,
-          },
-        },
-        include: {
-          detalles: true,
-          cliente: {
-            select: { id: true, nombres: true, apellidos: true },
-          },
-        },
-      });
-
-      // 1.5. Limpiar estado de ausente si el cliente estaba marcado como ausente
-      const fechaKey = getBogotaDayKey(fechaPagoBogota);
-
-      const estadoVisitaPostPago =
-        paymentDto.tipoRegistro === 'PAGO'
-          ? 'pagado'
-          : 'pendiente';
-
-      await tx.registroVisita.updateMany({
-        where: {
-          clienteId: clienteId,
-          fechaVisita: fechaKey,
-          estadoVisita: 'ausente',
-          ...(cobradorIdVal ? { rutaId: asignacion.rutaId } : {}),
-        },
-        data: {
-          estadoVisita: estadoVisitaPostPago,
-          notas:
-            paymentDto.tipoRegistro === 'PAGO'
-              ? 'Ausencia anulada automáticamente por registro de pago.'
-              : 'Ausencia anulada automáticamente por registro de abono.',
-        },
-      });
-
-      // 2. Actualizar cada cuota afectada
-      for (const cuotaUpd of cuotasActualizarActuales) {
-        await tx.cuota.update({
-          where: { id: cuotaUpd.id },
-          data: {
-            montoPagado: cuotaUpd.montoPagado,
-            estado: cuotaUpd.estado,
-            fechaPago:
-              cuotaUpd.estado === EstadoCuota.PAGADA ? fechaPagoBogota : undefined,
           },
         });
-      }
 
-      // 3. Actualizar saldos del préstamo
-      const nuevoTotalPagado = Number(prestamoActual.totalPagado) + montoTotal;
-      const nuevoCapitalPagado = Number(prestamoActual.capitalPagado) + capitalTotalActual;
-      const nuevoInteresPagado = Number(prestamoActual.interesPagado) + interesTotalActual;
-      const nuevoSaldoPendiente =
-        Number(prestamoActual.saldoPendiente) - montoTotal;
-
-      // Verificar si el préstamo queda pagado
-      const prestamoQuedaPagado = nuevoSaldoPendiente <= 0;
-
-      // Si el préstamo estaba EN_MORA y ya no quedan cuotas VENCIDAS, debe volver a ACTIVO inmediatamente.
-      // Esto evita que un cliente que pagó cuota(s) atrasada(s) + la del día siga figurando en mora hasta el próximo job.
-      let nuevoEstadoPrestamo: EstadoPrestamo = prestamoActual.estado;
-      if (prestamoQuedaPagado) {
-        nuevoEstadoPrestamo = EstadoPrestamo.PAGADO;
-      } else if (prestamoActual.estado === EstadoPrestamo.EN_MORA) {
-        const vencidasRestantes = await tx.cuota.count({
-          where: {
-            prestamoId: prestamoIdVal,
-            estado: EstadoCuota.VENCIDA,
-          },
-        });
-        if (vencidasRestantes === 0) {
-          nuevoEstadoPrestamo = EstadoPrestamo.ACTIVO;
+        if (!prestamoActual) {
+          throw new NotFoundException('Préstamo no encontrado');
         }
-      }
 
-      await tx.prestamo.update({
-        where: { id: prestamoIdVal },
-        data: {
-          totalPagado: nuevoTotalPagado,
-          capitalPagado: nuevoCapitalPagado,
-          interesPagado: nuevoInteresPagado,
-          saldoPendiente: Math.max(0, nuevoSaldoPendiente),
-          estado: nuevoEstadoPrestamo,
-          estadoSincronizacion: 'PENDIENTE',
-        },
-      });
+        if (
+          prestamoActual.estado !== EstadoPrestamo.ACTIVO &&
+          prestamoActual.estado !== EstadoPrestamo.EN_MORA
+        ) {
+          throw new BadRequestException(
+            `No se puede registrar pago: el préstamo está en estado ${prestamoActual.estado}`,
+          );
+        }
 
-      const numeroTransaccionCaja = this.generarNumeroTransaccion('TRX-IN');
+        if (montoTotal > Number(prestamoActual.saldoPendiente) + 1) {
+          throw new BadRequestException(
+            `El monto del pago ($${montoTotal}) no puede ser mayor al saldo pendiente del préstamo ($${prestamoActual.saldoPendiente})`,
+          );
+        }
 
-      await tx.transaccion.create({
-        data: {
-          numeroTransaccion: numeroTransaccionCaja,
-          cajaId: cajaIngreso.id,
-          tipo: TipoTransaccion.INGRESO,
-          monto: montoTotal,
-          descripcion: `Cobranza ${numeroPago}`,
-          creadoPorId: cobradorIdVal,
-          tipoReferencia: 'PAGO',
-          referenciaId: numeroPago,
-        },
-      });
+        this.validatePagoIntentAgainstCurrentCuota(paymentDto, prestamoActual);
 
-      // Asiento contable de Partida Doble
-      // Débito: 1.2.1 Caja Ruta (+montoTotal) | Crédito: 1.3.1 Cartera + 3.1 Interés + 3.2 Mora
-      // LedgerService actualiza saldoActual de la caja en la misma transacción (cajaDelta=+montoTotal)
-      await this.ledgerService.registrarPago(
-        {
-          pagoId:       pago.id,
-          cajaRutaId:   cajaIngreso.id,
-          montoCapital: capitalTotalFinalActual,
-          montoInteres: interesTotalFinalActual,
-          montoMora:    moraTotalFinalActual,
-          metodoPago:   pago.metodoPago,
-          createdBy:    cobradorIdVal,
-        },
-        tx as any,
-      );
+        const {
+          detallesPago: detallesPagoActuales,
+          cuotasActualizar: cuotasActualizarActuales,
+          capitalTotal: capitalTotalActual,
+          interesTotal: interesTotalActual,
+          moraTotal: moraTotalActual,
+        } = this.calcularAplicacionPago(prestamoActual, montoTotal);
 
-      return {
-        pago,
-        descomposicion: {
-          montoTotal,
-          capitalRecuperado: capitalTotalActual,
-          interesRecuperado: interesTotalActual,
-          saldoAnterior: Number(prestamoActual.saldoPendiente),
-          saldoNuevo: Math.max(0, nuevoSaldoPendiente),
-          cuotasAfectadas: cuotasActualizarActuales.length,
-          prestamoQuedaPagado,
-        },
-      };
-    }).catch((error) => this.rethrowKnownPaymentError(error));
+        const interesTotalFinalActual =
+          Math.round(interesTotalActual * 100) / 100;
+        const moraTotalFinalActual = Math.round(moraTotalActual * 100) / 100;
+        const capitalTotalFinalActual =
+          Math.round(
+            (montoTotal - interesTotalFinalActual - moraTotalFinalActual) * 100,
+          ) / 100;
+
+        const asignacion = await tx.asignacionRuta.findFirst({
+          where: this.isCollector(actor)
+            ? {
+                clienteId,
+                activa: true,
+                OR: [
+                  { cobradorId: cobradorIdVal },
+                  { ruta: { cobradorId: cobradorIdVal } },
+                ],
+              }
+            : {
+                clienteId,
+                activa: true,
+              },
+          select: {
+            rutaId: true,
+            cobradorId: true,
+            ruta: { select: { cobradorId: true } },
+          },
+        });
+        if (!asignacion?.rutaId) {
+          throw new BadRequestException(
+            'El cliente no tiene una ruta asignada activa para registrar el pago',
+          );
+        }
+
+        if (!this.isCollector(actor)) {
+          cobradorIdVal = asignacion.ruta?.cobradorId || asignacion.cobradorId;
+        }
+
+        if (!cobradorIdVal) {
+          throw new BadRequestException('El cobrador es requerido');
+        }
+
+        const cajaIngreso = await tx.caja.findFirst({
+          where: { rutaId: asignacion.rutaId, tipo: 'RUTA', activa: true },
+          select: { id: true, nombre: true, saldoActual: true },
+        });
+
+        if (!cajaIngreso?.id) {
+          throw new BadRequestException(
+            'No existe una caja de ruta activa asociada a la ruta del cliente',
+          );
+        }
+
+        // 1. Crear el registro de pago
+        const pago = await tx.pago.create({
+          data: {
+            numeroPago,
+            idempotencyKey,
+            clienteId: clienteId,
+            prestamoId: prestamoIdVal,
+            cobradorId: cobradorIdVal,
+            rutaId: asignacion.rutaId,
+            fechaPago: fechaPagoBogota,
+            montoTotal,
+            metodoPago: paymentDto.metodoPago || MetodoPago.EFECTIVO,
+            numeroReferencia: paymentDto.numeroReferencia,
+            notas: paymentDto.notas,
+            detalles: {
+              create: detallesPagoActuales,
+            },
+          },
+          include: {
+            detalles: true,
+            cliente: {
+              select: { id: true, nombres: true, apellidos: true },
+            },
+          },
+        });
+
+        // 1.5. Limpiar estado de ausente si el cliente estaba marcado como ausente
+        const fechaKey = getBogotaDayKey(fechaPagoBogota);
+
+        const estadoVisitaPostPago =
+          paymentDto.tipoRegistro === 'PAGO' ? 'pagado' : 'pendiente';
+
+        await tx.registroVisita.updateMany({
+          where: {
+            clienteId: clienteId,
+            fechaVisita: fechaKey,
+            estadoVisita: 'ausente',
+            ...(cobradorIdVal ? { rutaId: asignacion.rutaId } : {}),
+          },
+          data: {
+            estadoVisita: estadoVisitaPostPago,
+            notas:
+              paymentDto.tipoRegistro === 'PAGO'
+                ? 'Ausencia anulada automáticamente por registro de pago.'
+                : 'Ausencia anulada automáticamente por registro de abono.',
+          },
+        });
+
+        // 2. Actualizar cada cuota afectada
+        for (const cuotaUpd of cuotasActualizarActuales) {
+          await tx.cuota.update({
+            where: { id: cuotaUpd.id },
+            data: {
+              montoPagado: cuotaUpd.montoPagado,
+              estado: cuotaUpd.estado,
+              fechaPago:
+                cuotaUpd.estado === EstadoCuota.PAGADA
+                  ? fechaPagoBogota
+                  : undefined,
+            },
+          });
+        }
+
+        // 3. Actualizar saldos del préstamo
+        const nuevoTotalPagado =
+          Number(prestamoActual.totalPagado) + montoTotal;
+        const nuevoCapitalPagado =
+          Number(prestamoActual.capitalPagado) + capitalTotalActual;
+        const nuevoInteresPagado =
+          Number(prestamoActual.interesPagado) + interesTotalActual;
+        const nuevoSaldoPendiente =
+          Number(prestamoActual.saldoPendiente) - montoTotal;
+
+        // Verificar si el préstamo queda pagado
+        const prestamoQuedaPagado = nuevoSaldoPendiente <= 0;
+
+        // Si el préstamo estaba EN_MORA y ya no quedan cuotas VENCIDAS, debe volver a ACTIVO inmediatamente.
+        // Esto evita que un cliente que pagó cuota(s) atrasada(s) + la del día siga figurando en mora hasta el próximo job.
+        let nuevoEstadoPrestamo: EstadoPrestamo = prestamoActual.estado;
+        if (prestamoQuedaPagado) {
+          nuevoEstadoPrestamo = EstadoPrestamo.PAGADO;
+        } else if (prestamoActual.estado === EstadoPrestamo.EN_MORA) {
+          const vencidasRestantes = await tx.cuota.count({
+            where: {
+              prestamoId: prestamoIdVal,
+              estado: EstadoCuota.VENCIDA,
+            },
+          });
+          if (vencidasRestantes === 0) {
+            nuevoEstadoPrestamo = EstadoPrestamo.ACTIVO;
+          }
+        }
+
+        await tx.prestamo.update({
+          where: { id: prestamoIdVal },
+          data: {
+            totalPagado: nuevoTotalPagado,
+            capitalPagado: nuevoCapitalPagado,
+            interesPagado: nuevoInteresPagado,
+            saldoPendiente: Math.max(0, nuevoSaldoPendiente),
+            estado: nuevoEstadoPrestamo,
+            estadoSincronizacion: 'PENDIENTE',
+          },
+        });
+
+        const numeroTransaccionCaja = this.generarNumeroTransaccion('TRX-IN');
+
+        await tx.transaccion.create({
+          data: {
+            numeroTransaccion: numeroTransaccionCaja,
+            cajaId: cajaIngreso.id,
+            tipo: TipoTransaccion.INGRESO,
+            monto: montoTotal,
+            descripcion: `Cobranza ${numeroPago}`,
+            creadoPorId: cobradorIdVal,
+            tipoReferencia: 'PAGO',
+            referenciaId: numeroPago,
+          },
+        });
+
+        // Asiento contable de Partida Doble
+        // Débito: 1.2.1 Caja Ruta (+montoTotal) | Crédito: 1.3.1 Cartera + 3.1 Interés + 3.2 Mora
+        // LedgerService actualiza saldoActual de la caja en la misma transacción (cajaDelta=+montoTotal)
+        await this.ledgerService.registrarPago(
+          {
+            pagoId: pago.id,
+            cajaRutaId: cajaIngreso.id,
+            montoCapital: capitalTotalFinalActual,
+            montoInteres: interesTotalFinalActual,
+            montoMora: moraTotalFinalActual,
+            metodoPago: pago.metodoPago,
+            createdBy: cobradorIdVal,
+          },
+          tx,
+        );
+
+        return {
+          pago,
+          descomposicion: {
+            montoTotal,
+            capitalRecuperado: capitalTotalActual,
+            interesRecuperado: interesTotalActual,
+            saldoAnterior: Number(prestamoActual.saldoPendiente),
+            saldoNuevo: Math.max(0, nuevoSaldoPendiente),
+            cuotasAfectadas: cuotasActualizarActuales.length,
+            prestamoQuedaPagado,
+          },
+        };
+      })
+      .catch((error) => this.rethrowKnownPaymentError(error));
 
     // Auditoría
     try {
@@ -921,9 +981,13 @@ export class PaymentsService {
           prestamoIdVal,
           montoTotal,
           capitalRecuperado:
-            Math.round(Number(resultado.descomposicion.capitalRecuperado || 0) * 100) / 100,
+            Math.round(
+              Number(resultado.descomposicion.capitalRecuperado || 0) * 100,
+            ) / 100,
           interesRecuperado:
-            Math.round(Number(resultado.descomposicion.interesRecuperado || 0) * 100) / 100,
+            Math.round(
+              Number(resultado.descomposicion.interesRecuperado || 0) * 100,
+            ) / 100,
           moraRecuperada:
             Math.round(
               Number(
@@ -970,12 +1034,15 @@ export class PaymentsService {
     return resultado;
   }
 
-  async findAll(filters?: {
-    prestamoId?: string;
-    clienteId?: string;
-    page?: number;
-    limit?: number;
-  }, actor?: PaymentActor) {
+  async findAll(
+    filters?: {
+      prestamoId?: string;
+      clienteId?: string;
+      page?: number;
+      limit?: number;
+    },
+    actor?: PaymentActor,
+  ) {
     const { prestamoId, clienteId, page = 1, limit = 20 } = filters || {};
     const skip = (page - 1) * limit;
 
@@ -1002,7 +1069,15 @@ export class PaymentsService {
             },
           },
           cliente: {
-            select: { id: true, nombres: true, apellidos: true, dni: true, direccion: true, telefono: true, nivelRiesgo: true },
+            select: {
+              id: true,
+              nombres: true,
+              apellidos: true,
+              dni: true,
+              direccion: true,
+              telefono: true,
+              nivelRiesgo: true,
+            },
           },
           prestamo: {
             select: {
@@ -1099,7 +1174,11 @@ export class PaymentsService {
   async reconcilePayment(pagoId: string): Promise<{
     pagoId: string;
     numeroPago: string;
-    cuotasActualizadas: { cuotaId: string; numeroCuota: number; estadoAntes: string }[];
+    cuotasActualizadas: {
+      cuotaId: string;
+      numeroCuota: number;
+      estadoAntes: string;
+    }[];
     cuotasOmitidas: { cuotaId: string; numeroCuota: number; razon: string }[];
     prestamoEstadoAntes: string;
     prestamoEstadoDespues: string;
@@ -1137,7 +1216,11 @@ export class PaymentsService {
       numeroCuota: number;
       estadoAntes: string;
     }[] = [];
-    const cuotasOmitidas: { cuotaId: string; numeroCuota: number; razon: string }[] = [];
+    const cuotasOmitidas: {
+      cuotaId: string;
+      numeroCuota: number;
+      razon: string;
+    }[] = [];
     const prestamoEstadoAntes = String(prestamo.estado);
     let prestamoEstadoDespues = prestamoEstadoAntes;
 
@@ -1176,9 +1259,9 @@ export class PaymentsService {
 
         const montoCuota = Number(cuota.monto || 0);
         const montoPagadoActual = Number(cuota.montoPagado || 0);
-        const montoDetalle = Number((detalle as any).monto || 0);
+        const montoDetalle = Number(detalle.monto || 0);
         const nuevoMontoPagado = montoPagadoActual + montoDetalle;
-        const cuotaCompleta = nuevoMontoPagado >= (montoCuota - COP_TOLERANCE);
+        const cuotaCompleta = nuevoMontoPagado >= montoCuota - COP_TOLERANCE;
 
         if (!cuotaCompleta) {
           cuotasOmitidas.push({
@@ -1242,7 +1325,12 @@ export class PaymentsService {
   }
 
   async exportPayments(
-    filters: { startDate?: string; endDate?: string; rutaId?: string; prestamoId?: string },
+    filters: {
+      startDate?: string;
+      endDate?: string;
+      rutaId?: string;
+      prestamoId?: string;
+    },
     format: 'excel' | 'pdf',
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
     // 1. Solo consulta de BD
@@ -1258,7 +1346,9 @@ export class PaymentsService {
       const endKey = filters.endDate || filters.startDate;
 
       if (!startKey || !endKey) {
-        throw new BadRequestException('Debe proporcionar al menos una fecha de inicio o fin');
+        throw new BadRequestException(
+          'Debe proporcionar al menos una fecha de inicio o fin',
+        );
       }
 
       const { startDate } = getBogotaStartEndOfDayFromKey(startKey);
@@ -1282,13 +1372,17 @@ export class PaymentsService {
     });
 
     const fecha = (() => {
-      if (filters.startDate && filters.endDate && filters.startDate !== filters.endDate) {
+      if (
+        filters.startDate &&
+        filters.endDate &&
+        filters.startDate !== filters.endDate
+      ) {
         return `${filters.startDate} a ${filters.endDate}`;
       }
 
-      return filters.startDate
-        || filters.endDate
-        || getBogotaDayKey(new Date());
+      return (
+        filters.startDate || filters.endDate || getBogotaDayKey(new Date())
+      );
     })();
 
     // Obtener registros de visita para mostrar estado de ausencia
@@ -1297,28 +1391,25 @@ export class PaymentsService {
     );
 
     const fechasPago = Array.from(
-      new Set(
-        pagos
-          .map((p) => getBogotaDayKey(p.fechaPago))
-          .filter(Boolean),
-      ),
+      new Set(pagos.map((p) => getBogotaDayKey(p.fechaPago)).filter(Boolean)),
     );
 
-    const registrosVisitas = clienteIds.length > 0 && fechasPago.length > 0
-      ? await this.prisma.registroVisita.findMany({
-          where: {
-            clienteId: { in: clienteIds },
-            fechaVisita: { in: fechasPago },
-            ...(filters.rutaId ? { rutaId: filters.rutaId } : {}),
-          },
-          select: {
-            clienteId: true,
-            fechaVisita: true,
-            estadoVisita: true,
-            notas: true,
-          },
-        })
-      : [];
+    const registrosVisitas =
+      clienteIds.length > 0 && fechasPago.length > 0
+        ? await this.prisma.registroVisita.findMany({
+            where: {
+              clienteId: { in: clienteIds },
+              fechaVisita: { in: fechasPago },
+              ...(filters.rutaId ? { rutaId: filters.rutaId } : {}),
+            },
+            select: {
+              clienteId: true,
+              fechaVisita: true,
+              estadoVisita: true,
+              notas: true,
+            },
+          })
+        : [];
 
     type VisitaPago = {
       clienteId: string;
@@ -1347,13 +1438,19 @@ export class PaymentsService {
         numeroPrestamo: p.prestamo?.numeroPrestamo || '',
         montoTotal: Number(p.montoTotal),
         metodoPago: p.metodoPago || '',
-        cobrador: p.cobrador ? `${p.cobrador.nombres} ${p.cobrador.apellidos}` : 'Admin',
+        cobrador: p.cobrador
+          ? `${p.cobrador.nombres} ${p.cobrador.apellidos}`
+          : 'Admin',
         esAbono: (p as any).esAbono ?? false,
         capitalPagado: Number((p as any).capitalPagado || 0),
         interesPagado: Number((p as any).interesPagado || 0),
         moraPagada: Number((p as any).moraPagada || 0),
         comentario: (p as any).notas || '',
-        origenCaja: !p.cobrador ? 'Admin' : p.cobrador.rol === 'PUNTO_DE_VENTA' ? 'P.Venta' : 'Ruta',
+        origenCaja: !p.cobrador
+          ? 'Admin'
+          : p.cobrador.rol === 'PUNTO_DE_VENTA'
+            ? 'P.Venta'
+            : 'Ruta',
         estadoVisita: gestion?.estadoVisita || null,
         notasVisita: gestion?.notas || null,
       };
@@ -1384,14 +1481,19 @@ export class PaymentsService {
   }) {
     const where: Prisma.PagoWhereInput = {};
 
-    if (Number.isFinite(Number(filters.amount || 0)) && Number(filters.amount || 0) > 0) {
+    if (
+      Number.isFinite(Number(filters.amount || 0)) &&
+      Number(filters.amount || 0) > 0
+    ) {
       where.montoTotal = Number(filters.amount);
     }
 
     if (filters.from || filters.to) {
       where.fechaPago = {};
       if (filters.from) {
-        (where.fechaPago as any).gte = new Date(`${filters.from}T00:00:00-05:00`);
+        (where.fechaPago as any).gte = new Date(
+          `${filters.from}T00:00:00-05:00`,
+        );
       }
       if (filters.to) {
         (where.fechaPago as any).lte = new Date(`${filters.to}T23:59:59-05:00`);
@@ -1412,10 +1514,20 @@ export class PaymentsService {
       where,
       include: {
         cliente: { select: { id: true, nombres: true, apellidos: true } },
-        prestamo: { select: { id: true, numeroPrestamo: true, saldoPendiente: true } },
+        prestamo: {
+          select: { id: true, numeroPrestamo: true, saldoPendiente: true },
+        },
         detalles: {
           include: {
-            cuota: { select: { id: true, numeroCuota: true, monto: true, montoPagado: true, estado: true } },
+            cuota: {
+              select: {
+                id: true,
+                numeroCuota: true,
+                monto: true,
+                montoPagado: true,
+                estado: true,
+              },
+            },
           },
         },
       },
@@ -1450,14 +1562,20 @@ export class PaymentsService {
   private getCuotaStateAfterRevert(cuota: any, nextPaid: number) {
     const amount = Number(cuota?.monto || 0);
     if (nextPaid >= amount - 1) {
-      return { estado: EstadoCuota.PAGADA, fechaPago: cuota?.fechaPago || null };
+      return {
+        estado: EstadoCuota.PAGADA,
+        fechaPago: cuota?.fechaPago || null,
+      };
     }
     if (nextPaid > 0) {
       return { estado: EstadoCuota.PARCIAL, fechaPago: null };
     }
     const due = cuota?.fechaVencimientoProrroga || cuota?.fechaVencimiento;
     const isOverdue = due ? new Date(due).getTime() < Date.now() : false;
-    return { estado: isOverdue ? EstadoCuota.VENCIDA : EstadoCuota.PENDIENTE, fechaPago: null };
+    return {
+      estado: isOverdue ? EstadoCuota.VENCIDA : EstadoCuota.PENDIENTE,
+      fechaPago: null,
+    };
   }
 
   async revertPaymentForRepair(params: {
@@ -1469,7 +1587,9 @@ export class PaymentsService {
     const pagoId = params.pagoId?.trim();
     if (!pagoId) throw new BadRequestException('Falta pagoId');
     if (params.confirmPagoId !== pagoId) {
-      throw new BadRequestException('Para reversar, confirmPagoId debe ser igual al pagoId');
+      throw new BadRequestException(
+        'Para reversar, confirmPagoId debe ser igual al pagoId',
+      );
     }
 
     const result = await this.prisma.$transaction(async (tx) => {
@@ -1491,7 +1611,9 @@ export class PaymentsService {
         select: { id: true },
       });
       if (existingReverse) {
-        throw new ConflictException(`Este pago ya fue reversado (${existingReverse.id})`);
+        throw new ConflictException(
+          `Este pago ya fue reversado (${existingReverse.id})`,
+        );
       }
 
       await tx.$queryRaw`SELECT id FROM "Prestamo" WHERE id = ${pago.prestamoId} FOR UPDATE`;
@@ -1501,20 +1623,37 @@ export class PaymentsService {
         include: { cuota: true },
       });
       if (!detalles.length) {
-        throw new BadRequestException('El pago no tiene detalles de cuotas; no se puede reversar automáticamente.');
+        throw new BadRequestException(
+          'El pago no tiene detalles de cuotas; no se puede reversar automáticamente.',
+        );
       }
 
       const montoTotal = Number(pago.montoTotal || 0);
-      const capitalTotal = detalles.reduce((s: number, d: any) => s + Number(d.montoCapital || 0), 0);
-      const interesTotal = detalles.reduce((s: number, d: any) => s + Number(d.montoInteres || 0), 0);
-      const moraTotal = detalles.reduce((s: number, d: any) => s + Number(d.montoInteresMora || 0), 0);
+      const capitalTotal = detalles.reduce(
+        (s: number, d: any) => s + Number(d.montoCapital || 0),
+        0,
+      );
+      const interesTotal = detalles.reduce(
+        (s: number, d: any) => s + Number(d.montoInteres || 0),
+        0,
+      );
+      const moraTotal = detalles.reduce(
+        (s: number, d: any) => s + Number(d.montoInteresMora || 0),
+        0,
+      );
 
       for (const detalle of detalles) {
         await tx.$queryRaw`SELECT id FROM "cuotas" WHERE id = ${detalle.cuotaId} FOR UPDATE`;
-        const cuota = await tx.cuota.findUnique({ where: { id: detalle.cuotaId } });
-        if (!cuota) throw new NotFoundException(`Cuota ${detalle.cuotaId} no encontrada`);
+        const cuota = await tx.cuota.findUnique({
+          where: { id: detalle.cuotaId },
+        });
+        if (!cuota)
+          throw new NotFoundException(`Cuota ${detalle.cuotaId} no encontrada`);
 
-        const nextPaid = Math.max(0, Number(cuota.montoPagado || 0) - Number(detalle.monto || 0));
+        const nextPaid = Math.max(
+          0,
+          Number(cuota.montoPagado || 0) - Number(detalle.monto || 0),
+        );
         const nextState = this.getCuotaStateAfterRevert(cuota, nextPaid);
         await tx.cuota.update({
           where: { id: cuota.id },
@@ -1529,9 +1668,11 @@ export class PaymentsService {
       const cuotasVencidas = await tx.cuota.count({
         where: { prestamoId: pago.prestamoId, estado: EstadoCuota.VENCIDA },
       });
-      const saldoDespues = Number(pago.prestamo.saldoPendiente || 0) + montoTotal;
+      const saldoDespues =
+        Number(pago.prestamo.saldoPendiente || 0) + montoTotal;
       const estadoDespues =
-        pago.prestamo.estado === EstadoPrestamo.INCUMPLIDO || pago.prestamo.estado === EstadoPrestamo.PERDIDA
+        pago.prestamo.estado === EstadoPrestamo.INCUMPLIDO ||
+        pago.prestamo.estado === EstadoPrestamo.PERDIDA
           ? pago.prestamo.estado
           : cuotasVencidas > 0
             ? EstadoPrestamo.EN_MORA
@@ -1540,10 +1681,22 @@ export class PaymentsService {
       await tx.prestamo.update({
         where: { id: pago.prestamoId },
         data: {
-          totalPagado: Math.max(0, Number(pago.prestamo.totalPagado || 0) - montoTotal),
-          capitalPagado: Math.max(0, Number(pago.prestamo.capitalPagado || 0) - capitalTotal),
-          interesPagado: Math.max(0, Number(pago.prestamo.interesPagado || 0) - interesTotal),
-          interesMoraPagado: Math.max(0, Number(pago.prestamo.interesMoraPagado || 0) - moraTotal),
+          totalPagado: Math.max(
+            0,
+            Number(pago.prestamo.totalPagado || 0) - montoTotal,
+          ),
+          capitalPagado: Math.max(
+            0,
+            Number(pago.prestamo.capitalPagado || 0) - capitalTotal,
+          ),
+          interesPagado: Math.max(
+            0,
+            Number(pago.prestamo.interesPagado || 0) - interesTotal,
+          ),
+          interesMoraPagado: Math.max(
+            0,
+            Number(pago.prestamo.interesMoraPagado || 0) - moraTotal,
+          ),
           saldoPendiente: saldoDespues,
           estado: estadoDespues,
           version: { increment: 1 },
@@ -1562,7 +1715,9 @@ export class PaymentsService {
             tipo: TipoTransaccion.EGRESO,
             monto: montoTotal,
             descripcion: `Reverso pago ${pago.numeroPago}`,
-            notas: params.motivo || 'Reverso administrativo de pago duplicado o incorrecto',
+            notas:
+              params.motivo ||
+              'Reverso administrativo de pago duplicado o incorrecto',
             creadoPorId: params.actor?.id || pago.cobradorId,
             tipoReferencia: 'REVERSO_PAGO',
             referenciaId: pago.numeroPago,
@@ -1594,7 +1749,8 @@ export class PaymentsService {
 
         for (const line of originalEntry.lines as any[]) {
           if (!line.cajaId) continue;
-          const originalDelta = Number(line.debitAmount || 0) - Number(line.creditAmount || 0);
+          const originalDelta =
+            Number(line.debitAmount || 0) - Number(line.creditAmount || 0);
           if (originalDelta === 0) continue;
           await tx.caja.update({
             where: { id: line.cajaId },
@@ -1625,21 +1781,24 @@ export class PaymentsService {
       };
     });
 
-    await this.auditService.create({
-      usuarioId: params.actor?.id || '',
-      accion: 'REVERSAR_PAGO',
-      entidad: 'Pago',
-      entidadId: pagoId,
-      datosNuevos: result,
-      metadata: {
-        motivo: params.motivo,
-        endpoint: `/payments/repair/revert/${pagoId}`,
-      },
-    }).catch((error) => {
-      this.logger.warn(`No se pudo registrar auditoría de reverso de pago ${pagoId}: ${error?.message || error}`);
-    });
+    await this.auditService
+      .create({
+        usuarioId: params.actor?.id || '',
+        accion: 'REVERSAR_PAGO',
+        entidad: 'Pago',
+        entidadId: pagoId,
+        datosNuevos: result,
+        metadata: {
+          motivo: params.motivo,
+          endpoint: `/payments/repair/revert/${pagoId}`,
+        },
+      })
+      .catch((error) => {
+        this.logger.warn(
+          `No se pudo registrar auditoría de reverso de pago ${pagoId}: ${error?.message || error}`,
+        );
+      });
 
     return result;
   }
 }
-

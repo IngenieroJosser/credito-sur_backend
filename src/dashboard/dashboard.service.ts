@@ -8,7 +8,12 @@ import {
   TipoAprobacion,
   TipoTransaccion,
 } from '@prisma/client';
-import { calculateDateRange, getBogotaDayKey, getBogotaStartEndOfDay, TimeFilterPeriod as BogotaPeriod } from '../utils/date-utils';
+import {
+  calculateDateRange,
+  getBogotaDayKey,
+  getBogotaStartEndOfDay,
+  TimeFilterPeriod as BogotaPeriod,
+} from '../utils/date-utils';
 
 @Injectable()
 export class DashboardService {
@@ -18,7 +23,8 @@ export class DashboardService {
 
   async getDashboardData(timeFilter: string) {
     try {
-      const { startDate, endDate } = this.calculateDateRangeFromFilter(timeFilter);
+      const { startDate, endDate } =
+        this.calculateDateRangeFromFilter(timeFilter);
       const { startDate: hoyInicioBogota } = getBogotaStartEndOfDay(new Date());
       const hoyKeyBogota = getBogotaDayKey(new Date());
 
@@ -31,7 +37,7 @@ export class DashboardService {
 
       // 1. Obtener métricas principales filtradas por período
       const pendingApprovals = await this.prisma.aprobacion.count({
-        where: { 
+        where: {
           estado: EstadoAprobacion.PENDIENTE,
           creadoEn: { gte: startDate, lte: endDate },
         },
@@ -73,7 +79,10 @@ export class DashboardService {
 
       // Recaudo del período: fuente contable oficial desde ledger.
       // Se toma únicamente cobranza de pagos (PAGO) contra cajas/bancos.
-      const recaudoTotal = await this.getLedgerCobranzaTotal(startDate, endDate);
+      const recaudoTotal = await this.getLedgerCobranzaTotal(
+        startDate,
+        endDate,
+      );
 
       // Eficiencia: misma lógica de efectividad de cobrador (recaudo / meta)
       // Meta = suma de cuotas con vencimiento en el período. Las cuotas iniciales
@@ -96,9 +105,12 @@ export class DashboardService {
       });
 
       const metaTotal = Number(metaCuotasRes._sum?.monto || 0);
-      const efficiency = metaTotal > 0
-        ? Math.min(100, (recaudoTotal / metaTotal) * 100)
-        : (recaudoTotal > 0 ? 100 : 0);
+      const efficiency =
+        metaTotal > 0
+          ? Math.min(100, (recaudoTotal / metaTotal) * 100)
+          : recaudoTotal > 0
+            ? 100
+            : 0;
 
       // Total de pagos en el período
       const totalPagos = await this.prisma.pago.count({
@@ -107,21 +119,21 @@ export class DashboardService {
 
       // 2. Obtener aprobaciones pendientes (filtradas por período)
       const pendingApprovalsList = await this.prisma.aprobacion.findMany({
-      where: { 
-        estado: EstadoAprobacion.PENDIENTE,
-        creadoEn: { gte: startDate, lte: endDate },
-      },
-      include: {
-        solicitadoPor: {
-          select: {
-            nombres: true,
-            apellidos: true,
+        where: {
+          estado: EstadoAprobacion.PENDIENTE,
+          creadoEn: { gte: startDate, lte: endDate },
+        },
+        include: {
+          solicitadoPor: {
+            select: {
+              nombres: true,
+              apellidos: true,
+            },
           },
         },
-      },
-      orderBy: { creadoEn: 'desc' },
-      take: 5,
-    });
+        orderBy: { creadoEn: 'desc' },
+        take: 5,
+      });
 
       // Cuentas en mora para el listado detallado: sin filtro de período.
       // Importante: NO dependemos solo de `prestamo.estado = EN_MORA` porque el job
@@ -136,7 +148,13 @@ export class DashboardService {
             {
               cuotas: {
                 some: {
-                  estado: { in: [EstadoCuota.PENDIENTE, EstadoCuota.PARCIAL, EstadoCuota.VENCIDA] },
+                  estado: {
+                    in: [
+                      EstadoCuota.PENDIENTE,
+                      EstadoCuota.PARCIAL,
+                      EstadoCuota.VENCIDA,
+                    ],
+                  },
                   // Filtro preliminar por fecha (evita traer demasiadas filas). Luego se valida en memoria
                   // con la fecha efectiva (prórroga si existe) y la llave Bogotá.
                   fechaVencimiento: { lt: hoyInicioBogota },
@@ -161,7 +179,15 @@ export class DashboardService {
             },
           },
           cuotas: {
-            where: { estado: { in: [EstadoCuota.PENDIENTE, EstadoCuota.PARCIAL, EstadoCuota.VENCIDA] } },
+            where: {
+              estado: {
+                in: [
+                  EstadoCuota.PENDIENTE,
+                  EstadoCuota.PARCIAL,
+                  EstadoCuota.VENCIDA,
+                ],
+              },
+            },
             orderBy: { fechaVencimiento: 'asc' },
             take: 50,
           },
@@ -175,7 +201,13 @@ export class DashboardService {
           const cuotasVencidasReal = cuotas.filter((c: any) => {
             if (!c) return false;
             const st = String(c?.estado || '').toUpperCase();
-            if (st === 'PAGADA' || st === 'PAGADO' || st === 'ANULADA' || st === 'ANULADO') return false;
+            if (
+              st === 'PAGADA' ||
+              st === 'PAGADO' ||
+              st === 'ANULADA' ||
+              st === 'ANULADO'
+            )
+              return false;
             const eff = c?.fechaVencimientoProrroga
               ? new Date(c.fechaVencimientoProrroga)
               : new Date(c.fechaVencimiento);
@@ -203,7 +235,13 @@ export class DashboardService {
             {
               cuotas: {
                 some: {
-                  estado: { in: [EstadoCuota.PENDIENTE, EstadoCuota.PARCIAL, EstadoCuota.VENCIDA] },
+                  estado: {
+                    in: [
+                      EstadoCuota.PENDIENTE,
+                      EstadoCuota.PARCIAL,
+                      EstadoCuota.VENCIDA,
+                    ],
+                  },
                   fechaVencimiento: { lt: hoyInicioBogota },
                 },
               },
@@ -213,67 +251,90 @@ export class DashboardService {
         select: {
           id: true,
           cuotas: {
-            where: { estado: { in: [EstadoCuota.PENDIENTE, EstadoCuota.PARCIAL, EstadoCuota.VENCIDA] } },
-            select: { estado: true, fechaVencimiento: true, fechaVencimientoProrroga: true },
+            where: {
+              estado: {
+                in: [
+                  EstadoCuota.PENDIENTE,
+                  EstadoCuota.PARCIAL,
+                  EstadoCuota.VENCIDA,
+                ],
+              },
+            },
+            select: {
+              estado: true,
+              fechaVencimiento: true,
+              fechaVencimientoProrroga: true,
+            },
             take: 50,
           },
         },
         take: 500,
       });
 
-      const delinquentAccounts = delinquentAccountsCountRaw.reduce((acc: number, loan: any) => {
-        const cuotas = Array.isArray(loan?.cuotas) ? loan.cuotas : [];
-        const tieneVencidaReal = cuotas.some((c: any) => {
-          if (!c) return false;
-          const st = String(c?.estado || '').toUpperCase();
-          if (st === 'PAGADA' || st === 'PAGADO' || st === 'ANULADA' || st === 'ANULADO') return false;
-          const eff = c?.fechaVencimientoProrroga
-            ? new Date(c.fechaVencimientoProrroga)
-            : new Date(c.fechaVencimiento);
-          if (!eff || isNaN(eff.getTime())) return false;
-          const key = utcDateKey(eff);
-          return !!key && key < hoyKeyBogota;
-        });
-        return tieneVencidaReal ? (acc + 1) : acc;
-      }, 0);
+      const delinquentAccounts = delinquentAccountsCountRaw.reduce(
+        (acc: number, loan: any) => {
+          const cuotas = Array.isArray(loan?.cuotas) ? loan.cuotas : [];
+          const tieneVencidaReal = cuotas.some((c: any) => {
+            if (!c) return false;
+            const st = String(c?.estado || '').toUpperCase();
+            if (
+              st === 'PAGADA' ||
+              st === 'PAGADO' ||
+              st === 'ANULADA' ||
+              st === 'ANULADO'
+            )
+              return false;
+            const eff = c?.fechaVencimientoProrroga
+              ? new Date(c.fechaVencimientoProrroga)
+              : new Date(c.fechaVencimiento);
+            if (!eff || isNaN(eff.getTime())) return false;
+            const key = utcDateKey(eff);
+            return !!key && key < hoyKeyBogota;
+          });
+          return tieneVencidaReal ? acc + 1 : acc;
+        },
+        0,
+      );
 
       // 4. Obtener actividad reciente (últimas aprobaciones procesadas) - filtradas por período
       const recentActivityList = await this.prisma.aprobacion.findMany({
-      where: {
-        estado: { in: [EstadoAprobacion.APROBADO, EstadoAprobacion.RECHAZADO] },
-        actualizadoEn: { gte: startDate, lte: endDate },
-      },
-      include: {
-        solicitadoPor: {
-          select: {
-            nombres: true,
-            apellidos: true,
+        where: {
+          estado: {
+            in: [EstadoAprobacion.APROBADO, EstadoAprobacion.RECHAZADO],
+          },
+          actualizadoEn: { gte: startDate, lte: endDate },
+        },
+        include: {
+          solicitadoPor: {
+            select: {
+              nombres: true,
+              apellidos: true,
+            },
           },
         },
-      },
-      orderBy: { actualizadoEn: 'desc' },
-      take: 5,
-    });
+        orderBy: { actualizadoEn: 'desc' },
+        take: 5,
+      });
 
       // 5. Datos de tendencia (últimos 7 días)
       const trendData = await this.getTrendData(timeFilter);
 
       // 6. Top 5 Cobradores (filtrado por período) - Filtrado por Rol
       const topCollectorsRaw = await this.prisma.pago.groupBy({
-      by: ['cobradorId'],
-      _sum: {
-        montoTotal: true,
-      },
-      where: {
-        fechaPago: { gte: startDate, lte: endDate },
-      },
-      orderBy: {
+        by: ['cobradorId'],
         _sum: {
-          montoTotal: 'desc',
+          montoTotal: true,
         },
-      },
-      take: 10, // Traemos extra para filtrar
-    });
+        where: {
+          fechaPago: { gte: startDate, lte: endDate },
+        },
+        orderBy: {
+          _sum: {
+            montoTotal: 'desc',
+          },
+        },
+        take: 10, // Traemos extra para filtrar
+      });
 
       // Enriquecer con datos de usuario y filtrar
       const topCollectorsList: any[] = [];
@@ -284,51 +345,62 @@ export class DashboardService {
           select: { nombres: true, apellidos: true, rol: true },
         });
 
-        if (user && ['COBRADOR', 'SUPERVISOR', 'COORDINADOR'].includes(user.rol)) {
+        if (
+          user &&
+          ['COBRADOR', 'SUPERVISOR', 'COORDINADOR'].includes(user.rol)
+        ) {
           // Calcular eficiencia real: (recaudado / meta_periodo) * 100
           // Incluimos CUOTA_INICIAL tanto en recaudo como en meta para consistencia con RoutesService
-          const [metaCobroRes, cuotasInicialesRes, pagosRes] = await Promise.all([
-            this.prisma.cuota.aggregate({
-              where: {
-                fechaVencimiento: { gte: startDate, lte: endDate },
-                prestamo: {
-                  cliente: {
-                    asignacionesRuta: {
-                      some: {
-                        cobradorId: item.cobradorId,
-                        activa: true
-                      }
-                    }
-                  }
-                }
-              },
-              _sum: { monto: true }
-            }),
-            this.prisma.transaccion.aggregate({
-              where: {
-                caja: { responsableId: item.cobradorId, tipo: 'RUTA' },
-                tipoReferencia: 'CUOTA_INICIAL',
-                tipo: TipoTransaccion.INGRESO,
-                fechaTransaccion: { gte: startDate, lte: endDate },
-              },
-              _sum: { monto: true }
-            }),
-            this.prisma.pago.aggregate({
-              where: {
-                cobradorId: item.cobradorId,
-                fechaPago: { gte: startDate, lte: endDate },
-              },
-              _sum: { montoTotal: true }
-            })
-          ]);
+          const [metaCobroRes, cuotasInicialesRes, pagosRes] =
+            await Promise.all([
+              this.prisma.cuota.aggregate({
+                where: {
+                  fechaVencimiento: { gte: startDate, lte: endDate },
+                  prestamo: {
+                    cliente: {
+                      asignacionesRuta: {
+                        some: {
+                          cobradorId: item.cobradorId,
+                          activa: true,
+                        },
+                      },
+                    },
+                  },
+                },
+                _sum: { monto: true },
+              }),
+              this.prisma.transaccion.aggregate({
+                where: {
+                  caja: { responsableId: item.cobradorId, tipo: 'RUTA' },
+                  tipoReferencia: 'CUOTA_INICIAL',
+                  tipo: TipoTransaccion.INGRESO,
+                  fechaTransaccion: { gte: startDate, lte: endDate },
+                },
+                _sum: { monto: true },
+              }),
+              this.prisma.pago.aggregate({
+                where: {
+                  cobradorId: item.cobradorId,
+                  fechaPago: { gte: startDate, lte: endDate },
+                },
+                _sum: { montoTotal: true },
+              }),
+            ]);
 
-          const montoMeta = Number(metaCobroRes._sum.monto || 0) + Number(cuotasInicialesRes._sum.monto || 0);
-          const collected = Number(pagosRes._sum.montoTotal || 0) + Number(cuotasInicialesRes._sum.monto || 0);
-          
+          const montoMeta =
+            Number(metaCobroRes._sum.monto || 0) +
+            Number(cuotasInicialesRes._sum.monto || 0);
+          const collected =
+            Number(pagosRes._sum.montoTotal || 0) +
+            Number(cuotasInicialesRes._sum.monto || 0);
+
           // Si no hay meta, asumimos 100% de eficiencia si recaudó algo
-          const efficiency = montoMeta > 0 
-            ? Math.min(100, (collected / montoMeta) * 100) 
-            : (collected > 0 ? 100 : 0);
+          const efficiency =
+            montoMeta > 0
+              ? Math.min(100, (collected / montoMeta) * 100)
+              : collected > 0
+                ? 100
+                : 0;
 
           topCollectorsList.push({
             name: `${user.nombres} ${user.apellidos}`,
@@ -337,7 +409,7 @@ export class DashboardService {
             trend: efficiency >= 90 ? 'up' : 'down',
           });
         }
-        if (topCollectorsList.length >= 5) break; 
+        if (topCollectorsList.length >= 5) break;
       }
 
       const result = {
@@ -362,10 +434,13 @@ export class DashboardService {
         ),
         topCollectors: topCollectorsList,
       };
-      
+
       return result;
     } catch (error) {
-      this.logger.error('Error obteniendo datos del dashboard', error instanceof Error ? error.stack : error);
+      this.logger.error(
+        'Error obteniendo datos del dashboard',
+        error instanceof Error ? error.stack : error,
+      );
       // Retornar datos de fallback en caso de error
       return {
         metrics: {
@@ -409,7 +484,8 @@ export class DashboardService {
   async getTrendData(timeFilter: string): Promise<any[]> {
     try {
       // Usar el mismo cálculo de fechas que getDashboardData para consistencia
-      const { startDate, endDate } = this.calculateDateRangeFromFilter(timeFilter);
+      const { startDate, endDate } =
+        this.calculateDateRangeFromFilter(timeFilter);
       let groupBy: 'day' | 'week' | 'month' = 'day';
 
       // Determinar cómo agrupar según el filtro de período
@@ -424,7 +500,7 @@ export class DashboardService {
           groupBy = 'day';
           break;
         case 'year':
-          groupBy = 'month';  // Año → agrupa por mes (12 barras)
+          groupBy = 'month'; // Año → agrupa por mes (12 barras)
           break;
         default:
           groupBy = 'day';
@@ -467,11 +543,14 @@ export class DashboardService {
     // Agrupar por día Bogotá
     const pagosPorDiaKey = new Map<string, number>();
     for (const line of ledgerCobros) {
-      const createdAt = (line as any)?.journalEntry?.createdAt;
+      const createdAt = line?.journalEntry?.createdAt;
       if (!createdAt) continue;
       const { startDate: dStart } = getBogotaStartEndOfDay(new Date(createdAt));
       const key = dStart.toISOString();
-      pagosPorDiaKey.set(key, (pagosPorDiaKey.get(key) || 0) + Number((line as any).debitAmount || 0));
+      pagosPorDiaKey.set(
+        key,
+        (pagosPorDiaKey.get(key) || 0) + Number(line.debitAmount || 0),
+      );
     }
 
     // 2) Meta nominal diaria (target)
@@ -481,12 +560,19 @@ export class DashboardService {
     //      -> tomar la más antigua.
     //   b) Si NO existe deuda hasta ese día, contar una cuota PAGADA en ESE día (fechaPago en el día)
     //      -> tomar la más antigua por fechaVencimiento para determinismo.
-    const { startDate: endDayStartUTC, endDate: endDayEndUTC } = getBogotaStartEndOfDay(endDate);
+    const { startDate: endDayStartUTC, endDate: endDayEndUTC } =
+      getBogotaStartEndOfDay(endDate);
 
     const cuotasNoPagadasHastaFin = await this.prisma.cuota.findMany({
       where: {
         prestamo: {
-          estado: { in: [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA, EstadoPrestamo.PAGADO] },
+          estado: {
+            in: [
+              EstadoPrestamo.ACTIVO,
+              EstadoPrestamo.EN_MORA,
+              EstadoPrestamo.PAGADO,
+            ],
+          },
           eliminadoEn: null,
         },
         fechaVencimiento: { lte: endDayEndUTC },
@@ -507,14 +593,14 @@ export class DashboardService {
           },
         ],
       },
-      select: { 
-        prestamoId: true, 
-        fechaVencimiento: true, 
-        monto: true, 
-        montoPagado: true, 
+      select: {
+        prestamoId: true,
+        fechaVencimiento: true,
+        monto: true,
+        montoPagado: true,
         estado: true,
         fechaPago: true,
-        prestamo: { select: { frecuenciaPago: true } }
+        prestamo: { select: { frecuenciaPago: true } },
       },
       orderBy: [{ prestamoId: 'asc' }, { fechaVencimiento: 'asc' }],
     });
@@ -532,11 +618,12 @@ export class DashboardService {
       for (let i = 0; i <= maxDays; i++) {
         const currentDate = new Date(startDate);
         currentDate.setDate(startDate.getDate() + i);
-        
+
         // No procesar días futuros
         if (currentDate > endDate) break;
 
-        const { startDate: dayStartBogota, endDate: dayEndBogota } = getBogotaStartEndOfDay(currentDate);
+        const { startDate: dayStartBogota, endDate: dayEndBogota } =
+          getBogotaStartEndOfDay(currentDate);
         const dayKey = dayStartBogota.toISOString();
         const cutoffTime = dayEndBogota.getTime();
         const hoyBogotaKey = getBogotaDayKey(currentDate);
@@ -567,14 +654,20 @@ export class DashboardService {
 
           const montoFull = Number(c.monto || 0);
           const montoPagado = Number(c.montoPagado || 0);
-          // If it's PARCIAL currently, and we are in the past, it might have been fully unpaid. 
+          // If it's PARCIAL currently, and we are in the past, it might have been fully unpaid.
           // For simplicity we just use the current montoPendiente as routes does.
-          const montoPendiente = c.estado === EstadoCuota.PARCIAL ? Math.max(0, montoFull - montoPagado) : montoFull;
+          const montoPendiente =
+            c.estado === EstadoCuota.PARCIAL
+              ? Math.max(0, montoFull - montoPagado)
+              : montoFull;
 
           if (montoPendiente <= 0) continue;
 
           if (isDiario) {
-            acumuladoPorPrestamo.set(pid, (acumuladoPorPrestamo.get(pid) || 0) + montoPendiente);
+            acumuladoPorPrestamo.set(
+              pid,
+              (acumuladoPorPrestamo.get(pid) || 0) + montoPendiente,
+            );
           } else {
             if (!primeraCuotaPorPrestamo.has(pid)) {
               primeraCuotaPorPrestamo.set(pid, montoPendiente);
@@ -595,9 +688,11 @@ export class DashboardService {
         // Crear etiqueta más descriptiva: día de semana + fecha
         const dayName = daysOfWeek[currentDate.getDay()];
         const dayNumber = currentDate.getDate();
-        const monthName = currentDate.toLocaleDateString('es-CO', { month: 'short' });
+        const monthName = currentDate.toLocaleDateString('es-CO', {
+          month: 'short',
+        });
         const label = `${dayName} ${dayNumber}/${monthName}`;
-        
+
         result.push({
           label,
           value: total,
@@ -619,7 +714,8 @@ export class DashboardService {
       cursor.setTime(cStart.getTime());
 
       while (cursor <= endDate) {
-        const { startDate: dayStartBogota, endDate: dayEndBogota } = getBogotaStartEndOfDay(cursor);
+        const { startDate: dayStartBogota, endDate: dayEndBogota } =
+          getBogotaStartEndOfDay(cursor);
         const dayKey = dayStartBogota.toISOString();
         const cutoffTime = dayEndBogota.getTime();
         const hoyBogotaKey = getBogotaDayKey(cursor);
@@ -635,7 +731,7 @@ export class DashboardService {
         for (const c of cuotasNoPagadasHastaFin) {
           if (!c.prestamoId) continue;
           const vtoKey = getBogotaDayKey(new Date(c.fechaVencimiento));
-          if (vtoKey > hoyBogotaKey) continue; 
+          if (vtoKey > hoyBogotaKey) continue;
 
           if (c.estado === EstadoCuota.PAGADA && c.fechaPago) {
             const pagoTime = new Date(c.fechaPago).getTime();
@@ -648,12 +744,18 @@ export class DashboardService {
 
           const montoFull = Number(c.monto || 0);
           const montoPagado = Number(c.montoPagado || 0);
-          const montoPendiente = c.estado === EstadoCuota.PARCIAL ? Math.max(0, montoFull - montoPagado) : montoFull;
+          const montoPendiente =
+            c.estado === EstadoCuota.PARCIAL
+              ? Math.max(0, montoFull - montoPagado)
+              : montoFull;
 
           if (montoPendiente <= 0) continue;
 
           if (isDiario) {
-            acumuladoPorPrestamo.set(pid, (acumuladoPorPrestamo.get(pid) || 0) + montoPendiente);
+            acumuladoPorPrestamo.set(
+              pid,
+              (acumuladoPorPrestamo.get(pid) || 0) + montoPendiente,
+            );
           } else {
             if (!primeraCuotaPorPrestamo.has(pid)) {
               primeraCuotaPorPrestamo.set(pid, montoPendiente);
@@ -671,13 +773,20 @@ export class DashboardService {
         const target = metaNominal + value;
 
         monthMapValue.set(monthKey, (monthMapValue.get(monthKey) || 0) + value);
-        monthMapTarget.set(monthKey, (monthMapTarget.get(monthKey) || 0) + target);
+        monthMapTarget.set(
+          monthKey,
+          (monthMapTarget.get(monthKey) || 0) + target,
+        );
 
         cursor.setDate(cursor.getDate() + 1);
       }
 
       // Generar puntos de tendencia por mes dentro del rango
-      const current = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+      const current = new Date(
+        startDate.getFullYear(),
+        startDate.getMonth(),
+        1,
+      );
       const { startDate: currentStart } = getBogotaStartEndOfDay(current);
       current.setTime(currentStart.getTime());
 
@@ -725,7 +834,10 @@ export class DashboardService {
     };
   }
 
-  private async getLedgerCobranzaTotal(startDate: Date, endDate: Date): Promise<number> {
+  private async getLedgerCobranzaTotal(
+    startDate: Date,
+    endDate: Date,
+  ): Promise<number> {
     const res = await this.prisma.journalLine.aggregate({
       where: this.getLedgerCobranzaWhere(startDate, endDate),
       _sum: { debitAmount: true },
@@ -824,17 +936,18 @@ export class DashboardService {
   private mapDelinquentAccount(loan: any, hoyInicioBogota: Date) {
     const cuotaVencida = loan.cuotas[0];
     const eff = cuotaVencida
-      ? (cuotaVencida?.fechaVencimientoProrroga
-          ? new Date(cuotaVencida.fechaVencimientoProrroga)
-          : new Date(cuotaVencida.fechaVencimiento))
+      ? cuotaVencida?.fechaVencimientoProrroga
+        ? new Date(cuotaVencida.fechaVencimientoProrroga)
+        : new Date(cuotaVencida.fechaVencimiento)
       : null;
 
-    const daysLate = eff && !isNaN(eff.getTime())
-      ? Math.max(0, differenceInDays(hoyInicioBogota, eff))
-      : 0;
+    const daysLate =
+      eff && !isNaN(eff.getTime())
+        ? Math.max(0, differenceInDays(hoyInicioBogota, eff))
+        : 0;
 
     const asignacion = loan.cliente.asignacionesRuta?.[0];
-    const collectorName = asignacion?.cobrador 
+    const collectorName = asignacion?.cobrador
       ? `${asignacion.cobrador.nombres} ${asignacion.cobrador.apellidos}`
       : 'No asignado';
     const routeName = asignacion?.ruta?.nombre || 'General';
@@ -915,10 +1028,15 @@ export class DashboardService {
   /**
    * Calcula el rango de fechas según el filtro de período (Sincronizado con Bogotá)
    */
-  private calculateDateRangeFromFilter(timeFilter: string): { startDate: Date; endDate: Date } {
-    const period = (['today', 'week', 'month', 'year'].includes(timeFilter) 
-      ? timeFilter 
-      : 'month') as BogotaPeriod;
+  private calculateDateRangeFromFilter(timeFilter: string): {
+    startDate: Date;
+    endDate: Date;
+  } {
+    const period = (
+      ['today', 'week', 'month', 'year'].includes(timeFilter)
+        ? timeFilter
+        : 'month'
+    ) as BogotaPeriod;
 
     const { startDate, endDate } = calculateDateRange(period);
     return { startDate, endDate };

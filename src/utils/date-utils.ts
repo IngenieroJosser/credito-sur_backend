@@ -35,7 +35,15 @@ const getBogotaPartsIntl = (date: Date): BogotaParts | null => {
     for (const p of parts) {
       if (p.type !== 'literal') map[p.type] = p.value;
     }
-    if (!map.year || !map.month || !map.day || !map.hour || !map.minute || !map.second) return null;
+    if (
+      !map.year ||
+      !map.month ||
+      !map.day ||
+      !map.hour ||
+      !map.minute ||
+      !map.second
+    )
+      return null;
     return {
       year: map.year,
       month: map.month,
@@ -109,7 +117,9 @@ export function getBogotaDayKey(date: Date = new Date()): string {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
-export function parseBogotaDayKey(key: string): { year: number; month: number; day: number } | null {
+export function parseBogotaDayKey(
+  key: string,
+): { year: number; month: number; day: number } | null {
   const m = /^\d{4}-\d{2}-\d{2}$/.exec(key);
   if (!m) return null;
   const [year, month, day] = key.split('-').map((n) => Number(n));
@@ -117,12 +127,18 @@ export function parseBogotaDayKey(key: string): { year: number; month: number; d
   return { year, month, day };
 }
 
-export function getBogotaStartEndOfDay(date: Date = new Date()): { startDate: Date; endDate: Date } {
+export function getBogotaStartEndOfDay(date: Date = new Date()): {
+  startDate: Date;
+  endDate: Date;
+} {
   const key = getBogotaDayKey(date);
   return getBogotaStartEndOfDayFromKey(key);
 }
 
-export function getBogotaStartEndOfDayFromKey(key: string): { startDate: Date; endDate: Date } {
+export function getBogotaStartEndOfDayFromKey(key: string): {
+  startDate: Date;
+  endDate: Date;
+} {
   const parsed = parseBogotaDayKey(key);
   if (!parsed) {
     return getBogotaStartEndOfDay(new Date());
@@ -179,24 +195,29 @@ export function calculateDateRange(
       break;
     case 'custom':
       {
-        const startKey = customStart && /^\d{4}-\d{2}-\d{2}$/.test(customStart) ? customStart : getBogotaDayKey(now);
-        const endKey = customEnd && /^\d{4}-\d{2}-\d{2}$/.test(customEnd) ? customEnd : getBogotaDayKey(now);
+        const startKey =
+          customStart && /^\d{4}-\d{2}-\d{2}$/.test(customStart)
+            ? customStart
+            : getBogotaDayKey(now);
+        const endKey =
+          customEnd && /^\d{4}-\d{2}-\d{2}$/.test(customEnd)
+            ? customEnd
+            : getBogotaDayKey(now);
         const s = getBogotaStartEndOfDayFromKey(startKey);
         const e = getBogotaStartEndOfDayFromKey(endKey);
         startDate = s.startDate;
         endDate = e.endDate;
       }
       break;
-    default:
-      {
-        const parts = getBogotaPartsIntl(now);
-        const y = Number(parts?.year || 0);
-        const m = Number(parts?.month || 0);
-        const startKey = `${y}-${pad2(m)}-01`;
-        const endKey = getLastDayOfMonthKey(y, m);
-        startDate = getBogotaStartEndOfDayFromKey(startKey).startDate;
-        endDate = getBogotaStartEndOfDayFromKey(endKey).endDate;
-      }
+    default: {
+      const parts = getBogotaPartsIntl(now);
+      const y = Number(parts?.year || 0);
+      const m = Number(parts?.month || 0);
+      const startKey = `${y}-${pad2(m)}-01`;
+      const endKey = getLastDayOfMonthKey(y, m);
+      startDate = getBogotaStartEndOfDayFromKey(startKey).startDate;
+      endDate = getBogotaStartEndOfDayFromKey(endKey).endDate;
+    }
   }
 
   // Asegurar que las fechas sean válidas

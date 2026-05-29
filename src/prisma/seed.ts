@@ -1,9 +1,5 @@
 import 'dotenv/config';
-import {
-  PrismaClient,
-  RolUsuario,
-  EstadoUsuario,
-} from '@prisma/client';
+import { PrismaClient, RolUsuario, EstadoUsuario } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import * as argon2 from 'argon2';
@@ -27,7 +23,9 @@ async function crearSuperadministradorInicial() {
   });
 
   if (usuarioExistente) {
-    console.log(`[SEED] Superadministrador ya existe - manteniendo contraseña actual`);
+    console.log(
+      `[SEED] Superadministrador ya existe - manteniendo contraseña actual`,
+    );
     await prisma.usuario.update({
       where: { correo },
       data: {
@@ -38,7 +36,9 @@ async function crearSuperadministradorInicial() {
         estado: EstadoUsuario.ACTIVO,
       },
     });
-    console.log(`[SEED] Superadministrador actualizado - contraseña sin cambios`);
+    console.log(
+      `[SEED] Superadministrador actualizado - contraseña sin cambios`,
+    );
     return usuarioExistente;
   }
 
@@ -53,7 +53,9 @@ async function crearSuperadministradorInicial() {
       estado: EstadoUsuario.ACTIVO,
     },
   });
-  console.log(`[SEED] Superadministrador creado con id: ${superadministrador.id}`);
+  console.log(
+    `[SEED] Superadministrador creado con id: ${superadministrador.id}`,
+  );
 
   return superadministrador;
 }
@@ -66,7 +68,9 @@ async function crearAdministradorInicial() {
   });
 
   if (usuarioExistente) {
-    console.log(`[SEED] Administrador ya existe - manteniendo contraseña actual`);
+    console.log(
+      `[SEED] Administrador ya existe - manteniendo contraseña actual`,
+    );
     const administradorActualizado = await prisma.usuario.update({
       where: { correo },
       data: {
@@ -111,7 +115,9 @@ async function crearUsuarioPorRol(
   const hashContrasena = await argon2.hash(password ?? `${rol}_1234`);
 
   if (existente) {
-    console.log(`[SEED] Usuario ${rol} ya existe (${correo}) - manteniendo contraseña actual`);
+    console.log(
+      `[SEED] Usuario ${rol} ya existe (${correo}) - manteniendo contraseña actual`,
+    );
     const usuarioActualizado = await prisma.usuario.update({
       where: { correo },
       data: {
@@ -122,7 +128,9 @@ async function crearUsuarioPorRol(
         // NO actualizar hashContrasena para mantener la contraseña existente
       },
     });
-    console.log(`[SEED] Usuario ${rol} actualizado (${correo}) - contraseña sin cambios`);
+    console.log(
+      `[SEED] Usuario ${rol} actualizado (${correo}) - contraseña sin cambios`,
+    );
 
     return usuarioActualizado;
   }
@@ -148,38 +156,200 @@ async function crearCatalogoContable() {
   // Usamos literales directos en lugar de enums importados
   // para evitar problemas de caché de tipos de Prisma en ts-node
   const accounts = [
-    { code: '1',     name: 'ACTIVOS',                   type: 'ACTIVO',     nature: 'DEBITORA',   description: 'Cuentas de activo general' },
-    { code: '1.1',   name: 'Caja Principal',            type: 'ACTIVO',     nature: 'DEBITORA',   description: 'Dinero en oficina y bancos' },
-    { code: '1.1.1', name: 'Caja Oficina Central',      type: 'ACTIVO',     nature: 'DEBITORA',   description: 'Efectivo físico en oficina' },
-    { code: '1.1.2', name: 'Cuentas Bancarias',         type: 'ACTIVO',     nature: 'DEBITORA',   description: 'Dinero en bancos (Nequi, Bancolombia, etc.)' },
-    { code: '1.2',   name: 'Cajas de Ruta',             type: 'ACTIVO',     nature: 'DEBITORA',   description: 'Efectivo en poder de cobradores' },
-    { code: '1.2.1',   name: 'Caja Ruta General',         type: 'ACTIVO',     nature: 'DEBITORA',   description: 'Cuenta control para billeteras de cobradores' },
-    { code: '1.2.1.E', name: 'Caja Ruta — Efectivo',      type: 'ACTIVO',     nature: 'DEBITORA',   description: 'Recaudo en efectivo por cobrador' },
-    { code: '1.2.1.T', name: 'Caja Ruta — Transferencia',  type: 'ACTIVO',     nature: 'DEBITORA',   description: 'Recaudo por Nequi/Bancolombia pendiente de conciliación' },
-    { code: '1.3',   name: 'Cartera de Préstamos',      type: 'ACTIVO',     nature: 'DEBITORA',   description: 'Derechos de cobro sobre clientes' },
-    { code: '1.3.1', name: 'Cartera Vigente',           type: 'ACTIVO',     nature: 'DEBITORA',   description: 'Préstamos en estado activo' },
-    { code: '1.3.2', name: 'Cartera en Mora',           type: 'ACTIVO',     nature: 'DEBITORA',   description: 'Préstamos con cuotas vencidas' },
-    { code: '1.4',   name: 'Cuentas Cobrar Cobradores', type: 'ACTIVO',     nature: 'DEBITORA',   description: 'Deudas de empleados por descuadres o adelantos' },
-    { code: '1.4.1', name: 'Deuda Cobrador General',    type: 'ACTIVO',     nature: 'DEBITORA',   description: 'Subcuenta de control de deudas' },
-    { code: '2',     name: 'PATRIMONIO Y PASIVOS',      type: 'PATRIMONIO', nature: 'ACREEDORA',  description: 'Obligaciones y capital' },
-    { code: '2.1',   name: 'Capital del Propietario',   type: 'PATRIMONIO', nature: 'ACREEDORA',  description: 'Inversión inicial del dueño' },
-    { code: '2.2',   name: 'Utilidades Retenidas',      type: 'PATRIMONIO', nature: 'ACREEDORA',  description: 'Ganancias de ejercicios anteriores' },
-    { code: '2.3',   name: 'Utilidad del Periodo',      type: 'PATRIMONIO', nature: 'ACREEDORA',  description: 'Ganancia neta calculada' },
-    { code: '2.4',   name: 'Ajustes Pendientes',        type: 'PASIVO',     nature: 'ACREEDORA',  description: 'Sobrantes de arqueo por identificar' },
-    { code: '3',     name: 'INGRESOS',                  type: 'INGRESOS',   nature: 'ACREEDORA',  description: 'Aumentos en el patrimonio por actividad' },
-    { code: '3.1',   name: 'Ingresos por Intereses',    type: 'INGRESOS',   nature: 'ACREEDORA',  description: 'Interés corriente de préstamos' },
-    { code: '3.2',   name: 'Ingresos por Mora',         type: 'INGRESOS',   nature: 'ACREEDORA',  description: 'Interés por mora y penalidades' },
-    { code: '3.3',   name: 'Otros Ingresos Oper.',      type: 'INGRESOS',   nature: 'ACREEDORA',  description: 'Margen de artículos u otros conceptos' },
-    { code: '4',     name: 'GASTOS',                    type: 'GASTOS',     nature: 'DEBITORA',   description: 'Disminuciones en el patrimonio por operación' },
-    { code: '4.1',   name: 'Gastos de Ruta',            type: 'GASTOS',     nature: 'DEBITORA',   description: 'Gasolina, papelería, viáticos' },
-    { code: '4.2',   name: 'Gastos Administrativos',    type: 'GASTOS',     nature: 'DEBITORA',   description: 'Nómina, servicios, arriendos' },
-    { code: '4.3',   name: 'Pérdidas Incobrables',      type: 'GASTOS',     nature: 'DEBITORA',   description: 'Condonaciones o préstamos perdidos' },
+    {
+      code: '1',
+      name: 'ACTIVOS',
+      type: 'ACTIVO',
+      nature: 'DEBITORA',
+      description: 'Cuentas de activo general',
+    },
+    {
+      code: '1.1',
+      name: 'Caja Principal',
+      type: 'ACTIVO',
+      nature: 'DEBITORA',
+      description: 'Dinero en oficina y bancos',
+    },
+    {
+      code: '1.1.1',
+      name: 'Caja Oficina Central',
+      type: 'ACTIVO',
+      nature: 'DEBITORA',
+      description: 'Efectivo físico en oficina',
+    },
+    {
+      code: '1.1.2',
+      name: 'Cuentas Bancarias',
+      type: 'ACTIVO',
+      nature: 'DEBITORA',
+      description: 'Dinero en bancos (Nequi, Bancolombia, etc.)',
+    },
+    {
+      code: '1.2',
+      name: 'Cajas de Ruta',
+      type: 'ACTIVO',
+      nature: 'DEBITORA',
+      description: 'Efectivo en poder de cobradores',
+    },
+    {
+      code: '1.2.1',
+      name: 'Caja Ruta General',
+      type: 'ACTIVO',
+      nature: 'DEBITORA',
+      description: 'Cuenta control para billeteras de cobradores',
+    },
+    {
+      code: '1.2.1.E',
+      name: 'Caja Ruta — Efectivo',
+      type: 'ACTIVO',
+      nature: 'DEBITORA',
+      description: 'Recaudo en efectivo por cobrador',
+    },
+    {
+      code: '1.2.1.T',
+      name: 'Caja Ruta — Transferencia',
+      type: 'ACTIVO',
+      nature: 'DEBITORA',
+      description: 'Recaudo por Nequi/Bancolombia pendiente de conciliación',
+    },
+    {
+      code: '1.3',
+      name: 'Cartera de Préstamos',
+      type: 'ACTIVO',
+      nature: 'DEBITORA',
+      description: 'Derechos de cobro sobre clientes',
+    },
+    {
+      code: '1.3.1',
+      name: 'Cartera Vigente',
+      type: 'ACTIVO',
+      nature: 'DEBITORA',
+      description: 'Préstamos en estado activo',
+    },
+    {
+      code: '1.3.2',
+      name: 'Cartera en Mora',
+      type: 'ACTIVO',
+      nature: 'DEBITORA',
+      description: 'Préstamos con cuotas vencidas',
+    },
+    {
+      code: '1.4',
+      name: 'Cuentas Cobrar Cobradores',
+      type: 'ACTIVO',
+      nature: 'DEBITORA',
+      description: 'Deudas de empleados por descuadres o adelantos',
+    },
+    {
+      code: '1.4.1',
+      name: 'Deuda Cobrador General',
+      type: 'ACTIVO',
+      nature: 'DEBITORA',
+      description: 'Subcuenta de control de deudas',
+    },
+    {
+      code: '2',
+      name: 'PATRIMONIO Y PASIVOS',
+      type: 'PATRIMONIO',
+      nature: 'ACREEDORA',
+      description: 'Obligaciones y capital',
+    },
+    {
+      code: '2.1',
+      name: 'Capital del Propietario',
+      type: 'PATRIMONIO',
+      nature: 'ACREEDORA',
+      description: 'Inversión inicial del dueño',
+    },
+    {
+      code: '2.2',
+      name: 'Utilidades Retenidas',
+      type: 'PATRIMONIO',
+      nature: 'ACREEDORA',
+      description: 'Ganancias de ejercicios anteriores',
+    },
+    {
+      code: '2.3',
+      name: 'Utilidad del Periodo',
+      type: 'PATRIMONIO',
+      nature: 'ACREEDORA',
+      description: 'Ganancia neta calculada',
+    },
+    {
+      code: '2.4',
+      name: 'Ajustes Pendientes',
+      type: 'PASIVO',
+      nature: 'ACREEDORA',
+      description: 'Sobrantes de arqueo por identificar',
+    },
+    {
+      code: '3',
+      name: 'INGRESOS',
+      type: 'INGRESOS',
+      nature: 'ACREEDORA',
+      description: 'Aumentos en el patrimonio por actividad',
+    },
+    {
+      code: '3.1',
+      name: 'Ingresos por Intereses',
+      type: 'INGRESOS',
+      nature: 'ACREEDORA',
+      description: 'Interés corriente de préstamos',
+    },
+    {
+      code: '3.2',
+      name: 'Ingresos por Mora',
+      type: 'INGRESOS',
+      nature: 'ACREEDORA',
+      description: 'Interés por mora y penalidades',
+    },
+    {
+      code: '3.3',
+      name: 'Otros Ingresos Oper.',
+      type: 'INGRESOS',
+      nature: 'ACREEDORA',
+      description: 'Margen de artículos u otros conceptos',
+    },
+    {
+      code: '4',
+      name: 'GASTOS',
+      type: 'GASTOS',
+      nature: 'DEBITORA',
+      description: 'Disminuciones en el patrimonio por operación',
+    },
+    {
+      code: '4.1',
+      name: 'Gastos de Ruta',
+      type: 'GASTOS',
+      nature: 'DEBITORA',
+      description: 'Gasolina, papelería, viáticos',
+    },
+    {
+      code: '4.2',
+      name: 'Gastos Administrativos',
+      type: 'GASTOS',
+      nature: 'DEBITORA',
+      description: 'Nómina, servicios, arriendos',
+    },
+    {
+      code: '4.3',
+      name: 'Pérdidas Incobrables',
+      type: 'GASTOS',
+      nature: 'DEBITORA',
+      description: 'Condonaciones o préstamos perdidos',
+    },
   ] as const;
 
   for (const acc of accounts) {
     await (prisma as any).account.upsert({
-      where:  { code: acc.code },
-      update: { name: acc.name, type: acc.type, nature: acc.nature, description: acc.description, isActive: true },
+      where: { code: acc.code },
+      update: {
+        name: acc.name,
+        type: acc.type,
+        nature: acc.nature,
+        description: acc.description,
+        isActive: true,
+      },
       create: acc,
     });
   }
@@ -246,56 +416,308 @@ async function seedRolesYPermisos() {
   // La 'accion' debe coincidir con el ID del módulo en el frontend
   const permisos = [
     // General
-    { modulo: 'General', accion: 'dashboard', nombre: 'Dashboard', descripcion: 'Panel Principal', icono: 'LayoutDashboard', ruta: '/admin', orden: 0, esNavegable: true },
-    
+    {
+      modulo: 'General',
+      accion: 'dashboard',
+      nombre: 'Dashboard',
+      descripcion: 'Panel Principal',
+      icono: 'LayoutDashboard',
+      ruta: '/admin',
+      orden: 0,
+      esNavegable: true,
+    },
+
     // Operaciones
-    { modulo: 'Operaciones', accion: 'gestion-creditos', nombre: 'Cr\u00e9ditos', descripcion: 'Gesti\u00f3n de cr\u00e9ditos', icono: 'CreditCard', ruta: '/admin/creditos', orden: 10, esNavegable: true },
-    { modulo: 'Operaciones', accion: 'rutas', nombre: 'Rutas', descripcion: 'Gesti\u00f3n de rutas', icono: 'Route', ruta: '/admin/rutas', orden: 11, esNavegable: true },
+    {
+      modulo: 'Operaciones',
+      accion: 'gestion-creditos',
+      nombre: 'Cr\u00e9ditos',
+      descripcion: 'Gesti\u00f3n de cr\u00e9ditos',
+      icono: 'CreditCard',
+      ruta: '/admin/creditos',
+      orden: 10,
+      esNavegable: true,
+    },
+    {
+      modulo: 'Operaciones',
+      accion: 'rutas',
+      nombre: 'Rutas',
+      descripcion: 'Gesti\u00f3n de rutas',
+      icono: 'Route',
+      ruta: '/admin/rutas',
+      orden: 11,
+      esNavegable: true,
+    },
 
     // Gesti\u00f3n Clientes
-    { modulo: 'Gesti\u00f3n Clientes', accion: 'clientes', nombre: 'Clientes', descripcion: 'Directorio de clientes', icono: 'Users', ruta: '/admin/clientes', orden: 20, esNavegable: true },
-    { modulo: 'Gesti\u00f3n Clientes', accion: 'cuentas-mora', nombre: 'Cuentas en mora', descripcion: 'Gesti\u00f3n de mora', icono: 'AlertCircle', ruta: '/cuentas-mora', orden: 21, esNavegable: true },
-    { modulo: 'Gesti\u00f3n Clientes', accion: 'cuentas-vencidas', nombre: 'Cuentas vencidas', descripcion: 'Cartera castigada', icono: 'FileX2', ruta: '/cuentas-vencidas', orden: 22, esNavegable: true },
-    { modulo: 'Gesti\u00f3n Clientes', accion: 'archivados', nombre: 'Archivados', descripcion: 'Hist\u00f3ricos', icono: 'Archive', ruta: '/admin/archivados', orden: 23, esNavegable: true },
+    {
+      modulo: 'Gesti\u00f3n Clientes',
+      accion: 'clientes',
+      nombre: 'Clientes',
+      descripcion: 'Directorio de clientes',
+      icono: 'Users',
+      ruta: '/admin/clientes',
+      orden: 20,
+      esNavegable: true,
+    },
+    {
+      modulo: 'Gesti\u00f3n Clientes',
+      accion: 'cuentas-mora',
+      nombre: 'Cuentas en mora',
+      descripcion: 'Gesti\u00f3n de mora',
+      icono: 'AlertCircle',
+      ruta: '/cuentas-mora',
+      orden: 21,
+      esNavegable: true,
+    },
+    {
+      modulo: 'Gesti\u00f3n Clientes',
+      accion: 'cuentas-vencidas',
+      nombre: 'Cuentas vencidas',
+      descripcion: 'Cartera castigada',
+      icono: 'FileX2',
+      ruta: '/cuentas-vencidas',
+      orden: 22,
+      esNavegable: true,
+    },
+    {
+      modulo: 'Gesti\u00f3n Clientes',
+      accion: 'archivados',
+      nombre: 'Archivados',
+      descripcion: 'Hist\u00f3ricos',
+      icono: 'Archive',
+      ruta: '/admin/archivados',
+      orden: 23,
+      esNavegable: true,
+    },
 
     // Finanzas
-    { modulo: 'Finanzas', accion: 'contable', nombre: 'Movimientos', descripcion: 'Contabilidad', icono: 'Calculator', ruta: '/contable', orden: 30, esNavegable: true },
-    { modulo: 'Finanzas', accion: 'arqueo', nombre: 'Arqueo de Caja', descripcion: 'Cierre de caja', icono: 'Landmark', ruta: '/contable/cierre-caja', orden: 31, esNavegable: true },
-    { modulo: 'Finanzas', accion: 'articulos', nombre: 'Art\u00edculos (Inventario)', descripcion: 'Inventario', icono: 'Package', ruta: '/articulos', orden: 32, esNavegable: true },
-    { modulo: 'Finanzas', accion: 'reportes-financieros', nombre: 'Reportes Financieros', descripcion: 'Balances', icono: 'BarChart3', ruta: '/reportes/financieros', orden: 33, esNavegable: true },
-    { modulo: 'Finanzas', accion: 'pagos-historial', nombre: 'Historial de Pagos y Gastos', descripcion: 'Cobranza, pagos y gastos registrados', icono: 'Banknote', ruta: '/pagos/historial', orden: 34, esNavegable: true },
+    {
+      modulo: 'Finanzas',
+      accion: 'contable',
+      nombre: 'Movimientos',
+      descripcion: 'Contabilidad',
+      icono: 'Calculator',
+      ruta: '/contable',
+      orden: 30,
+      esNavegable: true,
+    },
+    {
+      modulo: 'Finanzas',
+      accion: 'arqueo',
+      nombre: 'Arqueo de Caja',
+      descripcion: 'Cierre de caja',
+      icono: 'Landmark',
+      ruta: '/contable/cierre-caja',
+      orden: 31,
+      esNavegable: true,
+    },
+    {
+      modulo: 'Finanzas',
+      accion: 'articulos',
+      nombre: 'Art\u00edculos (Inventario)',
+      descripcion: 'Inventario',
+      icono: 'Package',
+      ruta: '/articulos',
+      orden: 32,
+      esNavegable: true,
+    },
+    {
+      modulo: 'Finanzas',
+      accion: 'reportes-financieros',
+      nombre: 'Reportes Financieros',
+      descripcion: 'Balances',
+      icono: 'BarChart3',
+      ruta: '/reportes/financieros',
+      orden: 33,
+      esNavegable: true,
+    },
+    {
+      modulo: 'Finanzas',
+      accion: 'pagos-historial',
+      nombre: 'Historial de Pagos y Gastos',
+      descripcion: 'Cobranza, pagos y gastos registrados',
+      icono: 'Banknote',
+      ruta: '/pagos/historial',
+      orden: 34,
+      esNavegable: true,
+    },
 
     // Administraci\u00f3n
-    { modulo: 'Administraci\u00f3n', accion: 'usuarios', nombre: 'Usuarios', descripcion: 'Gesti\u00f3n de usuarios', icono: 'User', ruta: '/admin/users', orden: 40, esNavegable: true },
-    { modulo: 'Administraci\u00f3n', accion: 'auditoria', nombre: 'Auditor\u00eda', descripcion: 'Logs del sistema', icono: 'FileText', ruta: '/admin/auditoria', orden: 41, esNavegable: true },
+    {
+      modulo: 'Administraci\u00f3n',
+      accion: 'usuarios',
+      nombre: 'Usuarios',
+      descripcion: 'Gesti\u00f3n de usuarios',
+      icono: 'User',
+      ruta: '/admin/users',
+      orden: 40,
+      esNavegable: true,
+    },
+    {
+      modulo: 'Administraci\u00f3n',
+      accion: 'auditoria',
+      nombre: 'Auditor\u00eda',
+      descripcion: 'Logs del sistema',
+      icono: 'FileText',
+      ruta: '/admin/auditoria',
+      orden: 41,
+      esNavegable: true,
+    },
 
     // Sistema
-    { modulo: 'Sistema', accion: 'configuracion', nombre: 'Configuraci\u00f3n', descripcion: 'Ajustes globales', icono: 'Settings', ruta: '/admin/sistema/configuracion', orden: 50, esNavegable: true },
-    { modulo: 'Sistema', accion: 'sincronizacion', nombre: 'Sincronizaci\u00f3n', descripcion: 'Estado de sync', icono: 'RefreshCw', ruta: '/admin/sistema/sincronizacion', orden: 51, esNavegable: true },
-    { modulo: 'Sistema', accion: 'backups', nombre: 'Backups', descripcion: 'Copias de seguridad', icono: 'HardDrive', ruta: '/admin/sistema/backups', orden: 52, esNavegable: true },
+    {
+      modulo: 'Sistema',
+      accion: 'configuracion',
+      nombre: 'Configuraci\u00f3n',
+      descripcion: 'Ajustes globales',
+      icono: 'Settings',
+      ruta: '/admin/sistema/configuracion',
+      orden: 50,
+      esNavegable: true,
+    },
+    {
+      modulo: 'Sistema',
+      accion: 'sincronizacion',
+      nombre: 'Sincronizaci\u00f3n',
+      descripcion: 'Estado de sync',
+      icono: 'RefreshCw',
+      ruta: '/admin/sistema/sincronizacion',
+      orden: 51,
+      esNavegable: true,
+    },
+    {
+      modulo: 'Sistema',
+      accion: 'backups',
+      nombre: 'Backups',
+      descripcion: 'Copias de seguridad',
+      icono: 'HardDrive',
+      ruta: '/admin/sistema/backups',
+      orden: 52,
+      esNavegable: true,
+    },
 
     // Reportes
-    { modulo: 'Reportes', accion: 'reportes-operativos', nombre: 'Reportes Operativos', descripcion: 'M\u00e9tricas', icono: 'ClipboardList', ruta: '/admin/reportes/operativos', orden: 60, esNavegable: true },
-    
+    {
+      modulo: 'Reportes',
+      accion: 'reportes-operativos',
+      nombre: 'Reportes Operativos',
+      descripcion: 'M\u00e9tricas',
+      icono: 'ClipboardList',
+      ruta: '/admin/reportes/operativos',
+      orden: 60,
+      esNavegable: true,
+    },
+
     // Cobranza (App/Frontend specific)
-    { modulo: 'Cobranza', accion: 'prestamos-dinero', nombre: 'Solicitar Cr\u00e9dito', descripcion: 'Solicitudes', icono: 'CreditCard', ruta: '/cobranzas/prestamos/nuevo', orden: 70, esNavegable: true },
-    { modulo: 'Cobranza', accion: 'notificaciones', nombre: 'Notificaciones', descripcion: 'Alertas', icono: 'Bell', ruta: '/cobranzas/notificaciones', orden: 71, esNavegable: true },
+    {
+      modulo: 'Cobranza',
+      accion: 'prestamos-dinero',
+      nombre: 'Solicitar Cr\u00e9dito',
+      descripcion: 'Solicitudes',
+      icono: 'CreditCard',
+      ruta: '/cobranzas/prestamos/nuevo',
+      orden: 70,
+      esNavegable: true,
+    },
+    {
+      modulo: 'Cobranza',
+      accion: 'notificaciones',
+      nombre: 'Notificaciones',
+      descripcion: 'Alertas',
+      icono: 'Bell',
+      ruta: '/cobranzas/notificaciones',
+      orden: 71,
+      esNavegable: true,
+    },
 
     // Cr\u00e9ditos Art\u00edculos
-    { modulo: 'Supervisi\u00f3n', accion: 'creditos-articulos', nombre: 'Cr\u00e9ditos Art\u00edculos', descripcion: 'Cr\u00e9ditos de art\u00edculos', icono: 'ShoppingBag', ruta: '/creditos-articulos', orden: 15, esNavegable: true },
+    {
+      modulo: 'Supervisi\u00f3n',
+      accion: 'creditos-articulos',
+      nombre: 'Cr\u00e9ditos Art\u00edculos',
+      descripcion: 'Cr\u00e9ditos de art\u00edculos',
+      icono: 'ShoppingBag',
+      ruta: '/creditos-articulos',
+      orden: 15,
+      esNavegable: true,
+    },
 
     // Solicitudes
-    { modulo: 'Cobranza', accion: 'solicitudes', nombre: 'Solicitudes', descripcion: 'Solicitudes pendientes', icono: 'ClipboardList', ruta: '/cobranzas/solicitudes', orden: 72, esNavegable: true },
+    {
+      modulo: 'Cobranza',
+      accion: 'solicitudes',
+      nombre: 'Solicitudes',
+      descripcion: 'Solicitudes pendientes',
+      icono: 'ClipboardList',
+      ruta: '/cobranzas/solicitudes',
+      orden: 72,
+      esNavegable: true,
+    },
 
     // ── Permisos granulares (verificados por ProtectedPage en el frontend) ──
     // Estos NO son navegables (no generan ítems de sidebar) pero son
     // requeridos por <ProtectedPage permiso="..."> para acceso a páginas.
-    { modulo: 'Contable', accion: 'CONTABLE_VIEW', nombre: 'Ver Módulo Contable', descripcion: 'Permite acceder al módulo contable y financiero.', icono: 'Calculator', ruta: '/contable', orden: 30, esNavegable: false },
-    { modulo: 'CuentasVencidas', accion: 'CUENTAS_VENCIDAS_VIEW', nombre: 'Ver Cuentas Vencidas', descripcion: 'Permite acceder al módulo de cuentas vencidas.', icono: 'FileX2', ruta: '/cuentas-vencidas', orden: 22, esNavegable: false },
-    { modulo: 'Articulos', accion: 'ARTICULOS_VIEW', nombre: 'Ver Artículos', descripcion: 'Permite acceder al catálogo de artículos e inventario.', icono: 'Package', ruta: '/articulos', orden: 32, esNavegable: false },
-    { modulo: 'Reportes', accion: 'REPORTES_FINANCIEROS_VIEW', nombre: 'Ver Reportes Financieros', descripcion: 'Permite acceder a reportes financieros.', icono: 'BarChart3', ruta: '/reportes/financieros', orden: 33, esNavegable: false },
-    { modulo: 'CreditosArticulos', accion: 'CREDITOS_ARTICULOS_VIEW', nombre: 'Ver Créditos de Artículos', descripcion: 'Permite acceder al módulo de créditos de artículos.', icono: 'ShoppingBag', ruta: '/creditos-articulos', orden: 15, esNavegable: false },
-    { modulo: 'Auditoria', accion: 'AUDIT_VIEW', nombre: 'Ver Auditoría', descripcion: 'Permite acceder al módulo de auditoría.', icono: 'FileText', ruta: '/admin/auditoria', orden: 41, esNavegable: false },
+    {
+      modulo: 'Contable',
+      accion: 'CONTABLE_VIEW',
+      nombre: 'Ver Módulo Contable',
+      descripcion: 'Permite acceder al módulo contable y financiero.',
+      icono: 'Calculator',
+      ruta: '/contable',
+      orden: 30,
+      esNavegable: false,
+    },
+    {
+      modulo: 'CuentasVencidas',
+      accion: 'CUENTAS_VENCIDAS_VIEW',
+      nombre: 'Ver Cuentas Vencidas',
+      descripcion: 'Permite acceder al módulo de cuentas vencidas.',
+      icono: 'FileX2',
+      ruta: '/cuentas-vencidas',
+      orden: 22,
+      esNavegable: false,
+    },
+    {
+      modulo: 'Articulos',
+      accion: 'ARTICULOS_VIEW',
+      nombre: 'Ver Artículos',
+      descripcion: 'Permite acceder al catálogo de artículos e inventario.',
+      icono: 'Package',
+      ruta: '/articulos',
+      orden: 32,
+      esNavegable: false,
+    },
+    {
+      modulo: 'Reportes',
+      accion: 'REPORTES_FINANCIEROS_VIEW',
+      nombre: 'Ver Reportes Financieros',
+      descripcion: 'Permite acceder a reportes financieros.',
+      icono: 'BarChart3',
+      ruta: '/reportes/financieros',
+      orden: 33,
+      esNavegable: false,
+    },
+    {
+      modulo: 'CreditosArticulos',
+      accion: 'CREDITOS_ARTICULOS_VIEW',
+      nombre: 'Ver Créditos de Artículos',
+      descripcion: 'Permite acceder al módulo de créditos de artículos.',
+      icono: 'ShoppingBag',
+      ruta: '/creditos-articulos',
+      orden: 15,
+      esNavegable: false,
+    },
+    {
+      modulo: 'Auditoria',
+      accion: 'AUDIT_VIEW',
+      nombre: 'Ver Auditoría',
+      descripcion: 'Permite acceder al módulo de auditoría.',
+      icono: 'FileText',
+      ruta: '/admin/auditoria',
+      orden: 41,
+      esNavegable: false,
+    },
   ];
 
   // Upsert Permisos
@@ -315,7 +737,7 @@ async function seedRolesYPermisos() {
       descripcion: 'Control total del sistema',
       esSistema: true,
       rutaDefault: '/admin',
-      permisos: ['all'] 
+      permisos: ['all'],
     },
     {
       nombre: 'ADMIN',
@@ -324,15 +746,26 @@ async function seedRolesYPermisos() {
       rutaDefault: '/admin',
       permisos: [
         'dashboard',
-        'gestion-creditos', 'rutas',
-        'clientes', 'cuentas-mora', 'cuentas-vencidas', 'archivados',
-        'contable', 'arqueo', 'articulos', 'reportes-financieros', 'pagos-historial',
+        'gestion-creditos',
+        'rutas',
+        'clientes',
+        'cuentas-mora',
+        'cuentas-vencidas',
+        'archivados',
+        'contable',
+        'arqueo',
+        'articulos',
+        'reportes-financieros',
+        'pagos-historial',
         'auditoria',
         'reportes-operativos',
         // Granulares (ProtectedPage)
-        'CONTABLE_VIEW', 'CUENTAS_VENCIDAS_VIEW', 'ARTICULOS_VIEW',
-        'REPORTES_FINANCIEROS_VIEW', 'AUDIT_VIEW',
-      ]
+        'CONTABLE_VIEW',
+        'CUENTAS_VENCIDAS_VIEW',
+        'ARTICULOS_VIEW',
+        'REPORTES_FINANCIEROS_VIEW',
+        'AUDIT_VIEW',
+      ],
     },
     {
       nombre: 'COORDINADOR',
@@ -341,14 +774,19 @@ async function seedRolesYPermisos() {
       rutaDefault: '/coordinador',
       permisos: [
         'dashboard',
-        'gestion-creditos', 'rutas',
-        'clientes', 'cuentas-mora', 'cuentas-vencidas', 'archivados',
+        'gestion-creditos',
+        'rutas',
+        'clientes',
+        'cuentas-mora',
+        'cuentas-vencidas',
+        'archivados',
         'articulos',
         'pagos-historial',
         'reportes-operativos',
         // Granulares (ProtectedPage)
-        'CUENTAS_VENCIDAS_VIEW', 'ARTICULOS_VIEW',
-      ]
+        'CUENTAS_VENCIDAS_VIEW',
+        'ARTICULOS_VIEW',
+      ],
     },
     {
       nombre: 'SUPERVISOR',
@@ -358,12 +796,13 @@ async function seedRolesYPermisos() {
       permisos: [
         'dashboard',
         'rutas',
-        'clientes', 'cuentas-mora',
+        'clientes',
+        'cuentas-mora',
         'creditos-articulos',
         'reportes-operativos',
         // Granulares (ProtectedPage)
         'CREDITOS_ARTICULOS_VIEW',
-      ]
+      ],
     },
     {
       nombre: 'COBRADOR',
@@ -373,8 +812,10 @@ async function seedRolesYPermisos() {
       permisos: [
         'dashboard',
         'clientes',
-        'prestamos-dinero', 'notificaciones', 'solicitudes'
-      ]
+        'prestamos-dinero',
+        'notificaciones',
+        'solicitudes',
+      ],
     },
     {
       nombre: 'CONTADOR',
@@ -383,11 +824,19 @@ async function seedRolesYPermisos() {
       rutaDefault: '/contable',
       permisos: [
         'dashboard',
-        'cuentas-mora', 'cuentas-vencidas',
-        'contable', 'arqueo', 'articulos', 'reportes-financieros', 'pagos-historial',
+        'cuentas-mora',
+        'cuentas-vencidas',
+        'contable',
+        'arqueo',
+        'articulos',
+        'reportes-financieros',
+        'pagos-historial',
         // Granulares (ProtectedPage)
-        'CONTABLE_VIEW', 'CUENTAS_VENCIDAS_VIEW', 'ARTICULOS_VIEW', 'REPORTES_FINANCIEROS_VIEW',
-      ]
+        'CONTABLE_VIEW',
+        'CUENTAS_VENCIDAS_VIEW',
+        'ARTICULOS_VIEW',
+        'REPORTES_FINANCIEROS_VIEW',
+      ],
     },
     {
       nombre: 'PUNTO_DE_VENTA',
@@ -400,9 +849,10 @@ async function seedRolesYPermisos() {
         'articulos',
         'clientes',
         // Granulares (ProtectedPage)
-        'CREDITOS_ARTICULOS_VIEW', 'ARTICULOS_VIEW',
-      ]
-    }
+        'CREDITOS_ARTICULOS_VIEW',
+        'ARTICULOS_VIEW',
+      ],
+    },
   ];
 
   // Upsert Roles y Asignar Permisos
@@ -411,17 +861,26 @@ async function seedRolesYPermisos() {
   for (const r of roles) {
     const rol = await prisma.rol.upsert({
       where: { nombre: r.nombre },
-      update: { descripcion: r.descripcion, esSistema: r.esSistema, rutaDefault: r.rutaDefault },
-      create: { nombre: r.nombre, descripcion: r.descripcion, esSistema: r.esSistema, rutaDefault: r.rutaDefault },
+      update: {
+        descripcion: r.descripcion,
+        esSistema: r.esSistema,
+        rutaDefault: r.rutaDefault,
+      },
+      create: {
+        nombre: r.nombre,
+        descripcion: r.descripcion,
+        esSistema: r.esSistema,
+        rutaDefault: r.rutaDefault,
+      },
     });
 
     let permisosIds: string[] = [];
     if (r.permisos.includes('all')) {
-      permisosIds = allPermisos.map(p => p.id);
+      permisosIds = allPermisos.map((p) => p.id);
     } else {
       permisosIds = allPermisos
-        .filter(p => r.permisos.includes(p.accion))
-        .map(p => p.id);
+        .filter((p) => r.permisos.includes(p.accion))
+        .map((p) => p.id);
     }
 
     // Limpiar permisos existentes
@@ -430,13 +889,13 @@ async function seedRolesYPermisos() {
     // Asignar nuevos
     if (permisosIds.length > 0) {
       await prisma.rolPermiso.createMany({
-        data: permisosIds.map(pid => ({ rolId: rol.id, permisoId: pid }))
+        data: permisosIds.map((pid) => ({ rolId: rol.id, permisoId: pid })),
       });
     }
 
     // VINCULAR USUARIOS CON ROLES DINÁMICOS
     const usuariosConRol = await prisma.usuario.findMany({
-      where: { rol: r.nombre as RolUsuario }
+      where: { rol: r.nombre as RolUsuario },
     });
 
     for (const usuario of usuariosConRol) {
@@ -444,14 +903,14 @@ async function seedRolesYPermisos() {
         where: {
           usuarioId_rolId: {
             usuarioId: usuario.id,
-            rolId: rol.id
-          }
+            rolId: rol.id,
+          },
         },
         create: {
           usuarioId: usuario.id,
-          rolId: rol.id
+          rolId: rol.id,
         },
-        update: {}
+        update: {},
       });
     }
   }

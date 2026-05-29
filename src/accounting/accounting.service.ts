@@ -7,12 +7,34 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { EstadoAprobacion, Prisma, TipoAprobacion, TipoCaja, TipoTransaccion } from '@prisma/client';
+import {
+  EstadoAprobacion,
+  Prisma,
+  TipoAprobacion,
+  TipoCaja,
+  TipoTransaccion,
+} from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
-import { calculateDateRange, formatBogotaOffsetIso, getBogotaDayKey, getBogotaStartEndOfDay, getBogotaStartEndOfDayFromKey } from '../utils/date-utils';
-import { generarExcelContable, generarPDFContable, CajaRow, TransaccionRow } from '../templates/exports/reporte-contable.template';
-import { generarExcelGastos, generarPDFGastos, GastoRow, GastosTotales } from '../templates/exports/gastos-export.template';
+import {
+  calculateDateRange,
+  formatBogotaOffsetIso,
+  getBogotaDayKey,
+  getBogotaStartEndOfDay,
+  getBogotaStartEndOfDayFromKey,
+} from '../utils/date-utils';
+import {
+  generarExcelContable,
+  generarPDFContable,
+  CajaRow,
+  TransaccionRow,
+} from '../templates/exports/reporte-contable.template';
+import {
+  generarExcelGastos,
+  generarPDFGastos,
+  GastoRow,
+  GastosTotales,
+} from '../templates/exports/gastos-export.template';
 import { LedgerService, ReferenceTypeContable } from './ledger.service';
 import { randomUUID } from 'crypto';
 
@@ -28,7 +50,11 @@ export class AccountingService {
   ) {}
 
   // Codigos reservados para las cajas que no se pueden eliminar
-  private static readonly CODIGOS_DEFAULT = ['CAJA-PRINCIPAL', 'CAJA-OFICINA', 'CAJA-BANCO'] as const;
+  private static readonly CODIGOS_DEFAULT = [
+    'CAJA-PRINCIPAL',
+    'CAJA-OFICINA',
+    'CAJA-BANCO',
+  ] as const;
 
   async onModuleInit() {
     await this.ensureCajasDefault();
@@ -173,34 +199,56 @@ export class AccountingService {
       });
 
       if (!adminUser) {
-        this.logger.warn('No hay un usuario administrador activo para asignar las cajas por defecto. Se reintentara cuando exista uno.');
+        this.logger.warn(
+          'No hay un usuario administrador activo para asignar las cajas por defecto. Se reintentara cuando exista uno.',
+        );
         return;
       }
 
       const cajasDefault = [
-        { codigo: 'CAJA-PRINCIPAL', nombre: 'Caja Principal', tipo: 'PRINCIPAL' as const },
-        { codigo: 'CAJA-OFICINA',   nombre: 'Caja de Oficina', tipo: 'PRINCIPAL' as const },
-        { codigo: 'CAJA-BANCO',     nombre: 'Caja Banco',      tipo: 'PRINCIPAL' as const },
+        {
+          codigo: 'CAJA-PRINCIPAL',
+          nombre: 'Caja Principal',
+          tipo: 'PRINCIPAL' as const,
+        },
+        {
+          codigo: 'CAJA-OFICINA',
+          nombre: 'Caja de Oficina',
+          tipo: 'PRINCIPAL' as const,
+        },
+        {
+          codigo: 'CAJA-BANCO',
+          nombre: 'Caja Banco',
+          tipo: 'PRINCIPAL' as const,
+        },
       ];
 
       for (const def of cajasDefault) {
-        const existe = await this.prisma.caja.findUnique({ where: { codigo: def.codigo } });
+        const existe = await this.prisma.caja.findUnique({
+          where: { codigo: def.codigo },
+        });
         if (!existe) {
           await this.prisma.caja.create({
             data: {
-              codigo:        def.codigo,
-              nombre:        def.nombre,
-              tipo:          def.tipo,
+              codigo: def.codigo,
+              nombre: def.nombre,
+              tipo: def.tipo,
               responsableId: adminUser.id,
-              saldoActual:   0,
-              activa:        true,
+              saldoActual: 0,
+              activa: true,
             },
           });
-          this.logger.log(`Caja por defecto creada: ${def.nombre} (${def.codigo})`);
+          this.logger.log(
+            `Caja por defecto creada: ${def.nombre} (${def.codigo})`,
+          );
         } else {
           // Si ya existe, la normalizamos para garantizar que aparezca en listados (getCajas filtra activa=true)
           // y que tenga propiedades coherentes.
-          if (!existe.activa || existe.nombre !== def.nombre || existe.tipo !== def.tipo) {
+          if (
+            !existe.activa ||
+            existe.nombre !== def.nombre ||
+            existe.tipo !== def.tipo
+          ) {
             await this.prisma.caja.update({
               where: { id: existe.id },
               data: {
@@ -237,7 +285,9 @@ export class AccountingService {
       throw new NotFoundException('Caja de ruta no encontrada');
     }
 
-    const { startDate: inicioHoy, endDate: finHoy } = getBogotaStartEndOfDay(new Date());
+    const { startDate: inicioHoy, endDate: finHoy } = getBogotaStartEndOfDay(
+      new Date(),
+    );
 
     const cierre = await this.prisma.transaccion.findFirst({
       where: {
@@ -252,7 +302,9 @@ export class AccountingService {
       rutaId,
       cerradaHoy: !!cierre?.id,
       cierreId: cierre?.id || null,
-      fechaCierre: cierre?.fechaTransaccion ? formatBogotaOffsetIso(cierre.fechaTransaccion) : null,
+      fechaCierre: cierre?.fechaTransaccion
+        ? formatBogotaOffsetIso(cierre.fechaTransaccion)
+        : null,
     };
   }
 
@@ -276,7 +328,8 @@ export class AccountingService {
       orderBy: { creadoEn: 'desc' },
     });
 
-    const { startDate: fechaInicio, endDate: fechaFin } = getBogotaStartEndOfDay(new Date());
+    const { startDate: fechaInicio, endDate: fechaFin } =
+      getBogotaStartEndOfDay(new Date());
 
     const cajasConSaldo = await Promise.all(
       cajas.map(async (caja) => {
@@ -343,7 +396,7 @@ export class AccountingService {
       nombre: caja.nombre,
       tipo: caja.tipo,
       rutaId: caja.rutaId,
-      rutaNombre: (caja as any).ruta?.nombre || null,
+      rutaNombre: caja.ruta?.nombre || null,
       responsable: caja.responsable
         ? `${caja.responsable.nombres} ${caja.responsable.apellidos}`
         : 'Sin asignar',
@@ -403,7 +456,8 @@ export class AccountingService {
       }
     }
 
-    const { rutaId, cobradorId, cajaRuta } = await this.resolveActiveRouteCashContext(data.rutaId);
+    const { rutaId, cobradorId, cajaRuta } =
+      await this.resolveActiveRouteCashContext(data.rutaId);
 
     // Buscar nombre del solicitante
     const solicitante = await this.prisma.usuario.findUnique({
@@ -524,7 +578,9 @@ export class AccountingService {
         await tx.transaccion.create({
           data: {
             numeroTransaccion: this.generarNumeroTransaccion('GTRX'),
-            idempotencyKey: idempotencyKey ? `${idempotencyKey}:trx` : undefined,
+            idempotencyKey: idempotencyKey
+              ? `${idempotencyKey}:trx`
+              : undefined,
             cajaId: cajaRuta.id,
             tipo: TipoTransaccion.EGRESO,
             monto: data.monto,
@@ -539,23 +595,23 @@ export class AccountingService {
         await this.ledgerService.registrarAsiento(
           {
             referenceType: 'GASTO',
-            referenceId:   newGasto.id,
-            description:   `Gasto de ruta directo: ${data.descripcion}`,
-            createdBy:     data.solicitadoPorId,
+            referenceId: newGasto.id,
+            description: `Gasto de ruta directo: ${data.descripcion}`,
+            createdBy: data.solicitadoPorId,
             lines: [
               {
                 accountCode: '4.1', // Gastos de Ruta
-                debitAmount:  Number(data.monto),
+                debitAmount: Number(data.monto),
               },
               {
-                accountCode:  '1.2.1', // Caja Ruta
-                creditAmount:  Number(data.monto),
-                cajaId:        cajaRuta.id,
-                cajaDelta:    -Number(data.monto),
+                accountCode: '1.2.1', // Caja Ruta
+                creditAmount: Number(data.monto),
+                cajaId: cajaRuta.id,
+                cajaDelta: -Number(data.monto),
               },
             ],
           },
-          tx as any,
+          tx,
         );
       });
 
@@ -578,7 +634,8 @@ export class AccountingService {
     cobradorId: string;
     solicitadoPorId: string;
   }) {
-    const { rutaId, cobradorId, cajaRuta } = await this.resolveActiveRouteCashContext(data.rutaId);
+    const { rutaId, cobradorId, cajaRuta } =
+      await this.resolveActiveRouteCashContext(data.rutaId);
 
     const aprobacion = await this.prisma.aprobacion.create({
       data: {
@@ -633,7 +690,8 @@ export class AccountingService {
       await this.notificacionesService.create({
         usuarioId: data.solicitadoPorId,
         titulo: 'Solicitud enviada',
-        mensaje: 'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
+        mensaje:
+          'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
         tipo: 'INFORMATIVO',
         entidad: 'Aprobacion',
         entidadId: aprobacion.id,
@@ -772,7 +830,8 @@ export class AccountingService {
               createdBy: userId,
               lines: [
                 {
-                  accountCode: nuevaCaja.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1',
+                  accountCode:
+                    nuevaCaja.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1',
                   debitAmount: data.saldoInicial,
                   cajaId: nuevaCaja.id,
                   cajaDelta: +data.saldoInicial,
@@ -783,7 +842,7 @@ export class AccountingService {
                 },
               ],
             },
-            tx as any,
+            tx,
           );
         }
 
@@ -830,12 +889,16 @@ export class AccountingService {
     }
 
     // Las cajas por defecto NO pueden desactivarse ni renombrarse, solo cambiar responsable
-    if (AccountingService.CODIGOS_DEFAULT.includes(caja.codigo as any)) {
+    if (AccountingService.CODIGOS_DEFAULT.includes(caja.codigo)) {
       if (data.activa === false) {
-        throw new ForbiddenException(`La caja "${caja.nombre}" es una caja del sistema y no puede desactivarse.`);
+        throw new ForbiddenException(
+          `La caja "${caja.nombre}" es una caja del sistema y no puede desactivarse.`,
+        );
       }
       if (data.nombre && data.nombre !== caja.nombre) {
-        throw new ForbiddenException(`El nombre de la caja "${caja.nombre}" no puede modificarse.`);
+        throw new ForbiddenException(
+          `El nombre de la caja "${caja.nombre}" no puede modificarse.`,
+        );
       }
       // Solo se permite actualizar el responsable; los saldos se ajustan por ledger.
       return this.prisma.caja.update({
@@ -856,7 +919,7 @@ export class AccountingService {
     const caja = await this.prisma.caja.findUnique({ where: { id } });
     if (!caja) throw new NotFoundException('Caja no encontrada');
 
-    if (AccountingService.CODIGOS_DEFAULT.includes(caja.codigo as any)) {
+    if (AccountingService.CODIGOS_DEFAULT.includes(caja.codigo)) {
       throw new ForbiddenException(
         `La caja "${caja.nombre}" es una caja del sistema y no puede eliminarse. Solo puede reasignarse su responsable.`,
       );
@@ -916,11 +979,16 @@ export class AccountingService {
     if (fechaInicio || fechaFin) {
       where.createdAt = {};
       if (fechaInicio) {
-        const inicioKey = fechaInicio.includes('T') ? fechaInicio.split('T')[0] : fechaInicio;
-        where.createdAt.gte = getBogotaStartEndOfDayFromKey(inicioKey).startDate;
+        const inicioKey = fechaInicio.includes('T')
+          ? fechaInicio.split('T')[0]
+          : fechaInicio;
+        where.createdAt.gte =
+          getBogotaStartEndOfDayFromKey(inicioKey).startDate;
       }
       if (fechaFin) {
-        const finKey = fechaFin.includes('T') ? fechaFin.split('T')[0] : fechaFin;
+        const finKey = fechaFin.includes('T')
+          ? fechaFin.split('T')[0]
+          : fechaFin;
         where.createdAt.lte = getBogotaStartEndOfDayFromKey(finKey).endDate;
       }
     }
@@ -945,7 +1013,9 @@ export class AccountingService {
           lines: {
             include: {
               account: { select: { code: true, name: true, type: true } },
-              caja: { select: { id: true, nombre: true, codigo: true, tipo: true } },
+              caja: {
+                select: { id: true, nombre: true, codigo: true, tipo: true },
+              },
             },
             orderBy: { accountCode: 'asc' },
           },
@@ -981,23 +1051,36 @@ export class AccountingService {
       const resultadoIngresos = entry.lines.reduce(
         (sum: number, line: any) =>
           String(line.accountCode || '').startsWith('3.')
-            ? sum + Number(line.creditAmount || 0) - Number(line.debitAmount || 0)
+            ? sum +
+              Number(line.creditAmount || 0) -
+              Number(line.debitAmount || 0)
             : sum,
         0,
       );
       const resultadoEgresosCostos = entry.lines.reduce(
         (sum: number, line: any) =>
-          String(line.accountCode || '').startsWith('4.') || String(line.accountCode || '').startsWith('5.')
-            ? sum + Number(line.debitAmount || 0) - Number(line.creditAmount || 0)
+          String(line.accountCode || '').startsWith('4.') ||
+          String(line.accountCode || '').startsWith('5.')
+            ? sum +
+              Number(line.debitAmount || 0) -
+              Number(line.creditAmount || 0)
             : sum,
         0,
       );
       const impactoResultado = resultadoIngresos - resultadoEgresosCostos;
       const cuentaPrincipal =
-        (entry.referenceType === 'AJUSTE' && impactoCaja !== 0 ? lineasCaja[0] : null) ||
-        entry.lines.find((line: any) => String(line.accountCode || '').startsWith('3.')) ||
-        entry.lines.find((line: any) => String(line.accountCode || '').startsWith('4.')) ||
-        entry.lines.find((line: any) => String(line.accountCode || '').startsWith('5.')) ||
+        (entry.referenceType === 'AJUSTE' && impactoCaja !== 0
+          ? lineasCaja[0]
+          : null) ||
+        entry.lines.find((line: any) =>
+          String(line.accountCode || '').startsWith('3.'),
+        ) ||
+        entry.lines.find((line: any) =>
+          String(line.accountCode || '').startsWith('4.'),
+        ) ||
+        entry.lines.find((line: any) =>
+          String(line.accountCode || '').startsWith('5.'),
+        ) ||
         entry.lines.find((line: any) => line.cajaId) ||
         entry.lines[0];
 
@@ -1010,11 +1093,21 @@ export class AccountingService {
         creadoPorId: entry.createdBy,
         totalDebito,
         totalCredito,
-        direction: impactoCaja > 0 ? 'IN' : impactoCaja < 0 ? 'OUT' : impactoResultado >= 0 ? 'IN' : 'OUT',
+        direction:
+          impactoCaja > 0
+            ? 'IN'
+            : impactoCaja < 0
+              ? 'OUT'
+              : impactoResultado >= 0
+                ? 'IN'
+                : 'OUT',
         impactoCaja,
         impactoResultado,
         accountCode: cuentaPrincipal?.accountCode || null,
-        accountName: cuentaPrincipal?.account?.name || cuentaPrincipal?.accountCode || null,
+        accountName:
+          cuentaPrincipal?.account?.name ||
+          cuentaPrincipal?.accountCode ||
+          null,
         caja: lineasCaja[0]?.caja?.nombre || null,
         cajaId: lineasCaja[0]?.cajaId || null,
         cuadrado: Math.abs(totalDebito - totalCredito) < 0.01,
@@ -1027,7 +1120,9 @@ export class AccountingService {
           cajaId: line.cajaId,
           caja: line.caja?.nombre || null,
           direction: line.cajaId
-            ? Number(line.debitAmount || 0) >= Number(line.creditAmount || 0) ? 'IN' : 'OUT'
+            ? Number(line.debitAmount || 0) >= Number(line.creditAmount || 0)
+              ? 'IN'
+              : 'OUT'
             : null,
         })),
       };
@@ -1056,97 +1151,122 @@ export class AccountingService {
     limit?: number;
   }) {
     try {
-    const {
-      cajaId,
-      tipo,
-      fechaInicio,
-      fechaFin,
-      page = 1,
-      limit = 50,
-    } = filtros;
-    const skip = (page - 1) * limit;
+      const {
+        cajaId,
+        tipo,
+        fechaInicio,
+        fechaFin,
+        page = 1,
+        limit = 50,
+      } = filtros;
+      const skip = (page - 1) * limit;
 
-    const where: any = {};
+      const where: any = {};
 
-    // Se eliminó el filtro que excluía consolidaciones para mostrarlas en movimientos recientes
+      // Se eliminó el filtro que excluía consolidaciones para mostrarlas en movimientos recientes
 
-    if (cajaId) {
-      where.cajaId = cajaId;
-      if (tipo) where.tipo = tipo;
-    } else if (tipo === TipoTransaccion.INGRESO || tipo === TipoTransaccion.EGRESO) {
-      // Filtro global por tipo explícito (historial de ingresos/egresos del módulo contable)
-      where.tipo = tipo;
-      // Para ingresos globales, excluir transacciones internas que no son recaudo real
-      if (tipo === TipoTransaccion.INGRESO) {
-        where.NOT = {
-          tipoReferencia: { in: ['SOLICITUD_BASE', 'SOLICITUD_BASE_EFECTIVO', 'APERTURA_CAJA'] },
+      if (cajaId) {
+        where.cajaId = cajaId;
+        if (tipo) where.tipo = tipo;
+      } else if (
+        tipo === TipoTransaccion.INGRESO ||
+        tipo === TipoTransaccion.EGRESO
+      ) {
+        // Filtro global por tipo explícito (historial de ingresos/egresos del módulo contable)
+        where.tipo = tipo;
+        // Para ingresos globales, excluir transacciones internas que no son recaudo real
+        if (tipo === TipoTransaccion.INGRESO) {
+          where.NOT = {
+            tipoReferencia: {
+              in: [
+                'SOLICITUD_BASE',
+                'SOLICITUD_BASE_EFECTIVO',
+                'APERTURA_CAJA',
+              ],
+            },
+          };
+        }
+      } else {
+        // Movimientos recientes (global): mostrar solo movimientos entre cajas.
+        // Además, ocultar la "doble partida" de transferencias mostrando solo el lado TRX-IN.
+        where.tipo = TipoTransaccion.TRANSFERENCIA;
+        where.numeroTransaccion = { startsWith: 'TRX-IN' };
+      }
+      if (fechaInicio || fechaFin) {
+        const { startDate, endDate } = calculateDateRange(
+          'custom',
+          fechaInicio
+            ? fechaInicio.includes('T')
+              ? fechaInicio.split('T')[0]
+              : fechaInicio
+            : undefined,
+          fechaFin
+            ? fechaFin.includes('T')
+              ? fechaFin.split('T')[0]
+              : fechaFin
+            : undefined,
+        );
+        where.fechaTransaccion = {
+          gte: startDate,
+          lte: endDate,
         };
       }
-    } else {
-      // Movimientos recientes (global): mostrar solo movimientos entre cajas.
-      // Además, ocultar la "doble partida" de transferencias mostrando solo el lado TRX-IN.
-      where.tipo = TipoTransaccion.TRANSFERENCIA;
-      where.numeroTransaccion = { startsWith: 'TRX-IN' };
-    }
-    if (fechaInicio || fechaFin) {
-      const { startDate, endDate } = calculateDateRange(
-        'custom',
-        fechaInicio ? (fechaInicio.includes('T') ? fechaInicio.split('T')[0] : fechaInicio) : undefined,
-        fechaFin ? (fechaFin.includes('T') ? fechaFin.split('T')[0] : fechaFin) : undefined
-      );
-      where.fechaTransaccion = {
-        gte: startDate,
-        lte: endDate,
-      };
-    }
 
-    // Si el tipo es 'INGRESO', queremos incluir tanto INGRESOS reales como TRANSFERENCIAS TRX-IN
-    // que representan recolecciones de ruta (para que el listado coincida con el dashboard)
-    if (where.tipo === TipoTransaccion.INGRESO && !cajaId) {
-       delete where.tipo;
-       where.OR = [
-         { tipo: TipoTransaccion.INGRESO },
-         { tipo: TipoTransaccion.TRANSFERENCIA, numeroTransaccion: { startsWith: 'TRX-IN' } }
-       ];
-       // Seguir excluyendo bases si es ingreso global
-       where.NOT = {
-         tipoReferencia: { in: ['SOLICITUD_BASE', 'SOLICITUD_BASE_EFECTIVO', 'APERTURA_CAJA'] },
-       };
-    }
-
-    const [transacciones, total] = await Promise.all([
-      this.prisma.transaccion.findMany({
-        where,
-        skip,
-        take: limit,
-        include: {
-          caja: {
-            select: {
-              nombre: true,
-              codigo: true,
-              tipo: true,
-              rutaId: true,
-              saldoActual: true,
-            },
+      // Si el tipo es 'INGRESO', queremos incluir tanto INGRESOS reales como TRANSFERENCIAS TRX-IN
+      // que representan recolecciones de ruta (para que el listado coincida con el dashboard)
+      if (where.tipo === TipoTransaccion.INGRESO && !cajaId) {
+        delete where.tipo;
+        where.OR = [
+          { tipo: TipoTransaccion.INGRESO },
+          {
+            tipo: TipoTransaccion.TRANSFERENCIA,
+            numeroTransaccion: { startsWith: 'TRX-IN' },
           },
-          creadoPor: { select: { nombres: true, apellidos: true } },
-        },
-        orderBy: { fechaTransaccion: 'desc' },
-      }),
-      this.prisma.transaccion.count({ where }),
-    ]);
+        ];
+        // Seguir excluyendo bases si es ingreso global
+        where.NOT = {
+          tipoReferencia: {
+            in: ['SOLICITUD_BASE', 'SOLICITUD_BASE_EFECTIVO', 'APERTURA_CAJA'],
+          },
+        };
+      }
 
-    return {
-      data: transacciones.map((t) => this.mapTransaccionRow(t)),
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
-    };
+      const [transacciones, total] = await Promise.all([
+        this.prisma.transaccion.findMany({
+          where,
+          skip,
+          take: limit,
+          include: {
+            caja: {
+              select: {
+                nombre: true,
+                codigo: true,
+                tipo: true,
+                rutaId: true,
+                saldoActual: true,
+              },
+            },
+            creadoPor: { select: { nombres: true, apellidos: true } },
+          },
+          orderBy: { fechaTransaccion: 'desc' },
+        }),
+        this.prisma.transaccion.count({ where }),
+      ]);
+
+      return {
+        data: transacciones.map((t) => this.mapTransaccionRow(t)),
+        meta: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
+      };
     } catch (error) {
-      this.logger.error(`Error fetching transacciones: ${error.message}`, error.stack);
+      this.logger.error(
+        `Error fetching transacciones: ${error.message}`,
+        error.stack,
+      );
       throw error;
     }
   }
@@ -1173,7 +1293,10 @@ export class AccountingService {
 
       return this.mapTransaccionRow(t);
     } catch (error) {
-      this.logger.error(`Error fetching transaccion by id: ${error.message}`, error.stack);
+      this.logger.error(
+        `Error fetching transaccion by id: ${error.message}`,
+        error.stack,
+      );
       throw error;
     }
   }
@@ -1192,15 +1315,22 @@ export class AccountingService {
 
     if (fechaInicio && fechaFin) {
       // Interpretar YYYY-MM-DD como día Colombia
-      const startKey = /^\d{4}-\d{2}-\d{2}$/.test(fechaInicio) ? fechaInicio : getBogotaDayKey(new Date(fechaInicio));
-      const endKey = /^\d{4}-\d{2}-\d{2}$/.test(fechaFin) ? fechaFin : getBogotaDayKey(new Date(fechaFin));
+      const startKey = /^\d{4}-\d{2}-\d{2}$/.test(fechaInicio)
+        ? fechaInicio
+        : getBogotaDayKey(new Date(fechaInicio));
+      const endKey = /^\d{4}-\d{2}-\d{2}$/.test(fechaFin)
+        ? fechaFin
+        : getBogotaDayKey(new Date(fechaFin));
       rangeStart = getBogotaStartEndOfDayFromKey(startKey).startDate;
       rangeEnd = getBogotaStartEndOfDayFromKey(endKey).endDate;
     } else {
       const key = fecha
-        ? (/^\d{4}-\d{2}-\d{2}$/.test(fecha) ? fecha : getBogotaDayKey(new Date(fecha)))
+        ? /^\d{4}-\d{2}-\d{2}$/.test(fecha)
+          ? fecha
+          : getBogotaDayKey(new Date(fecha))
         : getBogotaDayKey(new Date());
-      ({ startDate: rangeStart, endDate: rangeEnd } = getBogotaStartEndOfDayFromKey(key));
+      ({ startDate: rangeStart, endDate: rangeEnd } =
+        getBogotaStartEndOfDayFromKey(key));
     }
 
     const caja = await this.prisma.caja.findFirst({
@@ -1252,7 +1382,8 @@ export class AccountingService {
         if (t.tipoReferencia === 'PAGO') {
           cobranzaTrx += monto;
           if (t.referenciaId) {
-            recaudosPorReferencia[t.referenciaId] = (recaudosPorReferencia[t.referenciaId] || 0) + monto;
+            recaudosPorReferencia[t.referenciaId] =
+              (recaudosPorReferencia[t.referenciaId] || 0) + monto;
           }
         } else if (
           t.tipoReferencia === 'SOLICITUD_BASE_EFECTIVO' ||
@@ -1318,7 +1449,8 @@ export class AccountingService {
         const m = Number(p.montoTotal);
         cobranzaPagos += m;
         if (p.prestamoId) {
-          recaudosPorReferencia[p.prestamoId] = (recaudosPorReferencia[p.prestamoId] || 0) + m;
+          recaudosPorReferencia[p.prestamoId] =
+            (recaudosPorReferencia[p.prestamoId] || 0) + m;
         }
       });
     }
@@ -1333,7 +1465,7 @@ export class AccountingService {
       cajaId: caja.id,
       fecha: formatBogotaOffsetIso(rangeStart),
       saldoDisponible: Number(caja.saldoActual),
-      recaudoDelDia: totalCobranza, 
+      recaudoDelDia: totalCobranza,
       cobranzaDelDia: totalCobranza,
       recaudosPorReferencia,
       gastosDelDia: totalGastos,
@@ -1412,7 +1544,9 @@ export class AccountingService {
         await tx.transaccion.create({
           data: {
             numeroTransaccion: this.generarNumeroTransaccion('TRX-OUT'),
-            idempotencyKey: idempotencyKey ? `${idempotencyKey}:out` : undefined,
+            idempotencyKey: idempotencyKey
+              ? `${idempotencyKey}:out`
+              : undefined,
             cajaId: cajaOrigenId,
             tipo: TipoTransaccion.TRANSFERENCIA,
             monto: data.monto,
@@ -1439,17 +1573,18 @@ export class AccountingService {
         });
 
         // 3. Registrar asiento contable de consolidación (Ledger mueve los saldos)
-        const accountCodeDestino = caja.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1';
+        const accountCodeDestino =
+          caja.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1';
         await this.ledgerService.registrarConsolidacion(
           {
-            referenceId:   numeroReferencia,
-            monto:         data.monto,
-            cajaOrigenId:  data.cajaOrigenId as string,
+            referenceId: numeroReferencia,
+            monto: data.monto,
+            cajaOrigenId: data.cajaOrigenId as string,
             cajaDestinoId: data.cajaId,
             accountCodeDestino,
-            createdBy:     data.creadoPorId as string,
+            createdBy: data.creadoPorId,
           },
-          tx as any,
+          tx,
         );
 
         return transaccion;
@@ -1490,51 +1625,67 @@ export class AccountingService {
         'EGRESO',
       ]);
       const refUpper = String(data.tipoReferencia || '').toUpperCase();
-      const refType: ReferenceTypeContable = validReferenceTypes.has(refUpper as ReferenceTypeContable)
-        ? refUpper as ReferenceTypeContable
+      const refType: ReferenceTypeContable = validReferenceTypes.has(
+        refUpper as ReferenceTypeContable,
+      )
+        ? (refUpper as ReferenceTypeContable)
         : isIngreso
           ? 'INGRESO'
           : 'EGRESO';
-      
-      // Si el usuario especifica una cuenta, la usamos como contrapartida. 
+
+      // Si el usuario especifica una cuenta, la usamos como contrapartida.
       // Si no, usamos las cuentas genéricas por concepto (3.3 Otros Ingresos / 4.x Otros Gastos).
       const contrapartidaDefecto = isIngreso
         ? '3.3'
         : refUpper === 'DEUDA_COBRADOR'
           ? '1.4.1'
-          : (caja.tipo === 'RUTA' ? '4.1' : '4.2');
+          : caja.tipo === 'RUTA'
+            ? '4.1'
+            : '4.2';
       const accountCodeContrapartida = data.accountCode || contrapartidaDefecto;
 
       await this.ledgerService.registrarAsiento(
         {
           referenceType: refType,
-          referenceId:   data.referenciaId || t.id,
-          description:   data.descripcion,
-          createdBy:     data.creadoPorId,
+          referenceId: data.referenciaId || t.id,
+          description: data.descripcion,
+          createdBy: data.creadoPorId,
           lines: [
             {
-              accountCode: isIngreso 
-                ? (caja.tipo === 'RUTA' ? '1.2.1' : (caja.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1')) 
+              accountCode: isIngreso
+                ? caja.tipo === 'RUTA'
+                  ? '1.2.1'
+                  : caja.codigo === 'CAJA-BANCO'
+                    ? '1.1.2'
+                    : '1.1.1'
                 : accountCodeContrapartida,
               debitAmount: data.monto,
-              ...(isIngreso ? {
-                cajaId: data.cajaId,
-                cajaDelta: +data.monto,
-              } : {})
+              ...(isIngreso
+                ? {
+                    cajaId: data.cajaId,
+                    cajaDelta: +data.monto,
+                  }
+                : {}),
             },
             {
-              accountCode: isIngreso 
+              accountCode: isIngreso
                 ? accountCodeContrapartida
-                : (caja.tipo === 'RUTA' ? '1.2.1' : (caja.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1')),
+                : caja.tipo === 'RUTA'
+                  ? '1.2.1'
+                  : caja.codigo === 'CAJA-BANCO'
+                    ? '1.1.2'
+                    : '1.1.1',
               creditAmount: data.monto,
-              ...(!isIngreso ? {
-                cajaId: data.cajaId,
-                cajaDelta: -data.monto,
-              } : {})
-            }
-          ]
+              ...(!isIngreso
+                ? {
+                    cajaId: data.cajaId,
+                    cajaDelta: -data.monto,
+                  }
+                : {}),
+            },
+          ],
         },
-        tx as any
+        tx,
       );
 
       return t;
@@ -1563,7 +1714,11 @@ export class AccountingService {
     return transaccion;
   }
 
-  async consolidarCaja(cajaOrigenId: string, administradorId: string, montoRecolectar?: number) {
+  async consolidarCaja(
+    cajaOrigenId: string,
+    administradorId: string,
+    montoRecolectar?: number,
+  ) {
     // 1. Validar Caja Origen
     const cajaOrigen = await this.prisma.caja.findUnique({
       where: { id: cajaOrigenId },
@@ -1572,36 +1727,52 @@ export class AccountingService {
     if (!cajaOrigen) throw new NotFoundException('Caja origen no encontrada');
 
     const saldoDisponible = Number(cajaOrigen.saldoActual);
-    const montoATransferirSolicitado = montoRecolectar && montoRecolectar > 0 ? montoRecolectar : saldoDisponible;
+    const montoATransferirSolicitado =
+      montoRecolectar && montoRecolectar > 0
+        ? montoRecolectar
+        : saldoDisponible;
 
     if (montoATransferirSolicitado <= 0) {
-      throw new BadRequestException('El monto a recolectar debe ser mayor a cero');
+      throw new BadRequestException(
+        'El monto a recolectar debe ser mayor a cero',
+      );
     }
     if (montoATransferirSolicitado > saldoDisponible) {
-      throw new BadRequestException(`El monto (${montoATransferirSolicitado}) supera el saldo disponible (${saldoDisponible})`);
+      throw new BadRequestException(
+        `El monto (${montoATransferirSolicitado}) supera el saldo disponible (${saldoDisponible})`,
+      );
     }
 
     // 2. Buscar Caja de Oficina como destino
-    const cajaDestino = await this.prisma.caja.findFirst({
-      where: {
-        OR: [
-          { codigo: 'CAJA-OFICINA' },
-          { tipo: TipoCaja.PRINCIPAL, activa: true, NOT: { codigo: 'CAJA-PRINCIPAL' } },
-        ],
-      },
-      orderBy: { creadoEn: 'asc' },
-    }) ?? await this.prisma.caja.findFirst({
-      where: { tipo: TipoCaja.PRINCIPAL, activa: true },
-      orderBy: { creadoEn: 'asc' },
-    });
+    const cajaDestino =
+      (await this.prisma.caja.findFirst({
+        where: {
+          OR: [
+            { codigo: 'CAJA-OFICINA' },
+            {
+              tipo: TipoCaja.PRINCIPAL,
+              activa: true,
+              NOT: { codigo: 'CAJA-PRINCIPAL' },
+            },
+          ],
+        },
+        orderBy: { creadoEn: 'asc' },
+      })) ??
+      (await this.prisma.caja.findFirst({
+        where: { tipo: TipoCaja.PRINCIPAL, activa: true },
+        orderBy: { creadoEn: 'asc' },
+      }));
 
-    if (!cajaDestino) throw new BadRequestException('No existe una Caja de Oficina activa');
+    if (!cajaDestino)
+      throw new BadRequestException('No existe una Caja de Oficina activa');
     if (cajaDestino.id === cajaOrigen.id)
-      throw new BadRequestException('No se puede recolectar desde la caja destino');
+      throw new BadRequestException(
+        'No se puede recolectar desde la caja destino',
+      );
 
     const numeroRef = this.generarNumeroTransaccion('RECOL');
     const esTotal = montoATransferirSolicitado === saldoDisponible;
-    const rutaNombre = (cajaOrigen as any).ruta?.nombre || cajaOrigen.nombre;
+    const rutaNombre = cajaOrigen.ruta?.nombre || cajaOrigen.nombre;
 
     // 3. Ejecutar Transaccion Atomica
     const resultado = await this.prisma.$transaction(async (tx) => {
@@ -1611,15 +1782,19 @@ export class AccountingService {
         where: { id: cajaOrigen.id },
         include: { ruta: { select: { nombre: true, id: true } } },
       });
-      if (!cajaOrigenActual) throw new NotFoundException('Caja origen no encontrada');
+      if (!cajaOrigenActual)
+        throw new NotFoundException('Caja origen no encontrada');
 
       const saldoDisponibleActual = Number(cajaOrigenActual.saldoActual);
-      const montoATransferir = montoRecolectar && montoRecolectar > 0
-        ? montoRecolectar
-        : saldoDisponibleActual;
+      const montoATransferir =
+        montoRecolectar && montoRecolectar > 0
+          ? montoRecolectar
+          : saldoDisponibleActual;
 
       if (montoATransferir <= 0) {
-        throw new BadRequestException('El monto a recolectar debe ser mayor a cero');
+        throw new BadRequestException(
+          'El monto a recolectar debe ser mayor a cero',
+        );
       }
       if (montoATransferir > saldoDisponibleActual) {
         throw new BadRequestException(
@@ -1654,17 +1829,18 @@ export class AccountingService {
       });
 
       // Asiento contable de Partida Doble (Ledger mueve los saldos)
-      const accountCodeDestino = cajaDestino.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1';
+      const accountCodeDestino =
+        cajaDestino.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1';
       await this.ledgerService.registrarConsolidacion(
         {
-          referenceId:   numeroRef,
-          monto:         montoATransferir,
-          cajaOrigenId:  cajaOrigen.id,
+          referenceId: numeroRef,
+          monto: montoATransferir,
+          cajaOrigenId: cajaOrigen.id,
           cajaDestinoId: cajaDestino.id,
           accountCodeDestino,
-          createdBy:     administradorId,
+          createdBy: administradorId,
         },
-        tx as any,
+        tx,
       );
 
       return { egreso, ingreso, montoATransferir };
@@ -1672,7 +1848,10 @@ export class AccountingService {
 
     // 4. Notificacion puramente informativa (no va a revisiones)
     try {
-      const montoFmt = resultado.montoATransferir.toLocaleString('es-CO', { style: 'currency', currency: 'COP' });
+      const montoFmt = resultado.montoATransferir.toLocaleString('es-CO', {
+        style: 'currency',
+        currency: 'COP',
+      });
       await this.notificacionesService.notifyCoordinator({
         titulo: 'Recoleccion de Dinero Registrada',
         mensaje: `Se recolectaron ${montoFmt} de la ruta "${rutaNombre}" hacia ${cajaDestino.nombre}. Referencia: ${numeroRef}.`,
@@ -1689,12 +1868,15 @@ export class AccountingService {
         },
       });
     } catch (notifErr) {
-      this.logger.warn('No se pudo enviar notificacion de recoleccion:', notifErr);
+      this.logger.warn(
+        'No se pudo enviar notificacion de recoleccion:',
+        notifErr,
+      );
     }
 
     // 5. Auditoria
     this.logger.log(
-      `[RECOLECCION] ${numeroRef} | Admin: ${administradorId} | Origen: ${cajaOrigen.nombre} (${cajaOrigenId}) | Destino: ${cajaDestino.nombre} | Monto: ${resultado.montoATransferir} | Tipo: ${esTotal ? 'TOTAL' : 'PARCIAL'}`
+      `[RECOLECCION] ${numeroRef} | Admin: ${administradorId} | Origen: ${cajaOrigen.nombre} (${cajaOrigenId}) | Destino: ${cajaDestino.nombre} | Monto: ${resultado.montoATransferir} | Tipo: ${esTotal ? 'TOTAL' : 'PARCIAL'}`,
     );
 
     return {
@@ -1705,7 +1887,6 @@ export class AccountingService {
       transacciones: [resultado.egreso.id, resultado.ingreso.id],
     };
   }
-
 
   // =====================
   // DESGLOSE CAJA (Efectivo vs Transferencia)
@@ -1725,9 +1906,12 @@ export class AccountingService {
       return { efectivo: 0, transferencia: 0, total: 0, fecha: null };
     }
 
-    const baseDate = fecha ? new Date(fecha.includes('T') ? fecha : `${fecha}T00:00:00`) : new Date();
+    const baseDate = fecha
+      ? new Date(fecha.includes('T') ? fecha : `${fecha}T00:00:00`)
+      : new Date();
     const fechaKey = getBogotaDayKey(baseDate);
-    const { startDate: rangeStart, endDate: rangeEnd } = getBogotaStartEndOfDayFromKey(fechaKey);
+    const { startDate: rangeStart, endDate: rangeEnd } =
+      getBogotaStartEndOfDayFromKey(fechaKey);
 
     // Obtener los clienteIds asignados a esta ruta
     const asignaciones = await this.prisma.asignacionRuta.findMany({
@@ -1736,7 +1920,12 @@ export class AccountingService {
     });
 
     if (asignaciones.length === 0) {
-      return { efectivo: 0, transferencia: 0, total: 0, fecha: formatBogotaOffsetIso(rangeStart) };
+      return {
+        efectivo: 0,
+        transferencia: 0,
+        total: 0,
+        fecha: formatBogotaOffsetIso(rangeStart),
+      };
     }
 
     const clienteIds = asignaciones.map((a) => a.clienteId);
@@ -1777,15 +1966,29 @@ export class AccountingService {
   async getResumenFinanciero(fechaInicio?: string, fechaFin?: string) {
     const { startDate: inicioHoy, endDate: finHoy } = calculateDateRange(
       'custom',
-      fechaInicio ? (fechaInicio.includes('T') ? fechaInicio.split('T')[0] : fechaInicio) : undefined,
-      fechaFin ? (fechaFin.includes('T') ? fechaFin.split('T')[0] : fechaFin) : undefined
+      fechaInicio
+        ? fechaInicio.includes('T')
+          ? fechaInicio.split('T')[0]
+          : fechaInicio
+        : undefined,
+      fechaFin
+        ? fechaFin.includes('T')
+          ? fechaFin.split('T')[0]
+          : fechaFin
+        : undefined,
     );
 
     const ledgerDuration = finHoy.getTime() - inicioHoy.getTime();
-    const ledgerInicioAnterior = new Date(inicioHoy.getTime() - ledgerDuration - 1);
+    const ledgerInicioAnterior = new Date(
+      inicioHoy.getTime() - ledgerDuration - 1,
+    );
     const ledgerFinAnterior = new Date(inicioHoy.getTime() - 1);
 
-    const ledgerPeriodWhere = (start: Date, end: Date, accountPrefix: string) => ({
+    const ledgerPeriodWhere = (
+      start: Date,
+      end: Date,
+      accountPrefix: string,
+    ) => ({
       accountCode: { startsWith: accountPrefix },
       journalEntry: {
         isOpening: false,
@@ -1910,7 +2113,10 @@ export class AccountingService {
         _sum: { debitAmount: true },
       }),
       this.prisma.journalLine.aggregate({
-        where: ledgerIncomeOperativoWhere(ledgerInicioAnterior, ledgerFinAnterior),
+        where: ledgerIncomeOperativoWhere(
+          ledgerInicioAnterior,
+          ledgerFinAnterior,
+        ),
         _sum: { creditAmount: true, debitAmount: true },
       }),
       this.prisma.journalLine.aggregate({
@@ -1976,11 +2182,17 @@ export class AccountingService {
         _sum: { monto: true },
       }),
       this.prisma.transaccion.aggregate({
-        where: cuotaInicialIngresoWhere(ledgerInicioAnterior, ledgerFinAnterior),
+        where: cuotaInicialIngresoWhere(
+          ledgerInicioAnterior,
+          ledgerFinAnterior,
+        ),
         _sum: { monto: true },
       }),
       this.prisma.transaccion.aggregate({
-        where: cuotaInicialReversoWhere(ledgerInicioAnterior, ledgerFinAnterior),
+        where: cuotaInicialReversoWhere(
+          ledgerInicioAnterior,
+          ledgerFinAnterior,
+        ),
         _sum: { monto: true },
       }),
       this.prisma.prestamo.aggregate({
@@ -1993,7 +2205,9 @@ export class AccountingService {
       }),
     ]);
 
-    const ingresosCajaLedger = Number(ingresosCajaHoyLedger._sum.debitAmount || 0);
+    const ingresosCajaLedger = Number(
+      ingresosCajaHoyLedger._sum.debitAmount || 0,
+    );
     const ingresosLedger =
       Number(ingresosHoyLedger._sum.creditAmount || 0) -
       Number(ingresosHoyLedger._sum.debitAmount || 0);
@@ -2016,7 +2230,9 @@ export class AccountingService {
       Number(costosHoyLedger._sum.debitAmount || 0) -
       Number(costosHoyLedger._sum.creditAmount || 0);
     const cobranzaLedger = Number(cobranzaHoyLedger._sum.debitAmount || 0);
-    const ingresosCajaAyerLedgerVal = Number(ingresosCajaAyerLedger._sum.debitAmount || 0);
+    const ingresosCajaAyerLedgerVal = Number(
+      ingresosCajaAyerLedger._sum.debitAmount || 0,
+    );
     const ingresosAyerLedgerVal =
       Number(ingresosAyerLedger._sum.creditAmount || 0) -
       Number(ingresosAyerLedger._sum.debitAmount || 0);
@@ -2032,7 +2248,9 @@ export class AccountingService {
     const cuotaInicialAyerLedgerVal =
       Number(cuotaInicialAyerIngresoAggLedger._sum.monto || 0) -
       Number(cuotaInicialAyerReversoAggLedger._sum.monto || 0);
-    const capitalEnCallePrestamos = Number(carteraActivaPrestamos._sum.saldoPendiente || 0);
+    const capitalEnCallePrestamos = Number(
+      carteraActivaPrestamos._sum.saldoPendiente || 0,
+    );
     const deudaCobradorLedgerVal =
       Number(deudaCobradorLedger._sum.debitAmount || 0) -
       Number(deudaCobradorLedger._sum.creditAmount || 0);
@@ -2065,15 +2283,18 @@ export class AccountingService {
         }),
       ]);
 
-    const saldoEnMora      = Number(carteraEnMoraAgg._sum.saldoPendiente      || 0);
-    const saldoIncumplido  = Number(carteraIncumplidaAgg._sum.saldoPendiente  || 0);
-    const saldoPerdida     = Number(carteraPerdidaAgg._sum.saldoPendiente      || 0);
+    const saldoEnMora = Number(carteraEnMoraAgg._sum.saldoPendiente || 0);
+    const saldoIncumplido = Number(
+      carteraIncumplidaAgg._sum.saldoPendiente || 0,
+    );
+    const saldoPerdida = Number(carteraPerdidaAgg._sum.saldoPendiente || 0);
     const cartaraTotalMora = saldoEnMora + saldoIncumplido + saldoPerdida;
 
-    const provisionEnMora     = saldoEnMora     * 0.20;
-    const provisionIncumplida = saldoIncumplido * 0.60;
-    const provisionPerdida    = saldoPerdida    * 1.00;
-    const provisionTotal      = provisionEnMora + provisionIncumplida + provisionPerdida;
+    const provisionEnMora = saldoEnMora * 0.2;
+    const provisionIncumplida = saldoIncumplido * 0.6;
+    const provisionPerdida = saldoPerdida * 1.0;
+    const provisionTotal =
+      provisionEnMora + provisionIncumplida + provisionPerdida;
 
     const esUnSoloDiaLedger = ledgerDuration < 24 * 60 * 60 * 1000;
     const porcentajeCierreLedger =
@@ -2081,7 +2302,8 @@ export class AccountingService {
         ? Math.round((consolidacionesHoyLedger / totalRutasCountLedger) * 100)
         : 0;
     const margenArticulosLedger = articulosLedger - costosLedger;
-    const ingresosDevengadosLedger = interesesLedger + moraLedger + margenArticulosLedger;
+    const ingresosDevengadosLedger =
+      interesesLedger + moraLedger + margenArticulosLedger;
     // Utilidad Operativa devengada = Interés + Mora + Margen de artículos − Gastos Operativos.
     // Aportes, inyecciones de capital y otros ingresos externos no son ganancia operativa.
     const utilidadOperativaLedger = ingresosDevengadosLedger - egresosLedger;
@@ -2126,16 +2348,37 @@ export class AccountingService {
       consolidacionesHoy: consolidacionesHoyLedger,
       porcentajeCierre: porcentajeCierreLedger,
       fecha: formatBogotaOffsetIso(inicioHoy),
-      porcentajeIngresosVsAyer: esUnSoloDiaLedger ? calcularDiferenciaLedger(ingresosLedger, ingresosAyerLedgerVal) : null,
-      porcentajeEgresosVsAyer: esUnSoloDiaLedger ? calcularDiferenciaLedger(egresosLedger + costosLedger, egresosAyerLedgerVal + costosAyerLedgerVal) : null,
-      porcentajeCobranzaVsAyer: esUnSoloDiaLedger ? calcularDiferenciaLedger(cobranzaLedger, ingresosCajaAyerLedgerVal) : null,
+      porcentajeIngresosVsAyer: esUnSoloDiaLedger
+        ? calcularDiferenciaLedger(ingresosLedger, ingresosAyerLedgerVal)
+        : null,
+      porcentajeEgresosVsAyer: esUnSoloDiaLedger
+        ? calcularDiferenciaLedger(
+            egresosLedger + costosLedger,
+            egresosAyerLedgerVal + costosAyerLedgerVal,
+          )
+        : null,
+      porcentajeCobranzaVsAyer: esUnSoloDiaLedger
+        ? calcularDiferenciaLedger(cobranzaLedger, ingresosCajaAyerLedgerVal)
+        : null,
       porcentajeDeudaCobradorVsAyer: null,
       porcentajeMargenArticulosVsAyer: null,
       porcentajeTrasladosVsAyer: null,
-      porcentajeCuotaInicialVsAyer: esUnSoloDiaLedger ? calcularDiferenciaLedger(cuotaInicialLedger, cuotaInicialAyerLedgerVal) : null,
-      esIngresoPositivo: esUnSoloDiaLedger ? ingresosLedger >= ingresosAyerLedgerVal : true,
-      esEgresoPositivo: esUnSoloDiaLedger ? (egresosLedger + costosLedger) <= (egresosAyerLedgerVal + costosAyerLedgerVal) : true,
-      esCobranzaPositivo: esUnSoloDiaLedger ? cobranzaLedger >= ingresosCajaAyerLedgerVal : true,
+      porcentajeCuotaInicialVsAyer: esUnSoloDiaLedger
+        ? calcularDiferenciaLedger(
+            cuotaInicialLedger,
+            cuotaInicialAyerLedgerVal,
+          )
+        : null,
+      esIngresoPositivo: esUnSoloDiaLedger
+        ? ingresosLedger >= ingresosAyerLedgerVal
+        : true,
+      esEgresoPositivo: esUnSoloDiaLedger
+        ? egresosLedger + costosLedger <=
+          egresosAyerLedgerVal + costosAyerLedgerVal
+        : true,
+      esCobranzaPositivo: esUnSoloDiaLedger
+        ? cobranzaLedger >= ingresosCajaAyerLedgerVal
+        : true,
       esDeudaCobradorPositivo: true,
       esMargenArticulosPositivo: true,
       esTrasladoPositivo: true,
@@ -2191,7 +2434,13 @@ export class AccountingService {
           ],
           NOT: {
             tipoReferencia: {
-              in: ['SOLICITUD_BASE', 'SOLICITUD_BASE_EFECTIVO', 'CUOTA_INICIAL', 'RESTAURACION_CUOTA_INICIAL', 'ABONO_DEUDA'],
+              in: [
+                'SOLICITUD_BASE',
+                'SOLICITUD_BASE_EFECTIVO',
+                'CUOTA_INICIAL',
+                'RESTAURACION_CUOTA_INICIAL',
+                'ABONO_DEUDA',
+              ],
             },
           },
         },
@@ -2203,7 +2452,12 @@ export class AccountingService {
           tipo: 'EGRESO',
           NOT: {
             tipoReferencia: {
-              in: ['DEUDA_COBRADOR', 'SOLICITUD_BASE', 'SOLICITUD_BASE_EFECTIVO', 'TRANSFERENCIA_INTERNA'],
+              in: [
+                'DEUDA_COBRADOR',
+                'SOLICITUD_BASE',
+                'SOLICITUD_BASE_EFECTIVO',
+                'TRANSFERENCIA_INTERNA',
+              ],
             },
           },
         },
@@ -2237,7 +2491,9 @@ export class AccountingService {
         where: {
           ...whereHoy,
           tipo: 'INGRESO',
-          tipoReferencia: { in: ['CUOTA_INICIAL', 'RESTAURACION_CUOTA_INICIAL'] },
+          tipoReferencia: {
+            in: ['CUOTA_INICIAL', 'RESTAURACION_CUOTA_INICIAL'],
+          },
         },
         _sum: { monto: true },
       }),
@@ -2319,7 +2575,9 @@ export class AccountingService {
         where: {
           ...whereAyer,
           tipo: 'INGRESO',
-          tipoReferencia: { in: ['CUOTA_INICIAL', 'RESTAURACION_CUOTA_INICIAL'] },
+          tipoReferencia: {
+            in: ['CUOTA_INICIAL', 'RESTAURACION_CUOTA_INICIAL'],
+          },
         },
         _sum: { monto: true },
       }),
@@ -2412,24 +2670,30 @@ export class AccountingService {
     const cobranza = Number(cobranzaHoyAgg._sum.monto || 0);
     const traslados = Number(trasladosHoy._sum.monto || 0);
     const cuotaInicialHoy = Number(cuotaInicialHoyAgg._sum.monto || 0);
-    const margenArticulosHoy = (cuotasPagadasArticuloHoy || []).reduce((acc: number, c: any) => {
-      const margenTotal = Number(c?.prestamo?.margenArticulo || 0);
-      const totalCuotas = Number(c?.prestamo?.cantidadCuotas || 0);
-      if (!totalCuotas) return acc;
-      return acc + (margenTotal / totalCuotas);
-    }, 0);
+    const margenArticulosHoy = (cuotasPagadasArticuloHoy || []).reduce(
+      (acc: number, c: any) => {
+        const margenTotal = Number(c?.prestamo?.margenArticulo || 0);
+        const totalCuotas = Number(c?.prestamo?.cantidadCuotas || 0);
+        if (!totalCuotas) return acc;
+        return acc + margenTotal / totalCuotas;
+      },
+      0,
+    );
     const ingresosAyerVal = Number(ingresosAyer._sum.monto || 0);
     const egresosAyerVal = Number(egresosOperativosAyer._sum.monto || 0);
     const deudaCobradorAyerVal = Number(deudaCobradorAyerAgg._sum.monto || 0);
     const cobranzaAyerVal = Number(cobranzaAyerAgg._sum.monto || 0);
     const trasladosAyerVal = Number(trasladosAyer._sum.monto || 0);
     const cuotaInicialAyerVal = Number(cuotaInicialAyerAgg._sum.monto || 0);
-    const margenArticulosAyerVal = (cuotasPagadasArticuloAyer || []).reduce((acc: number, c: any) => {
-      const margenTotal = Number(c?.prestamo?.margenArticulo || 0);
-      const totalCuotas = Number(c?.prestamo?.cantidadCuotas || 0);
-      if (!totalCuotas) return acc;
-      return acc + (margenTotal / totalCuotas);
-    }, 0);
+    const margenArticulosAyerVal = (cuotasPagadasArticuloAyer || []).reduce(
+      (acc: number, c: any) => {
+        const margenTotal = Number(c?.prestamo?.margenArticulo || 0);
+        const totalCuotas = Number(c?.prestamo?.cantidadCuotas || 0);
+        if (!totalCuotas) return acc;
+        return acc + margenTotal / totalCuotas;
+      },
+      0,
+    );
 
     const calcularDiferencia = (actual: number, anterior: number) => {
       if (anterior === 0) return actual > 0 ? 100 : 0;
@@ -2447,8 +2711,8 @@ export class AccountingService {
         ? Math.round((consolidacionesHoy / totalRutasCount) * 100)
         : 0;
 
-    const interesHoy = Number((interesHoyAgg as any)?._sum?.montoInteres || 0);
-    const moraHoy = Number((interesHoyAgg as any)?._sum?.montoInteresMora || 0);
+    const interesHoy = Number(interesHoyAgg?._sum?.montoInteres || 0);
+    const moraHoy = Number(interesHoyAgg?._sum?.montoInteresMora || 0);
 
     return {
       ingresosHoy: ingresos,
@@ -2465,9 +2729,11 @@ export class AccountingService {
       interesHoy,
       moraHoy,
       // La utilidad real es (interés+mora) + margen artículos - egresos operativos
-      utilidadReal: (interesHoy + moraHoy + margenArticulosHoy) - egresosOperativos,
+      utilidadReal:
+        interesHoy + moraHoy + margenArticulosHoy - egresosOperativos,
       // La cuota inicial pertenece al Capital (Ingreso Bruto de Caja) y no a la Utilidad.
-      gananciaNeta: (interesHoy + moraHoy + margenArticulosHoy) - egresosOperativos,
+      gananciaNeta:
+        interesHoy + moraHoy + margenArticulosHoy - egresosOperativos,
       capitalEnCalle: Number(prestamosActivos._sum.monto || 0),
       saldoCajas: Number(totalCajas._sum.saldoActual || 0),
       cajasAbiertasCount: await this.prisma.caja.count({
@@ -2479,19 +2745,45 @@ export class AccountingService {
       consolidacionesHoy: consolidacionesHoy,
       porcentajeCierre: porcentajeCierres,
       fecha: formatBogotaOffsetIso(inicioHoy),
-      porcentajeIngresosVsAyer: usarComparacionAyer ? calcularDiferencia(ingresos, ingresosAyerVal) : null,
-      porcentajeEgresosVsAyer: usarComparacionAyer ? calcularDiferencia(egresosOperativos, egresosAyerVal) : null,
-      porcentajeCobranzaVsAyer: usarComparacionAyer ? calcularDiferencia(cobranza, cobranzaAyerVal) : null,
-      porcentajeDeudaCobradorVsAyer: usarComparacionAyer ? calcularDiferencia(deudaCobrador, deudaCobradorAyerVal) : null,
-      porcentajeMargenArticulosVsAyer: usarComparacionAyer ? calcularDiferencia(margenArticulosHoy, margenArticulosAyerVal) : null,
-      porcentajeTrasladosVsAyer: usarComparacionAyer ? calcularDiferencia(traslados, trasladosAyerVal) : null,
-      porcentajeCuotaInicialVsAyer: usarComparacionAyer ? calcularDiferencia(cuotaInicialHoy, cuotaInicialAyerVal) : null,
-      esIngresoPositivo: usarComparacionAyer ? ingresos >= ingresosAyerVal : true,
-      esEgresoPositivo: usarComparacionAyer ? egresosOperativos <= egresosAyerVal : true,
-      esCobranzaPositivo: usarComparacionAyer ? cobranza >= cobranzaAyerVal : true,
-      esDeudaCobradorPositivo: usarComparacionAyer ? deudaCobrador <= deudaCobradorAyerVal : true,
-      esMargenArticulosPositivo: usarComparacionAyer ? margenArticulosHoy >= margenArticulosAyerVal : true,
-      esTrasladoPositivo: usarComparacionAyer ? traslados <= trasladosAyerVal : true,
+      porcentajeIngresosVsAyer: usarComparacionAyer
+        ? calcularDiferencia(ingresos, ingresosAyerVal)
+        : null,
+      porcentajeEgresosVsAyer: usarComparacionAyer
+        ? calcularDiferencia(egresosOperativos, egresosAyerVal)
+        : null,
+      porcentajeCobranzaVsAyer: usarComparacionAyer
+        ? calcularDiferencia(cobranza, cobranzaAyerVal)
+        : null,
+      porcentajeDeudaCobradorVsAyer: usarComparacionAyer
+        ? calcularDiferencia(deudaCobrador, deudaCobradorAyerVal)
+        : null,
+      porcentajeMargenArticulosVsAyer: usarComparacionAyer
+        ? calcularDiferencia(margenArticulosHoy, margenArticulosAyerVal)
+        : null,
+      porcentajeTrasladosVsAyer: usarComparacionAyer
+        ? calcularDiferencia(traslados, trasladosAyerVal)
+        : null,
+      porcentajeCuotaInicialVsAyer: usarComparacionAyer
+        ? calcularDiferencia(cuotaInicialHoy, cuotaInicialAyerVal)
+        : null,
+      esIngresoPositivo: usarComparacionAyer
+        ? ingresos >= ingresosAyerVal
+        : true,
+      esEgresoPositivo: usarComparacionAyer
+        ? egresosOperativos <= egresosAyerVal
+        : true,
+      esCobranzaPositivo: usarComparacionAyer
+        ? cobranza >= cobranzaAyerVal
+        : true,
+      esDeudaCobradorPositivo: usarComparacionAyer
+        ? deudaCobrador <= deudaCobradorAyerVal
+        : true,
+      esMargenArticulosPositivo: usarComparacionAyer
+        ? margenArticulosHoy >= margenArticulosAyerVal
+        : true,
+      esTrasladoPositivo: usarComparacionAyer
+        ? traslados <= trasladosAyerVal
+        : true,
     };
   }
 
@@ -2577,7 +2869,9 @@ export class AccountingService {
         let efectividad = 0;
         let clientesFaltantes = 0;
         let saldoAlCierre = 0;
-        let cobradorNombre = t.creadoPor ? `${t.creadoPor.nombres} ${t.creadoPor.apellidos}` : 'Sistema';
+        let cobradorNombre = t.creadoPor
+          ? `${t.creadoPor.nombres} ${t.creadoPor.apellidos}`
+          : 'Sistema';
         try {
           const parts = (t.referenciaId || '').split('|');
           for (const p of parts) {
@@ -2591,10 +2885,13 @@ export class AccountingService {
             if (k === 'SD') saldoAlCierre = Number(v);
             if (k === 'CO') cobradorNombre = v;
           }
-        } catch (_) { void 0; }
-        const deudaPorFaltantes = clientesFaltantes > 0
-          ? Math.max(Number(meta || 0) - Number(recaudo || 0), 0)
-          : 0;
+        } catch (_) {
+          void 0;
+        }
+        const deudaPorFaltantes =
+          clientesFaltantes > 0
+            ? Math.max(Number(meta || 0) - Number(recaudo || 0), 0)
+            : 0;
         // Regla de negocio: saldoAlCierre (efectivo en caja de ruta) es dinero del cobrador
         // que aún no ha entregado. Se considera descuadre/deuda pendiente.
         const descuadre = deudaPorFaltantes > 0 || saldoAlCierre > 0;
@@ -2618,7 +2915,6 @@ export class AccountingService {
         };
       }
       return {
-
         id: t.id,
         fecha: formatBogotaOffsetIso(t.fechaTransaccion),
         caja: t.caja.nombre,
@@ -2649,7 +2945,10 @@ export class AccountingService {
     return mapped;
   }
 
-  private async assertNoOfflinePendienteAntesArqueo(caja: any, cierreTimestamp: Date) {
+  private async assertNoOfflinePendienteAntesArqueo(
+    caja: any,
+    cierreTimestamp: Date,
+  ) {
     const usuarioIds = [caja?.responsableId].filter(Boolean);
     const pendingSyncCount = await this.prisma.colaSincronizacion.count({
       where: {
@@ -2680,7 +2979,8 @@ export class AccountingService {
     }
 
     const diaKey = getBogotaDayKey(cierreTimestamp);
-    const { startDate: inicioHoy, endDate: finHoy } = getBogotaStartEndOfDayFromKey(diaKey);
+    const { startDate: inicioHoy, endDate: finHoy } =
+      getBogotaStartEndOfDayFromKey(diaKey);
     const inicioAyer = new Date(inicioHoy.getTime() - 86_400_000);
 
     const cuotas = await this.prisma.cuota.findMany({
@@ -2723,7 +3023,9 @@ export class AccountingService {
     return cuotas
       .filter((cuota: any) => {
         const ultimoPago = cuota?.prestamo?.pagos?.[0]?.fechaPago;
-        return !ultimoPago || new Date(ultimoPago).getTime() < inicioHoy.getTime();
+        return (
+          !ultimoPago || new Date(ultimoPago).getTime() < inicioHoy.getTime()
+        );
       })
       .map((cuota: any) => ({
         cuotaId: cuota.id,
@@ -2731,11 +3033,15 @@ export class AccountingService {
         fechaVencimiento: formatBogotaOffsetIso(cuota.fechaVencimiento),
         monto: Number(cuota.monto || 0),
         montoPagado: Number(cuota.montoPagado || 0),
-        saldoCuota: Math.max(0, Number(cuota.monto || 0) - Number(cuota.montoPagado || 0)),
+        saldoCuota: Math.max(
+          0,
+          Number(cuota.monto || 0) - Number(cuota.montoPagado || 0),
+        ),
         prestamoId: cuota.prestamo.id,
         numeroPrestamo: cuota.prestamo.numeroPrestamo,
         clienteId: cuota.prestamo.cliente.id,
-        cliente: `${cuota.prestamo.cliente.nombres} ${cuota.prestamo.cliente.apellidos}`.trim(),
+        cliente:
+          `${cuota.prestamo.cliente.nombres} ${cuota.prestamo.cliente.apellidos}`.trim(),
       }));
   }
 
@@ -2778,9 +3084,10 @@ export class AccountingService {
       });
     }
 
-    const candidatosSobrante = Number(data.diferencia) > 0
-      ? await this.getCandidatosSobranteRuta(caja, cierreTimestamp)
-      : [];
+    const candidatosSobrante =
+      Number(data.diferencia) > 0
+        ? await this.getCandidatosSobranteRuta(caja, cierreTimestamp)
+        : [];
 
     // Con diferencia: registrar ajuste como ingreso/egreso para cuadrar
     const tipoAjuste =
@@ -2806,12 +3113,12 @@ export class AccountingService {
       // 2. Registrar asiento contable y ajustar saldo
       await this.ledgerService.registrarArqueoDescuadre(
         {
-          arqueoId:   transaccion.id,
+          arqueoId: transaccion.id,
           diferencia: Number(data.diferencia),
           cajaId,
-          createdBy:  userId,
+          createdBy: userId,
         },
-        tx as any,
+        tx,
       );
 
       return {
@@ -2819,7 +3126,8 @@ export class AccountingService {
         ...(Number(data.diferencia) > 0
           ? {
               alertaSobrante: {
-                mensaje: 'Hay sobrante de efectivo. Revise posibles clientes en mora reciente de esta ruta.',
+                mensaje:
+                  'Hay sobrante de efectivo. Revise posibles clientes en mora reciente de esta ruta.',
                 candidatos: candidatosSobrante,
               },
             }
@@ -2840,7 +3148,14 @@ export class AccountingService {
     fechaInicio?: string;
     fechaFin?: string;
   }) {
-    const { rutaId, estado, page = 1, limit = 50, fechaInicio, fechaFin } = filtros;
+    const {
+      rutaId,
+      estado,
+      page = 1,
+      limit = 50,
+      fechaInicio,
+      fechaFin,
+    } = filtros;
     const skip = (page - 1) * limit;
 
     const where: any = {};
@@ -2850,7 +3165,8 @@ export class AccountingService {
       where.fechaGasto = {};
       if (fechaInicio) {
         const startKey = getBogotaDayKey(new Date(fechaInicio));
-        where.fechaGasto.gte = getBogotaStartEndOfDayFromKey(startKey).startDate;
+        where.fechaGasto.gte =
+          getBogotaStartEndOfDayFromKey(startKey).startDate;
       }
       if (fechaFin) {
         const endKey = getBogotaDayKey(new Date(fechaFin));
@@ -2886,7 +3202,7 @@ export class AccountingService {
         cobrador: `${g.cobrador.nombres} ${g.cobrador.apellidos}`,
         ruta: g.ruta?.nombre || 'Sin ruta',
         caja: g.caja.nombre,
-        categoria: (g as any).categoria?.nombre || null,
+        categoria: g.categoria?.nombre || null,
         estado: g.estadoAprobacion,
       })),
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
@@ -2919,7 +3235,11 @@ export class AccountingService {
       }),
     ]);
 
-    const usuarioIds = [...new Set(journalEntries.map((entry: any) => entry.createdBy).filter(Boolean))];
+    const usuarioIds = [
+      ...new Set(
+        journalEntries.map((entry: any) => entry.createdBy).filter(Boolean),
+      ),
+    ];
     const cajaIds = [
       ...new Set(
         journalEntries
@@ -2944,10 +3264,13 @@ export class AccountingService {
         : Promise.resolve([]),
     ]);
 
-    const usuariosMap = new Map(usuarios.map((u: any) => [u.id, `${u.nombres} ${u.apellidos}`]));
-    const cajasMap = new Map<string, { id: string; nombre: string; tipo: TipoCaja }>(
-      cajasMovimientos.map((c: any) => [c.id, c]),
+    const usuariosMap = new Map(
+      usuarios.map((u: any) => [u.id, `${u.nombres} ${u.apellidos}`]),
     );
+    const cajasMap = new Map<
+      string,
+      { id: string; nombre: string; tipo: TipoCaja }
+    >(cajasMovimientos.map((c: any) => [c.id, c]));
 
     const fecha = getBogotaDayKey(new Date());
 
@@ -2955,39 +3278,54 @@ export class AccountingService {
       nombre: c.nombre,
       codigo: c.codigo,
       tipo: c.tipo,
-      responsable: c.responsable ? `${c.responsable.nombres} ${c.responsable.apellidos}` : 'Sin asignar',
+      responsable: c.responsable
+        ? `${c.responsable.nombres} ${c.responsable.apellidos}`
+        : 'Sin asignar',
       ruta: c.ruta?.nombre || 'N/A',
       saldo: Number(c.saldoActual),
-      tipoCaja: c.tipo === 'RUTA' ? 'COBRADOR' : c.codigo === 'CAJA-PRINCIPAL' ? 'PRINCIPAL' : 'EMPRESA',
+      tipoCaja:
+        c.tipo === 'RUTA'
+          ? 'COBRADOR'
+          : c.codigo === 'CAJA-PRINCIPAL'
+            ? 'PRINCIPAL'
+            : 'EMPRESA',
     }));
 
-    const filasTransacciones: TransaccionRow[] = journalEntries.map((entry: any) => {
-      const totalDebito = (entry.lines || []).reduce(
-        (sum: number, line: any) => sum + Number(line.debitAmount || 0),
-        0,
-      );
-      const cajasEntry = (entry.lines || [])
-        .map((line: any) => line.cajaId ? cajasMap.get(line.cajaId)?.nombre : null)
-        .filter(Boolean);
-      const cuentas = (entry.lines || [])
-        .map((line: any) => `${line.accountCode} ${line.account?.name || ''}`.trim())
-        .join(' / ');
+    const filasTransacciones: TransaccionRow[] = journalEntries.map(
+      (entry: any) => {
+        const totalDebito = (entry.lines || []).reduce(
+          (sum: number, line: any) => sum + Number(line.debitAmount || 0),
+          0,
+        );
+        const cajasEntry = (entry.lines || [])
+          .map((line: any) =>
+            line.cajaId ? cajasMap.get(line.cajaId)?.nombre : null,
+          )
+          .filter(Boolean);
+        const cuentas = (entry.lines || [])
+          .map((line: any) =>
+            `${line.accountCode} ${line.account?.name || ''}`.trim(),
+          )
+          .join(' / ');
 
-      return {
-        fecha: entry.createdAt,
-        tipo: entry.referenceType,
-        monto: totalDebito,
-        descripcion: entry.description || cuentas,
-        caja: [...new Set(cajasEntry)].join(', '),
-        usuario: usuariosMap.get(entry.createdBy) || entry.createdBy || '',
-        tipoCaja: '',
-        estadoAprobacion: 'APROBADO',
-        metodoPago: '',
-      };
-    });
+        return {
+          fecha: entry.createdAt,
+          tipo: entry.referenceType,
+          monto: totalDebito,
+          descripcion: entry.description || cuentas,
+          caja: [...new Set(cajasEntry)].join(', '),
+          usuario: usuariosMap.get(entry.createdBy) || entry.createdBy || '',
+          tipoCaja: '',
+          estadoAprobacion: 'APROBADO',
+          metodoPago: '',
+        };
+      },
+    );
 
-    if (format === 'excel') return generarExcelContable(filasCjas, filasTransacciones, fecha);
-    if (format === 'pdf') return generarPDFContable(filasCjas, filasTransacciones, fecha);
+    if (format === 'excel')
+      return generarExcelContable(filasCjas, filasTransacciones, fecha);
+    if (format === 'pdf')
+      return generarPDFContable(filasCjas, filasTransacciones, fecha);
 
     throw new Error(`Formato no soportado: ${format}`);
   }
@@ -3002,7 +3340,8 @@ export class AccountingService {
       where.fechaGasto = {};
       if (filters.fechaInicio) {
         const startKey = getBogotaDayKey(new Date(filters.fechaInicio));
-        where.fechaGasto.gte = getBogotaStartEndOfDayFromKey(startKey).startDate;
+        where.fechaGasto.gte =
+          getBogotaStartEndOfDayFromKey(startKey).startDate;
       }
       if (filters.fechaFin) {
         const endKey = getBogotaDayKey(new Date(filters.fechaFin));
@@ -3027,7 +3366,7 @@ export class AccountingService {
       cobrador: `${g.cobrador.nombres} ${g.cobrador.apellidos}`,
       ruta: g.ruta?.nombre || 'Sin ruta',
       tipo: g.tipoGasto,
-      categoria: (g as any).categoria?.nombre || null,
+      categoria: g.categoria?.nombre || null,
       descripcion: g.descripcion,
       monto: Number(g.monto),
       estado: g.estadoAprobacion,
@@ -3036,13 +3375,18 @@ export class AccountingService {
     const totales: GastosTotales = {
       totalGastos: filasGastos.reduce((sum, g) => sum + g.monto, 0),
       cantidadGastos: filasGastos.length,
-      totalOperativos: filasGastos.filter(g => g.tipo === 'OPERATIVO').reduce((sum, g) => sum + g.monto, 0),
-      totalPersonales: filasGastos.filter(g => g.tipo === 'PERSONAL').reduce((sum, g) => sum + g.monto, 0),
+      totalOperativos: filasGastos
+        .filter((g) => g.tipo === 'OPERATIVO')
+        .reduce((sum, g) => sum + g.monto, 0),
+      totalPersonales: filasGastos
+        .filter((g) => g.tipo === 'PERSONAL')
+        .reduce((sum, g) => sum + g.monto, 0),
     };
 
     const fecha = getBogotaDayKey(new Date());
 
-    if (format === 'excel') return generarExcelGastos(filasGastos, totales, fecha);
+    if (format === 'excel')
+      return generarExcelGastos(filasGastos, totales, fecha);
     if (format === 'pdf') return generarPDFGastos(filasGastos, totales, fecha);
 
     throw new Error(`Formato no soportado: ${format}`);
@@ -3078,7 +3422,11 @@ export class AccountingService {
     // También buscar deudas registradas directamente en Transaccion (cierre de ruta vía gateway)
     // Incluye CIERRE_RUTA para capturar cierres previos que no generaron DEUDA_COBRADOR
     const deudaTransacciones = await this.prisma.transaccion.findMany({
-      where: { tipoReferencia: { in: ['DEUDA_COBRADOR', 'ABONO_DEUDA', 'CIERRE_RUTA'] } },
+      where: {
+        tipoReferencia: {
+          in: ['DEUDA_COBRADOR', 'ABONO_DEUDA', 'CIERRE_RUTA'],
+        },
+      },
       select: {
         id: true,
         cajaId: true,
@@ -3097,14 +3445,29 @@ export class AccountingService {
       orderBy: { fechaTransaccion: 'desc' },
     });
 
-    const deudaMap = new Map<string, { descuadres: number; gastosPersonales: number; totalEventos: number }>();
+    const deudaMap = new Map<
+      string,
+      { descuadres: number; gastosPersonales: number; totalEventos: number }
+    >();
     const eventosMap = new Map<
       string,
-      Array<{ id: string; tipoReferencia: string; monto: number; fecha: Date; cajaId: string; referenciaId?: string; descripcion?: string }>
+      Array<{
+        id: string;
+        tipoReferencia: string;
+        monto: number;
+        fecha: Date;
+        cajaId: string;
+        referenciaId?: string;
+        descripcion?: string;
+      }>
     >();
 
     const ensureDebt = (cobradorId: string) => {
-      const prev = deudaMap.get(cobradorId) || { descuadres: 0, gastosPersonales: 0, totalEventos: 0 };
+      const prev = deudaMap.get(cobradorId) || {
+        descuadres: 0,
+        gastosPersonales: 0,
+        totalEventos: 0,
+      };
       deudaMap.set(cobradorId, prev);
       return prev;
     };
@@ -3114,7 +3477,9 @@ export class AccountingService {
       const arqueoReferenceIds = [
         ...new Set(
           debtLines
-            .filter((line: any) => line.journalEntry?.referenceType === 'ARQUEO')
+            .filter(
+              (line: any) => line.journalEntry?.referenceType === 'ARQUEO',
+            )
             .map((line: any) => line.journalEntry?.referenceId)
             .filter(Boolean),
         ),
@@ -3136,7 +3501,9 @@ export class AccountingService {
           })
         : [];
 
-      const transaccionMap = new Map(arqueoTransacciones.map((t: any) => [t.id, t]));
+      const transaccionMap = new Map(
+        arqueoTransacciones.map((t: any) => [t.id, t]),
+      );
 
       for (const line of debtLines as any[]) {
         const entry = line.journalEntry;
@@ -3183,9 +3550,10 @@ export class AccountingService {
     // Solo contar las que NO tienen entrada correspondiente en el ledger (evitar doble conteo)
     const ledgerRefIds = new Set(
       debtLines
-        .filter((line: any) =>
-          line.journalEntry?.referenceType === 'DEUDA_COBRADOR' ||
-          line.journalEntry?.referenceType === 'ABONO_DEUDA'
+        .filter(
+          (line: any) =>
+            line.journalEntry?.referenceType === 'DEUDA_COBRADOR' ||
+            line.journalEntry?.referenceType === 'ABONO_DEUDA',
         )
         .map((line: any) => line.journalEntry?.referenceId)
         .filter(Boolean),
@@ -3194,10 +3562,15 @@ export class AccountingService {
     // Track which CIERRE_RUTA ids already have a corresponding DEUDA_COBRADOR (avoid double count)
     const cierreIdsConDeuda = new Set(
       deudaTransacciones
-        .filter((t: any) => String(t.tipoReferencia) === 'DEUDA_COBRADOR' && t.referenciaId)
+        .filter(
+          (t: any) =>
+            String(t.tipoReferencia) === 'DEUDA_COBRADOR' && t.referenciaId,
+        )
         .map((t: any) => {
           // Extraer el referenciaId del cierre del campo DD del DEUDA_COBRADOR
-          const match = String(t.referenciaId || '').match(/DD:\d+\|SD:\d+\|FD:\d+\|(.+)/);
+          const match = String(t.referenciaId || '').match(
+            /DD:\d+\|SD:\d+\|FD:\d+\|(.+)/,
+          );
           return match ? match[1] : null;
         })
         .filter(Boolean),
@@ -3215,7 +3588,7 @@ export class AccountingService {
         cobradorId = String(trx.referenciaId || '').split('|')[0] || null;
       } else if (isCierreRuta) {
         // CIERRE_RUTA: obtener cobradorId desde la caja/ruta
-        cobradorId = (trx as any)?.caja?.ruta?.cobradorId || null;
+        cobradorId = trx?.caja?.ruta?.cobradorId || null;
         // Extraer saldo al cierre del referenciaId (formato: RC:x|MT:x|EF:x|CF:x|CO:x|SD:xxx)
         if (cobradorId && trx.referenciaId) {
           const sdMatch = String(trx.referenciaId).match(/SD:(\d+)/);
@@ -3227,7 +3600,7 @@ export class AccountingService {
         }
       } else {
         // DEUDA_COBRADOR: obtener cobradorId desde la caja/ruta
-        cobradorId = (trx as any)?.caja?.ruta?.cobradorId || null;
+        cobradorId = trx?.caja?.ruta?.cobradorId || null;
       }
 
       if (!cobradorId) continue;
@@ -3270,11 +3643,19 @@ export class AccountingService {
     return Array.from(deudaMap.entries())
       .map(([cobradorId, deuda]) => {
         const cobrador: any = cobradorMap.get(cobradorId);
-        const descuadres = Math.max(0, Math.round(Number(deuda.descuadres || 0)));
-        const gastosPersonales = Math.max(0, Math.round(Number(deuda.gastosPersonales || 0)));
+        const descuadres = Math.max(
+          0,
+          Math.round(Number(deuda.descuadres || 0)),
+        );
+        const gastosPersonales = Math.max(
+          0,
+          Math.round(Number(deuda.gastosPersonales || 0)),
+        );
         return {
           cobradorId,
-          nombreCobrador: cobrador ? `${cobrador.nombres} ${cobrador.apellidos}` : 'Desconocido',
+          nombreCobrador: cobrador
+            ? `${cobrador.nombres} ${cobrador.apellidos}`
+            : 'Desconocido',
           rol: cobrador?.rol || 'COBRADOR',
           totalDeuda: descuadres + gastosPersonales,
           gastosPersonales,
@@ -3299,27 +3680,35 @@ export class AccountingService {
     userId: string,
     cajaIdDestino?: string,
   ) {
-    const cobrador = await this.prisma.usuario.findUnique({ where: { id: cobradorId } });
+    const cobrador = await this.prisma.usuario.findUnique({
+      where: { id: cobradorId },
+    });
     if (!cobrador) throw new NotFoundException('Cobrador no encontrado');
 
     const montoClean = Number(monto || 0);
     if (!(montoClean > 0)) throw new BadRequestException('Monto inválido');
 
     // 1. Resolver caja destino (por defecto Caja Principal)
-    let cajaDestino = null as any
+    let cajaDestino = null as any;
     if (cajaIdDestino) {
-      cajaDestino = await this.prisma.caja.findUnique({ where: { id: cajaIdDestino } })
-      if (!cajaDestino) throw new NotFoundException('Caja destino no encontrada')
+      cajaDestino = await this.prisma.caja.findUnique({
+        where: { id: cajaIdDestino },
+      });
+      if (!cajaDestino)
+        throw new NotFoundException('Caja destino no encontrada');
     } else {
       cajaDestino = await this.prisma.caja.findFirst({
         where: { codigo: 'CAJA-OFICINA' },
-      })
+      });
       if (!cajaDestino) {
         cajaDestino = await this.prisma.caja.findFirst({
           where: { codigo: 'CAJA-PRINCIPAL' },
-        })
+        });
       }
-      if (!cajaDestino) throw new Error('No existe Caja Oficina/Caja Principal para registrar el ingreso')
+      if (!cajaDestino)
+        throw new Error(
+          'No existe Caja Oficina/Caja Principal para registrar el ingreso',
+        );
     }
 
     // 2. Ejecutar transacción contable
@@ -3342,12 +3731,12 @@ export class AccountingService {
       await this.ledgerService.registrarAbonoDeuda(
         {
           cobradorId,
-          monto:       montoClean,
-          cajaId:      cajaDestino.id,
+          monto: montoClean,
+          cajaId: cajaDestino.id,
           accountCode: cajaDestino.tipo === 'RUTA' ? '1.2.1' : '1.1.1',
-          createdBy:   userId,
+          createdBy: userId,
         },
-        tx as any,
+        tx,
       );
 
       return transaccion;
@@ -3412,7 +3801,7 @@ export class AccountingService {
     let deltaOficinaAcc = deltaOficina;
 
     for (const t of transacciones) {
-      const monto = new Prisma.Decimal(t.monto as any);
+      const monto = new Prisma.Decimal(t.monto);
       const tipo = String(t.tipo || '').toUpperCase();
 
       let deltaOrigen = new Prisma.Decimal(0);
@@ -3428,11 +3817,15 @@ export class AccountingService {
         continue;
       }
 
-      deltaPorCaja[t.cajaId] = (deltaPorCaja[t.cajaId] || new Prisma.Decimal(0)).add(deltaOrigen);
+      deltaPorCaja[t.cajaId] = (
+        deltaPorCaja[t.cajaId] || new Prisma.Decimal(0)
+      ).add(deltaOrigen);
       deltaOficinaAcc = deltaOficinaAcc.add(deltaDestino);
     }
 
-    deltaPorCaja[cajaOficina.id] = (deltaPorCaja[cajaOficina.id] || new Prisma.Decimal(0)).add(deltaOficinaAcc);
+    deltaPorCaja[cajaOficina.id] = (
+      deltaPorCaja[cajaOficina.id] || new Prisma.Decimal(0)
+    ).add(deltaOficinaAcc);
 
     if (dryRun) {
       return {
@@ -3508,13 +3901,18 @@ export class AccountingService {
       existingEntries.map((e: any) => `${e.referenceType}:${e.referenceId}`),
     );
 
-    const mapReferenceType = (tipoReferencia?: string | null, tipo?: string) => {
+    const mapReferenceType = (
+      tipoReferencia?: string | null,
+      tipo?: string,
+    ) => {
       const ref = String(tipoReferencia || '').toUpperCase();
       if (ref === 'PAGO' || ref === 'ABONO') return 'PAGO';
       if (ref === 'GASTO') return 'GASTO';
       if (ref === 'PRESTAMO') return 'DESEMBOLSO';
-      if (ref === 'RECOLECCION' || ref === 'CONSOLIDACION') return 'CONSOLIDACION';
-      if (ref === 'SOLICITUD_BASE' || ref === 'SOLICITUD_BASE_EFECTIVO') return 'BASE';
+      if (ref === 'RECOLECCION' || ref === 'CONSOLIDACION')
+        return 'CONSOLIDACION';
+      if (ref === 'SOLICITUD_BASE' || ref === 'SOLICITUD_BASE_EFECTIVO')
+        return 'BASE';
       if (ref === 'ABONO_DEUDA') return 'ABONO_DEUDA';
       if (ref === 'ARQUEO') return 'ARQUEO';
       if (ref === 'CUOTA_INICIAL') return 'AJUSTE';
@@ -3560,7 +3958,9 @@ export class AccountingService {
     if (!params.dryRun) {
       await this.prisma.$transaction(async (tx) => {
         for (const c of candidatos) {
-          const transaccion = (transacciones as any[]).find((t) => t.id === c.transaccionId);
+          const transaccion = (transacciones as any[]).find(
+            (t) => t.id === c.transaccionId,
+          );
           if (!transaccion) continue;
 
           const monto = Number(transaccion.monto || 0);
@@ -3569,13 +3969,19 @@ export class AccountingService {
           const cajaAccount =
             transaccion.caja?.tipo === 'RUTA'
               ? '1.2.1'
-              : (transaccion.caja?.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1');
-          const isIngreso = String(transaccion.tipo).toUpperCase() === 'INGRESO';
-          const contrapartida = c.referenceType === 'ABONO_DEUDA'
-            ? '1.4.1'
-            : isIngreso
-              ? '3.3'
-              : (transaccion.caja?.tipo === 'RUTA' ? '4.1' : '4.2');
+              : transaccion.caja?.codigo === 'CAJA-BANCO'
+                ? '1.1.2'
+                : '1.1.1';
+          const isIngreso =
+            String(transaccion.tipo).toUpperCase() === 'INGRESO';
+          const contrapartida =
+            c.referenceType === 'ABONO_DEUDA'
+              ? '1.4.1'
+              : isIngreso
+                ? '3.3'
+                : transaccion.caja?.tipo === 'RUTA'
+                  ? '4.1'
+                  : '4.2';
 
           await this.ledgerService.registrarAsiento(
             {
@@ -3609,13 +4015,16 @@ export class AccountingService {
                     },
                   ],
             },
-            tx as any,
+            tx,
           );
         }
       });
     }
 
-    const totalMontoCandidatos = candidatos.reduce((sum, c) => sum + Number(c.monto || 0), 0);
+    const totalMontoCandidatos = candidatos.reduce(
+      (sum, c) => sum + Number(c.monto || 0),
+      0,
+    );
 
     return {
       dryRun: params.dryRun,
@@ -3639,28 +4048,37 @@ export class AccountingService {
   async ejecutarAperturaContable(userId: string) {
     const existingEntries = await this.prisma.journalEntry.count();
     if (existingEntries > 0) {
-      throw new BadRequestException('El libro contable ya contiene registros. No se puede realizar la apertura.');
+      throw new BadRequestException(
+        'El libro contable ya contiene registros. No se puede realizar la apertura.',
+      );
     }
 
     return this.prisma.$transaction(async (tx) => {
       // 1. Obtener saldos de Cajas
       const cajas = await tx.caja.findMany({ where: { activa: true } });
-      const lineasCajas = cajas.map(c => ({
-        accountCode:  c.tipo === 'RUTA' ? '1.2.1' : (c.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1'),
-        debitAmount:  Number(c.saldoActual),
-        cajaId:       c.id,
-        cajaDelta:    0, // El saldo ya existe en la tabla Caja, no queremos incrementarlo doble
-      })).filter(l => l.debitAmount > 0);
+      const lineasCajas = cajas
+        .map((c) => ({
+          accountCode:
+            c.tipo === 'RUTA'
+              ? '1.2.1'
+              : c.codigo === 'CAJA-BANCO'
+                ? '1.1.2'
+                : '1.1.1',
+          debitAmount: Number(c.saldoActual),
+          cajaId: c.id,
+          cajaDelta: 0, // El saldo ya existe en la tabla Caja, no queremos incrementarlo doble
+        }))
+        .filter((l) => l.debitAmount > 0);
 
       // 2. Obtener Cartera Vigente (Capital pendiente)
       const prestamos = await tx.prestamo.findMany({
         where: { estado: { in: ['ACTIVO', 'EN_MORA'] }, eliminadoEn: null },
-        select: { saldoPendiente: true }
+        select: { saldoPendiente: true },
       });
 
       const totalCartera = prestamos.reduce(
         (acc, p) => acc + Number(p.saldoPendiente || 0),
-        0
+        0,
       );
 
       const lineaCartera = {
@@ -3671,7 +4089,7 @@ export class AccountingService {
       // 3. Obtener Deuda Cobradores
       const deudores = await this.getDeudoresCobrador();
       let totalDeudaCobradores = 0;
-      deudores.forEach(d => totalDeudaCobradores += d.totalDeuda);
+      deudores.forEach((d) => (totalDeudaCobradores += d.totalDeuda));
 
       const lineaDeuda = {
         accountCode: '1.4.1',
@@ -3679,12 +4097,15 @@ export class AccountingService {
       };
 
       // 4. Sumar todo para el Patrimonio (Contrapartida)
-      const totalDebitos = lineasCajas.reduce((acc, l) => acc + (l.debitAmount || 0), 0) +
-                           (lineaCartera.debitAmount || 0) +
-                           (lineaDeuda.debitAmount || 0);
+      const totalDebitos =
+        lineasCajas.reduce((acc, l) => acc + (l.debitAmount || 0), 0) +
+        (lineaCartera.debitAmount || 0) +
+        (lineaDeuda.debitAmount || 0);
 
       if (totalDebitos === 0) {
-        throw new BadRequestException('No hay saldos positivos para realizar la apertura.');
+        throw new BadRequestException(
+          'No hay saldos positivos para realizar la apertura.',
+        );
       }
 
       const lines = [
@@ -3694,21 +4115,22 @@ export class AccountingService {
         {
           accountCode: '2.1', // Capital Social / Patrimonio
           creditAmount: totalDebitos,
-        }
-      ].filter(l => (l.debitAmount || 0) > 0 || (l.creditAmount || 0) > 0);
+        },
+      ].filter((l) => (l.debitAmount || 0) > 0 || (l.creditAmount || 0) > 0);
 
       // 5. Registrar Asiento
-      return this.ledgerService.registrarAsiento({
-        referenceType: 'APERTURA',
-        referenceId:   'DAY-ZERO',
-        description:   'Asiento de apertura: Migración de saldos iniciales a Partida Doble',
-        isOpening:     true,
-        createdBy:     userId,
-        lines,
-      }, tx as any);
+      return this.ledgerService.registrarAsiento(
+        {
+          referenceType: 'APERTURA',
+          referenceId: 'DAY-ZERO',
+          description:
+            'Asiento de apertura: Migración de saldos iniciales a Partida Doble',
+          isOpening: true,
+          createdBy: userId,
+          lines,
+        },
+        tx,
+      );
     });
   }
 }
-
-
-

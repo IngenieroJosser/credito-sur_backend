@@ -1,5 +1,10 @@
-import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service'; 
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
 import {
   EstadoAprobacion,
   EstadoPrestamo,
@@ -75,26 +80,30 @@ export class ApprovalsService {
 
     const matchingAssignment = requestedCobradorId
       ? await db.asignacionRuta?.findFirst({
-        where: {
-          clienteId,
-          activa: true,
-          OR: [
-            { cobradorId: requestedCobradorId },
-            { ruta: { cobradorId: requestedCobradorId } },
-          ],
-        },
-        select,
-      })
+          where: {
+            clienteId,
+            activa: true,
+            OR: [
+              { cobradorId: requestedCobradorId },
+              { ruta: { cobradorId: requestedCobradorId } },
+            ],
+          },
+          select,
+        })
       : null;
 
-    const activeAssignment = matchingAssignment || await db.asignacionRuta?.findFirst({
-      where: { clienteId, activa: true },
-      select,
-    });
+    const activeAssignment =
+      matchingAssignment ||
+      (await db.asignacionRuta?.findFirst({
+        where: { clienteId, activa: true },
+        select,
+      }));
 
-    return activeAssignment?.ruta?.cobradorId
-      || activeAssignment?.cobradorId
-      || requestedCobradorId;
+    return (
+      activeAssignment?.ruta?.cobradorId ||
+      activeAssignment?.cobradorId ||
+      requestedCobradorId
+    );
   }
 
   private async resolveActiveRouteCashContext(
@@ -152,7 +161,10 @@ export class ApprovalsService {
   }) {
     try {
       const asignacion = await this.prisma.asignacionRuta.findFirst({
-        where: { cliente: { prestamos: { some: { id: params.prestamoId } } }, activa: true },
+        where: {
+          cliente: { prestamos: { some: { id: params.prestamoId } } },
+          activa: true,
+        },
         select: { ruta: { select: { cobradorId: true } } },
       });
 
@@ -172,7 +184,10 @@ export class ApprovalsService {
         },
       });
     } catch (e) {
-      this.logger.warn('No se pudo notificar al cobrador por gestión vencida', e as any);
+      this.logger.warn(
+        'No se pudo notificar al cobrador por gestión vencida',
+        e,
+      );
     }
   }
 
@@ -196,7 +211,8 @@ export class ApprovalsService {
     let capitalTotal = 0;
     let interesTotal = 0;
     let moraTotal = 0;
-    const cuotasActualizar: { id: string; montoPagado: number; estado: any }[] = [];
+    const cuotasActualizar: { id: string; montoPagado: number; estado: any }[] =
+      [];
 
     for (const cuota of prestamo.cuotas || []) {
       if (restante <= 0) break;
@@ -255,14 +271,30 @@ export class ApprovalsService {
             ? EstadoCuota.PARCIAL
             : cuota.estado;
 
-        cuotasActualizar.push({ id: cuota.id, montoPagado: montoPagadoFinal, estado: nuevoEstado });
+        cuotasActualizar.push({
+          id: cuota.id,
+          montoPagado: montoPagadoFinal,
+          estado: nuevoEstado,
+        });
       }
     }
 
-    return { detallesPago, cuotasActualizar, capitalTotal, interesTotal, moraTotal };
+    return {
+      detallesPago,
+      cuotasActualizar,
+      capitalTotal,
+      interesTotal,
+      moraTotal,
+    };
   }
 
-  async approveItem(id: string, _type: TipoAprobacion, aprobadoPorId?: string, notas?: string, editedData?: any) {
+  async approveItem(
+    id: string,
+    _type: TipoAprobacion,
+    aprobadoPorId?: string,
+    notas?: string,
+    editedData?: any,
+  ) {
     const approval = await this.prisma.aprobacion.findUnique({
       where: { id },
     });
@@ -272,7 +304,9 @@ export class ApprovalsService {
     }
 
     if (approval.estado !== EstadoAprobacion.PENDIENTE) {
-      throw new BadRequestException(`Esta solicitud ya fue procesada (estado: ${approval.estado})`);
+      throw new BadRequestException(
+        `Esta solicitud ya fue procesada (estado: ${approval.estado})`,
+      );
     }
 
     const claimed = await this.prisma.aprobacion.updateMany({
@@ -290,7 +324,9 @@ export class ApprovalsService {
     });
 
     if (claimed.count !== 1) {
-      throw new BadRequestException('Esta solicitud ya fue tomada por otro usuario');
+      throw new BadRequestException(
+        'Esta solicitud ya fue tomada por otro usuario',
+      );
     }
 
     try {
@@ -341,26 +377,34 @@ export class ApprovalsService {
       tipoAprobacion: approval.tipoAprobacion,
     });
 
-    this.logger.log(`Aprobación ${id} procesada por ${aprobadoPorId || 'desconocido'} (tipo: ${approval.tipoAprobacion})`);
+    this.logger.log(
+      `Aprobación ${id} procesada por ${aprobadoPorId || 'desconocido'} (tipo: ${approval.tipoAprobacion})`,
+    );
 
     return { success: true, message: 'Aprobación procesada exitosamente' };
   }
 
   private async approveTransferPayment(approval: any, aprobadoPorId?: string) {
-    const data = typeof approval.datosSolicitud === 'string'
-      ? JSON.parse(approval.datosSolicitud)
-      : approval.datosSolicitud;
+    const data =
+      typeof approval.datosSolicitud === 'string'
+        ? JSON.parse(approval.datosSolicitud)
+        : approval.datosSolicitud;
 
     const prestamoId = String(data?.prestamoId || approval.referenciaId || '');
-    const requestedCobradorId = String(data?.cobradorId || approval.solicitadoPorId || '');
+    const requestedCobradorId = String(
+      data?.cobradorId || approval.solicitadoPorId || '',
+    );
     const montoTotal = Number(data?.montoTotal || approval.montoSolicitud || 0);
     const rawFechaPago = String(data?.fechaPago || '');
-    const idempotencyKey = (data?.idempotencyKey || approval.idempotencyKey || '')
-      .toString()
-      .trim() || undefined;
+    const idempotencyKey =
+      (data?.idempotencyKey || approval.idempotencyKey || '')
+        .toString()
+        .trim() || undefined;
 
     if (!prestamoId || !requestedCobradorId || !montoTotal || montoTotal <= 0) {
-      throw new BadRequestException('Datos insuficientes para aprobar pago por transferencia');
+      throw new BadRequestException(
+        'Datos insuficientes para aprobar pago por transferencia',
+      );
     }
 
     const fechaPagoBogota = (() => {
@@ -380,7 +424,15 @@ export class ApprovalsService {
       where: { id: prestamoId, eliminadoEn: null },
       include: {
         cuotas: {
-          where: { estado: { in: [EstadoCuota.PENDIENTE, EstadoCuota.PARCIAL, EstadoCuota.VENCIDA] } },
+          where: {
+            estado: {
+              in: [
+                EstadoCuota.PENDIENTE,
+                EstadoCuota.PARCIAL,
+                EstadoCuota.VENCIDA,
+              ],
+            },
+          },
           orderBy: { numeroCuota: 'asc' },
         },
         cliente: { select: { id: true } },
@@ -388,8 +440,12 @@ export class ApprovalsService {
     });
 
     if (!prestamo) throw new NotFoundException('Préstamo no encontrado');
-    if (![EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA].includes(prestamo.estado as any)) {
-      throw new BadRequestException(`No se puede aplicar pago: préstamo en estado ${prestamo.estado}`);
+    if (
+      ![EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA].includes(prestamo.estado)
+    ) {
+      throw new BadRequestException(
+        `No se puede aplicar pago: préstamo en estado ${prestamo.estado}`,
+      );
     }
 
     const numeroPago = this.generarNumeroPago();
@@ -401,18 +457,33 @@ export class ApprovalsService {
         where: { id: prestamoId, eliminadoEn: null },
         include: {
           cuotas: {
-            where: { estado: { in: [EstadoCuota.PENDIENTE, EstadoCuota.PARCIAL, EstadoCuota.VENCIDA] } },
+            where: {
+              estado: {
+                in: [
+                  EstadoCuota.PENDIENTE,
+                  EstadoCuota.PARCIAL,
+                  EstadoCuota.VENCIDA,
+                ],
+              },
+            },
             orderBy: { numeroCuota: 'asc' },
           },
           cliente: { select: { id: true } },
         },
       });
 
-      if (!prestamoActual) throw new NotFoundException('Préstamo no encontrado');
-      if (![EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA].includes(prestamoActual.estado as any)) {
-        throw new BadRequestException(`No se puede aplicar pago: préstamo en estado ${prestamoActual.estado}`);
+      if (!prestamoActual)
+        throw new NotFoundException('Préstamo no encontrado');
+      if (
+        ![EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA].includes(
+          prestamoActual.estado,
+        )
+      ) {
+        throw new BadRequestException(
+          `No se puede aplicar pago: préstamo en estado ${prestamoActual.estado}`,
+        );
       }
-      if (montoTotal > Number((prestamoActual as any).saldoPendiente || 0) + 1) {
+      if (montoTotal > Number(prestamoActual.saldoPendiente || 0) + 1) {
         throw new BadRequestException(
           `El monto del pago (${montoTotal}) no puede ser mayor al saldo pendiente del préstamo (${prestamoActual.saldoPendiente})`,
         );
@@ -424,7 +495,9 @@ export class ApprovalsService {
         requestedCobradorId,
       );
       if (!cobradorId) {
-        throw new BadRequestException('No se pudo determinar el cobrador de la ruta para este pago');
+        throw new BadRequestException(
+          'No se pudo determinar el cobrador de la ruta para este pago',
+        );
       }
 
       const {
@@ -438,7 +511,8 @@ export class ApprovalsService {
       const interesTotalFinal = Math.round(interesTotal * 100) / 100;
       const moraTotalFinal = Math.round(moraTotal * 100) / 100;
       const capitalTotalFinal =
-        Math.round((montoTotal - interesTotalFinal - moraTotalFinal) * 100) / 100;
+        Math.round((montoTotal - interesTotalFinal - moraTotalFinal) * 100) /
+        100;
 
       const pago = await tx.pago.create({
         data: {
@@ -463,27 +537,36 @@ export class ApprovalsService {
           data: {
             montoPagado: upd.montoPagado,
             estado: upd.estado,
-            fechaPago: upd.estado === EstadoCuota.PAGADA ? fechaPagoBogota : undefined,
+            fechaPago:
+              upd.estado === EstadoCuota.PAGADA ? fechaPagoBogota : undefined,
           },
         });
       }
 
       // Actualizar préstamo
-      const nuevoSaldo = Math.max(0, Number((prestamoActual as any).saldoPendiente || 0) - montoTotal);
+      const nuevoSaldo = Math.max(
+        0,
+        Number(prestamoActual.saldoPendiente || 0) - montoTotal,
+      );
       const prestamoQuedaPagado = nuevoSaldo <= 0;
       let nuevoEstadoPrestamo: any = prestamoActual.estado;
       if (prestamoQuedaPagado) nuevoEstadoPrestamo = EstadoPrestamo.PAGADO;
       else if (prestamoActual.estado === EstadoPrestamo.EN_MORA) {
-        const vencidasRestantes = await tx.cuota.count({ where: { prestamoId: prestamoActual.id, estado: EstadoCuota.VENCIDA } });
-        if (vencidasRestantes === 0) nuevoEstadoPrestamo = EstadoPrestamo.ACTIVO;
+        const vencidasRestantes = await tx.cuota.count({
+          where: { prestamoId: prestamoActual.id, estado: EstadoCuota.VENCIDA },
+        });
+        if (vencidasRestantes === 0)
+          nuevoEstadoPrestamo = EstadoPrestamo.ACTIVO;
       }
 
       await tx.prestamo.update({
         where: { id: prestamoActual.id },
         data: {
-          totalPagado: Number((prestamoActual as any).totalPagado || 0) + montoTotal,
-          capitalPagado: Number((prestamoActual as any).capitalPagado || 0) + capitalTotal,
-          interesPagado: Number((prestamoActual as any).interesPagado || 0) + interesTotal,
+          totalPagado: Number(prestamoActual.totalPagado || 0) + montoTotal,
+          capitalPagado:
+            Number(prestamoActual.capitalPagado || 0) + capitalTotal,
+          interesPagado:
+            Number(prestamoActual.interesPagado || 0) + interesTotal,
           saldoPendiente: nuevoSaldo,
           estado: nuevoEstadoPrestamo,
           estadoSincronizacion: 'PENDIENTE' as any,
@@ -499,7 +582,7 @@ export class ApprovalsService {
           cajaId: cajaBanco.id,
           tipo: TipoTransaccion.INGRESO,
           monto: montoTotal,
-          descripcion: `Cobranza ${numeroPago} (Transferencia verificada)` ,
+          descripcion: `Cobranza ${numeroPago} (Transferencia verificada)`,
           creadoPorId: cobradorId,
           aprobadoPorId: aprobadoPorId || null,
           tipoReferencia: 'PAGO',
@@ -513,31 +596,39 @@ export class ApprovalsService {
       await this.ledgerService.registrarAsiento(
         {
           referenceType: 'PAGO',
-          referenceId:   pago.id,
-          description:   `Pago transferencia verificada ${numeroPago}`,
-          createdBy:     aprobadoPorId || cobradorId,
+          referenceId: pago.id,
+          description: `Pago transferencia verificada ${numeroPago}`,
+          createdBy: aprobadoPorId || cobradorId,
           lines: [
             {
-              accountCode: '1.1.2',   // Cuentas Bancarias
-              debitAmount:  montoTotal,
-              cajaId:       cajaBanco.id,
-              cajaDelta:    montoTotal,
+              accountCode: '1.1.2', // Cuentas Bancarias
+              debitAmount: montoTotal,
+              cajaId: cajaBanco.id,
+              cajaDelta: montoTotal,
             },
             {
-              accountCode:  '1.3.1',
-              creditAmount:  capitalTotalFinal,
+              accountCode: '1.3.1',
+              creditAmount: capitalTotalFinal,
             },
-            ...(interesTotalFinal > 0 ? [{
-              accountCode:  '3.1',
-              creditAmount:  interesTotalFinal,
-            }] : []),
-            ...(moraTotalFinal > 0 ? [{
-              accountCode:  '3.2',
-              creditAmount:  moraTotalFinal,
-            }] : []),
+            ...(interesTotalFinal > 0
+              ? [
+                  {
+                    accountCode: '3.1',
+                    creditAmount: interesTotalFinal,
+                  },
+                ]
+              : []),
+            ...(moraTotalFinal > 0
+              ? [
+                  {
+                    accountCode: '3.2',
+                    creditAmount: moraTotalFinal,
+                  },
+                ]
+              : []),
           ],
         },
-        tx as any,
+        tx,
       );
 
       // Vincular comprobante (si existe) al pago real
@@ -555,7 +646,10 @@ export class ApprovalsService {
           select: { id: true },
         });
         if (comprobante?.id) {
-          await tx.multimedia.update({ where: { id: comprobante.id }, data: { pagoId: pago.id } });
+          await tx.multimedia.update({
+            where: { id: comprobante.id },
+            data: { pagoId: pago.id },
+          });
         }
       } catch {
         // ignore
@@ -574,13 +668,13 @@ export class ApprovalsService {
       },
       include: {
         solicitadoPor: {
-          select: { nombres: true, apellidos: true }
+          select: { nombres: true, apellidos: true },
         },
         aprobadoPor: {
-          select: { nombres: true, apellidos: true }
-        }
+          select: { nombres: true, apellidos: true },
+        },
       },
-      orderBy: { creadoEn: 'desc' }
+      orderBy: { creadoEn: 'desc' },
     });
   }
 
@@ -596,13 +690,13 @@ export class ApprovalsService {
       where,
       include: {
         solicitadoPor: {
-          select: { id: true, nombres: true, apellidos: true, rol: true }
+          select: { id: true, nombres: true, apellidos: true, rol: true },
         },
         aprobadoPor: {
-          select: { id: true, nombres: true, apellidos: true }
-        }
+          select: { id: true, nombres: true, apellidos: true },
+        },
       },
-      orderBy: { creadoEn: 'desc' }
+      orderBy: { creadoEn: 'desc' },
     });
 
     const grouped: Record<string, any[]> = {};
@@ -614,10 +708,11 @@ export class ApprovalsService {
         grouped[key] = [];
         conteo[key] = 0;
       }
-      
-      const datos = typeof item.datosSolicitud === 'string'
-        ? JSON.parse(item.datosSolicitud)
-        : item.datosSolicitud;
+
+      const datos =
+        typeof item.datosSolicitud === 'string'
+          ? JSON.parse(item.datosSolicitud)
+          : item.datosSolicitud;
 
       grouped[key].push({
         ...item,
@@ -650,11 +745,11 @@ export class ApprovalsService {
       },
       include: {
         solicitadoPor: {
-          select: { id: true, nombres: true, apellidos: true, rol: true }
+          select: { id: true, nombres: true, apellidos: true, rol: true },
         },
         aprobadoPor: {
-          select: { id: true, nombres: true, apellidos: true, rol: true }
-        }
+          select: { id: true, nombres: true, apellidos: true, rol: true },
+        },
       },
       orderBy: { revisadoEn: 'desc' },
     });
@@ -662,9 +757,10 @@ export class ApprovalsService {
     return {
       total: rechazados.length,
       items: rechazados.map((item) => {
-        const datos = typeof item.datosSolicitud === 'string'
-          ? JSON.parse(item.datosSolicitud)
-          : item.datosSolicitud;
+        const datos =
+          typeof item.datosSolicitud === 'string'
+            ? JSON.parse(item.datosSolicitud)
+            : item.datosSolicitud;
 
         return {
           ...item,
@@ -684,9 +780,14 @@ export class ApprovalsService {
   /**
    * Confirmar o revertir un rechazo (decisión final del SuperAdmin).
    */
-  async confirmSuperadminAction(id: string, accion: 'CONFIRMAR' | 'REVERTIR', userId: string, notas?: string) {
+  async confirmSuperadminAction(
+    id: string,
+    accion: 'CONFIRMAR' | 'REVERTIR',
+    userId: string,
+    notas?: string,
+  ) {
     const approval = await this.prisma.aprobacion.findUnique({ where: { id } });
-    
+
     if (!approval) {
       throw new NotFoundException('Aprobación no encontrada');
     }
@@ -708,7 +809,10 @@ export class ApprovalsService {
         tipoAprobacion: approval.tipoAprobacion,
       });
 
-      return { success: true, message: 'Eliminación confirmada por el SuperAdministrador' };
+      return {
+        success: true,
+        message: 'Eliminación confirmada por el SuperAdministrador',
+      };
     } else {
       await this.prisma.aprobacion.update({
         where: { id },
@@ -728,34 +832,56 @@ export class ApprovalsService {
         tipoAprobacion: approval.tipoAprobacion,
       });
 
-      if (approval.tipoAprobacion === TipoAprobacion.NUEVO_PRESTAMO && approval.referenciaId) {
+      if (
+        approval.tipoAprobacion === TipoAprobacion.NUEVO_PRESTAMO &&
+        approval.referenciaId
+      ) {
         try {
           const prestamoRevertido = await this.prisma.prestamo.update({
             where: { id: approval.referenciaId },
-            data: { estadoAprobacion: EstadoAprobacion.PENDIENTE, eliminadoEn: null },
-            include: { producto: true }
+            data: {
+              estadoAprobacion: EstadoAprobacion.PENDIENTE,
+              eliminadoEn: null,
+            },
+            include: { producto: true },
           });
 
           // CORRECCIÓN: Volver a reservar el stock porque la solicitud vuelve a evaluación
-          if (prestamoRevertido.productoId && prestamoRevertido.producto?.stock !== undefined && prestamoRevertido.producto?.stock !== null) {
+          if (
+            prestamoRevertido.productoId &&
+            prestamoRevertido.producto?.stock !== undefined &&
+            prestamoRevertido.producto?.stock !== null
+          ) {
             try {
-               await this.prisma.producto.update({
-                 where: { id: prestamoRevertido.productoId },
-                 data: { stock: { decrement: 1 } } // Decrementamos porque vuelve a reservarse
-               });
-            } catch(e) {}
+              await this.prisma.producto.update({
+                where: { id: prestamoRevertido.productoId },
+                data: { stock: { decrement: 1 } }, // Decrementamos porque vuelve a reservarse
+              });
+            } catch (e) {}
           }
         } catch (error) {
-          this.logger.error(`Error revirtiendo préstamo ${approval.referenciaId}:`, error);
+          this.logger.error(
+            `Error revirtiendo préstamo ${approval.referenciaId}:`,
+            error,
+          );
         }
-      } else if (approval.tipoAprobacion === TipoAprobacion.NUEVO_CLIENTE && approval.referenciaId) {
+      } else if (
+        approval.tipoAprobacion === TipoAprobacion.NUEVO_CLIENTE &&
+        approval.referenciaId
+      ) {
         try {
           await this.prisma.cliente.update({
             where: { id: approval.referenciaId },
-            data: { estadoAprobacion: EstadoAprobacion.PENDIENTE, eliminadoEn: null },
+            data: {
+              estadoAprobacion: EstadoAprobacion.PENDIENTE,
+              eliminadoEn: null,
+            },
           });
         } catch (error) {
-          this.logger.error(`Error revirtiendo cliente ${approval.referenciaId}:`, error);
+          this.logger.error(
+            `Error revirtiendo cliente ${approval.referenciaId}:`,
+            error,
+          );
         }
       }
 
@@ -763,18 +889,29 @@ export class ApprovalsService {
         await this.notificacionesService.create({
           usuarioId: approval.solicitadoPorId,
           titulo: 'Solicitud Restaurada',
-          mensaje: 'Tu solicitud fue restaurada a estado pendiente por el SuperAdministrador para re-evaluación.',
+          mensaje:
+            'Tu solicitud fue restaurada a estado pendiente por el SuperAdministrador para re-evaluación.',
           tipo: 'SISTEMA',
           entidad: 'Aprobacion',
           entidadId: approval.id,
         });
-      } catch { /* no interrumpir */ }
+      } catch {
+        /* no interrumpir */
+      }
 
-      return { success: true, message: 'Solicitud restaurada a pendiente para re-evaluación' };
+      return {
+        success: true,
+        message: 'Solicitud restaurada a pendiente para re-evaluación',
+      };
     }
   }
 
-  async rejectItem(id: string, _type: TipoAprobacion, rechazadoPorId?: string, motivoRechazo?: string) {
+  async rejectItem(
+    id: string,
+    _type: TipoAprobacion,
+    rechazadoPorId?: string,
+    motivoRechazo?: string,
+  ) {
     const approval = await this.prisma.aprobacion.findUnique({
       where: { id },
     });
@@ -784,7 +921,9 @@ export class ApprovalsService {
     }
 
     if (approval.estado !== EstadoAprobacion.PENDIENTE) {
-      throw new BadRequestException(`Esta solicitud ya fue procesada (estado: ${approval.estado})`);
+      throw new BadRequestException(
+        `Esta solicitud ya fue procesada (estado: ${approval.estado})`,
+      );
     }
 
     const claimed = await this.prisma.aprobacion.updateMany({
@@ -801,7 +940,9 @@ export class ApprovalsService {
     });
 
     if (claimed.count !== 1) {
-      throw new BadRequestException('Esta solicitud ya fue tomada por otro usuario');
+      throw new BadRequestException(
+        'Esta solicitud ya fue tomada por otro usuario',
+      );
     }
 
     if (approval.tipoAprobacion === TipoAprobacion.PRORROGA_PAGO) {
@@ -812,10 +953,13 @@ export class ApprovalsService {
             : approval.datosSolicitud;
 
         if (data?.tipo === 'GESTION_VENCIDA' && data?.prestamoId) {
-          const nombreCliente = data?.clienteNombre || data?.cliente || 'Cliente';
+          const nombreCliente =
+            data?.clienteNombre || data?.cliente || 'Cliente';
           const numeroPrestamo = data?.numeroPrestamo || '';
           const decision = (data?.decision as string) || 'PRORROGAR';
-          const fechaOriginal = data?.fechaVencimientoOriginal ? new Date(data.fechaVencimientoOriginal) : null;
+          const fechaOriginal = data?.fechaVencimientoOriginal
+            ? new Date(data.fechaVencimientoOriginal)
+            : null;
 
           if (fechaOriginal && !isNaN(fechaOriginal.getTime())) {
             try {
@@ -858,7 +1002,10 @@ export class ApprovalsService {
     });
 
     // Operación específica por tipo de rechazo
-    if (approval.tipoAprobacion === TipoAprobacion.NUEVO_PRESTAMO && approval.referenciaId) {
+    if (
+      approval.tipoAprobacion === TipoAprobacion.NUEVO_PRESTAMO &&
+      approval.referenciaId
+    ) {
       try {
         const prestamoRechazado = await this.prisma.prestamo.update({
           where: { id: approval.referenciaId },
@@ -869,24 +1016,37 @@ export class ApprovalsService {
           },
           include: {
             producto: true,
-          }
+          },
         });
 
         // CORRECCIÓN: Restablecer stock si el préstamo incluye un artículo físico (stock !== undefined)
-        if (prestamoRechazado.productoId && prestamoRechazado.producto?.stock !== undefined && prestamoRechazado.producto?.stock !== null) {
+        if (
+          prestamoRechazado.productoId &&
+          prestamoRechazado.producto?.stock !== undefined &&
+          prestamoRechazado.producto?.stock !== null
+        ) {
           try {
-             await this.prisma.producto.update({
-               where: { id: prestamoRechazado.productoId },
-               data: { stock: { increment: 1 } }
-             });
-          } catch(e) {
-            this.logger.error(`Error devolviendo stock al rechazar el préstamo ${approval.referenciaId}:`, e);
+            await this.prisma.producto.update({
+              where: { id: prestamoRechazado.productoId },
+              data: { stock: { increment: 1 } },
+            });
+          } catch (e) {
+            this.logger.error(
+              `Error devolviendo stock al rechazar el préstamo ${approval.referenciaId}:`,
+              e,
+            );
           }
         }
       } catch (error) {
-        this.logger.error(`Error actualizando préstamo rechazado ${approval.referenciaId}:`, error);
+        this.logger.error(
+          `Error actualizando préstamo rechazado ${approval.referenciaId}:`,
+          error,
+        );
       }
-    } else if (approval.tipoAprobacion === TipoAprobacion.NUEVO_CLIENTE && approval.referenciaId) {
+    } else if (
+      approval.tipoAprobacion === TipoAprobacion.NUEVO_CLIENTE &&
+      approval.referenciaId
+    ) {
       try {
         await this.prisma.cliente.update({
           where: { id: approval.referenciaId },
@@ -897,7 +1057,10 @@ export class ApprovalsService {
           },
         });
       } catch (error) {
-        this.logger.error(`Error actualizando cliente rechazado ${approval.referenciaId}:`, error);
+        this.logger.error(
+          `Error actualizando cliente rechazado ${approval.referenciaId}:`,
+          error,
+        );
       }
     }
 
@@ -907,9 +1070,11 @@ export class ApprovalsService {
         where: { id: rechazadoPorId },
         select: { nombres: true, apellidos: true },
       });
-      nombreRevisor = usuario ? `${usuario.nombres} ${usuario.apellidos}`.trim() : undefined;
+      nombreRevisor = usuario
+        ? `${usuario.nombres} ${usuario.apellidos}`.trim()
+        : undefined;
     }
-    const datos = (approval.datosSolicitud as any) || {};
+    const datos = approval.datosSolicitud || {};
     // Notificar al solicitante que su solicitud fue rechazada (con metadata para no mostrar botones y mostrar quién rechazó)
     try {
       await this.notificacionesService.create({
@@ -931,7 +1096,9 @@ export class ApprovalsService {
       // No interrumpir si la notificación falla
     }
 
-    this.logger.log(`Aprobación ${id} rechazada por ${rechazadoPorId || 'desconocido'}`);
+    this.logger.log(
+      `Aprobación ${id} rechazada por ${rechazadoPorId || 'desconocido'}`,
+    );
 
     return { success: true, message: 'Aprobación rechazada' };
   }
@@ -968,7 +1135,11 @@ export class ApprovalsService {
     });
   }
 
-  private async approveNewLoan(approval: any, aprobadoPorId?: string, editedData?: any) {
+  private async approveNewLoan(
+    approval: any,
+    aprobadoPorId?: string,
+    editedData?: any,
+  ) {
     const data =
       typeof approval.datosSolicitud === 'string'
         ? JSON.parse(approval.datosSolicitud)
@@ -979,12 +1150,20 @@ export class ApprovalsService {
 
     // Ejecutar en una transacción
     await this.prisma.$transaction(async (tx) => {
-      const isArticulo = String((finalData as any)?.tipo || '').toUpperCase() === 'ARTICULO';
-      const cuotaInicial = finalData.cuotaInicial !== undefined ? Number(finalData.cuotaInicial) : undefined;
+      const isArticulo =
+        String(finalData?.tipo || '').toUpperCase() === 'ARTICULO';
+      const cuotaInicial =
+        finalData.cuotaInicial !== undefined
+          ? Number(finalData.cuotaInicial)
+          : undefined;
 
       const montoNormalizado = (() => {
-        const monto = finalData.monto !== undefined ? Number(finalData.monto) : undefined;
-        const valorArticulo = finalData.valorArticulo !== undefined ? Number(finalData.valorArticulo) : undefined;
+        const monto =
+          finalData.monto !== undefined ? Number(finalData.monto) : undefined;
+        const valorArticulo =
+          finalData.valorArticulo !== undefined
+            ? Number(finalData.valorArticulo)
+            : undefined;
 
         // Para ARTICULO: monto es "a financiar". Si solo llegó valorArticulo, derivamos con cuotaInicial.
         if (isArticulo) {
@@ -998,7 +1177,8 @@ export class ApprovalsService {
 
         // Para EFECTIVO: monto representa el capital del préstamo
         if (monto !== undefined && !isNaN(monto)) return monto;
-        if (valorArticulo !== undefined && !isNaN(valorArticulo)) return valorArticulo;
+        if (valorArticulo !== undefined && !isNaN(valorArticulo))
+          return valorArticulo;
         return undefined;
       })();
 
@@ -1007,7 +1187,9 @@ export class ApprovalsService {
         where: { id: approval.referenciaId },
         select: { estado: true, monto: true },
       });
-      const fueActivo = prestamoPrevio?.estado === EstadoPrestamo.ACTIVO || prestamoPrevio?.estado === EstadoPrestamo.EN_MORA;
+      const fueActivo =
+        prestamoPrevio?.estado === EstadoPrestamo.ACTIVO ||
+        prestamoPrevio?.estado === EstadoPrestamo.EN_MORA;
       const montoOriginal = Number(prestamoPrevio?.monto || 0);
 
       // 1. Activar el préstamo (aplicando cambios si fueron editados)
@@ -1019,11 +1201,23 @@ export class ApprovalsService {
           aprobadoPorId: aprobadoPorId || undefined,
           // Actualizar campos financieros si cambiaron en la revisión
           monto: montoNormalizado,
-          cantidadCuotas: finalData.cantidadCuotas || finalData.cuotas || finalData.numCuotas ? Number(finalData.cantidadCuotas || finalData.cuotas || finalData.numCuotas) : undefined,
-          tasaInteres: finalData.porcentaje !== undefined ? Number(finalData.porcentaje) : undefined,
+          cantidadCuotas:
+            finalData.cantidadCuotas || finalData.cuotas || finalData.numCuotas
+              ? Number(
+                  finalData.cantidadCuotas ||
+                    finalData.cuotas ||
+                    finalData.numCuotas,
+                )
+              : undefined,
+          tasaInteres:
+            finalData.porcentaje !== undefined
+              ? Number(finalData.porcentaje)
+              : undefined,
           frecuenciaPago: finalData.frecuenciaPago || undefined,
           cuotaInicial,
-          fechaInicio: finalData.fechaInicio ? new Date(finalData.fechaInicio) : undefined,
+          fechaInicio: finalData.fechaInicio
+            ? new Date(finalData.fechaInicio)
+            : undefined,
           notas: finalData.notas || undefined,
         },
         include: {
@@ -1031,11 +1225,11 @@ export class ApprovalsService {
             include: {
               asignacionesRuta: {
                 where: { activa: true },
-                take: 1
-              }
-            }
-          }
-        }
+                take: 1,
+              },
+            },
+          },
+        },
       });
 
       // Si es crédito de ARTICULO, registrar la venta completa separando ingreso, costo e inventario.
@@ -1077,20 +1271,23 @@ export class ApprovalsService {
 
         if (!asientoVentaExistente?.id) {
           if (cuotaInicialVal > 0 && !cajaIdDestino) {
-            throw new BadRequestException('No se encontró una caja activa para registrar la cuota inicial del artículo.');
+            throw new BadRequestException(
+              'No se encontró una caja activa para registrar la cuota inicial del artículo.',
+            );
           }
 
-          const yaExiste = cuotaInicialVal > 0 && cajaIdDestino
-            ? await tx.transaccion.findFirst({
-                where: {
-                  cajaId: cajaIdDestino,
-                  tipo: TipoTransaccion.INGRESO,
-                  tipoReferencia: 'CUOTA_INICIAL',
-                  referenciaId: prestamo.id,
-                },
-                select: { id: true },
-              })
-            : null;
+          const yaExiste =
+            cuotaInicialVal > 0 && cajaIdDestino
+              ? await tx.transaccion.findFirst({
+                  where: {
+                    cajaId: cajaIdDestino,
+                    tipo: TipoTransaccion.INGRESO,
+                    tipoReferencia: 'CUOTA_INICIAL',
+                    referenciaId: prestamo.id,
+                  },
+                  select: { id: true },
+                })
+              : null;
 
           if (cuotaInicialVal > 0 && cajaIdDestino && !yaExiste?.id) {
             await tx.transaccion.create({
@@ -1109,16 +1306,16 @@ export class ApprovalsService {
           }
 
           const precioVentaArticulo = Number(
-            (prestamo as any).precioVentaArticulo ||
-            finalData.valorArticulo ||
-            finalData.precioVentaArticulo ||
-            (Number(prestamo.monto || 0) + cuotaInicialVal),
+            prestamo.precioVentaArticulo ||
+              finalData.valorArticulo ||
+              finalData.precioVentaArticulo ||
+              Number(prestamo.monto || 0) + cuotaInicialVal,
           );
           const costoArticulo = Number(
-            (prestamo as any).costoArticulo ||
-            finalData.costoArticulo ||
-            finalData.costo ||
-            0,
+            prestamo.costoArticulo ||
+              finalData.costoArticulo ||
+              finalData.costo ||
+              0,
           );
 
           await this.ledgerService.registrarVentaArticulo(
@@ -1129,10 +1326,11 @@ export class ApprovalsService {
               montoFinanciado: Number(prestamo.monto || 0),
               cuotaInicial: cuotaInicialVal,
               cajaId: cajaIdDestino,
-              accountCodeCaja: cajaDestino?.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1',
+              accountCodeCaja:
+                cajaDestino?.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1',
               createdBy: aprobadoPorId || approval.solicitadoPorId,
             },
-            tx as any,
+            tx,
           );
         }
       }
@@ -1144,17 +1342,33 @@ export class ApprovalsService {
         const montoFinanciar = Number(prestamo.monto);
         const tasaInteres = Number(prestamo.tasaInteres);
         const frecuencia = prestamo.frecuenciaPago;
-        const cantidadCuotas = Number(prestamo.cantidadCuotas || (finalData.cantidadCuotas || finalData.cuotas || finalData.numCuotas || 0));
-        
+        const cantidadCuotas = Number(
+          prestamo.cantidadCuotas ||
+            finalData.cantidadCuotas ||
+            finalData.cuotas ||
+            finalData.numCuotas ||
+            0,
+        );
+
         // Determinar plazo real para el cálculo de intereses
-        let realPlazoMeses = Number(finalData.plazoMeses || finalData.plajeMeses || (finalData as any).plazo || (prestamo as any).plazoMeses || 1);
-        
+        let realPlazoMeses = Number(
+          finalData.plazoMeses ||
+            finalData.plajeMeses ||
+            finalData.plazo ||
+            prestamo.plazoMeses ||
+            1,
+        );
+
         // Sincronizar con la lógica de loans.service: derivar el plazo de las cuotas si existen
         if (cantidadCuotas > 0) {
-           if (frecuencia === FrecuenciaPago.DIARIO) realPlazoMeses = cantidadCuotas / 30;
-           else if (frecuencia === FrecuenciaPago.SEMANAL) realPlazoMeses = cantidadCuotas / 4;
-           else if (frecuencia === FrecuenciaPago.QUINCENAL) realPlazoMeses = cantidadCuotas / 2;
-           else if (frecuencia === FrecuenciaPago.MENSUAL) realPlazoMeses = cantidadCuotas;
+          if (frecuencia === FrecuenciaPago.DIARIO)
+            realPlazoMeses = cantidadCuotas / 30;
+          else if (frecuencia === FrecuenciaPago.SEMANAL)
+            realPlazoMeses = cantidadCuotas / 4;
+          else if (frecuencia === FrecuenciaPago.QUINCENAL)
+            realPlazoMeses = cantidadCuotas / 2;
+          else if (frecuencia === FrecuenciaPago.MENSUAL)
+            realPlazoMeses = cantidadCuotas;
         }
 
         const tipoAmort = prestamo.tipoAmortizacion;
@@ -1167,129 +1381,162 @@ export class ApprovalsService {
           // Usamos la fórmula de amortización francesa (Simplificada para este contexto)
           const tasaMensual = tasaInteres / realPlazoMeses / 100;
           let tasaPeriodo = tasaMensual;
-          if (frecuencia === FrecuenciaPago.DIARIO) tasaPeriodo = tasaMensual / 30;
-          else if (frecuencia === FrecuenciaPago.SEMANAL) tasaPeriodo = tasaMensual / 4;
-          else if (frecuencia === FrecuenciaPago.QUINCENAL) tasaPeriodo = tasaMensual / 2;
+          if (frecuencia === FrecuenciaPago.DIARIO)
+            tasaPeriodo = tasaMensual / 30;
+          else if (frecuencia === FrecuenciaPago.SEMANAL)
+            tasaPeriodo = tasaMensual / 4;
+          else if (frecuencia === FrecuenciaPago.QUINCENAL)
+            tasaPeriodo = tasaMensual / 2;
 
           if (tasaPeriodo === 0) {
-              interesTotal = 0;
-              const montoCuota = montoFinanciar / cantidadCuotas;
-              cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => ({
-                  numeroCuota: i + 1,
-                  montoCapital: montoCuota,
-                  montoInteres: 0,
-                  monto: montoCuota
-              }));
+            interesTotal = 0;
+            const montoCuota = montoFinanciar / cantidadCuotas;
+            cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => ({
+              numeroCuota: i + 1,
+              montoCapital: montoCuota,
+              montoInteres: 0,
+              monto: montoCuota,
+            }));
           } else {
-              const cuotaFija = (montoFinanciar * tasaPeriodo) / (1 - Math.pow(1 + tasaPeriodo, -cantidadCuotas));
-              let saldo = montoFinanciar;
-              for (let i = 0; i < cantidadCuotas; i++) {
-                  const intPeriodo = saldo * tasaPeriodo;
-                  const capPeriodo = i === cantidadCuotas - 1 ? saldo : cuotaFija - intPeriodo;
-                  interesTotal += intPeriodo;
-                  cuotasData.push({
-                      numeroCuota: i + 1,
-                      montoCapital: capPeriodo,
-                      montoInteres: intPeriodo,
-                      monto: capPeriodo + intPeriodo
-                  });
-                  saldo -= capPeriodo;
-              }
+            const cuotaFija =
+              (montoFinanciar * tasaPeriodo) /
+              (1 - Math.pow(1 + tasaPeriodo, -cantidadCuotas));
+            let saldo = montoFinanciar;
+            for (let i = 0; i < cantidadCuotas; i++) {
+              const intPeriodo = saldo * tasaPeriodo;
+              const capPeriodo =
+                i === cantidadCuotas - 1 ? saldo : cuotaFija - intPeriodo;
+              interesTotal += intPeriodo;
+              cuotasData.push({
+                numeroCuota: i + 1,
+                montoCapital: capPeriodo,
+                montoInteres: intPeriodo,
+                monto: capPeriodo + intPeriodo,
+              });
+              saldo -= capPeriodo;
+            }
           }
         } else {
           // INTERES SIMPLE
           const mesesInteres = Math.max(1, realPlazoMeses);
           interesTotal = (montoFinanciar * tasaInteres * mesesInteres) / 100;
           const montoTotalSimple = montoFinanciar + interesTotal;
-          const montoCuota = cantidadCuotas > 0 ? montoTotalSimple / cantidadCuotas : 0;
-          const montoCapitalCuota = cantidadCuotas > 0 ? montoFinanciar / cantidadCuotas : 0;
-          const montoInteresCuota = cantidadCuotas > 0 ? interesTotal / cantidadCuotas : 0;
-          
+          const montoCuota =
+            cantidadCuotas > 0 ? montoTotalSimple / cantidadCuotas : 0;
+          const montoCapitalCuota =
+            cantidadCuotas > 0 ? montoFinanciar / cantidadCuotas : 0;
+          const montoInteresCuota =
+            cantidadCuotas > 0 ? interesTotal / cantidadCuotas : 0;
+
           cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => ({
             numeroCuota: i + 1,
             monto: montoCuota,
             montoCapital: montoCapitalCuota,
-            montoInteres: montoInteresCuota
+            montoInteres: montoInteresCuota,
           }));
         }
 
         // Actualizar el préstamo con el nuevo interés calculado y saldo
         await tx.prestamo.update({
-            where: { id: prestamo.id },
-            data: { 
-                interesTotal,
-                saldoPendiente: montoFinanciar + interesTotal
-            }
+          where: { id: prestamo.id },
+          data: {
+            interesTotal,
+            saldoPendiente: montoFinanciar + interesTotal,
+          },
         });
 
         // Eliminar cuotas viejas y crear nuevas para que coincidan con la edición
         await tx.cuota.deleteMany({ where: { prestamoId: prestamo.id } });
-        
+
         // Función auxiliar para calcular fechas (duplicada brevemente aquí para el tx)
-        const calcularFecha = (base: Date, num: number, freq: FrecuenciaPago) => {
-            const d = new Date(base);
-            if (freq === FrecuenciaPago.DIARIO) d.setDate(d.getDate() + num);
-            else if (freq === FrecuenciaPago.SEMANAL) d.setDate(d.getDate() + num * 7);
-            else if (freq === FrecuenciaPago.QUINCENAL) d.setDate(d.getDate() + num * 15);
-            else if (freq === FrecuenciaPago.MENSUAL) d.setMonth(d.getMonth() + num);
-            return d;
+        const calcularFecha = (
+          base: Date,
+          num: number,
+          freq: FrecuenciaPago,
+        ) => {
+          const d = new Date(base);
+          if (freq === FrecuenciaPago.DIARIO) d.setDate(d.getDate() + num);
+          else if (freq === FrecuenciaPago.SEMANAL)
+            d.setDate(d.getDate() + num * 7);
+          else if (freq === FrecuenciaPago.QUINCENAL)
+            d.setDate(d.getDate() + num * 15);
+          else if (freq === FrecuenciaPago.MENSUAL)
+            d.setMonth(d.getMonth() + num);
+          return d;
         };
 
         await tx.cuota.createMany({
-            data: cuotasData.map(c => ({
-                prestamoId: prestamo.id,
-                numeroCuota: c.numeroCuota,
-                monto: c.monto,
-                montoCapital: c.montoCapital,
-                montoInteres: c.montoInteres,
-                fechaVencimiento: calcularFecha(fechaInicio, c.numeroCuota, frecuencia),
-                estado: EstadoCuota.PENDIENTE
-            }))
+          data: cuotasData.map((c) => ({
+            prestamoId: prestamo.id,
+            numeroCuota: c.numeroCuota,
+            monto: c.monto,
+            montoCapital: c.montoCapital,
+            montoInteres: c.montoInteres,
+            fechaVencimiento: calcularFecha(
+              fechaInicio,
+              c.numeroCuota,
+              frecuencia,
+            ),
+            estado: EstadoCuota.PENDIENTE,
+          })),
         });
       }
 
       const montoDesembolso = Number(prestamo.monto || 0);
-      const isArticuloLoan = String(prestamo.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
+      const isArticuloLoan =
+        String(prestamo.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
 
       if (!isArticuloLoan && !fueActivo) {
         const solicitante = await tx.usuario.findFirst({
           where: { id: approval.solicitadoPorId },
           select: { rol: true },
         });
-        const rutaAsignadaId = (prestamo as any)?.cliente?.asignacionesRuta?.[0]?.rutaId;
-        const cajaRuta = solicitante?.rol === RolUsuario.COBRADOR && rutaAsignadaId
-          ? await tx.caja.findFirst({
-            where: { activa: true, tipo: 'RUTA', rutaId: rutaAsignadaId },
+        const rutaAsignadaId = prestamo?.cliente?.asignacionesRuta?.[0]?.rutaId;
+        const cajaRuta =
+          solicitante?.rol === RolUsuario.COBRADOR && rutaAsignadaId
+            ? await tx.caja.findFirst({
+                where: { activa: true, tipo: 'RUTA', rutaId: rutaAsignadaId },
+                select: {
+                  id: true,
+                  codigo: true,
+                  nombre: true,
+                  saldoActual: true,
+                },
+              })
+            : null;
+        const cajaDesembolso =
+          cajaRuta ??
+          (await tx.caja.findFirst({
+            where: { activa: true, codigo: 'CAJA-OFICINA' },
             select: { id: true, codigo: true, nombre: true, saldoActual: true },
-          })
-          : null;
-        const cajaDesembolso = cajaRuta ?? await tx.caja.findFirst({
-          where: { activa: true, codigo: 'CAJA-OFICINA' },
-          select: { id: true, codigo: true, nombre: true, saldoActual: true },
-        }) ?? await tx.caja.findFirst({
-          where: {
-            activa: true,
-            OR: [{ codigo: 'CAJA-PRINCIPAL' }, { tipo: 'PRINCIPAL' }],
-          },
-          orderBy: { creadoEn: 'asc' },
-          select: { id: true, codigo: true, nombre: true, saldoActual: true },
-        });
+          })) ??
+          (await tx.caja.findFirst({
+            where: {
+              activa: true,
+              OR: [{ codigo: 'CAJA-PRINCIPAL' }, { tipo: 'PRINCIPAL' }],
+            },
+            orderBy: { creadoEn: 'asc' },
+            select: { id: true, codigo: true, nombre: true, saldoActual: true },
+          }));
 
         if (!cajaDesembolso?.id) {
-          throw new BadRequestException('No existe una caja activa para desembolsar el préstamo.');
+          throw new BadRequestException(
+            'No existe una caja activa para desembolsar el préstamo.',
+          );
         }
 
-        const saldoCajaDesembolso = Number((cajaDesembolso as any).saldoActual || 0);
+        const saldoCajaDesembolso = Number(cajaDesembolso.saldoActual || 0);
         if (montoDesembolso > 0 && saldoCajaDesembolso < montoDesembolso) {
           throw new BadRequestException(
             `Saldo insuficiente en la caja para desembolsar el préstamo. Caja: ${cajaDesembolso.nombre}. Saldo: ${saldoCajaDesembolso.toLocaleString('es-CO')}. Monto desembolso: ${montoDesembolso.toLocaleString('es-CO')}`,
           );
         }
-        const accountCodeDesembolso = cajaRuta?.id === cajaDesembolso.id
-          ? '1.2.1'
-          : cajaDesembolso.codigo === 'CAJA-BANCO'
-            ? '1.1.2'
-            : '1.1.1';
+        const accountCodeDesembolso =
+          cajaRuta?.id === cajaDesembolso.id
+            ? '1.2.1'
+            : cajaDesembolso.codigo === 'CAJA-BANCO'
+              ? '1.1.2'
+              : '1.1.1';
 
         await tx.transaccion.create({
           data: {
@@ -1308,38 +1555,42 @@ export class ApprovalsService {
         await this.ledgerService.registrarAsiento(
           {
             referenceType: 'DESEMBOLSO',
-            referenceId:   prestamo.id,
-            description:   `Desembolso préstamo #${prestamo.numeroPrestamo} - $${montoDesembolso.toLocaleString('es-CO')}`,
-            createdBy:     aprobadoPorId || approval.solicitadoPorId,
+            referenceId: prestamo.id,
+            description: `Desembolso préstamo #${prestamo.numeroPrestamo} - $${montoDesembolso.toLocaleString('es-CO')}`,
+            createdBy: aprobadoPorId || approval.solicitadoPorId,
             lines: [
               {
                 accountCode: '1.3.1',
-                debitAmount:  montoDesembolso,
+                debitAmount: montoDesembolso,
               },
               {
-                accountCode:  accountCodeDesembolso,
-                creditAmount:  montoDesembolso,
-                cajaId:        cajaDesembolso.id,
-                cajaDelta:    -montoDesembolso,
+                accountCode: accountCodeDesembolso,
+                creditAmount: montoDesembolso,
+                cajaId: cajaDesembolso.id,
+                cajaDelta: -montoDesembolso,
               },
             ],
           },
-          tx as any,
+          tx,
         );
       }
 
       if (fueActivo && Number(prestamo.monto) !== montoOriginal) {
-        await this.ledgerService.registrarAjusteCartera({
-          prestamoId: prestamo.id,
-          montoDiferencia: Number(prestamo.monto) - montoOriginal,
-          createdBy: aprobadoPorId || approval.solicitadoPorId,
-        }, tx as any);
+        await this.ledgerService.registrarAjusteCartera(
+          {
+            prestamoId: prestamo.id,
+            montoDiferencia: Number(prestamo.monto) - montoOriginal,
+            createdBy: aprobadoPorId || approval.solicitadoPorId,
+          },
+          tx,
+        );
       }
     });
 
     try {
       // Notificar al solicitante que su préstamo fue aprobado
-      const isArticulo = data.tipo === 'ARTICULO' || data.tipoPrestamo === 'ARTICULO';
+      const isArticulo =
+        data.tipo === 'ARTICULO' || data.tipoPrestamo === 'ARTICULO';
       const label = isArticulo ? 'crédito por un artículo' : 'préstamo';
 
       await this.notificacionesService.create({
@@ -1352,8 +1603,8 @@ export class ApprovalsService {
         metadata: {
           estadoAprobacion: 'APROBADO',
           monto: data.monto,
-          articulo: data.articulo
-        }
+          articulo: data.articulo,
+        },
       });
     } catch (e) {
       this.logger.error('Error notifying loan approval:', e);
@@ -1384,13 +1635,12 @@ export class ApprovalsService {
           rutaId: routeCash.rutaId,
           cobradorId: routeCash.cobradorId,
           cajaId: routeCash.cajaId,
-          tipoGasto:
-            ({
-              GASTO_OPERATIVO: 'OPERATIVO',
-              OPERATIVO: 'OPERATIVO',
-              TRANSPORTE: 'TRANSPORTE',
-              OTRO: 'OTRO',
-            }[data.tipoGasto] || 'OPERATIVO') as any,
+          tipoGasto: ({
+            GASTO_OPERATIVO: 'OPERATIVO',
+            OPERATIVO: 'OPERATIVO',
+            TRANSPORTE: 'TRANSPORTE',
+            OTRO: 'OTRO',
+          }[data.tipoGasto] || 'OPERATIVO') as any,
           monto: data.monto,
           descripcion: data.descripcion,
           categoriaId: data.categoriaId || undefined,
@@ -1425,23 +1675,23 @@ export class ApprovalsService {
       await this.ledgerService.registrarAsiento(
         {
           referenceType: 'GASTO',
-          referenceId:   newGasto.id,
-          description:   `Gasto aprobado: ${data.descripcion}`,
-          createdBy:     aprobadoPorId || approval.solicitadoPorId,
+          referenceId: newGasto.id,
+          description: `Gasto aprobado: ${data.descripcion}`,
+          createdBy: aprobadoPorId || approval.solicitadoPorId,
           lines: [
             {
               accountCode: '4.1',
-              debitAmount:  Number(data.monto),
+              debitAmount: Number(data.monto),
             },
             {
-              accountCode:  '1.2.1',
-              creditAmount:  Number(data.monto),
-              cajaId:        routeCash.cajaId,
-              cajaDelta:    -Number(data.monto), // Ledger decrementa el saldo
+              accountCode: '1.2.1',
+              creditAmount: Number(data.monto),
+              cajaId: routeCash.cajaId,
+              cajaDelta: -Number(data.monto), // Ledger decrementa el saldo
             },
           ],
         },
-        tx as any,
+        tx,
       );
 
       return [newGasto];
@@ -1494,7 +1744,9 @@ export class ApprovalsService {
       });
 
       if (!cajaPrincipal) {
-        throw new BadRequestException('No se encontró una Caja Principal activa para entregar la base.');
+        throw new BadRequestException(
+          'No se encontró una Caja Principal activa para entregar la base.',
+        );
       }
 
       const monto = Number(data.monto);
@@ -1544,29 +1796,30 @@ export class ApprovalsService {
       });
 
       // Asiento contable de Partida Doble (patrón correcto: Ledger mueve ambos saldos)
-      const accountCodePrincipal = cajaPrincipal.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1';
+      const accountCodePrincipal =
+        cajaPrincipal.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1';
       await this.ledgerService.registrarAsiento(
         {
           referenceType: 'BASE',
-          referenceId:   approval.id,
-          description:   `Base efectivo: ${data.descripcion}`,
-          createdBy:     aprobadoPorId || approval.solicitadoPorId,
+          referenceId: approval.id,
+          description: `Base efectivo: ${data.descripcion}`,
+          createdBy: aprobadoPorId || approval.solicitadoPorId,
           lines: [
             {
               accountCode: '1.2.1',
-              debitAmount:  monto,
-              cajaId:       routeCash.cajaId,
-              cajaDelta:   +monto,  // Caja Ruta RECIBE
+              debitAmount: monto,
+              cajaId: routeCash.cajaId,
+              cajaDelta: +monto, // Caja Ruta RECIBE
             },
             {
-              accountCode:  accountCodePrincipal,
-              creditAmount:  monto,
-              cajaId:        cajaPrincipal.id,
-              cajaDelta:    -monto,  // Caja Principal ENTREGA
+              accountCode: accountCodePrincipal,
+              creditAmount: monto,
+              cajaId: cajaPrincipal.id,
+              cajaDelta: -monto, // Caja Principal ENTREGA
             },
           ],
         },
-        tx as any,
+        tx,
       );
 
       return newTrx;
@@ -1620,7 +1873,9 @@ export class ApprovalsService {
     if (data.nuevaFechaVencimiento) {
       nuevaFecha = new Date(data.nuevaFechaVencimiento);
     } else if (data.diasGracia) {
-      nuevaFecha = new Date(Date.now() + Number(data.diasGracia) * 24 * 60 * 60 * 1000);
+      nuevaFecha = new Date(
+        Date.now() + Number(data.diasGracia) * 24 * 60 * 60 * 1000,
+      );
     } else {
       // Por defecto 30 dias de gracia
       nuevaFecha = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
@@ -1700,7 +1955,11 @@ export class ApprovalsService {
     });
   }
 
-  private async approveLoanLoss(approval: any, aprobadoPorId?: string, editedData?: any) {
+  private async approveLoanLoss(
+    approval: any,
+    aprobadoPorId?: string,
+    editedData?: any,
+  ) {
     const prestamoId = approval.referenciaId;
 
     const prestamo = await this.prisma.prestamo.findUnique({
@@ -1732,7 +1991,8 @@ export class ApprovalsService {
         },
         data: {
           estado: EstadoAprobacion.RECHAZADO,
-          comentarios: 'Archivado automáticamente por aprobación de baja por pérdida',
+          comentarios:
+            'Archivado automáticamente por aprobación de baja por pérdida',
           revisadoEn: new Date(),
         },
       });
@@ -1740,11 +2000,14 @@ export class ApprovalsService {
       // 3. Registrar castigo de cartera en el Ledger (Bug Gap 2 Fix)
       const saldoCapital = Number(prestamo.saldoPendiente);
       if (saldoCapital > 0) {
-        await this.ledgerService.registrarBajaCartera({
-          prestamoId: prestamo.id,
-          monto:      saldoCapital,
-          createdBy:  aprobadoPorId || approval.solicitadoPorId,
-        }, tx as any);
+        await this.ledgerService.registrarBajaCartera(
+          {
+            prestamoId: prestamo.id,
+            monto: saldoCapital,
+            createdBy: aprobadoPorId || approval.solicitadoPorId,
+          },
+          tx,
+        );
       }
     });
 

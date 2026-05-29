@@ -50,8 +50,12 @@ describe('PushController', () => {
     };
     const controller = new PushController(pushService as any);
 
-    await (controller as any).getUserSubscriptions({ user: { id: 'authenticated-user' } });
+    await (controller as any).getUserSubscriptions({
+      user: { id: 'authenticated-user' },
+    });
 
-    expect(pushService.getUserSubscriptions).toHaveBeenCalledWith('authenticated-user');
+    expect(pushService.getUserSubscriptions).toHaveBeenCalledWith(
+      'authenticated-user',
+    );
   });
 });

@@ -7,18 +7,28 @@ const mockNotifications = {
   notifyApprovers: jest.fn().mockResolvedValue(undefined),
 };
 const mockAudit = { create: jest.fn().mockResolvedValue(undefined) };
-const mockPush = { sendPushNotification: jest.fn().mockResolvedValue(undefined) };
+const mockPush = {
+  sendPushNotification: jest.fn().mockResolvedValue(undefined),
+};
 const mockGateway = {
   broadcastPrestamosActualizados: jest.fn(),
   broadcastDashboardsActualizados: jest.fn(),
   broadcastRutasActualizadas: jest.fn(),
   broadcastAprobacionesActualizadas: jest.fn(),
 };
-const mockConfig = { shouldAutoApproveCredits: jest.fn().mockResolvedValue(true) };
+const mockConfig = {
+  shouldAutoApproveCredits: jest.fn().mockResolvedValue(true),
+};
 const mockLedger = {
-  registrarDesembolso: jest.fn().mockResolvedValue({ id: 'journal-desembolso' }),
-  registrarVentaArticulo: jest.fn().mockResolvedValue({ id: 'journal-venta-articulo' }),
-  registrarAsiento: jest.fn().mockResolvedValue({ id: 'journal-reverso-articulo' }),
+  registrarDesembolso: jest
+    .fn()
+    .mockResolvedValue({ id: 'journal-desembolso' }),
+  registrarVentaArticulo: jest
+    .fn()
+    .mockResolvedValue({ id: 'journal-venta-articulo' }),
+  registrarAsiento: jest
+    .fn()
+    .mockResolvedValue({ id: 'journal-reverso-articulo' }),
 };
 
 function makeService(prisma: any) {
@@ -50,7 +60,8 @@ describe('LoansService accounting impact for approved loans', () => {
         findFirst: jest.fn().mockResolvedValue(null),
       },
       caja: {
-        findFirst: jest.fn()
+        findFirst: jest
+          .fn()
           .mockResolvedValueOnce({
             id: 'caja-oficina',
             tipo: 'PRINCIPAL',
@@ -71,14 +82,16 @@ describe('LoansService accounting impact for approved loans', () => {
       },
     };
 
-    await (makeService(prisma) as any).registrarImpactoContablePrestamoAprobado({
-      id: 'prestamo-cash-1',
-      numeroPrestamo: 'PRES-1',
-      clienteId: 'cliente-1',
-      tipoPrestamo: 'EFECTIVO',
-      monto: 120000,
-      creadoPorId: 'admin-1',
-    });
+    await (makeService(prisma) as any).registrarImpactoContablePrestamoAprobado(
+      {
+        id: 'prestamo-cash-1',
+        numeroPrestamo: 'PRES-1',
+        clienteId: 'cliente-1',
+        tipoPrestamo: 'EFECTIVO',
+        monto: 120000,
+        creadoPorId: 'admin-1',
+      },
+    );
 
     expect(prisma.transaccion.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -125,14 +138,16 @@ describe('LoansService accounting impact for approved loans', () => {
       },
     };
 
-    await (makeService(prisma) as any).registrarImpactoContablePrestamoAprobado({
-      id: 'prestamo-cash-ruta-1',
-      numeroPrestamo: 'PRES-RUTA-1',
-      clienteId: 'cliente-1',
-      tipoPrestamo: 'EFECTIVO',
-      monto: 120000,
-      creadoPorId: 'cobrador-1',
-    });
+    await (makeService(prisma) as any).registrarImpactoContablePrestamoAprobado(
+      {
+        id: 'prestamo-cash-ruta-1',
+        numeroPrestamo: 'PRES-RUTA-1',
+        clienteId: 'cliente-1',
+        tipoPrestamo: 'EFECTIVO',
+        monto: 120000,
+        creadoPorId: 'cobrador-1',
+      },
+    );
 
     expect(prisma.ruta.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -171,8 +186,11 @@ describe('LoansService accounting impact for approved loans', () => {
         findFirst: jest.fn().mockResolvedValue({ rutaId: 'ruta-1' }),
       },
       caja: {
-        findFirst: jest.fn()
-          .mockResolvedValueOnce({ id: 'caja-oficina', codigo: 'CAJA-OFICINA', tipo: 'PRINCIPAL' }),
+        findFirst: jest.fn().mockResolvedValueOnce({
+          id: 'caja-oficina',
+          codigo: 'CAJA-OFICINA',
+          tipo: 'PRINCIPAL',
+        }),
       },
       transaccion: {
         findFirst: jest.fn().mockResolvedValue(null),
@@ -181,17 +199,19 @@ describe('LoansService accounting impact for approved loans', () => {
       },
     };
 
-    await (makeService(prisma) as any).registrarImpactoContablePrestamoAprobado({
-      id: 'prestamo-art-1',
-      numeroPrestamo: 'ART-1',
-      clienteId: 'cliente-1',
-      tipoPrestamo: 'ARTICULO',
-      monto: 80000,
-      cuotaInicial: 20000,
-      precioVentaArticulo: 100000,
-      costoArticulo: 65000,
-      creadoPorId: 'admin-1',
-    });
+    await (makeService(prisma) as any).registrarImpactoContablePrestamoAprobado(
+      {
+        id: 'prestamo-art-1',
+        numeroPrestamo: 'ART-1',
+        clienteId: 'cliente-1',
+        tipoPrestamo: 'ARTICULO',
+        monto: 80000,
+        cuotaInicial: 20000,
+        precioVentaArticulo: 100000,
+        costoArticulo: 65000,
+        creadoPorId: 'admin-1',
+      },
+    );
 
     expect(prisma.transaccion.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -271,7 +291,11 @@ describe('LoansService accounting impact for approved loans', () => {
     };
 
     await expect(
-      makeService(prisma).updateLoan('prestamo-1', { monto: 120000, version: 3 } as any, 'admin-1'),
+      makeService(prisma).updateLoan(
+        'prestamo-1',
+        { monto: 120000, version: 3 } as any,
+        'admin-1',
+      ),
     ).rejects.toBeInstanceOf(ConflictException);
 
     expect(prisma.prestamo.update).not.toHaveBeenCalled();
@@ -315,8 +339,12 @@ describe('LoansService accounting impact for approved loans', () => {
     };
     const service = makeService(prisma) as any;
 
-    expect(service.generarNumeroPrestamo('ARTICULO')).toMatch(/^ART-\d+-[0-9a-f-]{8}$/);
-    expect(service.generarNumeroPrestamo('EFECTIVO')).toMatch(/^PRES-\d+-[0-9a-f-]{8}$/);
+    expect(service.generarNumeroPrestamo('ARTICULO')).toMatch(
+      /^ART-\d+-[0-9a-f-]{8}$/,
+    );
+    expect(service.generarNumeroPrestamo('EFECTIVO')).toMatch(
+      /^PRES-\d+-[0-9a-f-]{8}$/,
+    );
     expect(prisma.prestamo.count).not.toHaveBeenCalled();
   });
 });
@@ -373,7 +401,11 @@ describe('LoansService reprogramacion concurrency controls', () => {
     const prisma = makeReprogramacionPrisma();
 
     await expect(
-      makeService(prisma).rechazarReprogramacion('aprobacion-1', 'admin-1', 'No aplica'),
+      makeService(prisma).rechazarReprogramacion(
+        'aprobacion-1',
+        'admin-1',
+        'No aplica',
+      ),
     ).rejects.toThrow(BadRequestException);
 
     expect(prisma.aprobacion.update).not.toHaveBeenCalled();
@@ -391,13 +423,22 @@ describe('LoansService role scoping', () => {
       prestamo: {
         findMany: jest.fn().mockResolvedValue([]),
         count: jest.fn().mockResolvedValue(0),
-        aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 0, saldoPendiente: 0 } }),
+        aggregate: jest
+          .fn()
+          .mockResolvedValue({ _sum: { monto: 0, saldoPendiente: 0 } }),
       },
     };
     const service = makeService(prisma);
 
     await service.getAllLoans(
-      { estado: 'todos', ruta: 'todas', search: '', tipo: 'todos', page: 1, limit: 8 },
+      {
+        estado: 'todos',
+        ruta: 'todas',
+        search: '',
+        tipo: 'todos',
+        page: 1,
+        limit: 8,
+      },
       { id: 'cobrador-propio', rol: RolUsuario.COBRADOR } as any,
     );
 
@@ -434,13 +475,22 @@ describe('LoansService role scoping', () => {
       prestamo: {
         findMany: jest.fn().mockResolvedValue([]),
         count: jest.fn().mockResolvedValue(0),
-        aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 0, saldoPendiente: 0 } }),
+        aggregate: jest
+          .fn()
+          .mockResolvedValue({ _sum: { monto: 0, saldoPendiente: 0 } }),
       },
     };
     const service = makeService(prisma);
 
     await service.getAllLoans(
-      { estado: 'todos', ruta: 'todas', search: '', tipo: 'todos', page: 1, limit: 8 },
+      {
+        estado: 'todos',
+        ruta: 'todas',
+        search: '',
+        tipo: 'todos',
+        page: 1,
+        limit: 8,
+      },
       { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
     );
 
@@ -494,15 +544,29 @@ describe('LoansService role scoping', () => {
       prestamo: {
         findMany: jest.fn().mockResolvedValue([]),
         count: jest.fn().mockResolvedValue(0),
-        aggregate: jest.fn()
-          .mockResolvedValueOnce({ _sum: { monto: 8200000, interesTotal: 1000000, saldoPendiente: 8852000 } })
+        aggregate: jest
+          .fn()
+          .mockResolvedValueOnce({
+            _sum: {
+              monto: 8200000,
+              interesTotal: 1000000,
+              saldoPendiente: 8852000,
+            },
+          })
           .mockResolvedValueOnce({ _sum: { saldoPendiente: 8452000 } }),
       },
     };
     const service = makeService(prisma);
 
     const result = await service.getAllLoans(
-      { estado: 'todos', ruta: 'todas', search: '', tipo: 'todos', page: 1, limit: 8 },
+      {
+        estado: 'todos',
+        ruta: 'todas',
+        search: '',
+        tipo: 'todos',
+        page: 1,
+        limit: 8,
+      },
       { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
     );
 
@@ -529,10 +593,10 @@ describe('LoansService role scoping', () => {
     const service = makeService(prisma);
 
     await expect(
-      service.getLoanById(
-        'prestamo-ajeno',
-        { id: 'cobrador-propio', rol: RolUsuario.COBRADOR } as any,
-      ),
+      service.getLoanById('prestamo-ajeno', {
+        id: 'cobrador-propio',
+        rol: RolUsuario.COBRADOR,
+      } as any),
     ).rejects.toThrow('Préstamo no encontrado');
 
     expect(prisma.prestamo.findFirst).toHaveBeenCalledWith(
@@ -564,10 +628,10 @@ describe('LoansService role scoping', () => {
     const service = makeService(prisma);
 
     await expect(
-      service.getLoanCuotas(
-        'prestamo-ajeno',
-        { id: 'cobrador-propio', rol: RolUsuario.COBRADOR } as any,
-      ),
+      service.getLoanCuotas('prestamo-ajeno', {
+        id: 'cobrador-propio',
+        rol: RolUsuario.COBRADOR,
+      } as any),
     ).rejects.toThrow('Préstamo no encontrado');
 
     expect(prisma.cuota.findMany).not.toHaveBeenCalled();
@@ -588,15 +652,41 @@ describe('LoansService archive accounting reversal', () => {
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
       journalEntry: {
-        findFirst: jest.fn()
+        findFirst: jest
+          .fn()
           .mockResolvedValueOnce({
             id: 'journal-venta',
             lines: [
-              { accountCode: '1.1.1', cajaId: 'caja-oficina', debitAmount: 500000, creditAmount: 0 },
-              { accountCode: '1.3.1', cajaId: null, debitAmount: 1900000, creditAmount: 0 },
-              { accountCode: '3.4', cajaId: null, debitAmount: 0, creditAmount: 2400000 },
-              { accountCode: '5.1', cajaId: null, debitAmount: 2000000, creditAmount: 0 },
-              { accountCode: '1.5', cajaId: null, debitAmount: 0, creditAmount: 2000000 },
+              {
+                accountCode: '1.1.1',
+                cajaId: 'caja-oficina',
+                debitAmount: 500000,
+                creditAmount: 0,
+              },
+              {
+                accountCode: '1.3.1',
+                cajaId: null,
+                debitAmount: 1900000,
+                creditAmount: 0,
+              },
+              {
+                accountCode: '3.4',
+                cajaId: null,
+                debitAmount: 0,
+                creditAmount: 2400000,
+              },
+              {
+                accountCode: '5.1',
+                cajaId: null,
+                debitAmount: 2000000,
+                creditAmount: 0,
+              },
+              {
+                accountCode: '1.5',
+                cajaId: null,
+                debitAmount: 0,
+                creditAmount: 2000000,
+              },
             ],
           })
           .mockResolvedValueOnce(null),
@@ -658,10 +748,21 @@ describe('LoansService archive accounting reversal', () => {
         referenceId: 'ARCHIVO:prestamo-art-1',
         lines: expect.arrayContaining([
           expect.objectContaining({ accountCode: '3.4', debitAmount: 2400000 }),
-          expect.objectContaining({ accountCode: '1.1.1', creditAmount: 500000, cajaId: 'caja-oficina', cajaDelta: -500000 }),
-          expect.objectContaining({ accountCode: '1.3.1', creditAmount: 1900000 }),
+          expect.objectContaining({
+            accountCode: '1.1.1',
+            creditAmount: 500000,
+            cajaId: 'caja-oficina',
+            cajaDelta: -500000,
+          }),
+          expect.objectContaining({
+            accountCode: '1.3.1',
+            creditAmount: 1900000,
+          }),
           expect.objectContaining({ accountCode: '1.5', debitAmount: 2000000 }),
-          expect.objectContaining({ accountCode: '5.1', creditAmount: 2000000 }),
+          expect.objectContaining({
+            accountCode: '5.1',
+            creditAmount: 2000000,
+          }),
         ]),
       }),
       tx,
@@ -671,21 +772,50 @@ describe('LoansService archive accounting reversal', () => {
   it('permite reparar la reversa contable de un crédito de artículo que ya estaba archivado', async () => {
     const tx = {
       journalEntry: {
-        findFirst: jest.fn()
+        findFirst: jest
+          .fn()
           .mockResolvedValueOnce({
             id: 'journal-venta',
             lines: [
-              { accountCode: '1.1.1', cajaId: 'caja-oficina', debitAmount: 500000, creditAmount: 0 },
-              { accountCode: '1.3.1', cajaId: null, debitAmount: 1900000, creditAmount: 0 },
-              { accountCode: '3.4', cajaId: null, debitAmount: 0, creditAmount: 2400000 },
-              { accountCode: '5.1', cajaId: null, debitAmount: 2000000, creditAmount: 0 },
-              { accountCode: '1.5', cajaId: null, debitAmount: 0, creditAmount: 2000000 },
+              {
+                accountCode: '1.1.1',
+                cajaId: 'caja-oficina',
+                debitAmount: 500000,
+                creditAmount: 0,
+              },
+              {
+                accountCode: '1.3.1',
+                cajaId: null,
+                debitAmount: 1900000,
+                creditAmount: 0,
+              },
+              {
+                accountCode: '3.4',
+                cajaId: null,
+                debitAmount: 0,
+                creditAmount: 2400000,
+              },
+              {
+                accountCode: '5.1',
+                cajaId: null,
+                debitAmount: 2000000,
+                creditAmount: 0,
+              },
+              {
+                accountCode: '1.5',
+                cajaId: null,
+                debitAmount: 0,
+                creditAmount: 2000000,
+              },
             ],
           })
           .mockResolvedValueOnce(null),
       },
       transaccion: {
-        findFirst: jest.fn().mockResolvedValue({ id: 'trx-cuota-inicial', cajaId: 'caja-oficina' }),
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'trx-cuota-inicial',
+          cajaId: 'caja-oficina',
+        }),
         count: jest.fn().mockResolvedValue(4),
         create: jest.fn().mockResolvedValue({ id: 'trx-reverso' }),
       },
@@ -707,10 +837,13 @@ describe('LoansService archive accounting reversal', () => {
       $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
     };
 
-    const result = await makeService(prisma).archiveLoan('prestamo-art-archivado', {
-      motivo: 'Reparar reversa',
-      archivarPorId: 'admin-1',
-    });
+    const result = await makeService(prisma).archiveLoan(
+      'prestamo-art-archivado',
+      {
+        motivo: 'Reparar reversa',
+        archivarPorId: 'admin-1',
+      },
+    );
 
     expect(result.message).toContain('reversa contable verificada');
     expect(mockLedger.registrarAsiento).toHaveBeenCalledWith(
@@ -725,18 +858,49 @@ describe('LoansService archive accounting reversal', () => {
   it('restaura el impacto contable de un crédito de artículo restaurado', async () => {
     const tx = {
       prestamo: {
-        update: jest.fn().mockResolvedValue({ id: 'prestamo-art-restaurar', estado: 'ACTIVO', eliminadoEn: null }),
+        update: jest.fn().mockResolvedValue({
+          id: 'prestamo-art-restaurar',
+          estado: 'ACTIVO',
+          eliminadoEn: null,
+        }),
       },
       journalEntry: {
-        findFirst: jest.fn()
+        findFirst: jest
+          .fn()
           .mockResolvedValueOnce({
             id: 'journal-archivo',
             lines: [
-              { accountCode: '3.4', cajaId: null, debitAmount: 2400000, creditAmount: 0 },
-              { accountCode: '1.1.1', cajaId: 'caja-oficina', debitAmount: 0, creditAmount: 500000, cajaDelta: -500000 },
-              { accountCode: '1.3.1', cajaId: null, debitAmount: 0, creditAmount: 1900000 },
-              { accountCode: '1.5', cajaId: null, debitAmount: 2000000, creditAmount: 0 },
-              { accountCode: '5.1', cajaId: null, debitAmount: 0, creditAmount: 2000000 },
+              {
+                accountCode: '3.4',
+                cajaId: null,
+                debitAmount: 2400000,
+                creditAmount: 0,
+              },
+              {
+                accountCode: '1.1.1',
+                cajaId: 'caja-oficina',
+                debitAmount: 0,
+                creditAmount: 500000,
+                cajaDelta: -500000,
+              },
+              {
+                accountCode: '1.3.1',
+                cajaId: null,
+                debitAmount: 0,
+                creditAmount: 1900000,
+              },
+              {
+                accountCode: '1.5',
+                cajaId: null,
+                debitAmount: 2000000,
+                creditAmount: 0,
+              },
+              {
+                accountCode: '5.1',
+                cajaId: null,
+                debitAmount: 0,
+                creditAmount: 2000000,
+              },
             ],
           })
           .mockResolvedValueOnce(null),
@@ -778,17 +942,34 @@ describe('LoansService archive accounting reversal', () => {
         referenceType: 'AJUSTE',
         referenceId: 'RESTAURACION_ARCHIVO:prestamo-art-restaurar',
         lines: expect.arrayContaining([
-          expect.objectContaining({ accountCode: '3.4', creditAmount: 2400000 }),
-          expect.objectContaining({ accountCode: '1.1.1', debitAmount: 500000, cajaId: 'caja-oficina', cajaDelta: 500000 }),
-          expect.objectContaining({ accountCode: '1.3.1', debitAmount: 1900000 }),
-          expect.objectContaining({ accountCode: '1.5', creditAmount: 2000000 }),
+          expect.objectContaining({
+            accountCode: '3.4',
+            creditAmount: 2400000,
+          }),
+          expect.objectContaining({
+            accountCode: '1.1.1',
+            debitAmount: 500000,
+            cajaId: 'caja-oficina',
+            cajaDelta: 500000,
+          }),
+          expect.objectContaining({
+            accountCode: '1.3.1',
+            debitAmount: 1900000,
+          }),
+          expect.objectContaining({
+            accountCode: '1.5',
+            creditAmount: 2000000,
+          }),
           expect.objectContaining({ accountCode: '5.1', debitAmount: 2000000 }),
         ]),
       }),
       tx,
     );
     expect(mockGateway.broadcastPrestamosActualizados).toHaveBeenCalledWith(
-      expect.objectContaining({ accion: 'RESTAURAR', prestamoId: 'prestamo-art-restaurar' }),
+      expect.objectContaining({
+        accion: 'RESTAURAR',
+        prestamoId: 'prestamo-art-restaurar',
+      }),
     );
     expect(mockGateway.broadcastDashboardsActualizados).toHaveBeenCalled();
   });

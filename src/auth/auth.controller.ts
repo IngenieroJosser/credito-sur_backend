@@ -12,7 +12,10 @@ import {
 import { AuthService } from './auth.service';
 import { LoginAuthDto } from './dto/login-auth.dto';
 import { CreateAuthDto } from './dto/create-auth.dto';
-import { ForgotPasswordDto, VerifyResetCodeDto } from './dto/forgot-password.dto';
+import {
+  ForgotPasswordDto,
+  VerifyResetCodeDto,
+} from './dto/forgot-password.dto';
 
 import {
   ApiTags,
@@ -34,7 +37,11 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+  )
   @Get()
   @ApiOperation({ summary: 'Listar usuarios registrados' })
   obtenerTodosLosUsuarios() {
@@ -85,7 +92,10 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @Get('refresh')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Refrescar sesión del usuario autenticado (permisos + sidebar + token)' })
+  @ApiOperation({
+    summary:
+      'Refrescar sesión del usuario autenticado (permisos + sidebar + token)',
+  })
   refresh(@Request() req: { user: { id?: string } }) {
     return this.authService.refreshSession(String(req.user?.id || ''));
   }
@@ -94,7 +104,9 @@ export class AuthController {
   @Publico()
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Solicitar codigo de recuperacion de contrasena (solo Superadmin)' })
+  @ApiOperation({
+    summary: 'Solicitar codigo de recuperacion de contrasena (solo Superadmin)',
+  })
   async olvidarContrasena(@Body() dto: ForgotPasswordDto) {
     return this.authService.solicitarRecuperacion(dto);
   }

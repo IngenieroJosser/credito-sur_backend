@@ -28,7 +28,7 @@ export class ConfiguracionService {
       autoAprobarClientes?: boolean;
       autoAprobarCreditos?: boolean;
     },
-    userId?: string
+    userId?: string,
   ) {
     await this.getConfiguracion();
 

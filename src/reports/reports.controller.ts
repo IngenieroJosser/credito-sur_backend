@@ -123,7 +123,10 @@ export class ReportsController {
       exportRequest.formato,
     );
     res.setHeader('Content-Type', result.contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${result.filename}"`,
+    );
     res.send(result.data);
   }
 
@@ -166,7 +169,12 @@ export class ReportsController {
   }
 
   @Post('cuentas-vencidas/decision')
-  @Roles(RolUsuario.COORDINADOR, RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.CONTADOR)
+  @Roles(
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.CONTADOR,
+  )
   @ApiOperation({ summary: 'Procesar decisión sobre cuenta vencida' })
   @ApiResponse({
     status: HttpStatus.CREATED,
@@ -204,7 +212,10 @@ export class ReportsController {
       exportRequest.filtros as CuentasVencidasFiltrosDto,
     );
     res.setHeader('Content-Type', result.contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${result.filename}"`,
+    );
     res.send(result.data);
   }
 
@@ -315,9 +326,16 @@ export class ReportsController {
       ? new Date(startDate)
       : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
     const end = endDate ? new Date(endDate) : new Date();
-    const result = await this.reportsService.exportFinancialReport(start, end, format);
+    const result = await this.reportsService.exportFinancialReport(
+      start,
+      end,
+      format,
+    );
     res.setHeader('Content-Type', result.contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${result.filename}"`,
+    );
     res.send(result.data);
   }
 }

@@ -1,13 +1,13 @@
-import {
-  Injectable,
-  Logger,
-  OnModuleInit,
-} from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { PushService } from '../push/push.service';
-import { formatBogotaOffsetIso, getBogotaDayKey, getBogotaStartEndOfDay } from '../utils/date-utils';
+import {
+  formatBogotaOffsetIso,
+  getBogotaDayKey,
+  getBogotaStartEndOfDay,
+} from '../utils/date-utils';
 
 /**
  * Umbrales de días en mora para cada nivel de mora.
@@ -19,10 +19,10 @@ import { formatBogotaOffsetIso, getBogotaDayKey, getBogotaStartEndOfDay } from '
  * Crítico   → 8 o más días                            → ROJO
  */
 export const MORA_THRESHOLDS = {
-  LEVE: 1,       // 1 día  → Leve, sigue en VERDE
+  LEVE: 1, // 1 día  → Leve, sigue en VERDE
   PRECAUCION: 3, // 3 días → Precaución, sube a AMARILLO
-  MODERADO: 5,   // 5 días → Moderado, sigue en AMARILLO
-  CRITICO: 8,    // 8+ días→ Crítico, sube a ROJO
+  MODERADO: 5, // 5 días → Moderado, sigue en AMARILLO
+  CRITICO: 8, // 8+ días→ Crítico, sube a ROJO
 };
 
 /**
@@ -30,27 +30,32 @@ export const MORA_THRESHOLDS = {
  * "Mínimo" es el estado base (0 días = al día, siempre VERDE).
  */
 export function etiquetaMora(dias: number): string {
-  if (dias >= MORA_THRESHOLDS.CRITICO)    return 'Crítico';    // 8+
-  if (dias >= MORA_THRESHOLDS.MODERADO)   return 'Moderado';   // 5-7
+  if (dias >= MORA_THRESHOLDS.CRITICO) return 'Crítico'; // 8+
+  if (dias >= MORA_THRESHOLDS.MODERADO) return 'Moderado'; // 5-7
   if (dias >= MORA_THRESHOLDS.PRECAUCION) return 'Precaución'; // 3-4
-  if (dias >= MORA_THRESHOLDS.LEVE)       return 'Leve';       // 1-2
+  if (dias >= MORA_THRESHOLDS.LEVE) return 'Leve'; // 1-2
   return 'Mínimo'; // 0 días → siempre verde, estado base
 }
 
 /** Emoji de alerta según etiqueta */
 function emojiMora(etiqueta: string): string {
   switch (etiqueta) {
-    case 'Crítico':    return '🔴';
-    case 'Moderado':   return '🟠';
-    case 'Precaución': return '🟡';
-    case 'Leve':       return '🟢';
-    default:           return '✅';
+    case 'Crítico':
+      return '🔴';
+    case 'Moderado':
+      return '🟠';
+    case 'Precaución':
+      return '🟡';
+    case 'Leve':
+      return '🟢';
+    default:
+      return '✅';
   }
 }
 
 /** Nivel de riesgo del schema Prisma (VERDE / AMARILLO / ROJO) según días en mora */
 function nivelRiesgoPorDias(dias: number): 'VERDE' | 'AMARILLO' | 'ROJO' {
-  if (dias >= MORA_THRESHOLDS.CRITICO)    return 'ROJO';     // 8+
+  if (dias >= MORA_THRESHOLDS.CRITICO) return 'ROJO'; // 8+
   if (dias >= MORA_THRESHOLDS.PRECAUCION) return 'AMARILLO'; // 3-7
   return 'VERDE'; // 0-2 → Mínimo / Leve, siguen en verde
 }
@@ -60,10 +65,10 @@ function nivelRiesgoPorDias(dias: number): 'VERDE' | 'AMARILLO' | 'ROJO' {
  * aunque el nivelRiesgo del schema sea el mismo (ej: Precaución y Moderado son AMARILLO).
  */
 function nivelMoraNumerico(dias: number): number {
-  if (dias >= MORA_THRESHOLDS.CRITICO)    return 5; // Crítico
-  if (dias >= MORA_THRESHOLDS.MODERADO)   return 4; // Moderado
+  if (dias >= MORA_THRESHOLDS.CRITICO) return 5; // Crítico
+  if (dias >= MORA_THRESHOLDS.MODERADO) return 4; // Moderado
   if (dias >= MORA_THRESHOLDS.PRECAUCION) return 3; // Precaución
-  if (dias >= MORA_THRESHOLDS.LEVE)       return 2; // Leve
+  if (dias >= MORA_THRESHOLDS.LEVE) return 2; // Leve
   return 1; // Mínimo
 }
 
@@ -99,9 +104,9 @@ export class MoraService implements OnModuleInit {
       const result = await this.procesarMoraAutomatica();
       this.logger.log(
         `✅ [MORA] Completado: ${result.cuotasVencidas} cuotas vencidas, ` +
-        `${result.prestamosEnMoraActualizados} préstamos → EN_MORA, ` +
-        `${result.prestamosActivosRecuperados} recuperados, ` +
-        `${result.notificacionesEnviadas} notificaciones enviadas`,
+          `${result.prestamosEnMoraActualizados} préstamos → EN_MORA, ` +
+          `${result.prestamosActivosRecuperados} recuperados, ` +
+          `${result.notificacionesEnviadas} notificaciones enviadas`,
       );
     } catch (err) {
       this.logger.error(`❌ [MORA] Error al arranque: ${err.message}`);
@@ -121,7 +126,9 @@ export class MoraService implements OnModuleInit {
    */
   async procesarMoraAutomatica(): Promise<ResultadoProcesarMora> {
     const hoyKeyBogota = getBogotaDayKey(new Date());
-    const hoy = hoyKeyBogota ? new Date(`${hoyKeyBogota}T00:00:00.000Z`) : new Date();
+    const hoy = hoyKeyBogota
+      ? new Date(`${hoyKeyBogota}T00:00:00.000Z`)
+      : new Date();
 
     const resultado: ResultadoProcesarMora = {
       cuotasVencidas: 0,
@@ -177,10 +184,14 @@ export class MoraService implements OnModuleInit {
           });
           resultado.prestamosEnMoraActualizados++;
         } catch (err) {
-          resultado.errores.push(`Préstamo ${prest.numeroPrestamo} → EN_MORA: ${err.message}`);
+          resultado.errores.push(
+            `Préstamo ${prest.numeroPrestamo} → EN_MORA: ${err.message}`,
+          );
         }
       }
-      this.logger.log(`[MORA] Paso 2: ${resultado.prestamosEnMoraActualizados} préstamos → EN_MORA`);
+      this.logger.log(
+        `[MORA] Paso 2: ${resultado.prestamosEnMoraActualizados} préstamos → EN_MORA`,
+      );
     } catch (err) {
       resultado.errores.push(`Paso 2: ${err.message}`);
       this.logger.error('[MORA] Error en Paso 2:', err.message);
@@ -206,10 +217,14 @@ export class MoraService implements OnModuleInit {
           });
           resultado.prestamosActivosRecuperados++;
         } catch (err) {
-          resultado.errores.push(`Préstamo ${prest.numeroPrestamo} → ACTIVO: ${err.message}`);
+          resultado.errores.push(
+            `Préstamo ${prest.numeroPrestamo} → ACTIVO: ${err.message}`,
+          );
         }
       }
-      this.logger.log(`[MORA] Paso 3: ${resultado.prestamosActivosRecuperados} préstamos recuperados → ACTIVO`);
+      this.logger.log(
+        `[MORA] Paso 3: ${resultado.prestamosActivosRecuperados} préstamos recuperados → ACTIVO`,
+      );
     } catch (err) {
       resultado.errores.push(`Paso 3: ${err.message}`);
       this.logger.error('[MORA] Error en Paso 3:', err.message);
@@ -288,17 +303,19 @@ export class MoraService implements OnModuleInit {
             }
           }
 
-          const nuevoNivelPrisma = diasMoraMax > 0
-            ? nivelRiesgoPorDias(diasMoraMax)
-            : 'VERDE';
+          const nuevoNivelPrisma =
+            diasMoraMax > 0 ? nivelRiesgoPorDias(diasMoraMax) : 'VERDE';
 
           const nuevaEtiqueta = etiquetaMora(diasMoraMax);
           const nuevoNivelNumerico = nivelMoraNumerico(diasMoraMax);
-          const nivelNumericoAnterior = this.cacheNivelesMora.get(cliente.id) ?? 1;
+          const nivelNumericoAnterior =
+            this.cacheNivelesMora.get(cliente.id) ?? 1;
 
           // Detectar si el cliente subió de nivel de mora (o acaba de entrar a mora)
-          const subioDeNivel = nuevoNivelNumerico > nivelNumericoAnterior && diasMoraMax > 0;
-          const esNuevoEnMora = nivelNumericoAnterior === 1 && nuevoNivelNumerico > 1;
+          const subioDeNivel =
+            nuevoNivelNumerico > nivelNumericoAnterior && diasMoraMax > 0;
+          const esNuevoEnMora =
+            nivelNumericoAnterior === 1 && nuevoNivelNumerico > 1;
 
           // Actualizar nivelRiesgo en DB si cambió
           if (cliente.nivelRiesgo !== nuevoNivelPrisma) {
@@ -327,8 +344,12 @@ export class MoraService implements OnModuleInit {
             const mensajeNotif =
               `${nombreCliente} (C.C. ${cliente.dni}) tiene ${diasMoraMax} día${diasMoraMax !== 1 ? 's' : ''} en mora` +
               ` y está en nivel ${nuevaEtiqueta}.` +
-              (ruta ? ` Ruta: ${ruta.nombre} (${ruta.zona}).` : ' Sin ruta asignada.') +
-              (cobrador ? ` Cobrador: ${cobrador.nombres} ${cobrador.apellidos}.` : '');
+              (ruta
+                ? ` Ruta: ${ruta.nombre} (${ruta.zona}).`
+                : ' Sin ruta asignada.') +
+              (cobrador
+                ? ` Cobrador: ${cobrador.nombres} ${cobrador.apellidos}.`
+                : '');
 
             const metadataNotif = {
               clienteId: cliente.id,
@@ -341,7 +362,9 @@ export class MoraService implements OnModuleInit {
               rutaNombre: ruta?.nombre,
               rutaZona: ruta?.zona,
               cobradorId: cobrador?.id,
-              cobradorNombre: cobrador ? `${cobrador.nombres} ${cobrador.apellidos}` : null,
+              cobradorNombre: cobrador
+                ? `${cobrador.nombres} ${cobrador.apellidos}`
+                : null,
             };
 
             // 1. Notificación interna para admins/coordinadores
@@ -356,7 +379,9 @@ export class MoraService implements OnModuleInit {
               });
               resultado.notificacionesEnviadas++;
             } catch (err) {
-              this.logger.warn(`[MORA] Error notif interna cliente ${cliente.id}: ${err.message}`);
+              this.logger.warn(
+                `[MORA] Error notif interna cliente ${cliente.id}: ${err.message}`,
+              );
             }
 
             // 2. Notificación interna para el cobrador asignado (si existe)
@@ -375,7 +400,9 @@ export class MoraService implements OnModuleInit {
                 });
                 resultado.notificacionesEnviadas++;
               } catch (err) {
-                this.logger.warn(`[MORA] Error notif cobrador ${cobrador.id}: ${err.message}`);
+                this.logger.warn(
+                  `[MORA] Error notif cobrador ${cobrador.id}: ${err.message}`,
+                );
               }
             }
 
@@ -384,7 +411,12 @@ export class MoraService implements OnModuleInit {
               await this.pushService.sendPushNotification({
                 title: tituloNotif,
                 body: mensajeNotif,
-                roleFilter: ['ADMIN', 'SUPER_ADMINISTRADOR', 'COORDINADOR', 'SUPERVISOR'],
+                roleFilter: [
+                  'ADMIN',
+                  'SUPER_ADMINISTRADOR',
+                  'COORDINADOR',
+                  'SUPERVISOR',
+                ],
                 data: {
                   type: 'MORA_NIVEL',
                   clienteId: cliente.id,
@@ -416,13 +448,15 @@ export class MoraService implements OnModuleInit {
                 });
                 resultado.notificacionesEnviadas++;
               } catch (err) {
-                this.logger.warn(`[MORA] Error push cobrador ${cobrador.id}: ${err.message}`);
+                this.logger.warn(
+                  `[MORA] Error push cobrador ${cobrador.id}: ${err.message}`,
+                );
               }
             }
 
             this.logger.log(
               `[MORA] 🔔 Notificado: ${nombreCliente} → ${nuevaEtiqueta} (${diasMoraMax} días)` +
-              (ruta ? ` | Ruta: ${ruta.nombre}` : ''),
+                (ruta ? ` | Ruta: ${ruta.nombre}` : ''),
             );
           }
         } catch (err) {
@@ -450,7 +484,7 @@ export class MoraService implements OnModuleInit {
 
       this.logger.log(
         `[MORA] Paso 4: ${resultado.clientesRiesgoActualizado} clientes riesgo actualizado, ` +
-        `${resultado.notificacionesEnviadas} notificaciones enviadas`,
+          `${resultado.notificacionesEnviadas} notificaciones enviadas`,
       );
     } catch (err) {
       resultado.errores.push(`Paso 4: ${err.message}`);
@@ -459,8 +493,12 @@ export class MoraService implements OnModuleInit {
 
     // ─── PASO 5: Broadcast WebSocket ─────────────────────────────────────────
     try {
-      this.notificacionesGateway.broadcastPrestamosActualizados({ accion: 'MORA_PROCESADA' });
-      this.notificacionesGateway.broadcastDashboardsActualizados({ origen: 'MORA' });
+      this.notificacionesGateway.broadcastPrestamosActualizados({
+        accion: 'MORA_PROCESADA',
+      });
+      this.notificacionesGateway.broadcastDashboardsActualizados({
+        origen: 'MORA',
+      });
     } catch (err) {
       this.logger.warn('[MORA] Error broadcast WS:', err.message);
     }
@@ -502,7 +540,9 @@ export class MoraService implements OnModuleInit {
     };
     if (params?.prestamoId) whereCuotas.prestamoId = params.prestamoId;
 
-    const cuotasDetectadas = await this.prisma.cuota.count({ where: whereCuotas });
+    const cuotasDetectadas = await this.prisma.cuota.count({
+      where: whereCuotas,
+    });
     let cuotasReparadas = 0;
     if (!dryRun && cuotasDetectadas > 0) {
       const upd = await this.prisma.cuota.updateMany({
@@ -584,7 +624,11 @@ export class MoraService implements OnModuleInit {
             cuotas: {
               where: { estado: 'VENCIDA' },
               orderBy: { fechaVencimiento: 'asc' },
-              select: { fechaVencimiento: true, monto: true, montoPagado: true },
+              select: {
+                fechaVencimiento: true,
+                monto: true,
+                montoPagado: true,
+              },
             },
           },
         },
@@ -603,7 +647,9 @@ export class MoraService implements OnModuleInit {
         const fechaVenc = new Date(c.fechaVencimiento);
         const dias = Math.max(
           0,
-          Math.floor((hoy.getTime() - fechaVenc.getTime()) / (1000 * 60 * 60 * 24)),
+          Math.floor(
+            (hoy.getTime() - fechaVenc.getTime()) / (1000 * 60 * 60 * 24),
+          ),
         );
         if (dias > diasMoraMax) diasMoraMax = dias;
         montoVencidoTotal += Number(c.monto) - Number(c.montoPagado);

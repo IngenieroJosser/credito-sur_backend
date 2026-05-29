@@ -3,7 +3,7 @@ import { LoansController } from './loans.controller';
 import { LoansService } from './loans.service';
 import { MoraService } from './mora.service';
 import { LoansScheduler } from './loans.scheduler';
-import { PrismaModule } from '../prisma/prisma.module'; 
+import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoggerMiddleware } from '../common/middleware/logger.middleware';
 import { NotificacionesModule } from '../notificaciones/notificaciones.module';
@@ -14,7 +14,15 @@ import { ApprovalsModule } from '../approvals/approvals.module';
 import { AccountingModule } from '../accounting/accounting.module';
 
 @Module({
-  imports: [PrismaModule, NotificacionesModule, AuditModule, PushModule, ConfiguracionModule, ApprovalsModule, AccountingModule],
+  imports: [
+    PrismaModule,
+    NotificacionesModule,
+    AuditModule,
+    PushModule,
+    ConfiguracionModule,
+    ApprovalsModule,
+    AccountingModule,
+  ],
   controllers: [LoansController],
   providers: [LoansService, MoraService, PrismaService, LoansScheduler],
   exports: [LoansService, MoraService],

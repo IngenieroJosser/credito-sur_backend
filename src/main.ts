@@ -22,7 +22,9 @@ async function bootstrap() {
   validateEnv();
 
   const logger = new Logger('Bootstrap');
-  const app = await NestFactory.create(AppModule, { logger: ['log', 'warn', 'error'] });
+  const app = await NestFactory.create(AppModule, {
+    logger: ['log', 'warn', 'error'],
+  });
   app.getHttpAdapter().getInstance().set('trust proxy', 1);
 
   // Configurar prefijo global para la API
@@ -42,32 +44,41 @@ async function bootstrap() {
       });
 
       const httpServer = app.getHttpAdapter().getInstance();
-      httpServer.use(bullBoardBasePath, (req: Request, res: Response, next: NextFunction) => {
-        const user = process.env.BULLBOARD_USER;
-        const pass = process.env.BULLBOARD_PASS;
+      httpServer.use(
+        bullBoardBasePath,
+        (req: Request, res: Response, next: NextFunction) => {
+          const user = process.env.BULLBOARD_USER;
+          const pass = process.env.BULLBOARD_PASS;
 
-        if (!user || !pass) {
-          return res.status(500).json({ message: 'Bull Board no configurado (BULLBOARD_USER/BULLBOARD_PASS)' });
-        }
+          if (!user || !pass) {
+            return res.status(500).json({
+              message:
+                'Bull Board no configurado (BULLBOARD_USER/BULLBOARD_PASS)',
+            });
+          }
 
-        const header = req.headers.authorization || '';
-        if (!header.startsWith('Basic ')) {
-          res.setHeader('WWW-Authenticate', 'Basic realm="Bull Board"');
-          return res.status(401).send('Unauthorized');
-        }
+          const header = req.headers.authorization || '';
+          if (!header.startsWith('Basic ')) {
+            res.setHeader('WWW-Authenticate', 'Basic realm="Bull Board"');
+            return res.status(401).send('Unauthorized');
+          }
 
-        const decoded = Buffer.from(header.slice('Basic '.length), 'base64').toString('utf8');
-        const idx = decoded.indexOf(':');
-        const incomingUser = idx >= 0 ? decoded.slice(0, idx) : '';
-        const incomingPass = idx >= 0 ? decoded.slice(idx + 1) : '';
+          const decoded = Buffer.from(
+            header.slice('Basic '.length),
+            'base64',
+          ).toString('utf8');
+          const idx = decoded.indexOf(':');
+          const incomingUser = idx >= 0 ? decoded.slice(0, idx) : '';
+          const incomingPass = idx >= 0 ? decoded.slice(idx + 1) : '';
 
-        if (incomingUser !== user || incomingPass !== pass) {
-          res.setHeader('WWW-Authenticate', 'Basic realm="Bull Board"');
-          return res.status(401).send('Unauthorized');
-        }
+          if (incomingUser !== user || incomingPass !== pass) {
+            res.setHeader('WWW-Authenticate', 'Basic realm="Bull Board"');
+            return res.status(401).send('Unauthorized');
+          }
 
-        return next();
-      });
+          return next();
+        },
+      );
       httpServer.use(bullBoardBasePath, expressAdapter.getRouter());
     } catch (e) {
       logger.warn(
@@ -77,32 +88,34 @@ async function bootstrap() {
   }
 
   // Aplicar mitigaciones de seguridad XSS y Headers HTTP con Helmet
-  app.use(helmet({
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", "data:", "blob:", "https:", "http:"],
-        connectSrc: [
-          "'self'", 
-          "https://fcm.googleapis.com", 
-          "https://credito-sur-backend.onrender.com",
-          "https://credito-sur-frontend.onrender.com",
-          "http://localhost:3000",
-          "http://127.0.0.1:3000",
-          "http://localhost:3001",
-          "http://127.0.0.1:3001"
-        ], 
-        workerSrc: ["'self'"],
-        manifestSrc: ["'self'"],
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", 'data:', 'blob:', 'https:', 'http:'],
+          connectSrc: [
+            "'self'",
+            'https://fcm.googleapis.com',
+            'https://credito-sur-backend.onrender.com',
+            'https://credito-sur-frontend.onrender.com',
+            'http://localhost:3000',
+            'http://127.0.0.1:3000',
+            'http://localhost:3001',
+            'http://127.0.0.1:3001',
+          ],
+          workerSrc: ["'self'"],
+          manifestSrc: ["'self'"],
+        },
       },
-    },
-    crossOriginEmbedderPolicy: false,
-    crossOriginOpenerPolicy: false,
-    crossOriginResourcePolicy: { policy: 'cross-origin' },
-  }));
-  
+      crossOriginEmbedderPolicy: false,
+      crossOriginOpenerPolicy: false,
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+    }),
+  );
+
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -116,7 +129,7 @@ async function bootstrap() {
       },
     }),
     new SanitizePipe(),
-  );  
+  );
 
   app.enableCors({
     origin: [
@@ -128,7 +141,7 @@ async function bootstrap() {
     exposedHeaders: ['Content-Disposition', 'Content-Type', 'Content-Length'],
     credentials: true,
   });
-    
+
   const config = new DocumentBuilder()
     .setTitle('Créditos del Sur – API REST')
     .setDescription(

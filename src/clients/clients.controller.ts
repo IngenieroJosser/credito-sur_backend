@@ -37,14 +37,22 @@ export class ClientsController {
   }
 
   @Delete(':id')
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+  )
   remove(@Param('id') id: string, @Request() req: any) {
     const userId = req.user.id;
     return this.clientsService.remove(id, userId);
   }
 
   @Patch(':id/restore')
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+  )
   restore(@Param('id') id: string, @Request() req: any) {
     const userId = req.user.id;
     return this.clientsService.restore(id, userId);
@@ -106,7 +114,10 @@ export class ClientsController {
       { nivelRiesgo, ruta, search },
     );
     res.setHeader('Content-Type', result.contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${result.filename}"`,
+    );
     res.send(result.data);
   }
 
@@ -144,7 +155,11 @@ export class ClientsController {
   }
 
   @Post('approve/:id')
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+  )
   async approveClient(
     @Param('id') id: string,
     @Body() body: { aprobadoPorId: string; datosAprobados?: any },
@@ -158,7 +173,11 @@ export class ClientsController {
   }
 
   @Post('reject/:id')
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+  )
   async rejectClient(
     @Param('id') id: string,
     @Body() body: { rechazadoPorId: string; razon?: string },
@@ -172,7 +191,11 @@ export class ClientsController {
   }
 
   @Put(':id')
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+  )
   async updateClient(
     @Param('id') id: string,
     @Body()

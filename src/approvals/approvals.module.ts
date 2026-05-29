@@ -7,6 +7,6 @@ import { AccountingModule } from '../accounting/accounting.module';
   imports: [AccountingModule],
   controllers: [ApprovalsController],
   providers: [ApprovalsService],
-  exports: [ApprovalsService]
+  exports: [ApprovalsService],
 })
 export class ApprovalsModule {}

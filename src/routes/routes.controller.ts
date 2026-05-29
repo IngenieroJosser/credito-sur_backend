@@ -156,7 +156,9 @@ export class RoutesController {
     RolUsuario.SUPERVISOR,
     RolUsuario.COBRADOR,
   )
-  @ApiOperation({ summary: 'Listar créditos asignados a un cobrador (Mis clientes)' })
+  @ApiOperation({
+    summary: 'Listar créditos asignados a un cobrador (Mis clientes)',
+  })
   @ApiResponse({ status: 200, description: 'Listado de créditos asignados' })
   listarCreditosAsignadosACobrador(
     @Param('id', ParseUUIDPipe) id: string,
@@ -261,6 +263,23 @@ export class RoutesController {
     return this.routesService.activarRutaHoy(id, req.user?.id);
   }
 
+  @Get(':id/cierre-pendiente')
+  @Roles(
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.COBRADOR,
+  )
+  @ApiOperation({
+    summary:
+      'Consultar si la ruta tiene una jornada anterior pendiente de cierre',
+  })
+  @ApiResponse({ status: 200, description: 'Estado de cierre pendiente' })
+  getCierrePendiente(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
+    return this.routesService.getCierrePendienteRutaPublic(id, req.user);
+  }
+
   @Post(':id/assign-client')
   @Roles(
     RolUsuario.SUPERVISOR,
@@ -348,8 +367,16 @@ export class RoutesController {
     RolUsuario.SUPER_ADMINISTRADOR,
   )
   @ApiOperation({ summary: 'Obtener visitas del día para una ruta' })
-  @ApiQuery({ name: 'fecha', required: false, type: String, description: 'Fecha en formato YYYY-MM-DD' })
-  @ApiResponse({ status: 200, description: 'Visitas del día obtenidas exitosamente' })
+  @ApiQuery({
+    name: 'fecha',
+    required: false,
+    type: String,
+    description: 'Fecha en formato YYYY-MM-DD',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Visitas del día obtenidas exitosamente',
+  })
   @ApiResponse({ status: 404, description: 'Ruta no encontrada' })
   getDailyVisits(
     @Param('id', ParseUUIDPipe) id: string,
@@ -367,7 +394,9 @@ export class RoutesController {
     RolUsuario.ADMIN,
     RolUsuario.SUPER_ADMINISTRADOR,
   )
-  @ApiOperation({ summary: 'Actualizar orden de clientes en una ruta (drag & drop)' })
+  @ApiOperation({
+    summary: 'Actualizar orden de clientes en una ruta (drag & drop)',
+  })
   @ApiResponse({ status: 200, description: 'Orden actualizado exitosamente' })
   @ApiResponse({ status: 404, description: 'Ruta no encontrada' })
   updateClientOrder(
@@ -397,8 +426,14 @@ export class RoutesController {
     @Request() req,
   ) {
     const buffer = await this.routesService.exportarRuta(id, 'excel', req.user);
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="ruta_${id}.xlsx"`);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="ruta_${id}.xlsx"`,
+    );
     res.send(buffer);
   }
 
@@ -420,7 +455,10 @@ export class RoutesController {
   ) {
     const buffer = await this.routesService.exportarRuta(id, 'pdf', req.user);
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="ruta_${id}.pdf"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="ruta_${id}.pdf"`,
+    );
     res.send(buffer);
   }
 
@@ -432,15 +470,23 @@ export class RoutesController {
     RolUsuario.SUPER_ADMINISTRADOR,
     RolUsuario.COBRADOR,
   )
-  @ApiOperation({ summary: 'Registrar visita (ej: ausente) para un cliente en la ruta' })
+  @ApiOperation({
+    summary: 'Registrar visita (ej: ausente) para un cliente en la ruta',
+  })
   @ApiResponse({ status: 201, description: 'Visita registrada exitosamente' })
   registrarVisita(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('clienteId', ParseUUIDPipe) clienteId: string,
     @Body('estadoVisita') estadoVisita: string,
     @Body('notas') notas: string,
-    @Request() req
+    @Request() req,
   ) {
-    return this.routesService.registrarVisita(id, clienteId, estadoVisita, notas, req.user);
+    return this.routesService.registrarVisita(
+      id,
+      clienteId,
+      estadoVisita,
+      notas,
+      req.user,
+    );
   }
 }

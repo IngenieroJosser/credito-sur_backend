@@ -33,18 +33,22 @@ export class CloudinaryService {
   private configurar(): void {
     if (this.configurado) return;
 
-    const cloudName  = process.env.CLOUDINARY_CLOUD_NAME;
-    const apiKey     = process.env.CLOUDINARY_API_KEY;
-    const apiSecret  = process.env.CLOUDINARY_API_SECRET;
+    const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+    const apiKey = process.env.CLOUDINARY_API_KEY;
+    const apiSecret = process.env.CLOUDINARY_API_SECRET;
 
     if (!cloudName || !apiKey || !apiSecret) {
       throw new BadRequestException(
         'Cloudinary no está configurado. Verifique las variables de entorno: ' +
-        'CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET',
+          'CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET',
       );
     }
 
-    cloudinary.config({ cloud_name: cloudName, api_key: apiKey, api_secret: apiSecret });
+    cloudinary.config({
+      cloud_name: cloudName,
+      api_key: apiKey,
+      api_secret: apiSecret,
+    });
     this.configurado = true;
   }
 
@@ -57,10 +61,13 @@ export class CloudinaryService {
   ): Promise<CloudinaryUploadResult> {
     this.configurar();
 
-    const isHostedProd = process.env.NODE_ENV === 'production' || Boolean(process.env.RENDER);
-    const rootFolder   = process.env.CLOUDINARY_ROOT_FOLDER || (isHostedProd ? 'creditos-del-sur' : 'creditos-del-sur-local');
-    const subFolder    = options.folder || 'general';
-    const folder       = `${rootFolder}/${subFolder}`;
+    const isHostedProd =
+      process.env.NODE_ENV === 'production' || Boolean(process.env.RENDER);
+    const rootFolder =
+      process.env.CLOUDINARY_ROOT_FOLDER ||
+      (isHostedProd ? 'creditos-del-sur' : 'creditos-del-sur-local');
+    const subFolder = options.folder || 'general';
+    const folder = `${rootFolder}/${subFolder}`;
 
     const resourceType = file.mimetype.startsWith('video/') ? 'video' : 'auto';
 
@@ -68,7 +75,12 @@ export class CloudinaryService {
       const stream = cloudinary.uploader.upload_stream(
         { folder, resource_type: resourceType },
         (error, result) => {
-          if (error) return reject(new BadRequestException(`Error al subir archivo a Cloudinary: ${error.message}`));
+          if (error)
+            return reject(
+              new BadRequestException(
+                `Error al subir archivo a Cloudinary: ${error.message}`,
+              ),
+            );
           resolve(result);
         },
       );
@@ -76,9 +88,9 @@ export class CloudinaryService {
     });
 
     return {
-      publicId:    uploadResult.public_id,
-      url:         uploadResult.secure_url,
-      formato:     uploadResult.format || file.mimetype.split('/')[1] || 'bin',
+      publicId: uploadResult.public_id,
+      url: uploadResult.secure_url,
+      formato: uploadResult.format || file.mimetype.split('/')[1] || 'bin',
       tamanoBytes: uploadResult.bytes || file.size,
     };
   }

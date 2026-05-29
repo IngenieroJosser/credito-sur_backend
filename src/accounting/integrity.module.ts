@@ -6,9 +6,9 @@ import { AccountingIntegrityCron } from './accounting-integrity.cron';
 @Module({
   imports: [
     AccountingModule,
-    // NotificacionesModule es Global, pero lo importamos explícitamente para mayor claridad 
+    // NotificacionesModule es Global, pero lo importamos explícitamente para mayor claridad
     // y para asegurar que el Cron pueda inyectar NotificacionesService sin ciclos.
-    NotificacionesModule, 
+    NotificacionesModule,
   ],
   providers: [AccountingIntegrityCron],
 })

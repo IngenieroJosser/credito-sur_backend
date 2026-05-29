@@ -23,7 +23,8 @@ export class PushService {
     // Configurar llaves VAPID
     const publicKey = process.env.VAPID_PUBLIC_KEY;
     const privateKey = process.env.VAPID_PRIVATE_KEY;
-    const mailto = process.env.VAPID_MAILTO || 'mailto:erickmanuel238@gmail.com';
+    const mailto =
+      process.env.VAPID_MAILTO || 'mailto:erickmanuel238@gmail.com';
 
     if (publicKey && privateKey) {
       try {
@@ -34,25 +35,29 @@ export class PushService {
       }
     } else {
       this.logger.warn(
-        'Notificaciones Push desactivadas: Faltan las variables de entorno VAPID_PUBLIC_KEY o VAPID_PRIVATE_KEY'
+        'Notificaciones Push desactivadas: Faltan las variables de entorno VAPID_PUBLIC_KEY o VAPID_PRIVATE_KEY',
       );
     }
   }
 
   async sendPushNotification(data: SendPushNotificationDto): Promise<void> {
     if (!this.isInitialized) {
-      this.logger.warn('Intento de enviar notificación push pero el servicio no está configurado');
+      this.logger.warn(
+        'Intento de enviar notificación push pero el servicio no está configurado',
+      );
       return;
     }
     try {
       // Obtener suscripciones de push
       let subscriptions = await this.prisma.pushSubscription.findMany({
-        where: { activa: true }
+        where: { activa: true },
       });
 
       // Filtrar por usuario si se especifica
       if (data.userId) {
-        subscriptions = subscriptions.filter(sub => sub.usuarioId === data.userId);
+        subscriptions = subscriptions.filter(
+          (sub) => sub.usuarioId === data.userId,
+        );
       }
 
       // Filtrar por rol si se especifica
@@ -60,11 +65,13 @@ export class PushService {
         const usuarios = await this.prisma.usuario.findMany({
           where: {
             rol: { in: data.roleFilter as any },
-            estado: 'ACTIVO'
-          }
+            estado: 'ACTIVO',
+          },
         });
-        const usuarioIds = usuarios.map(u => u.id);
-        subscriptions = subscriptions.filter(sub => usuarioIds.includes(sub.usuarioId));
+        const usuarioIds = usuarios.map((u) => u.id);
+        subscriptions = subscriptions.filter((sub) =>
+          usuarioIds.includes(sub.usuarioId),
+        );
       }
 
       // Enviar notificaciones a cada suscripción
@@ -76,8 +83,8 @@ export class PushService {
         tag: data.tag || 'general',
         data: {
           ...data.data,
-          timestamp: formatBogotaOffsetIso(new Date())
-        }
+          timestamp: formatBogotaOffsetIso(new Date()),
+        },
       };
 
       for (const subscription of subscriptions) {
@@ -91,22 +98,29 @@ export class PushService {
         await this.sendToSubscription(pushSub, payload);
       }
 
-      this.logger.log(`Push notification sent to ${subscriptions.length} subscribers`);
+      this.logger.log(
+        `Push notification sent to ${subscriptions.length} subscribers`,
+      );
     } catch (error) {
       this.logger.error('Error sending push notification:', error);
     }
   }
 
-  private async sendToSubscription(subscription: any, payload: any): Promise<void> {
+  private async sendToSubscription(
+    subscription: any,
+    payload: any,
+  ): Promise<void> {
     try {
       this.logger.log(`Enviando push real a: ${subscription.endpoint}`);
       await webpush.sendNotification(subscription, JSON.stringify(payload));
     } catch (error: any) {
       if (error.statusCode === 410 || error.statusCode === 404) {
-        this.logger.warn(`Suscripción expirada o inválida, eliminando: ${subscription.endpoint}`);
+        this.logger.warn(
+          `Suscripción expirada o inválida, eliminando: ${subscription.endpoint}`,
+        );
         await this.prisma.pushSubscription.update({
           where: { endpoint: subscription.endpoint },
-          data: { activa: false }
+          data: { activa: false },
         });
       } else {
         this.logger.error(`Error enviando a ${subscription.endpoint}:`, error);
@@ -122,15 +136,15 @@ export class PushService {
           usuarioId: userId,
           p256dh: subscription.keys.p256dh,
           auth: subscription.keys.auth,
-          activa: true
+          activa: true,
         },
         create: {
           endpoint: subscription.endpoint,
           usuarioId: userId,
           p256dh: subscription.keys.p256dh,
           auth: subscription.keys.auth,
-          activa: true
-        }
+          activa: true,
+        },
       });
 
       this.logger.log(`User ${userId} subscribed to push notifications`);
@@ -173,7 +187,7 @@ export class PushService {
     try {
       await this.prisma.pushSubscription.updateMany({
         where: { endpoint, usuarioId: userId },
-        data: { activa: false }
+        data: { activa: false },
       });
 
       this.logger.log(`Unsubscribed: ${endpoint}`);

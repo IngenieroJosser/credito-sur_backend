@@ -52,10 +52,7 @@ export class AuditController {
    * Listar todos los registros de auditoría (con paginación opcional)
    */
   @Get()
-  findAll(
-    @Query('pagina') pagina?: string,
-    @Query('limite') limite?: string,
-  ) {
+  findAll(@Query('pagina') pagina?: string, @Query('limite') limite?: string) {
     if (pagina || limite) {
       const p = pagina ? parseInt(pagina) : 1;
       const l = limite ? parseInt(limite) : 50;
@@ -86,7 +83,11 @@ export class AuditController {
    * Obtener un registro de auditoría por ID
    */
   @Get('export')
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.SUPERVISOR)
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPERVISOR,
+  )
   @HttpCode(HttpStatus.OK)
   async exportAuditLog(
     @Query('format') format: 'excel' | 'pdf',
@@ -99,7 +100,10 @@ export class AuditController {
       endDate: endDate || undefined,
     });
     res.setHeader('Content-Type', result.contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${result.filename}"`,
+    );
     res.send(result.data);
   }
 
@@ -111,9 +115,7 @@ export class AuditController {
 
   @Post('hide-archived')
   @HttpCode(HttpStatus.OK)
-  hideArchived(
-    @Body() body: { entidad: string; entidadId: string },
-  ) {
+  hideArchived(@Body() body: { entidad: string; entidadId: string }) {
     return this.auditService.hideArchivedItem(body);
   }
 

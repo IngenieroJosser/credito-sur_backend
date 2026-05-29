@@ -9,11 +9,12 @@ import {
   ConnectedSocket,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Logger, forwardRef, Inject } from '@nestjs/common';
+import { Logger, forwardRef, Inject, Injectable } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { NotificacionesService } from './notificaciones.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { getBogotaStartEndOfDay } from '../utils/date-utils';
+import { RoutesService } from '../routes/routes.service';
 
 @WebSocketGateway({
   cors: {
@@ -27,7 +28,9 @@ import { getBogotaStartEndOfDay } from '../utils/date-utils';
   },
   transports: ['websocket', 'polling'],
 })
-export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
+export class NotificacionesGateway
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
+{
   @WebSocketServer()
   server: Server;
 
@@ -35,6 +38,7 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
     @Inject(forwardRef(() => NotificacionesService))
     private notificacionesService: NotificacionesService,
     private prisma: PrismaService,
+    private routesService: RoutesService,
   ) {}
 
   private logger: Logger = new Logger('NotificacionesGateway');
@@ -52,7 +56,7 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
 
   handleDisconnect(client: Socket) {
     this.logger.log(`Cliente desconectado: ${client.id}`);
-    
+
     // Limpiar el socket de los registros de usuario
     for (const [userId, sockets] of this.userSockets.entries()) {
       if (sockets.has(client.id)) {
@@ -80,10 +84,10 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
       this.userSockets.set(userId, new Set());
     }
     this.userSockets.get(userId)!.add(client.id);
-    
+
     // Opcional: unirlo a una sala con su propio ID para emisiones directas
     client.join(`user_${userId}`);
-    
+
     this.logger.log(`Usuario ${userId} registrado con socket ${client.id}`);
     return { success: true };
   }
@@ -93,108 +97,193 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
    */
   @SubscribeMessage('ruta_completada_emit')
   async handleRutaCompletadaEmit(
-    @MessageBody() data: { rutaNombre: string, cobradorNombre: string, recaudo: number, meta: number, efectividad: number, clientesFaltantes: number, rutaId?: string },
+    @MessageBody()
+    data: {
+      rutaNombre: string;
+      cobradorNombre: string;
+      recaudo: number;
+      meta: number;
+      efectividad: number;
+      clientesFaltantes: number;
+      rutaId?: string;
+      actorId?: string;
+      actorRol?: string;
+    },
     @ConnectedSocket() client: Socket,
   ) {
     this.logger.log(`El cobrador completó la ruta: ${data.rutaNombre}`);
 
-    const clientesFaltantesNum = Number(data.clientesFaltantes || 0);
-
-    // 1. Registrar el cierre de ruta en BD (trazabilidad de descuadre)
     try {
-      if (data.rutaId) {
-        // Regla: registrar "CIERRE_RUTA" cuando el cobrador completa la ruta.
-        // Si aún faltan clientes por cobrar/visitar, se registra igual el cierre para
-        // indicar que el cobrador cerró su jornada.
-        const cajaDeLaRuta = await this.prisma.caja.findFirst({
-          where: { rutaId: data.rutaId, tipo: 'RUTA' },
-        });
-        if (cajaDeLaRuta) {
-          const { startDate: inicioHoy, endDate: finHoy } = getBogotaStartEndOfDay(new Date());
+      const clientesFaltantesNum = Number(data.clientesFaltantes || 0);
 
-          const yaCerroHoy = await this.prisma.transaccion.findFirst({
-            where: {
-              cajaId: cajaDeLaRuta.id,
-              tipoReferencia: 'CIERRE_RUTA',
-              fechaTransaccion: { gte: inicioHoy, lte: finHoy },
-            },
-            select: { id: true },
+      // 1. Registrar el cierre de ruta en BD (trazabilidad de descuadre)
+      try {
+        if (data.rutaId) {
+          // Regla: registrar "CIERRE_RUTA" cuando el cobrador completa la ruta.
+          // Si aún faltan clientes por cobrar/visitar, se registra igual el cierre para
+          // indicar que el cobrador cerró su jornada.
+          const cajaDeLaRuta = await this.prisma.caja.findFirst({
+            where: { rutaId: data.rutaId, tipo: 'RUTA' },
           });
+          if (cajaDeLaRuta) {
+            const { startDate: inicioHoy, endDate: finHoy } =
+              getBogotaStartEndOfDay(new Date());
 
-          if (yaCerroHoy?.id) {
-            this.logger.warn(
-              `Cierre de ruta duplicado ignorado: rutaId=${data.rutaId} cajaId=${cajaDeLaRuta.id} transaccionId=${yaCerroHoy.id}`,
-            );
-            return;
-          }
-
-          const saldoAlCierre = Number(cajaDeLaRuta.saldoActual || 0);
-          const deudaPorFaltantes = clientesFaltantesNum > 0
-            ? Math.max(Number(data.meta || 0) - Number(data.recaudo || 0), 0)
-            : 0;
-
-          // Regla de negocio: el saldo en caja de la ruta al cierre es dinero del cobrador
-          // que aún no ha entregado. Se registra como deuda pendiente (descuadre).
-          // Cuando el admin/coordinador recolecte ese dinero (consolide la caja),
-          // la deuda desaparece automáticamente.
-          const deudaTotal = Math.max(deudaPorFaltantes + saldoAlCierre, 0);
-          const hayDescuadre = deudaTotal > 0;
-          
-          // Codificamos los datos en referenciaId agregando SD
-          const referenciaId = `RC:${data.recaudo}|MT:${data.meta || 0}|EF:${data.efectividad}|CF:${data.clientesFaltantes}|CO:${data.cobradorNombre}|SD:${saldoAlCierre}`;
-          
-          await this.prisma.transaccion.create({
-            data: {
-              numeroTransaccion: `CR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-              cajaId: cajaDeLaRuta.id,
-              tipo: 'TRANSFERENCIA',
-              monto: 0,
-              descripcion: hayDescuadre
-                ? `Cierre de ruta con descuadre: $${deudaTotal.toLocaleString('es-CO')} pendientes (saldo en caja: $${saldoAlCierre.toLocaleString('es-CO')}, faltantes: $${deudaPorFaltantes.toLocaleString('es-CO')}). Recaudó: $${data.recaudo.toLocaleString('es-CO')}.`
-                : `Cierre de ruta exitoso: sin saldo pendiente. Recaudó $${data.recaudo.toLocaleString('es-CO')} (${data.efectividad}% META).`,
-              tipoReferencia: 'CIERRE_RUTA',
-              referenciaId,
-              creadoPorId: cajaDeLaRuta.responsableId, 
-            },
-          });
-
-          // Regla de negocio: si hay descuadre (dinero retenido o clientes faltantes), se registra la deuda formal.
-          if (hayDescuadre) {
-            const deuda = deudaTotal;
-            const refDeuda = `DD:${deuda}|SD:${saldoAlCierre}|FD:${deudaPorFaltantes}|${referenciaId}`;
-            await this.prisma.transaccion.create({
-              data: {
-                numeroTransaccion: `DC-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-                cajaId: cajaDeLaRuta.id,
-                tipo: 'EGRESO',
-                monto: deuda,
-                descripcion: `Deuda del cobrador por cierre de ruta: $${deuda.toLocaleString('es-CO')} (saldo en caja: $${saldoAlCierre.toLocaleString('es-CO')}, faltantes: $${deudaPorFaltantes.toLocaleString('es-CO')})`,
-                tipoReferencia: 'DEUDA_COBRADOR',
-                referenciaId: refDeuda,
-                creadoPorId: cajaDeLaRuta.responsableId,
+            // Validar actor contra base de datos (no confiar en actorRol del frontend)
+            const actorId = data.actorId || cajaDeLaRuta.responsableId;
+            const actor = await this.prisma.usuario.findUnique({
+              where: { id: actorId },
+              select: {
+                id: true,
+                rol: true,
               },
             });
-          }
-          this.logger.log(`Cierre de ruta registrado en caja ${cajaDeLaRuta.id} — descuadre: ${hayDescuadre}`);
-        }
-      }
-    } catch (err) {
-      this.logger.error('Error registrando cierre de ruta en BD:', err);
-    }
 
-    // 2. Alerta al Coordinador/Supervisor (Sistematizado + Push)
-    await this.notificacionesService.notifyApprovers({
-      titulo: 'Cierre de Ruta Completo',
-      mensaje: `Cobrador: ${data.cobradorNombre} cerró la ruta ${data.rutaNombre}. Recaudo Final: $${data.recaudo.toLocaleString('es-CO')} (${data.efectividad}% META). ${data.clientesFaltantes > 0 ? 'Faltaron ' + data.clientesFaltantes + ' clientes' : 'Todos visitados'}.`,
-      tipo: 'SISTEMA',
-    });
+            // Validar si puede cerrar la jornada actual (verifica cierre pendiente anterior)
+            try {
+              await this.routesService.assertPuedeCerrarJornadaActual(
+                data.rutaId,
+                {
+                  id: actor?.id || cajaDeLaRuta.responsableId,
+                  rol: actor?.rol || 'COBRADOR',
+                },
+              );
+            } catch (error: any) {
+              this.logger.warn(
+                `Bloqueo de cierre por jornada pendiente: rutaId=${data.rutaId}`,
+                error.message,
+              );
+              // Retornar error al frontend
+              return {
+                success: false,
+                code:
+                  error?.response?.code ||
+                  error?.code ||
+                  'RUTA_ANTERIOR_PENDIENTE_CIERRE',
+                message:
+                  error?.response?.message ||
+                  error?.message ||
+                  'Existe una jornada anterior pendiente de cierre.',
+              };
+            }
+
+            const yaCerroHoy = await this.prisma.transaccion.findFirst({
+              where: {
+                cajaId: cajaDeLaRuta.id,
+                tipoReferencia: 'CIERRE_RUTA',
+                fechaTransaccion: { gte: inicioHoy, lte: finHoy },
+              },
+              select: { id: true },
+            });
+
+            if (yaCerroHoy?.id) {
+              this.logger.warn(
+                `Cierre de ruta duplicado ignorado: rutaId=${data.rutaId} cajaId=${cajaDeLaRuta.id} transaccionId=${yaCerroHoy.id}`,
+              );
+              return {
+                success: false,
+                code: 'CIERRE_DUPLICADO',
+                message: 'La ruta ya fue cerrada hoy.',
+              };
+            }
+
+            const saldoAlCierre = Number(cajaDeLaRuta.saldoActual || 0);
+            const deudaPorFaltantes =
+              clientesFaltantesNum > 0
+                ? Math.max(
+                    Number(data.meta || 0) - Number(data.recaudo || 0),
+                    0,
+                  )
+                : 0;
+
+            // Regla de negocio: el saldo en caja de la ruta al cierre es dinero del cobrador
+            // que aún no ha entregado. Se registra como deuda pendiente (descuadre).
+            // Cuando el admin/coordinador recolecte ese dinero (consolide la caja),
+            // la deuda desaparece automáticamente.
+            const deudaTotal = Math.max(deudaPorFaltantes + saldoAlCierre, 0);
+            const hayDescuadre = deudaTotal > 0;
+
+            // Codificamos los datos en referenciaId agregando SD
+            const referenciaId = `RC:${data.recaudo}|MT:${data.meta || 0}|EF:${data.efectividad}|CF:${data.clientesFaltantes}|CO:${data.cobradorNombre}|SD:${saldoAlCierre}`;
+
+            await this.prisma.transaccion.create({
+              data: {
+                numeroTransaccion: `CR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+                cajaId: cajaDeLaRuta.id,
+                tipo: 'TRANSFERENCIA',
+                monto: 0,
+                descripcion: hayDescuadre
+                  ? `Cierre de ruta con descuadre: $${deudaTotal.toLocaleString('es-CO')} pendientes (saldo en caja: $${saldoAlCierre.toLocaleString('es-CO')}, faltantes: $${deudaPorFaltantes.toLocaleString('es-CO')}). Recaudó: $${data.recaudo.toLocaleString('es-CO')}.`
+                  : `Cierre de ruta exitoso: sin saldo pendiente. Recaudó $${data.recaudo.toLocaleString('es-CO')} (${data.efectividad}% META).`,
+                tipoReferencia: 'CIERRE_RUTA',
+                referenciaId,
+                creadoPorId: actor?.id || cajaDeLaRuta.responsableId,
+              },
+            });
+
+            // Regla de negocio: si hay descuadre (dinero retenido o clientes faltantes), se registra la deuda formal.
+            if (hayDescuadre) {
+              const deuda = deudaTotal;
+              const refDeuda = `DD:${deuda}|SD:${saldoAlCierre}|FD:${deudaPorFaltantes}|${referenciaId}`;
+              await this.prisma.transaccion.create({
+                data: {
+                  numeroTransaccion: `DC-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+                  cajaId: cajaDeLaRuta.id,
+                  tipo: 'EGRESO',
+                  monto: deuda,
+                  descripcion: `Deuda del cobrador por cierre de ruta: $${deuda.toLocaleString('es-CO')} (saldo en caja: $${saldoAlCierre.toLocaleString('es-CO')}, faltantes: $${deudaPorFaltantes.toLocaleString('es-CO')})`,
+                  tipoReferencia: 'DEUDA_COBRADOR',
+                  referenciaId: refDeuda,
+                  creadoPorId: actor?.id || cajaDeLaRuta.responsableId,
+                },
+              });
+            }
+            this.logger.log(
+              `Cierre de ruta registrado en caja ${cajaDeLaRuta.id} — descuadre: ${hayDescuadre}`,
+            );
+          }
+        }
+      } catch (err) {
+        this.logger.error('Error registrando cierre de ruta en BD:', err);
+        return {
+          success: false,
+          code: 'ERROR_REGISTRO_CIERRE',
+          message: 'Error al registrar el cierre de ruta en base de datos.',
+        };
+      }
+
+      // 2. Alerta al Coordinador/Supervisor (Sistematizado + Push)
+      await this.notificacionesService.notifyApprovers({
+        titulo: 'Cierre de Ruta Completo',
+        mensaje: `Cobrador: ${data.cobradorNombre} cerró la ruta ${data.rutaNombre}. Recaudo Final: $${data.recaudo.toLocaleString('es-CO')} (${data.efectividad}% META). ${data.clientesFaltantes > 0 ? 'Faltaron ' + data.clientesFaltantes + ' clientes' : 'Todos visitados'}.`,
+        tipo: 'SISTEMA',
+      });
+
+      // Retornar éxito al frontend
+      return {
+        success: true,
+        message: 'Ruta cerrada correctamente.',
+      };
+    } catch (error: any) {
+      this.logger.error('Error en handleRutaCompletadaEmit:', error);
+      return {
+        success: false,
+        code: error?.response?.code || error?.code || 'ERROR_CIERRE_RUTA',
+        message:
+          error?.response?.message ||
+          error?.message ||
+          'No se pudo cerrar la ruta.',
+      };
+    }
   }
 
   /**
    * Enviar notificación a un usuario específico
    */
   enviarNotificacionAUsuario(userId: string, notificacion: any) {
-    this.logger.log(`Emitiendo notificación a user_${userId}: ${notificacion.titulo}`);
+    this.logger.log(
+      `Emitiendo notificación a user_${userId}: ${notificacion.titulo}`,
+    );
     // Emitimos a la sala específica del usuario
     this.server.to(`user_${userId}`).emit('nueva_notificacion', notificacion);
   }
@@ -203,7 +292,9 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
    * Enviar evento estructurado a un usuario para indicar que la cuenta de notificaciones no leidas cambió
    */
   notificarActualizacion(userId: string) {
-    this.server.to(`user_${userId}`).emit('notificaciones_actualizadas', { timestamp: new Date() });
+    this.server
+      .to(`user_${userId}`)
+      .emit('notificaciones_actualizadas', { timestamp: new Date() });
   }
 
   /**
@@ -286,7 +377,9 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
   @OnEvent('aprobacion.created')
   @OnEvent('aprobacion.updated')
   handleAprobacionChanged(payload: any) {
-    this.logger.log('Aprobacion creada/actualizada → broadcastAprobacionesActualizadas (via EventEmitter)');
+    this.logger.log(
+      'Aprobacion creada/actualizada → broadcastAprobacionesActualizadas (via EventEmitter)',
+    );
     this.broadcastAprobacionesActualizadas(payload?.data || {});
   }
 
@@ -295,7 +388,9 @@ export class NotificacionesGateway implements OnGatewayInit, OnGatewayConnection
     const model = String(payload?.model || '');
     if (model !== 'RegistroAuditoria' && model !== 'ArchivadoOculto') return;
 
-    this.logger.log(`Cambio en ${model} -> broadcastDashboardsActualizados para archivados/auditoria`);
+    this.logger.log(
+      `Cambio en ${model} -> broadcastDashboardsActualizados para archivados/auditoria`,
+    );
     this.broadcastDashboardsActualizados({
       action: 'archived_audit_updated',
       model,

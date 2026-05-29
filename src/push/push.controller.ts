@@ -27,7 +27,10 @@ export class PushController {
     @Body() body: { subscription: any },
     @Request() req: { user?: { id?: string } },
   ) {
-    return this.pushService.subscribeUser(String(req.user?.id || ''), body.subscription);
+    return this.pushService.subscribeUser(
+      String(req.user?.id || ''),
+      body.subscription,
+    );
   }
 
   @Delete('unsubscribe/:endpoint')
@@ -36,17 +39,26 @@ export class PushController {
     @Param('endpoint') endpoint: string,
     @Request() req: { user?: { id?: string } },
   ) {
-    return this.pushService.unsubscribeUser(decodeURIComponent(endpoint), String(req.user?.id || ''));
+    return this.pushService.unsubscribeUser(
+      decodeURIComponent(endpoint),
+      String(req.user?.id || ''),
+    );
   }
 
   @Get('subscriptions')
-  @ApiOperation({ summary: 'Listar suscripciones push activas del usuario autenticado' })
+  @ApiOperation({
+    summary: 'Listar suscripciones push activas del usuario autenticado',
+  })
   async getUserSubscriptions(@Request() req: { user?: { id?: string } }) {
     return this.pushService.getUserSubscriptions(String(req.user?.id || ''));
   }
 
   @Post('send')
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+  )
   @ApiOperation({ summary: 'Enviar notificación push' })
   async send(@Body() data: any) {
     return this.pushService.sendPushNotification(data);
