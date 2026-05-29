@@ -5,6 +5,8 @@ import {
   BadRequestException,
   ForbiddenException,
   InternalServerErrorException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 
 import { PrismaService } from '../prisma/prisma.service';
@@ -55,6 +57,7 @@ export class RoutesService {
 
     private auditService: AuditService,
 
+    @Inject(forwardRef(() => NotificacionesGateway))
     private notificacionesGateway: NotificacionesGateway,
 
     private notificacionesService: NotificacionesService,
