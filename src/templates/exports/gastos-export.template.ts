@@ -37,22 +37,22 @@ export interface GastosTotales {
 
 const C = {
   // Azul
-  AZUL_DARK:    'FF1A5F8A',
-  AZUL_MED:     'FF2B7BB5',
-  AZUL_SOFT:    'FFD6E9F5',
-  AZUL_PALE:    'FFEBF4FB',
+  AZUL_DARK: 'FF1A5F8A',
+  AZUL_MED: 'FF2B7BB5',
+  AZUL_SOFT: 'FFD6E9F5',
+  AZUL_PALE: 'FFEBF4FB',
   // Naranja
-  NAR_DARK:     'FFD4600A',
-  NAR_MED:      'FFF07A28',
-  NAR_SOFT:     'FFFDE8D5',
-  NAR_PALE:     'FFFEF3EC',
+  NAR_DARK: 'FFD4600A',
+  NAR_MED: 'FFF07A28',
+  NAR_SOFT: 'FFFDE8D5',
+  NAR_PALE: 'FFFEF3EC',
   // Neutros
-  BLANCO:       'FFFFFFFF',
-  GRIS_TEXTO:   'FF2D3748',
-  GRIS_MED:     'FF718096',
-  GRIS_CLARO:   'FFE2E8F0',
-  GRIS_FONDO:   'FFF7FAFC',
-  GRIS_ALT:     'FFF0F4F8',
+  BLANCO: 'FFFFFFFF',
+  GRIS_TEXTO: 'FF2D3748',
+  GRIS_MED: 'FF718096',
+  GRIS_CLARO: 'FFE2E8F0',
+  GRIS_FONDO: 'FFF7FAFC',
+  GRIS_ALT: 'FFF0F4F8',
 } as const;
 
 // ─── Utilidades ───────────────────────────────────────────────────────────────
@@ -77,17 +77,22 @@ function cellBorder(
 ): Partial<ExcelJS.Borders> {
   return {
     bottom: { style: bottomStyle, color: { argb: bottomColor } },
-    right:  { style: 'hair',      color: { argb: C.GRIS_CLARO } },
+    right: { style: 'hair', color: { argb: C.GRIS_CLARO } },
   };
 }
 
 function applyHeader(cell: ExcelJS.Cell, bgArgb: string = C.AZUL_MED): void {
-  cell.font      = { bold: true, size: 9, color: { argb: C.BLANCO }, name: 'Calibri' };
-  cell.fill      = solidFill(bgArgb);
+  cell.font = {
+    bold: true,
+    size: 9,
+    color: { argb: C.BLANCO },
+    name: 'Calibri',
+  };
+  cell.fill = solidFill(bgArgb);
   cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-  cell.border    = {
+  cell.border = {
     bottom: { style: 'medium', color: { argb: C.NAR_MED } },
-    right:  { style: 'thin',   color: { argb: C.BLANCO } },
+    right: { style: 'thin', color: { argb: C.BLANCO } },
   };
 }
 
@@ -112,14 +117,23 @@ export async function generarExcelGastos(
   worksheet.mergeCells('A1:I1');
   const titleCell = worksheet.getCell('A1');
   titleCell.value = 'HISTORIAL DE PAGOS Y GASTOS';
-  titleCell.font = { bold: true, size: 16, color: { argb: C.AZUL_DARK }, name: 'Calibri' };
+  titleCell.font = {
+    bold: true,
+    size: 16,
+    color: { argb: C.AZUL_DARK },
+    name: 'Calibri',
+  };
   titleCell.alignment = { horizontal: 'center' };
 
   // Subtítulo con fecha
   worksheet.mergeCells('A2:I2');
   const subtitleCell = worksheet.getCell('A2');
   subtitleCell.value = `Reporte generado: ${new Date().toLocaleString('es-CO')}`;
-  subtitleCell.font = { size: 10, color: { argb: C.GRIS_MED }, name: 'Calibri' };
+  subtitleCell.font = {
+    size: 10,
+    color: { argb: C.GRIS_MED },
+    name: 'Calibri',
+  };
   subtitleCell.alignment = { horizontal: 'center' };
 
   // Espacio
@@ -160,7 +174,7 @@ export async function generarExcelGastos(
       estado: g.estado,
     });
     row.height = 20;
-    
+
     // Estilo de filas alternado
     const isEven = idx % 2 === 0;
     row.eachCell((cell) => {
@@ -174,7 +188,10 @@ export async function generarExcelGastos(
 
     // Formato de moneda
     row.getCell('monto').numFmt = '$#,##0.00';
-    row.getCell('monto').alignment = { horizontal: 'right', vertical: 'middle' };
+    row.getCell('monto').alignment = {
+      horizontal: 'right',
+      vertical: 'middle',
+    };
   });
 
   // Totales
@@ -182,7 +199,12 @@ export async function generarExcelGastos(
   worksheet.mergeCells(`A${totalRowIndex}:G${totalRowIndex}`);
   const totalLabel = worksheet.getCell(`A${totalRowIndex}`);
   totalLabel.value = 'TOTAL GASTOS';
-  totalLabel.font = { bold: true, size: 11, color: { argb: C.AZUL_DARK }, name: 'Calibri' };
+  totalLabel.font = {
+    bold: true,
+    size: 11,
+    color: { argb: C.AZUL_DARK },
+    name: 'Calibri',
+  };
   totalLabel.alignment = { horizontal: 'right', vertical: 'middle' };
   totalLabel.fill = solidFill(C.AZUL_SOFT);
   totalLabel.border = cellBorder('medium', C.AZUL_MED);
@@ -190,21 +212,38 @@ export async function generarExcelGastos(
   const totalValue = worksheet.getCell(`H${totalRowIndex}`);
   totalValue.value = totales.totalGastos;
   totalValue.numFmt = '$#,##0.00';
-  totalValue.font = { bold: true, size: 11, color: { argb: C.NAR_DARK }, name: 'Calibri' };
+  totalValue.font = {
+    bold: true,
+    size: 11,
+    color: { argb: C.NAR_DARK },
+    name: 'Calibri',
+  };
   totalValue.alignment = { horizontal: 'right', vertical: 'middle' };
   totalValue.fill = solidFill(C.NAR_SOFT);
   totalValue.border = cellBorder('medium', C.NAR_MED);
 
   worksheet.getCell(`I${totalRowIndex}`).value = totales.cantidadGastos;
-  worksheet.getCell(`I${totalRowIndex}`).font = { bold: true, size: 11, color: { argb: C.GRIS_TEXTO }, name: 'Calibri' };
-  worksheet.getCell(`I${totalRowIndex}`).alignment = { horizontal: 'center', vertical: 'middle' };
+  worksheet.getCell(`I${totalRowIndex}`).font = {
+    bold: true,
+    size: 11,
+    color: { argb: C.GRIS_TEXTO },
+    name: 'Calibri',
+  };
+  worksheet.getCell(`I${totalRowIndex}`).alignment = {
+    horizontal: 'center',
+    vertical: 'middle',
+  };
   worksheet.getCell(`I${totalRowIndex}`).fill = solidFill(C.GRIS_FONDO);
-  worksheet.getCell(`I${totalRowIndex}`).border = cellBorder('medium', C.GRIS_MED);
+  worksheet.getCell(`I${totalRowIndex}`).border = cellBorder(
+    'medium',
+    C.GRIS_MED,
+  );
 
   const buffer = await workbook.xlsx.writeBuffer();
   return {
     data: Buffer.from(buffer),
-    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    contentType:
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     filename: `gastos_${fecha}.xlsx`,
   };
 }
@@ -216,22 +255,25 @@ export async function generarPDFGastos(
   totales: GastosTotales,
   fecha: string,
 ): Promise<{ data: Buffer; contentType: string; filename: string }> {
-
-  const doc     = new PDFDocument({ layout: 'landscape', size: 'LETTER', margin: 30 });
+  const doc = new PDFDocument({
+    layout: 'landscape',
+    size: 'LETTER',
+    margin: 30,
+  });
   const buffers: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
 
   // ── Colores ────────────────────────────────────────────────────────────────
-  const AZUL_DARK  = '#1A5F8A';
-  const AZUL_MED   = '#2B7BB5';
-  const AZUL_PALE  = '#EBF4FB';
-  const NAR_MED    = '#F07A28';
-  const NAR_DARK   = '#D4600A';
-  const NAR_SOFT   = '#FDE8D5';
-  const BLANCO     = '#FFFFFF';
-  const GRIS_TXT   = '#2D3748';
-  const GRIS_MED   = '#718096';
-  const GRIS_CLR   = '#E2E8F0';
+  const AZUL_DARK = '#1A5F8A';
+  const AZUL_MED = '#2B7BB5';
+  const AZUL_PALE = '#EBF4FB';
+  const NAR_MED = '#F07A28';
+  const NAR_DARK = '#D4600A';
+  const NAR_SOFT = '#FDE8D5';
+  const BLANCO = '#FFFFFF';
+  const GRIS_TXT = '#2D3748';
+  const GRIS_MED = '#718096';
+  const GRIS_CLR = '#E2E8F0';
 
   // ── Watermark ─────────────────────────────────────────────────────────────
   const drawWatermark = () => {
@@ -254,39 +296,80 @@ export async function generarPDFGastos(
     const W = doc.page.width;
 
     // Título alineado a la izquierda
-    doc.fontSize(22).font('Helvetica-Bold').fillColor('#1A5F8A')
-       .text('Créditos del Sur', 30, 25);
-    doc.fontSize(9).font('Helvetica').fillColor('#F07A28')
-       .text('HISTORIAL DE PAGOS Y GASTOS', 30, 52, { characterSpacing: 0.5 });
+    doc
+      .fontSize(22)
+      .font('Helvetica-Bold')
+      .fillColor('#1A5F8A')
+      .text('Créditos del Sur', 30, 25);
+    doc
+      .fontSize(9)
+      .font('Helvetica')
+      .fillColor('#F07A28')
+      .text('HISTORIAL DE PAGOS Y GASTOS', 30, 52, { characterSpacing: 0.5 });
 
     // Bloque fecha (derecha)
-    doc.roundedRect(W - 180, 20, 148, 44, 5)
-       .fillAndStroke(BLANCO, GRIS_CLR);
-    doc.fontSize(8).font('Helvetica-Bold').fillColor(GRIS_MED)
-       .text('PERÍODO', W - 180, 28, { width: 148, align: 'center' });
-    doc.fontSize(11).font('Helvetica-Bold').fillColor(AZUL_DARK)
-       .text(fecha, W - 180, 40, { width: 148, align: 'center' });
+    doc.roundedRect(W - 180, 20, 148, 44, 5).fillAndStroke(BLANCO, GRIS_CLR);
+    doc
+      .fontSize(8)
+      .font('Helvetica-Bold')
+      .fillColor(GRIS_MED)
+      .text('PERÍODO', W - 180, 28, { width: 148, align: 'center' });
+    doc
+      .fontSize(11)
+      .font('Helvetica-Bold')
+      .fillColor(AZUL_DARK)
+      .text(fecha, W - 180, 40, { width: 148, align: 'center' });
 
     // ── KPIs ──────────────────────────────────────────────────────────────
     const metY = 98;
     const metW = 148;
-    const gap  = 18;
-    const totalW = (metW * 4) + (gap * 3);
+    const gap = 18;
+    const totalW = metW * 4 + gap * 3;
     const startX = (W - totalW) / 2;
 
     [
-      { label: 'TOTAL GASTOS',     val: totales.totalGastos,         color: AZUL_DARK, bg: '#D6E9F5', fmt: 'money' },
-      { label: 'OPERATIVOS',      val: totales.totalOperativos ?? 0, color: GRIS_TXT,  bg: '#F0F4F8', fmt: 'money' },
-      { label: 'PERSONALES',      val: totales.totalPersonales ?? 0, color: NAR_DARK,  bg: '#FDE8D5', fmt: 'money' },
-      { label: 'CANTIDAD',        val: totales.cantidadGastos,       color: GRIS_TXT,  bg: '#F0F4F8', fmt: 'count' },
+      {
+        label: 'TOTAL GASTOS',
+        val: totales.totalGastos,
+        color: AZUL_DARK,
+        bg: '#D6E9F5',
+        fmt: 'money',
+      },
+      {
+        label: 'OPERATIVOS',
+        val: totales.totalOperativos ?? 0,
+        color: GRIS_TXT,
+        bg: '#F0F4F8',
+        fmt: 'money',
+      },
+      {
+        label: 'PERSONALES',
+        val: totales.totalPersonales ?? 0,
+        color: NAR_DARK,
+        bg: '#FDE8D5',
+        fmt: 'money',
+      },
+      {
+        label: 'CANTIDAD',
+        val: totales.cantidadGastos,
+        color: GRIS_TXT,
+        bg: '#F0F4F8',
+        fmt: 'count',
+      },
     ].forEach((m, i) => {
       const mx = startX + i * (metW + gap);
       doc.roundedRect(mx, metY, metW, 44, 6).fillAndStroke(m.bg, GRIS_CLR);
-      doc.fontSize(7.5).font('Helvetica-Bold').fillColor(GRIS_MED)
-         .text(m.label, mx, metY + 10, { width: metW, align: 'center' });
+      doc
+        .fontSize(7.5)
+        .font('Helvetica-Bold')
+        .fillColor(GRIS_MED)
+        .text(m.label, mx, metY + 10, { width: metW, align: 'center' });
       const displayVal = m.fmt === 'count' ? String(m.val) : fmtCOP(m.val);
-      doc.fontSize(13).font('Helvetica-Bold').fillColor(m.color)
-         .text(displayVal, mx, metY + 23, { width: metW, align: 'center' });
+      doc
+        .fontSize(13)
+        .font('Helvetica-Bold')
+        .fillColor(m.color)
+        .text(displayVal, mx, metY + 23, { width: metW, align: 'center' });
     });
 
     return metY + 58;
@@ -294,17 +377,17 @@ export async function generarPDFGastos(
 
   // ── Configuración de columnas tabla ───────────────────────────────────────
   const cols = [
-    { label: 'Fecha',        width: 53  },
-    { label: 'N° Gasto',     width: 53  },
-    { label: 'Cobrador',     width: 100 },
-    { label: 'Ruta',         width: 80  },
-    { label: 'Tipo',         width: 48  },
-    { label: 'Categoría',    width: 70  },
-    { label: 'Descripción',  width: 140 },
-    { label: 'Monto',        width: 68  },
-    { label: 'Estado',       width: 55  },
+    { label: 'Fecha', width: 53 },
+    { label: 'N° Gasto', width: 53 },
+    { label: 'Cobrador', width: 100 },
+    { label: 'Ruta', width: 80 },
+    { label: 'Tipo', width: 48 },
+    { label: 'Categoría', width: 70 },
+    { label: 'Descripción', width: 140 },
+    { label: 'Monto', width: 68 },
+    { label: 'Estado', width: 55 },
   ];
-  const tableLeft  = 28;
+  const tableLeft = 28;
   const tableWidth = cols.reduce((s, c) => s + c.width, 0);
 
   const drawTableHeader = (y: number): number => {
@@ -313,8 +396,11 @@ export async function generarPDFGastos(
 
     let x = tableLeft;
     doc.fontSize(8).font('Helvetica-Bold').fillColor(BLANCO);
-    cols.forEach(col => {
-      doc.text(col.label, x + 4, y + 7, { width: col.width - 8, align: 'center' });
+    cols.forEach((col) => {
+      doc.text(col.label, x + 4, y + 7, {
+        width: col.width - 8,
+        align: 'center',
+      });
       x += col.width;
     });
     return y + 30;
@@ -325,19 +411,23 @@ export async function generarPDFGastos(
     const W = doc.page.width;
     const H = doc.page.height;
     doc.fontSize(7).font('Helvetica').fillColor(GRIS_MED);
-    doc.text(`Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`, 0, H - 25, { align: 'right', width: W - 30 });
+    doc.text(
+      `Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`,
+      0,
+      H - 25,
+      { align: 'right', width: W - 30 },
+    );
   };
 
   // ── Primera página ────────────────────────────────────────────────────────
   drawWatermark();
   let y = drawPageHeader();
-  y     = drawTableHeader(y);
+  y = drawTableHeader(y);
 
   doc.font('Helvetica').fontSize(7.5);
 
   // ── Filas de datos ────────────────────────────────────────────────────────
   filas.forEach((fila, i) => {
-
     let maxRowHeight = 17;
     const rowVals = [
       fmtFecha(fila.fecha),
@@ -355,7 +445,10 @@ export async function generarPDFGastos(
     rowVals.forEach((val, ci) => {
       const isBold = ci === 2 || ci === 7;
       if (isBold) doc.font('Helvetica-Bold');
-      const h = doc.heightOfString(val, { width: cols[ci].width - 8, lineBreak: true });
+      const h = doc.heightOfString(val, {
+        width: cols[ci].width - 8,
+        lineBreak: true,
+      });
       if (h + 8 > maxRowHeight) maxRowHeight = h + 8;
       doc.font('Helvetica');
     });
@@ -373,22 +466,33 @@ export async function generarPDFGastos(
 
     // Fondo de fila alterno
     const par = i % 2 === 0;
-    doc.rect(tableLeft, y, tableWidth, maxRowHeight).fill(par ? BLANCO : AZUL_PALE);
+    doc
+      .rect(tableLeft, y, tableWidth, maxRowHeight)
+      .fill(par ? BLANCO : AZUL_PALE);
 
     // Línea separadora
-    doc.moveTo(tableLeft, y + maxRowHeight)
-       .lineTo(tableLeft + tableWidth, y + maxRowHeight)
-       .strokeColor(GRIS_CLR).lineWidth(0.4).stroke();
+    doc
+      .moveTo(tableLeft, y + maxRowHeight)
+      .lineTo(tableLeft + tableWidth, y + maxRowHeight)
+      .strokeColor(GRIS_CLR)
+      .lineWidth(0.4)
+      .stroke();
 
     let x = tableLeft;
     rowVals.forEach((val, ci) => {
       const isMoneyCol = ci === 7;
-      const align      = isMoneyCol ? 'right' : (ci === 4 || ci === 8 ? 'center' : 'left');
+      const align = isMoneyCol
+        ? 'right'
+        : ci === 4 || ci === 8
+          ? 'center'
+          : 'left';
 
       if (ci === 7) {
         doc.font('Helvetica-Bold').fillColor(NAR_DARK);
       } else if (ci === 4) {
-        doc.font('Helvetica-Bold').fillColor(fila.tipo === 'OPERATIVO' ? AZUL_DARK : NAR_DARK);
+        doc
+          .font('Helvetica-Bold')
+          .fillColor(fila.tipo === 'OPERATIVO' ? AZUL_DARK : NAR_DARK);
       } else if (ci === 2) {
         doc.font('Helvetica-Bold').fillColor(AZUL_DARK);
       } else if (ci === 8) {
@@ -397,7 +501,11 @@ export async function generarPDFGastos(
         doc.font('Helvetica').fillColor(GRIS_TXT);
       }
 
-      doc.text(val, x + 4, y + 4, { width: cols[ci].width - 8, align, lineBreak: true });
+      doc.text(val, x + 4, y + 4, {
+        width: cols[ci].width - 8,
+        align,
+        lineBreak: true,
+      });
       x += cols[ci].width;
     });
 
@@ -412,22 +520,31 @@ export async function generarPDFGastos(
   doc.fontSize(8.5).font('Helvetica-Bold').fillColor(BLANCO);
   doc.text(
     `TOTAL GENERAL  /  ${totales.cantidadGastos} gastos`,
-    tableLeft + 6, y + 8,
-    { width: cols.slice(0, 7).reduce((s, c) => s + c.width, 0) - 10 }
+    tableLeft + 6,
+    y + 8,
+    { width: cols.slice(0, 7).reduce((s, c) => s + c.width, 0) - 10 },
   );
 
-  let tx = tableLeft + cols.slice(0, 7).reduce((s, c) => s + c.width, 0);
+  const tx = tableLeft + cols.slice(0, 7).reduce((s, c) => s + c.width, 0);
   doc.fillColor(NAR_MED).font('Helvetica-Bold').fontSize(9);
-  doc.text(fmtCOP(totales.totalGastos), tx + 4, y + 7,
-    { width: cols[7].width - 8, align: 'right', lineBreak: false });
+  doc.text(fmtCOP(totales.totalGastos), tx + 4, y + 7, {
+    width: cols[7].width - 8,
+    align: 'right',
+    lineBreak: false,
+  });
 
   // ── Nota al pie ───────────────────────────────────────────────────────────
   y += 38;
-  doc.fontSize(7.5).font('Helvetica-Oblique').fillColor(GRIS_MED)
-     .text(
-       'Documento expedido por Créditos del Sur. Las cifras presentadas son definitivas y sujetas a revisión de auditoría.',
-       tableLeft, y, { align: 'center', width: tableWidth }
-     );
+  doc
+    .fontSize(7.5)
+    .font('Helvetica-Oblique')
+    .fillColor(GRIS_MED)
+    .text(
+      'Documento expedido por Créditos del Sur. Las cifras presentadas son definitivas y sujetas a revisión de auditoría.',
+      tableLeft,
+      y,
+      { align: 'center', width: tableWidth },
+    );
 
   drawFooter();
 
@@ -438,9 +555,9 @@ export async function generarPDFGastos(
   });
 
   return {
-    data:        buffer,
+    data: buffer,
     contentType: 'application/pdf',
-    filename:    `gastos_${fecha}.pdf`,
+    filename: `gastos_${fecha}.pdf`,
   };
 }
 

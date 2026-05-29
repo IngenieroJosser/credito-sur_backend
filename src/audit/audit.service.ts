@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { generarExcelAuditoria, generarPDFAuditoria, AuditoriaRow } from '../templates/exports/auditoria.template';
-import { PrismaService } from '../prisma/prisma.service'; 
+import {
+  generarExcelAuditoria,
+  generarPDFAuditoria,
+  AuditoriaRow,
+} from '../templates/exports/auditoria.template';
+import { PrismaService } from '../prisma/prisma.service';
 import { getBogotaDayKey } from '../utils/date-utils';
 
 @Injectable()
@@ -158,7 +162,9 @@ export class AuditService {
 
   async hideArchivedItem(data: { entidad: string; entidadId: string }) {
     return this.prisma.archivadoOculto.upsert({
-      where: { entidad_entidadId: { entidad: data.entidad, entidadId: data.entidadId } },
+      where: {
+        entidad_entidadId: { entidad: data.entidad, entidadId: data.entidadId },
+      },
       update: { ocultoEn: new Date() },
       create: { entidad: data.entidad, entidadId: data.entidadId },
     });

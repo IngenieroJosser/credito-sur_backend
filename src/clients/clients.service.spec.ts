@@ -210,7 +210,9 @@ describe('ClientsService', () => {
     it('forces client list queries from collectors to clients assigned to their routes', async () => {
       (prismaService.cliente.findMany as jest.Mock).mockResolvedValue([]);
       (prismaService.cliente.count as jest.Mock).mockResolvedValue(0);
-      (prismaService.cliente.aggregate as jest.Mock).mockResolvedValue({ _avg: { puntaje: 0 } });
+      (prismaService.cliente.aggregate as jest.Mock).mockResolvedValue({
+        _avg: { puntaje: 0 },
+      });
 
       await service.getAllClients(
         { nivelRiesgo: 'all', ruta: '', search: '' },
@@ -245,10 +247,10 @@ describe('ClientsService', () => {
       (prismaService.cliente.findFirst as jest.Mock).mockResolvedValue(null);
 
       await expect(
-        service.getClientById(
-          'cliente-ajeno',
-          { id: 'cobrador-propio', rol: RolUsuario.COBRADOR } as any,
-        ),
+        service.getClientById('cliente-ajeno', {
+          id: 'cobrador-propio',
+          rol: RolUsuario.COBRADOR,
+        } as any),
       ).rejects.toThrow('Cliente no encontrado');
 
       expect(prismaService.cliente.findFirst).toHaveBeenCalledWith(
@@ -269,8 +271,12 @@ describe('ClientsService', () => {
 
   describe('assignToRoute', () => {
     it('usa el cobrador real de la ruta aunque el body traiga otro cobradorId', async () => {
-      (prismaService.asignacionRuta.findFirst as jest.Mock).mockResolvedValue(null);
-      (prismaService.asignacionRuta.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+      (prismaService.asignacionRuta.findFirst as jest.Mock).mockResolvedValue(
+        null,
+      );
+      (prismaService.asignacionRuta.updateMany as jest.Mock).mockResolvedValue({
+        count: 1,
+      });
       (prismaService.asignacionRuta.aggregate as jest.Mock).mockResolvedValue({
         _max: { ordenVisita: 0 },
       });
@@ -283,11 +289,7 @@ describe('ClientsService', () => {
         cobradorId: 'cobrador-ruta',
       });
 
-      await service.assignToRoute(
-        'cliente-1',
-        'ruta-1',
-        'cobrador-equivocado',
-      );
+      await service.assignToRoute('cliente-1', 'ruta-1', 'cobrador-equivocado');
 
       expect(mockPrismaService.asignacionRuta.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
@@ -303,11 +305,17 @@ describe('ClientsService', () => {
         id: 'ruta-destino',
         cobradorId: 'cobrador-destino',
       });
-      (mockPrismaService.asignacionRuta.findFirst as jest.Mock).mockResolvedValue(null);
-      (mockPrismaService.asignacionRuta.updateMany as jest.Mock).mockResolvedValue({
+      (
+        mockPrismaService.asignacionRuta.findFirst as jest.Mock
+      ).mockResolvedValue(null);
+      (
+        mockPrismaService.asignacionRuta.updateMany as jest.Mock
+      ).mockResolvedValue({
         count: 2,
       });
-      (mockPrismaService.asignacionRuta.aggregate as jest.Mock).mockResolvedValue({
+      (
+        mockPrismaService.asignacionRuta.aggregate as jest.Mock
+      ).mockResolvedValue({
         _max: { ordenVisita: 4 },
       });
       (mockPrismaService.asignacionRuta.create as jest.Mock).mockResolvedValue({

@@ -28,7 +28,9 @@ export class ClientsService {
     return String(actor?.rol || '').toUpperCase() === RolUsuario.COBRADOR;
   }
 
-  private collectorClientScope(actor?: { id?: string; rol?: RolUsuario | string } | null): Prisma.ClienteWhereInput {
+  private collectorClientScope(
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
+  ): Prisma.ClienteWhereInput {
     if (!this.isCollector(actor) || !actor?.id) return {};
     return {
       asignacionesRuta: {
@@ -102,7 +104,9 @@ export class ClientsService {
       accion: 'CREAR',
       clienteId: cliente.id,
     });
-    this.notificacionesGateway.broadcastDashboardsActualizados({ accion: 'CREAR_CLIENTE' });
+    this.notificacionesGateway.broadcastDashboardsActualizados({
+      accion: 'CREAR_CLIENTE',
+    });
 
     return cliente;
   }
@@ -143,27 +147,31 @@ export class ClientsService {
 
     // Si vienen archivos, procesar actualización (incluso si el array está vacío, significa que se eliminaron todos)
     if (archivos !== undefined) {
-      this.logger.log(`[DEBUG] Actualizando archivos para cliente ${id}. Archivos recibidos: ${archivos.length}`);
+      this.logger.log(
+        `[DEBUG] Actualizando archivos para cliente ${id}. Archivos recibidos: ${archivos.length}`,
+      );
 
       // ESTRATEGIA SIMPLE: Marcar TODOS los archivos existentes como ELIMINADOS
       const archivosExistentes = await this.prisma.multimedia.findMany({
-        where: { 
+        where: {
           clienteId: id,
-          estado: 'ACTIVO'
+          estado: 'ACTIVO',
         },
         select: { id: true, tipoContenido: true },
       });
 
       if (archivosExistentes.length > 0) {
-        this.logger.log(`[DEBUG] Marcando ${archivosExistentes.length} archivos antiguos como ELIMINADOS`);
+        this.logger.log(
+          `[DEBUG] Marcando ${archivosExistentes.length} archivos antiguos como ELIMINADOS`,
+        );
         await this.prisma.multimedia.updateMany({
           where: {
-            id: { in: archivosExistentes.map(a => a.id) }
+            id: { in: archivosExistentes.map((a) => a.id) },
           },
           data: {
             estado: 'ELIMINADO' as const,
-            eliminadoEn: new Date()
-          }
+            eliminadoEn: new Date(),
+          },
         });
       }
 
@@ -171,24 +179,32 @@ export class ClientsService {
       const nuevosArchivos = archivos.map((archivo: any) => {
         // Asegurar que la URL sea correcta
         const url = archivo.url || archivo.path || archivo.ruta;
-        const urlFinal = typeof url === 'string' && url.startsWith('http') ? url : undefined;
+        const urlFinal =
+          typeof url === 'string' && url.startsWith('http') ? url : undefined;
 
         const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
-        const rutaValue = String(archivo.ruta || archivo.path || archivo.nombreAlmacenamiento || '').trim();
-        const tipoArchivoValue = String(archivo.tipoArchivo || '').toLowerCase();
+        const rutaValue = String(
+          archivo.ruta || archivo.path || archivo.nombreAlmacenamiento || '',
+        ).trim();
+        const tipoArchivoValue = String(
+          archivo.tipoArchivo || '',
+        ).toLowerCase();
         const isVideo = tipoArchivoValue.startsWith('video/');
 
-        const urlDerivada = (!urlFinal && cloudName && rutaValue)
-          ? `https://res.cloudinary.com/${cloudName}/${isVideo ? 'video' : 'image'}/upload/${rutaValue}`
-          : undefined;
-        
+        const urlDerivada =
+          !urlFinal && cloudName && rutaValue
+            ? `https://res.cloudinary.com/${cloudName}/${isVideo ? 'video' : 'image'}/upload/${rutaValue}`
+            : undefined;
+
         return {
           clienteId: id,
           tipoContenido: archivo.tipoContenido,
           tipoArchivo: archivo.tipoArchivo,
-          formato: archivo.formato || archivo.tipoArchivo?.split('/')[1] || 'jpg',
+          formato:
+            archivo.formato || archivo.tipoArchivo?.split('/')[1] || 'jpg',
           nombreOriginal: archivo.nombreOriginal,
-          nombreAlmacenamiento: archivo.nombreAlmacenamiento || archivo.nombreOriginal,
+          nombreAlmacenamiento:
+            archivo.nombreAlmacenamiento || archivo.nombreOriginal,
           ruta: archivo.ruta || archivo.path,
           url: urlFinal || urlDerivada,
           tamanoBytes: archivo.tamanoBytes || 0,
@@ -202,10 +218,14 @@ export class ClientsService {
       });
 
       this.logger.log(`[DEBUG] Archivos actualizados para cliente ${id}:`);
-      this.logger.log(`  - Eliminados: ${archivosExistentes.length} archivos antiguos`);
+      this.logger.log(
+        `  - Eliminados: ${archivosExistentes.length} archivos antiguos`,
+      );
       this.logger.log(`  - Creados: ${nuevosArchivos.length} archivos nuevos`);
       nuevosArchivos.forEach((a, i) => {
-        this.logger.log(`    [${i}] ${a.tipoContenido} - ${a.tipoArchivo} - ${a.url}`);
+        this.logger.log(
+          `    [${i}] ${a.tipoContenido} - ${a.tipoArchivo} - ${a.url}`,
+        );
       });
     }
 
@@ -249,7 +269,7 @@ export class ClientsService {
       datosAnteriores: {
         nombres: cliente.nombres,
         apellidos: cliente.apellidos,
-        dni: cliente.dni
+        dni: cliente.dni,
       },
       datosNuevos: { eliminadoEn: clienteEliminado.eliminadoEn },
     });
@@ -284,11 +304,14 @@ export class ClientsService {
     return clienteRestaurado;
   }
 
-  async getAllClients(filters: {
-    nivelRiesgo?: string;
-    ruta?: string;
-    search?: string;
-  }, actor?: { id?: string; rol?: RolUsuario | string } | null) {
+  async getAllClients(
+    filters: {
+      nivelRiesgo?: string;
+      ruta?: string;
+      search?: string;
+    },
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
+  ) {
     try {
       this.logger.log(
         `Getting clients with filters: ${JSON.stringify(filters)}`,
@@ -316,7 +339,7 @@ export class ClientsService {
       if (ruta && ruta !== '') {
         where.asignacionesRuta = {
           some: {
-            ...((where.asignacionesRuta?.some) || {}),
+            ...(where.asignacionesRuta?.some || {}),
             rutaId: ruta,
             activa: true,
           },
@@ -630,7 +653,10 @@ export class ClientsService {
     }
   }
 
-  async getClientById(id: string, actor?: { id?: string; rol?: RolUsuario | string } | null) {
+  async getClientById(
+    id: string,
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
+  ) {
     this.logger.log(`[DEBUG] getClientById called with ID: ${id}`);
     try {
       const cliente = await this.prisma.cliente.findFirst({
@@ -706,9 +732,13 @@ export class ClientsService {
 
       // Log de archivos devueltos
       if (cliente && cliente.archivos) {
-        this.logger.log(`[DEBUG] Cliente ${id} - Archivos ACTIVOS devueltos: ${cliente.archivos.length}`);
+        this.logger.log(
+          `[DEBUG] Cliente ${id} - Archivos ACTIVOS devueltos: ${cliente.archivos.length}`,
+        );
         cliente.archivos.forEach((a: any, i: number) => {
-          this.logger.log(`  [${i}] ${a.tipoContenido} - ${a.tipoArchivo} - Estado: ${a.estado} - URL: ${a.url}`);
+          this.logger.log(
+            `  [${i}] ${a.tipoContenido} - ${a.tipoArchivo} - Estado: ${a.estado} - URL: ${a.url}`,
+          );
         });
       }
 
@@ -760,7 +790,8 @@ export class ClientsService {
   async createClient(data: CreateClientDto) {
     this.logger.log(`[DEBUG] createClient llamado para documento: ${data.dni}`);
     try {
-      const idempotencyKey = data.idempotencyKey?.toString().trim() || undefined;
+      const idempotencyKey =
+        data.idempotencyKey?.toString().trim() || undefined;
 
       if (idempotencyKey) {
         const clientePorClave = await this.prisma.cliente.findFirst({
@@ -819,7 +850,8 @@ export class ClientsService {
             throw new NotFoundException('Usuario solicitante no encontrado');
           }
 
-          const autoAprobar = await this.configuracionService.shouldAutoApproveClients();
+          const autoAprobar =
+            await this.configuracionService.shouldAutoApproveClients();
           const estadoInicial = autoAprobar ? 'APROBADO' : 'PENDIENTE';
 
           const clienteRestaurado = await this.prisma.cliente.update({
@@ -904,7 +936,9 @@ export class ClientsService {
                 archivos: data.archivos || [],
                 idempotencyKey: idempotencyKey || null,
               }),
-              ...(autoAprobar ? { aprobadoPorId: solicitadoPorId, revisadoEn: new Date() } : {}),
+              ...(autoAprobar
+                ? { aprobadoPorId: solicitadoPorId, revisadoEn: new Date() }
+                : {}),
             },
           });
 
@@ -934,7 +968,8 @@ export class ClientsService {
               await this.notificacionesService.create({
                 usuarioId: solicitadoPorId as string,
                 titulo: 'Solicitud reenviada',
-                mensaje: 'Tu solicitud fue reenviada con  e9xito y qued f3 pendiente de aprobaci f3n.',
+                mensaje:
+                  'Tu solicitud fue reenviada con  e9xito y qued f3 pendiente de aprobaci f3n.',
                 tipo: 'INFORMATIVO',
                 entidad: 'Aprobacion',
                 entidadId: aprobacion.id,
@@ -996,7 +1031,8 @@ export class ClientsService {
       const codigo = `CLI-${Date.now().toString().slice(-6)}`;
 
       // Flujo de aprobación
-      const autoAprobar = await this.configuracionService.shouldAutoApproveClients();
+      const autoAprobar =
+        await this.configuracionService.shouldAutoApproveClients();
       const estadoInicial = autoAprobar ? 'APROBADO' : 'PENDIENTE';
 
       // 1. Crear el cliente en la base de datos
@@ -1078,7 +1114,9 @@ export class ClientsService {
             archivos: data.archivos || [],
             idempotencyKey: idempotencyKey || null,
           }),
-          ...(autoAprobar ? { aprobadoPorId: solicitadoPorId, revisadoEn: new Date() } : {})
+          ...(autoAprobar
+            ? { aprobadoPorId: solicitadoPorId, revisadoEn: new Date() }
+            : {}),
         },
       });
 
@@ -1090,7 +1128,9 @@ export class ClientsService {
             select: { nombres: true, apellidos: true },
           });
           if (solicitante) {
-            nombreSolicitante = `${solicitante.nombres} ${solicitante.apellidos}`.trim() || nombreSolicitante;
+            nombreSolicitante =
+              `${solicitante.nombres} ${solicitante.apellidos}`.trim() ||
+              nombreSolicitante;
           }
         } catch {
           // silencioso
@@ -1112,14 +1152,14 @@ export class ClientsService {
               apellidos: data.apellidos,
             },
           });
-        } catch {
-        }
+        } catch {}
 
         try {
           await this.notificacionesService.create({
             usuarioId: solicitadoPorId as string,
             titulo: 'Solicitud enviada',
-            mensaje: 'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
+            mensaje:
+              'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
             tipo: 'INFORMATIVO',
             entidad: 'Aprobacion',
             entidadId: aprobacion.id,
@@ -1128,20 +1168,24 @@ export class ClientsService {
               clienteId: cliente.id,
             },
           });
-        } catch {
-        }
+        } catch {}
       }
-
 
       this.notificacionesGateway.broadcastClientesActualizados({
         accion: 'CREAR',
         clienteId: cliente.id,
       });
-      this.notificacionesGateway.broadcastDashboardsActualizados({ accion: 'CREAR_CLIENTE' });
+      this.notificacionesGateway.broadcastDashboardsActualizados({
+        accion: 'CREAR_CLIENTE',
+      });
 
-      this.logger.log(`[DEBUG] Cliente creado con estado ${estadoInicial} (ID: ${cliente.id}) y aprobación creada (ID: ${aprobacion.id}).`);
+      this.logger.log(
+        `[DEBUG] Cliente creado con estado ${estadoInicial} (ID: ${cliente.id}) y aprobación creada (ID: ${aprobacion.id}).`,
+      );
       return {
-        mensaje: autoAprobar ? 'Cliente creado y aprobado automáticamente.' : 'Cliente creado exitosamente. Pendiente de aprobación.',
+        mensaje: autoAprobar
+          ? 'Cliente creado y aprobado automáticamente.'
+          : 'Cliente creado exitosamente. Pendiente de aprobación.',
         aprobacionId: aprobacion.id,
         clienteId: cliente.id,
         clienteCodigo: codigo,
@@ -1157,12 +1201,18 @@ export class ClientsService {
         if (error.code === 'P2002') {
           const target = (error.meta?.target as string[]) || [];
           if (target.includes('dni')) {
-            throw new ConflictException(`Ya existe un cliente registrado con el documento: ${data.dni}.`);
+            throw new ConflictException(
+              `Ya existe un cliente registrado con el documento: ${data.dni}.`,
+            );
           }
           if (target.includes('codigo')) {
-             throw new ConflictException(`Ya existe un cliente con el código generado automáticamente. Por favor reintente registrarlo.`);
+            throw new ConflictException(
+              `Ya existe un cliente con el código generado automáticamente. Por favor reintente registrarlo.`,
+            );
           }
-          throw new ConflictException('Ya existe un cliente con esos datos (DNI o Código duplicado).');
+          throw new ConflictException(
+            'Ya existe un cliente con esos datos (DNI o Código duplicado).',
+          );
         }
 
         // FK constraint (e.g. creadoPorId/aprobadoPorId/subidoPorId)
@@ -1319,11 +1369,11 @@ export class ClientsService {
         datosAnteriores: {
           nombres: clienteRechazado.nombres,
           apellidos: clienteRechazado.apellidos,
-          dni: clienteRechazado.dni
+          dni: clienteRechazado.dni,
         },
-        datosNuevos: { 
+        datosNuevos: {
           estadoAprobacion: 'RECHAZADO',
-          razon
+          razon,
         },
       });
 
@@ -1390,7 +1440,10 @@ export class ClientsService {
         throw new NotFoundException('Cliente no encontrado');
       }
 
-      if (data.version != null && Number(data.version) !== Number((cliente as any).version || 1)) {
+      if (
+        data.version != null &&
+        Number(data.version) !== Number(cliente.version || 1)
+      ) {
         throw new ConflictException(
           'El cliente fue actualizado por otro usuario. Recarga la información antes de guardar.',
         );
@@ -1406,13 +1459,17 @@ export class ClientsService {
           ...clientData,
           version: { increment: 1 },
           ultimaActualizacionRiesgo:
-            clientData.nivelRiesgo || clientData.puntaje ? new Date() : undefined,
+            clientData.nivelRiesgo || clientData.puntaje
+              ? new Date()
+              : undefined,
         },
       });
 
       // Procesar archivos si se enviaron
       if (archivos && Array.isArray(archivos)) {
-        this.logger.log(`[UPDATE] Procesando ${archivos.length} archivos para cliente ${id}`);
+        this.logger.log(
+          `[UPDATE] Procesando ${archivos.length} archivos para cliente ${id}`,
+        );
 
         // 1. Marcar TODOS los archivos ACTIVOS como ELIMINADOS
         const eliminados = await this.prisma.multimedia.updateMany({
@@ -1425,7 +1482,9 @@ export class ClientsService {
             eliminadoEn: new Date(),
           },
         });
-        this.logger.log(`[UPDATE] ${eliminados.count} archivos antiguos marcados como ELIMINADOS`);
+        this.logger.log(
+          `[UPDATE] ${eliminados.count} archivos antiguos marcados como ELIMINADOS`,
+        );
 
         // 2. Crear los archivos nuevos
         if (archivos.length > 0) {
@@ -1434,9 +1493,14 @@ export class ClientsService {
               clienteId: id,
               tipoContenido: archivo.tipoContenido,
               tipoArchivo: archivo.tipoArchivo || 'image/jpeg',
-              formato: archivo.formato || archivo.tipoArchivo?.split('/')[1] || archivo.nombreOriginal?.split('.').pop() || 'jpg',
+              formato:
+                archivo.formato ||
+                archivo.tipoArchivo?.split('/')[1] ||
+                archivo.nombreOriginal?.split('.').pop() ||
+                'jpg',
               nombreOriginal: archivo.nombreOriginal,
-              nombreAlmacenamiento: archivo.nombreAlmacenamiento || archivo.nombreOriginal,
+              nombreAlmacenamiento:
+                archivo.nombreAlmacenamiento || archivo.nombreOriginal,
               ruta: archivo.ruta || archivo.path || '',
               url: archivo.url || archivo.ruta || archivo.path || '',
               tamanoBytes: archivo.tamanoBytes || 0,
@@ -1444,7 +1508,9 @@ export class ClientsService {
               estado: 'ACTIVO' as const,
             })),
           });
-          this.logger.log(`[UPDATE] ${archivos.length} archivos nuevos creados`);
+          this.logger.log(
+            `[UPDATE] ${archivos.length} archivos nuevos creados`,
+          );
         }
       }
 
@@ -1497,11 +1563,11 @@ export class ClientsService {
         datosAnteriores: {
           nombres: cliente.nombres,
           apellidos: cliente.apellidos,
-          dni: cliente.dni
+          dni: cliente.dni,
         },
         datosNuevos: {
           enListaNegra: true,
-          razon
+          razon,
         },
       });
 
@@ -1678,8 +1744,13 @@ export class ClientsService {
     });
 
     const filas = clientes.map((c) => {
-      const prestamosActivos = c.prestamos.filter((p) => p.estado === 'ACTIVO').length;
-      const montoTotal = c.prestamos.reduce((s, p) => s + Number(p.saldoPendiente ?? 0), 0);
+      const prestamosActivos = c.prestamos.filter(
+        (p) => p.estado === 'ACTIVO',
+      ).length;
+      const montoTotal = c.prestamos.reduce(
+        (s, p) => s + Number(p.saldoPendiente ?? 0),
+        0,
+      );
       const montoMora = c.prestamos
         .filter((p) => p.estado === 'EN_MORA')
         .reduce((s, p) => s + Number(p.saldoPendiente ?? 0), 0);

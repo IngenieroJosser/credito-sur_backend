@@ -82,7 +82,9 @@ export class OutboxService {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.logger.error(`[OUTBOX] Error procesando ${event.eventType} (${event.id}): ${message}`);
+      this.logger.error(
+        `[OUTBOX] Error procesando ${event.eventType} (${event.id}): ${message}`,
+      );
 
       await this.prisma.outboxEvent.update({
         where: { id: event.id },
@@ -109,10 +111,18 @@ export class OutboxService {
 
     if (model === 'Aprobacion') {
       if (action === 'create' || action === 'createMany') {
-        await this.eventEmitter.emitAsync('aprobacion.created', { data: payload?.data });
+        await this.eventEmitter.emitAsync('aprobacion.created', {
+          data: payload?.data,
+        });
       }
-      if (['update', 'updateMany', 'upsert', 'delete', 'deleteMany'].includes(String(action))) {
-        await this.eventEmitter.emitAsync('aprobacion.updated', { data: payload?.data });
+      if (
+        ['update', 'updateMany', 'upsert', 'delete', 'deleteMany'].includes(
+          String(action),
+        )
+      ) {
+        await this.eventEmitter.emitAsync('aprobacion.updated', {
+          data: payload?.data,
+        });
       }
     }
   }

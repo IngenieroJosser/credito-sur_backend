@@ -1,4 +1,9 @@
-import { Injectable, UnauthorizedException, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  UnauthorizedException,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { UsersService } from '../users/users.service';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
@@ -6,7 +11,10 @@ import { LoginAuthDto } from './dto/login-auth.dto';
 import { CreateAuthDto } from './dto/create-auth.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import * as nodemailer from 'nodemailer';
-import { ForgotPasswordDto, VerifyResetCodeDto } from './dto/forgot-password.dto';
+import {
+  ForgotPasswordDto,
+  VerifyResetCodeDto,
+} from './dto/forgot-password.dto';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -38,10 +46,11 @@ export class AuthService {
     const rutaDefault = rolDinamico?.rutaDefault || '/admin';
 
     // Permisos personalizados del usuario (si existen, tienen precedencia)
-    const permisosPersonalizados = await this.prisma.asignacionPermisoUsuario.findMany({
-      where: { usuarioId: usuario.id },
-      include: { permiso: true },
-    });
+    const permisosPersonalizados =
+      await this.prisma.asignacionPermisoUsuario.findMany({
+        where: { usuarioId: usuario.id },
+        include: { permiso: true },
+      });
 
     // Obtener permisos completos con metadata de sidebar
     const rolPermisos = await this.prisma.rolPermiso.findMany({
@@ -67,10 +76,7 @@ export class AuthService {
       (p, i, arr) => arr.findIndex((x) => x.id === p.id) === i,
     );
 
-    const modulosMap = new Map<
-      string,
-      { nombre: string; permisos: any[] }
-    >();
+    const modulosMap = new Map<string, { nombre: string; permisos: any[] }>();
     for (const p of permisosUnicos) {
       if (!p.esNavegable) continue;
       const grupo = modulosMap.get(p.modulo) || {
@@ -81,20 +87,18 @@ export class AuthService {
       modulosMap.set(p.modulo, grupo);
     }
 
-    const sidebar = Array.from(modulosMap.entries()).map(
-      ([modulo, grupo]) => ({
-        modulo,
-        items: grupo.permisos
-          .sort((a, b) => a.orden - b.orden)
-          .map((p) => ({
-            id: p.accion,
-            nombre: p.nombre,
-            icono: p.icono,
-            ruta: p.ruta,
-            orden: p.orden,
-          })),
-      }),
-    );
+    const sidebar = Array.from(modulosMap.entries()).map(([modulo, grupo]) => ({
+      modulo,
+      items: grupo.permisos
+        .sort((a, b) => a.orden - b.orden)
+        .map((p) => ({
+          id: p.accion,
+          nombre: p.nombre,
+          icono: p.icono,
+          ruta: p.ruta,
+          orden: p.orden,
+        })),
+    }));
 
     const payload = {
       sub: usuario.id,
@@ -163,7 +167,7 @@ export class AuthService {
       data: { ultimoIngreso: new Date() },
     });
 
-    return this.buildSessionForUser(usuario as any);
+    return this.buildSessionForUser(usuario);
   }
 
   async refreshSession(userId: string) {
@@ -182,7 +186,7 @@ export class AuthService {
       throw new NotFoundException('Usuario no encontrado');
     }
 
-    return this.buildSessionForUser(usuario as any);
+    return this.buildSessionForUser(usuario);
   }
 
   async registrarUsuario(dto: CreateAuthDto) {
@@ -223,12 +227,18 @@ export class AuthService {
 
     // Por seguridad, no revelamos si el correo existe o no
     if (!usuario || usuario.estado !== 'ACTIVO') {
-      return { mensaje: 'Si el correo existe y la cuenta está activa, recibirás un código en breve.' };
+      return {
+        mensaje:
+          'Si el correo existe y la cuenta está activa, recibirás un código en breve.',
+      };
     }
 
     // Solo superadmin puede usar este flujo (otros roles lo gestionan a traves del admin)
     if (usuario.rol !== 'SUPER_ADMINISTRADOR') {
-      return { mensaje: 'Si el correo existe y la cuenta está activa, recibirás un código en breve.' };
+      return {
+        mensaje:
+          'Si el correo existe y la cuenta está activa, recibirás un código en breve.',
+      };
     }
 
     // Generar código OTP de 6 dígitos
@@ -246,9 +256,16 @@ export class AuthService {
     });
 
     // Enviar el correo con el código
-    await this.enviarCorreoRecuperacion(usuario.correo, usuario.nombres, codigo);
+    await this.enviarCorreoRecuperacion(
+      usuario.correo,
+      usuario.nombres,
+      codigo,
+    );
 
-    return { mensaje: 'Si el correo existe y la cuenta está activa, recibirás un código en breve.' };
+    return {
+      mensaje:
+        'Si el correo existe y la cuenta está activa, recibirás un código en breve.',
+    };
   }
 
   async verificarCodigoRecuperacion(dto: VerifyResetCodeDto) {
@@ -261,13 +278,15 @@ export class AuthService {
     }
 
     // Verificar expiración
-    const expires = (usuario as any).resetPasswordExpires;
+    const expires = usuario.resetPasswordExpires;
     if (!expires || new Date() > new Date(expires)) {
-      throw new BadRequestException('El código ha expirado. Solicita uno nuevo.');
+      throw new BadRequestException(
+        'El código ha expirado. Solicita uno nuevo.',
+      );
     }
 
     // Verificar el código
-    const token = (usuario as any).resetPasswordToken;
+    const token = usuario.resetPasswordToken;
     if (!token) {
       throw new BadRequestException('Código inválido o expirado');
     }
@@ -294,10 +313,17 @@ export class AuthService {
       } as any,
     });
 
-    return { mensaje: 'Contraseña actualizada correctamente. Ya puedes iniciar sesión.' };
+    return {
+      mensaje:
+        'Contraseña actualizada correctamente. Ya puedes iniciar sesión.',
+    };
   }
 
-  private async enviarCorreoRecuperacion(correo: string, nombre: string, codigo: string) {
+  private async enviarCorreoRecuperacion(
+    correo: string,
+    nombre: string,
+    codigo: string,
+  ) {
     const smtpHost = process.env.SMTP_HOST;
     const smtpPort = parseInt(process.env.SMTP_PORT || '587');
     const smtpUser = process.env.SMTP_USER;
@@ -307,7 +333,9 @@ export class AuthService {
 
     if (!smtpHost || !smtpUser || !smtpPass) {
       // En desarrollo o sin SMTP configurado, solo loguear el código
-      console.warn(`[RECOVERY] Codigo de recuperacion para ${correo}: ${codigo} (SMTP no configurado)`);
+      console.warn(
+        `[RECOVERY] Codigo de recuperacion para ${correo}: ${codigo} (SMTP no configurado)`,
+      );
       return;
     }
 

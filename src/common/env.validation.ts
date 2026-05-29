@@ -31,7 +31,8 @@ const ENV_VARS: EnvVar[] = [
     key: 'DATABASE_URL',
     required: true,
     description: 'URL de conexión a la base de datos PostgreSQL',
-    validator: (v) => v.startsWith('postgresql://') || v.startsWith('postgres://'),
+    validator: (v) =>
+      v.startsWith('postgresql://') || v.startsWith('postgres://'),
     validatorMessage: 'Debe comenzar con postgresql:// o postgres://',
   },
   {
@@ -46,7 +47,8 @@ const ENV_VARS: EnvVar[] = [
   {
     key: 'SMTP_HOST',
     required: false,
-    description: 'Host del servidor SMTP (requerido para recuperación de contraseña)',
+    description:
+      'Host del servidor SMTP (requerido para recuperación de contraseña)',
   },
   {
     key: 'SMTP_USER',
@@ -89,13 +91,13 @@ export function validateEnv(): void {
 
     if (!redisHost || redisHost.trim() === '') {
       errors.push(
-        '❌ FALTA VARIABLE CRÍTICA: REDIS_HOST\n   → Host de Redis requerido en producción (BullMQ/colas)'
+        '❌ FALTA VARIABLE CRÍTICA: REDIS_HOST\n   → Host de Redis requerido en producción (BullMQ/colas)',
       );
     }
 
     if (!redisPassword || redisPassword.trim() === '') {
       errors.push(
-        '❌ FALTA VARIABLE CRÍTICA: REDIS_PASSWORD\n   → Password/Token de Redis requerido en producción (BullMQ/colas)'
+        '❌ FALTA VARIABLE CRÍTICA: REDIS_PASSWORD\n   → Password/Token de Redis requerido en producción (BullMQ/colas)',
       );
     }
   }
@@ -143,7 +145,9 @@ export function validateEnv(): void {
     logger.error('─────────────────────────────────────────────');
     errors.forEach((e) => logger.error(e));
     logger.error('═════════════════════════════════════════════');
-    logger.error('Agrega las variables faltantes en Render → Environment y reinicia el servicio.');
+    logger.error(
+      'Agrega las variables faltantes en Render → Environment y reinicia el servicio.',
+    );
     process.exit(1);
   }
 

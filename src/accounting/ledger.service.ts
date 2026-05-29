@@ -20,9 +20,9 @@ export type ReferenceTypeContable =
 
 export interface JournalLineDto {
   accountCode: string;
-  debitAmount?:  number;
+  debitAmount?: number;
   creditAmount?: number;
-  cajaId?:       string;
+  cajaId?: string;
   /**
    * Delta EXPLÍCITO sobre `Caja.saldoActual`.
    * - Positivo  → la caja recibe dinero  (ej. cobro de pago)
@@ -36,75 +36,75 @@ export interface JournalLineDto {
 
 export interface RegistrarAsientoDto {
   referenceType: ReferenceTypeContable;
-  referenceId:   string;
-  description?:  string;
-  isOpening?:    boolean;
-  createdBy:     string;
-  lines:         JournalLineDto[];
+  referenceId: string;
+  description?: string;
+  isOpening?: boolean;
+  createdBy: string;
+  lines: JournalLineDto[];
 }
 
 // ─── Parámetros de métodos de alto nivel ────────────────────────────────────
 
 export interface RegistrarPagoParams {
-  pagoId:      string;
-  cajaRutaId:  string;
+  pagoId: string;
+  cajaRutaId: string;
   montoCapital: number;
   montoInteres: number;
-  montoMora:    number;
-  metodoPago:   string; // 'EFECTIVO' | 'TRANSFERENCIA'
-  createdBy:   string;
+  montoMora: number;
+  metodoPago: string; // 'EFECTIVO' | 'TRANSFERENCIA'
+  createdBy: string;
 }
 
 export interface RegistrarDesembolsoParams {
-  prestamoId:   string;
-  monto:        number;
+  prestamoId: string;
+  monto: number;
   cajaOrigenId: string;
   accountCodeOrigen: string; // '1.1.1' | '1.1.2' | '1.2.1'
-  createdBy:    string;
+  createdBy: string;
 }
 
 export interface RegistrarGastoParams {
-  gastoId:     string;
-  monto:       number;
-  cajaId:      string;
+  gastoId: string;
+  monto: number;
+  cajaId: string;
   cuentaGasto: string; // ej. '4.1' Gastos de Ruta, '4.2' Gastos Administrativos
-  createdBy:   string;
+  createdBy: string;
 }
 
 export interface RegistrarConsolidacionParams {
-  referenceId:  string;
-  monto:        number;
+  referenceId: string;
+  monto: number;
   cajaOrigenId: string; // caja de ruta que entrega
   cajaDestinoId: string; // caja principal que recibe
   accountCodeDestino?: string; // '1.1.1' | '1.1.2' (opcional, default 1.1.1)
-  createdBy:    string;
+  createdBy: string;
 }
 
 export interface RegistrarArqueoDescuadreParams {
-  arqueoId:  string;
+  arqueoId: string;
   diferencia: number; // positivo = sobrante, negativo = faltante
-  cajaId:    string;
+  cajaId: string;
   createdBy: string;
 }
 
 export interface RegistrarAbonoDeudaParams {
-  cobradorId:  string;
-  monto:       number;
-  cajaId:      string;
+  cobradorId: string;
+  monto: number;
+  cajaId: string;
   accountCode: string; // 1.1.1 para Principal, 1.2.1 para Ruta
-  createdBy:   string;
+  createdBy: string;
 }
 
 export interface RegistrarBajaCarteraParams {
-  prestamoId:   string;
-  monto:        number; // Saldo capital pendiente a castigar
-  createdBy:    string;
+  prestamoId: string;
+  monto: number; // Saldo capital pendiente a castigar
+  createdBy: string;
 }
 
 export interface RegistrarAjusteCarteraParams {
-  prestamoId:   string;
+  prestamoId: string;
   montoDiferencia: number; // Positivo = aumenta cartera, Negativo = disminuye
-  createdBy:    string;
+  createdBy: string;
 }
 
 export interface RegistrarVentaArticuloParams {
@@ -150,18 +150,27 @@ export class LedgerService {
     dto: RegistrarAsientoDto,
     externalTx?: Prisma.TransactionClient,
   ) {
-    const { referenceType, referenceId, description, isOpening, createdBy, lines } = dto;
+    const {
+      referenceType,
+      referenceId,
+      description,
+      isOpening,
+      createdBy,
+      lines,
+    } = dto;
 
     // 1. Validaciones (antes de abrir transacción → falla rápida)
     if (!lines || lines.length < 2) {
-      throw new BadRequestException('Un asiento contable debe tener al menos dos líneas.');
+      throw new BadRequestException(
+        'Un asiento contable debe tener al menos dos líneas.',
+      );
     }
 
-    let totalDebitos  = new Prisma.Decimal(0);
+    let totalDebitos = new Prisma.Decimal(0);
     let totalCreditos = new Prisma.Decimal(0);
 
     for (const line of lines) {
-      const debit  = new Prisma.Decimal(line.debitAmount  ?? 0);
+      const debit = new Prisma.Decimal(line.debitAmount ?? 0);
       const credit = new Prisma.Decimal(line.creditAmount ?? 0);
 
       if (debit.greaterThan(0) && credit.greaterThan(0)) {
@@ -175,7 +184,7 @@ export class LedgerService {
         );
       }
 
-      totalDebitos  = totalDebitos.add(debit);
+      totalDebitos = totalDebitos.add(debit);
       totalCreditos = totalCreditos.add(credit);
     }
 
@@ -199,10 +208,10 @@ export class LedgerService {
           createdBy,
           lines: {
             create: lines.map((line) => ({
-              accountCode:  line.accountCode,
-              debitAmount:  line.debitAmount  ?? null,
+              accountCode: line.accountCode,
+              debitAmount: line.debitAmount ?? null,
               creditAmount: line.creditAmount ?? null,
-              cajaId:       line.cajaId       ?? null,
+              cajaId: line.cajaId ?? null,
             })),
           },
         },
@@ -226,7 +235,7 @@ export class LedgerService {
 
         await tx.caja.update({
           where: { id: line.cajaId },
-          data:  { saldoActual: { increment: delta } },
+          data: { saldoActual: { increment: delta } },
         });
 
         this.logger.debug(
@@ -261,18 +270,20 @@ export class LedgerService {
     params: RegistrarPagoParams,
     tx?: Prisma.TransactionClient,
   ) {
-    const montoTotal = params.montoCapital + params.montoInteres + params.montoMora;
-    const accountCodeCaja = params.metodoPago === 'TRANSFERENCIA' ? '1.2.1.T' : '1.2.1.E';
+    const montoTotal =
+      params.montoCapital + params.montoInteres + params.montoMora;
+    const accountCodeCaja =
+      params.metodoPago === 'TRANSFERENCIA' ? '1.2.1.T' : '1.2.1.E';
 
     const lines: JournalLineDto[] = [
       {
         accountCode: accountCodeCaja,
-        debitAmount:  montoTotal,
-        cajaId:       params.cajaRutaId,
-        cajaDelta:    +montoTotal,  // la caja de ruta RECIBE dinero
+        debitAmount: montoTotal,
+        cajaId: params.cajaRutaId,
+        cajaDelta: +montoTotal, // la caja de ruta RECIBE dinero
       },
       {
-        accountCode:  '1.3.1',
+        accountCode: '1.3.1',
         creditAmount: params.montoCapital,
         // sin cajaId — Cartera Vigente no es una caja física
       },
@@ -288,9 +299,9 @@ export class LedgerService {
     return this.registrarAsiento(
       {
         referenceType: 'PAGO',
-        referenceId:   params.pagoId,
-        description:   `Pago recibido — capital: $${params.montoCapital} | interés: $${params.montoInteres} | mora: $${params.montoMora}`,
-        createdBy:     params.createdBy,
+        referenceId: params.pagoId,
+        description: `Pago recibido — capital: $${params.montoCapital} | interés: $${params.montoInteres} | mora: $${params.montoMora}`,
+        createdBy: params.createdBy,
         lines,
       },
       tx,
@@ -309,20 +320,20 @@ export class LedgerService {
     return this.registrarAsiento(
       {
         referenceType: 'DESEMBOLSO',
-        referenceId:   params.prestamoId,
-        description:   `Desembolso de préstamo por $${params.monto}`,
-        createdBy:     params.createdBy,
+        referenceId: params.prestamoId,
+        description: `Desembolso de préstamo por $${params.monto}`,
+        createdBy: params.createdBy,
         lines: [
           {
             accountCode: '1.3.1',
-            debitAmount:  params.monto,
+            debitAmount: params.monto,
             // sin cajaId — Cartera Vigente no es caja física
           },
           {
-            accountCode:  params.accountCodeOrigen, // Origen dinámico
-            creditAmount:  params.monto,
-            cajaId:        params.cajaOrigenId,
-            cajaDelta:    -params.monto,  // la caja origen ENTREGA dinero
+            accountCode: params.accountCodeOrigen, // Origen dinámico
+            creditAmount: params.monto,
+            cajaId: params.cajaOrigenId,
+            cajaDelta: -params.monto, // la caja origen ENTREGA dinero
           },
         ],
       },
@@ -342,20 +353,20 @@ export class LedgerService {
     return this.registrarAsiento(
       {
         referenceType: 'GASTO',
-        referenceId:   params.gastoId,
-        description:   `Gasto operativo — cuenta ${params.cuentaGasto}`,
-        createdBy:     params.createdBy,
+        referenceId: params.gastoId,
+        description: `Gasto operativo — cuenta ${params.cuentaGasto}`,
+        createdBy: params.createdBy,
         lines: [
           {
             accountCode: params.cuentaGasto,
-            debitAmount:  params.monto,
+            debitAmount: params.monto,
             // sin cajaId — las cuentas de gasto no son cajas físicas
           },
           {
-            accountCode:  '1.2.1',
-            creditAmount:  params.monto,
-            cajaId:        params.cajaId,
-            cajaDelta:    -params.monto,  // la caja de ruta ENTREGA dinero
+            accountCode: '1.2.1',
+            creditAmount: params.monto,
+            cajaId: params.cajaId,
+            cajaDelta: -params.monto, // la caja de ruta ENTREGA dinero
           },
         ],
       },
@@ -382,14 +393,18 @@ export class LedgerService {
     const cuotaInicial = Number(params.cuotaInicial || 0);
 
     if (precioVenta <= 0) {
-      throw new BadRequestException('La venta de artículo debe tener precio de venta mayor a cero.');
+      throw new BadRequestException(
+        'La venta de artículo debe tener precio de venta mayor a cero.',
+      );
     }
 
     const lines: JournalLineDto[] = [];
 
     if (cuotaInicial > 0) {
       if (!params.cajaId || !params.accountCodeCaja) {
-        throw new BadRequestException('La cuota inicial requiere caja y cuenta de caja.');
+        throw new BadRequestException(
+          'La cuota inicial requiere caja y cuenta de caja.',
+        );
       }
       lines.push({
         accountCode: params.accountCodeCaja,
@@ -449,21 +464,21 @@ export class LedgerService {
     return this.registrarAsiento(
       {
         referenceType: 'CONSOLIDACION',
-        referenceId:   params.referenceId,
-        description:   `Consolidación de $${params.monto} de ruta a oficina`,
-        createdBy:     params.createdBy,
+        referenceId: params.referenceId,
+        description: `Consolidación de $${params.monto} de ruta a oficina`,
+        createdBy: params.createdBy,
         lines: [
           {
             accountCode: cuentaDestino, // Destino dinámico
-            debitAmount:  params.monto,
-            cajaId:       params.cajaDestinoId,
-            cajaDelta:   +params.monto,  // caja principal/banco RECIBE
+            debitAmount: params.monto,
+            cajaId: params.cajaDestinoId,
+            cajaDelta: +params.monto, // caja principal/banco RECIBE
           },
           {
-            accountCode:  '1.2.1',
-            creditAmount:  params.monto,
-            cajaId:        params.cajaOrigenId,
-            cajaDelta:    -params.monto,  // caja de ruta ENTREGA
+            accountCode: '1.2.1',
+            creditAmount: params.monto,
+            cajaId: params.cajaOrigenId,
+            cajaDelta: -params.monto, // caja de ruta ENTREGA
           },
         ],
       },
@@ -483,24 +498,35 @@ export class LedgerService {
     const { diferencia } = params;
     const abs = Math.abs(diferencia);
 
-    const lines: JournalLineDto[] = diferencia > 0
-      ? [
-          // Sobrante: la caja tiene más de lo esperado
-          { accountCode: '1.2.1', debitAmount:  abs, cajaId: params.cajaId, cajaDelta: 0 }, // ya está en caja, no mueve
-          { accountCode: '2.4',   creditAmount: abs }, // se registra como ajuste pendiente
-        ]
-      : [
-          // Faltante: el cobrador debe reintegrar
-          { accountCode: '1.4.1', debitAmount:  abs }, // cuenta por cobrar al cobrador
-          { accountCode: '1.2.1', creditAmount: abs, cajaId: params.cajaId, cajaDelta: -abs }, // reduce la caja
-        ];
+    const lines: JournalLineDto[] =
+      diferencia > 0
+        ? [
+            // Sobrante: la caja tiene más de lo esperado
+            {
+              accountCode: '1.2.1',
+              debitAmount: abs,
+              cajaId: params.cajaId,
+              cajaDelta: 0,
+            }, // ya está en caja, no mueve
+            { accountCode: '2.4', creditAmount: abs }, // se registra como ajuste pendiente
+          ]
+        : [
+            // Faltante: el cobrador debe reintegrar
+            { accountCode: '1.4.1', debitAmount: abs }, // cuenta por cobrar al cobrador
+            {
+              accountCode: '1.2.1',
+              creditAmount: abs,
+              cajaId: params.cajaId,
+              cajaDelta: -abs,
+            }, // reduce la caja
+          ];
 
     return this.registrarAsiento(
       {
         referenceType: 'ARQUEO',
-        referenceId:   params.arqueoId,
-        description:   `Descuadre de arqueo — ${diferencia > 0 ? 'sobrante' : 'faltante'} de $${abs}`,
-        createdBy:     params.createdBy,
+        referenceId: params.arqueoId,
+        description: `Descuadre de arqueo — ${diferencia > 0 ? 'sobrante' : 'faltante'} de $${abs}`,
+        createdBy: params.createdBy,
         lines,
       },
       tx,
@@ -519,19 +545,19 @@ export class LedgerService {
     return this.registrarAsiento(
       {
         referenceType: 'ABONO_DEUDA',
-        referenceId:   params.cobradorId,
-        description:   `Abono a deuda de cobrador — monto: $${params.monto}`,
-        createdBy:     params.createdBy,
+        referenceId: params.cobradorId,
+        description: `Abono a deuda de cobrador — monto: $${params.monto}`,
+        createdBy: params.createdBy,
         lines: [
           {
-            accountCode: params.accountCode, 
-            debitAmount:  params.monto,
-            cajaId:       params.cajaId,
-            cajaDelta:   +params.monto,
+            accountCode: params.accountCode,
+            debitAmount: params.monto,
+            cajaId: params.cajaId,
+            cajaDelta: +params.monto,
           },
           {
-            accountCode:  '1.4.1',
-            creditAmount:  params.monto,
+            accountCode: '1.4.1',
+            creditAmount: params.monto,
           },
         ],
       },
@@ -548,27 +574,27 @@ export class LedgerService {
    *   ACREEDORA → saldo = créditos - débitos  (Pasivos, Patrimonio, Ingresos)
    */
   async getSaldoCuenta(accountCode: string): Promise<{
-    debitos:  Prisma.Decimal;
+    debitos: Prisma.Decimal;
     creditos: Prisma.Decimal;
-    saldo:    number;
-    nature:   string;
+    saldo: number;
+    nature: string;
   }> {
     const account = await (this.prisma as any).account.findUniqueOrThrow({
-      where:  { code: accountCode },
+      where: { code: accountCode },
       select: { nature: true },
     });
 
     const result = await (this.prisma as any).journalLine.aggregate({
       where: { accountCode },
-      _sum:  { debitAmount: true, creditAmount: true },
+      _sum: { debitAmount: true, creditAmount: true },
     });
 
-    const debitos  = result._sum.debitAmount  ?? new Prisma.Decimal(0);
+    const debitos = result._sum.debitAmount ?? new Prisma.Decimal(0);
     const creditos = result._sum.creditAmount ?? new Prisma.Decimal(0);
 
     const saldo =
       account.nature === 'DEBITORA'
-        ? Number(debitos)  - Number(creditos)
+        ? Number(debitos) - Number(creditos)
         : Number(creditos) - Number(debitos);
 
     return { debitos, creditos, saldo, nature: account.nature };
@@ -580,18 +606,20 @@ export class LedgerService {
    * Usa `Decimal.isZero()` — sin tolerancia flotante.
    */
   async verificarIntegridadGlobal(): Promise<{
-    balanced:     boolean;
+    balanced: boolean;
     totalDebitos: number;
     totalCreditos: number;
-    diferencia:   number;
+    diferencia: number;
   }> {
     const result = await (this.prisma as any).journalLine.aggregate({
       _sum: { debitAmount: true, creditAmount: true },
     });
 
-    const totalDebitos  = result._sum.debitAmount  ?? new Prisma.Decimal(0);
+    const totalDebitos = result._sum.debitAmount ?? new Prisma.Decimal(0);
     const totalCreditos = result._sum.creditAmount ?? new Prisma.Decimal(0);
-    const diferencia    = (totalDebitos as Prisma.Decimal).sub(totalCreditos as Prisma.Decimal);
+    const diferencia = (totalDebitos as Prisma.Decimal).sub(
+      totalCreditos as Prisma.Decimal,
+    );
 
     if (!diferencia.isZero()) {
       this.logger.error(
@@ -600,36 +628,38 @@ export class LedgerService {
     }
 
     return {
-      balanced:      diferencia.isZero(),
-      totalDebitos:  Number(totalDebitos),
+      balanced: diferencia.isZero(),
+      totalDebitos: Number(totalDebitos),
       totalCreditos: Number(totalCreditos),
-      diferencia:    diferencia.toNumber(),
+      diferencia: diferencia.toNumber(),
     };
   }
 
   /**
    * Verifica que el `saldoActual` de cada Caja coincida con la suma de sus líneas en el Ledger.
    */
-  async verificarIntegridadCajas(): Promise<Array<{
-    cajaId:     string;
-    nombre:     string;
-    saldoCaja:  number;
-    saldoLibro: number;
-    diferencia: number;
-    correct:    boolean;
-  }>> {
+  async verificarIntegridadCajas(): Promise<
+    Array<{
+      cajaId: string;
+      nombre: string;
+      saldoCaja: number;
+      saldoLibro: number;
+      diferencia: number;
+      correct: boolean;
+    }>
+  > {
     const cajas = await this.prisma.caja.findMany({
       where: { activa: true },
       select: { id: true, nombre: true, saldoActual: true },
     });
 
     const report: Array<{
-      cajaId:     string;
-      nombre:     string;
-      saldoCaja:  number;
+      cajaId: string;
+      nombre: string;
+      saldoCaja: number;
       saldoLibro: number;
       diferencia: number;
-      correct:    boolean;
+      correct: boolean;
     }> = [];
 
     for (const caja of cajas) {
@@ -638,12 +668,12 @@ export class LedgerService {
         _sum: { debitAmount: true, creditAmount: true },
       });
 
-      const debitos  = linesSum._sum.debitAmount  ?? new Prisma.Decimal(0);
+      const debitos = linesSum._sum.debitAmount ?? new Prisma.Decimal(0);
       const creditos = linesSum._sum.creditAmount ?? new Prisma.Decimal(0);
 
       // El saldo del libro para una caja (activo) es Débitos - Créditos
       const saldoLibro = Number(debitos) - Number(creditos);
-      const saldoCaja  = Number(caja.saldoActual);
+      const saldoCaja = Number(caja.saldoActual);
       const diferencia = saldoCaja - saldoLibro;
 
       const correct = Math.abs(diferencia) < 0.01; // Tolerancia para decimales
@@ -672,23 +702,29 @@ export class LedgerService {
    * Débito:  4.3 Pérdidas Incobrables (Gasto)
    * Crédito: 1.3.1 Cartera Vigente (Activo ↓)
    */
-  async registrarBajaCartera(params: RegistrarBajaCarteraParams, tx?: Prisma.TransactionClient) {
-    return this.registrarAsiento({
-      referenceType: 'CASTIGO_CARTERA',
-      referenceId:   params.prestamoId,
-      description:   `Castigo de cartera por pérdida incobrable #${params.prestamoId}`,
-      createdBy:     params.createdBy,
-      lines: [
-        {
-          accountCode: '4.3', // Pérdidas Incobrables
-          debitAmount:  params.monto,
-        },
-        {
-          accountCode:  '1.3.1', // Cartera Vigente
-          creditAmount:  params.monto,
-        },
-      ],
-    }, tx);
+  async registrarBajaCartera(
+    params: RegistrarBajaCarteraParams,
+    tx?: Prisma.TransactionClient,
+  ) {
+    return this.registrarAsiento(
+      {
+        referenceType: 'CASTIGO_CARTERA',
+        referenceId: params.prestamoId,
+        description: `Castigo de cartera por pérdida incobrable #${params.prestamoId}`,
+        createdBy: params.createdBy,
+        lines: [
+          {
+            accountCode: '4.3', // Pérdidas Incobrables
+            debitAmount: params.monto,
+          },
+          {
+            accountCode: '1.3.1', // Cartera Vigente
+            creditAmount: params.monto,
+          },
+        ],
+      },
+      tx,
+    );
   }
 
   /**
@@ -696,25 +732,31 @@ export class LedgerService {
    * Débito/Crédito: 1.3.1 Cartera Vigente
    * Contrapartida:  2.3 Ajustes Contables
    */
-  async registrarAjusteCartera(params: RegistrarAjusteCarteraParams, tx?: Prisma.TransactionClient) {
+  async registrarAjusteCartera(
+    params: RegistrarAjusteCarteraParams,
+    tx?: Prisma.TransactionClient,
+  ) {
     const esIncremento = params.montoDiferencia > 0;
     const montoAbs = Math.abs(params.montoDiferencia);
 
-    return this.registrarAsiento({
-      referenceType: 'AJUSTE',
-      referenceId:   params.prestamoId,
-      description:   `Ajuste de saldo por modificación de préstamo #${params.prestamoId}`,
-      createdBy:     params.createdBy,
-      lines: [
-        {
-          accountCode: '1.3.1',
-          [esIncremento ? 'debitAmount' : 'creditAmount']: montoAbs,
-        },
-        {
-          accountCode: '2.3', // Ajustes Contables (Patrimonio/Ajuste)
-          [esIncremento ? 'creditAmount' : 'debitAmount']: montoAbs,
-        },
-      ],
-    }, tx);
+    return this.registrarAsiento(
+      {
+        referenceType: 'AJUSTE',
+        referenceId: params.prestamoId,
+        description: `Ajuste de saldo por modificación de préstamo #${params.prestamoId}`,
+        createdBy: params.createdBy,
+        lines: [
+          {
+            accountCode: '1.3.1',
+            [esIncremento ? 'debitAmount' : 'creditAmount']: montoAbs,
+          },
+          {
+            accountCode: '2.3', // Ajustes Contables (Patrimonio/Ajuste)
+            [esIncremento ? 'creditAmount' : 'debitAmount']: montoAbs,
+          },
+        ],
+      },
+      tx,
+    );
   }
 }

@@ -1,5 +1,11 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsString, MinLength, IsNumberString, Length } from 'class-validator';
+import {
+  IsEmail,
+  IsString,
+  MinLength,
+  IsNumberString,
+  Length,
+} from 'class-validator';
 
 export class ForgotPasswordDto {
   @ApiProperty({ example: 'admin@creditsur.com' })
@@ -12,7 +18,10 @@ export class VerifyResetCodeDto {
   @IsEmail()
   correo: string;
 
-  @ApiProperty({ example: '123456', description: 'Codigo de 6 digitos enviado al correo' })
+  @ApiProperty({
+    example: '123456',
+    description: 'Codigo de 6 digitos enviado al correo',
+  })
   @IsNumberString()
   @Length(6, 6)
   codigo: string;

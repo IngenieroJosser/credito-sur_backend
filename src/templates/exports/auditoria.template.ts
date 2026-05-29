@@ -36,7 +36,7 @@ export async function generarExcelAuditoria(
   const ws = workbook.addWorksheet('Log de Auditoría', {
     views: [{ state: 'frozen', ySplit: 4, showGridLines: false }],
     pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
-    properties: { tabColor: { argb: 'FF475569' } }
+    properties: { tabColor: { argb: 'FF475569' } },
   });
 
   ws.columns = [
@@ -52,13 +52,19 @@ export async function generarExcelAuditoria(
   // Título
   const titleRow = ws.addRow(['CRÉDITOS DEL SUR — LOG DE AUDITORÍA']);
   titleRow.font = { bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
-  titleRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF475569' } };
+  titleRow.fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FF475569' },
+  };
   ws.mergeCells('A1:G1');
   ws.getRow(1).height = 32;
   ws.getRow(2).height = 22;
 
   // Subtítulo
-  const subRow = ws.addRow([`Generado: ${new Date().toLocaleString('es-CO')}   |   Total registros: ${filas.length}`]);
+  const subRow = ws.addRow([
+    `Generado: ${new Date().toLocaleString('es-CO')}   |   Total registros: ${filas.length}`,
+  ]);
   subRow.font = { italic: true, size: 9, color: { argb: 'FF64748B' } };
   ws.mergeCells('A2:G2');
 
@@ -70,7 +76,11 @@ export async function generarExcelAuditoria(
     const cell = headerRow.getCell(i + 1);
     cell.value = col.header;
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF475569' } };
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF475569' },
+    };
     cell.alignment = { horizontal: 'center', vertical: 'middle' };
   });
   headerRow.height = 22;
@@ -93,8 +103,12 @@ export async function generarExcelAuditoria(
     });
 
     if (idx % 2 === 1) {
-      row.eachCell(cell => {
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+      row.eachCell((cell) => {
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FFF8FAFC' },
+        };
       });
     }
   });
@@ -105,7 +119,11 @@ export async function generarExcelAuditoria(
   totalRow.height = 24;
   totalRow.eachCell({ includeEmpty: true }, (cell) => {
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF1E293B' },
+    };
     cell.border = {
       top: { style: 'medium', color: { argb: 'FFFFFFFF' } },
       right: { style: 'thin', color: { argb: 'FFFFFFFF' } },
@@ -116,7 +134,8 @@ export async function generarExcelAuditoria(
   const buffer = await workbook.xlsx.writeBuffer();
   return {
     data: Buffer.from(buffer as ArrayBuffer),
-    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    contentType:
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     filename: `auditoria-${fecha}.xlsx`,
   };
 }
@@ -127,23 +146,27 @@ export async function generarPDFAuditoria(
   filas: AuditoriaRow[],
   fecha: string,
 ): Promise<{ data: Buffer; contentType: string; filename: string }> {
-  const doc = new PDFDocument({ layout: 'landscape', size: 'LETTER', margin: 30 });
+  const doc = new PDFDocument({
+    layout: 'landscape',
+    size: 'LETTER',
+    margin: 30,
+  });
   const buffers: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
 
-  const BLANCO     = '#FFFFFF';
-  const GRIS_CLR   = '#E2E8F0';
-  const GRIS_MED   = '#94A3B8';
-  const GRIS_TXT   = '#475569';
+  const BLANCO = '#FFFFFF';
+  const GRIS_CLR = '#E2E8F0';
+  const GRIS_MED = '#94A3B8';
+  const GRIS_TXT = '#475569';
   const SLATE_DARK = '#1E293B';
-  const SLATE_MED  = '#475569';
+  const SLATE_MED = '#475569';
   const SLATE_PALE = '#F1F5F9';
-  const AZUL_DARK  = '#1A5F8A';
+  const AZUL_DARK = '#1A5F8A';
 
   const getLogoPath = () => {
     const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
-    const pDev  = path.join(process.cwd(), 'src/assets/logo.png');
-    return fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
+    const pDev = path.join(process.cwd(), 'src/assets/logo.png');
+    return fs.existsSync(pProd) ? pProd : fs.existsSync(pDev) ? pDev : null;
   };
 
   const drawWatermark = () => {
@@ -151,13 +174,13 @@ export async function generarPDFAuditoria(
       const lp = getLogoPath();
       if (lp) {
         doc.save();
-        doc.opacity(0.08); 
+        doc.opacity(0.08);
         const W = doc.page.width;
         const H = doc.page.height;
         doc.image(lp, (W - 300) / 2, (H - 300) / 2, { width: 300 });
         doc.restore();
       }
-    } catch(e) {}
+    } catch (e) {}
   };
 
   let pageNumber = 1;
@@ -165,30 +188,68 @@ export async function generarPDFAuditoria(
   const drawPageHeader = (): number => {
     const W = doc.page.width;
 
-    doc.fontSize(22).font('Helvetica-Bold').fillColor(SLATE_DARK)
-       .text('Créditos del Sur', 30, 25);
-    doc.fontSize(9).font('Helvetica').fillColor(SLATE_MED)
-       .text('REPORTE DE AUDITORÍA DE SISTEMA', 30, 52, { characterSpacing: 0.5 });
+    doc
+      .fontSize(22)
+      .font('Helvetica-Bold')
+      .fillColor(SLATE_DARK)
+      .text('Créditos del Sur', 30, 25);
+    doc
+      .fontSize(9)
+      .font('Helvetica')
+      .fillColor(SLATE_MED)
+      .text('REPORTE DE AUDITORÍA DE SISTEMA', 30, 52, {
+        characterSpacing: 0.5,
+      });
 
     doc.roundedRect(W - 180, 20, 148, 44, 5).fillAndStroke(BLANCO, GRIS_CLR);
-    doc.fontSize(8).font('Helvetica-Bold').fillColor(GRIS_MED)
-       .text('FECHA GENERACIÓN', W - 180, 28, { width: 148, align: 'center' });
-    doc.fontSize(10).font('Helvetica-Bold').fillColor(SLATE_DARK)
-       .text(new Date().toLocaleDateString('es-CO'), W - 180, 40, { width: 148, align: 'center' });
+    doc
+      .fontSize(8)
+      .font('Helvetica-Bold')
+      .fillColor(GRIS_MED)
+      .text('FECHA GENERACIÓN', W - 180, 28, { width: 148, align: 'center' });
+    doc
+      .fontSize(10)
+      .font('Helvetica-Bold')
+      .fillColor(SLATE_DARK)
+      .text(new Date().toLocaleDateString('es-CO'), W - 180, 40, {
+        width: 148,
+        align: 'center',
+      });
 
     const kW = (doc.page.width - 60) / 3;
     const kY = 98;
     [
-      { label: 'TOTAL DE REGISTROS', val: String(filas.length), bg: SLATE_PALE, color: SLATE_DARK },
-      { label: 'SISTEMA BASE', val: 'Créditos del Sur V1.0', bg: '#F0F4F8', color: GRIS_TXT },
-      { label: 'NIVEL DE ACCESO', val: 'Administrador / Sistema', bg: '#F0F4F8', color: GRIS_TXT },
+      {
+        label: 'TOTAL DE REGISTROS',
+        val: String(filas.length),
+        bg: SLATE_PALE,
+        color: SLATE_DARK,
+      },
+      {
+        label: 'SISTEMA BASE',
+        val: 'Créditos del Sur V1.0',
+        bg: '#F0F4F8',
+        color: GRIS_TXT,
+      },
+      {
+        label: 'NIVEL DE ACCESO',
+        val: 'Administrador / Sistema',
+        bg: '#F0F4F8',
+        color: GRIS_TXT,
+      },
     ].forEach((m, i) => {
       const mx = 30 + i * (kW + 4);
       doc.roundedRect(mx, kY, kW, 44, 6).fillAndStroke(m.bg, GRIS_CLR);
-      doc.fontSize(7.5).font('Helvetica-Bold').fillColor(GRIS_MED)
-         .text(m.label, mx, kY + 10, { width: kW, align: 'center' });
-      doc.fontSize(11).font('Helvetica-Bold').fillColor(m.color)
-         .text(m.val, mx, kY + 23, { width: kW, align: 'center' });
+      doc
+        .fontSize(7.5)
+        .font('Helvetica-Bold')
+        .fillColor(GRIS_MED)
+        .text(m.label, mx, kY + 10, { width: kW, align: 'center' });
+      doc
+        .fontSize(11)
+        .font('Helvetica-Bold')
+        .fillColor(m.color)
+        .text(m.val, mx, kY + 23, { width: kW, align: 'center' });
     });
     return kY + 58;
   };
@@ -197,7 +258,12 @@ export async function generarPDFAuditoria(
     const W = doc.page.width;
     const H = doc.page.height;
     doc.fontSize(7).font('Helvetica').fillColor(GRIS_MED);
-    doc.text(`Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`, 0, H - 25, { align: 'right', width: W - 30 });
+    doc.text(
+      `Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`,
+      0,
+      H - 25,
+      { align: 'right', width: W - 30 },
+    );
   };
 
   const cols = [
@@ -217,8 +283,11 @@ export async function generarPDFAuditoria(
     doc.rect(tableLeft, y + 24, tableWidth, 2).fill(SLATE_DARK);
     let x = tableLeft;
     doc.fontSize(8).font('Helvetica-Bold').fillColor(BLANCO);
-    cols.forEach(col => {
-      doc.text(col.label, x + 4, y + 7, { width: col.width - 8, align: 'center' });
+    cols.forEach((col) => {
+      doc.text(col.label, x + 4, y + 7, {
+        width: col.width - 8,
+        align: 'center',
+      });
       x += col.width;
     });
     return y + 30;
@@ -242,7 +311,9 @@ export async function generarPDFAuditoria(
     // Audit logs can have HUGE JSON blobs. We need to limit them to avoid multi-page single rows, but we give them a generous 500 chars instead of hard 50.
     const detalle = fila.datosNuevos
       ? limitStr(JSON.stringify(fila.datosNuevos), 500)
-      : (fila.datosAnteriores ? limitStr(JSON.stringify(fila.datosAnteriores), 500) : '');
+      : fila.datosAnteriores
+        ? limitStr(JSON.stringify(fila.datosAnteriores), 500)
+        : '';
 
     const vals = [
       fila.fecha ? new Date(fila.fecha).toLocaleString('es-CO') : '',
@@ -256,7 +327,10 @@ export async function generarPDFAuditoria(
     doc.font('Helvetica').fontSize(7.5);
     vals.forEach((val, ci) => {
       if (ci === 0 || ci === 1) doc.font('Helvetica-Bold');
-      const h = doc.heightOfString(val, { width: cols[ci].width - 8, lineBreak: true });
+      const h = doc.heightOfString(val, {
+        width: cols[ci].width - 8,
+        lineBreak: true,
+      });
       if (h + 8 > maxRowHeight) maxRowHeight = h + 8;
       doc.font('Helvetica');
     });
@@ -273,25 +347,32 @@ export async function generarPDFAuditoria(
 
     const baseBg = i % 2 === 0 ? BLANCO : SLATE_PALE;
     doc.rect(tableLeft, y, tableWidth, maxRowHeight).fill(baseBg);
-    doc.moveTo(tableLeft, y + maxRowHeight)
-       .lineTo(tableLeft + tableWidth, y + maxRowHeight)
-       .strokeColor(GRIS_CLR).lineWidth(0.4).stroke();
+    doc
+      .moveTo(tableLeft, y + maxRowHeight)
+      .lineTo(tableLeft + tableWidth, y + maxRowHeight)
+      .strokeColor(GRIS_CLR)
+      .lineWidth(0.4)
+      .stroke();
 
     let x = tableLeft;
     vals.forEach((v, ci) => {
       const align = 'left';
 
       if (ci === 1) {
-         doc.font('Helvetica-Bold').fillColor(AZUL_DARK);
+        doc.font('Helvetica-Bold').fillColor(AZUL_DARK);
       } else if (ci === 0) {
-         doc.font('Helvetica-Bold').fillColor(SLATE_DARK);
+        doc.font('Helvetica-Bold').fillColor(SLATE_DARK);
       } else if (ci === 2) {
-         doc.font('Helvetica-Bold').fillColor(SLATE_MED);
+        doc.font('Helvetica-Bold').fillColor(SLATE_MED);
       } else {
-         doc.font('Helvetica').fillColor(GRIS_TXT);
+        doc.font('Helvetica').fillColor(GRIS_TXT);
       }
 
-      doc.text(v, x + 4, y + 4, { width: cols[ci].width - 8, align, lineBreak: true });
+      doc.text(v, x + 4, y + 4, {
+        width: cols[ci].width - 8,
+        align,
+        lineBreak: true,
+      });
       x += cols[ci].width;
     });
     y += maxRowHeight;
@@ -304,16 +385,22 @@ export async function generarPDFAuditoria(
   doc.fontSize(8.5).font('Helvetica-Bold').fillColor(BLANCO);
   doc.text(
     `TOTAL REGISTROS DE AUDITORÍA: ${filas.length}`,
-    tableLeft + 6, y + 9,
-    { width: tableWidth - 10, align: 'center' }
+    tableLeft + 6,
+    y + 9,
+    { width: tableWidth - 10, align: 'center' },
   );
 
   y += 38;
-  doc.fontSize(7.5).font('Helvetica-Oblique').fillColor(GRIS_MED)
-     .text(
-       'Documento expedido por Créditos del Sur. Información de trazabilidad del sistema. Confidencial.',
-       tableLeft, y, { align: 'center', width: tableWidth }
-     );
+  doc
+    .fontSize(7.5)
+    .font('Helvetica-Oblique')
+    .fillColor(GRIS_MED)
+    .text(
+      'Documento expedido por Créditos del Sur. Información de trazabilidad del sistema. Confidencial.',
+      tableLeft,
+      y,
+      { align: 'center', width: tableWidth },
+    );
 
   drawFooter();
 

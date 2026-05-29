@@ -14,15 +14,15 @@ import * as path from 'path';
 
 // ─── Paleta corporativa ────────────────────────────────────────────────────────
 const COLOR = {
-  rojo:        'FFDC2626',
-  rojoClaro:   'FFFEF2F2',
-  rojoBorde:   'FFEF4444',
-  gris:        'FF1E293B',
-  grisClaro:   'FFF8FAFC',
-  grisTexto:   'FF475569',
-  blanco:      'FFFFFFFF',
-  amarillo:    'FFFEF08A',
-  naranjaClaro:'FFFFF7ED',
+  rojo: 'FFDC2626',
+  rojoClaro: 'FFFEF2F2',
+  rojoBorde: 'FFEF4444',
+  gris: 'FF1E293B',
+  grisClaro: 'FFF8FAFC',
+  grisTexto: 'FF475569',
+  blanco: 'FFFFFFFF',
+  amarillo: 'FFFEF08A',
+  naranjaClaro: 'FFFFF7ED',
 };
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -40,12 +40,12 @@ export interface MoraRow {
   nivelRiesgo: string;
   ultimoPago?: string;
   // Campos financieros adicionales (§4.2, §5.6 propuesta)
-  tasaMoraAplicada?: number;       // % de mora por día aplicado (ej: 0.5%)
-  interesEspecial?: number;        // Monto de interés especial si fue aprobado
+  tasaMoraAplicada?: number; // % de mora por día aplicado (ej: 0.5%)
+  interesEspecial?: number; // Monto de interés especial si fue aprobado
   interesEspecialAprobado?: boolean; // Si el coordinador aprobó un interés especial
-  comentario?: string;             // Nota del cobrador o supervisor
-  capitalPendiente?: number;       // Solo capital, sin intereses ni mora
-  interesesPendientes?: number;    // Total intereses aún no pagados
+  comentario?: string; // Nota del cobrador o supervisor
+  capitalPendiente?: number; // Solo capital, sin intereses ni mora
+  interesesPendientes?: number; // Total intereses aún no pagados
 }
 
 export interface MoraTotales {
@@ -53,7 +53,7 @@ export interface MoraTotales {
   totalDeuda: number;
   totalCasosCriticos: number;
   totalRegistros: number;
-  totalCapitalPendiente?: number;  // Suma del capital puro pendiente
+  totalCapitalPendiente?: number; // Suma del capital puro pendiente
   totalInteresesPendientes?: number; // Suma de intereses aún no pagados
   totalCasosInteresEspecial?: number; // Cuantos tienen interés especial aprobado
 }
@@ -63,7 +63,11 @@ export interface MoraTotales {
 function estiloEncabezado(cell: ExcelJS.Cell, bgArgb: string): void {
   cell.font = { bold: true, color: { argb: COLOR.blanco }, size: 10 };
   cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgArgb } };
-  cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: false };
+  cell.alignment = {
+    horizontal: 'center',
+    vertical: 'middle',
+    wrapText: false,
+  };
   cell.border = {
     top: { style: 'thin', color: { argb: bgArgb } },
     bottom: { style: 'medium', color: { argb: COLOR.blanco } },
@@ -74,7 +78,11 @@ function estiloEncabezado(cell: ExcelJS.Cell, bgArgb: string): void {
 
 function estiloFila(cell: ExcelJS.Cell, par: boolean): void {
   if (par) {
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.grisClaro } };
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: COLOR.grisClaro },
+    };
   }
   cell.border = {
     bottom: { style: 'hair', color: { argb: 'FFE2E8F0' } },
@@ -103,22 +111,22 @@ export async function generarExcelMora(
   });
 
   ws.columns = [
-    { key: 'num',           width: 18 },
-    { key: 'cliente',       width: 30 },
-    { key: 'documento',     width: 14 },
-    { key: 'diasMora',      width: 11 },
-    { key: 'capitalPend',   width: 16 },
+    { key: 'num', width: 18 },
+    { key: 'cliente', width: 30 },
+    { key: 'documento', width: 14 },
+    { key: 'diasMora', width: 11 },
+    { key: 'capitalPend', width: 16 },
     { key: 'interesesPend', width: 16 },
-    { key: 'montoMora',     width: 16 },
-    { key: 'deudaTotal',    width: 18 },
-    { key: 'cuotas',        width: 13 },
-    { key: 'tasaMora',      width: 13 },
-    { key: 'intEspecial',   width: 16 },
-    { key: 'ruta',          width: 20 },
-    { key: 'cobrador',      width: 24 },
-    { key: 'riesgo',        width: 13 },
-    { key: 'ultimoPago',    width: 14 },
-    { key: 'comentario',    width: 28 },
+    { key: 'montoMora', width: 16 },
+    { key: 'deudaTotal', width: 18 },
+    { key: 'cuotas', width: 13 },
+    { key: 'tasaMora', width: 13 },
+    { key: 'intEspecial', width: 16 },
+    { key: 'ruta', width: 20 },
+    { key: 'cobrador', width: 24 },
+    { key: 'riesgo', width: 13 },
+    { key: 'ultimoPago', width: 14 },
+    { key: 'comentario', width: 28 },
   ] as any;
   const moraLastCol = 'P';
 
@@ -127,7 +135,11 @@ export async function generarExcelMora(
   const tituloCell = ws.getCell('A1');
   tituloCell.value = 'CRÉDITOS DEL SUR';
   tituloCell.font = { bold: true, size: 18, color: { argb: COLOR.blanco } };
-  tituloCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.rojo } };
+  tituloCell.fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: COLOR.rojo },
+  };
   tituloCell.alignment = { horizontal: 'center', vertical: 'middle' };
   ws.getRow(1).height = 32;
 
@@ -136,16 +148,22 @@ export async function generarExcelMora(
   const subCell = ws.getCell('A2');
   subCell.value = 'REPORTE DE CARTERA EN MORA';
   subCell.font = { bold: true, size: 12, color: { argb: COLOR.rojo } };
-  subCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF0F0' } };
+  subCell.fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FFFFF0F0' },
+  };
   subCell.alignment = { horizontal: 'center', vertical: 'middle' };
   ws.getRow(2).height = 22;
 
   // Fila 3: Metadatos
   ws.mergeCells('A3:D3');
-  ws.getCell('A3').value = `Fecha de Generación: ${new Date().toLocaleString('es-CO')}`;
+  ws.getCell('A3').value =
+    `Fecha de Generación: ${new Date().toLocaleString('es-CO')}`;
   ws.getCell('A3').font = { size: 9, color: { argb: COLOR.grisTexto } };
   ws.mergeCells('E3:H3');
-  ws.getCell('E3').value = `Casos Críticos: ${totales.totalCasosCriticos}  |  Int. Especial: ${totales.totalCasosInteresEspecial ?? 0} casos`;
+  ws.getCell('E3').value =
+    `Casos Críticos: ${totales.totalCasosCriticos}  |  Int. Especial: ${totales.totalCasosInteresEspecial ?? 0} casos`;
   ws.getCell('E3').font = { bold: true, size: 9, color: { argb: COLOR.rojo } };
   ws.getCell('E3').alignment = { horizontal: 'center' };
   ws.mergeCells('I3:P3');
@@ -159,12 +177,42 @@ export async function generarExcelMora(
   ws.getRow(5).height = 26;
 
   const moraKpis = [
-    { label: 'Mora Acumulada',     val: totales.totalMora,                bg: COLOR.rojoClaro, color: COLOR.rojo },
-    { label: 'Deuda Total',        val: totales.totalDeuda,               bg: COLOR.grisClaro, color: COLOR.grisTexto },
-    { label: 'Capital Pendiente',  val: totales.totalCapitalPendiente ?? 0, bg: COLOR.grisClaro, color: COLOR.grisTexto },
-    { label: 'Interés Pendiente',  val: totales.totalInteresesPendientes ?? 0, bg: COLOR.naranjaClaro, color: 'FFB45309' },
-    { label: 'Casos Críticos',     val: totales.totalCasosCriticos,       bg: COLOR.rojoClaro, color: COLOR.rojo },
-    { label: 'Int. Especial',      val: totales.totalCasosInteresEspecial ?? 0, bg: COLOR.amarillo, color: 'FFB45309' },
+    {
+      label: 'Mora Acumulada',
+      val: totales.totalMora,
+      bg: COLOR.rojoClaro,
+      color: COLOR.rojo,
+    },
+    {
+      label: 'Deuda Total',
+      val: totales.totalDeuda,
+      bg: COLOR.grisClaro,
+      color: COLOR.grisTexto,
+    },
+    {
+      label: 'Capital Pendiente',
+      val: totales.totalCapitalPendiente ?? 0,
+      bg: COLOR.grisClaro,
+      color: COLOR.grisTexto,
+    },
+    {
+      label: 'Interés Pendiente',
+      val: totales.totalInteresesPendientes ?? 0,
+      bg: COLOR.naranjaClaro,
+      color: 'FFB45309',
+    },
+    {
+      label: 'Casos Críticos',
+      val: totales.totalCasosCriticos,
+      bg: COLOR.rojoClaro,
+      color: COLOR.rojo,
+    },
+    {
+      label: 'Int. Especial',
+      val: totales.totalCasosInteresEspecial ?? 0,
+      bg: COLOR.amarillo,
+      color: 'FFB45309',
+    },
   ];
 
   moraKpis.forEach((kpi, i) => {
@@ -193,10 +241,22 @@ export async function generarExcelMora(
 
   // Fila 5: Encabezados de columnas
   const headers = [
-    'N° Préstamo','Cliente','Documento','Días Mora',
-    'Capital Pend.','Interés Pend.','Monto Mora','Deuda Total',
-    'Cuotas Venc.','Tasa Mora %','Int. Especial',
-    'Ruta','Cobrador','Nivel Riesgo','Ultimo Pago','Comentario',
+    'N° Préstamo',
+    'Cliente',
+    'Documento',
+    'Días Mora',
+    'Capital Pend.',
+    'Interés Pend.',
+    'Monto Mora',
+    'Deuda Total',
+    'Cuotas Venc.',
+    'Tasa Mora %',
+    'Int. Especial',
+    'Ruta',
+    'Cobrador',
+    'Nivel Riesgo',
+    'Ultimo Pago',
+    'Comentario',
   ];
   const hRow = ws.getRow(5);
   headers.forEach((h, i) => {
@@ -229,28 +289,46 @@ export async function generarExcelMora(
     ]);
     row.height = 18;
     const esPar = idx % 2 === 0;
-    row.eachCell(cell => estiloFila(cell, esPar));
+    row.eachCell((cell) => estiloFila(cell, esPar));
 
     // Formato moneda
-    [5, 6, 7, 8, 11].forEach(c => {
+    [5, 6, 7, 8, 11].forEach((c) => {
       row.getCell(c).numFmt = '"$"#,##0';
       row.getCell(c).alignment = { horizontal: 'right', vertical: 'middle' };
     });
 
     // Centrar números
-    [4, 9].forEach(c => row.getCell(c).alignment = { horizontal: 'center', vertical: 'middle' });
+    [4, 9].forEach(
+      (c) =>
+        (row.getCell(c).alignment = {
+          horizontal: 'center',
+          vertical: 'middle',
+        }),
+    );
 
     // Resaltar interés especial aprobado en naranja
     if (fila.interesEspecialAprobado) {
-      row.getCell(11).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } };
+      row.getCell(11).fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFFEF3C7' },
+      };
       row.getCell(11).font = { bold: true, color: { argb: 'FFB45309' } };
     }
 
     // Resaltar casos críticos
     const riesgo = fila.nivelRiesgo?.toUpperCase() || '';
     if (riesgo === 'ROJO' || riesgo === 'LISTA_NEGRA') {
-      row.getCell(2).font  = { bold: true, color: { argb: COLOR.rojo }, size: 10 };
-      row.getCell(14).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFECACA' } };
+      row.getCell(2).font = {
+        bold: true,
+        color: { argb: COLOR.rojo },
+        size: 10,
+      };
+      row.getCell(14).fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFFECACA' },
+      };
     }
   });
 
@@ -258,25 +336,39 @@ export async function generarExcelMora(
   ws.addRow([]);
   const totRow = ws.addRow([
     `TOTALES — ${totales.totalRegistros} préstamos en mora`,
-    '', '', '',
+    '',
+    '',
+    '',
     totales.totalCapitalPendiente ?? 0,
     totales.totalInteresesPendientes ?? 0,
     totales.totalMora,
     totales.totalDeuda,
-    '', '', '', '', '', '', '', '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
   ]);
   totRow.height = 24;
   ws.mergeCells(`A${totRow.number}:D${totRow.number}`);
   totRow.eachCell((cell, colNumber) => {
     cell.font = { bold: true, color: { argb: COLOR.blanco }, size: 10 };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.gris } };
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: COLOR.gris },
+    };
     cell.border = {
       top: { style: 'medium', color: { argb: COLOR.blanco } },
       right: { style: 'thin', color: { argb: COLOR.blanco } },
     };
-    if (colNumber === 1) cell.alignment = { horizontal: 'right', vertical: 'middle' };
+    if (colNumber === 1)
+      cell.alignment = { horizontal: 'right', vertical: 'middle' };
   });
-  [5, 6, 7, 8].forEach(c => {
+  [5, 6, 7, 8].forEach((c) => {
     totRow.getCell(c).numFmt = '"$"#,##0';
     totRow.getCell(c).alignment = { horizontal: 'right', vertical: 'middle' };
   });
@@ -290,7 +382,7 @@ export async function generarExcelMora(
   wsResumen.columns = [
     { key: 'nivel', width: 22 },
     { key: 'casos', width: 12 },
-    { key: 'mora',  width: 20 },
+    { key: 'mora', width: 20 },
     { key: 'deuda', width: 20 },
   ] as any;
 
@@ -298,37 +390,51 @@ export async function generarExcelMora(
   const rT = wsResumen.getCell('A1');
   rT.value = 'CRÉDITOS DEL SUR — Resumen por Nivel de Riesgo';
   rT.font = { bold: true, size: 14, color: { argb: COLOR.blanco } };
-  rT.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.rojo } };
+  rT.fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: COLOR.rojo },
+  };
   rT.alignment = { horizontal: 'center', vertical: 'middle' };
   wsResumen.getRow(1).height = 28;
 
   wsResumen.addRow([]);
   const rhRow = wsResumen.getRow(3);
-  ['Nivel de Riesgo','Casos','Mora Acumulada','Deuda Total'].forEach((h, i) => {
-    const cell = rhRow.getCell(i + 1);
-    cell.value = h;
-    estiloEncabezado(cell, COLOR.rojo);
-  });
+  ['Nivel de Riesgo', 'Casos', 'Mora Acumulada', 'Deuda Total'].forEach(
+    (h, i) => {
+      const cell = rhRow.getCell(i + 1);
+      cell.value = h;
+      estiloEncabezado(cell, COLOR.rojo);
+    },
+  );
   rhRow.height = 20;
 
-  const porNivel: Record<string, { casos: number; mora: number; deuda: number }> = {};
-  filas.forEach(f => {
+  const porNivel: Record<
+    string,
+    { casos: number; mora: number; deuda: number }
+  > = {};
+  filas.forEach((f) => {
     const n = f.nivelRiesgo || 'Sin clasificar';
     if (!porNivel[n]) porNivel[n] = { casos: 0, mora: 0, deuda: 0 };
     porNivel[n].casos++;
-    porNivel[n].mora  += f.montoMora || 0;
+    porNivel[n].mora += f.montoMora || 0;
     porNivel[n].deuda += f.montoTotalDeuda || 0;
   });
 
   const nivelColors: Record<string, string> = {
-    ROJO: 'FFFECACA', AMARILLO: 'FFFEF9C3', VERDE: 'FFDCFCE7', LISTA_NEGRA: 'FFFFE4E6',
+    ROJO: 'FFFECACA',
+    AMARILLO: 'FFFEF9C3',
+    VERDE: 'FFDCFCE7',
+    LISTA_NEGRA: 'FFFFE4E6',
   };
 
   Object.entries(porNivel).forEach(([nivel, datos], idx) => {
     const row = wsResumen.addRow([nivel, datos.casos, datos.mora, datos.deuda]);
     row.height = 18;
-    const bg = nivelColors[nivel.toUpperCase()] || (idx % 2 === 0 ? 'FFF8FAFC' : 'FFFFFFFF');
-    row.eachCell(cell => {
+    const bg =
+      nivelColors[nivel.toUpperCase()] ||
+      (idx % 2 === 0 ? 'FFF8FAFC' : 'FFFFFFFF');
+    row.eachCell((cell) => {
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
       cell.alignment = { vertical: 'middle' };
     });
@@ -339,7 +445,8 @@ export async function generarExcelMora(
   const buffer = await workbook.xlsx.writeBuffer();
   return {
     data: Buffer.from(buffer as ArrayBuffer),
-    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    contentType:
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     filename: `cuentas-mora-${fecha}.xlsx`,
   };
 }
@@ -351,29 +458,33 @@ export async function generarPDFMora(
   totales: MoraTotales,
   fecha: string,
 ): Promise<{ data: Buffer; contentType: string; filename: string }> {
-  const doc = new PDFDocument({ layout: 'landscape', size: 'LETTER', margin: 30 });
+  const doc = new PDFDocument({
+    layout: 'landscape',
+    size: 'LETTER',
+    margin: 30,
+  });
   const buffers: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
 
-  const BLANCO     = '#FFFFFF';
-  const GRIS_CLR   = '#E2E8F0';
-  const GRIS_MED   = '#94A3B8';
-  const GRIS_TXT   = '#475569';
-  const AZUL_DARK  = '#1A5F8A';
-  const AZUL_MED   = '#2676AC';
-  const AZUL_PALE  = '#F0F9FF';
-  const NAR_DARK   = '#D95C0F';
-  const NAR_MED    = '#F07A28';
-  const NAR_SOFT   = '#FDE8D5';
-  const ROJO_DARK  = '#B91C1C';
-  const ROJO_PALE  = '#FEF2F2';
+  const BLANCO = '#FFFFFF';
+  const GRIS_CLR = '#E2E8F0';
+  const GRIS_MED = '#94A3B8';
+  const GRIS_TXT = '#475569';
+  const AZUL_DARK = '#1A5F8A';
+  const AZUL_MED = '#2676AC';
+  const AZUL_PALE = '#F0F9FF';
+  const NAR_DARK = '#D95C0F';
+  const NAR_MED = '#F07A28';
+  const NAR_SOFT = '#FDE8D5';
+  const ROJO_DARK = '#B91C1C';
+  const ROJO_PALE = '#FEF2F2';
 
-  const fmtCOP   = (v: number) => `$${(v || 0).toLocaleString('es-CO')}`;
+  const fmtCOP = (v: number) => `$${(v || 0).toLocaleString('es-CO')}`;
 
   const getLogoPath = () => {
     const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
-    const pDev  = path.join(process.cwd(), 'src/assets/logo.png');
-    return fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
+    const pDev = path.join(process.cwd(), 'src/assets/logo.png');
+    return fs.existsSync(pProd) ? pProd : fs.existsSync(pDev) ? pDev : null;
   };
 
   const drawWatermark = () => {
@@ -381,13 +492,13 @@ export async function generarPDFMora(
       const lp = getLogoPath();
       if (lp) {
         doc.save();
-        doc.opacity(0.08); 
+        doc.opacity(0.08);
         const W = doc.page.width;
         const H = doc.page.height;
         doc.image(lp, (W - 300) / 2, (H - 300) / 2, { width: 300 });
         doc.restore();
       }
-    } catch(e) {}
+    } catch (e) {}
   };
 
   let pageNumber = 1;
@@ -395,31 +506,76 @@ export async function generarPDFMora(
   const drawPageHeader = (): number => {
     const W = doc.page.width;
 
-    doc.fontSize(22).font('Helvetica-Bold').fillColor(AZUL_DARK)
-       .text('Créditos del Sur', 30, 25);
-    doc.fontSize(9).font('Helvetica').fillColor(ROJO_DARK) // Mora uses red subtitle
-       .text('REPORTE DE CARTERA EN MORA', 30, 52, { characterSpacing: 0.5 });
+    doc
+      .fontSize(22)
+      .font('Helvetica-Bold')
+      .fillColor(AZUL_DARK)
+      .text('Créditos del Sur', 30, 25);
+    doc
+      .fontSize(9)
+      .font('Helvetica')
+      .fillColor(ROJO_DARK) // Mora uses red subtitle
+      .text('REPORTE DE CARTERA EN MORA', 30, 52, { characterSpacing: 0.5 });
 
     doc.roundedRect(W - 180, 20, 148, 44, 5).fillAndStroke(BLANCO, GRIS_CLR);
-    doc.fontSize(8).font('Helvetica-Bold').fillColor(GRIS_MED)
-       .text('FECHA', W - 180, 28, { width: 148, align: 'center' });
-    doc.fontSize(11).font('Helvetica-Bold').fillColor(AZUL_DARK)
-       .text(fecha, W - 180, 40, { width: 148, align: 'center' });
+    doc
+      .fontSize(8)
+      .font('Helvetica-Bold')
+      .fillColor(GRIS_MED)
+      .text('FECHA', W - 180, 28, { width: 148, align: 'center' });
+    doc
+      .fontSize(11)
+      .font('Helvetica-Bold')
+      .fillColor(AZUL_DARK)
+      .text(fecha, W - 180, 40, { width: 148, align: 'center' });
 
     const kW = (doc.page.width - 60) / 4;
     const kY = 98;
     [
-      { label: 'MORA ACUMULADA',  val: totales.totalMora, bg: ROJO_PALE, color: ROJO_DARK, isNum: true },
-      { label: 'DEUDA TOTAL',     val: totales.totalDeuda, bg: '#F0F4F8', color: GRIS_TXT, isNum: true },
-      { label: 'CASOS CRÍTICOS',  val: totales.totalCasosCriticos, bg: ROJO_PALE, color: ROJO_DARK, isNum: false },
-      { label: 'INT. ESPECIAL',   val: (totales.totalCasosInteresEspecial ?? 0) + ' casos', bg: NAR_SOFT, color: NAR_DARK, isNum: false },
+      {
+        label: 'MORA ACUMULADA',
+        val: totales.totalMora,
+        bg: ROJO_PALE,
+        color: ROJO_DARK,
+        isNum: true,
+      },
+      {
+        label: 'DEUDA TOTAL',
+        val: totales.totalDeuda,
+        bg: '#F0F4F8',
+        color: GRIS_TXT,
+        isNum: true,
+      },
+      {
+        label: 'CASOS CRÍTICOS',
+        val: totales.totalCasosCriticos,
+        bg: ROJO_PALE,
+        color: ROJO_DARK,
+        isNum: false,
+      },
+      {
+        label: 'INT. ESPECIAL',
+        val: (totales.totalCasosInteresEspecial ?? 0) + ' casos',
+        bg: NAR_SOFT,
+        color: NAR_DARK,
+        isNum: false,
+      },
     ].forEach((m, i) => {
       const mx = 30 + i * (kW + 4);
       doc.roundedRect(mx, kY, kW, 44, 6).fillAndStroke(m.bg, GRIS_CLR);
-      doc.fontSize(7.5).font('Helvetica-Bold').fillColor(GRIS_MED)
-         .text(m.label, mx, kY + 10, { width: kW, align: 'center' });
-      doc.fontSize(13).font('Helvetica-Bold').fillColor(m.color)
-         .text(m.isNum ? fmtCOP(m.val as number) : String(m.val), mx, kY + 23, { width: kW, align: 'center' });
+      doc
+        .fontSize(7.5)
+        .font('Helvetica-Bold')
+        .fillColor(GRIS_MED)
+        .text(m.label, mx, kY + 10, { width: kW, align: 'center' });
+      doc
+        .fontSize(13)
+        .font('Helvetica-Bold')
+        .fillColor(m.color)
+        .text(m.isNum ? fmtCOP(m.val as number) : String(m.val), mx, kY + 23, {
+          width: kW,
+          align: 'center',
+        });
     });
     return kY + 58;
   };
@@ -428,19 +584,24 @@ export async function generarPDFMora(
     const W = doc.page.width;
     const H = doc.page.height;
     doc.fontSize(7).font('Helvetica').fillColor(GRIS_MED);
-    doc.text(`Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`, 0, H - 25, { align: 'right', width: W - 30 });
+    doc.text(
+      `Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`,
+      0,
+      H - 25,
+      { align: 'right', width: W - 30 },
+    );
   };
 
   const cols = [
     { label: 'N° Préstamo', width: 78 },
-    { label: 'Cliente',      width: 140 },
-    { label: 'Días Mora',   width: 55 },
-    { label: 'Monto Mora',  width: 78 },
+    { label: 'Cliente', width: 140 },
+    { label: 'Días Mora', width: 55 },
+    { label: 'Monto Mora', width: 78 },
     { label: 'Deuda Total', width: 78 },
-    { label: 'Cuotas',      width: 48 },
-    { label: 'Ruta',        width: 80 },
-    { label: 'Cobrador',    width: 110 },
-    { label: 'Riesgo',      width: 65 },
+    { label: 'Cuotas', width: 48 },
+    { label: 'Ruta', width: 80 },
+    { label: 'Cobrador', width: 110 },
+    { label: 'Riesgo', width: 65 },
   ];
   const tableLeft = 30;
   const tableWidth = cols.reduce((s, c) => s + c.width, 0);
@@ -450,8 +611,11 @@ export async function generarPDFMora(
     doc.rect(tableLeft, y + 24, tableWidth, 2).fill(ROJO_DARK); // Red line instead of orange
     let x = tableLeft;
     doc.fontSize(8).font('Helvetica-Bold').fillColor(BLANCO);
-    cols.forEach(col => {
-      doc.text(col.label, x + 4, y + 7, { width: col.width - 8, align: 'center' });
+    cols.forEach((col) => {
+      doc.text(col.label, x + 4, y + 7, {
+        width: col.width - 8,
+        align: 'center',
+      });
       x += col.width;
     });
     return y + 30;
@@ -480,7 +644,10 @@ export async function generarPDFMora(
     doc.font('Helvetica').fontSize(7.5);
     vals.forEach((val, ci) => {
       if (ci === 1 || ci === 3 || ci === 4) doc.font('Helvetica-Bold');
-      const h = doc.heightOfString(val, { width: cols[ci].width - 8, lineBreak: true });
+      const h = doc.heightOfString(val, {
+        width: cols[ci].width - 8,
+        lineBreak: true,
+      });
       if (h + 8 > maxRowHeight) maxRowHeight = h + 8;
       doc.font('Helvetica');
     });
@@ -497,30 +664,44 @@ export async function generarPDFMora(
 
     const riesgo = fila.nivelRiesgo?.toUpperCase() || '';
     const baseBg = i % 2 === 0 ? BLANCO : AZUL_PALE;
-    const bg = (riesgo === 'ROJO' || riesgo === 'LISTA_NEGRA') ? ROJO_PALE : baseBg;
-    
+    const bg =
+      riesgo === 'ROJO' || riesgo === 'LISTA_NEGRA' ? ROJO_PALE : baseBg;
+
     doc.rect(tableLeft, y, tableWidth, maxRowHeight).fill(bg);
-    doc.moveTo(tableLeft, y + maxRowHeight)
-       .lineTo(tableLeft + tableWidth, y + maxRowHeight)
-       .strokeColor(GRIS_CLR).lineWidth(0.4).stroke();
+    doc
+      .moveTo(tableLeft, y + maxRowHeight)
+      .lineTo(tableLeft + tableWidth, y + maxRowHeight)
+      .strokeColor(GRIS_CLR)
+      .lineWidth(0.4)
+      .stroke();
 
     let x = tableLeft;
     vals.forEach((v, ci) => {
-      const align = ci >= 2 && ci <= 5 ? 'right' : (ci === 8 ? 'center' : 'left');
+      const align = ci >= 2 && ci <= 5 ? 'right' : ci === 8 ? 'center' : 'left';
 
       if (ci === 3) {
-         doc.font('Helvetica-Bold').fillColor(ROJO_DARK);
+        doc.font('Helvetica-Bold').fillColor(ROJO_DARK);
       } else if (ci === 4) {
-         doc.font('Helvetica-Bold').fillColor(AZUL_DARK);
+        doc.font('Helvetica-Bold').fillColor(AZUL_DARK);
       } else if (ci === 1) {
-         doc.font('Helvetica-Bold').fillColor(AZUL_DARK);
+        doc.font('Helvetica-Bold').fillColor(AZUL_DARK);
       } else if (ci === 8) {
-         doc.font('Helvetica-Bold').fillColor((riesgo === 'ROJO' || riesgo === 'LISTA_NEGRA') ? ROJO_DARK : GRIS_TXT);
+        doc
+          .font('Helvetica-Bold')
+          .fillColor(
+            riesgo === 'ROJO' || riesgo === 'LISTA_NEGRA'
+              ? ROJO_DARK
+              : GRIS_TXT,
+          );
       } else {
-         doc.font('Helvetica').fillColor(GRIS_TXT);
+        doc.font('Helvetica').fillColor(GRIS_TXT);
       }
 
-      doc.text(v, x + 4, y + 4, { width: cols[ci].width - 8, align, lineBreak: true });
+      doc.text(v, x + 4, y + 4, {
+        width: cols[ci].width - 8,
+        align,
+        lineBreak: true,
+      });
       x += cols[ci].width;
     });
     y += maxRowHeight;
@@ -534,8 +715,9 @@ export async function generarPDFMora(
   doc.fontSize(8.5).font('Helvetica-Bold').fillColor(BLANCO);
   doc.text(
     `TOTAL GENERAL  /  ${totales.totalRegistros} préstamos en mora`,
-    tableLeft + 6, y + 8,
-    { width: cols.slice(0, 3).reduce((s, c) => s + c.width, 0) - 10 }
+    tableLeft + 6,
+    y + 8,
+    { width: cols.slice(0, 3).reduce((s, c) => s + c.width, 0) - 10 },
   );
 
   let tx = tableLeft + cols.slice(0, 3).reduce((s, c) => s + c.width, 0);
@@ -545,18 +727,29 @@ export async function generarPDFMora(
   ].forEach((val, i) => {
     const ci = i + 3; // a partir de la columna 4
     if (ci < cols.length) {
-      doc.fillColor(i === 0 ? '#FECACA' : BLANCO).font('Helvetica-Bold').fontSize(8);
-      doc.text(val, tx + 4, y + 9, { width: cols[ci].width - 8, align: 'right' });
+      doc
+        .fillColor(i === 0 ? '#FECACA' : BLANCO)
+        .font('Helvetica-Bold')
+        .fontSize(8);
+      doc.text(val, tx + 4, y + 9, {
+        width: cols[ci].width - 8,
+        align: 'right',
+      });
       tx += cols[ci].width;
     }
   });
 
   y += 38;
-  doc.fontSize(7.5).font('Helvetica-Oblique').fillColor(GRIS_MED)
-     .text(
-       'Documento expedido por Créditos del Sur. Las cifras presentadas son definitivas y sujetas a revisión de auditoría.',
-       tableLeft, y, { align: 'center', width: tableWidth }
-     );
+  doc
+    .fontSize(7.5)
+    .font('Helvetica-Oblique')
+    .fillColor(GRIS_MED)
+    .text(
+      'Documento expedido por Créditos del Sur. Las cifras presentadas son definitivas y sujetas a revisión de auditoría.',
+      tableLeft,
+      y,
+      { align: 'center', width: tableWidth },
+    );
 
   drawFooter();
 

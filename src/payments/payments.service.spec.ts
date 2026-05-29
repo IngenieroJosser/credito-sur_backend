@@ -17,8 +17,18 @@ import { AuditService } from '../audit/audit.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { CloudinaryService } from '../upload/cloudinary.service';
 import { LedgerService } from '../accounting/ledger.service';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
-import { EstadoCuota, EstadoPrestamo, MetodoPago, Prisma, RolUsuario } from '@prisma/client';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
+import {
+  EstadoCuota,
+  EstadoPrestamo,
+  MetodoPago,
+  Prisma,
+  RolUsuario,
+} from '@prisma/client';
 
 // ─────────────────────────────────────────────
 // Mocks de los servicios de soporte (no críticos para estos tests)
@@ -162,7 +172,9 @@ function buildMockPrisma(overrides: Record<string, unknown> = {}) {
       create: jest.fn().mockResolvedValue({ id: 'approval-1' }),
     },
     // $transaction ejecuta el callback con el txMock directamente
-    $transaction: jest.fn().mockImplementation((cb: (tx: typeof txMock) => unknown) => cb(txMock)),
+    $transaction: jest
+      .fn()
+      .mockImplementation((cb: (tx: typeof txMock) => unknown) => cb(txMock)),
     _txMock: txMock, // expuesto para assertions
     ...overrides,
   };
@@ -230,8 +242,8 @@ describe('PaymentsService', () => {
           montoInteres: 0,
         })),
       };
-      (prisma.prestamo.findFirst as jest.Mock).mockResolvedValue(prestamoSinInteres);
-      (prisma._txMock.prestamo.findFirst as jest.Mock).mockResolvedValue(prestamoSinInteres);
+      prisma.prestamo.findFirst.mockResolvedValue(prestamoSinInteres);
+      prisma._txMock.prestamo.findFirst.mockResolvedValue(prestamoSinInteres);
 
       const dto = {
         prestamoId: 'prestamo-1',
@@ -322,8 +334,8 @@ describe('PaymentsService', () => {
           },
         ],
       };
-      (prisma.prestamo.findFirst as jest.Mock).mockResolvedValue(prestamoSaldado);
-      (prisma._txMock.prestamo.findFirst as jest.Mock).mockResolvedValue(prestamoSaldado);
+      prisma.prestamo.findFirst.mockResolvedValue(prestamoSaldado);
+      prisma._txMock.prestamo.findFirst.mockResolvedValue(prestamoSaldado);
 
       const dto = {
         prestamoId: 'prestamo-1',
@@ -342,7 +354,11 @@ describe('PaymentsService', () => {
     });
 
     it('llama al servicio de auditoría al registrar el pago', async () => {
-      const dto = { prestamoId: 'prestamo-1', cobradorId: 'cobrador-1', montoTotal: 110000 };
+      const dto = {
+        prestamoId: 'prestamo-1',
+        cobradorId: 'cobrador-1',
+        montoTotal: 110000,
+      };
       await service.create(dto);
       expect(mockAuditService.create).toHaveBeenCalledWith(
         expect.objectContaining({ accion: 'REGISTRAR_PAGO' }),
@@ -352,10 +368,10 @@ describe('PaymentsService', () => {
 
   describe('findAll — alcance por rol', () => {
     it('limita la consulta de pagos del cobrador a su propio id', async () => {
-      await service.findAll(
-        { prestamoId: 'prestamo-1', limit: 50 },
-        { id: 'cobrador-propio', rol: RolUsuario.COBRADOR } as any,
-      );
+      await service.findAll({ prestamoId: 'prestamo-1', limit: 50 }, {
+        id: 'cobrador-propio',
+        rol: RolUsuario.COBRADOR,
+      } as any);
 
       expect(prisma.pago.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -376,10 +392,10 @@ describe('PaymentsService', () => {
 
   describe('findOne — alcance por rol', () => {
     it('limita el detalle de pago del cobrador a su propio id', async () => {
-      await service.findOne(
-        'pago-1',
-        { id: 'cobrador-propio', rol: RolUsuario.COBRADOR } as any,
-      );
+      await service.findOne('pago-1', {
+        id: 'cobrador-propio',
+        rol: RolUsuario.COBRADOR,
+      } as any);
 
       expect(prisma.pago.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -395,7 +411,11 @@ describe('PaymentsService', () => {
   describe('create — alcance por rol', () => {
     it('ignora un cobradorId ajeno cuando el actor es cobrador', async () => {
       await service.create(
-        { prestamoId: 'prestamo-1', cobradorId: 'cobrador-ajeno', montoTotal: 110000 },
+        {
+          prestamoId: 'prestamo-1',
+          cobradorId: 'cobrador-ajeno',
+          montoTotal: 110000,
+        },
         undefined,
         { id: 'cobrador-propio', rol: RolUsuario.COBRADOR } as any,
       );
@@ -412,11 +432,19 @@ describe('PaymentsService', () => {
 
   describe('create — concurrencia', () => {
     it('usa el estado fresco del préstamo dentro de la transacción para calcular saldos', async () => {
-      const stalePrestamo = { ...PRESTAMO_ACTIVO, saldoPendiente: 600000, totalPagado: 500000 };
-      const freshPrestamo = { ...PRESTAMO_ACTIVO, saldoPendiente: 490000, totalPagado: 610000 };
+      const stalePrestamo = {
+        ...PRESTAMO_ACTIVO,
+        saldoPendiente: 600000,
+        totalPagado: 500000,
+      };
+      const freshPrestamo = {
+        ...PRESTAMO_ACTIVO,
+        saldoPendiente: 490000,
+        totalPagado: 610000,
+      };
 
-      (prisma.prestamo.findFirst as jest.Mock).mockResolvedValue(stalePrestamo);
-      (prisma._txMock.prestamo.findFirst as jest.Mock).mockResolvedValue(freshPrestamo);
+      prisma.prestamo.findFirst.mockResolvedValue(stalePrestamo);
+      prisma._txMock.prestamo.findFirst.mockResolvedValue(freshPrestamo);
 
       const resultado = await service.create({
         prestamoId: 'prestamo-1',
@@ -514,11 +542,15 @@ describe('PaymentsService', () => {
     });
 
     it('busca la caja de la asignación activa que coincide con el cobrador del pago', async () => {
-      await service.create({
-        prestamoId: 'prestamo-1',
-        cobradorId: 'cobrador-1',
-        montoTotal: 110000,
-      }, undefined, { id: 'cobrador-1', rol: RolUsuario.COBRADOR } as any);
+      await service.create(
+        {
+          prestamoId: 'prestamo-1',
+          cobradorId: 'cobrador-1',
+          montoTotal: 110000,
+        },
+        undefined,
+        { id: 'cobrador-1', rol: RolUsuario.COBRADOR } as any,
+      );
 
       expect(prisma._txMock.asignacionRuta.findFirst).toHaveBeenCalledWith({
         where: {
@@ -540,7 +572,7 @@ describe('PaymentsService', () => {
 
   describe('create — idempotencia', () => {
     it('retorna el pago existente y no crea movimientos cuando se repite la misma idempotencyKey', async () => {
-      (prisma.pago.findFirst as jest.Mock).mockResolvedValue(PAGO_EXISTENTE);
+      prisma.pago.findFirst.mockResolvedValue(PAGO_EXISTENTE);
 
       const resultado = await service.create({
         prestamoId: 'prestamo-1',
@@ -557,19 +589,22 @@ describe('PaymentsService', () => {
     });
 
     it('retorna la aprobación existente si se reintenta una transferencia pendiente con la misma idempotencyKey', async () => {
-      (prisma.pago.findFirst as jest.Mock).mockResolvedValue(null);
-      (prisma.aprobacion.findFirst as jest.Mock).mockResolvedValue({
+      prisma.pago.findFirst.mockResolvedValue(null);
+      prisma.aprobacion.findFirst.mockResolvedValue({
         id: 'approval-existente-1',
         estado: 'PENDIENTE',
       });
 
-      const resultado = await service.create({
-        prestamoId: 'prestamo-1',
-        cobradorId: 'cobrador-1',
-        montoTotal: 110000,
-        metodoPago: MetodoPago.TRANSFERENCIA,
-        idempotencyKey: 'offline-transfer-1',
-      } as any, { originalname: 'comprobante.jpg', mimetype: 'image/jpeg' } as any);
+      const resultado = await service.create(
+        {
+          prestamoId: 'prestamo-1',
+          cobradorId: 'cobrador-1',
+          montoTotal: 110000,
+          metodoPago: MetodoPago.TRANSFERENCIA,
+          idempotencyKey: 'offline-transfer-1',
+        } as any,
+        { originalname: 'comprobante.jpg', mimetype: 'image/jpeg' } as any,
+      );
 
       expect(resultado).toEqual(
         expect.objectContaining({
@@ -587,15 +622,23 @@ describe('PaymentsService', () => {
   describe('create — validaciones y errores', () => {
     it('lanza BadRequestException si no se proporciona prestamoId', async () => {
       await expect(
-        service.create({ prestamoId: '', cobradorId: 'cobrador-1', montoTotal: 100000 }),
+        service.create({
+          prestamoId: '',
+          cobradorId: 'cobrador-1',
+          montoTotal: 100000,
+        }),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('lanza BadRequestException si no se proporciona cobradorId ni existe ruta activa para deducirlo', async () => {
-      (prisma.asignacionRuta.findFirst as jest.Mock).mockResolvedValue(null);
+      prisma.asignacionRuta.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.create({ prestamoId: 'prestamo-1', cobradorId: '', montoTotal: 100000 }),
+        service.create({
+          prestamoId: 'prestamo-1',
+          cobradorId: '',
+          montoTotal: 100000,
+        }),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -628,19 +671,27 @@ describe('PaymentsService', () => {
     });
 
     it('lanza NotFoundException si el préstamo no existe', async () => {
-      (prisma.prestamo.findFirst as jest.Mock).mockResolvedValue(null);
+      prisma.prestamo.findFirst.mockResolvedValue(null);
       await expect(
-        service.create({ prestamoId: 'no-existe', cobradorId: 'cobrador-1', montoTotal: 100000 }),
+        service.create({
+          prestamoId: 'no-existe',
+          cobradorId: 'cobrador-1',
+          montoTotal: 100000,
+        }),
       ).rejects.toThrow(NotFoundException);
     });
 
     it('lanza BadRequestException si el préstamo está en estado PAGADO', async () => {
-      (prisma.prestamo.findFirst as jest.Mock).mockResolvedValue({
+      prisma.prestamo.findFirst.mockResolvedValue({
         ...PRESTAMO_ACTIVO,
         estado: EstadoPrestamo.PAGADO,
       });
       await expect(
-        service.create({ prestamoId: 'prestamo-1', cobradorId: 'cobrador-1', montoTotal: 110000 }),
+        service.create({
+          prestamoId: 'prestamo-1',
+          cobradorId: 'cobrador-1',
+          montoTotal: 110000,
+        }),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -656,7 +707,7 @@ describe('PaymentsService', () => {
     });
 
     it('lanza ConflictException si otro usuario ya pagó la cuota esperada antes de confirmar', async () => {
-      (prisma._txMock.prestamo.findFirst as jest.Mock).mockResolvedValue({
+      prisma._txMock.prestamo.findFirst.mockResolvedValue({
         ...PRESTAMO_ACTIVO,
         cuotas: [
           {
@@ -685,7 +736,7 @@ describe('PaymentsService', () => {
     });
 
     it('permite completar una cuota con abono parcial si el numero de cuota no cambio', async () => {
-      (prisma._txMock.prestamo.findFirst as jest.Mock).mockResolvedValue({
+      prisma._txMock.prestamo.findFirst.mockResolvedValue({
         ...PRESTAMO_ACTIVO,
         cuotas: [
           {

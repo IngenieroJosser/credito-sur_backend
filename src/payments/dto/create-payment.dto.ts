@@ -36,7 +36,9 @@ export class CreatePaymentDto {
 
   @IsOptional()
   @Transform(({ value }) => value?.toString().toUpperCase())
-  @IsEnum(MetodoPago, { message: 'metodoPago debe ser EFECTIVO o TRANSFERENCIA' })
+  @IsEnum(MetodoPago, {
+    message: 'metodoPago debe ser EFECTIVO o TRANSFERENCIA',
+  })
   metodoPago?: MetodoPago;
 
   @IsDateString()

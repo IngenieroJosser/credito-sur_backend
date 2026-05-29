@@ -62,11 +62,14 @@ export class InventoryService {
         (acc, f) => acc + (Number(f.costo) || 0) * (Number(f.stock) || 0),
         0,
       ),
-      productosBajoStock: filas.filter((f) => Number(f.stock) <= Number(f.stockMinimo)).length,
+      productosBajoStock: filas.filter(
+        (f) => Number(f.stock) <= Number(f.stockMinimo),
+      ).length,
     };
 
     const fecha = getBogotaDayKey(new Date());
-    if (format === 'excel') return generarExcelInventario(filas, totales, fecha);
+    if (format === 'excel')
+      return generarExcelInventario(filas, totales, fecha);
     return generarPDFInventario(filas, totales, fecha);
   }
 
@@ -176,8 +179,13 @@ export class InventoryService {
         },
       });
 
-      this.notificacionesGateway.broadcastInventarioActualizado({ action: 'create', product });
-      this.notificacionesGateway.broadcastDashboardsActualizados({ accion: 'INVENTARIO_ACTUALIZADO' });
+      this.notificacionesGateway.broadcastInventarioActualizado({
+        action: 'create',
+        product,
+      });
+      this.notificacionesGateway.broadcastDashboardsActualizados({
+        accion: 'INVENTARIO_ACTUALIZADO',
+      });
       return product;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -249,7 +257,7 @@ export class InventoryService {
         if (catId !== undefined || catName !== undefined) {
           // If either is changing, we re-evaluate
           if (catId) {
-            const cat = await (tx as any).categoria.findUnique({
+            const cat = await tx.categoria.findUnique({
               where: { id: catId },
             });
             if (cat) {
@@ -259,7 +267,7 @@ export class InventoryService {
             }
           } else if (catName) {
             // Name provided, try to find match
-            const cat = await (tx as any).categoria.findFirst({
+            const cat = await tx.categoria.findFirst({
               where: { nombre: { equals: catName, mode: 'insensitive' } },
             });
             if (cat) {
@@ -352,8 +360,13 @@ export class InventoryService {
         });
       });
 
-      this.notificacionesGateway.broadcastInventarioActualizado({ action: 'update', product: updatedProduct });
-      this.notificacionesGateway.broadcastDashboardsActualizados({ accion: 'INVENTARIO_ACTUALIZADO' });
+      this.notificacionesGateway.broadcastInventarioActualizado({
+        action: 'update',
+        product: updatedProduct,
+      });
+      this.notificacionesGateway.broadcastDashboardsActualizados({
+        accion: 'INVENTARIO_ACTUALIZADO',
+      });
       return updatedProduct;
     } catch (error) {
       throw error;
@@ -376,8 +389,13 @@ export class InventoryService {
       },
     });
 
-    this.notificacionesGateway.broadcastInventarioActualizado({ action: 'remove', id });
-    this.notificacionesGateway.broadcastDashboardsActualizados({ accion: 'INVENTARIO_ACTUALIZADO' });
+    this.notificacionesGateway.broadcastInventarioActualizado({
+      action: 'remove',
+      id,
+    });
+    this.notificacionesGateway.broadcastDashboardsActualizados({
+      accion: 'INVENTARIO_ACTUALIZADO',
+    });
     return deletedProduct;
   }
 
@@ -413,7 +431,10 @@ export class InventoryService {
       },
     });
 
-    this.notificacionesGateway.broadcastInventarioActualizado({ action: 'restore', id });
+    this.notificacionesGateway.broadcastInventarioActualizado({
+      action: 'restore',
+      id,
+    });
     return restoredProduct;
   }
 
@@ -437,7 +458,10 @@ export class InventoryService {
       },
     });
 
-    this.notificacionesGateway.broadcastInventarioActualizado({ action: 'hideArchived', id });
+    this.notificacionesGateway.broadcastInventarioActualizado({
+      action: 'hideArchived',
+      id,
+    });
     return hiddenProduct;
   }
 }

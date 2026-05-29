@@ -23,7 +23,7 @@ import { Publico } from '../auth/decorators/public.decorator';
 
 // ─── Tipos de archivos permitidos ─────────────────────────────────────────────
 const EXTENSIONES_PERMITIDAS = /\.(jpg|jpeg|png|gif|mp4|webm|pdf)$/i;
-const TAMANO_MAX_BYTES        = 50 * 1024 * 1024; // 50 MB
+const TAMANO_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
 
 @ApiTags('Uploads')
 @Controller('uploads')
@@ -39,17 +39,19 @@ export class UploadController {
     RolUsuario.SUPERVISOR,
     RolUsuario.COBRADOR,
   )
-  @ApiOperation({ summary: 'Subir un archivo (imagen, video o PDF) a Cloudinary' })
+  @ApiOperation({
+    summary: 'Subir un archivo (imagen, video o PDF) a Cloudinary',
+  })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
       type: 'object',
       properties: {
-        file:          { type: 'string', format: 'binary' },
-        clienteId:     { type: 'string' },
-        dni:           { type: 'string' },
-        nombres:       { type: 'string' },
-        apellidos:     { type: 'string' },
+        file: { type: 'string', format: 'binary' },
+        clienteId: { type: 'string' },
+        dni: { type: 'string' },
+        nombres: { type: 'string' },
+        apellidos: { type: 'string' },
         tipoContenido: { type: 'string' },
       },
     },
@@ -60,7 +62,9 @@ export class UploadController {
       fileFilter: (_req, file, cb) => {
         if (!file.originalname.match(EXTENSIONES_PERMITIDAS)) {
           return cb(
-            new BadRequestException('Solo se permiten archivos de imagen, video o PDF'),
+            new BadRequestException(
+              'Solo se permiten archivos de imagen, video o PDF',
+            ),
             false,
           );
         }
@@ -73,10 +77,10 @@ export class UploadController {
     @UploadedFile() file: Express.Multer.File,
     @Body()
     body: {
-      clienteId?:     string;
-      dni?:           string;
-      nombres?:       string;
-      apellidos?:     string;
+      clienteId?: string;
+      dni?: string;
+      nombres?: string;
+      apellidos?: string;
       tipoContenido?: string;
     },
   ) {
@@ -84,33 +88,45 @@ export class UploadController {
 
     // Construir sub-carpeta según el tipo de contenido y datos del cliente
     const sanitize = (v?: string) =>
-      (v || '').toLowerCase()
-        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 60);
+      (v || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '')
+        .slice(0, 60);
 
-    const nombres    = sanitize(body?.nombres);
-    const apellidos  = sanitize(body?.apellidos);
-    const dni        = (body?.dni || '').replace(/\D/g, '');
-    const dniLast4   = dni ? dni.slice(-4) : '';
-    const clientPart = body?.clienteId ? body.clienteId : dni ? `cc-${dni}` : 'tmp';
-    const clientLabel = [clientPart, nombres, apellidos, dniLast4].filter(Boolean).join('-');
+    const nombres = sanitize(body?.nombres);
+    const apellidos = sanitize(body?.apellidos);
+    const dni = (body?.dni || '').replace(/\D/g, '');
+    const dniLast4 = dni ? dni.slice(-4) : '';
+    const clientPart = body?.clienteId
+      ? body.clienteId
+      : dni
+        ? `cc-${dni}`
+        : 'tmp';
+    const clientLabel = [clientPart, nombres, apellidos, dniLast4]
+      .filter(Boolean)
+      .join('-');
 
     const groupFolder =
-      body?.tipoContenido === 'FOTO_PERFIL' ? 'perfil'
-      : file.mimetype.startsWith('video/')  ? 'videos'
-      : 'documentos';
+      body?.tipoContenido === 'FOTO_PERFIL'
+        ? 'perfil'
+        : file.mimetype.startsWith('video/')
+          ? 'videos'
+          : 'documentos';
 
     const result = await this.cloudinaryService.subirArchivo(file, {
       folder: `clientes/${clientLabel}/${groupFolder}`,
     });
 
     return {
-      filename:     result.publicId,
+      filename: result.publicId,
       originalName: file.originalname,
-      publicId:     result.publicId,
-      path:         result.url,
-      mimetype:     file.mimetype,
-      size:         result.tamanoBytes,
+      publicId: result.publicId,
+      path: result.url,
+      mimetype: file.mimetype,
+      size: result.tamanoBytes,
     };
   }
 

@@ -21,25 +21,33 @@ export class NotificacionesService {
       .replace(/préstamo por artículo/gi, 'crédito por un artículo')
       .replace(/préstamo de artículo/gi, 'crédito por un artículo')
       .replace(/préstamo por un artículo/gi, 'crédito por un artículo')
-      .replace(/solicitado un préstamo por artículo/gi, 'solicitado un crédito por un artículo')
+      .replace(
+        /solicitado un préstamo por artículo/gi,
+        'solicitado un crédito por un artículo',
+      )
       .replace(/préstamo en efectivo/gi, 'préstamo');
   }
 
   private buildPrestamoDatosExtra(p: any, datos: any = {}) {
-    const interesTotal = Number(p?.interesTotal || 0)
-    const tasaInteres = Number(p?.tasaInteres || 0)
-    const cuotaInicial = Number(p?.cuotaInicial || datos?.cuotaInicial || 0)
-    const monto = Number(p?.monto || datos?.monto || 0)
-    const cantidadCuotas = Number(p?.cantidadCuotas || datos?.cuotas || datos?.cantidadCuotas || 0)
+    const interesTotal = Number(p?.interesTotal || 0);
+    const tasaInteres = Number(p?.tasaInteres || 0);
+    const cuotaInicial = Number(p?.cuotaInicial || datos?.cuotaInicial || 0);
+    const monto = Number(p?.monto || datos?.monto || 0);
+    const cantidadCuotas = Number(
+      p?.cantidadCuotas || datos?.cuotas || datos?.cantidadCuotas || 0,
+    );
 
     return {
       prestamoId: p.id,
       numeroPrestamo: p.numeroPrestamo,
 
       clienteId: p.clienteId,
-      cliente: `${p.cliente?.nombres || ''} ${p.cliente?.apellidos || ''}`.trim(),
-      nombreCliente: `${p.cliente?.nombres || ''} ${p.cliente?.apellidos || ''}`.trim(),
-      clienteNombre: `${p.cliente?.nombres || ''} ${p.cliente?.apellidos || ''}`.trim(),
+      cliente:
+        `${p.cliente?.nombres || ''} ${p.cliente?.apellidos || ''}`.trim(),
+      nombreCliente:
+        `${p.cliente?.nombres || ''} ${p.cliente?.apellidos || ''}`.trim(),
+      clienteNombre:
+        `${p.cliente?.nombres || ''} ${p.cliente?.apellidos || ''}`.trim(),
       cedula: String(p.cliente?.dni || ''),
       dni: String(p.cliente?.dni || ''),
       telefono: String(p.cliente?.telefono || ''),
@@ -49,9 +57,10 @@ export class NotificacionesService {
 
       monto,
       capitalSolicitado: monto,
-      valorArticulo: String(p.tipoPrestamo || '').toUpperCase() === 'ARTICULO'
-        ? monto + cuotaInicial
-        : monto,
+      valorArticulo:
+        String(p.tipoPrestamo || '').toUpperCase() === 'ARTICULO'
+          ? monto + cuotaInicial
+          : monto,
 
       cuotaInicial,
       cuotas: cantidadCuotas,
@@ -74,17 +83,18 @@ export class NotificacionesService {
       articulo: p.producto?.nombre || datos?.articulo || '',
       notas: p.notas || datos?.notas || '',
       garantia: p.garantia || datos?.garantia || '',
-    }
+    };
   }
 
   private async enrichNotificationForUi(notif: any) {
     const rawMeta = notif.metadata;
-    const meta = typeof rawMeta === 'string' ? JSON.parse(rawMeta) : (rawMeta || {});
-    
-    let enrichedNotif: any = { 
+    const meta =
+      typeof rawMeta === 'string' ? JSON.parse(rawMeta) : rawMeta || {};
+
+    let enrichedNotif: any = {
       ...notif,
       titulo: this.cleanNotificationText(notif.titulo),
-      mensaje: this.cleanNotificationText(notif.mensaje)
+      mensaje: this.cleanNotificationText(notif.mensaje),
     };
 
     try {
@@ -110,44 +120,56 @@ export class NotificacionesService {
         if (aprobacion) {
           aprobacionReal = aprobacion;
           const rawDatos = aprobacion.datosSolicitud;
-          const datos = typeof rawDatos === 'string' ? JSON.parse(rawDatos) : (rawDatos || {});
-          
+          const datos =
+            typeof rawDatos === 'string'
+              ? JSON.parse(rawDatos)
+              : rawDatos || {};
+
           // Si la aprobación apunta a un préstamo, cargar datos reales
-          if (aprobacion.referenciaId && (aprobacion.tablaReferencia === 'Prestamo' || aprobacion.tipoAprobacion === 'NUEVO_PRESTAMO')) {
+          if (
+            aprobacion.referenciaId &&
+            (aprobacion.tablaReferencia === 'Prestamo' ||
+              aprobacion.tipoAprobacion === 'NUEVO_PRESTAMO')
+          ) {
             const p = await this.prisma.prestamo.findUnique({
               where: { id: aprobacion.referenciaId },
-              include: { 
-                cliente: true, 
-                producto: { 
-                  select: { 
-                    nombre: true, 
-                    precios: true 
-                  } 
-                } 
-              }
+              include: {
+                cliente: true,
+                producto: {
+                  select: {
+                    nombre: true,
+                    precios: true,
+                  },
+                },
+              },
             });
             if (p) {
-                datosExtra = {
-                  ...this.buildPrestamoDatosExtra(p, datos),
-                  planesArticulo: Array.isArray(p.producto?.precios)
-                    ? p.producto?.precios
-                        .filter((pr) => pr.activo && pr.meses > 0)
-                        .map((pr) => ({
-                          meses: pr.meses,
-                          precioTotal: Number(pr.precio),
-                        }))
-                    : undefined,
-                };
+              datosExtra = {
+                ...this.buildPrestamoDatosExtra(p, datos),
+                planesArticulo: Array.isArray(p.producto?.precios)
+                  ? p.producto?.precios
+                      .filter((pr) => pr.activo && pr.meses > 0)
+                      .map((pr) => ({
+                        meses: pr.meses,
+                        precioTotal: Number(pr.precio),
+                      }))
+                  : undefined,
+              };
             }
           }
-          
-          const nombreSolicitante = aprobacion.solicitadoPor ? `${aprobacion.solicitadoPor.nombres} ${aprobacion.solicitadoPor.apellidos}`.trim() : undefined;
-          const nombreRevisor = aprobacion.aprobadoPor ? `${aprobacion.aprobadoPor.nombres} ${aprobacion.aprobadoPor.apellidos}`.trim() : undefined;
-          const descOriginal = (datos as any).descripcion || (datos as any).motivo || (datos as any).razon || undefined;
+
+          const nombreSolicitante = aprobacion.solicitadoPor
+            ? `${aprobacion.solicitadoPor.nombres} ${aprobacion.solicitadoPor.apellidos}`.trim()
+            : undefined;
+          const nombreRevisor = aprobacion.aprobadoPor
+            ? `${aprobacion.aprobadoPor.nombres} ${aprobacion.aprobadoPor.apellidos}`.trim()
+            : undefined;
+          const descOriginal =
+            datos.descripcion || datos.motivo || datos.razon || undefined;
 
           const enrichedMetadata = {
             ...meta,
-            ...(datos as any),
+            ...datos,
             ...datosExtra,
             tipoAprobacion: meta.tipoAprobacion || aprobacion.tipoAprobacion,
             estadoAprobacion: aprobacion.estado,
@@ -160,16 +182,20 @@ export class NotificacionesService {
           enrichedNotif = {
             ...enrichedNotif,
             metadata: enrichedMetadata,
-            detalles: { ...((notif as any).detalles || {}), ...(datos as any), ...datosExtra },
+            detalles: {
+              ...(notif.detalles || {}),
+              ...datos,
+              ...datosExtra,
+            },
             datosSolicitud: {
-              ...(datos as any),
+              ...datos,
               ...datosExtra,
             },
             aprobacion: aprobacionReal
               ? {
                   ...aprobacionReal,
                   datosSolicitud: {
-                    ...(datos as any),
+                    ...datos,
                     ...datosExtra,
                   },
                 }
@@ -177,22 +203,17 @@ export class NotificacionesService {
           };
         }
       }
-      
+
       // Fallback explícito para préstamo (funciona incluso sin entidadId)
       const prestamoIdFromMeta =
-        meta?.prestamoId ||
-        meta?.idPrestamo ||
-        meta?.referenciaId ||
-        null;
+        meta?.prestamoId || meta?.idPrestamo || meta?.referenciaId || null;
 
       const possiblePrestamoId =
         aprobacionReal?.referenciaId ||
         prestamoIdFromMeta ||
-        (
-          String(notif.entidad || '').toUpperCase() === 'PRESTAMO'
-            ? notif.entidadId
-            : null
-        );
+        (String(notif.entidad || '').toUpperCase() === 'PRESTAMO'
+          ? notif.entidadId
+          : null);
 
       if (possiblePrestamoId && !aprobacionReal) {
         const p = await this.prisma.prestamo.findUnique({
@@ -229,7 +250,9 @@ export class NotificacionesService {
               ...datosExtra,
             },
             detalles: {
-              ...(typeof enrichedNotif.detalles === 'object' ? enrichedNotif.detalles : {}),
+              ...(typeof enrichedNotif.detalles === 'object'
+                ? enrichedNotif.detalles
+                : {}),
               ...datosExtra,
             },
             datosSolicitud: {
@@ -238,17 +261,17 @@ export class NotificacionesService {
             aprobacion: undefined,
           };
         }
-      } 
+      }
     } catch (error) {
       this.logger.error('Error in notification enrichment:', error);
     }
 
-    // Aplicamos la limpieza de texto al final para asegurarnos de que el texto enriquecido 
+    // Aplicamos la limpieza de texto al final para asegurarnos de que el texto enriquecido
     // o el original queden estandarizados.
     return {
       ...enrichedNotif,
       titulo: this.cleanNotificationText(enrichedNotif.titulo),
-      mensaje: this.cleanNotificationText(enrichedNotif.mensaje)
+      mensaje: this.cleanNotificationText(enrichedNotif.mensaje),
     };
   }
 
@@ -293,24 +316,30 @@ export class NotificacionesService {
       });
 
       // Enriquecer la notificación antes de emitirla por socket
-      const notificacionEnriquecida = await this.enrichNotificationForUi(notificacion);
+      const notificacionEnriquecida =
+        await this.enrichNotificationForUi(notificacion);
 
       // Emitir evento en tiempo real (WebSockets) con notificación enriquecida
-      this.notificacionesGateway.enviarNotificacionAUsuario(data.usuarioId, notificacionEnriquecida);
+      this.notificacionesGateway.enviarNotificacionAUsuario(
+        data.usuarioId,
+        notificacionEnriquecida,
+      );
       this.notificacionesGateway.notificarActualizacion(data.usuarioId);
 
       // Enviar notificación Push (PWA)
-      this.pushService.sendPushNotification({
-        userId: data.usuarioId,
-        title: cleanTitulo,
-        body: cleanMensaje,
-        data: {
-          tipo: tipoFinal,
-          entidadId: data.entidadId,
-          entidad: data.entidad,
-          link: notificacion.id ? `/notificaciones` : undefined // Ajustar según necesidad
-        }
-      }).catch(err => this.logger.error('Error enviando push:', err));
+      this.pushService
+        .sendPushNotification({
+          userId: data.usuarioId,
+          title: cleanTitulo,
+          body: cleanMensaje,
+          data: {
+            tipo: tipoFinal,
+            entidadId: data.entidadId,
+            entidad: data.entidad,
+            link: notificacion.id ? `/notificaciones` : undefined, // Ajustar según necesidad
+          },
+        })
+        .catch((err) => this.logger.error('Error enviando push:', err));
 
       return notificacionEnriquecida;
     } catch (error) {
@@ -409,7 +438,7 @@ export class NotificacionesService {
 
     // Enriquecer notificaciones usando la función reutilizable
     const enriquecidas = await Promise.all(
-      notificaciones.map((notif) => this.enrichNotificationForUi(notif))
+      notificaciones.map((notif) => this.enrichNotificationForUi(notif)),
     );
 
     return enriquecidas;

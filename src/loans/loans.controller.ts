@@ -155,7 +155,9 @@ export class LoansController {
     RolUsuario.COORDINADOR,
     RolUsuario.CONTADOR,
   )
-  @ApiOperation({ summary: 'Exportar listado de préstamos y cartera en Excel o PDF' })
+  @ApiOperation({
+    summary: 'Exportar listado de préstamos y cartera en Excel o PDF',
+  })
   @ApiQuery({ name: 'format', enum: ['excel', 'pdf'], required: true })
   @ApiQuery({ name: 'estado', required: false })
   @ApiQuery({ name: 'ruta', required: false })
@@ -174,7 +176,10 @@ export class LoansController {
       search,
     });
     res.setHeader('Content-Type', result.contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${result.filename}"`,
+    );
     res.send(result.data);
   }
 
@@ -203,7 +208,10 @@ export class LoansController {
     try {
       const result = await this.loansService.generarContrato(id);
       res.setHeader('Content-Type', result.contentType);
-      res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${result.filename}"`,
+      );
       res.send(result.data);
     } catch (e: any) {
       console.error('PDF GENERATION ERROR: ' + e.message, e.stack);
@@ -263,7 +271,8 @@ export class LoansController {
   )
   @ApiOperation({
     summary: 'Obtener un préstamo archivado por ID',
-    description: 'Obtiene los detalles de un préstamo incluso si está eliminado (soft delete).',
+    description:
+      'Obtiene los detalles de un préstamo incluso si está eliminado (soft delete).',
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -313,7 +322,14 @@ export class LoansController {
   }
 
   @Post()
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR, RolUsuario.COBRADOR, RolUsuario.SUPERVISOR, RolUsuario.PUNTO_DE_VENTA)
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.COBRADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.PUNTO_DE_VENTA,
+  )
   @UsePipes(new ValidationPipe({ transform: true }))
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
@@ -382,7 +398,10 @@ export class LoansController {
     },
   })
   async createLoan(@Body() createLoanDto: CreateLoanDto, @Request() req) {
-    console.log('[CONTROLLER DEBUG] createLoan received:', JSON.stringify(createLoanDto));
+    console.log(
+      '[CONTROLLER DEBUG] createLoan received:',
+      JSON.stringify(createLoanDto),
+    );
     // Obtener usuario del request (JWT)
     const usuarioId = req.user.id;
 
@@ -401,7 +420,11 @@ export class LoansController {
   }
 
   @Post(':id/approve')
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.COORDINADOR, RolUsuario.ADMIN)
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+  )
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Aprobar un préstamo',
@@ -451,7 +474,11 @@ export class LoansController {
   }
 
   @Post(':id/reject')
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.COORDINADOR, RolUsuario.ADMIN)
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+  )
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Rechazar un préstamo',
@@ -506,7 +533,11 @@ export class LoansController {
   }
 
   @Delete(':id')
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.COORDINADOR, RolUsuario.ADMIN)
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+  )
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Eliminar un préstamo (marcar como eliminado)',
@@ -538,7 +569,11 @@ export class LoansController {
   }
 
   @Patch(':id')
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.COORDINADOR, RolUsuario.ADMIN)
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+  )
   @HttpCode(HttpStatus.OK)
   @UsePipes(new ValidationPipe({ transform: true }))
   @ApiOperation({
@@ -572,7 +607,11 @@ export class LoansController {
   }
 
   @Patch(':id/restore')
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.COORDINADOR, RolUsuario.ADMIN)
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+  )
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Restaurar un préstamo eliminado',
@@ -613,7 +652,9 @@ export class LoansController {
     RolUsuario.COORDINADOR,
     RolUsuario.SUPERVISOR,
   )
-  @ApiOperation({ summary: 'Archivar préstamo como pérdida y agregar cliente a blacklist' })
+  @ApiOperation({
+    summary: 'Archivar préstamo como pérdida y agregar cliente a blacklist',
+  })
   @ApiParam({ name: 'id', description: 'ID del préstamo a archivar' })
   @ApiBody({
     schema: {
@@ -625,9 +666,18 @@ export class LoansController {
       required: ['motivo'],
     },
   })
-  @ApiResponse({ status: HttpStatus.OK, description: 'Préstamo archivado exitosamente' })
-  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Préstamo no encontrado' })
-  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'El préstamo ya está archivado' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Préstamo archivado exitosamente',
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Préstamo no encontrado',
+  })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'El préstamo ya está archivado',
+  })
   async archiveLoan(
     @Param('id') id: string,
     @Body() body: { motivo: string; notas?: string },
@@ -649,11 +699,23 @@ export class LoansController {
   )
   @ApiOperation({ summary: 'Reprogramar fecha de vencimiento de una cuota' })
   @ApiParam({ name: 'id', description: 'ID del préstamo' })
-  @ApiParam({ name: 'numeroCuota', description: 'Número de la cuota a reprogramar' })
+  @ApiParam({
+    name: 'numeroCuota',
+    description: 'Número de la cuota a reprogramar',
+  })
   @ApiBody({ type: ReprogramarCuotaDto })
-  @ApiResponse({ status: HttpStatus.OK, description: 'Cuota reprogramada exitosamente' })
-  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Préstamo o cuota no encontrada' })
-  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Datos inválidos' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Cuota reprogramada exitosamente',
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Préstamo o cuota no encontrada',
+  })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Datos inválidos',
+  })
   async reprogramarCuota(
     @Param('id') id: string,
     @Param('numeroCuota', ParseIntPipe) numeroCuota: number,
@@ -670,7 +732,8 @@ export class LoansController {
   @Roles(RolUsuario.SUPER_ADMINISTRADOR)
   @ApiOperation({
     summary: 'Corregir cálculos de intereses en préstamos existentes',
-    description: 'Ejecuta script de corrección masiva para préstamos con interés simple mal calculado',
+    description:
+      'Ejecuta script de corrección masiva para préstamos con interés simple mal calculado',
   })
   async fixInterestCalculations() {
     return this.loansService.fixInterestCalculations();
@@ -754,7 +817,8 @@ export class LoansController {
   @ApiQuery({ name: 'dryRun', required: false, type: Boolean })
   async repararFalsosVencidosHoy(
     @Query('prestamoId') prestamoId?: string,
-    @Query('dryRun', new DefaultValuePipe(false), ParseBoolPipe) dryRun?: boolean,
+    @Query('dryRun', new DefaultValuePipe(false), ParseBoolPipe)
+    dryRun?: boolean,
   ) {
     return this.moraService.repararFalsosVencidosHoy({ prestamoId, dryRun });
   }
@@ -770,10 +834,13 @@ export class LoansController {
     RolUsuario.COORDINADOR,
     RolUsuario.SUPERVISOR,
   )
-  @ApiOperation({ summary: 'Asignar interés de mora a un préstamo (requiere aprobación)' })
+  @ApiOperation({
+    summary: 'Asignar interés de mora a un préstamo (requiere aprobación)',
+  })
   async asignarMora(
     @Param('id') prestamoId: string,
-    @Body() body: {
+    @Body()
+    body: {
       montoInteres: number;
       diasGracia: number;
       comentarios?: string;
@@ -796,7 +863,9 @@ export class LoansController {
       where: { id: usuarioId },
       select: { nombres: true, apellidos: true, rol: true },
     });
-    const nombreUsuario = usuario ? `${usuario.nombres} ${usuario.apellidos}` : 'Usuario';
+    const nombreUsuario = usuario
+      ? `${usuario.nombres} ${usuario.apellidos}`
+      : 'Usuario';
     const nombreCliente = prestamo.cliente
       ? `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`
       : 'Cliente';
@@ -868,7 +937,8 @@ export class LoansController {
       await this.notificacionesService.create({
         usuarioId,
         titulo: 'Solicitud enviada',
-        mensaje: 'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
+        mensaje:
+          'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
         tipo: 'INFORMATIVO',
         entidad: 'Aprobacion',
         entidadId: aprobacion.id,
@@ -909,7 +979,8 @@ export class LoansController {
   @ApiOperation({ summary: 'Procesar gestión sobre cuenta vencida' })
   async gestionarVencida(
     @Param('id') prestamoId: string,
-    @Body() body: {
+    @Body()
+    body: {
       decision: 'CASTIGAR' | 'PRORROGAR' | 'DEJAR_QUIETO';
       montoInteres?: number;
       diasGracia?: number;
@@ -930,7 +1001,9 @@ export class LoansController {
       where: { id: usuarioId },
       select: { nombres: true, apellidos: true, rol: true },
     });
-    const nombreUsuario = usuario ? `${usuario.nombres} ${usuario.apellidos}`.trim() : 'Usuario';
+    const nombreUsuario = usuario
+      ? `${usuario.nombres} ${usuario.apellidos}`.trim()
+      : 'Usuario';
     const nombreCliente = prestamo.cliente
       ? `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`.trim()
       : 'Cliente';
@@ -958,7 +1031,8 @@ export class LoansController {
         ? ('BAJA_POR_PERDIDA' as TipoAprobacion)
         : ('PRORROGA_PAGO' as TipoAprobacion);
 
-    const dias = Number(body.diasGracia || 0) > 0 ? Number(body.diasGracia) : 30;
+    const dias =
+      Number(body.diasGracia || 0) > 0 ? Number(body.diasGracia) : 30;
     const nuevaFecha = new Date();
     nuevaFecha.setDate(nuevaFecha.getDate() + dias);
 
@@ -980,9 +1054,13 @@ export class LoansController {
           saldoPendiente: Number(prestamo.saldoPendiente),
           montoInteres: Number(body.montoInteres || 0),
           diasGracia: body.decision === 'CASTIGAR' ? 0 : dias,
-          fechaVencimientoOriginal: prestamo.fechaFin ? formatBogotaOffsetIso(new Date(prestamo.fechaFin)) : undefined,
+          fechaVencimientoOriginal: prestamo.fechaFin
+            ? formatBogotaOffsetIso(new Date(prestamo.fechaFin))
+            : undefined,
           nuevaFechaVencimiento:
-            body.decision === 'PRORROGAR' ? formatBogotaOffsetIso(nuevaFecha) : undefined,
+            body.decision === 'PRORROGAR'
+              ? formatBogotaOffsetIso(nuevaFecha)
+              : undefined,
           comentarios: body.comentarios,
           gestionadoPor: nombreUsuario,
           rolGestor: usuario?.rol,
@@ -1029,14 +1107,22 @@ export class LoansController {
         if (tipoAprobacion === ('BAJA_POR_PERDIDA' as any)) {
           await this.prisma.aprobacion.update({
             where: { id: aprobacion.id },
-            data: { estado: 'APROBADO', aprobadoPorId: usuarioId, revisadoEn: new Date() } as any,
+            data: {
+              estado: 'APROBADO',
+              aprobadoPorId: usuarioId,
+              revisadoEn: new Date(),
+            } as any,
           });
           await this.loansService.archiveLoan(prestamoId, {
             motivo: body.comentarios || 'Baja por pérdida (auto-aprobado)',
             archivarPorId: usuarioId,
           });
         } else {
-          await this.approvalsService.approveItem(aprobacion.id, tipoAprobacion, usuarioId);
+          await this.approvalsService.approveItem(
+            aprobacion.id,
+            tipoAprobacion,
+            usuarioId,
+          );
         }
 
         return {
@@ -1057,7 +1143,9 @@ export class LoansController {
       };
       await this.notificacionesService.notifyApprovers({
         titulo: `${LABEL_DECISION[body.decision]} — ${nombreCliente} (${prestamo.numeroPrestamo})`,
-        mensaje: msgPorDecision[body.decision] || `${nombreUsuario} solicitó ${LABEL_DECISION[body.decision].toLowerCase()} para el préstamo ${prestamo.numeroPrestamo}.`,
+        mensaje:
+          msgPorDecision[body.decision] ||
+          `${nombreUsuario} solicitó ${LABEL_DECISION[body.decision].toLowerCase()} para el préstamo ${prestamo.numeroPrestamo}.`,
         tipo: body.decision === 'CASTIGAR' ? 'WARNING' : 'INFO',
         entidad: 'Aprobacion',
         entidadId: aprobacion.id,
@@ -1080,7 +1168,8 @@ export class LoansController {
       await this.notificacionesService.create({
         usuarioId,
         titulo: `Solicitud de ${LABEL_DECISION[body.decision]} enviada`,
-        mensaje: 'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
+        mensaje:
+          'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
         tipo: 'INFORMATIVO',
         entidad: 'Aprobacion',
         entidadId: aprobacion.id,
@@ -1119,7 +1208,8 @@ export class LoansController {
   @ApiOperation({ summary: 'Solicitar reprogramación de cuota' })
   async solicitarReprogramacion(
     @Param('id') prestamoId: string,
-    @Body() body: {
+    @Body()
+    body: {
       cuotaId?: string;
       nuevaFecha: string;
       motivo: string;
@@ -1146,7 +1236,11 @@ export class LoansController {
     RolUsuario.SUPERVISOR,
   )
   @ApiOperation({ summary: 'Listar solicitudes de reprogramación pendientes' })
-  @ApiQuery({ name: 'estado', required: false, enum: ['PENDIENTE', 'APROBADO', 'RECHAZADO', 'TODOS'] })
+  @ApiQuery({
+    name: 'estado',
+    required: false,
+    enum: ['PENDIENTE', 'APROBADO', 'RECHAZADO', 'TODOS'],
+  })
   async listarReprogramacionesPendientes(@Query('estado') estado?: string) {
     return this.loansService.listarReprogramacionesPendientes(estado);
   }
@@ -1178,6 +1272,10 @@ export class LoansController {
     @Body() body: { comentarios?: string },
     @Request() req: any,
   ) {
-    return this.loansService.rechazarReprogramacion(id, req.user.id, body.comentarios);
+    return this.loansService.rechazarReprogramacion(
+      id,
+      req.user.id,
+      body.comentarios,
+    );
   }
 }

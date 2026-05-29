@@ -31,15 +31,26 @@ export interface ResultadoAmortizacion {
  * Convierte la tasa mensual (%) a tasa por período de forma compuesta:
  * i_periodo = (1 + i_mensual)^(fracción_mes) - 1
  */
-export function tasaPorPeriodo(tasaMensualPct: number, frecuencia: FrecuenciaPago): number {
+export function tasaPorPeriodo(
+  tasaMensualPct: number,
+  frecuencia: FrecuenciaPago,
+): number {
   const tasaMensual = tasaMensualPct / 100;
   let fraccionMes: number;
   switch (frecuencia) {
-    case FrecuenciaPago.DIARIO:    fraccionMes = 1 / 30; break;
-    case FrecuenciaPago.SEMANAL:   fraccionMes = 1 / 4;  break;
-    case FrecuenciaPago.QUINCENAL: fraccionMes = 1 / 2;  break;
+    case FrecuenciaPago.DIARIO:
+      fraccionMes = 1 / 30;
+      break;
+    case FrecuenciaPago.SEMANAL:
+      fraccionMes = 1 / 4;
+      break;
+    case FrecuenciaPago.QUINCENAL:
+      fraccionMes = 1 / 2;
+      break;
     case FrecuenciaPago.MENSUAL:
-    default:                        fraccionMes = 1;       break;
+    default:
+      fraccionMes = 1;
+      break;
   }
   return Math.pow(1 + tasaMensual, fraccionMes) - 1;
 }
@@ -87,7 +98,8 @@ export function calcularAmortizacionFrancesa(
   }
 
   // Fórmula francesa: C = P × r / (1 - (1+r)^-n)
-  const cuotaFijaDecimal = (capital * tasaPeriodo) / (1 - Math.pow(1 + tasaPeriodo, -numCuotas));
+  const cuotaFijaDecimal =
+    (capital * tasaPeriodo) / (1 - Math.pow(1 + tasaPeriodo, -numCuotas));
   const cuotaFija = Math.round(cuotaFijaDecimal);
 
   let saldo = capital;
@@ -97,13 +109,13 @@ export function calcularAmortizacionFrancesa(
   for (let i = 0; i < numCuotas; i++) {
     const esUltima = i === numCuotas - 1;
     const interesPeriodo = Math.round(saldo * tasaPeriodo);
-    
+
     let capitalPeriodo = esUltima ? saldo : cuotaFija - interesPeriodo;
     capitalPeriodo = Math.min(saldo, Math.max(0, capitalPeriodo));
-    
+
     saldo = Math.max(0, saldo - capitalPeriodo);
     interesTotalAcumulado += interesPeriodo;
-    
+
     tabla.push({
       numeroCuota: i + 1,
       montoCapital: capitalPeriodo,
@@ -138,7 +150,7 @@ export function calcularInteresSimple(
 
   const tasaPeriodo = tasaPorPeriodo(tasaMensualPct, frecuencia);
   const interesTotal = Math.round(capital * tasaPeriodo * numCuotas);
-  
+
   const baseCapital = Math.floor(capital / numCuotas);
   const baseInteres = Math.floor(interesTotal / numCuotas);
   const cuotaFija = baseCapital + baseInteres;
@@ -148,14 +160,14 @@ export function calcularInteresSimple(
 
   for (let i = 0; i < numCuotas; i++) {
     const esUltima = i === numCuotas - 1;
-    
+
     const montoCapital = esUltima ? saldo : baseCapital;
-    const montoInteres = esUltima 
-      ? interesTotal - (baseInteres * (numCuotas - 1)) 
+    const montoInteres = esUltima
+      ? interesTotal - baseInteres * (numCuotas - 1)
       : baseInteres;
-    
+
     saldo = Math.max(0, saldo - montoCapital);
-    
+
     tabla.push({
       numeroCuota: i + 1,
       montoCapital,
@@ -182,10 +194,18 @@ export function calcularFechaVencimiento(
   const fecha = new Date(fechaBase);
   const offset = Math.max(0, numeroCuota - 1);
   switch (frecuencia) {
-    case FrecuenciaPago.DIARIO:    fecha.setDate(fecha.getDate() + offset);         break;
-    case FrecuenciaPago.SEMANAL:   fecha.setDate(fecha.getDate() + offset * 7);     break;
-    case FrecuenciaPago.QUINCENAL: fecha.setDate(fecha.getDate() + offset * 15);    break;
-    case FrecuenciaPago.MENSUAL:   fecha.setMonth(fecha.getMonth() + offset);       break;
+    case FrecuenciaPago.DIARIO:
+      fecha.setDate(fecha.getDate() + offset);
+      break;
+    case FrecuenciaPago.SEMANAL:
+      fecha.setDate(fecha.getDate() + offset * 7);
+      break;
+    case FrecuenciaPago.QUINCENAL:
+      fecha.setDate(fecha.getDate() + offset * 15);
+      break;
+    case FrecuenciaPago.MENSUAL:
+      fecha.setMonth(fecha.getMonth() + offset);
+      break;
   }
   return fecha;
 }

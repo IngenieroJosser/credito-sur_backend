@@ -15,11 +15,13 @@ describe('AuthController security metadata', () => {
 
     expect(isPublic).toBeUndefined();
     expect(guards).toEqual(expect.arrayContaining([JwtAuthGuard, RolesGuard]));
-    expect(roles).toEqual(expect.arrayContaining([
-      RolUsuario.SUPER_ADMINISTRADOR,
-      RolUsuario.ADMIN,
-      RolUsuario.COORDINADOR,
-    ]));
+    expect(roles).toEqual(
+      expect.arrayContaining([
+        RolUsuario.SUPER_ADMINISTRADOR,
+        RolUsuario.ADMIN,
+        RolUsuario.COORDINADOR,
+      ]),
+    );
   });
 
   it('does not expose registration as a public endpoint', () => {

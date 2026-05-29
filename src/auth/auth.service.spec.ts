@@ -47,11 +47,15 @@ const mockJwtService = {
   sign: jest.fn().mockReturnValue('jwt-token-mock'),
 };
 
-function buildMockPrisma(usuarioOverride: Record<string, unknown> | null = USUARIO_ACTIVO) {
+function buildMockPrisma(
+  usuarioOverride: Record<string, unknown> | null = USUARIO_ACTIVO,
+) {
   return {
     usuario: {
       findFirst: jest.fn().mockResolvedValue(usuarioOverride),
-      update: jest.fn().mockResolvedValue({ ...USUARIO_ACTIVO, ultimoIngreso: new Date() }),
+      update: jest
+        .fn()
+        .mockResolvedValue({ ...USUARIO_ACTIVO, ultimoIngreso: new Date() }),
     },
     asignacionRolUsuario: {
       findMany: jest.fn().mockResolvedValue([]),
@@ -119,7 +123,7 @@ describe('AuthService', () => {
     });
 
     it('lanza UnauthorizedException si el usuario no existe', async () => {
-      (prisma.usuario.findFirst as jest.Mock).mockResolvedValue(null);
+      prisma.usuario.findFirst.mockResolvedValue(null);
 
       await expect(
         service.login({ nombres: 'noexiste@test.com', contrasena: '123456' }),
@@ -130,13 +134,16 @@ describe('AuthService', () => {
       (argon2.verify as jest.Mock).mockResolvedValue(false);
 
       await expect(
-        service.login({ nombres: 'admin@test.com', contrasena: 'contraseña-mal' }),
+        service.login({
+          nombres: 'admin@test.com',
+          contrasena: 'contraseña-mal',
+        }),
       ).rejects.toThrow(UnauthorizedException);
     });
 
     it('lanza UnauthorizedException si el usuario está INACTIVO', async () => {
       (argon2.verify as jest.Mock).mockResolvedValue(true);
-      (prisma.usuario.findFirst as jest.Mock).mockResolvedValue({
+      prisma.usuario.findFirst.mockResolvedValue({
         ...USUARIO_ACTIVO,
         estado: 'INACTIVO',
       });
@@ -149,7 +156,10 @@ describe('AuthService', () => {
     it('actualiza ultimoIngreso después de un login exitoso', async () => {
       (argon2.verify as jest.Mock).mockResolvedValue(true);
 
-      await service.login({ nombres: 'admin@test.com', contrasena: 'correcta' });
+      await service.login({
+        nombres: 'admin@test.com',
+        contrasena: 'correcta',
+      });
 
       expect(prisma.usuario.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -163,7 +173,7 @@ describe('AuthService', () => {
   // ── validarUsuario ─────────────────────────
   describe('validarUsuario', () => {
     it('retorna null si el usuario no existe en BD', async () => {
-      (prisma.usuario.findFirst as jest.Mock).mockResolvedValue(null);
+      prisma.usuario.findFirst.mockResolvedValue(null);
       const result = await service.validarUsuario('noexiste', 'pass');
       expect(result).toBeNull();
     });

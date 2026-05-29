@@ -34,7 +34,11 @@ describe('OutboxService', () => {
         eventType: 'Cliente.create',
         aggregateType: 'Cliente',
         aggregateId: 'cliente-1',
-        payload: { model: 'Cliente', action: 'create', data: { id: 'cliente-1' } },
+        payload: {
+          model: 'Cliente',
+          action: 'create',
+          data: { id: 'cliente-1' },
+        },
         status: 'PENDING',
         attempts: 0,
         createdAt,
@@ -45,11 +49,14 @@ describe('OutboxService', () => {
 
     await service.processPending(10);
 
-    expect(eventEmitter.emitAsync).toHaveBeenCalledWith('database.write.success', {
-      model: 'Cliente',
-      action: 'create',
-      data: { id: 'cliente-1' },
-    });
+    expect(eventEmitter.emitAsync).toHaveBeenCalledWith(
+      'database.write.success',
+      {
+        model: 'Cliente',
+        action: 'create',
+        data: { id: 'cliente-1' },
+      },
+    );
     expect(prisma.outboxEvent.update).toHaveBeenCalledWith({
       where: { id: 'event-1' },
       data: {
@@ -71,7 +78,11 @@ describe('OutboxService', () => {
         eventType: 'Prestamo.update',
         aggregateType: 'Prestamo',
         aggregateId: 'prestamo-1',
-        payload: { model: 'Prestamo', action: 'update', data: { id: 'prestamo-1' } },
+        payload: {
+          model: 'Prestamo',
+          action: 'update',
+          data: { id: 'prestamo-1' },
+        },
         status: 'PENDING',
         attempts: 0,
         createdAt: new Date('2026-05-16T10:00:00.000Z'),
@@ -79,7 +90,9 @@ describe('OutboxService', () => {
     ]);
     prisma.outboxEvent.updateMany.mockResolvedValue({ count: 1 });
     prisma.outboxEvent.update.mockResolvedValue({});
-    eventEmitter.emitAsync.mockRejectedValue(new Error('socket bus unavailable'));
+    eventEmitter.emitAsync.mockRejectedValue(
+      new Error('socket bus unavailable'),
+    );
 
     await service.processPending(10);
 

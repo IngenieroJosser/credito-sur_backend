@@ -51,7 +51,7 @@ export async function generarExcelOperativo(
   const ws = workbook.addWorksheet('Rendimiento por Ruta', {
     views: [{ state: 'frozen', ySplit: 4, showGridLines: false }],
     pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
-    properties: { tabColor: { argb: 'FFEA580C' } }
+    properties: { tabColor: { argb: 'FFEA580C' } },
   });
 
   ws.columns = [
@@ -68,16 +68,23 @@ export async function generarExcelOperativo(
   // Título
   const titleRow = ws.addRow(['CRÉDITOS DEL SUR — REPORTE OPERATIVO']);
   titleRow.font = { bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
-  titleRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEA580C' } };
+  titleRow.fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FFEA580C' },
+  };
   ws.mergeCells('A1:H1');
   ws.getRow(1).height = 32;
   ws.getRow(2).height = 22;
 
   // Período
-  const periodoStr = resumen.fechaInicio && resumen.fechaFin
-    ? `Período: ${new Date(resumen.fechaInicio).toLocaleDateString('es-CO')} — ${new Date(resumen.fechaFin).toLocaleDateString('es-CO')}`
-    : `Período: ${resumen.periodo?.toUpperCase() || 'N/A'}`;
-  const subRow = ws.addRow([`${periodoStr}   |   Generado: ${new Date().toLocaleString('es-CO')}`]);
+  const periodoStr =
+    resumen.fechaInicio && resumen.fechaFin
+      ? `Período: ${new Date(resumen.fechaInicio).toLocaleDateString('es-CO')} — ${new Date(resumen.fechaFin).toLocaleDateString('es-CO')}`
+      : `Período: ${resumen.periodo?.toUpperCase() || 'N/A'}`;
+  const subRow = ws.addRow([
+    `${periodoStr}   |   Generado: ${new Date().toLocaleString('es-CO')}`,
+  ]);
   subRow.font = { italic: true, size: 9, color: { argb: 'FF64748B' } };
   ws.mergeCells('A2:H2');
 
@@ -89,7 +96,11 @@ export async function generarExcelOperativo(
     const cell = headerRow.getCell(i + 1);
     cell.value = col.header;
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEA580C' } };
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFEA580C' },
+    };
     cell.alignment = { horizontal: 'center', vertical: 'middle' };
   });
   headerRow.height = 22;
@@ -110,20 +121,28 @@ export async function generarExcelOperativo(
     });
 
     if (idx % 2 === 1) {
-      row.eachCell(cell => {
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF7ED' } };
+      row.eachCell((cell) => {
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FFFFF7ED' },
+        };
       });
     }
 
-    colsMoneda.forEach(key => {
+    colsMoneda.forEach((key) => {
       const colIdx = ws.columns.findIndex((c: any) => c.key === key) + 1;
       if (colIdx > 0) row.getCell(colIdx).numFmt = '#,##0';
     });
 
     // Color rojo si eficiencia < 70%
-    const eficienciaIdx = ws.columns.findIndex((c: any) => c.key === 'eficiencia') + 1;
+    const eficienciaIdx =
+      ws.columns.findIndex((c: any) => c.key === 'eficiencia') + 1;
     if (eficienciaIdx > 0 && fila.eficiencia < 70) {
-      row.getCell(eficienciaIdx).font = { color: { argb: 'FFDC2626' }, bold: true };
+      row.getCell(eficienciaIdx).font = {
+        color: { argb: 'FFDC2626' },
+        bold: true,
+      };
     }
   });
 
@@ -140,14 +159,18 @@ export async function generarExcelOperativo(
   totalRow.height = 24;
   totalRow.eachCell({ includeEmpty: true }, (cell) => {
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF1E293B' },
+    };
     cell.border = {
       top: { style: 'medium', color: { argb: 'FFFFFFFF' } },
       right: { style: 'thin', color: { argb: 'FFFFFFFF' } },
     };
   });
   totalRow.getCell(1).alignment = { horizontal: 'right', vertical: 'middle' };
-  colsMoneda.forEach(key => {
+  colsMoneda.forEach((key) => {
     const colIdx = ws.columns.findIndex((c: any) => c.key === key) + 1;
     if (colIdx > 0) totalRow.getCell(colIdx).numFmt = '#,##0';
   });
@@ -168,7 +191,11 @@ export async function generarExcelOperativo(
     const cell = h2.getCell(i + 1);
     cell.value = col.header;
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEA580C' } };
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFEA580C' },
+    };
     cell.alignment = { horizontal: 'center' };
   });
 
@@ -178,10 +205,17 @@ export async function generarExcelOperativo(
     { indicador: 'Eficiencia Global (%)', valor: resumen.porcentajeGlobal },
     { indicador: 'Préstamos Nuevos', valor: resumen.totalPrestamosNuevos },
     { indicador: 'Clientes Nuevos', valor: resumen.totalAfiliaciones },
-    { indicador: 'Efectividad Promedio Rutas (%)', valor: resumen.efectividadPromedio },
-  ].forEach(item => {
+    {
+      indicador: 'Efectividad Promedio Rutas (%)',
+      valor: resumen.efectividadPromedio,
+    },
+  ].forEach((item) => {
     const row = ws2.addRow({ indicador: item.indicador, valor: item.valor });
-    if (item.indicador.includes('$') || item.indicador.toLowerCase().includes('recaudado') || item.indicador.toLowerCase().includes('meta')) {
+    if (
+      item.indicador.includes('$') ||
+      item.indicador.toLowerCase().includes('recaudado') ||
+      item.indicador.toLowerCase().includes('meta')
+    ) {
       row.getCell(2).numFmt = '#,##0';
     }
   });
@@ -189,7 +223,8 @@ export async function generarExcelOperativo(
   const buffer = await workbook.xlsx.writeBuffer();
   return {
     data: Buffer.from(buffer as ArrayBuffer),
-    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    contentType:
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     filename: `reporte-operativo-${resumen.periodo}-${fecha}.xlsx`,
   };
 }
@@ -201,27 +236,31 @@ export async function generarPDFOperativo(
   resumen: OperativoResumen,
   fecha: string,
 ): Promise<{ data: Buffer; contentType: string; filename: string }> {
-  const doc = new PDFDocument({ layout: 'landscape', size: 'LETTER', margin: 30 });
+  const doc = new PDFDocument({
+    layout: 'landscape',
+    size: 'LETTER',
+    margin: 30,
+  });
   const buffers: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => buffers.push(chunk));
 
-  const BLANCO     = '#FFFFFF';
-  const GRIS_CLR   = '#E2E8F0';
-  const GRIS_MED   = '#94A3B8';
-  const GRIS_TXT   = '#475569';
-  const AZUL_DARK  = '#1A5F8A';
-  const AZUL_MED   = '#2676AC';
-  const AZUL_PALE  = '#F0F9FF';
-  const NAR_DARK   = '#D95C0F';
-  const NAR_MED    = '#F07A28';
-  const NAR_SOFT   = '#FDE8D5';
+  const BLANCO = '#FFFFFF';
+  const GRIS_CLR = '#E2E8F0';
+  const GRIS_MED = '#94A3B8';
+  const GRIS_TXT = '#475569';
+  const AZUL_DARK = '#1A5F8A';
+  const AZUL_MED = '#2676AC';
+  const AZUL_PALE = '#F0F9FF';
+  const NAR_DARK = '#D95C0F';
+  const NAR_MED = '#F07A28';
+  const NAR_SOFT = '#FDE8D5';
 
-  const fmtCOP   = (v: number) => `$${(v || 0).toLocaleString('es-CO')}`;
+  const fmtCOP = (v: number) => `$${(v || 0).toLocaleString('es-CO')}`;
 
   const getLogoPath = () => {
     const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
-    const pDev  = path.join(process.cwd(), 'src/assets/logo.png');
-    return fs.existsSync(pProd) ? pProd : (fs.existsSync(pDev) ? pDev : null);
+    const pDev = path.join(process.cwd(), 'src/assets/logo.png');
+    return fs.existsSync(pProd) ? pProd : fs.existsSync(pDev) ? pDev : null;
   };
 
   const drawWatermark = () => {
@@ -229,13 +268,13 @@ export async function generarPDFOperativo(
       const lp = getLogoPath();
       if (lp) {
         doc.save();
-        doc.opacity(0.08); 
+        doc.opacity(0.08);
         const W = doc.page.width;
         const H = doc.page.height;
         doc.image(lp, (W - 300) / 2, (H - 300) / 2, { width: 300 });
         doc.restore();
       }
-    } catch(e) {}
+    } catch (e) {}
   };
 
   let pageNumber = 1;
@@ -243,34 +282,75 @@ export async function generarPDFOperativo(
   const drawPageHeader = (): number => {
     const W = doc.page.width;
 
-    doc.fontSize(22).font('Helvetica-Bold').fillColor(AZUL_DARK)
-       .text('Créditos del Sur', 30, 25);
-    doc.fontSize(9).font('Helvetica').fillColor(NAR_MED)
-       .text('REPORTE OPERATIVO & RENDIMIENTO', 30, 52, { characterSpacing: 0.5 });
+    doc
+      .fontSize(22)
+      .font('Helvetica-Bold')
+      .fillColor(AZUL_DARK)
+      .text('Créditos del Sur', 30, 25);
+    doc
+      .fontSize(9)
+      .font('Helvetica')
+      .fillColor(NAR_MED)
+      .text('REPORTE OPERATIVO & RENDIMIENTO', 30, 52, {
+        characterSpacing: 0.5,
+      });
 
     doc.roundedRect(W - 180, 20, 148, 44, 5).fillAndStroke(BLANCO, GRIS_CLR);
-    doc.fontSize(8).font('Helvetica-Bold').fillColor(GRIS_MED)
-       .text('PERÍODO', W - 180, 28, { width: 148, align: 'center' });
-    const pStr = resumen.fechaInicio && resumen.fechaFin
-      ? `${new Date(resumen.fechaInicio).toLocaleDateString('es-CO')} - ${new Date(resumen.fechaFin).toLocaleDateString('es-CO')}`
-      : resumen.periodo?.toUpperCase() || 'N/A';
-    doc.fontSize(10).font('Helvetica-Bold').fillColor(AZUL_DARK)
-       .text(pStr, W - 180, 40, { width: 148, align: 'center' });
+    doc
+      .fontSize(8)
+      .font('Helvetica-Bold')
+      .fillColor(GRIS_MED)
+      .text('PERÍODO', W - 180, 28, { width: 148, align: 'center' });
+    const pStr =
+      resumen.fechaInicio && resumen.fechaFin
+        ? `${new Date(resumen.fechaInicio).toLocaleDateString('es-CO')} - ${new Date(resumen.fechaFin).toLocaleDateString('es-CO')}`
+        : resumen.periodo?.toUpperCase() || 'N/A';
+    doc
+      .fontSize(10)
+      .font('Helvetica-Bold')
+      .fillColor(AZUL_DARK)
+      .text(pStr, W - 180, 40, { width: 148, align: 'center' });
 
     const kW = (doc.page.width - 60) / 4;
     const kY = 98;
     [
-      { label: 'META TOTAL',      val: fmtCOP(resumen.totalMeta), bg: '#D6E9F5', color: AZUL_DARK },
-      { label: 'RECAUDO TOTAL',   val: fmtCOP(resumen.totalRecaudo), bg: NAR_SOFT, color: NAR_DARK },
-      { label: 'EFICIENCIA',      val: `${resumen.porcentajeGlobal}%`, bg: '#F0F4F8', color: GRIS_TXT },
-      { label: 'PRÉSTAMOS NUEVOS',val: String(resumen.totalPrestamosNuevos), bg: '#F0F4F8', color: GRIS_TXT },
+      {
+        label: 'META TOTAL',
+        val: fmtCOP(resumen.totalMeta),
+        bg: '#D6E9F5',
+        color: AZUL_DARK,
+      },
+      {
+        label: 'RECAUDO TOTAL',
+        val: fmtCOP(resumen.totalRecaudo),
+        bg: NAR_SOFT,
+        color: NAR_DARK,
+      },
+      {
+        label: 'EFICIENCIA',
+        val: `${resumen.porcentajeGlobal}%`,
+        bg: '#F0F4F8',
+        color: GRIS_TXT,
+      },
+      {
+        label: 'PRÉSTAMOS NUEVOS',
+        val: String(resumen.totalPrestamosNuevos),
+        bg: '#F0F4F8',
+        color: GRIS_TXT,
+      },
     ].forEach((m, i) => {
       const mx = 30 + i * (kW + 4);
       doc.roundedRect(mx, kY, kW, 44, 6).fillAndStroke(m.bg, GRIS_CLR);
-      doc.fontSize(7.5).font('Helvetica-Bold').fillColor(GRIS_MED)
-         .text(m.label, mx, kY + 10, { width: kW, align: 'center' });
-      doc.fontSize(13).font('Helvetica-Bold').fillColor(m.color)
-         .text(m.val, mx, kY + 23, { width: kW, align: 'center' });
+      doc
+        .fontSize(7.5)
+        .font('Helvetica-Bold')
+        .fillColor(GRIS_MED)
+        .text(m.label, mx, kY + 10, { width: kW, align: 'center' });
+      doc
+        .fontSize(13)
+        .font('Helvetica-Bold')
+        .fillColor(m.color)
+        .text(m.val, mx, kY + 23, { width: kW, align: 'center' });
     });
     return kY + 58;
   };
@@ -279,7 +359,12 @@ export async function generarPDFOperativo(
     const W = doc.page.width;
     const H = doc.page.height;
     doc.fontSize(7).font('Helvetica').fillColor(GRIS_MED);
-    doc.text(`Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`, 0, H - 25, { align: 'right', width: W - 30 });
+    doc.text(
+      `Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`,
+      0,
+      H - 25,
+      { align: 'right', width: W - 30 },
+    );
   };
 
   const cols = [
@@ -300,8 +385,11 @@ export async function generarPDFOperativo(
     doc.rect(tableLeft, y + 24, tableWidth, 2).fill(NAR_MED);
     let x = tableLeft;
     doc.fontSize(8).font('Helvetica-Bold').fillColor(BLANCO);
-    cols.forEach(col => {
-      doc.text(col.label, x + 4, y + 7, { width: col.width - 8, align: 'center' });
+    cols.forEach((col) => {
+      doc.text(col.label, x + 4, y + 7, {
+        width: col.width - 8,
+        align: 'center',
+      });
       x += col.width;
     });
     return y + 30;
@@ -329,7 +417,10 @@ export async function generarPDFOperativo(
     doc.font('Helvetica').fontSize(7.5);
     vals.forEach((val, ci) => {
       if (ci === 0 || ci === 1 || ci === 3) doc.font('Helvetica-Bold');
-      const h = doc.heightOfString(val, { width: cols[ci].width - 8, lineBreak: true });
+      const h = doc.heightOfString(val, {
+        width: cols[ci].width - 8,
+        lineBreak: true,
+      });
       if (h + 8 > maxRowHeight) maxRowHeight = h + 8;
       doc.font('Helvetica');
     });
@@ -346,29 +437,41 @@ export async function generarPDFOperativo(
 
     const baseBg = i % 2 === 0 ? BLANCO : AZUL_PALE;
     const bg = fila.eficiencia < 70 ? '#FEF2F2' : baseBg; // Rojo muy claro si eficiencia baja
-    
+
     doc.rect(tableLeft, y, tableWidth, maxRowHeight).fill(bg);
-    doc.moveTo(tableLeft, y + maxRowHeight)
-       .lineTo(tableLeft + tableWidth, y + maxRowHeight)
-       .strokeColor(GRIS_CLR).lineWidth(0.4).stroke();
+    doc
+      .moveTo(tableLeft, y + maxRowHeight)
+      .lineTo(tableLeft + tableWidth, y + maxRowHeight)
+      .strokeColor(GRIS_CLR)
+      .lineWidth(0.4)
+      .stroke();
 
     let x = tableLeft;
     vals.forEach((v, ci) => {
-      const align = ci >= 2 && ci <= 7 && ci !== 4 && ci !== 5 && ci !== 6 ? 'right' : (ci >= 4 && ci <= 6 ? 'center' : 'left');
+      const align =
+        ci >= 2 && ci <= 7 && ci !== 4 && ci !== 5 && ci !== 6
+          ? 'right'
+          : ci >= 4 && ci <= 6
+            ? 'center'
+            : 'left';
 
       if (ci === 3) {
-         doc.font('Helvetica-Bold').fillColor(AZUL_DARK);
+        doc.font('Helvetica-Bold').fillColor(AZUL_DARK);
       } else if (ci === 4 && fila.eficiencia < 70) {
-         doc.font('Helvetica-Bold').fillColor('#DC2626');
+        doc.font('Helvetica-Bold').fillColor('#DC2626');
       } else if (ci === 1) {
-         doc.font('Helvetica-Bold').fillColor(AZUL_DARK);
+        doc.font('Helvetica-Bold').fillColor(AZUL_DARK);
       } else if (ci === 0) {
-         doc.font('Helvetica-Bold').fillColor(GRIS_TXT);
+        doc.font('Helvetica-Bold').fillColor(GRIS_TXT);
       } else {
-         doc.font('Helvetica').fillColor(GRIS_TXT);
+        doc.font('Helvetica').fillColor(GRIS_TXT);
       }
 
-      doc.text(v, x + 4, y + 4, { width: cols[ci].width - 8, align, lineBreak: true });
+      doc.text(v, x + 4, y + 4, {
+        width: cols[ci].width - 8,
+        align,
+        lineBreak: true,
+      });
       x += cols[ci].width;
     });
     y += maxRowHeight;
@@ -380,11 +483,9 @@ export async function generarPDFOperativo(
   doc.rect(tableLeft, y, tableWidth, 2).fill(NAR_MED);
 
   doc.fontSize(8.5).font('Helvetica-Bold').fillColor(BLANCO);
-  doc.text(
-    `TOTAL GENERAL`,
-    tableLeft + 6, y + 8,
-    { width: cols.slice(0, 2).reduce((s, c) => s + c.width, 0) - 10 }
-  );
+  doc.text(`TOTAL GENERAL`, tableLeft + 6, y + 8, {
+    width: cols.slice(0, 2).reduce((s, c) => s + c.width, 0) - 10,
+  });
 
   let tx = tableLeft + cols.slice(0, 2).reduce((s, c) => s + c.width, 0);
   [
@@ -393,11 +494,14 @@ export async function generarPDFOperativo(
     `${resumen.porcentajeGlobal}%`,
     String(resumen.totalPrestamosNuevos),
     String(resumen.totalAfiliaciones),
-    `$${(filas.reduce((acc, f) => acc + (f.montoNuevosPrestamos || 0), 0)).toLocaleString('es-CO')}`,
+    `$${filas.reduce((acc, f) => acc + (f.montoNuevosPrestamos || 0), 0).toLocaleString('es-CO')}`,
   ].forEach((val, i) => {
     const ci = i + 2; // a partir de la columna 2
     if (ci < cols.length) {
-      doc.fillColor(i === 1 ? NAR_SOFT : BLANCO).font('Helvetica-Bold').fontSize(8);
+      doc
+        .fillColor(i === 1 ? NAR_SOFT : BLANCO)
+        .font('Helvetica-Bold')
+        .fontSize(8);
       const align = ci === 4 || ci === 5 || ci === 6 ? 'center' : 'right';
       doc.text(val, tx + 4, y + 9, { width: cols[ci].width - 8, align });
       tx += cols[ci].width;
@@ -405,11 +509,16 @@ export async function generarPDFOperativo(
   });
 
   y += 38;
-  doc.fontSize(7.5).font('Helvetica-Oblique').fillColor(GRIS_MED)
-     .text(
-       'Documento expedido por Créditos del Sur. Las cifras presentadas son definitivas y sujetas a revisión de auditoría.',
-       tableLeft, y, { align: 'center', width: tableWidth }
-     );
+  doc
+    .fontSize(7.5)
+    .font('Helvetica-Oblique')
+    .fillColor(GRIS_MED)
+    .text(
+      'Documento expedido por Créditos del Sur. Las cifras presentadas son definitivas y sujetas a revisión de auditoría.',
+      tableLeft,
+      y,
+      { align: 'center', width: tableWidth },
+    );
 
   drawFooter();
 

@@ -1,4 +1,14 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Request } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  UseGuards,
+  Request,
+} from '@nestjs/common';
 import { SyncConflictsService } from './sync-conflicts.service';
 import { CreateSyncConflictDto } from './dto/create-sync-conflict.dto';
 import { UpdateSyncConflictDto } from './dto/update-sync-conflict.dto';
@@ -18,23 +28,44 @@ export class SyncConflictsController {
     return this.syncConflictsService.create(createSyncConflictDto, req.user.id);
   }
 
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+  )
   @Get()
   findAll(@Request() req) {
     return this.syncConflictsService.findAll(req.user);
   }
 
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+  )
   @Get(':id')
   findOne(@Param('id') id: string, @Request() req) {
     return this.syncConflictsService.findOne(id, req.user);
   }
 
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.COORDINADOR)
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+  )
   @Patch(':id/resolve')
-  resolve(@Param('id') id: string, @Body('accion') accion: string, @Request() req) {
+  resolve(
+    @Param('id') id: string,
+    @Body('accion') accion: string,
+    @Request() req,
+  ) {
     const token = req.headers.authorization;
-    return this.syncConflictsService.resolveConflict(id, accion, req.user.id, token);
+    return this.syncConflictsService.resolveConflict(
+      id,
+      accion,
+      req.user.id,
+      token,
+    );
   }
 
   @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)

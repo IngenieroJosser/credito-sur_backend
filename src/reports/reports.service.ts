@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service'; 
+import { PrismaService } from '../prisma/prisma.service';
 import { EstadoAprobacion } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import {
@@ -22,13 +22,35 @@ import {
   OperationalReportResponse,
   RoutePerformanceDetail,
 } from './dto/responses-routes.dto';
-import { TimeFilterPeriod, calculateDateRange, getBogotaDayKey, getBogotaStartEndOfDay } from '../utils/date-utils';
+import {
+  TimeFilterPeriod,
+  calculateDateRange,
+  getBogotaDayKey,
+  getBogotaStartEndOfDay,
+} from '../utils/date-utils';
 import { RoutesService } from '../routes/routes.service';
-import { generarExcelMora, generarPDFMora, MoraRow, MoraTotales } from '../templates/exports/cuentas-mora.template';
-import { generarExcelVencidas, generarPDFVencidas, VencidasRow, VencidasTotales } from '../templates/exports/cuentas-vencidas.template';
-import { generarExcelOperativo, generarPDFOperativo, OperativoRow, OperativoResumen } from '../templates/exports/reporte-operativo.template';
-import { generarExcelFinanciero, generarPDFFinanciero } from '../templates/exports/reporte-financiero.template';
-
+import {
+  generarExcelMora,
+  generarPDFMora,
+  MoraRow,
+  MoraTotales,
+} from '../templates/exports/cuentas-mora.template';
+import {
+  generarExcelVencidas,
+  generarPDFVencidas,
+  VencidasRow,
+  VencidasTotales,
+} from '../templates/exports/cuentas-vencidas.template';
+import {
+  generarExcelOperativo,
+  generarPDFOperativo,
+  OperativoRow,
+  OperativoResumen,
+} from '../templates/exports/reporte-operativo.template';
+import {
+  generarExcelFinanciero,
+  generarPDFFinanciero,
+} from '../templates/exports/reporte-financiero.template';
 
 @Injectable()
 export class ReportsService {
@@ -163,7 +185,10 @@ export class ReportsService {
     const { startDate: hoyInicioBogota } = getBogotaStartEndOfDay(new Date());
     const hoyKeyBogota = getBogotaDayKey(new Date());
 
-    const diasMoraDiarioExcluyendoDomingos = (startKey: string, endKey: string): number => {
+    const diasMoraDiarioExcluyendoDomingos = (
+      startKey: string,
+      endKey: string,
+    ): number => {
       // Cuenta los días transcurridos DESPUÉS del vencimiento hasta hoy inclusive,
       // excluyendo domingos (no se cobra).
       //
@@ -352,7 +377,7 @@ export class ReportsService {
           },
         });
 
-        const cuotas = (prestamo as any)?.cuotas || [];
+        const cuotas = prestamo?.cuotas || [];
         const cuotasVencidas = cuotas.filter((c: any) => {
           const eff = c?.fechaVencimientoProrroga
             ? new Date(c.fechaVencimientoProrroga)
@@ -362,30 +387,43 @@ export class ReportsService {
           return !!key && key < hoyKeyBogota;
         });
 
-        const cuotaMasAntigua = cuotasVencidas.reduce((acc: any, c: any) => {
-          const eff = c?.fechaVencimientoProrroga
-            ? new Date(c.fechaVencimientoProrroga)
-            : new Date(c.fechaVencimiento);
-          if (!acc) return { cuota: c, eff };
-          return eff < acc.eff ? { cuota: c, eff } : acc;
-        }, null as null | { cuota: any; eff: Date });
+        const cuotaMasAntigua = cuotasVencidas.reduce(
+          (acc: any, c: any) => {
+            const eff = c?.fechaVencimientoProrroga
+              ? new Date(c.fechaVencimientoProrroga)
+              : new Date(c.fechaVencimiento);
+            if (!acc) return { cuota: c, eff };
+            return eff < acc.eff ? { cuota: c, eff } : acc;
+          },
+          null as null | { cuota: any; eff: Date },
+        );
 
-        const cuotaMasAntiguaKey = cuotaMasAntigua?.eff ? utcDateKey(cuotaMasAntigua.eff) : '';
+        const cuotaMasAntiguaKey = cuotaMasAntigua?.eff
+          ? utcDateKey(cuotaMasAntigua.eff)
+          : '';
 
         const diasMora = (() => {
           if (!cuotaMasAntiguaKey) return 0;
-          const frecuencia = String((prestamo as any)?.frecuenciaPago || '').toUpperCase();
+          const frecuencia = String(
+            prestamo?.frecuenciaPago || '',
+          ).toUpperCase();
           if (frecuencia === 'DIARIO') {
-            return diasMoraDiarioExcluyendoDomingos(cuotaMasAntiguaKey, hoyKeyBogota || '');
+            return diasMoraDiarioExcluyendoDomingos(
+              cuotaMasAntiguaKey,
+              hoyKeyBogota || '',
+            );
           }
           // Para frecuencias NO diarias, usamos llaves YYYY-MM-DD y fechas a mediodía Bogotá
           // para evitar desfases por hora/zona (UTC vs Bogotá) que pueden dar 0d aunque
           // la cuota ya esté vencida por llave.
-          const parseKeyToBogotaMidday = (key: string) => new Date(`${key}T12:00:00-05:00`);
+          const parseKeyToBogotaMidday = (key: string) =>
+            new Date(`${key}T12:00:00-05:00`);
           const start = parseKeyToBogotaMidday(cuotaMasAntiguaKey);
           const end = parseKeyToBogotaMidday(hoyKeyBogota || '');
           if (isNaN(start.getTime()) || isNaN(end.getTime())) return 0;
-          const diff = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+          const diff = Math.floor(
+            (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24),
+          );
           return diff > 0 ? diff : 0;
         })();
 
@@ -399,15 +437,20 @@ export class ReportsService {
         const ultimoPago = prestamo.pagos[0];
 
         // Prorroga activa: la extension mas reciente
-        const extension = (prestamo as any).extensiones?.[0];
+        const extension = prestamo.extensiones?.[0];
         const fechaProrroga = extension?.nuevaFechaVencimiento
           ? format(new Date(extension.nuevaFechaVencimiento), 'yyyy-MM-dd')
           : undefined;
         const diasProrroga = extension?.nuevaFechaVencimiento
-          ? Math.ceil((new Date(extension.nuevaFechaVencimiento).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+          ? Math.ceil(
+              (new Date(extension.nuevaFechaVencimiento).getTime() -
+                Date.now()) /
+                (1000 * 60 * 60 * 24),
+            )
           : undefined;
 
-        const tieneMoraReal = cuotasVencidas.length > 0 || diasMora > 0 || montoMora > 0;
+        const tieneMoraReal =
+          cuotasVencidas.length > 0 || diasMora > 0 || montoMora > 0;
         // Excluir falsos positivos (incluye casos donde el préstamo quedó EN_MORA
         // por un error histórico o por cuotas que vencen HOY).
         if (!tieneMoraReal) return null;
@@ -446,7 +489,9 @@ export class ReportsService {
       }),
     );
 
-    const prestamosEnriquecidos = prestamosEnriquecidosRaw.filter(Boolean) as PrestamoMoraDto[];
+    const prestamosEnriquecidos = prestamosEnriquecidosRaw.filter(
+      Boolean,
+    ) as PrestamoMoraDto[];
     const total = prestamosEnriquecidos.length;
 
     // Calcular totales
@@ -586,15 +631,28 @@ export class ReportsService {
 
     if (filtros.busqueda) {
       whereConditions.OR = [
-        { cliente: { nombres: { contains: filtros.busqueda, mode: 'insensitive' } } },
-        { cliente: { apellidos: { contains: filtros.busqueda, mode: 'insensitive' } } },
-        { cliente: { dni: { contains: filtros.busqueda, mode: 'insensitive' } } },
+        {
+          cliente: {
+            nombres: { contains: filtros.busqueda, mode: 'insensitive' },
+          },
+        },
+        {
+          cliente: {
+            apellidos: { contains: filtros.busqueda, mode: 'insensitive' },
+          },
+        },
+        {
+          cliente: { dni: { contains: filtros.busqueda, mode: 'insensitive' } },
+        },
         { numeroPrestamo: { contains: filtros.busqueda, mode: 'insensitive' } },
       ];
     }
 
     if (filtros.nivelRiesgo) {
-      whereConditions.cliente = { ...whereConditions.cliente, nivelRiesgo: filtros.nivelRiesgo };
+      whereConditions.cliente = {
+        ...whereConditions.cliente,
+        nivelRiesgo: filtros.nivelRiesgo,
+      };
     }
 
     if (filtros.rutaId) {
@@ -602,7 +660,9 @@ export class ReportsService {
         where: { rutaId: filtros.rutaId, activa: true },
         select: { clienteId: true },
       });
-      whereConditions.clienteId = { in: clientesRuta.map((cr) => cr.clienteId) };
+      whereConditions.clienteId = {
+        in: clientesRuta.map((cr) => cr.clienteId),
+      };
     }
 
     const total = await this.prisma.prestamo.count({ where: whereConditions });
@@ -626,7 +686,10 @@ export class ReportsService {
         });
 
         const diasVencidos = differenceInDays(hoy, prestamo.fechaFin);
-        const interesesMora = prestamo.cuotas.reduce((sum, cuota) => sum + cuota.montoInteresMora.toNumber(), 0);
+        const interesesMora = prestamo.cuotas.reduce(
+          (sum, cuota) => sum + cuota.montoInteresMora.toNumber(),
+          0,
+        );
 
         return {
           id: prestamo.id,
@@ -650,13 +713,26 @@ export class ReportsService {
     );
 
     const totales: TotalesVencidasDto = {
-      totalVencido: cuentasVencidas.reduce((sum, c) => sum + c.saldoPendiente, 0),
+      totalVencido: cuentasVencidas.reduce(
+        (sum, c) => sum + c.saldoPendiente,
+        0,
+      ),
       totalRegistros: total,
-      diasPromedioVencimiento: cuentasVencidas.length > 0
-        ? Math.round(cuentasVencidas.reduce((sum, c) => sum + c.diasVencidos, 0) / cuentasVencidas.length)
-        : 0,
-      totalInteresesMora: cuentasVencidas.reduce((s, c: any) => s + (c.interesesMora || 0), 0),
-      totalMontoOriginal: cuentasVencidas.reduce((s, c: any) => s + (c.montoOriginal || 0), 0),
+      diasPromedioVencimiento:
+        cuentasVencidas.length > 0
+          ? Math.round(
+              cuentasVencidas.reduce((sum, c) => sum + c.diasVencidos, 0) /
+                cuentasVencidas.length,
+            )
+          : 0,
+      totalInteresesMora: cuentasVencidas.reduce(
+        (s, c: any) => s + (c.interesesMora || 0),
+        0,
+      ),
+      totalMontoOriginal: cuentasVencidas.reduce(
+        (s, c: any) => s + (c.montoOriginal || 0),
+        0,
+      ),
     };
 
     return { cuentas: cuentasVencidas, totales, total, pagina, limite };
@@ -688,7 +764,10 @@ export class ReportsService {
     }
 
     let tipoAprobacion: TipoAprobacion;
-    if (decisionDto.decision === 'PRORROGAR' || decisionDto.decision === 'DEJAR_QUIETO') {
+    if (
+      decisionDto.decision === 'PRORROGAR' ||
+      decisionDto.decision === 'DEJAR_QUIETO'
+    ) {
       tipoAprobacion = TipoAprobacion.PRORROGA_PAGO;
     } else {
       tipoAprobacion = TipoAprobacion.BAJA_POR_PERDIDA;
@@ -723,7 +802,8 @@ export class ReportsService {
         where: { id: usuarioId },
         select: { nombres: true, apellidos: true },
       });
-      if (u) nombreUsuario = `${u.nombres} ${u.apellidos}`.trim() || nombreUsuario;
+      if (u)
+        nombreUsuario = `${u.nombres} ${u.apellidos}`.trim() || nombreUsuario;
     } catch {}
 
     if (decisionDto.decision !== 'PRORROGAR') {
@@ -777,8 +857,10 @@ export class ReportsService {
 
     const filas: VencidasRow[] = cuentas.map((c: any) => ({
       numeroPrestamo: c.numeroPrestamo || '',
-      cliente: typeof c.cliente === 'string' ? c.cliente : (c.cliente?.nombre || ''),
-      documento: typeof c.cliente === 'object' ? (c.cliente?.documento || '') : '',
+      cliente:
+        typeof c.cliente === 'string' ? c.cliente : c.cliente?.nombre || '',
+      documento:
+        typeof c.cliente === 'object' ? c.cliente?.documento || '' : '',
       fechaVencimiento: c.fechaVencimiento || '',
       diasVencidos: Number(c.diasVencidos || 0),
       saldoPendiente: Number(c.saldoPendiente || 0),
@@ -791,7 +873,9 @@ export class ReportsService {
 
     const totales: VencidasTotales = {
       totalVencido: Number(data.totales?.totalVencido || 0),
-      diasPromedioVencimiento: Number(data.totales?.diasPromedioVencimiento || 0),
+      diasPromedioVencimiento: Number(
+        data.totales?.diasPromedioVencimiento || 0,
+      ),
       totalRegistros: Number(data.totales?.totalRegistros || 0),
       totalInteresesMora: Number(data.totales?.totalInteresesMora || 0),
       totalMontoOriginal: Number(data.totales?.totalMontoOriginal || 0),
@@ -815,8 +899,12 @@ export class ReportsService {
       const rutasListado = await this.routesService.findAll({ activa: true });
       const rutas = (rutasListado as any)?.data || [];
 
-      const rutasFiltradas = routeId ? rutas.filter((r: any) => r.id === routeId) : rutas;
-      const { startDate: hoyInicio, endDate: hoyFin } = getBogotaStartEndOfDay(new Date());
+      const rutasFiltradas = routeId
+        ? rutas.filter((r: any) => r.id === routeId)
+        : rutas;
+      const { startDate: hoyInicio, endDate: hoyFin } = getBogotaStartEndOfDay(
+        new Date(),
+      );
 
       const rendimientoRutas: RoutePerformanceDetail[] = await Promise.all(
         rutasFiltradas.map(async (r: any) => {
@@ -824,7 +912,13 @@ export class ReportsService {
             where: {
               creadoEn: { gte: hoyInicio, lte: hoyFin },
               eliminadoEn: null,
-              estado: { in: [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA, EstadoPrestamo.PAGADO] },
+              estado: {
+                in: [
+                  EstadoPrestamo.ACTIVO,
+                  EstadoPrestamo.EN_MORA,
+                  EstadoPrestamo.PAGADO,
+                ],
+              },
               cliente: {
                 asignacionesRuta: { some: { rutaId: r.id, activa: true } },
               },
@@ -834,7 +928,9 @@ export class ReportsService {
           });
 
           const nuevosPrestamos = nuevosPrestamosAgg._count.id || 0;
-          const montoNuevosPrestamos = Number(nuevosPrestamosAgg._sum.monto || 0);
+          const montoNuevosPrestamos = Number(
+            nuevosPrestamosAgg._sum.monto || 0,
+          );
 
           const nuevosClientes = await this.prisma.cliente.count({
             where: {
@@ -858,19 +954,37 @@ export class ReportsService {
         }),
       );
 
-      const totalRecaudo = rendimientoRutas.reduce((sum, rr: any) => sum + Number(rr.recaudado || 0), 0);
-      const totalMeta = rendimientoRutas.reduce((sum, rr: any) => sum + Number(rr.meta || 0), 0);
-      const porcentajeGlobal = totalMeta > 0 ? Math.round((totalRecaudo / totalMeta) * 100) : 0;
+      const totalRecaudo = rendimientoRutas.reduce(
+        (sum, rr: any) => sum + Number(rr.recaudado || 0),
+        0,
+      );
+      const totalMeta = rendimientoRutas.reduce(
+        (sum, rr: any) => sum + Number(rr.meta || 0),
+        0,
+      );
+      const porcentajeGlobal =
+        totalMeta > 0 ? Math.round((totalRecaudo / totalMeta) * 100) : 0;
 
-      const totalPrestamosNuevos = rendimientoRutas.reduce((sum, rr: any) => sum + Number(rr.nuevosPrestamos || 0), 0);
-      const totalAfiliaciones = rendimientoRutas.reduce((sum, rr: any) => sum + Number(rr.nuevosClientes || 0), 0);
+      const totalPrestamosNuevos = rendimientoRutas.reduce(
+        (sum, rr: any) => sum + Number(rr.nuevosPrestamos || 0),
+        0,
+      );
+      const totalAfiliaciones = rendimientoRutas.reduce(
+        (sum, rr: any) => sum + Number(rr.nuevosClientes || 0),
+        0,
+      );
       const totalMontoPrestamosNuevos = rendimientoRutas.reduce(
         (sum, rr: any) => sum + Number(rr.montoNuevosPrestamos || 0),
         0,
       );
       const efectividadPromedio =
         rendimientoRutas.length > 0
-          ? Math.round(rendimientoRutas.reduce((sum, rr: any) => sum + Number(rr.eficiencia || 0), 0) / rendimientoRutas.length)
+          ? Math.round(
+              rendimientoRutas.reduce(
+                (sum, rr: any) => sum + Number(rr.eficiencia || 0),
+                0,
+              ) / rendimientoRutas.length,
+            )
           : 0;
 
       return {
@@ -949,7 +1063,9 @@ export class ReportsService {
 
       const newLoans = routeNewLoansStats._count.id || 0;
       const newLoansAmount = Number(routeNewLoansStats._sum.monto || 0);
-      const collectedFromCuotaInicial = Number(routeNewLoansStats._sum.cuotaInicial || 0);
+      const collectedFromCuotaInicial = Number(
+        routeNewLoansStats._sum.cuotaInicial || 0,
+      );
 
       const newClients = await this.prisma.cliente.count({
         where: {
@@ -996,12 +1112,15 @@ export class ReportsService {
         },
       });
 
-      const target = Number(routeDuePayments._sum.monto || 0) + 
-                    Number(routeDuePayments._sum.montoInteresMora || 0) + 
-                     collectedFromCuotaInicial;
+      const target =
+        Number(routeDuePayments._sum.monto || 0) +
+        Number(routeDuePayments._sum.montoInteresMora || 0) +
+        collectedFromCuotaInicial;
 
       const efficiency =
-        target > 0 ? Math.round(((collected + collectedFromCuotaInicial) / target) * 100) : 0;
+        target > 0
+          ? Math.round(((collected + collectedFromCuotaInicial) / target) * 100)
+          : 0;
 
       return {
         id: route.id,
@@ -1041,11 +1160,15 @@ export class ReportsService {
         monto: true,
         cuotaInicial: true,
       },
-      _count: { id: true }
+      _count: { id: true },
     });
 
-    const totalRecaudo = Number(globalPayments._sum.montoTotal || 0) + Number(globalNewLoansStats._sum.cuotaInicial || 0);
-    const totalMontoPrestamosNuevos = Number(globalNewLoansStats._sum.monto || 0);
+    const totalRecaudo =
+      Number(globalPayments._sum.montoTotal || 0) +
+      Number(globalNewLoansStats._sum.cuotaInicial || 0);
+    const totalMontoPrestamosNuevos = Number(
+      globalNewLoansStats._sum.monto || 0,
+    );
     const totalPrestamosNuevos = globalNewLoansStats._count.id || 0;
 
     const globalDuePayments = await this.prisma.cuota.aggregate({
@@ -1080,11 +1203,13 @@ export class ReportsService {
       },
     });
 
-    const totalMeta = Number(globalDuePayments._sum.monto || 0) + 
-                     Number(globalDuePayments._sum.montoInteresMora || 0) + 
-                     Number(globalNewLoansStats._sum.cuotaInicial || 0);
+    const totalMeta =
+      Number(globalDuePayments._sum.monto || 0) +
+      Number(globalDuePayments._sum.montoInteresMora || 0) +
+      Number(globalNewLoansStats._sum.cuotaInicial || 0);
 
-    const porcentajeGlobal = totalMeta > 0 ? Math.round((totalRecaudo / totalMeta) * 100) : 0;
+    const porcentajeGlobal =
+      totalMeta > 0 ? Math.round((totalRecaudo / totalMeta) * 100) : 0;
 
     const totalAfiliaciones = await this.prisma.cliente.count({
       where: {
@@ -1275,15 +1400,17 @@ export class ReportsService {
     const reportData = await this.getOperationalReport(filters);
     const fecha = getBogotaDayKey(new Date());
 
-    const filas: OperativoRow[] = (reportData.rendimientoRutas || []).map((r: any) => ({
-      ruta: r.ruta || '',
-      cobrador: r.cobrador || '',
-      meta: Number(r.meta || 0),
-      recaudado: Number(r.recaudado || 0),
-      eficiencia: Number(r.eficiencia || 0),
-      nuevosPrestamos: Number(r.nuevosPrestamos || 0),
-      nuevosClientes: Number(r.nuevosClientes || 0),
-    }));
+    const filas: OperativoRow[] = (reportData.rendimientoRutas || []).map(
+      (r: any) => ({
+        ruta: r.ruta || '',
+        cobrador: r.cobrador || '',
+        meta: Number(r.meta || 0),
+        recaudado: Number(r.recaudado || 0),
+        eficiencia: Number(r.eficiencia || 0),
+        nuevosPrestamos: Number(r.nuevosPrestamos || 0),
+        nuevosClientes: Number(r.nuevosClientes || 0),
+      }),
+    );
 
     const resumen: OperativoResumen = {
       totalRecaudo: Number(reportData.totalRecaudo || 0),
@@ -1315,8 +1442,10 @@ export class ReportsService {
     ]);
     const fecha = getBogotaDayKey(new Date());
 
-    if (format === 'excel') return generarExcelFinanciero(summary, monthly, expenses, fecha);
-    if (format === 'pdf') return generarPDFFinanciero(summary, monthly, expenses, fecha);
+    if (format === 'excel')
+      return generarExcelFinanciero(summary, monthly, expenses, fecha);
+    if (format === 'pdf')
+      return generarPDFFinanciero(summary, monthly, expenses, fecha);
 
     throw new Error(`Formato no soportado: ${format}`);
   }

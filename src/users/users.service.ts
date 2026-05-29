@@ -39,20 +39,30 @@ export class UsersService {
     // EXCEPCIÓN: Permitir crear el primer superadministrador desde endpoints públicos (Swagger) si no existe ninguno.
     if (usuarioDto.rol === RolUsuario.SUPER_ADMINISTRADOR) {
       const superadminsExistentes = await this.prisma.usuario.count({
-        where: { rol: RolUsuario.SUPER_ADMINISTRADOR, estado: EstadoUsuario.ACTIVO }
+        where: {
+          rol: RolUsuario.SUPER_ADMINISTRADOR,
+          estado: EstadoUsuario.ACTIVO,
+        },
       });
 
       if (superadminsExistentes > 0) {
         if (!usuarioCreadorId) {
-          throw new ForbiddenException('Se requiere autenticación para crear un Superadministrador adicional. Usa el token de un Superadmin.');
+          throw new ForbiddenException(
+            'Se requiere autenticación para crear un Superadministrador adicional. Usa el token de un Superadmin.',
+          );
         }
 
         const usuarioCreador = await this.prisma.usuario.findUnique({
           where: { id: usuarioCreadorId },
         });
 
-        if (!usuarioCreador || usuarioCreador.rol !== RolUsuario.SUPER_ADMINISTRADOR) {
-          throw new ForbiddenException('Solo un Superadministrador puede crear otro Superadministrador');
+        if (
+          !usuarioCreador ||
+          usuarioCreador.rol !== RolUsuario.SUPER_ADMINISTRADOR
+        ) {
+          throw new ForbiddenException(
+            'Solo un Superadministrador puede crear otro Superadministrador',
+          );
         }
       }
     }
@@ -80,8 +90,12 @@ export class UsersService {
           telefono: datosUsuario.telefono,
           estado: datosUsuario.estado,
           hashContrasena,
-          esPrincipal: esPrimerUsuario && usuarioDto.rol === RolUsuario.SUPER_ADMINISTRADOR,
-          ...(usuarioCreadorId ? { creadoPor: { connect: { id: usuarioCreadorId } } } : {}),
+          esPrincipal:
+            esPrimerUsuario &&
+            usuarioDto.rol === RolUsuario.SUPER_ADMINISTRADOR,
+          ...(usuarioCreadorId
+            ? { creadoPor: { connect: { id: usuarioCreadorId } } }
+            : {}),
         },
         select: {
           id: true,
@@ -134,7 +148,7 @@ export class UsersService {
   }
 
   async obtenerTodos() {
-    const usuarios = await this.prisma.usuario.findMany({
+    const usuarios = (await this.prisma.usuario.findMany({
       where: {
         eliminadoEn: null,
       },
@@ -168,8 +182,8 @@ export class UsersService {
           },
         },
       } as any,
-    // Prisma no soporta select + include anidados con tipos estáticos; cast necesario
-    }) as unknown as any[];
+      // Prisma no soporta select + include anidados con tipos estáticos; cast necesario
+    })) as unknown as any[];
 
     return usuarios.map((usuario) => {
       // 1. Permisos del Rol (default)
@@ -214,7 +228,9 @@ export class UsersService {
     // 2. Buscar permisos por 'accion' o por 'id'.
     // En instalaciones reales puede venir una mezcla, y si no se encuentran todos
     // no debemos "simular" éxito asignando 0.
-    const requested = (permisos || []).map((p) => String(p || '').trim()).filter(Boolean);
+    const requested = (permisos || [])
+      .map((p) => String(p || '').trim())
+      .filter(Boolean);
     const permisosDb = await this.prisma.permiso.findMany({
       where: {
         OR: [{ accion: { in: requested } }, { id: { in: requested } }],
@@ -234,38 +250,40 @@ export class UsersService {
       );
     }
 
-    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      // 3. Limpiar permisos personalizados existentes
-      await tx.asignacionPermisoUsuario.deleteMany({
-        where: { usuarioId },
-      });
-
-      // 4. Crear nuevas asignaciones
-      if (permisosDb.length > 0) {
-        await tx.asignacionPermisoUsuario.createMany({
-          data: permisosDb.map((p) => ({
-            usuarioId,
-            permisoId: p.id,
-          })),
+    return this.prisma
+      .$transaction(async (tx: Prisma.TransactionClient) => {
+        // 3. Limpiar permisos personalizados existentes
+        await tx.asignacionPermisoUsuario.deleteMany({
+          where: { usuarioId },
         });
-      }
 
-      this.logger.log(
-        `Permisos actualizados para usuario ${usuarioId}: ${permisosDb.length} asignados de ${permisos.length} solicitados.`
-      );
+        // 4. Crear nuevas asignaciones
+        if (permisosDb.length > 0) {
+          await tx.asignacionPermisoUsuario.createMany({
+            data: permisosDb.map((p) => ({
+              usuarioId,
+              permisoId: p.id,
+            })),
+          });
+        }
 
-      return {
-        mensaje: 'Permisos actualizados correctamente',
-        asignados: permisosDb.length,
-      };
-    }).then((result) => {
-      // Notificar en tiempo real que el usuario fue actualizado (para refresh de sesión)
-      this.notificacionesGateway.broadcastUsuariosActualizados({
-        accion: 'PERMISOS_ACTUALIZADOS',
-        usuarioId,
+        this.logger.log(
+          `Permisos actualizados para usuario ${usuarioId}: ${permisosDb.length} asignados de ${permisos.length} solicitados.`,
+        );
+
+        return {
+          mensaje: 'Permisos actualizados correctamente',
+          asignados: permisosDb.length,
+        };
+      })
+      .then((result) => {
+        // Notificar en tiempo real que el usuario fue actualizado (para refresh de sesión)
+        this.notificacionesGateway.broadcastUsuariosActualizados({
+          accion: 'PERMISOS_ACTUALIZADOS',
+          usuarioId,
+        });
+        return result;
       });
-      return result;
-    });
   }
 
   async obtenerPorId(id: string) {
@@ -305,14 +323,18 @@ export class UsersService {
 
   async obtenerPorCorreo(correo: string) {
     return this.prisma.usuario.findFirst({
-      where: { 
+      where: {
         correo,
         eliminadoEn: null,
       },
     });
   }
 
-  async actualizar(id: string, updateUserDto: UpdateUserDto, usuarioModificadorId?: string) {
+  async actualizar(
+    id: string,
+    updateUserDto: UpdateUserDto,
+    usuarioModificadorId?: string,
+  ) {
     const usuario = await this.prisma.usuario.findUnique({
       where: { id },
     });
@@ -348,8 +370,14 @@ export class UsersService {
     }
 
     // PROTECCIÓN: No se puede cambiar el rol del Superadmin principal
-    if (usuario.esPrincipal && updateUserDto.rol && updateUserDto.rol !== RolUsuario.SUPER_ADMINISTRADOR) {
-      throw new ForbiddenException('No se puede cambiar el rol del Superadministrador principal');
+    if (
+      usuario.esPrincipal &&
+      updateUserDto.rol &&
+      updateUserDto.rol !== RolUsuario.SUPER_ADMINISTRADOR
+    ) {
+      throw new ForbiddenException(
+        'No se puede cambiar el rol del Superadministrador principal',
+      );
     }
 
     // Hashear contraseña si se proporciona
@@ -360,26 +388,26 @@ export class UsersService {
 
     // Si cambia el rol, actualizar también la tabla relacional
     if (updateUserDto.rol && updateUserDto.rol !== usuario.rol) {
-       // Buscar el nuevo rol dinámico
-       const nuevoRol = await this.prisma.rol.findUnique({
-         where: { nombre: updateUserDto.rol }
-       });
-       
-       if (nuevoRol) {
-         await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-            // Eliminar asignación anterior
-            await tx.asignacionRolUsuario.deleteMany({
-              where: { usuarioId: id }
-            });
-            // Crear nueva
-            await tx.asignacionRolUsuario.create({
-              data: {
-                usuarioId: id,
-                rolId: nuevoRol.id
-              }
-            });
-         });
-       }
+      // Buscar el nuevo rol dinámico
+      const nuevoRol = await this.prisma.rol.findUnique({
+        where: { nombre: updateUserDto.rol },
+      });
+
+      if (nuevoRol) {
+        await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+          // Eliminar asignación anterior
+          await tx.asignacionRolUsuario.deleteMany({
+            where: { usuarioId: id },
+          });
+          // Crear nueva
+          await tx.asignacionRolUsuario.create({
+            data: {
+              usuarioId: id,
+              rolId: nuevoRol.id,
+            },
+          });
+        });
+      }
     }
 
     const { password, ...datos } = updateUserDto;
@@ -450,7 +478,9 @@ export class UsersService {
     // PROTECCIÓN: El Superadmin principal solo puede eliminarse a sí mismo
     if (usuario.esPrincipal) {
       if (!usuarioEliminadorId || usuarioEliminadorId !== id) {
-        throw new ForbiddenException('El Superadministrador principal solo puede ser eliminado por sí mismo');
+        throw new ForbiddenException(
+          'El Superadministrador principal solo puede ser eliminado por sí mismo',
+        );
       }
 
       // Si se elimina el Superadmin principal, transferir el rol a otro Superadmin
@@ -547,7 +577,11 @@ export class UsersService {
     return restaurado;
   }
 
-  async toggleEstado(id: string, nuevoEstado: EstadoUsuario, usuarioModificadorId?: string) {
+  async toggleEstado(
+    id: string,
+    nuevoEstado: EstadoUsuario,
+    usuarioModificadorId?: string,
+  ) {
     const usuario = await this.prisma.usuario.findUnique({
       where: { id },
     });
@@ -559,7 +593,9 @@ export class UsersService {
     // PROTECCIÓN: El Superadmin principal no puede ser desactivado por otros
     if (usuario.esPrincipal && nuevoEstado !== EstadoUsuario.ACTIVO) {
       if (!usuarioModificadorId || usuarioModificadorId !== id) {
-        throw new ForbiddenException('El Superadministrador principal no puede ser desactivado por otros usuarios');
+        throw new ForbiddenException(
+          'El Superadministrador principal no puede ser desactivado por otros usuarios',
+        );
       }
     }
 
@@ -585,10 +621,15 @@ export class UsersService {
 
   async changePassword(id: string, changePasswordDto: ChangePasswordDto) {
     // Validar que se tenga la nueva contraseña
-    if (!changePasswordDto.contrasenaNueva || changePasswordDto.contrasenaNueva.trim().length < 6) {
-      throw new BadRequestException('La nueva contraseña debe tener al menos 6 caracteres');
+    if (
+      !changePasswordDto.contrasenaNueva ||
+      changePasswordDto.contrasenaNueva.trim().length < 6
+    ) {
+      throw new BadRequestException(
+        'La nueva contraseña debe tener al menos 6 caracteres',
+      );
     }
-    
+
     const usuario = await this.prisma.usuario.findUnique({
       where: { id },
     });
@@ -598,7 +639,10 @@ export class UsersService {
     }
 
     // Si se proporciona contraseña actual, validarla
-    if (changePasswordDto.contrasenaActual && changePasswordDto.contrasenaActual.trim() !== '') {
+    if (
+      changePasswordDto.contrasenaActual &&
+      changePasswordDto.contrasenaActual.trim() !== ''
+    ) {
       try {
         const passwordValid = await argon2.verify(
           usuario.hashContrasena,
@@ -610,7 +654,10 @@ export class UsersService {
         }
       } catch (error) {
         if (error instanceof UnauthorizedException) throw error;
-        this.logger.error(`Error al verificar contraseña actual para usuario ${id}`, error instanceof Error ? error.stack : error);
+        this.logger.error(
+          `Error al verificar contraseña actual para usuario ${id}`,
+          error instanceof Error ? error.stack : error,
+        );
         throw new BadRequestException('Error al validar la contraseña actual');
       }
     } else {
@@ -618,7 +665,9 @@ export class UsersService {
     }
 
     try {
-      const hashContrasena = await argon2.hash(changePasswordDto.contrasenaNueva);
+      const hashContrasena = await argon2.hash(
+        changePasswordDto.contrasenaNueva,
+      );
 
       await this.prisma.usuario.update({
         where: { id },
@@ -628,7 +677,10 @@ export class UsersService {
       this.logger.log(`Contraseña actualizada para usuario ${id}`);
       return { message: 'Contraseña actualizada correctamente' };
     } catch (error) {
-      this.logger.error(`Error al actualizar contraseña para usuario ${id}`, error instanceof Error ? error.stack : error);
+      this.logger.error(
+        `Error al actualizar contraseña para usuario ${id}`,
+        error instanceof Error ? error.stack : error,
+      );
       throw new BadRequestException('Error al actualizar la contraseña');
     }
   }

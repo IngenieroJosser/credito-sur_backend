@@ -1,4 +1,13 @@
-import { Controller, Post, Get, Body, Param, UseGuards, Request, Query } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Get,
+  Body,
+  Param,
+  UseGuards,
+  Request,
+  Query,
+} from '@nestjs/common';
 import { ApprovalsService } from './approvals.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -22,7 +31,9 @@ export class ApprovalsController {
     RolUsuario.SUPERVISOR,
   )
   async getPending(@Query('tipo') tipo?: string) {
-    return this.approvalsService.getPendingApprovals(tipo as TipoAprobacion | undefined);
+    return this.approvalsService.getPendingApprovals(
+      tipo as TipoAprobacion | undefined,
+    );
   }
 
   /**
@@ -48,7 +59,13 @@ export class ApprovalsController {
     @Request() req: any,
   ) {
     const aprobadoPorId = req.user?.id || req.user?.sub;
-    return this.approvalsService.approveItem(id, body.type, aprobadoPorId, body.notas, body.editedData);
+    return this.approvalsService.approveItem(
+      id,
+      body.type,
+      aprobadoPorId,
+      body.notas,
+      body.editedData,
+    );
   }
 
   @Post(':id/reject')
@@ -64,7 +81,12 @@ export class ApprovalsController {
     @Request() req: any,
   ) {
     const rechazadoPorId = req.user?.id || req.user?.sub;
-    return this.approvalsService.rejectItem(id, body.type, rechazadoPorId, body.motivoRechazo);
+    return this.approvalsService.rejectItem(
+      id,
+      body.type,
+      rechazadoPorId,
+      body.motivoRechazo,
+    );
   }
 
   @Post(':id/confirm-deletion')
@@ -75,7 +97,12 @@ export class ApprovalsController {
     @Request() req: any,
   ) {
     const userId = req.user?.id || req.user?.sub;
-    return this.approvalsService.confirmSuperadminAction(id, body.accion, userId, body.notas);
+    return this.approvalsService.confirmSuperadminAction(
+      id,
+      body.accion,
+      userId,
+      body.notas,
+    );
   }
 
   @Post('history')
@@ -85,9 +112,7 @@ export class ApprovalsController {
     RolUsuario.ADMIN,
     RolUsuario.CONTADOR,
   )
-  async getHistory(
-    @Body() body: { entidadId: string; tabla: string },
-  ) {
+  async getHistory(@Body() body: { entidadId: string; tabla: string }) {
     return this.approvalsService.getHistory(body.entidadId, body.tabla);
   }
 }

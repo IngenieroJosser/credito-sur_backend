@@ -28,40 +28,68 @@ export class CreateLoanDto {
   @IsNotEmpty()
   tipoPrestamo: string; // 'prestamo' o 'articulo'
 
-  @Transform(({ value }) => (value === null || value === undefined || value === '') ? undefined : parseFloat(value))
+  @Transform(({ value }) =>
+    value === null || value === undefined || value === ''
+      ? undefined
+      : parseFloat(value),
+  )
   @IsNumber()
   @Min(0)
   monto: number;
 
-  @Transform(({ value }) => (value === null || value === undefined || value === '') ? undefined : parseFloat(value))
+  @Transform(({ value }) =>
+    value === null || value === undefined || value === ''
+      ? undefined
+      : parseFloat(value),
+  )
   @IsNumber()
   @Min(0)
   @ValidateIf((o) => o.tipoPrestamo === 'prestamo')
   tasaInteres: number;
 
-  @Transform(({ value }) => (value === null || value === undefined || value === '') ? undefined : parseFloat(value))
+  @Transform(({ value }) =>
+    value === null || value === undefined || value === ''
+      ? undefined
+      : parseFloat(value),
+  )
   @IsNumber()
   @Min(0)
   tasaInteresMora: number;
 
-  @Transform(({ value }) => (value === null || value === undefined || value === '') ? undefined : parseFloat(value))
+  @Transform(({ value }) =>
+    value === null || value === undefined || value === ''
+      ? undefined
+      : parseFloat(value),
+  )
   @IsNumber()
   @Min(0.01)
   plazoMeses: number;
 
-  @Transform(({ value }) => (value === null || value === undefined || value === '') ? undefined : parseInt(value))
+  @Transform(({ value }) =>
+    value === null || value === undefined || value === ''
+      ? undefined
+      : parseInt(value),
+  )
   @IsNumber()
   @Min(1)
   @IsOptional()
   cantidadCuotas?: number;
 
-  @Transform(({ value }) => (value === null || value === undefined || value === '') ? undefined : parseInt(value))
+  @Transform(({ value }) =>
+    value === null || value === undefined || value === ''
+      ? undefined
+      : parseInt(value),
+  )
   @IsNumber()
   @Min(1)
   @IsOptional()
   cuotas?: number;
 
-  @Transform(({ value }) => (value === null || value === undefined || value === '') ? undefined : parseInt(value))
+  @Transform(({ value }) =>
+    value === null || value === undefined || value === ''
+      ? undefined
+      : parseInt(value),
+  )
   @IsNumber()
   @Min(1)
   @IsOptional()
@@ -77,7 +105,11 @@ export class CreateLoanDto {
   @IsNotEmpty()
   creadoPorId: string;
 
-  @Transform(({ value }) => (value === null || value === undefined || value === '') ? undefined : parseFloat(value))
+  @Transform(({ value }) =>
+    value === null || value === undefined || value === ''
+      ? undefined
+      : parseFloat(value),
+  )
   @IsNumber()
   @Min(0)
   @IsOptional()

@@ -40,7 +40,9 @@ describe('DashboardService accounting-backed collections', () => {
   it('usa ledger PAGO como fuente del recaudo del dashboard', async () => {
     const prisma = buildPrismaMock();
 
-    const result = await new DashboardService(prisma as any).getDashboardData('today');
+    const result = await new DashboardService(prisma as any).getDashboardData(
+      'today',
+    );
 
     expect(prisma.journalLine.aggregate).toHaveBeenCalledWith(
       expect.objectContaining({

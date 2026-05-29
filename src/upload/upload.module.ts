@@ -4,7 +4,7 @@ import { CloudinaryService } from './cloudinary.service';
 
 @Module({
   controllers: [UploadController],
-  providers:   [CloudinaryService],
-  exports:     [CloudinaryService], // Exportado para ser usado en PaymentsModule, etc.
+  providers: [CloudinaryService],
+  exports: [CloudinaryService], // Exportado para ser usado en PaymentsModule, etc.
 })
 export class UploadModule {}

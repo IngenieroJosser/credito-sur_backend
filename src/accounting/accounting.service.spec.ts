@@ -1,5 +1,9 @@
 import { BadRequestException } from '@nestjs/common';
-import { EstadoAprobacion, TipoAprobacion, TipoTransaccion } from '@prisma/client';
+import {
+  EstadoAprobacion,
+  TipoAprobacion,
+  TipoTransaccion,
+} from '@prisma/client';
 import { AccountingService } from './accounting.service';
 
 const mockNotifications = {
@@ -15,8 +19,12 @@ const mockGateway = {
 const mockLedger = {
   registrarAsiento: jest.fn().mockResolvedValue({ id: 'journal-1' }),
   registrarArqueoDescuadre: jest.fn().mockResolvedValue({ id: 'journal-2' }),
-  registrarVentaArticulo: jest.fn().mockResolvedValue({ id: 'journal-venta-articulo' }),
-  registrarConsolidacion: jest.fn().mockResolvedValue({ id: 'journal-consolidacion' }),
+  registrarVentaArticulo: jest
+    .fn()
+    .mockResolvedValue({ id: 'journal-venta-articulo' }),
+  registrarConsolidacion: jest
+    .fn()
+    .mockResolvedValue({ id: 'journal-consolidacion' }),
 };
 
 function buildPrismaMock(overrides: Record<string, any> = {}) {
@@ -27,7 +35,9 @@ function buildPrismaMock(overrides: Record<string, any> = {}) {
       findFirst: jest.fn(),
     },
     transaccion: {
-      create: jest.fn().mockResolvedValue({ id: 'trx-1', tipoReferencia: 'ARQUEO' }),
+      create: jest
+        .fn()
+        .mockResolvedValue({ id: 'trx-1', tipoReferencia: 'ARQUEO' }),
     },
     gasto: {
       create: jest.fn().mockResolvedValue({ id: 'gasto-1' }),
@@ -66,7 +76,9 @@ function buildPrismaMock(overrides: Record<string, any> = {}) {
       findMany: jest.fn().mockResolvedValue([]),
     },
     ruta: {
-      findFirst: jest.fn().mockResolvedValue({ id: 'ruta-1', cobradorId: 'cobrador-1' }),
+      findFirst: jest
+        .fn()
+        .mockResolvedValue({ id: 'ruta-1', cobradorId: 'cobrador-1' }),
     },
     aprobacion: {
       findFirst: jest.fn().mockResolvedValue(null),
@@ -76,7 +88,9 @@ function buildPrismaMock(overrides: Record<string, any> = {}) {
       findFirst: jest.fn().mockResolvedValue(null),
     },
     usuario: {
-      findUnique: jest.fn().mockResolvedValue({ nombres: 'Cobra', apellidos: 'Dor' }),
+      findUnique: jest
+        .fn()
+        .mockResolvedValue({ nombres: 'Cobra', apellidos: 'Dor' }),
       findMany: jest.fn().mockResolvedValue([]),
     },
     colaSincronizacion: {
@@ -91,7 +105,9 @@ function buildPrismaMock(overrides: Record<string, any> = {}) {
     transaccion: {
       aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 0 } }),
       count: jest.fn().mockResolvedValue(0),
-      create: jest.fn().mockResolvedValue({ id: 'trx-zero', tipoReferencia: 'ARQUEO' }),
+      create: jest
+        .fn()
+        .mockResolvedValue({ id: 'trx-zero', tipoReferencia: 'ARQUEO' }),
       findFirst: jest.fn().mockResolvedValue(null),
       findMany: jest.fn().mockResolvedValue([]),
     },
@@ -99,7 +115,9 @@ function buildPrismaMock(overrides: Record<string, any> = {}) {
       aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 0 } }),
     },
     detallePago: {
-      aggregate: jest.fn().mockResolvedValue({ _sum: { montoInteres: 0, montoInteresMora: 0 } }),
+      aggregate: jest
+        .fn()
+        .mockResolvedValue({ _sum: { montoInteres: 0, montoInteresMora: 0 } }),
     },
     ...overrides,
   };
@@ -140,12 +158,21 @@ describe('AccountingService financial ledger controls', () => {
                 debitAmount: 500000,
                 creditAmount: 0,
                 cajaId: 'caja-oficina',
-                caja: { id: 'caja-oficina', nombre: 'Caja de Oficina', codigo: 'CAJA-OFICINA', tipo: 'PRINCIPAL' },
+                caja: {
+                  id: 'caja-oficina',
+                  nombre: 'Caja de Oficina',
+                  codigo: 'CAJA-OFICINA',
+                  tipo: 'PRINCIPAL',
+                },
               },
               {
                 id: 'line-ingreso-1',
                 accountCode: '3.4',
-                account: { code: '3.4', name: 'Ingresos por Artículos', type: 'INCOME' },
+                account: {
+                  code: '3.4',
+                  name: 'Ingresos por Artículos',
+                  type: 'INCOME',
+                },
                 debitAmount: 0,
                 creditAmount: 500000,
                 cajaId: null,
@@ -157,11 +184,11 @@ describe('AccountingService financial ledger controls', () => {
       },
     });
 
-    const result = await makeService(prisma).getMovimientosLedger({
+    const result = (await makeService(prisma).getMovimientosLedger({
       cajaId: 'caja-oficina',
       fechaInicio: '2026-05-09',
       fechaFin: '2026-05-09',
-    }) as any;
+    })) as any;
 
     const where = prisma.journalEntry.findMany.mock.calls[0][0].where;
     expect(where.createdAt.gte.toISOString()).toBe('2026-05-09T05:00:00.000Z');
@@ -181,8 +208,12 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { creditAmount: 0 } }) // articulos hoy 3.4
       .mockResolvedValueOnce({ _sum: { debitAmount: 35000 } }) // gastos hoy 4.x
       .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }) // costos hoy 5.x
-      .mockResolvedValueOnce({ _sum: { debitAmount: 900000, creditAmount: 250000 } }) // cartera
-      .mockResolvedValueOnce({ _sum: { debitAmount: 50000, creditAmount: 10000 } }) // deuda cobrador
+      .mockResolvedValueOnce({
+        _sum: { debitAmount: 900000, creditAmount: 250000 },
+      }) // cartera
+      .mockResolvedValueOnce({
+        _sum: { debitAmount: 50000, creditAmount: 10000 },
+      }) // deuda cobrador
       .mockResolvedValueOnce({ _sum: { debitAmount: 180000 } }) // cobranza hoy PAGO -> caja
       .mockResolvedValueOnce({ _sum: { debitAmount: 80000 } }) // ingresos caja periodo anterior
       .mockResolvedValueOnce({ _sum: { creditAmount: 80000 } }) // ingresos periodo anterior
@@ -192,7 +223,10 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { saldoPendiente: 650000 } }) // cartera activa real
       .mockResolvedValue({ _sum: { saldoPendiente: 0 } }); // provisiones
 
-    const result = await makeService(prisma).getResumenFinanciero('2026-05-08', '2026-05-08') as any;
+    const result = (await makeService(prisma).getResumenFinanciero(
+      '2026-05-08',
+      '2026-05-08',
+    )) as any;
 
     expect(prisma.journalLine.aggregate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -267,15 +301,22 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { creditAmount: 30000 } }) // margen/ventas articulos 3.4
       .mockResolvedValueOnce({ _sum: { debitAmount: 35000 } }) // gastos 4.x
       .mockResolvedValueOnce({ _sum: { debitAmount: 12000 } }) // costos 5.x
-      .mockResolvedValueOnce({ _sum: { debitAmount: 900000, creditAmount: 250000 } }) // cartera
-      .mockResolvedValueOnce({ _sum: { debitAmount: 50000, creditAmount: 10000 } }) // deuda cobrador
+      .mockResolvedValueOnce({
+        _sum: { debitAmount: 900000, creditAmount: 250000 },
+      }) // cartera
+      .mockResolvedValueOnce({
+        _sum: { debitAmount: 50000, creditAmount: 10000 },
+      }) // deuda cobrador
       .mockResolvedValueOnce({ _sum: { debitAmount: 180000 } }) // cobranza
       .mockResolvedValueOnce({ _sum: { debitAmount: 80000 } }) // ingresos caja anterior
       .mockResolvedValueOnce({ _sum: { creditAmount: 80000 } }) // ingresos anterior
       .mockResolvedValueOnce({ _sum: { debitAmount: 20000 } }) // gastos anterior
       .mockResolvedValueOnce({ _sum: { debitAmount: 5000 } }); // costos anterior
 
-    const result = await makeService(prisma).getResumenFinanciero('2026-05-08', '2026-05-08') as any;
+    const result = (await makeService(prisma).getResumenFinanciero(
+      '2026-05-08',
+      '2026-05-08',
+    )) as any;
 
     expect(prisma.journalLine.aggregate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -302,7 +343,9 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { creditAmount: 2400000 } }) // venta articulo 3.4
       .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }) // gastos
       .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }) // costos
-      .mockResolvedValueOnce({ _sum: { debitAmount: 1900000, creditAmount: 0 } }) // cartera
+      .mockResolvedValueOnce({
+        _sum: { debitAmount: 1900000, creditAmount: 0 },
+      }) // cartera
       .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } }) // deuda cobrador
       .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }) // cobranza
       .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }) // ingresos caja periodo anterior
@@ -310,7 +353,10 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }) // gastos periodo anterior
       .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }); // costos periodo anterior
 
-    const result = await makeService(prisma).getResumenFinanciero('2026-05-08', '2026-05-08') as any;
+    const result = (await makeService(prisma).getResumenFinanciero(
+      '2026-05-08',
+      '2026-05-08',
+    )) as any;
 
     expect(prisma.journalLine.aggregate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -342,7 +388,9 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { creditAmount: 2400000 } }) // venta articulo 3.4
       .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }) // gastos
       .mockResolvedValueOnce({ _sum: { debitAmount: 2000000 } }) // costos
-      .mockResolvedValueOnce({ _sum: { debitAmount: 1900000, creditAmount: 0 } }) // cartera
+      .mockResolvedValueOnce({
+        _sum: { debitAmount: 1900000, creditAmount: 0 },
+      }) // cartera
       .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } }) // deuda cobrador
       .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }) // cobranza
       .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }) // ingresos caja periodo anterior
@@ -350,7 +398,10 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }) // gastos anterior
       .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }); // costos anterior
 
-    const result = await makeService(prisma).getResumenFinanciero('2026-05-09', '2026-05-09') as any;
+    const result = (await makeService(prisma).getResumenFinanciero(
+      '2026-05-09',
+      '2026-05-09',
+    )) as any;
 
     expect(result.ingresosHoy).toBe(0);
     expect(result.entradasCajaHoy).toBe(500000);
@@ -384,7 +435,10 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { monto: 25000 } })
       .mockResolvedValueOnce({ _sum: { monto: 0 } });
 
-    const result = await makeService(prisma).getResumenFinanciero('2026-05-08', '2026-05-08') as any;
+    const result = (await makeService(prisma).getResumenFinanciero(
+      '2026-05-08',
+      '2026-05-08',
+    )) as any;
 
     expect(result.cuotaInicialHoy).toBe(50000);
     expect(result.porcentajeCuotaInicialVsAyer).toBe(100);
@@ -415,7 +469,10 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { monto: 0 } })
       .mockResolvedValueOnce({ _sum: { monto: 0 } });
 
-    const result = await makeService(prisma).getResumenFinanciero('2026-05-09', '2026-05-09') as any;
+    const result = (await makeService(prisma).getResumenFinanciero(
+      '2026-05-09',
+      '2026-05-09',
+    )) as any;
 
     expect(result.cuotaInicialHoy).toBe(0);
   });
@@ -424,13 +481,21 @@ describe('AccountingService financial ledger controls', () => {
     const prisma = buildPrismaMock();
     prisma.journalLine.aggregate
       .mockResolvedValueOnce({ _sum: { debitAmount: 500000 } })
-      .mockResolvedValueOnce({ _sum: { creditAmount: 8000000, debitAmount: 0 } })
+      .mockResolvedValueOnce({
+        _sum: { creditAmount: 8000000, debitAmount: 0 },
+      })
       .mockResolvedValueOnce({ _sum: { creditAmount: 0, debitAmount: 0 } })
       .mockResolvedValueOnce({ _sum: { creditAmount: 0, debitAmount: 0 } })
-      .mockResolvedValueOnce({ _sum: { creditAmount: 8000000, debitAmount: 0 } })
-      .mockResolvedValueOnce({ _sum: { creditAmount: 2200000, debitAmount: 2200000 } })
+      .mockResolvedValueOnce({
+        _sum: { creditAmount: 8000000, debitAmount: 0 },
+      })
+      .mockResolvedValueOnce({
+        _sum: { creditAmount: 2200000, debitAmount: 2200000 },
+      })
       .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } })
-      .mockResolvedValueOnce({ _sum: { debitAmount: 1800000, creditAmount: 1800000 } })
+      .mockResolvedValueOnce({
+        _sum: { debitAmount: 1800000, creditAmount: 1800000 },
+      })
       .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } })
       .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } })
       .mockResolvedValueOnce({ _sum: { debitAmount: 0 } })
@@ -444,7 +509,10 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { monto: 0 } })
       .mockResolvedValueOnce({ _sum: { monto: 0 } });
 
-    const result = await makeService(prisma).getResumenFinanciero('2026-05-09', '2026-05-09') as any;
+    const result = (await makeService(prisma).getResumenFinanciero(
+      '2026-05-09',
+      '2026-05-09',
+    )) as any;
 
     expect(result.ingresosArticulosHoy).toBe(0);
     expect(result.costosVentasHoy).toBe(0);
@@ -461,7 +529,9 @@ describe('AccountingService financial ledger controls', () => {
       makeService(prisma).updateCaja('caja-ruta-1', { saldoActual: 100000 }),
     ).rejects.toThrow(BadRequestException);
 
-    expect(prisma.caja.findUnique).toHaveBeenCalledWith({ where: { id: 'caja-ruta-1' } });
+    expect(prisma.caja.findUnique).toHaveBeenCalledWith({
+      where: { id: 'caja-ruta-1' },
+    });
   });
 
   it('clasifica egresos de deuda de cobrador como cuenta por cobrar y no como gasto', async () => {
@@ -741,7 +811,11 @@ describe('AccountingService financial ledger controls', () => {
     const prisma = buildPrismaMock({
       journalEntry: {
         findFirst: jest.fn().mockResolvedValue({ createdAt: cutoff }),
-        findMany: jest.fn().mockResolvedValue([{ referenceType: 'PAGO', referenceId: 'pago-existente' }]),
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { referenceType: 'PAGO', referenceId: 'pago-existente' },
+          ]),
       },
       transaccion: {
         findMany: jest.fn().mockResolvedValue([
@@ -765,7 +839,10 @@ describe('AccountingService financial ledger controls', () => {
       },
     });
 
-    const result = await (makeService(prisma) as any).migrarHistoricoLedger({ dryRun: true, userId: 'admin-1' });
+    const result = await (makeService(prisma) as any).migrarHistoricoLedger({
+      dryRun: true,
+      userId: 'admin-1',
+    });
 
     expect((prisma.transaccion as any).findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -789,7 +866,9 @@ describe('AccountingService financial ledger controls', () => {
     });
 
     await expect(
-      makeService(prisma).repararCajaOficinaIngresosMalAsignados({ dryRun: false }),
+      makeService(prisma).repararCajaOficinaIngresosMalAsignados({
+        dryRun: false,
+      }),
     ).rejects.toThrow(BadRequestException);
 
     expect(prisma.caja.findFirst).not.toHaveBeenCalled();
@@ -808,15 +887,31 @@ describe('AccountingService financial ledger controls', () => {
             createdAt: new Date('2026-05-08T12:00:00.000Z'),
             createdBy: 'user-1',
             lines: [
-              { debitAmount: 10000, creditAmount: null, accountCode: '1.2.1', cajaId: 'caja-1', account: { name: 'Caja Ruta' } },
-              { debitAmount: null, creditAmount: 10000, accountCode: '3.1', cajaId: null, account: { name: 'Intereses' } },
+              {
+                debitAmount: 10000,
+                creditAmount: null,
+                accountCode: '1.2.1',
+                cajaId: 'caja-1',
+                account: { name: 'Caja Ruta' },
+              },
+              {
+                debitAmount: null,
+                creditAmount: 10000,
+                accountCode: '3.1',
+                cajaId: null,
+                account: { name: 'Intereses' },
+              },
             ],
           },
         ]),
       },
     });
 
-    const result = await makeService(prisma).getMovimientosLedger({ page: 1, limit: 10, cajaId: 'caja-1' } as any);
+    const result = await makeService(prisma).getMovimientosLedger({
+      page: 1,
+      limit: 10,
+      cajaId: 'caja-1',
+    } as any);
 
     expect((prisma as any).journalEntry.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -862,8 +957,20 @@ describe('AccountingService financial ledger controls', () => {
             createdAt: new Date('2026-05-08T12:00:00.000Z'),
             createdBy: 'user-1',
             lines: [
-              { cajaId: 'caja-1', accountCode: '1.2.1', debitAmount: 10000, creditAmount: null, account: { name: 'Caja Ruta' } },
-              { cajaId: null, accountCode: '3.1', debitAmount: null, creditAmount: 10000, account: { name: 'Intereses' } },
+              {
+                cajaId: 'caja-1',
+                accountCode: '1.2.1',
+                debitAmount: 10000,
+                creditAmount: null,
+                account: { name: 'Caja Ruta' },
+              },
+              {
+                cajaId: null,
+                accountCode: '3.1',
+                debitAmount: null,
+                creditAmount: 10000,
+                account: { name: 'Intereses' },
+              },
             ],
           },
         ]),
@@ -871,11 +978,19 @@ describe('AccountingService financial ledger controls', () => {
       transaccion: {
         findMany: jest.fn().mockResolvedValue([]),
         aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 0 } }),
-        create: jest.fn().mockResolvedValue({ id: 'trx-zero', tipoReferencia: 'ARQUEO' }),
+        create: jest
+          .fn()
+          .mockResolvedValue({ id: 'trx-zero', tipoReferencia: 'ARQUEO' }),
       },
       usuario: {
-        findUnique: jest.fn().mockResolvedValue({ nombres: 'Cobra', apellidos: 'Dor' }),
-        findMany: jest.fn().mockResolvedValue([{ id: 'user-1', nombres: 'Admin', apellidos: 'Uno' }]),
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ nombres: 'Cobra', apellidos: 'Dor' }),
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { id: 'user-1', nombres: 'Admin', apellidos: 'Uno' },
+          ]),
       },
     });
 
@@ -927,12 +1042,21 @@ describe('AccountingService financial ledger controls', () => {
           },
         ]),
         aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 0 } }),
-        create: jest.fn().mockResolvedValue({ id: 'trx-zero', tipoReferencia: 'ARQUEO' }),
+        create: jest
+          .fn()
+          .mockResolvedValue({ id: 'trx-zero', tipoReferencia: 'ARQUEO' }),
       },
       usuario: {
-        findUnique: jest.fn().mockResolvedValue({ nombres: 'Cobra', apellidos: 'Dor' }),
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ nombres: 'Cobra', apellidos: 'Dor' }),
         findMany: jest.fn().mockResolvedValue([
-          { id: 'cobrador-1', nombres: 'Cobra', apellidos: 'Dor', rol: 'COBRADOR' },
+          {
+            id: 'cobrador-1',
+            nombres: 'Cobra',
+            apellidos: 'Dor',
+            rol: 'COBRADOR',
+          },
         ]),
       },
     });

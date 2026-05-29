@@ -7,7 +7,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 @Injectable()
 export class PrismaService implements OnModuleInit, OnModuleDestroy {
   [key: string]: any;
-  
+
   constructor(private eventEmitter: EventEmitter2) {
     const pool = new Pool({
       connectionString: process.env.DATABASE_URL,
@@ -22,13 +22,23 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         $allModels: {
           async $allOperations({ operation, model, args, query }) {
             const result = await query(args);
-            const watchActions = ['create', 'update', 'delete', 'upsert', 'createMany', 'updateMany', 'deleteMany'];
-            
+            const watchActions = [
+              'create',
+              'update',
+              'delete',
+              'upsert',
+              'createMany',
+              'updateMany',
+              'deleteMany',
+            ];
+
             if (watchActions.includes(operation as string) && model) {
               if (model !== 'OutboxEvent') {
                 const aggregateId =
                   (result as any)?.id ||
-                  (Array.isArray(result) ? undefined : (args as any)?.where?.id) ||
+                  (Array.isArray(result)
+                    ? undefined
+                    : (args as any)?.where?.id) ||
                   undefined;
 
                 (basePrisma as any).outboxEvent
@@ -45,7 +55,10 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
                     },
                   })
                   .catch((error: Error) => {
-                    console.error('[OUTBOX] Error creando evento:', error.message);
+                    console.error(
+                      '[OUTBOX] Error creando evento:',
+                      error.message,
+                    );
                   });
               }
 
@@ -66,25 +79,31 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
                 if (operation === 'create' || operation === 'createMany') {
                   eventEmitter.emit('aprobacion.created', { data: result });
                 }
-                if (operation === 'update' || operation === 'updateMany' || operation === 'upsert' || operation === 'delete' || operation === 'deleteMany') {
+                if (
+                  operation === 'update' ||
+                  operation === 'updateMany' ||
+                  operation === 'upsert' ||
+                  operation === 'delete' ||
+                  operation === 'deleteMany'
+                ) {
                   eventEmitter.emit('aprobacion.updated', { data: result });
                 }
               }
             }
-            
+
             return result;
-          }
-        }
-      }
+          },
+        },
+      },
     });
 
-    // Devolvemos un Proxy para que NestJS pueda inyectar PrismaService 
+    // Devolvemos un Proxy para que NestJS pueda inyectar PrismaService
     // y redirija cualquier llamada (this.prisma.user.findMany) al cliente extendido.
     return new Proxy(this, {
       get: (target, prop) => {
         if (prop in target) return target[prop as string];
         return (prisma as any)[prop];
-      }
+      },
     });
   }
 

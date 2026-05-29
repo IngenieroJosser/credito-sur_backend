@@ -101,10 +101,7 @@ export class AccountingController {
   }
 
   @Delete('cajas/:id')
-  @Roles(
-    RolUsuario.SUPER_ADMINISTRADOR,
-    RolUsuario.ADMIN,
-  )
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   deleteCaja(@Param('id') id: string) {
     return this.accountingService.deleteCaja(id);
   }
@@ -314,9 +311,16 @@ export class AccountingController {
     @Query('fechaInicio') fechaInicio?: string,
     @Query('fechaFin') fechaFin?: string,
   ) {
-    const result = await this.accountingService.exportGastos(format, { rutaId, fechaInicio, fechaFin });
+    const result = await this.accountingService.exportGastos(format, {
+      rutaId,
+      fechaInicio,
+      fechaFin,
+    });
     res.setHeader('Content-Type', result.contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${result.filename}"`,
+    );
     res.send(result.data);
   }
 
@@ -431,7 +435,10 @@ export class AccountingController {
   ) {
     const result = await this.accountingService.exportAccountingReport(format);
     res.setHeader('Content-Type', result.contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${result.filename}"`,
+    );
     res.send(result.data);
   }
 
@@ -460,10 +467,12 @@ export class AccountingController {
     @Body() body: { monto: number; nota: string; cajaIdDestino?: string },
     @Request() req,
   ) {
-    if (!req.user || !req.user.id) throw new UnauthorizedException('Usuario no autenticado');
+    if (!req.user || !req.user.id)
+      throw new UnauthorizedException('Usuario no autenticado');
     // Ensure monto is parsing correctly
-    const montoClean = typeof body.monto === 'number' ? body.monto : Number(body.monto) || 0;
-    
+    const montoClean =
+      typeof body.monto === 'number' ? body.monto : Number(body.monto) || 0;
+
     return this.accountingService.registrarAbonoDeuda(
       cobradorId,
       body.monto,
@@ -476,9 +485,7 @@ export class AccountingController {
   @Post('reparaciones/caja-oficina-ingresos')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   @HttpCode(HttpStatus.OK)
-  repararCajaOficinaIngresosMalAsignados(
-    @Query('dryRun') dryRun?: string,
-  ) {
+  repararCajaOficinaIngresosMalAsignados(@Query('dryRun') dryRun?: string) {
     return this.accountingService.repararCajaOficinaIngresosMalAsignados({
       dryRun: dryRun === '1' || String(dryRun || '').toLowerCase() === 'true',
     });

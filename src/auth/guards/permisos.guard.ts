@@ -35,7 +35,9 @@ export class PermisosGuard implements CanActivate {
       return true;
     }
 
-    const permisosUsuario = Array.isArray(usuario.permisos) ? usuario.permisos : [];
+    const permisosUsuario = Array.isArray(usuario.permisos)
+      ? usuario.permisos
+      : [];
 
     return permisosRequeridos.every((p) => permisosUsuario.includes(p));
   }

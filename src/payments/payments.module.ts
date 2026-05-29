@@ -8,7 +8,13 @@ import { UploadModule } from '../upload/upload.module';
 import { AccountingModule } from '../accounting/accounting.module';
 
 @Module({
-  imports: [PrismaModule, NotificacionesModule, AuditModule, UploadModule, AccountingModule],
+  imports: [
+    PrismaModule,
+    NotificacionesModule,
+    AuditModule,
+    UploadModule,
+    AccountingModule,
+  ],
   controllers: [PaymentsController],
   providers: [PaymentsService],
   exports: [PaymentsService],

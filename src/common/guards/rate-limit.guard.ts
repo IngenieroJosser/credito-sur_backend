@@ -44,18 +44,25 @@ export class RateLimitGuard implements CanActivate {
     this.pruneExpiredBuckets(now);
 
     const remaining = Math.max(profile.max - bucket.count, 0);
-    const retryAfterSeconds = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
+    const retryAfterSeconds = Math.max(
+      1,
+      Math.ceil((bucket.resetAt - now) / 1000),
+    );
 
     response?.setHeader?.('X-RateLimit-Limit', profile.max);
     response?.setHeader?.('X-RateLimit-Remaining', remaining);
-    response?.setHeader?.('X-RateLimit-Reset', Math.ceil(bucket.resetAt / 1000));
+    response?.setHeader?.(
+      'X-RateLimit-Reset',
+      Math.ceil(bucket.resetAt / 1000),
+    );
 
     if (bucket.count > profile.max) {
       response?.setHeader?.('Retry-After', retryAfterSeconds);
       throw new HttpException(
         {
           statusCode: HttpStatus.TOO_MANY_REQUESTS,
-          message: 'Demasiadas solicitudes. Espere un momento e intente de nuevo.',
+          message:
+            'Demasiadas solicitudes. Espere un momento e intente de nuevo.',
           error: 'Too Many Requests',
           retryAfterSeconds,
         },
@@ -83,7 +90,11 @@ export class RateLimitGuard implements CanActivate {
       };
     }
 
-    if (url.includes('/export') || url.includes('/exportar') || url.includes('/backup/run')) {
+    if (
+      url.includes('/export') ||
+      url.includes('/exportar') ||
+      url.includes('/backup/run')
+    ) {
       return {
         name: 'heavy',
         max: this.readPositiveInt('RATE_LIMIT_HEAVY_MAX', 30),
