@@ -54,6 +54,26 @@ export class PaymentsService {
     return String(actor?.rol || '').toUpperCase() === RolUsuario.COBRADOR;
   }
 
+  private parseFechaOperativaPagoKey(value?: string | null, fallback?: Date) {
+    if (!value) return getBogotaDayKey(fallback ?? new Date());
+
+    const raw = String(value).trim();
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      return raw;
+    }
+
+    const date = new Date(raw);
+
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException(
+        'fechaOperativaRuta inválida. Debe usar formato YYYY-MM-DD.',
+      );
+    }
+
+    return getBogotaDayKey(date);
+  }
+
   private rethrowKnownPaymentError(error: unknown): never {
     if (error instanceof HttpException) {
       throw error;
@@ -832,6 +852,8 @@ export class PaymentsService {
             metodoPago: paymentDto.metodoPago || MetodoPago.EFECTIVO,
             numeroReferencia: paymentDto.numeroReferencia,
             notas: paymentDto.notas,
+            fechaOperativaRuta: paymentDto.fechaOperativaRuta,
+            origenGestion: paymentDto.origenGestion,
             detalles: {
               create: detallesPagoActuales,
             },
@@ -845,7 +867,10 @@ export class PaymentsService {
         });
 
         // 1.5. Limpiar estado de ausente si el cliente estaba marcado como ausente
-        const fechaKey = getBogotaDayKey(fechaPagoBogota);
+        const fechaKey = this.parseFechaOperativaPagoKey(
+          paymentDto.fechaOperativaRuta,
+          fechaPagoBogota,
+        );
 
         const estadoVisitaPostPago =
           paymentDto.tipoRegistro === 'PAGO' ? 'pagado' : 'pendiente';

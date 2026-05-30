@@ -107,6 +107,26 @@ export class RoutesService {
     }
   }
 
+  private parseFechaOperativaBogotaKey(value?: string | null) {
+    if (!value) return getBogotaDayKey(new Date());
+
+    const raw = String(value).trim();
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      return raw;
+    }
+
+    const date = new Date(raw);
+
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException(
+        'fechaOperativa inválida. Debe usar formato YYYY-MM-DD.',
+      );
+    }
+
+    return getBogotaDayKey(date);
+  }
+
   private async buscarTransaccionCajaDia(
     cajaId: string,
     inicio: Date,
@@ -946,8 +966,12 @@ export class RoutesService {
           let avanceDiario = 0;
 
           if (clientesIds.length === 0) {
-            const cierrePendienteAnterior =
-              cierresPendientesMap.get(ruta.id) || null;
+            const cierreInfo = cierresPendientesMap.get(ruta.id) || {
+              cierrePendienteAnterior: null,
+              cierresPendientes: [],
+              totalCierresPendientes: 0,
+              tieneCierrePendiente: false,
+            };
             return {
               ...ruta,
               ...estadisticas,
@@ -957,10 +981,10 @@ export class RoutesService {
               cobrador: `${ruta.cobrador.nombres} ${ruta.cobrador.apellidos}`,
               estado: ruta.activa ? 'ACTIVA' : 'INACTIVA',
               frecuenciaVisita: 'DIARIO',
-              cierrePendienteAnterior,
-              tieneCierrePendiente: Boolean(
-                cierrePendienteAnterior?.pendienteCierre,
-              ),
+              cierrePendienteAnterior: cierreInfo.cierrePendienteAnterior,
+              cierresPendientes: cierreInfo.cierresPendientes,
+              totalCierresPendientes: cierreInfo.totalCierresPendientes,
+              tieneCierrePendiente: cierreInfo.tieneCierrePendiente,
             };
           }
 
@@ -1232,8 +1256,12 @@ export class RoutesService {
           }
 
           // Obtener información de cierre pendiente desde el mapa batch
-          const cierrePendienteAnterior =
-            cierresPendientesMap.get(ruta.id) || null;
+          const cierreInfo = cierresPendientesMap.get(ruta.id) || {
+            cierrePendienteAnterior: null,
+            cierresPendientes: [],
+            totalCierresPendientes: 0,
+            tieneCierrePendiente: false,
+          };
 
           return {
             ...ruta,
@@ -1260,11 +1288,10 @@ export class RoutesService {
 
             frecuenciaVisita: 'DIARIO',
 
-            cierrePendienteAnterior,
-
-            tieneCierrePendiente: Boolean(
-              cierrePendienteAnterior?.pendienteCierre,
-            ),
+            cierrePendienteAnterior: cierreInfo.cierrePendienteAnterior,
+            cierresPendientes: cierreInfo.cierresPendientes,
+            totalCierresPendientes: cierreInfo.totalCierresPendientes,
+            tieneCierrePendiente: cierreInfo.tieneCierrePendiente,
           };
         }),
       );
@@ -2913,11 +2940,7 @@ export class RoutesService {
   async getDailyVisits(rutaId: string, fecha?: string, actor?: RouteActor) {
     await this.assertCollectorOwnRoute(rutaId, actor);
 
-    const fechaKey = (() => {
-      if (!fecha) return getBogotaDayKey(new Date());
-      if (/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return fecha;
-      return getBogotaDayKey(new Date(fecha));
-    })();
+    const fechaKey = this.parseFechaOperativaBogotaKey(fecha);
 
     const { startDate: fechaConsulta } =
       getBogotaStartEndOfDayFromKey(fechaKey);
@@ -3114,7 +3137,7 @@ export class RoutesService {
     const { startDate: fInicio, endDate: fFin } =
       getBogotaStartEndOfDayFromKey(fechaKey);
     // Obtener TODOS los pagos vinculados a préstamos de esta ruta en la fecha,
-    // incluyendo clientes no programados hoy (sintéticos)
+    // incluyendo clientes no programados hoy (sintéticos) Y pagos regularizados de esta jornada
     const pagosDeHoy = await this.prisma.pago.findMany({
       where: {
         prestamo: {
@@ -3124,9 +3147,23 @@ export class RoutesService {
             },
           },
         },
-        fechaPago: { gte: fInicio, lte: fFin },
+        OR: [
+          {
+            fechaPago: { gte: fInicio, lte: fFin },
+          },
+          {
+            fechaOperativaRuta: fechaKey,
+            origenGestion: 'CIERRE_PENDIENTE',
+          },
+        ],
       },
-      select: { clienteId: true, montoTotal: true },
+      select: { 
+        clienteId: true, 
+        montoTotal: true,
+        fechaPago: true,
+        fechaOperativaRuta: true,
+        origenGestion: true,
+      },
     });
 
     // Mapear pagos por cliente para asignar a visitas
@@ -3135,6 +3172,31 @@ export class RoutesService {
       pagosPorCliente[p.clienteId] =
         (pagosPorCliente[p.clienteId] || 0) + Number(p.montoTotal || 0);
     });
+
+    // Separar recaudos: contable (pagos reales del día) vs regularizado (pagos de jornadas viejas)
+    const isFechaPagoEnRango = (p: any) => {
+      const fechaPago = new Date(p.fechaPago);
+      return fechaPago >= fInicio && fechaPago <= fFin;
+    };
+
+    const isRegularizadoParaJornada = (p: any) => {
+      return (
+        p.fechaOperativaRuta === fechaKey &&
+        p.origenGestion === 'CIERRE_PENDIENTE'
+      );
+    };
+
+    const recaudoContable = pagosDeHoy
+      .filter(isFechaPagoEnRango)
+      .reduce((sum, p) => sum + Number(p.montoTotal || 0), 0);
+
+    const recaudoRegularizado = pagosDeHoy
+      .filter((p) => isRegularizadoParaJornada(p) && !isFechaPagoEnRango(p))
+      .reduce((sum, p) => sum + Number(p.montoTotal || 0), 0);
+
+    const recaudoOperativo = pagosDeHoy
+      .filter((p) => isFechaPagoEnRango(p) || isRegularizadoParaJornada(p))
+      .reduce((sum, p) => sum + Number(p.montoTotal || 0), 0);
 
     const totalEsperado = visitasDelDia.reduce((sum, v) => {
       const cid = v.cliente?.id || v.clienteId;
@@ -3171,6 +3233,100 @@ export class RoutesService {
       }
     });
 
+    // Agregar visitas sintéticas para pagos regularizados cuyo cliente no aparece en visitasDelDia
+    const clientesEnVisitas = new Set(
+      visitasDelDia.map((v) => v.cliente?.id || v.clienteId),
+    );
+
+    const clientesIdsPagoSintetico = [
+      ...new Set(
+        pagosDeHoy
+          .filter(
+            (p) =>
+              p.clienteId &&
+              !clientesEnVisitas.has(p.clienteId) &&
+              p.fechaOperativaRuta === fechaKey &&
+              p.origenGestion === 'CIERRE_PENDIENTE',
+          )
+          .map((p) => p.clienteId)
+          .filter(Boolean),
+      ),
+    ];
+
+    if (clientesIdsPagoSintetico.length > 0) {
+      const clientesPagoSintetico = await this.prisma.cliente.findMany({
+        where: {
+          id: { in: clientesIdsPagoSintetico },
+        },
+        select: {
+          id: true,
+          codigo: true,
+          dni: true,
+          nombres: true,
+          apellidos: true,
+          telefono: true,
+          direccion: true,
+          nivelRiesgo: true,
+          prestamos: {
+            where: {
+              eliminadoEn: null,
+            },
+            select: {
+              id: true,
+              numeroPrestamo: true,
+              monto: true,
+              saldoPendiente: true,
+              frecuenciaPago: true,
+              cantidadCuotas: true,
+              estado: true,
+            },
+          },
+        },
+      });
+
+      for (const cliente of clientesPagoSintetico) {
+        visitasDelDia.push({
+          asignacionId: null,
+          ordenVisita: 9999,
+          cliente: {
+            id: cliente.id,
+            codigo: cliente.codigo,
+            dni: cliente.dni,
+            nombres: cliente.nombres,
+            apellidos: cliente.apellidos,
+            telefono: cliente.telefono,
+            direccion: cliente.direccion,
+            nivelRiesgo: cliente.nivelRiesgo,
+            prestamosActivos: cliente.prestamos.length,
+          },
+          prestamos: cliente.prestamos.map((p) => ({
+            id: p.id,
+            numeroPrestamo: p.numeroPrestamo,
+            monto: Number(p.monto),
+            saldoPendiente: Number(p.saldoPendiente),
+            frecuenciaPago: p.frecuenciaPago,
+            cantidadCuotas: p.cantidadCuotas,
+            estado: p.estado,
+            proximaCuota: null,
+            registroSintetico: true,
+            origenGestion: 'CIERRE_PENDIENTE',
+          })),
+          registroSintetico: true,
+          origenGestion: 'CIERRE_PENDIENTE',
+          recaudadoDelDia: pagosPorCliente[cliente.id] || 0,
+          estadoVisita: null,
+          notasVisita: null,
+        });
+      }
+    }
+
+    // Recalcular meta operativa para incluir visitas sintéticas regularizadas
+    const metaSinteticaRegularizada = visitasDelDia
+      .filter((v: any) => v.registroSintetico && v.origenGestion === 'CIERRE_PENDIENTE')
+      .reduce((sum, v: any) => sum + Number(v.recaudadoDelDia || 0), 0);
+
+    const totalEsperadoFinal = totalEsperado + metaSinteticaRegularizada;
+
     // Filtrar saldados sin actividad para no inflar el total de la ruta ni ensuciar la data
     const visitasDelDiaFinales = visitasDelDia.filter((v) => {
       const cid = v.cliente?.id || v.clienteId;
@@ -3188,10 +3344,7 @@ export class RoutesService {
       return !(isSaldado && !tuvoActividad);
     });
 
-    const recaudoFinal = pagosDeHoy.reduce(
-      (sum, p) => sum + Number(p.montoTotal || 0),
-      0,
-    );
+    const recaudoFinal = recaudoOperativo;
 
     // Buscar gastos de la ruta en ese día
     const gastosRuta = await this.prisma.gasto.aggregate({
@@ -3205,8 +3358,8 @@ export class RoutesService {
     const gastosFinal = Number(gastosRuta._sum.monto || 0);
 
     const efectividad =
-      totalEsperado > 0
-        ? Math.round((recaudoFinal / totalEsperado) * 100)
+      totalEsperadoFinal > 0
+        ? Math.round((recaudoFinal / totalEsperadoFinal) * 100)
         : recaudoFinal > 0
           ? 100
           : 0;
@@ -3224,8 +3377,10 @@ export class RoutesService {
       rutaId,
       totalVisitas: visitasDelDiaFinales.length,
       resumen: {
-        recaudo: recaudoFinal,
-        meta: totalEsperado,
+        recaudo: recaudoOperativo,
+        recaudoContable,
+        recaudoRegularizado,
+        meta: totalEsperadoFinal,
         gastos: gastosFinal,
         efectividad,
         visitados: gestionados,
@@ -3640,11 +3795,25 @@ export class RoutesService {
     estadoVisita: string,
     notas: string,
     actor?: RouteActor,
+    fechaOperativa?: string,
+    origenGestion?: string,
   ) {
     await this.assertCollectorOwnRoute(rutaId, actor);
 
-    const { startDate } = getBogotaStartEndOfDay(new Date());
-    const fechaKey = getBogotaDayKey(startDate);
+    const fechaKey = this.parseFechaOperativaBogotaKey(fechaOperativa);
+
+    const ruta = await this.prisma.ruta.findFirst({
+      where: { id: rutaId, eliminadoEn: null },
+      select: { id: true, cobradorId: true },
+    });
+
+    if (!ruta) {
+      throw new NotFoundException('Ruta no encontrada');
+    }
+
+    const notasFinales = origenGestion
+      ? `[${origenGestion}] Regularizado por ${actor?.id || 'N/A'} - ${notas || ''}`.trim()
+      : notas;
 
     const resultado = await this.prisma.registroVisita.upsert({
       where: {
@@ -3657,14 +3826,14 @@ export class RoutesService {
       create: {
         rutaId,
         clienteId,
-        cobradorId: actor?.id as string,
+        cobradorId: ruta.cobradorId,
         fechaVisita: fechaKey,
         estadoVisita,
-        notas,
+        notas: notasFinales,
       },
       update: {
         estadoVisita,
-        notas,
+        notas: notasFinales,
       },
     });
 
@@ -3677,6 +3846,148 @@ export class RoutesService {
     });
 
     return resultado;
+  }
+
+  /**
+   * Cierra una jornada regularizada (cierre pendiente)
+   *
+   * Este método permite cerrar una jornada vieja que estaba pendiente de cierre,
+   * actualizando el estado de la entidad RutaJornada a REGULARIZADA.
+   */
+  async cerrarJornadaRegularizada(
+    rutaId: string,
+    fechaOperativa: string,
+    observaciones?: string,
+    actor?: RouteActor,
+  ) {
+    // Validar que la ruta exista
+    const ruta = await this.prisma.ruta.findFirst({
+      where: { id: rutaId, eliminadoEn: null },
+      select: {
+        id: true,
+        nombre: true,
+        cobrador: {
+          select: {
+            id: true,
+            nombres: true,
+            apellidos: true,
+          },
+        },
+        cajas: {
+          where: {
+            tipo: 'RUTA',
+            activa: true,
+          },
+          select: { id: true },
+          take: 1,
+        },
+      },
+    });
+
+    if (!ruta) {
+      throw new NotFoundException('Ruta no encontrada');
+    }
+
+    const cajaRuta = ruta?.cajas?.[0];
+    if (!cajaRuta?.id) {
+      throw new BadRequestException('La ruta no tiene caja activa');
+    }
+
+    // Validar que la fechaOperativa esté en formato YYYY-MM-DD
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fechaOperativa)) {
+      throw new BadRequestException(
+        'fechaOperativa debe estar en formato YYYY-MM-DD',
+      );
+    }
+
+    // Validar que la jornada exista y esté pendiente de cierre
+    const jornada = await this.prisma.rutaJornada.findUnique({
+      where: {
+        rutaId_fechaOperativa: {
+          rutaId,
+          fechaOperativa,
+        },
+      },
+    });
+
+    if (!jornada) {
+      throw new NotFoundException(
+        'La jornada no existe',
+      );
+    }
+
+    if (jornada.estado !== 'PENDIENTE_CIERRE') {
+      throw new BadRequestException(
+        'La jornada no está pendiente de cierre o ya fue cerrada',
+      );
+    }
+
+    // Validar que tenga observaciones si hay clientes pendientes
+    const detalleDia = await this.getDailyVisits(
+      rutaId,
+      fechaOperativa,
+      actor,
+    );
+
+    const clientesPendientes = detalleDia.visitas?.filter((v: any) => {
+      return (
+        Number(v.recaudadoDelDia || 0) <= 0 &&
+        String(v.estadoVisita || '').toLowerCase() !== 'ausente'
+      );
+    });
+
+    if (clientesPendientes.length > 0 && !observaciones) {
+      throw new BadRequestException(
+        `La jornada tiene ${clientesPendientes.length} cliente(s) pendiente(s). Debe proporcionar observaciones para cerrar la jornada.`,
+      );
+    }
+
+    // Crear transacción CIERRE_RUTA para registro contable
+    const cierre = await this.prisma.transaccion.create({
+      data: {
+        cajaId: cajaRuta.id,
+        tipo: 'EGRESO',
+        tipoReferencia: 'CIERRE_RUTA',
+        referenciaId: `RUTA:${rutaId}:FECHA:${fechaOperativa}`,
+        monto: 0,
+        descripcion: `Cierre regularizado de jornada ${fechaOperativa}${observaciones ? ` - ${observaciones}` : ''}`,
+        fechaTransaccion: new Date(),
+        creadoPorId: actor?.id,
+      },
+    });
+
+    // Actualizar el estado de la jornada a REGULARIZADA
+    await this.prisma.rutaJornada.update({
+      where: {
+        id: jornada.id,
+      },
+      data: {
+        estado: 'REGULARIZADA',
+        cierreTransaccionId: cierre.id,
+        cerradaEn: new Date(),
+        regularizadaEn: new Date(),
+        regularizadaPorId: actor?.id,
+      },
+    });
+
+    // Emitir evento para sincronización en tiempo real
+    this.notificacionesGateway.broadcastRutasActualizadas({
+      accion: 'JORNADA_CERRADA_REGULARIZADA',
+      rutaId,
+      fechaOperativa,
+      cierreId: cierre.id,
+      jornadaId: jornada.id,
+      observaciones,
+    });
+
+    return {
+      success: true,
+      message: `Jornada ${fechaOperativa} cerrada exitosamente`,
+      cierreId: cierre.id,
+      jornadaId: jornada.id,
+      fechaOperativa,
+      rutaId,
+    };
   }
 
   /**
@@ -3718,14 +4029,11 @@ export class RoutesService {
     }
   }
 
-  private async getCierrePendienteRuta(rutaId: string) {
+  private async getCierresPendientesRuta(rutaId: string) {
     const { inicio } = this.getInicioFinHoy();
 
     const ruta = await this.prisma.ruta.findFirst({
-      where: {
-        id: rutaId,
-        eliminadoEn: null,
-      },
+      where: { id: rutaId, eliminadoEn: null },
       select: {
         id: true,
         nombre: true,
@@ -3741,92 +4049,61 @@ export class RoutesService {
             tipo: 'RUTA',
             activa: true,
           },
-          select: {
-            id: true,
-          },
+          select: { id: true },
           take: 1,
         },
       },
     });
 
     const cajaRuta = ruta?.cajas?.[0];
-    if (!ruta || !cajaRuta?.id) return null;
+    if (!ruta || !cajaRuta?.id) return [];
 
-    const ultimaActivacionAnterior = await this.prisma.transaccion.findFirst({
+    // Usar la nueva entidad RutaJornada para detectar jornadas pendientes
+    const jornadasPendientes = await this.prisma.rutaJornada.findMany({
       where: {
-        cajaId: cajaRuta.id,
-        tipoReferencia: 'ACTIVACION_RUTA',
-        fechaTransaccion: {
-          lt: inicio,
-        },
+        rutaId,
+        estado: 'PENDIENTE_CIERRE',
       },
       orderBy: {
-        fechaTransaccion: 'desc',
-      },
-      select: {
-        id: true,
-        cajaId: true,
-        fechaTransaccion: true,
-        creadoPorId: true,
-        referenciaId: true,
+        fechaOperativa: 'asc',
       },
     });
-
-    if (!ultimaActivacionAnterior?.id) return null;
-
-    const cierrePosterior = await this.prisma.transaccion.findFirst({
-      where: {
-        cajaId: cajaRuta.id,
-        tipoReferencia: 'CIERRE_RUTA',
-        fechaTransaccion: {
-          gt: ultimaActivacionAnterior.fechaTransaccion,
-        },
-      },
-      orderBy: {
-        fechaTransaccion: 'asc',
-      },
-      select: {
-        id: true,
-        fechaTransaccion: true,
-        creadoPorId: true,
-      },
-    });
-
-    if (cierrePosterior?.id) return null;
-
-    const fechaOperativa = getBogotaDayKey(
-      new Date(ultimaActivacionAnterior.fechaTransaccion),
-    );
 
     const hoyKey = getBogotaDayKey(new Date());
 
-    const diasPendiente = (() => {
+    return jornadasPendientes.map((jornada) => {
+      const fechaOperativa = jornada.fechaOperativa;
+
       const start = new Date(`${fechaOperativa}T12:00:00-05:00`);
       const end = new Date(`${hoyKey}T12:00:00-05:00`);
-      const diff = Math.floor(
-        (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24),
-      );
-      return Math.max(diff, 0);
-    })();
 
-    return {
-      rutaId,
-      rutaNombre: ruta.nombre,
-      cajaId: cajaRuta.id,
-      cobradorId: ruta.cobrador?.id || null,
-      cobradorNombre: ruta.cobrador
-        ? `${ruta.cobrador.nombres} ${ruta.cobrador.apellidos}`.trim()
-        : null,
-      activacionId: ultimaActivacionAnterior.id,
-      fechaOperativa,
-      fechaActivacion: formatBogotaOffsetIso(
-        ultimaActivacionAnterior.fechaTransaccion,
-      ),
-      diasPendiente,
-      pendienteCierre: true,
-      requiereRegularizacion: true,
-      message: `La ruta tiene una jornada pendiente de cierre del ${fechaOperativa}.`,
-    };
+      const diasPendiente = Math.max(
+        Math.floor((end.getTime() - start.getTime()) / 86_400_000),
+        0,
+      );
+
+      return {
+        rutaId,
+        rutaNombre: ruta.nombre,
+        cajaId: cajaRuta.id,
+        cobradorId: ruta.cobrador?.id || null,
+        cobradorNombre: ruta.cobrador
+          ? `${ruta.cobrador.nombres} ${ruta.cobrador.apellidos}`.trim()
+          : null,
+        activacionId: jornada.activacionTransaccionId,
+        fechaOperativa,
+        fechaActivacion: formatBogotaOffsetIso(jornada.activadaEn),
+        diasPendiente,
+        pendienteCierre: true,
+        requiereRegularizacion: true,
+        message: `La ruta tiene una jornada pendiente de cierre del ${fechaOperativa}.`,
+      };
+    });
+  }
+
+  private async getCierrePendienteRuta(rutaId: string) {
+    const pendientes = await this.getCierresPendientesRuta(rutaId);
+    return pendientes[0] || null;
   }
 
   private async getCierresPendientesRutasMap(rutaIds: string[]) {
@@ -3834,20 +4111,185 @@ export class RoutesService {
 
     const cierresPendientes = await Promise.all(
       rutaIds.map(async (rutaId) => {
-        const cierrePendiente = await this.getCierrePendienteRuta(rutaId);
-        return cierrePendiente
-          ? ([rutaId, cierrePendiente] as [string, any])
-          : null;
+        const pendientes = await this.getCierresPendientesRuta(rutaId);
+        return [
+          rutaId,
+          {
+            cierrePendienteAnterior: pendientes[0] || null,
+            cierresPendientes: pendientes,
+            totalCierresPendientes: pendientes.length,
+            tieneCierrePendiente: pendientes.length > 0,
+          },
+        ] as [string, any];
       }),
     );
 
     const result = new Map<string, any>();
     for (const item of cierresPendientes) {
-      if (item) {
-        result.set(item[0], item[1]);
-      }
+      result.set(item[0], item[1]);
     }
 
     return result;
+  }
+
+  async getCierrePendienteDetalle(rutaId: string, actor?: RouteActor) {
+    await this.assertCollectorOwnRoute(rutaId, actor);
+
+    const jornadasPendientes = await this.getCierresPendientesRuta(rutaId);
+
+    if (!jornadasPendientes.length) {
+      return {
+        pendienteCierre: false,
+        totalPendientes: 0,
+        jornadas: [],
+        message: 'La ruta no tiene jornadas pendientes de cierre.',
+      };
+    }
+
+    const jornadas = await Promise.all(
+      jornadasPendientes.map(async (cierrePendiente) => {
+        const detalleDia = await this.getDailyVisits(
+          rutaId,
+          cierrePendiente.fechaOperativa,
+          actor,
+        );
+
+        const visitas = Array.isArray(detalleDia?.visitas)
+          ? detalleDia.visitas
+          : [];
+
+        const clientesGestionados = visitas.filter((v: any) => {
+          return (
+            Number(v.recaudadoDelDia || 0) > 0 ||
+            String(v.estadoVisita || '').toLowerCase() === 'ausente'
+          );
+        });
+
+        const clientesPagaron = visitas.filter((v: any) => {
+          return Number(v.recaudadoDelDia || 0) > 0;
+        });
+
+        const clientesAusentes = visitas.filter((v: any) => {
+          return String(v.estadoVisita || '').toLowerCase() === 'ausente';
+        });
+
+        const clientesPendientes = visitas.filter((v: any) => {
+          return (
+            Number(v.recaudadoDelDia || 0) <= 0 &&
+            String(v.estadoVisita || '').toLowerCase() !== 'ausente'
+          );
+        });
+
+        return {
+          cierrePendiente,
+          resumen: {
+            fechaOperativa: cierrePendiente.fechaOperativa,
+            fechaActivacion: cierrePendiente.fechaActivacion,
+            diasPendiente: cierrePendiente.diasPendiente,
+            rutaId: cierrePendiente.rutaId,
+            rutaNombre: cierrePendiente.rutaNombre,
+            cobradorId: cierrePendiente.cobradorId,
+            cobradorNombre: cierrePendiente.cobradorNombre,
+
+            meta: detalleDia.resumen?.meta || 0,
+
+            recaudo: detalleDia.resumen?.recaudo || 0,
+            recaudoOperativo: detalleDia.resumen?.recaudo || 0,
+            recaudoContable: detalleDia.resumen?.recaudoContable || 0,
+            recaudoRegularizado:
+              detalleDia.resumen?.recaudoRegularizado || 0,
+
+            pendiente: Math.max(
+              Number(detalleDia.resumen?.meta || 0) -
+                Number(detalleDia.resumen?.recaudo || 0),
+              0,
+            ),
+
+            gastos: detalleDia.resumen?.gastos || 0,
+            efectividad: detalleDia.resumen?.efectividad || 0,
+
+            totalClientes: visitas.length,
+            clientesGestionados: clientesGestionados.length,
+            clientesPagaron: clientesPagaron.length,
+            clientesAusentes: clientesAusentes.length,
+            clientesPendientes: clientesPendientes.length,
+          },
+          clientes: visitas.map((v: any) => ({
+            asignacionId: v.asignacionId,
+            ordenVisita: v.ordenVisita,
+            clienteId: v.cliente?.id,
+            nombreCliente: `${v.cliente?.nombres || ''} ${v.cliente?.apellidos || ''}`.trim(),
+            dni: v.cliente?.dni,
+            telefono: v.cliente?.telefono,
+            direccion: v.cliente?.direccion,
+            nivelRiesgo: v.cliente?.nivelRiesgo,
+
+            estadoGestion:
+              Number(v.recaudadoDelDia || 0) > 0
+                ? 'PAGO_REGISTRADO'
+                : String(v.estadoVisita || '').toLowerCase() === 'ausente'
+                  ? 'AUSENTE'
+                  : 'PENDIENTE',
+
+            recaudadoDelDia: Number(v.recaudadoDelDia || 0),
+            estadoVisita: v.estadoVisita || null,
+            notasVisita: v.notasVisita || null,
+
+            prestamos: v.prestamos || [],
+          })),
+          accionesSugeridas: this.buildAccionesSugeridasCierrePendiente({
+            meta: detalleDia.resumen?.meta || 0,
+            recaudo: detalleDia.resumen?.recaudo || 0,
+            clientesPendientes: clientesPendientes.length,
+            clientesAusentes: clientesAusentes.length,
+          }),
+        };
+      }),
+    );
+
+    return {
+      pendienteCierre: true,
+      totalPendientes: jornadas.length,
+      jornadas,
+    };
+  }
+
+  private buildAccionesSugeridasCierrePendiente(input: {
+    meta: number;
+    recaudo: number;
+    clientesPendientes: number;
+    clientesAusentes: number;
+  }) {
+    const acciones: string[] = [];
+
+    if (input.clientesPendientes > 0) {
+      acciones.push(
+        `Revisar ${input.clientesPendientes} cliente(s) sin gestión registrada.`,
+      );
+    }
+
+    if (input.clientesAusentes > 0) {
+      acciones.push(
+        `Validar ${input.clientesAusentes} ausencia(s) registradas antes de cerrar.`,
+      );
+    }
+
+    if (input.recaudo > 0) {
+      acciones.push(
+        'Validar que el dinero recaudado haya sido entregado o conciliado.',
+      );
+    }
+
+    if (input.meta > input.recaudo) {
+      acciones.push(
+        'Registrar observación de descuadre o justificar pendiente antes de regularizar.',
+      );
+    }
+
+    if (!acciones.length) {
+      acciones.push('La jornada parece lista para cierre administrativo.');
+    }
+
+    return acciones;
   }
 }
