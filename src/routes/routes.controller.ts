@@ -280,6 +280,25 @@ export class RoutesController {
     return this.routesService.getCierrePendienteRutaPublic(id, req.user);
   }
 
+  @Get(':id/cierre-pendiente/detalle')
+  @Roles(
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.COBRADOR,
+  )
+  @ApiOperation({
+    summary: 'Obtener detalle operativo de la jornada pendiente de cierre',
+  })
+  @ApiResponse({ status: 200, description: 'Detalle de cierre pendiente' })
+  getCierrePendienteDetalle(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Request() req,
+  ) {
+    return this.routesService.getCierrePendienteDetalle(id, req.user);
+  }
+
   @Post(':id/assign-client')
   @Roles(
     RolUsuario.SUPERVISOR,
@@ -479,6 +498,8 @@ export class RoutesController {
     @Param('clienteId', ParseUUIDPipe) clienteId: string,
     @Body('estadoVisita') estadoVisita: string,
     @Body('notas') notas: string,
+    @Body('fechaOperativa') fechaOperativa: string | undefined,
+    @Body('origenGestion') origenGestion: string | undefined,
     @Request() req,
   ) {
     return this.routesService.registrarVisita(
@@ -486,6 +507,37 @@ export class RoutesController {
       clienteId,
       estadoVisita,
       notas,
+      req.user,
+      fechaOperativa,
+      origenGestion,
+    );
+  }
+
+  @Post(':id/cierre-pendiente/:fechaOperativa/cerrar')
+  @Roles(
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.COORDINADOR,
+  )
+  @ApiOperation({
+    summary: 'Cerrar una jornada regularizada (cierre pendiente)',
+  })
+  @ApiResponse({ status: 200, description: 'Jornada cerrada exitosamente' })
+  @ApiResponse({ status: 404, description: 'Ruta o jornada no encontrada' })
+  @ApiResponse({
+    status: 400,
+    description: 'La jornada no está pendiente de cierre',
+  })
+  cerrarJornadaRegularizada(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('fechaOperativa') fechaOperativa: string,
+    @Request() req,
+    @Body('observaciones') observaciones?: string,
+  ) {
+    return this.routesService.cerrarJornadaRegularizada(
+      id,
+      fechaOperativa,
+      observaciones,
       req.user,
     );
   }

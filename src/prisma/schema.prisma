@@ -378,6 +378,8 @@ model Pago {
   metodoPago           MetodoPago
   numeroReferencia     String?              @db.VarChar(100)
   notas                String?
+  fechaOperativaRuta   String?              @db.VarChar(10)
+  origenGestion        String?              @db.VarChar(50)
   creadoEn             DateTime             @default(now())
   actualizadoEn        DateTime             @updatedAt
   estadoSincronizacion EstadoSincronizacion @default(PENDIENTE)
@@ -396,6 +398,8 @@ model Pago {
   @@index([cobradorId])
   @@index([rutaId])
   @@index([fechaPago])
+  @@index([fechaOperativaRuta])
+  @@index([origenGestion])
   @@index([estadoSincronizacion])
 }
 
@@ -452,6 +456,7 @@ model Ruta {
   cajas         Caja[]
   registrosVisitas RegistroVisita[]
   pagos         Pago[]
+  jornadas      RutaJornada[]
   cobrador      Usuario          @relation("RutaCobrador", fields: [cobradorId], references: [id])
   supervisor    Usuario?         @relation("RutaSupervisor", fields: [supervisorId], references: [id])
 
@@ -533,6 +538,7 @@ model Caja {
   gastos        Gasto[]
   transacciones Transaccion[]
   journalLines  JournalLine[]
+  jornadas      RutaJornada[]
   responsable   Usuario       @relation(fields: [responsableId], references: [id])
   ruta          Ruta?         @relation(fields: [rutaId], references: [id])
 
@@ -1052,4 +1058,40 @@ model RegistroVisita {
   @@unique([rutaId, clienteId, fechaVisita])
   @@index([rutaId, fechaVisita])
   @@map("registros_visitas")
+}
+
+enum RutaJornadaEstado {
+  ABIERTA
+  PENDIENTE_CIERRE
+  CERRADA
+  REGULARIZADA
+  ANULADA
+}
+
+model RutaJornada {
+  id             String             @id @default(uuid())
+  rutaId         String
+  cajaId         String
+  fechaOperativa String             @db.VarChar(10) // Formato 'YYYY-MM-DD' en Bogotá
+  estado         RutaJornadaEstado @default(ABIERTA)
+
+  activacionTransaccionId String?
+  cierreTransaccionId     String?
+
+  activadaEn      DateTime
+  cerradaEn       DateTime?
+  regularizadaEn  DateTime?
+  regularizadaPorId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ruta Ruta @relation(fields: [rutaId], references: [id])
+  caja  Caja @relation(fields: [cajaId], references: [id])
+
+  @@unique([rutaId, fechaOperativa])
+  @@index([rutaId])
+  @@index([estado])
+  @@index([fechaOperativa])
+  @@map("rutas_jornadas")
 }

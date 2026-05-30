@@ -73,4 +73,12 @@ export class CreatePaymentDto {
   @Min(1, { message: 'montoCuotaEsperado debe ser mayor a 0' })
   @Type(() => Number)
   montoCuotaEsperado?: number;
+
+  @IsDateString()
+  @IsOptional()
+  fechaOperativaRuta?: string;
+
+  @IsString()
+  @IsOptional()
+  origenGestion?: string;
 }
