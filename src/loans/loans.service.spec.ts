@@ -14,6 +14,7 @@ const mockGateway = {
   broadcastPrestamosActualizados: jest.fn(),
   broadcastDashboardsActualizados: jest.fn(),
   broadcastRutasActualizadas: jest.fn(),
+  broadcastJornadasActualizadas: jest.fn(),
   broadcastAprobacionesActualizadas: jest.fn(),
 };
 const mockConfig = {
@@ -331,19 +332,20 @@ describe('LoansService accounting impact for approved loans', () => {
     ).rejects.toThrow('Producto sin stock disponible');
   });
 
-  it('genera número de préstamo sin depender de count + 1', () => {
+  it('genera número de préstamo sin depender de count + 1', async () => {
     const prisma = {
       prestamo: {
+        findFirst: jest.fn().mockResolvedValue(null),
         count: jest.fn(),
       },
     };
     const service = makeService(prisma) as any;
 
-    expect(service.generarNumeroPrestamo('ARTICULO')).toMatch(
-      /^ART-\d+-[0-9a-f-]{8}$/,
+    await expect(service.generarNumeroPrestamo('ARTICULO')).resolves.toBe(
+      'ART-000001',
     );
-    expect(service.generarNumeroPrestamo('EFECTIVO')).toMatch(
-      /^PRES-\d+-[0-9a-f-]{8}$/,
+    await expect(service.generarNumeroPrestamo('EFECTIVO')).resolves.toBe(
+      'PRES-000001',
     );
     expect(prisma.prestamo.count).not.toHaveBeenCalled();
   });
@@ -410,6 +412,76 @@ describe('LoansService reprogramacion concurrency controls', () => {
 
     expect(prisma.aprobacion.update).not.toHaveBeenCalled();
     expect(mockNotifications.create).not.toHaveBeenCalled();
+  });
+
+  it('reusa la aprobación existente cuando se repite la misma idempotencyKey en reprogramación', async () => {
+    const prisma = {
+      aprobacion: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'aprobacion-reprogramacion-1',
+          idempotencyKey: 'reprog-key-1',
+          estado: EstadoAprobacion.PENDIENTE,
+        }),
+      },
+    };
+
+    const result = await makeService(prisma as any).solicitarReprogramacion({
+      prestamoId: 'prestamo-1',
+      cuotaId: 'cuota-1',
+      nuevaFecha: '2026-05-20',
+      motivo: 'Cliente solicita cambio',
+      idempotencyKey: 'reprog-key-1',
+      solicitadoPorId: 'cobrador-1',
+    });
+
+    expect(prisma.aprobacion.findUnique).toHaveBeenCalledWith({
+      where: { idempotencyKey: 'reprog-key-1' },
+    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: 'aprobacion-reprogramacion-1',
+        idempotentReplay: true,
+      }),
+    );
+  });
+
+  it('exige fechaOperativaRuta cuando la reprogramación viene desde cierre pendiente', async () => {
+    const prisma = {
+      aprobacion: {
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
+      prestamo: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'prestamo-1',
+          clienteId: 'cliente-1',
+          numeroPrestamo: 'PRES-1',
+          frecuenciaPago: 'SEMANAL',
+          cliente: { nombres: 'Ana', apellidos: 'Rojas' },
+          cuotas: [
+            {
+              id: 'cuota-1',
+              numeroCuota: 1,
+              estado: 'PENDIENTE',
+              fechaVencimiento: new Date('2026-05-18T12:00:00-05:00'),
+              monto: 100000,
+            },
+          ],
+        }),
+      },
+    };
+
+    await expect(
+      makeService(prisma as any).solicitarReprogramacion({
+        prestamoId: 'prestamo-1',
+        cuotaId: 'cuota-1',
+        nuevaFecha: '2026-06-02',
+        motivo: 'Cliente solicita cambio',
+        origenGestion: 'CIERRE_PENDIENTE',
+        solicitadoPorId: 'cobrador-1',
+      }),
+    ).rejects.toThrow(
+      'fechaOperativaRuta es requerida para reprogramaciones desde cierre pendiente',
+    );
   });
 });
 

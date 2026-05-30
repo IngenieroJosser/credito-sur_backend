@@ -1208,12 +1208,7 @@ export class LoansController {
   @ApiOperation({ summary: 'Solicitar reprogramación de cuota' })
   async solicitarReprogramacion(
     @Param('id') prestamoId: string,
-    @Body()
-    body: {
-      cuotaId?: string;
-      nuevaFecha: string;
-      motivo: string;
-    },
+    @Body() body: ReprogramarCuotaDto,
     @Request() req: any,
   ) {
     const usuarioId: string = req.user?.sub || req.user?.id;
@@ -1224,6 +1219,9 @@ export class LoansController {
       cuotaId: body.cuotaId,
       nuevaFecha: body.nuevaFecha,
       motivo: body.motivo,
+      fechaOperativaRuta: body.fechaOperativaRuta,
+      origenGestion: body.origenGestion,
+      idempotencyKey: body.idempotencyKey,
       solicitadoPorId: usuarioId,
     });
   }
