@@ -353,6 +353,14 @@ export class NotificacionesGateway
     });
   }
 
+  broadcastJornadasActualizadas(payload?: any) {
+    this.logger.log('Emitiendo evento jornadas_actualizadas');
+    this.server.emit('jornadas_actualizadas', {
+      timestamp: new Date(),
+      ...(payload || {}),
+    });
+  }
+
   broadcastDashboardsActualizados(payload?: any) {
     this.logger.log('Emitiendo evento dashboards_actualizados');
     this.server.emit('dashboards_actualizados', {

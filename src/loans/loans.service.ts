@@ -119,6 +119,31 @@ export class LoansService implements OnModuleInit {
     private ledgerService: LedgerService,
   ) {}
 
+  private normalizeIdempotencyKey(value?: string | null) {
+    const key = value?.toString().trim();
+    return key || undefined;
+  }
+
+  private parseFechaOperativaReprogramacionKey(value?: string | null) {
+    if (!value) return undefined;
+
+    const raw = String(value).trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      throw new BadRequestException(
+        'fechaOperativaRuta inválida. Debe usar formato YYYY-MM-DD.',
+      );
+    }
+
+    const date = new Date(`${raw}T12:00:00-05:00`);
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException(
+        'fechaOperativaRuta inválida. Debe usar formato YYYY-MM-DD.',
+      );
+    }
+
+    return getBogotaDayKey(date);
+  }
+
   private generarNumeroTransaccion(prefix = 'TRX') {
     return `${prefix}-${Date.now()}-${randomUUID().slice(0, 8)}`;
   }
@@ -4137,8 +4162,25 @@ export class LoansService implements OnModuleInit {
     cuotaId?: string;
     nuevaFecha: string;
     motivo: string;
+    fechaOperativaRuta?: string;
+    origenGestion?: 'CIERRE_PENDIENTE';
+    idempotencyKey?: string;
     solicitadoPorId: string;
   }) {
+    const idempotencyKey = this.normalizeIdempotencyKey(data.idempotencyKey);
+    if (idempotencyKey) {
+      const aprobacionExistente = await this.prisma.aprobacion.findUnique({
+        where: { idempotencyKey },
+      });
+
+      if (aprobacionExistente) {
+        return {
+          ...aprobacionExistente,
+          idempotentReplay: true,
+        };
+      }
+    }
+
     const prestamo = await this.prisma.prestamo.findUnique({
       where: { id: data.prestamoId },
       include: {
@@ -4190,10 +4232,57 @@ export class LoansService implements OnModuleInit {
       );
     }
 
+    const fechaOperativaRuta = this.parseFechaOperativaReprogramacionKey(
+      data.fechaOperativaRuta,
+    );
+    if (data.origenGestion === 'CIERRE_PENDIENTE') {
+      if (!fechaOperativaRuta) {
+        throw new BadRequestException(
+          'fechaOperativaRuta es requerida para reprogramaciones desde cierre pendiente',
+        );
+      }
+
+      const asignacionActiva = await this.prisma.asignacionRuta.findFirst({
+        where: { clienteId: prestamo.clienteId, activa: true },
+        select: { rutaId: true },
+      });
+
+      if (!asignacionActiva?.rutaId) {
+        throw new BadRequestException(
+          'No existe una ruta activa válida para esta regularización',
+        );
+      }
+
+      const jornadaPendiente = await this.prisma.rutaJornada.findFirst({
+        where: {
+          rutaId: asignacionActiva.rutaId,
+          fechaOperativa: fechaOperativaRuta,
+          estado: 'PENDIENTE_CIERRE',
+        },
+        select: { id: true, rutaId: true, fechaOperativa: true },
+      });
+
+      if (!jornadaPendiente) {
+        throw new BadRequestException(
+          'No existe una jornada pendiente válida para esta regularización',
+        );
+      }
+    }
+
+    const contextoRegularizacion =
+      data.origenGestion === 'CIERRE_PENDIENTE'
+        ? {
+            fechaOperativaRuta,
+            origenGestion: data.origenGestion,
+            contexto: 'REPROGRAMACION_DESDE_CIERRE_PENDIENTE',
+          }
+        : {};
+
     // Crear solicitud de aprobación
     const aprobacion = await this.prisma.aprobacion.create({
       data: {
         tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
+        idempotencyKey,
         referenciaId: cuota.id,
         tablaReferencia: 'cuotas',
         solicitadoPorId: data.solicitadoPorId,
@@ -4212,6 +4301,7 @@ export class LoansService implements OnModuleInit {
           nuevaFecha: data.nuevaFecha,
           motivo: data.motivo,
           montoCuota: Number(cuota.monto),
+          ...contextoRegularizacion,
         },
       },
     });
@@ -4234,7 +4324,11 @@ export class LoansService implements OnModuleInit {
       tipo: 'REPROGRAMACION',
       entidad: 'Aprobacion',
       entidadId: aprobacion.id,
-      metadata: { aprobacionId: aprobacion.id, prestamoId: data.prestamoId },
+      metadata: {
+        aprobacionId: aprobacion.id,
+        prestamoId: data.prestamoId,
+        ...contextoRegularizacion,
+      },
     });
 
     this.logger.log(
@@ -4254,6 +4348,7 @@ export class LoansService implements OnModuleInit {
           tipoAprobacion: 'REPROGRAMACION_CUOTA',
           tipo: 'REPROGRAMACION_CUOTA',
           prestamoId: data.prestamoId,
+          ...contextoRegularizacion,
         },
       });
     } catch {}
@@ -4262,6 +4357,27 @@ export class LoansService implements OnModuleInit {
     this.notificacionesGateway.broadcastAprobacionesActualizadas({
       tipo: 'REPROGRAMACION_CUOTA',
       prestamoId: data.prestamoId,
+      aprobacionId: aprobacion.id,
+      ...contextoRegularizacion,
+    });
+    this.notificacionesGateway.broadcastJornadasActualizadas({
+      accion: 'REPROGRAMACION_SOLICITADA',
+      prestamoId: data.prestamoId,
+      cuotaId: data.cuotaId || cuota.id,
+      fechaOperativaRuta,
+      origenGestion: data.origenGestion,
+      aprobacionId: aprobacion.id,
+    });
+    this.notificacionesGateway.broadcastRutasActualizadas({
+      accion: 'REPROGRAMACION_SOLICITADA',
+      prestamoId: data.prestamoId,
+      cuotaId: data.cuotaId || cuota.id,
+      aprobacionId: aprobacion.id,
+    });
+    this.notificacionesGateway.broadcastPrestamosActualizados({
+      accion: 'REPROGRAMACION_SOLICITADA',
+      prestamoId: data.prestamoId,
+      cuotaId: data.cuotaId || cuota.id,
       aprobacionId: aprobacion.id,
     });
 
