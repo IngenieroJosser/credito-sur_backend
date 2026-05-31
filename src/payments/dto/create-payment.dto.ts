@@ -80,5 +80,17 @@ export class CreatePaymentDto {
 
   @IsString()
   @IsOptional()
-  origenGestion?: string;
+  @Transform(({ value }) => value?.toString().toUpperCase())
+  @IsIn(['CIERRE_PENDIENTE'])
+  origenGestion?: 'CIERRE_PENDIENTE';
+
+  @IsString()
+  @IsOptional()
+  @Transform(({ value }) => value?.toString().trim())
+  cuotaId?: string;
+
+  @IsString()
+  @IsOptional()
+  @Transform(({ value }) => value?.toString().trim())
+  rutaId?: string;
 }
