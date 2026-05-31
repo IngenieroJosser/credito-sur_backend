@@ -66,12 +66,18 @@ export class PaymentsController {
   ) {
     const dto = {
       ...createPaymentDto,
-      prestamoId: createPaymentDto.prestamoId?.toString(),
-      clienteId: createPaymentDto.clienteId?.toString(),
+      prestamoId: createPaymentDto.prestamoId?.toString().trim(),
+      clienteId: createPaymentDto.clienteId?.toString().trim(),
       cobradorId:
-        createPaymentDto.cobradorId?.toString() ||
+        createPaymentDto.cobradorId?.toString().trim() ||
         (req.user?.rol === RolUsuario.COBRADOR ? req.user?.id : undefined),
       montoTotal: Number(createPaymentDto.montoTotal),
+      metodoPago: createPaymentDto.metodoPago
+        ?.toString()
+        .toUpperCase() as any,
+      numeroReferencia: createPaymentDto.numeroReferencia?.toString().trim(),
+      notas: createPaymentDto.notas?.toString(),
+      fechaPago: createPaymentDto.fechaPago?.toString().trim(),
       idempotencyKey: createPaymentDto.idempotencyKey?.toString().trim(),
       tipoRegistro: createPaymentDto.tipoRegistro
         ?.toString()
@@ -84,6 +90,15 @@ export class PaymentsController {
         createPaymentDto.montoCuotaEsperado != null
           ? Number(createPaymentDto.montoCuotaEsperado)
           : undefined,
+      cuotaId: createPaymentDto.cuotaId?.toString().trim(),
+      rutaId: createPaymentDto.rutaId?.toString().trim(),
+      fechaOperativaRuta: createPaymentDto.fechaOperativaRuta
+        ?.toString()
+        .trim(),
+      origenGestion: createPaymentDto.origenGestion
+        ?.toString()
+        .trim()
+        .toUpperCase() as any,
     };
 
     if (

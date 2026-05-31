@@ -401,6 +401,26 @@ export class PaymentsService {
       throw new BadRequestException('El ID del préstamo es requerido');
     }
 
+    if (paymentDto.origenGestion === 'CIERRE_PENDIENTE') {
+      if (!paymentDto.cuotaId) {
+        throw new BadRequestException(
+          'cuotaId es requerido para pagos desde cierre pendiente.',
+        );
+      }
+
+      if (!paymentDto.fechaOperativaRuta) {
+        throw new BadRequestException(
+          'fechaOperativaRuta es requerida para pagos desde cierre pendiente.',
+        );
+      }
+
+      if (!paymentDto.rutaId) {
+        throw new BadRequestException(
+          'rutaId es requerido para pagos desde cierre pendiente.',
+        );
+      }
+    }
+
     // 2. Si el método es TRANSFERENCIA, el comprobante es OBLIGATORIO
     if (paymentDto.metodoPago === MetodoPago.TRANSFERENCIA && !comprobante) {
       throw new BadRequestException(
@@ -824,6 +844,7 @@ export class PaymentsService {
             ? {
                 clienteId,
                 activa: true,
+                ...(paymentDto.rutaId ? { rutaId: paymentDto.rutaId } : {}),
                 OR: [
                   { cobradorId: cobradorIdVal },
                   { ruta: { cobradorId: cobradorIdVal } },
@@ -832,6 +853,7 @@ export class PaymentsService {
             : {
                 clienteId,
                 activa: true,
+                ...(paymentDto.rutaId ? { rutaId: paymentDto.rutaId } : {}),
               },
           select: {
             rutaId: true,
