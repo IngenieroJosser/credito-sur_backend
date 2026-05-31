@@ -518,7 +518,6 @@ export class RoutesController {
     RolUsuario.ADMIN,
     RolUsuario.SUPER_ADMINISTRADOR,
     RolUsuario.COORDINADOR,
-    RolUsuario.SUPER_ADMIN,
   )
   @ApiOperation({
     summary: 'Cerrar una jornada regularizada (cierre pendiente)',
