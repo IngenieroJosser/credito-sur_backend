@@ -328,6 +328,7 @@ describe('PaymentsService', () => {
         montoCuotaEsperado: 110000,
         fechaOperativaRuta: '2026-05-27',
         origenGestion: 'CIERRE_PENDIENTE' as const,
+        rutaId: 'ruta-1',
       };
 
       await service.create(dto);
@@ -359,6 +360,27 @@ describe('PaymentsService', () => {
           }),
         }),
       );
+      expect(prisma._txMock.asignacionRuta.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            rutaId: 'ruta-1',
+          }),
+        }),
+      );
+    });
+
+    it('rechaza pago de cierre pendiente sin contexto completo', async () => {
+      await expect(
+        service.create({
+          prestamoId: 'prestamo-1',
+          cobradorId: 'cobrador-1',
+          montoTotal: 110000,
+          cuotaId: 'cuota-2',
+          origenGestion: 'CIERRE_PENDIENTE',
+        } as any),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(prisma.prestamo.findFirst).not.toHaveBeenCalled();
     });
 
     it('marca el préstamo como PAGADO cuando el saldo llega a ≤ 0', async () => {
