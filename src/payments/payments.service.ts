@@ -36,7 +36,7 @@ import {
   getBogotaStartEndOfDayFromKey,
 } from '../utils/date-utils';
 import { LedgerService } from '../accounting/ledger.service';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 
 type PaymentActor =
   | {
@@ -181,7 +181,10 @@ export class PaymentsService {
 
   private normalizeIdempotencyKey(value?: string | null) {
     const key = value?.toString().trim();
-    return key || undefined;
+    if (!key) return undefined;
+    if (key.length <= 100) return key;
+
+    return `sha256:${createHash('sha256').update(key).digest('hex')}`;
   }
 
   private buildIdempotentPaymentReplay(pago: any) {

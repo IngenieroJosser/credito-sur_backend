@@ -319,6 +319,8 @@ describe('PaymentsService', () => {
     });
 
     it('aplica el pago sobre cuotaId cuando viene de cierre pendiente', async () => {
+      const rawIdempotencyKey =
+        'CIERRE_PENDIENTE:ruta-1:2026-05-27:cliente-1:prestamo-1:cuota-2:16:PAGO:110000';
       const dto = {
         prestamoId: 'prestamo-1',
         cobradorId: 'cobrador-1',
@@ -329,8 +331,10 @@ describe('PaymentsService', () => {
         fechaOperativaRuta: '2026-05-27',
         origenGestion: 'CIERRE_PENDIENTE' as const,
         rutaId: 'ruta-1',
+        idempotencyKey: rawIdempotencyKey,
       };
 
+      prisma.pago.findFirst.mockResolvedValueOnce(null);
       await service.create(dto);
 
       expect(prisma._txMock.cuota.update).toHaveBeenCalledWith(
@@ -350,6 +354,7 @@ describe('PaymentsService', () => {
       expect(prisma._txMock.pago.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
+            idempotencyKey: rawIdempotencyKey,
             fechaOperativaRuta: '2026-05-27',
             origenGestion: 'CIERRE_PENDIENTE',
             detalles: {
@@ -365,6 +370,47 @@ describe('PaymentsService', () => {
           where: expect.objectContaining({
             rutaId: 'ruta-1',
           }),
+        }),
+      );
+    });
+
+    it('acorta idempotencyKey largas antes de guardar el pago', async () => {
+      const longKey = [
+        'CIERRE_PENDIENTE',
+        'e42db922-fea4-474b-a4b5-6165f132f9c3',
+        '2026-05-27',
+        'bc5c5e97-7745-4429-8ed2-112ab1b36552',
+        '1c2ded1a-56de-4977-9ae7-314cbfeb6142',
+        '0fee5824-088f-413c-a8eb-0f3ea6d2f927',
+        '16',
+        'PAGO',
+        '10000',
+      ].join(':');
+
+      prisma.pago.findFirst.mockResolvedValueOnce(null);
+
+      await service.create({
+        prestamoId: 'prestamo-1',
+        cobradorId: 'cobrador-1',
+        montoTotal: 110000,
+        cuotaId: 'cuota-2',
+        cuotaNumeroEsperada: 2,
+        montoCuotaEsperado: 110000,
+        fechaOperativaRuta: '2026-05-27',
+        origenGestion: 'CIERRE_PENDIENTE',
+        rutaId: 'ruta-1',
+        idempotencyKey: longKey,
+      } as any);
+
+      const savedKey =
+        prisma._txMock.pago.create.mock.calls[0][0].data.idempotencyKey;
+
+      expect(longKey.length).toBeGreaterThan(100);
+      expect(savedKey).toMatch(/^sha256:[a-f0-9]{64}$/);
+      expect(savedKey.length).toBeLessThanOrEqual(100);
+      expect(prisma.pago.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { idempotencyKey: savedKey },
         }),
       );
     });
