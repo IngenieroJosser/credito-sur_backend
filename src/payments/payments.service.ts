@@ -227,7 +227,11 @@ export class PaymentsService {
     });
   }
 
-  private calcularAplicacionPago(prestamo: any, montoTotal: number) {
+  private calcularAplicacionPago(
+    prestamo: any,
+    montoTotal: number,
+    cuotaIdObjetivo?: string,
+  ) {
     const detallesPago: {
       cuotaId: string;
       monto: number;
@@ -247,7 +251,18 @@ export class PaymentsService {
       estado: EstadoCuota;
     }[] = [];
 
-    for (const cuota of prestamo.cuotas || []) {
+    const cuotasBase = prestamo.cuotas || [];
+    const cuotasAplicables = cuotaIdObjetivo
+      ? cuotasBase.filter((cuota: any) => cuota.id === cuotaIdObjetivo)
+      : cuotasBase;
+
+    if (cuotaIdObjetivo && cuotasAplicables.length === 0) {
+      throw new BadRequestException(
+        'La cuota objetivo no está pendiente o no corresponde al préstamo indicado',
+      );
+    }
+
+    for (const cuota of cuotasAplicables) {
       if (montoRestante <= 0) break;
 
       const montoCuota = Number(cuota.monto);
@@ -317,6 +332,12 @@ export class PaymentsService {
       }
     }
 
+    if (cuotaIdObjetivo && montoRestante > 1) {
+      throw new BadRequestException(
+        'El monto del pago excede el saldo pendiente de la cuota objetivo',
+      );
+    }
+
     return {
       detallesPago,
       cuotasActualizar,
@@ -331,6 +352,7 @@ export class PaymentsService {
     prestamoActual: any,
   ) {
     if (paymentDto.tipoRegistro !== 'PAGO') return;
+    if (paymentDto.cuotaId) return;
 
     const cuotaActual = (prestamoActual?.cuotas || [])[0];
     if (!cuotaActual) {
@@ -783,7 +805,11 @@ export class PaymentsService {
           capitalTotal: capitalTotalActual,
           interesTotal: interesTotalActual,
           moraTotal: moraTotalActual,
-        } = this.calcularAplicacionPago(prestamoActual, montoTotal);
+        } = this.calcularAplicacionPago(
+          prestamoActual,
+          montoTotal,
+          paymentDto.cuotaId,
+        );
 
         const interesTotalFinalActual =
           Math.round(interesTotalActual * 100) / 100;

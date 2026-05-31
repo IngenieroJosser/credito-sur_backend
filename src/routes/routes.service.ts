@@ -221,6 +221,12 @@ export class RoutesService {
       throw new BadRequestException('Usuario inválido');
     }
 
+    if (this.isDomingoBogota()) {
+      throw new BadRequestException(
+        'No se puede activar una ruta en domingo. No hay jornada operativa.',
+      );
+    }
+
     const ruta = await this.prisma.ruta.findFirst({
       where: { id: rutaId, eliminadoEn: null },
       select: { id: true, nombre: true, cobradorId: true },
@@ -366,6 +372,15 @@ export class RoutesService {
             ? 'La ruta ya estaba activada hoy'
             : 'La ruta ya tiene movimiento de caja hoy; se considera operativa para evitar duplicidad por restricción de base de datos.',
     };
+  }
+
+  private isDomingoBogota(date = new Date()) {
+    const day = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Bogota',
+      weekday: 'short',
+    }).format(date);
+
+    return day === 'Sun';
   }
 
   async listarCreditosAsignadosACobrador(
