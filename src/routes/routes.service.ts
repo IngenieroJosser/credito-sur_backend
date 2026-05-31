@@ -4057,34 +4057,11 @@ export class RoutesService {
     // Validar que la ruta exista
     const ruta = await this.prisma.ruta.findFirst({
       where: { id: rutaId, eliminadoEn: null },
-      select: {
-        id: true,
-        nombre: true,
-        cobrador: {
-          select: {
-            id: true,
-            nombres: true,
-            apellidos: true,
-          },
-        },
-        cajas: {
-          where: {
-            tipo: 'RUTA',
-            activa: true,
-          },
-          select: { id: true },
-          take: 1,
-        },
-      },
+      select: { id: true },
     });
 
     if (!ruta) {
       throw new NotFoundException('Ruta no encontrada');
-    }
-
-    const cajaRuta = ruta?.cajas?.[0];
-    if (!cajaRuta?.id) {
-      throw new BadRequestException('La ruta no tiene caja activa');
     }
 
     // Validar que la fechaOperativa esté en formato YYYY-MM-DD
@@ -4137,21 +4114,7 @@ export class RoutesService {
         );
       }
 
-      // Crear transacción CIERRE_RUTA para registro contable
-      const cierre = await tx.transaccion.create({
-        data: {
-          cajaId: cajaRuta.id,
-          tipo: 'EGRESO',
-          tipoReferencia: 'CIERRE_RUTA',
-          referenciaId: `RUTA:${rutaId}:FECHA:${fechaOperativa}`,
-          monto: 0,
-          descripcion: `Cierre regularizado de jornada ${fechaOperativa}${observacionesLimpias ? ` - ${observacionesLimpias}` : ''}`,
-          fechaTransaccion: new Date(),
-          creadoPorId: actor?.id,
-        },
-      });
-
-      // Actualizar el estado de la jornada a REGULARIZADA
+      // Actualizar el estado de la jornada a REGULARIZADA sin transacción financiera
       const updated = await tx.rutaJornada.updateMany({
         where: {
           id: jornadaActual.id,
@@ -4159,7 +4122,7 @@ export class RoutesService {
         },
         data: {
           estado: 'REGULARIZADA',
-          cierreTransaccionId: cierre.id,
+          cierreTransaccionId: null,
           cerradaEn: new Date(),
           regularizadaEn: new Date(),
           regularizadaPorId: actor?.id,
@@ -4173,7 +4136,6 @@ export class RoutesService {
       }
 
       return {
-        cierre,
         jornadaId: jornadaActual.id,
       };
     });
@@ -4183,7 +4145,6 @@ export class RoutesService {
       accion: 'JORNADA_CERRADA_REGULARIZADA',
       rutaId,
       fechaOperativa,
-      cierreId: resultado.cierre.id,
       jornadaId: resultado.jornadaId,
       observaciones: observacionesLimpias,
     });
@@ -4191,7 +4152,6 @@ export class RoutesService {
     return {
       success: true,
       message: `Jornada ${fechaOperativa} cerrada exitosamente`,
-      cierreId: resultado.cierre.id,
       jornadaId: resultado.jornadaId,
       fechaOperativa,
       rutaId,
