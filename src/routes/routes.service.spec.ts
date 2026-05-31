@@ -1,4 +1,8 @@
-import { ConflictException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { Prisma, RolUsuario } from '@prisma/client';
 import { RoutesService } from './routes.service';
 
@@ -143,6 +147,8 @@ describe('RoutesService role scoping', () => {
   });
 
   it('bloquea la caja y revalida activación dentro de la transacción al activar ruta', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-01T12:00:00.000Z'));
+
     const tx = {
       $queryRaw: jest.fn().mockResolvedValue([]),
       transaccion: {
@@ -180,12 +186,35 @@ describe('RoutesService role scoping', () => {
       expect.objectContaining({
         where: expect.objectContaining({
           cajaId: 'caja-ruta-1',
-          tipoReferencia: 'ACTIVACION_RUTA',
         }),
       }),
     );
     expect(tx.transaccion.create).not.toHaveBeenCalled();
     expect(prisma.transaccion.create).not.toHaveBeenCalled();
+
+    jest.useRealTimers();
+  });
+
+  it('bloquea activar ruta en domingo antes de consultar base de datos', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-05-31T12:00:00.000Z'));
+
+    const prisma = {
+      ruta: {
+        findFirst: jest.fn(),
+      },
+      caja: {
+        findFirst: jest.fn(),
+      },
+    };
+
+    await expect(
+      makeService(prisma).activarRutaHoy('ruta-1', 'admin-1'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(prisma.ruta.findFirst).not.toHaveBeenCalled();
+    expect(prisma.caja.findFirst).not.toHaveBeenCalled();
+
+    jest.useRealTimers();
   });
 
   it('convierte el índice único de asignación activa en ConflictException legible', async () => {

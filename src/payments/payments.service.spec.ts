@@ -146,6 +146,7 @@ function buildMockPrisma(overrides: Record<string, unknown> = {}) {
       update: jest.fn().mockResolvedValue({}),
     },
     asignacionRuta: { findFirst: jest.fn().mockResolvedValue(ASIGNACION_RUTA) },
+    registroVisita: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
     caja: {
       findFirst: jest.fn().mockResolvedValue(CAJA_ACTIVA),
       update: jest.fn().mockResolvedValue({}),
@@ -312,6 +313,49 @@ describe('PaymentsService', () => {
           data: expect.objectContaining({
             montoPagado: 110000,
             estado: EstadoCuota.PAGADA,
+          }),
+        }),
+      );
+    });
+
+    it('aplica el pago sobre cuotaId cuando viene de cierre pendiente', async () => {
+      const dto = {
+        prestamoId: 'prestamo-1',
+        cobradorId: 'cobrador-1',
+        montoTotal: 110000,
+        cuotaId: 'cuota-2',
+        cuotaNumeroEsperada: 2,
+        montoCuotaEsperado: 110000,
+        fechaOperativaRuta: '2026-05-27',
+        origenGestion: 'CIERRE_PENDIENTE' as const,
+      };
+
+      await service.create(dto);
+
+      expect(prisma._txMock.cuota.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'cuota-2' },
+          data: expect.objectContaining({
+            montoPagado: 110000,
+            estado: EstadoCuota.PAGADA,
+          }),
+        }),
+      );
+      expect(prisma._txMock.cuota.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'cuota-1' },
+        }),
+      );
+      expect(prisma._txMock.pago.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            fechaOperativaRuta: '2026-05-27',
+            origenGestion: 'CIERRE_PENDIENTE',
+            detalles: {
+              create: expect.arrayContaining([
+                expect.objectContaining({ cuotaId: 'cuota-2' }),
+              ]),
+            },
           }),
         }),
       );

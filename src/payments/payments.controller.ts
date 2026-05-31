@@ -14,6 +14,7 @@ import {
   Res,
   UploadedFile,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiOperation, ApiConsumes, ApiTags } from '@nestjs/swagger';
@@ -28,6 +29,8 @@ import { Response } from 'express';
 @Controller('payments')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class PaymentsController {
+  private readonly logger = new Logger(PaymentsController.name);
+
   constructor(private readonly paymentsService: PaymentsService) {}
 
   @Post()
@@ -91,11 +94,35 @@ export class PaymentsController {
       dto.cobradorId = req.user.id;
     }
 
-    return this.paymentsService.create(
-      dto as CreatePaymentDto,
-      comprobante,
-      req.user,
-    );
+    try {
+      return await this.paymentsService.create(
+        dto as CreatePaymentDto,
+        comprobante,
+        req.user,
+      );
+    } catch (error: any) {
+      this.logger.error(
+        `[PaymentsController.create] Error registrando pago: ${error?.message}`,
+        JSON.stringify({
+          code: error?.code,
+          meta: error?.meta,
+          stack: error?.stack,
+          dto: {
+            clienteId: dto?.clienteId,
+            prestamoId: dto?.prestamoId,
+            cuotaId: dto?.cuotaId,
+            montoTotal: dto?.montoTotal,
+            fechaOperativaRuta: dto?.fechaOperativaRuta,
+            origenGestion: dto?.origenGestion,
+            cuotaNumeroEsperada: dto?.cuotaNumeroEsperada,
+            montoCuotaEsperado: dto?.montoCuotaEsperado,
+            idempotencyKey: dto?.idempotencyKey,
+          },
+        }),
+      );
+
+      throw error;
+    }
   }
 
   @Get()
