@@ -215,6 +215,24 @@ describe('PaymentsService', () => {
     expect(service).toBeDefined();
   });
 
+  describe('isDomingoBogota', () => {
+    it('detecta sábado antes de medianoche Bogotá aunque ya sea domingo UTC', () => {
+      expect(
+        (service as any).isDomingoBogota(
+          new Date('2026-05-31T04:59:00.000Z'),
+        ),
+      ).toBe(false);
+    });
+
+    it('detecta domingo desde medianoche Bogotá', () => {
+      expect(
+        (service as any).isDomingoBogota(
+          new Date('2026-05-31T05:00:00.000Z'),
+        ),
+      ).toBe(true);
+    });
+  });
+
   // ── Fórmula capital/interés ────────────────
   describe('descomponerPago (fórmula del Excel)', () => {
     it('con tasa 10%: capital = pago × 100/110, interés = pago × 10/110', async () => {
@@ -319,6 +337,9 @@ describe('PaymentsService', () => {
     });
 
     it('aplica el pago sobre cuotaId cuando viene de cierre pendiente', async () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-06-01T12:00:00.000Z'));
+
       const rawIdempotencyKey =
         'CIERRE_PENDIENTE:ruta-1:2026-05-27:cliente-1:prestamo-1:cuota-2:16:PAGO:110000';
       const dto = {
@@ -335,7 +356,11 @@ describe('PaymentsService', () => {
       };
 
       prisma.pago.findFirst.mockResolvedValueOnce(null);
-      await service.create(dto);
+      try {
+        await service.create(dto);
+      } finally {
+        jest.useRealTimers();
+      }
 
       expect(prisma._txMock.cuota.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -375,6 +400,9 @@ describe('PaymentsService', () => {
     });
 
     it('acorta idempotencyKey largas antes de guardar el pago', async () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-06-01T12:00:00.000Z'));
+
       const longKey = [
         'CIERRE_PENDIENTE',
         'e42db922-fea4-474b-a4b5-6165f132f9c3',
@@ -389,18 +417,22 @@ describe('PaymentsService', () => {
 
       prisma.pago.findFirst.mockResolvedValueOnce(null);
 
-      await service.create({
-        prestamoId: 'prestamo-1',
-        cobradorId: 'cobrador-1',
-        montoTotal: 110000,
-        cuotaId: 'cuota-2',
-        cuotaNumeroEsperada: 2,
-        montoCuotaEsperado: 110000,
-        fechaOperativaRuta: '2026-05-27',
-        origenGestion: 'CIERRE_PENDIENTE',
-        rutaId: 'ruta-1',
-        idempotencyKey: longKey,
-      } as any);
+      try {
+        await service.create({
+          prestamoId: 'prestamo-1',
+          cobradorId: 'cobrador-1',
+          montoTotal: 110000,
+          cuotaId: 'cuota-2',
+          cuotaNumeroEsperada: 2,
+          montoCuotaEsperado: 110000,
+          fechaOperativaRuta: '2026-05-27',
+          origenGestion: 'CIERRE_PENDIENTE',
+          rutaId: 'ruta-1',
+          idempotencyKey: longKey,
+        } as any);
+      } finally {
+        jest.useRealTimers();
+      }
 
       const savedKey =
         prisma._txMock.pago.create.mock.calls[0][0].data.idempotencyKey;
@@ -427,6 +459,31 @@ describe('PaymentsService', () => {
       ).rejects.toThrow(BadRequestException);
 
       expect(prisma.prestamo.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('rechaza pagos de cierre pendiente en domingo en Bogotá', async () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-05-31T12:00:00.000Z'));
+
+      try {
+        await expect(
+          service.create({
+            prestamoId: 'prestamo-1',
+            cobradorId: 'cobrador-1',
+            montoTotal: 110000,
+            cuotaId: 'cuota-2',
+            fechaOperativaRuta: '2026-05-27',
+            origenGestion: 'CIERRE_PENDIENTE',
+            rutaId: 'ruta-1',
+          } as any),
+        ).rejects.toThrow(
+          'No se pueden registrar pagos regularizados en domingo.',
+        );
+
+        expect(prisma.prestamo.findFirst).not.toHaveBeenCalled();
+      } finally {
+        jest.useRealTimers();
+      }
     });
 
     it('marca el préstamo como PAGADO cuando el saldo llega a ≤ 0', async () => {
@@ -461,6 +518,47 @@ describe('PaymentsService', () => {
       expect(prisma._txMock.prestamo.update).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ estado: EstadoPrestamo.PAGADO }),
+        }),
+      );
+    });
+
+    it('cierra el préstamo cuando el último pago queda dentro de la tolerancia COP', async () => {
+      const prestamoConResiduoCOP = {
+        ...PRESTAMO_ACTIVO,
+        saldoPendiente: 63334,
+        cuotas: [
+          {
+            id: 'cuota-final',
+            numeroCuota: 10,
+            monto: 63334,
+            montoCapital: 63334,
+            montoInteres: 0,
+            montoPagado: 0,
+            estado: EstadoCuota.PENDIENTE,
+            montoInteresMora: 0,
+          },
+        ],
+      };
+      prisma.prestamo.findFirst.mockResolvedValue(prestamoConResiduoCOP);
+      prisma._txMock.prestamo.findFirst.mockResolvedValue(prestamoConResiduoCOP);
+
+      const resultado = await service.create({
+        prestamoId: 'prestamo-1',
+        cobradorId: 'cobrador-1',
+        montoTotal: 63333,
+        tipoRegistro: 'PAGO',
+        cuotaNumeroEsperada: 10,
+        montoCuotaEsperado: 63333,
+      } as any);
+
+      expect(resultado.descomposicion.prestamoQuedaPagado).toBe(true);
+      expect(resultado.descomposicion.saldoNuevo).toBe(0);
+      expect(prisma._txMock.prestamo.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            saldoPendiente: 0,
+            estado: EstadoPrestamo.PAGADO,
+          }),
         }),
       );
     });

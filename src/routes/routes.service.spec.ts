@@ -217,6 +217,35 @@ describe('RoutesService role scoping', () => {
     jest.useRealTimers();
   });
 
+  it('reporta ruta no operable en domingo aunque exista caja de ruta', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-05-31T12:00:00.000Z'));
+
+    const prisma = {
+      ruta: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'ruta-1' }),
+      },
+      caja: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'caja-ruta-1' }),
+      },
+      transaccion: {
+        findFirst: jest.fn(),
+      },
+    };
+
+    await expect(makeService(prisma).getRutaActivadaHoy('ruta-1')).resolves.toEqual(
+      expect.objectContaining({
+        rutaId: 'ruta-1',
+        activadaHoy: false,
+        operableHoy: false,
+        diaNoLaboral: true,
+      }),
+    );
+
+    expect(prisma.transaccion.findFirst).not.toHaveBeenCalled();
+
+    jest.useRealTimers();
+  });
+
   it('convierte el índice único de asignación activa en ConflictException legible', async () => {
     const tx = {
       asignacionRuta: {

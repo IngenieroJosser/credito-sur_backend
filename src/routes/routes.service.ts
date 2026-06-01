@@ -195,6 +195,21 @@ export class RoutesService {
       throw new NotFoundException('Caja de ruta no encontrada');
     }
 
+    if (this.isDomingoBogota()) {
+      return {
+        rutaId,
+        activadaHoy: false,
+        operableHoy: false,
+        diaNoLaboral: true,
+        activacionId: null,
+        activacionReal: false,
+        tipoReferenciaActivacion: null,
+        fechaActivacion: null,
+        activadaPorId: null,
+        message: 'Hoy es domingo. La ruta no está operable.',
+      };
+    }
+
     const { inicio, fin } = this.getInicioFinHoy();
 
     const transaccionCajaHoy = await this.buscarTransaccionCajaDia(
@@ -206,6 +221,8 @@ export class RoutesService {
     return {
       rutaId,
       activadaHoy: !!transaccionCajaHoy?.id,
+      operableHoy: !!transaccionCajaHoy?.id,
+      diaNoLaboral: false,
       activacionId: transaccionCajaHoy?.id || null,
       activacionReal: transaccionCajaHoy?.tipoReferencia === 'ACTIVACION_RUTA',
       tipoReferenciaActivacion: transaccionCajaHoy?.tipoReferencia || null,
