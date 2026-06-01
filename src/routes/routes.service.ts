@@ -4297,7 +4297,91 @@ export class RoutesService {
       jornadaId: resultado.jornadaId,
     });
 
-    const cierreAdministrativo = clientesPendientes.length > 0;
+    // Calcular advertencias
+    const advertencias: string[] = [];
+    const visitas = detalleDia.visitas || [];
+    const cierrePendiente = await this.getCierrePendienteRuta(rutaId);
+
+    visitas.forEach((cliente: any) => {
+      const estadoGestion = this.resolveEstadoGestionCierrePendiente(cliente);
+      const tienePagoReal = Number(cliente.recaudadoDelDia || 0) > 0;
+
+      if (
+        estadoGestion === 'PAGO_REGISTRADO' &&
+        !tienePagoReal
+      ) {
+        advertencias.push(
+          `Visita pagada sin pago financiero asociado: ${cliente.nombreCliente || 'Cliente sin nombre'}`,
+        );
+      }
+    });
+
+    // Construir mensaje detallado
+    const partes: string[] = [];
+
+    if (clientesPendientes.length > 0) {
+      partes.push(
+        `${clientesPendientes.length} cliente(s) sin gestión`,
+      );
+    }
+
+    if (clientesAusentes.length > 0) {
+      partes.push(
+        `${clientesAusentes.length} ausencia(s)`,
+      );
+    }
+
+    const meta = Number(detalleDia.resumen?.meta || 0);
+    const recaudoOperativo = Number(
+      (detalleDia.resumen as any)?.recaudoOperativo || 
+      detalleDia.resumen?.recaudo || 0
+    );
+
+    if (recaudoOperativo < meta) {
+      partes.push('descuadre de recaudo');
+    }
+
+    const resumenCierre =
+      partes.length > 0
+        ? partes.join(', ')
+        : 'sin inconsistencias operativas';
+
+    const cierreAdministrativo =
+      clientesPendientes.length > 0 ||
+      clientesAusentes.length > 0 ||
+      recaudoOperativo < meta;
+
+    const tipoCierre = cierreAdministrativo
+      ? 'ADMINISTRATIVO_CON_OBSERVACION'
+      : 'REGULARIZACION_LIMPIA';
+
+    // Obtener nombre del usuario desde la DB para cerradaPorNombre
+    let cerradaPorNombre = 'Usuario del sistema';
+    if (actor?.id) {
+      const usuario = await this.prisma.usuario.findUnique({
+        where: { id: actor.id },
+        select: { nombre: true, nombres: true, email: true }
+      });
+      if (usuario) {
+        cerradaPorNombre = usuario.nombre || usuario.nombres || usuario.email || 'Usuario del sistema';
+      }
+    }
+
+    const totalClientes = visitas.length;
+    const clientesPagaron = visitas.filter(
+      (v: any) => this.resolveEstadoGestionCierrePendiente(v) === 'PAGO_REGISTRADO',
+    ).length;
+    const clientesGestionados = visitas.filter(
+      (v: any) => this.resolveEstadoGestionCierrePendiente(v) !== 'PENDIENTE',
+    ).length;
+
+    const recaudoContable = Number(detalleDia.resumen?.recaudoContable || 0);
+    const recaudoRegularizado = Number(detalleDia.resumen?.recaudoRegularizado || 0);
+    const cumplimiento =
+      meta > 0
+        ? Math.round(((recaudoOperativo / meta) * 100) * 10) / 10
+        : 0;
+
     await this.notificacionesService.notifyRolesDeduped?.({
       roles: [
         RolUsuario.SUPER_ADMINISTRADOR,
@@ -4309,7 +4393,7 @@ export class RoutesService {
         ? 'Jornada cerrada con observación administrativa'
         : 'Jornada pendiente regularizada',
       mensaje: cierreAdministrativo
-        ? `${ruta.nombre} · ${fechaOperativa}. Se cerró con ${clientesPendientes.length} cliente(s) pendiente(s) soportado(s) por observación.`
+        ? `${ruta.nombre} · ${fechaOperativa}. Se cerró con observación administrativa por ${resumenCierre}.`
         : `${ruta.nombre} · ${fechaOperativa}. La jornada fue cerrada como regularizada.`,
       tipo: cierreAdministrativo ? 'WARNING' : 'INFO',
       entidad: 'RutaJornada',
@@ -4322,17 +4406,28 @@ export class RoutesService {
       ].join(':'),
       metadata: {
         tipoEvento: 'JORNADA_PENDIENTE_CERRADA',
+        tipoCierre,
         rutaId,
         rutaNombre: ruta.nombre,
         fechaOperativa,
+        fechaActivacion: cierrePendiente?.fechaActivacion ?? null,
         estadoAnterior: 'PENDIENTE_CIERRE',
         estadoNuevo: 'REGULARIZADA',
-        cerradaPorId: actor?.id,
+        cerradaPorId: actor?.id ?? null,
+        cerradaPorNombre,
         observaciones: observacionesLimpias,
-        totalRegularizado: Number(detalleDia.resumen?.recaudoRegularizado || 0),
-        totalPendientes: clientesPendientes.length,
-        totalAusentes: clientesAusentes.length,
+        totalClientes,
+        clientesGestionados,
+        clientesPagaron,
+        clientesAusentes: clientesAusentes.length,
+        clientesPendientes: clientesPendientes.length,
+        meta,
+        recaudoOperativo,
+        recaudoContable,
+        recaudoRegularizado,
+        cumplimiento,
         requiereRevision: cierreAdministrativo,
+        advertencias,
       },
     });
 

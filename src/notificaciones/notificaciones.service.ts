@@ -376,7 +376,55 @@ export class NotificacionesService {
       orderBy: { creadoEn: 'desc' },
     });
 
-    if (existing?.id) return this.enrichNotificationForUi(existing);
+    if (existing?.id) {
+      const existingMeta = typeof existing.metadata === 'string'
+        ? JSON.parse(existing.metadata)
+        : (existing.metadata || {});
+
+      const incomingMeta = {
+        ...(data.metadata || {}),
+        dedupeKey,
+      };
+
+      const mergedMetadata = {
+        ...existingMeta,
+        ...incomingMeta,
+      };
+
+      const cleanTitulo = this.cleanNotificationText(data.titulo);
+      const cleanMensaje = this.cleanNotificationText(data.mensaje);
+      
+      const shouldUpdate =
+        JSON.stringify(existingMeta) !== JSON.stringify(mergedMetadata) ||
+        this.cleanNotificationText(existing.titulo) !== cleanTitulo ||
+        this.cleanNotificationText(existing.mensaje) !== cleanMensaje;
+
+      if (shouldUpdate) {
+        const updated = await this.prisma.notificacion.update({
+          where: { id: existing.id },
+          data: {
+            titulo: cleanTitulo,
+            mensaje: cleanMensaje,
+            tipo: data.tipo || existing.tipo,
+            entidad: data.entidad || existing.entidad,
+            entidadId: data.entidadId || existing.entidadId,
+            metadata: mergedMetadata,
+          },
+        });
+        
+        const notificacionEnriquecida = await this.enrichNotificationForUi(updated);
+        
+        this.notificacionesGateway.enviarNotificacionAUsuario(
+          data.usuarioId,
+          notificacionEnriquecida,
+        );
+        this.notificacionesGateway.notificarActualizacion(data.usuarioId);
+
+        return notificacionEnriquecida;
+      }
+      
+      return this.enrichNotificationForUi(existing);
+    }
 
     return this.create({
       ...data,
