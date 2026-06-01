@@ -4210,27 +4210,49 @@ export class RoutesService {
       );
     }
 
-    // Validar que tenga observaciones si hay clientes pendientes
+    // Validar que tenga observaciones si hay clientes pendientes, ausentes o descuadre
     const detalleDia = await this.getDailyVisits(
       rutaId,
       fechaOperativa,
       actor,
     );
 
-    const clientesPendientes = detalleDia.visitas?.filter((v: any) => {
-      return (
-        Number(v.recaudadoDelDia || 0) <= 0 &&
-        String(v.estadoVisita || '').toLowerCase() !== 'ausente'
-      );
-    });
-    const clientesAusentes = detalleDia.visitas?.filter((v: any) => {
-      return String(v.estadoVisita || '').toLowerCase() === 'ausente';
+    const visitas = Array.isArray(detalleDia.visitas) ? detalleDia.visitas : [];
+
+    const clientesPendientes = visitas.filter((v: any) => {
+      return this.resolveEstadoGestionCierrePendiente(v) === 'PENDIENTE';
     });
 
+    const clientesAusentes = visitas.filter((v: any) => {
+      return this.resolveEstadoGestionCierrePendiente(v) === 'AUSENTE';
+    });
+
+    const clientesPagaron = visitas.filter((v: any) => {
+      return this.resolveEstadoGestionCierrePendiente(v) === 'PAGO_REGISTRADO';
+    });
+
+    const clientesGestionados = visitas.filter((v: any) => {
+      return this.resolveEstadoGestionCierrePendiente(v) !== 'PENDIENTE';
+    });
+
+    const meta = Number(detalleDia.resumen?.meta || 0);
+
+    const recaudoOperativo = Number(
+      (detalleDia.resumen as any)?.recaudoOperativo ||
+        detalleDia.resumen?.recaudo ||
+        0,
+    );
+
+    const cierreAdministrativo =
+      clientesPendientes.length > 0 ||
+      clientesAusentes.length > 0 ||
+      recaudoOperativo < meta;
+
     const observacionesLimpias = observaciones?.trim();
-    if (clientesPendientes.length > 0 && !observacionesLimpias) {
+
+    if (cierreAdministrativo && !observacionesLimpias) {
       throw new BadRequestException(
-        `La jornada tiene ${clientesPendientes.length} cliente(s) pendiente(s). Debe proporcionar observaciones para cerrar la jornada.`,
+        'La jornada presenta pendientes, ausencias o descuadre de recaudo. Debe proporcionar una observación administrativa para cerrarla.',
       );
     }
 
@@ -4299,8 +4321,13 @@ export class RoutesService {
 
     // Calcular advertencias
     const advertencias: string[] = [];
-    const visitas = detalleDia.visitas || [];
     const cierrePendiente = await this.getCierrePendienteRuta(rutaId);
+
+    const getNombreClienteVisita = (v: any) => 
+      ( 
+        v.nombreCliente || 
+        `${v.cliente?.nombres || ''} ${v.cliente?.apellidos || ''}`.trim() 
+      ) || 'Cliente sin nombre';
 
     visitas.forEach((cliente: any) => {
       const estadoGestion = this.resolveEstadoGestionCierrePendiente(cliente);
@@ -4311,7 +4338,7 @@ export class RoutesService {
         !tienePagoReal
       ) {
         advertencias.push(
-          `Visita pagada sin pago financiero asociado: ${cliente.nombreCliente || 'Cliente sin nombre'}`,
+          `Visita pagada sin pago financiero asociado: ${getNombreClienteVisita(cliente)}`,
         );
       }
     });
@@ -4331,12 +4358,6 @@ export class RoutesService {
       );
     }
 
-    const meta = Number(detalleDia.resumen?.meta || 0);
-    const recaudoOperativo = Number(
-      (detalleDia.resumen as any)?.recaudoOperativo || 
-      detalleDia.resumen?.recaudo || 0
-    );
-
     if (recaudoOperativo < meta) {
       partes.push('descuadre de recaudo');
     }
@@ -4345,11 +4366,6 @@ export class RoutesService {
       partes.length > 0
         ? partes.join(', ')
         : 'sin inconsistencias operativas';
-
-    const cierreAdministrativo =
-      clientesPendientes.length > 0 ||
-      clientesAusentes.length > 0 ||
-      recaudoOperativo < meta;
 
     const tipoCierre = cierreAdministrativo
       ? 'ADMINISTRATIVO_CON_OBSERVACION'
@@ -4360,21 +4376,17 @@ export class RoutesService {
     if (actor?.id) {
       const usuario = await this.prisma.usuario.findUnique({
         where: { id: actor.id },
-        select: { nombre: true, nombres: true, email: true }
+        select: { nombres: true, apellidos: true, correo: true }
       });
       if (usuario) {
-        cerradaPorNombre = usuario.nombre || usuario.nombres || usuario.email || 'Usuario del sistema';
+        cerradaPorNombre = 
+          `${usuario.nombres || ''} ${usuario.apellidos || ''}`.trim() || 
+          usuario.correo || 
+          'Usuario del sistema';
       }
     }
 
     const totalClientes = visitas.length;
-    const clientesPagaron = visitas.filter(
-      (v: any) => this.resolveEstadoGestionCierrePendiente(v) === 'PAGO_REGISTRADO',
-    ).length;
-    const clientesGestionados = visitas.filter(
-      (v: any) => this.resolveEstadoGestionCierrePendiente(v) !== 'PENDIENTE',
-    ).length;
-
     const recaudoContable = Number(detalleDia.resumen?.recaudoContable || 0);
     const recaudoRegularizado = Number(detalleDia.resumen?.recaudoRegularizado || 0);
     const cumplimiento =
