@@ -4210,27 +4210,49 @@ export class RoutesService {
       );
     }
 
-    // Validar que tenga observaciones si hay clientes pendientes
+    // Validar que tenga observaciones si hay clientes pendientes, ausentes o descuadre
     const detalleDia = await this.getDailyVisits(
       rutaId,
       fechaOperativa,
       actor,
     );
 
-    const clientesPendientes = detalleDia.visitas?.filter((v: any) => {
-      return (
-        Number(v.recaudadoDelDia || 0) <= 0 &&
-        String(v.estadoVisita || '').toLowerCase() !== 'ausente'
-      );
-    });
-    const clientesAusentes = detalleDia.visitas?.filter((v: any) => {
-      return String(v.estadoVisita || '').toLowerCase() === 'ausente';
+    const visitas = Array.isArray(detalleDia.visitas) ? detalleDia.visitas : [];
+
+    const clientesPendientes = visitas.filter((v: any) => {
+      return this.resolveEstadoGestionCierrePendiente(v) === 'PENDIENTE';
     });
 
+    const clientesAusentes = visitas.filter((v: any) => {
+      return this.resolveEstadoGestionCierrePendiente(v) === 'AUSENTE';
+    });
+
+    const clientesPagaron = visitas.filter((v: any) => {
+      return this.resolveEstadoGestionCierrePendiente(v) === 'PAGO_REGISTRADO';
+    });
+
+    const clientesGestionados = visitas.filter((v: any) => {
+      return this.resolveEstadoGestionCierrePendiente(v) !== 'PENDIENTE';
+    });
+
+    const meta = Number(detalleDia.resumen?.meta || 0);
+
+    const recaudoOperativo = Number(
+      (detalleDia.resumen as any)?.recaudoOperativo ||
+        detalleDia.resumen?.recaudo ||
+        0,
+    );
+
+    const cierreAdministrativo =
+      clientesPendientes.length > 0 ||
+      clientesAusentes.length > 0 ||
+      recaudoOperativo < meta;
+
     const observacionesLimpias = observaciones?.trim();
-    if (clientesPendientes.length > 0 && !observacionesLimpias) {
+
+    if (cierreAdministrativo && !observacionesLimpias) {
       throw new BadRequestException(
-        `La jornada tiene ${clientesPendientes.length} cliente(s) pendiente(s). Debe proporcionar observaciones para cerrar la jornada.`,
+        'La jornada presenta pendientes, ausencias o descuadre de recaudo. Debe proporcionar una observación administrativa para cerrarla.',
       );
     }
 
@@ -4297,7 +4319,81 @@ export class RoutesService {
       jornadaId: resultado.jornadaId,
     });
 
-    const cierreAdministrativo = clientesPendientes.length > 0;
+    // Calcular advertencias
+    const advertencias: string[] = [];
+    const cierrePendiente = await this.getCierrePendienteRuta(rutaId);
+
+    const getNombreClienteVisita = (v: any) => 
+      ( 
+        v.nombreCliente || 
+        `${v.cliente?.nombres || ''} ${v.cliente?.apellidos || ''}`.trim() 
+      ) || 'Cliente sin nombre';
+
+    visitas.forEach((cliente: any) => {
+      const estadoGestion = this.resolveEstadoGestionCierrePendiente(cliente);
+      const tienePagoReal = Number(cliente.recaudadoDelDia || 0) > 0;
+
+      if (
+        estadoGestion === 'PAGO_REGISTRADO' &&
+        !tienePagoReal
+      ) {
+        advertencias.push(
+          `Visita pagada sin pago financiero asociado: ${getNombreClienteVisita(cliente)}`,
+        );
+      }
+    });
+
+    // Construir mensaje detallado
+    const partes: string[] = [];
+
+    if (clientesPendientes.length > 0) {
+      partes.push(
+        `${clientesPendientes.length} cliente(s) sin gestión`,
+      );
+    }
+
+    if (clientesAusentes.length > 0) {
+      partes.push(
+        `${clientesAusentes.length} ausencia(s)`,
+      );
+    }
+
+    if (recaudoOperativo < meta) {
+      partes.push('descuadre de recaudo');
+    }
+
+    const resumenCierre =
+      partes.length > 0
+        ? partes.join(', ')
+        : 'sin inconsistencias operativas';
+
+    const tipoCierre = cierreAdministrativo
+      ? 'ADMINISTRATIVO_CON_OBSERVACION'
+      : 'REGULARIZACION_LIMPIA';
+
+    // Obtener nombre del usuario desde la DB para cerradaPorNombre
+    let cerradaPorNombre = 'Usuario del sistema';
+    if (actor?.id) {
+      const usuario = await this.prisma.usuario.findUnique({
+        where: { id: actor.id },
+        select: { nombres: true, apellidos: true, correo: true }
+      });
+      if (usuario) {
+        cerradaPorNombre = 
+          `${usuario.nombres || ''} ${usuario.apellidos || ''}`.trim() || 
+          usuario.correo || 
+          'Usuario del sistema';
+      }
+    }
+
+    const totalClientes = visitas.length;
+    const recaudoContable = Number(detalleDia.resumen?.recaudoContable || 0);
+    const recaudoRegularizado = Number(detalleDia.resumen?.recaudoRegularizado || 0);
+    const cumplimiento =
+      meta > 0
+        ? Math.round(((recaudoOperativo / meta) * 100) * 10) / 10
+        : 0;
+
     await this.notificacionesService.notifyRolesDeduped?.({
       roles: [
         RolUsuario.SUPER_ADMINISTRADOR,
@@ -4309,7 +4405,7 @@ export class RoutesService {
         ? 'Jornada cerrada con observación administrativa'
         : 'Jornada pendiente regularizada',
       mensaje: cierreAdministrativo
-        ? `${ruta.nombre} · ${fechaOperativa}. Se cerró con ${clientesPendientes.length} cliente(s) pendiente(s) soportado(s) por observación.`
+        ? `${ruta.nombre} · ${fechaOperativa}. Se cerró con observación administrativa por ${resumenCierre}.`
         : `${ruta.nombre} · ${fechaOperativa}. La jornada fue cerrada como regularizada.`,
       tipo: cierreAdministrativo ? 'WARNING' : 'INFO',
       entidad: 'RutaJornada',
@@ -4322,17 +4418,28 @@ export class RoutesService {
       ].join(':'),
       metadata: {
         tipoEvento: 'JORNADA_PENDIENTE_CERRADA',
+        tipoCierre,
         rutaId,
         rutaNombre: ruta.nombre,
         fechaOperativa,
+        fechaActivacion: cierrePendiente?.fechaActivacion ?? null,
         estadoAnterior: 'PENDIENTE_CIERRE',
         estadoNuevo: 'REGULARIZADA',
-        cerradaPorId: actor?.id,
+        cerradaPorId: actor?.id ?? null,
+        cerradaPorNombre,
         observaciones: observacionesLimpias,
-        totalRegularizado: Number(detalleDia.resumen?.recaudoRegularizado || 0),
-        totalPendientes: clientesPendientes.length,
-        totalAusentes: clientesAusentes.length,
+        totalClientes,
+        clientesGestionados,
+        clientesPagaron,
+        clientesAusentes: clientesAusentes.length,
+        clientesPendientes: clientesPendientes.length,
+        meta,
+        recaudoOperativo,
+        recaudoContable,
+        recaudoRegularizado,
+        cumplimiento,
         requiereRevision: cierreAdministrativo,
+        advertencias,
       },
     });
 

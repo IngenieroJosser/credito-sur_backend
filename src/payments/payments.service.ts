@@ -1172,17 +1172,19 @@ export class PaymentsService {
     filters?: {
       prestamoId?: string;
       clienteId?: string;
+      rutaId?: string;
       page?: number;
       limit?: number;
     },
     actor?: PaymentActor,
   ) {
-    const { prestamoId, clienteId, page = 1, limit = 20 } = filters || {};
+    const { prestamoId, clienteId, rutaId, page = 1, limit = 20 } = filters || {};
     const skip = (page - 1) * limit;
 
     const where: Prisma.PagoWhereInput = {};
     if (prestamoId) where.prestamoId = prestamoId;
     if (clienteId) where.clienteId = clienteId;
+    if (rutaId) where.rutaId = rutaId;
     if (this.isCollector(actor) && actor?.id) where.cobradorId = actor.id;
 
     const [pagos, total] = await Promise.all([
@@ -1227,6 +1229,9 @@ export class PaymentsService {
           },
           cobrador: {
             select: { id: true, nombres: true, apellidos: true },
+          },
+          ruta: {
+            select: { id: true, nombre: true, codigo: true },
           },
         },
         skip,

@@ -144,6 +144,7 @@ export class PaymentsController {
   findAll(
     @Query('prestamoId') prestamoId?: string,
     @Query('clienteId') clienteId?: string,
+    @Query('rutaId') rutaId?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Request() req?: any,
@@ -152,6 +153,7 @@ export class PaymentsController {
       {
         prestamoId,
         clienteId,
+        rutaId,
         page: page ? parseInt(page, 10) : undefined,
         limit: limit ? parseInt(limit, 10) : undefined,
       },
