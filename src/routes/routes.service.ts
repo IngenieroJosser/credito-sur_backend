@@ -4487,6 +4487,25 @@ export class RoutesService {
     return result;
   }
 
+  private resolveEstadoGestionCierrePendiente(v: any): 'PAGO_REGISTRADO' | 'AUSENTE' | 'PENDIENTE' {
+    const estadoVisita = String(v?.estadoVisita || '').toLowerCase()
+    const recaudado = Number(v?.recaudadoDelDia || 0)
+
+    const esPagadoPorVisita = ['pagado', 'pago', 'pago_registrado'].includes(
+      estadoVisita,
+    )
+
+    if (recaudado > 0 || esPagadoPorVisita) {
+      return 'PAGO_REGISTRADO'
+    }
+
+    if (estadoVisita === 'ausente') {
+      return 'AUSENTE'
+    }
+
+    return 'PENDIENTE'
+  }
+
   async getCierrePendienteDetalle(rutaId: string, actor?: RouteActor) {
     await this.assertCollectorOwnRoute(rutaId, actor);
 
@@ -4514,25 +4533,23 @@ export class RoutesService {
           : [];
 
         const clientesGestionados = visitas.filter((v: any) => {
-          return (
-            Number(v.recaudadoDelDia || 0) > 0 ||
-            String(v.estadoVisita || '').toLowerCase() === 'ausente'
-          );
+          const estadoGestion = this.resolveEstadoGestionCierrePendiente(v);
+          return estadoGestion !== 'PENDIENTE';
         });
 
         const clientesPagaron = visitas.filter((v: any) => {
-          return Number(v.recaudadoDelDia || 0) > 0;
+          const estadoGestion = this.resolveEstadoGestionCierrePendiente(v);
+          return estadoGestion === 'PAGO_REGISTRADO';
         });
 
         const clientesAusentes = visitas.filter((v: any) => {
-          return String(v.estadoVisita || '').toLowerCase() === 'ausente';
+          const estadoGestion = this.resolveEstadoGestionCierrePendiente(v);
+          return estadoGestion === 'AUSENTE';
         });
 
         const clientesPendientes = visitas.filter((v: any) => {
-          return (
-            Number(v.recaudadoDelDia || 0) <= 0 &&
-            String(v.estadoVisita || '').toLowerCase() !== 'ausente'
-          );
+          const estadoGestion = this.resolveEstadoGestionCierrePendiente(v);
+          return estadoGestion === 'PENDIENTE';
         });
 
         return {
@@ -4579,12 +4596,7 @@ export class RoutesService {
             direccion: v.cliente?.direccion,
             nivelRiesgo: v.cliente?.nivelRiesgo,
 
-            estadoGestion:
-              Number(v.recaudadoDelDia || 0) > 0
-                ? 'PAGO_REGISTRADO'
-                : String(v.estadoVisita || '').toLowerCase() === 'ausente'
-                  ? 'AUSENTE'
-                  : 'PENDIENTE',
+            estadoGestion: this.resolveEstadoGestionCierrePendiente(v),
 
             recaudadoDelDia: Number(v.recaudadoDelDia || 0),
             estadoVisita: v.estadoVisita || null,
