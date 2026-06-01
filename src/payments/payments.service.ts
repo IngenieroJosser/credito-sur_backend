@@ -54,6 +54,15 @@ export class PaymentsService {
     return String(actor?.rol || '').toUpperCase() === RolUsuario.COBRADOR;
   }
 
+  private isDomingoBogota(date = new Date()) {
+    const day = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Bogota',
+      weekday: 'short',
+    }).format(date);
+
+    return day === 'Sun';
+  }
+
   private parseFechaOperativaPagoKey(value?: string | null, fallback?: Date) {
     if (!value) return getBogotaDayKey(fallback ?? new Date());
 
@@ -405,6 +414,12 @@ export class PaymentsService {
     }
 
     if (paymentDto.origenGestion === 'CIERRE_PENDIENTE') {
+      if (this.isDomingoBogota()) {
+        throw new BadRequestException(
+          'No se pueden registrar pagos regularizados en domingo. Realice la gestión el siguiente día hábil.',
+        );
+      }
+
       if (!paymentDto.cuotaId) {
         throw new BadRequestException(
           'cuotaId es requerido para pagos desde cierre pendiente.',
@@ -966,9 +981,14 @@ export class PaymentsService {
           Number(prestamoActual.interesPagado) + interesTotalActual;
         const nuevoSaldoPendiente =
           Number(prestamoActual.saldoPendiente) - montoTotal;
+        const COP_TOLERANCE = 1;
+        const saldoPendienteFinal =
+          Math.abs(nuevoSaldoPendiente) <= COP_TOLERANCE
+            ? 0
+            : Math.max(0, nuevoSaldoPendiente);
 
         // Verificar si el préstamo queda pagado
-        const prestamoQuedaPagado = nuevoSaldoPendiente <= 0;
+        const prestamoQuedaPagado = saldoPendienteFinal <= 0;
 
         // Si el préstamo estaba EN_MORA y ya no quedan cuotas VENCIDAS, debe volver a ACTIVO inmediatamente.
         // Esto evita que un cliente que pagó cuota(s) atrasada(s) + la del día siga figurando en mora hasta el próximo job.
@@ -993,7 +1013,7 @@ export class PaymentsService {
             totalPagado: nuevoTotalPagado,
             capitalPagado: nuevoCapitalPagado,
             interesPagado: nuevoInteresPagado,
-            saldoPendiente: Math.max(0, nuevoSaldoPendiente),
+            saldoPendiente: saldoPendienteFinal,
             estado: nuevoEstadoPrestamo,
             estadoSincronizacion: 'PENDIENTE',
           },
@@ -1037,7 +1057,7 @@ export class PaymentsService {
             capitalRecuperado: capitalTotalActual,
             interesRecuperado: interesTotalActual,
             saldoAnterior: Number(prestamoActual.saldoPendiente),
-            saldoNuevo: Math.max(0, nuevoSaldoPendiente),
+            saldoNuevo: saldoPendienteFinal,
             cuotasAfectadas: cuotasActualizarActuales.length,
             prestamoQuedaPagado,
           },
