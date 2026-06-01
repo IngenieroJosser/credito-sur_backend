@@ -174,12 +174,35 @@ export class RoutesService {
     return porUtc || null;
   }
 
+  private async buscarActivacionRutaDia(
+    cajaId: string,
+    inicio: Date,
+    fin: Date,
+  ) {
+    return this.prisma.transaccion.findFirst({
+      where: {
+        cajaId,
+        tipoReferencia: 'ACTIVACION_RUTA',
+        fechaTransaccion: {
+          gte: inicio,
+          lt: fin,
+        },
+      },
+      select: {
+        id: true,
+        fechaTransaccion: true,
+        creadoPorId: true,
+        tipoReferencia: true,
+      },
+    });
+  }
+
   async getRutaActivadaHoy(rutaId: string, actor?: RouteActor) {
     await this.assertCollectorOwnRoute(rutaId, actor);
 
     const ruta = await this.prisma.ruta.findFirst({
       where: { id: rutaId, eliminadoEn: null },
-      select: { id: true },
+      select: { id: true, nombre: true },
     });
 
     if (!ruta) {
@@ -212,7 +235,7 @@ export class RoutesService {
 
     const { inicio, fin } = this.getInicioFinHoy();
 
-    const transaccionCajaHoy = await this.buscarTransaccionCajaDia(
+    const activacionRutaHoy = await this.buscarActivacionRutaDia(
       cajaRuta.id,
       inicio,
       fin,
@@ -220,16 +243,16 @@ export class RoutesService {
 
     return {
       rutaId,
-      activadaHoy: !!transaccionCajaHoy?.id,
-      operableHoy: !!transaccionCajaHoy?.id,
+      activadaHoy: !!activacionRutaHoy?.id,
+      operableHoy: !!activacionRutaHoy?.id,
       diaNoLaboral: false,
-      activacionId: transaccionCajaHoy?.id || null,
-      activacionReal: transaccionCajaHoy?.tipoReferencia === 'ACTIVACION_RUTA',
-      tipoReferenciaActivacion: transaccionCajaHoy?.tipoReferencia || null,
-      fechaActivacion: transaccionCajaHoy?.fechaTransaccion
-        ? formatBogotaOffsetIso(transaccionCajaHoy.fechaTransaccion)
+      activacionId: activacionRutaHoy?.id || null,
+      activacionReal: !!activacionRutaHoy?.id,
+      tipoReferenciaActivacion: activacionRutaHoy?.tipoReferencia || null,
+      fechaActivacion: activacionRutaHoy?.fechaTransaccion
+        ? formatBogotaOffsetIso(activacionRutaHoy.fechaTransaccion)
         : null,
-      activadaPorId: transaccionCajaHoy?.creadoPorId || null,
+      activadaPorId: activacionRutaHoy?.creadoPorId || null,
     };
   }
 
@@ -275,6 +298,33 @@ export class RoutesService {
       resultadoActivacion = await this.prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "cajas" WHERE id = ${cajaRuta.id} FOR UPDATE`;
 
+        // Primero buscar específicamente la activación de la ruta
+        const activacionRutaHoy = await tx.transaccion.findFirst({
+          where: {
+            cajaId: cajaRuta.id,
+            tipoReferencia: 'ACTIVACION_RUTA',
+            fechaTransaccion: {
+              gte: inicio,
+              lt: fin,
+            },
+          },
+          select: {
+            id: true,
+            fechaTransaccion: true,
+            tipoReferencia: true,
+          },
+        });
+
+        if (activacionRutaHoy?.id) {
+          return {
+            id: activacionRutaHoy.id,
+            fechaTransaccion: activacionRutaHoy.fechaTransaccion,
+            tipoReferencia: activacionRutaHoy.tipoReferencia,
+            creadaAhora: false,
+          };
+        }
+
+        // Si no hay activación, verificar si hay algún otro movimiento
         const transaccionCajaHoy = await tx.transaccion.findFirst({
           where: {
             cajaId: cajaRuta.id,
@@ -291,12 +341,9 @@ export class RoutesService {
         });
 
         if (transaccionCajaHoy?.id) {
-          return {
-            id: transaccionCajaHoy.id,
-            fechaTransaccion: transaccionCajaHoy.fechaTransaccion,
-            tipoReferencia: transaccionCajaHoy.tipoReferencia,
-            creadaAhora: false,
-          };
+          throw new ConflictException(
+            'La caja de la ruta ya tiene un movimiento registrado hoy, pero no corresponde a una activación operativa. La ruta no puede marcarse como operable automáticamente.',
+          );
         }
 
         const creada = await tx.transaccion.create({
@@ -326,22 +373,22 @@ export class RoutesService {
       });
     } catch (error: any) {
       if (error?.code === 'P2002') {
-        const existenteCajaDia = await this.buscarTransaccionCajaDia(
+        const activacionExistente = await this.buscarActivacionRutaDia(
           cajaRuta.id,
           inicio,
           fin,
         );
 
-        if (existenteCajaDia?.id) {
+        if (activacionExistente?.id) {
           resultadoActivacion = {
-            id: existenteCajaDia.id,
-            fechaTransaccion: existenteCajaDia.fechaTransaccion,
-            tipoReferencia: existenteCajaDia.tipoReferencia,
+            id: activacionExistente.id,
+            fechaTransaccion: activacionExistente.fechaTransaccion,
+            tipoReferencia: activacionExistente.tipoReferencia,
             creadaAhora: false,
           };
         } else {
           throw new ConflictException(
-            'La caja ya tiene una transacción registrada para hoy, pero no fue posible recuperarla.',
+            'La caja ya tiene un movimiento registrado para hoy, pero no existe una activación operativa de ruta.',
           );
         }
       } else {
@@ -385,9 +432,7 @@ export class RoutesService {
         ? 'Ruta activada para hoy, pero existe una jornada anterior pendiente de cierre.'
         : resultadoActivacion.creadaAhora
           ? 'Ruta activada para hoy correctamente'
-          : activacionReal
-            ? 'La ruta ya estaba activada hoy'
-            : 'La ruta ya tiene movimiento de caja hoy; se considera operativa para evitar duplicidad por restricción de base de datos.',
+          : 'La ruta ya estaba activada hoy',
     };
   }
 
@@ -1028,29 +1073,33 @@ export class RoutesService {
               },
             });
 
-            // Obtener pagos de hoy para excluir ausentes que ya pagaron
+            // Obtener pagos operativos de hoy para excluir ausentes que realmente pagaron hoy.
+            // Las regularizaciones de jornadas pasadas no deben anular una ausencia operativa.
             const { startDate: inicioHoy, endDate: finHoy } =
               getBogotaStartEndOfDay(new Date());
-            const pagosHoy = await this.prisma.pago.findMany({
+            const pagosOperativosClientesHoy = await this.prisma.pago.findMany({
               where: {
                 clienteId: { in: clientesIds },
                 fechaPago: {
                   gte: inicioHoy,
                   lte: finHoy,
                 },
+                NOT: {
+                  origenGestion: 'CIERRE_PENDIENTE',
+                },
               },
               select: {
                 clienteId: true,
               },
             });
-            const clientesConPagoHoy = new Set(
-              pagosHoy.map((p) => p.clienteId),
+            const clientesConPagoOperativoHoy = new Set(
+              pagosOperativosClientesHoy.map((p) => p.clienteId),
             );
 
             const clientesAusentes = new Set(
               registrosVisitas
                 .filter((r) => r.estadoVisita === 'ausente')
-                .filter((r) => !clientesConPagoHoy.has(r.clienteId))
+                .filter((r) => !clientesConPagoOperativoHoy.has(r.clienteId))
                 .map((r) => r.clienteId),
             );
 
@@ -1114,7 +1163,7 @@ export class RoutesService {
                     },
                     fechaPago: { gte: dInicioBogota, lte: dFinBogota },
                   },
-                  select: { montoTotal: true },
+                  select: { montoTotal: true, origenGestion: true },
                 }),
 
                 this.prisma.cuota.findMany({
@@ -1152,11 +1201,30 @@ export class RoutesService {
               const pagosRutaRaw = resAgregados[0] as any[];
               const cuotasCriterio = resAgregados[1] as any[];
 
-              const cobranzaReal = pagosRutaRaw.reduce(
+              const pagosOperativosHoy = pagosRutaRaw.filter(
+                (p) =>
+                  String(p?.origenGestion || '').toUpperCase() !==
+                  'CIERRE_PENDIENTE',
+              );
+              const pagosRegularizadosHoy = pagosRutaRaw.filter(
+                (p) =>
+                  String(p?.origenGestion || '').toUpperCase() ===
+                  'CIERRE_PENDIENTE',
+              );
+
+              const cobranzaReal = pagosOperativosHoy.reduce(
+                (sum, p) => sum + Number(p.montoTotal || 0),
+                0,
+              );
+              const recaudoRegularizadoHoy = pagosRegularizadosHoy.reduce(
                 (sum, p) => sum + Number(p.montoTotal || 0),
                 0,
               );
               estadisticas.cobranzaDelDia = cobranzaReal + montoMetaInicial;
+              (estadisticas as any).recaudoRegularizadoHoy =
+                recaudoRegularizadoHoy;
+              (estadisticas as any).recaudoContableHoy =
+                cobranzaReal + recaudoRegularizadoHoy + montoMetaInicial;
 
               // Calcular meta nominal consistente con getDailyVisits + computeRutaHoyUiStatsFromVisitas:
               // - DIARIO: suma acumulada de todas las cuotas vencidas (<= inicio del día)
@@ -1218,7 +1286,9 @@ export class RoutesService {
               }
 
               estadisticas.metaDelDia =
-                metaNominal + estadisticas.cobranzaDelDia;
+                metaNominal +
+                estadisticas.cobranzaDelDia +
+                recaudoRegularizadoHoy;
 
               if (process.env.NODE_ENV !== 'production') {
                 console.log(`[META DEBUG] Ruta: ${ruta.nombre}`, {
@@ -1231,6 +1301,7 @@ export class RoutesService {
                   ].map(([k, v]) => ({ prestamoId: k, monto: v })),
                   metaDelDia: estadisticas.metaDelDia,
                   cobranzaDelDia: estadisticas.cobranzaDelDia,
+                  recaudoRegularizadoHoy,
                 });
               }
 
@@ -1303,6 +1374,11 @@ export class RoutesService {
             clientesNuevos: estadisticas.clientesNuevos,
 
             cobranzaDelDia: estadisticas.cobranzaDelDia,
+            recaudoRegularizadoHoy:
+              (estadisticas as any).recaudoRegularizadoHoy || 0,
+            recaudoContableHoy:
+              (estadisticas as any).recaudoContableHoy ||
+              estadisticas.cobranzaDelDia,
 
             metaDelDia: estadisticas.metaDelDia,
 
@@ -1542,27 +1618,33 @@ export class RoutesService {
           },
         });
 
-        // Obtener pagos de hoy para excluir ausentes que ya pagaron
+        // Obtener pagos operativos de hoy para excluir ausentes que realmente pagaron hoy.
+        // Las regularizaciones de jornadas pasadas no deben anular una ausencia operativa.
         const { startDate: inicioHoy, endDate: finHoy } =
           getBogotaStartEndOfDay(new Date());
-        const pagosHoy = await this.prisma.pago.findMany({
+        const pagosOperativosClientesHoy = await this.prisma.pago.findMany({
           where: {
             clienteId: { in: clientesIds },
             fechaPago: {
               gte: inicioHoy,
               lte: finHoy,
             },
+            NOT: {
+              origenGestion: 'CIERRE_PENDIENTE',
+            },
           },
           select: {
             clienteId: true,
           },
         });
-        const clientesConPagoHoy = new Set(pagosHoy.map((p) => p.clienteId));
+        const clientesConPagoOperativoHoy = new Set(
+          pagosOperativosClientesHoy.map((p) => p.clienteId),
+        );
 
         const clientesAusentes = new Set(
           registrosVisitas
             .filter((r) => r.estadoVisita === 'ausente')
-            .filter((r) => !clientesConPagoHoy.has(r.clienteId))
+            .filter((r) => !clientesConPagoOperativoHoy.has(r.clienteId))
             .map((r) => r.clienteId),
         );
 
@@ -1590,7 +1672,7 @@ export class RoutesService {
                 },
                 fechaPago: { gte: dInicioBogota, lte: dFinBogota },
               },
-              select: { montoTotal: true },
+              select: { montoTotal: true, origenGestion: true },
             }),
             this.prisma.cuota.findMany({
               where: {
@@ -1632,11 +1714,30 @@ export class RoutesService {
           const pagosRutaRaw = resAgregados[0] as any[];
           const cuotasCriterioQuery = resAgregados[1] as any[];
 
+          const pagosOperativosHoy = pagosRutaRaw.filter(
+            (p) =>
+              String(p?.origenGestion || '').toUpperCase() !==
+              'CIERRE_PENDIENTE',
+          );
+          const pagosRegularizadosHoy = pagosRutaRaw.filter(
+            (p) =>
+              String(p?.origenGestion || '').toUpperCase() ===
+              'CIERRE_PENDIENTE',
+          );
+          const recaudoRegularizadoHoy = pagosRegularizadosHoy.reduce(
+            (sum, p) => sum + Number(p.montoTotal || 0),
+            0,
+          );
+
           estadisticas.cobranzaDelDia =
-            pagosRutaRaw.reduce(
+            pagosOperativosHoy.reduce(
               (sum, p) => sum + Number(p.montoTotal || 0),
               0,
             ) + montoMetaInicial;
+          (estadisticas as any).recaudoRegularizadoHoy =
+            recaudoRegularizadoHoy;
+          (estadisticas as any).recaudoContableHoy =
+            estadisticas.cobranzaDelDia + recaudoRegularizadoHoy;
 
           let metaNominal = 0;
           const primeraCuotaPorPrestamo = new Map<string, number>();
@@ -1715,7 +1816,8 @@ export class RoutesService {
             metaNominal += Number(primeraCuotaPorPrestamo.get(pid) || 0);
           }
 
-          estadisticas.metaDelDia = metaNominal + montoMetaInicial;
+          estadisticas.metaDelDia =
+            metaNominal + montoMetaInicial + recaudoRegularizadoHoy;
         }
 
         const cuotasCriterio = prestamosActivos.flatMap((p) => p?.cuotas || []);
@@ -2308,8 +2410,10 @@ export class RoutesService {
             where: {
               fechaPago: {
                 gte: hoyInicio,
-
                 lte: hoyFin,
+              },
+              NOT: {
+                origenGestion: 'CIERRE_PENDIENTE',
               },
             },
 
@@ -3207,6 +3311,9 @@ export class RoutesService {
         OR: [
           {
             fechaPago: { gte: fInicio, lte: fFin },
+            NOT: {
+              origenGestion: 'CIERRE_PENDIENTE',
+            },
           },
           {
             fechaOperativaRuta: fechaKey,
@@ -4089,7 +4196,7 @@ export class RoutesService {
     // Validar que la ruta exista
     const ruta = await this.prisma.ruta.findFirst({
       where: { id: rutaId, eliminadoEn: null },
-      select: { id: true },
+      select: { id: true, nombre: true },
     });
 
     if (!ruta) {
@@ -4115,6 +4222,9 @@ export class RoutesService {
         Number(v.recaudadoDelDia || 0) <= 0 &&
         String(v.estadoVisita || '').toLowerCase() !== 'ausente'
       );
+    });
+    const clientesAusentes = detalleDia.visitas?.filter((v: any) => {
+      return String(v.estadoVisita || '').toLowerCase() === 'ausente';
     });
 
     const observacionesLimpias = observaciones?.trim();
@@ -4179,6 +4289,51 @@ export class RoutesService {
       fechaOperativa,
       jornadaId: resultado.jornadaId,
       observaciones: observacionesLimpias,
+    });
+    this.notificacionesGateway.broadcastJornadasActualizadas({
+      accion: 'JORNADA_CERRADA_REGULARIZADA',
+      rutaId,
+      fechaOperativa,
+      jornadaId: resultado.jornadaId,
+    });
+
+    const cierreAdministrativo = clientesPendientes.length > 0;
+    await this.notificacionesService.notifyRolesDeduped?.({
+      roles: [
+        RolUsuario.SUPER_ADMINISTRADOR,
+        RolUsuario.ADMIN,
+        RolUsuario.COORDINADOR,
+        RolUsuario.SUPERVISOR,
+      ],
+      titulo: cierreAdministrativo
+        ? 'Jornada cerrada con observación administrativa'
+        : 'Jornada pendiente regularizada',
+      mensaje: cierreAdministrativo
+        ? `${ruta.nombre} · ${fechaOperativa}. Se cerró con ${clientesPendientes.length} cliente(s) pendiente(s) soportado(s) por observación.`
+        : `${ruta.nombre} · ${fechaOperativa}. La jornada fue cerrada como regularizada.`,
+      tipo: cierreAdministrativo ? 'WARNING' : 'INFO',
+      entidad: 'RutaJornada',
+      entidadId: resultado.jornadaId,
+      dedupeKey: [
+        'CIERRE_PENDIENTE',
+        rutaId,
+        fechaOperativa,
+        'REGULARIZADA',
+      ].join(':'),
+      metadata: {
+        tipoEvento: 'JORNADA_PENDIENTE_CERRADA',
+        rutaId,
+        rutaNombre: ruta.nombre,
+        fechaOperativa,
+        estadoAnterior: 'PENDIENTE_CIERRE',
+        estadoNuevo: 'REGULARIZADA',
+        cerradaPorId: actor?.id,
+        observaciones: observacionesLimpias,
+        totalRegularizado: Number(detalleDia.resumen?.recaudoRegularizado || 0),
+        totalPendientes: clientesPendientes.length,
+        totalAusentes: clientesAusentes.length,
+        requiereRevision: cierreAdministrativo,
+      },
     });
 
     return {

@@ -351,6 +351,83 @@ export class NotificacionesService {
     }
   }
 
+  async createDeduped(data: {
+    usuarioId: string;
+    titulo: string;
+    mensaje: string;
+    tipo?: string;
+    entidad?: string;
+    entidadId?: string;
+    metadata?: any;
+    dedupeKey: string;
+  }) {
+    const dedupeKey = String(data.dedupeKey || '').trim();
+    if (!dedupeKey) return this.create(data);
+
+    const existing = await this.prisma.notificacion.findFirst({
+      where: {
+        usuarioId: data.usuarioId,
+        archivar: false,
+        metadata: {
+          path: ['dedupeKey'],
+          equals: dedupeKey,
+        } as any,
+      },
+      orderBy: { creadoEn: 'desc' },
+    });
+
+    if (existing?.id) return this.enrichNotificationForUi(existing);
+
+    return this.create({
+      ...data,
+      metadata: {
+        ...(data.metadata || {}),
+        dedupeKey,
+      },
+    });
+  }
+
+  async notifyRolesDeduped(data: {
+    roles: RolUsuario[];
+    titulo: string;
+    mensaje: string;
+    tipo?: string;
+    entidad?: string;
+    entidadId?: string;
+    metadata?: any;
+    dedupeKey: string;
+  }) {
+    try {
+      const roles = Array.from(new Set(data.roles || []));
+      if (roles.length === 0) return;
+
+      const usuarios = await this.prisma.usuario.findMany({
+        where: {
+          rol: { in: roles },
+          estado: 'ACTIVO',
+        },
+        select: { id: true },
+      });
+
+      await Promise.all(
+        usuarios.map((user) =>
+          this.createDeduped({
+            usuarioId: user.id,
+            titulo: data.titulo,
+            mensaje: data.mensaje,
+            tipo: data.tipo,
+            entidad: data.entidad,
+            entidadId: data.entidadId,
+            metadata: data.metadata,
+            dedupeKey: `${data.dedupeKey}:${user.id}`,
+          }),
+        ),
+      );
+    } catch (error) {
+      this.logger.error('Error notifying roles with dedupe:', error);
+    }
+  }
+
   /**
    * Notifica a todos los coordinadores activos del sistema.
    */

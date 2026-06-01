@@ -36,6 +36,7 @@ import {
 const mockNotificacionesService = {
   notifyCoordinator: jest.fn().mockResolvedValue(undefined),
   notifyApprovers: jest.fn().mockResolvedValue(undefined),
+  notifyRolesDeduped: jest.fn().mockResolvedValue(undefined),
 };
 
 const mockAuditService = {

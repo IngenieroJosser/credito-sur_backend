@@ -1100,6 +1100,44 @@ export class PaymentsService {
       );
     }
 
+    if (paymentDto.origenGestion === 'CIERRE_PENDIENTE') {
+      try {
+        const clienteNombre = `${resultado.pago.cliente?.nombres || ''} ${resultado.pago.cliente?.apellidos || ''}`.trim();
+        await this.notificacionesService.notifyRolesDeduped?.({
+          roles: [
+            RolUsuario.SUPER_ADMINISTRADOR,
+            RolUsuario.ADMIN,
+            RolUsuario.COORDINADOR,
+            RolUsuario.SUPERVISOR,
+          ],
+          titulo: 'Pago regularizado registrado',
+          mensaje: `${clienteNombre || 'Cliente'} · ${montoTotal.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}. Asociado a la jornada ${paymentDto.fechaOperativaRuta}.`,
+          tipo: 'INFO',
+          entidad: 'Pago',
+          entidadId: resultado.pago.id,
+          dedupeKey: [
+            'PAGO_REGULARIZADO',
+            resultado.pago.id,
+            paymentDto.fechaOperativaRuta,
+          ].join(':'),
+          metadata: {
+            tipoEvento: 'PAGO_REGULARIZADO',
+            pagoId: resultado.pago.id,
+            rutaId: paymentDto.rutaId,
+            clienteId,
+            clienteNombre,
+            prestamoId: prestamoIdVal,
+            fechaOperativaRuta: paymentDto.fechaOperativaRuta,
+            montoTotal,
+          },
+        });
+      } catch (error) {
+        this.logger.error(
+          `Pago regularizado ${resultado.pago.id} registrado, pero falló notificación: ${(error as Error)?.message || error}`,
+        );
+      }
+    }
+
     // Para EFECTIVO no se genera revisión.
 
     this.logger.log(
