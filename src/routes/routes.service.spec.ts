@@ -13,8 +13,12 @@ const makeService = (prisma: any) =>
     {
       broadcastRutasActualizadas: jest.fn(),
       broadcastDashboardsActualizados: jest.fn(),
+      broadcastJornadasActualizadas: jest.fn(),
     } as any,
-    { create: jest.fn().mockResolvedValue({}) } as any,
+    {
+      create: jest.fn().mockResolvedValue({}),
+      notifyRolesDeduped: jest.fn().mockResolvedValue(undefined),
+    } as any,
   );
 
 describe('RoutesService role scoping', () => {
