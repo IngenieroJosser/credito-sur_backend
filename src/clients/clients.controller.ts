@@ -72,6 +72,7 @@ export class ClientsController {
     @Query('nivelRiesgo') nivelRiesgo: string,
     @Query('ruta') ruta: string,
     @Query('search') search: string,
+    @Query('forCredit') forCredit: string,
     @Request() req: any,
   ) {
     return this.clientsService.getAllClients(
@@ -79,6 +80,7 @@ export class ClientsController {
         nivelRiesgo: nivelRiesgo || 'all',
         ruta: ruta || '',
         search: search || '',
+        forCredit: forCredit === 'true',
       },
       req.user,
     );

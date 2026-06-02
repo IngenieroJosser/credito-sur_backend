@@ -28,6 +28,10 @@ export class ClientsService {
     return String(actor?.rol || '').toUpperCase() === RolUsuario.COBRADOR;
   }
 
+  /**
+   * Scope estándar del cobrador: solo clientes asignados a su ruta activa.
+   * Se usa en listados operativos del dashboard.
+   */
   private collectorClientScope(
     actor?: { id?: string; rol?: RolUsuario | string } | null,
   ): Prisma.ClienteWhereInput {
@@ -43,6 +47,21 @@ export class ClientsService {
         },
       },
     };
+  }
+
+  /**
+   * Scope para creación de crédito: el cobrador puede ver todos los clientes
+   * disponibles (no eliminados, no en lista negra) igual que el supervisor.
+   * Esto le permite asignar un crédito a cualquier cliente activo.
+   */
+  private creditCreationClientScope(
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
+  ): Prisma.ClienteWhereInput {
+    if (!this.isCollector(actor)) return {};
+    // Para el cobrador en contexto de crédito: excluir solo lista negra.
+    // El supervisor no tiene restricción de scope, así que el cobrador tampoco
+    // la tendrá al crear un crédito.
+    return { enListaNegra: false };
   }
 
   constructor(
@@ -309,6 +328,12 @@ export class ClientsService {
       nivelRiesgo?: string;
       ruta?: string;
       search?: string;
+      /**
+       * Cuando es `true`, el cobrador obtiene todos los clientes no bloqueados
+       * (mismo alcance que el supervisor) en lugar del scope restringido a su ruta.
+       * Úsese exclusivamente al poblar selectores de creación de crédito.
+       */
+      forCredit?: boolean;
     },
     actor?: { id?: string; rol?: RolUsuario | string } | null,
   ) {
@@ -317,12 +342,20 @@ export class ClientsService {
         `Getting clients with filters: ${JSON.stringify(filters)}`,
       );
 
-      const { nivelRiesgo = 'all', ruta = '', search = '' } = filters;
+      const { nivelRiesgo = 'all', ruta = '', search = '', forCredit = false } = filters;
 
-      // Construir filtros de forma segura
+      // Construir filtros de forma segura.
+      // En contexto de creación de crédito el cobrador usa el scope amplio
+      // (todos los clientes no bloqueados); en el resto de vistas usa el scope
+      // restringido a su ruta asignada.
+      const clientScope =
+        forCredit && this.isCollector(actor)
+          ? this.creditCreationClientScope(actor)
+          : this.collectorClientScope(actor);
+
       const where: any = {
         eliminadoEn: null, // Solo clientes no eliminados
-        ...this.collectorClientScope(actor),
+        ...clientScope,
       };
 
       // Filtro por nivel de riesgo
