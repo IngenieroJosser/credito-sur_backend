@@ -123,13 +123,10 @@ export class AuthService {
   }
 
   async validarUsuario(nombreUsuario: string, contrasena: string) {
-    // Buscar por correo o nombres (case insensitive)
+    // El inicio de sesión debe hacerse solo con el campo "nombres".
     const usuario = await this.prisma.usuario.findFirst({
       where: {
-        OR: [
-          { correo: { equals: nombreUsuario, mode: 'insensitive' } },
-          { nombres: { equals: nombreUsuario, mode: 'insensitive' } },
-        ],
+        nombres: { equals: nombreUsuario, mode: 'insensitive' },
       },
     });
 
