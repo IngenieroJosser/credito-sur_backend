@@ -324,27 +324,8 @@ export class RoutesService {
           };
         }
 
-        // Si no hay activación, verificar si hay algún otro movimiento
-        const transaccionCajaHoy = await tx.transaccion.findFirst({
-          where: {
-            cajaId: cajaRuta.id,
-            fechaTransaccion: {
-              gte: inicio,
-              lt: fin,
-            },
-          },
-          select: {
-            id: true,
-            fechaTransaccion: true,
-            tipoReferencia: true,
-          },
-        });
-
-        if (transaccionCajaHoy?.id) {
-          throw new ConflictException(
-            'La caja de la ruta ya tiene un movimiento registrado hoy, pero no corresponde a una activación operativa. La ruta no puede marcarse como operable automáticamente.',
-          );
-        }
+        // Se removió la validación de transaccionCajaHoy que impedía activar la ruta
+        // si ya se habían registrado movimientos previos hoy (por ejemplo, desembolsos o adición de bases).
 
         const creada = await tx.transaccion.create({
           data: {
