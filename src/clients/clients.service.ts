@@ -1462,7 +1462,7 @@ export class ClientsService {
     },
   ) {
     try {
-      const cliente = await this.prisma.cliente.findUnique({
+      const cliente = await this.prisma.cliente.findFirst({
         where: {
           id,
           eliminadoEn: null,
@@ -1564,7 +1564,7 @@ export class ClientsService {
 
   async addToBlacklist(id: string, razon: string, agregadoPorId: string) {
     try {
-      const cliente = await this.prisma.cliente.findUnique({
+      const cliente = await this.prisma.cliente.findFirst({
         where: {
           id,
           eliminadoEn: null,
@@ -1613,7 +1613,7 @@ export class ClientsService {
 
   async removeFromBlacklist(id: string) {
     try {
-      const cliente = await this.prisma.cliente.findUnique({
+      const cliente = await this.prisma.cliente.findFirst({
         where: {
           id,
           eliminadoEn: null,

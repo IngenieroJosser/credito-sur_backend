@@ -6,8 +6,20 @@ import {
 import { Prisma, RolUsuario } from '@prisma/client';
 import { RoutesService } from './routes.service';
 
-const makeService = (prisma: any) =>
-  new RoutesService(
+const makeService = (prisma: any) => {
+  if (prisma) {
+    for (const key of Object.keys(prisma)) {
+      const model = prisma[key];
+      if (model && typeof model === 'object') {
+        if (model.findUnique && !model.findFirst) {
+          model.findFirst = model.findUnique;
+        } else if (model.findFirst && !model.findUnique) {
+          model.findUnique = model.findFirst;
+        }
+      }
+    }
+  }
+  return new RoutesService(
     prisma,
     {} as any,
     {
@@ -20,6 +32,7 @@ const makeService = (prisma: any) =>
       notifyRolesDeduped: jest.fn().mockResolvedValue(undefined),
     } as any,
   );
+};
 
 describe('RoutesService role scoping', () => {
   it('rejects a collector requesting assigned credits for another collector', async () => {
