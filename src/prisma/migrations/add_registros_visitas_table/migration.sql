@@ -1,5 +1,5 @@
 -- Create registros_visitas table
-CREATE TABLE "registros_visitas" (
+CREATE TABLE IF NOT EXISTS "registros_visitas" (
     "id" TEXT NOT NULL,
     "rutaId" TEXT NOT NULL,
     "clienteId" TEXT NOT NULL,
@@ -14,14 +14,41 @@ CREATE TABLE "registros_visitas" (
 );
 
 -- Create foreign key constraints
-ALTER TABLE "registros_visitas" ADD CONSTRAINT "registros_visitas_clienteId_fkey" FOREIGN KEY ("clienteId") REFERENCES "Cliente"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint 
+        WHERE conname = 'registros_visitas_clienteId_fkey'
+    ) THEN
+        ALTER TABLE "registros_visitas" 
+        ADD CONSTRAINT "registros_visitas_clienteId_fkey" 
+        FOREIGN KEY ("clienteId") REFERENCES "Cliente"("id") 
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
 
-ALTER TABLE "registros_visitas" ADD CONSTRAINT "registros_visitas_cobradorId_fkey" FOREIGN KEY ("cobradorId") REFERENCES "Usuario"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint 
+        WHERE conname = 'registros_visitas_cobradorId_fkey'
+    ) THEN
+        ALTER TABLE "registros_visitas" 
+        ADD CONSTRAINT "registros_visitas_cobradorId_fkey" 
+        FOREIGN KEY ("cobradorId") REFERENCES "Usuario"("id") 
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
 
-ALTER TABLE "registros_visitas" ADD CONSTRAINT "registros_visitas_rutaId_fkey" FOREIGN KEY ("rutaId") REFERENCES "rutas"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint 
+        WHERE conname = 'registros_visitas_rutaId_fkey'
+    ) THEN
+        ALTER TABLE "registros_visitas" 
+        ADD CONSTRAINT "registros_visitas_rutaId_fkey" 
+        FOREIGN KEY ("rutaId") REFERENCES "rutas"("id") 
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+END $$;
 
 -- Create unique constraint
-CREATE UNIQUE INDEX "registros_visitas_rutaId_clienteId_fechaVisita_key" ON "registros_visitas"("rutaId", "clienteId", "fechaVisita");
+CREATE UNIQUE INDEX IF NOT EXISTS "registros_visitas_rutaId_clienteId_fechaVisita_key" ON "registros_visitas"("rutaId", "clienteId", "fechaVisita");
 
 -- Create index
-CREATE INDEX "registros_visitas_rutaId_fechaVisita_idx" ON "registros_visitas"("rutaId", "fechaVisita");
+CREATE INDEX IF NOT EXISTS "registros_visitas_rutaId_fechaVisita_idx" ON "registros_visitas"("rutaId", "fechaVisita");
