@@ -72,10 +72,8 @@ export class AuthController {
     return this.authService.login(dto);
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR)
+  @Publico()
   @Post('register')
-  @ApiBearerAuth(SWAGGER_JWT_AUTH)
   @ApiOperation({ summary: 'Registrar usuario' })
   @ApiBody({ type: CreateAuthDto })
   registrar(@Body() dto: CreateAuthDto) {
