@@ -33,6 +33,18 @@ const mockLedger = {
 };
 
 function makeService(prisma: any) {
+  if (prisma) {
+    for (const key of Object.keys(prisma)) {
+      const model = prisma[key];
+      if (model && typeof model === 'object') {
+        if (model.findUnique && !model.findFirst) {
+          model.findFirst = model.findUnique;
+        } else if (model.findFirst && !model.findUnique) {
+          model.findUnique = model.findFirst;
+        }
+      }
+    }
+  }
   return new LoansService(
     prisma,
     mockNotifications as any,

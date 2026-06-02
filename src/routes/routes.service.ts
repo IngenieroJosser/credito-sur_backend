@@ -716,7 +716,7 @@ export class RoutesService {
 
       // Verificar si el cobrador existe
 
-      const cobrador = await this.prisma.usuario.findUnique({
+      const cobrador = await this.prisma.usuario.findFirst({
         where: {
           id: createRouteDto.cobradorId,
 
@@ -733,7 +733,7 @@ export class RoutesService {
       // Verificar supervisor si se proporciona
 
       if (createRouteDto.supervisorId) {
-        const supervisor = await this.prisma.usuario.findUnique({
+        const supervisor = await this.prisma.usuario.findFirst({
           where: {
             id: createRouteDto.supervisorId,
 
@@ -2061,7 +2061,7 @@ export class RoutesService {
   async update(id: string, updateRouteDto: UpdateRouteDto) {
     // Verificar si la ruta existe
 
-    const existingRoute = await this.prisma.ruta.findUnique({
+    const existingRoute = await this.prisma.ruta.findFirst({
       where: {
         id,
 
@@ -2091,7 +2091,7 @@ export class RoutesService {
     // Verificar cobrador si se proporciona
 
     if (updateRouteDto.cobradorId) {
-      const cobrador = await this.prisma.usuario.findUnique({
+      const cobrador = await this.prisma.usuario.findFirst({
         where: {
           id: updateRouteDto.cobradorId,
 
@@ -2109,7 +2109,7 @@ export class RoutesService {
     // Verificar supervisor si se proporciona
 
     if (updateRouteDto.supervisorId) {
-      const supervisor = await this.prisma.usuario.findUnique({
+      const supervisor = await this.prisma.usuario.findFirst({
         where: {
           id: updateRouteDto.supervisorId,
 
@@ -2232,7 +2232,7 @@ export class RoutesService {
   async remove(id: string) {
     // Verificar si la ruta existe
 
-    const existingRoute = await this.prisma.ruta.findUnique({
+    const existingRoute = await this.prisma.ruta.findFirst({
       where: {
         id,
 
@@ -2302,7 +2302,7 @@ export class RoutesService {
   }
 
   async toggleActive(id: string) {
-    const existingRoute = await this.prisma.ruta.findUnique({
+    const existingRoute = await this.prisma.ruta.findFirst({
       where: {
         id,
 
@@ -2573,7 +2573,7 @@ export class RoutesService {
     try {
       // Verificar si la ruta existe
 
-      const ruta = await this.prisma.ruta.findUnique({
+      const ruta = await this.prisma.ruta.findFirst({
         where: {
           id: rutaId,
 
@@ -2589,7 +2589,7 @@ export class RoutesService {
 
       // Verificar si el cliente existe
 
-      const cliente = await this.prisma.cliente.findUnique({
+      const cliente = await this.prisma.cliente.findFirst({
         where: {
           id: clienteId,
 
@@ -2801,7 +2801,7 @@ export class RoutesService {
       // Verificar ambas rutas
 
       const [rutaOrigen, rutaDestino] = await Promise.all([
-        this.prisma.ruta.findUnique({
+        this.prisma.ruta.findFirst({
           where: {
             id: fromRutaId,
 
@@ -2809,7 +2809,7 @@ export class RoutesService {
           },
         }),
 
-        this.prisma.ruta.findUnique({
+        this.prisma.ruta.findFirst({
           where: {
             id: toRutaId,
 
@@ -2955,7 +2955,7 @@ export class RoutesService {
 
       if (!prestamo) throw new NotFoundException('Préstamo no encontrado');
 
-      const rutaDestino = await this.prisma.ruta.findUnique({
+      const rutaDestino = await this.prisma.ruta.findFirst({
         where: { id: toRutaId, eliminadoEn: null },
       });
 

@@ -1280,6 +1280,8 @@ export class LoansService implements OnModuleInit {
             tipoProducto,
             tipoPrestamo: prestamo.tipoPrestamo,
             montoTotal,
+            montoPrestado: monto,
+            interesTotal,
             montoPendiente,
             montoPagado,
             cuotaInicial: Number(prestamo.cuotaInicial) || 0,
@@ -1316,6 +1318,8 @@ export class LoansService implements OnModuleInit {
             producto: 'Error',
             tipoProducto: 'efectivo',
             montoTotal: 0,
+            montoPrestado: 0,
+            interesTotal: 0,
             montoPendiente: 0,
             montoPagado: 0,
             moraAcumulada: 0,
@@ -1345,6 +1349,8 @@ export class LoansService implements OnModuleInit {
           montoTotal:
             Number(totales._sum?.monto || 0) +
             Number(totales._sum?.interesTotal || 0),
+          montoPrestado: Number(totales._sum?.monto || 0),
+          interesTotal: Number(totales._sum?.interesTotal || 0),
           montoPendiente: Math.trunc(Number(totales._sum?.saldoPendiente || 0)),
           moraTotal: Number(moraTotal._sum?.saldoPendiente || 0),
         },
@@ -1368,6 +1374,8 @@ export class LoansService implements OnModuleInit {
           pagados: 0,
           cancelados: 0,
           montoTotal: 0,
+          montoPrestado: 0,
+          interesTotal: 0,
           montoPendiente: 0,
           moraTotal: 0,
         },
@@ -1623,7 +1631,7 @@ export class LoansService implements OnModuleInit {
   async deleteLoan(id: string, userId: string) {
     try {
       // Verificar si el préstamo existe
-      const prestamo = await this.prisma.prestamo.findUnique({
+      const prestamo = await this.prisma.prestamo.findFirst({
         where: {
           id,
           eliminadoEn: null, // Solo si no está eliminado
@@ -1908,7 +1916,7 @@ export class LoansService implements OnModuleInit {
 
   async updateLoan(id: string, updateData: UpdateLoanData, userId: string) {
     try {
-      const prestamo = await this.prisma.prestamo.findUnique({
+      const prestamo = await this.prisma.prestamo.findFirst({
         where: { id, eliminadoEn: null },
       });
 
