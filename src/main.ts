@@ -10,6 +10,7 @@ import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { ExpressAdapter } from '@bull-board/express';
 import { getQueueToken } from '@nestjs/bullmq';
 import type { Request, Response, NextFunction } from 'express';
+import { SWAGGER_JWT_AUTH } from './auth/constants/swagger-auth.constants';
 
 const shouldEnableMirrorSync =
   process.env.MIRROR_SYNC_ENABLED === 'true' &&
@@ -157,7 +158,7 @@ async function bootstrap() {
         description: 'Ingrese el token JWT',
         in: 'header',
       },
-      'jwt-auth',
+      SWAGGER_JWT_AUTH,
     )
     .build();
 
