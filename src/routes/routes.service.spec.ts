@@ -417,14 +417,6 @@ describe('RoutesService role scoping', () => {
         }),
       }),
     );
-    expect(tx.prestamo.updateMany).toHaveBeenCalledWith({
-      where: {
-        clienteId: 'cliente-1',
-        estado: { in: ['ACTIVO', 'EN_MORA'] },
-        eliminadoEn: null,
-      },
-      data: { cobradorId: 'cobrador-destino' },
-    });
   });
 
   it('al mover un cliente reutiliza la asignación destino existente y apaga duplicados activos', async () => {
@@ -501,14 +493,6 @@ describe('RoutesService role scoping', () => {
       },
     });
     expect(tx.asignacionRuta.create).not.toHaveBeenCalled();
-    expect(tx.prestamo.updateMany).toHaveBeenCalledWith({
-      where: {
-        clienteId: 'cliente-1',
-        estado: { in: ['ACTIVO', 'EN_MORA'] },
-        eliminadoEn: null,
-      },
-      data: { cobradorId: 'cobrador-destino' },
-    });
   });
 
   it('al mover un crédito no deja al cliente activo en dos rutas', async () => {

@@ -2338,9 +2338,16 @@ export class LoansService implements OnModuleInit {
       fechaFin.setMonth(fechaFin.getMonth() + createLoanDto.plazoMeses);
 
       const fechaPrimerCobroParsed = createLoanDto.fechaPrimerCobro
-        ? new Date(createLoanDto.fechaPrimerCobro)
+        ? this.parseBogotaDayKey(createLoanDto.fechaPrimerCobro)
         : undefined;
       if (fechaPrimerCobroParsed) {
+        const hoyKey = getBogotaDayKey(new Date());
+        const { startDate: hoyStart } = getBogotaStartEndOfDayFromKey(hoyKey);
+        if (fechaPrimerCobroParsed.getTime() < hoyStart.getTime()) {
+          throw new BadRequestException(
+            'La fecha de primer cobro no puede ser un día pasado.',
+          );
+        }
         const key = getBogotaDayKey(fechaPrimerCobroParsed);
         const { startDate } = getBogotaStartEndOfDayFromKey(key);
         fechaPrimerCobroParsed.setTime(startDate.getTime());
@@ -3254,6 +3261,18 @@ export class LoansService implements OnModuleInit {
       const fechaPrimerCobroParsed = data.fechaPrimerCobro
         ? this.parseBogotaDayKey(data.fechaPrimerCobro)
         : undefined;
+      if (fechaPrimerCobroParsed) {
+        const hoyKey = getBogotaDayKey(new Date());
+        const { startDate: hoyStart } = getBogotaStartEndOfDayFromKey(hoyKey);
+        if (fechaPrimerCobroParsed.getTime() < hoyStart.getTime()) {
+          throw new BadRequestException(
+            'La fecha de primer cobro no puede ser un día pasado.',
+          );
+        }
+        const key = getBogotaDayKey(fechaPrimerCobroParsed);
+        const { startDate } = getBogotaStartEndOfDayFromKey(key);
+        fechaPrimerCobroParsed.setTime(startDate.getTime());
+      }
 
       // Calcular cantidad de cuotas: Prioridad TOTAL al valor enviado por el usuario
       let cantidadCuotas = numCantidadCuotas;
