@@ -2641,16 +2641,8 @@ export class RoutesService {
             },
           });
 
-          if (assignmentCobradorId) {
-            await tx.prestamo.updateMany({
-              where: {
-                clienteId,
-                estado: { in: ['ACTIVO', 'EN_MORA'] },
-                eliminadoEn: null,
-              },
-              data: { cobradorId: assignmentCobradorId },
-            });
-          }
+          // Nota: Prestamo no tiene campo cobradorId; el cobrador se gestiona
+          // a través de la AsignacionRuta. No se actualiza aquí.
 
           return updated;
         }
@@ -2688,16 +2680,8 @@ export class RoutesService {
           },
         });
 
-        if (assignmentCobradorId) {
-          await tx.prestamo.updateMany({
-            where: {
-              clienteId,
-              estado: { in: ['ACTIVO', 'EN_MORA'] },
-              eliminadoEn: null,
-            },
-            data: { cobradorId: assignmentCobradorId },
-          });
-        }
+          // Nota: Prestamo no tiene campo cobradorId; el cobrador se gestiona
+          // a través de la AsignacionRuta. No se actualiza aquí.
 
         return created;
       });
