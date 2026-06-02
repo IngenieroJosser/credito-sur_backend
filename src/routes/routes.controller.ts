@@ -21,6 +21,7 @@ import { UpdateRouteDto } from './dto/update-route.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { SWAGGER_JWT_AUTH } from '../auth/constants/swagger-auth.constants';
 import { RolUsuario } from '@prisma/client';
 import {
   ApiTags,
@@ -31,7 +32,7 @@ import {
 } from '@nestjs/swagger';
 
 @ApiTags('routes')
-@ApiBearerAuth()
+@ApiBearerAuth(SWAGGER_JWT_AUTH)
 @Controller('routes')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class RoutesController {

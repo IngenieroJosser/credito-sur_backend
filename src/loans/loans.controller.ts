@@ -35,6 +35,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { SWAGGER_JWT_AUTH } from '../auth/constants/swagger-auth.constants';
 import { RolUsuario, TipoAprobacion } from '@prisma/client';
 import { CreateLoanDto } from './dto/create-loan.dto';
 import { ReprogramarCuotaDto } from './dto/reprogramar-cuota.dto';
@@ -46,7 +47,7 @@ import { ApprovalsService } from '../approvals/approvals.service';
 import { formatBogotaOffsetIso } from '../utils/date-utils';
 
 @ApiTags('loans')
-@ApiBearerAuth()
+@ApiBearerAuth(SWAGGER_JWT_AUTH)
 @Controller('loans')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class LoansController {

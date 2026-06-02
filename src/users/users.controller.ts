@@ -19,9 +19,10 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolUsuario } from '@prisma/client';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { SWAGGER_JWT_AUTH } from '../auth/constants/swagger-auth.constants';
 
 @ApiTags('Usuarios')
-@ApiBearerAuth()
+@ApiBearerAuth(SWAGGER_JWT_AUTH)
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('usuarios')
 export class UsersController {

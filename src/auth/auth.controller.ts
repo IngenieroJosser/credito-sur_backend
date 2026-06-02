@@ -30,6 +30,7 @@ import { RolesGuard } from './guards/roles.guard';
 import { Publico } from './decorators/public.decorator';
 import { Roles } from './decorators/roles.decorator';
 import { RolUsuario } from '@prisma/client';
+import { SWAGGER_JWT_AUTH } from './constants/swagger-auth.constants';
 
 @ApiTags('Gestión de autenticación')
 @Controller('auth')
@@ -74,6 +75,7 @@ export class AuthController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(RolUsuario.SUPER_ADMINISTRADOR)
   @Post('register')
+  @ApiBearerAuth(SWAGGER_JWT_AUTH)
   @ApiOperation({ summary: 'Registrar usuario' })
   @ApiBody({ type: CreateAuthDto })
   registrar(@Body() dto: CreateAuthDto) {
@@ -83,7 +85,7 @@ export class AuthController {
   // 👤 Perfil
   @UseGuards(JwtAuthGuard)
   @Get('perfil')
-  @ApiBearerAuth()
+  @ApiBearerAuth(SWAGGER_JWT_AUTH)
   @ApiOperation({ summary: 'Perfil del usuario autenticado' })
   obtenerPerfil(@Request() req: { user: unknown }) {
     return req.user;
@@ -91,7 +93,7 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Get('refresh')
-  @ApiBearerAuth()
+  @ApiBearerAuth(SWAGGER_JWT_AUTH)
   @ApiOperation({
     summary:
       'Refrescar sesión del usuario autenticado (permisos + sidebar + token)',
