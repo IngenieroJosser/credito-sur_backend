@@ -1,4 +1,4 @@
-import {
+﻿import {
   Controller,
   Get,
   Post,
@@ -480,6 +480,44 @@ export class RoutesController {
       `attachment; filename="ruta_${id}.pdf"`,
     );
     res.send(buffer);
+  }
+
+  @Get('clientes/:clienteId/visitas')
+  @Roles(
+    RolUsuario.COBRADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
+  @ApiOperation({
+    summary: 'Obtener historial de visitas de un cliente',
+  })
+  @ApiQuery({
+    name: 'estadoVisita',
+    required: false,
+    type: String,
+    description: 'Filtrar por estado de visita, por ejemplo ausente',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    description: 'Cantidad maxima de registros a devolver',
+  })
+  @ApiResponse({ status: 200, description: 'Historial de visitas obtenido exitosamente' })
+  getHistorialVisitasCliente(
+    @Param('clienteId', ParseUUIDPipe) clienteId: string,
+    @Query('estadoVisita') estadoVisita: string | undefined,
+    @Query('limit') limit: string | undefined,
+    @Request() req,
+  ) {
+    return this.routesService.getHistorialVisitasCliente(
+      clienteId,
+      req.user,
+      estadoVisita,
+      limit,
+    );
   }
 
   @Post(':id/clientes/:clienteId/visita')

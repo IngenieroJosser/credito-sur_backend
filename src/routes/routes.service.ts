@@ -1,4 +1,4 @@
-import {
+﻿import {
   Injectable,
   NotFoundException,
   ConflictException,
@@ -4135,6 +4135,86 @@ export class RoutesService {
   }
 
   /**
+   * Historial operativo de visitas de un cliente.
+   * Los cobradores solo pueden consultar registros de sus propias rutas.
+   */
+  async getHistorialVisitasCliente(
+    clienteId: string,
+    actor?: RouteActor,
+    estadoVisita?: string,
+    limit?: string,
+  ) {
+    const takeRaw = Number.parseInt(String(limit || '20'), 10);
+    const take = Math.min(Math.max(Number.isFinite(takeRaw) ? takeRaw : 20, 1), 50);
+
+    const where: Prisma.RegistroVisitaWhereInput = {
+      clienteId,
+    };
+
+    const estado = String(estadoVisita || '').trim();
+    if (estado) {
+      where.estadoVisita = estado;
+    }
+
+    if (this.isCollector(actor)) {
+      if (!actor?.id) {
+        throw new ForbiddenException('No tienes permiso para consultar este historial.');
+      }
+      where.cobradorId = actor.id;
+    }
+
+    const registros = await this.prisma.registroVisita.findMany({
+      where,
+      orderBy: [{ fechaVisita: 'desc' }, { creadoEn: 'desc' }],
+      take,
+      select: {
+        id: true,
+        rutaId: true,
+        clienteId: true,
+        prestamoId: true,
+        cobradorId: true,
+        fechaVisita: true,
+        estadoVisita: true,
+        notas: true,
+        creadoEn: true,
+        ruta: {
+          select: {
+            id: true,
+            nombre: true,
+            codigo: true,
+          },
+        },
+        cobrador: {
+          select: {
+            id: true,
+            nombres: true,
+            apellidos: true,
+          },
+        },
+      },
+    });
+
+    return registros.map((registro) => ({
+      id: registro.id,
+      rutaId: registro.rutaId,
+      clienteId: registro.clienteId,
+      prestamoId: registro.prestamoId,
+      cobradorId: registro.cobradorId,
+      fechaVisita: registro.fechaVisita,
+      estadoVisita: registro.estadoVisita,
+      notas: registro.notas,
+      creadoEn: registro.creadoEn,
+      ruta: registro.ruta,
+      cobrador: registro.cobrador
+        ? {
+            id: registro.cobrador.id,
+            nombre: `${registro.cobrador.nombres || ''} ${registro.cobrador.apellidos || ''}`.trim(),
+          }
+        : null,
+    }));
+  }
+
+  /**
    * Registra una visita en la ruta para el día (ej: cliente ausente)
    */
   async registrarVisita(
@@ -4191,6 +4271,8 @@ export class RoutesService {
       rutaId,
       clienteId,
       estadoVisita,
+      notasVisita: resultado.notas,
+      fechaVisita: resultado.fechaVisita,
     });
 
     return resultado;
@@ -4806,4 +4888,3 @@ export class RoutesService {
     return acciones;
   }
 }
-
