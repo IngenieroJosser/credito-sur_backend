@@ -53,6 +53,7 @@ function buildMockPrisma(
   return {
     usuario: {
       findFirst: jest.fn().mockResolvedValue(usuarioOverride),
+      findMany: jest.fn().mockResolvedValue([]),
       update: jest
         .fn()
         .mockResolvedValue({ ...USUARIO_ACTIVO, ultimoIngreso: new Date() }),
@@ -111,7 +112,7 @@ describe('AuthService', () => {
       (argon2.verify as jest.Mock).mockResolvedValue(true);
 
       const resultado = await service.login({
-        nombres: 'admin@test.com',
+        nombres: 'Admin',
         contrasena: 'contraseña-correcta',
       });
 
@@ -124,9 +125,10 @@ describe('AuthService', () => {
 
     it('lanza UnauthorizedException si el usuario no existe', async () => {
       prisma.usuario.findFirst.mockResolvedValue(null);
+      prisma.usuario.findMany.mockResolvedValue([]);
 
       await expect(
-        service.login({ nombres: 'noexiste@test.com', contrasena: '123456' }),
+        service.login({ nombres: 'No Existe', contrasena: '123456' }),
       ).rejects.toThrow(UnauthorizedException);
     });
 
@@ -135,7 +137,7 @@ describe('AuthService', () => {
 
       await expect(
         service.login({
-          nombres: 'admin@test.com',
+          nombres: 'Admin',
           contrasena: 'contraseña-mal',
         }),
       ).rejects.toThrow(UnauthorizedException);
@@ -149,7 +151,7 @@ describe('AuthService', () => {
       });
 
       await expect(
-        service.login({ nombres: 'admin@test.com', contrasena: 'correcta' }),
+        service.login({ nombres: 'Admin', contrasena: 'correcta' }),
       ).rejects.toThrow(UnauthorizedException);
     });
 
@@ -157,7 +159,7 @@ describe('AuthService', () => {
       (argon2.verify as jest.Mock).mockResolvedValue(true);
 
       await service.login({
-        nombres: 'admin@test.com',
+        nombres: 'Admin',
         contrasena: 'correcta',
       });
 
@@ -174,22 +176,60 @@ describe('AuthService', () => {
   describe('validarUsuario', () => {
     it('retorna null si el usuario no existe en BD', async () => {
       prisma.usuario.findFirst.mockResolvedValue(null);
+      prisma.usuario.findMany.mockResolvedValue([]);
       const result = await service.validarUsuario('noexiste', 'pass');
       expect(result).toBeNull();
     });
 
     it('retorna null si argon2.verify lanza error inesperado', async () => {
       (argon2.verify as jest.Mock).mockRejectedValue(new Error('crypto error'));
-      const result = await service.validarUsuario('admin@test.com', 'pass');
+      const result = await service.validarUsuario('Admin', 'pass');
       expect(result).toBeNull();
     });
 
     it('retorna el usuario SIN hashContrasena si las credenciales son válidas', async () => {
       (argon2.verify as jest.Mock).mockResolvedValue(true);
-      const result = await service.validarUsuario('admin@test.com', 'correcta');
+      const result = await service.validarUsuario('Admin', 'correcta');
       expect(result).not.toBeNull();
       expect(result).not.toHaveProperty('hashContrasena');
       expect(result).toHaveProperty('id', 'user-1');
+    });
+
+    it('acepta el nombre completo formado por nombres y apellidos sin usar correo', async () => {
+      prisma.usuario.findFirst.mockResolvedValue(null);
+      prisma.usuario.findMany.mockResolvedValue([
+        {
+          ...USUARIO_ACTIVO,
+          id: 'coordinador-1',
+          nombres: 'Coordinador',
+          apellidos: 'Prueba',
+          correo: 'coordinador@gmail.com',
+          rol: 'COORDINADOR',
+        },
+      ]);
+      (argon2.verify as jest.Mock).mockResolvedValue(true);
+
+      const result = await service.validarUsuario(
+        'Coordinador Prueba',
+        'CoordinadorPrueba',
+      );
+
+      expect(prisma.usuario.findFirst).toHaveBeenCalledWith({
+        where: {
+          nombres: { equals: 'Coordinador Prueba', mode: 'insensitive' },
+        },
+      });
+      expect(prisma.usuario.findMany).toHaveBeenCalledWith({
+        where: {
+          nombres: { startsWith: 'Coordinador', mode: 'insensitive' },
+        },
+      });
+      expect(result).toMatchObject({
+        id: 'coordinador-1',
+        nombres: 'Coordinador',
+        apellidos: 'Prueba',
+      });
+      expect(result).not.toHaveProperty('hashContrasena');
     });
   });
 });
