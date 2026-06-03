@@ -371,6 +371,17 @@ describe('AccountingService financial ledger controls', () => {
         }),
       }),
     );
+    expect(prisma.journalLine.aggregate).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          NOT: [
+            { accountCode: { startsWith: '3.3' } },
+            { accountCode: { startsWith: '3.4' } },
+          ],
+        }),
+      }),
+    );
     expect(result.ingresosHoy).toBe(0);
     expect(result.entradasCajaHoy).toBe(500000);
     expect(result.ingresosDevengadosHoy).toBe(2400000);
@@ -403,6 +414,17 @@ describe('AccountingService financial ledger controls', () => {
       '2026-05-09',
     )) as any;
 
+    expect(prisma.journalLine.aggregate).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          NOT: [
+            { accountCode: { startsWith: '3.3' } },
+            { accountCode: { startsWith: '3.4' } },
+          ],
+        }),
+      }),
+    );
     expect(result.ingresosHoy).toBe(0);
     expect(result.entradasCajaHoy).toBe(500000);
     expect(result.ingresosDevengadosHoy).toBe(400000);
