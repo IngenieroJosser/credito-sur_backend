@@ -26,6 +26,27 @@ export class AuthService {
     private readonly prisma: PrismaService,
   ) {}
 
+  private normalizarTextoLogin(valor: string) {
+    return valor
+      .trim()
+      .replace(/\s+/g, ' ')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+  }
+
+  private nombreCompletoCoincide(
+    usuario: { nombres: string; apellidos?: string | null },
+    nombreNormalizado: string,
+  ) {
+    const nombres = this.normalizarTextoLogin(usuario.nombres);
+    const nombreCompleto = this.normalizarTextoLogin(
+      `${usuario.nombres} ${usuario.apellidos ?? ''}`,
+    );
+
+    return nombres === nombreNormalizado || nombreCompleto === nombreNormalizado;
+  }
+
   private async buildSessionForUser(usuario: {
     id: string;
     nombres: string;
@@ -123,20 +144,40 @@ export class AuthService {
   }
 
   async validarUsuario(nombreUsuario: string, contrasena: string) {
-    // El inicio de sesión debe hacerse solo con el campo "nombres".
-    const usuario = await this.prisma.usuario.findFirst({
+    const nombreLimpio = nombreUsuario.trim().replace(/\s+/g, ' ');
+    const nombreNormalizado = this.normalizarTextoLogin(nombreLimpio);
+    const primerNombre = nombreLimpio.split(' ')[0];
+
+    if (!nombreLimpio) return null;
+
+    // El inicio de sesión no usa correo: acepta "nombres" o "nombres apellidos".
+    const usuarioPorNombres = await this.prisma.usuario.findFirst({
       where: {
-        nombres: { equals: nombreUsuario, mode: 'insensitive' },
+        nombres: { equals: nombreLimpio, mode: 'insensitive' },
       },
     });
 
-    if (!usuario) return null;
+    const candidatos = usuarioPorNombres
+      ? [usuarioPorNombres]
+      : (
+          await this.prisma.usuario.findMany({
+            where: {
+              nombres: { startsWith: primerNombre, mode: 'insensitive' },
+            },
+          })
+        ).filter((usuario) =>
+          this.nombreCompletoCoincide(usuario, nombreNormalizado),
+        );
+
+    if (!candidatos.length) return null;
 
     try {
-      const matches = await argon2.verify(usuario.hashContrasena, contrasena);
-      if (matches) {
-        const { hashContrasena: _hashContrasena, ...resultado } = usuario;
-        return resultado;
+      for (const usuario of candidatos) {
+        const matches = await argon2.verify(usuario.hashContrasena, contrasena);
+        if (matches) {
+          const { hashContrasena: _hashContrasena, ...resultado } = usuario;
+          return resultado;
+        }
       }
     } catch {
       // Error al verificar contrasena

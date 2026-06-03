@@ -19,6 +19,21 @@ import { RolUsuario, TipoAprobacion } from '@prisma/client';
 export class ApprovalsController {
   constructor(private readonly approvalsService: ApprovalsService) {}
 
+  @Get('my-requests')
+  @Roles(
+    RolUsuario.COBRADOR,
+    RolUsuario.PUNTO_DE_VENTA,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.CONTADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
+  async getMyRequests(@Request() req: any) {
+    const usuarioId = req.user?.id || req.user?.sub;
+    return this.approvalsService.getMyRequests(usuarioId);
+  }
+
   /**
    * Obtener todas las aprobaciones pendientes, agrupadas por tipo.
    * Alimenta el módulo de Revisiones del frontend.

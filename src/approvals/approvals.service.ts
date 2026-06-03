@@ -191,6 +191,32 @@ export class ApprovalsService {
     }
   }
 
+  async getMyRequests(usuarioId: string) {
+    return this.prisma.aprobacion.findMany({
+      where: { solicitadoPorId: usuarioId },
+      orderBy: { creadoEn: 'desc' },
+      take: 100,
+      include: {
+        solicitadoPor: {
+          select: {
+            id: true,
+            nombres: true,
+            apellidos: true,
+            rol: true,
+          },
+        },
+        aprobadoPor: {
+          select: {
+            id: true,
+            nombres: true,
+            apellidos: true,
+            rol: true,
+          },
+        },
+      },
+    });
+  }
+
   private generarNumeroPago() {
     return `PAG-${Date.now()}-${randomUUID().slice(0, 8)}`;
   }
