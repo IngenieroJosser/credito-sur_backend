@@ -1997,7 +1997,10 @@ export class AccountingService {
     });
     const ledgerIncomeOperativoWhere = (start: Date, end: Date) => ({
       accountCode: { startsWith: '3.' },
-      NOT: { accountCode: { startsWith: '3.4' } },
+      NOT: [
+        { accountCode: { startsWith: '3.3' } },
+        { accountCode: { startsWith: '3.4' } },
+      ],
       journalEntry: {
         isOpening: false,
         createdAt: { gte: start, lte: end },
@@ -2311,7 +2314,7 @@ export class AccountingService {
     const utilidadNetaLedger = utilidadOperativaLedger - provisionTotal;
 
     return {
-      // Ingreso operativo del periodo. No incluye cartera futura, cuota inicial ni desembolsos.
+      // Ingreso de cartera del periodo. No incluye cartera futura, cuota inicial, artículos ni otros ingresos externos.
       ingresosHoy: ingresosLedger,
       // Entrada física de caja, útil para conciliación de efectivo.
       entradasCajaHoy: ingresosCajaLedger,
