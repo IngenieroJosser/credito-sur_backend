@@ -1065,9 +1065,10 @@ export class RoutesService {
                   gte: inicioHoy,
                   lte: finHoy,
                 },
-                NOT: {
-                  origenGestion: 'CIERRE_PENDIENTE',
-                },
+                OR: [
+              { origenGestion: null },
+              { origenGestion: { not: 'CIERRE_PENDIENTE' } },
+            ],
               },
               select: {
                 clienteId: true,
@@ -1610,9 +1611,10 @@ export class RoutesService {
               gte: inicioHoy,
               lte: finHoy,
             },
-            NOT: {
-              origenGestion: 'CIERRE_PENDIENTE',
-            },
+            OR: [
+              { origenGestion: null },
+              { origenGestion: { not: 'CIERRE_PENDIENTE' } },
+            ],
           },
           select: {
             clienteId: true,
@@ -2393,9 +2395,10 @@ export class RoutesService {
                 gte: hoyInicio,
                 lte: hoyFin,
               },
-              NOT: {
-                origenGestion: 'CIERRE_PENDIENTE',
-              },
+              OR: [
+              { origenGestion: null },
+              { origenGestion: { not: 'CIERRE_PENDIENTE' } },
+            ],
             },
 
             _sum: {
@@ -3276,9 +3279,10 @@ export class RoutesService {
         OR: [
           {
             fechaPago: { gte: fInicio, lte: fFin },
-            NOT: {
-              origenGestion: 'CIERRE_PENDIENTE',
-            },
+            OR: [
+              { origenGestion: null },
+              { origenGestion: { not: 'CIERRE_PENDIENTE' } },
+            ],
           },
           {
             fechaOperativaRuta: fechaKey,
@@ -4737,3 +4741,4 @@ export class RoutesService {
     return acciones;
   }
 }
+
