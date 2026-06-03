@@ -1899,16 +1899,81 @@ export class RoutesService {
       const visitasMap = new Map(registrosVisitas.map((r) => [r.clienteId, r]));
 
       const asignaciones: any[] = ruta.asignaciones;
+      const prestamosIdsRuta = [
+        ...new Set(
+          asignaciones.flatMap((asig: any) =>
+            (asig?.cliente?.prestamos || [])
+              .map((p: any) => p?.id)
+              .filter(Boolean),
+          ),
+        ),
+      ];
+      const pagosOperativosRutaHoy =
+        prestamosIdsRuta.length > 0
+          ? await this.prisma.pago.findMany({
+              where: {
+                rutaId: id,
+                prestamoId: { in: prestamosIdsRuta },
+                fechaPago: {
+                  gte: hoyInicio,
+                  lt: getBogotaStartEndOfDay(new Date()).endDate,
+                },
+                OR: [
+                  { origenGestion: null },
+                  { origenGestion: { not: 'CIERRE_PENDIENTE' } },
+                ],
+              },
+              select: {
+                prestamoId: true,
+                clienteId: true,
+                montoTotal: true,
+              },
+            })
+          : [];
+      const recaudoHoyPorPrestamo = new Map<string, number>();
+      const recaudoHoyPorCliente = new Map<string, number>();
+      for (const pago of pagosOperativosRutaHoy) {
+        const monto = Number(pago.montoTotal || 0);
+        if (pago.prestamoId) {
+          const key = String(pago.prestamoId);
+          recaudoHoyPorPrestamo.set(
+            key,
+            Number(recaudoHoyPorPrestamo.get(key) || 0) + monto,
+          );
+        }
+        if (pago.clienteId) {
+          const key = String(pago.clienteId);
+          recaudoHoyPorCliente.set(
+            key,
+            Number(recaudoHoyPorCliente.get(key) || 0) + monto,
+          );
+        }
+      }
+
       for (const asig of asignaciones) {
-        const reg = visitasMap.get(asig.clienteId);
+        const reg = visitasMap.get(asig.clienteId) as any;
+        const recaudoClienteHoy = Number(
+          recaudoHoyPorCliente.get(String(asig.clienteId)) || 0,
+        );
         if (reg) {
           // @ts-ignore - Prisma type inference issue, properties exist at runtime
-          asig.estadoVisita = reg.estadoVisita;
+          asig.estadoVisita =
+            reg.estadoVisita === 'ausente' && recaudoClienteHoy > 0
+              ? 'pagado'
+              : reg.estadoVisita;
           // @ts-ignore - Prisma type inference issue, properties exist at runtime
           asig.notasVisita = reg.notas;
         }
+        // @ts-ignore - campo calculado para el frontend
+        asig.recaudadoDelDia = recaudoClienteHoy;
         if (!asig.cliente || !asig.cliente.prestamos) continue;
         for (const p of asig.cliente.prestamos) {
+          const recaudoPrestamoHoy = Number(
+            recaudoHoyPorPrestamo.get(String(p.id)) || 0,
+          );
+          p.recaudadoDelDia = recaudoPrestamoHoy;
+          p.recaudadoHoy = recaudoPrestamoHoy;
+
           // BUG-02 FIX: calcular monto acumulado sin mutar el objeto Prisma.
           // El monto/estado se inyecta directamente al construir proximaCuota más abajo.
           let _montoAcumuladoHoy = 0;
