@@ -169,17 +169,33 @@ describe('RoutesService role scoping', () => {
     const tx = {
       $queryRaw: jest.fn().mockResolvedValue([]),
       transaccion: {
-        findFirst: jest.fn().mockResolvedValue({ id: 'activacion-existente' }),
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'activacion-existente',
+          fechaTransaccion: new Date('2026-06-01T12:00:00.000Z'),
+          tipoReferencia: 'ACTIVACION_RUTA',
+        }),
         create: jest.fn().mockResolvedValue({ id: 'activacion-nueva' }),
+      },
+      rutaJornada: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        upsert: jest.fn().mockResolvedValue({ id: 'jornada-1' }),
       },
     };
     const prisma = {
       ruta: {
-        findFirst: jest.fn().mockResolvedValue({
-          id: 'ruta-1',
-          nombre: 'Ruta 1',
-          cobradorId: 'cobrador-1',
-        }),
+        findFirst: jest
+          .fn()
+          .mockResolvedValueOnce({
+            id: 'ruta-1',
+            nombre: 'Ruta 1',
+            cobradorId: 'cobrador-1',
+          })
+          .mockResolvedValueOnce({
+            id: 'ruta-1',
+            nombre: 'Ruta 1',
+            cobrador: { id: 'cobrador-1', nombres: 'Cobrador', apellidos: 'Uno' },
+            cajas: [{ id: 'caja-ruta-1' }],
+          }),
       },
       caja: {
         findFirst: jest.fn().mockResolvedValue({ id: 'caja-ruta-1' }),
@@ -187,6 +203,11 @@ describe('RoutesService role scoping', () => {
       transaccion: {
         findFirst: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue({ id: 'activacion-fuera' }),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      rutaJornada: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findMany: jest.fn().mockResolvedValue([]),
       },
       $transaction: jest.fn().mockImplementation((input: any) => {
         if (typeof input === 'function') {
@@ -207,7 +228,74 @@ describe('RoutesService role scoping', () => {
       }),
     );
     expect(tx.transaccion.create).not.toHaveBeenCalled();
+    expect(tx.rutaJornada.updateMany).toHaveBeenCalledWith({
+      where: {
+        rutaId: 'ruta-1',
+        estado: 'ABIERTA',
+        fechaOperativa: { lt: '2026-06-01' },
+      },
+      data: { estado: 'PENDIENTE_CIERRE' },
+    });
+    expect(tx.rutaJornada.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          rutaId_fechaOperativa: {
+            rutaId: 'ruta-1',
+            fechaOperativa: '2026-06-01',
+          },
+        },
+      }),
+    );
     expect(prisma.transaccion.create).not.toHaveBeenCalled();
+
+    jest.useRealTimers();
+  });
+
+  it('detecta activaciones antiguas sin RutaJornada como cierres pendientes', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-04T12:00:00.000Z'));
+
+    const prisma = {
+      ruta: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'ruta-1',
+          nombre: 'Ruta 1',
+          cobrador: { id: 'cobrador-1', nombres: 'Cobrador', apellidos: 'Uno' },
+          cajas: [{ id: 'caja-ruta-1' }],
+        }),
+      },
+      rutaJornada: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([]),
+      },
+      transaccion: {
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([
+            {
+              id: 'activacion-yesterday',
+              fechaTransaccion: new Date('2026-06-03T14:00:00.000Z'),
+            },
+          ]),
+      },
+    };
+
+    const cierre = await makeService(prisma).getCierrePendienteRutaPublic(
+      'ruta-1',
+      { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+    );
+
+    expect(cierre).toEqual(
+      expect.objectContaining({
+        pendienteCierre: true,
+        fechaOperativa: '2026-06-03',
+        activacionId: 'activacion-yesterday',
+        origenDeteccion: 'TRANSACCION_ACTIVACION_LEGACY',
+      }),
+    );
 
     jest.useRealTimers();
   });

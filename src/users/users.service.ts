@@ -44,6 +44,20 @@ type UsuarioDetalleMetricas = {
   usuariosActivos: number;
 };
 
+const USUARIO_PUBLIC_SELECT = {
+  id: true,
+  nombres: true,
+  apellidos: true,
+  correo: true,
+  rol: true,
+  esPrincipal: true,
+  estado: true,
+  telefono: true,
+  creadoEn: true,
+  ultimoIngreso: true,
+  eliminadoEn: true,
+} satisfies Prisma.UsuarioSelect;
+
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
@@ -175,10 +189,13 @@ export class UsersService {
     return nuevoUsuario;
   }
 
-  async obtenerTodos() {
+  async obtenerTodos(includeArchived = false) {
     const usuarios = (await this.prisma.usuario.findMany({
       where: {
         eliminadoEn: null,
+        ...(includeArchived
+          ? {}
+          : { estado: { not: EstadoUsuario.ARCHIVADO } }),
       },
       select: {
         id: true,
@@ -503,63 +520,38 @@ export class UsersService {
       throw new NotFoundException(`Usuario con ID ${id} no encontrado`);
     }
 
-    // PROTECCIÓN: El Superadmin principal solo puede eliminarse a sí mismo
+    // Eliminar aquí no borra físicamente: oculta el usuario archivado para conservar trazabilidad.
     if (usuario.esPrincipal) {
-      if (!usuarioEliminadorId || usuarioEliminadorId !== id) {
-        throw new ForbiddenException(
-          'El Superadministrador principal solo puede ser eliminado por sí mismo',
-        );
-      }
-
-      // Si se elimina el Superadmin principal, transferir el rol a otro Superadmin
-      const eliminado = await this.prisma.$transaction(async (tx) => {
-        // Buscar otro Superadmin activo
-        const nuevoSuperadminPrincipal = await tx.usuario.findFirst({
-          where: {
-            rol: RolUsuario.SUPER_ADMINISTRADOR,
-            id: { not: id },
-            eliminadoEn: null,
-            estado: EstadoUsuario.ACTIVO,
-          },
-          orderBy: {
-            creadoEn: 'asc', // El más antiguo
-          },
-        });
-
-        // Si hay otro Superadmin, marcarlo como principal
-        if (nuevoSuperadminPrincipal) {
-          await tx.usuario.update({
-            where: { id: nuevoSuperadminPrincipal.id },
-            data: { esPrincipal: true },
-          });
-        }
-
-        // Eliminar el usuario actual
-        return tx.usuario.update({
-          where: { id },
-          data: {
-            eliminadoEn: new Date(),
-            estado: EstadoUsuario.INACTIVO,
-            esPrincipal: false,
-          },
-        });
-      });
-
-      this.notificacionesGateway.broadcastUsuariosActualizados({
-        accion: 'ELIMINAR',
-        usuarioId: id,
-      });
-
-      return eliminado;
+      throw new ForbiddenException(
+        'El Superadministrador principal no puede eliminarse ni ocultarse',
+      );
     }
 
     const eliminado = await this.prisma.usuario.update({
       where: { id },
       data: {
         eliminadoEn: new Date(),
-        estado: EstadoUsuario.INACTIVO,
+        estado: EstadoUsuario.ARCHIVADO,
       },
+      select: USUARIO_PUBLIC_SELECT,
     });
+
+    if (usuarioEliminadorId) {
+      await this.auditService.create({
+        usuarioId: usuarioEliminadorId,
+        accion: 'OCULTAR_USUARIO_ARCHIVADO',
+        entidad: 'Usuario',
+        entidadId: id,
+        datosAnteriores: {
+          estado: usuario.estado,
+          eliminadoEn: usuario.eliminadoEn,
+        },
+        datosNuevos: {
+          estado: EstadoUsuario.ARCHIVADO,
+          eliminadoEn: eliminado.eliminadoEn,
+        },
+      });
+    }
 
     this.notificacionesGateway.broadcastUsuariosActualizados({
       accion: 'ELIMINAR',
@@ -567,6 +559,55 @@ export class UsersService {
     });
 
     return eliminado;
+  }
+
+  async archivar(id: string, usuarioArchivadorId?: string) {
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { id },
+    });
+
+    if (!usuario || usuario.eliminadoEn) {
+      throw new NotFoundException(`Usuario con ID ${id} no encontrado`);
+    }
+
+    if (usuario.esPrincipal) {
+      throw new ForbiddenException(
+        'El Superadministrador principal no puede ser archivado',
+      );
+    }
+
+    const archivado = await this.prisma.usuario.update({
+      where: { id },
+      data: {
+        estado: EstadoUsuario.ARCHIVADO,
+        eliminadoEn: null,
+      },
+      select: USUARIO_PUBLIC_SELECT,
+    });
+
+    if (usuarioArchivadorId) {
+      await this.auditService.create({
+        usuarioId: usuarioArchivadorId,
+        accion: 'ARCHIVAR_USUARIO',
+        entidad: 'Usuario',
+        entidadId: id,
+        datosAnteriores: {
+          estado: usuario.estado,
+          eliminadoEn: usuario.eliminadoEn,
+        },
+        datosNuevos: {
+          estado: archivado.estado,
+          eliminadoEn: archivado.eliminadoEn,
+        },
+      });
+    }
+
+    this.notificacionesGateway.broadcastUsuariosActualizados({
+      accion: 'ARCHIVAR',
+      usuarioId: id,
+    });
+
+    return archivado;
   }
 
   async restaurar(id: string, usuarioRestauradorId?: string) {
@@ -584,6 +625,7 @@ export class UsersService {
         eliminadoEn: null,
         estado: EstadoUsuario.ACTIVO,
       },
+      select: USUARIO_PUBLIC_SELECT,
     });
 
     if (usuarioRestauradorId) {
@@ -592,8 +634,14 @@ export class UsersService {
         accion: 'RESTAURAR_USUARIO',
         entidad: 'Usuario',
         entidadId: id,
-        datosAnteriores: { eliminadoEn: usuario.eliminadoEn },
-        datosNuevos: { eliminadoEn: null },
+        datosAnteriores: {
+          estado: usuario.estado,
+          eliminadoEn: usuario.eliminadoEn,
+        },
+        datosNuevos: {
+          estado: EstadoUsuario.ACTIVO,
+          eliminadoEn: null,
+        },
       });
     }
 
@@ -1032,6 +1080,12 @@ export class UsersService {
 
     if (!usuario) {
       throw new NotFoundException(`Usuario con ID ${id} no encontrado`);
+    }
+
+    if (nuevoEstado === EstadoUsuario.ARCHIVADO) {
+      throw new BadRequestException(
+        'Use el flujo de archivar usuario para cambiar a estado ARCHIVADO',
+      );
     }
 
     // PROTECCIÓN: El Superadmin principal no puede ser desactivado por otros

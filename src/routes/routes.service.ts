@@ -286,6 +286,7 @@ export class RoutesService {
     }
 
     const { inicio, fin } = this.getInicioFinHoy();
+    const fechaOperativa = getBogotaDayKey(new Date());
 
     let resultadoActivacion: {
       id: string;
@@ -297,6 +298,15 @@ export class RoutesService {
     try {
       resultadoActivacion = await this.prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "cajas" WHERE id = ${cajaRuta.id} FOR UPDATE`;
+
+        await tx.rutaJornada.updateMany({
+          where: {
+            rutaId,
+            estado: 'ABIERTA',
+            fechaOperativa: { lt: fechaOperativa },
+          },
+          data: { estado: 'PENDIENTE_CIERRE' },
+        });
 
         // Primero buscar específicamente la activación de la ruta
         const activacionRutaHoy = await tx.transaccion.findFirst({
@@ -316,6 +326,28 @@ export class RoutesService {
         });
 
         if (activacionRutaHoy?.id) {
+          await tx.rutaJornada.upsert({
+            where: {
+              rutaId_fechaOperativa: {
+                rutaId,
+                fechaOperativa,
+              },
+            },
+            create: {
+              rutaId,
+              cajaId: cajaRuta.id,
+              fechaOperativa,
+              estado: 'ABIERTA',
+              activacionTransaccionId: activacionRutaHoy.id,
+              activadaEn: activacionRutaHoy.fechaTransaccion,
+            },
+            update: {
+              cajaId: cajaRuta.id,
+              activacionTransaccionId: activacionRutaHoy.id,
+              activadaEn: activacionRutaHoy.fechaTransaccion,
+            },
+          });
+
           return {
             id: activacionRutaHoy.id,
             fechaTransaccion: activacionRutaHoy.fechaTransaccion,
@@ -342,6 +374,28 @@ export class RoutesService {
             id: true,
             fechaTransaccion: true,
             tipoReferencia: true,
+          },
+        });
+
+        await tx.rutaJornada.upsert({
+          where: {
+            rutaId_fechaOperativa: {
+              rutaId,
+              fechaOperativa,
+            },
+          },
+          create: {
+            rutaId,
+            cajaId: cajaRuta.id,
+            fechaOperativa,
+            estado: 'ABIERTA',
+            activacionTransaccionId: creada.id,
+            activadaEn: creada.fechaTransaccion,
+          },
+          update: {
+            cajaId: cajaRuta.id,
+            activacionTransaccionId: creada.id,
+            activadaEn: creada.fechaTransaccion,
           },
         });
 
@@ -4609,7 +4663,6 @@ export class RoutesService {
   }
 
   private async getCierresPendientesRuta(rutaId: string) {
-
     const ruta = await this.prisma.ruta.findFirst({
       where: { id: rutaId, eliminadoEn: null },
       select: {
@@ -4636,6 +4689,18 @@ export class RoutesService {
     const cajaRuta = ruta?.cajas?.[0];
     if (!ruta || !cajaRuta?.id) return [];
 
+    const hoyKey = getBogotaDayKey(new Date());
+    const { startDate: inicioHoy } = getBogotaStartEndOfDayFromKey(hoyKey);
+
+    await this.prisma.rutaJornada.updateMany({
+      where: {
+        rutaId,
+        estado: 'ABIERTA',
+        fechaOperativa: { lt: hoyKey },
+      },
+      data: { estado: 'PENDIENTE_CIERRE' },
+    });
+
     // Usar la nueva entidad RutaJornada para detectar jornadas pendientes
     const jornadasPendientes = await this.prisma.rutaJornada.findMany({
       where: {
@@ -4647,9 +4712,49 @@ export class RoutesService {
       },
     });
 
-    const hoyKey = getBogotaDayKey(new Date());
+    const jornadasExistentes = await this.prisma.rutaJornada.findMany({
+      where: {
+        rutaId,
+        fechaOperativa: { lt: hoyKey },
+      },
+      select: {
+        fechaOperativa: true,
+      },
+    });
 
-    return jornadasPendientes.map((jornada) => {
+    const fechasJornadaExistente = new Set(
+      jornadasExistentes.map((jornada) => jornada.fechaOperativa),
+    );
+
+    const cierresRuta = await this.prisma.transaccion.findMany({
+      where: {
+        cajaId: cajaRuta.id,
+        tipoReferencia: 'CIERRE_RUTA',
+        fechaTransaccion: { lt: inicioHoy },
+      },
+      select: {
+        fechaTransaccion: true,
+      },
+    });
+
+    const fechasCerradasPorTransaccion = new Set(
+      cierresRuta.map((cierre) => getBogotaDayKey(cierre.fechaTransaccion)),
+    );
+
+    const activacionesSinJornada = await this.prisma.transaccion.findMany({
+      where: {
+        cajaId: cajaRuta.id,
+        tipoReferencia: 'ACTIVACION_RUTA',
+        fechaTransaccion: { lt: inicioHoy },
+      },
+      orderBy: { fechaTransaccion: 'asc' },
+      select: {
+        id: true,
+        fechaTransaccion: true,
+      },
+    });
+
+    const pendientesDesdeJornadas = jornadasPendientes.map((jornada) => {
       const fechaOperativa = jornada.fechaOperativa;
 
       const start = new Date(`${fechaOperativa}T12:00:00-05:00`);
@@ -4677,6 +4782,48 @@ export class RoutesService {
         message: `La ruta tiene una jornada pendiente de cierre del ${fechaOperativa}.`,
       };
     });
+
+    const pendientesDesdeTransacciones = activacionesSinJornada
+      .map((activacion) => {
+        const fechaOperativa = getBogotaDayKey(activacion.fechaTransaccion);
+        return { activacion, fechaOperativa };
+      })
+      .filter(({ fechaOperativa }) => {
+        if (!fechaOperativa) return false;
+        if (fechasJornadaExistente.has(fechaOperativa)) return false;
+        return !fechasCerradasPorTransaccion.has(fechaOperativa);
+      })
+      .map(({ activacion, fechaOperativa }) => {
+        const start = new Date(`${fechaOperativa}T12:00:00-05:00`);
+        const end = new Date(`${hoyKey}T12:00:00-05:00`);
+
+        const diasPendiente = Math.max(
+          Math.floor((end.getTime() - start.getTime()) / 86_400_000),
+          0,
+        );
+
+        return {
+          rutaId,
+          rutaNombre: ruta.nombre,
+          cajaId: cajaRuta.id,
+          cobradorId: ruta.cobrador?.id || null,
+          cobradorNombre: ruta.cobrador
+            ? `${ruta.cobrador.nombres} ${ruta.cobrador.apellidos}`.trim()
+            : null,
+          activacionId: activacion.id,
+          fechaOperativa,
+          fechaActivacion: formatBogotaOffsetIso(activacion.fechaTransaccion),
+          diasPendiente,
+          pendienteCierre: true,
+          requiereRegularizacion: true,
+          origenDeteccion: 'TRANSACCION_ACTIVACION_LEGACY',
+          message: `La ruta tiene una jornada pendiente de cierre del ${fechaOperativa}.`,
+        };
+      });
+
+    return [...pendientesDesdeJornadas, ...pendientesDesdeTransacciones].sort(
+      (a, b) => a.fechaOperativa.localeCompare(b.fechaOperativa),
+    );
   }
 
   private async getCierrePendienteRuta(rutaId: string) {

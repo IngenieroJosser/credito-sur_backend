@@ -255,7 +255,7 @@ export class NotificacionesGateway
             // Codificamos los datos en referenciaId agregando SD
             const referenciaId = `RC:${cierreCalculado.recaudo}|MT:${cierreCalculado.meta}|EF:${cierreCalculado.efectividad}|CF:${cierreCalculado.clientesFaltantes}|CO:${data.cobradorNombre}|SD:${saldoAlCierre}`;
 
-            await this.prisma.transaccion.create({
+            const cierreTransaccion = await this.prisma.transaccion.create({
               data: {
                 numeroTransaccion: `CR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
                 cajaId: cajaDeLaRuta.id,
@@ -267,6 +267,29 @@ export class NotificacionesGateway
                 tipoReferencia: 'CIERRE_RUTA',
                 referenciaId,
                 creadoPorId: actorCierre.id,
+              },
+            });
+
+            await this.prisma.rutaJornada.upsert({
+              where: {
+                rutaId_fechaOperativa: {
+                  rutaId: data.rutaId,
+                  fechaOperativa,
+                },
+              },
+              create: {
+                rutaId: data.rutaId,
+                cajaId: cajaDeLaRuta.id,
+                fechaOperativa,
+                estado: 'CERRADA',
+                cierreTransaccionId: cierreTransaccion.id,
+                activadaEn: new Date(),
+                cerradaEn: new Date(),
+              },
+              update: {
+                estado: 'CERRADA',
+                cierreTransaccionId: cierreTransaccion.id,
+                cerradaEn: new Date(),
               },
             });
 
