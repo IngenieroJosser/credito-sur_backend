@@ -13,7 +13,7 @@ import { Logger, forwardRef, Inject, Injectable } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { NotificacionesService } from './notificaciones.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { getBogotaStartEndOfDay } from '../utils/date-utils';
+import { getBogotaDayKey, getBogotaStartEndOfDay } from '../utils/date-utils';
 import { RoutesService } from '../routes/routes.service';
 
 @WebSocketGateway({
@@ -106,6 +106,7 @@ export class NotificacionesGateway
       meta: number;
       efectividad: number;
       clientesFaltantes: number;
+      clientesAusentes?: number;
       rutaId?: string;
       actorId?: string;
       actorRol?: string;
@@ -115,7 +116,14 @@ export class NotificacionesGateway
     this.logger.log(`El cobrador completó la ruta: ${data.rutaNombre}`);
 
     try {
-      const clientesFaltantesNum = Number(data.clientesFaltantes || 0);
+      const fechaOperativa = getBogotaDayKey(new Date());
+      let cierreCalculado = {
+        recaudo: Number(data.recaudo || 0),
+        meta: Number(data.meta || 0),
+        efectividad: Number(data.efectividad || 0),
+        clientesFaltantes: Number(data.clientesFaltantes || 0),
+        clientesAusentes: Number(data.clientesAusentes || 0),
+      };
 
       // 1. Registrar el cierre de ruta en BD (trazabilidad de descuadre)
       try {
@@ -139,15 +147,16 @@ export class NotificacionesGateway
                 rol: true,
               },
             });
+            const actorCierre = {
+              id: actor?.id || cajaDeLaRuta.responsableId,
+              rol: actor?.rol || 'COBRADOR',
+            };
 
             // Validar si puede cerrar la jornada actual (verifica cierre pendiente anterior)
             try {
               await this.routesService.assertPuedeCerrarJornadaActual(
                 data.rutaId,
-                {
-                  id: actor?.id || cajaDeLaRuta.responsableId,
-                  rol: actor?.rol || 'COBRADOR',
-                },
+                actorCierre,
               );
             } catch (error: any) {
               this.logger.warn(
@@ -188,11 +197,50 @@ export class NotificacionesGateway
               };
             }
 
+            const detalleDia = await this.routesService.getDailyVisits(
+              data.rutaId,
+              fechaOperativa,
+              actorCierre,
+            );
+            const resumen: any = detalleDia?.resumen || {};
+            const visitas = Array.isArray(detalleDia?.visitas)
+              ? detalleDia.visitas
+              : [];
+            const recaudoBackend = Number(
+              resumen.recaudoOperativo || resumen.recaudo || 0,
+            );
+            const metaBackend = Number(resumen.meta || 0);
+            const efectividadBackend =
+              metaBackend > 0
+                ? Math.round((recaudoBackend / metaBackend) * 1000) / 10
+                : Number(resumen.efectividad || 0);
+            const clientesAusentesBackend = visitas.filter((v: any) =>
+              String(v.estadoGestion || '').toUpperCase().includes('AUSENTE'),
+            ).length;
+            const clientesFaltantesBackend = visitas.filter((v: any) => {
+              const estado = String(v.estadoGestion || '').toUpperCase();
+              const recaudoVisita = Number(v.recaudadoDelDia || 0);
+              return (
+                recaudoVisita <= 0 &&
+                !estado.includes('PAGO') &&
+                !estado.includes('AUSENTE') &&
+                !estado.includes('REPROGRAM')
+              );
+            }).length;
+
+            cierreCalculado = {
+              recaudo: recaudoBackend,
+              meta: metaBackend,
+              efectividad: efectividadBackend,
+              clientesFaltantes: clientesFaltantesBackend,
+              clientesAusentes: clientesAusentesBackend,
+            };
+
             const saldoAlCierre = Number(cajaDeLaRuta.saldoActual || 0);
             const deudaPorFaltantes =
-              clientesFaltantesNum > 0
+              cierreCalculado.clientesFaltantes > 0
                 ? Math.max(
-                    Number(data.meta || 0) - Number(data.recaudo || 0),
+                    cierreCalculado.meta - cierreCalculado.recaudo,
                     0,
                   )
                 : 0;
@@ -205,7 +253,7 @@ export class NotificacionesGateway
             const hayDescuadre = deudaTotal > 0;
 
             // Codificamos los datos en referenciaId agregando SD
-            const referenciaId = `RC:${data.recaudo}|MT:${data.meta || 0}|EF:${data.efectividad}|CF:${data.clientesFaltantes}|CO:${data.cobradorNombre}|SD:${saldoAlCierre}`;
+            const referenciaId = `RC:${cierreCalculado.recaudo}|MT:${cierreCalculado.meta}|EF:${cierreCalculado.efectividad}|CF:${cierreCalculado.clientesFaltantes}|CO:${data.cobradorNombre}|SD:${saldoAlCierre}`;
 
             await this.prisma.transaccion.create({
               data: {
@@ -214,11 +262,11 @@ export class NotificacionesGateway
                 tipo: 'TRANSFERENCIA',
                 monto: 0,
                 descripcion: hayDescuadre
-                  ? `Cierre de ruta con descuadre: $${deudaTotal.toLocaleString('es-CO')} pendientes (saldo en caja: $${saldoAlCierre.toLocaleString('es-CO')}, faltantes: $${deudaPorFaltantes.toLocaleString('es-CO')}). Recaudó: $${data.recaudo.toLocaleString('es-CO')}.`
-                  : `Cierre de ruta exitoso: sin saldo pendiente. Recaudó $${data.recaudo.toLocaleString('es-CO')} (${data.efectividad}% META).`,
+                  ? `Cierre de ruta con descuadre: $${deudaTotal.toLocaleString('es-CO')} pendientes (saldo en caja: $${saldoAlCierre.toLocaleString('es-CO')}, faltantes: $${deudaPorFaltantes.toLocaleString('es-CO')}). Recaudó: $${cierreCalculado.recaudo.toLocaleString('es-CO')}.`
+                  : `Cierre de ruta exitoso: sin saldo pendiente. Recaudó $${cierreCalculado.recaudo.toLocaleString('es-CO')} (${cierreCalculado.efectividad}% META).`,
                 tipoReferencia: 'CIERRE_RUTA',
                 referenciaId,
-                creadoPorId: actor?.id || cajaDeLaRuta.responsableId,
+                creadoPorId: actorCierre.id,
               },
             });
 
@@ -235,7 +283,7 @@ export class NotificacionesGateway
                   descripcion: `Deuda del cobrador por cierre de ruta: $${deuda.toLocaleString('es-CO')} (saldo en caja: $${saldoAlCierre.toLocaleString('es-CO')}, faltantes: $${deudaPorFaltantes.toLocaleString('es-CO')})`,
                   tipoReferencia: 'DEUDA_COBRADOR',
                   referenciaId: refDeuda,
-                  creadoPorId: actor?.id || cajaDeLaRuta.responsableId,
+                  creadoPorId: actorCierre.id,
                 },
               });
             }
@@ -256,8 +304,22 @@ export class NotificacionesGateway
       // 2. Alerta al Coordinador/Supervisor (Sistematizado + Push)
       await this.notificacionesService.notifyApprovers({
         titulo: 'Cierre de Ruta Completo',
-        mensaje: `Cobrador: ${data.cobradorNombre} cerró la ruta ${data.rutaNombre}. Recaudo Final: $${data.recaudo.toLocaleString('es-CO')} (${data.efectividad}% META). ${data.clientesFaltantes > 0 ? 'Faltaron ' + data.clientesFaltantes + ' clientes' : 'Todos visitados'}.`,
+        mensaje: `Cobrador: ${data.cobradorNombre} cerró la ruta ${data.rutaNombre}. Recaudo Final: $${cierreCalculado.recaudo.toLocaleString('es-CO')} (${cierreCalculado.efectividad}% META). ${cierreCalculado.clientesFaltantes > 0 ? 'Faltaron ' + cierreCalculado.clientesFaltantes + ' clientes' : 'Todos visitados'}.`,
         tipo: 'SISTEMA',
+        entidad: 'Ruta',
+        entidadId: data.rutaId,
+        metadata: {
+          tipoEvento: 'CIERRE_RUTA',
+          rutaId: data.rutaId || null,
+          rutaNombre: data.rutaNombre,
+          cobradorNombre: data.cobradorNombre,
+          fechaOperativa,
+          recaudoFinal: cierreCalculado.recaudo,
+          meta: cierreCalculado.meta,
+          efectividad: cierreCalculado.efectividad,
+          clientesFaltantes: cierreCalculado.clientesFaltantes,
+          clientesAusentes: cierreCalculado.clientesAusentes,
+        },
       });
 
       // Retornar éxito al frontend
