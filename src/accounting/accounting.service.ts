@@ -3205,6 +3205,7 @@ export class AccountingService {
         cobrador: `${g.cobrador.nombres} ${g.cobrador.apellidos}`,
         ruta: g.ruta?.nombre || 'Sin ruta',
         caja: g.caja.nombre,
+        categoriaId: g.categoriaId || null,
         categoria: g.categoria?.nombre || null,
         estado: g.estadoAprobacion,
       })),
