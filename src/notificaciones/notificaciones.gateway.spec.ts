@@ -30,6 +30,9 @@ describe('NotificacionesGateway', () => {
           findFirst: jest.fn().mockResolvedValue(null),
           create: jest.fn().mockResolvedValue({ id: 'trx-1' }),
         },
+        rutaJornada: {
+          upsert: jest.fn().mockResolvedValue({ id: 'jornada-1' }),
+        },
       };
     const routesService =
       overrides?.routesService || {
@@ -94,6 +97,20 @@ describe('NotificacionesGateway', () => {
         data: expect.objectContaining({
           referenciaId: expect.stringContaining('RC:552001|MT:1511998|EF:36.5'),
           descripcion: expect.stringContaining('Recaudó: $552.001'),
+        }),
+      }),
+    );
+    expect(prisma.rutaJornada.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          rutaId_fechaOperativa: {
+            rutaId: 'ruta-1',
+            fechaOperativa: expect.any(String),
+          },
+        },
+        update: expect.objectContaining({
+          estado: 'CERRADA',
+          cierreTransaccionId: 'trx-1',
         }),
       }),
     );
