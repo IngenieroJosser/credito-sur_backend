@@ -130,6 +130,142 @@ describe('RoutesService role scoping', () => {
     expect(prisma.asignacionRuta.findMany).not.toHaveBeenCalled();
   });
 
+  it('reconstruye la meta de una jornada cuando un ausente registra pago despues', async () => {
+    const fechaPago = new Date('2026-06-03T15:00:00.000Z');
+    const fechaCuota = new Date('2026-06-03T12:00:00.000Z');
+    const prisma = {
+      asignacionRuta: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'asig-pendiente',
+            ordenVisita: 1,
+            cliente: {
+              id: 'cliente-pendiente',
+              codigo: 'C001',
+              dni: '111',
+              nombres: 'Cliente',
+              apellidos: 'Pendiente',
+              telefono: '300',
+              direccion: 'Calle 1',
+              nivelRiesgo: 'MINIMO',
+              prestamos: [
+                {
+                  id: 'prestamo-pendiente',
+                  numeroPrestamo: 'P-1',
+                  monto: 564_998,
+                  saldoPendiente: 564_998,
+                  frecuenciaPago: 'DIARIO',
+                  cantidadCuotas: 1,
+                  estado: 'ACTIVO',
+                  cuotas: [
+                    {
+                      id: 'cuota-pendiente-1',
+                      numeroCuota: 1,
+                      fechaVencimiento: new Date('2026-06-02T12:00:00.000Z'),
+                      fechaVencimientoProrroga: null,
+                      fechaPago: null,
+                      monto: 282_499,
+                      montoPagado: 0,
+                      estado: 'PENDIENTE',
+                    },
+                    {
+                      id: 'cuota-pendiente-2',
+                      numeroCuota: 2,
+                      fechaVencimiento: fechaCuota,
+                      fechaVencimientoProrroga: null,
+                      fechaPago: null,
+                      monto: 282_499,
+                      montoPagado: 0,
+                      estado: 'PENDIENTE',
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+          {
+            id: 'asig-ausente-pagado',
+            ordenVisita: 2,
+            cliente: {
+              id: 'cliente-ausente-pagado',
+              codigo: 'C002',
+              dni: '222',
+              nombres: 'Cliente',
+              apellidos: 'Ausente',
+              telefono: '301',
+              direccion: 'Calle 2',
+              nivelRiesgo: 'MINIMO',
+              prestamos: [
+                {
+                  id: 'prestamo-pagado',
+                  numeroPrestamo: 'P-2',
+                  monto: 425_335,
+                  saldoPendiente: 0,
+                  frecuenciaPago: 'DIARIO',
+                  cantidadCuotas: 1,
+                  estado: 'PAGADO',
+                  cuotas: [
+                    {
+                      id: 'cuota-pagada',
+                      numeroCuota: 1,
+                      fechaVencimiento: fechaCuota,
+                      fechaVencimientoProrroga: null,
+                      fechaPago,
+                      monto: 425_335,
+                      montoPagado: 425_335,
+                      estado: 'PAGADA',
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ]),
+      },
+      registroVisita: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            clienteId: 'cliente-ausente-pagado',
+            estadoVisita: 'ausente',
+            notas: 'No estaba en casa',
+          },
+        ]),
+      },
+      pago: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            clienteId: 'cliente-ausente-pagado',
+            montoTotal: 425_335,
+            fechaPago,
+            fechaOperativaRuta: null,
+            origenGestion: null,
+          },
+        ]),
+      },
+      gasto: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 0 } }),
+      },
+    };
+
+    const resultado = await makeService(prisma).getDailyVisits(
+      'ruta-1',
+      '2026-06-03',
+    );
+
+    expect(resultado.resumen.recaudoOperativo).toBe(425_335);
+    expect(resultado.resumen.meta).toBe(990_333);
+    expect(resultado.resumen.efectividad).toBe(42.9);
+    expect(resultado.visitas).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          cliente: expect.objectContaining({ id: 'cliente-ausente-pagado' }),
+          estadoVisita: 'ausente',
+          recaudadoDelDia: 425_335,
+        }),
+      ]),
+    );
+  });
+
   it('rejects a collector checking activation for a route they do not own', async () => {
     const prisma = {
       ruta: {

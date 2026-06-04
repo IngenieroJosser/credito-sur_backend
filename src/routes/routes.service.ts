@@ -3313,6 +3313,8 @@ export class RoutesService {
             frecuenciaPago: p.frecuenciaPago,
             cantidadCuotas: p.cantidadCuotas,
             estado: p.estado,
+            montoMetaOperativaPendiente:
+              this.computePendienteOperativoPrestamo(p, fechaKey),
             proximaCuota: proximaCuota
               ? {
                   id: proximaCuota.id,
@@ -3453,24 +3455,14 @@ export class RoutesService {
     const totalEsperado = visitasDelDia.reduce((sum, v) => {
       const cid = v.cliente?.id || v.clienteId;
       const registro: any = visitasMap.get(cid);
+      const recaudoCliente = Number(pagosPorCliente[cid] || 0);
 
       // Si está ausente y no pagó nada, descontamos de la meta
-      if (
-        registro?.estadoVisita === 'ausente' &&
-        (pagosPorCliente[cid] || 0) === 0
-      ) {
+      if (registro?.estadoVisita === 'ausente' && recaudoCliente === 0) {
         return sum; // No suma a la meta
       }
 
-      // La meta se basa en el monto nominal de la cuota (lo que corresponde pagar hoy)
-      const montoVisita = v.prestamos.reduce((pSum, p) => {
-        const objetivo = p.cuotaObjetivo;
-        if (objetivo) {
-          return pSum + Number(objetivo.saldoExigibleEnFechaOperativa || 0);
-        }
-        return pSum + Number(p.proximaCuota?.montoNominal || 0);
-      }, 0);
-      return sum + montoVisita;
+      return sum + this.computeMetaOperativaVisita(v, recaudoCliente, fechaKey);
     }, 0);
 
     // Enriquecer visitas con su recaudo individual del día y su estado de visita (ausente)
@@ -3566,6 +3558,8 @@ export class RoutesService {
             frecuenciaPago: p.frecuenciaPago,
             cantidadCuotas: p.cantidadCuotas,
             estado: p.estado,
+            montoMetaOperativaPendiente:
+              this.computePendienteOperativoPrestamo(p, fechaKey),
             proximaCuota: null,
             registroSintetico: true,
             origenGestion: 'CIERRE_PENDIENTE',
@@ -3615,10 +3609,11 @@ export class RoutesService {
     const metaSinteticaRegularizada = visitasDelDia
       .filter((v: any) => v.registroSintetico && v.origenGestion === 'CIERRE_PENDIENTE')
       .reduce((sum, v: any) => {
-        const metaCuotas = (v.prestamos || []).reduce((pSum: number, p: any) => {
-          return pSum + Number(p.cuotaObjetivo?.saldoExigibleEnFechaOperativa || 0);
-        }, 0);
-        return sum + (metaCuotas > 0 ? metaCuotas : Number(v.recaudadoDelDia || 0));
+        return sum + this.computeMetaOperativaVisita(
+          v,
+          Number(v.recaudadoDelDia || 0),
+          fechaKey,
+        );
       }, 0);
 
     const totalEsperadoFinal = totalEsperado + metaSinteticaRegularizada;
@@ -3654,7 +3649,7 @@ export class RoutesService {
 
     const efectividad =
       totalEsperadoFinal > 0
-        ? Math.round((recaudoFinal / totalEsperadoFinal) * 100)
+        ? Number(((recaudoFinal / totalEsperadoFinal) * 100).toFixed(1))
         : recaudoFinal > 0
           ? 100
           : 0;
@@ -3673,6 +3668,7 @@ export class RoutesService {
       totalVisitas: visitasDelDiaFinales.length,
       resumen: {
         recaudo: recaudoOperativo,
+        recaudoOperativo,
         recaudoContable,
         recaudoRegularizado,
         meta: totalEsperadoFinal,
@@ -3698,6 +3694,67 @@ export class RoutesService {
     if (Number.isNaN(date.getTime())) return '9999-12-31';
 
     return getBogotaDayKey(date);
+  }
+
+  private computeMetaOperativaVisita(
+    visita: any,
+    recaudoCliente = 0,
+    fechaKey?: string,
+  ): number {
+    const pendienteExigible = (visita?.prestamos || []).reduce(
+      (sum: number, prestamo: any) => {
+        if (prestamo?.montoMetaOperativaPendiente != null) {
+          return sum + Number(prestamo.montoMetaOperativaPendiente || 0);
+        }
+
+        const cuotas = Array.isArray(prestamo?.cuotas) ? prestamo.cuotas : [];
+        if (fechaKey && cuotas.length > 0) {
+          return sum + this.computePendienteOperativoPrestamo(prestamo, fechaKey);
+        }
+
+        const objetivo = prestamo?.cuotaObjetivo;
+        if (objetivo) {
+          return sum + Number(objetivo.saldoExigibleEnFechaOperativa || 0);
+        }
+        return sum + Number(prestamo?.proximaCuota?.montoNominal || 0);
+      },
+      0,
+    );
+
+    const recaudo = Number(recaudoCliente || visita?.recaudadoDelDia || 0);
+    return pendienteExigible + recaudo;
+  }
+
+  private computePendienteOperativoPrestamo(
+    prestamo: any,
+    fechaKey: string,
+  ): number {
+    const cuotas = Array.isArray(prestamo?.cuotas) ? prestamo.cuotas : [];
+    if (cuotas.length === 0) return 0;
+
+    const cuotasOrdenadas = [...cuotas].sort((a, b) => {
+      const ak = this.getCuotaFechaEfectivaKey(a);
+      const bk = this.getCuotaFechaEfectivaKey(b);
+      return ak.localeCompare(bk);
+    });
+    const cuotasVencidasNoPagadas = cuotasOrdenadas.filter((cuota) => {
+      const estado = String(cuota?.estado || '').toUpperCase();
+      if (['PAGADA', 'PAGADO', 'ANULADA', 'ANULADO'].includes(estado)) {
+        return false;
+      }
+      return this.getCuotaFechaEfectivaKey(cuota) <= fechaKey;
+    });
+    const frecuencia = String(prestamo?.frecuenciaPago || '').toUpperCase();
+    const cuotasObjetivo =
+      frecuencia === 'DIARIO' || frecuencia === 'DIA'
+        ? cuotasVencidasNoPagadas
+        : cuotasVencidasNoPagadas.slice(0, 1);
+
+    return cuotasObjetivo.reduce((sum: number, cuota: any) => {
+      const monto = Number(cuota?.monto || 0);
+      const pagado = Number(cuota?.montoPagado || 0);
+      return sum + Math.max(0, monto - pagado);
+    }, 0);
   }
 
   private computeCuotaObjetivo(prestamo: any, fechaKey: string) {
@@ -4922,6 +4979,22 @@ export class RoutesService {
           return estadoGestion === 'PENDIENTE';
         });
 
+        const getSaldoOperativoJornada = (v: any) => {
+          return (v?.prestamos || []).reduce((sum: number, prestamo: any) => {
+            if (prestamo?.montoMetaOperativaPendiente != null) {
+              return sum + Number(prestamo.montoMetaOperativaPendiente || 0);
+            }
+            return (
+              sum +
+              Number(
+                prestamo?.cuotaObjetivo?.saldoExigibleEnFechaOperativa ||
+                  prestamo?.proximaCuota?.montoNominal ||
+                  0,
+              )
+            );
+          }, 0);
+        };
+
         return {
           cierrePendiente,
           resumen: {
@@ -4936,14 +5009,21 @@ export class RoutesService {
             meta: detalleDia.resumen?.meta || 0,
 
             recaudo: detalleDia.resumen?.recaudo || 0,
-            recaudoOperativo: detalleDia.resumen?.recaudo || 0,
+            recaudoOperativo:
+              detalleDia.resumen?.recaudoOperativo ??
+              detalleDia.resumen?.recaudo ??
+              0,
             recaudoContable: detalleDia.resumen?.recaudoContable || 0,
             recaudoRegularizado:
               detalleDia.resumen?.recaudoRegularizado || 0,
 
             pendiente: Math.max(
               Number(detalleDia.resumen?.meta || 0) -
-                Number(detalleDia.resumen?.recaudo || 0),
+                Number(
+                  detalleDia.resumen?.recaudoOperativo ??
+                    detalleDia.resumen?.recaudo ??
+                    0,
+                ),
               0,
             ),
 
@@ -4969,6 +5049,8 @@ export class RoutesService {
             estadoGestion: this.resolveEstadoGestionCierrePendiente(v),
 
             recaudadoDelDia: Number(v.recaudadoDelDia || 0),
+            saldoOperativoJornada: getSaldoOperativoJornada(v),
+            metaOperativaJornada: getSaldoOperativoJornada(v) + Number(v.recaudadoDelDia || 0),
             estadoVisita: v.estadoVisita || null,
             notasVisita: v.notasVisita || null,
 
@@ -4981,7 +5063,10 @@ export class RoutesService {
           })),
           accionesSugeridas: this.buildAccionesSugeridasCierrePendiente({
             meta: detalleDia.resumen?.meta || 0,
-            recaudo: detalleDia.resumen?.recaudo || 0,
+            recaudo:
+              detalleDia.resumen?.recaudoOperativo ??
+              detalleDia.resumen?.recaudo ??
+              0,
             clientesPendientes: clientesPendientes.length,
             clientesAusentes: clientesAusentes.length,
           }),
