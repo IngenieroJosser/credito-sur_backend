@@ -400,6 +400,66 @@ describe('PaymentsService', () => {
       );
     });
 
+    it('aplica pago regularizado acumulado desde cuotaId hacia cuotas siguientes', async () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-06-01T12:00:00.000Z'));
+
+      const dto = {
+        prestamoId: 'prestamo-1',
+        cobradorId: 'cobrador-1',
+        montoTotal: 220000,
+        cuotaId: 'cuota-1',
+        cuotaNumeroEsperada: 1,
+        montoCuotaEsperado: 220000,
+        fechaOperativaRuta: '2026-05-27',
+        origenGestion: 'CIERRE_PENDIENTE' as const,
+        rutaId: 'ruta-1',
+        idempotencyKey:
+          'CIERRE_PENDIENTE:ruta-1:2026-05-27:cliente-1:prestamo-1:cuota-1:1:PAGO:220000',
+      };
+
+      prisma.pago.findFirst.mockResolvedValueOnce(null);
+      try {
+        await service.create(dto);
+      } finally {
+        jest.useRealTimers();
+      }
+
+      expect(prisma._txMock.cuota.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'cuota-1' },
+          data: expect.objectContaining({
+            montoPagado: 110000,
+            estado: EstadoCuota.PAGADA,
+          }),
+        }),
+      );
+      expect(prisma._txMock.cuota.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'cuota-2' },
+          data: expect.objectContaining({
+            montoPagado: 110000,
+            estado: EstadoCuota.PAGADA,
+          }),
+        }),
+      );
+      expect(prisma._txMock.pago.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            montoTotal: 220000,
+            fechaOperativaRuta: '2026-05-27',
+            origenGestion: 'CIERRE_PENDIENTE',
+            detalles: {
+              create: expect.arrayContaining([
+                expect.objectContaining({ cuotaId: 'cuota-1', monto: 110000 }),
+                expect.objectContaining({ cuotaId: 'cuota-2', monto: 110000 }),
+              ]),
+            },
+          }),
+        }),
+      );
+    });
+
     it('acorta idempotencyKey largas antes de guardar el pago', async () => {
       jest.useFakeTimers();
       jest.setSystemTime(new Date('2026-06-01T12:00:00.000Z'));

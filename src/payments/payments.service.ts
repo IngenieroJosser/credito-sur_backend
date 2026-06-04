@@ -243,6 +243,7 @@ export class PaymentsService {
     prestamo: any,
     montoTotal: number,
     cuotaIdObjetivo?: string,
+    aplicarDesdeCuotaObjetivo = false,
   ) {
     const detallesPago: {
       cuotaId: string;
@@ -264,9 +265,19 @@ export class PaymentsService {
     }[] = [];
 
     const cuotasBase = prestamo.cuotas || [];
-    const cuotasAplicables = cuotaIdObjetivo
-      ? cuotasBase.filter((cuota: any) => cuota.id === cuotaIdObjetivo)
-      : cuotasBase;
+    const cuotasAplicables = (() => {
+      if (!cuotaIdObjetivo) return cuotasBase;
+
+      if (!aplicarDesdeCuotaObjetivo) {
+        return cuotasBase.filter((cuota: any) => cuota.id === cuotaIdObjetivo);
+      }
+
+      const cuotaIndex = cuotasBase.findIndex(
+        (cuota: any) => cuota.id === cuotaIdObjetivo,
+      );
+
+      return cuotaIndex >= 0 ? cuotasBase.slice(cuotaIndex) : [];
+    })();
 
     if (cuotaIdObjetivo && cuotasAplicables.length === 0) {
       throw new BadRequestException(
@@ -344,7 +355,7 @@ export class PaymentsService {
       }
     }
 
-    if (cuotaIdObjetivo && montoRestante > 1) {
+    if (cuotaIdObjetivo && !aplicarDesdeCuotaObjetivo && montoRestante > 1) {
       throw new BadRequestException(
         'El monto del pago excede el saldo pendiente de la cuota objetivo',
       );
@@ -847,6 +858,7 @@ export class PaymentsService {
           prestamoActual,
           montoTotal,
           paymentDto.cuotaId,
+          paymentDto.origenGestion === 'CIERRE_PENDIENTE',
         );
 
         const interesTotalFinalActual =
