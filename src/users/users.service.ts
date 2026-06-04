@@ -11,10 +11,38 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import * as argon2 from 'argon2';
-import { EstadoUsuario, RolUsuario, Prisma } from '@prisma/client';
+import { EstadoAprobacion, EstadoUsuario, RolUsuario, Prisma } from '@prisma/client';
 import { UnauthorizedException } from '@nestjs/common';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+import { getBogotaStartEndOfDay } from '../utils/date-utils';
+
+type UsuarioDetalleMetricas = {
+  dineroCaja: number;
+  recaudoDia: number;
+  metaDiaria: number;
+  porcentajeMeta: number;
+  rutaNombre: string;
+  zona: string;
+  progreso: number;
+  enMora: number;
+  gastosHoy: number;
+  actividadReciente: Array<{
+    time: string;
+    action: string;
+    detail: string;
+    amount?: string;
+    type: 'in' | 'out' | 'neutral';
+  }>;
+  ingresosDia: number;
+  egresosDia: number;
+  balanceDia: number;
+  gastosCategorias: Array<{ categoria: string; monto: number }>;
+  rutasActivas: number;
+  rutasTotal: number;
+  rutasInactivas: number;
+  usuariosActivos: number;
+};
 
 @Injectable()
 export class UsersService {
@@ -575,6 +603,422 @@ export class UsersService {
     });
 
     return restaurado;
+  }
+
+  async obtenerDetalleOperativo(id: string) {
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        nombres: true,
+        apellidos: true,
+        rol: true,
+      },
+    });
+
+    if (!usuario) {
+      throw new NotFoundException(`Usuario con ID ${id} no encontrado`);
+    }
+
+    const metricas = this.buildMetricasBase();
+
+    if (usuario.rol === RolUsuario.COBRADOR) {
+      Object.assign(metricas, await this.buildMetricasCobrador(usuario.id));
+    } else if (usuario.rol === RolUsuario.SUPERVISOR) {
+      Object.assign(metricas, await this.buildMetricasRutas({ supervisorId: usuario.id }));
+    } else if (usuario.rol === RolUsuario.COORDINADOR) {
+      Object.assign(metricas, await this.buildMetricasRutas({}));
+    } else if (usuario.rol === RolUsuario.CONTADOR) {
+      Object.assign(metricas, await this.buildMetricasContables());
+    } else if (usuario.rol === RolUsuario.PUNTO_DE_VENTA) {
+      Object.assign(metricas, await this.buildMetricasPuntoVenta(usuario.id));
+    } else if (
+      usuario.rol === RolUsuario.ADMIN ||
+      usuario.rol === RolUsuario.SUPER_ADMINISTRADOR
+    ) {
+      const [rutas, contable, usuariosActivos] = await Promise.all([
+        this.buildMetricasRutas({}),
+        this.buildMetricasContables(),
+        this.prisma.usuario.count({
+          where: { estado: EstadoUsuario.ACTIVO, eliminadoEn: null },
+        }),
+      ]);
+      Object.assign(metricas, rutas, {
+        dineroCaja: contable.dineroCaja,
+        ingresosDia: contable.ingresosDia,
+        egresosDia: contable.egresosDia,
+        balanceDia: contable.balanceDia,
+        usuariosActivos,
+      });
+    }
+
+    const actividadAuditoria = await this.getActividadReciente(usuario.id);
+    if (actividadAuditoria.length > 0) {
+      metricas.actividadReciente = [
+        ...metricas.actividadReciente,
+        ...actividadAuditoria,
+      ].slice(0, 20);
+    }
+
+    return {
+      usuarioId: usuario.id,
+      rol: usuario.rol,
+      metricas,
+    };
+  }
+
+  private buildMetricasBase(): UsuarioDetalleMetricas {
+    return {
+      dineroCaja: 0,
+      recaudoDia: 0,
+      metaDiaria: 0,
+      porcentajeMeta: 0,
+      rutaNombre: '',
+      zona: '',
+      progreso: 0,
+      enMora: 0,
+      gastosHoy: 0,
+      actividadReciente: [],
+      ingresosDia: 0,
+      egresosDia: 0,
+      balanceDia: 0,
+      gastosCategorias: [],
+      rutasActivas: 0,
+      rutasTotal: 0,
+      rutasInactivas: 0,
+      usuariosActivos: 0,
+    };
+  }
+
+  private toNumber(value: unknown): number {
+    const parsed = Number(value || 0);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  private getPorcentaje(recaudo: number, meta: number) {
+    return meta > 0 ? Math.round((recaudo / meta) * 100) : 0;
+  }
+
+  private getHoyRange() {
+    return getBogotaStartEndOfDay(new Date());
+  }
+
+  private async buildMetricasCobrador(usuarioId: string): Promise<Partial<UsuarioDetalleMetricas>> {
+    const { startDate, endDate } = this.getHoyRange();
+    const rutas = await this.prisma.ruta.findMany({
+      where: {
+        cobradorId: usuarioId,
+        activa: true,
+        eliminadoEn: null,
+      },
+      select: { id: true, nombre: true, zona: true },
+    });
+    const rutaIds = rutas.map((ruta) => ruta.id);
+
+    if (rutaIds.length === 0) {
+      return this.buildMetricasBase();
+    }
+
+    const [recaudoAgg, metaAgg, gastosAgg, cajaAgg, enMora, pagosRecientes] =
+      await Promise.all([
+        this.prisma.pago.aggregate({
+          where: {
+            cobradorId: usuarioId,
+            rutaId: { in: rutaIds },
+            fechaPago: { gte: startDate, lte: endDate },
+            OR: [{ origenGestion: null }, { origenGestion: { not: 'CIERRE_PENDIENTE' } }],
+          },
+          _sum: { montoTotal: true },
+        }),
+        this.prisma.cuota.aggregate({
+          where: this.buildCuotasRutaWhere(rutaIds, endDate),
+          _sum: { monto: true, montoInteresMora: true },
+        }),
+        this.prisma.gasto.aggregate({
+          where: {
+            cobradorId: usuarioId,
+            rutaId: { in: rutaIds },
+            fechaGasto: { gte: startDate, lte: endDate },
+            estadoAprobacion: EstadoAprobacion.APROBADO,
+          },
+          _sum: { monto: true },
+        }),
+        this.prisma.caja.aggregate({
+          where: { responsableId: usuarioId, activa: true },
+          _sum: { saldoActual: true },
+        }),
+        this.prisma.prestamo.count({
+          where: {
+            estado: 'EN_MORA',
+            eliminadoEn: null,
+            cliente: {
+              asignacionesRuta: {
+                some: { rutaId: { in: rutaIds }, activa: true },
+              },
+            },
+          },
+        }),
+        this.prisma.pago.findMany({
+          where: {
+            cobradorId: usuarioId,
+            rutaId: { in: rutaIds },
+            fechaPago: { gte: startDate, lte: endDate },
+          },
+          take: 8,
+          orderBy: { fechaPago: 'desc' },
+          select: {
+            fechaPago: true,
+            montoTotal: true,
+            cliente: { select: { nombres: true, apellidos: true } },
+          },
+        }),
+      ]);
+
+    const recaudoDia = this.toNumber(recaudoAgg._sum.montoTotal);
+    const metaDiaria =
+      this.toNumber(metaAgg._sum.monto) +
+      this.toNumber(metaAgg._sum.montoInteresMora);
+    const porcentajeMeta = this.getPorcentaje(recaudoDia, metaDiaria);
+    const primeraRuta = rutas[0];
+
+    return {
+      dineroCaja: this.toNumber(cajaAgg._sum.saldoActual),
+      recaudoDia,
+      metaDiaria,
+      porcentajeMeta,
+      rutaNombre: rutas.length === 1 ? primeraRuta.nombre : `${rutas.length} rutas asignadas`,
+      zona: rutas.length === 1 ? primeraRuta.zona : '',
+      progreso: porcentajeMeta,
+      enMora,
+      gastosHoy: this.toNumber(gastosAgg._sum.monto),
+      rutasActivas: rutas.length,
+      rutasTotal: rutas.length,
+      rutasInactivas: 0,
+      actividadReciente: pagosRecientes.map((p) => ({
+        time: p.fechaPago.toISOString(),
+        action: 'Pago registrado',
+        detail: `Cliente: ${`${p.cliente.nombres} ${p.cliente.apellidos}`.trim()}`,
+        amount: `+$${this.toNumber(p.montoTotal).toLocaleString('es-CO')}`,
+        type: 'in' as const,
+      })),
+    };
+  }
+
+  private async buildMetricasRutas(filters: { supervisorId?: string }): Promise<Partial<UsuarioDetalleMetricas>> {
+    const { startDate, endDate } = this.getHoyRange();
+    const routeWhere: Prisma.RutaWhereInput = {
+      eliminadoEn: null,
+      ...(filters.supervisorId ? { supervisorId: filters.supervisorId } : {}),
+    };
+    const [rutas, rutasActivas, rutasInactivas] = await Promise.all([
+      this.prisma.ruta.findMany({
+        where: routeWhere,
+        select: { id: true, nombre: true, zona: true, activa: true },
+      }),
+      this.prisma.ruta.count({ where: { ...routeWhere, activa: true } }),
+      this.prisma.ruta.count({ where: { ...routeWhere, activa: false } }),
+    ]);
+    const rutaIds = rutas.map((ruta) => ruta.id);
+
+    if (rutaIds.length === 0) {
+      return {
+        rutasActivas: 0,
+        rutasTotal: 0,
+        rutasInactivas: 0,
+      };
+    }
+
+    const [recaudoAgg, metaAgg, gastosAgg, enMora] = await Promise.all([
+      this.prisma.pago.aggregate({
+        where: {
+          rutaId: { in: rutaIds },
+          fechaPago: { gte: startDate, lte: endDate },
+          OR: [{ origenGestion: null }, { origenGestion: { not: 'CIERRE_PENDIENTE' } }],
+        },
+        _sum: { montoTotal: true },
+      }),
+      this.prisma.cuota.aggregate({
+        where: this.buildCuotasRutaWhere(rutaIds, endDate),
+        _sum: { monto: true, montoInteresMora: true },
+      }),
+      this.prisma.gasto.aggregate({
+        where: {
+          rutaId: { in: rutaIds },
+          fechaGasto: { gte: startDate, lte: endDate },
+          estadoAprobacion: EstadoAprobacion.APROBADO,
+        },
+        _sum: { monto: true },
+      }),
+      this.prisma.prestamo.count({
+        where: {
+          estado: 'EN_MORA',
+          eliminadoEn: null,
+          cliente: {
+            asignacionesRuta: {
+              some: { rutaId: { in: rutaIds }, activa: true },
+            },
+          },
+        },
+      }),
+    ]);
+
+    const recaudoDia = this.toNumber(recaudoAgg._sum.montoTotal);
+    const metaDiaria =
+      this.toNumber(metaAgg._sum.monto) +
+      this.toNumber(metaAgg._sum.montoInteresMora);
+    const porcentajeMeta = this.getPorcentaje(recaudoDia, metaDiaria);
+
+    return {
+      recaudoDia,
+      metaDiaria,
+      porcentajeMeta,
+      rutaNombre:
+        rutas.length === 1 ? rutas[0].nombre : `${rutas.length} rutas`,
+      zona: rutas.length === 1 ? rutas[0].zona : '',
+      progreso: porcentajeMeta,
+      enMora,
+      gastosHoy: this.toNumber(gastosAgg._sum.monto),
+      rutasActivas,
+      rutasTotal: rutas.length,
+      rutasInactivas,
+    };
+  }
+
+  private buildCuotasRutaWhere(rutaIds: string[], endDate: Date): Prisma.CuotaWhereInput {
+    return {
+      estado: { in: ['PENDIENTE', 'PARCIAL', 'VENCIDA'] as any },
+      fechaVencimiento: { lte: endDate },
+      prestamo: {
+        estado: { in: ['ACTIVO', 'EN_MORA'] as any },
+        eliminadoEn: null,
+        cliente: {
+          asignacionesRuta: {
+            some: { rutaId: { in: rutaIds }, activa: true },
+          },
+        },
+      },
+    };
+  }
+
+  private async buildMetricasContables(): Promise<Partial<UsuarioDetalleMetricas>> {
+    const { startDate, endDate } = this.getHoyRange();
+    const [ingresosAgg, egresosAgg, cajaAgg, gastosCategorias] =
+      await Promise.all([
+        this.prisma.journalLine.aggregate({
+          where: {
+            accountCode: { startsWith: '3.' },
+            NOT: { accountCode: { startsWith: '3.4' } },
+            journalEntry: { createdAt: { gte: startDate, lte: endDate } },
+          },
+          _sum: { creditAmount: true, debitAmount: true },
+        }),
+        this.prisma.journalLine.aggregate({
+          where: {
+            accountCode: { startsWith: '4.' },
+            journalEntry: { createdAt: { gte: startDate, lte: endDate } },
+          },
+          _sum: { debitAmount: true, creditAmount: true },
+        }),
+        this.prisma.caja.aggregate({
+          where: { activa: true },
+          _sum: { saldoActual: true },
+        }),
+        this.prisma.gasto.groupBy({
+          by: ['tipoGasto'],
+          where: {
+            fechaGasto: { gte: startDate, lte: endDate },
+            estadoAprobacion: EstadoAprobacion.APROBADO,
+          },
+          _sum: { monto: true },
+        }),
+      ]);
+
+    const ingresosDia =
+      this.toNumber(ingresosAgg._sum.creditAmount) -
+      this.toNumber(ingresosAgg._sum.debitAmount);
+    const egresosDia =
+      this.toNumber(egresosAgg._sum.debitAmount) -
+      this.toNumber(egresosAgg._sum.creditAmount);
+
+    return {
+      dineroCaja: this.toNumber(cajaAgg._sum.saldoActual),
+      ingresosDia,
+      egresosDia,
+      balanceDia: ingresosDia - egresosDia,
+      gastosHoy: egresosDia,
+      gastosCategorias: gastosCategorias
+        .map((g) => ({
+          categoria: String(g.tipoGasto || 'OTRO'),
+          monto: this.toNumber(g._sum.monto),
+        }))
+        .sort((a, b) => b.monto - a.monto)
+        .slice(0, 5),
+    };
+  }
+
+  private async buildMetricasPuntoVenta(usuarioId: string): Promise<Partial<UsuarioDetalleMetricas>> {
+    const { startDate, endDate } = this.getHoyRange();
+    const [creditosAgg, clientesCreados, cuotaInicialAgg] = await Promise.all([
+      this.prisma.prestamo.aggregate({
+        where: {
+          creadoPorId: usuarioId,
+          creadoEn: { gte: startDate, lte: endDate },
+          eliminadoEn: null,
+          OR: [{ productoId: { not: null } }, { tipoPrestamo: 'ARTICULO' }],
+        },
+        _count: { id: true },
+        _sum: { monto: true },
+      }),
+      this.prisma.cliente.count({
+        where: {
+          creadoPorId: usuarioId,
+          creadoEn: { gte: startDate, lte: endDate },
+        },
+      }),
+      this.prisma.prestamo.aggregate({
+        where: {
+          creadoPorId: usuarioId,
+          creadoEn: { gte: startDate, lte: endDate },
+          eliminadoEn: null,
+          OR: [{ productoId: { not: null } }, { tipoPrestamo: 'ARTICULO' }],
+        },
+        _sum: { cuotaInicial: true },
+      }),
+    ]);
+
+    const ingresosDia = this.toNumber(creditosAgg._sum.monto);
+
+    return {
+      ingresosDia,
+      recaudoDia: this.toNumber(cuotaInicialAgg._sum.cuotaInicial),
+      metaDiaria: ingresosDia,
+      porcentajeMeta: ingresosDia > 0 ? 100 : 0,
+      progreso: ingresosDia > 0 ? 100 : 0,
+      rutasActivas: this.toNumber(creditosAgg._count.id),
+      rutasTotal: clientesCreados,
+      rutaNombre: 'Punto de venta',
+    };
+  }
+
+  private async getActividadReciente(usuarioId: string): Promise<UsuarioDetalleMetricas['actividadReciente']> {
+    const audit = await this.prisma.registroAuditoria.findMany({
+      where: { usuarioId },
+      take: 12,
+      orderBy: { creadoEn: 'desc' },
+      select: {
+        creadoEn: true,
+        accion: true,
+        entidad: true,
+        entidadId: true,
+      },
+    });
+
+    return audit.map((item) => ({
+      time: item.creadoEn.toISOString(),
+      action: item.accion,
+      detail: `${item.entidad || ''} ${item.entidadId || ''}`.trim(),
+      type: 'neutral' as const,
+    }));
   }
 
   async toggleEstado(

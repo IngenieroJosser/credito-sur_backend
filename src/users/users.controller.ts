@@ -48,6 +48,12 @@ export class UsersController {
     return this.usersService.obtenerTodos();
   }
 
+  @Get(':id/operational-detail')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
+  obtenerDetalleOperativo(@Param('id', ParseUUIDPipe) id: string) {
+    return this.usersService.obtenerDetalleOperativo(id);
+  }
+
   @Get(':id')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   obtenerPorId(@Param('id', ParseUUIDPipe) id: string) {
