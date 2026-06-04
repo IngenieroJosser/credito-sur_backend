@@ -9,6 +9,7 @@ import {
   ParseUUIDPipe,
   UseGuards,
   Request,
+  Query,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -44,8 +45,8 @@ export class UsersController {
     RolUsuario.PUNTO_DE_VENTA,
     RolUsuario.CONTADOR,
   )
-  obtenerTodos() {
-    return this.usersService.obtenerTodos();
+  obtenerTodos(@Query('includeArchived') includeArchived?: string) {
+    return this.usersService.obtenerTodos(includeArchived === 'true');
   }
 
   @Get(':id/operational-detail')
@@ -74,6 +75,12 @@ export class UsersController {
   @Roles(RolUsuario.SUPER_ADMINISTRADOR)
   eliminar(@Param('id', ParseUUIDPipe) id: string, @Request() req: any) {
     return this.usersService.eliminar(id, req.user?.id);
+  }
+
+  @Patch(':id/archive')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR)
+  archivar(@Param('id', ParseUUIDPipe) id: string, @Request() req: any) {
+    return this.usersService.archivar(id, req.user?.id);
   }
 
   @Patch(':id/restore')

@@ -804,6 +804,7 @@ enum EstadoUsuario {
   ACTIVO
   INACTIVO
   SUSPENDIDO
+  ARCHIVADO
 }
 
 enum RolUsuario {

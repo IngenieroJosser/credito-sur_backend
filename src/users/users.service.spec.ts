@@ -1,5 +1,5 @@
-import { NotFoundException } from '@nestjs/common';
-import { RolUsuario } from '@prisma/client';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { EstadoUsuario, RolUsuario } from '@prisma/client';
 import { UsersService } from './users.service';
 
 describe('UsersService operational detail', () => {
@@ -7,7 +7,9 @@ describe('UsersService operational detail', () => {
     const prisma: any = {
       usuario: {
         findUnique: jest.fn(),
+        findMany: jest.fn(),
         count: jest.fn(),
+        update: jest.fn(),
       },
       ruta: {
         findMany: jest.fn(),
@@ -43,13 +45,15 @@ describe('UsersService operational detail', () => {
       ...prismaOverrides,
     };
 
+    const auditService = { create: jest.fn() };
+    const gateway = { broadcastUsuariosActualizados: jest.fn() };
     const service = new UsersService(
       prisma,
-      { create: jest.fn() } as any,
-      { broadcastUsuariosActualizados: jest.fn() } as any,
+      auditService as any,
+      gateway as any,
     );
 
-    return { service, prisma };
+    return { service, prisma, auditService, gateway };
   };
 
   it('returns accounting metrics for contador users', async () => {
@@ -151,5 +155,80 @@ describe('UsersService operational detail', () => {
 
     expect(detalle.metricas.usuariosActivos).toBe(7);
     expect(detalle.metricas.rutasTotal).toBe(0);
+  });
+
+  it('archives users without setting eliminadoEn', async () => {
+    const { service, prisma, auditService, gateway } = buildService();
+    prisma.usuario.findUnique.mockResolvedValue({
+      id: 'user-1',
+      esPrincipal: false,
+      estado: EstadoUsuario.ACTIVO,
+      eliminadoEn: null,
+    });
+    prisma.usuario.update.mockResolvedValue({
+      id: 'user-1',
+      estado: EstadoUsuario.ARCHIVADO,
+      eliminadoEn: null,
+    });
+
+    const result = await service.archivar('user-1', 'admin-1');
+
+    expect(result.estado).toBe(EstadoUsuario.ARCHIVADO);
+    expect(prisma.usuario.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'user-1' },
+        data: { estado: EstadoUsuario.ARCHIVADO, eliminadoEn: null },
+      }),
+    );
+    expect(auditService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ accion: 'ARCHIVAR_USUARIO' }),
+    );
+    expect(gateway.broadcastUsuariosActualizados).toHaveBeenCalledWith({
+      accion: 'ARCHIVAR',
+      usuarioId: 'user-1',
+    });
+  });
+
+  it('does not allow archiving the principal superadmin', async () => {
+    const { service, prisma } = buildService();
+    prisma.usuario.findUnique.mockResolvedValue({
+      id: 'root',
+      esPrincipal: true,
+      estado: EstadoUsuario.ACTIVO,
+      eliminadoEn: null,
+    });
+
+    await expect(service.archivar('root', 'admin-1')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(prisma.usuario.update).not.toHaveBeenCalled();
+  });
+
+  it('hides archived users by setting eliminadoEn without physical delete', async () => {
+    const { service, prisma } = buildService();
+    prisma.usuario.findUnique.mockResolvedValue({
+      id: 'user-1',
+      esPrincipal: false,
+      estado: EstadoUsuario.ARCHIVADO,
+      eliminadoEn: null,
+    });
+    prisma.usuario.update.mockResolvedValue({
+      id: 'user-1',
+      estado: EstadoUsuario.ARCHIVADO,
+      eliminadoEn: new Date('2026-06-04T12:00:00.000Z'),
+    });
+
+    await service.eliminar('user-1', 'admin-1');
+
+    expect(prisma.usuario.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'user-1' },
+        data: {
+          eliminadoEn: expect.any(Date),
+          estado: EstadoUsuario.ARCHIVADO,
+        },
+      }),
+    );
+    expect(prisma.usuario.delete).toBeUndefined();
   });
 });
