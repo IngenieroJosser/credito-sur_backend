@@ -81,6 +81,11 @@ export class RoutesService {
     return String(actor?.rol || '').toUpperCase() === RolUsuario.COBRADOR;
   }
 
+  private isAssignedRouteSupervisor(actor: RouteActor) {
+    const rol = String(actor?.rol || '').toUpperCase();
+    return rol === RolUsuario.SUPERVISOR || rol === RolUsuario.COORDINADOR;
+  }
+
   private assertCollectorOwnUser(cobradorId: string, actor?: RouteActor) {
     if (!this.isCollector(actor)) return;
     if (actor?.id && actor.id === cobradorId) return;
@@ -937,6 +942,9 @@ export class RoutesService {
     const cobradorId = this.isCollector(actor)
       ? actor?.id
       : options?.cobradorId;
+    const scopedSupervisorId = this.isAssignedRouteSupervisor(actor)
+      ? actor?.id
+      : supervisorId;
 
     const where: any = {
       eliminadoEn: null,
@@ -962,8 +970,10 @@ export class RoutesService {
       where.cobradorId = cobradorId;
     }
 
-    if (supervisorId) {
-      where.supervisorId = supervisorId;
+    if (scopedSupervisorId) {
+      where.supervisorId = scopedSupervisorId;
+    } else if (this.isAssignedRouteSupervisor(actor)) {
+      where.supervisorId = '__NO_ACTOR_ID__';
     }
 
     try {
@@ -1467,6 +1477,10 @@ export class RoutesService {
           id,
 
           eliminadoEn: null,
+
+          ...(this.isAssignedRouteSupervisor(actor)
+            ? { supervisorId: actor?.id || '__NO_ACTOR_ID__' }
+            : {}),
         },
 
         include: {

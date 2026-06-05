@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  NotFoundException,
 } from '@nestjs/common';
 import { Prisma, RolUsuario } from '@prisma/client';
 import { RoutesService } from './routes.service';
@@ -99,6 +100,92 @@ describe('RoutesService role scoping', () => {
         cobradorId: 'cobrador-propio',
       }),
     });
+  });
+
+  it('forces route list queries from supervisors to assigned routes only', async () => {
+    const prisma = {
+      ruta: {
+        findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(0),
+      },
+    };
+    const service = makeService(prisma);
+
+    await service.findAll({ supervisorId: 'supervisor-ajeno', take: 10 }, {
+      id: 'supervisor-propio',
+      rol: RolUsuario.SUPERVISOR,
+    } as any);
+
+    expect(prisma.ruta.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          eliminadoEn: null,
+          supervisorId: 'supervisor-propio',
+        }),
+      }),
+    );
+    expect(prisma.ruta.count).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        eliminadoEn: null,
+        supervisorId: 'supervisor-propio',
+      }),
+    });
+  });
+
+  it('forces route list queries from coordinators to assigned routes only', async () => {
+    const prisma = {
+      ruta: {
+        findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(0),
+      },
+    };
+    const service = makeService(prisma);
+
+    await service.findAll({ take: 10 }, {
+      id: 'coordinador-propio',
+      rol: RolUsuario.COORDINADOR,
+    } as any);
+
+    expect(prisma.ruta.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          eliminadoEn: null,
+          supervisorId: 'coordinador-propio',
+        }),
+      }),
+    );
+    expect(prisma.ruta.count).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        eliminadoEn: null,
+        supervisorId: 'coordinador-propio',
+      }),
+    });
+  });
+
+  it('limits route detail for supervisors to assigned routes only', async () => {
+    const prisma = {
+      ruta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+    };
+    const service = makeService(prisma);
+
+    await expect(
+      service.findOne('ruta-ajena', {
+        id: 'supervisor-propio',
+        rol: RolUsuario.SUPERVISOR,
+      } as any),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    expect(prisma.ruta.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: 'ruta-ajena',
+          eliminadoEn: null,
+          supervisorId: 'supervisor-propio',
+        }),
+      }),
+    );
   });
 
   it('rejects a collector requesting daily visits for a route they do not own', async () => {
