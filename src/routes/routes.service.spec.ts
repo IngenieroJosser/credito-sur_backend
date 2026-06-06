@@ -599,6 +599,10 @@ describe('RoutesService role scoping', () => {
         meta: 100000,
         recaudo: 100000,
         recaudoOperativo: 100000,
+        gastos: 15000,
+        recaudoEfectivo: 60000,
+        recaudoTransferencia: 40000,
+        netoEfectivoRuta: 45000,
       },
       visitas: [
         {
@@ -651,6 +655,10 @@ describe('RoutesService role scoping', () => {
           tipoEvento: 'JORNADA_PENDIENTE_CERRADA',
           clientesGestionados: 1,
           clientesPagaron: 1,
+          recaudoEfectivo: 60000,
+          recaudoTransferencia: 40000,
+          gastosRuta: 15000,
+          netoEfectivoRuta: 45000,
           clientesPagaronDetalle: [
             expect.objectContaining({
               nombreCliente: 'Cliente sin nombre',
