@@ -3138,6 +3138,21 @@ export class RoutesService {
     const { startDate: fechaConsulta } =
       getBogotaStartEndOfDayFromKey(fechaKey);
 
+    const jornada = await this.prisma.rutaJornada?.findUnique?.({
+      where: {
+        rutaId_fechaOperativa: {
+          rutaId,
+          fechaOperativa: fechaKey,
+        },
+      },
+      select: {
+        id: true,
+        estado: true,
+        cerradaEn: true,
+        regularizadaEn: true,
+      },
+    });
+
     // Obtener todos los clientes de la ruta con sus préstamos activos
 
     const asignaciones = await this.prisma.asignacionRuta.findMany({
@@ -3384,7 +3399,9 @@ export class RoutesService {
         ],
       },
       select: { 
+        id: true,
         clienteId: true, 
+        prestamoId: true,
         montoTotal: true,
         fechaPago: true,
         fechaOperativaRuta: true,
@@ -3643,6 +3660,10 @@ export class RoutesService {
         recaudoOperativo,
         recaudoContable,
         recaudoRegularizado,
+        jornadaId: jornada?.id || null,
+        jornadaEstado: jornada?.estado || null,
+        jornadaCerradaEn: jornada?.cerradaEn || null,
+        jornadaRegularizadaEn: jornada?.regularizadaEn || null,
         meta: totalEsperadoFinal,
         gastos: gastosFinal,
         efectividad,
