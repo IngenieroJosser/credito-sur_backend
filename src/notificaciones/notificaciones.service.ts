@@ -336,6 +336,10 @@ export class NotificacionesService {
             tipo: tipoFinal,
             entidadId: data.entidadId,
             entidad: data.entidad,
+            tipoEvento: metadataFinal?.tipoEvento,
+            pagoId: metadataFinal?.pagoId,
+            rutaId: metadataFinal?.rutaId,
+            fechaOperativaRuta: metadataFinal?.fechaOperativaRuta,
             link: notificacion.id ? `/notificaciones` : undefined, // Ajustar según necesidad
           },
         })

@@ -482,6 +482,7 @@ describe('PaymentsService', () => {
           fechaOperativaRuta: '2026-05-27',
           origenGestion: 'CIERRE_PENDIENTE',
           rutaId: 'ruta-1',
+          notas: 'Recibido con nota administrativa',
           idempotencyKey:
             'CIERRE_PENDIENTE:ruta-1:2026-05-27:cliente-1:prestamo-1:cuota-2:1:PAGO:110000',
         } as any);
@@ -509,6 +510,8 @@ describe('PaymentsService', () => {
             fechaOperativaRuta: '2026-05-27',
             montoTotal: 110000,
             cuotasAfectadas: 1,
+            notaAdministrativa: 'Recibido con nota administrativa',
+            notas: 'Recibido con nota administrativa',
           }),
         }),
       );
