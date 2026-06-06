@@ -523,6 +523,130 @@ describe('RoutesService role scoping', () => {
     jest.useRealTimers();
   });
 
+  it('cierra una jornada regularizada detectada desde activación legacy sin RutaJornada', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-04T12:00:00.000Z'));
+
+    const tx = {
+      rutaJornada: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({
+          id: 'jornada-legacy',
+          rutaId: 'ruta-1',
+          cajaId: 'caja-ruta-1',
+          fechaOperativa: '2026-06-03',
+          estado: 'PENDIENTE_CIERRE',
+        }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+    };
+    const prisma = {
+      ruta: {
+        findFirst: jest
+          .fn()
+          .mockResolvedValueOnce({ id: 'ruta-1', nombre: 'Ruta 1' })
+          .mockResolvedValueOnce({
+            id: 'ruta-1',
+            nombre: 'Ruta 1',
+            cobrador: { id: 'cobrador-1', nombres: 'Cobrador', apellidos: 'Uno' },
+            cajas: [{ id: 'caja-ruta-1' }],
+          })
+          .mockResolvedValueOnce({
+            id: 'ruta-1',
+            nombre: 'Ruta 1',
+            cobrador: { id: 'cobrador-1', nombres: 'Cobrador', apellidos: 'Uno' },
+            cajas: [{ id: 'caja-ruta-1' }],
+          }),
+      },
+      rutaJornada: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([]),
+      },
+      transaccion: {
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([
+            {
+              id: 'activacion-legacy',
+              fechaTransaccion: new Date('2026-06-03T14:00:00.000Z'),
+            },
+          ])
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([]),
+      },
+      notificacion: {
+        create: jest.fn().mockResolvedValue({}),
+      },
+      usuario: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'admin-1',
+          nombres: 'Admin',
+          apellidos: 'Uno',
+          rol: RolUsuario.ADMIN,
+        }),
+      },
+      $transaction: jest.fn().mockImplementation((callback: any) => callback(tx)),
+    };
+    const service = makeService(prisma);
+    jest.spyOn(service as any, 'getDailyVisits').mockResolvedValue({
+      resumen: {
+        meta: 100000,
+        recaudo: 100000,
+        recaudoOperativo: 100000,
+      },
+      visitas: [
+        {
+          recaudadoDelDia: 100000,
+          estadoVisita: null,
+        },
+      ],
+    });
+
+    await expect(
+      service.cerrarJornadaRegularizada(
+        'ruta-1',
+        '2026-06-03',
+        'Jornada regularizada',
+        { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+      ),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        success: true,
+        jornadaId: 'jornada-legacy',
+        fechaOperativa: '2026-06-03',
+      }),
+    );
+
+    expect(tx.rutaJornada.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        rutaId: 'ruta-1',
+        cajaId: 'caja-ruta-1',
+        fechaOperativa: '2026-06-03',
+        estado: 'PENDIENTE_CIERRE',
+        activacionTransaccionId: 'activacion-legacy',
+      }),
+    });
+    expect(tx.rutaJornada.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'jornada-legacy',
+        estado: 'PENDIENTE_CIERRE',
+      },
+      data: expect.objectContaining({
+        estado: 'REGULARIZADA',
+        cierreTransaccionId: null,
+        regularizadaPorId: 'admin-1',
+      }),
+    });
+
+    jest.useRealTimers();
+  });
+
   it('bloquea activar ruta en domingo antes de consultar base de datos', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-05-31T12:00:00.000Z'));
 
