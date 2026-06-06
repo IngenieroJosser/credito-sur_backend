@@ -1289,10 +1289,7 @@ export class RoutesService {
                 if (vtoKey > hoyBogotaKey) continue;
                 const montoFull = Number(c.monto || 0);
                 const montoPagado = Number(c.montoPagado || 0);
-                const montoPendiente =
-                  c.estado === 'PARCIAL'
-                    ? Math.max(0, montoFull - montoPagado)
-                    : montoFull;
+                const montoPendiente = Math.max(0, montoFull - montoPagado);
                 if (montoPendiente <= 0) continue;
                 primeraCuotaPorPrestamo.set(pid, montoPendiente);
               }
@@ -1310,10 +1307,7 @@ export class RoutesService {
                 const pid = String(c.prestamoId);
                 const montoFull = Number(c.monto || 0);
                 const montoPagado = Number(c.montoPagado || 0);
-                const montoPendiente =
-                  c.estado === 'PARCIAL'
-                    ? Math.max(0, montoFull - montoPagado)
-                    : montoFull;
+                const montoPendiente = Math.max(0, montoFull - montoPagado);
                 if (montoPendiente <= 0) continue;
                 acumuladoPorPrestamo.set(
                   pid,
@@ -1332,9 +1326,7 @@ export class RoutesService {
               }
 
               estadisticas.metaDelDia =
-                metaNominal +
-                estadisticas.cobranzaDelDia +
-                recaudoRegularizadoHoy;
+                metaNominal + estadisticas.cobranzaDelDia;
 
               if (process.env.NODE_ENV !== 'production') {
                 console.log(`[META DEBUG] Ruta: ${ruta.nombre}`, {
@@ -1728,18 +1720,10 @@ export class RoutesService {
             this.prisma.cuota.findMany({
               where: {
                 prestamoId: { in: pIds },
-                OR: [
-                  {
-                    estado: {
-                      in: ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'],
-                    },
-                    fechaVencimiento: { lte: dFinUTC },
-                  },
-                  {
-                    estado: 'PAGADA',
-                    fechaPago: { gte: dInicioBogota, lte: dFinBogota },
-                  },
-                ],
+                estado: {
+                  in: ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'],
+                },
+                fechaVencimiento: { lte: dFinUTC },
               },
               select: {
                 prestamoId: true,
@@ -1747,6 +1731,7 @@ export class RoutesService {
                 fechaPago: true,
                 estado: true,
                 monto: true,
+                montoPagado: true,
               },
               orderBy: [{ prestamoId: 'asc' }, { fechaVencimiento: 'asc' }],
             }),
@@ -1796,7 +1781,10 @@ export class RoutesService {
             if (!c?.prestamoId) continue;
             const pid = String(c.prestamoId);
             if (primeraCuotaPorPrestamo.has(pid)) continue;
-            const monto = Number(c.monto || 0);
+            const monto = Math.max(
+              0,
+              Number(c.monto || 0) - Number((c as any).montoPagado || 0),
+            );
             if (monto <= 0) continue;
             primeraCuotaPorPrestamo.set(pid, monto);
           }
@@ -1809,51 +1797,21 @@ export class RoutesService {
             .map((p) => p.id);
 
           const metaDiariaPorPrestamo = new Map<string, number>();
-          if (diariosIds.length > 0) {
-            const [cuotasDiariasVencidasAgg, cuotasDiariasPagadasHoyAgg] =
-              await Promise.all([
-                this.prisma.cuota.groupBy({
-                  by: ['prestamoId'],
-                  where: {
-                    prestamoId: { in: diariosIds },
-                    estado: {
-                      in: ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'],
-                    },
-                    fechaVencimiento: { lte: dFinUTC },
-                  },
-                  _sum: { monto: true },
-                }),
-                this.prisma.cuota.groupBy({
-                  by: ['prestamoId'],
-                  where: {
-                    prestamoId: { in: diariosIds },
-                    estado: 'PAGADA',
-                    fechaPago: { gte: dInicioBogota, lte: dFinBogota },
-                  },
-                  _sum: { monto: true },
-                }),
-              ]);
-
-            const pagadasHoyMap = new Map<string, number>();
-            for (const row of cuotasDiariasPagadasHoyAgg as any[]) {
-              pagadasHoyMap.set(
-                String(row.prestamoId),
-                Number(row?._sum?.monto || 0),
+          const diariosIdsSet = new Set(diariosIds.map((pid) => String(pid)));
+          if (diariosIdsSet.size > 0) {
+            for (const c of cuotasCriterioQuery) {
+              if (!c?.prestamoId) continue;
+              const pid = String(c.prestamoId);
+              if (!diariosIdsSet.has(pid)) continue;
+              const monto = Math.max(
+                0,
+                Number(c.monto || 0) - Number((c as any).montoPagado || 0),
               );
-            }
-
-            for (const row of cuotasDiariasVencidasAgg as any[]) {
+              if (monto <= 0) continue;
               metaDiariaPorPrestamo.set(
-                String(row.prestamoId),
-                Number(row?._sum?.monto || 0),
+                pid,
+                Number(metaDiariaPorPrestamo.get(pid) || 0) + monto,
               );
-            }
-
-            for (const pid of diariosIds) {
-              const key = String(pid);
-              if (Number(metaDiariaPorPrestamo.get(key) || 0) > 0) continue;
-              const pagadaHoy = Number(pagadasHoyMap.get(key) || 0);
-              if (pagadaHoy > 0) metaDiariaPorPrestamo.set(key, pagadaHoy);
             }
           }
 
@@ -1868,7 +1826,7 @@ export class RoutesService {
           }
 
           estadisticas.metaDelDia =
-            metaNominal + montoMetaInicial + recaudoRegularizadoHoy;
+            metaNominal + estadisticas.cobranzaDelDia;
         }
 
         const cuotasCriterio = prestamosActivos.flatMap((p) => p?.cuotas || []);
