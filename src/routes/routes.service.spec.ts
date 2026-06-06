@@ -353,6 +353,111 @@ describe('RoutesService role scoping', () => {
     );
   });
 
+  it('mantiene como cuota objetivo historica la cuota cubierta por el pago de la jornada', async () => {
+    const fechaConsulta = new Date('2026-06-05T12:00:00.000Z');
+    const fechaPago = new Date('2026-06-06T15:00:00.000Z');
+    const cuotaPagada = {
+      id: 'cuota-3',
+      numeroCuota: 3,
+      fechaVencimiento: new Date('2026-06-04T12:00:00.000Z'),
+      fechaVencimientoProrroga: null,
+      fechaPago,
+      monto: 916_664,
+      montoPagado: 916_664,
+      estado: 'PAGADA',
+    };
+    const prisma = {
+      asignacionRuta: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'asig-juan',
+            ordenVisita: 1,
+            cliente: {
+              id: 'cliente-juan',
+              codigo: 'C003',
+              dni: '333',
+              nombres: 'Juan Camilo',
+              apellidos: 'Marrugo',
+              telefono: '302',
+              direccion: 'Calle 3',
+              nivelRiesgo: 'MINIMO',
+              prestamos: [
+                {
+                  id: 'prestamo-juan',
+                  numeroPrestamo: 'P-3',
+                  monto: 5_500_000,
+                  saldoPendiente: 3_666_672,
+                  frecuenciaPago: 'DIARIO',
+                  cantidadCuotas: 12,
+                  estado: 'ACTIVO',
+                  cuotas: [
+                    cuotaPagada,
+                    {
+                      id: 'cuota-4',
+                      numeroCuota: 4,
+                      fechaVencimiento: fechaConsulta,
+                      fechaVencimientoProrroga: null,
+                      fechaPago: null,
+                      monto: 458_332,
+                      montoPagado: 0,
+                      estado: 'PENDIENTE',
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ]),
+      },
+      registroVisita: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      pago: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            clienteId: 'cliente-juan',
+            prestamoId: 'prestamo-juan',
+            montoTotal: 916_664,
+            fechaPago,
+            fechaOperativaRuta: '2026-06-05',
+            origenGestion: 'CIERRE_PENDIENTE',
+            metodoPago: 'EFECTIVO',
+            detalles: [
+              {
+                monto: 916_664,
+                cuota: cuotaPagada,
+              },
+            ],
+          },
+        ]),
+      },
+      cliente: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      gasto: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 0 } }),
+      },
+    };
+
+    const resultado = await makeService(prisma).getDailyVisits(
+      'ruta-1',
+      '2026-06-05',
+    );
+
+    expect(resultado.visitas[0]).toEqual(
+      expect.objectContaining({
+        recaudadoDelDia: 916_664,
+        cuotaObjetivo: expect.objectContaining({
+          id: 'cuota-3',
+          numeroCuota: 3,
+          saldoExigibleEnFechaOperativa: 0,
+          cubiertaPorPagoJornada: true,
+        }),
+        cuotaObjetivoId: 'cuota-3',
+      }),
+    );
+  });
+
   it('rejects a collector checking activation for a route they do not own', async () => {
     const prisma = {
       ruta: {
