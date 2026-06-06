@@ -4635,6 +4635,34 @@ export class RoutesService {
       meta > 0
         ? Math.round(((recaudoOperativo / meta) * 100) * 10) / 10
         : 0;
+    const resumirClienteGestionado = (visita: any) => {
+      const cliente = visita?.cliente || {};
+      const nombreCliente =
+        getNombreClienteVisita(visita) ||
+        [cliente.nombres, cliente.apellidos].filter(Boolean).join(' ') ||
+        'Cliente sin nombre';
+
+      return {
+        clienteId: cliente.id || visita?.clienteId || null,
+        nombreCliente,
+        documento: cliente.cedula || cliente.dni || visita?.cedula || null,
+        estadoGestion: this.resolveEstadoGestionCierrePendiente(visita),
+        ordenVisita: visita?.ordenVisita ?? null,
+        cuotaObjetivoId: visita?.cuotaObjetivoId ?? null,
+        prestamoObjetivoId:
+          visita?.prestamoObjetivoId ||
+          visita?.cuotaObjetivoPrestamoId ||
+          null,
+        recaudado: Number(visita?.recaudadoDelDia || 0),
+      };
+    };
+
+    const clientesGestionadosDetalle = clientesGestionados.map(
+      resumirClienteGestionado,
+    );
+    const clientesPagaronDetalle = clientesPagaron.map(
+      resumirClienteGestionado,
+    );
 
     await this.notificacionesService.notifyRolesDeduped?.({
       roles: [
@@ -4671,8 +4699,10 @@ export class RoutesService {
         cerradaPorNombre,
         observaciones: observacionesLimpias,
         totalClientes,
-        clientesGestionados,
-        clientesPagaron,
+        clientesGestionados: clientesGestionados.length,
+        clientesPagaron: clientesPagaron.length,
+        clientesGestionadosDetalle,
+        clientesPagaronDetalle,
         clientesAusentes: clientesAusentes.length,
         clientesPendientes: clientesPendientes.length,
         meta,
