@@ -109,6 +109,9 @@ function buildPrismaMock() {
       findFirst: jest.fn().mockResolvedValue(null),
       update: jest.fn().mockResolvedValue({}),
     },
+    registroVisita: {
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
   };
 
   return {
@@ -338,6 +341,99 @@ describe('ApprovalsService financial ledger controls', () => {
         }),
       }),
     );
+  });
+
+  it('conserva contexto de cierre pendiente al aprobar transferencia regularizada', async () => {
+    const prisma = buildPrismaMock();
+    prisma._tx.prestamo.findFirst.mockResolvedValue({
+      id: 'prestamo-1',
+      clienteId: 'cliente-1',
+      estado: EstadoPrestamo.ACTIVO,
+      saldoPendiente: 200000,
+      totalPagado: 0,
+      capitalPagado: 0,
+      interesPagado: 0,
+      cuotas: [
+        {
+          id: 'cuota-1',
+          monto: 100000,
+          montoPagado: 0,
+          montoCapital: 80000,
+          montoInteres: 15000,
+          montoInteresMora: 5000,
+          estado: EstadoCuota.VENCIDA,
+        },
+        {
+          id: 'cuota-2',
+          monto: 100000,
+          montoPagado: 0,
+          montoCapital: 80000,
+          montoInteres: 15000,
+          montoInteresMora: 5000,
+          estado: EstadoCuota.VENCIDA,
+        },
+      ],
+      cliente: { id: 'cliente-1' },
+    });
+
+    await (makeService(prisma) as any).approveTransferPayment(
+      {
+        id: 'approval-regularizada-1',
+        referenciaId: 'prestamo-1',
+        solicitadoPorId: 'cobrador-1',
+        montoSolicitud: 100000,
+        datosSolicitud: {
+          prestamoId: 'prestamo-1',
+          clienteId: 'cliente-1',
+          cobradorId: 'cobrador-1',
+          rutaId: 'ruta-1',
+          montoTotal: 100000,
+          metodoPago: MetodoPago.TRANSFERENCIA,
+          cuotaId: 'cuota-2',
+          fechaOperativaRuta: '2026-06-05',
+          origenGestion: 'CIERRE_PENDIENTE',
+          notas: 'Pago regularizado por banco',
+        },
+      },
+      'admin-1',
+    );
+
+    expect(prisma._tx.pago.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          rutaId: 'ruta-1',
+          fechaOperativaRuta: '2026-06-05',
+          origenGestion: 'CIERRE_PENDIENTE',
+          detalles: {
+            create: expect.arrayContaining([
+              expect.objectContaining({ cuotaId: 'cuota-2' }),
+            ]),
+          },
+        }),
+      }),
+    );
+    expect(prisma._tx.cuota.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'cuota-1' },
+      }),
+    );
+    expect(prisma._tx.cuota.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'cuota-2' },
+      }),
+    );
+    expect(prisma._tx.registroVisita.updateMany).toHaveBeenCalledWith({
+      where: {
+        clienteId: 'cliente-1',
+        fechaVisita: '2026-06-05',
+        rutaId: 'ruta-1',
+        estadoVisita: 'ausente',
+      },
+      data: {
+        estadoVisita: 'pagado',
+        notas: 'Ausencia anulada automáticamente por registro de pago.',
+      },
+    });
   });
 
   it('aprueba transferencia usando el cobrador activo de la ruta aunque la solicitud traiga otro usuario', async () => {
