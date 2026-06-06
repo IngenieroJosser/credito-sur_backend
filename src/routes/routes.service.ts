@@ -3407,6 +3407,22 @@ export class RoutesService {
         fechaOperativaRuta: true,
         origenGestion: true,
         metodoPago: true,
+        detalles: {
+          select: {
+            monto: true,
+            cuota: {
+              select: {
+                id: true,
+                numeroCuota: true,
+                estado: true,
+                fechaVencimiento: true,
+                fechaVencimientoProrroga: true,
+                monto: true,
+                montoPagado: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -3458,6 +3474,63 @@ export class RoutesService {
       (p) => isRegularizadoParaJornada(p) && !isFechaPagoEnRango(p),
     );
 
+    const buildCuotaObjetivoDesdePago = (pago: any) => {
+      const detalle = Array.isArray(pago?.detalles)
+        ? [...pago.detalles]
+            .filter((d: any) => d?.cuota)
+            .sort((a: any, b: any) =>
+              Number(a?.cuota?.numeroCuota || 0) -
+              Number(b?.cuota?.numeroCuota || 0),
+            )[0]
+        : null;
+      const cuota = detalle?.cuota;
+      if (!cuota) return null;
+
+      const fechaEfectivaKey = this.getCuotaFechaEfectivaKey(cuota);
+      const montoCuota = Number(cuota.monto || 0);
+      const montoPagado = Math.max(
+        Number(cuota.montoPagado || 0),
+        Number(detalle?.monto || 0),
+      );
+
+      return {
+        id: cuota.id,
+        numeroCuota: cuota.numeroCuota,
+        estadoActual: cuota.estado,
+        fechaVencimiento: cuota.fechaVencimiento,
+        fechaVencimientoProrroga: cuota.fechaVencimientoProrroga || null,
+        fechaEfectiva: fechaEfectivaKey,
+        montoCuota,
+        montoPagado,
+        saldoCuota: 0,
+        saldoExigibleEnFechaOperativa: 0,
+        enMoraEnFechaOperativa: false,
+        puedePagar: false,
+        puedeReprogramar: false,
+        esCuotaFuturaEnFechaOperativa: false,
+        esCuotaPagadaHistorica: true,
+        cubiertaPorPagoJornada: true,
+        motivoBloqueoPago: 'La cuota objetivo ya está pagada.',
+        motivoBloqueoReprogramacion: 'La cuota objetivo ya está pagada.',
+      };
+    };
+
+    const cuotaPagadaPorPrestamo = new Map<string, any>();
+    const cuotaPagadaPorCliente = new Map<string, any>();
+    pagosOperativos.forEach((p: any) => {
+      const cuotaObjetivoPago = buildCuotaObjetivoDesdePago(p);
+      if (!cuotaObjetivoPago) return;
+
+      const prestamoId = String(p?.prestamoId || '');
+      const clienteId = String(p?.clienteId || '');
+      if (prestamoId && !cuotaPagadaPorPrestamo.has(prestamoId)) {
+        cuotaPagadaPorPrestamo.set(prestamoId, cuotaObjetivoPago);
+      }
+      if (clienteId && !cuotaPagadaPorCliente.has(clienteId)) {
+        cuotaPagadaPorCliente.set(clienteId, cuotaObjetivoPago);
+      }
+    });
+
     const recaudoEfectivo = sumPagosByMetodo(pagosOperativos, 'EFECTIVO');
     const recaudoTransferencia = sumPagosByMetodo(
       pagosOperativos,
@@ -3498,6 +3571,35 @@ export class RoutesService {
       const cid = v.cliente?.id || v.clienteId;
       // @ts-ignore - Prisma type inference issue, properties exist at runtime
       v.recaudadoDelDia = pagosPorCliente[cid] || 0;
+
+      if (Number(v.recaudadoDelDia || 0) > 0) {
+        const prestamoId = String(v.prestamoObjetivoId || '');
+        const cuotaPagada =
+          (prestamoId ? cuotaPagadaPorPrestamo.get(prestamoId) : null) ||
+          cuotaPagadaPorCliente.get(String(cid || ''));
+
+        if (cuotaPagada) {
+          // @ts-ignore - Prisma type inference issue, properties exist at runtime
+          v.cuotaObjetivo = cuotaPagada;
+          // @ts-ignore - Prisma type inference issue, properties exist at runtime
+          v.cuotaObjetivoId = cuotaPagada.id;
+          // @ts-ignore - Prisma type inference issue, properties exist at runtime
+          v.cuotaObjetivoPrestamoId = cuotaPagada.id;
+
+          if (Array.isArray(v.prestamos)) {
+            v.prestamos = v.prestamos.map((prestamo: any) => {
+              if (
+                prestamo?.id === prestamoId ||
+                cuotaPagadaPorPrestamo.get(String(prestamo?.id || ''))?.id ===
+                  cuotaPagada.id
+              ) {
+                return { ...prestamo, cuotaObjetivo: cuotaPagada };
+              }
+              return prestamo;
+            });
+          }
+        }
+      }
 
       const registro = visitasMap.get(cid);
       if (registro) {
