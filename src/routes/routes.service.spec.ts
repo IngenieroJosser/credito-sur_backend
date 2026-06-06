@@ -643,6 +643,24 @@ describe('RoutesService role scoping', () => {
         regularizadaPorId: 'admin-1',
       }),
     });
+    expect(
+      (service as any).notificacionesService.notifyRolesDeduped,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          tipoEvento: 'JORNADA_PENDIENTE_CERRADA',
+          clientesGestionados: 1,
+          clientesPagaron: 1,
+          clientesPagaronDetalle: [
+            expect.objectContaining({
+              nombreCliente: 'Cliente sin nombre',
+              estadoGestion: 'PAGO_REGISTRADO',
+              recaudado: 100000,
+            }),
+          ],
+        }),
+      }),
+    );
 
     jest.useRealTimers();
   });
