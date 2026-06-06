@@ -109,6 +109,54 @@ describe('NotificacionesService', () => {
       });
     });
 
+    it('includes regularized payment metadata in the push payload', async () => {
+      const data = {
+        usuarioId: 'user-123',
+        titulo: 'Pago regularizado registrado',
+        mensaje: 'Pago asociado a jornada pendiente',
+        tipo: 'INFO',
+        entidad: 'Pago',
+        entidadId: 'pago-1',
+        metadata: {
+          tipoEvento: 'PAGO_REGULARIZADO',
+          pagoId: 'pago-1',
+          rutaId: 'ruta-1',
+          fechaOperativaRuta: '2026-06-03',
+        },
+      };
+
+      await service.create(data);
+
+      expect(prismaService.notificacion.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          tipo: 'SISTEMA',
+          entidad: 'Pago',
+          entidadId: 'pago-1',
+          metadata: expect.objectContaining({
+            nivel: 'INFORMATIVO',
+            tipoEvento: 'PAGO_REGULARIZADO',
+            pagoId: 'pago-1',
+            rutaId: 'ruta-1',
+            fechaOperativaRuta: '2026-06-03',
+          }),
+        }),
+      });
+      expect(mockPushService.sendPushNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'user-123',
+          data: expect.objectContaining({
+            tipo: 'SISTEMA',
+            entidad: 'Pago',
+            entidadId: 'pago-1',
+            tipoEvento: 'PAGO_REGULARIZADO',
+            pagoId: 'pago-1',
+            rutaId: 'ruta-1',
+            fechaOperativaRuta: '2026-06-03',
+          }),
+        }),
+      );
+    });
+
     it('should handle errors gracefully (log only)', async () => {
       // Configuramos el mock para lanzar error
       mockPrismaService.notificacion.create.mockRejectedValue(

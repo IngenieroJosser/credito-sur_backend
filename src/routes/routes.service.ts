@@ -3138,6 +3138,21 @@ export class RoutesService {
     const { startDate: fechaConsulta } =
       getBogotaStartEndOfDayFromKey(fechaKey);
 
+    const jornada = await this.prisma.rutaJornada?.findUnique?.({
+      where: {
+        rutaId_fechaOperativa: {
+          rutaId,
+          fechaOperativa: fechaKey,
+        },
+      },
+      select: {
+        id: true,
+        estado: true,
+        cerradaEn: true,
+        regularizadaEn: true,
+      },
+    });
+
     // Obtener todos los clientes de la ruta con sus préstamos activos
 
     const asignaciones = await this.prisma.asignacionRuta.findMany({
@@ -3384,7 +3399,9 @@ export class RoutesService {
         ],
       },
       select: { 
+        id: true,
         clienteId: true, 
+        prestamoId: true,
         montoTotal: true,
         fechaPago: true,
         fechaOperativaRuta: true,
@@ -3643,6 +3660,10 @@ export class RoutesService {
         recaudoOperativo,
         recaudoContable,
         recaudoRegularizado,
+        jornadaId: jornada?.id || null,
+        jornadaEstado: jornada?.estado || null,
+        jornadaCerradaEn: jornada?.cerradaEn || null,
+        jornadaRegularizadaEn: jornada?.regularizadaEn || null,
         meta: totalEsperadoFinal,
         gastos: gastosFinal,
         efectividad,
@@ -4409,6 +4430,10 @@ export class RoutesService {
       );
     }
 
+    const cierrePendienteDetectado = (
+      await this.getCierresPendientesRuta(rutaId)
+    ).find((cierre) => cierre.fechaOperativa === fechaOperativa);
+
     // Validar que tenga observaciones si hay clientes pendientes, ausentes o descuadre
     const detalleDia = await this.getDailyVisits(
       rutaId,
@@ -4467,11 +4492,29 @@ export class RoutesService {
         },
       });
 
-      if (!jornadaActual) {
+      const jornadaRegularizable =
+        jornadaActual ||
+        (cierrePendienteDetectado?.cajaId
+          ? await tx.rutaJornada.create({
+              data: {
+                rutaId,
+                cajaId: cierrePendienteDetectado.cajaId,
+                fechaOperativa,
+                estado: 'PENDIENTE_CIERRE',
+                activacionTransaccionId:
+                  cierrePendienteDetectado.activacionId || null,
+                activadaEn: cierrePendienteDetectado.fechaActivacion
+                  ? new Date(cierrePendienteDetectado.fechaActivacion)
+                  : new Date(`${fechaOperativa}T12:00:00-05:00`),
+              },
+            })
+          : null);
+
+      if (!jornadaRegularizable) {
         throw new NotFoundException('La jornada no existe');
       }
 
-      if (jornadaActual.estado !== 'PENDIENTE_CIERRE') {
+      if (jornadaRegularizable.estado !== 'PENDIENTE_CIERRE') {
         throw new ConflictException(
           'La jornada ya fue cerrada o regularizada.',
         );
@@ -4480,7 +4523,7 @@ export class RoutesService {
       // Actualizar el estado de la jornada a REGULARIZADA sin transacción financiera
       const updated = await tx.rutaJornada.updateMany({
         where: {
-          id: jornadaActual.id,
+          id: jornadaRegularizable.id,
           estado: 'PENDIENTE_CIERRE',
         },
         data: {
@@ -4499,7 +4542,7 @@ export class RoutesService {
       }
 
       return {
-        jornadaId: jornadaActual.id,
+        jornadaId: jornadaRegularizable.id,
       };
     });
 

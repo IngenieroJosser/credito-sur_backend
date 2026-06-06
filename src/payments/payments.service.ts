@@ -1132,6 +1132,7 @@ export class PaymentsService {
           resultado.pago.id,
           paymentDto.fechaOperativaRuta,
         ].join(':');
+        const notaAdministrativa = String(paymentDto.notas || '').trim();
         const metadataRegularizacion = {
           tipoEvento: 'PAGO_REGULARIZADO',
           pagoId: resultado.pago.id,
@@ -1162,6 +1163,12 @@ export class PaymentsService {
           saldoNuevo: resultado.descomposicion.saldoNuevo,
           cuotasAfectadas: resultado.descomposicion.cuotasAfectadas,
           prestamoQuedaPagado: resultado.descomposicion.prestamoQuedaPagado,
+          ...(notaAdministrativa
+            ? {
+                notaAdministrativa,
+                notas: notaAdministrativa,
+              }
+            : {}),
         };
 
         await this.notificacionesService.notifyRolesDeduped?.({
@@ -1211,6 +1218,9 @@ export class PaymentsService {
         pagoId: resultado.pago.id,
         prestamoId: prestamo.id,
         clienteId: prestamo.clienteId,
+        rutaId: resultado.pago.rutaId,
+        origenGestion: resultado.pago.origenGestion,
+        fechaOperativaRuta: resultado.pago.fechaOperativaRuta,
       });
       this.notificacionesGateway.broadcastPrestamosActualizados({
         accion: 'PAGO',
