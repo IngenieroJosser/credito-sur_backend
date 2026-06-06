@@ -225,7 +225,12 @@ export class ApprovalsService {
     return `${prefix}-${Date.now()}-${randomUUID().slice(0, 8)}`;
   }
 
-  private calcularAplicacionPago(prestamo: any, montoTotal: number) {
+  private calcularAplicacionPago(
+    prestamo: any,
+    montoTotal: number,
+    cuotaIdObjetivo?: string,
+    aplicarDesdeCuotaObjetivo = false,
+  ) {
     const detallesPago: {
       cuotaId: string;
       monto: number;
@@ -240,7 +245,28 @@ export class ApprovalsService {
     const cuotasActualizar: { id: string; montoPagado: number; estado: any }[] =
       [];
 
-    for (const cuota of prestamo.cuotas || []) {
+    const cuotasBase = prestamo.cuotas || [];
+    const cuotasAplicables = (() => {
+      if (!cuotaIdObjetivo) return cuotasBase;
+
+      if (!aplicarDesdeCuotaObjetivo) {
+        return cuotasBase.filter((cuota: any) => cuota.id === cuotaIdObjetivo);
+      }
+
+      const cuotaIndex = cuotasBase.findIndex(
+        (cuota: any) => cuota.id === cuotaIdObjetivo,
+      );
+
+      return cuotaIndex >= 0 ? cuotasBase.slice(cuotaIndex) : [];
+    })();
+
+    if (cuotaIdObjetivo && cuotasAplicables.length === 0) {
+      throw new BadRequestException(
+        'La cuota objetivo no está pendiente o no corresponde al préstamo indicado',
+      );
+    }
+
+    for (const cuota of cuotasAplicables) {
       if (restante <= 0) break;
 
       const montoCuota = Number(cuota.monto);
@@ -422,6 +448,11 @@ export class ApprovalsService {
     );
     const montoTotal = Number(data?.montoTotal || approval.montoSolicitud || 0);
     const rawFechaPago = String(data?.fechaPago || '');
+    const origenGestion = String(data?.origenGestion || '').trim();
+    const fechaOperativaRuta = String(data?.fechaOperativaRuta || '').trim();
+    const cuotaId = String(data?.cuotaId || '').trim();
+    const rutaId = String(data?.rutaId || '').trim();
+    const esCierrePendiente = origenGestion === 'CIERRE_PENDIENTE';
     const idempotencyKey =
       (data?.idempotencyKey || approval.idempotencyKey || '')
         .toString()
@@ -532,7 +563,12 @@ export class ApprovalsService {
         capitalTotal,
         interesTotal,
         moraTotal,
-      } = this.calcularAplicacionPago(prestamoActual, montoTotal);
+      } = this.calcularAplicacionPago(
+        prestamoActual,
+        montoTotal,
+        cuotaId || undefined,
+        esCierrePendiente,
+      );
 
       const interesTotalFinal = Math.round(interesTotal * 100) / 100;
       const moraTotalFinal = Math.round(moraTotal * 100) / 100;
@@ -552,10 +588,28 @@ export class ApprovalsService {
           metodoPago: MetodoPago.TRANSFERENCIA,
           numeroReferencia: data?.numeroReferencia || null,
           notas: data?.notas || null,
+          rutaId: rutaId || undefined,
+          fechaOperativaRuta: fechaOperativaRuta || undefined,
+          origenGestion: esCierrePendiente ? 'CIERRE_PENDIENTE' : undefined,
           detalles: { create: detallesPago as any },
         },
         select: { id: true },
       });
+
+      if (esCierrePendiente && fechaOperativaRuta) {
+        await tx.registroVisita.updateMany({
+          where: {
+            clienteId: prestamoActual.clienteId,
+            fechaVisita: fechaOperativaRuta,
+            ...(rutaId ? { rutaId } : {}),
+            estadoVisita: 'ausente',
+          },
+          data: {
+            estadoVisita: 'pagado',
+            notas: 'Ausencia anulada automáticamente por registro de pago.',
+          },
+        });
+      }
 
       for (const upd of cuotasActualizar) {
         await tx.cuota.update({
