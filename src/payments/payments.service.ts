@@ -939,6 +939,15 @@ export class PaymentsService {
           include: {
             detalles: true,
             cliente: {
+              select: { id: true, nombres: true, apellidos: true, dni: true },
+            },
+            prestamo: {
+              select: { id: true, numeroPrestamo: true },
+            },
+            ruta: {
+              select: { id: true, nombre: true, codigo: true },
+            },
+            cobrador: {
               select: { id: true, nombres: true, apellidos: true },
             },
           },
@@ -1115,6 +1124,46 @@ export class PaymentsService {
     if (paymentDto.origenGestion === 'CIERRE_PENDIENTE') {
       try {
         const clienteNombre = `${resultado.pago.cliente?.nombres || ''} ${resultado.pago.cliente?.apellidos || ''}`.trim();
+        const cobradorNombre = `${resultado.pago.cobrador?.nombres || ''} ${resultado.pago.cobrador?.apellidos || ''}`.trim();
+        const rutaNombre = resultado.pago.ruta?.nombre || 'Ruta';
+        const fechaRealPago = formatBogotaOffsetIso(fechaPagoBogota);
+        const dedupeKey = [
+          'PAGO_REGULARIZADO',
+          resultado.pago.id,
+          paymentDto.fechaOperativaRuta,
+        ].join(':');
+        const metadataRegularizacion = {
+          tipoEvento: 'PAGO_REGULARIZADO',
+          pagoId: resultado.pago.id,
+          numeroPago: resultado.pago.numeroPago,
+          rutaId: resultado.pago.rutaId || paymentDto.rutaId,
+          rutaNombre,
+          rutaCodigo: resultado.pago.ruta?.codigo || null,
+          clienteId,
+          clienteNombre,
+          clienteDni: resultado.pago.cliente?.dni || null,
+          prestamoId: prestamoIdVal,
+          numeroPrestamo: resultado.pago.prestamo?.numeroPrestamo || null,
+          cobradorId: resultado.pago.cobradorId,
+          cobradorNombre,
+          fechaOperativaRuta: paymentDto.fechaOperativaRuta,
+          fechaRealPago,
+          metodoPago: resultado.pago.metodoPago,
+          montoTotal,
+          capitalRecuperado:
+            Math.round(
+              Number(resultado.descomposicion.capitalRecuperado || 0) * 100,
+            ) / 100,
+          interesRecuperado:
+            Math.round(
+              Number(resultado.descomposicion.interesRecuperado || 0) * 100,
+            ) / 100,
+          saldoAnterior: resultado.descomposicion.saldoAnterior,
+          saldoNuevo: resultado.descomposicion.saldoNuevo,
+          cuotasAfectadas: resultado.descomposicion.cuotasAfectadas,
+          prestamoQuedaPagado: resultado.descomposicion.prestamoQuedaPagado,
+        };
+
         await this.notificacionesService.notifyRolesDeduped?.({
           roles: [
             RolUsuario.SUPER_ADMINISTRADOR,
@@ -1123,26 +1172,26 @@ export class PaymentsService {
             RolUsuario.SUPERVISOR,
           ],
           titulo: 'Pago regularizado registrado',
-          mensaje: `${clienteNombre || 'Cliente'} · ${montoTotal.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}. Asociado a la jornada ${paymentDto.fechaOperativaRuta}.`,
+          mensaje: `${clienteNombre || 'Cliente'} · ${montoTotal.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}. Asociado a la jornada ${paymentDto.fechaOperativaRuta} de ${rutaNombre}.`,
           tipo: 'INFO',
           entidad: 'Pago',
           entidadId: resultado.pago.id,
-          dedupeKey: [
-            'PAGO_REGULARIZADO',
-            resultado.pago.id,
-            paymentDto.fechaOperativaRuta,
-          ].join(':'),
-          metadata: {
-            tipoEvento: 'PAGO_REGULARIZADO',
-            pagoId: resultado.pago.id,
-            rutaId: paymentDto.rutaId,
-            clienteId,
-            clienteNombre,
-            prestamoId: prestamoIdVal,
-            fechaOperativaRuta: paymentDto.fechaOperativaRuta,
-            montoTotal,
-          },
+          dedupeKey,
+          metadata: metadataRegularizacion,
         });
+
+        if (resultado.pago.cobradorId) {
+          await this.notificacionesService.createDeduped?.({
+            usuarioId: resultado.pago.cobradorId,
+            titulo: 'Pago regularizado registrado',
+            mensaje: `${clienteNombre || 'Cliente'} · ${montoTotal.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}. Asociado a la jornada ${paymentDto.fechaOperativaRuta} de ${rutaNombre}.`,
+            tipo: 'INFO',
+            entidad: 'Pago',
+            entidadId: resultado.pago.id,
+            dedupeKey: `${dedupeKey}:${resultado.pago.cobradorId}`,
+            metadata: metadataRegularizacion,
+          });
+        }
       } catch (error) {
         this.logger.error(
           `Pago regularizado ${resultado.pago.id} registrado, pero falló notificación: ${(error as Error)?.message || error}`,

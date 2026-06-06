@@ -37,6 +37,7 @@ const mockNotificacionesService = {
   notifyCoordinator: jest.fn().mockResolvedValue(undefined),
   notifyApprovers: jest.fn().mockResolvedValue(undefined),
   notifyRolesDeduped: jest.fn().mockResolvedValue(undefined),
+  createDeduped: jest.fn().mockResolvedValue(undefined),
 };
 
 const mockAuditService = {
@@ -105,6 +106,10 @@ const PAGO_CREADO = {
   fechaPago: new Date(),
   detalles: [],
   cliente: { id: 'cliente-1', nombres: 'Juan', apellidos: 'Pérez' },
+  prestamo: { id: 'prestamo-1', numeroPrestamo: 'PRE-000001' },
+  ruta: { id: 'ruta-1', nombre: 'Ruta Centro', codigo: 'RT-CEN' },
+  rutaId: 'ruta-1',
+  cobrador: { id: 'cobrador-1', nombres: 'Cobrador', apellidos: 'Prueba' },
 };
 
 const PAGO_EXISTENTE = {
@@ -455,6 +460,65 @@ describe('PaymentsService', () => {
                 expect.objectContaining({ cuotaId: 'cuota-2', monto: 110000 }),
               ]),
             },
+          }),
+        }),
+      );
+    });
+
+    it('notifica pago regularizado a oficina y al cobrador de la ruta con metadata auditable', async () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-06-01T12:00:00.000Z'));
+
+      prisma.pago.findFirst.mockResolvedValueOnce(null);
+
+      try {
+        await service.create({
+          prestamoId: 'prestamo-1',
+          cobradorId: 'cobrador-1',
+          montoTotal: 110000,
+          cuotaId: 'cuota-2',
+          cuotaNumeroEsperada: 2,
+          montoCuotaEsperado: 110000,
+          fechaOperativaRuta: '2026-05-27',
+          origenGestion: 'CIERRE_PENDIENTE',
+          rutaId: 'ruta-1',
+          idempotencyKey:
+            'CIERRE_PENDIENTE:ruta-1:2026-05-27:cliente-1:prestamo-1:cuota-2:1:PAGO:110000',
+        } as any);
+      } finally {
+        jest.useRealTimers();
+      }
+
+      expect(mockNotificacionesService.notifyRolesDeduped).toHaveBeenCalledWith(
+        expect.objectContaining({
+          titulo: 'Pago regularizado registrado',
+          entidad: 'Pago',
+          entidadId: 'pago-1',
+          dedupeKey: 'PAGO_REGULARIZADO:pago-1:2026-05-27',
+          metadata: expect.objectContaining({
+            tipoEvento: 'PAGO_REGULARIZADO',
+            pagoId: 'pago-1',
+            rutaId: 'ruta-1',
+            rutaNombre: 'Ruta Centro',
+            clienteId: 'cliente-1',
+            clienteNombre: 'Juan Pérez',
+            prestamoId: 'prestamo-1',
+            numeroPrestamo: 'PRE-000001',
+            cobradorId: 'cobrador-1',
+            cobradorNombre: 'Cobrador Prueba',
+            fechaOperativaRuta: '2026-05-27',
+            montoTotal: 110000,
+            cuotasAfectadas: 1,
+          }),
+        }),
+      );
+      expect(mockNotificacionesService.createDeduped).toHaveBeenCalledWith(
+        expect.objectContaining({
+          usuarioId: 'cobrador-1',
+          dedupeKey: 'PAGO_REGULARIZADO:pago-1:2026-05-27:cobrador-1',
+          metadata: expect.objectContaining({
+            tipoEvento: 'PAGO_REGULARIZADO',
+            pagoId: 'pago-1',
           }),
         }),
       );
