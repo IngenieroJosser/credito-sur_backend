@@ -3406,6 +3406,7 @@ export class RoutesService {
         fechaPago: true,
         fechaOperativaRuta: true,
         origenGestion: true,
+        metodoPago: true,
       },
     });
 
@@ -3440,6 +3441,44 @@ export class RoutesService {
     const recaudoOperativo = pagosDeHoy
       .filter((p) => isFechaPagoEnRango(p) || isRegularizadoParaJornada(p))
       .reduce((sum, p) => sum + Number(p.montoTotal || 0), 0);
+
+    const sumPagosByMetodo = (pagos: any[], metodo: 'EFECTIVO' | 'TRANSFERENCIA') => {
+      return pagos.reduce((sum, p) => {
+        const metodoPago = String(p.metodoPago || 'EFECTIVO').toUpperCase();
+        if (metodoPago !== metodo) return sum;
+        return sum + Number(p.montoTotal || 0);
+      }, 0);
+    };
+
+    const pagosOperativos = pagosDeHoy.filter(
+      (p) => isFechaPagoEnRango(p) || isRegularizadoParaJornada(p),
+    );
+    const pagosContables = pagosDeHoy.filter(isFechaPagoEnRango);
+    const pagosRegularizados = pagosDeHoy.filter(
+      (p) => isRegularizadoParaJornada(p) && !isFechaPagoEnRango(p),
+    );
+
+    const recaudoEfectivo = sumPagosByMetodo(pagosOperativos, 'EFECTIVO');
+    const recaudoTransferencia = sumPagosByMetodo(
+      pagosOperativos,
+      'TRANSFERENCIA',
+    );
+    const recaudoContableEfectivo = sumPagosByMetodo(
+      pagosContables,
+      'EFECTIVO',
+    );
+    const recaudoContableTransferencia = sumPagosByMetodo(
+      pagosContables,
+      'TRANSFERENCIA',
+    );
+    const recaudoRegularizadoEfectivo = sumPagosByMetodo(
+      pagosRegularizados,
+      'EFECTIVO',
+    );
+    const recaudoRegularizadoTransferencia = sumPagosByMetodo(
+      pagosRegularizados,
+      'TRANSFERENCIA',
+    );
 
     const totalEsperado = visitasDelDia.reduce((sum, v) => {
       const cid = v.cliente?.id || v.clienteId;
@@ -3635,6 +3674,7 @@ export class RoutesService {
     });
 
     const gastosFinal = Number(gastosRuta._sum.monto || 0);
+    const netoEfectivoRuta = Math.max(0, recaudoEfectivo - gastosFinal);
 
     const efectividad =
       totalEsperadoFinal > 0
@@ -3660,12 +3700,19 @@ export class RoutesService {
         recaudoOperativo,
         recaudoContable,
         recaudoRegularizado,
+        recaudoEfectivo,
+        recaudoTransferencia,
+        recaudoContableEfectivo,
+        recaudoContableTransferencia,
+        recaudoRegularizadoEfectivo,
+        recaudoRegularizadoTransferencia,
         jornadaId: jornada?.id || null,
         jornadaEstado: jornada?.estado || null,
         jornadaCerradaEn: jornada?.cerradaEn || null,
         jornadaRegularizadaEn: jornada?.regularizadaEn || null,
         meta: totalEsperadoFinal,
         gastos: gastosFinal,
+        netoEfectivoRuta,
         efectividad,
         visitados: gestionados,
         total: visitasDelDiaFinales.length,
@@ -4631,6 +4678,27 @@ export class RoutesService {
     const totalClientes = visitas.length;
     const recaudoContable = Number(detalleDia.resumen?.recaudoContable || 0);
     const recaudoRegularizado = Number(detalleDia.resumen?.recaudoRegularizado || 0);
+    const recaudoEfectivo = Number(detalleDia.resumen?.recaudoEfectivo || 0);
+    const recaudoTransferencia = Number(
+      detalleDia.resumen?.recaudoTransferencia || 0,
+    );
+    const recaudoContableEfectivo = Number(
+      detalleDia.resumen?.recaudoContableEfectivo || 0,
+    );
+    const recaudoContableTransferencia = Number(
+      detalleDia.resumen?.recaudoContableTransferencia || 0,
+    );
+    const recaudoRegularizadoEfectivo = Number(
+      detalleDia.resumen?.recaudoRegularizadoEfectivo || 0,
+    );
+    const recaudoRegularizadoTransferencia = Number(
+      detalleDia.resumen?.recaudoRegularizadoTransferencia || 0,
+    );
+    const gastosRuta = Number(detalleDia.resumen?.gastos || 0);
+    const netoEfectivoRuta = Number(
+      detalleDia.resumen?.netoEfectivoRuta ??
+        Math.max(0, recaudoEfectivo - gastosRuta),
+    );
     const cumplimiento =
       meta > 0
         ? Math.round(((recaudoOperativo / meta) * 100) * 10) / 10
@@ -4709,6 +4777,14 @@ export class RoutesService {
         recaudoOperativo,
         recaudoContable,
         recaudoRegularizado,
+        recaudoEfectivo,
+        recaudoTransferencia,
+        recaudoContableEfectivo,
+        recaudoContableTransferencia,
+        recaudoRegularizadoEfectivo,
+        recaudoRegularizadoTransferencia,
+        gastosRuta,
+        netoEfectivoRuta,
         cumplimiento,
         requiereRevision: cierreAdministrativo,
         advertencias,
@@ -5061,6 +5137,17 @@ export class RoutesService {
             recaudoContable: detalleDia.resumen?.recaudoContable || 0,
             recaudoRegularizado:
               detalleDia.resumen?.recaudoRegularizado || 0,
+            recaudoEfectivo: detalleDia.resumen?.recaudoEfectivo || 0,
+            recaudoTransferencia:
+              detalleDia.resumen?.recaudoTransferencia || 0,
+            recaudoContableEfectivo:
+              detalleDia.resumen?.recaudoContableEfectivo || 0,
+            recaudoContableTransferencia:
+              detalleDia.resumen?.recaudoContableTransferencia || 0,
+            recaudoRegularizadoEfectivo:
+              detalleDia.resumen?.recaudoRegularizadoEfectivo || 0,
+            recaudoRegularizadoTransferencia:
+              detalleDia.resumen?.recaudoRegularizadoTransferencia || 0,
 
             pendiente: Math.max(
               Number(detalleDia.resumen?.meta || 0) -
@@ -5073,6 +5160,7 @@ export class RoutesService {
             ),
 
             gastos: detalleDia.resumen?.gastos || 0,
+            netoEfectivoRuta: detalleDia.resumen?.netoEfectivoRuta || 0,
             efectividad: detalleDia.resumen?.efectividad || 0,
 
             totalClientes: visitas.length,
