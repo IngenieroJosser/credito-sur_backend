@@ -5277,24 +5277,6 @@ export class RoutesService {
     return result;
   }
 
-  async syncPendingRouteDebts(rutaIds?: string[]) {
-    const ids =
-      rutaIds && rutaIds.length
-        ? [...new Set(rutaIds)]
-        : (
-            await this.prisma.ruta.findMany({
-              where: { eliminadoEn: null },
-              select: { id: true },
-            })
-          ).map((ruta) => ruta.id);
-
-    if (!ids.length) return;
-
-    for (const rutaId of ids) {
-      await this.getCierresPendientesRuta(rutaId);
-    }
-  }
-
   private resolveEstadoGestionCierrePendiente(v: any): 'PAGO_REGISTRADO' | 'AUSENTE' | 'PENDIENTE' {
     const estadoVisita = String(v?.estadoVisita || '').toLowerCase()
     const recaudado = Number(v?.recaudadoDelDia || 0)
