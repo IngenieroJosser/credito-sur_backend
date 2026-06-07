@@ -3594,6 +3594,7 @@ export class AccountingService {
 
     const activeCajaIds = new Set(cajasRuta.map(c => c.id));
     const processedReferences = new Set<string>();
+    const cajasProcesadas = new Set<string>();
 
     for (const trx of deudaTransacciones) {
       const tipoRef = String(trx.tipoReferencia);
@@ -3603,6 +3604,10 @@ export class AccountingService {
       let montoDeuda = 0;
       let esFormatoCierre = false;
       let saldoAlCierre = 0;
+
+      if (isCierreRuta && trx.referenciaId && cierreIdsConDeuda.has(trx.referenciaId)) {
+        continue; // Omitir el cierre de ruta redundante si ya existe una DEUDA_COBRADOR correspondiente
+      }
 
       if (isAbono) {
         // ABONO_DEUDA: referenciaId = "cobradorId|nombre"
@@ -3631,6 +3636,13 @@ export class AccountingService {
           }
         } else if (isCierreRuta) {
           esFormatoCierre = true;
+        }
+
+        if (esFormatoCierre) {
+          if (cajasProcesadas.has(trx.cajaId)) {
+            continue; // Solo queremos el cierre de caja de ruta más reciente en el historial/total
+          }
+          cajasProcesadas.add(trx.cajaId);
         }
 
         montoDeuda = esFormatoCierre ? saldoAlCierre : Number(trx.monto || 0);
