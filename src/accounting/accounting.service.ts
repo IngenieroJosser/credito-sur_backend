@@ -3449,35 +3449,6 @@ export class AccountingService {
       orderBy: { fechaTransaccion: 'desc' },
     });
 
-    // Get all RutaJornada that are PENDIENTE_CIERRE
-    const pendingClosures = await this.prisma.rutaJornada.findMany({
-      where: {
-        estado: 'PENDIENTE_CIERRE',
-      },
-      include: {
-        ruta: {
-          select: {
-            id: true,
-            nombre: true,
-            cobradorId: true,
-            cajas: {
-              where: { tipo: 'RUTA', activa: true },
-              select: { id: true, saldoActual: true },
-              take: 1,
-            },
-          },
-        },
-      },
-      orderBy: { fechaOperativa: 'desc' },
-    });
-
-    // Filter out pending closures that already have a CIERRE_RUTA or DEUDA_COBRADOR
-    const cierreRutaReferenciaIds = new Set(
-      deudaTransacciones
-        .filter((t) => t.tipoReferencia === 'CIERRE_RUTA' || t.tipoReferencia === 'DEUDA_COBRADOR')
-        .map((t) => t.referenciaId || '')
-    );
-
     const deudaMap = new Map<
       string,
       { descuadres: number; gastosPersonales: number; totalEventos: number }
@@ -3660,41 +3631,6 @@ export class AccountingService {
         cajaId: trx.cajaId || '',
         referenciaId: trx.referenciaId,
         descripcion: trx.descripcion || '',
-      });
-      eventosMap.set(cobradorId, arr);
-    }
-
-    // 3. Process pending closures (RutaJornada with estado PENDIENTE_CIERRE)
-    for (const closure of pendingClosures) {
-      const cobradorId = closure.ruta?.cobradorId;
-      if (!cobradorId) continue;
-
-      const cajaRuta = closure.ruta?.cajas?.[0];
-      if (!cajaRuta) continue;
-
-      const saldoAlCierre = Number(cajaRuta.saldoActual || 0);
-      if (saldoAlCierre <= 0) continue;
-
-      // Create a fake referenceId for tracking (since we don't have a real transaction yet)
-      const referenciaId = `PENDING_CLOSURE:${closure.id}`;
-
-      // Don't add if we already have this in transactions
-      if (cierreRutaReferenciaIds.has(referenciaId)) continue;
-
-      const prev = ensureDebt(cobradorId);
-      prev.descuadres += saldoAlCierre;
-      prev.totalEventos += 1;
-      deudaMap.set(cobradorId, prev);
-
-      const arr = eventosMap.get(cobradorId) || [];
-      arr.unshift({ // Add to beginning (most recent first)
-        id: closure.id,
-        tipoReferencia: 'CIERRE_PENDIENTE',
-        monto: saldoAlCierre,
-        fecha: new Date(),
-        cajaId: cajaRuta.id,
-        referenciaId: referenciaId,
-        descripcion: `Deuda de cierre pendiente (${closure.fechaOperativa}) - Saldo en caja: ${saldoAlCierre.toLocaleString('es-CO')}`,
       });
       eventosMap.set(cobradorId, arr);
     }
