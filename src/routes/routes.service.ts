@@ -4947,6 +4947,7 @@ export class RoutesService {
     jornada: any,
     cajaRuta: any,
     creadoPorId?: string,
+    esUltimaJornada: boolean = true,
   ) {
     // Check for existing transactions for this jornada
     const { startDate: fechaOperativaStart, endDate: fechaOperativaEnd } = 
@@ -4992,7 +4993,7 @@ export class RoutesService {
     const recaudo = Number(resumen.recaudoOperativo || resumen.recaudo || 0);
     const meta = Number(resumen.meta || 0);
     const efectividad = meta > 0 ? Math.round((recaudo / meta) * 1000) / 10 : 0;
-    const saldoAlCierre = Number(cajaRuta.saldoActual || 0);
+    const saldoAlCierre = esUltimaJornada ? Number(cajaRuta.saldoActual || 0) : 0;
     const deudaPorFaltantes =
       clientesFaltantes > 0 ? Math.max(meta - recaudo, 0) : 0;
     const deudaTotal = Math.max(deudaPorFaltantes + saldoAlCierre, 0);
@@ -5132,12 +5133,20 @@ export class RoutesService {
     });
 
     // Update deudas for ALL pending jornadas
-    for (const jornada of jornadasPendientes) {
+    for (let i = 0; i < jornadasPendientes.length; i++) {
+      const jornada = jornadasPendientes[i];
       const jornadaWithRuta = {
         ...jornada,
         ruta: ruta,
       };
-      await this.actualizarDeudasJornadaPendiente(rutaId, jornadaWithRuta, cajaRuta, creadoPorId);
+      const esUltima = i === jornadasPendientes.length - 1;
+      await this.actualizarDeudasJornadaPendiente(
+        rutaId,
+        jornadaWithRuta,
+        cajaRuta,
+        creadoPorId,
+        esUltima,
+      );
     }
 
     const jornadasExistentes = await this.prisma.rutaJornada.findMany({
