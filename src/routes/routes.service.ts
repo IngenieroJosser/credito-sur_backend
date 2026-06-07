@@ -4994,8 +4994,7 @@ export class RoutesService {
     const meta = Number(resumen.meta || 0);
     const efectividad = meta > 0 ? Math.round((recaudo / meta) * 1000) / 10 : 0;
     const saldoAlCierre = esUltimaJornada ? Number(cajaRuta.saldoActual || 0) : 0;
-    const deudaPorFaltantes =
-      clientesFaltantes > 0 ? Math.max(meta - recaudo, 0) : 0;
+    const deudaPorFaltantes = 0; // Se elimina la deuda por clientes/metas faltantes
     const deudaTotal = Math.max(deudaPorFaltantes + saldoAlCierre, 0);
     const hayDescuadre = deudaTotal > 0;
 

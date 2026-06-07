@@ -237,18 +237,7 @@ export class NotificacionesGateway
             };
 
             const saldoAlCierre = Number(cajaDeLaRuta.saldoActual || 0);
-            const deudaPorFaltantes =
-              cierreCalculado.clientesFaltantes > 0
-                ? Math.max(
-                    cierreCalculado.meta - cierreCalculado.recaudo,
-                    0,
-                  )
-                : 0;
-
-            // Regla de negocio: el saldo en caja de la ruta al cierre es dinero del cobrador
-            // que aún no ha entregado. Se registra como deuda pendiente (descuadre).
-            // Cuando el admin/coordinador recolecte ese dinero (consolide la caja),
-            // la deuda desaparece automáticamente.
+            const deudaPorFaltantes = 0;
             const deudaTotal = Math.max(deudaPorFaltantes + saldoAlCierre, 0);
             const hayDescuadre = deudaTotal > 0;
 

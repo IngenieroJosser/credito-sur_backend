@@ -3580,6 +3580,8 @@ export class AccountingService {
         .filter(Boolean),
     );
 
+    const processedReferences = new Set<string>();
+
     for (const trx of deudaTransacciones) {
       const tipoRef = String(trx.tipoReferencia);
       const isAbono = tipoRef === 'ABONO_DEUDA';
@@ -3590,21 +3592,40 @@ export class AccountingService {
       if (isAbono) {
         // ABONO_DEUDA: referenciaId = "cobradorId|nombre"
         cobradorId = String(trx.referenciaId || '').split('|')[0] || null;
-      } else if (isCierreRuta) {
-        // CIERRE_RUTA: obtener cobradorId desde la caja/ruta
+        montoDeuda = Number(trx.monto || 0);
+      } else {
+        // DEUDA_COBRADOR / CIERRE_RUTA: obtener cobradorId desde la caja/ruta
         cobradorId = trx?.caja?.ruta?.cobradorId || null;
-        // Extraer saldo al cierre del referenciaId (formato: RC:x|MT:x|EF:x|CF:x|CO:x|SD:xxx)
-        if (cobradorId && trx.referenciaId) {
-          const sdMatch = String(trx.referenciaId).match(/SD:(\d+)/);
-          const saldoAlCierre = sdMatch ? Number(sdMatch[1]) : 0;
-          // Solo registrar como deuda si hay saldo pendiente y NO hay DEUDA_COBRADOR ya registrada
-          if (saldoAlCierre > 0 && !cierreIdsConDeuda.has(trx.referenciaId)) {
-            montoDeuda = saldoAlCierre;
+
+        // Evitar duplicados por concurrencia
+        if (trx.referenciaId) {
+          if (processedReferences.has(trx.referenciaId)) {
+            continue;
+          }
+          processedReferences.add(trx.referenciaId);
+        }
+
+        let faltante = 0;
+        let tieneFormatoCierre = false;
+
+        if (trx.referenciaId) {
+          const fdMatch = String(trx.referenciaId).match(/FD:(\d+)/);
+          if (fdMatch) {
+            faltante = Number(fdMatch[1]);
+            tieneFormatoCierre = true;
+          } else if (isCierreRuta) {
+            const cfMatch = String(trx.referenciaId).match(/CF:(\d+)/);
+            const rcMatch = String(trx.referenciaId).match(/RC:(\d+)/);
+            const mtMatch = String(trx.referenciaId).match(/MT:(\d+)/);
+            const cf = cfMatch ? Number(cfMatch[1]) : 0;
+            const rc = rcMatch ? Number(rcMatch[1]) : 0;
+            const mt = mtMatch ? Number(mtMatch[1]) : 0;
+            faltante = cf > 0 ? Math.max(mt - rc, 0) : 0;
+            tieneFormatoCierre = true;
           }
         }
-      } else {
-        // DEUDA_COBRADOR: obtener cobradorId desde la caja/ruta
-        cobradorId = trx?.caja?.ruta?.cobradorId || null;
+
+        montoDeuda = tieneFormatoCierre ? faltante : Number(trx.monto || 0);
       }
 
       if (!cobradorId) continue;
@@ -3612,11 +3633,9 @@ export class AccountingService {
       // Si ya existe en el ledger con el mismo referenciaId, no contar dos veces
       if (trx.referenciaId && ledgerRefIds.has(trx.referenciaId)) continue;
 
-      const monto = isCierreRuta ? montoDeuda : Number(trx.monto || 0);
-      if (monto <= 0 && !isAbono) continue;
-      if (isCierreRuta && montoDeuda <= 0) continue;
+      if (montoDeuda <= 0 && !isAbono) continue;
 
-      const delta = isAbono ? -monto : monto;
+      const delta = isAbono ? -montoDeuda : montoDeuda;
       const prev = ensureDebt(cobradorId);
       prev.descuadres += delta;
       prev.totalEventos += 1;
@@ -3636,10 +3655,37 @@ export class AccountingService {
     }
 
     const cobradorIds = [...deudaMap.keys()];
-    if (cobradorIds.length === 0) return [];
+    
+    // Obtener saldos actuales de cajas de ruta activas de cada cobrador
+    const cajasRuta = await this.prisma.caja.findMany({
+      where: { tipo: 'RUTA', activa: true },
+      select: {
+        saldoActual: true,
+        ruta: {
+          select: { cobradorId: true }
+        }
+      }
+    });
+
+    const saldosCajasMap = new Map<string, number>();
+    for (const caja of cajasRuta) {
+      const cid = caja.ruta?.cobradorId;
+      if (cid) {
+        const actual = saldosCajasMap.get(cid) || 0;
+        saldosCajasMap.set(cid, actual + Number(caja.saldoActual || 0));
+      }
+    }
+
+    // Asegurar que todos los cobradores con saldo estén en deudaMap
+    for (const cid of saldosCajasMap.keys()) {
+      ensureDebt(cid);
+    }
+
+    const finalCobradorIds = [...deudaMap.keys()];
+    if (finalCobradorIds.length === 0) return [];
 
     const cobradores = await this.prisma.usuario.findMany({
-      where: { id: { in: cobradorIds } },
+      where: { id: { in: finalCobradorIds } },
       select: { id: true, nombres: true, apellidos: true, rol: true },
     });
     const cobradorMap = new Map(cobradores.map((c: any) => [c.id, c]));
@@ -3647,9 +3693,11 @@ export class AccountingService {
     return Array.from(deudaMap.entries())
       .map(([cobradorId, deuda]) => {
         const cobrador: any = cobradorMap.get(cobradorId);
+        const saldoCajaActual = saldosCajasMap.get(cobradorId) || 0;
+        
         const descuadres = Math.max(
           0,
-          Math.round(Number(deuda.descuadres || 0)),
+          Math.round(Number(deuda.descuadres || 0) + saldoCajaActual),
         );
         const gastosPersonales = Math.max(
           0,
