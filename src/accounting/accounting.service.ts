@@ -3580,6 +3580,19 @@ export class AccountingService {
         .filter(Boolean),
     );
 
+    // Obtener saldos actuales de cajas de ruta activas de cada cobrador
+    const cajasRuta = await this.prisma.caja.findMany({
+      where: { tipo: 'RUTA', activa: true },
+      select: {
+        id: true,
+        saldoActual: true,
+        ruta: {
+          select: { cobradorId: true }
+        }
+      }
+    });
+
+    const activeCajaIds = new Set(cajasRuta.map(c => c.id));
     const processedReferences = new Set<string>();
 
     for (const trx of deudaTransacciones) {
@@ -3588,6 +3601,8 @@ export class AccountingService {
       const isCierreRuta = tipoRef === 'CIERRE_RUTA';
       let cobradorId: string | null = null;
       let montoDeuda = 0;
+      let esFormatoCierre = false;
+      let saldoAlCierre = 0;
 
       if (isAbono) {
         // ABONO_DEUDA: referenciaId = "cobradorId|nombre"
@@ -3605,27 +3620,20 @@ export class AccountingService {
           processedReferences.add(trx.referenciaId);
         }
 
-        let faltante = 0;
-        let tieneFormatoCierre = false;
-
+        saldoAlCierre = Number(trx.monto || 0);
         if (trx.referenciaId) {
-          const fdMatch = String(trx.referenciaId).match(/FD:(\d+)/);
-          if (fdMatch) {
-            faltante = Number(fdMatch[1]);
-            tieneFormatoCierre = true;
+          const sdMatch = String(trx.referenciaId).match(/SD:(\d+)/);
+          if (sdMatch) {
+            saldoAlCierre = Number(sdMatch[1]);
+            esFormatoCierre = true;
           } else if (isCierreRuta) {
-            const cfMatch = String(trx.referenciaId).match(/CF:(\d+)/);
-            const rcMatch = String(trx.referenciaId).match(/RC:(\d+)/);
-            const mtMatch = String(trx.referenciaId).match(/MT:(\d+)/);
-            const cf = cfMatch ? Number(cfMatch[1]) : 0;
-            const rc = rcMatch ? Number(rcMatch[1]) : 0;
-            const mt = mtMatch ? Number(mtMatch[1]) : 0;
-            faltante = cf > 0 ? Math.max(mt - rc, 0) : 0;
-            tieneFormatoCierre = true;
+            esFormatoCierre = true;
           }
+        } else if (isCierreRuta) {
+          esFormatoCierre = true;
         }
 
-        montoDeuda = tieneFormatoCierre ? faltante : Number(trx.monto || 0);
+        montoDeuda = esFormatoCierre ? saldoAlCierre : Number(trx.monto || 0);
       }
 
       if (!cobradorId) continue;
@@ -3637,7 +3645,14 @@ export class AccountingService {
 
       const delta = isAbono ? -montoDeuda : montoDeuda;
       const prev = ensureDebt(cobradorId);
-      prev.descuadres += delta;
+      
+      // Si pertenece a una caja activa de ruta, el saldo actual de esa caja se sumará al final en tiempo real.
+      // Así evitamos duplicar la deuda acumulada de esa caja.
+      const omitirDeudaAcumulada = !isAbono && esFormatoCierre && activeCajaIds.has(trx.cajaId);
+      if (!omitirDeudaAcumulada) {
+        prev.descuadres += delta;
+      }
+      
       prev.totalEventos += 1;
       deudaMap.set(cobradorId, prev);
 
@@ -3656,17 +3671,6 @@ export class AccountingService {
 
     const cobradorIds = [...deudaMap.keys()];
     
-    // Obtener saldos actuales de cajas de ruta activas de cada cobrador
-    const cajasRuta = await this.prisma.caja.findMany({
-      where: { tipo: 'RUTA', activa: true },
-      select: {
-        saldoActual: true,
-        ruta: {
-          select: { cobradorId: true }
-        }
-      }
-    });
-
     const saldosCajasMap = new Map<string, number>();
     for (const caja of cajasRuta) {
       const cid = caja.ruta?.cobradorId;
