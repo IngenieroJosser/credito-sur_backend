@@ -5007,16 +5007,16 @@ export class RoutesService {
       if (!cajaRuta) continue;
 
       // First check if we already have a CIERRE_RUTA or DEUDA_COBRADOR for this jornada
-      const fechaOperativaDate = new Date(`${jornada.fechaOperativa}T00:00:00-05:00`);
-      const fechaFinDia = new Date(`${jornada.fechaOperativa}T23:59:59-05:00`);
+      const { startDate: fechaOperativaStart, endDate: fechaOperativaEnd } = 
+        getBogotaStartEndOfDayFromKey(jornada.fechaOperativa);
       
       const existingCierreRuta = await this.prisma.transaccion.findFirst({
         where: {
           cajaId: cajaRuta.id,
           tipoReferencia: 'CIERRE_RUTA',
           fechaTransaccion: {
-            gte: fechaOperativaDate,
-            lte: fechaFinDia
+            gte: fechaOperativaStart,
+            lte: fechaOperativaEnd
           }
         },
       });
@@ -5026,8 +5026,8 @@ export class RoutesService {
           cajaId: cajaRuta.id,
           tipoReferencia: 'DEUDA_COBRADOR',
           fechaTransaccion: {
-            gte: fechaOperativaDate,
-            lte: fechaFinDia
+            gte: fechaOperativaStart,
+            lte: fechaOperativaEnd
           }
         },
       });
@@ -5092,7 +5092,7 @@ export class RoutesService {
             tipoReferencia: 'CIERRE_RUTA',
             referenciaId: referenciaIdCierre,
             creadoPorId: null,
-            fechaTransaccion: new Date(`${jornada.fechaOperativa}T23:59:59-05:00`),
+            fechaTransaccion: fechaOperativaEnd,
           },
         });
       }
@@ -5129,7 +5129,7 @@ export class RoutesService {
               tipoReferencia: 'DEUDA_COBRADOR',
               referenciaId: referenciaIdDeuda,
               creadoPorId: null,
-              fechaTransaccion: new Date(`${jornada.fechaOperativa}T23:59:59-05:00`),
+              fechaTransaccion: fechaOperativaEnd,
             },
           });
         }
