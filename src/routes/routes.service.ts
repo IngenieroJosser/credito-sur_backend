@@ -1055,7 +1055,7 @@ export class RoutesService {
 
       const rutaIds = rutas.map((r) => r.id);
       const cierresPendientesMap =
-        await this.getCierresPendientesRutasMap(rutaIds);
+        await this.getCierresPendientesRutasMap(rutaIds, actor?.id);
 
       const rutasConEstadisticas = await Promise.all(
         rutas.map(async (ruta) => {
@@ -4580,7 +4580,7 @@ export class RoutesService {
     }
 
     const cierrePendienteDetectado = (
-      await this.getCierresPendientesRuta(rutaId)
+      await this.getCierresPendientesRuta(rutaId, actor?.id)
     ).find((cierre) => cierre.fechaOperativa === fechaOperativa);
 
     // Validar que tenga observaciones si hay clientes pendientes, ausentes o descuadre
@@ -4911,7 +4911,7 @@ export class RoutesService {
    */
   async getCierrePendienteRutaPublic(rutaId: string, actor?: RouteActor) {
     await this.assertCollectorOwnRoute(rutaId, actor);
-    return this.getCierrePendienteRuta(rutaId);
+    return this.getCierrePendienteRuta(rutaId, actor?.id);
   }
 
   /**
@@ -4945,7 +4945,8 @@ export class RoutesService {
   private async actualizarDeudasJornadaPendiente(
     rutaId: string,
     jornada: any,
-    cajaRuta: any
+    cajaRuta: any,
+    creadoPorId?: string,
   ) {
     // Check for existing transactions for this jornada
     const { startDate: fechaOperativaStart, endDate: fechaOperativaEnd } = 
@@ -5004,6 +5005,13 @@ export class RoutesService {
 
     const referenciaIdCierre = `RC:${recaudo}|MT:${meta}|EF:${efectividad}|CF:${clientesFaltantes}|CO:${cobradorNombre}|SD:${saldoAlCierre}`;
 
+    const userId = creadoPorId || jornada.ruta?.cobradorId || cajaRuta.responsableId;
+    if (!userId) {
+      throw new Error(
+        `No se pudo determinar el usuario creador (creadoPorId) para las transacciones del cierre de jornada ${jornada.fechaOperativa}.`
+      );
+    }
+
     let cierreTransaccion = existingCierreRuta;
     if (existingCierreRuta) {
       // Update existing CIERRE_RUTA
@@ -5029,7 +5037,7 @@ export class RoutesService {
             : `Cierre de ruta exitoso: sin saldo pendiente. Recaudó ${recaudo.toLocaleString('es-CO')} (${efectividad}% META).`,
           tipoReferencia: 'CIERRE_RUTA',
           referenciaId: referenciaIdCierre,
-          creadoPorId: null,
+          creadoPorId: userId,
           fechaTransaccion: fechaOperativaEnd,
         },
       });
@@ -5068,7 +5076,7 @@ export class RoutesService {
             descripcion: `Deuda del cobrador por cierre de ruta: ${deudaTotal.toLocaleString('es-CO')} (saldo en caja: ${saldoAlCierre.toLocaleString('es-CO')}, faltantes: ${deudaPorFaltantes.toLocaleString('es-CO')})`,
             tipoReferencia: 'DEUDA_COBRADOR',
             referenciaId: referenciaIdDeuda,
-            creadoPorId: null,
+            creadoPorId: userId,
             fechaTransaccion: fechaOperativaEnd,
           },
         });
@@ -5081,7 +5089,7 @@ export class RoutesService {
     }
   }
 
-  private async getCierresPendientesRuta(rutaId: string) {
+  private async getCierresPendientesRuta(rutaId: string, creadoPorId?: string) {
     const ruta = await this.prisma.ruta.findFirst({
       where: { id: rutaId, eliminadoEn: null },
       include: {
@@ -5129,7 +5137,7 @@ export class RoutesService {
         ...jornada,
         ruta: ruta,
       };
-      await this.actualizarDeudasJornadaPendiente(rutaId, jornadaWithRuta, cajaRuta);
+      await this.actualizarDeudasJornadaPendiente(rutaId, jornadaWithRuta, cajaRuta, creadoPorId);
     }
 
     const jornadasExistentes = await this.prisma.rutaJornada.findMany({
@@ -5246,17 +5254,17 @@ export class RoutesService {
     );
   }
 
-  private async getCierrePendienteRuta(rutaId: string) {
-    const pendientes = await this.getCierresPendientesRuta(rutaId);
+  private async getCierrePendienteRuta(rutaId: string, creadoPorId?: string) {
+    const pendientes = await this.getCierresPendientesRuta(rutaId, creadoPorId);
     return pendientes[0] || null;
   }
 
-  private async getCierresPendientesRutasMap(rutaIds: string[]) {
+  private async getCierresPendientesRutasMap(rutaIds: string[], creadoPorId?: string) {
     if (!rutaIds.length) return new Map<string, any>();
 
     const cierresPendientes = await Promise.all(
       rutaIds.map(async (rutaId) => {
-        const pendientes = await this.getCierresPendientesRuta(rutaId);
+        const pendientes = await this.getCierresPendientesRuta(rutaId, creadoPorId);
         return [
           rutaId,
           {
@@ -5299,7 +5307,7 @@ export class RoutesService {
   async getCierrePendienteDetalle(rutaId: string, actor?: RouteActor) {
     await this.assertCollectorOwnRoute(rutaId, actor);
 
-    const jornadasPendientes = await this.getCierresPendientesRuta(rutaId);
+    const jornadasPendientes = await this.getCierresPendientesRuta(rutaId, actor?.id);
 
     if (!jornadasPendientes.length) {
       return {
