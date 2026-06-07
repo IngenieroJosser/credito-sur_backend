@@ -23,6 +23,7 @@ import {
   getBogotaStartEndOfDay,
   getBogotaStartEndOfDayFromKey,
 } from '../utils/date-utils';
+import { RoutesService } from '../routes/routes.service';
 import {
   generarExcelContable,
   generarPDFContable,
@@ -47,6 +48,7 @@ export class AccountingService {
     private readonly notificacionesService: NotificacionesService,
     private readonly notificacionesGateway: NotificacionesGateway,
     private readonly ledgerService: LedgerService,
+    private readonly routesService: RoutesService,
   ) {}
 
   // Codigos reservados para las cajas que no se pueden eliminar
@@ -3407,6 +3409,8 @@ export class AccountingService {
    * =====================================================
    */
   async getDeudoresCobrador() {
+    await this.routesService.syncPendingRouteDebts();
+
     const debtLines = await this.prisma.journalLine.findMany({
       where: { accountCode: { startsWith: '1.4' } },
       include: {

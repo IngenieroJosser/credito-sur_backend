@@ -27,6 +27,10 @@ const mockLedger = {
     .mockResolvedValue({ id: 'journal-consolidacion' }),
 };
 
+const mockRoutes = {
+  syncPendingRouteDebts: jest.fn().mockResolvedValue(undefined),
+};
+
 function buildPrismaMock(overrides: Record<string, any> = {}) {
   const tx = {
     $queryRaw: jest.fn().mockResolvedValue([]),
@@ -129,12 +133,14 @@ function makeService(prisma: any) {
     mockNotifications as any,
     mockGateway as any,
     mockLedger as any,
+    mockRoutes as any,
   );
 }
 
 describe('AccountingService financial ledger controls', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockRoutes.syncPendingRouteDebts.mockResolvedValue(undefined);
   });
 
   it('filtra movimientos ledger por el día completo en zona Bogotá y expone la caja afectada', async () => {
@@ -1085,6 +1091,7 @@ describe('AccountingService financial ledger controls', () => {
 
     const result = await makeService(prisma).getDeudoresCobrador();
 
+    expect(mockRoutes.syncPendingRouteDebts).toHaveBeenCalled();
     expect(prisma.journalLine.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { accountCode: { startsWith: '1.4' } },
