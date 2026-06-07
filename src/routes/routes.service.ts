@@ -4942,25 +4942,155 @@ export class RoutesService {
     }
   }
 
+  private async actualizarDeudasJornadaPendiente(
+    rutaId: string,
+    jornada: any,
+    cajaRuta: any
+  ) {
+    // Check for existing transactions for this jornada
+    const { startDate: fechaOperativaStart, endDate: fechaOperativaEnd } = 
+      getBogotaStartEndOfDayFromKey(jornada.fechaOperativa);
+    
+    const existingCierreRuta = await this.prisma.transaccion.findFirst({
+      where: {
+        cajaId: cajaRuta.id,
+        tipoReferencia: 'CIERRE_RUTA',
+        fechaTransaccion: {
+          gte: fechaOperativaStart,
+          lte: fechaOperativaEnd
+        }
+      },
+    });
+    
+    const existingDeudaCobrador = await this.prisma.transaccion.findFirst({
+      where: {
+        cajaId: cajaRuta.id,
+        tipoReferencia: 'DEUDA_COBRADOR',
+        fechaTransaccion: {
+          gte: fechaOperativaStart,
+          lte: fechaOperativaEnd
+        }
+      },
+    });
+
+    // Get daily details to calculate meta, recaudo, etc.
+    const detalleDia = await this.getDailyVisits(rutaId, jornada.fechaOperativa);
+    const resumen = detalleDia?.resumen || ({} as any);
+    const visitas = detalleDia?.visitas || [];
+    const clientesFaltantes = visitas.filter((v: any) => {
+      const estado = String(v.estadoGestion || '').toUpperCase();
+      const recaudoVisita = Number(v.recaudadoDelDia || 0);
+      return (
+        recaudoVisita <= 0 &&
+        !estado.includes('PAGO') &&
+        !estado.includes('AUSENTE') &&
+        !estado.includes('REPROGRAM')
+      );
+    }).length;
+
+    const recaudo = Number(resumen.recaudoOperativo || resumen.recaudo || 0);
+    const meta = Number(resumen.meta || 0);
+    const efectividad = meta > 0 ? Math.round((recaudo / meta) * 1000) / 10 : 0;
+    const saldoAlCierre = Number(cajaRuta.saldoActual || 0);
+    const deudaPorFaltantes =
+      clientesFaltantes > 0 ? Math.max(meta - recaudo, 0) : 0;
+    const deudaTotal = Math.max(deudaPorFaltantes + saldoAlCierre, 0);
+    const hayDescuadre = deudaTotal > 0;
+
+    const cobradorNombre =
+      jornada.ruta?.cobrador?.nombres && jornada.ruta?.cobrador?.apellidos
+        ? `${jornada.ruta.cobrador.nombres} ${jornada.ruta.cobrador.apellidos}`
+        : 'Cobrador';
+
+    const referenciaIdCierre = `RC:${recaudo}|MT:${meta}|EF:${efectividad}|CF:${clientesFaltantes}|CO:${cobradorNombre}|SD:${saldoAlCierre}`;
+
+    let cierreTransaccion = existingCierreRuta;
+    if (existingCierreRuta) {
+      // Update existing CIERRE_RUTA
+      cierreTransaccion = await this.prisma.transaccion.update({
+        where: { id: existingCierreRuta.id },
+        data: {
+          descripcion: hayDescuadre
+            ? `Cierre de ruta con descuadre: ${deudaTotal.toLocaleString('es-CO')} pendientes (saldo en caja: ${saldoAlCierre.toLocaleString('es-CO')}, faltantes: ${deudaPorFaltantes.toLocaleString('es-CO')}). Recaudó: ${recaudo.toLocaleString('es-CO')}.`
+            : `Cierre de ruta exitoso: sin saldo pendiente. Recaudó ${recaudo.toLocaleString('es-CO')} (${efectividad}% META).`,
+          referenciaId: referenciaIdCierre,
+        },
+      });
+    } else {
+      // Create new CIERRE_RUTA transaction
+      cierreTransaccion = await this.prisma.transaccion.create({
+        data: {
+          numeroTransaccion: `CR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          cajaId: cajaRuta.id,
+          tipo: 'TRANSFERENCIA',
+          monto: 0,
+          descripcion: hayDescuadre
+            ? `Cierre de ruta con descuadre: ${deudaTotal.toLocaleString('es-CO')} pendientes (saldo en caja: ${saldoAlCierre.toLocaleString('es-CO')}, faltantes: ${deudaPorFaltantes.toLocaleString('es-CO')}). Recaudó: ${recaudo.toLocaleString('es-CO')}.`
+            : `Cierre de ruta exitoso: sin saldo pendiente. Recaudó ${recaudo.toLocaleString('es-CO')} (${efectividad}% META).`,
+          tipoReferencia: 'CIERRE_RUTA',
+          referenciaId: referenciaIdCierre,
+          creadoPorId: null,
+          fechaTransaccion: fechaOperativaEnd,
+        },
+      });
+    }
+
+    // Update the RutaJornada to have the cierreTransaccionId if needed
+    if (!jornada.cierreTransaccionId && cierreTransaccion) {
+      await this.prisma.rutaJornada.update({
+        where: { id: jornada.id },
+        data: { cierreTransaccionId: cierreTransaccion.id },
+      });
+    }
+
+    // If there's a descuadre, create OR update DEUDA_COBRADOR transaction
+    if (hayDescuadre) {
+      const referenciaIdDeuda = `DD:${deudaTotal}|SD:${saldoAlCierre}|FD:${deudaPorFaltantes}|${referenciaIdCierre}`;
+      
+      if (existingDeudaCobrador) {
+        // Update existing DEUDA_COBRADOR
+        await this.prisma.transaccion.update({
+          where: { id: existingDeudaCobrador.id },
+          data: {
+            monto: deudaTotal,
+            descripcion: `Deuda del cobrador por cierre de ruta: ${deudaTotal.toLocaleString('es-CO')} (saldo en caja: ${saldoAlCierre.toLocaleString('es-CO')}, faltantes: ${deudaPorFaltantes.toLocaleString('es-CO')})`,
+            referenciaId: referenciaIdDeuda,
+          },
+        });
+      } else {
+        // Create new DEUDA_COBRADOR
+        await this.prisma.transaccion.create({
+          data: {
+            numeroTransaccion: `DC-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            cajaId: cajaRuta.id,
+            tipo: 'EGRESO',
+            monto: deudaTotal,
+            descripcion: `Deuda del cobrador por cierre de ruta: ${deudaTotal.toLocaleString('es-CO')} (saldo en caja: ${saldoAlCierre.toLocaleString('es-CO')}, faltantes: ${deudaPorFaltantes.toLocaleString('es-CO')})`,
+            tipoReferencia: 'DEUDA_COBRADOR',
+            referenciaId: referenciaIdDeuda,
+            creadoPorId: null,
+            fechaTransaccion: fechaOperativaEnd,
+          },
+        });
+      }
+    } else if (existingDeudaCobrador) {
+      // If no descuadre but there was a DEUDA_COBRADOR, delete it
+      await this.prisma.transaccion.delete({
+        where: { id: existingDeudaCobrador.id },
+      });
+    }
+  }
+
   private async getCierresPendientesRuta(rutaId: string) {
     const ruta = await this.prisma.ruta.findFirst({
       where: { id: rutaId, eliminadoEn: null },
-      select: {
-        id: true,
-        nombre: true,
+      include: {
         cobrador: {
-          select: {
-            id: true,
-            nombres: true,
-            apellidos: true,
-          },
+          select: { id: true, nombres: true, apellidos: true },
         },
         cajas: {
-          where: {
-            tipo: 'RUTA',
-            activa: true,
-          },
-          select: { id: true },
+          where: { tipo: 'RUTA', activa: true },
+          select: { id: true, saldoActual: true },
           take: 1,
         },
       },
@@ -4972,26 +5102,7 @@ export class RoutesService {
     const hoyKey = getBogotaDayKey(new Date());
     const { startDate: inicioHoy } = getBogotaStartEndOfDayFromKey(hoyKey);
 
-    // Get jornadas that are ABIERTA before updating them so we know which are new
-    const jornadasToMakePending = await this.prisma.rutaJornada.findMany({
-      where: {
-        rutaId,
-        estado: 'ABIERTA',
-        fechaOperativa: { lt: hoyKey },
-      },
-      include: {
-        ruta: {
-          include: {
-            cajas: {
-              where: { tipo: 'RUTA', activa: true },
-              select: { id: true, saldoActual: true, nombre: true },
-              take: 1,
-            },
-          },
-        },
-      },
-    });
-
+    // Mark old ABIERTA jornadas as PENDIENTE_CIERRE
     await this.prisma.rutaJornada.updateMany({
       where: {
         rutaId,
@@ -5001,148 +5112,7 @@ export class RoutesService {
       data: { estado: 'PENDIENTE_CIERRE' },
     });
 
-    // Now, for each of those jornadas, create OR update CIERRE_RUTA and DEUDA_COBRADOR (if needed)
-    for (const jornada of jornadasToMakePending) {
-      const cajaRuta = jornada.ruta?.cajas?.[0];
-      if (!cajaRuta) continue;
-
-      // First check if we already have a CIERRE_RUTA or DEUDA_COBRADOR for this jornada
-      const { startDate: fechaOperativaStart, endDate: fechaOperativaEnd } = 
-        getBogotaStartEndOfDayFromKey(jornada.fechaOperativa);
-      
-      const existingCierreRuta = await this.prisma.transaccion.findFirst({
-        where: {
-          cajaId: cajaRuta.id,
-          tipoReferencia: 'CIERRE_RUTA',
-          fechaTransaccion: {
-            gte: fechaOperativaStart,
-            lte: fechaOperativaEnd
-          }
-        },
-      });
-      
-      const existingDeudaCobrador = await this.prisma.transaccion.findFirst({
-        where: {
-          cajaId: cajaRuta.id,
-          tipoReferencia: 'DEUDA_COBRADOR',
-          fechaTransaccion: {
-            gte: fechaOperativaStart,
-            lte: fechaOperativaEnd
-          }
-        },
-      });
-
-      // Get daily details to calculate meta, recaudo, etc.
-      const detalleDia = await this.getDailyVisits(
-        rutaId,
-        jornada.fechaOperativa,
-      );
-      const resumen = detalleDia?.resumen || ({} as any);
-      const visitas = detalleDia?.visitas || [];
-      const clientesFaltantes = visitas.filter((v: any) => {
-        const estado = String(v.estadoGestion || '').toUpperCase();
-        const recaudoVisita = Number(v.recaudadoDelDia || 0);
-        return (
-          recaudoVisita <= 0 &&
-          !estado.includes('PAGO') &&
-          !estado.includes('AUSENTE') &&
-          !estado.includes('REPROGRAM')
-        );
-      }).length;
-
-      const recaudo = Number(resumen.recaudoOperativo || resumen.recaudo || 0);
-      const meta = Number(resumen.meta || 0);
-      const efectividad = meta > 0 ? Math.round((recaudo / meta) * 1000) / 10 : 0;
-      const saldoAlCierre = Number(cajaRuta.saldoActual || 0);
-      const deudaPorFaltantes =
-        clientesFaltantes > 0 ? Math.max(meta - recaudo, 0) : 0;
-      const deudaTotal = Math.max(deudaPorFaltantes + saldoAlCierre, 0);
-      const hayDescuadre = deudaTotal > 0;
-
-      const cobradorNombre =
-        jornada.ruta.cobrador?.nombres && jornada.ruta.cobrador?.apellidos
-          ? `${jornada.ruta.cobrador.nombres} ${jornada.ruta.cobrador.apellidos}`
-          : 'Cobrador';
-
-      const referenciaIdCierre = `RC:${recaudo}|MT:${meta}|EF:${efectividad}|CF:${clientesFaltantes}|CO:${cobradorNombre}|SD:${saldoAlCierre}`;
-
-      let cierreTransaccion;
-      if (existingCierreRuta) {
-        // Update existing CIERRE_RUTA
-        cierreTransaccion = await this.prisma.transaccion.update({
-          where: { id: existingCierreRuta.id },
-          data: {
-            descripcion: hayDescuadre
-              ? `Cierre de ruta con descuadre: ${deudaTotal.toLocaleString('es-CO')} pendientes (saldo en caja: ${saldoAlCierre.toLocaleString('es-CO')}, faltantes: ${deudaPorFaltantes.toLocaleString('es-CO')}). Recaudó: ${recaudo.toLocaleString('es-CO')}.`
-              : `Cierre de ruta exitoso: sin saldo pendiente. Recaudó ${recaudo.toLocaleString('es-CO')} (${efectividad}% META).`,
-            referenciaId: referenciaIdCierre,
-          },
-        });
-      } else {
-        // Create new CIERRE_RUTA transaction
-        cierreTransaccion = await this.prisma.transaccion.create({
-          data: {
-            numeroTransaccion: `CR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-            cajaId: cajaRuta.id,
-            tipo: 'TRANSFERENCIA',
-            monto: 0,
-            descripcion: hayDescuadre
-              ? `Cierre de ruta con descuadre: ${deudaTotal.toLocaleString('es-CO')} pendientes (saldo en caja: ${saldoAlCierre.toLocaleString('es-CO')}, faltantes: ${deudaPorFaltantes.toLocaleString('es-CO')}). Recaudó: ${recaudo.toLocaleString('es-CO')}.`
-              : `Cierre de ruta exitoso: sin saldo pendiente. Recaudó ${recaudo.toLocaleString('es-CO')} (${efectividad}% META).`,
-            tipoReferencia: 'CIERRE_RUTA',
-            referenciaId: referenciaIdCierre,
-            creadoPorId: null,
-            fechaTransaccion: fechaOperativaEnd,
-          },
-        });
-      }
-
-      // Update the RutaJornada to have the cierreTransaccionId
-      await this.prisma.rutaJornada.update({
-        where: { id: jornada.id },
-        data: { cierreTransaccionId: cierreTransaccion.id },
-      });
-
-      // If there's a descuadre, create OR update DEUDA_COBRADOR transaction
-      if (hayDescuadre) {
-        const referenciaIdDeuda = `DD:${deudaTotal}|SD:${saldoAlCierre}|FD:${deudaPorFaltantes}|${referenciaIdCierre}`;
-        
-        if (existingDeudaCobrador) {
-          // Update existing DEUDA_COBRADOR
-          await this.prisma.transaccion.update({
-            where: { id: existingDeudaCobrador.id },
-            data: {
-              monto: deudaTotal,
-              descripcion: `Deuda del cobrador por cierre de ruta: ${deudaTotal.toLocaleString('es-CO')} (saldo en caja: ${saldoAlCierre.toLocaleString('es-CO')}, faltantes: ${deudaPorFaltantes.toLocaleString('es-CO')})`,
-              referenciaId: referenciaIdDeuda,
-            },
-          });
-        } else {
-          // Create new DEUDA_COBRADOR
-          await this.prisma.transaccion.create({
-            data: {
-              numeroTransaccion: `DC-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-              cajaId: cajaRuta.id,
-              tipo: 'EGRESO',
-              monto: deudaTotal,
-              descripcion: `Deuda del cobrador por cierre de ruta: ${deudaTotal.toLocaleString('es-CO')} (saldo en caja: ${saldoAlCierre.toLocaleString('es-CO')}, faltantes: ${deudaPorFaltantes.toLocaleString('es-CO')})`,
-              tipoReferencia: 'DEUDA_COBRADOR',
-              referenciaId: referenciaIdDeuda,
-              creadoPorId: null,
-              fechaTransaccion: fechaOperativaEnd,
-            },
-          });
-        }
-      } else if (existingDeudaCobrador) {
-        // If no descuadre but there was a DEUDA_COBRADOR, delete or update to monto 0?
-        // Let's delete it
-        await this.prisma.transaccion.delete({
-          where: { id: existingDeudaCobrador.id },
-        });
-      }
-    }
-
-    // Usar la nueva entidad RutaJornada para detectar jornadas pendientes
+    // Get ALL PENDIENTE_CIERRE jornadas
     const jornadasPendientes = await this.prisma.rutaJornada.findMany({
       where: {
         rutaId,
@@ -5152,6 +5122,15 @@ export class RoutesService {
         fechaOperativa: 'asc',
       },
     });
+
+    // Update deudas for ALL pending jornadas
+    for (const jornada of jornadasPendientes) {
+      const jornadaWithRuta = {
+        ...jornada,
+        ruta: ruta,
+      };
+      await this.actualizarDeudasJornadaPendiente(rutaId, jornadaWithRuta, cajaRuta);
+    }
 
     const jornadasExistentes = await this.prisma.rutaJornada.findMany({
       where: {
