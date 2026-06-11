@@ -282,12 +282,15 @@ export class LedgerService {
         cajaId: params.cajaRutaId,
         cajaDelta: +montoTotal, // la caja de ruta RECIBE dinero
       },
-      {
+    ];
+
+    if (params.montoCapital > 0) {
+      lines.push({
         accountCode: '1.3.1',
         creditAmount: params.montoCapital,
         // sin cajaId — Cartera Vigente no es una caja física
-      },
-    ];
+      });
+    }
 
     if (params.montoInteres > 0) {
       lines.push({ accountCode: '3.1', creditAmount: params.montoInteres });
