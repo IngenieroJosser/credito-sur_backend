@@ -6,6 +6,7 @@ import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 import { AuditModule } from '../audit/audit.module';
 import { UploadModule } from '../upload/upload.module';
 import { AccountingModule } from '../accounting/accounting.module';
+import { LoansModule } from '../loans/loans.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { AccountingModule } from '../accounting/accounting.module';
     AuditModule,
     UploadModule,
     AccountingModule,
+    LoansModule,
   ],
   controllers: [PaymentsController],
   providers: [PaymentsService],
