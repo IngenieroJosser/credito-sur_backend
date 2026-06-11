@@ -795,6 +795,67 @@ describe('RoutesService role scoping', () => {
     jest.useRealTimers();
   });
 
+  it('crea activaciones con idempotencyKey por fecha operativa Bogota', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-12T04:15:00.000Z'));
+
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      transaccion: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({
+          id: 'activacion-nueva',
+          fechaTransaccion: new Date('2026-06-12T04:15:00.000Z'),
+          tipoReferencia: 'ACTIVACION_RUTA',
+        }),
+      },
+      rutaJornada: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        upsert: jest.fn().mockResolvedValue({ id: 'jornada-1' }),
+      },
+    };
+    const prisma = {
+      ruta: {
+        findFirst: jest
+          .fn()
+          .mockResolvedValueOnce({
+            id: 'ruta-1',
+            nombre: 'Ruta 1',
+            cobradorId: 'cobrador-1',
+          })
+          .mockResolvedValueOnce({
+            id: 'ruta-1',
+            nombre: 'Ruta 1',
+            cobrador: { id: 'cobrador-1', nombres: 'Cobrador', apellidos: 'Uno' },
+            cajas: [{ id: 'caja-ruta-1' }],
+          }),
+      },
+      caja: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'caja-ruta-1' }),
+      },
+      transaccion: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      rutaJornada: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      $transaction: jest.fn().mockImplementation((callback: any) => callback(tx)),
+    };
+
+    await makeService(prisma).activarRutaHoy('ruta-1', 'admin-1');
+
+    expect(tx.transaccion.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          idempotencyKey: 'ACTIVACION_RUTA:ruta-1:2026-06-11',
+        }),
+      }),
+    );
+
+    jest.useRealTimers();
+  });
+
   it('detecta activaciones antiguas sin RutaJornada como cierres pendientes', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-06-04T12:00:00.000Z'));
 

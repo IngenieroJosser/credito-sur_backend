@@ -294,6 +294,7 @@ export class RoutesService {
 
     const { inicio, fin } = this.getInicioFinHoy();
     const fechaOperativa = getBogotaDayKey(new Date());
+    const activacionIdempotencyKey = `ACTIVACION_RUTA:${ruta.id}:${fechaOperativa}`;
 
     let resultadoActivacion: {
       id: string;
@@ -375,6 +376,7 @@ export class RoutesService {
             descripcion: `Activación de ruta del día: ${ruta.nombre}`,
             tipoReferencia: 'ACTIVACION_RUTA',
             referenciaId: `RUTA:${ruta.id}`,
+            idempotencyKey: activacionIdempotencyKey,
             creadoPorId: userId,
           },
           select: {
@@ -415,11 +417,20 @@ export class RoutesService {
       });
     } catch (error: any) {
       if (error?.code === 'P2002') {
-        const activacionExistente = await this.buscarActivacionRutaDia(
-          cajaRuta.id,
-          inicio,
-          fin,
-        );
+        const activacionExistente =
+          (await this.prisma.transaccion.findFirst({
+            where: { idempotencyKey: activacionIdempotencyKey },
+            select: {
+              id: true,
+              fechaTransaccion: true,
+              tipoReferencia: true,
+            },
+          })) ||
+          (await this.buscarActivacionRutaDia(
+            cajaRuta.id,
+            inicio,
+            fin,
+          ));
 
         if (activacionExistente?.id) {
           resultadoActivacion = {
