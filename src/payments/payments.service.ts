@@ -51,6 +51,7 @@ type PaymentActor =
 @Injectable()
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
+  private readonly MONTO_MINIMO_ABONO_COP = 1000;
 
   private isCollector(actor: PaymentActor) {
     return String(actor?.rol || '').toUpperCase() === RolUsuario.COBRADOR;
@@ -577,6 +578,15 @@ export class PaymentsService {
     if (!Number.isFinite(montoTotal) || montoTotal <= 0) {
       throw new BadRequestException(
         'El monto del pago debe ser un número mayor a cero',
+      );
+    }
+
+    if (
+      paymentDto.tipoRegistro === 'ABONO' &&
+      montoTotal < this.MONTO_MINIMO_ABONO_COP
+    ) {
+      throw new BadRequestException(
+        `El abono mínimo permitido es $${this.MONTO_MINIMO_ABONO_COP.toLocaleString('es-CO')}.`,
       );
     }
 
