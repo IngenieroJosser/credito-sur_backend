@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   HttpException,
   Logger,
 } from '@nestjs/common';
@@ -53,6 +54,49 @@ export class PaymentsService {
 
   private isCollector(actor: PaymentActor) {
     return String(actor?.rol || '').toUpperCase() === RolUsuario.COBRADOR;
+  }
+
+  private async assertCanRegisterRegularizedPayment(
+    rutaId: string,
+    actor?: PaymentActor,
+  ) {
+    const rol = String(actor?.rol || '').toUpperCase();
+
+    if (!actor?.id) {
+      throw new ForbiddenException(
+        'No tienes permiso para registrar pagos regularizados.',
+      );
+    }
+
+    if (
+      rol === RolUsuario.SUPER_ADMINISTRADOR ||
+      rol === RolUsuario.ADMIN ||
+      rol === RolUsuario.COORDINADOR
+    ) {
+      return;
+    }
+
+    if (rol !== RolUsuario.COBRADOR && rol !== RolUsuario.SUPERVISOR) {
+      throw new ForbiddenException(
+        'No tienes permiso para registrar pagos regularizados.',
+      );
+    }
+
+    const ruta = await this.prisma.ruta.findFirst({
+      where: {
+        id: rutaId,
+        eliminadoEn: null,
+        ...(rol === RolUsuario.COBRADOR ? { cobradorId: actor.id } : {}),
+        ...(rol === RolUsuario.SUPERVISOR ? { supervisorId: actor.id } : {}),
+      },
+      select: { id: true },
+    });
+
+    if (!ruta?.id) {
+      throw new ForbiddenException(
+        'No tienes permiso para registrar pagos regularizados en esta ruta.',
+      );
+    }
   }
 
   private isDomingoBogota(date = new Date()) {
@@ -450,6 +494,8 @@ export class PaymentsService {
           'rutaId es requerido para pagos desde cierre pendiente.',
         );
       }
+
+      await this.assertCanRegisterRegularizedPayment(paymentDto.rutaId, actor);
     }
 
     // 2. Si el método es TRANSFERENCIA, el comprobante es OBLIGATORIO
