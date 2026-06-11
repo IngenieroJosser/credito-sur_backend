@@ -3488,10 +3488,40 @@ export class RoutesService {
 
       const fechaEfectivaKey = this.getCuotaFechaEfectivaKey(cuota);
       const montoCuota = Number(cuota.monto || 0);
+      const estado = String(cuota.estado || '').toUpperCase();
+      const pagada = ['PAGADA', 'PAGADO'].includes(estado);
+      const anulada = ['ANULADA', 'ANULADO'].includes(estado);
+      const estadoTerminal = pagada || anulada;
       const montoPagado = Math.max(
         Number(cuota.montoPagado || 0),
         Number(detalle?.monto || 0),
       );
+      const saldoCuota = estadoTerminal ? 0 : Math.max(0, montoCuota - montoPagado);
+      const esCuotaFuturaEnFechaOperativa = fechaEfectivaKey > fechaKey;
+      const saldoExigibleEnFechaOperativa =
+        estadoTerminal || esCuotaFuturaEnFechaOperativa ? 0 : saldoCuota;
+      const cubiertaPorPagoJornada = saldoExigibleEnFechaOperativa <= 0;
+      const puedePagar = saldoExigibleEnFechaOperativa > 0;
+      const puedeReprogramar =
+        !estadoTerminal &&
+        !esCuotaFuturaEnFechaOperativa &&
+        saldoExigibleEnFechaOperativa > 0;
+
+      const motivoBloqueoPago = pagada || cubiertaPorPagoJornada
+        ? 'La cuota objetivo ya está pagada.'
+        : anulada
+          ? 'La cuota objetivo está anulada.'
+          : esCuotaFuturaEnFechaOperativa
+            ? 'La cuota encontrada es futura para esta jornada.'
+            : null;
+
+      const motivoBloqueoReprogramacion = pagada || cubiertaPorPagoJornada
+        ? 'La cuota objetivo ya está pagada.'
+        : anulada
+          ? 'La cuota objetivo está anulada.'
+          : esCuotaFuturaEnFechaOperativa
+            ? 'No se recomienda reprogramar una cuota futura desde una jornada pasada.'
+            : null;
 
       return {
         id: cuota.id,
@@ -3502,16 +3532,16 @@ export class RoutesService {
         fechaEfectiva: fechaEfectivaKey,
         montoCuota,
         montoPagado,
-        saldoCuota: 0,
-        saldoExigibleEnFechaOperativa: 0,
-        enMoraEnFechaOperativa: false,
-        puedePagar: false,
-        puedeReprogramar: false,
-        esCuotaFuturaEnFechaOperativa: false,
-        esCuotaPagadaHistorica: true,
-        cubiertaPorPagoJornada: true,
-        motivoBloqueoPago: 'La cuota objetivo ya está pagada.',
-        motivoBloqueoReprogramacion: 'La cuota objetivo ya está pagada.',
+        saldoCuota,
+        saldoExigibleEnFechaOperativa,
+        enMoraEnFechaOperativa: fechaEfectivaKey < fechaKey && !estadoTerminal,
+        puedePagar,
+        puedeReprogramar,
+        esCuotaFuturaEnFechaOperativa,
+        esCuotaPagadaHistorica: pagada && fechaEfectivaKey <= fechaKey,
+        cubiertaPorPagoJornada,
+        motivoBloqueoPago,
+        motivoBloqueoReprogramacion,
       };
     };
 
