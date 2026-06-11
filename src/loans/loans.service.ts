@@ -33,7 +33,7 @@ import {
   CarteraRow,
   CarteraTotales,
 } from '../templates/exports/cartera-creditos.template';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { ContratoData, generarContratoPDF } from '../templates/exports';
 import {
   calculateDateRange,
@@ -121,7 +121,10 @@ export class LoansService implements OnModuleInit {
 
   private normalizeIdempotencyKey(value?: string | null) {
     const key = value?.toString().trim();
-    return key || undefined;
+    if (!key) return undefined;
+    if (key.length <= 100) return key;
+
+    return `sha256:${createHash('sha256').update(key).digest('hex')}`;
   }
 
   private parseFechaOperativaReprogramacionKey(value?: string | null) {
