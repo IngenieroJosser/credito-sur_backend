@@ -5293,7 +5293,9 @@ export class RoutesService {
     return result;
   }
 
-  private resolveEstadoGestionCierrePendiente(v: any): 'PAGO_REGISTRADO' | 'AUSENTE' | 'PENDIENTE' {
+  private resolveEstadoGestionCierrePendiente(
+    v: any,
+  ): 'PAGO_REGISTRADO' | 'AUSENTE' | 'REPROGRAMADO' | 'PENDIENTE' {
     const estadoVisita = String(v?.estadoVisita || '').toLowerCase()
     const recaudado = Number(v?.recaudadoDelDia || 0)
 
@@ -5307,6 +5309,15 @@ export class RoutesService {
 
     if (estadoVisita === 'ausente') {
       return 'AUSENTE'
+    }
+
+    if (
+      estadoVisita === 'reprogramado' ||
+      estadoVisita === 'reprogramada' ||
+      estadoVisita === 'reprogramacion' ||
+      estadoVisita === 'reprogramación'
+    ) {
+      return 'REPROGRAMADO'
     }
 
     return 'PENDIENTE'

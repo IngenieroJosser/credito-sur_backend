@@ -21,6 +21,7 @@ import { MoraService } from '../loans/mora.service';
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -149,6 +150,10 @@ const ASIGNACION_RUTA_CON_COBRADOR = {
   cobradorId: 'cobrador-ruta',
   ruta: { cobradorId: 'cobrador-ruta' },
 };
+const ACTOR_ADMIN = {
+  id: 'admin-1',
+  rol: RolUsuario.ADMIN,
+};
 
 // ─────────────────────────────────────────────
 // Mock de PrismaService — simula transacciones
@@ -177,6 +182,9 @@ function buildMockPrisma(overrides: Record<string, unknown> = {}) {
     },
     asignacionRuta: {
       findFirst: jest.fn().mockResolvedValue(ASIGNACION_RUTA_CON_COBRADOR),
+    },
+    ruta: {
+      findFirst: jest.fn().mockResolvedValue({ id: 'ruta-1' }),
     },
     pago: {
       count: jest.fn().mockResolvedValue(0),
@@ -374,7 +382,7 @@ describe('PaymentsService', () => {
 
       prisma.pago.findFirst.mockResolvedValueOnce(null);
       try {
-        await service.create(dto);
+        await service.create(dto, undefined, ACTOR_ADMIN);
       } finally {
         jest.useRealTimers();
       }
@@ -440,7 +448,7 @@ describe('PaymentsService', () => {
 
       prisma.pago.findFirst.mockResolvedValueOnce(null);
       try {
-        await service.create(dto);
+        await service.create(dto, undefined, ACTOR_ADMIN);
       } finally {
         jest.useRealTimers();
       }
@@ -500,7 +508,7 @@ describe('PaymentsService', () => {
           notas: 'Recibido con nota administrativa',
           idempotencyKey:
             'CIERRE_PENDIENTE:ruta-1:2026-05-27:cliente-1:prestamo-1:cuota-2:1:PAGO:110000',
-        } as any);
+        } as any, undefined, ACTOR_ADMIN);
       } finally {
         jest.useRealTimers();
       }
@@ -572,7 +580,7 @@ describe('PaymentsService', () => {
           origenGestion: 'CIERRE_PENDIENTE',
           rutaId: 'ruta-1',
           idempotencyKey: longKey,
-        } as any);
+        } as any, undefined, ACTOR_ADMIN);
       } finally {
         jest.useRealTimers();
       }
@@ -602,6 +610,33 @@ describe('PaymentsService', () => {
       ).rejects.toThrow(BadRequestException);
 
       expect(prisma.prestamo.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('rechaza pagos regularizados de roles sin permiso operativo en la ruta', async () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-06-01T12:00:00.000Z'));
+
+      try {
+        await expect(
+          service.create(
+            {
+              prestamoId: 'prestamo-1',
+              cobradorId: 'cobrador-1',
+              montoTotal: 110000,
+              cuotaId: 'cuota-2',
+              fechaOperativaRuta: '2026-05-27',
+              origenGestion: 'CIERRE_PENDIENTE',
+              rutaId: 'ruta-1',
+            } as any,
+            undefined,
+            { id: 'contador-1', rol: RolUsuario.CONTADOR },
+          ),
+        ).rejects.toThrow(ForbiddenException);
+
+        expect(prisma.prestamo.findFirst).not.toHaveBeenCalled();
+      } finally {
+        jest.useRealTimers();
+      }
     });
 
     it('rechaza pagos de cierre pendiente en domingo en Bogotá', async () => {
