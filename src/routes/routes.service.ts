@@ -240,13 +240,20 @@ export class RoutesService {
       };
     }
 
-    const { inicio, fin } = this.getInicioFinHoy();
+    const fechaOperativa = getBogotaDayKey(new Date());
+    const activacionIdempotencyKey = `ACTIVACION_RUTA:${ruta.id}:${fechaOperativa}`;
 
-    const activacionRutaHoy = await this.buscarActivacionRutaDia(
-      cajaRuta.id,
-      inicio,
-      fin,
-    );
+    const activacionRutaHoy = await this.prisma.transaccion.findFirst({
+      where: {
+        idempotencyKey: activacionIdempotencyKey,
+      },
+      select: {
+        id: true,
+        fechaTransaccion: true,
+        creadoPorId: true,
+        tipoReferencia: true,
+      },
+    });
 
     return {
       rutaId,
