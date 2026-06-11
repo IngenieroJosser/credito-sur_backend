@@ -3377,32 +3377,17 @@ export class RoutesService {
           .filter(Boolean),
       ),
     ];
-    const cuotasReferenciaIds = [
-      ...new Set(
-        visitasDelDia.flatMap((v: any) => {
-          const ids = [
-            v?.cuotaObjetivo?.id,
-            v?.cuotaObjetivoId,
-            ...(Array.isArray(v?.prestamos)
-              ? v.prestamos.flatMap((prestamo: any) => [
-                  prestamo?.cuotaObjetivo?.id,
-                  prestamo?.proximaCuota?.id,
-                ])
-              : []),
-          ];
-          return ids.filter(Boolean).map(String);
-        }),
-      ),
-    ];
     const reprogramacionesJornada =
       clientesVisitaIds.length > 0 &&
-      cuotasReferenciaIds.length > 0 &&
       this.prisma.aprobacion?.findMany
         ? await this.prisma.aprobacion.findMany({
             where: {
               tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
               estado: { in: [EstadoAprobacion.PENDIENTE, EstadoAprobacion.APROBADO] },
-              referenciaId: { in: cuotasReferenciaIds },
+              datosSolicitud: {
+                path: ['fechaOperativaRuta'],
+                equals: fechaKey,
+              },
             },
             orderBy: { creadoEn: 'desc' },
             select: {
