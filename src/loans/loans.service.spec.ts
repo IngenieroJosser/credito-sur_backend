@@ -457,6 +457,84 @@ describe('LoansService reprogramacion concurrency controls', () => {
     );
   });
 
+  it('normaliza idempotencyKey largas antes de crear la aprobación de reprogramación', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-11T12:00:00-05:00'));
+
+    const prisma = {
+      aprobacion: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'aprobacion-1' }),
+      },
+      prestamo: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'prestamo-1',
+          clienteId: 'cliente-1',
+          numeroPrestamo: 'PRES-1',
+          frecuenciaPago: 'DIARIO',
+          cliente: { nombres: 'Ana', apellidos: 'Rojas' },
+          cuotas: [
+            {
+              id: 'cuota-1',
+              numeroCuota: 1,
+              estado: 'PENDIENTE',
+              fechaVencimiento: new Date('2026-06-10T12:00:00-05:00'),
+              monto: 100000,
+            },
+          ],
+        }),
+      },
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue({
+          rutaId: 'ruta-1',
+          cobradorId: 'cobrador-1',
+          ruta: { cobradorId: 'cobrador-ruta-1' },
+        }),
+      },
+      rutaJornada: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'jornada-1',
+          rutaId: 'ruta-1',
+          fechaOperativa: '2026-06-10',
+        }),
+      },
+      registroVisita: {
+        upsert: jest.fn().mockResolvedValue({ id: 'visita-1' }),
+      },
+      usuario: {
+        findUnique: jest.fn().mockResolvedValue({ rol: RolUsuario.ADMIN }),
+      },
+    };
+
+    const longKey = [
+      'REPROGRAMACION_CIERRE_PENDIENTE',
+      '4cad8b09-971f-4c9c-9d4a-db1bc8ba3452',
+      '2026-06-10',
+      'cliente-encarnacion-44444444-uuid-largo',
+      'prestamo-encarnacion-uuid-largo-1234567890',
+      'cuota-encarnacion-uuid-largo-1234567890',
+      '2026-06-11',
+    ].join(':');
+
+    try {
+      await makeService(prisma as any).solicitarReprogramacion({
+        prestamoId: 'prestamo-1',
+        cuotaId: 'cuota-1',
+        nuevaFecha: '2026-06-11',
+        motivo: 'Cliente pidió reprogramar para hoy',
+        origenGestion: 'CIERRE_PENDIENTE',
+        fechaOperativaRuta: '2026-06-10',
+        idempotencyKey: longKey,
+        solicitadoPorId: 'admin-1',
+      });
+    } finally {
+      jest.useRealTimers();
+    }
+
+    const createArg = prisma.aprobacion.create.mock.calls[0][0];
+    expect(createArg.data.idempotencyKey).toMatch(/^sha256:/);
+    expect(createArg.data.idempotencyKey).toHaveLength(71);
+  });
+
   it('exige fechaOperativaRuta cuando la reprogramación viene desde cierre pendiente', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-06-01T12:00:00-05:00'));
 
