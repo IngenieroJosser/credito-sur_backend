@@ -555,6 +555,125 @@ describe('RoutesService role scoping', () => {
     );
   });
 
+  it('mantiene la cuota reprogramada de la jornada aunque el préstamo ya apunte a otra cuota', async () => {
+    const cuotaPagadaAnterior = {
+      id: 'cuota-7',
+      numeroCuota: 7,
+      fechaVencimiento: new Date('2026-06-09T12:00:00.000Z'),
+      fechaVencimientoProrroga: null,
+      fechaPago: new Date('2026-06-10T16:00:00.000Z'),
+      monto: 43_333,
+      montoPagado: 43_333,
+      estado: 'PAGADA',
+    };
+    const cuotaReprogramada = {
+      id: 'cuota-8',
+      numeroCuota: 8,
+      fechaVencimiento: new Date('2026-06-10T12:00:00.000Z'),
+      fechaVencimientoProrroga: new Date('2026-06-11T12:00:00.000Z'),
+      fechaPago: null,
+      monto: 43_333,
+      montoPagado: 0,
+      estado: 'PRORROGADA',
+    };
+    const prisma = {
+      asignacionRuta: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'asig-epifanio',
+            ordenVisita: 4,
+            cliente: {
+              id: 'cliente-epifanio',
+              codigo: 'C002',
+              dni: '222',
+              nombres: 'Epifanio',
+              apellidos: 'Mena',
+              telefono: '311',
+              direccion: 'Barrio Playita',
+              nivelRiesgo: 'MINIMO',
+              prestamos: [
+                {
+                  id: 'prestamo-epifanio',
+                  numeroPrestamo: 'ART-000002',
+                  monto: 2_600_000,
+                  saldoPendiente: 2_296_669,
+                  frecuenciaPago: 'DIARIO',
+                  cantidadCuotas: 60,
+                  estado: 'ACTIVO',
+                  cuotas: [cuotaPagadaAnterior, cuotaReprogramada],
+                },
+              ],
+            },
+          },
+        ]),
+      },
+      registroVisita: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            rutaId: 'ruta-1',
+            clienteId: 'cliente-epifanio',
+            prestamoId: 'prestamo-epifanio',
+            cobradorId: 'cobrador-1',
+            fechaVisita: '2026-06-10',
+            estadoVisita: 'reprogramado',
+            notas:
+              'Reprogramación solicitada desde cierre pendiente: Reprogramación solicitada',
+          },
+        ]),
+      },
+      aprobacion: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'aprobacion-epifanio',
+            referenciaId: 'cuota-8',
+            estado: 'PENDIENTE',
+            creadoEn: new Date('2026-06-11T08:32:00.000Z'),
+            datosSolicitud: {
+              prestamoId: 'prestamo-epifanio',
+              cuotaId: 'cuota-8',
+              clienteId: 'cliente-epifanio',
+              numeroCuota: 8,
+              fechaOperativaRuta: '2026-06-10',
+              fechaVencimientoOriginal: '2026-06-10T12:00:00.000-05:00',
+              nuevaFecha: '2026-06-11',
+              montoCuota: 43_333,
+            },
+          },
+        ]),
+      },
+      pago: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      cliente: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      gasto: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 0 } }),
+      },
+    };
+
+    const resultado = await makeService(prisma).getDailyVisits(
+      'ruta-1',
+      '2026-06-10',
+    );
+
+    expect(resultado.visitas[0]).toEqual(
+      expect.objectContaining({
+        estadoVisita: 'reprogramado',
+        cuotaObjetivo: expect.objectContaining({
+          id: 'cuota-8',
+          numeroCuota: 8,
+          esCuotaReprogramadaJornada: true,
+          nuevaFechaReprogramada: '2026-06-11',
+          saldoExigibleEnFechaOperativa: 0,
+          motivoBloqueoPago:
+            'La cuota fue reprogramada desde esta jornada pendiente.',
+        }),
+        cuotaObjetivoId: 'cuota-8',
+      }),
+    );
+  });
+
   it('rejects a collector checking activation for a route they do not own', async () => {
     const prisma = {
       ruta: {

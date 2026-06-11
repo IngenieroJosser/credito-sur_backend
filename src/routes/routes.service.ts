@@ -31,7 +31,9 @@ import { UpdateRouteDto } from './dto/update-route.dto';
 import {
   Prisma,
   EstadoPrestamo,
+  EstadoAprobacion,
   RolUsuario,
+  TipoAprobacion,
 } from '@prisma/client';
 
 import {
@@ -3368,6 +3370,65 @@ export class RoutesService {
       },
     });
     const visitasMap = new Map(registrosVisitas.map((r) => [r.clienteId, r]));
+    const clientesVisitaIds = [
+      ...new Set(
+        visitasDelDia
+          .map((v: any) => v?.cliente?.id || v?.clienteId)
+          .filter(Boolean),
+      ),
+    ];
+    const cuotasReferenciaIds = [
+      ...new Set(
+        visitasDelDia.flatMap((v: any) => {
+          const ids = [
+            v?.cuotaObjetivo?.id,
+            v?.cuotaObjetivoId,
+            ...(Array.isArray(v?.prestamos)
+              ? v.prestamos.flatMap((prestamo: any) => [
+                  prestamo?.cuotaObjetivo?.id,
+                  prestamo?.proximaCuota?.id,
+                ])
+              : []),
+          ];
+          return ids.filter(Boolean).map(String);
+        }),
+      ),
+    ];
+    const reprogramacionesJornada =
+      clientesVisitaIds.length > 0 &&
+      cuotasReferenciaIds.length > 0 &&
+      this.prisma.aprobacion?.findMany
+        ? await this.prisma.aprobacion.findMany({
+            where: {
+              tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
+              estado: { in: [EstadoAprobacion.PENDIENTE, EstadoAprobacion.APROBADO] },
+              referenciaId: { in: cuotasReferenciaIds },
+            },
+            orderBy: { creadoEn: 'desc' },
+            select: {
+              id: true,
+              referenciaId: true,
+              estado: true,
+              datosSolicitud: true,
+              creadoEn: true,
+            },
+          })
+        : [];
+    const reprogramacionPorCliente = new Map<string, any>();
+    reprogramacionesJornada.forEach((aprobacion: any) => {
+      const datos = (aprobacion?.datosSolicitud || {}) as any;
+      const clienteId = String(datos?.clienteId || '');
+      if (
+        !clienteId ||
+        !clientesVisitaIds.includes(clienteId) ||
+        String(datos?.fechaOperativaRuta || '') !== fechaKey
+      ) {
+        return;
+      }
+      if (!reprogramacionPorCliente.has(clienteId)) {
+        reprogramacionPorCliente.set(clienteId, aprobacion);
+      }
+    });
 
     // Calcular recaudo real de esa fecha para esa ruta
     // Calcular recaudo real de esa fecha para la ruta basándose en los clientes identificados
@@ -3631,12 +3692,38 @@ export class RoutesService {
         }
       }
 
-      const registro = visitasMap.get(cid);
+      const registro: any = visitasMap.get(cid);
       if (registro) {
         // @ts-ignore - Prisma type inference issue, properties exist at runtime
         v.estadoVisita = registro.estadoVisita;
         // @ts-ignore - Prisma type inference issue, properties exist at runtime
         v.notasVisita = registro.notas;
+
+        if (String(registro.estadoVisita || '').toLowerCase() === 'reprogramado') {
+          const reprogramacion = reprogramacionPorCliente.get(String(cid || ''));
+          const cuotaReprogramada =
+            this.buildCuotaObjetivoDesdeReprogramacion(reprogramacion);
+          if (cuotaReprogramada) {
+            // @ts-ignore - Prisma type inference issue, properties exist at runtime
+            v.cuotaObjetivo = cuotaReprogramada;
+            // @ts-ignore - Prisma type inference issue, properties exist at runtime
+            v.cuotaObjetivoId = cuotaReprogramada.id;
+            // @ts-ignore - Prisma type inference issue, properties exist at runtime
+            v.cuotaObjetivoPrestamoId = cuotaReprogramada.id;
+            // @ts-ignore - Prisma type inference issue, properties exist at runtime
+            v.prestamoObjetivoId =
+              cuotaReprogramada.prestamoId || v.prestamoObjetivoId || null;
+
+            if (Array.isArray(v.prestamos)) {
+              v.prestamos = v.prestamos.map((prestamo: any) => {
+                if (prestamo?.id === cuotaReprogramada.prestamoId) {
+                  return { ...prestamo, cuotaObjetivo: cuotaReprogramada };
+                }
+                return prestamo;
+              });
+            }
+          }
+        }
       }
     });
 
@@ -4018,6 +4105,46 @@ export class RoutesService {
       esCuotaPagadaHistorica,
       motivoBloqueoPago,
       motivoBloqueoReprogramacion,
+    };
+  }
+
+  private buildCuotaObjetivoDesdeReprogramacion(aprobacion: any) {
+    const datos = (aprobacion?.datosSolicitud || {}) as any;
+    const cuotaId = String(datos?.cuotaId || aprobacion?.referenciaId || '');
+    if (!cuotaId) return null;
+
+    const fechaOriginal =
+      datos?.fechaVencimientoOriginal || datos?.fechaVencimiento || null;
+    const fechaOriginalKey = fechaOriginal
+      ? getBogotaDayKey(new Date(fechaOriginal))
+      : null;
+    const nuevaFecha = datos?.nuevaFecha || null;
+
+    return {
+      id: cuotaId,
+      prestamoId: datos?.prestamoId || null,
+      numeroCuota: Number(datos?.numeroCuota || 0) || null,
+      estadoActual: 'REPROGRAMADA',
+      fechaVencimiento: fechaOriginal,
+      fechaVencimientoProrroga: nuevaFecha,
+      fechaEfectiva: fechaOriginalKey,
+      nuevaFechaReprogramada: nuevaFecha,
+      montoCuota: Number(datos?.montoCuota || 0),
+      montoPagado: 0,
+      saldoCuota: Number(datos?.montoCuota || 0),
+      saldoExigibleEnFechaOperativa: 0,
+      enMoraEnFechaOperativa: false,
+      puedePagar: false,
+      puedeReprogramar: false,
+      esCuotaFuturaEnFechaOperativa: false,
+      esCuotaPagadaHistorica: false,
+      esCuotaReprogramadaJornada: true,
+      aprobacionReprogramacionId: aprobacion?.id || null,
+      estadoReprogramacion: aprobacion?.estado || null,
+      motivoBloqueoPago:
+        'La cuota fue reprogramada desde esta jornada pendiente.',
+      motivoBloqueoReprogramacion:
+        'La cuota ya tiene una reprogramación registrada para esta jornada.',
     };
   }
 
