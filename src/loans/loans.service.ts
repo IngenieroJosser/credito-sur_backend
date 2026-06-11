@@ -4271,7 +4271,11 @@ export class LoansService implements OnModuleInit {
 
       const asignacionActiva = await this.prisma.asignacionRuta.findFirst({
         where: { clienteId: prestamo.clienteId, activa: true },
-        select: { rutaId: true },
+        select: {
+          rutaId: true,
+          cobradorId: true,
+          ruta: { select: { cobradorId: true } },
+        },
       });
 
       if (!asignacionActiva?.rutaId) {
@@ -4294,6 +4298,36 @@ export class LoansService implements OnModuleInit {
           'No existe una jornada pendiente válida para esta regularización',
         );
       }
+
+      const cobradorGestionId =
+        asignacionActiva.cobradorId ||
+        asignacionActiva.ruta?.cobradorId ||
+        data.solicitadoPorId;
+
+      await this.prisma.registroVisita.upsert({
+        where: {
+          rutaId_clienteId_fechaVisita: {
+            rutaId: asignacionActiva.rutaId,
+            clienteId: prestamo.clienteId,
+            fechaVisita: fechaOperativaRuta,
+          },
+        },
+        create: {
+          rutaId: asignacionActiva.rutaId,
+          clienteId: prestamo.clienteId,
+          prestamoId: prestamo.id,
+          cobradorId: cobradorGestionId,
+          fechaVisita: fechaOperativaRuta,
+          estadoVisita: 'reprogramado',
+          notas: `Reprogramación solicitada desde cierre pendiente: ${data.motivo || 'Sin motivo'}`,
+        },
+        update: {
+          prestamoId: prestamo.id,
+          cobradorId: cobradorGestionId,
+          estadoVisita: 'reprogramado',
+          notas: `Reprogramación solicitada desde cierre pendiente: ${data.motivo || 'Sin motivo'}`,
+        },
+      });
     }
 
     const contextoRegularizacion =

@@ -499,6 +499,92 @@ describe('LoansService reprogramacion concurrency controls', () => {
 
     jest.useRealTimers();
   });
+
+  it('marca la visita como reprogramada al solicitar reprogramación desde cierre pendiente', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-01T12:00:00-05:00'));
+
+    const prisma = {
+      aprobacion: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'aprobacion-1' }),
+      },
+      prestamo: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'prestamo-1',
+          clienteId: 'cliente-1',
+          numeroPrestamo: 'PRES-1',
+          frecuenciaPago: 'SEMANAL',
+          cliente: { nombres: 'Ana', apellidos: 'Rojas' },
+          cuotas: [
+            {
+              id: 'cuota-1',
+              numeroCuota: 1,
+              estado: 'PENDIENTE',
+              fechaVencimiento: new Date('2026-05-18T12:00:00-05:00'),
+              monto: 100000,
+            },
+          ],
+        }),
+      },
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue({
+          rutaId: 'ruta-1',
+          cobradorId: 'cobrador-1',
+          ruta: { cobradorId: 'cobrador-ruta-1' },
+        }),
+      },
+      rutaJornada: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'jornada-1',
+          rutaId: 'ruta-1',
+          fechaOperativa: '2026-05-27',
+        }),
+      },
+      registroVisita: {
+        upsert: jest.fn().mockResolvedValue({ id: 'visita-1' }),
+      },
+      usuario: {
+        findUnique: jest.fn().mockResolvedValue({ rol: RolUsuario.COBRADOR }),
+      },
+    };
+
+    try {
+      await makeService(prisma as any).solicitarReprogramacion({
+        prestamoId: 'prestamo-1',
+        cuotaId: 'cuota-1',
+        nuevaFecha: '2026-06-02',
+        motivo: 'Cliente solicita cambio',
+        origenGestion: 'CIERRE_PENDIENTE',
+        fechaOperativaRuta: '2026-05-27',
+        solicitadoPorId: 'cobrador-1',
+      });
+    } finally {
+      jest.useRealTimers();
+    }
+
+    expect(prisma.registroVisita.upsert).toHaveBeenCalledWith({
+      where: {
+        rutaId_clienteId_fechaVisita: {
+          rutaId: 'ruta-1',
+          clienteId: 'cliente-1',
+          fechaVisita: '2026-05-27',
+        },
+      },
+      create: expect.objectContaining({
+        rutaId: 'ruta-1',
+        clienteId: 'cliente-1',
+        prestamoId: 'prestamo-1',
+        cobradorId: 'cobrador-1',
+        fechaVisita: '2026-05-27',
+        estadoVisita: 'reprogramado',
+      }),
+      update: expect.objectContaining({
+        prestamoId: 'prestamo-1',
+        cobradorId: 'cobrador-1',
+        estadoVisita: 'reprogramado',
+      }),
+    });
+  });
 });
 
 describe('LoansService role scoping', () => {
