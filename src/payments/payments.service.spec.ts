@@ -17,6 +17,7 @@ import { AuditService } from '../audit/audit.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { CloudinaryService } from '../upload/cloudinary.service';
 import { LedgerService } from '../accounting/ledger.service';
+import { MoraService } from '../loans/mora.service';
 import {
   BadRequestException,
   ConflictException,
@@ -53,6 +54,15 @@ const mockNotificacionesGateway = {
 
 const mockLedgerService = {
   registrarPago: jest.fn().mockResolvedValue(undefined),
+};
+
+const mockMoraService = {
+  recalcularNivelRiesgoCliente: jest.fn().mockResolvedValue({
+    clienteId: 'cliente-1',
+    nivelRiesgo: 'VERDE',
+    diasEnMora: 0,
+    actualizado: true,
+  }),
 };
 
 // ─────────────────────────────────────────────
@@ -205,6 +215,7 @@ describe('PaymentsService', () => {
         { provide: NotificacionesGateway, useValue: mockNotificacionesGateway },
         { provide: CloudinaryService, useValue: { subirArchivo: jest.fn() } },
         { provide: LedgerService, useValue: mockLedgerService },
+        { provide: MoraService, useValue: mockMoraService },
       ],
     }).compile();
 
@@ -402,6 +413,10 @@ describe('PaymentsService', () => {
             rutaId: 'ruta-1',
           }),
         }),
+      );
+      expect(mockMoraService.recalcularNivelRiesgoCliente).toHaveBeenCalledWith(
+        'cliente-1',
+        prisma._txMock,
       );
     });
 

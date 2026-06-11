@@ -36,6 +36,7 @@ import {
   getBogotaStartEndOfDayFromKey,
 } from '../utils/date-utils';
 import { LedgerService } from '../accounting/ledger.service';
+import { MoraService } from '../loans/mora.service';
 import { createHash, randomUUID } from 'crypto';
 
 type PaymentActor =
@@ -153,6 +154,7 @@ export class PaymentsService {
     private notificacionesGateway: NotificacionesGateway,
     private readonly cloudinaryService: CloudinaryService,
     private readonly ledgerService: LedgerService,
+    private readonly moraService: MoraService,
   ) {}
 
   /**
@@ -1043,6 +1045,8 @@ export class PaymentsService {
             estadoSincronizacion: 'PENDIENTE',
           },
         });
+
+        await this.moraService.recalcularNivelRiesgoCliente(clienteId, tx);
 
         const numeroTransaccionCaja = this.generarNumeroTransaccion('TRX-IN');
 

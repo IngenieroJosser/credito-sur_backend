@@ -458,6 +458,8 @@ describe('LoansService reprogramacion concurrency controls', () => {
   });
 
   it('exige fechaOperativaRuta cuando la reprogramación viene desde cierre pendiente', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-01T12:00:00-05:00'));
+
     const prisma = {
       aprobacion: {
         findUnique: jest.fn().mockResolvedValue(null),
@@ -494,6 +496,8 @@ describe('LoansService reprogramacion concurrency controls', () => {
     ).rejects.toThrow(
       'fechaOperativaRuta es requerida para reprogramaciones desde cierre pendiente',
     );
+
+    jest.useRealTimers();
   });
 });
 

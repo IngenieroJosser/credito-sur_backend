@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
@@ -7,6 +8,7 @@ import {
   formatBogotaOffsetIso,
   getBogotaDayKey,
   getBogotaStartEndOfDay,
+  getBogotaWeekday,
 } from '../utils/date-utils';
 
 /**
@@ -72,6 +74,45 @@ function nivelMoraNumerico(dias: number): number {
   return 1; // Mínimo
 }
 
+function buildBogotaNoon(key: string): Date {
+  return new Date(`${key}T12:00:00-05:00`);
+}
+
+function shiftBogotaKey(key: string, days: number): string {
+  const shifted = new Date(buildBogotaNoon(key).getTime() + days * 86_400_000);
+  return getBogotaDayKey(shifted);
+}
+
+export function calcularDiasMoraOperativos(
+  fechaVencimiento: Date,
+  hoy: Date,
+  frecuenciaPago?: string | null,
+): number {
+  const vencimientoKey = getBogotaDayKey(fechaVencimiento);
+  const hoyKey = getBogotaDayKey(hoy);
+  if (!vencimientoKey || !hoyKey || vencimientoKey >= hoyKey) return 0;
+
+  if (String(frecuenciaPago || '').toUpperCase() !== 'DIARIO') {
+    const vencimiento = buildBogotaNoon(vencimientoKey);
+    const actual = buildBogotaNoon(hoyKey);
+    return Math.max(
+      0,
+      Math.floor((actual.getTime() - vencimiento.getTime()) / 86_400_000),
+    );
+  }
+
+  let dias = 0;
+  let cursorKey = shiftBogotaKey(vencimientoKey, 1);
+  while (cursorKey && cursorKey <= hoyKey) {
+    if (getBogotaWeekday(buildBogotaNoon(cursorKey)) !== 0) {
+      dias++;
+    }
+    cursorKey = shiftBogotaKey(cursorKey, 1);
+  }
+
+  return dias;
+}
+
 export interface ResultadoProcesarMora {
   cuotasVencidas: number;
   prestamosEnMoraActualizados: number;
@@ -81,6 +122,8 @@ export interface ResultadoProcesarMora {
   errores: string[];
   procesadoEn: string;
 }
+
+type MoraDbClient = PrismaService | Prisma.TransactionClient;
 
 @Injectable()
 export class MoraService implements OnModuleInit {
@@ -96,6 +139,79 @@ export class MoraService implements OnModuleInit {
     private readonly notificacionesGateway: NotificacionesGateway,
     private readonly pushService: PushService,
   ) {}
+
+  async recalcularNivelRiesgoCliente(
+    clienteId: string,
+    db: MoraDbClient = this.prisma,
+  ): Promise<{
+    clienteId: string;
+    diasEnMora: number;
+    nivelRiesgo: 'VERDE' | 'AMARILLO' | 'ROJO';
+    actualizado: boolean;
+  } | null> {
+    const hoy = new Date();
+
+    const cliente = await db.cliente.findUnique({
+      where: { id: clienteId },
+      select: {
+        id: true,
+        nivelRiesgo: true,
+        enListaNegra: true,
+        prestamos: {
+          where: {
+            estado: { in: ['ACTIVO', 'EN_MORA'] },
+            eliminadoEn: null,
+          },
+          select: {
+            frecuenciaPago: true,
+            cuotas: {
+              where: { estado: 'VENCIDA' },
+              orderBy: { fechaVencimiento: 'asc' },
+              take: 1,
+              select: { fechaVencimiento: true },
+            },
+          },
+        },
+      },
+    });
+
+    if (!cliente || cliente.enListaNegra) return null;
+
+    let diasMoraMax = 0;
+    for (const prestamo of cliente.prestamos) {
+      const cuota = prestamo.cuotas[0];
+      if (!cuota) continue;
+
+      const dias = calcularDiasMoraOperativos(
+        new Date(cuota.fechaVencimiento),
+        hoy,
+        prestamo.frecuenciaPago,
+      );
+      if (dias > diasMoraMax) diasMoraMax = dias;
+    }
+
+    const nuevoNivel =
+      diasMoraMax > 0 ? nivelRiesgoPorDias(diasMoraMax) : 'VERDE';
+
+    if (cliente.nivelRiesgo !== nuevoNivel) {
+      await db.cliente.update({
+        where: { id: cliente.id },
+        data: {
+          nivelRiesgo: nuevoNivel,
+          ultimaActualizacionRiesgo: new Date(),
+        },
+      });
+    }
+
+    this.cacheNivelesMora.set(cliente.id, nivelMoraNumerico(diasMoraMax));
+
+    return {
+      clienteId: cliente.id,
+      diasEnMora: diasMoraMax,
+      nivelRiesgo: nuevoNivel,
+      actualizado: cliente.nivelRiesgo !== nuevoNivel,
+    };
+  }
 
   async onModuleInit() {
     if (process.env.NODE_ENV !== 'production') return;
@@ -277,6 +393,7 @@ export class MoraService implements OnModuleInit {
             select: {
               numeroPrestamo: true,
               saldoPendiente: true,
+              frecuenciaPago: true,
               cuotas: {
                 where: { estado: 'VENCIDA' },
                 orderBy: { fechaVencimiento: 'asc' },
@@ -295,9 +412,10 @@ export class MoraService implements OnModuleInit {
           for (const prestamo of cliente.prestamos) {
             if (prestamo.cuotas.length > 0) {
               const cuota = prestamo.cuotas[0];
-              const fechaVenc = new Date(cuota.fechaVencimiento);
-              const dias = Math.floor(
-                (hoy.getTime() - fechaVenc.getTime()) / (1000 * 60 * 60 * 24),
+              const dias = calcularDiasMoraOperativos(
+                new Date(cuota.fechaVencimiento),
+                hoy,
+                prestamo.frecuenciaPago,
               );
               if (dias > diasMoraMax) diasMoraMax = dias;
             }
@@ -621,6 +739,7 @@ export class MoraService implements OnModuleInit {
           select: {
             numeroPrestamo: true,
             saldoPendiente: true,
+            frecuenciaPago: true,
             cuotas: {
               where: { estado: 'VENCIDA' },
               orderBy: { fechaVencimiento: 'asc' },
@@ -644,12 +763,10 @@ export class MoraService implements OnModuleInit {
     for (const p of cliente.prestamos) {
       cuotasVencidasTotal += p.cuotas.length;
       for (const c of p.cuotas) {
-        const fechaVenc = new Date(c.fechaVencimiento);
-        const dias = Math.max(
-          0,
-          Math.floor(
-            (hoy.getTime() - fechaVenc.getTime()) / (1000 * 60 * 60 * 24),
-          ),
+        const dias = calcularDiasMoraOperativos(
+          new Date(c.fechaVencimiento),
+          hoy,
+          p.frecuenciaPago,
         );
         if (dias > diasMoraMax) diasMoraMax = dias;
         montoVencidoTotal += Number(c.monto) - Number(c.montoPagado);

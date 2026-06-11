@@ -1097,4 +1097,68 @@ describe('AccountingService financial ledger controls', () => {
       descuadres: 20000,
     });
   });
+
+  it('usa el saldo actual de la caja activa sin duplicar deudas de cierres previos', async () => {
+    const prisma = buildPrismaMock({
+      journalLine: {
+        aggregate: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      caja: {
+        aggregate: jest
+          .fn()
+          .mockResolvedValue({ _sum: { saldoActual: 500000 } }),
+        count: jest.fn().mockResolvedValue(1),
+        findUnique: jest.fn(),
+        findFirst: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'caja-ruta-1',
+            saldoActual: 700000,
+            ruta: { cobradorId: 'cobrador-1' },
+          },
+        ]),
+      },
+      transaccion: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 0 } }),
+        count: jest.fn().mockResolvedValue(0),
+        create: jest.fn(),
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'deuda-cierre-anterior',
+            cajaId: 'caja-ruta-1',
+            monto: 500000,
+            descripcion: 'Deuda del cobrador por cierre de ruta',
+            tipoReferencia: 'DEUDA_COBRADOR',
+            referenciaId:
+              'DD:500000|SD:500000|FD:0|RC:0|MT:0|EF:0|CF:0|CO:Cobrador|SD:500000',
+            fechaTransaccion: new Date('2026-06-05T12:00:00.000Z'),
+            tipo: 'EGRESO',
+            caja: { ruta: { cobradorId: 'cobrador-1' } },
+          },
+        ]),
+      },
+      usuario: {
+        findUnique: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'cobrador-1',
+            nombres: 'Cobra',
+            apellidos: 'Dor',
+            rol: 'COBRADOR',
+          },
+        ]),
+      },
+    });
+
+    const result = await makeService(prisma).getDeudoresCobrador();
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      cobradorId: 'cobrador-1',
+      totalDeuda: 700000,
+      descuadres: 700000,
+    });
+  });
 });
