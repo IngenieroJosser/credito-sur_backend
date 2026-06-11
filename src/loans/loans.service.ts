@@ -4378,19 +4378,27 @@ export class LoansService implements OnModuleInit {
         ? 'Supervisor'
         : 'Cobrador Principal';
 
-    // Notificar a aprobadores (ADMIN / COORDINADOR / SUPERVISOR)
-    await this.notificacionesService.notifyApprovers({
-      titulo: 'Reprogramaciones',
-      mensaje: `Solicitud de reprogramaciones por ${rolNameText}`,
-      tipo: 'REPROGRAMACION',
-      entidad: 'Aprobacion',
-      entidadId: aprobacion.id,
-      metadata: {
-        aprobacionId: aprobacion.id,
-        prestamoId: data.prestamoId,
-        ...contextoRegularizacion,
-      },
-    });
+    // Notificar a aprobadores (ADMIN / COORDINADOR / SUPERVISOR).
+    // La solicitud ya quedó persistida; un fallo de notificación no debe
+    // convertir la gestión operativa en error 500.
+    try {
+      await this.notificacionesService.notifyApprovers({
+        titulo: 'Reprogramaciones',
+        mensaje: `Solicitud de reprogramaciones por ${rolNameText}`,
+        tipo: 'REPROGRAMACION',
+        entidad: 'Aprobacion',
+        entidadId: aprobacion.id,
+        metadata: {
+          aprobacionId: aprobacion.id,
+          prestamoId: data.prestamoId,
+          ...contextoRegularizacion,
+        },
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Reprogramacion ${aprobacion.id} creada, pero falló notificación a aprobadores: ${(error as Error)?.message || error}`,
+      );
+    }
 
     this.logger.log(
       `Reprogramacion solicitada: cuota ${cuota.id} del prestamo ${data.prestamoId} -> ${data.nuevaFecha}`,
@@ -4414,33 +4422,39 @@ export class LoansService implements OnModuleInit {
       });
     } catch {}
 
-    // ⚡ Tiempo real: notificar a todos los clientes conectados
-    this.notificacionesGateway.broadcastAprobacionesActualizadas({
-      tipo: 'REPROGRAMACION_CUOTA',
-      prestamoId: data.prestamoId,
-      aprobacionId: aprobacion.id,
-      ...contextoRegularizacion,
-    });
-    this.notificacionesGateway.broadcastJornadasActualizadas({
-      accion: 'REPROGRAMACION_SOLICITADA',
-      prestamoId: data.prestamoId,
-      cuotaId: data.cuotaId || cuota.id,
-      fechaOperativaRuta,
-      origenGestion: data.origenGestion,
-      aprobacionId: aprobacion.id,
-    });
-    this.notificacionesGateway.broadcastRutasActualizadas({
-      accion: 'REPROGRAMACION_SOLICITADA',
-      prestamoId: data.prestamoId,
-      cuotaId: data.cuotaId || cuota.id,
-      aprobacionId: aprobacion.id,
-    });
-    this.notificacionesGateway.broadcastPrestamosActualizados({
-      accion: 'REPROGRAMACION_SOLICITADA',
-      prestamoId: data.prestamoId,
-      cuotaId: data.cuotaId || cuota.id,
-      aprobacionId: aprobacion.id,
-    });
+    // ⚡ Tiempo real: notificar a todos los clientes conectados.
+    try {
+      this.notificacionesGateway.broadcastAprobacionesActualizadas({
+        tipo: 'REPROGRAMACION_CUOTA',
+        prestamoId: data.prestamoId,
+        aprobacionId: aprobacion.id,
+        ...contextoRegularizacion,
+      });
+      this.notificacionesGateway.broadcastJornadasActualizadas({
+        accion: 'REPROGRAMACION_SOLICITADA',
+        prestamoId: data.prestamoId,
+        cuotaId: data.cuotaId || cuota.id,
+        fechaOperativaRuta,
+        origenGestion: data.origenGestion,
+        aprobacionId: aprobacion.id,
+      });
+      this.notificacionesGateway.broadcastRutasActualizadas({
+        accion: 'REPROGRAMACION_SOLICITADA',
+        prestamoId: data.prestamoId,
+        cuotaId: data.cuotaId || cuota.id,
+        aprobacionId: aprobacion.id,
+      });
+      this.notificacionesGateway.broadcastPrestamosActualizados({
+        accion: 'REPROGRAMACION_SOLICITADA',
+        prestamoId: data.prestamoId,
+        cuotaId: data.cuotaId || cuota.id,
+        aprobacionId: aprobacion.id,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Reprogramacion ${aprobacion.id} creada, pero falló broadcast realtime: ${(error as Error)?.message || error}`,
+      );
+    }
 
     return {
       mensaje: 'Solicitud de reprogramacion enviada para revision',

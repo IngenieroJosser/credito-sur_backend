@@ -585,6 +585,82 @@ describe('LoansService reprogramacion concurrency controls', () => {
       }),
     });
   });
+
+  it('no falla la reprogramación si falla la notificación a aprobadores', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-11T12:00:00-05:00'));
+    mockNotifications.notifyApprovers.mockRejectedValueOnce(
+      new Error('Servicio de notificaciones no disponible'),
+    );
+
+    const prisma = {
+      aprobacion: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'aprobacion-1' }),
+      },
+      prestamo: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'prestamo-1',
+          clienteId: 'cliente-1',
+          numeroPrestamo: 'PRES-1',
+          frecuenciaPago: 'DIARIO',
+          cliente: { nombres: 'Ana', apellidos: 'Rojas' },
+          cuotas: [
+            {
+              id: 'cuota-1',
+              numeroCuota: 1,
+              estado: 'PENDIENTE',
+              fechaVencimiento: new Date('2026-06-10T12:00:00-05:00'),
+              monto: 100000,
+            },
+          ],
+        }),
+      },
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue({
+          rutaId: 'ruta-1',
+          cobradorId: 'cobrador-1',
+          ruta: { cobradorId: 'cobrador-ruta-1' },
+        }),
+      },
+      rutaJornada: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'jornada-1',
+          rutaId: 'ruta-1',
+          fechaOperativa: '2026-06-10',
+        }),
+      },
+      registroVisita: {
+        upsert: jest.fn().mockResolvedValue({ id: 'visita-1' }),
+      },
+      usuario: {
+        findUnique: jest.fn().mockResolvedValue({ rol: RolUsuario.ADMIN }),
+      },
+    };
+
+    let result: any;
+    try {
+      result = await makeService(prisma as any).solicitarReprogramacion({
+        prestamoId: 'prestamo-1',
+        cuotaId: 'cuota-1',
+        nuevaFecha: '2026-06-11',
+        motivo: 'Cliente pidió reprogramar para hoy',
+        origenGestion: 'CIERRE_PENDIENTE',
+        fechaOperativaRuta: '2026-06-10',
+        solicitadoPorId: 'admin-1',
+      });
+    } finally {
+      jest.useRealTimers();
+    }
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        mensaje: 'Solicitud de reprogramacion enviada para revision',
+        aprobacion: expect.objectContaining({ id: 'aprobacion-1' }),
+      }),
+    );
+    expect(prisma.registroVisita.upsert).toHaveBeenCalled();
+    expect(prisma.aprobacion.create).toHaveBeenCalled();
+  });
 });
 
 describe('LoansService role scoping', () => {
