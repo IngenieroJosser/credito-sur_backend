@@ -1041,6 +1041,19 @@ describe('PaymentsService', () => {
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
+    it('rechaza abonos menores a 1000 pesos', async () => {
+      await expect(
+        service.create({
+          prestamoId: 'prestamo-1',
+          cobradorId: 'cobrador-1',
+          montoTotal: 999,
+          tipoRegistro: 'ABONO',
+        } as any),
+      ).rejects.toThrow('El abono mínimo permitido es $1.000.');
+
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
     it('convierte errores de relación inválida de Prisma en BadRequest legible', async () => {
       prisma._txMock.pago.create.mockRejectedValueOnce(
         new Prisma.PrismaClientKnownRequestError('Foreign key failed', {
