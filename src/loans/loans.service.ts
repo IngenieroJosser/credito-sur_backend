@@ -2988,6 +2988,10 @@ export class LoansService implements OnModuleInit {
   }
 
   async createLoan(data: CreateLoanDto) {
+    let prestamoCreado: any = null;
+    let aprobacionCreada: any = null;
+    let esAutoAprobadoFinal = false;
+
     try {
       this.logger.log(
         `Creating loan for client ${data.clienteId}, type: ${data.tipoPrestamo}. Data: ${JSON.stringify(data)}`,
@@ -3363,6 +3367,7 @@ export class LoansService implements OnModuleInit {
       const autoAprobarCreditos =
         await this.configuracionService.shouldAutoApproveCredits();
       const esAutoAprobado = autoAprobarCreditos;
+      esAutoAprobadoFinal = esAutoAprobado;
       this.logger.log(
         `[CREATE LOAN] Usuario: ${creador.nombres}, Rol: ${creador.rol}, Auto-aprobado por configuración global: ${esAutoAprobado}`,
       );
@@ -3438,6 +3443,7 @@ export class LoansService implements OnModuleInit {
           },
         },
       });
+      prestamoCreado = prestamo;
 
       // Descontar stock si el préstamo es de artículo y ha sido APROBADO inmediatamente
       if (
@@ -3637,6 +3643,7 @@ export class LoansService implements OnModuleInit {
             data.esContado || esAutoAprobado ? data.creadoPorId : undefined,
         },
       });
+      aprobacionCreada = aprobacion;
 
       if (!esAutoAprobado && !data.esContado) {
         try {
@@ -3870,6 +3877,23 @@ export class LoansService implements OnModuleInit {
       };
     } catch (error) {
       this.logger.error('Error creating loan:', error);
+      if (prestamoCreado?.id && aprobacionCreada?.id) {
+        this.logger.error(
+          `[CREATE LOAN] Recuperando respuesta exitosa: préstamo ${prestamoCreado.id} y aprobación ${aprobacionCreada.id} ya fueron creados antes del error.`,
+          error instanceof Error ? error.stack : String(error),
+        );
+
+        return {
+          ...prestamoCreado,
+          mensaje: esAutoAprobadoFinal
+            ? 'Préstamo creado y aprobado automáticamente.'
+            : 'Préstamo creado exitosamente. Pendiente de aprobación.',
+          requiereAprobacion: !esAutoAprobadoFinal,
+          aprobacionId: aprobacionCreada.id,
+          warning:
+            'La operación principal fue creada, pero falló una tarea secundaria posterior.',
+        };
+      }
       throw error;
     }
   }
