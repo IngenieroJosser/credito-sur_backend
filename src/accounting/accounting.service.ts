@@ -1027,7 +1027,32 @@ export class AccountingService {
       this.prisma.journalEntry.count({ where }),
     ]);
 
+    const pagoIds = entries
+      .filter((entry: any) => String(entry.referenceType || '').toUpperCase() === 'PAGO')
+      .map((entry: any) => String(entry.referenceId || '').trim())
+      .filter(Boolean);
+    const pagosRegularizados = pagoIds.length
+      ? await this.prisma.pago.findMany({
+          where: {
+            id: { in: pagoIds },
+            origenGestion: 'CIERRE_PENDIENTE',
+          },
+          select: {
+            id: true,
+            origenGestion: true,
+            fechaOperativaRuta: true,
+          },
+        })
+      : [];
+    const pagoRegularizadoPorId = new Map<
+      string,
+      { id: string; origenGestion: string | null; fechaOperativaRuta: string | null }
+    >(
+      pagosRegularizados.map((p: any) => [p.id, p]),
+    );
+
     const data = entries.map((entry: any) => {
+      const pagoRegularizado = pagoRegularizadoPorId.get(entry.referenceId);
       const totalDebito = entry.lines.reduce(
         (sum: number, line: any) => sum + Number(line.debitAmount || 0),
         0,
@@ -1108,6 +1133,8 @@ export class AccountingService {
           cuentaPrincipal?.account?.name ||
           cuentaPrincipal?.accountCode ||
           null,
+        origenGestion: pagoRegularizado?.origenGestion || null,
+        fechaOperativaRuta: pagoRegularizado?.fechaOperativaRuta || null,
         caja: lineasCaja[0]?.caja?.nombre || null,
         cajaId: lineasCaja[0]?.cajaId || null,
         cuadrado: Math.abs(totalDebito - totalCredito) < 0.01,
