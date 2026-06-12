@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, Request, UseGuards } from '@nestjs/common';
 import { DashboardService } from './dashboard.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -18,8 +18,8 @@ export class DashboardController {
     RolUsuario.SUPERVISOR,
     RolUsuario.PUNTO_DE_VENTA,
   )
-  async getDashboardData(@Query('timeFilter') timeFilter: string) {
-    return this.dashboardService.getDashboardData(timeFilter);
+  async getDashboardData(@Query('timeFilter') timeFilter: string, @Request() req: any) {
+    return this.dashboardService.getDashboardData(timeFilter, req.user);
   }
 
   @Get('trend')

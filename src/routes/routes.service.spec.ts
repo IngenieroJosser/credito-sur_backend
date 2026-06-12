@@ -162,6 +162,60 @@ describe('RoutesService role scoping', () => {
     });
   });
 
+  it('usa el resumen operativo diario como fuente de verdad para el avance del listado', async () => {
+    const prisma = {
+      ruta: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'ruta-1',
+            nombre: 'Ruta Centro',
+            codigo: 'RT-1',
+            activa: true,
+            cobrador: {
+              nombres: 'Cobrador',
+              apellidos: 'Prueba',
+            },
+            supervisor: null,
+            asignaciones: [],
+            _count: { asignaciones: 1, gastos: 0 },
+          },
+        ]),
+        count: jest.fn().mockResolvedValue(1),
+      },
+      asignacionRuta: {
+        findMany: jest.fn().mockResolvedValue([{ clienteId: 'cliente-1' }]),
+        count: jest.fn().mockResolvedValue(0),
+      },
+      registroVisita: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      pago: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      prestamo: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    };
+    const service = makeService(prisma);
+    jest
+      .spyOn(service as any, 'getCierresPendientesRutasMap')
+      .mockResolvedValue(new Map());
+    jest.spyOn(service, 'getDailyVisits').mockResolvedValue({
+      resumen: {
+        recaudoOperativo: 1_043_330,
+        meta: 1_555_331,
+      },
+      visitas: [],
+    } as any);
+
+    const resultado = await service.findAll({ take: 10 });
+    const ruta = resultado.data[0] as any;
+
+    expect(ruta.cobranzaDelDia).toBe(1_043_330);
+    expect(ruta.metaDelDia).toBe(1_555_331);
+    expect(ruta.avanceDiario).toBe(67.08);
+  });
+
   it('limits route detail for supervisors to assigned routes only', async () => {
     const prisma = {
       ruta: {
@@ -657,6 +711,7 @@ describe('RoutesService role scoping', () => {
       '2026-06-10',
     );
 
+    expect(resultado.resumen.visitados).toBe(1);
     expect(resultado.visitas[0]).toEqual(
       expect.objectContaining({
         estadoVisita: 'reprogramado',

@@ -4333,6 +4333,8 @@ export class LoansService implements OnModuleInit {
       });
     }
 
+    const fechaGestionOriginal = fechaOperativaRuta || getBogotaDayKey(new Date());
+
     const contextoRegularizacion =
       data.origenGestion === 'CIERRE_PENDIENTE'
         ? {
@@ -4359,6 +4361,7 @@ export class LoansService implements OnModuleInit {
           numeroPrestamo: prestamo.numeroPrestamo,
           numeroCuota: cuota.numeroCuota,
           frecuenciaPago: prestamo.frecuenciaPago,
+          fechaGestionOriginal,
           fechaVencimientoOriginal: formatBogotaOffsetIso(
             cuota.fechaVencimiento,
           ),

@@ -102,6 +102,9 @@ function buildPrismaMock(overrides: Record<string, any> = {}) {
     cuota: {
       findMany: jest.fn().mockResolvedValue([]),
     },
+    pago: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     transaccion: {
       aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 0 } }),
       count: jest.fn().mockResolvedValue(0),
@@ -951,6 +954,71 @@ describe('AccountingService financial ledger controls', () => {
       cuadrado: true,
     });
     expect(result.paginacion.total).toBe(1);
+  });
+
+  it('expone metadata de pago regularizado en movimientos ledger', async () => {
+    const prisma = buildPrismaMock({
+      journalEntry: {
+        count: jest.fn().mockResolvedValue(1),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'journal-regularizado-1',
+            referenceType: 'PAGO',
+            referenceId: 'pago-regularizado-1',
+            description: 'Pago recibido',
+            createdAt: new Date('2026-06-11T07:54:00.000Z'),
+            createdBy: 'user-1',
+            lines: [
+              {
+                debitAmount: 43333,
+                creditAmount: null,
+                accountCode: '1.2.1',
+                cajaId: 'caja-1',
+                account: { name: 'Caja Ruta' },
+              },
+              {
+                debitAmount: null,
+                creditAmount: 43333,
+                accountCode: '1.3.1',
+                cajaId: null,
+                account: { name: 'Cartera' },
+              },
+            ],
+          },
+        ]),
+      },
+      pago: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'pago-regularizado-1',
+            origenGestion: 'CIERRE_PENDIENTE',
+            fechaOperativaRuta: '2026-06-10',
+          },
+        ]),
+      },
+    });
+
+    const result = await makeService(prisma).getMovimientosLedger({
+      page: 1,
+      limit: 10,
+      cajaId: 'caja-1',
+    } as any);
+
+    expect((prisma as any).pago.findMany).toHaveBeenCalledWith({
+      where: {
+        id: { in: ['pago-regularizado-1'] },
+        origenGestion: 'CIERRE_PENDIENTE',
+      },
+      select: {
+        id: true,
+        origenGestion: true,
+        fechaOperativaRuta: true,
+      },
+    });
+    expect(result.data[0]).toMatchObject({
+      origenGestion: 'CIERRE_PENDIENTE',
+      fechaOperativaRuta: '2026-06-10',
+    });
   });
 
   it('exporta el reporte contable desde JournalEntry en lugar de Transaccion', async () => {

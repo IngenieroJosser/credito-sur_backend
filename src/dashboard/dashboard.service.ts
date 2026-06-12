@@ -5,6 +5,7 @@ import {
   EstadoAprobacion,
   EstadoCuota,
   EstadoPrestamo,
+  RolUsuario,
   TipoAprobacion,
   TipoTransaccion,
 } from '@prisma/client';
@@ -21,7 +22,10 @@ export class DashboardService {
 
   constructor(private prisma: PrismaService) {}
 
-  async getDashboardData(timeFilter: string) {
+  async getDashboardData(
+    timeFilter: string,
+    actor?: { id?: string; rol?: RolUsuario | string },
+  ) {
     try {
       const { startDate, endDate } =
         this.calculateDateRangeFromFilter(timeFilter);
@@ -116,6 +120,8 @@ export class DashboardService {
       const totalPagos = await this.prisma.pago.count({
         where: { fechaPago: { gte: startDate, lte: endDate } },
       });
+
+      const loanCompletion = await this.getLoanCompletionMetrics(actor);
 
       // 2. Obtener aprobaciones pendientes (filtradas por período)
       const pendingApprovalsList = await this.prisma.aprobacion.findMany({
@@ -421,6 +427,7 @@ export class DashboardService {
           capitalPrestado: Number(capitalPrestado._sum?.monto || 0),
           recaudo: recaudoTotal,
           totalPagos,
+          loanCompletion,
         },
         trend: trendData,
         pendingApprovals: pendingApprovalsList.map((item) =>
@@ -450,6 +457,12 @@ export class DashboardService {
           efficiency: 0,
           capitalPrestado: 0,
           recaudo: 0,
+          loanCompletion: {
+            pagados: 0,
+            activos: 0,
+            total: 0,
+            porcentaje: 0,
+          },
         },
         trend: [],
         pendingApprovals: [],
@@ -458,6 +471,63 @@ export class DashboardService {
         topCollectors: [],
       };
     }
+  }
+
+  private async getLoanCompletionMetrics(actor?: {
+    id?: string;
+    rol?: RolUsuario | string;
+  }) {
+    const isSupervisor =
+      String(actor?.rol || '').toUpperCase() === RolUsuario.SUPERVISOR &&
+      !!actor?.id;
+
+    const supervisedRouteScope = isSupervisor
+      ? {
+          cliente: {
+            asignacionesRuta: {
+              some: {
+                activa: true,
+                ruta: {
+                  supervisorId: String(actor?.id),
+                  eliminadoEn: null,
+                },
+              },
+            },
+          },
+        }
+      : {};
+
+    const baseWhere = {
+      eliminadoEn: null,
+      ...supervisedRouteScope,
+    };
+
+    const [pagados, activos] = await Promise.all([
+      this.prisma.prestamo.count({
+        where: {
+          ...baseWhere,
+          estado: EstadoPrestamo.PAGADO,
+        },
+      }),
+      this.prisma.prestamo.count({
+        where: {
+          ...baseWhere,
+          estado: { in: [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA] },
+          saldoPendiente: { gt: 0 },
+        },
+      }),
+    ]);
+
+    const total = pagados + activos;
+    const porcentaje =
+      total > 0 ? Number(((pagados / total) * 100).toFixed(1)) : 0;
+
+    return {
+      pagados,
+      activos,
+      total,
+      porcentaje,
+    };
   }
 
   private calculateRequestedBase(approvals: any[]): number {
