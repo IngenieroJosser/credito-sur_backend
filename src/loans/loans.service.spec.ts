@@ -662,6 +662,16 @@ describe('LoansService reprogramacion concurrency controls', () => {
         estadoVisita: 'reprogramado',
       }),
     });
+    expect(prisma.aprobacion.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          datosSolicitud: expect.objectContaining({
+            fechaGestionOriginal: '2026-05-27',
+            fechaOperativaRuta: '2026-05-27',
+          }),
+        }),
+      }),
+    );
   });
 
   it('no falla la reprogramación si falla la notificación a aprobadores', async () => {
