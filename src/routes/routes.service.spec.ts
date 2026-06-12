@@ -930,9 +930,24 @@ describe('RoutesService role scoping', () => {
       '2026-06-12',
     );
 
+    expect(resultado.totalVisitas).toBe(2);
     expect(resultado.resumen.meta).toBe(33_333);
-    expect(resultado.resumen.visitados).toBe(0);
+    expect(resultado.resumen.visitados).toBe(1);
     expect(resultado.visitas).toHaveLength(1);
+    expect(resultado.obligaciones).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          prestamoId: 'prestamo-viejo',
+          estadoGestion: 'REPROGRAMADO',
+          montoMetaOperativaPendiente: 0,
+        }),
+        expect.objectContaining({
+          prestamoId: 'prestamo-nuevo',
+          estadoGestion: 'PENDIENTE',
+          montoMetaOperativaPendiente: 33_333,
+        }),
+      ]),
+    );
     expect(resultado.visitas[0]).toEqual(
       expect.objectContaining({
         prestamoObjetivoId: 'prestamo-nuevo',
