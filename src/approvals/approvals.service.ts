@@ -758,11 +758,108 @@ export class ApprovalsService {
     });
   }
 
+  private async reconcilePendingLoansWithoutApproval() {
+    const pendingLoans = await this.prisma.prestamo.findMany({
+      where: {
+        estadoAprobacion: EstadoAprobacion.PENDIENTE,
+        estado: EstadoPrestamo.PENDIENTE_APROBACION,
+        eliminadoEn: null,
+      },
+      take: 50,
+      orderBy: { creadoEn: 'desc' },
+      include: {
+        cliente: {
+          select: {
+            nombres: true,
+            apellidos: true,
+            dni: true,
+            telefono: true,
+          },
+        },
+        producto: {
+          select: {
+            nombre: true,
+          },
+        },
+      },
+    });
+
+    if (pendingLoans.length === 0) return;
+
+    const loanIds = pendingLoans.map((loan) => loan.id);
+    const existingApprovals = await this.prisma.aprobacion.findMany({
+      where: {
+        tipoAprobacion: TipoAprobacion.NUEVO_PRESTAMO,
+        tablaReferencia: 'Prestamo',
+        referenciaId: { in: loanIds },
+        estado: EstadoAprobacion.PENDIENTE,
+      },
+      select: { referenciaId: true },
+    });
+    const approvedLoanIds = new Set(
+      existingApprovals.map((approval) => approval.referenciaId),
+    );
+
+    for (const loan of pendingLoans) {
+      if (approvedLoanIds.has(loan.id)) continue;
+
+      const isArticulo = String(loan.tipoPrestamo).toUpperCase() === 'ARTICULO';
+      const capital = Number(loan.monto || 0);
+      const interesTotal = Number(loan.interesTotal || 0);
+      const valorArticulo = Number(loan.precioVentaArticulo || loan.monto || 0);
+      const cuotaInicial = Number(loan.cuotaInicial || 0);
+
+      await this.prisma.aprobacion.create({
+        data: {
+          tipoAprobacion: TipoAprobacion.NUEVO_PRESTAMO,
+          idempotencyKey: loan.idempotencyKey || undefined,
+          referenciaId: loan.id,
+          tablaReferencia: 'Prestamo',
+          solicitadoPorId: loan.creadoPorId,
+          montoSolicitud: isArticulo ? valorArticulo : capital,
+          estado: EstadoAprobacion.PENDIENTE,
+          datosSolicitud: {
+            numeroPrestamo: loan.numeroPrestamo,
+            cliente:
+              `${loan.cliente?.nombres || ''} ${loan.cliente?.apellidos || ''}`.trim(),
+            cedula: String(loan.cliente?.dni || ''),
+            telefono: String(loan.cliente?.telefono || ''),
+            monto: capital,
+            montoTotal: capital + interesTotal,
+            interesTotal,
+            tipo: String(loan.tipoPrestamo),
+            tipoPrestamo: String(loan.tipoPrestamo),
+            articulo: loan.producto?.nombre || 'Artículo',
+            valorArticulo: isArticulo ? valorArticulo : capital,
+            cuotas: Number(loan.cantidadCuotas || 0),
+            cantidadCuotas: Number(loan.cantidadCuotas || 0),
+            plazoMeses: Number(loan.plazoMeses || 0),
+            porcentaje: Number(loan.tasaInteres || 0),
+            tasaInteres: Number(loan.tasaInteres || 0),
+            frecuenciaPago: String(loan.frecuenciaPago),
+            cuotaInicial,
+            notas: loan.notas || undefined,
+            garantia: loan.garantia || undefined,
+            fechaInicio: loan.fechaInicio
+              ? formatBogotaOffsetIso(loan.fechaInicio)
+              : undefined,
+            fechaPrimerCobro: loan.fechaPrimerCobro
+              ? formatBogotaOffsetIso(loan.fechaPrimerCobro)
+              : undefined,
+            recuperadaAutomaticamente: true,
+          },
+        },
+      });
+    }
+  }
+
   /**
    * Obtener todas las aprobaciones pendientes agrupadas por tipo.
    * Incluye datos del solicitante y montos para el módulo de Revisiones.
    */
   async getPendingApprovals(tipo?: TipoAprobacion) {
+    await this.reconcilePendingLoansWithoutApproval();
+
     const where: any = { estado: EstadoAprobacion.PENDIENTE };
     if (tipo) where.tipoAprobacion = tipo;
 

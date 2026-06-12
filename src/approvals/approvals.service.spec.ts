@@ -1,9 +1,11 @@
 import { BadRequestException } from '@nestjs/common';
 import {
+  EstadoAprobacion,
   EstadoCuota,
   EstadoPrestamo,
   MetodoPago,
   RolUsuario,
+  TipoAprobacion,
 } from '@prisma/client';
 import { ApprovalsService } from './approvals.service';
 
@@ -162,6 +164,104 @@ function makeService(prisma: any) {
     mockLedger as any,
   );
 }
+
+describe('ApprovalsService pending loan reconciliation', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('crea una aprobación faltante para préstamos pendientes y la expone en revisiones', async () => {
+    const orphanLoan = {
+      id: 'prestamo-huerfano-1',
+      idempotencyKey: 'loan-idempotency-1',
+      numeroPrestamo: 'PRES-000003',
+      creadoPorId: 'coordinador-1',
+      tipoPrestamo: 'EFECTIVO',
+      monto: 5000000,
+      interesTotal: 500000,
+      precioVentaArticulo: null,
+      cuotaInicial: 0,
+      cantidadCuotas: 12,
+      plazoMeses: 1,
+      tasaInteres: 10,
+      frecuenciaPago: 'DIARIO',
+      notas: null,
+      garantia: null,
+      fechaInicio: new Date('2026-06-12T05:00:00.000Z'),
+      fechaPrimerCobro: new Date('2026-06-13T05:00:00.000Z'),
+      cliente: {
+        nombres: 'Mario Baraka',
+        apellidos: 'Mosquera',
+        dni: '111111111',
+        telefono: '3000000000',
+      },
+      producto: null,
+    };
+
+    const prisma = {
+      prestamo: {
+        findMany: jest.fn().mockResolvedValue([orphanLoan]),
+      },
+      aprobacion: {
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([
+            {
+              id: 'aprobacion-recuperada-1',
+              tipoAprobacion: TipoAprobacion.NUEVO_PRESTAMO,
+              referenciaId: orphanLoan.id,
+              tablaReferencia: 'Prestamo',
+              solicitadoPorId: orphanLoan.creadoPorId,
+              estado: EstadoAprobacion.PENDIENTE,
+              datosSolicitud: {
+                cliente: 'Mario Baraka Mosquera',
+                monto: 5000000,
+              },
+              montoSolicitud: 5000000,
+              creadoEn: new Date(),
+              actualizadoEn: new Date(),
+              aprobadoPorId: null,
+              comentarios: null,
+              datosAprobados: null,
+              revisadoEn: null,
+              solicitadoPor: {
+                id: 'coordinador-1',
+                nombres: 'Coordinador',
+                apellidos: 'Prueba',
+                rol: RolUsuario.COORDINADOR,
+              },
+              aprobadoPor: null,
+            },
+          ]),
+        create: jest.fn().mockResolvedValue({ id: 'aprobacion-recuperada-1' }),
+      },
+    };
+
+    const result = await makeService(prisma).getPendingApprovals();
+
+    expect(prisma.aprobacion.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          tipoAprobacion: TipoAprobacion.NUEVO_PRESTAMO,
+          referenciaId: orphanLoan.id,
+          tablaReferencia: 'Prestamo',
+          solicitadoPorId: orphanLoan.creadoPorId,
+          estado: EstadoAprobacion.PENDIENTE,
+          datosSolicitud: expect.objectContaining({
+            numeroPrestamo: 'PRES-000003',
+            cliente: 'Mario Baraka Mosquera',
+            monto: 5000000,
+            montoTotal: 5500000,
+            recuperadaAutomaticamente: true,
+          }),
+        }),
+      }),
+    );
+    expect(result.total).toBe(1);
+    expect(result.conteo.NUEVO_PRESTAMO).toBe(1);
+  });
+});
 
 describe('ApprovalsService financial ledger controls', () => {
   beforeEach(() => {
