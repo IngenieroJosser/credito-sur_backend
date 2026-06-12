@@ -1178,43 +1178,8 @@ export class RoutesService {
               pagosOperativosClientesHoy.map((p) => p.clienteId),
             );
 
-            const reprogramacionesAprobadas = this.prisma.aprobacion?.findMany
-              ? await this.prisma.aprobacion.findMany({
-                  where: {
-                    tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
-                    estado: EstadoAprobacion.APROBADO,
-                    OR: [
-                      {
-                        datosSolicitud: {
-                          path: ['fechaOperativaRuta'],
-                          equals: hoyKey2,
-                        },
-                      },
-                      {
-                        datosSolicitud: {
-                          path: ['fechaGestionOriginal'],
-                          equals: hoyKey2,
-                        },
-                      },
-                    ],
-                  },
-                  select: {
-                    datosSolicitud: true,
-                  },
-                })
-              : [];
-
-            const clientesConReprogramacionAprobada = new Set(
-              reprogramacionesAprobadas
-                .map((aprobacion) => {
-                  const datos = (aprobacion?.datosSolicitud || {}) as any;
-                  return String(datos?.clienteId || '');
-                })
-                .filter((cid) => cid && clientesIds.includes(cid)),
-            );
-
-            const clientesSinMetaPorGestion = new Set([
-              ...registrosVisitas
+            const clientesSinMetaPorGestion = new Set(
+              registrosVisitas
                 .filter((r) => {
                   const estado = String(r.estadoVisita || '').toLowerCase();
                   return (
@@ -1227,10 +1192,7 @@ export class RoutesService {
                 })
                 .filter((r) => !clientesConPagoOperativoHoy.has(r.clienteId))
                 .map((r) => r.clienteId),
-              ...Array.from(clientesConReprogramacionAprobada).filter(
-                (id) => !clientesConPagoOperativoHoy.has(id),
-              ),
-            ]);
+            );
 
             // Para la META: solo préstamos activos/en mora, excluyendo clientes ausentes
             const prestamosParaMeta = await this.prisma.prestamo.findMany({
@@ -1797,43 +1759,8 @@ export class RoutesService {
           pagosOperativosClientesHoy.map((p) => p.clienteId),
         );
 
-        const reprogramacionesAprobadas = this.prisma.aprobacion?.findMany
-          ? await this.prisma.aprobacion.findMany({
-              where: {
-                tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
-                estado: EstadoAprobacion.APROBADO,
-                OR: [
-                  {
-                    datosSolicitud: {
-                      path: ['fechaOperativaRuta'],
-                      equals: hoyKey2,
-                    },
-                  },
-                  {
-                    datosSolicitud: {
-                      path: ['fechaGestionOriginal'],
-                      equals: hoyKey2,
-                    },
-                  },
-                ],
-              },
-              select: {
-                datosSolicitud: true,
-              },
-            })
-          : [];
-
-        const clientesConReprogramacionAprobada = new Set(
-          reprogramacionesAprobadas
-            .map((aprobacion) => {
-              const datos = (aprobacion?.datosSolicitud || {}) as any;
-              return String(datos?.clienteId || '');
-            })
-            .filter((cid) => cid && clientesIds.includes(cid)),
-        );
-
-        const clientesSinMetaPorGestion = new Set([
-          ...registrosVisitas
+        const clientesSinMetaPorGestion = new Set(
+          registrosVisitas
             .filter((r) => {
               const estado = String(r.estadoVisita || '').toLowerCase();
               return (
@@ -1846,10 +1773,7 @@ export class RoutesService {
             })
             .filter((r) => !clientesConPagoOperativoHoy.has(r.clienteId))
             .map((r) => r.clienteId),
-          ...Array.from(clientesConReprogramacionAprobada).filter(
-            (id) => !clientesConPagoOperativoHoy.has(id),
-          ),
-        ]);
+        );
 
         // Obtener préstamos activos y en mora, excluyendo clientes ausentes
         const prestamosActivos = ruta.asignaciones
@@ -2237,6 +2161,73 @@ export class RoutesService {
                 enProrroga: cuotaEnProrroga,
               }
             : null;
+        }
+      }
+
+      if (estadisticas.clientesAsignados > 0) {
+        try {
+          const detalleOperativoHoy = await this.getDailyVisits(
+            id,
+            hoyKey2,
+            actor,
+          );
+          const resumenHoy = detalleOperativoHoy?.resumen || {};
+          const recaudoOperativoHoy = Number(
+            resumenHoy.recaudoOperativo ?? resumenHoy.recaudo ?? 0,
+          );
+          const metaOperativaHoy = Number(resumenHoy.meta ?? 0);
+
+          estadisticas.cobranzaDelDia = recaudoOperativoHoy;
+          estadisticas.metaDelDia = metaOperativaHoy;
+          avanceDiario =
+            metaOperativaHoy > 0
+              ? (recaudoOperativoHoy / metaOperativaHoy) * 100
+              : recaudoOperativoHoy > 0
+                ? 100
+                : 0;
+
+          const visitasOperativas = new Map(
+            (detalleOperativoHoy?.visitas || []).map((visita: any) => [
+              String(visita?.cliente?.id || visita?.clienteId || ''),
+              visita,
+            ]),
+          );
+
+          for (const asig of asignaciones) {
+            const visitaOperativa: any = visitasOperativas.get(
+              String(asig.clienteId || ''),
+            );
+            if (!visitaOperativa) continue;
+
+            asig.estadoVisita = visitaOperativa.estadoVisita ?? asig.estadoVisita;
+            asig.notasVisita = visitaOperativa.notasVisita ?? asig.notasVisita;
+            asig.recaudadoDelDia = Number(
+              visitaOperativa.recaudadoDelDia || asig.recaudadoDelDia || 0,
+            );
+
+            if (!Array.isArray(asig?.cliente?.prestamos)) continue;
+
+            asig.cliente.prestamos = asig.cliente.prestamos.map((prestamo: any) => {
+              const prestamoOperativo = (visitaOperativa.prestamos || []).find(
+                (p: any) => String(p?.id || '') === String(prestamo?.id || ''),
+              );
+              if (!prestamoOperativo) return prestamo;
+
+              return {
+                ...prestamo,
+                cuotaObjetivo:
+                  prestamoOperativo.cuotaObjetivo ?? prestamo.cuotaObjetivo,
+                proximaCuota:
+                  prestamoOperativo.proximaCuota ?? prestamo.proximaCuota,
+                montoMetaOperativaPendiente:
+                  prestamoOperativo.montoMetaOperativaPendiente ??
+                  prestamo.montoMetaOperativaPendiente,
+              };
+            });
+          }
+        } catch {
+          // Si el detalle operativo no está disponible, conservamos el cálculo
+          // previo para no dejar la vista sin datos.
         }
       }
 
@@ -3879,6 +3870,47 @@ export class RoutesService {
       'TRANSFERENCIA',
     );
 
+    visitasDelDia.forEach((v: any) => {
+      const cid = String(v?.cliente?.id || v?.clienteId || '');
+      const reprogramacion = reprogramacionPorCliente.get(cid);
+      if (!reprogramacion) return;
+
+      const cuotaReprogramada =
+        this.buildCuotaObjetivoDesdeReprogramacion(reprogramacion);
+      if (!cuotaReprogramada) return;
+
+      v.estadoVisita = 'reprogramado';
+      v.notasVisita = `Reprogramación aprobada: ${
+        (reprogramacion?.datosSolicitud as any)?.motivo || 'Sin motivo'
+      }`;
+      v.cuotaObjetivo = cuotaReprogramada;
+      v.cuotaObjetivoId = cuotaReprogramada.id;
+      v.cuotaObjetivoPrestamoId = cuotaReprogramada.id;
+      v.prestamoObjetivoId =
+        cuotaReprogramada.prestamoId || v.prestamoObjetivoId || null;
+
+      if (Array.isArray(v.prestamos)) {
+        v.prestamos = v.prestamos.map((prestamo: any) => {
+          if (prestamo?.id !== cuotaReprogramada.prestamoId) return prestamo;
+
+          return {
+            ...prestamo,
+            montoMetaOperativaPendiente: 0,
+            cuotaObjetivo: cuotaReprogramada,
+            proximaCuota: {
+              id: cuotaReprogramada.id,
+              numeroCuota: cuotaReprogramada.numeroCuota,
+              fechaVencimiento: cuotaReprogramada.fechaVencimiento,
+              monto: cuotaReprogramada.montoCuota,
+              montoTotalDeuda: cuotaReprogramada.montoCuota,
+              montoNominal: 0,
+              estado: 'REPROGRAMADA',
+            },
+          };
+        });
+      }
+    });
+
     const totalEsperado = visitasDelDia.reduce((sum, v) => {
       const cid = v.cliente?.id || v.clienteId;
       const registro: any = visitasMap.get(cid);
@@ -3938,49 +3970,35 @@ export class RoutesService {
       }
 
       const registro: any = visitasMap.get(cid);
-      const reprogramacion = reprogramacionPorCliente.get(String(cid || ''));
-      const tieneReprogramacionAprobada =
-        reprogramacion &&
-        reprogramacion.estado === EstadoAprobacion.APROBADO;
-
       if (registro) {
         // @ts-ignore - Prisma type inference issue, properties exist at runtime
         v.estadoVisita = registro.estadoVisita;
         // @ts-ignore - Prisma type inference issue, properties exist at runtime
         v.notasVisita = registro.notas;
-      } else if (tieneReprogramacionAprobada) {
-        // @ts-ignore - Prisma type inference issue, properties exist at runtime
-        v.estadoVisita = 'reprogramado';
-        // @ts-ignore - Prisma type inference issue, properties exist at runtime
-        v.notasVisita = `Reprogramación aprobada: ${
-          (reprogramacion?.datosSolicitud as any)?.motivo || 'Sin motivo'
-        }`;
-      }
 
-      if (
-        (registro && String(registro.estadoVisita || '').toLowerCase() === 'reprogramado') ||
-        tieneReprogramacionAprobada
-      ) {
-        const cuotaReprogramada =
-          this.buildCuotaObjetivoDesdeReprogramacion(reprogramacion);
-        if (cuotaReprogramada) {
-          // @ts-ignore - Prisma type inference issue, properties exist at runtime
-          v.cuotaObjetivo = cuotaReprogramada;
-          // @ts-ignore - Prisma type inference issue, properties exist at runtime
-          v.cuotaObjetivoId = cuotaReprogramada.id;
-          // @ts-ignore - Prisma type inference issue, properties exist at runtime
-          v.cuotaObjetivoPrestamoId = cuotaReprogramada.id;
-          // @ts-ignore - Prisma type inference issue, properties exist at runtime
-          v.prestamoObjetivoId =
-            cuotaReprogramada.prestamoId || v.prestamoObjetivoId || null;
+        if (String(registro.estadoVisita || '').toLowerCase() === 'reprogramado') {
+          const reprogramacion = reprogramacionPorCliente.get(String(cid || ''));
+          const cuotaReprogramada =
+            this.buildCuotaObjetivoDesdeReprogramacion(reprogramacion);
+          if (cuotaReprogramada) {
+            // @ts-ignore - Prisma type inference issue, properties exist at runtime
+            v.cuotaObjetivo = cuotaReprogramada;
+            // @ts-ignore - Prisma type inference issue, properties exist at runtime
+            v.cuotaObjetivoId = cuotaReprogramada.id;
+            // @ts-ignore - Prisma type inference issue, properties exist at runtime
+            v.cuotaObjetivoPrestamoId = cuotaReprogramada.id;
+            // @ts-ignore - Prisma type inference issue, properties exist at runtime
+            v.prestamoObjetivoId =
+              cuotaReprogramada.prestamoId || v.prestamoObjetivoId || null;
 
-          if (Array.isArray(v.prestamos)) {
-            v.prestamos = v.prestamos.map((prestamo: any) => {
-              if (prestamo?.id === cuotaReprogramada.prestamoId) {
-                return { ...prestamo, cuotaObjetivo: cuotaReprogramada };
-              }
-              return prestamo;
-            });
+            if (Array.isArray(v.prestamos)) {
+              v.prestamos = v.prestamos.map((prestamo: any) => {
+                if (prestamo?.id === cuotaReprogramada.prestamoId) {
+                  return { ...prestamo, cuotaObjetivo: cuotaReprogramada };
+                }
+                return prestamo;
+              });
+            }
           }
         }
       }
