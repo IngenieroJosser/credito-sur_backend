@@ -657,6 +657,7 @@ describe('RoutesService role scoping', () => {
       '2026-06-10',
     );
 
+    expect(resultado.resumen.visitados).toBe(1);
     expect(resultado.visitas[0]).toEqual(
       expect.objectContaining({
         estadoVisita: 'reprogramado',

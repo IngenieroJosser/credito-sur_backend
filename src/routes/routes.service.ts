@@ -3884,11 +3884,9 @@ export class RoutesService {
 
     const totalEsperadoFinal = totalEsperado + metaSinteticaRegularizada;
 
-    // Filtrar saldados sin actividad para no inflar el total de la ruta ni ensuciar la data
+    // Filtrar saldados sin gestión real para no inflar el total de la ruta ni ensuciar la data.
     const visitasDelDiaFinales = visitasDelDia.filter((v) => {
-      // @ts-ignore - Prisma type inference issue, properties exist at runtime
-      const tuvoActividad =
-        (v.recaudadoDelDia || 0) > 0 || v.estadoVisita === 'ausente';
+      const estadoGestion = this.resolveEstadoGestionCierrePendiente(v);
 
       const todosPagados = v.prestamos.every((p) => p.estado === 'PAGADO');
       const saldoTotal = v.prestamos.reduce(
@@ -3897,7 +3895,7 @@ export class RoutesService {
       );
       const isSaldado = todosPagados && saldoTotal <= 0;
 
-      return !(isSaldado && !tuvoActividad);
+      return !(isSaldado && estadoGestion === 'PENDIENTE');
     });
 
     const recaudoFinal = recaudoOperativo;
@@ -3921,13 +3919,9 @@ export class RoutesService {
           ? 100
           : 0;
 
-    const gestionadosPagos = Object.keys(pagosPorCliente).length;
-    // Añadimos a los gestionados aquellos que tienen registro de visita PERO no tienen pago hoy
-    const gestionadosAusentes = registrosVisitas.filter(
-      (r) =>
-        r.estadoVisita === 'ausente' && !(pagosPorCliente[r.clienteId] > 0),
-    ).length;
-    const gestionados = gestionadosPagos + gestionadosAusentes;
+    const gestionados = visitasDelDiaFinales.filter((v) => {
+      return this.resolveEstadoGestionCierrePendiente(v) !== 'PENDIENTE';
+    }).length;
 
     return {
       fecha: fechaKey, // Clave de fecha Bogotá YYYY-MM-DD
