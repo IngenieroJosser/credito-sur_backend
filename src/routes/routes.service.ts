@@ -243,7 +243,9 @@ export class RoutesService {
     const fechaOperativa = getBogotaDayKey(new Date());
     const activacionIdempotencyKey = `ACTIVACION_RUTA:${ruta.id}:${fechaOperativa}`;
 
-    const activacionRutaHoy = await this.prisma.transaccion.findFirst({
+    const { inicio, fin } = this.getInicioFinHoy();
+    const activacionRutaHoy =
+      (await this.prisma.transaccion.findFirst({
       where: {
         idempotencyKey: activacionIdempotencyKey,
       },
@@ -253,7 +255,8 @@ export class RoutesService {
         creadoPorId: true,
         tipoReferencia: true,
       },
-    });
+      })) ||
+      (await this.buscarActivacionRutaDia(cajaRuta.id, inicio, fin));
 
     return {
       rutaId,
@@ -341,6 +344,18 @@ export class RoutesService {
         });
 
         if (activacionRutaHoy?.id) {
+          if (typeof tx.transaccion.updateMany === 'function') {
+            await tx.transaccion.updateMany({
+              where: {
+                id: activacionRutaHoy.id,
+                idempotencyKey: null,
+              },
+              data: {
+                idempotencyKey: activacionIdempotencyKey,
+              },
+            });
+          }
+
           await tx.rutaJornada.upsert({
             where: {
               rutaId_fechaOperativa: {
@@ -484,6 +499,7 @@ export class RoutesService {
     return {
       rutaId: ruta.id,
       activadaHoy: true,
+      operableHoy: true,
       activacionId: resultadoActivacion.id,
       activacionReal,
       tipoReferenciaActivacion: resultadoActivacion.tipoReferencia,
