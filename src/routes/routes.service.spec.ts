@@ -828,6 +828,142 @@ describe('RoutesService role scoping', () => {
     );
   });
 
+  it('no propaga una reprogramación a otros créditos activos del mismo cliente', async () => {
+    const cuotaCreditoViejo = {
+      id: 'cuota-vieja-8',
+      numeroCuota: 8,
+      fechaVencimiento: new Date('2026-06-12T12:00:00.000Z'),
+      fechaVencimientoProrroga: null,
+      fechaPago: null,
+      monto: 86_666,
+      montoPagado: 0,
+      estado: 'VENCIDA',
+    };
+    const cuotaCreditoNuevo = {
+      id: 'cuota-nueva-1',
+      numeroCuota: 1,
+      fechaVencimiento: new Date('2026-06-12T12:00:00.000Z'),
+      fechaVencimientoProrroga: null,
+      fechaPago: null,
+      monto: 33_333,
+      montoPagado: 0,
+      estado: 'PENDIENTE',
+    };
+    const prisma = {
+      asignacionRuta: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'asig-epifanio',
+            ordenVisita: 4,
+            cliente: {
+              id: 'cliente-epifanio',
+              codigo: 'C002',
+              dni: '222',
+              nombres: 'Epifanio',
+              apellidos: 'Mena',
+              telefono: '311',
+              direccion: 'Barrio Playita',
+              nivelRiesgo: 'LEVE',
+              prestamos: [
+                {
+                  id: 'prestamo-viejo',
+                  numeroPrestamo: 'ART-000002',
+                  monto: 2_600_000,
+                  saldoPendiente: 2_296_669,
+                  frecuenciaPago: 'DIARIO',
+                  cantidadCuotas: 60,
+                  estado: 'ACTIVO',
+                  cuotas: [cuotaCreditoViejo],
+                },
+                {
+                  id: 'prestamo-nuevo',
+                  numeroPrestamo: 'ART-000003',
+                  monto: 2_000_000,
+                  saldoPendiente: 2_000_000,
+                  frecuenciaPago: 'DIARIO',
+                  cantidadCuotas: 60,
+                  estado: 'ACTIVO',
+                  cuotas: [cuotaCreditoNuevo],
+                },
+              ],
+            },
+          },
+        ]),
+      },
+      registroVisita: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      aprobacion: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'aprobacion-epifanio-viejo',
+            referenciaId: 'cuota-vieja-8',
+            estado: 'APROBADO',
+            creadoEn: new Date('2026-06-12T15:00:00.000Z'),
+            datosSolicitud: {
+              prestamoId: 'prestamo-viejo',
+              cuotaId: 'cuota-vieja-8',
+              clienteId: 'cliente-epifanio',
+              numeroCuota: 8,
+              fechaGestionOriginal: '2026-06-12',
+              fechaVencimientoOriginal: '2026-06-12T12:00:00.000-05:00',
+              nuevaFecha: '2026-06-13',
+              motivo: 'Cliente pidió pagar mañana',
+              montoCuota: 86_666,
+            },
+          },
+        ]),
+      },
+      pago: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      cliente: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      gasto: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 0 } }),
+      },
+    };
+
+    const resultado = await makeService(prisma).getDailyVisits(
+      'ruta-1',
+      '2026-06-12',
+    );
+
+    expect(resultado.resumen.meta).toBe(33_333);
+    expect(resultado.resumen.visitados).toBe(0);
+    expect(resultado.visitas).toHaveLength(1);
+    expect(resultado.visitas[0]).toEqual(
+      expect.objectContaining({
+        prestamoObjetivoId: 'prestamo-nuevo',
+        estadoVisita: null,
+        cuotaObjetivo: expect.objectContaining({
+          id: 'cuota-nueva-1',
+          saldoExigibleEnFechaOperativa: 33_333,
+        }),
+      }),
+    );
+    expect(resultado.visitas[0].prestamos).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'prestamo-viejo',
+          montoMetaOperativaPendiente: 0,
+          cuotaObjetivo: expect.objectContaining({
+            id: 'cuota-vieja-8',
+            esCuotaReprogramadaJornada: true,
+          }),
+        }),
+        expect.objectContaining({
+          id: 'prestamo-nuevo',
+          montoMetaOperativaPendiente: 33_333,
+          cuotaObjetivo: expect.objectContaining({
+            id: 'cuota-nueva-1',
+          }),
+        }),
+      ]),
+    );
+  });
+
   it('rejects a collector checking activation for a route they do not own', async () => {
     const prisma = {
       ruta: {

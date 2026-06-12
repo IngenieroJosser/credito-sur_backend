@@ -3519,6 +3519,14 @@ export class RoutesService {
       },
     });
     const visitasMap = new Map(registrosVisitas.map((r) => [r.clienteId, r]));
+    const visitasMapPorPrestamo = new Map<string, any>();
+    registrosVisitas.forEach((registro: any) => {
+      const clienteId = String(registro?.clienteId || '');
+      const prestamoId = String(registro?.prestamoId || '');
+      if (clienteId && prestamoId) {
+        visitasMapPorPrestamo.set(`${clienteId}:${prestamoId}`, registro);
+      }
+    });
     const clientesRutaIds = [
       ...new Set(
         asignaciones
@@ -3566,9 +3574,11 @@ export class RoutesService {
           })
         : [];
     const reprogramacionPorCliente = new Map<string, any>();
+    const reprogramacionPorPrestamo = new Map<string, any>();
     reprogramacionesJornada.forEach((aprobacion: any) => {
       const datos = (aprobacion?.datosSolicitud || {}) as any;
       const clienteId = String(datos?.clienteId || '');
+      const prestamoId = String(datos?.prestamoId || '');
       const fechaGestion =
         String(datos?.fechaOperativaRuta || datos?.fechaGestionOriginal || '');
       if (
@@ -3580,6 +3590,9 @@ export class RoutesService {
       }
       if (!reprogramacionPorCliente.has(clienteId)) {
         reprogramacionPorCliente.set(clienteId, aprobacion);
+      }
+      if (prestamoId && !reprogramacionPorPrestamo.has(prestamoId)) {
+        reprogramacionPorPrestamo.set(prestamoId, aprobacion);
       }
     });
 
@@ -3650,8 +3663,24 @@ export class RoutesService {
     const clientesEnVisitasIniciales = new Set(
       visitasDelDia.map((v: any) => v?.cliente?.id || v?.clienteId),
     );
-    for (const [clienteId, reprogramacion] of reprogramacionPorCliente.entries()) {
-      if (clientesEnVisitasIniciales.has(clienteId)) continue;
+    for (const reprogramacion of reprogramacionPorPrestamo.values()) {
+      const cuotaReprogramada =
+        this.buildCuotaObjetivoDesdeReprogramacion(reprogramacion);
+      if (!cuotaReprogramada) continue;
+
+      const datosReprogramacion = (reprogramacion?.datosSolicitud || {}) as any;
+      const clienteId = String(datosReprogramacion?.clienteId || '');
+      const prestamoId = String(cuotaReprogramada.prestamoId || '');
+      if (!clienteId || !prestamoId) continue;
+
+      const visitaInicial = visitasDelDia.find((v: any) => {
+        if (String(v?.cliente?.id || v?.clienteId || '') !== clienteId) return false;
+        return (v?.prestamos || []).some(
+          (p: any) => String(p?.id || '') === prestamoId,
+        );
+      });
+
+      if (visitaInicial) continue;
 
       const asignacion = asignaciones.find(
         (a: any) => String(a?.cliente?.id || a?.clienteId || '') === clienteId,
@@ -3659,11 +3688,6 @@ export class RoutesService {
       const cliente = asignacion?.cliente;
       if (!cliente) continue;
 
-      const cuotaReprogramada =
-        this.buildCuotaObjetivoDesdeReprogramacion(reprogramacion);
-      if (!cuotaReprogramada) continue;
-
-      const prestamoId = String(cuotaReprogramada.prestamoId || '');
       const prestamosConCuotaObjetivo = (cliente.prestamos || []).map((p: any) => {
         const isObjetivo = String(p?.id || '') === prestamoId;
         return {
@@ -3872,26 +3896,23 @@ export class RoutesService {
 
     visitasDelDia.forEach((v: any) => {
       const cid = String(v?.cliente?.id || v?.clienteId || '');
-      const reprogramacion = reprogramacionPorCliente.get(cid);
-      if (!reprogramacion) return;
-
-      const cuotaReprogramada =
-        this.buildCuotaObjetivoDesdeReprogramacion(reprogramacion);
-      if (!cuotaReprogramada) return;
-
-      v.estadoVisita = 'reprogramado';
-      v.notasVisita = `Reprogramación aprobada: ${
-        (reprogramacion?.datosSolicitud as any)?.motivo || 'Sin motivo'
-      }`;
-      v.cuotaObjetivo = cuotaReprogramada;
-      v.cuotaObjetivoId = cuotaReprogramada.id;
-      v.cuotaObjetivoPrestamoId = cuotaReprogramada.id;
-      v.prestamoObjetivoId =
-        cuotaReprogramada.prestamoId || v.prestamoObjetivoId || null;
+      let reprogramacionObjetivo: any = null;
+      let cuotaReprogramadaObjetivo: any = null;
 
       if (Array.isArray(v.prestamos)) {
         v.prestamos = v.prestamos.map((prestamo: any) => {
-          if (prestamo?.id !== cuotaReprogramada.prestamoId) return prestamo;
+          const prestamoId = String(prestamo?.id || '');
+          const reprogramacion = prestamoId
+            ? reprogramacionPorPrestamo.get(prestamoId)
+            : null;
+          const cuotaReprogramada =
+            this.buildCuotaObjetivoDesdeReprogramacion(reprogramacion);
+          if (!cuotaReprogramada) return prestamo;
+
+          if (prestamoId === String(v?.prestamoObjetivoId || '')) {
+            reprogramacionObjetivo = reprogramacion;
+            cuotaReprogramadaObjetivo = cuotaReprogramada;
+          }
 
           return {
             ...prestamo,
@@ -3909,6 +3930,45 @@ export class RoutesService {
           };
         });
       }
+
+      const prestamoOperativo = Array.isArray(v.prestamos)
+        ? v.prestamos.find((prestamo: any) => {
+            if (reprogramacionPorPrestamo.has(String(prestamo?.id || ''))) {
+              return false;
+            }
+            const objetivo = prestamo?.cuotaObjetivo;
+            const meta = Number(prestamo?.montoMetaOperativaPendiente || 0);
+            return meta > 0 && (objetivo?.puedePagar || objetivo?.puedeReprogramar);
+          }) ||
+          v.prestamos.find((prestamo: any) => {
+            if (reprogramacionPorPrestamo.has(String(prestamo?.id || ''))) {
+              return false;
+            }
+            return Number(prestamo?.montoMetaOperativaPendiente || 0) > 0;
+          })
+        : null;
+
+      if (prestamoOperativo?.cuotaObjetivo) {
+        v.estadoVisita = null;
+        v.notasVisita = null;
+        v.cuotaObjetivo = prestamoOperativo.cuotaObjetivo;
+        v.cuotaObjetivoId = prestamoOperativo.cuotaObjetivo.id || null;
+        v.cuotaObjetivoPrestamoId = prestamoOperativo.cuotaObjetivo.id || null;
+        v.prestamoObjetivoId = prestamoOperativo.id || null;
+        return;
+      }
+
+      if (cuotaReprogramadaObjetivo) {
+        v.estadoVisita = 'reprogramado';
+        v.notasVisita = `Reprogramación aprobada: ${
+          (reprogramacionObjetivo?.datosSolicitud as any)?.motivo || 'Sin motivo'
+        }`;
+        v.cuotaObjetivo = cuotaReprogramadaObjetivo;
+        v.cuotaObjetivoId = cuotaReprogramadaObjetivo.id;
+        v.cuotaObjetivoPrestamoId = cuotaReprogramadaObjetivo.id;
+        v.prestamoObjetivoId =
+          cuotaReprogramadaObjetivo.prestamoId || v.prestamoObjetivoId || null;
+      }
     });
 
     const totalEsperado = visitasDelDia.reduce((sum, v) => {
@@ -3920,13 +3980,10 @@ export class RoutesService {
         registro?.estadoVisita || v.estadoVisita || '',
       ).toLowerCase();
       const gestionSinMeta =
-        estadoRegistro === 'ausente' ||
-        estadoRegistro === 'reprogramado' ||
-        estadoRegistro === 'reprogramada' ||
-        estadoRegistro === 'reprogramacion' ||
-        estadoRegistro === 'reprogramación';
+        estadoRegistro === 'ausente';
 
-      // Si está ausente/reprogramado y no pagó nada, descontamos de la meta
+      // Si está ausente y no pagó nada, descontamos toda la visita de la meta.
+      // La reprogramación se descuenta por préstamo en montoMetaOperativaPendiente.
       if (gestionSinMeta && recaudoCliente === 0) {
         return sum; // No suma a la meta
       }
@@ -3971,13 +4028,24 @@ export class RoutesService {
 
       const registro: any = visitasMap.get(cid);
       if (registro) {
-        // @ts-ignore - Prisma type inference issue, properties exist at runtime
-        v.estadoVisita = registro.estadoVisita;
-        // @ts-ignore - Prisma type inference issue, properties exist at runtime
-        v.notasVisita = registro.notas;
+        const prestamoId = String(v.prestamoObjetivoId || '');
+        const registroPorPrestamo = prestamoId
+          ? visitasMapPorPrestamo.get(`${String(cid || '')}:${prestamoId}`)
+          : null;
+        const estadoCliente = String(registro.estadoVisita || '').toLowerCase();
+        const registroAplicable =
+          registroPorPrestamo || (estadoCliente === 'ausente' ? registro : null);
+        if (!registroAplicable) return;
 
-        if (String(registro.estadoVisita || '').toLowerCase() === 'reprogramado') {
-          const reprogramacion = reprogramacionPorCliente.get(String(cid || ''));
+        // @ts-ignore - Prisma type inference issue, properties exist at runtime
+        v.estadoVisita = registroAplicable.estadoVisita;
+        // @ts-ignore - Prisma type inference issue, properties exist at runtime
+        v.notasVisita = registroAplicable.notas;
+
+        if (String(registroAplicable.estadoVisita || '').toLowerCase() === 'reprogramado') {
+          const reprogramacion = prestamoId
+            ? reprogramacionPorPrestamo.get(prestamoId)
+            : null;
           const cuotaReprogramada =
             this.buildCuotaObjetivoDesdeReprogramacion(reprogramacion);
           if (cuotaReprogramada) {
