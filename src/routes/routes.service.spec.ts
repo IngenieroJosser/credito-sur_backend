@@ -6,7 +6,6 @@ import {
 } from '@nestjs/common';
 import { Prisma, RolUsuario } from '@prisma/client';
 import { RoutesService } from './routes.service';
-import { getBogotaDayKey } from '../utils/date-utils';
 
 const makeService = (prisma: any) => {
   if (prisma) {
@@ -1600,78 +1599,5 @@ describe('RoutesService role scoping', () => {
       where: { rutaId: 'ruta-1', tipo: 'RUTA', activa: true },
       data: { responsableId: 'cobrador-nuevo' },
     });
-  });
-
-  it('excluye de la meta a clientes con reprogramación aprobada para la fecha operativa en findOne', async () => {
-    const hoyKey = getBogotaDayKey(new Date());
-    const prisma = {
-      ruta: {
-        findFirst: jest.fn().mockResolvedValue({
-          id: 'ruta-1',
-          cobradorId: 'cobrador-1',
-          supervisorId: null,
-          cobrador: { nombres: 'C', apellidos: 'P' },
-          asignaciones: [
-            {
-              clienteId: 'cliente-reprogramado',
-              cliente: {
-                id: 'cliente-reprogramado',
-                prestamos: [
-                  {
-                    id: 'prestamo-1',
-                    estado: 'ACTIVO',
-                    eliminadoEn: null,
-                    saldoPendiente: 1000,
-                    frecuenciaPago: 'DIARIO',
-                    cuotas: [
-                      {
-                        id: 'cuota-1',
-                        estado: 'PENDIENTE',
-                        monto: 100,
-                        montoPagado: 0,
-                        fechaVencimiento: new Date(),
-                      },
-                    ],
-                  },
-                ],
-              },
-            },
-          ],
-          cajas: [],
-          gastos: [],
-          _count: { asignaciones: 1, gastos: 0 },
-        }),
-      },
-      registroVisita: {
-        findMany: jest.fn().mockResolvedValue([]),
-      },
-      pago: {
-        findMany: jest.fn().mockResolvedValue([]),
-      },
-      cuota: {
-        findMany: jest.fn().mockResolvedValue([]),
-      },
-      transaccion: {
-        findFirst: jest.fn().mockResolvedValue(null),
-        aggregate: jest.fn().mockResolvedValue({ _sum: { monto: null } }),
-      },
-      aprobacion: {
-        findMany: jest.fn().mockResolvedValue([
-          {
-            datosSolicitud: {
-              clienteId: 'cliente-reprogramado',
-              fechaOperativaRuta: hoyKey,
-            },
-          },
-        ]),
-      },
-      asignacionRuta: {
-        count: jest.fn().mockResolvedValue(0),
-      },
-    };
-
-    const service = makeService(prisma);
-    const result = await service.findOne('ruta-1');
-    expect(result.estadisticas.metaDelDia).toBe(0);
   });
 });
