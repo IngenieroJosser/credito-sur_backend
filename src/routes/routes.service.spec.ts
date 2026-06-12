@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Prisma, RolUsuario } from '@prisma/client';
 import { RoutesService } from './routes.service';
+import { getBogotaDayKey } from '../utils/date-utils';
 
 const makeService = (prisma: any) => {
   if (prisma) {
@@ -725,6 +726,105 @@ describe('RoutesService role scoping', () => {
             'La cuota fue reprogramada desde esta jornada pendiente.',
         }),
         cuotaObjetivoId: 'cuota-8',
+      }),
+    );
+  });
+
+  it('muestra como reprogramado un cliente de ruta actual aunque la cuota ya se haya movido al futuro', async () => {
+    const cuotaReprogramada = {
+      id: 'cuota-8',
+      numeroCuota: 8,
+      fechaVencimiento: new Date('2026-06-12T12:00:00.000Z'),
+      fechaVencimientoProrroga: new Date('2026-06-13T12:00:00.000Z'),
+      fechaPago: null,
+      monto: 86_666,
+      montoPagado: 0,
+      estado: 'PRORROGADA',
+    };
+    const prisma = {
+      asignacionRuta: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'asig-epifanio',
+            ordenVisita: 4,
+            cliente: {
+              id: 'cliente-epifanio',
+              codigo: 'C002',
+              dni: '222',
+              nombres: 'Epifanio',
+              apellidos: 'Mena',
+              telefono: '311',
+              direccion: 'Barrio Playita',
+              nivelRiesgo: 'LEVE',
+              prestamos: [
+                {
+                  id: 'prestamo-epifanio',
+                  numeroPrestamo: 'ART-000002',
+                  monto: 2_600_000,
+                  saldoPendiente: 2_296_669,
+                  frecuenciaPago: 'DIARIO',
+                  cantidadCuotas: 60,
+                  estado: 'ACTIVO',
+                  cuotas: [cuotaReprogramada],
+                },
+              ],
+            },
+          },
+        ]),
+      },
+      registroVisita: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      aprobacion: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'aprobacion-epifanio',
+            referenciaId: 'cuota-8',
+            estado: 'APROBADO',
+            creadoEn: new Date('2026-06-12T15:00:00.000Z'),
+            datosSolicitud: {
+              prestamoId: 'prestamo-epifanio',
+              cuotaId: 'cuota-8',
+              clienteId: 'cliente-epifanio',
+              numeroCuota: 8,
+              fechaGestionOriginal: '2026-06-12',
+              fechaVencimientoOriginal: '2026-06-12T12:00:00.000-05:00',
+              nuevaFecha: '2026-06-13',
+              motivo: 'Cliente pidió pagar mañana',
+              montoCuota: 86_666,
+            },
+          },
+        ]),
+      },
+      pago: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      cliente: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      gasto: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 0 } }),
+      },
+    };
+
+    const resultado = await makeService(prisma).getDailyVisits(
+      'ruta-1',
+      '2026-06-12',
+    );
+
+    expect(resultado.totalVisitas).toBe(1);
+    expect(resultado.resumen.meta).toBe(0);
+    expect(resultado.resumen.visitados).toBe(1);
+    expect(resultado.visitas[0]).toEqual(
+      expect.objectContaining({
+        estadoVisita: 'reprogramado',
+        cuotaObjetivo: expect.objectContaining({
+          id: 'cuota-8',
+          numeroCuota: 8,
+          saldoExigibleEnFechaOperativa: 0,
+          esCuotaReprogramadaJornada: true,
+          nuevaFechaReprogramada: '2026-06-13',
+        }),
       }),
     );
   });
@@ -1500,5 +1600,78 @@ describe('RoutesService role scoping', () => {
       where: { rutaId: 'ruta-1', tipo: 'RUTA', activa: true },
       data: { responsableId: 'cobrador-nuevo' },
     });
+  });
+
+  it('excluye de la meta a clientes con reprogramación aprobada para la fecha operativa en findOne', async () => {
+    const hoyKey = getBogotaDayKey(new Date());
+    const prisma = {
+      ruta: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'ruta-1',
+          cobradorId: 'cobrador-1',
+          supervisorId: null,
+          cobrador: { nombres: 'C', apellidos: 'P' },
+          asignaciones: [
+            {
+              clienteId: 'cliente-reprogramado',
+              cliente: {
+                id: 'cliente-reprogramado',
+                prestamos: [
+                  {
+                    id: 'prestamo-1',
+                    estado: 'ACTIVO',
+                    eliminadoEn: null,
+                    saldoPendiente: 1000,
+                    frecuenciaPago: 'DIARIO',
+                    cuotas: [
+                      {
+                        id: 'cuota-1',
+                        estado: 'PENDIENTE',
+                        monto: 100,
+                        montoPagado: 0,
+                        fechaVencimiento: new Date(),
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+          cajas: [],
+          gastos: [],
+          _count: { asignaciones: 1, gastos: 0 },
+        }),
+      },
+      registroVisita: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      pago: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      cuota: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      transaccion: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _sum: { monto: null } }),
+      },
+      aprobacion: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            datosSolicitud: {
+              clienteId: 'cliente-reprogramado',
+              fechaOperativaRuta: hoyKey,
+            },
+          },
+        ]),
+      },
+      asignacionRuta: {
+        count: jest.fn().mockResolvedValue(0),
+      },
+    };
+
+    const service = makeService(prisma);
+    const result = await service.findOne('ruta-1');
+    expect(result.estadisticas.metaDelDia).toBe(0);
   });
 });

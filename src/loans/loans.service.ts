@@ -4571,6 +4571,9 @@ export class LoansService implements OnModuleInit {
     }
 
     const datos = aprobacion.datosSolicitud as Record<string, any>;
+    const fechaGestionOriginal = this.parseFechaOperativaReprogramacionKey(
+      datos.fechaOperativaRuta || datos.fechaGestionOriginal,
+    );
 
     await this.prisma.$transaction(async (tx) => {
       const claimed = await tx.aprobacion.updateMany({
@@ -4601,6 +4604,49 @@ export class LoansService implements OnModuleInit {
           ),
         },
       });
+
+      if (fechaGestionOriginal && datos.clienteId && datos.prestamoId) {
+        const asignacionActiva = await tx.asignacionRuta.findFirst({
+          where: { clienteId: String(datos.clienteId), activa: true },
+          select: {
+            rutaId: true,
+            cobradorId: true,
+            ruta: { select: { cobradorId: true } },
+          },
+        });
+
+        if (asignacionActiva?.rutaId) {
+          const cobradorGestionId =
+            asignacionActiva.cobradorId ||
+            asignacionActiva.ruta?.cobradorId ||
+            aprobacion.solicitadoPorId;
+
+          await tx.registroVisita.upsert({
+            where: {
+              rutaId_clienteId_fechaVisita: {
+                rutaId: asignacionActiva.rutaId,
+                clienteId: String(datos.clienteId),
+                fechaVisita: fechaGestionOriginal,
+              },
+            },
+            create: {
+              rutaId: asignacionActiva.rutaId,
+              clienteId: String(datos.clienteId),
+              prestamoId: String(datos.prestamoId),
+              cobradorId: cobradorGestionId,
+              fechaVisita: fechaGestionOriginal,
+              estadoVisita: 'reprogramado',
+              notas: `Reprogramación aprobada: ${datos.motivo || 'Sin motivo'}`,
+            },
+            update: {
+              prestamoId: String(datos.prestamoId),
+              cobradorId: cobradorGestionId,
+              estadoVisita: 'reprogramado',
+              notas: `Reprogramación aprobada: ${datos.motivo || 'Sin motivo'}`,
+            },
+          });
+        }
+      }
     });
 
     // Notificar al cobrador que solicitó
