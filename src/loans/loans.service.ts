@@ -3478,47 +3478,58 @@ export class LoansService implements OnModuleInit {
       const startKey = getBogotaDayKey(new Date(fechaInicio));
       const { startDate: startDate } = getBogotaStartEndOfDayFromKey(startKey);
 
-      if (!data.esContado && startDate.getTime() === today.getTime()) {
-        const rutaPreferida = cliente.asignacionesRuta?.find(
-          (a: any) => a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
-        );
+      await this.runCreateLoanSideEffect(
+        'asignación automática de ruta por crédito creado hoy',
+        async () => {
+          if (data.esContado || startDate.getTime() !== today.getTime()) return;
 
-        const rutaCobrador =
-          !rutaPreferida && creador.rol === RolUsuario.COBRADOR
-            ? await this.prisma.ruta.findFirst({
-                where: {
-                  eliminadoEn: null,
-                  activa: true,
-                  cobradorId: creador.id,
-                },
-                select: { id: true, cobradorId: true },
-              })
-            : null;
+          const rutaPreferida = cliente.asignacionesRuta?.find(
+            (a: any) => a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
+          );
 
-        const rutaIdAsignar =
-          rutaPreferida?.rutaId || rutaPreferida?.ruta?.id || rutaCobrador?.id;
-        const cobradorIdAsignar =
-          rutaPreferida?.cobradorId ||
-          rutaPreferida?.ruta?.cobradorId ||
-          rutaCobrador?.cobradorId;
+          const rutaCobrador =
+            !rutaPreferida && creador.rol === RolUsuario.COBRADOR
+              ? await this.prisma.ruta.findFirst({
+                  where: {
+                    eliminadoEn: null,
+                    activa: true,
+                    cobradorId: creador.id,
+                  },
+                  select: { id: true, cobradorId: true },
+                })
+              : null;
 
-        if (rutaIdAsignar && cobradorIdAsignar) {
-          const existenteHoy = await this.prisma.asignacionRuta.findFirst({
+          const rutaIdAsignar =
+            rutaPreferida?.rutaId || rutaPreferida?.ruta?.id || rutaCobrador?.id;
+          const cobradorIdAsignar =
+            rutaPreferida?.cobradorId ||
+            rutaPreferida?.ruta?.cobradorId ||
+            rutaCobrador?.cobradorId;
+
+          if (!rutaIdAsignar || !cobradorIdAsignar) return;
+
+          const asignacionExistente = await this.prisma.asignacionRuta.findFirst({
             where: {
               rutaId: rutaIdAsignar,
               clienteId: cliente.id,
               activa: true,
-              fechaEspecifica: today,
             },
             select: { id: true },
           });
 
-          if (!existenteHoy) {
-            const maxOrden = await this.prisma.asignacionRuta.aggregate({
-              where: { rutaId: rutaIdAsignar, activa: true },
-              _max: { ordenVisita: true },
-            });
+          if (asignacionExistente?.id) {
+            this.logger.log(
+              `[CREATE LOAN] Cliente ${cliente.id} ya tiene asignación activa en ruta ${rutaIdAsignar}. Se omite creación automática.`,
+            );
+            return;
+          }
 
+          const maxOrden = await this.prisma.asignacionRuta.aggregate({
+            where: { rutaId: rutaIdAsignar, activa: true },
+            _max: { ordenVisita: true },
+          });
+
+          try {
             await this.prisma.asignacionRuta.create({
               data: {
                 rutaId: rutaIdAsignar,
@@ -3529,17 +3540,24 @@ export class LoansService implements OnModuleInit {
                 activa: true,
               },
             });
+          } catch (error: any) {
+            if (error?.code === 'P2002') {
+              this.logger.warn(
+                `[CREATE LOAN] Asignación de ruta omitida por duplicado rutaId=${rutaIdAsignar}, clienteId=${cliente.id}`,
+              );
+              return;
+            }
 
-            await this.runCreateLoanSideEffect('broadcast rutas', () =>
-              this.notificacionesGateway.broadcastRutasActualizadas({
-                accion: 'ACTUALIZAR',
-                rutaId: rutaIdAsignar,
-                clienteId: cliente.id,
-              }),
-            );
+            throw error;
           }
-        }
-      }
+
+          this.notificacionesGateway.broadcastRutasActualizadas({
+            accion: 'ACTUALIZAR',
+            rutaId: rutaIdAsignar,
+            clienteId: cliente.id,
+          });
+        },
+      );
 
       this.logger.log(
         `Loan created successfully: ${prestamo.id}, requiereAprobacion: ${esAutoAprobado}`,
@@ -3813,12 +3831,12 @@ export class LoansService implements OnModuleInit {
         });
         */
 
-        // Enviar notificaciones push a coordinadores
-        await this.runCreateLoanSideEffect('push coordinadores aprobación', () =>
+        // Enviar notificaciones push a aprobadores principales.
+        await this.runCreateLoanSideEffect('push aprobadores aprobación', () =>
           this.pushService.sendPushNotification({
             title: 'Nuevo Préstamo Requiere Aprobación',
             body: `${creador.nombres} ${creador.apellidos} ha solicitado un ${data.tipoPrestamo === 'EFECTIVO' ? 'préstamo' : 'crédito de artículo'} por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
-            roleFilter: ['COORDINADOR'],
+            roleFilter: ['COORDINADOR', 'ADMIN', 'SUPER_ADMINISTRADOR'],
             data: {
               type: 'PRESTAMO_PENDIENTE',
               prestamoId: prestamo.id,

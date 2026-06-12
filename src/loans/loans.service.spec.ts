@@ -427,7 +427,12 @@ describe('LoansService accounting impact for approved loans', () => {
     const service = makeService(prisma) as any;
     service.runCreateLoanSideEffect = jest
       .fn()
-      .mockRejectedValueOnce(new Error('fallo secundario inesperado'));
+      .mockImplementation((label: string, action: () => Promise<unknown>) => {
+        if (label === 'broadcast préstamos') {
+          return Promise.reject(new Error('fallo secundario inesperado'));
+        }
+        return action();
+      });
 
     const result = await service.createLoan({
       clienteId: 'cliente-1',
@@ -449,6 +454,110 @@ describe('LoansService accounting impact for approved loans', () => {
       mensaje: 'Préstamo creado exitosamente. Pendiente de aprobación.',
       requiereAprobacion: true,
     });
+  });
+
+  it('no duplica la asignación activa de ruta al crear un crédito para un cliente ya asignado', async () => {
+    mockConfig.shouldAutoApproveCredits.mockResolvedValueOnce(false);
+
+    const fechaInicio = new Date('2026-06-12T05:00:00.000Z');
+    const prisma = {
+      cliente: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'cliente-1',
+          nombres: 'Epifanio',
+          apellidos: 'Mena',
+          dni: '22222222',
+          telefono: '3112394628',
+          enListaNegra: false,
+          asignacionesRuta: [
+            {
+              id: 'asignacion-existente',
+              rutaId: 'ruta-1',
+              cobradorId: 'cobrador-1',
+              activa: true,
+              ruta: {
+                id: 'ruta-1',
+                cobradorId: 'cobrador-1',
+                activa: true,
+                eliminadoEn: null,
+              },
+            },
+          ],
+        }),
+      },
+      usuario: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'supervisor-1',
+          nombres: 'Supervisor',
+          apellidos: 'Prueba',
+          rol: RolUsuario.SUPERVISOR,
+        }),
+      },
+      caja: {
+        findFirst: jest.fn().mockResolvedValue({ saldoActual: 10000000 }),
+      },
+      prestamo: {
+        findFirst: jest.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(null),
+        create: jest.fn().mockResolvedValue({
+          id: 'prestamo-1',
+          numeroPrestamo: 'PRES-000001',
+          clienteId: 'cliente-1',
+          tipoPrestamo: 'EFECTIVO',
+          tipoAmortizacion: 'INTERES_SIMPLE',
+          monto: 5000000,
+          cuotaInicial: 0,
+          precioVentaArticulo: null,
+          costoArticulo: null,
+          tasaInteres: 10,
+          plazoMeses: 1,
+          frecuenciaPago: 'DIARIO',
+          cantidadCuotas: 12,
+          estadoAprobacion: EstadoAprobacion.PENDIENTE,
+          fechaInicio,
+          producto: null,
+          cuotas: [],
+        }),
+      },
+      aprobacion: {
+        create: jest.fn().mockResolvedValue({
+          id: 'aprobacion-1',
+          referenciaId: 'prestamo-1',
+        }),
+      },
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'asignacion-existente' }),
+        aggregate: jest.fn(),
+        create: jest.fn(),
+      },
+    };
+
+    const result = await makeService(prisma).createLoan({
+      clienteId: 'cliente-1',
+      tipoPrestamo: 'EFECTIVO',
+      monto: 5000000,
+      tasaInteres: 10,
+      tasaInteresMora: 2,
+      plazoMeses: 1,
+      cantidadCuotas: 12,
+      frecuenciaPago: 'DIARIO' as any,
+      fechaInicio: '2026-06-12',
+      creadoPorId: 'supervisor-1',
+    } as any);
+
+    expect(result).toMatchObject({
+      id: 'prestamo-1',
+      mensaje: 'Préstamo creado exitosamente. Pendiente de aprobación.',
+      requiereAprobacion: true,
+    });
+    expect(prisma.asignacionRuta.findFirst).toHaveBeenCalledWith({
+      where: {
+        rutaId: 'ruta-1',
+        clienteId: 'cliente-1',
+        activa: true,
+      },
+      select: { id: true },
+    });
+    expect(prisma.asignacionRuta.create).not.toHaveBeenCalled();
   });
 
   it('rechaza edición de préstamo si la versión enviada está vieja', async () => {
