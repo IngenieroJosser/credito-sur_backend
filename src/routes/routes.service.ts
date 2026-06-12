@@ -2222,6 +2222,12 @@ export class RoutesService {
                 montoMetaOperativaPendiente:
                   prestamoOperativo.montoMetaOperativaPendiente ??
                   prestamo.montoMetaOperativaPendiente,
+                estadoGestion:
+                  prestamoOperativo.estadoGestion ?? prestamo.estadoGestion,
+                estadoVisita:
+                  prestamoOperativo.estadoVisita ?? prestamo.estadoVisita,
+                notasVisita:
+                  prestamoOperativo.notasVisita ?? prestamo.notasVisita,
               };
             });
           }
@@ -3547,7 +3553,7 @@ export class RoutesService {
         ? await this.prisma.aprobacion.findMany({
             where: {
               tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
-              estado: { in: [EstadoAprobacion.PENDIENTE, EstadoAprobacion.APROBADO] },
+              estado: EstadoAprobacion.APROBADO,
               OR: [
                 {
                   datosSolicitud: {
@@ -3573,14 +3579,47 @@ export class RoutesService {
             },
           })
         : [];
-    const reprogramacionPorCliente = new Map<string, any>();
+    const resolvePrestamoIdFromReprogramacion = (
+      aprobacion: any,
+    ): string | null => {
+      const datos = (aprobacion?.datosSolicitud || {}) as any;
+
+      const prestamoIdDirecto = String(datos?.prestamoId || '').trim();
+      if (prestamoIdDirecto) return prestamoIdDirecto;
+
+      const cuotaId = String(
+        datos?.cuotaId || aprobacion?.referenciaId || '',
+      ).trim();
+      if (!cuotaId) return null;
+
+      for (const asignacion of asignaciones as any[]) {
+        const prestamos = asignacion?.cliente?.prestamos || [];
+
+        for (const prestamo of prestamos) {
+          const cuotas = prestamo?.cuotas || [];
+
+          const pertenece = cuotas.some(
+            (cuota: any) => String(cuota?.id || '') === cuotaId,
+          );
+
+          if (pertenece) {
+            return String(prestamo.id);
+          }
+        }
+      }
+
+      return null;
+    };
+
     const reprogramacionPorPrestamo = new Map<string, any>();
+
     reprogramacionesJornada.forEach((aprobacion: any) => {
       const datos = (aprobacion?.datosSolicitud || {}) as any;
       const clienteId = String(datos?.clienteId || '');
-      const prestamoId = String(datos?.prestamoId || '');
-      const fechaGestion =
-        String(datos?.fechaOperativaRuta || datos?.fechaGestionOriginal || '');
+      const fechaGestion = String(
+        datos?.fechaOperativaRuta || datos?.fechaGestionOriginal || '',
+      );
+
       if (
         !clienteId ||
         !clientesRutaIds.includes(clienteId) ||
@@ -3588,9 +3627,9 @@ export class RoutesService {
       ) {
         return;
       }
-      if (!reprogramacionPorCliente.has(clienteId)) {
-        reprogramacionPorCliente.set(clienteId, aprobacion);
-      }
+
+      const prestamoId = resolvePrestamoIdFromReprogramacion(aprobacion);
+
       if (prestamoId && !reprogramacionPorPrestamo.has(prestamoId)) {
         reprogramacionPorPrestamo.set(prestamoId, aprobacion);
       }
@@ -3663,14 +3702,13 @@ export class RoutesService {
     const clientesEnVisitasIniciales = new Set(
       visitasDelDia.map((v: any) => v?.cliente?.id || v?.clienteId),
     );
-    for (const reprogramacion of reprogramacionPorPrestamo.values()) {
+    for (const [prestamoId, reprogramacion] of reprogramacionPorPrestamo.entries()) {
       const cuotaReprogramada =
-        this.buildCuotaObjetivoDesdeReprogramacion(reprogramacion);
+        this.buildCuotaObjetivoDesdeReprogramacion(reprogramacion, prestamoId);
       if (!cuotaReprogramada) continue;
 
       const datosReprogramacion = (reprogramacion?.datosSolicitud || {}) as any;
       const clienteId = String(datosReprogramacion?.clienteId || '');
-      const prestamoId = String(cuotaReprogramada.prestamoId || '');
       if (!clienteId || !prestamoId) continue;
 
       const visitaInicial = visitasDelDia.find((v: any) => {
@@ -3906,8 +3944,16 @@ export class RoutesService {
             ? reprogramacionPorPrestamo.get(prestamoId)
             : null;
           const cuotaReprogramada =
-            this.buildCuotaObjetivoDesdeReprogramacion(reprogramacion);
-          if (!cuotaReprogramada) return prestamo;
+            this.buildCuotaObjetivoDesdeReprogramacion(
+              reprogramacion,
+              prestamoId,
+            );
+          if (!cuotaReprogramada) {
+            return {
+              ...prestamo,
+              estadoGestion: prestamo.estadoGestion || 'PENDIENTE',
+            };
+          }
 
           if (prestamoId === String(v?.prestamoObjetivoId || '')) {
             reprogramacionObjetivo = reprogramacion;
@@ -3916,6 +3962,11 @@ export class RoutesService {
 
           return {
             ...prestamo,
+            estadoGestion: 'REPROGRAMADO',
+            estadoVisita: 'reprogramado',
+            notasVisita: `Reprogramación aprobada: ${
+              (reprogramacion?.datosSolicitud as any)?.motivo || 'Sin motivo'
+            }`,
             montoMetaOperativaPendiente: 0,
             cuotaObjetivo: cuotaReprogramada,
             proximaCuota: {
@@ -4047,7 +4098,10 @@ export class RoutesService {
             ? reprogramacionPorPrestamo.get(prestamoId)
             : null;
           const cuotaReprogramada =
-            this.buildCuotaObjetivoDesdeReprogramacion(reprogramacion);
+            this.buildCuotaObjetivoDesdeReprogramacion(
+              reprogramacion,
+              prestamoId,
+            );
           if (cuotaReprogramada) {
             // @ts-ignore - Prisma type inference issue, properties exist at runtime
             v.cuotaObjetivo = cuotaReprogramada;
@@ -4245,14 +4299,19 @@ export class RoutesService {
           ? 100
           : 0;
 
-    const gestionados = visitasDelDiaFinales.filter((v) => {
-      return this.resolveEstadoGestionCierrePendiente(v) !== 'PENDIENTE';
+    const obligacionesOperativas =
+      this.buildObligacionesOperativas(visitasDelDiaFinales);
+
+    const gestionados = obligacionesOperativas.filter((item: any) => {
+      return item.estadoGestion !== 'PENDIENTE';
     }).length;
+
+    const totalObligaciones = obligacionesOperativas.length;
 
     return {
       fecha: fechaKey, // Clave de fecha Bogotá YYYY-MM-DD
       rutaId,
-      totalVisitas: visitasDelDiaFinales.length,
+      totalVisitas: totalObligaciones,
       resumen: {
         recaudo: recaudoOperativo,
         recaudoOperativo,
@@ -4273,9 +4332,24 @@ export class RoutesService {
         netoEfectivoRuta,
         efectividad,
         visitados: gestionados,
-        total: visitasDelDiaFinales.length,
+        total: totalObligaciones,
       },
       visitas: visitasDelDiaFinales,
+      obligaciones: obligacionesOperativas.map((item: any) => ({
+        asignacionId: item.visita.asignacionId,
+        ordenVisita: item.visita.ordenVisita,
+        cliente: item.visita.cliente,
+        prestamo: item.prestamo,
+        prestamoId: item.prestamo?.id || null,
+        cuotaObjetivo: item.prestamo?.cuotaObjetivo || null,
+        estadoGestion: item.estadoGestion,
+        estadoVisita:
+          item.prestamo?.estadoVisita || item.visita?.estadoVisita || null,
+        notasVisita:
+          item.prestamo?.notasVisita || item.visita?.notasVisita || null,
+        recaudadoDelDia: item.recaudado,
+        montoMetaOperativaPendiente: item.metaPendiente,
+      })),
     };
   }
 
@@ -4447,7 +4521,10 @@ export class RoutesService {
     };
   }
 
-  private buildCuotaObjetivoDesdeReprogramacion(aprobacion: any) {
+  private buildCuotaObjetivoDesdeReprogramacion(
+    aprobacion: any,
+    prestamoIdFallback?: string | null,
+  ) {
     const datos = (aprobacion?.datosSolicitud || {}) as any;
     const cuotaId = String(datos?.cuotaId || aprobacion?.referenciaId || '');
     if (!cuotaId) return null;
@@ -4461,7 +4538,8 @@ export class RoutesService {
 
     return {
       id: cuotaId,
-      prestamoId: datos?.prestamoId || null,
+      prestamoId:
+        String(datos?.prestamoId || prestamoIdFallback || '').trim() || null,
       numeroCuota: Number(datos?.numeroCuota || 0) || null,
       estadoActual: 'REPROGRAMADA',
       fechaVencimiento: fechaOriginal,
@@ -5087,6 +5165,23 @@ export class RoutesService {
     );
 
     const visitas = Array.isArray(detalleDia.visitas) ? detalleDia.visitas : [];
+    const obligaciones = this.buildObligacionesOperativas(visitas);
+
+    const obligacionesPendientes = obligaciones.filter((o: any) => {
+      return o.estadoGestion === 'PENDIENTE';
+    });
+
+    const obligacionesAusentes = obligaciones.filter((o: any) => {
+      return o.estadoGestion === 'AUSENTE';
+    });
+
+    const obligacionesPagaron = obligaciones.filter((o: any) => {
+      return o.estadoGestion === 'PAGO_REGISTRADO';
+    });
+
+    const obligacionesGestionadas = obligaciones.filter((o: any) => {
+      return o.estadoGestion !== 'PENDIENTE';
+    });
 
     const clientesPendientes = visitas.filter((v: any) => {
       return this.resolveEstadoGestionCierrePendiente(v) === 'PENDIENTE';
@@ -5113,8 +5208,8 @@ export class RoutesService {
     );
 
     const cierreAdministrativo =
-      clientesPendientes.length > 0 ||
-      clientesAusentes.length > 0 ||
+      obligacionesPendientes.length > 0 ||
+      obligacionesAusentes.length > 0 ||
       recaudoOperativo < meta;
 
     const observacionesLimpias = observaciones?.trim();
@@ -5233,15 +5328,15 @@ export class RoutesService {
     // Construir mensaje detallado
     const partes: string[] = [];
 
-    if (clientesPendientes.length > 0) {
+    if (obligacionesPendientes.length > 0) {
       partes.push(
-        `${clientesPendientes.length} cliente(s) sin gestión`,
+        `${obligacionesPendientes.length} obligación(es) sin gestión`,
       );
     }
 
-    if (clientesAusentes.length > 0) {
+    if (obligacionesAusentes.length > 0) {
       partes.push(
-        `${clientesAusentes.length} ausencia(s)`,
+        `${obligacionesAusentes.length} ausencia(s)`,
       );
     }
 
@@ -5371,6 +5466,11 @@ export class RoutesService {
         clientesPagaronDetalle,
         clientesAusentes: clientesAusentes.length,
         clientesPendientes: clientesPendientes.length,
+        totalObligaciones: obligaciones.length,
+        obligacionesGestionadas: obligacionesGestionadas.length,
+        obligacionesPagaron: obligacionesPagaron.length,
+        obligacionesAusentes: obligacionesAusentes.length,
+        obligacionesPendientes: obligacionesPendientes.length,
         meta,
         recaudoOperativo,
         recaudoContable,
@@ -5475,9 +5575,13 @@ export class RoutesService {
     const detalleDia = await this.getDailyVisits(rutaId, jornada.fechaOperativa);
     const resumen = detalleDia?.resumen || ({} as any);
     const visitas = detalleDia?.visitas || [];
-    const clientesFaltantes = visitas.filter((v: any) => {
-      const estado = String(v.estadoGestion || '').toUpperCase();
-      const recaudoVisita = Number(v.recaudadoDelDia || 0);
+    const obligaciones = Array.isArray((detalleDia as any)?.obligaciones)
+      ? (detalleDia as any).obligaciones
+      : this.buildObligacionesOperativas(visitas);
+
+    const clientesFaltantes = obligaciones.filter((o: any) => {
+      const estado = String(o.estadoGestion || '').toUpperCase();
+      const recaudoVisita = Number(o.recaudadoDelDia || o.recaudado || 0);
       return (
         recaudoVisita <= 0 &&
         !estado.includes('PAGO') &&
@@ -5819,6 +5923,82 @@ export class RoutesService {
     return 'PENDIENTE'
   }
 
+  private resolveEstadoGestionPrestamo(
+    visita: any,
+    prestamo: any,
+  ): 'PAGO_REGISTRADO' | 'AUSENTE' | 'REPROGRAMADO' | 'PENDIENTE' {
+    const estadoPrestamo = String(
+      prestamo?.estadoGestion ||
+        prestamo?.estadoVisita ||
+        prestamo?.proximaCuota?.estado ||
+        '',
+    ).toLowerCase();
+
+    const estadoVisita = String(visita?.estadoVisita || '').toLowerCase();
+
+    const recaudadoPrestamo = Number(
+      prestamo?.recaudadoDelDia || prestamo?.recaudadoHoy || 0,
+    );
+
+    if (recaudadoPrestamo > 0) {
+      return 'PAGO_REGISTRADO';
+    }
+
+    if (
+      estadoPrestamo === 'reprogramado' ||
+      estadoPrestamo === 'reprogramada' ||
+      estadoPrestamo === 'reprogramacion' ||
+      estadoPrestamo === 'reprogramación'
+    ) {
+      return 'REPROGRAMADO';
+    }
+
+    if (estadoVisita === 'ausente') {
+      return 'AUSENTE';
+    }
+
+    return 'PENDIENTE';
+  }
+
+  private buildObligacionesOperativas(visitas: any[]) {
+    return visitas.flatMap((visita: any) => {
+      return (visita.prestamos || [])
+        .map((prestamo: any) => {
+          const estadoGestion = this.resolveEstadoGestionPrestamo(
+            visita,
+            prestamo,
+          );
+
+          const metaPendiente = Number(
+            prestamo?.montoMetaOperativaPendiente ??
+              prestamo?.cuotaObjetivo?.saldoExigibleEnFechaOperativa ??
+              prestamo?.proximaCuota?.montoNominal ??
+              prestamo?.proximaCuota?.monto ??
+              0,
+          );
+
+          const recaudado = Number(
+            prestamo?.recaudadoDelDia || prestamo?.recaudadoHoy || 0,
+          );
+
+          return {
+            visita,
+            prestamo,
+            estadoGestion,
+            metaPendiente,
+            recaudado,
+          };
+        })
+        .filter((item: any) => {
+          return (
+            item.metaPendiente > 0 ||
+            item.recaudado > 0 ||
+            item.estadoGestion !== 'PENDIENTE'
+          );
+        });
+    });
+  }
+
   async getCierrePendienteDetalle(rutaId: string, actor?: RouteActor) {
     await this.assertCollectorOwnRoute(rutaId, actor);
 
@@ -5845,24 +6025,38 @@ export class RoutesService {
           ? detalleDia.visitas
           : [];
 
+        const obligaciones = this.buildObligacionesOperativas(visitas);
+
+        const obligacionesGestionadas = obligaciones.filter((o: any) => {
+          return o.estadoGestion !== 'PENDIENTE';
+        });
+
+        const obligacionesPagaron = obligaciones.filter((o: any) => {
+          return o.estadoGestion === 'PAGO_REGISTRADO';
+        });
+
+        const obligacionesAusentes = obligaciones.filter((o: any) => {
+          return o.estadoGestion === 'AUSENTE';
+        });
+
+        const obligacionesPendientes = obligaciones.filter((o: any) => {
+          return o.estadoGestion === 'PENDIENTE';
+        });
+
         const clientesGestionados = visitas.filter((v: any) => {
-          const estadoGestion = this.resolveEstadoGestionCierrePendiente(v);
-          return estadoGestion !== 'PENDIENTE';
+          return this.resolveEstadoGestionCierrePendiente(v) !== 'PENDIENTE';
         });
 
         const clientesPagaron = visitas.filter((v: any) => {
-          const estadoGestion = this.resolveEstadoGestionCierrePendiente(v);
-          return estadoGestion === 'PAGO_REGISTRADO';
+          return this.resolveEstadoGestionCierrePendiente(v) === 'PAGO_REGISTRADO';
         });
 
         const clientesAusentes = visitas.filter((v: any) => {
-          const estadoGestion = this.resolveEstadoGestionCierrePendiente(v);
-          return estadoGestion === 'AUSENTE';
+          return this.resolveEstadoGestionCierrePendiente(v) === 'AUSENTE';
         });
 
         const clientesPendientes = visitas.filter((v: any) => {
-          const estadoGestion = this.resolveEstadoGestionCierrePendiente(v);
-          return estadoGestion === 'PENDIENTE';
+          return this.resolveEstadoGestionCierrePendiente(v) === 'PENDIENTE';
         });
 
         const getSaldoOperativoJornada = (v: any) => {
@@ -5933,6 +6127,11 @@ export class RoutesService {
             clientesPagaron: clientesPagaron.length,
             clientesAusentes: clientesAusentes.length,
             clientesPendientes: clientesPendientes.length,
+            totalObligaciones: obligaciones.length,
+            obligacionesGestionadas: obligacionesGestionadas.length,
+            obligacionesPagaron: obligacionesPagaron.length,
+            obligacionesAusentes: obligacionesAusentes.length,
+            obligacionesPendientes: obligacionesPendientes.length,
           },
           clientes: visitas.map((v: any) => ({
             asignacionId: v.asignacionId,
@@ -5959,14 +6158,29 @@ export class RoutesService {
             cuotaObjetivoPrestamoId: v.cuotaObjetivoPrestamoId || null,
             prestamos: v.prestamos || [],
           })),
+          obligaciones: obligaciones.map((item: any) => ({
+            asignacionId: item.visita.asignacionId,
+            ordenVisita: item.visita.ordenVisita,
+            cliente: item.visita.cliente,
+            prestamo: item.prestamo,
+            prestamoId: item.prestamo?.id || null,
+            cuotaObjetivo: item.prestamo?.cuotaObjetivo || null,
+            estadoGestion: item.estadoGestion,
+            estadoVisita:
+              item.prestamo?.estadoVisita || item.visita?.estadoVisita || null,
+            notasVisita:
+              item.prestamo?.notasVisita || item.visita?.notasVisita || null,
+            recaudadoDelDia: item.recaudado,
+            montoMetaOperativaPendiente: item.metaPendiente,
+          })),
           accionesSugeridas: this.buildAccionesSugeridasCierrePendiente({
             meta: detalleDia.resumen?.meta || 0,
             recaudo:
               detalleDia.resumen?.recaudoOperativo ??
               detalleDia.resumen?.recaudo ??
               0,
-            clientesPendientes: clientesPendientes.length,
-            clientesAusentes: clientesAusentes.length,
+            clientesPendientes: obligacionesPendientes.length,
+            clientesAusentes: obligacionesAusentes.length,
           }),
         };
       }),
@@ -5989,7 +6203,7 @@ export class RoutesService {
 
     if (input.clientesPendientes > 0) {
       acciones.push(
-        `Revisar ${input.clientesPendientes} cliente(s) sin gestión registrada.`,
+        `Revisar ${input.clientesPendientes} obligación(es) sin gestión registrada.`,
       );
     }
 
