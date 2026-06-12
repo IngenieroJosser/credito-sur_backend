@@ -127,6 +127,20 @@ export class LoansService implements OnModuleInit {
     return `sha256:${createHash('sha256').update(key).digest('hex')}`;
   }
 
+  private async runCreateLoanSideEffect(
+    label: string,
+    action: () => Promise<unknown> | unknown,
+  ) {
+    try {
+      await action();
+    } catch (error) {
+      this.logger.error(
+        `[CREATE LOAN] Falló efecto secundario: ${label}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
   private parseFechaOperativaReprogramacionKey(value?: string | null) {
     if (!value) return undefined;
 
@@ -3510,11 +3524,13 @@ export class LoansService implements OnModuleInit {
               },
             });
 
-            this.notificacionesGateway.broadcastRutasActualizadas({
-              accion: 'ACTUALIZAR',
-              rutaId: rutaIdAsignar,
-              clienteId: cliente.id,
-            });
+            await this.runCreateLoanSideEffect('broadcast rutas', () =>
+              this.notificacionesGateway.broadcastRutasActualizadas({
+                accion: 'ACTUALIZAR',
+                rutaId: rutaIdAsignar,
+                clienteId: cliente.id,
+              }),
+            );
           }
         }
       }
@@ -3683,88 +3699,98 @@ export class LoansService implements OnModuleInit {
         });
 
         for (const admin of admins) {
-          await this.notificacionesService.create({
-            usuarioId: admin.id,
-            titulo: data.esContado
-              ? 'Nueva Venta de Contado'
-              : 'Préstamo Aprobado Automáticamente',
-            mensaje: data.esContado
-              ? `${creador.nombres} realizó una venta de contado para ${cliente.nombres} ${cliente.apellidos} por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`
-              : `${creador.nombres} ${creador.apellidos} creó y aprobó automáticamente un préstamo para ${cliente.nombres} ${cliente.apellidos} por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
-            tipo: 'SISTEMA',
-            entidad: 'PRESTAMO',
-            entidadId: prestamo.id,
-            metadata: {
-              esContado: !!data.esContado,
-              articulo: String(articuloNombre).replace(/&amp;/gi, '&'),
-              valorArticulo: isFinanciamientoArticulo
-                ? safeNumber(precioArticuloTotal)
-                : safeNumber(prestamo.monto),
-              monto: safeNumber(prestamo.monto),
-              clienteId: cliente.id,
-              cliente:
-                `${cliente.nombres || ''} ${cliente.apellidos || ''}`.trim(),
-              nombreCliente:
-                `${cliente.nombres || ''} ${cliente.apellidos || ''}`.trim(),
-              clienteNombre:
-                `${cliente.nombres || ''} ${cliente.apellidos || ''}`.trim(),
-              cedula: String(cliente.dni || ''),
-              dni: String(cliente.dni || ''),
-              telefono: String(cliente.telefono || ''),
-              numeroPrestamo: prestamo.numeroPrestamo,
-              cuotas: safeNumber(totalCuotasPrometidas),
-              plazoMeses: numPlazoMeses,
-              frecuenciaPago: String(data.frecuenciaPago),
-              cuotaInicial: safeNumber(data.cuotaInicial),
-              notas: String(data.notas || ''),
-              fechaInicio: prestamo.fechaInicio
-                ? formatBogotaOffsetIso(prestamo.fechaInicio)
-                : undefined,
-              fecha: prestamo.fechaInicio
-                ? formatBogotaOffsetIso(prestamo.fechaInicio)
-                : undefined, // Duplicado para compatibilidad
-              montoTotal: montoFinanciar + interesTotal,
-              interesTotal: safeNumber(interesTotal),
-              tasaInteres: safeNumber(tasaInteres),
-              totalAPagar: montoFinanciar + interesTotal,
-              totalPagar: montoFinanciar + interesTotal,
-            },
-          });
+          await this.runCreateLoanSideEffect(
+            `notificar administrador ${admin.id}`,
+            () =>
+              this.notificacionesService.create({
+                usuarioId: admin.id,
+                titulo: data.esContado
+                  ? 'Nueva Venta de Contado'
+                  : 'Préstamo Aprobado Automáticamente',
+                mensaje: data.esContado
+                  ? `${creador.nombres} realizó una venta de contado para ${cliente.nombres} ${cliente.apellidos} por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`
+                  : `${creador.nombres} ${creador.apellidos} creó y aprobó automáticamente un préstamo para ${cliente.nombres} ${cliente.apellidos} por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
+                tipo: 'SISTEMA',
+                entidad: 'PRESTAMO',
+                entidadId: prestamo.id,
+                metadata: {
+                  esContado: !!data.esContado,
+                  articulo: String(articuloNombre).replace(/&amp;/gi, '&'),
+                  valorArticulo: isFinanciamientoArticulo
+                    ? safeNumber(precioArticuloTotal)
+                    : safeNumber(prestamo.monto),
+                  monto: safeNumber(prestamo.monto),
+                  clienteId: cliente.id,
+                  cliente:
+                    `${cliente.nombres || ''} ${cliente.apellidos || ''}`.trim(),
+                  nombreCliente:
+                    `${cliente.nombres || ''} ${cliente.apellidos || ''}`.trim(),
+                  clienteNombre:
+                    `${cliente.nombres || ''} ${cliente.apellidos || ''}`.trim(),
+                  cedula: String(cliente.dni || ''),
+                  dni: String(cliente.dni || ''),
+                  telefono: String(cliente.telefono || ''),
+                  numeroPrestamo: prestamo.numeroPrestamo,
+                  cuotas: safeNumber(totalCuotasPrometidas),
+                  plazoMeses: numPlazoMeses,
+                  frecuenciaPago: String(data.frecuenciaPago),
+                  cuotaInicial: safeNumber(data.cuotaInicial),
+                  notas: String(data.notas || ''),
+                  fechaInicio: prestamo.fechaInicio
+                    ? formatBogotaOffsetIso(prestamo.fechaInicio)
+                    : undefined,
+                  fecha: prestamo.fechaInicio
+                    ? formatBogotaOffsetIso(prestamo.fechaInicio)
+                    : undefined, // Duplicado para compatibilidad
+                  montoTotal: montoFinanciar + interesTotal,
+                  interesTotal: safeNumber(interesTotal),
+                  tasaInteres: safeNumber(tasaInteres),
+                  totalAPagar: montoFinanciar + interesTotal,
+                  totalPagar: montoFinanciar + interesTotal,
+                },
+              }),
+          );
         }
 
         // Enviar notificaciones push a administradores
-        await this.pushService.sendPushNotification({
-          title: 'Préstamo Aprobado Automáticamente',
-          body: `${creador.nombres} ${creador.apellidos} creó y aprobó un préstamo por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
-          roleFilter: ['ADMIN', 'SUPER_ADMINISTRADOR'],
-          data: {
-            type: 'PRESTAMO_APROBADO',
-            prestamoId: prestamo.id,
-            numeroPrestamo: prestamo.numeroPrestamo,
-          },
-        });
+        await this.runCreateLoanSideEffect('push administradores', () =>
+          this.pushService.sendPushNotification({
+            title: 'Préstamo Aprobado Automáticamente',
+            body: `${creador.nombres} ${creador.apellidos} creó y aprobó un préstamo por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
+            roleFilter: ['ADMIN', 'SUPER_ADMINISTRADOR'],
+            data: {
+              type: 'PRESTAMO_APROBADO',
+              prestamoId: prestamo.id,
+              numeroPrestamo: prestamo.numeroPrestamo,
+            },
+          }),
+        );
 
         // Notificar al creador
-        await this.notificacionesService.create({
-          usuarioId: data.creadoPorId,
-          titulo: 'Préstamo Creado y Aprobado',
-          mensaje: `El préstamo ${prestamo.numeroPrestamo} ha sido creado y aprobado automáticamente.`,
-          tipo: 'EXITO',
-          entidad: 'PRESTAMO',
-          entidadId: prestamo.id,
-        });
+        await this.runCreateLoanSideEffect('notificar creador aprobado', () =>
+          this.notificacionesService.create({
+            usuarioId: data.creadoPorId,
+            titulo: 'Préstamo Creado y Aprobado',
+            mensaje: `El préstamo ${prestamo.numeroPrestamo} ha sido creado y aprobado automáticamente.`,
+            tipo: 'EXITO',
+            entidad: 'PRESTAMO',
+            entidadId: prestamo.id,
+          }),
+        );
 
         // Enviar notificación push al creador
-        await this.pushService.sendPushNotification({
-          title: 'Préstamo Creado y Aprobado',
-          body: `Tu préstamo ${prestamo.numeroPrestamo} ha sido creado y aprobado automáticamente.`,
-          userId: data.creadoPorId,
-          data: {
-            type: 'PRESTAMO_CREADO',
-            prestamoId: prestamo.id,
-            numeroPrestamo: prestamo.numeroPrestamo,
-          },
-        });
+        await this.runCreateLoanSideEffect('push creador aprobado', () =>
+          this.pushService.sendPushNotification({
+            title: 'Préstamo Creado y Aprobado',
+            body: `Tu préstamo ${prestamo.numeroPrestamo} ha sido creado y aprobado automáticamente.`,
+            userId: data.creadoPorId,
+            data: {
+              type: 'PRESTAMO_CREADO',
+              prestamoId: prestamo.id,
+              numeroPrestamo: prestamo.numeroPrestamo,
+            },
+          }),
+        );
       } else {
         /* 
         // Notificar a coordinadores, admins y superadmins para aprobación
@@ -3781,51 +3807,59 @@ export class LoansService implements OnModuleInit {
         */
 
         // Enviar notificaciones push a coordinadores
-        await this.pushService.sendPushNotification({
-          title: 'Nuevo Préstamo Requiere Aprobación',
-          body: `${creador.nombres} ${creador.apellidos} ha solicitado un ${data.tipoPrestamo === 'EFECTIVO' ? 'préstamo' : 'crédito de artículo'} por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
-          roleFilter: ['COORDINADOR'],
-          data: {
-            type: 'PRESTAMO_PENDIENTE',
-            prestamoId: prestamo.id,
-            numeroPrestamo: prestamo.numeroPrestamo,
-          },
-        });
+        await this.runCreateLoanSideEffect('push coordinadores aprobación', () =>
+          this.pushService.sendPushNotification({
+            title: 'Nuevo Préstamo Requiere Aprobación',
+            body: `${creador.nombres} ${creador.apellidos} ha solicitado un ${data.tipoPrestamo === 'EFECTIVO' ? 'préstamo' : 'crédito de artículo'} por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
+            roleFilter: ['COORDINADOR'],
+            data: {
+              type: 'PRESTAMO_PENDIENTE',
+              prestamoId: prestamo.id,
+              numeroPrestamo: prestamo.numeroPrestamo,
+            },
+          }),
+        );
 
         // Notificar al creador
-        await this.notificacionesService.create({
-          usuarioId: data.creadoPorId,
-          titulo: 'Préstamo Solicitado Exitosamente',
-          mensaje: `Tu solicitud de préstamo ${prestamo.numeroPrestamo} ha sido creada exitosamente y está pendiente de aprobación.`,
-          tipo: 'EXITO',
-          entidad: 'PRESTAMO',
-          entidadId: prestamo.id,
-        });
+        await this.runCreateLoanSideEffect('notificar creador pendiente', () =>
+          this.notificacionesService.create({
+            usuarioId: data.creadoPorId,
+            titulo: 'Préstamo Solicitado Exitosamente',
+            mensaje: `Tu solicitud de préstamo ${prestamo.numeroPrestamo} ha sido creada exitosamente y está pendiente de aprobación.`,
+            tipo: 'EXITO',
+            entidad: 'PRESTAMO',
+            entidadId: prestamo.id,
+          }),
+        );
       }
 
       // Auditoría
-      await this.auditService.create({
-        usuarioId: data.creadoPorId,
-        accion: 'CREAR_PRESTAMO',
-        entidad: 'Prestamo',
-        entidadId: prestamo.id,
-        datosNuevos: {
-          numeroPrestamo: prestamo.numeroPrestamo,
-          clienteId: prestamo.clienteId,
-          tipoPrestamo: prestamo.tipoPrestamo,
-          monto: prestamo.monto,
-          plazoMeses: prestamo.plazoMeses,
-          frecuenciaPago: prestamo.frecuenciaPago,
-          autoAprobado: esAutoAprobado,
-        },
-        metadata: { notas: data.notas || null },
-      });
+      await this.runCreateLoanSideEffect('auditoría creación préstamo', () =>
+        this.auditService.create({
+          usuarioId: data.creadoPorId,
+          accion: 'CREAR_PRESTAMO',
+          entidad: 'Prestamo',
+          entidadId: prestamo.id,
+          datosNuevos: {
+            numeroPrestamo: prestamo.numeroPrestamo,
+            clienteId: prestamo.clienteId,
+            tipoPrestamo: prestamo.tipoPrestamo,
+            monto: prestamo.monto,
+            plazoMeses: prestamo.plazoMeses,
+            frecuenciaPago: prestamo.frecuenciaPago,
+            autoAprobado: esAutoAprobado,
+          },
+          metadata: { notas: data.notas || null },
+        }),
+      );
 
-      this.notificacionesGateway.broadcastPrestamosActualizados({
-        accion: 'CREAR',
-        prestamoId: prestamo.id,
+      await this.runCreateLoanSideEffect('broadcast préstamos', () => {
+        this.notificacionesGateway.broadcastPrestamosActualizados({
+          accion: 'CREAR',
+          prestamoId: prestamo.id,
+        });
+        this.notificacionesGateway.broadcastDashboardsActualizados({});
       });
-      this.notificacionesGateway.broadcastDashboardsActualizados({});
 
       return {
         ...prestamo,
