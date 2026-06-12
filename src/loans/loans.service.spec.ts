@@ -368,6 +368,89 @@ describe('LoansService accounting impact for approved loans', () => {
     });
   });
 
+  it('recupera respuesta exitosa si ocurre un fallo inesperado después de crear la aprobación', async () => {
+    mockConfig.shouldAutoApproveCredits.mockResolvedValueOnce(false);
+
+    const fechaInicio = new Date('2026-06-12T05:00:00.000Z');
+    const prisma = {
+      cliente: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'cliente-1',
+          nombres: 'Mario',
+          apellidos: 'Baraka',
+          dni: '111111111',
+          telefono: '3112394628',
+          enListaNegra: false,
+          asignacionesRuta: [],
+        }),
+      },
+      usuario: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'supervisor-1',
+          nombres: 'Supervisor',
+          apellidos: 'Prueba',
+          rol: RolUsuario.SUPERVISOR,
+        }),
+      },
+      caja: {
+        findFirst: jest.fn().mockResolvedValue({ saldoActual: 10000000 }),
+      },
+      prestamo: {
+        findFirst: jest.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(null),
+        create: jest.fn().mockResolvedValue({
+          id: 'prestamo-1',
+          numeroPrestamo: 'PRES-000001',
+          clienteId: 'cliente-1',
+          tipoPrestamo: 'EFECTIVO',
+          tipoAmortizacion: 'INTERES_SIMPLE',
+          monto: 5000000,
+          cuotaInicial: 0,
+          precioVentaArticulo: null,
+          costoArticulo: null,
+          tasaInteres: 10,
+          plazoMeses: 1,
+          frecuenciaPago: 'DIARIO',
+          cantidadCuotas: 12,
+          estadoAprobacion: EstadoAprobacion.PENDIENTE,
+          fechaInicio,
+          producto: null,
+          cuotas: [],
+        }),
+      },
+      aprobacion: {
+        create: jest.fn().mockResolvedValue({
+          id: 'aprobacion-1',
+          referenciaId: 'prestamo-1',
+        }),
+      },
+    };
+    const service = makeService(prisma) as any;
+    service.runCreateLoanSideEffect = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('fallo secundario inesperado'));
+
+    const result = await service.createLoan({
+      clienteId: 'cliente-1',
+      tipoPrestamo: 'EFECTIVO',
+      monto: 5000000,
+      tasaInteres: 10,
+      tasaInteresMora: 2,
+      plazoMeses: 1,
+      cantidadCuotas: 12,
+      frecuenciaPago: 'DIARIO' as any,
+      fechaInicio: '2026-06-12',
+      creadoPorId: 'supervisor-1',
+    } as any);
+
+    expect(prisma.aprobacion.create).toHaveBeenCalled();
+    expect(result).toMatchObject({
+      id: 'prestamo-1',
+      aprobacionId: 'aprobacion-1',
+      mensaje: 'Préstamo creado exitosamente. Pendiente de aprobación.',
+      requiereAprobacion: true,
+    });
+  });
+
   it('rechaza edición de préstamo si la versión enviada está vieja', async () => {
     const prisma = {
       prestamo: {
