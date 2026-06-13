@@ -457,6 +457,7 @@ describe('LoansService accounting impact for approved loans', () => {
   });
 
   it('no duplica la asignación activa de ruta al crear un crédito para un cliente ya asignado', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-12T12:00:00-05:00'));
     mockConfig.shouldAutoApproveCredits.mockResolvedValueOnce(false);
 
     const fechaInicio = new Date('2026-06-12T05:00:00.000Z');
@@ -531,18 +532,23 @@ describe('LoansService accounting impact for approved loans', () => {
       },
     };
 
-    const result = await makeService(prisma).createLoan({
-      clienteId: 'cliente-1',
-      tipoPrestamo: 'EFECTIVO',
-      monto: 5000000,
-      tasaInteres: 10,
-      tasaInteresMora: 2,
-      plazoMeses: 1,
-      cantidadCuotas: 12,
-      frecuenciaPago: 'DIARIO' as any,
-      fechaInicio: '2026-06-12',
-      creadoPorId: 'supervisor-1',
-    } as any);
+    let result: any;
+    try {
+      result = await makeService(prisma).createLoan({
+        clienteId: 'cliente-1',
+        tipoPrestamo: 'EFECTIVO',
+        monto: 5000000,
+        tasaInteres: 10,
+        tasaInteresMora: 2,
+        plazoMeses: 1,
+        cantidadCuotas: 12,
+        frecuenciaPago: 'DIARIO' as any,
+        fechaInicio: '2026-06-12',
+        creadoPorId: 'supervisor-1',
+      } as any);
+    } finally {
+      jest.useRealTimers();
+    }
 
     expect(result).toMatchObject({
       id: 'prestamo-1',
