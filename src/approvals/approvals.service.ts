@@ -21,6 +21,7 @@ import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway'
 import { formatBogotaOffsetIso } from '../utils/date-utils';
 import { LedgerService } from '../accounting/ledger.service';
 import { randomUUID } from 'crypto';
+import { calcularAmortizacionFrancesa } from '../loans/utils/amortizacion.utils';
 
 @Injectable()
 export class ApprovalsService {
@@ -1555,44 +1556,15 @@ export class ApprovalsService {
         let cuotasData: any[] = [];
 
         if (tipoAmort === TipoAmortizacion.FRANCESA) {
-          // Usamos la fórmula de amortización francesa (Simplificada para este contexto)
-          const tasaMensual = tasaInteres / realPlazoMeses / 100;
-          let tasaPeriodo = tasaMensual;
-          if (frecuencia === FrecuenciaPago.DIARIO)
-            tasaPeriodo = tasaMensual / 30;
-          else if (frecuencia === FrecuenciaPago.SEMANAL)
-            tasaPeriodo = tasaMensual / 4;
-          else if (frecuencia === FrecuenciaPago.QUINCENAL)
-            tasaPeriodo = tasaMensual / 2;
-
-          if (tasaPeriodo === 0) {
-            interesTotal = 0;
-            const montoCuota = montoFinanciar / cantidadCuotas;
-            cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => ({
-              numeroCuota: i + 1,
-              montoCapital: montoCuota,
-              montoInteres: 0,
-              monto: montoCuota,
-            }));
-          } else {
-            const cuotaFija =
-              (montoFinanciar * tasaPeriodo) /
-              (1 - Math.pow(1 + tasaPeriodo, -cantidadCuotas));
-            let saldo = montoFinanciar;
-            for (let i = 0; i < cantidadCuotas; i++) {
-              const intPeriodo = saldo * tasaPeriodo;
-              const capPeriodo =
-                i === cantidadCuotas - 1 ? saldo : cuotaFija - intPeriodo;
-              interesTotal += intPeriodo;
-              cuotasData.push({
-                numeroCuota: i + 1,
-                montoCapital: capPeriodo,
-                montoInteres: intPeriodo,
-                monto: capPeriodo + intPeriodo,
-              });
-              saldo -= capPeriodo;
-            }
-          }
+          const amortizacion = calcularAmortizacionFrancesa(
+            montoFinanciar,
+            tasaInteres,
+            cantidadCuotas,
+            realPlazoMeses,
+            frecuencia,
+          );
+          interesTotal = amortizacion.interesTotal;
+          cuotasData = amortizacion.tabla;
         } else {
           // INTERES SIMPLE
           const mesesInteres = Math.max(1, realPlazoMeses);
