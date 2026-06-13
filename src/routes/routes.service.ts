@@ -4374,32 +4374,12 @@ export class RoutesService {
     prestamo: any,
     fechaKey: string,
   ): number {
-    const cuotas = Array.isArray(prestamo?.cuotas) ? prestamo.cuotas : [];
-    if (cuotas.length === 0) return 0;
-
-    const cuotasOrdenadas = [...cuotas].sort((a, b) => {
-      const ak = this.getCuotaFechaEfectivaKey(a);
-      const bk = this.getCuotaFechaEfectivaKey(b);
-      return ak.localeCompare(bk);
-    });
-    const cuotasVencidasNoPagadas = cuotasOrdenadas.filter((cuota) => {
-      const estado = String(cuota?.estado || '').toUpperCase();
-      if (['PAGADA', 'PAGADO', 'ANULADA', 'ANULADO'].includes(estado)) {
-        return false;
-      }
-      return this.getCuotaFechaEfectivaKey(cuota) <= fechaKey;
-    });
-    const frecuencia = String(prestamo?.frecuenciaPago || '').toUpperCase();
-    const cuotasObjetivo =
-      frecuencia === 'DIARIO' || frecuencia === 'DIA'
-        ? cuotasVencidasNoPagadas
-        : cuotasVencidasNoPagadas.slice(0, 1);
-
-    return cuotasObjetivo.reduce((sum: number, cuota: any) => {
-      const monto = Number(cuota?.monto || 0);
-      const pagado = Number(cuota?.montoPagado || 0);
-      return sum + Math.max(0, monto - pagado);
-    }, 0);
+    const cuotaObjetivo = this.computeCuotaObjetivo(prestamo, fechaKey);
+    if (!cuotaObjetivo) return 0;
+    return Math.max(
+      0,
+      Number(cuotaObjetivo.saldoExigibleEnFechaOperativa || 0),
+    );
   }
 
   private computeCuotaObjetivo(prestamo: any, fechaKey: string) {
