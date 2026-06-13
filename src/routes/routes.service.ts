@@ -4315,6 +4315,15 @@ export class RoutesService {
         prestamo: item.prestamo,
         prestamoId: item.prestamo?.id || null,
         cuotaObjetivo: item.prestamo?.cuotaObjetivo || null,
+        montoMoraAcumulada:
+          item.prestamo?.cuotaObjetivo?.montoMoraAcumulada ??
+          item.prestamo?.cuotaObjetivo?.saldoVencidoAcumulado ??
+          0,
+        saldoVencidoAcumulado:
+          item.prestamo?.cuotaObjetivo?.saldoVencidoAcumulado ??
+          item.prestamo?.cuotaObjetivo?.montoMoraAcumulada ??
+          0,
+        cuotasVencidas: item.prestamo?.cuotaObjetivo?.cuotasVencidas ?? 0,
         estadoGestion: item.estadoGestion,
         estadoVisita:
           item.prestamo?.estadoVisita || item.visita?.estadoVisita || null,
@@ -4426,6 +4435,19 @@ export class RoutesService {
 
     const montoCuota = Number(cuotaObjetivo.monto || 0);
     const montoPagado = Number(cuotaObjetivo.montoPagado || 0);
+    const cuotasVencidasPendientes = sortedCuotas.filter((cuota) => {
+      const estadoCuota = String(cuota?.estado || '').toUpperCase();
+      if (['PAGADA', 'PAGADO', 'ANULADA', 'ANULADO'].includes(estadoCuota)) {
+        return false;
+      }
+
+      return this.getCuotaFechaEfectivaKey(cuota) <= fechaKey;
+    });
+    const montoMoraAcumulada = cuotasVencidasPendientes.reduce(
+      (sum: number, cuota: any) =>
+        sum + Math.max(0, Number(cuota?.monto || 0) - Number(cuota?.montoPagado || 0)),
+      0,
+    );
 
     const saldoCuota = estadoTerminal ? 0 : Math.max(0, montoCuota - montoPagado);
 
@@ -4463,6 +4485,9 @@ export class RoutesService {
       montoCuota,
       montoPagado,
       saldoCuota,
+      montoMoraAcumulada,
+      saldoVencidoAcumulado: montoMoraAcumulada,
+      cuotasVencidas: cuotasVencidasPendientes.length,
       saldoExigibleEnFechaOperativa,
       enMoraEnFechaOperativa: fechaEfectivaKey < fechaKey && !estadoTerminal,
       puedePagar,
@@ -5852,7 +5877,7 @@ export class RoutesService {
     const estadoVisita = String(v?.estadoVisita || '').toLowerCase()
     const recaudado = Number(v?.recaudadoDelDia || 0)
 
-    const esPagadoPorVisita = ['pagado', 'pago', 'pago_registrado'].includes(
+    const esPagadoPorVisita = ['pagado', 'pago', 'pago_registrado', 'gestionado'].includes(
       estadoVisita,
     )
 
@@ -5893,7 +5918,7 @@ export class RoutesService {
       prestamo?.recaudadoDelDia || prestamo?.recaudadoHoy || 0,
     );
 
-    if (recaudadoPrestamo > 0) {
+    if (recaudadoPrestamo > 0 || estadoPrestamo === 'gestionado' || estadoVisita === 'gestionado') {
       return 'PAGO_REGISTRADO';
     }
 
@@ -5922,7 +5947,7 @@ export class RoutesService {
             prestamo,
           );
 
-          const metaPendiente = Number(
+          const metaPendienteRaw = Number(
             prestamo?.montoMetaOperativaPendiente ??
               prestamo?.cuotaObjetivo?.saldoExigibleEnFechaOperativa ??
               prestamo?.proximaCuota?.montoNominal ??
@@ -5942,6 +5967,10 @@ export class RoutesService {
               (esPrestamoObjetivo ? visita?.recaudadoDelDia : 0) ||
               0,
           );
+          const metaPendiente =
+            estadoGestion === 'PENDIENTE' || recaudado > 0
+              ? metaPendienteRaw
+              : 0;
 
           return {
             visita,
@@ -6127,6 +6156,15 @@ export class RoutesService {
             prestamo: item.prestamo,
             prestamoId: item.prestamo?.id || null,
             cuotaObjetivo: item.prestamo?.cuotaObjetivo || null,
+            montoMoraAcumulada:
+              item.prestamo?.cuotaObjetivo?.montoMoraAcumulada ??
+              item.prestamo?.cuotaObjetivo?.saldoVencidoAcumulado ??
+              0,
+            saldoVencidoAcumulado:
+              item.prestamo?.cuotaObjetivo?.saldoVencidoAcumulado ??
+              item.prestamo?.cuotaObjetivo?.montoMoraAcumulada ??
+              0,
+            cuotasVencidas: item.prestamo?.cuotaObjetivo?.cuotasVencidas ?? 0,
             estadoGestion: item.estadoGestion,
             estadoVisita:
               item.prestamo?.estadoVisita || item.visita?.estadoVisita || null,
