@@ -55,79 +55,50 @@ export function tasaPorPeriodo(
   return Math.pow(1 + tasaMensual, fraccionMes) - 1;
 }
 
-// ── Amortización Francesa (cuota fija) ─────────────────────────────────────────
+// ── Amortización (cuota fija) ─────────────────────────────────────────
 
 /**
- * Genera tabla de amortización francesa (cuota fija).
- * La tasa que recibe es la tasa MENSUAL del crédito (ej: 10 = 10% mensual).
+ * Genera tabla de amortización (cuota fija).
+ * La tasa que recibe se aplica directamente por periodo.
  */
 export function calcularAmortizacionFrancesa(
   capital: number,
-  tasaTotal: number,
+  tasaTotal: number, // tasaPct
   numCuotas: number,
   _plazoMeses: number,
-  frecuencia: FrecuenciaPago,
+  _frecuencia: FrecuenciaPago,
 ): ResultadoAmortizacion {
   if (numCuotas <= 0 || capital <= 0) {
     return { cuotaFija: 0, interesTotal: 0, tabla: [] };
   }
 
-  const tasaPeriodo = tasaPorPeriodo(tasaTotal, frecuencia);
+  const tasaPlana = tasaTotal / 100;
+  const interesTotal = Math.round(capital * tasaPlana);
+  const totalFinanciado = capital + interesTotal;
 
-  if (tasaPeriodo === 0) {
-    const cuotaFija = Math.round(capital / numCuotas);
-    let saldo = capital;
-    const tabla = Array.from({ length: numCuotas }, (_, i) => {
-      const esUltima = i === numCuotas - 1;
-      const montoCapital = esUltima ? saldo : Math.floor(capital / numCuotas);
-      saldo = Math.max(0, saldo - montoCapital);
-      return {
-        numeroCuota: i + 1,
-        montoCapital,
-        montoInteres: 0,
-        monto: montoCapital,
-        saldoRestante: saldo,
-      };
-    });
-
-    return {
-      cuotaFija,
-      interesTotal: 0,
-      tabla,
-    };
-  }
-
-  // Fórmula francesa: C = P × r / (1 - (1+r)^-n)
-  const cuotaFijaDecimal =
-    (capital * tasaPeriodo) / (1 - Math.pow(1 + tasaPeriodo, -numCuotas));
-  const cuotaFija = Math.round(cuotaFijaDecimal);
-
-  let saldo = capital;
-  let interesTotalAcumulado = 0;
+  const cuotaBase = Math.floor(totalFinanciado / numCuotas);
+  
+  let saldo = totalFinanciado;
   const tabla: FilaAmortizacion[] = [];
 
   for (let i = 0; i < numCuotas; i++) {
     const esUltima = i === numCuotas - 1;
-    const interesPeriodo = Math.round(saldo * tasaPeriodo);
+    const monto = esUltima ? saldo : cuotaBase;
 
-    let capitalPeriodo = esUltima ? saldo : cuotaFija - interesPeriodo;
-    capitalPeriodo = Math.min(saldo, Math.max(0, capitalPeriodo));
-
-    saldo = Math.max(0, saldo - capitalPeriodo);
-    interesTotalAcumulado += interesPeriodo;
+    saldo = Math.max(0, saldo - monto);
 
     tabla.push({
       numeroCuota: i + 1,
-      montoCapital: capitalPeriodo,
-      montoInteres: interesPeriodo,
-      monto: capitalPeriodo + interesPeriodo,
+      montoCapital: 0, // No aplica desglose tradicional
+      montoInteres: 0, // No aplica desglose tradicional
+      monto,
       saldoRestante: saldo,
     });
   }
 
   return {
-    cuotaFija,
-    interesTotal: interesTotalAcumulado,
+    cuotaFija: cuotaBase,
+    interesTotal,
     tabla,
   };
 }
@@ -183,6 +154,7 @@ export function calcularInteresSimple(
     tabla,
   };
 }
+
 
 // ── Fecha de vencimiento por cuota ─────────────────────────────────────────────
 

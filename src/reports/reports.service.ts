@@ -104,7 +104,8 @@ export class ReportsService {
     const pagos = await this.prisma.pago.findMany({
       where: {
         fechaPago: { gte: startOfYear, lte: endOfYear },
-      },
+        NOT: {
+          origenGestion: 'CIERRE_PENDIENTE' } },
       select: { fechaPago: true, montoTotal: true },
     });
 

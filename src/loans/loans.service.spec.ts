@@ -1030,6 +1030,23 @@ describe('LoansService reprogramacion concurrency controls', () => {
   });
 });
 
+describe('LoansService calcularInteresPlano', () => {
+  it('calcula interes plano correctamente para 5M, 10%, 12 cuotas', () => {
+    const service = makeService(null);
+    const result = (service as any).calcularInteresPlano(5000000, 10, 12);
+    
+    expect(result.interesTotal).toBe(500000);
+    expect(result.cuotaFija).toBe(458333);
+    expect(result.tabla).toHaveLength(12);
+    
+    const totalCuotas = result.tabla.reduce((sum: number, c: any) => sum + c.monto, 0);
+    expect(totalCuotas).toBe(5500000);
+    expect(result.tabla[0].monto).toBe(458333);
+    expect(result.tabla.at(-1)?.monto).toBe(458337);
+    expect(result.tabla.at(-1)?.saldoRestante).toBe(0);
+  });
+});
+
 describe('LoansService role scoping', () => {
   beforeEach(() => {
     jest.clearAllMocks();

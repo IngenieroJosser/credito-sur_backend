@@ -22,6 +22,7 @@ import { UploadModule } from './upload/upload.module';
 import { CategoriasModule } from './categorias/categorias.module';
 import { PushModule } from './push/push.module';
 import { ConfiguracionModule } from './configuracion/configuracion.module';
+import { CajasModule } from './cajas/cajas.module';
 import { SyncConflictsModule } from './sync-conflicts/sync-conflicts.module';
 import { MirrorSyncModule } from './mirror-sync/mirror-sync.module';
 import { OutboxModule } from './outbox/outbox.module';
@@ -62,6 +63,7 @@ const shouldEnableMirrorSync =
     CategoriasModule,
     PushModule,
     ConfiguracionModule,
+    CajasModule,
     SyncConflictsModule,
     IntegrityModule,
     OutboxModule,

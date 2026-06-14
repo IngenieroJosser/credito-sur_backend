@@ -830,6 +830,7 @@ export class ApprovalsService {
             interesTotal,
             tipo: String(loan.tipoPrestamo),
             tipoPrestamo: String(loan.tipoPrestamo),
+            tipoAmortizacion: loan.tipoAmortizacion,
             articulo: loan.producto?.nombre || 'Artículo',
             valorArticulo: isArticulo ? valorArticulo : capital,
             cuotas: Number(loan.cantidadCuotas || 0),
@@ -1565,6 +1566,7 @@ export class ApprovalsService {
           );
           interesTotal = amortizacion.interesTotal;
           cuotasData = amortizacion.tabla;
+
         } else {
           // INTERES SIMPLE
           const mesesInteres = Math.max(1, realPlazoMeses);
