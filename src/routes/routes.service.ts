@@ -4022,26 +4022,6 @@ export class RoutesService {
       }
     });
 
-    const totalEsperado = visitasDelDia.reduce((sum, v) => {
-      const cid = v.cliente?.id || v.clienteId;
-      const registro: any = visitasMap.get(cid);
-      const recaudoCliente = Number(pagosPorCliente[cid] || 0);
-
-      const estadoRegistro = String(
-        registro?.estadoVisita || v.estadoVisita || '',
-      ).toLowerCase();
-      const gestionSinMeta =
-        estadoRegistro === 'ausente';
-
-      // Si está ausente y no pagó nada, descontamos toda la visita de la meta.
-      // La reprogramación se descuenta por préstamo en montoMetaOperativaPendiente.
-      if (gestionSinMeta && recaudoCliente === 0) {
-        return sum; // No suma a la meta
-      }
-
-      return sum + this.computeMetaOperativaVisita(v, recaudoCliente, fechaKey);
-    }, 0);
-
     // Enriquecer visitas con su recaudo individual del día y su estado de visita (ausente)
     visitasDelDia.forEach((v) => {
       const cid = v.cliente?.id || v.clienteId;
@@ -4251,19 +4231,6 @@ export class RoutesService {
       }
     }
 
-    // Recalcular meta operativa para incluir visitas sintéticas regularizadas
-    const metaSinteticaRegularizada = visitasDelDia
-      .filter((v: any) => v.registroSintetico && v.origenGestion === 'CIERRE_PENDIENTE')
-      .reduce((sum, v: any) => {
-        return sum + this.computeMetaOperativaVisita(
-          v,
-          Number(v.recaudadoDelDia || 0),
-          fechaKey,
-        );
-      }, 0);
-
-    const totalEsperadoFinal = totalEsperado + metaSinteticaRegularizada;
-
     // Filtrar saldados sin gestión real para no inflar el total de la ruta ni ensuciar la data.
     const visitasDelDiaFinales = visitasDelDia.filter((v) => {
       const estadoGestion = this.resolveEstadoGestionCierrePendiente(v);
@@ -4292,15 +4259,21 @@ export class RoutesService {
     const gastosFinal = Number(gastosRuta._sum.monto || 0);
     const netoEfectivoRuta = Math.max(0, recaudoEfectivo - gastosFinal);
 
+    const obligacionesOperativas =
+      this.buildObligacionesOperativas(visitasDelDiaFinales);
+
+    const totalEsperadoFinal = obligacionesOperativas.reduce(
+      (sum: number, item: any) =>
+        sum + Number(item.metaPendiente || 0) + Number(item.recaudado || 0),
+      0,
+    );
+
     const efectividad =
       totalEsperadoFinal > 0
         ? Number(((recaudoFinal / totalEsperadoFinal) * 100).toFixed(1))
         : recaudoFinal > 0
           ? 100
           : 0;
-
-    const obligacionesOperativas =
-      this.buildObligacionesOperativas(visitasDelDiaFinales);
 
     const gestionados = obligacionesOperativas.filter((item: any) => {
       return item.estadoGestion !== 'PENDIENTE';
@@ -4342,6 +4315,15 @@ export class RoutesService {
         prestamo: item.prestamo,
         prestamoId: item.prestamo?.id || null,
         cuotaObjetivo: item.prestamo?.cuotaObjetivo || null,
+        montoMoraAcumulada:
+          item.prestamo?.cuotaObjetivo?.montoMoraAcumulada ??
+          item.prestamo?.cuotaObjetivo?.saldoVencidoAcumulado ??
+          0,
+        saldoVencidoAcumulado:
+          item.prestamo?.cuotaObjetivo?.saldoVencidoAcumulado ??
+          item.prestamo?.cuotaObjetivo?.montoMoraAcumulada ??
+          0,
+        cuotasVencidas: item.prestamo?.cuotaObjetivo?.cuotasVencidas ?? 0,
         estadoGestion: item.estadoGestion,
         estadoVisita:
           item.prestamo?.estadoVisita || item.visita?.estadoVisita || null,
@@ -4401,32 +4383,12 @@ export class RoutesService {
     prestamo: any,
     fechaKey: string,
   ): number {
-    const cuotas = Array.isArray(prestamo?.cuotas) ? prestamo.cuotas : [];
-    if (cuotas.length === 0) return 0;
-
-    const cuotasOrdenadas = [...cuotas].sort((a, b) => {
-      const ak = this.getCuotaFechaEfectivaKey(a);
-      const bk = this.getCuotaFechaEfectivaKey(b);
-      return ak.localeCompare(bk);
-    });
-    const cuotasVencidasNoPagadas = cuotasOrdenadas.filter((cuota) => {
-      const estado = String(cuota?.estado || '').toUpperCase();
-      if (['PAGADA', 'PAGADO', 'ANULADA', 'ANULADO'].includes(estado)) {
-        return false;
-      }
-      return this.getCuotaFechaEfectivaKey(cuota) <= fechaKey;
-    });
-    const frecuencia = String(prestamo?.frecuenciaPago || '').toUpperCase();
-    const cuotasObjetivo =
-      frecuencia === 'DIARIO' || frecuencia === 'DIA'
-        ? cuotasVencidasNoPagadas
-        : cuotasVencidasNoPagadas.slice(0, 1);
-
-    return cuotasObjetivo.reduce((sum: number, cuota: any) => {
-      const monto = Number(cuota?.monto || 0);
-      const pagado = Number(cuota?.montoPagado || 0);
-      return sum + Math.max(0, monto - pagado);
-    }, 0);
+    const cuotaObjetivo = this.computeCuotaObjetivo(prestamo, fechaKey);
+    if (!cuotaObjetivo) return 0;
+    return Math.max(
+      0,
+      Number(cuotaObjetivo.saldoExigibleEnFechaOperativa || 0),
+    );
   }
 
   private computeCuotaObjetivo(prestamo: any, fechaKey: string) {
@@ -4473,6 +4435,19 @@ export class RoutesService {
 
     const montoCuota = Number(cuotaObjetivo.monto || 0);
     const montoPagado = Number(cuotaObjetivo.montoPagado || 0);
+    const cuotasVencidasPendientes = sortedCuotas.filter((cuota) => {
+      const estadoCuota = String(cuota?.estado || '').toUpperCase();
+      if (['PAGADA', 'PAGADO', 'ANULADA', 'ANULADO'].includes(estadoCuota)) {
+        return false;
+      }
+
+      return this.getCuotaFechaEfectivaKey(cuota) <= fechaKey;
+    });
+    const montoMoraAcumulada = cuotasVencidasPendientes.reduce(
+      (sum: number, cuota: any) =>
+        sum + Math.max(0, Number(cuota?.monto || 0) - Number(cuota?.montoPagado || 0)),
+      0,
+    );
 
     const saldoCuota = estadoTerminal ? 0 : Math.max(0, montoCuota - montoPagado);
 
@@ -4510,6 +4485,9 @@ export class RoutesService {
       montoCuota,
       montoPagado,
       saldoCuota,
+      montoMoraAcumulada,
+      saldoVencidoAcumulado: montoMoraAcumulada,
+      cuotasVencidas: cuotasVencidasPendientes.length,
       saldoExigibleEnFechaOperativa,
       enMoraEnFechaOperativa: fechaEfectivaKey < fechaKey && !estadoTerminal,
       puedePagar,
@@ -5899,7 +5877,7 @@ export class RoutesService {
     const estadoVisita = String(v?.estadoVisita || '').toLowerCase()
     const recaudado = Number(v?.recaudadoDelDia || 0)
 
-    const esPagadoPorVisita = ['pagado', 'pago', 'pago_registrado'].includes(
+    const esPagadoPorVisita = ['pagado', 'pago', 'pago_registrado', 'gestionado'].includes(
       estadoVisita,
     )
 
@@ -5940,7 +5918,7 @@ export class RoutesService {
       prestamo?.recaudadoDelDia || prestamo?.recaudadoHoy || 0,
     );
 
-    if (recaudadoPrestamo > 0) {
+    if (recaudadoPrestamo > 0 || estadoPrestamo === 'gestionado' || estadoVisita === 'gestionado') {
       return 'PAGO_REGISTRADO';
     }
 
@@ -5969,7 +5947,7 @@ export class RoutesService {
             prestamo,
           );
 
-          const metaPendiente = Number(
+          const metaPendienteRaw = Number(
             prestamo?.montoMetaOperativaPendiente ??
               prestamo?.cuotaObjetivo?.saldoExigibleEnFechaOperativa ??
               prestamo?.proximaCuota?.montoNominal ??
@@ -5977,9 +5955,22 @@ export class RoutesService {
               0,
           );
 
+          const prestamosVisita = Array.isArray(visita?.prestamos)
+            ? visita.prestamos
+            : [];
+          const esPrestamoObjetivo =
+            String(prestamo?.id || '') === String(visita?.prestamoObjetivoId || '') ||
+            prestamosVisita.length === 1;
           const recaudado = Number(
-            prestamo?.recaudadoDelDia || prestamo?.recaudadoHoy || 0,
+            prestamo?.recaudadoDelDia ||
+              prestamo?.recaudadoHoy ||
+              (esPrestamoObjetivo ? visita?.recaudadoDelDia : 0) ||
+              0,
           );
+          const metaPendiente =
+            estadoGestion === 'PENDIENTE' || recaudado > 0
+              ? metaPendienteRaw
+              : 0;
 
           return {
             visita,
@@ -6165,6 +6156,15 @@ export class RoutesService {
             prestamo: item.prestamo,
             prestamoId: item.prestamo?.id || null,
             cuotaObjetivo: item.prestamo?.cuotaObjetivo || null,
+            montoMoraAcumulada:
+              item.prestamo?.cuotaObjetivo?.montoMoraAcumulada ??
+              item.prestamo?.cuotaObjetivo?.saldoVencidoAcumulado ??
+              0,
+            saldoVencidoAcumulado:
+              item.prestamo?.cuotaObjetivo?.saldoVencidoAcumulado ??
+              item.prestamo?.cuotaObjetivo?.montoMoraAcumulada ??
+              0,
+            cuotasVencidas: item.prestamo?.cuotaObjetivo?.cuotasVencidas ?? 0,
             estadoGestion: item.estadoGestion,
             estadoVisita:
               item.prestamo?.estadoVisita || item.visita?.estadoVisita || null,

@@ -1022,16 +1022,31 @@ export class PaymentsService {
         );
 
         const estadoVisitaPostPago =
-          paymentDto.tipoRegistro === 'PAGO' ? 'pagado' : 'pendiente';
+          paymentDto.tipoRegistro === 'PAGO' ? 'pagado' : 'gestionado';
+        const notaGestionPostPago =
+          paymentDto.tipoRegistro === 'PAGO'
+            ? 'Gestión operativa completada por registro de pago.'
+            : 'Gestión operativa completada por registro de abono.';
 
-        await tx.registroVisita.updateMany({
+        await tx.registroVisita.upsert({
           where: {
-            clienteId: clienteId,
-            fechaVisita: fechaKey,
-            estadoVisita: 'ausente',
-            ...(cobradorIdVal ? { rutaId: asignacion.rutaId } : {}),
+            rutaId_clienteId_fechaVisita: {
+              rutaId: asignacion.rutaId,
+              clienteId,
+              fechaVisita: fechaKey,
+            },
           },
-          data: {
+          create: {
+            rutaId: asignacion.rutaId,
+            clienteId,
+            prestamoId: prestamoIdVal,
+            cobradorId: cobradorIdVal,
+            fechaVisita: fechaKey,
+            estadoVisita: estadoVisitaPostPago,
+            notas: notaGestionPostPago,
+          },
+          update: {
+            prestamoId: prestamoIdVal,
             estadoVisita: estadoVisitaPostPago,
             notas:
               paymentDto.tipoRegistro === 'PAGO'

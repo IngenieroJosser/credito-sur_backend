@@ -394,8 +394,21 @@ describe('RoutesService role scoping', () => {
     );
 
     expect(resultado.resumen.recaudoOperativo).toBe(425_335);
-    expect(resultado.resumen.meta).toBe(990_333);
-    expect(resultado.resumen.efectividad).toBe(42.9);
+    expect(resultado.resumen.meta).toBe(707_834);
+    expect(resultado.resumen.efectividad).toBe(60.1);
+    expect(resultado.obligaciones).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          prestamoId: 'prestamo-pendiente',
+          montoMetaOperativaPendiente: 282_499,
+        }),
+        expect.objectContaining({
+          prestamoId: 'prestamo-pagado',
+          montoMetaOperativaPendiente: 0,
+          recaudadoDelDia: 425_335,
+        }),
+      ]),
+    );
     expect(resultado.visitas).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

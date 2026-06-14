@@ -602,8 +602,9 @@ export class DashboardService {
     // La cuota inicial queda fuera de esta tendencia porque contabilidad la expone separada de cobranza.
 
     // 1) Cobros contables dentro del rango
+    const where = await this.getLedgerCobranzaWhere(startDate, endDate);
     const ledgerCobros = await this.prisma.journalLine.findMany({
-      where: this.getLedgerCobranzaWhere(startDate, endDate),
+      where,
       select: {
         debitAmount: true,
         journalEntry: { select: { createdAt: true } },
@@ -889,7 +890,13 @@ export class DashboardService {
     return [];
   }
 
-  private getLedgerCobranzaWhere(startDate: Date, endDate: Date) {
+  private async getLedgerCobranzaWhere(startDate: Date, endDate: Date) {
+    // First get all regularized pago ids
+    const regularizedPagoIds = await this.prisma.pago.findMany({
+      where: { origenGestion: 'CIERRE_PENDIENTE' },
+      select: { id: true },
+    }).then((pagos) => pagos.map((p) => p.id));
+
     return {
       OR: [
         { accountCode: { startsWith: '1.1' } },
@@ -900,6 +907,9 @@ export class DashboardService {
         isOpening: false,
         referenceType: 'PAGO',
         createdAt: { gte: startDate, lte: endDate },
+        NOT: {
+          referenceId: { in: regularizedPagoIds },
+        },
       },
     };
   }
@@ -908,8 +918,9 @@ export class DashboardService {
     startDate: Date,
     endDate: Date,
   ): Promise<number> {
+    const where = await this.getLedgerCobranzaWhere(startDate, endDate);
     const res = await this.prisma.journalLine.aggregate({
-      where: this.getLedgerCobranzaWhere(startDate, endDate),
+      where,
       _sum: { debitAmount: true },
     });
     return Number(res._sum.debitAmount || 0);

@@ -21,6 +21,7 @@ import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway'
 import { formatBogotaOffsetIso } from '../utils/date-utils';
 import { LedgerService } from '../accounting/ledger.service';
 import { randomUUID } from 'crypto';
+import { calcularAmortizacionFrancesa } from '../loans/utils/amortizacion.utils';
 
 @Injectable()
 export class ApprovalsService {
@@ -225,6 +226,96 @@ export class ApprovalsService {
     return `${prefix}-${Date.now()}-${randomUUID().slice(0, 8)}`;
   }
 
+  private async cargarEfectoProvisionalPendiente(
+    db: any,
+    aprobacionId: string,
+  ) {
+    const efecto = await db.efectoProvisional?.findFirst?.({
+      where: { aprobacionId },
+      orderBy: { creadoEn: 'desc' },
+    });
+
+    if (efecto && efecto.estado !== 'PENDIENTE_REVISION') {
+      throw new BadRequestException('El efecto provisional ya fue procesado');
+    }
+
+    return efecto || null;
+  }
+
+  private async confirmarEfectoProvisional(tx: any, efecto: any) {
+    if (!efecto?.id) return;
+
+    await tx.efectoProvisional.update({
+      where: { id: efecto.id },
+      data: {
+        estado: 'CONFIRMADO',
+        confirmadoEn: new Date(),
+      },
+    });
+  }
+
+  private async confirmarPrestamoProvisional(
+    tx: any,
+    approval: any,
+    aprobadoPorId?: string,
+  ) {
+    if (!approval.referenciaId) {
+      throw new BadRequestException('La aprobación no tiene préstamo asociado');
+    }
+
+    await tx.prestamo.update({
+      where: { id: approval.referenciaId },
+      data: {
+        estado: EstadoPrestamo.ACTIVO,
+        estadoAprobacion: EstadoAprobacion.APROBADO,
+        aprobadoPorId: aprobadoPorId || undefined,
+      },
+    });
+  }
+
+  private async revertirPrestamoProvisional(
+    tx: any,
+    approval: any,
+    efecto: any,
+    rechazadoPorId?: string,
+    motivoRechazo?: string,
+  ) {
+    const rollbackData = efecto?.rollbackData || {};
+    const prestamoId = String(
+      rollbackData.prestamoId || approval.referenciaId || '',
+    );
+
+    if (!prestamoId) {
+      throw new BadRequestException('La aprobación no tiene préstamo asociado');
+    }
+
+    const prestamoRechazado = await tx.prestamo.update({
+      where: { id: prestamoId },
+      data: {
+        estadoAprobacion: EstadoAprobacion.RECHAZADO,
+        aprobadoPorId: rechazadoPorId || undefined,
+        eliminadoEn: new Date(),
+      },
+      include: { producto: true },
+    });
+
+    if (rollbackData.stockDescontado && prestamoRechazado.productoId) {
+      await tx.producto.update({
+        where: { id: prestamoRechazado.productoId },
+        data: { stock: { increment: 1 } },
+      });
+    }
+
+    await tx.efectoProvisional.update({
+      where: { id: efecto.id },
+      data: {
+        estado: 'REVERTIDO',
+        revertidoEn: new Date(),
+        motivoReversion: motivoRechazo || 'Solicitud rechazada',
+      },
+    });
+  }
+
   private calcularAplicacionPago(
     prestamo: any,
     montoTotal: number,
@@ -359,6 +450,62 @@ export class ApprovalsService {
       throw new BadRequestException(
         `Esta solicitud ya fue procesada (estado: ${approval.estado})`,
       );
+    }
+
+    const efectoProvisional = await this.cargarEfectoProvisionalPendiente(
+      this.prisma,
+      id,
+    );
+
+    if (
+      efectoProvisional &&
+      approval.tipoAprobacion === TipoAprobacion.NUEVO_PRESTAMO
+    ) {
+      await this.prisma.$transaction(async (tx) => {
+        const claimed = await tx.aprobacion.updateMany({
+          where: {
+            id,
+            estado: EstadoAprobacion.PENDIENTE,
+          },
+          data: {
+            estado: EstadoAprobacion.APROBADO,
+            aprobadoPorId: aprobadoPorId || undefined,
+            comentarios: notas || undefined,
+            datosAprobados: editedData || undefined,
+            revisadoEn: new Date(),
+          },
+        });
+
+        if (claimed.count !== 1) {
+          throw new BadRequestException(
+            'Esta solicitud ya fue tomada por otro usuario',
+          );
+        }
+
+        await this.confirmarPrestamoProvisional(
+          tx,
+          approval,
+          aprobadoPorId,
+        );
+        await this.confirmarEfectoProvisional(tx, efectoProvisional);
+      });
+
+      this.notificacionesGateway.broadcastAprobacionesActualizadas({
+        accion: 'APROBAR',
+        aprobacionId: id,
+        tipoAprobacion: approval.tipoAprobacion,
+      });
+      this.notificacionesGateway.broadcastPrestamosActualizados({
+        accion: 'APROBAR',
+        prestamoId: approval.referenciaId,
+      });
+      this.notificacionesGateway.broadcastDashboardsActualizados({});
+
+      this.logger.log(
+        `Aprobación provisional ${id} confirmada por ${aprobadoPorId || 'desconocido'} (tipo: ${approval.tipoAprobacion})`,
+      );
+
+      return { success: true, message: 'Aprobación procesada exitosamente' };
     }
 
     const claimed = await this.prisma.aprobacion.updateMany({
@@ -829,6 +976,7 @@ export class ApprovalsService {
             interesTotal,
             tipo: String(loan.tipoPrestamo),
             tipoPrestamo: String(loan.tipoPrestamo),
+            tipoAmortizacion: loan.tipoAmortizacion,
             articulo: loan.producto?.nombre || 'Artículo',
             valorArticulo: isArticulo ? valorArticulo : capital,
             cuotas: Number(loan.cantidadCuotas || 0),
@@ -1101,6 +1249,58 @@ export class ApprovalsService {
       throw new BadRequestException(
         `Esta solicitud ya fue procesada (estado: ${approval.estado})`,
       );
+    }
+
+    const efectoProvisional = await this.cargarEfectoProvisionalPendiente(
+      this.prisma,
+      id,
+    );
+
+    if (
+      efectoProvisional &&
+      approval.tipoAprobacion === TipoAprobacion.NUEVO_PRESTAMO
+    ) {
+      await this.prisma.$transaction(async (tx) => {
+        const claimed = await tx.aprobacion.updateMany({
+          where: {
+            id,
+            estado: EstadoAprobacion.PENDIENTE,
+          },
+          data: {
+            estado: EstadoAprobacion.RECHAZADO,
+            aprobadoPorId: rechazadoPorId || undefined,
+            comentarios: motivoRechazo || 'Rechazado sin motivo especificado',
+            revisadoEn: new Date(),
+          },
+        });
+
+        if (claimed.count !== 1) {
+          throw new BadRequestException(
+            'Esta solicitud ya fue tomada por otro usuario',
+          );
+        }
+
+        await this.revertirPrestamoProvisional(
+          tx,
+          approval,
+          efectoProvisional,
+          rechazadoPorId,
+          motivoRechazo,
+        );
+      });
+
+      this.notificacionesGateway.broadcastAprobacionesActualizadas({
+        accion: 'RECHAZAR',
+        aprobacionId: id,
+        tipoAprobacion: approval.tipoAprobacion,
+      });
+      this.notificacionesGateway.broadcastPrestamosActualizados({
+        accion: 'RECHAZAR',
+        prestamoId: approval.referenciaId,
+      });
+      this.notificacionesGateway.broadcastDashboardsActualizados({});
+
+      return { success: true, message: 'Aprobación rechazada' };
     }
 
     const claimed = await this.prisma.aprobacion.updateMany({
@@ -1555,44 +1755,16 @@ export class ApprovalsService {
         let cuotasData: any[] = [];
 
         if (tipoAmort === TipoAmortizacion.FRANCESA) {
-          // Usamos la fórmula de amortización francesa (Simplificada para este contexto)
-          const tasaMensual = tasaInteres / realPlazoMeses / 100;
-          let tasaPeriodo = tasaMensual;
-          if (frecuencia === FrecuenciaPago.DIARIO)
-            tasaPeriodo = tasaMensual / 30;
-          else if (frecuencia === FrecuenciaPago.SEMANAL)
-            tasaPeriodo = tasaMensual / 4;
-          else if (frecuencia === FrecuenciaPago.QUINCENAL)
-            tasaPeriodo = tasaMensual / 2;
+          const amortizacion = calcularAmortizacionFrancesa(
+            montoFinanciar,
+            tasaInteres,
+            cantidadCuotas,
+            realPlazoMeses,
+            frecuencia,
+          );
+          interesTotal = amortizacion.interesTotal;
+          cuotasData = amortizacion.tabla;
 
-          if (tasaPeriodo === 0) {
-            interesTotal = 0;
-            const montoCuota = montoFinanciar / cantidadCuotas;
-            cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => ({
-              numeroCuota: i + 1,
-              montoCapital: montoCuota,
-              montoInteres: 0,
-              monto: montoCuota,
-            }));
-          } else {
-            const cuotaFija =
-              (montoFinanciar * tasaPeriodo) /
-              (1 - Math.pow(1 + tasaPeriodo, -cantidadCuotas));
-            let saldo = montoFinanciar;
-            for (let i = 0; i < cantidadCuotas; i++) {
-              const intPeriodo = saldo * tasaPeriodo;
-              const capPeriodo =
-                i === cantidadCuotas - 1 ? saldo : cuotaFija - intPeriodo;
-              interesTotal += intPeriodo;
-              cuotasData.push({
-                numeroCuota: i + 1,
-                montoCapital: capPeriodo,
-                montoInteres: intPeriodo,
-                monto: capPeriodo + intPeriodo,
-              });
-              saldo -= capPeriodo;
-            }
-          }
         } else {
           // INTERES SIMPLE
           const mesesInteres = Math.max(1, realPlazoMeses);
