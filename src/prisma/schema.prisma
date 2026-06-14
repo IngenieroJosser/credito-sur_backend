@@ -515,6 +515,7 @@ model Aprobacion {
   montoSolicitud       Decimal?             @db.Decimal(12, 2)
   aprobadoPor          Usuario?             @relation("AprobacionRevisadaPor", fields: [aprobadoPorId], references: [id])
   solicitadoPor        Usuario              @relation("AprobacionSolicitadaPor", fields: [solicitadoPorId], references: [id])
+  efectosProvisionales EfectoProvisional[]
 
   @@index([tipoAprobacion])
   @@index([referenciaId, tablaReferencia])
@@ -1087,6 +1088,38 @@ enum EstadoArqueoCaja {
   BORRADOR
   CONFIRMADO
   ANULADO
+}
+
+enum EstadoEfectoProvisional {
+  PENDIENTE_REVISION
+  CONFIRMADO
+  REVERTIDO
+  REVERSA_FALLIDA
+}
+
+model EfectoProvisional {
+  id                String                @id @default(uuid())
+  aprobacionId      String
+  aprobacion        Aprobacion            @relation(fields: [aprobacionId], references: [id], onDelete: Cascade)
+  tipoAccion        String
+  tipoEntidad       String?
+  entidadId         String?
+  estado            EstadoEfectoProvisional @default(PENDIENTE_REVISION)
+  snapshotAntes     Json?
+  snapshotDespues   Json?
+  rollbackData      Json?
+  entidadesAfectadas Json?
+  aplicadoPorId     String
+  aplicadoEn        DateTime              @default(now())
+  confirmadoEn      DateTime?
+  revertidoEn       DateTime?
+  motivoReversion   String?
+  creadoEn          DateTime              @default(now())
+  actualizadoEn     DateTime              @updatedAt
+
+  @@index([aprobacionId])
+  @@index([tipoAccion])
+  @@index([estado])
 }
 
 model RutaJornada {

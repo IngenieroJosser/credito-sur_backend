@@ -35,6 +35,10 @@ const mockLedger = {
 function buildPrismaMock() {
   const tx = {
     $queryRaw: jest.fn().mockResolvedValue([]),
+    aprobacion: {
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      update: jest.fn().mockResolvedValue({}),
+    },
     pago: { create: jest.fn().mockResolvedValue({ id: 'pago-transfer-1' }) },
     cuota: {
       update: jest.fn().mockResolvedValue({}),
@@ -114,6 +118,11 @@ function buildPrismaMock() {
     registroVisita: {
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
+    efectoProvisional: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      update: jest.fn().mockResolvedValue({}),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
   };
 
   return {
@@ -149,6 +158,11 @@ function buildPrismaMock() {
     asignacionRuta: { findFirst: jest.fn().mockResolvedValue(null) },
     cliente: { update: jest.fn().mockResolvedValue({}) },
     producto: { update: jest.fn().mockResolvedValue({}) },
+    efectoProvisional: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      update: jest.fn().mockResolvedValue({}),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     usuario: { findUnique: jest.fn().mockResolvedValue(null) },
     notificacion: { create: jest.fn().mockResolvedValue({}) },
     $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
@@ -702,6 +716,98 @@ describe('ApprovalsService financial ledger controls', () => {
 
     expect(prisma._tx.transaccion.create).not.toHaveBeenCalled();
     expect(mockLedger.registrarAsiento).not.toHaveBeenCalled();
+  });
+
+  it('confirma un préstamo provisional sin volver a ejecutar approveNewLoan', async () => {
+    const prisma = buildPrismaMock();
+    prisma.aprobacion.findUnique.mockResolvedValue({
+      id: 'approval-loan-1',
+      tipoAprobacion: TipoAprobacion.NUEVO_PRESTAMO,
+      referenciaId: 'prestamo-1',
+      tablaReferencia: 'Prestamo',
+      solicitadoPorId: 'supervisor-1',
+      estado: EstadoAprobacion.PENDIENTE,
+      datosSolicitud: { monto: 5000000 },
+    });
+    prisma.efectoProvisional.findFirst.mockResolvedValue({
+      id: 'efecto-loan-1',
+      aprobacionId: 'approval-loan-1',
+      tipoAccion: 'NUEVO_PRESTAMO',
+      tipoEntidad: 'Prestamo',
+      entidadId: 'prestamo-1',
+      estado: 'PENDIENTE_REVISION',
+    });
+
+    const service = makeService(prisma) as any;
+    const approveNewLoanSpy = jest
+      .spyOn(service, 'approveNewLoan')
+      .mockResolvedValue(undefined);
+
+    await service.approveItem(
+      'approval-loan-1',
+      TipoAprobacion.NUEVO_PRESTAMO,
+      'admin-1',
+    );
+
+    expect(approveNewLoanSpy).not.toHaveBeenCalled();
+    expect(prisma._tx.efectoProvisional.update).toHaveBeenCalledWith({
+      where: { id: 'efecto-loan-1' },
+      data: expect.objectContaining({
+        estado: 'CONFIRMADO',
+        confirmadoEn: expect.any(Date),
+      }),
+    });
+  });
+
+  it('revierte un préstamo provisional al rechazar la aprobación', async () => {
+    const prisma = buildPrismaMock();
+    prisma.aprobacion.findUnique.mockResolvedValue({
+      id: 'approval-loan-1',
+      tipoAprobacion: TipoAprobacion.NUEVO_PRESTAMO,
+      referenciaId: 'prestamo-1',
+      tablaReferencia: 'Prestamo',
+      solicitadoPorId: 'supervisor-1',
+      estado: EstadoAprobacion.PENDIENTE,
+      datosSolicitud: { monto: 5000000 },
+    });
+    prisma.efectoProvisional.findFirst.mockResolvedValue({
+      id: 'efecto-loan-1',
+      aprobacionId: 'approval-loan-1',
+      tipoAccion: 'NUEVO_PRESTAMO',
+      tipoEntidad: 'Prestamo',
+      entidadId: 'prestamo-1',
+      estado: 'PENDIENTE_REVISION',
+      rollbackData: {
+        prestamoId: 'prestamo-1',
+        productoId: null,
+        stockDescontado: false,
+      },
+    });
+
+    await makeService(prisma).rejectItem(
+      'approval-loan-1',
+      TipoAprobacion.NUEVO_PRESTAMO,
+      'admin-1',
+      'No cumple política',
+    );
+
+    expect(prisma._tx.prestamo.update).toHaveBeenCalledWith({
+      where: { id: 'prestamo-1' },
+      data: expect.objectContaining({
+        estadoAprobacion: EstadoAprobacion.RECHAZADO,
+        aprobadoPorId: 'admin-1',
+        eliminadoEn: expect.any(Date),
+      }),
+      include: { producto: true },
+    });
+    expect(prisma._tx.efectoProvisional.update).toHaveBeenCalledWith({
+      where: { id: 'efecto-loan-1' },
+      data: expect.objectContaining({
+        estado: 'REVERTIDO',
+        revertidoEn: expect.any(Date),
+        motivoReversion: 'No cumple política',
+      }),
+    });
   });
 
   it('no ejecuta un rechazo si otro usuario ya tomó la aprobación primero', async () => {

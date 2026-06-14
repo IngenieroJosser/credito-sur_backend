@@ -44,6 +44,19 @@ function makeService(prisma: any) {
         }
       }
     }
+    if (!prisma.$transaction) {
+      prisma.$transaction = jest.fn().mockImplementation((cb: any) => cb(prisma));
+    }
+    if (!prisma.cuota) {
+      prisma.cuota = {
+        update: jest.fn().mockImplementation(({ where, data }: any) =>
+          Promise.resolve({
+            id: where?.id || 'cuota-1',
+            fechaVencimiento: data?.fechaVencimiento || new Date(),
+          }),
+        ),
+      };
+    }
   }
   return new LoansService(
     prisma,
@@ -365,6 +378,103 @@ describe('LoansService accounting impact for approved loans', () => {
       id: 'prestamo-1',
       mensaje: 'Préstamo creado exitosamente. Pendiente de aprobación.',
       requiereAprobacion: true,
+    });
+  });
+
+  it('crea efecto provisional para un crédito pendiente de revisión', async () => {
+    mockConfig.shouldAutoApproveCredits.mockResolvedValueOnce(false);
+
+    const fechaInicio = new Date('2026-06-12T05:00:00.000Z');
+    const prisma = {
+      cliente: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'cliente-1',
+          nombres: 'Mario',
+          apellidos: 'Baraka',
+          dni: '111111111',
+          telefono: '3112394628',
+          enListaNegra: false,
+          asignacionesRuta: [],
+        }),
+      },
+      usuario: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'supervisor-1',
+          nombres: 'Supervisor',
+          apellidos: 'Prueba',
+          rol: RolUsuario.SUPERVISOR,
+        }),
+      },
+      caja: {
+        findFirst: jest.fn().mockResolvedValue({ saldoActual: 10000000 }),
+      },
+      prestamo: {
+        findFirst: jest.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(null),
+        create: jest.fn().mockResolvedValue({
+          id: 'prestamo-1',
+          numeroPrestamo: 'PRES-000001',
+          clienteId: 'cliente-1',
+          tipoPrestamo: 'EFECTIVO',
+          tipoAmortizacion: 'INTERES_SIMPLE',
+          monto: 5000000,
+          cuotaInicial: 0,
+          precioVentaArticulo: null,
+          costoArticulo: null,
+          tasaInteres: 10,
+          plazoMeses: 1,
+          frecuenciaPago: 'DIARIO',
+          cantidadCuotas: 12,
+          estadoAprobacion: EstadoAprobacion.PENDIENTE,
+          fechaInicio,
+          productoId: null,
+          producto: null,
+          cuotas: [{ id: 'cuota-1' }, { id: 'cuota-2' }],
+        }),
+      },
+      aprobacion: {
+        create: jest.fn().mockResolvedValue({
+          id: 'aprobacion-1',
+          referenciaId: 'prestamo-1',
+        }),
+      },
+      efectoProvisional: {
+        create: jest.fn().mockResolvedValue({ id: 'efecto-1' }),
+      },
+    };
+
+    const result = await makeService(prisma).createLoan({
+      clienteId: 'cliente-1',
+      tipoPrestamo: 'EFECTIVO',
+      monto: 5000000,
+      tasaInteres: 10,
+      tasaInteresMora: 2,
+      plazoMeses: 1,
+      cantidadCuotas: 12,
+      frecuenciaPago: 'DIARIO' as any,
+      fechaInicio: '2026-06-12',
+      creadoPorId: 'supervisor-1',
+    } as any);
+
+    expect(result).toMatchObject({
+      id: 'prestamo-1',
+      requiereAprobacion: true,
+    });
+    expect(prisma.efectoProvisional.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        aprobacionId: 'aprobacion-1',
+        tipoAccion: 'NUEVO_PRESTAMO',
+        tipoEntidad: 'Prestamo',
+        entidadId: 'prestamo-1',
+        estado: 'PENDIENTE_REVISION',
+        aplicadoPorId: 'supervisor-1',
+        rollbackData: expect.objectContaining({
+          prestamoId: 'prestamo-1',
+          cuotaIds: ['cuota-1', 'cuota-2'],
+          productoId: null,
+          stockDescontado: false,
+          usuarioSolicitanteId: 'supervisor-1',
+        }),
+      }),
     });
   });
 
@@ -1021,7 +1131,8 @@ describe('LoansService reprogramacion concurrency controls', () => {
 
     expect(result).toEqual(
       expect.objectContaining({
-        mensaje: 'Solicitud de reprogramacion enviada para revision',
+        mensaje:
+          'Solicitud de reprogramacion enviada y aplicada provisionalmente',
         aprobacion: expect.objectContaining({ id: 'aprobacion-1' }),
       }),
     );

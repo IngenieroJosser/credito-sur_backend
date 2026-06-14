@@ -3014,6 +3014,8 @@ export class LoansService implements OnModuleInit {
   async createLoan(data: CreateLoanDto) {
     let prestamoCreado: any = null;
     let aprobacionCreada: any = null;
+    let efectoProvisionalCreado: any = null;
+    let asignacionRutaCreadaId: string | null = null;
     let esAutoAprobadoFinal = false;
 
     try {
@@ -3554,7 +3556,7 @@ export class LoansService implements OnModuleInit {
           });
 
           try {
-            await this.prisma.asignacionRuta.create({
+            const asignacionCreada = await this.prisma.asignacionRuta.create({
               data: {
                 rutaId: rutaIdAsignar,
                 clienteId: cliente.id,
@@ -3564,6 +3566,7 @@ export class LoansService implements OnModuleInit {
                 activa: true,
               },
             });
+            asignacionRutaCreadaId = asignacionCreada?.id || null;
           } catch (error: any) {
             if (error?.code === 'P2002') {
               this.logger.warn(
@@ -3693,6 +3696,59 @@ export class LoansService implements OnModuleInit {
       aprobacionCreada = aprobacion;
 
       if (!esAutoAprobado && !data.esContado) {
+        efectoProvisionalCreado = await (this.prisma as any).efectoProvisional
+          ?.create?.({
+            data: {
+              aprobacionId: aprobacion.id,
+              tipoAccion: 'NUEVO_PRESTAMO',
+              tipoEntidad: 'Prestamo',
+              entidadId: prestamo.id,
+              estado: 'PENDIENTE_REVISION',
+              snapshotAntes: null,
+              snapshotDespues: {
+                prestamo: {
+                  id: prestamo.id,
+                  estado: prestamo.estado,
+                  estadoAprobacion: prestamo.estadoAprobacion,
+                  saldoPendiente: prestamo.saldoPendiente,
+                },
+                cuotas: (prestamo.cuotas || []).map((cuota: any) => ({
+                  id: cuota.id,
+                  estado: cuota.estado,
+                  monto: cuota.monto,
+                  fechaVencimiento: cuota.fechaVencimiento,
+                })),
+              },
+              rollbackData: {
+                prestamoId: prestamo.id,
+                cuotaIds: (prestamo.cuotas || []).map((cuota: any) => cuota.id),
+                productoId: prestamo.productoId || null,
+                stockDescontado: false,
+                journalReferenceIds: [],
+                transaccionIds: [],
+                asignacionRutaId: asignacionRutaCreadaId,
+                estadoPrestamoInicial: prestamo.estado,
+                estadoAprobacionInicial: prestamo.estadoAprobacion,
+                usuarioSolicitanteId: data.creadoPorId,
+                rutaId:
+                  cliente.asignacionesRuta?.[0]?.rutaId ||
+                  cliente.asignacionesRuta?.[0]?.ruta?.id ||
+                  null,
+                cobradorId:
+                  cliente.asignacionesRuta?.[0]?.cobradorId ||
+                  cliente.asignacionesRuta?.[0]?.ruta?.cobradorId ||
+                  null,
+              },
+              entidadesAfectadas: {
+                prestamoId: prestamo.id,
+                cuotaIds: (prestamo.cuotas || []).map((cuota: any) => cuota.id),
+                aprobacionId: aprobacion.id,
+                asignacionRutaId: asignacionRutaCreadaId,
+              },
+              aplicadoPorId: data.creadoPorId,
+            },
+          });
+
         try {
           await this.notificacionesService.notifyApprovers({
             titulo: 'Nuevo crédito requiere aprobación',
@@ -3937,6 +3993,7 @@ export class LoansService implements OnModuleInit {
             : 'Préstamo creado exitosamente. Pendiente de aprobación.',
           requiereAprobacion: !esAutoAprobadoFinal,
           aprobacionId: aprobacionCreada.id,
+          efectoProvisionalId: efectoProvisionalCreado?.id || null,
           warning:
             'La operación principal fue creada, pero falló una tarea secundaria posterior.',
         };
@@ -4288,8 +4345,8 @@ export class LoansService implements OnModuleInit {
   // ── FLUJO DE APROBACIÓN DE REPROGRAMACIONES ─────────────────────────────────
 
   /**
-   * El COBRADOR solicita reprogramar una cuota. Se registra como Aprobacion
-   * en estado PENDIENTE y se notifica a los aprobadores (ADMIN/COORDINADOR).
+   * El COBRADOR solicita reprogramar una cuota. Se aplica inmediatamente,
+   * se registra como Aprobacion en estado PENDIENTE y se notifica a los aprobadores.
    * Valida los límites de días: semanal ≤6 días, quincenal ≤14 días.
    */
   async solicitarReprogramacion(data: {
@@ -4339,11 +4396,30 @@ export class LoansService implements OnModuleInit {
 
     const { startDate: hoyLocal } = getBogotaStartEndOfDay(new Date());
 
-    // Normalizar la nuevaFecha enviada por el frontend
-    const nuevaFechaStr = data.nuevaFecha.includes('T')
+    // Normalizar y validar la nuevaFecha enviada por el frontend
+    let nuevaFechaStr = data.nuevaFecha.includes('T')
       ? data.nuevaFecha.split('T')[0]
       : data.nuevaFecha;
+
+    // Si la fecha viene en formato DD/MM/YYYY, convertirla a YYYY-MM-DD
+    const ddmmyyyy = nuevaFechaStr.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (ddmmyyyy) {
+      const [, dd, mm, yyyy] = ddmmyyyy;
+      nuevaFechaStr = `${yyyy}-${mm}-${dd}`;
+    }
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(nuevaFechaStr)) {
+      throw new BadRequestException(
+        'nuevaFecha inválida. Debe usar formato YYYY-MM-DD o DD/MM/YYYY.',
+      );
+    }
+
     const nuevaFechaObj = new Date(`${nuevaFechaStr}T12:00:00-05:00`);
+    if (Number.isNaN(nuevaFechaObj.getTime())) {
+      throw new BadRequestException(
+        'nuevaFecha inválida. Debe usar formato YYYY-MM-DD o DD/MM/YYYY.',
+      );
+    }
 
     const diasDesdeHoy = Math.round(
       (nuevaFechaObj.getTime() - hoyLocal.getTime()) / 86_400_000,
@@ -4370,74 +4446,11 @@ export class LoansService implements OnModuleInit {
     const fechaOperativaRuta = this.parseFechaOperativaReprogramacionKey(
       data.fechaOperativaRuta,
     );
-    if (data.origenGestion === 'CIERRE_PENDIENTE') {
-      if (!fechaOperativaRuta) {
-        throw new BadRequestException(
-          'fechaOperativaRuta es requerida para reprogramaciones desde cierre pendiente',
-        );
-      }
-
-      const asignacionActiva = await this.prisma.asignacionRuta.findFirst({
-        where: { clienteId: prestamo.clienteId, activa: true },
-        select: {
-          rutaId: true,
-          cobradorId: true,
-          ruta: { select: { cobradorId: true } },
-        },
-      });
-
-      if (!asignacionActiva?.rutaId) {
-        throw new BadRequestException(
-          'No existe una ruta activa válida para esta regularización',
-        );
-      }
-
-      const jornadaPendiente = await this.prisma.rutaJornada.findFirst({
-        where: {
-          rutaId: asignacionActiva.rutaId,
-          fechaOperativa: fechaOperativaRuta,
-          estado: 'PENDIENTE_CIERRE',
-        },
-        select: { id: true, rutaId: true, fechaOperativa: true },
-      });
-
-      if (!jornadaPendiente) {
-        throw new BadRequestException(
-          'No existe una jornada pendiente válida para esta regularización',
-        );
-      }
-
-      const cobradorGestionId =
-        asignacionActiva.cobradorId ||
-        asignacionActiva.ruta?.cobradorId ||
-        data.solicitadoPorId;
-
-      await this.prisma.registroVisita.upsert({
-        where: {
-          rutaId_clienteId_fechaVisita: {
-            rutaId: asignacionActiva.rutaId,
-            clienteId: prestamo.clienteId,
-            fechaVisita: fechaOperativaRuta,
-          },
-        },
-        create: {
-          rutaId: asignacionActiva.rutaId,
-          clienteId: prestamo.clienteId,
-          prestamoId: prestamo.id,
-          cobradorId: cobradorGestionId,
-          fechaVisita: fechaOperativaRuta,
-          estadoVisita: 'reprogramado',
-          notas: `Reprogramación solicitada desde cierre pendiente: ${data.motivo || 'Sin motivo'}`,
-        },
-        update: {
-          prestamoId: prestamo.id,
-          cobradorId: cobradorGestionId,
-          estadoVisita: 'reprogramado',
-          notas: `Reprogramación solicitada desde cierre pendiente: ${data.motivo || 'Sin motivo'}`,
-        },
-      });
+    if (data.origenGestion === 'CIERRE_PENDIENTE' && !fechaOperativaRuta) {
+      throw new BadRequestException(
+        'fechaOperativaRuta es requerida para reprogramaciones desde cierre pendiente',
+      );
     }
-
     const fechaGestionOriginal = fechaOperativaRuta || getBogotaDayKey(new Date());
 
     const contextoRegularizacion =
@@ -4449,33 +4462,172 @@ export class LoansService implements OnModuleInit {
           }
         : {};
 
-    // Crear solicitud de aprobación
-    const aprobacion = await this.prisma.aprobacion.create({
-      data: {
-        tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
-        idempotencyKey,
-        referenciaId: cuota.id,
-        tablaReferencia: 'cuotas',
-        solicitadoPorId: data.solicitadoPorId,
-        estado: EstadoAprobacion.PENDIENTE,
-        datosSolicitud: {
-          prestamoId: data.prestamoId,
-          cuotaId: data.cuotaId || cuota.id,
-          clienteNombre: `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
-          clienteId: prestamo.clienteId,
-          numeroPrestamo: prestamo.numeroPrestamo,
-          numeroCuota: cuota.numeroCuota,
-          frecuenciaPago: prestamo.frecuenciaPago,
-          fechaGestionOriginal,
-          fechaVencimientoOriginal: formatBogotaOffsetIso(
-            cuota.fechaVencimiento,
-          ),
-          nuevaFecha: data.nuevaFecha,
-          motivo: data.motivo,
-          montoCuota: Number(cuota.monto),
-          ...contextoRegularizacion,
+    // Aplicar reprogramación inmediatamente y crear registros
+    const resultado = await this.prisma.$transaction(async (tx) => {
+      // 1. Obtener información inicial para rollback
+      const asignacionActiva = await tx.asignacionRuta.findFirst({
+        where: { clienteId: prestamo.clienteId, activa: true },
+        select: { rutaId: true },
+      });
+      const rutaIdOriginal = asignacionActiva?.rutaId;
+
+      // 2. Obtener estado anterior de RegistroVisita si existe
+      let registroVisitaAnterior: any = null;
+      if (fechaOperativaRuta && rutaIdOriginal && tx.registroVisita?.findUnique) {
+        registroVisitaAnterior = await tx.registroVisita.findUnique({
+          where: {
+            rutaId_clienteId_fechaVisita: {
+              rutaId: rutaIdOriginal,
+              clienteId: prestamo.clienteId,
+              fechaVisita: fechaOperativaRuta,
+            },
+          },
+        });
+      }
+
+      // 2. Actualizar cuota inmediatamente
+      const cuotaActualizada = await tx.cuota.update({
+        where: { id: cuota.id },
+        data: {
+          fechaVencimiento: nuevaFechaObj,
         },
-      },
+      });
+
+      // 2. Manejar registro de visita si es cierre pendiente
+      if (data.origenGestion === 'CIERRE_PENDIENTE') {
+        if (!fechaOperativaRuta) {
+          throw new BadRequestException(
+            'fechaOperativaRuta es requerida para reprogramaciones desde cierre pendiente',
+          );
+        }
+
+        const asignacionActiva = await tx.asignacionRuta.findFirst({
+          where: { clienteId: prestamo.clienteId, activa: true },
+          select: {
+            rutaId: true,
+            cobradorId: true,
+            ruta: { select: { cobradorId: true } },
+          },
+        });
+
+        if (!asignacionActiva?.rutaId) {
+          throw new BadRequestException(
+            'No existe una ruta activa válida para esta regularización',
+          );
+        }
+
+        const jornadaPendiente = await tx.rutaJornada.findFirst({
+          where: {
+            rutaId: asignacionActiva.rutaId,
+            fechaOperativa: fechaOperativaRuta,
+            estado: 'PENDIENTE_CIERRE',
+          },
+          select: { id: true, rutaId: true, fechaOperativa: true },
+        });
+
+        if (!jornadaPendiente) {
+          throw new BadRequestException(
+            'No existe una jornada pendiente válida para esta regularización',
+          );
+        }
+
+        const cobradorGestionId =
+          asignacionActiva.cobradorId ||
+          asignacionActiva.ruta?.cobradorId ||
+          data.solicitadoPorId;
+
+        await tx.registroVisita.upsert({
+          where: {
+            rutaId_clienteId_fechaVisita: {
+              rutaId: asignacionActiva.rutaId,
+              clienteId: prestamo.clienteId,
+              fechaVisita: fechaOperativaRuta,
+            },
+          },
+          create: {
+            rutaId: asignacionActiva.rutaId,
+            clienteId: prestamo.clienteId,
+            prestamoId: prestamo.id,
+            cobradorId: cobradorGestionId,
+            fechaVisita: fechaOperativaRuta,
+            estadoVisita: 'reprogramado',
+            notas: `Reprogramación solicitada desde cierre pendiente: ${data.motivo || 'Sin motivo'}`,
+          },
+          update: {
+            prestamoId: prestamo.id,
+            cobradorId: cobradorGestionId,
+            estadoVisita: 'reprogramado',
+            notas: `Reprogramación solicitada desde cierre pendiente: ${data.motivo || 'Sin motivo'}`,
+          },
+        });
+      }
+
+      // 3. Crear solicitud de aprobación
+      const aprobacion = await tx.aprobacion.create({
+        data: {
+          tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
+          idempotencyKey,
+          referenciaId: cuota.id,
+          tablaReferencia: 'cuotas',
+          solicitadoPorId: data.solicitadoPorId,
+          estado: EstadoAprobacion.PENDIENTE,
+          datosSolicitud: {
+            prestamoId: data.prestamoId,
+            cuotaId: data.cuotaId || cuota.id,
+            clienteNombre: `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
+            clienteId: prestamo.clienteId,
+            numeroPrestamo: prestamo.numeroPrestamo,
+            numeroCuota: cuota.numeroCuota,
+            frecuenciaPago: prestamo.frecuenciaPago,
+            fechaGestionOriginal,
+            fechaVencimientoOriginal: formatBogotaOffsetIso(
+              cuota.fechaVencimiento,
+            ),
+            nuevaFecha: data.nuevaFecha,
+            motivo: data.motivo,
+            montoCuota: Number(cuota.monto),
+            ...contextoRegularizacion,
+          },
+        },
+      });
+
+      // 4. Crear EfectoProvisional con datos para reversión
+      const efectoProvisional = await tx.efectoProvisional?.create?.({
+        data: {
+          aprobacionId: aprobacion.id,
+          tipoAccion: 'REPROGRAMACION_CUOTA',
+          tipoEntidad: 'Cuota',
+          entidadId: cuota.id,
+          estado: 'PENDIENTE_REVISION',
+          snapshotAntes: {
+            cuota: {
+              id: cuota.id,
+              fechaVencimiento: cuota.fechaVencimiento.toISOString(),
+            },
+            registroVisita: registroVisitaAnterior,
+          },
+          snapshotDespues: {
+            cuota: {
+              id: cuotaActualizada.id,
+              fechaVencimiento: cuotaActualizada.fechaVencimiento.toISOString(),
+            },
+          },
+          rollbackData: {
+            cuotaId: cuota.id,
+            clienteId: prestamo.clienteId,
+            prestamoId: prestamo.id,
+            rutaIdOriginal,
+            fechaVencimientoOriginal: cuota.fechaVencimiento.toISOString(),
+            fechaVencimientoNueva: nuevaFechaObj.toISOString(),
+            fechaOperativaOriginal: fechaGestionOriginal,
+            origenGestion: data.origenGestion,
+            registroVisitaAnterior,
+          },
+          aplicadoPorId: data.solicitadoPorId,
+        },
+      });
+
+      return { aprobacion, efectoProvisional };
     });
 
     // Validar Auto-Aprobación
@@ -4490,29 +4642,27 @@ export class LoansService implements OnModuleInit {
         : 'Cobrador Principal';
 
     // Notificar a aprobadores (ADMIN / COORDINADOR / SUPERVISOR).
-    // La solicitud ya quedó persistida; un fallo de notificación no debe
-    // convertir la gestión operativa en error 500.
     try {
       await this.notificacionesService.notifyApprovers({
         titulo: 'Reprogramaciones',
         mensaje: `Solicitud de reprogramaciones por ${rolNameText}`,
         tipo: 'REPROGRAMACION',
         entidad: 'Aprobacion',
-        entidadId: aprobacion.id,
+        entidadId: resultado.aprobacion.id,
         metadata: {
-          aprobacionId: aprobacion.id,
+          aprobacionId: resultado.aprobacion.id,
           prestamoId: data.prestamoId,
           ...contextoRegularizacion,
         },
       });
     } catch (error) {
       this.logger.warn(
-        `Reprogramacion ${aprobacion.id} creada, pero falló notificación a aprobadores: ${(error as Error)?.message || error}`,
+        `Reprogramacion ${resultado.aprobacion.id} creada, pero falló notificación a aprobadores: ${(error as Error)?.message || error}`,
       );
     }
 
     this.logger.log(
-      `Reprogramacion solicitada: cuota ${cuota.id} del prestamo ${data.prestamoId} -> ${data.nuevaFecha}`,
+      `Reprogramacion solicitada y aplicada: cuota ${cuota.id} del prestamo ${data.prestamoId} -> ${data.nuevaFecha}`,
     );
 
     try {
@@ -4520,10 +4670,10 @@ export class LoansService implements OnModuleInit {
         usuarioId: data.solicitadoPorId,
         titulo: 'Solicitud de reprogramación enviada',
         mensaje:
-          'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
+          'Tu solicitud fue enviada con éxito y la reprogramación fue aplicada provisionalmente.',
         tipo: 'INFORMATIVO',
         entidad: 'Aprobacion',
-        entidadId: aprobacion.id,
+        entidadId: resultado.aprobacion.id,
         metadata: {
           tipoAprobacion: 'REPROGRAMACION_CUOTA',
           tipo: 'REPROGRAMACION_CUOTA',
@@ -4538,7 +4688,7 @@ export class LoansService implements OnModuleInit {
       this.notificacionesGateway.broadcastAprobacionesActualizadas({
         tipo: 'REPROGRAMACION_CUOTA',
         prestamoId: data.prestamoId,
-        aprobacionId: aprobacion.id,
+        aprobacionId: resultado.aprobacion.id,
         ...contextoRegularizacion,
       });
       this.notificacionesGateway.broadcastJornadasActualizadas({
@@ -4547,29 +4697,30 @@ export class LoansService implements OnModuleInit {
         cuotaId: data.cuotaId || cuota.id,
         fechaOperativaRuta,
         origenGestion: data.origenGestion,
-        aprobacionId: aprobacion.id,
+        aprobacionId: resultado.aprobacion.id,
       });
       this.notificacionesGateway.broadcastRutasActualizadas({
         accion: 'REPROGRAMACION_SOLICITADA',
         prestamoId: data.prestamoId,
         cuotaId: data.cuotaId || cuota.id,
-        aprobacionId: aprobacion.id,
+        aprobacionId: resultado.aprobacion.id,
       });
       this.notificacionesGateway.broadcastPrestamosActualizados({
         accion: 'REPROGRAMACION_SOLICITADA',
         prestamoId: data.prestamoId,
         cuotaId: data.cuotaId || cuota.id,
-        aprobacionId: aprobacion.id,
+        aprobacionId: resultado.aprobacion.id,
       });
     } catch (error) {
       this.logger.warn(
-        `Reprogramacion ${aprobacion.id} creada, pero falló broadcast realtime: ${(error as Error)?.message || error}`,
+        `Reprogramacion ${resultado.aprobacion.id} creada, pero falló broadcast realtime: ${(error as Error)?.message || error}`,
       );
     }
 
     return {
-      mensaje: 'Solicitud de reprogramacion enviada para revision',
-      aprobacion,
+      mensaje: 'Solicitud de reprogramacion enviada y aplicada provisionalmente',
+      aprobacion: resultado.aprobacion,
+      efectoProvisional: resultado.efectoProvisional,
     };
   }
 
@@ -4604,11 +4755,12 @@ export class LoansService implements OnModuleInit {
   }
 
   /**
-   * SUPERVISOR/ADMIN aprueba una reprogramación: aplica la nueva fecha a la cuota.
+   * SUPERVISOR/ADMIN aprueba una reprogramación: confirma el efecto provisional.
    */
   async aprobarReprogramacion(aprobacionId: string, aprobadoPorId: string) {
     const aprobacion = await this.prisma.aprobacion.findUnique({
       where: { id: aprobacionId },
+      include: { efectosProvisionales: true },
     });
     if (!aprobacion) throw new NotFoundException('Solicitud no encontrada');
     if (aprobacion.estado !== EstadoAprobacion.PENDIENTE) {
@@ -4617,12 +4769,18 @@ export class LoansService implements OnModuleInit {
       );
     }
 
-    const datos = aprobacion.datosSolicitud as Record<string, any>;
-    const fechaGestionOriginal = this.parseFechaOperativaReprogramacionKey(
-      datos.fechaOperativaRuta || datos.fechaGestionOriginal,
-    );
+    const efectoProvisional = aprobacion.efectosProvisionales?.[0];
+    if (!efectoProvisional) {
+      throw new BadRequestException('No se encontró efecto provisional');
+    }
+    if (efectoProvisional.estado !== 'PENDIENTE_REVISION') {
+      throw new BadRequestException(
+        'El efecto provisional ya fue procesado',
+      );
+    }
 
     await this.prisma.$transaction(async (tx) => {
+      // 1. Actualizar aprobación a APROBADO
       const claimed = await tx.aprobacion.updateMany({
         where: {
           id: aprobacionId,
@@ -4641,61 +4799,17 @@ export class LoansService implements OnModuleInit {
         );
       }
 
-      await tx.cuota.update({
-        where: { id: datos.cuotaId || aprobacion.referenciaId },
+      // 2. Actualizar EfectoProvisional a CONFIRMADO
+      await tx.efectoProvisional.update({
+        where: { id: efectoProvisional.id },
         data: {
-          fechaVencimiento: new Date(
-            datos.nuevaFecha.includes('T')
-              ? datos.nuevaFecha
-              : datos.nuevaFecha + 'T12:00:00.000Z',
-          ),
+          estado: 'CONFIRMADO',
+          confirmadoEn: new Date(),
         },
       });
-
-      if (fechaGestionOriginal && datos.clienteId && datos.prestamoId) {
-        const asignacionActiva = await tx.asignacionRuta.findFirst({
-          where: { clienteId: String(datos.clienteId), activa: true },
-          select: {
-            rutaId: true,
-            cobradorId: true,
-            ruta: { select: { cobradorId: true } },
-          },
-        });
-
-        if (asignacionActiva?.rutaId) {
-          const cobradorGestionId =
-            asignacionActiva.cobradorId ||
-            asignacionActiva.ruta?.cobradorId ||
-            aprobacion.solicitadoPorId;
-
-          await tx.registroVisita.upsert({
-            where: {
-              rutaId_clienteId_fechaVisita: {
-                rutaId: asignacionActiva.rutaId,
-                clienteId: String(datos.clienteId),
-                fechaVisita: fechaGestionOriginal,
-              },
-            },
-            create: {
-              rutaId: asignacionActiva.rutaId,
-              clienteId: String(datos.clienteId),
-              prestamoId: String(datos.prestamoId),
-              cobradorId: cobradorGestionId,
-              fechaVisita: fechaGestionOriginal,
-              estadoVisita: 'reprogramado',
-              notas: `Reprogramación aprobada: ${datos.motivo || 'Sin motivo'}`,
-            },
-            update: {
-              prestamoId: String(datos.prestamoId),
-              cobradorId: cobradorGestionId,
-              estadoVisita: 'reprogramado',
-              notas: `Reprogramación aprobada: ${datos.motivo || 'Sin motivo'}`,
-            },
-          });
-        }
-      }
     });
 
+    const datos = aprobacion.datosSolicitud as Record<string, any>;
     // Notificar al cobrador que solicitó
     await this.notificacionesService.create({
       usuarioId: aprobacion.solicitadoPorId,
@@ -4712,11 +4826,11 @@ export class LoansService implements OnModuleInit {
     this.notificacionesGateway.broadcastPrestamosActualizados();
     this.notificacionesGateway.broadcastAprobacionesActualizadas();
 
-    return { mensaje: 'Reprogramación aprobada y aplicada exitosamente' };
+    return { mensaje: 'Reprogramación aprobada exitosamente' };
   }
 
   /**
-   * SUPERVISOR/ADMIN rechaza una reprogramación.
+   * SUPERVISOR/ADMIN rechaza una reprogramación: revierte el efecto provisional.
    */
   async rechazarReprogramacion(
     aprobacionId: string,
@@ -4725,6 +4839,7 @@ export class LoansService implements OnModuleInit {
   ) {
     const aprobacion = await this.prisma.aprobacion.findUnique({
       where: { id: aprobacionId },
+      include: { efectosProvisionales: true },
     });
     if (!aprobacion) throw new NotFoundException('Solicitud no encontrada');
     if (aprobacion.estado !== EstadoAprobacion.PENDIENTE) {
@@ -4733,41 +4848,133 @@ export class LoansService implements OnModuleInit {
       );
     }
 
-    const datos = aprobacion.datosSolicitud as Record<string, any>;
-
-    const claimed = await this.prisma.aprobacion.updateMany({
-      where: {
-        id: aprobacionId,
-        estado: EstadoAprobacion.PENDIENTE,
-      },
-      data: {
-        estado: EstadoAprobacion.RECHAZADO,
-        aprobadoPorId: rechazadoPorId,
-        revisadoEn: new Date(),
-        comentarios: comentarios || null,
-      },
-    });
-
-    if (claimed.count !== 1) {
+    const efectoProvisional = aprobacion.efectosProvisionales?.[0];
+    if (!efectoProvisional) {
+      throw new BadRequestException('No se encontró efecto provisional');
+    }
+    if (efectoProvisional.estado !== 'PENDIENTE_REVISION') {
       throw new BadRequestException(
-        'Esta solicitud ya fue tomada por otro usuario',
+        'El efecto provisional ya fue procesado',
       );
     }
 
+    const rollbackData = efectoProvisional.rollbackData as any;
+    const fechaVencimientoOriginal = new Date(rollbackData.fechaVencimientoOriginal);
+    const fechaOperativaOriginal = typeof rollbackData.fechaOperativaOriginal === 'string' ? rollbackData.fechaOperativaOriginal : null;
+    const registroVisitaAnterior = rollbackData.registroVisitaAnterior;
+    const debeRevertirRegistroVisita = rollbackData.origenGestion === 'CIERRE_PENDIENTE' && fechaOperativaOriginal;
+
+    await this.prisma.$transaction(async (tx) => {
+      // 1. Validar que la cuota no haya sido modificada
+      const cuotaActual = await tx.cuota.findUnique({
+        where: { id: rollbackData.cuotaId },
+        select: {
+          id: true,
+          fechaVencimiento: true,
+          estado: true,
+        },
+      });
+
+      if (!cuotaActual) {
+        throw new BadRequestException('La cuota ya no existe');
+      }
+
+      if (cuotaActual.estado === 'PAGADA') {
+        throw new BadRequestException(
+          'No se puede revertir una reprogramación de una cuota ya pagada',
+        );
+      }
+
+      const fechaActualIso = cuotaActual.fechaVencimiento.toISOString();
+      if (fechaActualIso !== rollbackData.fechaVencimientoNueva) {
+        throw new BadRequestException(
+          'La cuota fue modificada después de la solicitud. Requiere revisión manual.',
+        );
+      }
+
+      // 2. Actualizar aprobación a RECHAZADO
+      const claimed = await tx.aprobacion.updateMany({
+        where: {
+          id: aprobacionId,
+          estado: EstadoAprobacion.PENDIENTE,
+        },
+        data: {
+          estado: EstadoAprobacion.RECHAZADO,
+          aprobadoPorId: rechazadoPorId,
+          revisadoEn: new Date(),
+          comentarios: comentarios || null,
+        },
+      });
+
+      if (claimed.count !== 1) {
+        throw new BadRequestException(
+          'Esta solicitud ya fue tomada por otro usuario',
+        );
+      }
+
+      // 3. Revertir la cuota a su fecha original
+      await tx.cuota.update({
+        where: { id: rollbackData.cuotaId },
+        data: {
+          fechaVencimiento: fechaVencimientoOriginal,
+        },
+      });
+
+      // 4. Revertir RegistroVisita si aplica
+      if (debeRevertirRegistroVisita && rollbackData.rutaIdOriginal) {
+        const rutaIdOriginal = rollbackData.rutaIdOriginal;
+        if (registroVisitaAnterior) {
+          // Restaurar el registro anterior
+          await tx.registroVisita.update({
+            where: { id: registroVisitaAnterior.id },
+            data: {
+              estadoVisita: registroVisitaAnterior.estadoVisita,
+              notas: registroVisitaAnterior.notas,
+              prestamoId: registroVisitaAnterior.prestamoId,
+              cobradorId: registroVisitaAnterior.cobradorId,
+            },
+          });
+        } else {
+          // Eliminar el registro que creamos
+          await tx.registroVisita.deleteMany({
+            where: {
+              rutaId: rutaIdOriginal,
+              clienteId: rollbackData.clienteId,
+              fechaVisita: fechaOperativaOriginal,
+            },
+          });
+        }
+      }
+
+      // 5. Actualizar EfectoProvisional a REVERTIDO
+      await tx.efectoProvisional.update({
+        where: { id: efectoProvisional.id },
+        data: {
+          estado: 'REVERTIDO',
+          revertidoEn: new Date(),
+          motivoReversion: comentarios,
+        },
+      });
+    });
+
+    const datos = aprobacion.datosSolicitud as Record<string, any>;
     // Notificar al cobrador
     await this.notificacionesService.create({
       usuarioId: aprobacion.solicitadoPorId,
       titulo: 'Reprogramacion rechazada',
-      mensaje: `La reprogramacion de la cuota del cliente ${datos.clienteNombre} fue RECHAZADA.${comentarios ? ` Motivo: ${comentarios}` : ''}`,
+      mensaje: `La reprogramacion de la cuota del cliente ${datos.clienteNombre} fue RECHAZADA y revertida.${comentarios ? ` Motivo: ${comentarios}` : ''}`,
       tipo: 'REPROGRAMACION_RECHAZADA',
       entidad: 'Aprobacion',
       entidadId: aprobacionId,
     });
 
-    // Actualizar vistas (revisiones, etc)
+    // Actualizar vistas
+    this.notificacionesGateway.broadcastRutasActualizadas();
+    this.notificacionesGateway.broadcastDashboardsActualizados();
+    this.notificacionesGateway.broadcastPrestamosActualizados();
     this.notificacionesGateway.broadcastAprobacionesActualizadas();
 
-    return { mensaje: 'Reprogramación rechazada' };
+    return { mensaje: 'Reprogramación rechazada y revertida' };
   }
 
   /**
