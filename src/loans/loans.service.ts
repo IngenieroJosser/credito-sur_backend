@@ -423,6 +423,270 @@ export class LoansService implements OnModuleInit {
     });
   }
 
+  private async resolveCajaOperacionPrestamo(
+    tx: any,
+    params: {
+      data: CreateLoanDto;
+      creador: any;
+      cliente: any;
+      requiereCajaRuta?: boolean;
+    },
+  ) {
+    const dataAny = params.data as any;
+    const cajaId = String(dataAny.cajaId || '').trim();
+    if (cajaId) {
+      const caja = await tx.caja.findFirst({
+        where: { id: cajaId, activa: true },
+        select: {
+          id: true,
+          codigo: true,
+          tipo: true,
+          nombre: true,
+          saldoActual: true,
+          rutaId: true,
+          responsableId: true,
+        },
+      });
+      if (caja?.id) return caja;
+    }
+
+    const rutaIdPayload = String(dataAny.rutaId || '').trim();
+    const cobradorIdPayload = String(dataAny.cobradorId || '').trim();
+    const rutaPreferida =
+      rutaIdPayload ||
+      params.cliente?.asignacionesRuta?.[0]?.rutaId ||
+      params.cliente?.asignacionesRuta?.[0]?.ruta?.id ||
+      '';
+    const cobradorPreferido =
+      cobradorIdPayload ||
+      params.cliente?.asignacionesRuta?.[0]?.cobradorId ||
+      params.cliente?.asignacionesRuta?.[0]?.ruta?.cobradorId ||
+      (params.creador?.rol === RolUsuario.COBRADOR ? params.creador.id : '');
+
+    const ruta =
+      rutaPreferida || cobradorPreferido
+        ? await tx.ruta.findFirst({
+            where: {
+              eliminadoEn: null,
+              activa: true,
+              ...(rutaPreferida
+                ? { id: rutaPreferida }
+                : { cobradorId: cobradorPreferido }),
+            },
+            select: { id: true, cobradorId: true },
+          })
+        : null;
+
+    if (ruta?.id) {
+      const cajaRuta = await tx.caja.findFirst({
+        where: { activa: true, tipo: 'RUTA' as any, rutaId: ruta.id },
+        select: {
+          id: true,
+          codigo: true,
+          tipo: true,
+          nombre: true,
+          saldoActual: true,
+          rutaId: true,
+          responsableId: true,
+        },
+      });
+      if (cajaRuta?.id) return cajaRuta;
+    }
+
+    if (params.requiereCajaRuta && params.creador?.rol === RolUsuario.COBRADOR) {
+      throw new BadRequestException(
+        'No existe una caja de ruta activa para desembolsar este crédito.',
+      );
+    }
+
+    return (
+      (await tx.caja.findFirst({
+        where: { activa: true, codigo: 'CAJA-OFICINA' },
+        select: {
+          id: true,
+          codigo: true,
+          tipo: true,
+          nombre: true,
+          saldoActual: true,
+          rutaId: true,
+          responsableId: true,
+        },
+      })) ||
+      (await tx.caja.findFirst({
+        where: {
+          activa: true,
+          OR: [{ codigo: 'CAJA-PRINCIPAL' }, { tipo: 'PRINCIPAL' as any }],
+        },
+        orderBy: { creadoEn: 'asc' as any },
+        select: {
+          id: true,
+          codigo: true,
+          tipo: true,
+          nombre: true,
+          saldoActual: true,
+          rutaId: true,
+          responsableId: true,
+        },
+      }))
+    );
+  }
+
+  private getAccountCodeCaja(caja: any) {
+    if (caja?.codigo === 'CAJA-BANCO') return '1.1.2';
+    if (String(caja?.tipo || '').toUpperCase() === 'RUTA') return '1.2.1';
+    return '1.1.1';
+  }
+
+  private async aplicarImpactoProvisionalPrestamo(
+    tx: any,
+    params: {
+      prestamo: any;
+      data: CreateLoanDto;
+      creador: any;
+      cliente: any;
+    },
+  ) {
+    const { prestamo, data, creador, cliente } = params;
+    const transaccionIds: string[] = [];
+    const journalEntryIds: string[] = [];
+    let cajaOrigenId: string | null = null;
+    let montoDesembolsado = 0;
+    let stockDescontado = false;
+    let referenciaDesembolso: string | null = null;
+    let referenciaCuotaInicial: string | null = null;
+
+    const isArticulo =
+      String(prestamo.tipoPrestamo || data.tipoPrestamo || '').toUpperCase() ===
+      'ARTICULO';
+
+    if (isArticulo) {
+      if (
+        prestamo.productoId &&
+        prestamo.producto?.stock !== undefined &&
+        prestamo.producto?.stock !== null
+      ) {
+        await this.descontarStockSiDisponible(prestamo.productoId, tx);
+        stockDescontado = true;
+      }
+
+      const cuotaInicial = Number(prestamo.cuotaInicial || data.cuotaInicial || 0);
+      const cajaDestino =
+        cuotaInicial > 0
+          ? await this.resolveCajaOperacionPrestamo(tx, {
+              data,
+              creador,
+              cliente,
+              requiereCajaRuta: false,
+            })
+          : null;
+
+      if (cuotaInicial > 0 && !cajaDestino?.id) {
+        throw new BadRequestException(
+          'No se encontró una caja activa para registrar la cuota inicial del artículo.',
+        );
+      }
+
+      if (cuotaInicial > 0 && cajaDestino?.id) {
+        const transaccion = await tx.transaccion.create({
+          data: {
+            numeroTransaccion: this.generarNumeroTransaccion('CI'),
+            cajaId: cajaDestino.id,
+            tipo: TipoTransaccion.INGRESO,
+            monto: cuotaInicial,
+            descripcion: `Cuota inicial crédito artículo #${prestamo.numeroPrestamo}`,
+            creadoPorId: data.creadoPorId,
+            tipoReferencia: 'CUOTA_INICIAL',
+            referenciaId: prestamo.id,
+          },
+          select: { id: true, numeroTransaccion: true },
+        });
+        transaccionIds.push(transaccion.id);
+        referenciaCuotaInicial = transaccion.numeroTransaccion;
+      }
+
+      const journalEntry = await this.ledgerService.registrarVentaArticulo(
+        {
+          prestamoId: prestamo.id,
+          precioVenta: Number(
+            prestamo.precioVentaArticulo ||
+              (data as any).valorArticulo ||
+              Number(prestamo.monto || 0) + cuotaInicial,
+          ),
+          costoArticulo: Number(prestamo.costoArticulo || 0),
+          montoFinanciado: Number(prestamo.monto || 0),
+          cuotaInicial,
+          cajaId: cajaDestino?.id,
+          accountCodeCaja: cajaDestino?.id
+            ? this.getAccountCodeCaja(cajaDestino)
+            : undefined,
+          createdBy: data.creadoPorId,
+        },
+        tx,
+      );
+      if (journalEntry?.id) journalEntryIds.push(journalEntry.id);
+      cajaOrigenId = cajaDestino?.id || null;
+    } else {
+      const cajaOrigen = await this.resolveCajaOperacionPrestamo(tx, {
+        data,
+        creador,
+        cliente,
+        requiereCajaRuta: creador?.rol === RolUsuario.COBRADOR,
+      });
+      if (!cajaOrigen?.id) {
+        throw new BadRequestException(
+          'No existe una caja activa para desembolsar el préstamo.',
+        );
+      }
+
+      montoDesembolsado = Number(prestamo.monto || 0);
+      const saldoCaja = Number(cajaOrigen.saldoActual || 0);
+      if (montoDesembolsado > 0 && saldoCaja < montoDesembolsado) {
+        throw new BadRequestException(
+          `Saldo insuficiente en la caja para desembolsar el préstamo. Caja: ${cajaOrigen.nombre}. Saldo: ${saldoCaja.toLocaleString('es-CO')}. Monto desembolso: ${montoDesembolsado.toLocaleString('es-CO')}`,
+        );
+      }
+
+      const transaccion = await tx.transaccion.create({
+        data: {
+          numeroTransaccion: this.generarNumeroTransaccion('T'),
+          cajaId: cajaOrigen.id,
+          tipo: TipoTransaccion.EGRESO,
+          monto: montoDesembolsado,
+          descripcion: `Desembolso provisional de préstamo #${prestamo.numeroPrestamo}`,
+          creadoPorId: data.creadoPorId,
+          tipoReferencia: 'PRESTAMO',
+          referenciaId: prestamo.id,
+        },
+        select: { id: true, numeroTransaccion: true },
+      });
+      transaccionIds.push(transaccion.id);
+      referenciaDesembolso = transaccion.numeroTransaccion;
+
+      const journalEntry = await this.ledgerService.registrarDesembolso(
+        {
+          prestamoId: prestamo.id,
+          monto: montoDesembolsado,
+          cajaOrigenId: cajaOrigen.id,
+          accountCodeOrigen: this.getAccountCodeCaja(cajaOrigen),
+          createdBy: data.creadoPorId,
+        },
+        tx,
+      );
+      if (journalEntry?.id) journalEntryIds.push(journalEntry.id);
+      cajaOrigenId = cajaOrigen.id;
+    }
+
+    return {
+      transaccionIds,
+      journalEntryIds,
+      cajaOrigenId,
+      montoDesembolsado,
+      stockDescontado,
+      referenciaDesembolso,
+      referenciaCuotaInicial,
+    };
+  }
+
   async generarContrato(prestamoId: string) {
     const prestamo = await this.prisma.prestamo.findUnique({
       where: { id: prestamoId },
@@ -3017,6 +3281,7 @@ export class LoansService implements OnModuleInit {
     let efectoProvisionalCreado: any = null;
     let asignacionRutaCreadaId: string | null = null;
     let esAutoAprobadoFinal = false;
+    let impactoProvisionalPrestamo: any = null;
 
     try {
       this.logger.log(
@@ -3398,106 +3663,257 @@ export class LoansService implements OnModuleInit {
         `[CREATE LOAN] Usuario: ${creador.nombres}, Rol: ${creador.rol}, Auto-aprobado por configuración global: ${esAutoAprobado}`,
       );
 
-      // Crear préstamo con cuotas
-      const prestamo = await this.prisma.prestamo.create({
-        data: {
-          numeroPrestamo,
-          idempotencyKey,
-          clienteId: data.clienteId,
-          productoId: data.productoId,
-          precioProductoId: data.precioProductoId,
-          tipoPrestamo: data.tipoPrestamo,
-          tipoAmortizacion: tipoAmort,
-          monto: montoFinanciar,
-          precioVentaArticulo,
-          costoArticulo,
-          margenArticulo,
-          tasaInteres: tasaInteres,
-          tasaInteresMora: data.tasaInteresMora || 2,
-          plazoMeses: plazoMesesPrisma,
-          frecuenciaPago: data.frecuenciaPago,
-          cantidadCuotas,
-          cuotaInicial: data.cuotaInicial || 0,
-          fechaInicio,
-          fechaPrimerCobro: fechaPrimerCobroParsed,
-          fechaFin,
-          estado: data.esContado
-            ? EstadoPrestamo.PAGADO
-            : esAutoAprobado
-              ? EstadoPrestamo.ACTIVO
-              : EstadoPrestamo.PENDIENTE_APROBACION,
-          estadoAprobacion: data.esContado
-            ? EstadoAprobacion.APROBADO
-            : esAutoAprobado
+      const articuloNombre =
+        (data as any).productoNombre || producto?.nombre || 'Artículo';
+      const totalCuotasPrometidas = cantidadCuotas;
+      const isFinanciamientoArticulo = data.tipoPrestamo === 'ARTICULO';
+      const safeNumber = (val: any) => {
+        const n = Number(val);
+        return isNaN(n) ? 0 : n;
+      };
+
+      const {
+        prestamo,
+        aprobacion,
+        efectoProvisional,
+        impactoProvisional,
+      } = await this.prisma.$transaction(async (tx) => {
+        const prestamoTx = await tx.prestamo.create({
+          data: {
+            numeroPrestamo,
+            idempotencyKey,
+            clienteId: data.clienteId,
+            productoId: data.productoId,
+            precioProductoId: data.precioProductoId,
+            tipoPrestamo: data.tipoPrestamo,
+            tipoAmortizacion: tipoAmort,
+            monto: montoFinanciar,
+            precioVentaArticulo,
+            costoArticulo,
+            margenArticulo,
+            tasaInteres: tasaInteres,
+            tasaInteresMora: data.tasaInteresMora || 2,
+            plazoMeses: plazoMesesPrisma,
+            frecuenciaPago: data.frecuenciaPago,
+            cantidadCuotas,
+            cuotaInicial: data.cuotaInicial || 0,
+            fechaInicio,
+            fechaPrimerCobro: fechaPrimerCobroParsed,
+            fechaFin,
+            estado: data.esContado
+              ? EstadoPrestamo.PAGADO
+              : esAutoAprobado
+                ? EstadoPrestamo.ACTIVO
+                : EstadoPrestamo.PENDIENTE_APROBACION,
+            estadoAprobacion: data.esContado
               ? EstadoAprobacion.APROBADO
-              : EstadoAprobacion.PENDIENTE,
-          aprobadoPorId:
-            data.esContado || esAutoAprobado ? data.creadoPorId : undefined,
-          creadoPorId: data.creadoPorId,
-          interesTotal,
-          saldoPendiente: data.esContado ? 0 : montoTotal,
-          totalPagado: data.esContado ? montoTotal : 0,
-          notas:
-            data.notas ||
-            (data as any).observaciones ||
-            (data as any).comentarios ||
-            (data as any).detalle ||
-            undefined
-              ? String(
-                  data.notas ||
-                    (data as any).observaciones ||
-                    (data as any).comentarios ||
-                    (data as any).detalle,
-                )
-              : undefined,
-          garantia: data.garantia ? String(data.garantia) : undefined,
-          cuotas: {
-            create: cuotasDataFinal,
-          },
-        } as any,
-        include: {
-          cliente: true,
-          producto: true,
-          cuotas: true,
-          creadoPor: {
-            select: {
-              id: true,
-              nombres: true,
-              apellidos: true,
-              rol: true,
+              : esAutoAprobado
+                ? EstadoAprobacion.APROBADO
+                : EstadoAprobacion.PENDIENTE,
+            aprobadoPorId:
+              data.esContado || esAutoAprobado ? data.creadoPorId : undefined,
+            creadoPorId: data.creadoPorId,
+            interesTotal,
+            saldoPendiente: data.esContado ? 0 : montoTotal,
+            totalPagado: data.esContado ? montoTotal : 0,
+            notas:
+              data.notas ||
+              (data as any).observaciones ||
+              (data as any).comentarios ||
+              (data as any).detalle ||
+              undefined
+                ? String(
+                    data.notas ||
+                      (data as any).observaciones ||
+                      (data as any).comentarios ||
+                      (data as any).detalle,
+                  )
+                : undefined,
+            garantia: data.garantia ? String(data.garantia) : undefined,
+            cuotas: {
+              create: cuotasDataFinal,
+            },
+          } as any,
+          include: {
+            cliente: true,
+            producto: true,
+            cuotas: true,
+            creadoPor: {
+              select: {
+                id: true,
+                nombres: true,
+                apellidos: true,
+                rol: true,
+              },
             },
           },
-        },
-      });
-      prestamoCreado = prestamo;
-
-      // Descontar stock si el préstamo es de artículo y ha sido APROBADO inmediatamente
-      if (
-        prestamo.tipoPrestamo === 'ARTICULO' &&
-        prestamo.estadoAprobacion === EstadoAprobacion.APROBADO
-      ) {
-        if (
-          prestamo.productoId &&
-          prestamo.producto?.stock !== undefined &&
-          prestamo.producto?.stock !== null
-        ) {
-          await this.descontarStockSiDisponible(prestamo.productoId);
-        }
-      }
-
-      if (prestamo.estadoAprobacion === EstadoAprobacion.APROBADO) {
-        await this.registrarImpactoContablePrestamoAprobado({
-          id: prestamo.id,
-          numeroPrestamo: prestamo.numeroPrestamo,
-          clienteId: prestamo.clienteId,
-          tipoPrestamo: prestamo.tipoPrestamo,
-          monto: prestamo.monto,
-          cuotaInicial: prestamo.cuotaInicial,
-          precioVentaArticulo: prestamo.precioVentaArticulo,
-          costoArticulo: prestamo.costoArticulo,
-          creadoPorId: data.creadoPorId,
         });
-      }
+
+        const impactoTx = await this.aplicarImpactoProvisionalPrestamo(tx, {
+          prestamo: prestamoTx,
+          data,
+          creador,
+          cliente,
+        });
+
+        const aprobacionTx = await tx.aprobacion.create({
+          data: {
+            tipoAprobacion: TipoAprobacion.NUEVO_PRESTAMO,
+            idempotencyKey,
+            referenciaId: prestamoTx.id,
+            tablaReferencia: 'Prestamo',
+            solicitadoPorId: data.creadoPorId,
+            datosSolicitud: {
+              numeroPrestamo: prestamoTx.numeroPrestamo,
+              cliente: `${cliente.nombres} ${cliente.apellidos}`,
+              cedula: String(cliente.dni),
+              telefono: String(cliente.telefono),
+              monto: safeNumber(prestamoTx.monto),
+              montoTotal: safeNumber(prestamoTx.montoTotal),
+              interesTotal: safeNumber(prestamoTx.interesTotal),
+              tipoAmortizacion: prestamoTx.tipoAmortizacion,
+              cantidadCuotas: safeNumber(prestamoTx.cantidadCuotas),
+              tasaInteres: safeNumber(prestamoTx.tasaInteres),
+              tipo: String(data.tipoPrestamo),
+              articulo: String(articuloNombre)
+                .replace(/&amp;/gi, '&')
+                .replace(/&lt;/gi, '<')
+                .replace(/&gt;/gi, '>'),
+              valorArticulo: isFinanciamientoArticulo
+                ? safeNumber((data as any).valorArticulo || precioArticuloTotal)
+                : safeNumber(prestamoTx.monto),
+              cuotas: safeNumber(totalCuotasPrometidas),
+              plazoMeses: numPlazoMeses,
+              porcentaje: safeNumber(
+                isFinanciamientoArticulo ? 0 : tasaInteres,
+              ),
+              frecuenciaPago: String(data.frecuenciaPago),
+              cuotaInicial: safeNumber(data.cuotaInicial),
+              notas:
+                data.notas ||
+                (data as any).observaciones ||
+                (data as any).comentarios ||
+                (data as any).detalle ||
+                undefined
+                  ? String(
+                      data.notas ||
+                        (data as any).observaciones ||
+                        (data as any).comentarios ||
+                        (data as any).detalle,
+                    )
+                  : undefined,
+              garantia: data.garantia ? String(data.garantia) : undefined,
+              fechaInicio: prestamoTx.fechaInicio
+                ? formatBogotaOffsetIso(prestamoTx.fechaInicio)
+                : undefined,
+              fechaPrimerCobro: (data as any).fechaPrimerCobro
+                ? String((data as any).fechaPrimerCobro)
+                : undefined,
+              esContado: !!data.esContado,
+              idempotencyKey: idempotencyKey || null,
+            },
+            montoSolicitud: isFinanciamientoArticulo
+              ? precioArticuloTotal
+              : safeNumber(prestamoTx.monto),
+            estado:
+              data.esContado || esAutoAprobado
+                ? EstadoAprobacion.APROBADO
+                : EstadoAprobacion.PENDIENTE,
+            aprobadoPorId:
+              data.esContado || esAutoAprobado ? data.creadoPorId : undefined,
+          },
+        });
+
+        const efectoTx =
+          !esAutoAprobado && !data.esContado
+            ? await tx.efectoProvisional.create({
+                data: {
+                  aprobacionId: aprobacionTx.id,
+                  tipoAccion: 'NUEVO_PRESTAMO',
+                  tipoEntidad: 'Prestamo',
+                  entidadId: prestamoTx.id,
+                  estado: 'PENDIENTE_REVISION',
+                  snapshotAntes: null,
+                  snapshotDespues: {
+                    prestamo: {
+                      id: prestamoTx.id,
+                      estado: prestamoTx.estado,
+                      estadoAprobacion: prestamoTx.estadoAprobacion,
+                      saldoPendiente: prestamoTx.saldoPendiente,
+                    },
+                    cuotas: (prestamoTx.cuotas || []).map((cuota: any) => ({
+                      id: cuota.id,
+                      estado: cuota.estado,
+                      monto: cuota.monto,
+                      fechaVencimiento: cuota.fechaVencimiento,
+                    })),
+                  },
+                  rollbackData: {
+                    prestamoId: prestamoTx.id,
+                    cuotaIds: (prestamoTx.cuotas || []).map(
+                      (cuota: any) => cuota.id,
+                    ),
+                    productoId: prestamoTx.productoId || null,
+                    stockDescontado: !!impactoTx?.stockDescontado,
+                    journalReferenceIds: impactoTx?.journalEntryIds || [],
+                    journalEntryIds: impactoTx?.journalEntryIds || [],
+                    transaccionIds: impactoTx?.transaccionIds || [],
+                    cajaOrigenId: impactoTx?.cajaOrigenId || null,
+                    montoDesembolsado: impactoTx?.montoDesembolsado || 0,
+                    tipoPrestamo: prestamoTx.tipoPrestamo,
+                    asignacionRutaId: asignacionRutaCreadaId,
+                    estadoPrestamoInicial: prestamoTx.estado,
+                    estadoAprobacionInicial: prestamoTx.estadoAprobacion,
+                    estadoInicialPrestamo: prestamoTx.estado,
+                    estadoInicialCuotas: (prestamoTx.cuotas || []).map(
+                      (cuota: any) => ({
+                        id: cuota.id,
+                        estado: cuota.estado,
+                        montoPagado: cuota.montoPagado || 0,
+                        fechaPago: cuota.fechaPago || null,
+                      }),
+                    ),
+                    usuarioSolicitanteId: data.creadoPorId,
+                    rutaId:
+                      (data as any).rutaId ||
+                      cliente.asignacionesRuta?.[0]?.rutaId ||
+                      cliente.asignacionesRuta?.[0]?.ruta?.id ||
+                      null,
+                    cobradorId:
+                      (data as any).cobradorId ||
+                      cliente.asignacionesRuta?.[0]?.cobradorId ||
+                      cliente.asignacionesRuta?.[0]?.ruta?.cobradorId ||
+                      null,
+                    referenciaDesembolso:
+                      impactoTx?.referenciaDesembolso || null,
+                    referenciaCuotaInicial:
+                      impactoTx?.referenciaCuotaInicial || null,
+                  },
+                  entidadesAfectadas: {
+                    prestamoId: prestamoTx.id,
+                    cuotaIds: (prestamoTx.cuotas || []).map(
+                      (cuota: any) => cuota.id,
+                    ),
+                    aprobacionId: aprobacionTx.id,
+                    asignacionRutaId: asignacionRutaCreadaId,
+                  },
+                  aplicadoPorId: data.creadoPorId,
+                },
+              })
+            : null;
+
+        return {
+          prestamo: prestamoTx,
+          aprobacion: aprobacionTx,
+          efectoProvisional: efectoTx,
+          impactoProvisional: impactoTx,
+        };
+      });
+
+      prestamoCreado = prestamo;
+      aprobacionCreada = aprobacion;
+      efectoProvisionalCreado = efectoProvisional;
+      impactoProvisionalPrestamo = impactoProvisional;
 
       const hoyKey = getBogotaDayKey(new Date());
       const { startDate: today } = getBogotaStartEndOfDayFromKey(hoyKey);
@@ -3614,141 +4030,7 @@ export class LoansService implements OnModuleInit {
         });
       }
 
-      const articuloNombre =
-        (data as any).productoNombre || prestamo.producto?.nombre || 'Artículo';
-      const totalCuotasPrometidas = cantidadCuotas;
-      const isFinanciamientoArticulo = data.tipoPrestamo === 'ARTICULO';
-
-      const safeNumber = (val: any) => {
-        const n = Number(val);
-        return isNaN(n) ? 0 : n;
-      };
-
-      // Crear registro de aprobación
-      const aprobacion = await this.prisma.aprobacion.create({
-        data: {
-          tipoAprobacion: TipoAprobacion.NUEVO_PRESTAMO,
-          idempotencyKey,
-          referenciaId: prestamo.id,
-          tablaReferencia: 'Prestamo',
-          solicitadoPorId: data.creadoPorId,
-          datosSolicitud: {
-            numeroPrestamo: prestamo.numeroPrestamo,
-            cliente: `${cliente.nombres} ${cliente.apellidos}`,
-            cedula: String(cliente.dni),
-            telefono: String(cliente.telefono),
-            monto: safeNumber(prestamo.monto),
-            montoTotal: safeNumber(prestamo.montoTotal),
-            interesTotal: safeNumber(prestamo.interesTotal),
-            tipoAmortizacion: prestamo.tipoAmortizacion,
-            cantidadCuotas: safeNumber(prestamo.cantidadCuotas),
-            tasaInteres: safeNumber(prestamo.tasaInteres),
-            tipo: String(data.tipoPrestamo),
-            // Sanitizar el nombre del artículo: reemplazar & HTML por símbolo natural
-            articulo: String(articuloNombre)
-              .replace(/&amp;/gi, '&')
-              .replace(/&lt;/gi, '<')
-              .replace(/&gt;/gi, '>'),
-            // valorArticulo = precio total del artículo (incluye cuota inicial + monto financiado)
-            valorArticulo: isFinanciamientoArticulo
-              ? safeNumber((data as any).valorArticulo || precioArticuloTotal)
-              : safeNumber(prestamo.monto),
-            cuotas: safeNumber(totalCuotasPrometidas),
-            plazoMeses: numPlazoMeses, // GUARDAR EL FLOAT (Ej: 0.4) para que la aprobación no lo redondee a 1.
-            porcentaje: safeNumber(isFinanciamientoArticulo ? 0 : tasaInteres),
-            frecuenciaPago: String(data.frecuenciaPago),
-            cuotaInicial: safeNumber(data.cuotaInicial),
-            notas:
-              data.notas ||
-              (data as any).observaciones ||
-              (data as any).comentarios ||
-              (data as any).detalle ||
-              undefined
-                ? String(
-                    data.notas ||
-                      (data as any).observaciones ||
-                      (data as any).comentarios ||
-                      (data as any).detalle,
-                  )
-                : undefined,
-            garantia: data.garantia ? String(data.garantia) : undefined,
-            fechaInicio: prestamo.fechaInicio
-              ? formatBogotaOffsetIso(prestamo.fechaInicio)
-              : undefined,
-            fechaPrimerCobro: (data as any).fechaPrimerCobro
-              ? String((data as any).fechaPrimerCobro)
-              : undefined,
-            esContado: !!data.esContado,
-            idempotencyKey: idempotencyKey || null,
-          },
-          // montoSolicitud = precio total del artículo, o monto del préstamo en efectivo
-          montoSolicitud: isFinanciamientoArticulo
-            ? precioArticuloTotal
-            : safeNumber(prestamo.monto),
-          estado:
-            data.esContado || esAutoAprobado
-              ? EstadoAprobacion.APROBADO
-              : EstadoAprobacion.PENDIENTE,
-          aprobadoPorId:
-            data.esContado || esAutoAprobado ? data.creadoPorId : undefined,
-        },
-      });
-      aprobacionCreada = aprobacion;
-
       if (!esAutoAprobado && !data.esContado) {
-        efectoProvisionalCreado = await (this.prisma as any).efectoProvisional
-          ?.create?.({
-            data: {
-              aprobacionId: aprobacion.id,
-              tipoAccion: 'NUEVO_PRESTAMO',
-              tipoEntidad: 'Prestamo',
-              entidadId: prestamo.id,
-              estado: 'PENDIENTE_REVISION',
-              snapshotAntes: null,
-              snapshotDespues: {
-                prestamo: {
-                  id: prestamo.id,
-                  estado: prestamo.estado,
-                  estadoAprobacion: prestamo.estadoAprobacion,
-                  saldoPendiente: prestamo.saldoPendiente,
-                },
-                cuotas: (prestamo.cuotas || []).map((cuota: any) => ({
-                  id: cuota.id,
-                  estado: cuota.estado,
-                  monto: cuota.monto,
-                  fechaVencimiento: cuota.fechaVencimiento,
-                })),
-              },
-              rollbackData: {
-                prestamoId: prestamo.id,
-                cuotaIds: (prestamo.cuotas || []).map((cuota: any) => cuota.id),
-                productoId: prestamo.productoId || null,
-                stockDescontado: false,
-                journalReferenceIds: [],
-                transaccionIds: [],
-                asignacionRutaId: asignacionRutaCreadaId,
-                estadoPrestamoInicial: prestamo.estado,
-                estadoAprobacionInicial: prestamo.estadoAprobacion,
-                usuarioSolicitanteId: data.creadoPorId,
-                rutaId:
-                  cliente.asignacionesRuta?.[0]?.rutaId ||
-                  cliente.asignacionesRuta?.[0]?.ruta?.id ||
-                  null,
-                cobradorId:
-                  cliente.asignacionesRuta?.[0]?.cobradorId ||
-                  cliente.asignacionesRuta?.[0]?.ruta?.cobradorId ||
-                  null,
-              },
-              entidadesAfectadas: {
-                prestamoId: prestamo.id,
-                cuotaIds: (prestamo.cuotas || []).map((cuota: any) => cuota.id),
-                aprobacionId: aprobacion.id,
-                asignacionRutaId: asignacionRutaCreadaId,
-              },
-              aplicadoPorId: data.creadoPorId,
-            },
-          });
-
         try {
           await this.notificacionesService.notifyApprovers({
             titulo: 'Nuevo crédito requiere aprobación',

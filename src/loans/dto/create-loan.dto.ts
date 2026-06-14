@@ -11,6 +11,18 @@ import {
 import { FrecuenciaPago, TipoAmortizacion } from '@prisma/client';
 import { Transform } from 'class-transformer';
 
+export enum TipoPrestamoDto {
+  EFECTIVO = 'EFECTIVO',
+  ARTICULO = 'ARTICULO',
+}
+
+export enum OrigenOperacionPrestamo {
+  RUTA = 'RUTA',
+  ADMIN = 'ADMIN',
+  OFICINA = 'OFICINA',
+  PUNTO_VENTA = 'PUNTO_VENTA',
+}
+
 export class CreateLoanDto {
   @IsString()
   @IsNotEmpty()
@@ -24,9 +36,15 @@ export class CreateLoanDto {
   @IsOptional()
   precioProductoId?: string;
 
-  @IsString()
+  @Transform(({ value }) => {
+    const normalized = String(value || '').trim().toUpperCase();
+    if (normalized === 'PRESTAMO') return TipoPrestamoDto.EFECTIVO;
+    if (normalized === 'ARTICULO') return TipoPrestamoDto.ARTICULO;
+    return normalized;
+  })
+  @IsEnum(TipoPrestamoDto)
   @IsNotEmpty()
-  tipoPrestamo: string; // 'prestamo' o 'articulo'
+  tipoPrestamo: TipoPrestamoDto;
 
   @Transform(({ value }) =>
     value === null || value === undefined || value === ''
@@ -44,7 +62,9 @@ export class CreateLoanDto {
   )
   @IsNumber()
   @Min(0)
-  @ValidateIf((o) => o.tipoPrestamo === 'prestamo')
+  @ValidateIf(
+    (o) => String(o.tipoPrestamo || '').toUpperCase() !== 'ARTICULO',
+  )
   tasaInteres: number;
 
   @Transform(({ value }) =>
@@ -54,7 +74,8 @@ export class CreateLoanDto {
   )
   @IsNumber()
   @Min(0)
-  tasaInteresMora: number;
+  @IsOptional()
+  tasaInteresMora?: number;
 
   @Transform(({ value }) =>
     value === null || value === undefined || value === ''
@@ -131,12 +152,34 @@ export class CreateLoanDto {
   @IsOptional()
   garantia?: string;
 
+  @Transform(({ value }) => value === true || value === 'true' || value === '1')
   @IsOptional()
   esContado?: boolean;
 
   @IsString()
   @IsOptional()
   idempotencyKey?: string;
+
+  @IsString()
+  @IsOptional()
+  rutaId?: string;
+
+  @IsString()
+  @IsOptional()
+  cobradorId?: string;
+
+  @IsString()
+  @IsOptional()
+  cajaId?: string;
+
+  @Transform(({ value }) =>
+    value === null || value === undefined || value === ''
+      ? undefined
+      : String(value).trim().toUpperCase(),
+  )
+  @IsEnum(OrigenOperacionPrestamo)
+  @IsOptional()
+  origenOperacion?: OrigenOperacionPrestamo;
 
   @IsNumber()
   @IsOptional()

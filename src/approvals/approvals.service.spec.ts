@@ -42,6 +42,7 @@ function buildPrismaMock() {
     pago: { create: jest.fn().mockResolvedValue({ id: 'pago-transfer-1' }) },
     cuota: {
       update: jest.fn().mockResolvedValue({}),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       count: jest.fn().mockResolvedValue(0),
     },
     prestamo: {
@@ -153,6 +154,7 @@ function buildPrismaMock() {
         ],
         cliente: { id: 'cliente-1' },
       }),
+      update: jest.fn().mockResolvedValue({}),
     },
     pago: { count: jest.fn().mockResolvedValue(0) },
     asignacionRuta: { findFirst: jest.fn().mockResolvedValue(null) },
@@ -718,7 +720,7 @@ describe('ApprovalsService financial ledger controls', () => {
     expect(mockLedger.registrarAsiento).not.toHaveBeenCalled();
   });
 
-  it('confirma un préstamo provisional sin volver a ejecutar approveNewLoan', async () => {
+  it('confirma un préstamo provisional sin volver a mover caja ni ledger', async () => {
     const prisma = buildPrismaMock();
     prisma.aprobacion.findUnique.mockResolvedValue({
       id: 'approval-loan-1',
@@ -800,12 +802,92 @@ describe('ApprovalsService financial ledger controls', () => {
       }),
       include: { producto: true },
     });
+    expect(prisma._tx.cuota.updateMany).toHaveBeenCalledWith({
+      where: { prestamoId: 'prestamo-1' },
+      data: {
+        estado: EstadoCuota.PENDIENTE,
+        montoPagado: 0,
+        fechaPago: null,
+      },
+    });
     expect(prisma._tx.efectoProvisional.update).toHaveBeenCalledWith({
       where: { id: 'efecto-loan-1' },
       data: expect.objectContaining({
         estado: 'REVERTIDO',
         revertidoEn: expect.any(Date),
         motivoReversion: 'No cumple política',
+      }),
+    });
+  });
+
+  it('restaura una aprobación rechazada creando un nuevo efecto provisional', async () => {
+    const prisma = buildPrismaMock();
+    prisma.aprobacion.findUnique.mockResolvedValue({
+      id: 'approval-loan-1',
+      tipoAprobacion: TipoAprobacion.NUEVO_PRESTAMO,
+      referenciaId: 'prestamo-1',
+      solicitadoPorId: 'supervisor-1',
+      estado: EstadoAprobacion.RECHAZADO,
+    });
+    prisma.efectoProvisional.findFirst.mockResolvedValue({
+      id: 'efecto-loan-1',
+      aprobacionId: 'approval-loan-1',
+      estado: 'REVERTIDO',
+      rollbackData: {
+        prestamoId: 'prestamo-1',
+        cuotaIds: ['cuota-1'],
+        transaccionIds: [],
+        journalEntryIds: [],
+        stockDescontado: false,
+      },
+    });
+    prisma._tx.efectoProvisional.findFirst = jest.fn().mockResolvedValue({
+      id: 'efecto-loan-1',
+      aprobacionId: 'approval-loan-1',
+      estado: 'REVERTIDO',
+      rollbackData: {
+        prestamoId: 'prestamo-1',
+        cuotaIds: ['cuota-1'],
+        transaccionIds: [],
+        journalEntryIds: [],
+        stockDescontado: false,
+      },
+    });
+    (prisma._tx.efectoProvisional as any).create = jest
+      .fn()
+      .mockResolvedValue({ id: 'efecto-loan-2' });
+
+    await makeService(prisma).confirmSuperadminAction(
+      'approval-loan-1',
+      'REVERTIR',
+      'superadmin-1',
+      'Revisar de nuevo',
+    );
+
+    expect(prisma._tx.aprobacion.update).toHaveBeenCalledWith({
+      where: { id: 'approval-loan-1' },
+      data: expect.objectContaining({
+        estado: EstadoAprobacion.PENDIENTE,
+        aprobadoPorId: null,
+        revisadoEn: null,
+      }),
+    });
+    expect(prisma._tx.prestamo.update).toHaveBeenCalledWith({
+      where: { id: 'prestamo-1' },
+      data: expect.objectContaining({
+        estado: EstadoPrestamo.PENDIENTE_APROBACION,
+        estadoAprobacion: EstadoAprobacion.PENDIENTE,
+        eliminadoEn: null,
+      }),
+    });
+    expect((prisma._tx.efectoProvisional as any).create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        aprobacionId: 'approval-loan-1',
+        estado: 'PENDIENTE_REVISION',
+        rollbackData: expect.objectContaining({
+          efectoAnteriorId: 'efecto-loan-1',
+          reaperturaPorId: 'superadmin-1',
+        }),
       }),
     });
   });

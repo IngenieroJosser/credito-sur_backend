@@ -273,6 +273,260 @@ export class ApprovalsService {
     });
   }
 
+  private async asegurarRestauracionProvisionalPermitida(aprobacionId: string) {
+    const efecto = await this.prisma.efectoProvisional?.findFirst?.({
+      where: { aprobacionId },
+      orderBy: { creadoEn: 'desc' },
+    });
+
+    if (efecto && efecto.estado !== 'PENDIENTE_REVISION') {
+      throw new BadRequestException(
+        'Esta solicitud ya ejecutó su efecto provisional. Debe crearse una nueva solicitud para reabrirla.',
+      );
+    }
+  }
+
+  private async crearReversasPrestamoProvisional(
+    tx: any,
+    rollbackData: any,
+    reversadoPorId?: string,
+    motivoRechazo?: string,
+  ) {
+    const transaccionIds = Array.isArray(rollbackData?.transaccionIds)
+      ? rollbackData.transaccionIds.filter(Boolean)
+      : [];
+    const journalEntryIds = Array.isArray(rollbackData?.journalEntryIds)
+      ? rollbackData.journalEntryIds.filter(Boolean)
+      : Array.isArray(rollbackData?.journalReferenceIds)
+        ? rollbackData.journalReferenceIds.filter(Boolean)
+        : [];
+
+    const transaccionReversaIds: string[] = [];
+    const journalEntryReversaIds: string[] = [];
+
+    for (const transaccionId of transaccionIds) {
+      const original = await tx.transaccion.findUnique?.({
+        where: { id: transaccionId },
+        select: {
+          id: true,
+          cajaId: true,
+          tipo: true,
+          monto: true,
+          descripcion: true,
+          creadoPorId: true,
+          tipoReferencia: true,
+          referenciaId: true,
+        },
+      });
+      if (!original?.id) continue;
+
+      const tipoReversa =
+        original.tipo === TipoTransaccion.EGRESO
+          ? TipoTransaccion.INGRESO
+          : TipoTransaccion.EGRESO;
+
+      const reversa = await tx.transaccion.create({
+        data: {
+          numeroTransaccion: this.generarNumeroTransaccion('REV'),
+          cajaId: original.cajaId,
+          tipo: tipoReversa,
+          monto: Number(original.monto || 0),
+          descripcion: `Reversa de ${original.descripcion || 'movimiento'}${motivoRechazo ? ` — ${motivoRechazo}` : ''}`,
+          creadoPorId: reversadoPorId || original.creadoPorId,
+          aprobadoPorId: reversadoPorId || undefined,
+          tipoReferencia: 'REVERSA',
+          referenciaId: original.id,
+        },
+        select: { id: true },
+      });
+      transaccionReversaIds.push(reversa.id);
+    }
+
+    for (const journalEntryId of journalEntryIds) {
+      const original = await tx.journalEntry.findUnique?.({
+        where: { id: journalEntryId },
+        include: { lines: true },
+      });
+      if (!original?.id || !Array.isArray(original.lines)) continue;
+
+      const reversa = await this.ledgerService.registrarAsiento(
+        {
+          referenceType: 'REVERSA' as any,
+          referenceId: original.id,
+          description: `Reversa de asiento ${original.referenceType || ''} ${original.referenceId || ''}${motivoRechazo ? ` — ${motivoRechazo}` : ''}`,
+          createdBy: reversadoPorId || original.createdBy,
+          lines: original.lines
+            .map((line: any) => {
+              const debit = Number(line.debitAmount || 0);
+              const credit = Number(line.creditAmount || 0);
+              const cajaDelta =
+                line.cajaId && (debit > 0 || credit > 0)
+                  ? credit - debit
+                  : undefined;
+
+              return {
+                accountCode: line.accountCode,
+                debitAmount: credit > 0 ? credit : undefined,
+                creditAmount: debit > 0 ? debit : undefined,
+                cajaId: line.cajaId || undefined,
+                cajaDelta,
+              };
+            })
+            .filter(
+              (line: any) =>
+                Number(line.debitAmount || 0) > 0 ||
+                Number(line.creditAmount || 0) > 0,
+            ),
+        },
+        tx,
+      );
+      if (reversa?.id) journalEntryReversaIds.push(reversa.id);
+    }
+
+    return { transaccionReversaIds, journalEntryReversaIds };
+  }
+
+  private async reaplicarPrestamoProvisionalRevertido(
+    tx: any,
+    approval: any,
+    userId: string,
+    notas?: string,
+  ) {
+    const efectoAnterior = await tx.efectoProvisional.findFirst({
+      where: { aprobacionId: approval.id },
+      orderBy: { creadoEn: 'desc' },
+    });
+
+    if (!efectoAnterior || efectoAnterior.estado !== 'REVERTIDO') {
+      return null;
+    }
+
+    const rollbackData = efectoAnterior.rollbackData || {};
+    const prestamoId = String(
+      rollbackData.prestamoId || approval.referenciaId || '',
+    );
+    if (!prestamoId) {
+      throw new BadRequestException('La aprobación no tiene préstamo asociado');
+    }
+
+    await tx.prestamo.update({
+      where: { id: prestamoId },
+      data: {
+        estado: EstadoPrestamo.PENDIENTE_APROBACION,
+        estadoAprobacion: EstadoAprobacion.PENDIENTE,
+        eliminadoEn: null,
+        aprobadoPorId: null,
+      },
+    });
+
+    await tx.cuota.updateMany({
+      where: { prestamoId },
+      data: {
+        estado: EstadoCuota.PENDIENTE,
+        montoPagado: 0,
+        fechaPago: null,
+      },
+    });
+
+    if (rollbackData.stockDescontado && rollbackData.productoId) {
+      await tx.producto.update({
+        where: { id: rollbackData.productoId },
+        data: { stock: { decrement: 1 } },
+      });
+    }
+
+    const transaccionIds: string[] = [];
+    const journalEntryIds: string[] = [];
+
+    for (const transaccionId of rollbackData.transaccionIds || []) {
+      const original = await tx.transaccion.findUnique?.({
+        where: { id: transaccionId },
+      });
+      if (!original?.id) continue;
+
+      const nueva = await tx.transaccion.create({
+        data: {
+          numeroTransaccion: this.generarNumeroTransaccion('REP'),
+          cajaId: original.cajaId,
+          tipo: original.tipo,
+          monto: Number(original.monto || 0),
+          descripcion: `Reapertura provisional: ${original.descripcion || 'movimiento'}`,
+          creadoPorId: userId,
+          tipoReferencia: original.tipoReferencia,
+          referenciaId: original.referenciaId,
+        },
+        select: { id: true },
+      });
+      transaccionIds.push(nueva.id);
+    }
+
+    const originalJournalIds = rollbackData.journalEntryIds || rollbackData.journalReferenceIds || [];
+    for (const journalEntryId of originalJournalIds) {
+      const original = await tx.journalEntry.findUnique?.({
+        where: { id: journalEntryId },
+        include: { lines: true },
+      });
+      if (!original?.id || !Array.isArray(original.lines)) continue;
+
+      const nuevo = await this.ledgerService.registrarAsiento(
+        {
+          referenceType: 'REAPERTURA_PROVISIONAL' as any,
+          referenceId: prestamoId,
+          description: `Reapertura provisional de ${original.referenceType || ''} ${original.referenceId || ''}${notas ? ` — ${notas}` : ''}`,
+          createdBy: userId,
+          lines: original.lines
+            .map((line: any) => {
+              const debit = Number(line.debitAmount || 0);
+              const credit = Number(line.creditAmount || 0);
+              return {
+                accountCode: line.accountCode,
+                debitAmount: debit > 0 ? debit : undefined,
+                creditAmount: credit > 0 ? credit : undefined,
+                cajaId: line.cajaId || undefined,
+                cajaDelta:
+                  line.cajaId && (debit > 0 || credit > 0)
+                    ? debit - credit
+                    : undefined,
+              };
+            })
+            .filter(
+              (line: any) =>
+                Number(line.debitAmount || 0) > 0 ||
+                Number(line.creditAmount || 0) > 0,
+            ),
+        },
+        tx,
+      );
+      if (nuevo?.id) journalEntryIds.push(nuevo.id);
+    }
+
+    return tx.efectoProvisional.create({
+      data: {
+        aprobacionId: approval.id,
+        tipoAccion: 'NUEVO_PRESTAMO',
+        tipoEntidad: 'Prestamo',
+        entidadId: prestamoId,
+        estado: 'PENDIENTE_REVISION',
+        snapshotAntes: { efectoAnteriorId: efectoAnterior.id },
+        snapshotDespues: { reapertura: true },
+        rollbackData: {
+          ...rollbackData,
+          transaccionIds,
+          journalEntryIds,
+          journalReferenceIds: journalEntryIds,
+          efectoAnteriorId: efectoAnterior.id,
+          reaperturaPorId: userId,
+        },
+        entidadesAfectadas: {
+          prestamoId,
+          cuotaIds: rollbackData.cuotaIds || [],
+          aprobacionId: approval.id,
+        },
+        aplicadoPorId: userId,
+      },
+    });
+  }
+
   private async revertirPrestamoProvisional(
     tx: any,
     approval: any,
@@ -289,6 +543,13 @@ export class ApprovalsService {
       throw new BadRequestException('La aprobación no tiene préstamo asociado');
     }
 
+    const reversas = await this.crearReversasPrestamoProvisional(
+      tx,
+      rollbackData,
+      rechazadoPorId,
+      motivoRechazo,
+    );
+
     const prestamoRechazado = await tx.prestamo.update({
       where: { id: prestamoId },
       data: {
@@ -297,6 +558,15 @@ export class ApprovalsService {
         eliminadoEn: new Date(),
       },
       include: { producto: true },
+    });
+
+    await tx.cuota.updateMany({
+      where: { prestamoId },
+      data: {
+        estado: EstadoCuota.PENDIENTE,
+        montoPagado: 0,
+        fechaPago: null,
+      },
     });
 
     if (rollbackData.stockDescontado && prestamoRechazado.productoId) {
@@ -312,6 +582,10 @@ export class ApprovalsService {
         estado: 'REVERTIDO',
         revertidoEn: new Date(),
         motivoReversion: motivoRechazo || 'Solicitud rechazada',
+        rollbackData: {
+          ...rollbackData,
+          ...reversas,
+        },
       },
     });
   }
@@ -1139,16 +1413,52 @@ export class ApprovalsService {
         message: 'Eliminación confirmada por el SuperAdministrador',
       };
     } else {
-      await this.prisma.aprobacion.update({
-        where: { id },
-        data: {
-          estado: EstadoAprobacion.PENDIENTE,
-          aprobadoPorId: null,
-          revisadoEn: null,
-          comentarios: notas
-            ? `[SuperAdmin] Revertido a pendiente: ${notas}`
-            : `[SuperAdmin] Revertido a pendiente para re-evaluación`,
-        },
+      await this.prisma.$transaction(async (tx) => {
+        await tx.aprobacion.update({
+          where: { id },
+          data: {
+            estado: EstadoAprobacion.PENDIENTE,
+            aprobadoPorId: null,
+            revisadoEn: null,
+            comentarios: notas
+              ? `[SuperAdmin] Revertido a pendiente: ${notas}`
+              : `[SuperAdmin] Revertido a pendiente para re-evaluación`,
+          },
+        });
+
+        if (
+          approval.tipoAprobacion === TipoAprobacion.NUEVO_PRESTAMO &&
+          approval.referenciaId
+        ) {
+          const efectoReaplicado =
+            await this.reaplicarPrestamoProvisionalRevertido(
+              tx,
+              approval,
+              userId,
+              notas,
+            );
+
+          if (!efectoReaplicado) {
+            await tx.prestamo.update({
+              where: { id: approval.referenciaId },
+              data: {
+                estadoAprobacion: EstadoAprobacion.PENDIENTE,
+                eliminadoEn: null,
+              },
+            });
+          }
+        } else if (
+          approval.tipoAprobacion === TipoAprobacion.NUEVO_CLIENTE &&
+          approval.referenciaId
+        ) {
+          await tx.cliente.update({
+            where: { id: approval.referenciaId },
+            data: {
+              estadoAprobacion: EstadoAprobacion.PENDIENTE,
+              eliminadoEn: null,
+            },
+          });
+        }
       });
 
       this.notificacionesGateway.broadcastAprobacionesActualizadas({
@@ -1156,59 +1466,6 @@ export class ApprovalsService {
         aprobacionId: id,
         tipoAprobacion: approval.tipoAprobacion,
       });
-
-      if (
-        approval.tipoAprobacion === TipoAprobacion.NUEVO_PRESTAMO &&
-        approval.referenciaId
-      ) {
-        try {
-          const prestamoRevertido = await this.prisma.prestamo.update({
-            where: { id: approval.referenciaId },
-            data: {
-              estadoAprobacion: EstadoAprobacion.PENDIENTE,
-              eliminadoEn: null,
-            },
-            include: { producto: true },
-          });
-
-          // CORRECCIÓN: Volver a reservar el stock porque la solicitud vuelve a evaluación
-          if (
-            prestamoRevertido.productoId &&
-            prestamoRevertido.producto?.stock !== undefined &&
-            prestamoRevertido.producto?.stock !== null
-          ) {
-            try {
-              await this.prisma.producto.update({
-                where: { id: prestamoRevertido.productoId },
-                data: { stock: { decrement: 1 } }, // Decrementamos porque vuelve a reservarse
-              });
-            } catch (e) {}
-          }
-        } catch (error) {
-          this.logger.error(
-            `Error revirtiendo préstamo ${approval.referenciaId}:`,
-            error,
-          );
-        }
-      } else if (
-        approval.tipoAprobacion === TipoAprobacion.NUEVO_CLIENTE &&
-        approval.referenciaId
-      ) {
-        try {
-          await this.prisma.cliente.update({
-            where: { id: approval.referenciaId },
-            data: {
-              estadoAprobacion: EstadoAprobacion.PENDIENTE,
-              eliminadoEn: null,
-            },
-          });
-        } catch (error) {
-          this.logger.error(
-            `Error revirtiendo cliente ${approval.referenciaId}:`,
-            error,
-          );
-        }
-      }
 
       try {
         await this.notificacionesService.create({
