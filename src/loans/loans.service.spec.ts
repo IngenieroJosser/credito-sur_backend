@@ -634,6 +634,151 @@ describe('LoansService accounting impact for approved loans', () => {
     expect(tx.efectoProvisional.create).toHaveBeenCalled();
   });
 
+  it('guarda la asignación automática creada dentro del efecto provisional', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-12T12:00:00-05:00'));
+    mockConfig.shouldAutoApproveCredits.mockResolvedValueOnce(false);
+
+    const fechaInicio = new Date('2026-06-12T05:00:00.000Z');
+    const prestamoCreado = {
+      id: 'prestamo-ruta-1',
+      numeroPrestamo: 'PRES-000100',
+      clienteId: 'cliente-1',
+      tipoPrestamo: 'EFECTIVO',
+      tipoAmortizacion: 'INTERES_SIMPLE',
+      monto: 100000,
+      cuotaInicial: 0,
+      precioVentaArticulo: null,
+      costoArticulo: null,
+      tasaInteres: 10,
+      plazoMeses: 1,
+      frecuenciaPago: 'DIARIO',
+      cantidadCuotas: 12,
+      estadoAprobacion: EstadoAprobacion.PENDIENTE,
+      fechaInicio,
+      productoId: null,
+      producto: null,
+      cuotas: [{ id: 'cuota-1' }],
+    };
+
+    const tx: any = {
+      prestamo: {
+        create: jest.fn().mockResolvedValue(prestamoCreado),
+      },
+      ruta: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'ruta-1',
+          cobradorId: 'cobrador-1',
+        }),
+      },
+      caja: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'caja-ruta-1',
+          codigo: 'RUTA-001',
+          tipo: 'RUTA',
+          nombre: 'Caja Ruta',
+          saldoActual: 1000000,
+          rutaId: 'ruta-1',
+        }),
+      },
+      transaccion: {
+        create: jest.fn().mockResolvedValue({
+          id: 'trx-provisional-1',
+          numeroTransaccion: 'T-001',
+        }),
+      },
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 3 } }),
+        create: jest.fn().mockResolvedValue({ id: 'asignacion-nueva' }),
+      },
+      aprobacion: {
+        create: jest.fn().mockResolvedValue({
+          id: 'aprobacion-1',
+          referenciaId: 'prestamo-ruta-1',
+        }),
+      },
+      efectoProvisional: {
+        create: jest.fn().mockResolvedValue({ id: 'efecto-1' }),
+      },
+    };
+
+    const prisma = {
+      $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
+      cliente: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'cliente-1',
+          nombres: 'Cliente',
+          apellidos: 'Ruta',
+          dni: '111111111',
+          telefono: '3112394628',
+          enListaNegra: false,
+          asignacionesRuta: [],
+        }),
+      },
+      usuario: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'cobrador-1',
+          nombres: 'Cobrador',
+          apellidos: 'Prueba',
+          rol: RolUsuario.COBRADOR,
+        }),
+      },
+      ruta: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'ruta-1',
+          cobradorId: 'cobrador-1',
+        }),
+      },
+      caja: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'caja-ruta-1',
+          nombre: 'Caja Ruta',
+          saldoActual: 1000000,
+        }),
+      },
+      prestamo: {
+        findFirst: jest.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(null),
+      },
+    };
+
+    try {
+      await makeService(prisma).createLoan({
+        clienteId: 'cliente-1',
+        tipoPrestamo: 'EFECTIVO',
+        monto: 100000,
+        tasaInteres: 10,
+        tasaInteresMora: 2,
+        plazoMeses: 1,
+        cantidadCuotas: 12,
+        frecuenciaPago: 'DIARIO' as any,
+        fechaInicio: '2026-06-12',
+        creadoPorId: 'cobrador-1',
+      } as any);
+    } finally {
+      jest.useRealTimers();
+    }
+
+    expect(tx.asignacionRuta.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        rutaId: 'ruta-1',
+        clienteId: 'cliente-1',
+        cobradorId: 'cobrador-1',
+        ordenVisita: 4,
+        activa: true,
+      }),
+    });
+    expect(tx.efectoProvisional.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        rollbackData: expect.objectContaining({
+          asignacionRutaId: 'asignacion-nueva',
+        }),
+        entidadesAfectadas: expect.objectContaining({
+          asignacionRutaId: 'asignacion-nueva',
+        }),
+      }),
+    });
+  });
+
   it('recupera respuesta exitosa si ocurre un fallo inesperado después de crear la aprobación', async () => {
     mockConfig.shouldAutoApproveCredits.mockResolvedValueOnce(false);
 

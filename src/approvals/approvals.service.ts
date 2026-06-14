@@ -569,6 +569,13 @@ export class ApprovalsService {
       },
     });
 
+    if (rollbackData.asignacionRutaId) {
+      await tx.asignacionRuta.updateMany({
+        where: { id: String(rollbackData.asignacionRutaId) },
+        data: { activa: false },
+      });
+    }
+
     if (rollbackData.stockDescontado && prestamoRechazado.productoId) {
       await tx.producto.update({
         where: { id: prestamoRechazado.productoId },

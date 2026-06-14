@@ -3671,6 +3671,11 @@ export class LoansService implements OnModuleInit {
         const n = Number(val);
         return isNaN(n) ? 0 : n;
       };
+      const hoyKey = getBogotaDayKey(new Date());
+      const { startDate: today } = getBogotaStartEndOfDayFromKey(hoyKey);
+      const startKey = getBogotaDayKey(new Date(fechaInicio));
+      const { startDate: startDate } = getBogotaStartEndOfDayFromKey(startKey);
+      let rutaIdAsignadaBroadcast: string | null = null;
 
       const {
         prestamo,
@@ -3756,6 +3761,78 @@ export class LoansService implements OnModuleInit {
           cliente,
         });
 
+        let asignacionRutaTxId: string | null = null;
+        if (!data.esContado && startDate.getTime() === today.getTime()) {
+          const rutaPreferida = cliente.asignacionesRuta?.find(
+            (a: any) => a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
+          );
+
+          const rutaCobrador =
+            !rutaPreferida && creador.rol === RolUsuario.COBRADOR
+              ? await tx.ruta.findFirst({
+                  where: {
+                    eliminadoEn: null,
+                    activa: true,
+                    cobradorId: creador.id,
+                  },
+                  select: { id: true, cobradorId: true },
+                })
+              : null;
+
+          const rutaIdAsignar =
+            rutaPreferida?.rutaId || rutaPreferida?.ruta?.id || rutaCobrador?.id;
+          const cobradorIdAsignar =
+            rutaPreferida?.cobradorId ||
+            rutaPreferida?.ruta?.cobradorId ||
+            rutaCobrador?.cobradorId;
+
+          if (rutaIdAsignar && cobradorIdAsignar) {
+            const asignacionExistente = await tx.asignacionRuta.findFirst({
+              where: {
+                rutaId: rutaIdAsignar,
+                clienteId: cliente.id,
+                activa: true,
+              },
+              select: { id: true },
+            });
+
+            if (asignacionExistente?.id) {
+              this.logger.log(
+                `[CREATE LOAN] Cliente ${cliente.id} ya tiene asignación activa en ruta ${rutaIdAsignar}. Se omite creación automática.`,
+              );
+            } else {
+              const maxOrden = await tx.asignacionRuta.aggregate({
+                where: { rutaId: rutaIdAsignar, activa: true },
+                _max: { ordenVisita: true },
+              });
+
+              try {
+                const asignacionCreada = await tx.asignacionRuta.create({
+                  data: {
+                    rutaId: rutaIdAsignar,
+                    clienteId: cliente.id,
+                    cobradorId: cobradorIdAsignar,
+                    fechaEspecifica: today,
+                    ordenVisita: (maxOrden._max.ordenVisita || 0) + 1,
+                    activa: true,
+                  },
+                });
+                asignacionRutaTxId = asignacionCreada?.id || null;
+                asignacionRutaCreadaId = asignacionRutaTxId;
+                rutaIdAsignadaBroadcast = rutaIdAsignar;
+              } catch (error: any) {
+                if (error?.code === 'P2002') {
+                  this.logger.warn(
+                    `[CREATE LOAN] Asignación de ruta omitida por duplicado rutaId=${rutaIdAsignar}, clienteId=${cliente.id}`,
+                  );
+                } else {
+                  throw error;
+                }
+              }
+            }
+          }
+        }
+
         const aprobacionTx = await tx.aprobacion.create({
           data: {
             tipoAprobacion: TipoAprobacion.NUEVO_PRESTAMO,
@@ -3769,7 +3846,9 @@ export class LoansService implements OnModuleInit {
               cedula: String(cliente.dni),
               telefono: String(cliente.telefono),
               monto: safeNumber(prestamoTx.monto),
-              montoTotal: safeNumber(prestamoTx.montoTotal),
+              montoTotal:
+                safeNumber(prestamoTx.monto) +
+                safeNumber(prestamoTx.interesTotal),
               interesTotal: safeNumber(prestamoTx.interesTotal),
               tipoAmortizacion: prestamoTx.tipoAmortizacion,
               cantidadCuotas: safeNumber(prestamoTx.cantidadCuotas),
@@ -3861,7 +3940,7 @@ export class LoansService implements OnModuleInit {
                     cajaOrigenId: impactoTx?.cajaOrigenId || null,
                     montoDesembolsado: impactoTx?.montoDesembolsado || 0,
                     tipoPrestamo: prestamoTx.tipoPrestamo,
-                    asignacionRutaId: asignacionRutaCreadaId,
+                    asignacionRutaId: asignacionRutaTxId,
                     estadoPrestamoInicial: prestamoTx.estado,
                     estadoAprobacionInicial: prestamoTx.estadoAprobacion,
                     estadoInicialPrestamo: prestamoTx.estado,
@@ -3895,7 +3974,7 @@ export class LoansService implements OnModuleInit {
                       (cuota: any) => cuota.id,
                     ),
                     aprobacionId: aprobacionTx.id,
-                    asignacionRutaId: asignacionRutaCreadaId,
+                    asignacionRutaId: asignacionRutaTxId,
                   },
                   aplicadoPorId: data.creadoPorId,
                 },
@@ -3915,92 +3994,15 @@ export class LoansService implements OnModuleInit {
       efectoProvisionalCreado = efectoProvisional;
       impactoProvisionalPrestamo = impactoProvisional;
 
-      const hoyKey = getBogotaDayKey(new Date());
-      const { startDate: today } = getBogotaStartEndOfDayFromKey(hoyKey);
-      const startKey = getBogotaDayKey(new Date(fechaInicio));
-      const { startDate: startDate } = getBogotaStartEndOfDayFromKey(startKey);
-
-      await this.runCreateLoanSideEffect(
-        'asignación automática de ruta por crédito creado hoy',
-        async () => {
-          if (data.esContado || startDate.getTime() !== today.getTime()) return;
-
-          const rutaPreferida = cliente.asignacionesRuta?.find(
-            (a: any) => a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
-          );
-
-          const rutaCobrador =
-            !rutaPreferida && creador.rol === RolUsuario.COBRADOR
-              ? await this.prisma.ruta.findFirst({
-                  where: {
-                    eliminadoEn: null,
-                    activa: true,
-                    cobradorId: creador.id,
-                  },
-                  select: { id: true, cobradorId: true },
-                })
-              : null;
-
-          const rutaIdAsignar =
-            rutaPreferida?.rutaId || rutaPreferida?.ruta?.id || rutaCobrador?.id;
-          const cobradorIdAsignar =
-            rutaPreferida?.cobradorId ||
-            rutaPreferida?.ruta?.cobradorId ||
-            rutaCobrador?.cobradorId;
-
-          if (!rutaIdAsignar || !cobradorIdAsignar) return;
-
-          const asignacionExistente = await this.prisma.asignacionRuta.findFirst({
-            where: {
-              rutaId: rutaIdAsignar,
-              clienteId: cliente.id,
-              activa: true,
-            },
-            select: { id: true },
-          });
-
-          if (asignacionExistente?.id) {
-            this.logger.log(
-              `[CREATE LOAN] Cliente ${cliente.id} ya tiene asignación activa en ruta ${rutaIdAsignar}. Se omite creación automática.`,
-            );
-            return;
-          }
-
-          const maxOrden = await this.prisma.asignacionRuta.aggregate({
-            where: { rutaId: rutaIdAsignar, activa: true },
-            _max: { ordenVisita: true },
-          });
-
-          try {
-            const asignacionCreada = await this.prisma.asignacionRuta.create({
-              data: {
-                rutaId: rutaIdAsignar,
-                clienteId: cliente.id,
-                cobradorId: cobradorIdAsignar,
-                fechaEspecifica: today,
-                ordenVisita: (maxOrden._max.ordenVisita || 0) + 1,
-                activa: true,
-              },
-            });
-            asignacionRutaCreadaId = asignacionCreada?.id || null;
-          } catch (error: any) {
-            if (error?.code === 'P2002') {
-              this.logger.warn(
-                `[CREATE LOAN] Asignación de ruta omitida por duplicado rutaId=${rutaIdAsignar}, clienteId=${cliente.id}`,
-              );
-              return;
-            }
-
-            throw error;
-          }
-
+      if (asignacionRutaCreadaId && rutaIdAsignadaBroadcast) {
+        await this.runCreateLoanSideEffect('broadcast asignación de ruta', () => {
           this.notificacionesGateway.broadcastRutasActualizadas({
             accion: 'ACTUALIZAR',
-            rutaId: rutaIdAsignar,
+            rutaId: rutaIdAsignadaBroadcast,
             clienteId: cliente.id,
           });
-        },
-      );
+        });
+      }
 
       this.logger.log(
         `Loan created successfully: ${prestamo.id}, requiereAprobacion: ${esAutoAprobado}`,

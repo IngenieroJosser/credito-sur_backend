@@ -181,6 +181,11 @@ export class CreateLoanDto {
   @IsOptional()
   origenOperacion?: OrigenOperacionPrestamo;
 
+  @Transform(({ value }) =>
+    value === null || value === undefined || value === ''
+      ? undefined
+      : parseInt(value),
+  )
   @IsNumber()
   @IsOptional()
   version?: number;

@@ -74,6 +74,7 @@ function buildPrismaMock() {
         cobradorId: 'cobrador-1',
         ruta: { cobradorId: 'cobrador-1' },
       }),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     ruta: {
       findFirst: jest.fn().mockResolvedValue({
@@ -783,6 +784,7 @@ describe('ApprovalsService financial ledger controls', () => {
         prestamoId: 'prestamo-1',
         productoId: null,
         stockDescontado: false,
+        asignacionRutaId: 'asignacion-nueva',
       },
     });
 
@@ -809,6 +811,10 @@ describe('ApprovalsService financial ledger controls', () => {
         montoPagado: 0,
         fechaPago: null,
       },
+    });
+    expect(prisma._tx.asignacionRuta.updateMany).toHaveBeenCalledWith({
+      where: { id: 'asignacion-nueva' },
+      data: { activa: false },
     });
     expect(prisma._tx.efectoProvisional.update).toHaveBeenCalledWith({
       where: { id: 'efecto-loan-1' },
