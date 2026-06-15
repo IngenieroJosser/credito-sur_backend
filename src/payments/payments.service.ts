@@ -410,7 +410,11 @@ export class PaymentsService {
       }
     }
 
-    if (cuotaIdObjetivo && !aplicarDesdeCuotaObjetivo && montoRestante > 1) {
+    if (
+      cuotaIdObjetivo &&
+      !aplicarDesdeCuotaObjetivo &&
+      truncCop(montoRestante) > 0
+    ) {
       throw new BadRequestException(
         'El monto del pago excede el saldo pendiente de la cuota objetivo',
       );
@@ -598,7 +602,7 @@ export class PaymentsService {
       );
     }
 
-    if (montoTotal > Number(prestamo.saldoPendiente) + 1) {
+    if (montoTotal > Number(prestamo.saldoPendiente)) {
       throw new BadRequestException(
         `El monto del pago ($${montoTotal}) no puede ser mayor al saldo pendiente del préstamo ($${prestamo.saldoPendiente})`,
       );
@@ -910,7 +914,7 @@ export class PaymentsService {
           );
         }
 
-        if (montoTotal > Number(prestamoActual.saldoPendiente) + 1) {
+        if (montoTotal > Number(prestamoActual.saldoPendiente)) {
           throw new BadRequestException(
             `El monto del pago ($${montoTotal}) no puede ser mayor al saldo pendiente del préstamo ($${prestamoActual.saldoPendiente})`,
           );
@@ -1857,7 +1861,7 @@ export class PaymentsService {
 
   private getCuotaStateAfterRevert(cuota: any, nextPaid: number) {
     const amount = Number(cuota?.monto || 0);
-    if (nextPaid >= amount - 1) {
+    if (nextPaid >= amount) {
       return {
         estado: EstadoCuota.PAGADA,
         fechaPago: cuota?.fechaPago || null,
