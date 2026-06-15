@@ -18,7 +18,8 @@ export class CreateCashSaleDto {
   cajaId: string;
 
   @IsString()
-  creadoPorId: string;
+  @IsOptional()
+  creadoPorId?: string;
 
   @IsEnum(MetodoPago)
   @IsOptional()

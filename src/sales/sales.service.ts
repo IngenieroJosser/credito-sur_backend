@@ -28,7 +28,7 @@ export class SalesService {
     if (metodo === MetodoPago.TRANSFERENCIA) return '1.1.2';
 
     const tipo = String(caja?.tipo || '').toUpperCase();
-    if (tipo === 'RUTA') return '1.2.1.E';
+    if (tipo === 'RUTA') return '1.2.1';
     return '1.1.1';
   }
 
@@ -38,6 +38,10 @@ export class SalesService {
       throw new BadRequestException(
         'La venta de contado debe tener precio mayor a cero.',
       );
+    }
+
+    if (!dto.creadoPorId) {
+      throw new BadRequestException('Usuario creador requerido');
     }
 
     const producto = await this.prisma.producto.findUnique({
@@ -111,7 +115,7 @@ export class SalesService {
           cuotaInicial: precioVenta,
           cajaId: caja.id,
           accountCodeCaja: this.getAccountCodeCaja(caja, metodoPago),
-          createdBy: dto.creadoPorId,
+          createdBy: dto.creadoPorId!,
         },
         tx,
       );
@@ -169,6 +173,8 @@ export class SalesService {
       numeroTransaccion: v.numeroTransaccion,
       monto: Number(v.monto),
       fecha: v.fechaTransaccion,
+      descripcion: v.descripcion,
+      tipoReferencia: v.tipoReferencia,
       caja: v.caja?.nombre || null,
       vendedor: v.creadoPor
         ? `${v.creadoPor.nombres} ${v.creadoPor.apellidos}`.trim()

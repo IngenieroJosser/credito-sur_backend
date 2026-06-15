@@ -8,6 +8,7 @@ import {
   Request,
   UseGuards,
 } from '@nestjs/common';
+import { BadRequestException } from '@nestjs/common';
 import { RolUsuario } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -31,9 +32,12 @@ export class SalesController {
     RolUsuario.PUNTO_DE_VENTA,
   )
   registrarVentaContado(@Body() dto: CreateCashSaleDto, @Request() req: any) {
+    if (!req?.user?.id) {
+      throw new BadRequestException('Usuario autenticado requerido');
+    }
     return this.salesService.registrarVentaContado({
       ...dto,
-      creadoPorId: dto.creadoPorId || req?.user?.id,
+      creadoPorId: req.user.id,
     });
   }
 
