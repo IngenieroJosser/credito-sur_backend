@@ -1477,6 +1477,383 @@ describe('RoutesService role scoping', () => {
     jest.useRealTimers();
   });
 
+  describe('cerrarJornadaRegularizada', () => {
+    it('permite regularizar jornada pendiente sin arqueo', async () => {
+      const prisma = {
+        ruta: {
+          findFirst: jest.fn().mockResolvedValue({ id: 'ruta-1', nombre: 'Ruta 1' }),
+        },
+        rutaJornada: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'jornada-1',
+            rutaId: 'ruta-1',
+            cajaId: 'caja-ruta-1',
+            fechaOperativa: '2026-06-13',
+            estado: 'PENDIENTE_CIERRE',
+          }),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        arqueoCaja: {
+          findUnique: jest.fn().mockResolvedValue(null), // Sin arqueo
+        },
+        usuario: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'admin-1',
+            nombres: 'Admin',
+            apellidos: 'Uno',
+            correo: 'admin@test.com',
+          }),
+        },
+        $transaction: jest.fn().mockImplementation((callback: any) => {
+          const tx = {
+            rutaJornada: {
+              findUnique: jest.fn().mockResolvedValue({
+                id: 'jornada-1',
+                rutaId: 'ruta-1',
+                cajaId: 'caja-ruta-1',
+                fechaOperativa: '2026-06-13',
+                estado: 'PENDIENTE_CIERRE',
+              }),
+              updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+            arqueoCaja: {
+              findUnique: jest.fn().mockResolvedValue(null),
+            },
+            usuario: {
+              findUnique: jest.fn().mockResolvedValue({
+                id: 'admin-1',
+                nombres: 'Admin',
+                apellidos: 'Uno',
+                correo: 'admin@test.com',
+              }),
+            },
+          };
+          return callback(tx);
+        }),
+      };
+
+      const service = makeService(prisma);
+      jest.spyOn(service as any, 'getDailyVisits').mockResolvedValue({
+        resumen: { meta: 100000, recaudo: 100000, recaudoOperativo: 100000 },
+        visitas: [],
+      });
+      jest.spyOn(service as any, 'getCierresPendientesRuta').mockResolvedValue([]);
+
+      await expect(
+        service.cerrarJornadaRegularizada(
+          'ruta-1',
+          '2026-06-13',
+          'Jornada regularizada',
+          { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+        ),
+      ).resolves.toEqual(
+        expect.objectContaining({
+          jornadaId: 'jornada-1',
+        }),
+      );
+    });
+
+    it('no permite regularizar jornada anulada', async () => {
+      const prisma = {
+        ruta: {
+          findFirst: jest.fn().mockResolvedValue({ id: 'ruta-1', nombre: 'Ruta 1' }),
+        },
+        $transaction: jest.fn().mockImplementation((callback: any) => {
+          const tx = {
+            rutaJornada: {
+              findUnique: jest.fn().mockResolvedValue({
+                id: 'jornada-1',
+                estado: 'ANULADA',
+              }),
+            },
+          };
+          return callback(tx);
+        }),
+      };
+
+      const service = makeService(prisma);
+      jest.spyOn(service as any, 'getDailyVisits').mockResolvedValue({
+        resumen: { meta: 100000, recaudo: 100000 },
+        visitas: [],
+      });
+      jest.spyOn(service as any, 'getCierresPendientesRuta').mockResolvedValue([]);
+
+      await expect(
+        service.cerrarJornadaRegularizada(
+          'ruta-1',
+          '2026-06-13',
+          'Jornada regularizada',
+          { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('no permite regularizar jornada ya cerrada o regularizada', async () => {
+      const prisma = {
+        ruta: {
+          findFirst: jest.fn().mockResolvedValue({ id: 'ruta-1', nombre: 'Ruta 1' }),
+        },
+        $transaction: jest.fn().mockImplementation((callback: any) => {
+          const tx = {
+            rutaJornada: {
+              findUnique: jest.fn().mockResolvedValue({
+                id: 'jornada-1',
+                estado: 'REGULARIZADA',
+              }),
+            },
+          };
+          return callback(tx);
+        }),
+      };
+
+      const service = makeService(prisma);
+      jest.spyOn(service as any, 'getDailyVisits').mockResolvedValue({
+        resumen: { meta: 100000, recaudo: 100000 },
+        visitas: [],
+      });
+      jest.spyOn(service as any, 'getCierresPendientesRuta').mockResolvedValue([]);
+
+      await expect(
+        service.cerrarJornadaRegularizada(
+          'ruta-1',
+          '2026-06-13',
+          'Jornada regularizada',
+          { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+        ),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('exige observación cuando hay pendientes, ausencias o descuadre', async () => {
+      const prisma = {
+        ruta: {
+          findFirst: jest.fn().mockResolvedValue({ id: 'ruta-1', nombre: 'Ruta 1' }),
+        },
+        $transaction: jest.fn().mockImplementation((callback: any) => {
+          const tx = {
+            rutaJornada: {
+              findUnique: jest.fn().mockResolvedValue({
+                id: 'jornada-1',
+                estado: 'PENDIENTE_CIERRE',
+              }),
+            },
+          };
+          return callback(tx);
+        }),
+      };
+
+      const service = makeService(prisma);
+      jest.spyOn(service as any, 'getDailyVisits').mockResolvedValue({
+        resumen: { meta: 100000, recaudo: 50000, recaudoOperativo: 50000 }, // Descuadre
+        visitas: [{ estadoGestion: 'PENDIENTE' }],
+      });
+      jest.spyOn(service as any, 'getCierresPendientesRuta').mockResolvedValue([]);
+
+      await expect(
+        service.cerrarJornadaRegularizada(
+          'ruta-1',
+          '2026-06-13',
+          undefined, // Sin observación
+          { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('no exige observación cuando la jornada está limpia', async () => {
+      const prisma = {
+        ruta: {
+          findFirst: jest.fn().mockResolvedValue({ id: 'ruta-1', nombre: 'Ruta 1' }),
+        },
+        rutaJornada: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'jornada-1',
+            estado: 'PENDIENTE_CIERRE',
+          }),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        usuario: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'admin-1',
+            nombres: 'Admin',
+            apellidos: 'Uno',
+            correo: 'admin@test.com',
+          }),
+        },
+        $transaction: jest.fn().mockImplementation((callback: any) => {
+          const tx = {
+            rutaJornada: {
+              findUnique: jest.fn().mockResolvedValue({
+                id: 'jornada-1',
+                estado: 'PENDIENTE_CIERRE',
+              }),
+              updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+            usuario: {
+              findUnique: jest.fn().mockResolvedValue({
+                id: 'admin-1',
+                nombres: 'Admin',
+                apellidos: 'Uno',
+                correo: 'admin@test.com',
+              }),
+            },
+          };
+          return callback(tx);
+        }),
+      };
+
+      const service = makeService(prisma);
+      jest.spyOn(service as any, 'getDailyVisits').mockResolvedValue({
+        resumen: { meta: 100000, recaudo: 100000, recaudoOperativo: 100000 },
+        visitas: [],
+      });
+      jest.spyOn(service as any, 'getCierresPendientesRuta').mockResolvedValue([]);
+
+      await expect(
+        service.cerrarJornadaRegularizada(
+          'ruta-1',
+          '2026-06-13',
+          undefined, // Sin observación, pero jornada está limpia
+          { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+        ),
+      ).resolves.toEqual(
+        expect.objectContaining({
+          jornadaId: 'jornada-1',
+        }),
+      );
+    });
+
+    it('no crea transacción financiera al regularizar', async () => {
+      const prisma = {
+        ruta: {
+          findFirst: jest.fn().mockResolvedValue({ id: 'ruta-1', nombre: 'Ruta 1' }),
+        },
+        rutaJornada: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'jornada-1',
+            estado: 'PENDIENTE_CIERRE',
+          }),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        transaccion: {
+          create: jest.fn().mockResolvedValue({}),
+        },
+        usuario: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'admin-1',
+            nombres: 'Admin',
+            apellidos: 'Uno',
+            correo: 'admin@test.com',
+          }),
+        },
+        $transaction: jest.fn().mockImplementation((callback: any) => {
+          const tx = {
+            rutaJornada: {
+              findUnique: jest.fn().mockResolvedValue({
+                id: 'jornada-1',
+                estado: 'PENDIENTE_CIERRE',
+              }),
+              updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+            transaccion: {
+              create: jest.fn().mockResolvedValue({}),
+            },
+            usuario: {
+              findUnique: jest.fn().mockResolvedValue({
+                id: 'admin-1',
+                nombres: 'Admin',
+                apellidos: 'Uno',
+                correo: 'admin@test.com',
+              }),
+            },
+          };
+          return callback(tx);
+        }),
+      };
+
+      const service = makeService(prisma);
+      jest.spyOn(service as any, 'getDailyVisits').mockResolvedValue({
+        resumen: { meta: 100000, recaudo: 100000 },
+        visitas: [],
+      });
+      jest.spyOn(service as any, 'getCierresPendientesRuta').mockResolvedValue([]);
+
+      await service.cerrarJornadaRegularizada(
+        'ruta-1',
+        '2026-06-13',
+        'Jornada regularizada',
+        { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+      );
+
+      // Verificar que no se creó transacción financiera
+      expect(prisma.transaccion?.create).not.toHaveBeenCalled();
+    });
+
+    it('no crea JournalEntry al regularizar', async () => {
+      const prisma = {
+        ruta: {
+          findFirst: jest.fn().mockResolvedValue({ id: 'ruta-1', nombre: 'Ruta 1' }),
+        },
+        rutaJornada: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'jornada-1',
+            estado: 'PENDIENTE_CIERRE',
+          }),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        journalEntry: {
+          create: jest.fn().mockResolvedValue({}),
+        },
+        usuario: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'admin-1',
+            nombres: 'Admin',
+            apellidos: 'Uno',
+            correo: 'admin@test.com',
+          }),
+        },
+        $transaction: jest.fn().mockImplementation((callback: any) => {
+          const tx = {
+            rutaJornada: {
+              findUnique: jest.fn().mockResolvedValue({
+                id: 'jornada-1',
+                estado: 'PENDIENTE_CIERRE',
+              }),
+              updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+            journalEntry: {
+              create: jest.fn().mockResolvedValue({}),
+            },
+            usuario: {
+              findUnique: jest.fn().mockResolvedValue({
+                id: 'admin-1',
+                nombres: 'Admin',
+                apellidos: 'Uno',
+                correo: 'admin@test.com',
+              }),
+            },
+          };
+          return callback(tx);
+        }),
+      };
+
+      const service = makeService(prisma);
+      jest.spyOn(service as any, 'getDailyVisits').mockResolvedValue({
+        resumen: { meta: 100000, recaudo: 100000 },
+        visitas: [],
+      });
+      jest.spyOn(service as any, 'getCierresPendientesRuta').mockResolvedValue([]);
+
+      await service.cerrarJornadaRegularizada(
+        'ruta-1',
+        '2026-06-13',
+        'Jornada regularizada',
+        { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+      );
+
+      // Verificar que no se creó JournalEntry
+      expect(prisma.journalEntry?.create).not.toHaveBeenCalled();
+    });
+  });
+
   it('bloquea activar ruta en domingo antes de consultar base de datos', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-05-31T12:00:00.000Z'));
 

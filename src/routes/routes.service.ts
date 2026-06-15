@@ -5243,6 +5243,10 @@ export class RoutesService {
         throw new NotFoundException('La jornada no existe');
       }
 
+      if (jornadaRegularizable.estado === 'ANULADA') {
+        throw new BadRequestException('La jornada está anulada y no puede cerrarse.');
+      }
+
       if (jornadaRegularizable.estado !== 'PENDIENTE_CIERRE') {
         throw new ConflictException(
           'La jornada ya fue cerrada o regularizada.',
