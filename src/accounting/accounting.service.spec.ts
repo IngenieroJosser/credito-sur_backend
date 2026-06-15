@@ -48,7 +48,12 @@ function buildPrismaMock(overrides: Record<string, any> = {}) {
     $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
     _tx: tx,
     journalLine: {
-      aggregate: jest.fn(),
+      aggregate: jest.fn().mockResolvedValue({
+        _sum: {
+          debitAmount: 0,
+          creditAmount: 0,
+        },
+      }),
       findMany: jest.fn().mockResolvedValue([]),
     },
     journalEntry: {
