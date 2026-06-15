@@ -7,27 +7,27 @@ datasource db {
 }
 
 model Usuario {
-  id                      String                     @id @default(uuid())
-  correo                  String                     @unique @db.VarChar(255)
-  hashContrasena          String                     @db.VarChar(255)
-  nombres                 String                     @db.VarChar(100)
-  apellidos               String                     @db.VarChar(100)
-  telefono                String?                    @db.VarChar(20)
-  rol                     RolUsuario
-  esPrincipal             Boolean                    @default(false)
-  estado                  EstadoUsuario              @default(ACTIVO)
-  ultimoIngreso           DateTime?
-  intentosFallidos        Int                        @default(0)
-  debeCambiarContrasena   Boolean                    @default(false)
-  creadoPorId             String?
-  creadoEn                DateTime                   @default(now())
-  actualizadoEn           DateTime                   @updatedAt
-  eliminadoEn             DateTime?
-  estadoSincronizacion    EstadoSincronizacion       @default(PENDIENTE)
-  ultimaSincronizacion    DateTime?
-  errorSincronizacion     String?
-  resetPasswordToken      String?
-  resetPasswordExpires    DateTime?
+  id                    String               @id @default(uuid())
+  correo                String               @unique @db.VarChar(255)
+  hashContrasena        String               @db.VarChar(255)
+  nombres               String               @db.VarChar(100)
+  apellidos             String               @db.VarChar(100)
+  telefono              String?              @db.VarChar(20)
+  rol                   RolUsuario
+  esPrincipal           Boolean              @default(false)
+  estado                EstadoUsuario        @default(ACTIVO)
+  ultimoIngreso         DateTime?
+  intentosFallidos      Int                  @default(0)
+  debeCambiarContrasena Boolean              @default(false)
+  creadoPorId           String?
+  creadoEn              DateTime             @default(now())
+  actualizadoEn         DateTime             @updatedAt
+  eliminadoEn           DateTime?
+  estadoSincronizacion  EstadoSincronizacion @default(PENDIENTE)
+  ultimaSincronizacion  DateTime?
+  errorSincronizacion   String?
+  resetPasswordToken    String?
+  resetPasswordExpires  DateTime?
 
   clientesListaNegra      Cliente[]                  @relation("ClienteListaNegraPor")
   clientesAprobados       Cliente[]                  @relation("ClienteAprobadoPor")
@@ -57,10 +57,13 @@ model Usuario {
   registrosAuditoria      RegistroAuditoria[]
   rutasComoCobrador       Ruta[]                     @relation("RutaCobrador")
   rutasComoSupervisor     Ruta[]                     @relation("RutaSupervisor")
+  arqueosComoResponsable  ArqueoCaja[]               @relation("ArqueoCajaResponsable")
+  arqueosCreados          ArqueoCaja[]               @relation("ArqueoCajaCreadoPor")
+  arqueosRecibidos        ArqueoCaja[]               @relation("ArqueoCajaRecibidoPor")
 
-  syncConflictsCreados    SyncConflict[]             @relation("SyncConflictCreadoPor")
-  syncConflictsResueltos  SyncConflict[]             @relation("SyncConflictResueltoPor")
-  registrosVisitas        RegistroVisita[]           @relation("VisitasRegistradas")
+  syncConflictsCreados   SyncConflict[]   @relation("SyncConflictCreadoPor")
+  syncConflictsResueltos SyncConflict[]   @relation("SyncConflictResueltoPor")
+  registrosVisitas       RegistroVisita[] @relation("VisitasRegistradas")
 
   @@index([correo])
   @@index([rol])
@@ -212,26 +215,26 @@ model Cliente {
 }
 
 model Producto {
-  id            String           @id @default(uuid())
-  codigo        String           @unique @db.VarChar(50)
-  nombre        String           @db.VarChar(255)
-  descripcion   String?
-  categoria     String           @db.VarChar(100)
-  marca         String?          @db.VarChar(100)
-  modelo        String?          @db.VarChar(100)
-  costo         Decimal          @db.Decimal(10, 2)
-  stock         Int              @default(0)
-  stockMinimo   Int              @default(0)
-  activo        Boolean          @default(true)
-  categoriaId   String?
-  creadoEn      DateTime         @default(now())
-  actualizadoEn DateTime         @updatedAt
-  eliminadoEn   DateTime?
+  id                 String           @id @default(uuid())
+  codigo             String           @unique @db.VarChar(50)
+  nombre             String           @db.VarChar(255)
+  descripcion        String?
+  categoria          String           @db.VarChar(100)
+  marca              String?          @db.VarChar(100)
+  modelo             String?          @db.VarChar(100)
+  costo              Decimal          @db.Decimal(10, 2)
+  stock              Int              @default(0)
+  stockMinimo        Int              @default(0)
+  activo             Boolean          @default(true)
+  categoriaId        String?
+  creadoEn           DateTime         @default(now())
+  actualizadoEn      DateTime         @updatedAt
+  eliminadoEn        DateTime?
   ocultoArchivadosEn DateTime?
-  prestamos     Prestamo[]
-  categoriaRel  Categoria?       @relation(fields: [categoriaId], references: [id])
-  archivos      Multimedia[]     @relation("MultimediaProducto")
-  precios       PrecioProducto[]
+  prestamos          Prestamo[]
+  categoriaRel       Categoria?       @relation(fields: [categoriaId], references: [id])
+  archivos           Multimedia[]     @relation("MultimediaProducto")
+  precios            PrecioProducto[]
 
   @@index([codigo])
   @@index([categoria])
@@ -260,13 +263,13 @@ model PrecioProducto {
 model Prestamo {
   id                   String               @id @default(uuid())
   numeroPrestamo       String               @unique @db.VarChar(50)
-  idempotencyKey        String?              @unique @db.VarChar(100)
+  idempotencyKey       String?              @unique @db.VarChar(100)
   version              Int                  @default(1)
   clienteId            String
   productoId           String?
   precioProductoId     String?
   tipoPrestamo         String               @db.VarChar(20)
-  tipoAmortizacion     TipoAmortizacion     @default(INTERES_SIMPLE)
+  tipoAmortizacion     TipoAmortizacion     @default(INTERES_PLANO)
   monto                Decimal              @db.Decimal(12, 2)
   // Para créditos de artículo: valores para calcular y persistir la utilidad por margen (sin afectar caja)
   precioVentaArticulo  Decimal?             @db.Decimal(12, 2)
@@ -440,25 +443,26 @@ model Recibo {
 }
 
 model Ruta {
-  id            String           @id @default(uuid())
-  codigo        String           @unique @db.VarChar(20)
-  nombre        String           @db.VarChar(255)
-  descripcion   String?
-  zona          String           @db.VarChar(100)
-  activa        Boolean          @default(true)
-  cobradorId    String
-  supervisorId  String?
-  eliminadoEn   DateTime?
-  creadoEn      DateTime         @default(now())
-  actualizadoEn DateTime         @updatedAt
-  gastos        Gasto[]
-  asignaciones  AsignacionRuta[]
-  cajas         Caja[]
+  id               String           @id @default(uuid())
+  codigo           String           @unique @db.VarChar(20)
+  nombre           String           @db.VarChar(255)
+  descripcion      String?
+  zona             String           @db.VarChar(100)
+  activa           Boolean          @default(true)
+  cobradorId       String
+  supervisorId     String?
+  eliminadoEn      DateTime?
+  creadoEn         DateTime         @default(now())
+  actualizadoEn    DateTime         @updatedAt
+  gastos           Gasto[]
+  asignaciones     AsignacionRuta[]
   registrosVisitas RegistroVisita[]
-  pagos         Pago[]
-  jornadas      RutaJornada[]
-  cobrador      Usuario          @relation("RutaCobrador", fields: [cobradorId], references: [id])
-  supervisor    Usuario?         @relation("RutaSupervisor", fields: [supervisorId], references: [id])
+  pagos            Pago[]
+  jornadas         RutaJornada[]
+  cajas            Caja[]
+  arqueos          ArqueoCaja[]
+  cobrador         Usuario          @relation("RutaCobrador", fields: [cobradorId], references: [id])
+  supervisor       Usuario?         @relation("RutaSupervisor", fields: [supervisorId], references: [id])
 
   @@index([codigo])
   @@index([cobradorId])
@@ -511,6 +515,7 @@ model Aprobacion {
   montoSolicitud       Decimal?             @db.Decimal(12, 2)
   aprobadoPor          Usuario?             @relation("AprobacionRevisadaPor", fields: [aprobadoPorId], references: [id])
   solicitadoPor        Usuario              @relation("AprobacionSolicitadaPor", fields: [solicitadoPorId], references: [id])
+  efectosProvisionales EfectoProvisional[]
 
   @@index([tipoAprobacion])
   @@index([referenciaId, tablaReferencia])
@@ -539,6 +544,7 @@ model Caja {
   transacciones Transaccion[]
   journalLines  JournalLine[]
   jornadas      RutaJornada[]
+  arqueos       ArqueoCaja[]
   responsable   Usuario       @relation(fields: [responsableId], references: [id])
   ruta          Ruta?         @relation(fields: [rutaId], references: [id])
 
@@ -569,6 +575,8 @@ model Transaccion {
   aprobadoPor          Usuario?             @relation("TransaccionAprobadaPor", fields: [aprobadoPorId], references: [id])
   caja                 Caja                 @relation(fields: [cajaId], references: [id])
   creadoPor            Usuario              @relation("TransaccionCreadaPor", fields: [creadoPorId], references: [id])
+  jornadasActivadas    RutaJornada[]        @relation("RutaJornadaActivacion")
+  jornadasCerradas     RutaJornada[]        @relation("RutaJornadaCierre")
 
   @@index([numeroTransaccion])
   @@index([cajaId])
@@ -636,17 +644,17 @@ model RegistroAuditoria {
 }
 
 model OutboxEvent {
-  id             String    @id @default(uuid())
-  eventType      String    @db.VarChar(100)
-  aggregateType  String    @db.VarChar(100)
-  aggregateId    String?   @db.VarChar(100)
-  payload        Json
-  status         String    @default("PENDING") @db.VarChar(20)
-  attempts       Int       @default(0)
-  lastError      String?
-  processedAt    DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id            String    @id @default(uuid())
+  eventType     String    @db.VarChar(100)
+  aggregateType String    @db.VarChar(100)
+  aggregateId   String?   @db.VarChar(100)
+  payload       Json
+  status        String    @default("PENDING") @db.VarChar(20)
+  attempts      Int       @default(0)
+  lastError     String?
+  processedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@index([status, createdAt])
   @@index([aggregateType, aggregateId])
@@ -688,21 +696,21 @@ model ColaSincronizacion {
 }
 
 model SyncConflict {
-  id               String               @id @default(uuid())
-  entidad          String               @db.VarChar(50) // ej: "pago", "cliente", "nota"
-  operacion        String               @db.VarChar(20) // POST, PUT, DELETE
-  datos            Json                 // payload original guardado en IndexedDB
-  errorMotivo      String               @db.Text
+  id               String   @id @default(uuid())
+  entidad          String   @db.VarChar(50) // ej: "pago", "cliente", "nota"
+  operacion        String   @db.VarChar(20) // POST, PUT, DELETE
+  datos            Json // payload original guardado en IndexedDB
+  errorMotivo      String   @db.Text
   statusCode       Int?
-  endpoint         String               @db.VarChar(255)
-  estadoResolucion String               @default("PENDIENTE") @db.VarChar(20) // PENDIENTE, RESUELTO, DESCARTADO
+  endpoint         String   @db.VarChar(255)
+  estadoResolucion String   @default("PENDIENTE") @db.VarChar(20) // PENDIENTE, RESUELTO, DESCARTADO
   creadoPorId      String?
-  creadoEn         DateTime             @default(now())
-  actualizadoEn    DateTime             @updatedAt
+  creadoEn         DateTime @default(now())
+  actualizadoEn    DateTime @updatedAt
   resueltoPorId    String?
 
-  creadoPor        Usuario?             @relation("SyncConflictCreadoPor", fields: [creadoPorId], references: [id])
-  resueltoPor      Usuario?             @relation("SyncConflictResueltoPor", fields: [resueltoPorId], references: [id])
+  creadoPor   Usuario? @relation("SyncConflictCreadoPor", fields: [creadoPorId], references: [id])
+  resueltoPor Usuario? @relation("SyncConflictResueltoPor", fields: [resueltoPorId], references: [id])
 
   @@index([entidad])
   @@index([estadoResolucion])
@@ -852,6 +860,7 @@ enum FrecuenciaPago {
 enum TipoAmortizacion {
   INTERES_SIMPLE
   FRANCESA
+  INTERES_PLANO
 }
 
 enum MetodoPago {
@@ -922,13 +931,13 @@ enum EstadoMultimedia {
 }
 
 model ConfiguracionSistema {
-  id                    String   @id @default("default")
-  autoAprobarClientes   Boolean  @default(false)
-  autoAprobarCreditos   Boolean  @default(false)
-  tasaInteresBase       Decimal  @default(20.00) @db.Decimal(5, 2)
-  porcentajeMoraDiaria  Decimal  @default(2.50) @db.Decimal(5, 2)
-  actualizadoEn         DateTime @updatedAt
-  actualizadoPorId      String?
+  id                   String   @id @default("default")
+  autoAprobarClientes  Boolean  @default(false)
+  autoAprobarCreditos  Boolean  @default(false)
+  tasaInteresBase      Decimal  @default(20.00) @db.Decimal(5, 2)
+  porcentajeMoraDiaria Decimal  @default(2.50) @db.Decimal(5, 2)
+  actualizadoEn        DateTime @updatedAt
+  actualizadoPorId     String?
 
   @@map("configuracion_sistema")
 }
@@ -949,17 +958,17 @@ enum BackupEstado {
 }
 
 model BackupRun {
-  id          String        @id @default(uuid())
-  tipo        BackupTipo
-  destino     BackupDestino @default(LOCAL)
-  estado      BackupEstado  @default(EN_PROCESO)
-  filePath    String?       @db.VarChar(500)
-  fileSize    Int?
-  startedAt   DateTime      @default(now())
-  finishedAt  DateTime?
-  durationMs  Int?
-  error       String?
-  metadata    Json?
+  id         String        @id @default(uuid())
+  tipo       BackupTipo
+  destino    BackupDestino @default(LOCAL)
+  estado     BackupEstado  @default(EN_PROCESO)
+  filePath   String?       @db.VarChar(500)
+  fileSize   Int?
+  startedAt  DateTime      @default(now())
+  finishedAt DateTime?
+  durationMs Int?
+  error      String?
+  metadata   Json?
 
   @@index([startedAt])
   @@index([estado])
@@ -1016,7 +1025,7 @@ model JournalEntry {
   isOpening     Boolean               @default(false)
   createdAt     DateTime              @default(now())
   createdBy     String
-  createdByUser Usuario                @relation("JournalEntryCreatedBy", fields: [createdBy], references: [id])
+  createdByUser Usuario               @relation("JournalEntryCreatedBy", fields: [createdBy], references: [id])
   lines         JournalLine[]
 
   @@index([referenceType, referenceId])
@@ -1030,8 +1039,8 @@ model JournalLine {
   journalEntry   JournalEntry @relation(fields: [journalEntryId], references: [id])
   accountCode    String
   account        Account      @relation(fields: [accountCode], references: [code])
-  debitAmount    Decimal?     @db.Decimal(15,2)
-  creditAmount   Decimal?     @db.Decimal(15,2)
+  debitAmount    Decimal?     @db.Decimal(15, 2)
+  creditAmount   Decimal?     @db.Decimal(15, 2)
   cajaId         String?
   caja           Caja?        @relation(fields: [cajaId], references: [id])
 
@@ -1042,19 +1051,19 @@ model JournalLine {
 }
 
 model RegistroVisita {
-  id            String   @id @default(uuid())
-  rutaId        String
-  clienteId     String
-  prestamoId    String?
-  cobradorId    String
-  fechaVisita   String   @db.VarChar(10) // Formato 'YYYY-MM-DD' en Bogotá
-  estadoVisita  String   @db.VarChar(50) // Ejemplo: 'ausente'
-  notas         String?  @db.Text
-  creadoEn      DateTime @default(now())
-  
-  cliente       Cliente  @relation(fields: [clienteId], references: [id])
-  cobrador      Usuario  @relation("VisitasRegistradas", fields: [cobradorId], references: [id])
-  ruta          Ruta     @relation(fields: [rutaId], references: [id])
+  id           String   @id @default(uuid())
+  rutaId       String
+  clienteId    String
+  prestamoId   String?
+  cobradorId   String
+  fechaVisita  String   @db.VarChar(10) // Formato 'YYYY-MM-DD' en Bogotá
+  estadoVisita String   @db.VarChar(50) // Ejemplo: 'ausente'
+  notas        String?  @db.Text
+  creadoEn     DateTime @default(now())
+
+  cliente  Cliente @relation(fields: [clienteId], references: [id])
+  cobrador Usuario @relation("VisitasRegistradas", fields: [cobradorId], references: [id])
+  ruta     Ruta    @relation(fields: [rutaId], references: [id])
 
   @@unique([rutaId, clienteId, fechaVisita])
   @@index([rutaId, fechaVisita])
@@ -1069,30 +1078,123 @@ enum RutaJornadaEstado {
   ANULADA
 }
 
+enum TipoDiferenciaArqueo {
+  SIN_DIFERENCIA
+  FALTANTE
+  SOBRANTE
+}
+
+enum EstadoArqueoCaja {
+  BORRADOR
+  CONFIRMADO
+  ANULADO
+}
+
+enum EstadoEfectoProvisional {
+  PENDIENTE_REVISION
+  CONFIRMADO
+  REVERTIDO
+  REVERSA_FALLIDA
+}
+
+model EfectoProvisional {
+  id                String                @id @default(uuid())
+  aprobacionId      String
+  aprobacion        Aprobacion            @relation(fields: [aprobacionId], references: [id], onDelete: Cascade)
+  tipoAccion        String
+  tipoEntidad       String?
+  entidadId         String?
+  estado            EstadoEfectoProvisional @default(PENDIENTE_REVISION)
+  snapshotAntes     Json?
+  snapshotDespues   Json?
+  rollbackData      Json?
+  entidadesAfectadas Json?
+  aplicadoPorId     String
+  aplicadoEn        DateTime              @default(now())
+  confirmadoEn      DateTime?
+  revertidoEn       DateTime?
+  motivoReversion   String?
+  creadoEn          DateTime              @default(now())
+  actualizadoEn     DateTime              @updatedAt
+
+  @@index([aprobacionId])
+  @@index([tipoAccion])
+  @@index([estado])
+}
+
 model RutaJornada {
-  id             String             @id @default(uuid())
+  id             String            @id @default(uuid())
   rutaId         String
   cajaId         String
-  fechaOperativa String             @db.VarChar(10) // Formato 'YYYY-MM-DD' en Bogotá
+  fechaOperativa String            @db.VarChar(10) // Formato 'YYYY-MM-DD' en Bogotá
   estado         RutaJornadaEstado @default(ABIERTA)
 
   activacionTransaccionId String?
   cierreTransaccionId     String?
 
-  activadaEn      DateTime
-  cerradaEn       DateTime?
-  regularizadaEn  DateTime?
+  activacionTransaccion Transaccion? @relation("RutaJornadaActivacion", fields: [activacionTransaccionId], references: [id])
+  cierreTransaccion     Transaccion? @relation("RutaJornadaCierre", fields: [cierreTransaccionId], references: [id])
+
+  activadaEn        DateTime
+  cerradaEn         DateTime?
+  regularizadaEn    DateTime?
   regularizadaPorId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  arqueos ArqueoCaja[]
+
   ruta Ruta @relation(fields: [rutaId], references: [id])
-  caja  Caja @relation(fields: [cajaId], references: [id])
+  caja Caja @relation(fields: [cajaId], references: [id])
 
   @@unique([rutaId, fechaOperativa])
   @@index([rutaId])
   @@index([estado])
   @@index([fechaOperativa])
   @@map("rutas_jornadas")
+}
+
+model ArqueoCaja {
+  id             String  @id @default(uuid())
+  cajaId         String
+  rutaId         String?
+  rutaJornadaId  String?
+  fechaOperativa String  @db.VarChar(10)
+
+  responsableId String
+  creadoPorId   String
+  recibidoPorId String?
+
+  saldoEsperado   Decimal @db.Decimal(12, 2)
+  efectivoContado Decimal @db.Decimal(12, 2)
+  diferencia      Decimal @db.Decimal(12, 2)
+  montoTransferido Decimal? @db.Decimal(12, 2)
+
+  tipoDiferencia TipoDiferenciaArqueo
+  estado         EstadoArqueoCaja     @default(CONFIRMADO)
+
+  numeroComprobanteTraslado String? @unique @db.VarChar(50)
+  denominaciones Json?
+  observaciones  String?
+
+  transaccionSalidaId  String?
+  transaccionEntradaId String?
+  journalEntryId       String?
+
+  creadoEn      DateTime @default(now())
+  recibidoEn    DateTime?
+  actualizadoEn DateTime @updatedAt
+
+  caja        Caja         @relation(fields: [cajaId], references: [id])
+  ruta        Ruta?        @relation(fields: [rutaId], references: [id])
+  rutaJornada RutaJornada? @relation(fields: [rutaJornadaId], references: [id])
+  responsable Usuario      @relation("ArqueoCajaResponsable", fields: [responsableId], references: [id])
+  creadoPor   Usuario      @relation("ArqueoCajaCreadoPor", fields: [creadoPorId], references: [id])
+  recibidoPor Usuario?     @relation("ArqueoCajaRecibidoPor", fields: [recibidoPorId], references: [id])
+
+  @@unique([cajaId, fechaOperativa])
+  @@index([fechaOperativa])
+  @@index([responsableId])
+  @@map("arqueos_caja")
 }
