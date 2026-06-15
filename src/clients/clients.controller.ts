@@ -123,20 +123,6 @@ export class ClientsController {
     res.send(result.data);
   }
 
-  @Get(':id')
-  @Roles(
-    RolUsuario.SUPER_ADMINISTRADOR,
-    RolUsuario.ADMIN,
-    RolUsuario.COORDINADOR,
-    RolUsuario.SUPERVISOR,
-    RolUsuario.COBRADOR,
-    RolUsuario.CONTADOR,
-    RolUsuario.PUNTO_DE_VENTA,
-  )
-  async getClientById(@Param('id') id: string, @Request() req: any) {
-    return this.clientsService.getClientById(id, req.user);
-  }
-
   @Get(':id/estado-cuenta')
   @Roles(
     RolUsuario.SUPER_ADMINISTRADOR,
@@ -149,6 +135,20 @@ export class ClientsController {
   )
   async getEstadoCuenta(@Param('id') id: string) {
     return this.clientsService.getEstadoCuentaCliente(id);
+  }
+
+  @Get(':id')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COBRADOR,
+    RolUsuario.CONTADOR,
+    RolUsuario.PUNTO_DE_VENTA,
+  )
+  async getClientById(@Param('id') id: string, @Request() req: any) {
+    return this.clientsService.getClientById(id, req.user);
   }
 
   private readonly logger = new Logger(ClientsController.name);

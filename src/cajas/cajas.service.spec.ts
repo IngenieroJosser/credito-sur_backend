@@ -117,6 +117,10 @@ function buildMockPrisma(overrides: Record<string, unknown> = {}) {
         if (where.tipo === TipoCaja.PRINCIPAL) return CAJA_PRINCIPAL;
         return null;
       }),
+      update: jest.fn().mockResolvedValue({}),
+    },
+    transaccion: {
+      findMany: jest.fn().mockResolvedValue([]),
     },
     arqueoCaja: {
       findUnique: jest.fn().mockResolvedValue(null),
@@ -151,6 +155,9 @@ function buildMockPrisma(overrides: Record<string, unknown> = {}) {
         if (where.tipo === TipoCaja.PRINCIPAL) return CAJA_PRINCIPAL;
         return null;
       }),
+    },
+    transaccion: {
+      findMany: jest.fn().mockResolvedValue([]),
     },
     arqueoCaja: {
       findUnique: jest.fn().mockResolvedValue(null),
@@ -188,11 +195,17 @@ describe('CajasService', () => {
   });
 
   describe('getArqueoPreview', () => {
+    beforeEach(() => {
+      // Limpiar mocks de transacciones antes de cada test de getArqueoPreview
+      prisma.transaccion.findMany.mockClear();
+      prisma.transaccion.findMany.mockResolvedValue([]);
+    });
+
     it('devuelve preview correctamente cuando la caja existe', async () => {
       const result = await service.getArqueoPreview(CAJA_RUTA_ACTIVA.id, '2026-06-13');
 
       expect(result).toHaveProperty('cajaId', CAJA_RUTA_ACTIVA.id);
-      expect(result).toHaveProperty('saldoEsperado', CAJA_RUTA_ACTIVA.saldoActual);
+      expect(result).toHaveProperty('saldoEsperado');
       expect(result).toHaveProperty('cajaPrincipal');
       expect(result).toHaveProperty('arqueoExistente', false);
     });
@@ -204,15 +217,67 @@ describe('CajasService', () => {
         NotFoundException,
       );
     });
+
+    it('calcula saldo esperado desde transacciones', async () => {
+      // Mock de transacciones para el cálculo de saldo esperado
+      prisma.transaccion.findMany.mockResolvedValue([
+        { tipo: 'INGRESO', monto: 1000000 },
+        { tipo: 'INGRESO', monto: 500000 },
+        { tipo: 'EGRESO', monto: 200000 },
+      ]);
+
+      const result = await service.getArqueoPreview(CAJA_RUTA_ACTIVA.id, '2026-06-13');
+
+      // Saldo esperado = 1000000 + 500000 - 200000 = 1300000
+      expect(result.desglose.saldoEsperadoCalculado).toBe(1300000);
+      expect(result.desglose.diferenciaSistema).toBeDefined();
+    });
+
+    it('excluye ventas contado del cálculo de saldo esperado', async () => {
+      // Configurar mock que simula el filtro tipoReferencia
+      prisma.transaccion.findMany.mockImplementation(({ where }: any) => {
+        if (where?.tipoReferencia?.notIn?.includes('VENTA_CONTADO')) {
+          // Cuando se filtra por notIn VENTA_CONTADO, devolver transacciones sin VENTA_CONTADO
+          return Promise.resolve([
+            { tipo: 'INGRESO', monto: 1000000 },
+            { tipo: 'EGRESO', monto: 200000 },
+          ]);
+        }
+        // Sin filtro, devolver todas las transacciones
+        return Promise.resolve([
+          { tipo: 'INGRESO', monto: 1000000 },
+          { tipo: 'INGRESO', monto: 500000, tipoReferencia: 'VENTA_CONTADO' },
+          { tipo: 'EGRESO', monto: 200000 },
+        ]);
+      });
+
+      const result = await service.getArqueoPreview(CAJA_RUTA_ACTIVA.id, '2026-06-13');
+
+      // Saldo esperado = 1000000 - 200000 = 800000 (excluye VENTA_CONTADO)
+      expect(result.desglose.saldoEsperadoCalculado).toBe(800000);
+    });
   });
 
   describe('confirmarArqueo', () => {
+    beforeEach(() => {
+      // Configurar mock de transacciones por defecto para confirmarArqueo
+      prisma.transaccion.findMany.mockResolvedValue([
+        { tipo: 'INGRESO', monto: 5000000 },
+      ]);
+      prisma._tx.transaccion.findMany.mockResolvedValue([
+        { tipo: 'INGRESO', monto: 5000000 },
+      ]);
+    });
+
     it('confirmar arqueo sin diferencia', async () => {
       const result = await service.confirmarArqueo(
         CAJA_RUTA_ACTIVA.id,
         '2026-06-13',
         5000000,
         USUARIO_ADMIN.id,
+        undefined,
+        undefined,
+        undefined, // Sin observación porque no hay diferencia
       );
 
       expect(result).toHaveProperty('arqueoId', ARQUEO_CREADO.id);
@@ -248,6 +313,9 @@ describe('CajasService', () => {
         '2026-06-13',
         4900000,
         USUARIO_ADMIN.id,
+        undefined,
+        undefined,
+        'Faltante por error de conteo', // Observación requerida
       );
 
       expect(result).toHaveProperty('arqueoId');
@@ -285,6 +353,9 @@ describe('CajasService', () => {
         '2026-06-13',
         5100000,
         USUARIO_ADMIN.id,
+        undefined,
+        undefined,
+        'Sobrante por error de conteo', // Observación requerida
       );
 
       expect(result).toHaveProperty('arqueoId');
@@ -337,10 +408,7 @@ describe('CajasService', () => {
     });
 
     it('no permite arqueo duplicado', async () => {
-      prisma.$transaction.mockImplementationOnce((cb: any) => {
-        prisma._tx.arqueoCaja.findUnique.mockResolvedValueOnce(ARQUEO_CREADO);
-        return cb(prisma._tx);
-      });
+      prisma._tx.arqueoCaja.findUnique.mockResolvedValueOnce(ARQUEO_CREADO);
 
       await expect(service.confirmarArqueo(
         CAJA_RUTA_ACTIVA.id,
