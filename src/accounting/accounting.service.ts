@@ -2288,17 +2288,17 @@ export class AccountingService {
     const cobranzaLedger = Number(cobranzaHoyLedger._sum.debitAmount || 0);
     const cobranzaAyerLedgerVal = Number(cobranzaAyerLedger._sum.debitAmount || 0);
     const ingresosCajaAyerLedgerVal = Number(
-      ingresosCajaAyerLedger._sum.debitAmount || 0,
+      ingresosCajaAyerLedger?._sum?.debitAmount || 0,
     );
     const ingresosAyerLedgerVal =
-      Number(ingresosAyerLedger._sum.creditAmount || 0) -
-      Number(ingresosAyerLedger._sum.debitAmount || 0);
+      Number(ingresosAyerLedger?._sum?.creditAmount || 0) -
+      Number(ingresosAyerLedger?._sum?.debitAmount || 0);
     const egresosAyerLedgerVal =
-      Number(gastosAyerLedger._sum.debitAmount || 0) -
-      Number(gastosAyerLedger._sum.creditAmount || 0);
+      Number(gastosAyerLedger?._sum?.debitAmount || 0) -
+      Number(gastosAyerLedger?._sum?.creditAmount || 0);
     const costosAyerLedgerVal =
-      Number(costosAyerLedger._sum.debitAmount || 0) -
-      Number(costosAyerLedger._sum.creditAmount || 0);
+      Number(costosAyerLedger?._sum?.debitAmount || 0) -
+      Number(costosAyerLedger?._sum?.creditAmount || 0);
     const cuotaInicialLedger =
       Number(cuotaInicialHoyIngresoAggLedger._sum.monto || 0) -
       Number(cuotaInicialHoyReversoAggLedger._sum.monto || 0);

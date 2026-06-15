@@ -1064,9 +1064,6 @@ export class ReportsService {
 
       const newLoans = routeNewLoansStats._count.id || 0;
       const newLoansAmount = Number(routeNewLoansStats._sum.monto || 0);
-      const collectedFromCuotaInicial = Number(
-        routeNewLoansStats._sum.cuotaInicial || 0,
-      );
 
       const newClients = await this.prisma.cliente.count({
         where: {
@@ -1115,12 +1112,11 @@ export class ReportsService {
 
       const target =
         Number(routeDuePayments._sum.monto || 0) +
-        Number(routeDuePayments._sum.montoInteresMora || 0) +
-        collectedFromCuotaInicial;
+        Number(routeDuePayments._sum.montoInteresMora || 0);
 
       const efficiency =
         target > 0
-          ? Math.round(((collected + collectedFromCuotaInicial) / target) * 100)
+          ? Math.round((collected / target) * 100)
           : 0;
 
       return {
@@ -1129,7 +1125,7 @@ export class ReportsService {
         cobrador: `${route.cobrador.nombres} ${route.cobrador.apellidos}`,
         cobradorId: route.cobrador.id,
         meta: target,
-        recaudado: collected + collectedFromCuotaInicial,
+        recaudado: collected,
         eficiencia: efficiency,
         nuevosPrestamos: newLoans,
         nuevosClientes: newClients,
@@ -1164,9 +1160,7 @@ export class ReportsService {
       _count: { id: true },
     });
 
-    const totalRecaudo =
-      Number(globalPayments._sum.montoTotal || 0) +
-      Number(globalNewLoansStats._sum.cuotaInicial || 0);
+    const totalRecaudo = Number(globalPayments._sum.montoTotal || 0);
     const totalMontoPrestamosNuevos = Number(
       globalNewLoansStats._sum.monto || 0,
     );
@@ -1206,8 +1200,7 @@ export class ReportsService {
 
     const totalMeta =
       Number(globalDuePayments._sum.monto || 0) +
-      Number(globalDuePayments._sum.montoInteresMora || 0) +
-      Number(globalNewLoansStats._sum.cuotaInicial || 0);
+      Number(globalDuePayments._sum.montoInteresMora || 0);
 
     const porcentajeGlobal =
       totalMeta > 0 ? Math.round((totalRecaudo / totalMeta) * 100) : 0;

@@ -60,6 +60,11 @@ export function tasaPorPeriodo(
 /**
  * Genera tabla de amortización (cuota fija).
  * La tasa que recibe se aplica directamente por periodo.
+ *
+ * NOTA: En CrediSur, este método conserva el nombre histórico de "francesa",
+ * pero por decisión de negocio calcula interés plano:
+ * total = capital + interés total
+ * cuota = total / cantidadCuotas
  */
 export function calcularAmortizacionFrancesa(
   capital: number,
