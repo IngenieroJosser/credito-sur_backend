@@ -8,7 +8,7 @@ const migrations = [
   {
     name: '20260613165000_add_arqueo_caja',
     resolveOnGlobalFailure: true,
-    resolveAlways: true,
+    resolveAlways: false,
   },
   // NOTA: 20260614113000_add_efecto_provisional eliminado de auto-resolve
   // El CREATE TYPE ahora es idempotente con bloque DO, por lo que no necesita
