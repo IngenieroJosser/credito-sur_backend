@@ -27,6 +27,11 @@ import {
 import { CreateRouteDto } from './dto/create-route.dto';
 
 import { UpdateRouteDto } from './dto/update-route.dto';
+import {
+  getCuotaFechaEfectivaKeyRuta,
+  getEstadoRevisionOperacion,
+  isPrestamoOperativoRuta,
+} from './ruta-operational-rules';
 
 import {
   Prisma,
@@ -519,70 +524,6 @@ export class RoutesService {
     }).format(date);
 
     return day === 'Sun';
-  }
-
-  private getEstadoEfectoProvisional(prestamo: any): string {
-    return String(
-      prestamo?.estadoEfectoProvisional ||
-        prestamo?.efectoProvisional?.estado ||
-        prestamo?.efectosProvisionales?.[0]?.estado ||
-        '',
-    ).toUpperCase();
-  }
-
-  private getEstadoRevisionOperacion(prestamo: any) {
-    const estadoAprobacion = String(
-      prestamo?.estadoAprobacion || '',
-    ).toUpperCase();
-    const estadoEfectoProvisional =
-      this.getEstadoEfectoProvisional(prestamo);
-    const estado = String(prestamo?.estado || '').toUpperCase();
-    const esRevertido =
-      estadoEfectoProvisional === 'REVERTIDO' ||
-      estadoEfectoProvisional === 'REVERSA_FALLIDA' ||
-      Boolean(prestamo?.esRevertido);
-    const esProvisional =
-      !esRevertido &&
-      (estadoAprobacion === EstadoAprobacion.PENDIENTE ||
-        estado === EstadoPrestamo.PENDIENTE_APROBACION ||
-        estadoEfectoProvisional === 'PENDIENTE_REVISION' ||
-        Boolean(prestamo?.esProvisional));
-
-    return {
-      estadoAprobacion: estadoAprobacion || null,
-      estadoEfectoProvisional: estadoEfectoProvisional || null,
-      esProvisional,
-      esRevertido,
-      etiquetaRevision: esRevertido
-        ? 'Revertido'
-        : esProvisional
-          ? 'Pendiente de revisión'
-          : null,
-    };
-  }
-
-  private isPrestamoOperativoRuta(prestamo: any): boolean {
-    if (!prestamo) return false;
-    if (prestamo.eliminadoEn) return false;
-
-    const estado = String(prestamo.estado || '').toUpperCase();
-    const estadoAprobacion = String(
-      prestamo.estadoAprobacion || '',
-    ).toUpperCase();
-    const tipoPrestamo = String(prestamo.tipoPrestamo || '').toUpperCase();
-
-    if (estadoAprobacion === EstadoAprobacion.RECHAZADO) return false;
-    if (
-      [EstadoPrestamo.PERDIDA, EstadoPrestamo.BORRADOR].includes(
-        estado as any,
-      )
-    ) {
-      return false;
-    }
-    if (this.getEstadoRevisionOperacion(prestamo).esRevertido) return false;
-    if (prestamo.esContado || tipoPrestamo === 'VENTA_CONTADO') return false;
-
-    return true;
   }
 
   async listarCreditosAsignadosACobrador(
@@ -3437,7 +3378,7 @@ export class RoutesService {
       // Revisar cada préstamo activo
 
       const prestamosOperativos = (cliente.prestamos || []).filter(
-        (prestamo: any) => this.isPrestamoOperativoRuta(prestamo),
+        (prestamo: any) => isPrestamoOperativoRuta(prestamo),
       );
 
       for (const prestamo of prestamosOperativos) {
@@ -3507,7 +3448,7 @@ export class RoutesService {
       if (debeAparecerHoy) {
         // Compute cuotaObjetivo for each prestamo
         const prestamosConCuotaObjetivo = prestamosOperativos.map((p) => {
-          const estadoRevision = this.getEstadoRevisionOperacion(p);
+          const estadoRevision = getEstadoRevisionOperacion(p);
           const montoTotalCuotas = p.cuotas.reduce(
             (sum, c) => sum + Number(c.monto),
             0,
@@ -3817,10 +3758,10 @@ export class RoutesService {
       if (!cliente) continue;
 
       const prestamosOperativos = (cliente.prestamos || []).filter(
-        (p: any) => this.isPrestamoOperativoRuta(p),
+        (p: any) => isPrestamoOperativoRuta(p),
       );
       const prestamosConCuotaObjetivo = prestamosOperativos.map((p: any) => {
-        const estadoRevision = this.getEstadoRevisionOperacion(p);
+        const estadoRevision = getEstadoRevisionOperacion(p);
         const isObjetivo = String(p?.id || '') === prestamoId;
         return {
           id: p.id,
@@ -3934,7 +3875,7 @@ export class RoutesService {
       const cuota = detalle?.cuota;
       if (!cuota) return null;
 
-      const fechaEfectivaKey = this.getCuotaFechaEfectivaKey(cuota);
+      const fechaEfectivaKey = getCuotaFechaEfectivaKeyRuta(cuota);
       const montoCuota = Number(cuota.monto || 0);
       const estado = String(cuota.estado || '').toUpperCase();
       const pagada = ['PAGADA', 'PAGADO'].includes(estado);
@@ -4274,10 +4215,10 @@ export class RoutesService {
           },
         });
         const prestamosOperativos = (clienteFull?.prestamos || []).filter(
-          (p: any) => this.isPrestamoOperativoRuta(p),
+          (p: any) => isPrestamoOperativoRuta(p),
         );
         const prestamosConCuotaObjetivo = prestamosOperativos.map((p) => {
-          const estadoRevision = this.getEstadoRevisionOperacion(p);
+          const estadoRevision = getEstadoRevisionOperacion(p);
           const cuotaObjetivo = this.computeCuotaObjetivo(p, fechaKey);
           return {
             id: p.id,
@@ -4449,21 +4390,6 @@ export class RoutesService {
     };
   }
 
-  private getCuotaFechaEfectivaKey(cuota: any) {
-    const raw = 
-      String(cuota?.estado || '').toUpperCase() === 'PRORROGADA' && 
-      cuota?.fechaVencimientoProrroga 
-        ? cuota.fechaVencimientoProrroga 
-        : cuota?.fechaVencimiento;
-
-    if (!raw) return '9999-12-31';
-
-    const date = new Date(raw);
-    if (Number.isNaN(date.getTime())) return '9999-12-31';
-
-    return getBogotaDayKey(date);
-  }
-
   private computeMetaOperativaVisita(
     visita: any,
     recaudoCliente = 0,
@@ -4471,7 +4397,7 @@ export class RoutesService {
   ): number {
     const pendienteExigible = (visita?.prestamos || []).reduce(
       (sum: number, prestamo: any) => {
-        if (!this.isPrestamoOperativoRuta(prestamo)) return sum;
+        if (!isPrestamoOperativoRuta(prestamo)) return sum;
 
         if (prestamo?.montoMetaOperativaPendiente != null) {
           return sum + Number(prestamo.montoMetaOperativaPendiente || 0);
@@ -4499,7 +4425,7 @@ export class RoutesService {
     prestamo: any,
     fechaKey: string,
   ): number {
-    if (!this.isPrestamoOperativoRuta(prestamo)) return 0;
+    if (!isPrestamoOperativoRuta(prestamo)) return 0;
 
     const cuotaObjetivo = this.computeCuotaObjetivo(prestamo, fechaKey);
     if (!cuotaObjetivo) return 0;
@@ -4510,18 +4436,18 @@ export class RoutesService {
   }
 
   private computeCuotaObjetivo(prestamo: any, fechaKey: string) {
-    if (!this.isPrestamoOperativoRuta(prestamo)) return null;
+    if (!isPrestamoOperativoRuta(prestamo)) return null;
 
     if (!prestamo.cuotas || prestamo.cuotas.length === 0) return null;
 
     const sortedCuotas = [...prestamo.cuotas].sort((a, b) => {
-      const ak = this.getCuotaFechaEfectivaKey(a);
-      const bk = this.getCuotaFechaEfectivaKey(b);
+      const ak = getCuotaFechaEfectivaKeyRuta(a);
+      const bk = getCuotaFechaEfectivaKeyRuta(b);
       return ak.localeCompare(bk);
     });
 
     const cuotasHastaFecha = sortedCuotas.filter((cuota) => {
-      return this.getCuotaFechaEfectivaKey(cuota) <= fechaKey;
+      return getCuotaFechaEfectivaKeyRuta(cuota) <= fechaKey;
     });
 
     const cuotaNoPagadaVencida = cuotasHastaFecha.find((cuota) => {
@@ -4536,7 +4462,7 @@ export class RoutesService {
         : null;
 
     const cuotaFutura = sortedCuotas.find((cuota) => {
-      return this.getCuotaFechaEfectivaKey(cuota) > fechaKey;
+      return getCuotaFechaEfectivaKeyRuta(cuota) > fechaKey;
     });
 
     const cuotaObjetivo = 
@@ -4549,7 +4475,7 @@ export class RoutesService {
     const pagada = ['PAGADA', 'PAGADO'].includes(estado);
     const anulada = ['ANULADA', 'ANULADO'].includes(estado);
 
-    const fechaEfectivaKey = this.getCuotaFechaEfectivaKey(cuotaObjetivo);
+    const fechaEfectivaKey = getCuotaFechaEfectivaKeyRuta(cuotaObjetivo);
     const esCuotaFuturaEnFechaOperativa = fechaEfectivaKey > fechaKey;
     const esCuotaPagadaHistorica = pagada && fechaEfectivaKey <= fechaKey;
 
@@ -4561,7 +4487,7 @@ export class RoutesService {
         return false;
       }
 
-      return this.getCuotaFechaEfectivaKey(cuota) <= fechaKey;
+      return getCuotaFechaEfectivaKeyRuta(cuota) <= fechaKey;
     });
     const montoMoraAcumulada = cuotasVencidasPendientes.reduce(
       (sum: number, cuota: any) =>
@@ -6061,7 +5987,7 @@ export class RoutesService {
   private buildObligacionesOperativas(visitas: any[]) {
     return visitas.flatMap((visita: any) => {
       return (visita.prestamos || [])
-        .filter((prestamo: any) => this.isPrestamoOperativoRuta(prestamo))
+        .filter((prestamo: any) => isPrestamoOperativoRuta(prestamo))
         .map((prestamo: any) => {
           const estadoGestion = this.resolveEstadoGestionPrestamo(
             visita,
