@@ -1,8 +1,14 @@
 const { execFileSync } = require('node:child_process');
 
-const migrationNames = [
-  '20260611120000_fix_route_activation_bogota_day_unique',
-  '20260613165000_add_arqueo_caja',
+const migrations = [
+  {
+    name: '20260611120000_fix_route_activation_bogota_day_unique',
+    resolveOnGlobalFailure: false,
+  },
+  {
+    name: '20260613165000_add_arqueo_caja',
+    resolveOnGlobalFailure: true,
+  },
 ];
 const schema = 'src/prisma/schema.prisma';
 
@@ -22,23 +28,32 @@ function main() {
     status = `${error.stdout || ''}\n${error.stderr || ''}`;
   }
 
-  for (const migrationName of migrationNames) {
-    if (!status.includes(migrationName)) {
-      console.log(`[migrate] ${migrationName} not reported by migrate status, continuing.`);
-      continue;
-    }
+  const hasFailedMigration = /failed|P3018|P3009|failed migrations/i.test(status);
 
-    if (!/failed|P3018|P3009|failed migrations/i.test(status)) {
-      console.log(`[migrate] ${migrationName} was not in a failed state, continuing.`);
+  for (const migration of migrations) {
+    const migrationName = migration.name;
+    const migrationReported = status.includes(migrationName);
+    const shouldResolve =
+      hasFailedMigration &&
+      (migrationReported || migration.resolveOnGlobalFailure);
+
+    if (!shouldResolve) {
+      console.log(`[migrate] ${migrationName} not reported as failed by migrate status, continuing.`);
       continue;
     }
 
     console.log(`[migrate] Marking failed migration ${migrationName} as rolled back before deploy.`);
-    run(
-      'npx',
-      ['prisma', 'migrate', 'resolve', '--rolled-back', migrationName, '--schema', schema],
-      { stdio: 'inherit' },
-    );
+    try {
+      run(
+        'npx',
+        ['prisma', 'migrate', 'resolve', '--rolled-back', migrationName, '--schema', schema],
+        { stdio: 'inherit' },
+      );
+    } catch (error) {
+      console.warn(
+        `[migrate] Could not mark ${migrationName} as rolled back. Continuing so migrate deploy can report the current state.`,
+      );
+    }
   }
 }
 
