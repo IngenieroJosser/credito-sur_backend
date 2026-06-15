@@ -1,6 +1,9 @@
 const { execFileSync } = require('node:child_process');
 
-const migrationName = '20260611120000_fix_route_activation_bogota_day_unique';
+const migrationNames = [
+  '20260611120000_fix_route_activation_bogota_day_unique',
+  '20260613165000_add_arqueo_caja',
+];
 const schema = 'src/prisma/schema.prisma';
 
 function run(command, args, options = {}) {
@@ -19,22 +22,24 @@ function main() {
     status = `${error.stdout || ''}\n${error.stderr || ''}`;
   }
 
-  if (!status.includes(migrationName)) {
-    console.log(`[migrate] ${migrationName} not reported by migrate status, continuing.`);
-    return;
-  }
+  for (const migrationName of migrationNames) {
+    if (!status.includes(migrationName)) {
+      console.log(`[migrate] ${migrationName} not reported by migrate status, continuing.`);
+      continue;
+    }
 
-  if (!/failed|P3018|failed migrations/i.test(status)) {
-    console.log(`[migrate] ${migrationName} was not in a failed state, continuing.`);
-    return;
-  }
+    if (!/failed|P3018|P3009|failed migrations/i.test(status)) {
+      console.log(`[migrate] ${migrationName} was not in a failed state, continuing.`);
+      continue;
+    }
 
-  console.log(`[migrate] Marking failed migration ${migrationName} as rolled back before deploy.`);
-  run(
-    'npx',
-    ['prisma', 'migrate', 'resolve', '--rolled-back', migrationName, '--schema', schema],
-    { stdio: 'inherit' },
-  );
+    console.log(`[migrate] Marking failed migration ${migrationName} as rolled back before deploy.`);
+    run(
+      'npx',
+      ['prisma', 'migrate', 'resolve', '--rolled-back', migrationName, '--schema', schema],
+      { stdio: 'inherit' },
+    );
+  }
 }
 
 main();
