@@ -10,11 +10,9 @@ const migrations = [
     resolveOnGlobalFailure: true,
     resolveAlways: true,
   },
-  {
-    name: '20260614113000_add_efecto_provisional',
-    resolveOnGlobalFailure: true,
-    resolveAlways: true,
-  },
+  // NOTA: 20260614113000_add_efecto_provisional eliminado de auto-resolve
+  // El CREATE TYPE ahora es idempotente con bloque DO, por lo que no necesita
+  // marcado automático como rolled-back. Si falla, se debe resolver manualmente.
 ];
 const schema = 'src/prisma/schema.prisma';
 

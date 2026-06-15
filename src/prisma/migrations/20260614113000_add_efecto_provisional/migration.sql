@@ -1,10 +1,15 @@
 -- CreateEnum
-CREATE TYPE "EstadoEfectoProvisional" AS ENUM (
+DO $$
+BEGIN
+  CREATE TYPE "EstadoEfectoProvisional" AS ENUM (
   'PENDIENTE_REVISION',
   'CONFIRMADO',
   'REVERTIDO',
   'REVERSA_FALLIDA'
-);
+  );
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 -- CreateTable
 CREATE TABLE "EfectoProvisional" (
