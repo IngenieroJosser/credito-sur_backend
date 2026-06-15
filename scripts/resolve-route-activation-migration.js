@@ -11,31 +11,7 @@ function run(command, args, options = {}) {
 }
 
 function main() {
-  const migrationName = '20260614113000_add_efecto_provisional';
-
-  console.log(`[migrate] Resolviendo migración fallida puntual: ${migrationName}`);
-
-  try {
-    run(
-      'npx',
-      [
-        'prisma',
-        'migrate',
-        'resolve',
-        '--rolled-back',
-        migrationName,
-        '--schema',
-        schema,
-      ],
-      { stdio: 'inherit' },
-    );
-
-    console.log(`[migrate] ${migrationName} marcada como rolled back.`);
-  } catch (error) {
-    console.warn(
-      `[migrate] No se pudo marcar ${migrationName} como rolled back. Continuando para que migrate deploy reporte el estado actual.`,
-    );
-  }
+  console.log('[migrate] Auto-resolve disabled. Production migrations are resolved manually or by explicit hotfix.');
 }
 
 main();
