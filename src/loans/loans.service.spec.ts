@@ -100,6 +100,73 @@ describe('LoansService accounting impact for approved loans', () => {
     jest.clearAllMocks();
   });
 
+  it('resuelve caja de oficina para crédito administrativo aunque el cliente tenga ruta asignada', async () => {
+    const tx = {
+      ruta: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'ruta-1',
+          cobradorId: 'cobrador-1',
+        }),
+      },
+      caja: {
+        findFirst: jest.fn().mockImplementation(({ where }: any) => {
+          if (where?.tipo === 'RUTA') {
+            return Promise.resolve({
+              id: 'caja-ruta-1',
+              codigo: 'CAJA-RUTA-1',
+              tipo: 'RUTA',
+              nombre: 'Caja Ruta Centro - Norte',
+              saldoActual: 500000,
+              rutaId: 'ruta-1',
+              responsableId: 'cobrador-1',
+            });
+          }
+          if (where?.codigo === 'CAJA-OFICINA') {
+            return Promise.resolve({
+              id: 'caja-oficina',
+              codigo: 'CAJA-OFICINA',
+              tipo: 'PRINCIPAL',
+              nombre: 'Caja de Oficina',
+              saldoActual: 1000000,
+              rutaId: null,
+              responsableId: null,
+            });
+          }
+          return Promise.resolve(null);
+        }),
+      },
+    };
+
+    const service = makeService({} as any) as any;
+    const caja = await service.resolveCajaOperacionPrestamo(tx, {
+      data: { rutaId: 'ruta-1' },
+      creador: { id: 'admin-1', rol: RolUsuario.ADMIN },
+      cliente: {
+        asignacionesRuta: [
+          {
+            rutaId: 'ruta-1',
+            cobradorId: 'cobrador-1',
+            ruta: { id: 'ruta-1', cobradorId: 'cobrador-1' },
+          },
+        ],
+      },
+      requiereCajaRuta: false,
+    });
+
+    expect(caja).toMatchObject({
+      id: 'caja-oficina',
+      codigo: 'CAJA-OFICINA',
+    });
+    expect(tx.caja.findFirst).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tipo: 'RUTA',
+          rutaId: 'ruta-1',
+        }),
+      }),
+    );
+  });
+
   it('registra desembolso contable desde caja de oficina para préstamo en efectivo autoaprobado', async () => {
     const prisma = {
       usuario: {

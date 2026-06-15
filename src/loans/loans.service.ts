@@ -433,6 +433,44 @@ export class LoansService implements OnModuleInit {
     },
   ) {
     const dataAny = params.data as any;
+    const rolCreador = String(params.creador?.rol || '').toUpperCase();
+    const esCobrador = rolCreador === RolUsuario.COBRADOR;
+    const rolesAdminConCajaRutaExplicita = [
+      RolUsuario.ADMIN,
+      RolUsuario.SUPER_ADMINISTRADOR,
+      RolUsuario.COORDINADOR,
+    ].map(String);
+
+    const findCajaOficina = async () =>
+      (await tx.caja.findFirst({
+        where: { activa: true, codigo: 'CAJA-OFICINA' },
+        select: {
+          id: true,
+          codigo: true,
+          tipo: true,
+          nombre: true,
+          saldoActual: true,
+          rutaId: true,
+          responsableId: true,
+        },
+      })) ||
+      (await tx.caja.findFirst({
+        where: {
+          activa: true,
+          OR: [{ codigo: 'CAJA-PRINCIPAL' }, { tipo: 'PRINCIPAL' as any }],
+        },
+        orderBy: { creadoEn: 'asc' as any },
+        select: {
+          id: true,
+          codigo: true,
+          tipo: true,
+          nombre: true,
+          saldoActual: true,
+          rutaId: true,
+          responsableId: true,
+        },
+      }));
+
     const cajaId = String(dataAny.cajaId || '').trim();
     if (cajaId) {
       const caja = await tx.caja.findFirst({
@@ -447,7 +485,32 @@ export class LoansService implements OnModuleInit {
           responsableId: true,
         },
       });
-      if (caja?.id) return caja;
+      if (caja?.id) {
+        const esCajaRuta = String(caja.tipo || '').toUpperCase() === 'RUTA';
+        if (!esCajaRuta) return caja;
+
+        const puedeUsarCajaRutaExplicita =
+          esCobrador ||
+          rolesAdminConCajaRutaExplicita.includes(rolCreador);
+
+        if (!puedeUsarCajaRutaExplicita) {
+          throw new BadRequestException(
+            'No tienes permiso para desembolsar desde una caja de ruta.',
+          );
+        }
+
+        if (esCobrador && caja.responsableId && caja.responsableId !== params.creador?.id) {
+          throw new BadRequestException(
+            'No puedes desembolsar desde una caja de ruta que no tienes asignada.',
+          );
+        }
+
+        return caja;
+      }
+    }
+
+    if (!esCobrador) {
+      return findCajaOficina();
     }
 
     const rutaIdPayload = String(dataAny.rutaId || '').trim();
@@ -499,36 +562,7 @@ export class LoansService implements OnModuleInit {
       );
     }
 
-    return (
-      (await tx.caja.findFirst({
-        where: { activa: true, codigo: 'CAJA-OFICINA' },
-        select: {
-          id: true,
-          codigo: true,
-          tipo: true,
-          nombre: true,
-          saldoActual: true,
-          rutaId: true,
-          responsableId: true,
-        },
-      })) ||
-      (await tx.caja.findFirst({
-        where: {
-          activa: true,
-          OR: [{ codigo: 'CAJA-PRINCIPAL' }, { tipo: 'PRINCIPAL' as any }],
-        },
-        orderBy: { creadoEn: 'asc' as any },
-        select: {
-          id: true,
-          codigo: true,
-          tipo: true,
-          nombre: true,
-          saldoActual: true,
-          rutaId: true,
-          responsableId: true,
-        },
-      }))
-    );
+    return findCajaOficina();
   }
 
   private getAccountCodeCaja(caja: any) {
