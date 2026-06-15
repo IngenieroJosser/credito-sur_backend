@@ -1417,31 +1417,26 @@ export class RoutesService {
           }
 
           if (estadisticas.clientesAsignados > 0) {
-            try {
-              const hoyKey = getBogotaDayKey(new Date());
-              const detalleOperativoHoy = await this.getDailyVisits(
-                ruta.id,
-                hoyKey,
-                actor,
-              );
-              const resumenHoy = detalleOperativoHoy?.resumen || {};
-              const recaudoOperativoHoy = Number(
-                resumenHoy.recaudoOperativo ?? resumenHoy.recaudo ?? 0,
-              );
-              const metaOperativaHoy = Number(resumenHoy.meta ?? 0);
+            const hoyKey = getBogotaDayKey(new Date());
+            const detalleOperativoHoy = await this.getDailyVisits(
+              ruta.id,
+              hoyKey,
+              actor,
+            );
+            const resumenHoy = detalleOperativoHoy?.resumen || {};
+            const recaudoOperativoHoy = Number(
+              resumenHoy.recaudoOperativo ?? resumenHoy.recaudo ?? 0,
+            );
+            const metaOperativaHoy = Number(resumenHoy.meta ?? 0);
 
-              estadisticas.cobranzaDelDia = recaudoOperativoHoy;
-              estadisticas.metaDelDia = metaOperativaHoy;
-              avanceDiario =
-                metaOperativaHoy > 0
-                  ? (recaudoOperativoHoy / metaOperativaHoy) * 100
-                  : recaudoOperativoHoy > 0
-                    ? 100
-                    : 0;
-            } catch {
-              // Si el detalle operativo no está disponible, conservamos el cálculo
-              // previo para no dejar el listado sin datos.
-            }
+            estadisticas.cobranzaDelDia = recaudoOperativoHoy;
+            estadisticas.metaDelDia = metaOperativaHoy;
+            avanceDiario =
+              metaOperativaHoy > 0
+                ? (recaudoOperativoHoy / metaOperativaHoy) * 100
+                : recaudoOperativoHoy > 0
+                  ? 100
+                  : 0;
           }
 
           // Obtener información de cierre pendiente desde el mapa batch
