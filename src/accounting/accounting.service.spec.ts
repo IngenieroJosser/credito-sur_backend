@@ -312,6 +312,255 @@ describe('AccountingService financial ledger controls', () => {
     expect(mockLedger.registrarAsiento).not.toHaveBeenCalled();
   });
 
+  describe('consolidarCaja idempotencia', () => {
+    it('crea TRX-OUT y TRX-IN con idempotencyKey', async () => {
+      const prisma = buildPrismaMock();
+      prisma.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 100000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+      prisma.caja.findFirst.mockResolvedValue({
+        id: 'caja-oficina',
+        nombre: 'Caja Oficina',
+        codigo: 'CAJA-OFICINA',
+        tipo: 'PRINCIPAL',
+        saldoActual: 0,
+      });
+      prisma.transaccion.findFirst.mockResolvedValue(null);
+      prisma._tx.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 100000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+      prisma._tx.transaccion.create
+        .mockResolvedValueOnce({ id: 'trx-out-1' })
+        .mockResolvedValueOnce({ id: 'trx-in-1' });
+
+      await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000);
+
+      expect(prisma._tx.transaccion.create).toHaveBeenCalledTimes(2);
+      expect(prisma._tx.transaccion.create).toHaveBeenNthCalledWith(1, {
+        data: expect.objectContaining({
+          idempotencyKey: expect.stringContaining(':OUT'),
+        }),
+      });
+      expect(prisma._tx.transaccion.create).toHaveBeenNthCalledWith(2, {
+        data: expect.objectContaining({
+          idempotencyKey: expect.stringContaining(':IN'),
+        }),
+      });
+    });
+
+    it('si se reintenta la misma recolección con la misma idempotencyKey, no duplica transacciones', async () => {
+      const prisma = buildPrismaMock();
+      prisma.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 100000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+      prisma.caja.findFirst.mockResolvedValue({
+        id: 'caja-oficina',
+        nombre: 'Caja Oficina',
+        codigo: 'CAJA-OFICINA',
+        tipo: 'PRINCIPAL',
+        saldoActual: 0,
+      });
+      prisma.transaccion.findFirst
+        .mockResolvedValueOnce({
+          id: 'trx-out-1',
+          numeroTransaccion: 'TRX-OUT-001',
+          monto: 50000,
+          referenciaId: 'RECOL-001',
+        })
+        .mockResolvedValueOnce({
+          id: 'trx-in-1',
+          numeroTransaccion: 'TRX-IN-001',
+          referenciaId: 'RECOL-001',
+        });
+
+      const result = await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000);
+
+      expect(prisma._tx.transaccion.create).not.toHaveBeenCalled();
+      expect(mockLedger.registrarAsiento).not.toHaveBeenCalled();
+      expect(result.idempotente).toBe(true);
+      expect(result.monto).toBe(50000);
+    });
+
+    it('si se reintenta, no vuelve a modificar saldos', async () => {
+      const prisma = buildPrismaMock();
+      prisma.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 100000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+      prisma.caja.findFirst.mockResolvedValue({
+        id: 'caja-oficina',
+        nombre: 'Caja Oficina',
+        codigo: 'CAJA-OFICINA',
+        tipo: 'PRINCIPAL',
+        saldoActual: 0,
+      });
+      prisma.transaccion.findFirst.mockResolvedValue({
+        id: 'trx-out-1',
+        numeroTransaccion: 'TRX-OUT-001',
+        monto: 50000,
+        referenciaId: 'RECOL-001',
+      });
+      prisma.transaccion.findFirst.mockResolvedValue({
+        id: 'trx-in-1',
+        numeroTransaccion: 'TRX-IN-001',
+        referenciaId: 'RECOL-001',
+      });
+
+      await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000);
+
+      expect(prisma._tx.transaccion.create).not.toHaveBeenCalled();
+      expect(mockLedger.registrarAsiento).not.toHaveBeenCalled();
+    });
+
+    it('rechaza saldo insuficiente', async () => {
+      const prisma = buildPrismaMock();
+      prisma.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 10000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+      prisma.caja.findFirst.mockResolvedValue({
+        id: 'caja-oficina',
+        nombre: 'Caja Oficina',
+        codigo: 'CAJA-OFICINA',
+        tipo: 'PRINCIPAL',
+        saldoActual: 0,
+      });
+      prisma.transaccion.findFirst.mockResolvedValue(null);
+
+      await expect(
+        makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('bloquea caja origen con FOR UPDATE', async () => {
+      const prisma = buildPrismaMock();
+      prisma.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 100000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+      prisma.caja.findFirst.mockResolvedValue({
+        id: 'caja-oficina',
+        nombre: 'Caja Oficina',
+        codigo: 'CAJA-OFICINA',
+        tipo: 'PRINCIPAL',
+        saldoActual: 0,
+      });
+      prisma.transaccion.findFirst.mockResolvedValue(null);
+      prisma._tx.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 100000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+      prisma._tx.transaccion.create
+        .mockResolvedValueOnce({ id: 'trx-out-1' })
+        .mockResolvedValueOnce({ id: 'trx-in-1' });
+
+      await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000);
+
+      expect(prisma._tx.$queryRaw).toHaveBeenCalled();
+      const callArgs = prisma._tx.$queryRaw.mock.calls[0];
+      expect(callArgs[0]).toContain('FOR UPDATE');
+    });
+
+    it('mantiene destino CAJA-OFICINA o CAJA-PRINCIPAL según lógica actual', async () => {
+      const prisma = buildPrismaMock();
+      prisma.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 100000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+      prisma.caja.findFirst.mockResolvedValue({
+        id: 'caja-oficina',
+        nombre: 'Caja Oficina',
+        codigo: 'CAJA-OFICINA',
+        tipo: 'PRINCIPAL',
+        saldoActual: 0,
+      });
+      prisma.transaccion.findFirst.mockResolvedValue(null);
+      prisma._tx.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 100000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+      prisma._tx.transaccion.create
+        .mockResolvedValueOnce({ id: 'trx-out-1' })
+        .mockResolvedValueOnce({ id: 'trx-in-1' });
+
+      const result = await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000);
+
+      expect(result.destino).toBe('Caja Oficina');
+    });
+
+    it('no toca caja de ventas contado', async () => {
+      const prisma = buildPrismaMock();
+      prisma.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 100000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+      prisma.caja.findFirst.mockResolvedValue({
+        id: 'caja-oficina',
+        nombre: 'Caja Oficina',
+        codigo: 'CAJA-OFICINA',
+        tipo: 'PRINCIPAL',
+        saldoActual: 0,
+      });
+      prisma.transaccion.findFirst.mockResolvedValue(null);
+      prisma._tx.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 100000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+      prisma._tx.transaccion.create
+        .mockResolvedValueOnce({ id: 'trx-out-1' })
+        .mockResolvedValueOnce({ id: 'trx-in-1' });
+
+      await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000);
+
+      expect(prisma._tx.transaccion.create).toHaveBeenNthCalledWith(1, {
+        data: expect.objectContaining({
+          tipoReferencia: 'RECOLECCION',
+        }),
+      });
+      expect(prisma._tx.transaccion.create).toHaveBeenNthCalledWith(2, {
+        data: expect.objectContaining({
+          tipoReferencia: 'RECOLECCION',
+        }),
+      });
+    });
+  });
+
   it('calcula utilidad operativa y neta separando ingresos, gastos y costos desde ledger', async () => {
     const prisma = buildPrismaMock();
     prisma.journalLine.aggregate

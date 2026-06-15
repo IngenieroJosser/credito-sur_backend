@@ -76,21 +76,21 @@ END $$;
 
 -- AddForeignKey (only if not exists)
 DO $$ BEGIN
-    ALTER TABLE "arqueos_caja" ADD CONSTRAINT "arqueos_caja_responsableId_fkey" FOREIGN KEY ("responsableId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+    ALTER TABLE "arqueos_caja" ADD CONSTRAINT "arqueos_caja_responsableId_fkey" FOREIGN KEY ("responsableId") REFERENCES "Usuario"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
 
 -- AddForeignKey (only if not exists)
 DO $$ BEGIN
-    ALTER TABLE "arqueos_caja" ADD CONSTRAINT "arqueos_caja_creadoPorId_fkey" FOREIGN KEY ("creadoPorId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+    ALTER TABLE "arqueos_caja" ADD CONSTRAINT "arqueos_caja_creadoPorId_fkey" FOREIGN KEY ("creadoPorId") REFERENCES "Usuario"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
 
 -- AddForeignKey (only if not exists)
 DO $$ BEGIN
-    ALTER TABLE "arqueos_caja" ADD CONSTRAINT "arqueos_caja_recibidoPorId_fkey" FOREIGN KEY ("recibidoPorId") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+    ALTER TABLE "arqueos_caja" ADD CONSTRAINT "arqueos_caja_recibidoPorId_fkey" FOREIGN KEY ("recibidoPorId") REFERENCES "Usuario"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;

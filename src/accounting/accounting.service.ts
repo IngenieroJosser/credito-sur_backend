@@ -1745,6 +1745,7 @@ export class AccountingService {
     cajaOrigenId: string,
     administradorId: string,
     montoRecolectar?: number,
+    idempotencyKey?: string,
   ) {
     // 1. Validar Caja Origen
     const cajaOrigen = await this.prisma.caja.findUnique({
@@ -1797,11 +1798,49 @@ export class AccountingService {
         'No se puede recolectar desde la caja destino',
       );
 
+    // 3. Generar idempotencyKey determinístico si no se proporciona
+    const fechaOperativa = getBogotaDayKey(new Date());
+    const idempotencyKeyFinal =
+      idempotencyKey ||
+      `RECOLECCION:${cajaOrigenId}:${cajaDestino.id}:${montoATransferirSolicitado}:${administradorId}:${fechaOperativa}`;
+
     const numeroRef = this.generarNumeroTransaccion('RECOL');
     const esTotal = montoATransferirSolicitado === saldoDisponible;
     const rutaNombre = cajaOrigen.ruta?.nombre || cajaOrigen.nombre;
 
-    // 3. Ejecutar Transaccion Atomica
+    // 4. Validar si ya existe una recolección con el mismo idempotencyKey
+    const existingTrxOut = await this.prisma.transaccion.findFirst({
+      where: {
+        tipo: TipoTransaccion.TRANSFERENCIA,
+        tipoReferencia: 'RECOLECCION',
+        numeroTransaccion: { startsWith: 'TRX-OUT' },
+        idempotencyKey: idempotencyKeyFinal,
+      },
+      orderBy: { fechaTransaccion: 'desc' },
+    });
+
+    if (existingTrxOut) {
+      // Retornar la consolidación existente sin duplicar movimiento
+      const existingTrxIn = await this.prisma.transaccion.findFirst({
+        where: {
+          tipo: TipoTransaccion.TRANSFERENCIA,
+          tipoReferencia: 'RECOLECCION',
+          referenciaId: existingTrxOut.referenciaId,
+          numeroTransaccion: { startsWith: 'TRX-IN' },
+        },
+      });
+
+      return {
+        origen: cajaOrigen.nombre,
+        destino: cajaDestino.nombre,
+        monto: Number(existingTrxOut.monto),
+        numeroRef: existingTrxOut.referenciaId,
+        transacciones: existingTrxIn ? [existingTrxOut.id, existingTrxIn.id] : [existingTrxOut.id],
+        idempotente: true,
+      };
+    }
+
+    // 5. Ejecutar Transaccion Atomica
     const resultado = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "cajas" WHERE id = ${cajaOrigen.id} FOR UPDATE`;
 
@@ -1832,6 +1871,7 @@ export class AccountingService {
       const egreso = await tx.transaccion.create({
         data: {
           numeroTransaccion: this.generarNumeroTransaccion('TRX-OUT'),
+          idempotencyKey: `${idempotencyKeyFinal}:OUT`,
           cajaId: cajaOrigen.id,
           tipo: TipoTransaccion.TRANSFERENCIA,
           monto: montoATransferir,
@@ -1845,6 +1885,7 @@ export class AccountingService {
       const ingreso = await tx.transaccion.create({
         data: {
           numeroTransaccion: this.generarNumeroTransaccion('TRX-IN'),
+          idempotencyKey: `${idempotencyKeyFinal}:IN`,
           cajaId: cajaDestino.id,
           tipo: TipoTransaccion.TRANSFERENCIA,
           monto: montoATransferir,
