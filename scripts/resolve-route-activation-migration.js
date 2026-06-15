@@ -10,6 +10,11 @@ const migrations = [
     resolveOnGlobalFailure: true,
     resolveAlways: true,
   },
+  {
+    name: '20260614113000_add_efecto_provisional',
+    resolveOnGlobalFailure: true,
+    resolveAlways: true,
+  },
 ];
 const schema = 'src/prisma/schema.prisma';
 

@@ -41,5 +41,5 @@ CREATE INDEX "EfectoProvisional_estado_idx" ON "EfectoProvisional"("estado");
 -- AddForeignKey
 ALTER TABLE "EfectoProvisional"
   ADD CONSTRAINT "EfectoProvisional_aprobacionId_fkey"
-  FOREIGN KEY ("aprobacionId") REFERENCES "Aprobacion"("id")
+  FOREIGN KEY ("aprobacionId") REFERENCES "aprobaciones"("id")
   ON DELETE CASCADE ON UPDATE CASCADE;
