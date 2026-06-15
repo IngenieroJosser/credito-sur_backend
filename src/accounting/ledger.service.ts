@@ -182,6 +182,19 @@ export class LedgerService {
     );
   }
 
+  /**
+   * Método público para aplicar delta de caja de forma segura.
+   * Delega internamente a applyCajaDeltaSafely.
+   * Usado por servicios externos que necesitan actualizar caja con validación de saldo.
+   */
+  async aplicarDeltaCajaSeguro(
+    tx: any,
+    cajaId: string,
+    delta: number,
+  ) {
+    return this.applyCajaDeltaSafely(tx, cajaId, delta);
+  }
+
   // ─── Método core ──────────────────────────────────────────────────────────
 
   /**

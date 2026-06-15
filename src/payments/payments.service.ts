@@ -2055,12 +2055,12 @@ export class PaymentsService {
 
           await tx.$queryRaw`SELECT id FROM "cajas" WHERE id = ${line.cajaId} FOR UPDATE`;
 
-          await this.ledgerService['applyCajaDeltaSafely'](tx, line.cajaId, -originalDelta);
+          await this.ledgerService.aplicarDeltaCajaSeguro(tx, line.cajaId, -originalDelta);
         }
       } else if (originalTransaccion) {
         await tx.$queryRaw`SELECT id FROM "cajas" WHERE id = ${originalTransaccion.cajaId} FOR UPDATE`;
 
-        await this.ledgerService['applyCajaDeltaSafely'](tx, originalTransaccion.cajaId, -montoTotal);
+        await this.ledgerService.aplicarDeltaCajaSeguro(tx, originalTransaccion.cajaId, -montoTotal);
       }
 
       await tx.recibo.deleteMany({ where: { pagoId: pago.id } });
