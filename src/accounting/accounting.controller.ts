@@ -116,9 +116,9 @@ export class AccountingController {
   consolidarCaja(
     @Param('id') id: string,
     @Request() req,
-    @Body() body?: { monto?: number },
+    @Body() body?: { monto?: number; idempotencyKey?: string },
   ) {
-    return this.accountingService.consolidarCaja(id, req.user.id, body?.monto);
+    return this.accountingService.consolidarCaja(id, req.user.id, body?.monto, body?.idempotencyKey);
   }
 
   @Get('cajas/:id/desglose-pagos')
