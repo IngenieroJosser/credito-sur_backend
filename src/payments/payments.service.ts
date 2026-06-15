@@ -2055,46 +2055,12 @@ export class PaymentsService {
 
           await tx.$queryRaw`SELECT id FROM "cajas" WHERE id = ${line.cajaId} FOR UPDATE`;
 
-          const caja = await tx.caja.findUnique({
-            where: { id: line.cajaId },
-            select: { saldoActual: true },
-          });
-          if (!caja) {
-            throw new NotFoundException(`Caja ${line.cajaId} no encontrada`);
-          }
-          const saldoActual = Number(caja.saldoActual || 0);
-          if (saldoActual < originalDelta) {
-            throw new BadRequestException(
-              `Saldo insuficiente en caja para reverso. Saldo actual: $${saldoActual}, monto a reversar: $${originalDelta}`,
-            );
-          }
-
-          await tx.caja.update({
-            where: { id: line.cajaId },
-            data: { saldoActual: { decrement: originalDelta } },
-          });
+          await this.ledgerService['applyCajaDeltaSafely'](tx, line.cajaId, -originalDelta);
         }
       } else if (originalTransaccion) {
         await tx.$queryRaw`SELECT id FROM "cajas" WHERE id = ${originalTransaccion.cajaId} FOR UPDATE`;
 
-        const caja = await tx.caja.findUnique({
-          where: { id: originalTransaccion.cajaId },
-          select: { saldoActual: true },
-        });
-        if (!caja) {
-          throw new NotFoundException(`Caja ${originalTransaccion.cajaId} no encontrada`);
-        }
-        const saldoActual = Number(caja.saldoActual || 0);
-        if (saldoActual < montoTotal) {
-          throw new BadRequestException(
-            `Saldo insuficiente en caja para reverso. Saldo actual: $${saldoActual}, monto a reversar: $${montoTotal}`,
-          );
-        }
-
-        await tx.caja.update({
-          where: { id: originalTransaccion.cajaId },
-          data: { saldoActual: { decrement: montoTotal } },
-        });
+        await this.ledgerService['applyCajaDeltaSafely'](tx, originalTransaccion.cajaId, -montoTotal);
       }
 
       await tx.recibo.deleteMany({ where: { pagoId: pago.id } });
