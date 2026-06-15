@@ -8,6 +8,7 @@ import { PermissionsModule } from './permissions/permissions.module';
 import { ClientsModule } from './clients/clients.module';
 import { LoansModule } from './loans/loans.module';
 import { PaymentsModule } from './payments/payments.module';
+import { SalesModule } from './sales/sales.module';
 import { RoutesModule } from './routes/routes.module';
 import { ApprovalsModule } from './approvals/approvals.module';
 import { InventoryModule } from './inventory/inventory.module';
@@ -50,6 +51,7 @@ const shouldEnableMirrorSync =
     ClientsModule,
     LoansModule,
     PaymentsModule,
+    SalesModule,
     RoutesModule,
     ApprovalsModule,
     InventoryModule,
