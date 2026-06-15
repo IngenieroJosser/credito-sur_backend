@@ -167,7 +167,10 @@ function buildMockPrisma(overrides: Record<string, unknown> = {}) {
       update: jest.fn().mockResolvedValue({}),
     },
     asignacionRuta: { findFirst: jest.fn().mockResolvedValue(ASIGNACION_RUTA) },
-    registroVisita: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+    registroVisita: {
+      upsert: jest.fn().mockResolvedValue({}),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
     caja: {
       findFirst: jest.fn().mockResolvedValue(CAJA_ACTIVA),
       update: jest.fn().mockResolvedValue({}),
@@ -700,7 +703,7 @@ describe('PaymentsService', () => {
       );
     });
 
-    it('cierra el préstamo cuando el último pago queda dentro de la tolerancia COP', async () => {
+    it('no cierra el préstamo si queda residuo de 1 COP', async () => {
       const prestamoConResiduoCOP = {
         ...PRESTAMO_ACTIVO,
         saldoPendiente: 63334,
@@ -717,6 +720,7 @@ describe('PaymentsService', () => {
           },
         ],
       };
+
       prisma.prestamo.findFirst.mockResolvedValue(prestamoConResiduoCOP);
       prisma._txMock.prestamo.findFirst.mockResolvedValue(prestamoConResiduoCOP);
 
@@ -729,8 +733,59 @@ describe('PaymentsService', () => {
         montoCuotaEsperado: 63333,
       } as any);
 
+      expect(resultado.descomposicion.prestamoQuedaPagado).toBe(false);
+      expect(resultado.descomposicion.saldoNuevo).toBe(1);
+
+      expect(prisma._txMock.prestamo.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            saldoPendiente: 1,
+          }),
+        }),
+      );
+
+      expect(prisma._txMock.prestamo.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            estado: EstadoPrestamo.PAGADO,
+          }),
+        }),
+      );
+    });
+
+    it('cierra el préstamo solo cuando el saldo truncado llega a 0', async () => {
+      const prestamoSaldado = {
+        ...PRESTAMO_ACTIVO,
+        saldoPendiente: 63334,
+        cuotas: [
+          {
+            id: 'cuota-final',
+            numeroCuota: 10,
+            monto: 63334,
+            montoCapital: 63334,
+            montoInteres: 0,
+            montoPagado: 0,
+            estado: EstadoCuota.PENDIENTE,
+            montoInteresMora: 0,
+          },
+        ],
+      };
+
+      prisma.prestamo.findFirst.mockResolvedValue(prestamoSaldado);
+      prisma._txMock.prestamo.findFirst.mockResolvedValue(prestamoSaldado);
+
+      const resultado = await service.create({
+        prestamoId: 'prestamo-1',
+        cobradorId: 'cobrador-1',
+        montoTotal: 63334,
+        tipoRegistro: 'PAGO',
+        cuotaNumeroEsperada: 10,
+        montoCuotaEsperado: 63334,
+      } as any);
+
       expect(resultado.descomposicion.prestamoQuedaPagado).toBe(true);
       expect(resultado.descomposicion.saldoNuevo).toBe(0);
+
       expect(prisma._txMock.prestamo.update).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({

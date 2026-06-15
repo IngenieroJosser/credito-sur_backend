@@ -31,6 +31,10 @@ import {
   getCuotaFechaEfectivaKeyRuta,
   getEstadoRevisionOperacion,
   isPrestamoOperativoRuta,
+  resolveCuotaObjetivoOperativa,
+  isCuotaOperativaParaFechaRuta,
+  isObligacionOperativaRuta,
+  normalizeUpper,
 } from './ruta-operational-rules';
 
 import {
@@ -589,63 +593,50 @@ export class RoutesService {
 
               select: {
                 id: true,
-
                 numeroPrestamo: true,
-
                 tipoPrestamo: true,
-
                 saldoPendiente: true,
-
                 frecuenciaPago: true,
-
                 cantidadCuotas: true,
-
                 estado: true,
-
+                estadoAprobacion: true,
                 producto: {
                   select: {
                     id: true,
-
                     nombre: true,
-
                     descripcion: true,
                   },
                 },
-
                 cuotas: {
                   where: {
                     estado: {
                       in: ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'],
                     },
                   },
-
                   take: 100,
-
                   select: {
                     id: true,
-
                     numeroCuota: true,
-
                     monto: true,
-
-                    // BUG-13 FIX: incluir montoPagado para que el frontend pueda calcular
-                    // el exigible correcto descontando abonos parciales.
-                    montoPagado: true,
-
+                    montoCuota: true,
+                    montoNominal: true,
+                    estadoActual: true,
                     estado: true,
-
                     fechaVencimiento: true,
-
                     fechaVencimientoProrroga: true,
+                    montoPagado: true,
+                    saldoExigibleEnFechaOperativa: true,
                   },
                 },
-
                 extensiones: {
                   orderBy: { creadoEn: 'desc' },
-
                   take: 1,
-
                   select: { id: true, nuevaFechaVencimiento: true },
+                },
+                efectoProvisional: {
+                  select: {
+                    estado: true,
+                  },
                 },
               },
             },
@@ -666,55 +657,39 @@ export class RoutesService {
       const hoyKey = getBogotaDayKey(new Date());
 
       for (const p of prestamos) {
-        let proxima = p.cuotas?.[0] || null;
-
-        if (p.cuotas && p.cuotas.length > 0) {
-          let montoAcumulado = 0;
-          let esMoraAtrasada = false;
-
-          for (const c of p.cuotas) {
-            if (!c.fechaVencimiento) continue;
-            // Extraer la fecha literal de la cuota y compararla con hoyKey de Bogotá.
-            const cuotaKey = getBogotaDayKey(new Date(c.fechaVencimiento));
-            if (cuotaKey <= hoyKey) {
-              montoAcumulado += Number(c.monto);
-              if (cuotaKey < hoyKey) esMoraAtrasada = true;
-            }
-          }
-
-          // BUG-10 FIX: encontrar la cuota más antigua vencida (no necesariamente cuotas[0])
-          // para que proximaCuota.id y numeroCuota sean los de la cuota real exigible.
-          // DEFECTO-A FIX: fallback '9999-12-31' (no 0) para cuotas sin fechaVencimiento:
-          // new Date(0) = '1969-12-31' las ordenaría primero (como las más antiguas), lo cual
-          // las convertiría en 'proxima' incorrecto. Con '9999-12-31' van al final del sort.
-          const cuotasMasAntigua = [...p.cuotas].sort((a, b) => {
-            const ak = getBogotaDayKey(
-              new Date(a.fechaVencimiento || '9999-12-31'),
-            );
-            const bk = getBogotaDayKey(
-              new Date(b.fechaVencimiento || '9999-12-31'),
-            );
-            return String(ak).localeCompare(String(bk));
-          });
-          proxima = cuotasMasAntigua[0] || proxima;
-
-          if (montoAcumulado > 0 && proxima) {
-            proxima = { ...proxima, monto: montoAcumulado };
-            if (esMoraAtrasada) {
-              proxima.estado = 'VENCIDA';
-            }
-          }
-        }
-
-        const cuotaEnProrroga = proxima?.estado === 'PRORROGADA';
-        const extension = p.extensiones?.[0] || null;
-
-        const fechaEfectiva =
-          cuotaEnProrroga && proxima?.fechaVencimientoProrroga
-            ? proxima.fechaVencimientoProrroga
-            : (extension?.nuevaFechaVencimiento ??
-              proxima?.fechaVencimiento ??
-              null);
+        // Step 1: Validate prestamo is operational
+        if (!isPrestamoOperativoRuta(p)) continue;
+        
+        // Step 2: Resolve cuota objetivo
+        const cuotaObjetivoBase = resolveCuotaObjetivoOperativa(p, hoyKey);
+        if (!cuotaObjetivoBase) continue;
+        
+        // Step 3: Validate obligacion is operational
+        if (!isObligacionOperativaRuta({ prestamo: p, cuota: cuotaObjetivoBase }, hoyKey)) continue;
+        
+        // Step 4: Get revision state
+        const estadoRevision = getEstadoRevisionOperacion(p);
+        
+        // Step 5: Enrich cuota objetivo with necessary fields
+        const cuotaObjetivo = {
+          ...cuotaObjetivoBase,
+          montoCuota: Number(
+            cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0
+          ),
+          montoNominal: Number(
+            cuotaObjetivoBase.montoNominal ?? cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0
+          ),
+          montoPagado: Number(cuotaObjetivoBase.montoPagado ?? 0),
+          saldoExigibleEnFechaOperativa: Math.max(0, Number(
+            cuotaObjetivoBase.saldoExigibleEnFechaOperativa ?? (
+              (cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0) - 
+              (cuotaObjetivoBase.montoPagado ?? 0)
+            )
+          )),
+          fechaEfectiva: getCuotaFechaEfectivaKeyRuta(cuotaObjetivoBase)
+        };
+        
+        const cuotaEnProrroga = (cuotaObjetivo.estadoActual ?? cuotaObjetivo.estado) === 'PRORROGADA';
 
         filas.push({
           asignacionId: asig.id,
@@ -729,54 +704,41 @@ export class RoutesService {
 
           cliente: {
             id: cliente.id,
-
             nombres: cliente.nombres,
-
             apellidos: cliente.apellidos,
-
             telefono: cliente.telefono,
-
             direccion: cliente.direccion,
-
             nivelRiesgo: cliente.nivelRiesgo,
           },
 
           prestamo: {
             id: p.id,
-
             tipo: p.tipoPrestamo,
-
             numeroPrestamo: p.numeroPrestamo,
-
             saldoPendiente: Number(p.saldoPendiente),
-
             frecuenciaPago: p.frecuenciaPago,
-
             cantidadCuotas: p.cantidadCuotas,
-
             estado: p.estado,
-
             articulo: p.producto?.nombre || p.producto?.descripcion || null,
-
-            proximaCuota: proxima
-              ? {
-                  id: proxima.id,
-
-                  numeroCuota: proxima.numeroCuota,
-
-                  monto: Number(proxima.monto),
-
-                  estado: proxima.estado,
-
-                  fechaVencimiento: proxima.fechaVencimiento,
-
-                  fechaVencimientoProrroga: proxima.fechaVencimientoProrroga,
-
-                  enProrroga: cuotaEnProrroga,
-                }
-              : null,
-
-            fechaEfectiva,
+            proximaCuota: {
+              id: cuotaObjetivo.id,
+              numeroCuota: cuotaObjetivo.numeroCuota,
+              monto: cuotaObjetivo.montoCuota,
+              estado: cuotaObjetivo.estadoActual ?? cuotaObjetivo.estado,
+              fechaVencimiento: cuotaObjetivo.fechaVencimiento,
+              fechaVencimientoProrroga: cuotaObjetivo.fechaVencimientoProrroga,
+              enProrroga: cuotaEnProrroga,
+            },
+            fechaEfectiva: cuotaObjetivo.fechaEfectiva,
+            cuotaObjetivo,
+            cuotaObjetivoId: cuotaObjetivo.id,
+            montoCuotaNormal: cuotaObjetivo.montoNominal,
+            montoMetaOperativaPendiente: cuotaObjetivo.saldoExigibleEnFechaOperativa,
+            estadoAprobacion: estadoRevision.estadoAprobacion,
+            estadoEfectoProvisional: estadoRevision.estadoEfectoProvisional,
+            esProvisional: estadoRevision.esProvisional,
+            esRevertido: estadoRevision.esRevertido,
+            etiquetaRevision: estadoRevision.etiquetaRevision,
           },
         });
       }
@@ -2210,39 +2172,19 @@ export class RoutesService {
             const visitaOperativa: any = visitasOperativas.get(
               String(asig.clienteId || ''),
             );
-            if (!visitaOperativa) continue;
-
-            asig.estadoVisita = visitaOperativa.estadoVisita ?? asig.estadoVisita;
-            asig.notasVisita = visitaOperativa.notasVisita ?? asig.notasVisita;
+            
+            asig.estadoVisita = visitaOperativa?.estadoVisita ?? asig.estadoVisita;
+            asig.notasVisita = visitaOperativa?.notasVisita ?? asig.notasVisita;
             asig.recaudadoDelDia = Number(
-              visitaOperativa.recaudadoDelDia || asig.recaudadoDelDia || 0,
-            );
+              visitaOperativa?.recaudadoDelDia || asig.recaudadoDelDia || 0);
 
-            if (!Array.isArray(asig?.cliente?.prestamos)) continue;
-
-            asig.cliente.prestamos = asig.cliente.prestamos.map((prestamo: any) => {
-              const prestamoOperativo = (visitaOperativa.prestamos || []).find(
-                (p: any) => String(p?.id || '') === String(prestamo?.id || ''),
-              );
-              if (!prestamoOperativo) return prestamo;
-
-              return {
-                ...prestamo,
-                cuotaObjetivo:
-                  prestamoOperativo.cuotaObjetivo ?? prestamo.cuotaObjetivo,
-                proximaCuota:
-                  prestamoOperativo.proximaCuota ?? prestamo.proximaCuota,
-                montoMetaOperativaPendiente:
-                  prestamoOperativo.montoMetaOperativaPendiente ??
-                  prestamo.montoMetaOperativaPendiente,
-                estadoGestion:
-                  prestamoOperativo.estadoGestion ?? prestamo.estadoGestion,
-                estadoVisita:
-                  prestamoOperativo.estadoVisita ?? prestamo.estadoVisita,
-                notasVisita:
-                  prestamoOperativo.notasVisita ?? prestamo.notasVisita,
-              };
-            });
+            if (asig.cliente) {
+              if (!visitaOperativa) {
+                asig.cliente.prestamos = [];
+              } else {
+                asig.cliente.prestamos = visitaOperativa.prestamos || [];
+              }
+            }
           }
         } catch {
           // Si el detalle operativo no está disponible, conservamos el cálculo
@@ -3323,8 +3265,70 @@ export class RoutesService {
       },
     });
 
-    // Obtener todos los clientes de la ruta con sus préstamos activos
+    // Calcular recaudo real de esa fecha para esa ruta
+    // Obtener TODOS los pagos vinculados a préstamos de esta ruta en la fecha,
+    // incluyendo clientes no programados hoy (sintéticos) Y pagos regularizados de esta jornada
+    const { startDate: fInicio, endDate: fFin } =
+      getBogotaStartEndOfDayFromKey(fechaKey);
+    const pagosDeHoy = await this.prisma.pago.findMany({
+      where: {
+        prestamo: {
+          cliente: {
+            asignacionesRuta: {
+              some: { rutaId, activa: true },
+            },
+          },
+        },
+        OR: [
+          {
+            fechaPago: { gte: fInicio, lte: fFin },
+            OR: [
+              { origenGestion: null },
+              { origenGestion: { not: 'CIERRE_PENDIENTE' } },
+            ],
+          },
+          {
+            fechaOperativaRuta: fechaKey,
+            origenGestion: 'CIERRE_PENDIENTE',
+          },
+        ],
+      },
+      select: {
+        id: true,
+        clienteId: true,
+        prestamoId: true,
+        montoTotal: true,
+        fechaPago: true,
+        fechaOperativaRuta: true,
+        origenGestion: true,
+        metodoPago: true,
+        detalles: {
+          select: {
+            monto: true,
+            cuota: {
+              select: {
+                id: true,
+                numeroCuota: true,
+                estado: true,
+                fechaVencimiento: true,
+                fechaVencimientoProrroga: true,
+                monto: true,
+                montoPagado: true,
+              },
+            },
+          },
+        },
+      },
+    });
 
+    // Mapear pagos por cliente para asignar a visitas
+    const pagosPorCliente: Record<string, number> = {};
+    pagosDeHoy.forEach((p) => {
+      pagosPorCliente[p.clienteId] =
+        (pagosPorCliente[p.clienteId] || 0) + Number(p.montoTotal || 0);
+    });
+
+    // Obtener todos los clientes de la ruta con sus préstamos activos
     const asignaciones = await this.prisma.asignacionRuta.findMany({
       where: {
         rutaId,
@@ -3370,146 +3374,129 @@ export class RoutesService {
       const cliente = asignacion.cliente;
 
       // Si el cliente ya fue agregado a la lista de hoy (evitar duplicados por múltiples asignaciones)
-
       if (clientesProcesados.has(cliente.id)) continue;
 
-      let debeAparecerHoy = false;
+      // Step 0: Check if this client has any payment today
+      const tienePagoHoy = Number(pagosPorCliente[cliente.id] || 0) > 0;
 
-      // Revisar cada préstamo activo
-
-      const prestamosOperativos = (cliente.prestamos || []).filter(
+      // Step 1: Get prestamos that are operationally valid OR are paid but have a payment today
+      let prestamosConPrestamoOperativo = (cliente.prestamos || []).filter(
         (prestamo: any) => isPrestamoOperativoRuta(prestamo),
       );
 
-      for (const prestamo of prestamosOperativos) {
-
-
-        if (prestamo.cuotas.length === 0) continue;
-
-        // Filter cuotas to find proximaCuota (as before, but now from all cuotas)
-        const filteredCuotas = prestamo.cuotas.filter((c: any) => {
-          const fechaVto = new Date(c.fechaVencimiento);
-          const fechaVtoKey = getBogotaDayKey(fechaVto);
-          const fechaConsultaKey = getBogotaDayKey(fechaConsulta);
-
-          const isUnpaidAndDue = ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'].includes(c.estado) &&
-            fechaVtoKey <= fechaConsultaKey;
-
-          const isPaidToday = c.estado === 'PAGADA' &&
-            c.fechaPago &&
-            new Date(c.fechaPago) >= fechaConsulta &&
-            new Date(c.fechaPago) <= getBogotaStartEndOfDayFromKey(fechaKey).endDate;
-
-          return isUnpaidAndDue || isPaidToday;
-        }).sort((a: any, b: any) => {
-          const aFecha = new Date(a.fechaVencimiento);
-          const bFecha = new Date(b.fechaVencimiento);
-          return aFecha.getTime() - bFecha.getTime();
-        });
-
-        const proximaCuota = filteredCuotas[0] || prestamo.cuotas[0];
-
-        // Para cuotas PRORROGADA, usar la nueva fecha de vencimiento
-
-        const fechaEfectivaRaw =
-          proximaCuota.estado === 'PRORROGADA' &&
-          proximaCuota.fechaVencimientoProrroga
-            ? new Date(proximaCuota.fechaVencimientoProrroga)
-            : new Date(proximaCuota.fechaVencimiento);
-
-        // Fecha efectiva normalizada para comparación de "día calendario" en Bogotá
-        const fechaEfectivaKey = getBogotaDayKey(fechaEfectivaRaw);
-        const fechaConsultaKey = getBogotaDayKey(fechaConsulta);
-
-        // Calcular días de diferencia absoluta basándose en claves Bogotá
-        const daysDiff = (dateStr: string) => {
-          const [y, m, d] = dateStr.split('-').map(Number);
-          const base = new Date(
-            `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}T12:00:00-05:00`,
-          );
-          return Math.floor(base.getTime() / 86_400_000);
-        };
-        const diasHastaVencimiento =
-          daysDiff(fechaEfectivaKey) - daysDiff(fechaConsultaKey);
-
-        if (fechaEfectivaKey <= fechaConsultaKey) {
-          debeAparecerHoy = true;
-          break;
-        }
-
-        // Todas las frecuencias tienen el mismo criterio: aparece hoy si la cuota vence hoy o antes.
-        // (El bloque if anterior ya cubre fechaEfectivaKey <= fechaConsultaKey con break;
-        //  este if protege el caso borde donde diasHastaVencimiento es 0 pero la clave aún no coincide.)
-        if (diasHastaVencimiento <= 0) debeAparecerHoy = true;
-
-        if (debeAparecerHoy) break;
+      // If they have a payment today, include their paid prestamos as well
+      if (tienePagoHoy) {
+        const prestamosPagados = (cliente.prestamos || []).filter(
+          (prestamo: any) =>
+            normalizeUpper(prestamo?.estado) === 'PAGADO' &&
+            !prestamosConPrestamoOperativo.some(
+              (p) => p.id === prestamo.id
+            )
+        );
+        prestamosConPrestamoOperativo = [
+          ...prestamosConPrestamoOperativo,
+          ...prestamosPagados
+        ];
       }
 
-      if (debeAparecerHoy) {
+      // Step 2: For each prestamo, resolve cuota objetivo and validate obligacion operativa
+      const prestamosOperativos = prestamosConPrestamoOperativo
+        .map((prestamo: any) => {
+          const cuotaObjetivoBase =
+            resolveCuotaObjetivoOperativa(prestamo, fechaKey) ||
+            (prestamo.cuotas.length > 0
+              ? [...prestamo.cuotas]
+                  .sort((a, b) =>
+                    getCuotaFechaEfectivaKeyRuta(a).localeCompare(
+                      getCuotaFechaEfectivaKeyRuta(b)
+                    )
+                  )
+                  .find(
+                    (c) =>
+                      getCuotaFechaEfectivaKeyRuta(c) <= fechaKey &&
+                      !['ANULADO', 'ANULADA'].includes(
+                        normalizeUpper(c.estado || c.estadoActual)
+                      )
+                  )
+              : null);
+          
+          if (!cuotaObjetivoBase) return null;
+          
+          const isValid =
+            isObligacionOperativaRuta(
+              { prestamo, cuota: cuotaObjetivoBase },
+              fechaKey
+            ) ||
+            (tienePagoHoy &&
+              normalizeUpper(prestamo?.estado) === 'PAGADO');
+
+          if (!isValid) return null;
+
+          return {
+            prestamo,
+            cuotaObjetivoBase
+          };
+        })
+        .filter(Boolean) as Array<{ prestamo: any, cuotaObjetivoBase: any }>;
+
+      // Step 3: If no operational prestamos AND no payment today, don't add to visitas
+      if (prestamosOperativos.length === 0 && !tienePagoHoy) continue;
+
+      {
         // Compute cuotaObjetivo for each prestamo
-        const prestamosConCuotaObjetivo = prestamosOperativos.map((p) => {
-          const estadoRevision = getEstadoRevisionOperacion(p);
-          const montoTotalCuotas = p.cuotas.reduce(
+        const prestamosConCuotaObjetivo = prestamosOperativos.map(({ prestamo, cuotaObjetivoBase }) => {
+          const estadoRevision = getEstadoRevisionOperacion(prestamo);
+          const montoTotalCuotas = prestamo.cuotas.reduce(
             (sum, c) => sum + Number(c.monto),
             0,
           );
-          const cuotaObjetivo = this.computeCuotaObjetivo(p, fechaKey);
-          // Filter cuotas for proximaCuota as before
-          const filteredCuotas = p.cuotas.filter((c: any) => {
-            const fechaVto = new Date(c.fechaVencimiento);
-            const fechaVtoKey = getBogotaDayKey(fechaVto);
-            const fechaConsultaKey = getBogotaDayKey(fechaConsulta);
-
-            const isUnpaidAndDue = ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'].includes(c.estado) &&
-              fechaVtoKey <= fechaConsultaKey;
-
-            const isPaidToday = c.estado === 'PAGADA' &&
-              c.fechaPago &&
-              new Date(c.fechaPago) >= fechaConsulta &&
-              new Date(c.fechaPago) <= getBogotaStartEndOfDayFromKey(fechaKey).endDate;
-
-            return isUnpaidAndDue || isPaidToday;
-          }).sort((a: any, b: any) => {
-            const aFecha = new Date(a.fechaVencimiento);
-            const bFecha = new Date(b.fechaVencimiento);
-            return aFecha.getTime() - bFecha.getTime();
-          });
-          const proximaCuota = filteredCuotas[0] || p.cuotas[0];
+          const cuotaObjetivo = {
+            ...cuotaObjetivoBase,
+            montoCuota: Number(
+              cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0
+            ),
+            montoNominal: Number(
+              cuotaObjetivoBase.montoNominal ?? cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0
+            ),
+            montoPagado: Number(cuotaObjetivoBase.montoPagado ?? 0),
+            saldoExigibleEnFechaOperativa: Math.max(0, Number(
+              cuotaObjetivoBase.saldoExigibleEnFechaOperativa ?? (
+                (cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0) - 
+                (cuotaObjetivoBase.montoPagado ?? 0)
+              )
+            )),
+            fechaEfectiva: getCuotaFechaEfectivaKeyRuta(cuotaObjetivoBase)
+          };
           return {
-            id: p.id,
-            numeroPrestamo: p.numeroPrestamo,
-            monto: Number(p.monto),
-            saldoPendiente: Number(p.saldoPendiente),
-            frecuenciaPago: p.frecuenciaPago,
-            cantidadCuotas: p.cantidadCuotas,
-            estado: p.estado,
+            id: prestamo.id,
+            numeroPrestamo: prestamo.numeroPrestamo,
+            monto: Number(prestamo.monto),
+            saldoPendiente: Number(prestamo.saldoPendiente),
+            frecuenciaPago: prestamo.frecuenciaPago,
+            cantidadCuotas: prestamo.cantidadCuotas,
+            estado: prestamo.estado,
             estadoAprobacion: estadoRevision.estadoAprobacion,
             estadoEfectoProvisional: estadoRevision.estadoEfectoProvisional,
             esProvisional: estadoRevision.esProvisional,
             esRevertido: estadoRevision.esRevertido,
             etiquetaRevision: estadoRevision.etiquetaRevision,
             montoMetaOperativaPendiente:
-              this.computePendienteOperativoPrestamo(p, fechaKey),
-            proximaCuota: proximaCuota
-              ? {
-                  id: proximaCuota.id,
-                  numeroCuota: proximaCuota.numeroCuota,
-                  fechaVencimiento:
-                    proximaCuota.estado === 'PRORROGADA' &&
-                    proximaCuota.fechaVencimientoProrroga
-                      ? proximaCuota.fechaVencimientoProrroga
-                      : proximaCuota.fechaVencimiento,
-                  monto: Number(proximaCuota.monto),
-                  montoTotalDeuda: montoTotalCuotas,
-                  montoNominal: Number(proximaCuota.monto),
-                  estado: proximaCuota.estado,
-                  enProrroga: proximaCuota.estado === 'PRORROGADA',
-                  fechaOriginalVencimiento:
-                    proximaCuota.estado === 'PRORROGADA'
-                      ? proximaCuota.fechaVencimiento
-                      : undefined,
-                }
-              : null,
+              cuotaObjetivo.saldoExigibleEnFechaOperativa ??
+              this.computePendienteOperativoPrestamo(prestamo, fechaKey),
+            proximaCuota: {
+              id: cuotaObjetivo.id,
+              numeroCuota: cuotaObjetivo.numeroCuota,
+              monto: cuotaObjetivo.montoCuota,
+              montoTotalDeuda: montoTotalCuotas,
+              montoNominal: cuotaObjetivo.montoNominal,
+              montoPagado: cuotaObjetivo.montoPagado,
+              saldoExigibleEnFechaOperativa: cuotaObjetivo.saldoExigibleEnFechaOperativa,
+              estado: cuotaObjetivo.estadoActual ?? cuotaObjetivo.estado,
+              fechaVencimiento: cuotaObjetivo.fechaVencimiento,
+              fechaVencimientoProrroga: cuotaObjetivo.fechaVencimientoProrroga,
+              fechaEfectiva: cuotaObjetivo.fechaEfectiva,
+              enProrroga: String(cuotaObjetivo.estadoActual ?? cuotaObjetivo.estado).toUpperCase() === 'PRORROGADA',
+            },
             cuotaObjetivo,
           };
         });
@@ -3666,70 +3653,6 @@ export class RoutesService {
       }
     });
 
-    // Calcular recaudo real de esa fecha para esa ruta
-    // Calcular recaudo real de esa fecha para la ruta basándose en los clientes identificados
-    const { startDate: fInicio, endDate: fFin } =
-      getBogotaStartEndOfDayFromKey(fechaKey);
-    // Obtener TODOS los pagos vinculados a préstamos de esta ruta en la fecha,
-    // incluyendo clientes no programados hoy (sintéticos) Y pagos regularizados de esta jornada
-    const pagosDeHoy = await this.prisma.pago.findMany({
-      where: {
-        prestamo: {
-          cliente: {
-            asignacionesRuta: {
-              some: { rutaId, activa: true },
-            },
-          },
-        },
-        OR: [
-          {
-            fechaPago: { gte: fInicio, lte: fFin },
-            OR: [
-              { origenGestion: null },
-              { origenGestion: { not: 'CIERRE_PENDIENTE' } },
-            ],
-          },
-          {
-            fechaOperativaRuta: fechaKey,
-            origenGestion: 'CIERRE_PENDIENTE',
-          },
-        ],
-      },
-      select: { 
-        id: true,
-        clienteId: true, 
-        prestamoId: true,
-        montoTotal: true,
-        fechaPago: true,
-        fechaOperativaRuta: true,
-        origenGestion: true,
-        metodoPago: true,
-        detalles: {
-          select: {
-            monto: true,
-            cuota: {
-              select: {
-                id: true,
-                numeroCuota: true,
-                estado: true,
-                fechaVencimiento: true,
-                fechaVencimientoProrroga: true,
-                monto: true,
-                montoPagado: true,
-              },
-            },
-          },
-        },
-      },
-    });
-
-    // Mapear pagos por cliente para asignar a visitas
-    const pagosPorCliente: Record<string, number> = {};
-    pagosDeHoy.forEach((p) => {
-      pagosPorCliente[p.clienteId] =
-        (pagosPorCliente[p.clienteId] || 0) + Number(p.montoTotal || 0);
-    });
-
     const clientesEnVisitasIniciales = new Set(
       visitasDelDia.map((v: any) => v?.cliente?.id || v?.clienteId),
     );
@@ -3757,10 +3680,12 @@ export class RoutesService {
       const cliente = asignacion?.cliente;
       if (!cliente) continue;
 
-      const prestamosOperativos = (cliente.prestamos || []).filter(
-        (p: any) => isPrestamoOperativoRuta(p),
+      const clienteTienePagoHoy = Number(pagosPorCliente[cliente.id] || 0) > 0;
+      const prestamosOperativosReprogramacion = (cliente.prestamos || []).filter(
+        (prestamo: any) => isPrestamoOperativoRuta(prestamo) || 
+          (clienteTienePagoHoy && normalizeUpper(prestamo?.estado) === 'PAGADO'),
       );
-      const prestamosConCuotaObjetivo = prestamosOperativos.map((p: any) => {
+      const prestamosConCuotaObjetivoReprogramacion = prestamosOperativosReprogramacion.map((p: any) => {
         const estadoRevision = getEstadoRevisionOperacion(p);
         const isObjetivo = String(p?.id || '') === prestamoId;
         return {
@@ -3772,7 +3697,7 @@ export class RoutesService {
           cantidadCuotas: p.cantidadCuotas,
           estado: p.estado,
           estadoAprobacion: estadoRevision.estadoAprobacion,
-          estadoEfectoProvisional: estadoRevision.estadoEfectoProvisional,
+          estadoEfectivoProvisional: estadoRevision.estadoEfectoProvisional,
           esProvisional: estadoRevision.esProvisional,
           esRevertido: estadoRevision.esRevertido,
           etiquetaRevision: estadoRevision.etiquetaRevision,
@@ -3804,9 +3729,9 @@ export class RoutesService {
           telefono: cliente.telefono,
           direccion: cliente.direccion,
           nivelRiesgo: cliente.nivelRiesgo,
-          prestamosActivos: prestamosOperativos.length,
+          prestamosActivos: prestamosOperativosReprogramacion.length,
         },
-        prestamos: prestamosConCuotaObjetivo,
+        prestamos: prestamosConCuotaObjetivoReprogramacion,
         cuotaObjetivo: cuotaReprogramada,
         prestamoObjetivoId: prestamoId || null,
         cuotaObjetivoId: cuotaReprogramada.id,
@@ -3822,7 +3747,7 @@ export class RoutesService {
       clientesEnVisitasIniciales.add(clienteId);
     }
 
-    // Separar recaudos: contable (pagos reales del día) vs regularizado (pagos de jornadas viejas)
+    // Separar recaudo: contable (pagos reales del día) vs regularizado (pagos de jornadas viejas)
     const isFechaPagoEnRango = (p: any) => {
       const fechaPago = new Date(p.fechaPago);
       return fechaPago >= fInicio && fechaPago <= fFin;
@@ -3942,10 +3867,10 @@ export class RoutesService {
 
       const prestamoId = String(p?.prestamoId || '');
       const clienteId = String(p?.clienteId || '');
-      if (prestamoId && !cuotaPagadaPorPrestamo.has(prestamoId)) {
+      if (prestamoId) {
         cuotaPagadaPorPrestamo.set(prestamoId, cuotaObjetivoPago);
       }
-      if (clienteId && !cuotaPagadaPorCliente.has(clienteId)) {
+      if (clienteId) {
         cuotaPagadaPorCliente.set(clienteId, cuotaObjetivoPago);
       }
     });
@@ -4214,28 +4139,63 @@ export class RoutesService {
             },
           },
         });
-        const prestamosOperativos = (clienteFull?.prestamos || []).filter(
+        const prestamosConPrestamoOperativo = (clienteFull?.prestamos || []).filter(
           (p: any) => isPrestamoOperativoRuta(p),
         );
-        const prestamosConCuotaObjetivo = prestamosOperativos.map((p) => {
-          const estadoRevision = getEstadoRevisionOperacion(p);
-          const cuotaObjetivo = this.computeCuotaObjetivo(p, fechaKey);
+        const prestamosOperativos = prestamosConPrestamoOperativo
+          .map((p: any) => {
+            const cuotaObjetivoBase = resolveCuotaObjetivoOperativa(p, fechaKey);
+            if (!cuotaObjetivoBase) return null;
+            if (!isObligacionOperativaRuta({ prestamo: p, cuota: cuotaObjetivoBase }, fechaKey)) return null;
+            return { prestamo: p, cuotaObjetivoBase };
+          })
+          .filter(Boolean) as Array<{ prestamo: any, cuotaObjetivoBase: any }>;
+        
+        if (prestamosOperativos.length === 0) continue;
+
+        const prestamosConCuotaObjetivo = prestamosOperativos.map(({ prestamo, cuotaObjetivoBase }) => {
+          const estadoRevision = getEstadoRevisionOperacion(prestamo);
+          const cuotaObjetivo = {
+            ...cuotaObjetivoBase,
+            montoCuota: Number(cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0),
+            montoNominal: Number(cuotaObjetivoBase.montoNominal ?? cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0),
+            montoPagado: Number(cuotaObjetivoBase.montoPagado ?? 0),
+            saldoExigibleEnFechaOperativa: Math.max(0, Number(
+              cuotaObjetivoBase.saldoExigibleEnFechaOperativa ?? (
+                (cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0) - 
+                (cuotaObjetivoBase.montoPagado ?? 0)
+              )
+            )),
+            fechaEfectiva: getCuotaFechaEfectivaKeyRuta(cuotaObjetivoBase)
+          };
           return {
-            id: p.id,
-            numeroPrestamo: p.numeroPrestamo,
-            monto: Number(p.monto),
-            saldoPendiente: Number(p.saldoPendiente),
-            frecuenciaPago: p.frecuenciaPago,
-            cantidadCuotas: p.cantidadCuotas,
-            estado: p.estado,
+            id: prestamo.id,
+            numeroPrestamo: prestamo.numeroPrestamo,
+            monto: Number(prestamo.monto),
+            saldoPendiente: Number(prestamo.saldoPendiente),
+            frecuenciaPago: prestamo.frecuenciaPago,
+            cantidadCuotas: prestamo.cantidadCuotas,
+            estado: prestamo.estado,
             estadoAprobacion: estadoRevision.estadoAprobacion,
             estadoEfectoProvisional: estadoRevision.estadoEfectoProvisional,
             esProvisional: estadoRevision.esProvisional,
             esRevertido: estadoRevision.esRevertido,
             etiquetaRevision: estadoRevision.etiquetaRevision,
-            montoMetaOperativaPendiente:
-              this.computePendienteOperativoPrestamo(p, fechaKey),
-            proximaCuota: null,
+            montoMetaOperativaPendiente: cuotaObjetivo.saldoExigibleEnFechaOperativa,
+            proximaCuota: {
+              id: cuotaObjetivo.id,
+              numeroCuota: cuotaObjetivo.numeroCuota,
+              monto: cuotaObjetivo.montoCuota,
+              montoTotalDeuda: prestamo.cuotas.reduce((sum, c) => sum + Number(c.monto), 0),
+              montoNominal: cuotaObjetivo.montoNominal,
+              montoPagado: cuotaObjetivo.montoPagado,
+              saldoExigibleEnFechaOperativa: cuotaObjetivo.saldoExigibleEnFechaOperativa,
+              estado: cuotaObjetivo.estadoActual ?? cuotaObjetivo.estado,
+              fechaVencimiento: cuotaObjetivo.fechaVencimiento,
+              fechaVencimientoProrroga: cuotaObjetivo.fechaVencimientoProrroga,
+              fechaEfectiva: cuotaObjetivo.fechaEfectiva,
+              enProrroga: String(cuotaObjetivo.estadoActual ?? cuotaObjetivo.estado).toUpperCase() === 'PRORROGADA',
+            },
             registroSintetico: true,
             origenGestion: 'CIERRE_PENDIENTE',
             cuotaObjetivo,
@@ -4355,6 +4315,11 @@ export class RoutesService {
         efectividad,
         visitados: gestionados,
         total: totalObligaciones,
+        clientesOperativosHoy: new Set(
+          obligacionesOperativas
+            .map((item: any) => item.visita?.cliente?.id || item.visita?.clienteId)
+            .filter(Boolean),
+        ).size,
       },
       visitas: visitasDelDiaFinales,
       obligaciones: obligacionesOperativas.map((item: any) => ({

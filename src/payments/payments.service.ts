@@ -40,6 +40,14 @@ import { LedgerService } from '../accounting/ledger.service';
 import { MoraService } from '../loans/mora.service';
 import { createHash, randomUUID } from 'crypto';
 
+/**
+ * Truncamiento monetario estricto sin redondeo ni tolerancia.
+ * Un residuo de $1 sigue siendo deuda.
+ */
+function truncCop(value: number | string | Prisma.Decimal | null | undefined): number {
+  return Math.trunc(Number(value) || 0);
+}
+
 type PaymentActor =
   | {
       id?: string;
@@ -384,8 +392,8 @@ export class PaymentsService {
         });
 
         const nuevoMontoPagado = yaPagado + totalAplicadoCuota;
-        const COP_TOLERANCE = 1;
-        const cuotaCompleta = nuevoMontoPagado >= montoCuota - COP_TOLERANCE;
+
+        const cuotaCompleta = truncCop(nuevoMontoPagado) >= truncCop(montoCuota);
         const montoPagadoFinal = cuotaCompleta ? montoCuota : nuevoMontoPagado;
 
         const nuevoEstadoCuota = cuotaCompleta
@@ -686,8 +694,8 @@ export class PaymentsService {
         });
 
         const nuevoMontoPagado = yaPagado + totalAplicadoCuota;
-        const COP_TOLERANCE = 1;
-        const cuotaCompleta = nuevoMontoPagado >= montoCuota - COP_TOLERANCE;
+
+        const cuotaCompleta = truncCop(nuevoMontoPagado) >= truncCop(montoCuota);
         const montoPagadoFinal = cuotaCompleta ? montoCuota : nuevoMontoPagado;
 
         const nuevoEstadoCuota = cuotaCompleta
@@ -705,10 +713,10 @@ export class PaymentsService {
     }
 
     // Fix exactitud decimal para el Ledger
-    const interesTotalFinal = Math.round(interesTotal * 100) / 100;
-    const moraTotalFinal = Math.round(moraTotal * 100) / 100;
+    const interesTotalFinal = truncCop(interesTotal);
+    const moraTotalFinal = truncCop(moraTotal);
     const capitalTotalFinal =
-      Math.round((montoTotal - interesTotalFinal - moraTotalFinal) * 100) / 100;
+      truncCop(montoTotal - interesTotalFinal - moraTotalFinal);
 
     // Validar cobrador
     if (!cobradorIdVal) {
@@ -924,12 +932,12 @@ export class PaymentsService {
         );
 
         const interesTotalFinalActual =
-          Math.round(interesTotalActual * 100) / 100;
-        const moraTotalFinalActual = Math.round(moraTotalActual * 100) / 100;
+          truncCop(interesTotalActual);
+        const moraTotalFinalActual = truncCop(moraTotalActual);
         const capitalTotalFinalActual =
-          Math.round(
-            (montoTotal - interesTotalFinalActual - moraTotalFinalActual) * 100,
-          ) / 100;
+          truncCop(
+            montoTotal - interesTotalFinalActual - moraTotalFinalActual,
+          );
 
         const asignacion = await tx.asignacionRuta.findFirst({
           where: this.isCollector(actor)
@@ -1079,11 +1087,10 @@ export class PaymentsService {
           Number(prestamoActual.interesPagado) + interesTotalActual;
         const nuevoSaldoPendiente =
           Number(prestamoActual.saldoPendiente) - montoTotal;
-        const COP_TOLERANCE = 1;
-        const saldoPendienteFinal =
-          Math.abs(nuevoSaldoPendiente) <= COP_TOLERANCE
-            ? 0
-            : Math.max(0, nuevoSaldoPendiente);
+
+          const saldoPendienteFinal =
+          Math.max(0, truncCop(nuevoSaldoPendiente));
+
 
         // Verificar si el préstamo queda pagado
         const prestamoQuedaPagado = saldoPendienteFinal <= 0;
@@ -1177,21 +1184,21 @@ export class PaymentsService {
           prestamoIdVal,
           montoTotal,
           capitalRecuperado:
-            Math.round(
-              Number(resultado.descomposicion.capitalRecuperado || 0) * 100,
-            ) / 100,
+            truncCop(
+              Number(resultado.descomposicion.capitalRecuperado || 0),
+            ),
           interesRecuperado:
-            Math.round(
-              Number(resultado.descomposicion.interesRecuperado || 0) * 100,
-            ) / 100,
+            truncCop(
+              Number(resultado.descomposicion.interesRecuperado || 0),
+            ),
           moraRecuperada:
-            Math.round(
-              Number(
-                montoTotal -
-                  Number(resultado.descomposicion.capitalRecuperado || 0) -
-                  Number(resultado.descomposicion.interesRecuperado || 0),
-              ) * 100,
-            ) / 100,
+            truncCop(
+              montoTotal -
+                Number(resultado.descomposicion.capitalRecuperado || 0) -
+                Number(resultado.descomposicion.interesRecuperado || 0),
+            ),
+
+
         },
       });
     } catch (error) {
@@ -1231,13 +1238,13 @@ export class PaymentsService {
           metodoPago: resultado.pago.metodoPago,
           montoTotal,
           capitalRecuperado:
-            Math.round(
-              Number(resultado.descomposicion.capitalRecuperado || 0) * 100,
-            ) / 100,
+            truncCop(
+              Number(resultado.descomposicion.capitalRecuperado || 0),
+            ),
           interesRecuperado:
-            Math.round(
-              Number(resultado.descomposicion.interesRecuperado || 0) * 100,
-            ) / 100,
+            truncCop(
+              Number(resultado.descomposicion.interesRecuperado || 0),
+            ),
           saldoAnterior: resultado.descomposicion.saldoAnterior,
           saldoNuevo: resultado.descomposicion.saldoNuevo,
           cuotasAfectadas: resultado.descomposicion.cuotasAfectadas,
@@ -1513,7 +1520,7 @@ export class PaymentsService {
     const prestamoEstadoAntes = String(prestamo.estado);
     let prestamoEstadoDespues = prestamoEstadoAntes;
 
-    const COP_TOLERANCE = 1;
+
 
     await this.prisma.$transaction(async (tx) => {
       for (const detalle of pago.detalles) {
@@ -1550,7 +1557,7 @@ export class PaymentsService {
         const montoPagadoActual = Number(cuota.montoPagado || 0);
         const montoDetalle = Number(detalle.monto || 0);
         const nuevoMontoPagado = montoPagadoActual + montoDetalle;
-        const cuotaCompleta = nuevoMontoPagado >= montoCuota - COP_TOLERANCE;
+        const cuotaCompleta = truncCop(nuevoMontoPagado) >= truncCop(montoCuota);
 
         if (!cuotaCompleta) {
           cuotasOmitidas.push({

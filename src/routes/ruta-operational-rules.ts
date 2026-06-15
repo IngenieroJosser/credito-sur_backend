@@ -1,14 +1,42 @@
-const normalizeUpper = (value: unknown): string =>
+export const normalizeUpper = (value: unknown): string =>
   String(value ?? '').trim().toUpperCase();
 
-const terminalCuotaStates = new Set(['PAGADA', 'PAGADO', 'ANULADA', 'ANULADO']);
-const operativeCuotaStates = new Set(['PENDIENTE', 'PARCIAL', 'VENCIDA']);
+const operativeCuotaStates = new Set([
+  'PENDIENTE',
+  'PARCIAL',
+  'VENCIDA',
+  'PRORROGADA',
+]);
+
+const nonOperativePrestamoStates = new Set([
+  'PERDIDA',
+  'BORRADOR',
+  'ANULADO',
+  'ANULADA',
+  'CANCELADO',
+  'CANCELADA',
+  'REVERSADO',
+  'REVERTIDO',
+]);
+
+const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const toBogotaDayKey = (value: unknown): string => {
   if (!value) return '9999-12-31';
 
+  if (typeof value === 'string') {
+    const raw = value.trim();
+
+    if (DATE_KEY_RE.test(raw)) {
+      return raw;
+    }
+  }
+
   const date = new Date(value as any);
-  if (Number.isNaN(date.getTime())) return '9999-12-31';
+
+  if (Number.isNaN(date.getTime())) {
+    return '9999-12-31';
+  }
 
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Bogota',
@@ -18,10 +46,16 @@ const toBogotaDayKey = (value: unknown): string => {
   }).format(date);
 };
 
+const normalizeFechaOperativaKey = (value: unknown): string => {
+  const key = toBogotaDayKey(value);
+  return key === '9999-12-31' ? '' : key;
+};
+
 export const getCuotaFechaEfectivaKeyRuta = (cuota: any): string => {
+  const estado = normalizeUpper(cuota?.estadoActual || cuota?.estado);
+
   const raw =
-    normalizeUpper(cuota?.estado) === 'PRORROGADA' &&
-    cuota?.fechaVencimientoProrroga
+    estado === 'PRORROGADA' && cuota?.fechaVencimientoProrroga
       ? cuota.fechaVencimientoProrroga
       : cuota?.fechaEfectiva ||
         cuota?.fechaVencimientoProrroga ||
@@ -32,16 +66,20 @@ export const getCuotaFechaEfectivaKeyRuta = (cuota: any): string => {
 
 export const getEstadoRevisionOperacion = (prestamo: any) => {
   const estadoAprobacion = normalizeUpper(prestamo?.estadoAprobacion);
+
   const estadoEfectoProvisional = normalizeUpper(
     prestamo?.estadoEfectoProvisional ||
       prestamo?.efectoProvisional?.estado ||
       prestamo?.efectosProvisionales?.[0]?.estado,
   );
+
   const estado = normalizeUpper(prestamo?.estado);
+
   const esRevertido =
     estadoEfectoProvisional === 'REVERTIDO' ||
     estadoEfectoProvisional === 'REVERSA_FALLIDA' ||
     Boolean(prestamo?.esRevertido);
+
   const esProvisional =
     !esRevertido &&
     (estadoAprobacion === 'PENDIENTE' ||
@@ -71,7 +109,7 @@ export const isPrestamoOperativoRuta = (prestamo: any): boolean => {
   const tipoPrestamo = normalizeUpper(prestamo.tipoPrestamo || prestamo.tipo);
 
   if (estadoAprobacion === 'RECHAZADO') return false;
-  if (['PERDIDA', 'BORRADOR'].includes(estado)) return false;
+  if (nonOperativePrestamoStates.has(estado)) return false;
   if (getEstadoRevisionOperacion(prestamo).esRevertido) return false;
   if (prestamo.esContado || tipoPrestamo === 'VENTA_CONTADO') return false;
 
@@ -82,49 +120,65 @@ export const isCuotaOperativaParaFechaRuta = (
   cuota: any,
   fechaOperativaKey: string,
 ): boolean => {
-  if (!cuota || !fechaOperativaKey) return false;
+  const fechaOperativa = normalizeFechaOperativaKey(fechaOperativaKey);
+
+  if (!cuota || !fechaOperativa) return false;
 
   const estado = normalizeUpper(cuota.estadoActual || cuota.estado);
-  if (!operativeCuotaStates.has(estado)) return false;
+
+  if (!operativeCuotaStates.has(estado)) {
+    return false;
+  }
 
   const fechaKey = getCuotaFechaEfectivaKeyRuta(cuota);
-  return Boolean(fechaKey && fechaKey <= fechaOperativaKey);
+
+  return Boolean(fechaKey && fechaKey <= fechaOperativa);
 };
 
 export const resolveCuotaObjetivoOperativa = (
   prestamo: any,
   fechaOperativaKey: string,
 ) => {
-  if (!isPrestamoOperativoRuta(prestamo)) return null;
-  const cuotas = Array.isArray(prestamo?.cuotas) ? prestamo.cuotas : [];
-  if (cuotas.length === 0) return null;
+  const fechaOperativa = normalizeFechaOperativaKey(fechaOperativaKey);
 
-  return [...cuotas]
-    .sort((a, b) =>
-      getCuotaFechaEfectivaKeyRuta(a).localeCompare(
-        getCuotaFechaEfectivaKeyRuta(b),
-      ),
-    )
-    .find((cuota) => {
-      const estado = normalizeUpper(cuota?.estadoActual || cuota?.estado);
-      if (terminalCuotaStates.has(estado)) return false;
-      return getCuotaFechaEfectivaKeyRuta(cuota) <= fechaOperativaKey;
-    }) || null;
+  if (!isPrestamoOperativoRuta(prestamo) || !fechaOperativa) return null;
+
+  const cuotas = Array.isArray(prestamo?.cuotas) ? prestamo.cuotas : [];
+
+  if (cuotas.length === 0) {
+    return null;
+  }
+
+  return (
+    [...cuotas]
+      .sort((a, b) =>
+        getCuotaFechaEfectivaKeyRuta(a).localeCompare(
+          getCuotaFechaEfectivaKeyRuta(b),
+        ),
+      )
+      .find((cuota) =>
+        isCuotaOperativaParaFechaRuta(cuota, fechaOperativa),
+      ) || null
+  );
 };
 
 export const isObligacionOperativaRuta = (
   obligacion: { prestamo?: any; cuota?: any; cuotaObjetivo?: any },
   fechaOperativaKey: string,
 ): boolean => {
+  const fechaOperativa = normalizeFechaOperativaKey(fechaOperativaKey);
   const prestamo = obligacion?.prestamo ?? obligacion;
+
+  if (!isPrestamoOperativoRuta(prestamo) || !fechaOperativa) {
+    return false;
+  }
+
   const cuota =
     obligacion?.cuota ??
     obligacion?.cuotaObjetivo ??
     prestamo?.cuotaObjetivo ??
-    prestamo?.proximaCuota;
+    prestamo?.proximaCuota ??
+    resolveCuotaObjetivoOperativa(prestamo, fechaOperativa);
 
-  return (
-    isPrestamoOperativoRuta(prestamo) &&
-    isCuotaOperativaParaFechaRuta(cuota, fechaOperativaKey)
-  );
+  return isCuotaOperativaParaFechaRuta(cuota, fechaOperativa);
 };
