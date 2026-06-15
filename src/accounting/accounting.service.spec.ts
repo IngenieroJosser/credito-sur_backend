@@ -482,7 +482,7 @@ describe('AccountingService financial ledger controls', () => {
 
       expect(prisma._tx.$queryRaw).toHaveBeenCalled();
       const callArgs = prisma._tx.$queryRaw.mock.calls[0];
-      expect(callArgs[0]).toContain('FOR UPDATE');
+      expect(callArgs[0]).toEqual(expect.arrayContaining([expect.stringContaining('FOR UPDATE')]));
     });
 
     it('mantiene destino CAJA-OFICINA o CAJA-PRINCIPAL según lógica actual', async () => {
