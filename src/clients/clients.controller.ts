@@ -123,6 +123,20 @@ export class ClientsController {
     res.send(result.data);
   }
 
+  @Get(':id/estado-cuenta')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COBRADOR,
+    RolUsuario.CONTADOR,
+    RolUsuario.PUNTO_DE_VENTA,
+  )
+  async getEstadoCuenta(@Param('id') id: string) {
+    return this.clientsService.getEstadoCuentaCliente(id);
+  }
+
   @Get(':id')
   @Roles(
     RolUsuario.SUPER_ADMINISTRADOR,

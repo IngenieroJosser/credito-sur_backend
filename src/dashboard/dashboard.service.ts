@@ -7,7 +7,6 @@ import {
   EstadoPrestamo,
   RolUsuario,
   TipoAprobacion,
-  TipoTransaccion,
 } from '@prisma/client';
 import {
   calculateDateRange,
@@ -355,9 +354,9 @@ export class DashboardService {
           user &&
           ['COBRADOR', 'SUPERVISOR', 'COORDINADOR'].includes(user.rol)
         ) {
-          // Calcular eficiencia real: (recaudado / meta_periodo) * 100
-          // Incluimos CUOTA_INICIAL tanto en recaudo como en meta para consistencia con RoutesService
-          const [metaCobroRes, cuotasInicialesRes, pagosRes] =
+          // Calcular eficiencia operativa real: pagos de cuotas / meta de cuotas.
+          // La cuota inicial es entrada de caja, no recaudo operativo de ruta.
+          const [metaCobroRes, pagosRes] =
             await Promise.all([
               this.prisma.cuota.aggregate({
                 where: {
@@ -375,15 +374,6 @@ export class DashboardService {
                 },
                 _sum: { monto: true },
               }),
-              this.prisma.transaccion.aggregate({
-                where: {
-                  caja: { responsableId: item.cobradorId, tipo: 'RUTA' },
-                  tipoReferencia: 'CUOTA_INICIAL',
-                  tipo: TipoTransaccion.INGRESO,
-                  fechaTransaccion: { gte: startDate, lte: endDate },
-                },
-                _sum: { monto: true },
-              }),
               this.prisma.pago.aggregate({
                 where: {
                   cobradorId: item.cobradorId,
@@ -393,12 +383,8 @@ export class DashboardService {
               }),
             ]);
 
-          const montoMeta =
-            Number(metaCobroRes._sum.monto || 0) +
-            Number(cuotasInicialesRes._sum.monto || 0);
-          const collected =
-            Number(pagosRes._sum.montoTotal || 0) +
-            Number(cuotasInicialesRes._sum.monto || 0);
+          const montoMeta = Number(metaCobroRes._sum.monto || 0);
+          const collected = Number(pagosRes._sum.montoTotal || 0);
 
           // Si no hay meta, asumimos 100% de eficiencia si recaudó algo
           const efficiency =

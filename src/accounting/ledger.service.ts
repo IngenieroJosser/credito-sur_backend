@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
 
@@ -136,6 +136,51 @@ export class LedgerService {
   private readonly logger = new Logger(LedgerService.name);
 
   constructor(private readonly prisma: PrismaService) {}
+
+  // ─── Helper interno para actualizar caja de forma segura ───────────────────
+
+  /**
+   * Aplica un delta al saldo de una caja validando que no quede negativo.
+   * Solo debe usarse para operaciones que RESTAN saldo (egresos, reversas, gastos).
+   * Para operaciones que SUMAN saldo (pagos, ingresos), el delta positivo no requiere validación.
+   */
+  private async applyCajaDeltaSafely(
+    tx: any,
+    cajaId: string,
+    delta: number,
+  ) {
+    if (delta === 0) return;
+
+    // Solo validar si el delta es negativo (resta saldo)
+    if (delta < 0) {
+      const caja = await tx.caja.findUnique({
+        where: { id: cajaId },
+        select: { saldoActual: true },
+      });
+
+      if (!caja) {
+        throw new NotFoundException(`Caja ${cajaId} no encontrada`);
+      }
+
+      const saldoActual = Number(caja.saldoActual || 0);
+      const nuevoSaldo = saldoActual + delta;
+
+      if (nuevoSaldo < 0) {
+        throw new BadRequestException(
+          `Saldo insuficiente en caja ${cajaId}. Saldo actual: $${saldoActual}, Intento de restar: $${Math.abs(delta)}`,
+        );
+      }
+    }
+
+    await tx.caja.update({
+      where: { id: cajaId },
+      data: { saldoActual: { increment: delta } },
+    });
+
+    this.logger.debug(
+      `[Ledger] Caja ${cajaId} Δ${delta > 0 ? '+' : ''}${delta}`,
+    );
+  }
 
   // ─── Método core ──────────────────────────────────────────────────────────
 

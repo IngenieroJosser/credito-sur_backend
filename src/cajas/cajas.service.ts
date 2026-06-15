@@ -12,6 +12,48 @@ export class CajasService {
     private ledgerService: LedgerService,
   ) {}
 
+  /**
+   * Calcula el saldo esperado de una caja desde sus transacciones.
+   * Suma INGRESOS y resta EGRESOS para la fecha operativa dada.
+   * No incluye transacciones de otras cajas ni ventas contado de CAJA-OFICINA/BANCO.
+   */
+  private async calcularSaldoEsperadoDesdeTransacciones(
+    cajaId: string,
+    fechaOperativa: string,
+  ): Promise<number> {
+    const transacciones = await this.prisma.transaccion.findMany({
+      where: {
+        cajaId,
+        fechaTransaccion: {
+          gte: new Date(`${fechaOperativa}T00:00:00.000Z`),
+          lt: new Date(`${fechaOperativa}T23:59:59.999Z`),
+        },
+        tipoReferencia: {
+          notIn: ['VENTA_CONTADO'], // Excluir ventas contado que van a CAJA-OFICINA/BANCO
+        },
+      },
+      select: {
+        tipo: true,
+        monto: true,
+      },
+    });
+
+    let saldoEsperado = 0;
+
+    for (const tx of transacciones) {
+      const monto = Number(tx.monto || 0);
+      
+      if (tx.tipo === 'INGRESO') {
+        saldoEsperado += monto;
+      } else if (tx.tipo === 'EGRESO' || tx.tipo === 'TRANSFERENCIA') {
+        saldoEsperado -= monto;
+      }
+      // ACTIVACION_RUTA no afecta saldo esperado (es solo marca de inicio)
+    }
+
+    return saldoEsperado;
+  }
+
   async getArqueoPreview(cajaId: string, fechaOperativa?: string, userId?: string) {
     const fecha = fechaOperativa || getBogotaDayKey(new Date());
     const caja = await this.prisma.caja.findUnique({
@@ -47,7 +89,13 @@ export class CajasService {
       ? Number(jornada.activacionTransaccion.monto)
       : 0;
 
-    const saldoEsperado = Number(caja.saldoActual || 0);
+    // Calcular saldo esperado desde transacciones
+    const saldoEsperadoCalculado = await this.calcularSaldoEsperadoDesdeTransacciones(cajaId, fecha);
+    const saldoActualSistema = Number(caja.saldoActual || 0);
+    
+    // Usar el saldo esperado calculado como fuente primaria
+    const saldoEsperado = saldoEsperadoCalculado;
+    const diferenciaSistema = saldoActualSistema - saldoEsperadoCalculado;
 
     return {
       cajaId: caja.id,
@@ -67,7 +115,9 @@ export class CajasService {
       saldoEsperado,
       desglose: {
         baseInicial,
-        saldoActualSistema: saldoEsperado,
+        saldoActualSistema,
+        saldoEsperadoCalculado,
+        diferenciaSistema,
       },
       jornada: jornada ? { id: jornada.id, estado: jornada.estado } : null,
       arqueoExistente: Boolean(arqueoExistente),
@@ -169,8 +219,9 @@ export class CajasService {
         throw new BadRequestException('La jornada no está abierta o pendiente de cierre');
       }
 
-      const saldoEsperado = Number(caja.saldoActual || 0);
-      const diferencia = efectivo - saldoEsperado;
+      // Calcular saldo esperado desde transacciones
+      const saldoEsperadoCalculado = await this.calcularSaldoEsperadoDesdeTransacciones(cajaId, fechaOperativa);
+      const diferencia = efectivo - saldoEsperadoCalculado;
 
       const tipoDiferencia =
         diferencia === 0
@@ -178,6 +229,13 @@ export class CajasService {
           : diferencia < 0
             ? TipoDiferenciaArqueo.FALTANTE
             : TipoDiferenciaArqueo.SOBRANTE;
+
+      // Si hay diferencia, requiere observación
+      if (diferencia !== 0 && !observaciones?.trim()) {
+        throw new BadRequestException(
+          `El arqueo presenta ${tipoDiferencia === TipoDiferenciaArqueo.FALTANTE ? 'faltante' : 'sobrante'} de $${Math.abs(diferencia)}. Debe proporcionar una observación.`,
+        );
+      }
 
       const cajaPrincipal = await tx.caja.findFirst({
         where: { tipo: TipoCaja.PRINCIPAL, activa: true },
@@ -210,7 +268,7 @@ export class CajasService {
           recibidoEn: new Date(),
           numeroComprobanteTraslado: numeroComprobante,
           montoTransferido: efectivo,
-          saldoEsperado: saldoEsperado,
+          saldoEsperado: saldoEsperadoCalculado,
           efectivoContado: efectivo,
           diferencia,
           tipoDiferencia,
@@ -234,9 +292,9 @@ export class CajasService {
       // b. Caja ruta entrega el saldo esperado
       lines.push({
         accountCode: '1.2.1',
-        creditAmount: saldoEsperado,
+        creditAmount: saldoEsperadoCalculado,
         cajaId: caja.id,
-        cajaDelta: -saldoEsperado,
+        cajaDelta: -saldoEsperadoCalculado,
       });
 
       // c. Ajuste por diferencia
@@ -308,8 +366,8 @@ export class CajasService {
         cajaOrigen: {
           id: caja.id,
           nombre: caja.nombre,
-          saldoAnterior: saldoEsperado,
-          salida: saldoEsperado,
+          saldoAnterior: saldoEsperadoCalculado,
+          salida: saldoEsperadoCalculado,
           saldoNuevo: Number(cajaOrigenActualizada.saldoActual),
         },
         cajaDestino: {

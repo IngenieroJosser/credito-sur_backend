@@ -112,4 +112,45 @@ describe('DashboardService accounting-backed collections', () => {
       porcentaje: 30,
     });
   });
+
+  it('no suma cuota inicial como recaudo operativo en top cobradores', async () => {
+    const prisma = buildPrismaMock({
+      pago: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { montoTotal: 100000 } }),
+        count: jest.fn().mockResolvedValue(0),
+        groupBy: jest.fn().mockResolvedValue([
+          {
+            cobradorId: 'cobrador-1',
+            _sum: { montoTotal: 100000 },
+          },
+        ]),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      usuario: {
+        findUnique: jest.fn().mockResolvedValue({
+          nombres: 'Ana',
+          apellidos: 'Ruta',
+          rol: 'COBRADOR',
+        }),
+      },
+      cuota: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 200000 } }),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      transaccion: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 20000 } }),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    });
+
+    const result = await new DashboardService(prisma as any).getDashboardData(
+      'today',
+    );
+
+    expect(result.topCollectors[0]).toMatchObject({
+      name: 'Ana Ruta',
+      collected: 100000,
+      efficiency: 50,
+    });
+  });
 });

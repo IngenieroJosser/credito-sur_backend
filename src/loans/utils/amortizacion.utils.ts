@@ -4,11 +4,6 @@
  */
 import { FrecuenciaPago } from '@prisma/client';
 
-function trunc2(n: number): number {
-  if (!Number.isFinite(n)) return 0;
-  return Math.trunc(n * 100) / 100;
-}
-
 // ── Tipos ──────────────────────────────────────────────────────────────────────
 
 export interface FilaAmortizacion {
@@ -58,8 +53,12 @@ export function tasaPorPeriodo(
 // ── Amortización (cuota fija) ─────────────────────────────────────────
 
 /**
- * Genera tabla de amortización (cuota fija).
- * La tasa que recibe se aplica directamente por periodo.
+ * Genera tabla de cuotas con interés plano.
+ *
+ * NOTA: En CrediSur, este método conserva el nombre histórico de "francesa",
+ * pero por decisión de negocio calcula interés plano:
+ * total = capital + interés total
+ * cuota = total / cantidadCuotas
  */
 export function calcularAmortizacionFrancesa(
   capital: number,
@@ -77,7 +76,7 @@ export function calcularAmortizacionFrancesa(
   const totalFinanciado = capital + interesTotal;
 
   const cuotaBase = Math.floor(totalFinanciado / numCuotas);
-  
+
   let saldo = totalFinanciado;
   const tabla: FilaAmortizacion[] = [];
 
@@ -154,7 +153,6 @@ export function calcularInteresSimple(
     tabla,
   };
 }
-
 
 // ── Fecha de vencimiento por cuota ─────────────────────────────────────────────
 

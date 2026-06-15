@@ -48,7 +48,12 @@ function buildPrismaMock(overrides: Record<string, any> = {}) {
     $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
     _tx: tx,
     journalLine: {
-      aggregate: jest.fn(),
+      aggregate: jest.fn().mockResolvedValue({
+        _sum: {
+          debitAmount: 0,
+          creditAmount: 0,
+        },
+      }),
       findMany: jest.fn().mockResolvedValue([]),
     },
     journalEntry: {
@@ -204,13 +209,13 @@ describe('AccountingService financial ledger controls', () => {
     const prisma = buildPrismaMock();
     prisma.journalLine.aggregate
       .mockResolvedValueOnce({ _sum: { debitAmount: 120000 } }) // ingresos caja hoy
-      .mockResolvedValueOnce({ _sum: { creditAmount: 120000 } }) // ingresos hoy 3.x
-      .mockResolvedValueOnce({ _sum: { creditAmount: 90000 } }) // intereses hoy 3.1
-      .mockResolvedValueOnce({ _sum: { creditAmount: 25000 } }) // mora hoy 3.2
-      .mockResolvedValueOnce({ _sum: { creditAmount: 5000 } }) // otros ingresos hoy 3.3
-      .mockResolvedValueOnce({ _sum: { creditAmount: 0 } }) // articulos hoy 3.4
-      .mockResolvedValueOnce({ _sum: { debitAmount: 35000 } }) // gastos hoy 4.x
-      .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }) // costos hoy 5.x
+      .mockResolvedValueOnce({ _sum: { creditAmount: 120000, debitAmount: 0 } }) // ingresos hoy 3.x
+      .mockResolvedValueOnce({ _sum: { creditAmount: 90000, debitAmount: 0 } }) // intereses hoy 3.1
+      .mockResolvedValueOnce({ _sum: { creditAmount: 25000, debitAmount: 0 } }) // mora hoy 3.2
+      .mockResolvedValueOnce({ _sum: { creditAmount: 5000, debitAmount: 0 } }) // otros ingresos hoy 3.3
+      .mockResolvedValueOnce({ _sum: { creditAmount: 0, debitAmount: 0 } }) // articulos hoy 3.4
+      .mockResolvedValueOnce({ _sum: { debitAmount: 35000, creditAmount: 0 } }) // gastos hoy 4.x
+      .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } }) // costos hoy 5.x
       .mockResolvedValueOnce({
         _sum: { debitAmount: 900000, creditAmount: 250000 },
       }) // cartera
@@ -218,10 +223,24 @@ describe('AccountingService financial ledger controls', () => {
         _sum: { debitAmount: 50000, creditAmount: 10000 },
       }) // deuda cobrador
       .mockResolvedValueOnce({ _sum: { debitAmount: 180000 } }) // cobranza hoy PAGO -> caja
-      .mockResolvedValueOnce({ _sum: { debitAmount: 80000 } }) // ingresos caja periodo anterior
-      .mockResolvedValueOnce({ _sum: { creditAmount: 80000 } }) // ingresos periodo anterior
-      .mockResolvedValueOnce({ _sum: { debitAmount: 20000 } }) // gastos periodo anterior
-      .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }); // costos periodo anterior
+      .mockResolvedValueOnce({ _sum: { debitAmount: 80000 } }) // cobranza ayer
+      .mockResolvedValueOnce({ _sum: { debitAmount: 80000 } }) // ingresos caja ayer
+      .mockResolvedValueOnce({ _sum: { creditAmount: 80000, debitAmount: 0 } }) // ingresos periodo anterior
+      .mockResolvedValueOnce({ _sum: { debitAmount: 20000, creditAmount: 0 } }) // gastos periodo anterior
+      .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } }); // costos periodo anterior
+    prisma.caja.aggregate
+      .mockResolvedValueOnce({ _sum: { saldoActual: 500000 } }); // saldo total cajas
+    prisma.caja.count
+      .mockResolvedValueOnce(5) // total rutas
+      .mockResolvedValueOnce(3) // rutas abiertas
+      .mockResolvedValueOnce(2) // rutas pendientes consolidación
+      .mockResolvedValueOnce(1) // consolidaciones hoy
+      .mockResolvedValueOnce(4); // cajas abiertas
+    prisma.transaccion.aggregate
+      .mockResolvedValueOnce({ _sum: { monto: 50000 } }) // cuota inicial hoy ingreso
+      .mockResolvedValueOnce({ _sum: { monto: 0 } }) // cuota inicial hoy reverso
+      .mockResolvedValueOnce({ _sum: { monto: 30000 } }) // cuota inicial ayer ingreso
+      .mockResolvedValueOnce({ _sum: { monto: 0 } }); // cuota inicial ayer reverso
     prisma.prestamo.aggregate
       .mockResolvedValueOnce({ _sum: { saldoPendiente: 650000 } }) // cartera activa real
       .mockResolvedValue({ _sum: { saldoPendiente: 0 } }); // provisiones
@@ -293,6 +312,255 @@ describe('AccountingService financial ledger controls', () => {
     expect(mockLedger.registrarAsiento).not.toHaveBeenCalled();
   });
 
+  describe('consolidarCaja idempotencia', () => {
+    it('crea TRX-OUT y TRX-IN con idempotencyKey', async () => {
+      const prisma = buildPrismaMock();
+      prisma.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 100000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+      prisma.caja.findFirst.mockResolvedValue({
+        id: 'caja-oficina',
+        nombre: 'Caja Oficina',
+        codigo: 'CAJA-OFICINA',
+        tipo: 'PRINCIPAL',
+        saldoActual: 0,
+      });
+      prisma.transaccion.findFirst.mockResolvedValue(null);
+      prisma._tx.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 100000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+      prisma._tx.transaccion.create
+        .mockResolvedValueOnce({ id: 'trx-out-1' })
+        .mockResolvedValueOnce({ id: 'trx-in-1' });
+
+      await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000);
+
+      expect(prisma._tx.transaccion.create).toHaveBeenCalledTimes(2);
+      expect(prisma._tx.transaccion.create).toHaveBeenNthCalledWith(1, {
+        data: expect.objectContaining({
+          idempotencyKey: expect.stringContaining(':OUT'),
+        }),
+      });
+      expect(prisma._tx.transaccion.create).toHaveBeenNthCalledWith(2, {
+        data: expect.objectContaining({
+          idempotencyKey: expect.stringContaining(':IN'),
+        }),
+      });
+    });
+
+    it('si se reintenta la misma recolección con la misma idempotencyKey, no duplica transacciones', async () => {
+      const prisma = buildPrismaMock();
+      prisma.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 100000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+      prisma.caja.findFirst.mockResolvedValue({
+        id: 'caja-oficina',
+        nombre: 'Caja Oficina',
+        codigo: 'CAJA-OFICINA',
+        tipo: 'PRINCIPAL',
+        saldoActual: 0,
+      });
+      prisma.transaccion.findFirst
+        .mockResolvedValueOnce({
+          id: 'trx-out-1',
+          numeroTransaccion: 'TRX-OUT-001',
+          monto: 50000,
+          referenciaId: 'RECOL-001',
+        })
+        .mockResolvedValueOnce({
+          id: 'trx-in-1',
+          numeroTransaccion: 'TRX-IN-001',
+          referenciaId: 'RECOL-001',
+        });
+
+      const result = await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000);
+
+      expect(prisma._tx.transaccion.create).not.toHaveBeenCalled();
+      expect(mockLedger.registrarAsiento).not.toHaveBeenCalled();
+      expect(result.idempotente).toBe(true);
+      expect(result.monto).toBe(50000);
+    });
+
+    it('si se reintenta, no vuelve a modificar saldos', async () => {
+      const prisma = buildPrismaMock();
+      prisma.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 100000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+      prisma.caja.findFirst.mockResolvedValue({
+        id: 'caja-oficina',
+        nombre: 'Caja Oficina',
+        codigo: 'CAJA-OFICINA',
+        tipo: 'PRINCIPAL',
+        saldoActual: 0,
+      });
+      prisma.transaccion.findFirst.mockResolvedValue({
+        id: 'trx-out-1',
+        numeroTransaccion: 'TRX-OUT-001',
+        monto: 50000,
+        referenciaId: 'RECOL-001',
+      });
+      prisma.transaccion.findFirst.mockResolvedValue({
+        id: 'trx-in-1',
+        numeroTransaccion: 'TRX-IN-001',
+        referenciaId: 'RECOL-001',
+      });
+
+      await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000);
+
+      expect(prisma._tx.transaccion.create).not.toHaveBeenCalled();
+      expect(mockLedger.registrarAsiento).not.toHaveBeenCalled();
+    });
+
+    it('rechaza saldo insuficiente', async () => {
+      const prisma = buildPrismaMock();
+      prisma.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 10000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+      prisma.caja.findFirst.mockResolvedValue({
+        id: 'caja-oficina',
+        nombre: 'Caja Oficina',
+        codigo: 'CAJA-OFICINA',
+        tipo: 'PRINCIPAL',
+        saldoActual: 0,
+      });
+      prisma.transaccion.findFirst.mockResolvedValue(null);
+
+      await expect(
+        makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('bloquea caja origen con FOR UPDATE', async () => {
+      const prisma = buildPrismaMock();
+      prisma.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 100000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+      prisma.caja.findFirst.mockResolvedValue({
+        id: 'caja-oficina',
+        nombre: 'Caja Oficina',
+        codigo: 'CAJA-OFICINA',
+        tipo: 'PRINCIPAL',
+        saldoActual: 0,
+      });
+      prisma.transaccion.findFirst.mockResolvedValue(null);
+      prisma._tx.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 100000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+      prisma._tx.transaccion.create
+        .mockResolvedValueOnce({ id: 'trx-out-1' })
+        .mockResolvedValueOnce({ id: 'trx-in-1' });
+
+      await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000);
+
+      expect(prisma._tx.$queryRaw).toHaveBeenCalled();
+      const callArgs = prisma._tx.$queryRaw.mock.calls[0];
+      expect(callArgs[0]).toContain('FOR UPDATE');
+    });
+
+    it('mantiene destino CAJA-OFICINA o CAJA-PRINCIPAL según lógica actual', async () => {
+      const prisma = buildPrismaMock();
+      prisma.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 100000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+      prisma.caja.findFirst.mockResolvedValue({
+        id: 'caja-oficina',
+        nombre: 'Caja Oficina',
+        codigo: 'CAJA-OFICINA',
+        tipo: 'PRINCIPAL',
+        saldoActual: 0,
+      });
+      prisma.transaccion.findFirst.mockResolvedValue(null);
+      prisma._tx.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 100000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+      prisma._tx.transaccion.create
+        .mockResolvedValueOnce({ id: 'trx-out-1' })
+        .mockResolvedValueOnce({ id: 'trx-in-1' });
+
+      const result = await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000);
+
+      expect(result.destino).toBe('Caja Oficina');
+    });
+
+    it('no toca caja de ventas contado', async () => {
+      const prisma = buildPrismaMock();
+      prisma.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 100000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+      prisma.caja.findFirst.mockResolvedValue({
+        id: 'caja-oficina',
+        nombre: 'Caja Oficina',
+        codigo: 'CAJA-OFICINA',
+        tipo: 'PRINCIPAL',
+        saldoActual: 0,
+      });
+      prisma.transaccion.findFirst.mockResolvedValue(null);
+      prisma._tx.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 100000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+      prisma._tx.transaccion.create
+        .mockResolvedValueOnce({ id: 'trx-out-1' })
+        .mockResolvedValueOnce({ id: 'trx-in-1' });
+
+      await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000);
+
+      expect(prisma._tx.transaccion.create).toHaveBeenNthCalledWith(1, {
+        data: expect.objectContaining({
+          tipoReferencia: 'RECOLECCION',
+        }),
+      });
+      expect(prisma._tx.transaccion.create).toHaveBeenNthCalledWith(2, {
+        data: expect.objectContaining({
+          tipoReferencia: 'RECOLECCION',
+        }),
+      });
+    });
+  });
+
   it('calcula utilidad operativa y neta separando ingresos, gastos y costos desde ledger', async () => {
     const prisma = buildPrismaMock();
     prisma.journalLine.aggregate
@@ -312,9 +580,25 @@ describe('AccountingService financial ledger controls', () => {
       }) // deuda cobrador
       .mockResolvedValueOnce({ _sum: { debitAmount: 180000 } }) // cobranza
       .mockResolvedValueOnce({ _sum: { debitAmount: 80000 } }) // ingresos caja anterior
-      .mockResolvedValueOnce({ _sum: { creditAmount: 80000 } }) // ingresos anterior
-      .mockResolvedValueOnce({ _sum: { debitAmount: 20000 } }) // gastos anterior
-      .mockResolvedValueOnce({ _sum: { debitAmount: 5000 } }); // costos anterior
+      .mockResolvedValueOnce({ _sum: { creditAmount: 80000, debitAmount: 0 } }) // ingresos anterior
+      .mockResolvedValueOnce({ _sum: { debitAmount: 20000, creditAmount: 0 } }) // gastos anterior
+      .mockResolvedValueOnce({ _sum: { debitAmount: 5000, creditAmount: 0 } }); // costos anterior
+    prisma.caja.aggregate
+      .mockResolvedValueOnce({ _sum: { saldoActual: 500000 } }); // saldo total cajas
+    prisma.caja.count
+      .mockResolvedValueOnce(5) // total rutas
+      .mockResolvedValueOnce(3) // rutas abiertas
+      .mockResolvedValueOnce(2) // rutas pendientes consolidación
+      .mockResolvedValueOnce(1) // consolidaciones hoy
+      .mockResolvedValueOnce(4); // cajas abiertas
+    prisma.transaccion.aggregate
+      .mockResolvedValueOnce({ _sum: { monto: 50000 } }) // cuota inicial hoy ingreso
+      .mockResolvedValueOnce({ _sum: { monto: 0 } }) // cuota inicial hoy reverso
+      .mockResolvedValueOnce({ _sum: { monto: 30000 } }) // cuota inicial ayer ingreso
+      .mockResolvedValueOnce({ _sum: { monto: 0 } }); // cuota inicial ayer reverso
+    prisma.prestamo.aggregate
+      .mockResolvedValueOnce({ _sum: { saldoPendiente: 650000 } }) // cartera activa real
+      .mockResolvedValue({ _sum: { saldoPendiente: 0 } }); // provisiones
 
     const result = (await makeService(prisma).getResumenFinanciero(
       '2026-05-08',
@@ -352,9 +636,25 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } }) // deuda cobrador
       .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }) // cobranza
       .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }) // ingresos caja periodo anterior
-      .mockResolvedValueOnce({ _sum: { creditAmount: 0 } }) // ingresos contables periodo anterior
-      .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }) // gastos periodo anterior
-      .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }); // costos periodo anterior
+      .mockResolvedValueOnce({ _sum: { creditAmount: 0, debitAmount: 0 } }) // ingresos contables periodo anterior
+      .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } }) // gastos periodo anterior
+      .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } }); // costos periodo anterior
+    prisma.caja.aggregate
+      .mockResolvedValueOnce({ _sum: { saldoActual: 500000 } }); // saldo total cajas
+    prisma.caja.count
+      .mockResolvedValueOnce(5) // total rutas
+      .mockResolvedValueOnce(3) // rutas abiertas
+      .mockResolvedValueOnce(2) // rutas pendientes consolidación
+      .mockResolvedValueOnce(1) // consolidaciones hoy
+      .mockResolvedValueOnce(4); // cajas abiertas
+    prisma.transaccion.aggregate
+      .mockResolvedValueOnce({ _sum: { monto: 50000 } }) // cuota inicial hoy ingreso
+      .mockResolvedValueOnce({ _sum: { monto: 0 } }) // cuota inicial hoy reverso
+      .mockResolvedValueOnce({ _sum: { monto: 30000 } }) // cuota inicial ayer ingreso
+      .mockResolvedValueOnce({ _sum: { monto: 0 } }); // cuota inicial ayer reverso
+    prisma.prestamo.aggregate
+      .mockResolvedValueOnce({ _sum: { saldoPendiente: 650000 } }) // cartera activa real
+      .mockResolvedValue({ _sum: { saldoPendiente: 0 } }); // provisiones
 
     const result = (await makeService(prisma).getResumenFinanciero(
       '2026-05-08',
@@ -408,9 +708,25 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } }) // deuda cobrador
       .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }) // cobranza
       .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }) // ingresos caja periodo anterior
-      .mockResolvedValueOnce({ _sum: { creditAmount: 0 } }) // ingresos anterior
-      .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }) // gastos anterior
-      .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }); // costos anterior
+      .mockResolvedValueOnce({ _sum: { creditAmount: 0, debitAmount: 0 } }) // ingresos anterior
+      .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } }) // gastos anterior
+      .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } }); // costos anterior
+    prisma.caja.aggregate
+      .mockResolvedValueOnce({ _sum: { saldoActual: 500000 } }); // saldo total cajas
+    prisma.caja.count
+      .mockResolvedValueOnce(5) // total rutas
+      .mockResolvedValueOnce(3) // rutas abiertas
+      .mockResolvedValueOnce(2) // rutas pendientes consolidación
+      .mockResolvedValueOnce(1) // consolidaciones hoy
+      .mockResolvedValueOnce(4); // cajas abiertas
+    prisma.transaccion.aggregate
+      .mockResolvedValueOnce({ _sum: { monto: 50000 } }) // cuota inicial hoy ingreso
+      .mockResolvedValueOnce({ _sum: { monto: 0 } }) // cuota inicial hoy reverso
+      .mockResolvedValueOnce({ _sum: { monto: 30000 } }) // cuota inicial ayer ingreso
+      .mockResolvedValueOnce({ _sum: { monto: 0 } }); // cuota inicial ayer reverso
+    prisma.prestamo.aggregate
+      .mockResolvedValueOnce({ _sum: { saldoPendiente: 650000 } }) // cartera activa real
+      .mockResolvedValue({ _sum: { saldoPendiente: 0 } }); // provisiones
 
     const result = (await makeService(prisma).getResumenFinanciero(
       '2026-05-09',
@@ -451,14 +767,25 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } }) // deuda cobrador
       .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }) // cobranza
       .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }) // ingresos caja anterior
-      .mockResolvedValueOnce({ _sum: { creditAmount: 0 } }) // ingresos anterior
-      .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }) // gastos anterior
-      .mockResolvedValueOnce({ _sum: { debitAmount: 0 } }); // costos anterior
+      .mockResolvedValueOnce({ _sum: { creditAmount: 0, debitAmount: 0 } }) // ingresos anterior
+      .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } }) // gastos anterior
+      .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } }); // costos anterior
     prisma.transaccion.aggregate
       .mockResolvedValueOnce({ _sum: { monto: 50000 } })
       .mockResolvedValueOnce({ _sum: { monto: 0 } })
       .mockResolvedValueOnce({ _sum: { monto: 25000 } })
       .mockResolvedValueOnce({ _sum: { monto: 0 } });
+    prisma.caja.aggregate
+      .mockResolvedValueOnce({ _sum: { saldoActual: 500000 } }); // saldo total cajas
+    prisma.caja.count
+      .mockResolvedValueOnce(5) // total rutas
+      .mockResolvedValueOnce(3) // rutas abiertas
+      .mockResolvedValueOnce(2) // rutas pendientes consolidación
+      .mockResolvedValueOnce(1) // consolidaciones hoy
+      .mockResolvedValueOnce(4); // cajas abiertas
+    prisma.prestamo.aggregate
+      .mockResolvedValueOnce({ _sum: { saldoPendiente: 650000 } }) // cartera activa real
+      .mockResolvedValue({ _sum: { saldoPendiente: 0 } }); // provisiones
 
     const result = (await makeService(prisma).getResumenFinanciero(
       '2026-05-08',
@@ -483,16 +810,27 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { debitAmount: 0 } })
       .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } })
       .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } })
-      .mockResolvedValueOnce({ _sum: { debitAmount: 0 } })
-      .mockResolvedValueOnce({ _sum: { debitAmount: 0 } })
-      .mockResolvedValueOnce({ _sum: { creditAmount: 0 } })
-      .mockResolvedValueOnce({ _sum: { debitAmount: 0 } })
-      .mockResolvedValueOnce({ _sum: { debitAmount: 0 } });
+      .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } })
+      .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } })
+      .mockResolvedValueOnce({ _sum: { creditAmount: 0, debitAmount: 0 } })
+      .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } })
+      .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } });
     prisma.transaccion.aggregate
       .mockResolvedValueOnce({ _sum: { monto: 500000 } })
       .mockResolvedValueOnce({ _sum: { monto: 500000 } })
       .mockResolvedValueOnce({ _sum: { monto: 0 } })
       .mockResolvedValueOnce({ _sum: { monto: 0 } });
+    prisma.caja.aggregate
+      .mockResolvedValueOnce({ _sum: { saldoActual: 500000 } }); // saldo total cajas
+    prisma.caja.count
+      .mockResolvedValueOnce(5) // total rutas
+      .mockResolvedValueOnce(3) // rutas abiertas
+      .mockResolvedValueOnce(2) // rutas pendientes consolidación
+      .mockResolvedValueOnce(1) // consolidaciones hoy
+      .mockResolvedValueOnce(4); // cajas abiertas
+    prisma.prestamo.aggregate
+      .mockResolvedValueOnce({ _sum: { saldoPendiente: 650000 } }) // cartera activa real
+      .mockResolvedValue({ _sum: { saldoPendiente: 0 } }); // provisiones
 
     const result = (await makeService(prisma).getResumenFinanciero(
       '2026-05-09',
@@ -523,8 +861,8 @@ describe('AccountingService financial ledger controls', () => {
       })
       .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } })
       .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } })
-      .mockResolvedValueOnce({ _sum: { debitAmount: 0 } })
-      .mockResolvedValueOnce({ _sum: { debitAmount: 0 } })
+      .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } })
+      .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } })
       .mockResolvedValueOnce({ _sum: { creditAmount: 0, debitAmount: 0 } })
       .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } })
       .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } });
@@ -533,6 +871,17 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { monto: 500000 } })
       .mockResolvedValueOnce({ _sum: { monto: 0 } })
       .mockResolvedValueOnce({ _sum: { monto: 0 } });
+    prisma.caja.aggregate
+      .mockResolvedValueOnce({ _sum: { saldoActual: 500000 } }); // saldo total cajas
+    prisma.caja.count
+      .mockResolvedValueOnce(5) // total rutas
+      .mockResolvedValueOnce(3) // rutas abiertas
+      .mockResolvedValueOnce(2) // rutas pendientes consolidación
+      .mockResolvedValueOnce(1) // consolidaciones hoy
+      .mockResolvedValueOnce(4); // cajas abiertas
+    prisma.prestamo.aggregate
+      .mockResolvedValueOnce({ _sum: { saldoPendiente: 650000 } }) // cartera activa real
+      .mockResolvedValue({ _sum: { saldoPendiente: 0 } }); // provisiones
 
     const result = (await makeService(prisma).getResumenFinanciero(
       '2026-05-09',
