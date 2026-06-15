@@ -278,14 +278,7 @@ export class LedgerService {
 
         if (delta === 0) continue;
 
-        await tx.caja.update({
-          where: { id: line.cajaId },
-          data: { saldoActual: { increment: delta } },
-        });
-
-        this.logger.debug(
-          `[Ledger] Caja ${line.cajaId} Δ${delta > 0 ? '+' : ''}${delta}`,
-        );
+        await this.applyCajaDeltaSafely(tx, line.cajaId, delta);
       }
 
       return journalEntry;

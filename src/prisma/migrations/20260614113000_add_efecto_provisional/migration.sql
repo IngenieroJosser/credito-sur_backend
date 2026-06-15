@@ -1,13 +1,18 @@
 -- CreateEnum
-CREATE TYPE "EstadoEfectoProvisional" AS ENUM (
+DO $$
+BEGIN
+  CREATE TYPE "EstadoEfectoProvisional" AS ENUM (
   'PENDIENTE_REVISION',
   'CONFIRMADO',
   'REVERTIDO',
   'REVERSA_FALLIDA'
-);
+  );
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 -- CreateTable
-CREATE TABLE "EfectoProvisional" (
+CREATE TABLE IF NOT EXISTS "EfectoProvisional" (
   "id" TEXT NOT NULL,
   "aprobacionId" TEXT NOT NULL,
   "tipoAccion" TEXT NOT NULL,
@@ -30,16 +35,21 @@ CREATE TABLE "EfectoProvisional" (
 );
 
 -- CreateIndex
-CREATE INDEX "EfectoProvisional_aprobacionId_idx" ON "EfectoProvisional"("aprobacionId");
+CREATE INDEX IF NOT EXISTS "EfectoProvisional_aprobacionId_idx" ON "EfectoProvisional"("aprobacionId");
 
 -- CreateIndex
-CREATE INDEX "EfectoProvisional_tipoAccion_idx" ON "EfectoProvisional"("tipoAccion");
+CREATE INDEX IF NOT EXISTS "EfectoProvisional_tipoAccion_idx" ON "EfectoProvisional"("tipoAccion");
 
 -- CreateIndex
-CREATE INDEX "EfectoProvisional_estado_idx" ON "EfectoProvisional"("estado");
+CREATE INDEX IF NOT EXISTS "EfectoProvisional_estado_idx" ON "EfectoProvisional"("estado");
 
 -- AddForeignKey
-ALTER TABLE "EfectoProvisional"
-  ADD CONSTRAINT "EfectoProvisional_aprobacionId_fkey"
-  FOREIGN KEY ("aprobacionId") REFERENCES "aprobaciones"("id")
-  ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  ALTER TABLE "EfectoProvisional"
+    ADD CONSTRAINT "EfectoProvisional_aprobacionId_fkey"
+    FOREIGN KEY ("aprobacionId") REFERENCES "aprobaciones"("id")
+    ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;

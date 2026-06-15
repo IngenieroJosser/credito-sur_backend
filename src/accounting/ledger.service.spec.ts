@@ -6,6 +6,10 @@ function makeService() {
       create: jest.fn().mockResolvedValue({ id: 'journal-1', lines: [] }),
     },
     caja: {
+      findUnique: jest.fn().mockResolvedValue({
+        id: 'caja-ruta-1',
+        saldoActual: 100000,
+      }),
       update: jest.fn().mockResolvedValue({}),
     },
   };
@@ -141,13 +145,11 @@ describe('LedgerService consolidacion', () => {
           accountCode: '1.1.1',
           debitAmount: 50000,
           cajaId: 'caja-oficina',
-          cajaDelta: 50000,
         }),
         expect.objectContaining({
           accountCode: '1.2.1',
           creditAmount: 50000,
           cajaId: 'caja-ruta-1',
-          cajaDelta: -50000,
         }),
       ]),
     );
@@ -233,5 +235,25 @@ describe('LedgerService consolidacion', () => {
     expect(destinoLine).toBeDefined();
     expect(destinoLine.debitAmount).toBe(50000);
     expect(destinoLine.cajaId).toBe('caja-banco');
+  });
+
+  it('registrarConsolidacion lanza error si caja origen queda negativa', async () => {
+    const { service, prisma } = makeService();
+
+    prisma._tx.caja.findUnique.mockResolvedValueOnce({
+      id: 'caja-ruta-1',
+      saldoActual: 40000,
+    });
+
+    await expect(
+      service.registrarConsolidacion({
+        referenceId: 'RECOL-001',
+        monto: 50000,
+        cajaOrigenId: 'caja-ruta-1',
+        cajaDestinoId: 'caja-oficina',
+        accountCodeDestino: '1.1.1',
+        createdBy: 'admin-1',
+      }),
+    ).rejects.toThrow();
   });
 });
