@@ -1747,29 +1747,12 @@ export class AccountingService {
     montoRecolectar?: number,
     idempotencyKey?: string,
   ) {
-    // 1. Validar Caja Origen
+    // 1. Validar Caja Origen existe
     const cajaOrigen = await this.prisma.caja.findUnique({
       where: { id: cajaOrigenId },
       include: { ruta: { select: { nombre: true, id: true } } },
     });
     if (!cajaOrigen) throw new NotFoundException('Caja origen no encontrada');
-
-    const saldoDisponible = Number(cajaOrigen.saldoActual);
-    const montoATransferirSolicitado =
-      montoRecolectar && montoRecolectar > 0
-        ? montoRecolectar
-        : saldoDisponible;
-
-    if (montoATransferirSolicitado <= 0) {
-      throw new BadRequestException(
-        'El monto a recolectar debe ser mayor a cero',
-      );
-    }
-    if (montoATransferirSolicitado > saldoDisponible) {
-      throw new BadRequestException(
-        `El monto (${montoATransferirSolicitado}) supera el saldo disponible (${saldoDisponible})`,
-      );
-    }
 
     // 2. Buscar Caja de Oficina como destino
     const cajaDestino =
@@ -1798,23 +1781,22 @@ export class AccountingService {
         'No se puede recolectar desde la caja destino',
       );
 
-    // 3. Generar idempotencyKey determinístico si no se proporciona
-    const fechaOperativa = getBogotaDayKey(new Date());
-    const idempotencyKeyFinal =
-      idempotencyKey ||
-      `RECOLECCION:${cajaOrigenId}:${cajaDestino.id}:${montoATransferirSolicitado}:${administradorId}:${fechaOperativa}`;
+    // 3. Exigir idempotencyKey para evitar doble ejecución
+    if (!idempotencyKey?.trim()) {
+      throw new BadRequestException(
+        'La recolección requiere idempotencyKey para evitar doble ejecución.',
+      );
+    }
 
-    const numeroRef = this.generarNumeroTransaccion('RECOL');
-    const esTotal = montoATransferirSolicitado === saldoDisponible;
-    const rutaNombre = cajaOrigen.ruta?.nombre || cajaOrigen.nombre;
+    const idempotencyKeyFinal = idempotencyKey.trim();
 
-    // 4. Validar si ya existe una recolección con el mismo idempotencyKey
+    // 4. Validar si ya existe una recolección con el mismo idempotencyKey (antes de validar saldo)
     const existingTrxOut = await this.prisma.transaccion.findFirst({
       where: {
         tipo: TipoTransaccion.TRANSFERENCIA,
         tipoReferencia: 'RECOLECCION',
         numeroTransaccion: { startsWith: 'TRX-OUT' },
-        idempotencyKey: idempotencyKeyFinal,
+        idempotencyKey: `${idempotencyKeyFinal}:OUT`,
       },
       orderBy: { fechaTransaccion: 'desc' },
     });
@@ -1840,7 +1822,29 @@ export class AccountingService {
       };
     }
 
-    // 5. Ejecutar Transaccion Atomica
+    // 5. Validar saldo (solo si no es replay)
+    const saldoDisponible = Number(cajaOrigen.saldoActual);
+    const montoATransferirSolicitado =
+      montoRecolectar && montoRecolectar > 0
+        ? montoRecolectar
+        : saldoDisponible;
+
+    if (montoATransferirSolicitado <= 0) {
+      throw new BadRequestException(
+        'El monto a recolectar debe ser mayor a cero',
+      );
+    }
+    if (montoATransferirSolicitado > saldoDisponible) {
+      throw new BadRequestException(
+        `El monto (${montoATransferirSolicitado}) supera el saldo disponible (${saldoDisponible})`,
+      );
+    }
+
+    const numeroRef = this.generarNumeroTransaccion('RECOL');
+    const esTotal = montoATransferirSolicitado === saldoDisponible;
+    const rutaNombre = cajaOrigen.ruta?.nombre || cajaOrigen.nombre;
+
+    // 6. Ejecutar Transaccion Atomica
     const resultado = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "cajas" WHERE id = ${cajaOrigen.id} FOR UPDATE`;
 

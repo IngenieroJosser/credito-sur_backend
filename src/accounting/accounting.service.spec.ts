@@ -304,7 +304,7 @@ describe('AccountingService financial ledger controls', () => {
     });
 
     await expect(
-      makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000),
+      makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000, 'recol-001'),
     ).rejects.toThrow(BadRequestException);
 
     expect(prisma._tx.$queryRaw).toHaveBeenCalled();
@@ -313,6 +313,64 @@ describe('AccountingService financial ledger controls', () => {
   });
 
   describe('consolidarCaja idempotencia', () => {
+    it('lanza error cuando no se proporciona idempotencyKey', async () => {
+      const prisma = buildPrismaMock();
+      prisma.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 100000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+      prisma.caja.findFirst.mockResolvedValue({
+        id: 'caja-oficina',
+        nombre: 'Caja Oficina',
+        codigo: 'CAJA-OFICINA',
+        tipo: 'PRINCIPAL',
+        saldoActual: 0,
+      });
+      prisma._tx.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 100000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+
+      await expect(
+        makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000, undefined),
+      ).rejects.toThrow('La recolección requiere idempotencyKey para evitar doble ejecución.');
+    });
+
+    it('lanza error cuando idempotencyKey está vacío', async () => {
+      const prisma = buildPrismaMock();
+      prisma.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 100000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+      prisma.caja.findFirst.mockResolvedValue({
+        id: 'caja-oficina',
+        nombre: 'Caja Oficina',
+        codigo: 'CAJA-OFICINA',
+        tipo: 'PRINCIPAL',
+        saldoActual: 0,
+      });
+      prisma._tx.caja.findUnique.mockResolvedValue({
+        id: 'caja-ruta-1',
+        nombre: 'Caja Ruta 1',
+        tipo: 'RUTA',
+        saldoActual: 100000,
+        ruta: { id: 'ruta-1', nombre: 'Ruta 1' },
+      });
+
+      await expect(
+        makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000, '   '),
+      ).rejects.toThrow('La recolección requiere idempotencyKey para evitar doble ejecución.');
+    });
+
     it('crea TRX-OUT y TRX-IN con idempotencyKey', async () => {
       const prisma = buildPrismaMock();
       prisma.caja.findUnique.mockResolvedValue({
@@ -341,7 +399,7 @@ describe('AccountingService financial ledger controls', () => {
         .mockResolvedValueOnce({ id: 'trx-out-1' })
         .mockResolvedValueOnce({ id: 'trx-in-1' });
 
-      await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000);
+      await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000, 'recol-001');
 
       expect(prisma._tx.transaccion.create).toHaveBeenCalledTimes(2);
       expect(prisma._tx.transaccion.create).toHaveBeenNthCalledWith(1, {
@@ -385,7 +443,7 @@ describe('AccountingService financial ledger controls', () => {
           referenciaId: 'RECOL-001',
         });
 
-      const result = await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000);
+      const result = await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000, 'recol-001');
 
       expect(prisma._tx.transaccion.create).not.toHaveBeenCalled();
       expect(mockLedger.registrarAsiento).not.toHaveBeenCalled();
@@ -421,7 +479,7 @@ describe('AccountingService financial ledger controls', () => {
         referenciaId: 'RECOL-001',
       });
 
-      await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000);
+      await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000, 'recol-001');
 
       expect(prisma._tx.transaccion.create).not.toHaveBeenCalled();
       expect(mockLedger.registrarAsiento).not.toHaveBeenCalled();
@@ -446,7 +504,7 @@ describe('AccountingService financial ledger controls', () => {
       prisma.transaccion.findFirst.mockResolvedValue(null);
 
       await expect(
-        makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000),
+        makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000, 'recol-001'),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -478,7 +536,7 @@ describe('AccountingService financial ledger controls', () => {
         .mockResolvedValueOnce({ id: 'trx-out-1' })
         .mockResolvedValueOnce({ id: 'trx-in-1' });
 
-      await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000);
+      await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000, 'recol-001');
 
       expect(prisma._tx.$queryRaw).toHaveBeenCalled();
       const callArgs = prisma._tx.$queryRaw.mock.calls[0];
@@ -513,7 +571,7 @@ describe('AccountingService financial ledger controls', () => {
         .mockResolvedValueOnce({ id: 'trx-out-1' })
         .mockResolvedValueOnce({ id: 'trx-in-1' });
 
-      const result = await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000);
+      const result = await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000, 'recol-001');
 
       expect(result.destino).toBe('Caja Oficina');
     });
@@ -546,7 +604,7 @@ describe('AccountingService financial ledger controls', () => {
         .mockResolvedValueOnce({ id: 'trx-out-1' })
         .mockResolvedValueOnce({ id: 'trx-in-1' });
 
-      await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000);
+      await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000, 'recol-001');
 
       expect(prisma._tx.transaccion.create).toHaveBeenNthCalledWith(1, {
         data: expect.objectContaining({
