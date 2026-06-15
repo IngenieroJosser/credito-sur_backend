@@ -36,6 +36,110 @@ const makeService = (prisma: any) => {
 };
 
 describe('RoutesService role scoping', () => {
+  it('incluye obligaciones pendientes de revisión y excluye préstamos rechazados en daily visits', async () => {
+    const prisma = {
+      asignacionRuta: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'asig-provisional',
+            ordenVisita: 1,
+            cliente: {
+              id: 'cliente-provisional',
+              codigo: 'C-PROV',
+              dni: '111',
+              nombres: 'Cliente',
+              apellidos: 'Provisional',
+              telefono: '300',
+              direccion: 'Calle 1',
+              nivelRiesgo: 'MINIMO',
+              prestamos: [
+                {
+                  id: 'prestamo-pendiente',
+                  numeroPrestamo: 'PEND-1',
+                  monto: 300_000,
+                  saldoPendiente: 300_000,
+                  frecuenciaPago: 'DIARIO',
+                  cantidadCuotas: 3,
+                  estado: 'PENDIENTE_APROBACION',
+                  estadoAprobacion: 'PENDIENTE',
+                  efectoProvisional: { estado: 'PENDIENTE_REVISION' },
+                  cuotas: [
+                    {
+                      id: 'cuota-pendiente',
+                      numeroCuota: 1,
+                      fechaVencimiento: new Date('2026-06-12T12:00:00.000Z'),
+                      fechaVencimientoProrroga: null,
+                      fechaPago: null,
+                      monto: 100_000,
+                      montoPagado: 0,
+                      estado: 'PENDIENTE',
+                    },
+                  ],
+                },
+                {
+                  id: 'prestamo-rechazado',
+                  numeroPrestamo: 'RECH-1',
+                  monto: 600_000,
+                  saldoPendiente: 600_000,
+                  frecuenciaPago: 'DIARIO',
+                  cantidadCuotas: 3,
+                  estado: 'PENDIENTE_APROBACION',
+                  estadoAprobacion: 'RECHAZADO',
+                  cuotas: [
+                    {
+                      id: 'cuota-rechazada',
+                      numeroCuota: 1,
+                      fechaVencimiento: new Date('2026-06-12T12:00:00.000Z'),
+                      fechaVencimientoProrroga: null,
+                      fechaPago: null,
+                      monto: 200_000,
+                      montoPagado: 0,
+                      estado: 'PENDIENTE',
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ]),
+      },
+      registroVisita: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      pago: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      cliente: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      gasto: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 0 } }),
+      },
+    };
+
+    const resultado = await makeService(prisma).getDailyVisits(
+      'ruta-1',
+      '2026-06-12',
+    );
+
+    expect(resultado.resumen.meta).toBe(100_000);
+    expect(resultado.resumen.total).toBe(1);
+    expect(resultado.obligaciones).toHaveLength(1);
+    expect(resultado.obligaciones[0]).toMatchObject({
+      prestamoId: 'prestamo-pendiente',
+      montoMetaOperativaPendiente: 100_000,
+      esProvisional: true,
+      estadoAprobacion: 'PENDIENTE',
+      estadoEfectoProvisional: 'PENDIENTE_REVISION',
+      etiquetaRevision: 'Pendiente de revisión',
+    });
+    expect(resultado.obligaciones).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ prestamoId: 'prestamo-rechazado' }),
+      ]),
+    );
+  });
+
   it('rejects a collector requesting assigned credits for another collector', async () => {
     const prisma = {
       asignacionRuta: {
