@@ -93,6 +93,7 @@ describe('SalesService venta contado', () => {
     );
     expect(ledger.registrarVentaArticulo).toHaveBeenCalledWith(
       expect.objectContaining({
+        prestamoId: expect.stringMatching(/^VENTA:/),
         precioVenta: 1_000_000,
         costoArticulo: 650_000,
         montoFinanciado: 0,
@@ -154,6 +155,159 @@ describe('SalesService venta contado', () => {
         cajaId: 'caja-pv-1',
         creadoPorId: 'vendedor-1',
       }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('registra venta de contado por transferencia en Caja Banco', async () => {
+    const tx = {
+      producto: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      caja: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'caja-banco-1',
+          codigo: 'CAJA-BANCO',
+          tipo: 'PRINCIPAL',
+          saldoActual: 0,
+        }),
+      },
+      transaccion: {
+        create: jest.fn().mockResolvedValue({
+          id: 'trx-venta-transferencia-1',
+          numeroTransaccion: 'VC-TRANSFER-001',
+        }),
+      },
+      prestamo: {
+        create: jest.fn(),
+      },
+      cuota: {
+        create: jest.fn(),
+        createMany: jest.fn(),
+      },
+      pago: {
+        create: jest.fn(),
+      },
+    };
+
+    const prisma = {
+      producto: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'producto-1',
+          nombre: 'Nevera',
+          costo: 650_000,
+          stock: 3,
+        }),
+      },
+      prestamo: {
+        create: jest.fn(),
+      },
+      cuota: {
+        create: jest.fn(),
+        createMany: jest.fn(),
+      },
+      pago: {
+        create: jest.fn(),
+      },
+      $transaction: jest.fn().mockImplementation((callback: any) => callback(tx)),
+    };
+
+    const ledger = {
+      registrarVentaArticulo: jest.fn().mockResolvedValue({
+        id: 'journal-venta-transferencia-1',
+      }),
+    };
+
+    const resultado = await makeService(prisma, ledger).registrarVentaContado({
+      clienteId: 'cliente-1',
+      productoId: 'producto-1',
+      precioVenta: 1_000_000,
+      cajaId: 'caja-pv-1',
+      creadoPorId: 'vendedor-1',
+      metodoPago: 'TRANSFERENCIA',
+      notas: 'Transferencia Bancolombia',
+    } as any);
+
+    expect(tx.caja.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          codigo: 'CAJA-BANCO',
+          activa: true,
+        },
+      }),
+    );
+
+    expect(tx.transaccion.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          cajaId: 'caja-banco-1',
+          tipo: TipoTransaccion.INGRESO,
+          monto: 1_000_000,
+          tipoReferencia: 'VENTA_CONTADO',
+          referenciaId: expect.stringMatching(/^VENTA:/),
+        }),
+      }),
+    );
+
+    expect(ledger.registrarVentaArticulo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prestamoId: expect.stringMatching(/^VENTA:/),
+        precioVenta: 1_000_000,
+        costoArticulo: 650_000,
+        montoFinanciado: 0,
+        cuotaInicial: 1_000_000,
+        cajaId: 'caja-banco-1',
+        accountCodeCaja: '1.1.2',
+        createdBy: 'vendedor-1',
+      }),
+      tx,
+    );
+
+    expect(tx.prestamo.create).not.toHaveBeenCalled();
+    expect(tx.cuota.create).not.toHaveBeenCalled();
+    expect(tx.cuota.createMany).not.toHaveBeenCalled();
+    expect(tx.pago.create).not.toHaveBeenCalled();
+
+    expect(resultado).toMatchObject({
+      success: true,
+      productoId: 'producto-1',
+      precioVenta: 1_000_000,
+      metodoPago: 'TRANSFERENCIA',
+      transaccionId: 'trx-venta-transferencia-1',
+      journalEntryId: 'journal-venta-transferencia-1',
+    });
+  });
+
+  it('rechaza venta de contado por transferencia si no existe Caja Banco activa', async () => {
+    const tx = {
+      producto: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      caja: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+    };
+
+    const prisma = {
+      producto: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'producto-1',
+          nombre: 'Nevera',
+          costo: 650_000,
+          stock: 3,
+        }),
+      },
+      $transaction: jest.fn().mockImplementation((callback: any) => callback(tx)),
+    };
+
+    await expect(
+      makeService(prisma).registrarVentaContado({
+        clienteId: 'cliente-1',
+        productoId: 'producto-1',
+        precioVenta: 1_000_000,
+        cajaId: 'caja-pv-1',
+        creadoPorId: 'vendedor-1',
+        metodoPago: 'TRANSFERENCIA',
+      } as any),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 });

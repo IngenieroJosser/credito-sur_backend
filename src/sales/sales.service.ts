@@ -32,6 +32,54 @@ export class SalesService {
     return '1.1.1';
   }
 
+  private async resolveCajaVenta(
+    tx: any,
+    cajaId: string,
+    metodoPago: MetodoPago,
+  ) {
+    if (metodoPago === MetodoPago.TRANSFERENCIA) {
+      const cajaBanco = await tx.caja.findFirst({
+        where: {
+          codigo: 'CAJA-BANCO',
+          activa: true,
+        },
+        select: {
+          id: true,
+          codigo: true,
+          tipo: true,
+          saldoActual: true,
+        },
+      });
+
+      if (!cajaBanco?.id) {
+        throw new NotFoundException(
+          'Caja Banco activa no encontrada para registrar venta por transferencia',
+        );
+      }
+
+      return cajaBanco;
+    }
+
+    const caja = await tx.caja.findFirst({
+      where: {
+        id: cajaId,
+        activa: true,
+      },
+      select: {
+        id: true,
+        codigo: true,
+        tipo: true,
+        saldoActual: true,
+      },
+    });
+
+    if (!caja?.id) {
+      throw new NotFoundException('Caja activa no encontrada');
+    }
+
+    return caja;
+  }
+
   async registrarVentaContado(dto: CreateCashSaleDto) {
     const precioVenta = Number(dto.precioVenta || 0);
     if (!Number.isFinite(precioVenta) || precioVenta <= 0) {
@@ -75,19 +123,7 @@ export class SalesService {
         throw new BadRequestException('Producto sin stock disponible');
       }
 
-      const caja = await tx.caja.findFirst({
-        where: { id: dto.cajaId, activa: true },
-        select: {
-          id: true,
-          codigo: true,
-          tipo: true,
-          saldoActual: true,
-        },
-      });
-
-      if (!caja?.id) {
-        throw new NotFoundException('Caja activa no encontrada');
-      }
+      const caja = await this.resolveCajaVenta(tx, dto.cajaId, metodoPago);
 
       const transaccion = await tx.transaccion.create({
         data: {
@@ -95,8 +131,9 @@ export class SalesService {
           cajaId: caja.id,
           tipo: TipoTransaccion.INGRESO,
           monto: precioVenta,
-          descripcion: `Venta de contado: ${producto.nombre}`,
-          creadoPorId: dto.creadoPorId,
+          descripcion: `Venta de contado ${metodoPago}: ${producto.nombre}`,
+          notas: dto.notas,
+          creadoPorId: dto.creadoPorId!,
           tipoReferencia: 'VENTA_CONTADO',
           referenciaId,
         },
@@ -174,6 +211,7 @@ export class SalesService {
       monto: Number(v.monto),
       fecha: v.fechaTransaccion,
       descripcion: v.descripcion,
+      notas: v.notas,
       tipoReferencia: v.tipoReferencia,
       caja: v.caja?.nombre || null,
       vendedor: v.creadoPor
