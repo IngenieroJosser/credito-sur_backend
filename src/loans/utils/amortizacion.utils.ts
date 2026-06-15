@@ -76,7 +76,7 @@ export function calcularAmortizacionFrancesa(
   const totalFinanciado = capital + interesTotal;
 
   const cuotaBase = Math.floor(totalFinanciado / numCuotas);
-  
+
   let saldo = totalFinanciado;
   const tabla: FilaAmortizacion[] = [];
 
@@ -153,7 +153,6 @@ export function calcularInteresSimple(
     tabla,
   };
 }
-
 
 // ── Fecha de vencimiento por cuota ─────────────────────────────────────────────
 

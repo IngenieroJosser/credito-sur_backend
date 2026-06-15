@@ -1812,4 +1812,184 @@ export class ClientsService {
       ? generarPDFClientes(filas, fecha)
       : generarExcelClientes(filas, fecha);
   }
+
+  async getEstadoCuentaCliente(clienteId: string) {
+    const cliente = await this.prisma.cliente.findFirst({
+      where: {
+        id: clienteId,
+        eliminadoEn: null,
+      },
+      select: {
+        id: true,
+        nombres: true,
+        apellidos: true,
+        dni: true,
+        telefono: true,
+      },
+    });
+
+    if (!cliente) {
+      throw new NotFoundException('Cliente no encontrado');
+    }
+
+    const [prestamos, pagos, ventasContado] = await Promise.all([
+      this.prisma.prestamo.findMany({
+        where: {
+          clienteId,
+          eliminadoEn: null,
+          estadoAprobacion: {
+            not: 'RECHAZADO',
+          },
+          estado: {
+            notIn: [
+              'BORRADOR',
+              'ANULADO',
+              'ANULADA',
+              'CANCELADO',
+              'CANCELADA',
+              'REVERSADO',
+              'REVERTIDO',
+              'PERDIDA',
+            ] as any,
+          },
+        },
+        include: {
+          cuotas: {
+            orderBy: {
+              numeroCuota: 'asc',
+            },
+          },
+        },
+        orderBy: {
+          creadoEn: 'desc',
+        },
+      }),
+
+      this.prisma.pago.findMany({
+        where: {
+          clienteId,
+        },
+        include: {
+          detalles: true,
+        },
+        orderBy: {
+          fechaPago: 'desc',
+        },
+      }),
+
+      this.prisma.transaccion.findMany({
+        where: {
+          clienteId,
+          tipoReferencia: 'VENTA_CONTADO',
+        },
+        include: {
+          caja: {
+            select: {
+              id: true,
+              nombre: true,
+              codigo: true,
+            },
+          },
+        },
+        orderBy: {
+          fechaTransaccion: 'desc',
+        },
+      }),
+    ]);
+
+    const resumen = {
+      totalPrestado: prestamos.reduce((s, p) => s + Number(p.monto || 0), 0),
+      saldoPendiente: prestamos.reduce(
+        (s, p) => s + Number(p.saldoPendiente || 0),
+        0,
+      ),
+      totalPagado: pagos.reduce((s, p) => s + Number(p.montoTotal || 0), 0),
+      totalMora: prestamos
+        .flatMap((p) => p.cuotas || [])
+        .reduce((s, c) => s + Number(c.montoInteresMora || 0), 0),
+      cuotasPendientes: prestamos
+        .flatMap((p) => p.cuotas || [])
+        .filter((c) =>
+          ['PENDIENTE', 'PARCIAL', 'VENCIDA', 'PRORROGADA'].includes(
+            String(c.estado),
+          ),
+        ).length,
+      cuotasVencidas: prestamos
+        .flatMap((p) => p.cuotas || [])
+        .filter((c) => String(c.estado) === 'VENCIDA').length,
+      prestamosActivos: prestamos.filter((p) =>
+        ['ACTIVO', 'EN_MORA'].includes(String(p.estado)),
+      ).length,
+      prestamosPagados: prestamos.filter((p) => String(p.estado) === 'PAGADO')
+        .length,
+    };
+
+    const movimientosComerciales = [
+      ...ventasContado.map((v) => ({
+        id: v.id,
+        tipo: 'VENTA_CONTADO' as const,
+        monto: Number(v.monto || 0),
+        descripcion: v.descripcion,
+        fecha: v.fechaTransaccion,
+        caja: v.caja?.nombre || null,
+      })),
+
+      ...prestamos
+        .filter((p) => Number(p.cuotaInicial || 0) > 0)
+        .map((p) => ({
+          id: `CUOTA_INICIAL:${p.id}`,
+          tipo: 'CUOTA_INICIAL' as const,
+          monto: Number(p.cuotaInicial || 0),
+          descripcion: `Cuota inicial préstamo ${p.numeroPrestamo}`,
+          fecha: p.creadoEn,
+          prestamoId: p.id,
+        })),
+    ].sort(
+      (a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime(),
+    );
+
+    return {
+      cliente: {
+        id: cliente.id,
+        nombre: `${cliente.nombres} ${cliente.apellidos}`.trim(),
+        dni: cliente.dni,
+        telefono: cliente.telefono,
+      },
+      resumen,
+      prestamos: prestamos.map((p) => ({
+        id: p.id,
+        numeroPrestamo: p.numeroPrestamo,
+        tipoPrestamo: p.tipoPrestamo,
+        estado: p.estado,
+        monto: Number(p.monto || 0),
+        saldoPendiente: Number(p.saldoPendiente || 0),
+        cuotaInicial: Number(p.cuotaInicial || 0),
+        fechaInicio: p.fechaInicio,
+        cuotas: (p.cuotas || []).map((c) => ({
+          id: c.id,
+          numeroCuota: c.numeroCuota,
+          monto: Number(c.monto || 0),
+          montoPagado: Number(c.montoPagado || 0),
+          saldo: Math.max(Number(c.monto || 0) - Number(c.montoPagado || 0), 0),
+          estado: c.estado,
+          fechaVencimiento: c.fechaVencimiento,
+        })),
+      })),
+      pagos: pagos.map((p) => ({
+        id: p.id,
+        prestamoId: p.prestamoId,
+        montoTotal: Number(p.montoTotal || 0),
+        metodoPago: p.metodoPago,
+        fechaPago: p.fechaPago,
+        estado: p.estado,
+        detalles: (p.detalles || []).map((d) => ({
+          cuotaId: d.cuotaId,
+          montoCapital: Number(d.montoCapital || 0),
+          montoInteres: Number(d.montoInteres || 0),
+          montoMora: Number(d.montoMora || 0),
+        })),
+      })),
+      movimientosComerciales,
+    };
+  }
 }

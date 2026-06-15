@@ -137,6 +137,20 @@ export class ClientsController {
     return this.clientsService.getClientById(id, req.user);
   }
 
+  @Get(':id/estado-cuenta')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COBRADOR,
+    RolUsuario.CONTADOR,
+    RolUsuario.PUNTO_DE_VENTA,
+  )
+  async getEstadoCuenta(@Param('id') id: string) {
+    return this.clientsService.getEstadoCuentaCliente(id);
+  }
+
   private readonly logger = new Logger(ClientsController.name);
 
   @Post()

@@ -91,6 +91,7 @@ describe('SalesService venta contado', () => {
     expect(tx.transaccion.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
+          clienteId: 'cliente-1',
           cajaId: 'caja-oficina-1',
           tipo: TipoTransaccion.INGRESO,
           monto: 1_000_000,
@@ -248,6 +249,7 @@ describe('SalesService venta contado', () => {
     expect(tx.transaccion.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
+          clienteId: 'cliente-1',
           cajaId: 'caja-banco-1',
           tipo: TipoTransaccion.INGRESO,
           monto: 1_000_000,

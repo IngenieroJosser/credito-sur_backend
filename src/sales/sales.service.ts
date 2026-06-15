@@ -125,6 +125,7 @@ export class SalesService {
         data: {
           numeroTransaccion: this.generarNumeroTransaccion(),
           cajaId: caja.id,
+          clienteId: dto.clienteId,
           tipo: TipoTransaccion.INGRESO,
           monto: precioVenta,
           descripcion: `Venta de contado ${metodoPago}: ${producto.nombre}`,

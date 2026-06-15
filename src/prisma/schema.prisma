@@ -205,6 +205,7 @@ model Cliente {
   asignacionesRuta          AsignacionRuta[]
   archivos                  Multimedia[]         @relation("MultimediaCliente")
   registrosVisitas          RegistroVisita[]
+  transacciones             Transaccion[]
 
   @@index([dni])
   @@index([nivelRiesgo])
@@ -560,6 +561,7 @@ model Transaccion {
   numeroTransaccion    String               @unique @db.VarChar(50)
   idempotencyKey       String?              @unique @db.VarChar(100)
   cajaId               String
+  clienteId            String?
   tipo                 TipoTransaccion
   monto                Decimal              @db.Decimal(12, 2)
   tipoReferencia       String?              @db.VarChar(50)
@@ -574,13 +576,16 @@ model Transaccion {
   estadoSincronizacion EstadoSincronizacion @default(PENDIENTE)
   aprobadoPor          Usuario?             @relation("TransaccionAprobadaPor", fields: [aprobadoPorId], references: [id])
   caja                 Caja                 @relation(fields: [cajaId], references: [id])
+  cliente              Cliente?             @relation(fields: [clienteId], references: [id])
   creadoPor            Usuario              @relation("TransaccionCreadaPor", fields: [creadoPorId], references: [id])
   jornadasActivadas    RutaJornada[]        @relation("RutaJornadaActivacion")
   jornadasCerradas     RutaJornada[]        @relation("RutaJornadaCierre")
 
   @@index([numeroTransaccion])
   @@index([cajaId])
+  @@index([clienteId])
   @@index([tipo])
+  @@index([tipoReferencia, clienteId])
   @@index([tipoReferencia, referenciaId])
   @@index([creadoPorId])
   @@index([fechaTransaccion])

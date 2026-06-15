@@ -40,6 +40,13 @@ describe('ClientsService', () => {
     },
     prestamo: {
       updateMany: jest.fn(),
+      findMany: jest.fn(),
+    },
+    pago: {
+      findMany: jest.fn(),
+    },
+    transaccion: {
+      findMany: jest.fn(),
     },
     ruta: {
       findUnique: jest.fn(),
@@ -349,6 +356,168 @@ describe('ClientsService', () => {
         },
         data: { cobradorId: 'cobrador-destino' },
       });
+    });
+  });
+
+  describe('getEstadoCuentaCliente', () => {
+    it('debe lanzar NotFoundException si el cliente no existe', async () => {
+      (mockPrismaService.cliente.findFirst as jest.Mock).mockResolvedValue(null);
+
+      await expect(service.getEstadoCuentaCliente('cliente-inexistente')).rejects.toThrow(
+        'Cliente no encontrado',
+      );
+    });
+
+    it('debe devolver estado de cuenta con venta contado separada de cartera', async () => {
+      (mockPrismaService.cliente.findFirst as jest.Mock).mockResolvedValue({
+        id: 'cliente-1',
+        nombres: 'Juan',
+        apellidos: 'Pérez',
+        dni: '12345678',
+        telefono: '3001234567',
+      });
+
+      (mockPrismaService.prestamo.findMany as jest.Mock).mockResolvedValue([]);
+
+      (mockPrismaService.pago.findMany as jest.Mock).mockResolvedValue([]);
+
+      (mockPrismaService.transaccion.findMany as jest.Mock).mockResolvedValue([
+        {
+          id: 'trx-1',
+          monto: 800000,
+          descripcion: 'Venta de contado EFECTIVO: Nevera',
+          fechaTransaccion: new Date('2026-01-15'),
+          caja: { id: 'caja-1', nombre: 'CAJA-OFICINA', codigo: 'CAJA-OFICINA' },
+        },
+      ]);
+
+      const resultado = await service.getEstadoCuentaCliente('cliente-1');
+
+      expect(resultado.cliente.nombre).toBe('Juan Pérez');
+      expect(resultado.resumen.saldoPendiente).toBe(0);
+      expect(resultado.resumen.totalPagado).toBe(0);
+      expect(resultado.prestamos).toEqual([]);
+      expect(resultado.pagos).toEqual([]);
+      expect(resultado.movimientosComerciales).toHaveLength(1);
+      expect(resultado.movimientosComerciales[0].tipo).toBe('VENTA_CONTADO');
+      expect(resultado.movimientosComerciales[0].monto).toBe(800000);
+    });
+
+    it('debe incluir préstamos activos en cartera', async () => {
+      (mockPrismaService.cliente.findFirst as jest.Mock).mockResolvedValue({
+        id: 'cliente-1',
+        nombres: 'Juan',
+        apellidos: 'Pérez',
+        dni: '12345678',
+        telefono: '3001234567',
+      });
+
+      (mockPrismaService.prestamo.findMany as jest.Mock).mockResolvedValue([
+        {
+          id: 'prestamo-1',
+          numeroPrestamo: 'P-001',
+          tipoPrestamo: 'EFECTIVO',
+          estado: 'ACTIVO',
+          monto: 500000,
+          saldoPendiente: 500000,
+          cuotaInicial: 0,
+          fechaInicio: '2026-01-01',
+          cuotas: [],
+        },
+      ]);
+
+      (mockPrismaService.pago.findMany as jest.Mock).mockResolvedValue([]);
+
+      (mockPrismaService.transaccion.findMany as jest.Mock).mockResolvedValue([]);
+
+      const resultado = await service.getEstadoCuentaCliente('cliente-1');
+
+      expect(resultado.resumen.saldoPendiente).toBe(500000);
+      expect(resultado.resumen.prestamosActivos).toBe(1);
+      expect(resultado.prestamos).toHaveLength(1);
+      expect(resultado.prestamos[0].saldoPendiente).toBe(500000);
+    });
+
+    it('debe incluir cuota inicial como movimiento comercial', async () => {
+      (mockPrismaService.cliente.findFirst as jest.Mock).mockResolvedValue({
+        id: 'cliente-1',
+        nombres: 'Juan',
+        apellidos: 'Pérez',
+        dni: '12345678',
+        telefono: '3001234567',
+      });
+
+      (mockPrismaService.prestamo.findMany as jest.Mock).mockResolvedValue([
+        {
+          id: 'prestamo-1',
+          numeroPrestamo: 'P-001',
+          tipoPrestamo: 'ARTICULO',
+          estado: 'ACTIVO',
+          monto: 500000,
+          saldoPendiente: 400000,
+          cuotaInicial: 100000,
+          fechaInicio: '2026-01-01',
+          creadoEn: '2026-01-01',
+          cuotas: [],
+        },
+      ]);
+
+      (mockPrismaService.pago.findMany as jest.Mock).mockResolvedValue([]);
+
+      (mockPrismaService.transaccion.findMany as jest.Mock).mockResolvedValue([]);
+
+      const resultado = await service.getEstadoCuentaCliente('cliente-1');
+
+      expect(resultado.resumen.totalPagado).toBe(0); // cuota inicial no suma totalPagado
+      expect(resultado.movimientosComerciales).toHaveLength(1);
+      expect(resultado.movimientosComerciales[0].tipo).toBe('CUOTA_INICIAL');
+      expect(resultado.movimientosComerciales[0].monto).toBe(100000);
+    });
+
+    it('debe excluir préstamos rechazados, anulados y reversados', async () => {
+      (mockPrismaService.cliente.findFirst as jest.Mock).mockResolvedValue({
+        id: 'cliente-1',
+        nombres: 'Juan',
+        apellidos: 'Pérez',
+        dni: '12345678',
+        telefono: '3001234567',
+      });
+
+      (mockPrismaService.prestamo.findMany as jest.Mock).mockResolvedValue([
+        {
+          id: 'prestamo-rechazado',
+          estadoAprobacion: 'RECHAZADO',
+          estado: 'ACTIVO',
+          monto: 100000,
+          saldoPendiente: 100000,
+          cuotas: [],
+        },
+        {
+          id: 'prestamo-anulado',
+          estadoAprobacion: 'APROBADO',
+          estado: 'ANULADO',
+          monto: 200000,
+          saldoPendiente: 200000,
+          cuotas: [],
+        },
+        {
+          id: 'prestamo-reversado',
+          estadoAprobacion: 'APROBADO',
+          estado: 'REVERSADO',
+          monto: 300000,
+          saldoPendiente: 300000,
+          cuotas: [],
+        },
+      ]);
+
+      (mockPrismaService.pago.findMany as jest.Mock).mockResolvedValue([]);
+
+      (mockPrismaService.transaccion.findMany as jest.Mock).mockResolvedValue([]);
+
+      const resultado = await service.getEstadoCuentaCliente('cliente-1');
+
+      expect(resultado.prestamos).toHaveLength(0);
+      expect(resultado.resumen.saldoPendiente).toBe(0);
     });
   });
 });
