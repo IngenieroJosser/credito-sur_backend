@@ -15,7 +15,8 @@ export class CreateCashSaleDto {
   precioVenta: number;
 
   @IsString()
-  cajaId: string;
+  @IsOptional()
+  cajaId?: string;
 
   @IsString()
   @IsOptional()

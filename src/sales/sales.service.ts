@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { MetodoPago, TipoTransaccion } from '@prisma/client';
 import { LedgerService } from '../accounting/ledger.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -10,59 +11,41 @@ import { CreateCashSaleDto } from './dto/create-cash-sale.dto';
 
 @Injectable()
 export class SalesService {
+  private readonly CAJA_OFICINA_CODIGO = 'CAJA-OFICINA';
+  private readonly CAJA_BANCO_CODIGO = 'CAJA-BANCO';
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly ledgerService: LedgerService,
   ) {}
 
   private generarReferenciaVenta() {
-    return `VENTA:${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    return `VENTA:${randomUUID()}`;
   }
 
   private generarNumeroTransaccion() {
-    return `VC-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    return `VC-${Date.now()}-${randomUUID().slice(0, 8)}`;
   }
 
   private getAccountCodeCaja(caja: any, metodoPago?: MetodoPago | string) {
     const metodo = String(metodoPago || '').toUpperCase();
+
     if (metodo === MetodoPago.TRANSFERENCIA) return '1.1.2';
 
-    const tipo = String(caja?.tipo || '').toUpperCase();
-    if (tipo === 'RUTA') return '1.2.1';
     return '1.1.1';
   }
 
-  private async resolveCajaVenta(
-    tx: any,
-    cajaId: string,
-    metodoPago: MetodoPago,
-  ) {
-    if (metodoPago === MetodoPago.TRANSFERENCIA) {
-      const cajaBanco = await tx.caja.findFirst({
-        where: {
-          codigo: 'CAJA-BANCO',
-          activa: true,
-        },
-        select: {
-          id: true,
-          codigo: true,
-          tipo: true,
-          saldoActual: true,
-        },
-      });
+  private async resolveCajaVenta(tx: any, metodoPago: MetodoPago) {
+    const metodo = String(metodoPago || '').toUpperCase();
 
-      if (!cajaBanco?.id) {
-        throw new NotFoundException(
-          'Caja Banco activa no encontrada para registrar venta por transferencia',
-        );
-      }
-
-      return cajaBanco;
-    }
+    const codigoCaja =
+      metodo === MetodoPago.TRANSFERENCIA
+        ? this.CAJA_BANCO_CODIGO
+        : this.CAJA_OFICINA_CODIGO;
 
     const caja = await tx.caja.findFirst({
       where: {
-        id: cajaId,
+        codigo: codigoCaja,
         activa: true,
       },
       select: {
@@ -74,7 +57,11 @@ export class SalesService {
     });
 
     if (!caja?.id) {
-      throw new NotFoundException('Caja activa no encontrada');
+      throw new NotFoundException(
+        metodo === MetodoPago.TRANSFERENCIA
+          ? 'Caja Banco activa no encontrada para registrar venta por transferencia'
+          : 'Caja Oficina activa no encontrada para registrar venta en efectivo',
+      );
     }
 
     return caja;
@@ -113,6 +100,15 @@ export class SalesService {
     const referenciaId = this.generarReferenciaVenta();
     const metodoPago = dto.metodoPago || MetodoPago.EFECTIVO;
 
+    if (
+      metodoPago !== MetodoPago.EFECTIVO &&
+      metodoPago !== MetodoPago.TRANSFERENCIA
+    ) {
+      throw new BadRequestException(
+        'La venta de contado solo permite pago en efectivo o transferencia.',
+      );
+    }
+
     const resultado = await this.prisma.$transaction(async (tx) => {
       const stockUpdate = await tx.producto.updateMany({
         where: { id: dto.productoId, stock: { gt: 0 } },
@@ -123,7 +119,7 @@ export class SalesService {
         throw new BadRequestException('Producto sin stock disponible');
       }
 
-      const caja = await this.resolveCajaVenta(tx, dto.cajaId, metodoPago);
+      const caja = await this.resolveCajaVenta(tx, metodoPago);
 
       const transaccion = await tx.transaccion.create({
         data: {
