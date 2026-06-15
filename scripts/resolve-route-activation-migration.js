@@ -8,6 +8,7 @@ const migrations = [
   {
     name: '20260613165000_add_arqueo_caja',
     resolveOnGlobalFailure: true,
+    resolveAlways: true,
   },
 ];
 const schema = 'src/prisma/schema.prisma';
@@ -34,8 +35,9 @@ function main() {
     const migrationName = migration.name;
     const migrationReported = status.includes(migrationName);
     const shouldResolve =
-      hasFailedMigration &&
-      (migrationReported || migration.resolveOnGlobalFailure);
+      migration.resolveAlways ||
+      (hasFailedMigration &&
+        (migrationReported || migration.resolveOnGlobalFailure));
 
     if (!shouldResolve) {
       console.log(`[migrate] ${migrationName} not reported as failed by migrate status, continuing.`);
