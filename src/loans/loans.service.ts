@@ -526,14 +526,11 @@ export class LoansService implements OnModuleInit {
           return caja;
         }
 
-        if (!esCajaRuta) return caja;
-
-        const puedeUsarCajaRutaExplicita =
-          rolesAdminConCajaRutaExplicita.includes(rolCreador);
-
-        if (!puedeUsarCajaRutaExplicita) {
+        // ADMIN/SUPER_ADMIN/COORDINADOR siempre usan Caja Oficina
+        // No pueden usar caja de ruta explícita
+        if (esCajaRuta) {
           throw new BadRequestException(
-            'No tienes permiso para desembolsar desde una caja de ruta.',
+            'Los roles administrativos deben usar Caja Oficina para desembolsar créditos.',
           );
         }
 
