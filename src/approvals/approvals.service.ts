@@ -592,8 +592,8 @@ export class ApprovalsService {
 
       const nuevo = await this.ledgerService.registrarAsiento(
         {
-          referenceType: 'REAPERTURA_PROVISIONAL' as any,
-          referenceId: prestamoId,
+          referenceType: 'AJUSTE' as any,
+          referenceId: `REAPERTURA:${original.id}`,
           description: `Reapertura provisional de ${original.referenceType || ''} ${original.referenceId || ''}${notas ? ` — ${notas}` : ''}`,
           createdBy: userId,
           lines: original.lines
