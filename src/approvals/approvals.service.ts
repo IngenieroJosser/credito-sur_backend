@@ -286,6 +286,128 @@ export class ApprovalsService {
     }
   }
 
+  private async crearReversasPrestamoProvisionalRobusto(
+    tx: any,
+    rollbackData: any,
+    transaccionesOriginales: any[],
+    journalsOriginales: any[],
+    reversadoPorId?: string,
+    motivoRechazo?: string,
+  ) {
+    const transaccionReversaIds: string[] = [];
+    const journalEntryReversaIds: string[] = [];
+
+    // Reversa de transacciones
+    for (const original of transaccionesOriginales) {
+      const reversaReferenciaId = `REVERSA:${original.id}`;
+
+      // Validar idempotencia: verificar si ya existe reversa
+      const existingReversa = await tx.transaccion.findFirst({
+        where: {
+          referenciaId: reversaReferenciaId,
+        },
+        select: { id: true },
+      });
+
+      if (existingReversa?.id) {
+        this.logger.log(`Reversa de transacción ${original.id} ya existe, saltando`);
+        transaccionReversaIds.push(existingReversa.id);
+        continue;
+      }
+
+      const tipoReversa =
+        original.tipo === TipoTransaccion.EGRESO
+          ? TipoTransaccion.INGRESO
+          : TipoTransaccion.EGRESO;
+
+      try {
+        const reversa = await tx.transaccion.create({
+          data: {
+            numeroTransaccion: this.generarNumeroTransaccion('REV'),
+            cajaId: original.cajaId,
+            tipo: tipoReversa,
+            monto: Number(original.monto || 0),
+            descripcion: `Reversa de ${original.descripcion || 'movimiento'}${motivoRechazo ? ` — ${motivoRechazo}` : ''}`,
+            creadoPorId: reversadoPorId || original.creadoPorId,
+            aprobadoPorId: reversadoPorId || undefined,
+            tipoReferencia: original.tipoReferencia || 'PRESTAMO',
+            referenciaId: reversaReferenciaId,
+          },
+          select: { id: true },
+        });
+        transaccionReversaIds.push(reversa.id);
+      } catch (error) {
+        this.logger.error(`Error creando reversa de transacción ${original.id}:`, error);
+        throw new BadRequestException(`No se pudo crear reversa de transacción: ${(error as Error).message}`);
+      }
+    }
+
+    // Reversa de journals
+    for (const original of journalsOriginales) {
+      if (!Array.isArray(original.lines)) continue;
+
+      const reversaReferenceType = 'AJUSTE' as any;
+      const reversaReferenceId = `REVERSA:${original.id}`;
+
+      // Validar idempotencia: verificar si ya existe reversa
+      const existingReversa = await tx.journalEntry.findFirst({
+        where: {
+          referenceType: reversaReferenceType,
+          referenceId: reversaReferenceId,
+        },
+        select: { id: true },
+      });
+
+      if (existingReversa?.id) {
+        this.logger.log(`Reversa de journal ${original.id} ya existe, saltando`);
+        journalEntryReversaIds.push(existingReversa.id);
+        continue;
+      }
+
+      try {
+        const reversa = await this.ledgerService.registrarAsiento(
+          {
+            referenceType: reversaReferenceType,
+            referenceId: reversaReferenceId,
+            description: `Reversa de asiento ${original.referenceType || ''} ${original.referenceId || ''}${motivoRechazo ? ` — ${motivoRechazo}` : ''}`,
+            createdBy: reversadoPorId || original.createdBy,
+            lines: original.lines
+              .map((line: any) => {
+                const debit = Number(line.debitAmount || 0);
+                const credit = Number(line.creditAmount || 0);
+                const cajaDelta =
+                  line.cajaId && (debit > 0 || credit > 0)
+                    ? credit - debit
+                    : undefined;
+
+                return {
+                  accountCode: line.accountCode,
+                  debitAmount: credit > 0 ? credit : undefined,
+                  creditAmount: debit > 0 ? debit : undefined,
+                  cajaId: line.cajaId || undefined,
+                  cajaDelta,
+                };
+              })
+              .filter(
+                (line: any) =>
+                  Number(line.debitAmount || 0) > 0 ||
+                  Number(line.creditAmount || 0) > 0,
+              ),
+          },
+          tx,
+        );
+        if (reversa?.id) journalEntryReversaIds.push(reversa.id);
+      } catch (error) {
+        this.logger.error(`Error creando reversa de journal ${original.id}:`, error);
+        throw new BadRequestException(`No se pudo crear reversa de asiento contable: ${(error as Error).message}`);
+      }
+    }
+
+    return { transaccionReversaIds, journalEntryReversaIds };
+  }
+
+  // DEPRECATED: Usar crearReversasPrestamoProvisionalRobusto en su lugar
+  // Esta función usa referenceType: 'REVERSA' que no existe en el enum ReferenceTypeContable
   private async crearReversasPrestamoProvisional(
     tx: any,
     rollbackData: any,
@@ -527,6 +649,50 @@ export class ApprovalsService {
     });
   }
 
+  private async rejectLoanDirecto(
+    tx: any,
+    approval: any,
+    rechazadoPorId?: string,
+    motivoRechazo?: string,
+  ) {
+    if (!approval.referenciaId) {
+      throw new BadRequestException('La aprobación no tiene préstamo asociado');
+    }
+
+    const prestamoRechazado = await tx.prestamo.update({
+      where: { id: approval.referenciaId },
+      data: {
+        estadoAprobacion: EstadoAprobacion.RECHAZADO,
+        aprobadoPorId: rechazadoPorId || undefined,
+        eliminadoEn: new Date(),
+      },
+      include: { producto: true },
+    });
+
+    await tx.cuota.updateMany({
+      where: { prestamoId: approval.referenciaId },
+      data: {
+        estado: EstadoCuota.PENDIENTE,
+        montoPagado: 0,
+        fechaPago: null,
+      },
+    });
+
+    if (prestamoRechazado.productoId) {
+      try {
+        await tx.producto.update({
+          where: { id: prestamoRechazado.productoId },
+          data: { stock: { increment: 1 } },
+        });
+      } catch (e) {
+        this.logger.warn(
+          `No se pudo restablecer stock al rechazar el préstamo ${approval.referenciaId}:`,
+          e,
+        );
+      }
+    }
+  }
+
   private async revertirPrestamoProvisional(
     tx: any,
     approval: any,
@@ -534,6 +700,12 @@ export class ApprovalsService {
     rechazadoPorId?: string,
     motivoRechazo?: string,
   ) {
+    // Validar idempotencia
+    if (efecto.estado === 'REVERTIDO') {
+      this.logger.log(`Efecto provisional ${efecto.id} ya está revertido, retornando idempotente`);
+      return;
+    }
+
     const rollbackData = efecto?.rollbackData || {};
     const prestamoId = String(
       rollbackData.prestamoId || approval.referenciaId || '',
@@ -543,9 +715,104 @@ export class ApprovalsService {
       throw new BadRequestException('La aprobación no tiene préstamo asociado');
     }
 
-    const reversas = await this.crearReversasPrestamoProvisional(
+    // Validar que el préstamo existe
+    const prestamo = await tx.prestamo.findUnique({
+      where: { id: prestamoId },
+      select: { id: true, productoId: true },
+    });
+
+    if (!prestamo?.id) {
+      throw new NotFoundException(`Préstamo ${prestamoId} no encontrado`);
+    }
+
+    // Resolver transacciones originales con fallback
+    const transaccionIds = Array.isArray(rollbackData.transaccionIds)
+      ? rollbackData.transaccionIds.filter(Boolean)
+      : [];
+
+    let transaccionesOriginales = [];
+
+    if (transaccionIds.length > 0) {
+      transaccionesOriginales = await tx.transaccion.findMany({
+        where: { id: { in: transaccionIds } },
+        select: {
+          id: true,
+          cajaId: true,
+          tipo: true,
+          monto: true,
+          descripcion: true,
+          creadoPorId: true,
+          tipoReferencia: true,
+          referenciaId: true,
+        },
+      });
+    }
+
+    if (transaccionesOriginales.length === 0) {
+      transaccionesOriginales = await tx.transaccion.findMany({
+        where: {
+          tipoReferencia: 'PRESTAMO',
+          referenciaId: prestamoId,
+          tipo: TipoTransaccion.EGRESO,
+        },
+        select: {
+          id: true,
+          cajaId: true,
+          tipo: true,
+          monto: true,
+          descripcion: true,
+          creadoPorId: true,
+          tipoReferencia: true,
+          referenciaId: true,
+        },
+      });
+    }
+
+    // Resolver journals originales con fallback
+    const journalEntryIds = Array.isArray(rollbackData.journalEntryIds)
+      ? rollbackData.journalEntryIds.filter(Boolean)
+      : Array.isArray(rollbackData.journalReferenceIds)
+        ? rollbackData.journalReferenceIds.filter(Boolean)
+        : [];
+
+    let journalsOriginales = [];
+
+    if (journalEntryIds.length > 0) {
+      journalsOriginales = await tx.journalEntry.findMany({
+        where: { id: { in: journalEntryIds } },
+        include: { lines: true },
+      });
+    }
+
+    if (journalsOriginales.length === 0) {
+      journalsOriginales = await tx.journalEntry.findMany({
+        where: {
+          referenceType: 'DESEMBOLSO',
+          referenceId: prestamoId,
+        },
+        include: { lines: true },
+      });
+    }
+
+    // Validar que existan movimientos originales para revertir
+    if (transaccionesOriginales.length === 0 && journalsOriginales.length === 0) {
+      throw new BadRequestException(
+        `No se encontraron movimientos originales para revertir el préstamo provisional ${prestamoId}`,
+      );
+    }
+
+    // Validar que exista journal original si hay transacciones
+    if (transaccionesOriginales.length > 0 && journalsOriginales.length === 0) {
+      throw new BadRequestException(
+        `No se encontró el asiento contable original del desembolso para el préstamo ${prestamoId}. No se puede revertir caja de forma segura.`,
+      );
+    }
+
+    const reversas = await this.crearReversasPrestamoProvisionalRobusto(
       tx,
       rollbackData,
+      transaccionesOriginales,
+      journalsOriginales,
       rechazadoPorId,
       motivoRechazo,
     );
