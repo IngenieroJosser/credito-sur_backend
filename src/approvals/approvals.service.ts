@@ -299,11 +299,12 @@ export class ApprovalsService {
 
     // Reversa de transacciones
     for (const original of transaccionesOriginales) {
+      const reversaReferenciaId = `REVERSA:${original.id}`;
+
       // Validar idempotencia: verificar si ya existe reversa
       const existingReversa = await tx.transaccion.findFirst({
         where: {
-          tipoReferencia: 'REVERSA',
-          referenciaId: original.id,
+          referenciaId: reversaReferenciaId,
         },
         select: { id: true },
       });
@@ -329,8 +330,8 @@ export class ApprovalsService {
             descripcion: `Reversa de ${original.descripcion || 'movimiento'}${motivoRechazo ? ` — ${motivoRechazo}` : ''}`,
             creadoPorId: reversadoPorId || original.creadoPorId,
             aprobadoPorId: reversadoPorId || undefined,
-            tipoReferencia: 'REVERSA',
-            referenciaId: original.id,
+            tipoReferencia: original.tipoReferencia || 'PRESTAMO',
+            referenciaId: reversaReferenciaId,
           },
           select: { id: true },
         });
@@ -405,6 +406,8 @@ export class ApprovalsService {
     return { transaccionReversaIds, journalEntryReversaIds };
   }
 
+  // DEPRECATED: Usar crearReversasPrestamoProvisionalRobusto en su lugar
+  // Esta función usa referenceType: 'REVERSA' que no existe en el enum ReferenceTypeContable
   private async crearReversasPrestamoProvisional(
     tx: any,
     rollbackData: any,
