@@ -666,30 +666,78 @@ export class AccountingService {
           return { gastoId: newGasto.id, approvalId: aprobacion.id };
         });
 
-        // Notificar aprobadores
-        await this.notificacionesService.notifyApprovers({
-          titulo: 'Nuevo Gasto Provisional Requiere Aprobación',
-          mensaje: `${nombreSolicitante} ha registrado un gasto provisional por ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}. La caja ya fue afectada.`,
-          tipo: 'GASTO',
-          entidad: 'Aprobacion',
-          entidadId: approvalId,
-          metadata: {
-            tipoAprobacion: 'GASTO',
-            rutaId,
-            cajaId: cajaRuta.id,
-            cobradorId,
-            monto: data.monto,
-            descripcion: data.descripcion,
-            solicitadoPor: nombreSolicitante,
-            categoriaId: data.categoriaId,
-            esProvisional: true,
-          },
-        });
+        // Notificar aprobadores (no bloqueante)
+        try {
+          await this.notificacionesService.notifyApprovers({
+            titulo: 'Nuevo Gasto Provisional Requiere Aprobación',
+            mensaje: `${nombreSolicitante} ha registrado un gasto provisional por ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}. La caja ya fue afectada.`,
+            tipo: 'GASTO',
+            entidad: 'Aprobacion',
+            entidadId: approvalId,
+            metadata: {
+              tipoAprobacion: 'GASTO',
+              rutaId,
+              cajaId: cajaRuta.id,
+              cobradorId,
+              monto: data.monto,
+              descripcion: data.descripcion,
+              solicitadoPor: nombreSolicitante,
+              categoriaId: data.categoriaId,
+              esProvisional: true,
+            },
+          });
+        } catch (notificationError) {
+          this.logger.warn(
+            `[GASTO_PROVISIONAL] Gasto registrado, pero falló notifyApprovers: ${
+              notificationError instanceof Error
+                ? notificationError.message
+                : JSON.stringify(notificationError)
+            }`,
+          );
+        }
 
-        this.notificacionesGateway.broadcastDashboardsActualizados({
-          origen: 'GASTO',
-          rutaId,
-        });
+        try {
+          this.notificacionesGateway.broadcastDashboardsActualizados({
+            origen: 'GASTO',
+            rutaId,
+          });
+        } catch (gatewayError) {
+          this.logger.warn(
+            `[GASTO_PROVISIONAL] Gasto registrado, pero falló broadcastDashboardsActualizados: ${
+              gatewayError instanceof Error
+                ? gatewayError.message
+                : JSON.stringify(gatewayError)
+            }`,
+          );
+        }
+
+        // Notificar al solicitante (no bloqueante)
+        try {
+          await this.notificacionesService.create({
+            usuarioId: data.solicitadoPorId,
+            titulo: 'Gasto provisional registrado',
+            mensaje: 'Tu gasto fue registrado, descontado de caja y enviado a revisión.',
+            tipo: 'INFORMATIVO',
+            entidad: 'Aprobacion',
+            entidadId: approvalId,
+            metadata: {
+              tipoAprobacion: 'GASTO',
+              rutaId,
+              cajaId: cajaRuta.id,
+              gastoId,
+              monto: data.monto,
+              esProvisional: true,
+            },
+          });
+        } catch (notificationError) {
+          this.logger.warn(
+            `[GASTO_PROVISIONAL] No se pudo notificar al solicitante: ${
+              notificationError instanceof Error
+                ? notificationError.message
+                : JSON.stringify(notificationError)
+            }`,
+          );
+        }
 
         return {
           success: true,
