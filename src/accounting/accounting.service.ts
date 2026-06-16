@@ -3499,8 +3499,8 @@ export class AccountingService {
           eventos: (eventosMap.get(cobradorId) || []).slice(0, 25),
         };
       })
-      .filter((d) => Number(d.totalDeuda || 0) > 0)
-      .sort((a, b) => b.totalDeuda - a.totalDeuda);
+      .filter((d) => Number(d.totalDeuda || 0) > 0 || Number(d.efectivoBajoCustodia || 0) > 0)
+      .sort((a, b) => b.efectivoBajoCustodia - a.efectivoBajoCustodia || b.totalDeuda - a.totalDeuda);
   }
 
   /**
