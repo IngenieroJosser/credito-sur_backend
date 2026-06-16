@@ -527,6 +527,50 @@ export class ApprovalsService {
     });
   }
 
+  private async rejectLoanDirecto(
+    tx: any,
+    approval: any,
+    rechazadoPorId?: string,
+    motivoRechazo?: string,
+  ) {
+    if (!approval.referenciaId) {
+      throw new BadRequestException('La aprobación no tiene préstamo asociado');
+    }
+
+    const prestamoRechazado = await tx.prestamo.update({
+      where: { id: approval.referenciaId },
+      data: {
+        estadoAprobacion: EstadoAprobacion.RECHAZADO,
+        aprobadoPorId: rechazadoPorId || undefined,
+        eliminadoEn: new Date(),
+      },
+      include: { producto: true },
+    });
+
+    await tx.cuota.updateMany({
+      where: { prestamoId: approval.referenciaId },
+      data: {
+        estado: EstadoCuota.PENDIENTE,
+        montoPagado: 0,
+        fechaPago: null,
+      },
+    });
+
+    if (prestamoRechazado.productoId) {
+      try {
+        await tx.producto.update({
+          where: { id: prestamoRechazado.productoId },
+          data: { stock: { increment: 1 } },
+        });
+      } catch (e) {
+        this.logger.warn(
+          `No se pudo restablecer stock al rechazar el préstamo ${approval.referenciaId}:`,
+          e,
+        );
+      }
+    }
+  }
+
   private async revertirPrestamoProvisional(
     tx: any,
     approval: any,
@@ -1544,13 +1588,22 @@ export class ApprovalsService {
           );
         }
 
-        await this.revertirPrestamoProvisional(
-          tx,
-          approval,
-          efectoProvisional,
-          rechazadoPorId,
-          motivoRechazo,
-        );
+        try {
+          await this.revertirPrestamoProvisional(
+            tx,
+            approval,
+            efectoProvisional,
+            rechazadoPorId,
+            motivoRechazo,
+          );
+        } catch (error) {
+          this.logger.error(
+            `Error al revertir préstamo provisional ${approval.referenciaId}:`,
+            error,
+          );
+          // Si falla la reversa, intentamos el rechazo directo como fallback
+          await this.rejectLoanDirecto(tx, approval, rechazadoPorId, motivoRechazo);
+        }
       });
 
       this.notificacionesGateway.broadcastAprobacionesActualizadas({
