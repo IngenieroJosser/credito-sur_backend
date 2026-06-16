@@ -406,108 +406,6 @@ export class ApprovalsService {
     return { transaccionReversaIds, journalEntryReversaIds };
   }
 
-  // DEPRECATED: Usar crearReversasPrestamoProvisionalRobusto en su lugar
-  // Esta función usa referenceType: 'REVERSA' que no existe en el enum ReferenceTypeContable
-  private async crearReversasPrestamoProvisional(
-    tx: any,
-    rollbackData: any,
-    reversadoPorId?: string,
-    motivoRechazo?: string,
-  ) {
-    const transaccionIds = Array.isArray(rollbackData?.transaccionIds)
-      ? rollbackData.transaccionIds.filter(Boolean)
-      : [];
-    const journalEntryIds = Array.isArray(rollbackData?.journalEntryIds)
-      ? rollbackData.journalEntryIds.filter(Boolean)
-      : Array.isArray(rollbackData?.journalReferenceIds)
-        ? rollbackData.journalReferenceIds.filter(Boolean)
-        : [];
-
-    const transaccionReversaIds: string[] = [];
-    const journalEntryReversaIds: string[] = [];
-
-    for (const transaccionId of transaccionIds) {
-      const original = await tx.transaccion.findUnique?.({
-        where: { id: transaccionId },
-        select: {
-          id: true,
-          cajaId: true,
-          tipo: true,
-          monto: true,
-          descripcion: true,
-          creadoPorId: true,
-          tipoReferencia: true,
-          referenciaId: true,
-        },
-      });
-      if (!original?.id) continue;
-
-      const tipoReversa =
-        original.tipo === TipoTransaccion.EGRESO
-          ? TipoTransaccion.INGRESO
-          : TipoTransaccion.EGRESO;
-
-      const reversa = await tx.transaccion.create({
-        data: {
-          numeroTransaccion: this.generarNumeroTransaccion('REV'),
-          cajaId: original.cajaId,
-          tipo: tipoReversa,
-          monto: Number(original.monto || 0),
-          descripcion: `Reversa de ${original.descripcion || 'movimiento'}${motivoRechazo ? ` — ${motivoRechazo}` : ''}`,
-          creadoPorId: reversadoPorId || original.creadoPorId,
-          aprobadoPorId: reversadoPorId || undefined,
-          tipoReferencia: 'REVERSA',
-          referenciaId: original.id,
-        },
-        select: { id: true },
-      });
-      transaccionReversaIds.push(reversa.id);
-    }
-
-    for (const journalEntryId of journalEntryIds) {
-      const original = await tx.journalEntry.findUnique?.({
-        where: { id: journalEntryId },
-        include: { lines: true },
-      });
-      if (!original?.id || !Array.isArray(original.lines)) continue;
-
-      const reversa = await this.ledgerService.registrarAsiento(
-        {
-          referenceType: 'REVERSA' as any,
-          referenceId: original.id,
-          description: `Reversa de asiento ${original.referenceType || ''} ${original.referenceId || ''}${motivoRechazo ? ` — ${motivoRechazo}` : ''}`,
-          createdBy: reversadoPorId || original.createdBy,
-          lines: original.lines
-            .map((line: any) => {
-              const debit = Number(line.debitAmount || 0);
-              const credit = Number(line.creditAmount || 0);
-              const cajaDelta =
-                line.cajaId && (debit > 0 || credit > 0)
-                  ? credit - debit
-                  : undefined;
-
-              return {
-                accountCode: line.accountCode,
-                debitAmount: credit > 0 ? credit : undefined,
-                creditAmount: debit > 0 ? debit : undefined,
-                cajaId: line.cajaId || undefined,
-                cajaDelta,
-              };
-            })
-            .filter(
-              (line: any) =>
-                Number(line.debitAmount || 0) > 0 ||
-                Number(line.creditAmount || 0) > 0,
-            ),
-        },
-        tx,
-      );
-      if (reversa?.id) journalEntryReversaIds.push(reversa.id);
-    }
-
-    return { transaccionReversaIds, journalEntryReversaIds };
-  }
-
   private async reaplicarPrestamoProvisionalRevertido(
     tx: any,
     approval: any,
@@ -1663,6 +1561,12 @@ export class ApprovalsService {
 
     if (!approval) {
       throw new NotFoundException('Aprobación no encontrada');
+    }
+
+    if (approval.estado !== EstadoAprobacion.RECHAZADO) {
+      throw new BadRequestException(
+        `Solo se puede confirmar o restaurar una revisión rechazada. Estado actual: ${approval.estado}`,
+      );
     }
 
     if (accion === 'CONFIRMAR') {
