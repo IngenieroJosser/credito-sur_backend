@@ -3472,23 +3472,29 @@ export class AccountingService {
         const cobrador: any = cobradorMap.get(cobradorId);
         const saldoCajaActual = saldosCajasMap.get(cobradorId) || 0;
         
+        // Deuda real solo viene de ledger 1.4.x y eventos DEUDA_COBRADOR/ABONO_DEUDA/CIERRE_RUTA
+        // NO incluye saldo de caja actual (eso es efectivo bajo custodia, no deuda)
         const descuadres = Math.max(
           0,
-          Math.round(Number(deuda.descuadres || 0) + saldoCajaActual),
+          Math.round(Number(deuda.descuadres || 0)),
         );
         const gastosPersonales = Math.max(
           0,
           Math.round(Number(deuda.gastosPersonales || 0)),
         );
+        const deudaReal = descuadres + gastosPersonales;
+        const efectivoBajoCustodia = saldoCajaActual;
+        
         return {
           cobradorId,
           nombreCobrador: cobrador
             ? `${cobrador.nombres} ${cobrador.apellidos}`
             : 'Desconocido',
           rol: cobrador?.rol || 'COBRADOR',
-          totalDeuda: descuadres + gastosPersonales,
+          totalDeuda: deudaReal,
           gastosPersonales,
           descuadres,
+          efectivoBajoCustodia,
           totalEventos: deuda.totalEventos,
           eventos: (eventosMap.get(cobradorId) || []).slice(0, 25),
         };
