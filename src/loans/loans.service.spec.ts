@@ -167,6 +167,86 @@ describe('LoansService accounting impact for approved loans', () => {
     );
   });
 
+  it('resuelve caja propia para supervisor y no la caja del cobrador supervisado', async () => {
+    const tx = {
+      ruta: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'ruta-supervisada-1',
+          cobradorId: 'cobrador-1',
+          supervisorId: 'supervisor-1',
+        }),
+      },
+      caja: {
+        findFirst: jest.fn().mockImplementation(({ where }: any) => {
+          if (where?.responsableId === 'supervisor-1') {
+            return Promise.resolve({
+              id: 'caja-supervisor-1',
+              codigo: 'BASE-SUP-001',
+              tipo: 'RUTA',
+              nombre: 'Base Supervisor',
+              saldoActual: 900000,
+              rutaId: null,
+              responsableId: 'supervisor-1',
+            });
+          }
+          if (where?.tipo === 'RUTA' && where?.rutaId === 'ruta-supervisada-1') {
+            return Promise.resolve({
+              id: 'caja-ruta-cobrador-1',
+              codigo: 'CAJA-RUTA-001',
+              tipo: 'RUTA',
+              nombre: 'Caja Cobrador',
+              saldoActual: 500000,
+              rutaId: 'ruta-supervisada-1',
+              responsableId: 'cobrador-1',
+            });
+          }
+          if (where?.codigo === 'CAJA-OFICINA') {
+            return Promise.resolve({
+              id: 'caja-oficina',
+              codigo: 'CAJA-OFICINA',
+              tipo: 'PRINCIPAL',
+              nombre: 'Caja de Oficina',
+              saldoActual: 1000000,
+            });
+          }
+          return Promise.resolve(null);
+        }),
+      },
+    };
+
+    const service = makeService({} as any) as any;
+    const caja = await service.resolveCajaOperacionPrestamo(tx, {
+      data: {},
+      creador: { id: 'supervisor-1', rol: RolUsuario.SUPERVISOR },
+      cliente: {
+        asignacionesRuta: [
+          {
+            rutaId: 'ruta-supervisada-1',
+            cobradorId: 'cobrador-1',
+            ruta: {
+              id: 'ruta-supervisada-1',
+              cobradorId: 'cobrador-1',
+              supervisorId: 'supervisor-1',
+            },
+          },
+        ],
+      },
+      requiereCajaRuta: true,
+    });
+
+    expect(caja).toMatchObject({
+      id: 'caja-supervisor-1',
+      responsableId: 'supervisor-1',
+    });
+    expect(tx.caja.findFirst).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          rutaId: 'ruta-supervisada-1',
+        }),
+      }),
+    );
+  });
+
   it('registra desembolso contable desde caja de oficina para préstamo en efectivo autoaprobado', async () => {
     const prisma = {
       usuario: {
@@ -268,12 +348,12 @@ describe('LoansService accounting impact for approved loans', () => {
       },
     );
 
-    expect(prisma.ruta.findFirst).toHaveBeenCalledWith(
+    expect(prisma.caja.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          cobradorId: 'cobrador-1',
+          responsableId: 'cobrador-1',
           activa: true,
-          eliminadoEn: null,
+          tipo: 'RUTA',
         }),
       }),
     );
@@ -421,12 +501,18 @@ describe('LoansService accounting impact for approved loans', () => {
         }),
       },
       caja: {
-        findFirst: jest.fn().mockResolvedValue({
-          id: 'caja-oficina',
-          codigo: 'CAJA-OFICINA',
-          tipo: 'PRINCIPAL',
-          nombre: 'Caja Oficina',
-          saldoActual: 10000000,
+        findFirst: jest.fn().mockImplementation(({ where }: any) => {
+          if (where?.responsableId === 'supervisor-1') {
+            return Promise.resolve({
+              id: 'caja-supervisor-1',
+              codigo: 'BASE-SUP-001',
+              tipo: 'RUTA',
+              nombre: 'Base Supervisor',
+              saldoActual: 10000000,
+              responsableId: 'supervisor-1',
+            });
+          }
+          return Promise.resolve(null);
         }),
       },
       prestamo: {
@@ -587,6 +673,118 @@ describe('LoansService accounting impact for approved loans', () => {
     });
   });
 
+  it('permite a supervisor crear crédito con saldo en su base aunque Caja Oficina no tenga saldo', async () => {
+    mockConfig.shouldAutoApproveCredits.mockResolvedValueOnce(false);
+
+    const fechaInicio = new Date('2026-06-12T05:00:00.000Z');
+    const prisma = {
+      cliente: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'cliente-1',
+          nombres: 'Mario',
+          apellidos: 'Baraka',
+          dni: '111111111',
+          telefono: '3112394628',
+          enListaNegra: false,
+          asignacionesRuta: [],
+        }),
+      },
+      usuario: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'supervisor-1',
+          nombres: 'Supervisor',
+          apellidos: 'Prueba',
+          rol: RolUsuario.SUPERVISOR,
+        }),
+      },
+      ruta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      caja: {
+        findFirst: jest.fn().mockImplementation(({ where }: any) => {
+          if (where?.codigo === 'CAJA-OFICINA') {
+            return Promise.resolve({
+              id: 'caja-oficina',
+              codigo: 'CAJA-OFICINA',
+              tipo: 'PRINCIPAL',
+              nombre: 'Caja Oficina',
+              saldoActual: 0,
+              responsableId: 'admin-1',
+            });
+          }
+          if (where?.responsableId === 'supervisor-1') {
+            return Promise.resolve({
+              id: 'caja-supervisor-1',
+              codigo: 'BASE-SUP-001',
+              tipo: 'RUTA',
+              nombre: 'Base Supervisor',
+              saldoActual: 10000000,
+              responsableId: 'supervisor-1',
+            });
+          }
+          return Promise.resolve(null);
+        }),
+      },
+      prestamo: {
+        findFirst: jest.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(null),
+        create: jest.fn().mockResolvedValue({
+          id: 'prestamo-1',
+          numeroPrestamo: 'PRES-000001',
+          clienteId: 'cliente-1',
+          tipoPrestamo: 'EFECTIVO',
+          tipoAmortizacion: 'INTERES_SIMPLE',
+          monto: 500000,
+          cuotaInicial: 0,
+          precioVentaArticulo: null,
+          costoArticulo: null,
+          tasaInteres: 10,
+          plazoMeses: 1,
+          frecuenciaPago: 'DIARIO',
+          cantidadCuotas: 12,
+          estadoAprobacion: EstadoAprobacion.PENDIENTE,
+          fechaInicio,
+          productoId: null,
+          producto: null,
+          cuotas: [{ id: 'cuota-1' }],
+        }),
+      },
+      aprobacion: {
+        create: jest.fn().mockResolvedValue({
+          id: 'aprobacion-1',
+          referenciaId: 'prestamo-1',
+        }),
+      },
+      efectoProvisional: {
+        create: jest.fn().mockResolvedValue({ id: 'efecto-1' }),
+      },
+    };
+
+    const result = await makeService(prisma).createLoan({
+      clienteId: 'cliente-1',
+      tipoPrestamo: 'EFECTIVO',
+      monto: 500000,
+      tasaInteres: 10,
+      tasaInteresMora: 2,
+      plazoMeses: 1,
+      cantidadCuotas: 12,
+      frecuenciaPago: 'DIARIO' as any,
+      fechaInicio: '2026-06-12',
+      creadoPorId: 'supervisor-1',
+    } as any);
+
+    expect(result).toMatchObject({
+      id: 'prestamo-1',
+      requiereAprobacion: true,
+    });
+    expect(prisma.efectoProvisional.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        rollbackData: expect.objectContaining({
+          cajaOrigenId: 'caja-supervisor-1',
+        }),
+      }),
+    });
+  });
+
   it('mantiene atómica la creación pendiente si falla el efecto provisional', async () => {
     mockConfig.shouldAutoApproveCredits.mockResolvedValueOnce(false);
 
@@ -669,7 +867,19 @@ describe('LoansService accounting impact for approved loans', () => {
         }),
       },
       caja: {
-        findFirst: jest.fn().mockResolvedValue({ saldoActual: 10000000 }),
+        findFirst: jest.fn().mockImplementation(({ where }: any) => {
+          if (where?.responsableId === 'supervisor-1') {
+            return Promise.resolve({
+              id: 'caja-supervisor-1',
+              codigo: 'BASE-SUP-001',
+              tipo: 'RUTA',
+              nombre: 'Base Supervisor',
+              saldoActual: 10000000,
+              responsableId: 'supervisor-1',
+            });
+          }
+          return Promise.resolve(null);
+        }),
       },
       prestamo: {
         findFirst: jest.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(null),

@@ -52,6 +52,11 @@ export class LoansService implements OnModuleInit {
     return String(actor?.rol || '').toUpperCase() === RolUsuario.COBRADOR;
   }
 
+  private isOperatorWithBase(actor?: { rol?: RolUsuario | string } | null) {
+    const rol = String(actor?.rol || '').toUpperCase();
+    return rol === RolUsuario.COBRADOR || rol === RolUsuario.SUPERVISOR;
+  }
+
   private collectorLoanScope(
     actor?: { id?: string; rol?: RolUsuario | string } | null,
   ): Prisma.PrestamoWhereInput {
@@ -345,37 +350,15 @@ export class LoansService implements OnModuleInit {
       where: { id: prestamo.creadoPorId },
       select: { rol: true },
     });
-    const rutaCobrador =
-      creador?.rol === RolUsuario.COBRADOR
-        ? await this.prisma.ruta.findFirst({
-            where: {
-              cobradorId: prestamo.creadoPorId,
-              activa: true,
-              eliminadoEn: null,
-            },
-            select: { id: true },
-          })
-        : null;
-    const cajaRuta = rutaCobrador?.id
-      ? await this.prisma.caja.findFirst({
-          where: { activa: true, tipo: 'RUTA' as any, rutaId: rutaCobrador.id },
-          select: { id: true, tipo: true, codigo: true, saldoActual: true },
-        })
-      : null;
-    const cajaOrigen =
-      cajaRuta ??
-      (await this.prisma.caja.findFirst({
-        where: { activa: true, codigo: 'CAJA-OFICINA' },
-        select: { id: true, tipo: true, codigo: true, saldoActual: true },
-      })) ??
-      (await this.prisma.caja.findFirst({
-        where: {
-          activa: true,
-          OR: [{ codigo: 'CAJA-PRINCIPAL' }, { tipo: 'PRINCIPAL' as any }],
-        },
-        orderBy: { creadoEn: 'asc' as any },
-        select: { id: true, tipo: true, codigo: true, saldoActual: true },
-      }));
+    const cajaOrigen = await this.resolveCajaOperacionPrestamo(
+      this.prisma as any,
+      {
+        data: {} as any,
+        creador: { id: prestamo.creadoPorId, rol: creador?.rol },
+        cliente: { asignacionesRuta: [] },
+        requiereCajaRuta: this.isOperatorWithBase(creador),
+      },
+    );
 
     if (!cajaOrigen?.id) {
       throw new BadRequestException(
@@ -413,12 +396,7 @@ export class LoansService implements OnModuleInit {
       prestamoId: prestamo.id,
       monto,
       cajaOrigenId: cajaOrigen.id,
-      accountCodeOrigen:
-        cajaRuta?.id === cajaOrigen.id
-          ? '1.2.1'
-          : cajaOrigen.codigo === 'CAJA-BANCO'
-            ? '1.1.2'
-            : '1.1.1',
+      accountCodeOrigen: this.getAccountCodeCaja(cajaOrigen),
       createdBy: prestamo.creadoPorId,
     });
   }
@@ -435,6 +413,8 @@ export class LoansService implements OnModuleInit {
     const dataAny = params.data as any;
     const rolCreador = String(params.creador?.rol || '').toUpperCase();
     const esCobrador = rolCreador === RolUsuario.COBRADOR;
+    const esSupervisor = rolCreador === RolUsuario.SUPERVISOR;
+    const esOperadorConBase = esCobrador || esSupervisor;
     const rolesAdminConCajaRutaExplicita = [
       RolUsuario.ADMIN,
       RolUsuario.SUPER_ADMINISTRADOR,
@@ -471,26 +451,84 @@ export class LoansService implements OnModuleInit {
         },
       }));
 
+    const selectCajaOperacion = {
+      id: true,
+      codigo: true,
+      tipo: true,
+      nombre: true,
+      saldoActual: true,
+      rutaId: true,
+      responsableId: true,
+    };
+
+    const findCajaBaseOperador = async () => {
+      const operadorId = String(params.creador?.id || '').trim();
+      if (!operadorId || !esOperadorConBase) return null;
+
+      const cajaResponsable = await tx.caja.findFirst({
+        where: {
+          activa: true,
+          responsableId: operadorId,
+          tipo: 'RUTA' as any,
+        },
+        select: selectCajaOperacion,
+      });
+      if (cajaResponsable?.id) return cajaResponsable;
+
+      const ruta = await tx.ruta.findFirst({
+        where: {
+          eliminadoEn: null,
+          activa: true,
+          ...(esSupervisor
+            ? { supervisorId: operadorId }
+            : { cobradorId: operadorId }),
+        },
+        select: { id: true, cobradorId: true, supervisorId: true },
+      });
+
+      if (!ruta?.id) return null;
+
+      const cajaRuta = await tx.caja.findFirst({
+        where: {
+          activa: true,
+          tipo: 'RUTA' as any,
+          rutaId: ruta.id,
+          ...(esSupervisor ? { responsableId: operadorId } : {}),
+        },
+        select: selectCajaOperacion,
+      });
+
+      return cajaRuta?.id ? cajaRuta : null;
+    };
+
+    const getMensajeCajaBaseNoExiste = () =>
+      esSupervisor
+        ? 'No existe una caja/base activa para el supervisor.'
+        : 'No existe una caja de ruta activa para desembolsar este crédito.';
+
     const cajaId = String(dataAny.cajaId || '').trim();
     if (cajaId) {
       const caja = await tx.caja.findFirst({
         where: { id: cajaId, activa: true },
-        select: {
-          id: true,
-          codigo: true,
-          tipo: true,
-          nombre: true,
-          saldoActual: true,
-          rutaId: true,
-          responsableId: true,
-        },
+        select: selectCajaOperacion,
       });
       if (caja?.id) {
         const esCajaRuta = String(caja.tipo || '').toUpperCase() === 'RUTA';
+
+        if (esOperadorConBase) {
+          if (caja.responsableId !== params.creador?.id) {
+            throw new BadRequestException(
+              esSupervisor
+                ? 'No puedes desembolsar desde una caja/base de supervisor que no tienes asignada.'
+                : 'No puedes desembolsar desde una caja de ruta que no tienes asignada.',
+            );
+          }
+          return caja;
+        }
+
         if (!esCajaRuta) return caja;
 
         const puedeUsarCajaRutaExplicita =
-          esCobrador ||
           rolesAdminConCajaRutaExplicita.includes(rolCreador);
 
         if (!puedeUsarCajaRutaExplicita) {
@@ -499,19 +537,16 @@ export class LoansService implements OnModuleInit {
           );
         }
 
-        if (esCobrador && caja.responsableId && caja.responsableId !== params.creador?.id) {
-          throw new BadRequestException(
-            'No puedes desembolsar desde una caja de ruta que no tienes asignada.',
-          );
-        }
-
         return caja;
       }
     }
 
-    if (!esCobrador) {
+    if (!esOperadorConBase) {
       return findCajaOficina();
     }
+
+    const cajaBaseOperador = await findCajaBaseOperador();
+    if (cajaBaseOperador?.id) return cajaBaseOperador;
 
     const rutaIdPayload = String(dataAny.rutaId || '').trim();
     const cobradorIdPayload = String(dataAny.cobradorId || '').trim();
@@ -543,23 +578,13 @@ export class LoansService implements OnModuleInit {
     if (ruta?.id) {
       const cajaRuta = await tx.caja.findFirst({
         where: { activa: true, tipo: 'RUTA' as any, rutaId: ruta.id },
-        select: {
-          id: true,
-          codigo: true,
-          tipo: true,
-          nombre: true,
-          saldoActual: true,
-          rutaId: true,
-          responsableId: true,
-        },
+        select: selectCajaOperacion,
       });
-      if (cajaRuta?.id) return cajaRuta;
+      if (cajaRuta?.id && !esSupervisor) return cajaRuta;
     }
 
-    if (params.requiereCajaRuta && params.creador?.rol === RolUsuario.COBRADOR) {
-      throw new BadRequestException(
-        'No existe una caja de ruta activa para desembolsar este crédito.',
-      );
+    if (params.requiereCajaRuta && esOperadorConBase) {
+      throw new BadRequestException(getMensajeCajaBaseNoExiste());
     }
 
     return findCajaOficina();
@@ -664,7 +689,7 @@ export class LoansService implements OnModuleInit {
         data,
         creador,
         cliente,
-        requiereCajaRuta: creador?.rol === RolUsuario.COBRADOR,
+        requiereCajaRuta: this.isOperatorWithBase(creador),
       });
       if (!cajaOrigen?.id) {
         throw new BadRequestException(
@@ -3380,62 +3405,48 @@ export class LoansService implements OnModuleInit {
       const isArticulo =
         String(data.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
 
-      // Validar que haya capital en el sistema (Caja de Oficina) solo para préstamos que no son artículos
+      // Validar capital en la caja que realmente responderá por el desembolso.
       if (!isArticulo) {
-        const cajaOficina = await this.prisma.caja.findFirst({
-          where: { codigo: 'CAJA-OFICINA', activa: true },
-          select: { saldoActual: true },
-        });
+        const montoDesembolso = Number(data.monto || 0);
+        const cajaOperacion = this.isOperatorWithBase(creador)
+          ? await this.resolveCajaOperacionPrestamo(this.prisma as any, {
+              data,
+              creador,
+              cliente,
+              requiereCajaRuta: true,
+            })
+          : await this.prisma.caja.findFirst({
+              where: { codigo: 'CAJA-OFICINA', activa: true },
+              select: {
+                id: true,
+                codigo: true,
+                tipo: true,
+                nombre: true,
+                saldoActual: true,
+                rutaId: true,
+                responsableId: true,
+              },
+            });
 
-        if (!cajaOficina || Number(cajaOficina.saldoActual) <= 0) {
+        if (!cajaOperacion?.id) {
+          throw new BadRequestException(
+            this.isOperatorWithBase(creador)
+              ? 'No existe una caja/base activa para el operador.'
+              : 'No hay capital en la caja de oficina. No se puede realizar ningún crédito.',
+          );
+        }
+
+        const saldoCaja = Number(cajaOperacion.saldoActual || 0);
+        if (montoDesembolso > 0) {
+          if (saldoCaja < montoDesembolso) {
+            throw new BadRequestException(
+              `Saldo insuficiente en la caja para solicitar este crédito. Caja: ${cajaOperacion.nombre}. Saldo: ${saldoCaja.toLocaleString('es-CO')}. Monto solicitado: ${montoDesembolso.toLocaleString('es-CO')}.`,
+            );
+          }
+        } else if (saldoCaja <= 0 && !this.isOperatorWithBase(creador)) {
           throw new BadRequestException(
             'No hay capital en la caja de oficina. No se puede realizar ningún crédito.',
           );
-        }
-      }
-
-      // Regla (producción): un COBRADOR no puede solicitar un préstamo en efectivo
-      // si su caja de ruta no tiene saldo suficiente para el desembolso.
-      // Esto evita que el saldo de la caja quede negativo al aprobar/desembolsar.
-      if (creador.rol === RolUsuario.COBRADOR && !isArticulo) {
-        const montoDesembolso = Number(data.monto || 0);
-        if (montoDesembolso > 0) {
-          const rutaCobrador = await this.prisma.ruta.findFirst({
-            where: {
-              eliminadoEn: null,
-              activa: true,
-              cobradorId: creador.id,
-            },
-            select: { id: true },
-          });
-
-          if (!rutaCobrador?.id) {
-            throw new BadRequestException(
-              'No tienes una ruta activa asignada para solicitar un crédito en efectivo.',
-            );
-          }
-
-          const cajaRuta = await this.prisma.caja.findFirst({
-            where: {
-              rutaId: rutaCobrador.id,
-              tipo: 'RUTA',
-              activa: true,
-            },
-            select: { id: true, nombre: true, saldoActual: true },
-          });
-
-          const saldoCajaRuta = Number(cajaRuta?.saldoActual || 0);
-          if (!cajaRuta?.id) {
-            throw new BadRequestException(
-              'No existe una caja de ruta activa para tu ruta. Contacta al administrador.',
-            );
-          }
-
-          if (saldoCajaRuta < montoDesembolso) {
-            throw new BadRequestException(
-              `Saldo insuficiente en tu caja de ruta para solicitar este crédito. Caja: ${cajaRuta.nombre}. Saldo: ${saldoCajaRuta.toLocaleString('es-CO')}. Monto solicitado: ${montoDesembolso.toLocaleString('es-CO')}.`,
-            );
-          }
         }
       }
 
