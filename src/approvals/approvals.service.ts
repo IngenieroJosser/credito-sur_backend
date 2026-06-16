@@ -448,6 +448,13 @@ export class ApprovalsService {
       },
     });
 
+    if (rollbackData.asignacionRutaId) {
+      await tx.asignacionRuta.updateMany({
+        where: { id: String(rollbackData.asignacionRutaId) },
+        data: { activa: true },
+      });
+    }
+
     if (rollbackData.stockDescontado && rollbackData.productoId) {
       await tx.producto.update({
         where: { id: rollbackData.productoId },
