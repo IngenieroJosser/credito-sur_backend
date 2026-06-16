@@ -557,125 +557,154 @@ export class AccountingService {
     // ======== 1. GASTO OPERATIVO (GASTO PROVISIONAL) ========
     // Afecta caja inmediatamente, pendiente de aprobación para reclasificación contable
     if (!data.esPersonal) {
-      const { gastoId, approvalId } = await this.prisma.$transaction(async (tx) => {
-        // 1. Crear Gasto como PROVISIONAL (PENDIENTE de aprobación)
-        const newGasto = await tx.gasto.create({
-          data: {
-            numeroGasto: `G${Date.now()}-${randomUUID().slice(0, 8)}`,
-            idempotencyKey,
-            rutaId,
-            cobradorId,
-            cajaId: cajaRuta.id,
-            tipoGasto: 'OPERATIVO',
-            monto: data.monto,
-            descripcion: data.descripcion,
-            fotoRecibo: comprobanteGasto,
-            categoriaId: data.categoriaId || undefined,
-            estadoAprobacion: EstadoAprobacion.PENDIENTE,
-            esProvisional: true,
-            aplicadoEnCaja: true,
-          },
-        });
-
-        // 2. Crear Aprobación pendiente
-        const aprobacion = await tx.aprobacion.create({
-          data: {
-            tipoAprobacion: data.tipoAprobacion,
-            idempotencyKey,
-            referenciaId: newGasto.id,
-            tablaReferencia: 'Gasto',
-            solicitadoPorId: data.solicitadoPorId,
-            estado: EstadoAprobacion.PENDIENTE,
-            datosSolicitud: {
+      try {
+        const { gastoId, approvalId } = await this.prisma.$transaction(async (tx) => {
+          // 1. Crear Gasto como PROVISIONAL (PENDIENTE de aprobación)
+          const newGasto = await tx.gasto.create({
+            data: {
+              numeroGasto: `G${Date.now()}-${randomUUID().slice(0, 8)}`,
+              idempotencyKey,
               rutaId,
               cobradorId,
               cajaId: cajaRuta.id,
               tipoGasto: 'OPERATIVO',
               monto: data.monto,
               descripcion: data.descripcion,
-              categoriaId: data.categoriaId,
               fotoRecibo: comprobanteGasto,
+              categoriaId: data.categoriaId || undefined,
+              estadoAprobacion: EstadoAprobacion.PENDIENTE,
               esProvisional: true,
-              idempotencyKey: idempotencyKey || null,
+              aplicadoEnCaja: true,
             },
-            montoSolicitud: data.monto,
-          },
-        });
+          });
 
-        // 3. Registrar egreso en caja (el dinero ya salió de la caja del cobrador)
-        await tx.transaccion.create({
-          data: {
-            numeroTransaccion: this.generarNumeroTransaccion('GTRX'),
-            idempotencyKey: idempotencyKey
-              ? `${idempotencyKey}:trx`
-              : undefined,
-            cajaId: cajaRuta.id,
-            tipo: TipoTransaccion.EGRESO,
-            monto: data.monto,
-            descripcion: `Gasto provisional: ${data.descripcion}`,
-            creadoPorId: data.solicitadoPorId,
-            tipoReferencia: 'GASTO_PROVISIONAL',
-            referenciaId: newGasto.id,
-          },
-        });
-
-        // 4. Registrar asiento contable en cuenta puente (Gastos por legalizar)
-        await this.ledgerService.registrarAsiento(
-          {
-            referenceType: 'GASTO',
-            referenceId: `PROVISIONAL:${newGasto.id}`,
-            description: `Gasto provisional: ${data.descripcion}`,
-            createdBy: data.solicitadoPorId,
-            lines: [
-              {
-                accountCode: '1.6.1', // Gastos por legalizar (cuenta puente)
-                debitAmount: Number(data.monto),
-              },
-              {
-                accountCode: '1.2.1', // Caja Ruta
-                creditAmount: Number(data.monto),
+          // 2. Crear Aprobación pendiente
+          const aprobacion = await tx.aprobacion.create({
+            data: {
+              tipoAprobacion: data.tipoAprobacion ?? TipoAprobacion.GASTO,
+              idempotencyKey,
+              referenciaId: newGasto.id,
+              tablaReferencia: 'Gasto',
+              solicitadoPorId: data.solicitadoPorId,
+              estado: EstadoAprobacion.PENDIENTE,
+              datosSolicitud: {
+                rutaId,
+                cobradorId,
                 cajaId: cajaRuta.id,
-                cajaDelta: -Number(data.monto),
+                tipoGasto: 'OPERATIVO',
+                monto: data.monto,
+                descripcion: data.descripcion,
+                categoriaId: data.categoriaId,
+                fotoRecibo: comprobanteGasto,
+                esProvisional: true,
+                idempotencyKey: idempotencyKey || null,
               },
-            ],
+              montoSolicitud: data.monto,
+            },
+          });
+
+          // 3. Registrar egreso en caja (el dinero ya salió de la caja del cobrador)
+          await tx.transaccion.create({
+            data: {
+              numeroTransaccion: this.generarNumeroTransaccion('GTRX'),
+              idempotencyKey: idempotencyKey
+                ? `${idempotencyKey}:trx`
+                : undefined,
+              cajaId: cajaRuta.id,
+              tipo: TipoTransaccion.EGRESO,
+              monto: data.monto,
+              descripcion: `Gasto provisional: ${data.descripcion}`,
+              creadoPorId: data.solicitadoPorId,
+              tipoReferencia: 'GASTO_PROVISIONAL',
+              referenciaId: `PROVISIONAL:${newGasto.id}`,
+            },
+          });
+
+          // 3.5. Validar cuentas contables requeridas antes del asiento
+          const cuentasRequeridas = ['1.6.1', '1.2.1']
+
+          const cuentasExistentes = await (tx as any).account.findMany({
+            where: {
+              code: { in: cuentasRequeridas },
+              isActive: true,
+            },
+            select: { code: true },
+          })
+
+          const existentes = new Set(cuentasExistentes.map((c: any) => c.code))
+          const faltantes = cuentasRequeridas.filter((code) => !existentes.has(code))
+
+          if (faltantes.length > 0) {
+            throw new BadRequestException(
+              `Faltan cuentas contables requeridas para registrar gasto provisional: ${faltantes.join(', ')}`,
+            )
+          }
+
+          // 4. Registrar asiento contable en cuenta puente (Gastos por legalizar)
+          await this.ledgerService.registrarAsiento(
+            {
+              referenceType: 'GASTO',
+              referenceId: `PROVISIONAL:${newGasto.id}`,
+              description: `Gasto provisional: ${data.descripcion}`,
+              createdBy: data.solicitadoPorId,
+              lines: [
+                {
+                  accountCode: '1.6.1', // Gastos por legalizar (cuenta puente)
+                  debitAmount: Number(data.monto),
+                },
+                {
+                  accountCode: '1.2.1', // Caja Ruta
+                  creditAmount: Number(data.monto),
+                  cajaId: cajaRuta.id,
+                  cajaDelta: -Number(data.monto),
+                },
+              ],
+            },
+            tx,
+          );
+
+          return { gastoId: newGasto.id, approvalId: aprobacion.id };
+        });
+
+        // Notificar aprobadores
+        await this.notificacionesService.notifyApprovers({
+          titulo: 'Nuevo Gasto Provisional Requiere Aprobación',
+          mensaje: `${nombreSolicitante} ha registrado un gasto provisional por ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}. La caja ya fue afectada.`,
+          tipo: 'GASTO',
+          entidad: 'Aprobacion',
+          entidadId: approvalId,
+          metadata: {
+            tipoAprobacion: 'GASTO',
+            rutaId,
+            cajaId: cajaRuta.id,
+            cobradorId,
+            monto: data.monto,
+            descripcion: data.descripcion,
+            solicitadoPor: nombreSolicitante,
+            categoriaId: data.categoriaId,
+            esProvisional: true,
           },
-          tx,
+        });
+
+        this.notificacionesGateway.broadcastDashboardsActualizados({
+          origen: 'GASTO',
+          rutaId,
+        });
+
+        return {
+          success: true,
+          message: 'Gasto provisional registrado y enviado para aprobación',
+          gastoId,
+          approvalId,
+        };
+      } catch (error) {
+        this.logger.error(
+          '[GASTO_PROVISIONAL] Error registrando gasto',
+          error instanceof Error ? error.stack : JSON.stringify(error),
         );
 
-        return { gastoId: newGasto.id, approvalId: aprobacion.id };
-      });
-
-      // Notificar aprobadores
-      await this.notificacionesService.notifyApprovers({
-        titulo: 'Nuevo Gasto Provisional Requiere Aprobación',
-        mensaje: `${nombreSolicitante} ha registrado un gasto provisional por ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}. La caja ya fue afectada.`,
-        tipo: 'GASTO',
-        entidad: 'Aprobacion',
-        entidadId: approvalId,
-        metadata: {
-          tipoAprobacion: 'GASTO',
-          rutaId,
-          cajaId: cajaRuta.id,
-          cobradorId,
-          monto: data.monto,
-          descripcion: data.descripcion,
-          solicitadoPor: nombreSolicitante,
-          categoriaId: data.categoriaId,
-          esProvisional: true,
-        },
-      });
-
-      this.notificacionesGateway.broadcastDashboardsActualizados({
-        origen: 'GASTO',
-        rutaId,
-      });
-
-      return {
-        success: true,
-        message: 'Gasto provisional registrado y enviado para aprobación',
-        gastoId,
-        approvalId,
-      };
+        throw error;
+      }
     }
   }
 
