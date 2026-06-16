@@ -406,108 +406,6 @@ export class ApprovalsService {
     return { transaccionReversaIds, journalEntryReversaIds };
   }
 
-  // DEPRECATED: Usar crearReversasPrestamoProvisionalRobusto en su lugar
-  // Esta función usa referenceType: 'REVERSA' que no existe en el enum ReferenceTypeContable
-  private async crearReversasPrestamoProvisional(
-    tx: any,
-    rollbackData: any,
-    reversadoPorId?: string,
-    motivoRechazo?: string,
-  ) {
-    const transaccionIds = Array.isArray(rollbackData?.transaccionIds)
-      ? rollbackData.transaccionIds.filter(Boolean)
-      : [];
-    const journalEntryIds = Array.isArray(rollbackData?.journalEntryIds)
-      ? rollbackData.journalEntryIds.filter(Boolean)
-      : Array.isArray(rollbackData?.journalReferenceIds)
-        ? rollbackData.journalReferenceIds.filter(Boolean)
-        : [];
-
-    const transaccionReversaIds: string[] = [];
-    const journalEntryReversaIds: string[] = [];
-
-    for (const transaccionId of transaccionIds) {
-      const original = await tx.transaccion.findUnique?.({
-        where: { id: transaccionId },
-        select: {
-          id: true,
-          cajaId: true,
-          tipo: true,
-          monto: true,
-          descripcion: true,
-          creadoPorId: true,
-          tipoReferencia: true,
-          referenciaId: true,
-        },
-      });
-      if (!original?.id) continue;
-
-      const tipoReversa =
-        original.tipo === TipoTransaccion.EGRESO
-          ? TipoTransaccion.INGRESO
-          : TipoTransaccion.EGRESO;
-
-      const reversa = await tx.transaccion.create({
-        data: {
-          numeroTransaccion: this.generarNumeroTransaccion('REV'),
-          cajaId: original.cajaId,
-          tipo: tipoReversa,
-          monto: Number(original.monto || 0),
-          descripcion: `Reversa de ${original.descripcion || 'movimiento'}${motivoRechazo ? ` — ${motivoRechazo}` : ''}`,
-          creadoPorId: reversadoPorId || original.creadoPorId,
-          aprobadoPorId: reversadoPorId || undefined,
-          tipoReferencia: 'REVERSA',
-          referenciaId: original.id,
-        },
-        select: { id: true },
-      });
-      transaccionReversaIds.push(reversa.id);
-    }
-
-    for (const journalEntryId of journalEntryIds) {
-      const original = await tx.journalEntry.findUnique?.({
-        where: { id: journalEntryId },
-        include: { lines: true },
-      });
-      if (!original?.id || !Array.isArray(original.lines)) continue;
-
-      const reversa = await this.ledgerService.registrarAsiento(
-        {
-          referenceType: 'REVERSA' as any,
-          referenceId: original.id,
-          description: `Reversa de asiento ${original.referenceType || ''} ${original.referenceId || ''}${motivoRechazo ? ` — ${motivoRechazo}` : ''}`,
-          createdBy: reversadoPorId || original.createdBy,
-          lines: original.lines
-            .map((line: any) => {
-              const debit = Number(line.debitAmount || 0);
-              const credit = Number(line.creditAmount || 0);
-              const cajaDelta =
-                line.cajaId && (debit > 0 || credit > 0)
-                  ? credit - debit
-                  : undefined;
-
-              return {
-                accountCode: line.accountCode,
-                debitAmount: credit > 0 ? credit : undefined,
-                creditAmount: debit > 0 ? debit : undefined,
-                cajaId: line.cajaId || undefined,
-                cajaDelta,
-              };
-            })
-            .filter(
-              (line: any) =>
-                Number(line.debitAmount || 0) > 0 ||
-                Number(line.creditAmount || 0) > 0,
-            ),
-        },
-        tx,
-      );
-      if (reversa?.id) journalEntryReversaIds.push(reversa.id);
-    }
-
-    return { transaccionReversaIds, journalEntryReversaIds };
-  }
-
   private async reaplicarPrestamoProvisionalRevertido(
     tx: any,
     approval: any,
@@ -549,6 +447,13 @@ export class ApprovalsService {
         fechaPago: null,
       },
     });
+
+    if (rollbackData.asignacionRutaId) {
+      await tx.asignacionRuta.updateMany({
+        where: { id: String(rollbackData.asignacionRutaId) },
+        data: { activa: true },
+      });
+    }
 
     if (rollbackData.stockDescontado && rollbackData.productoId) {
       await tx.producto.update({
@@ -592,8 +497,8 @@ export class ApprovalsService {
 
       const nuevo = await this.ledgerService.registrarAsiento(
         {
-          referenceType: 'REAPERTURA_PROVISIONAL' as any,
-          referenceId: prestamoId,
+          referenceType: 'AJUSTE' as any,
+          referenceId: `REAPERTURA:${original.id}`,
           description: `Reapertura provisional de ${original.referenceType || ''} ${original.referenceId || ''}${notas ? ` — ${notas}` : ''}`,
           createdBy: userId,
           lines: original.lines
@@ -1665,9 +1570,18 @@ export class ApprovalsService {
       throw new NotFoundException('Aprobación no encontrada');
     }
 
+    if (approval.estado !== EstadoAprobacion.RECHAZADO) {
+      throw new BadRequestException(
+        `Solo se puede confirmar o restaurar una revisión rechazada. Estado actual: ${approval.estado}`,
+      );
+    }
+
     if (accion === 'CONFIRMAR') {
-      await this.prisma.aprobacion.update({
-        where: { id },
+      const claimed = await this.prisma.aprobacion.updateMany({
+        where: {
+          id,
+          estado: EstadoAprobacion.RECHAZADO,
+        },
         data: {
           estado: EstadoAprobacion.CANCELADO,
           comentarios: notas
@@ -1675,6 +1589,10 @@ export class ApprovalsService {
             : `[SuperAdmin] Eliminación confirmada`,
         },
       });
+
+      if (claimed.count !== 1) {
+        throw new BadRequestException('Esta revisión final ya fue procesada');
+      }
 
       this.notificacionesGateway.broadcastAprobacionesActualizadas({
         accion: 'CONFIRMAR',
@@ -1688,8 +1606,11 @@ export class ApprovalsService {
       };
     } else {
       await this.prisma.$transaction(async (tx) => {
-        await tx.aprobacion.update({
-          where: { id },
+        const claimed = await tx.aprobacion.updateMany({
+          where: {
+            id,
+            estado: EstadoAprobacion.RECHAZADO,
+          },
           data: {
             estado: EstadoAprobacion.PENDIENTE,
             aprobadoPorId: null,
@@ -1699,6 +1620,10 @@ export class ApprovalsService {
               : `[SuperAdmin] Revertido a pendiente para re-evaluación`,
           },
         });
+
+        if (claimed.count !== 1) {
+          throw new BadRequestException('Esta revisión final ya fue procesada');
+        }
 
         if (
           approval.tipoAprobacion === TipoAprobacion.NUEVO_PRESTAMO &&
@@ -1740,6 +1665,17 @@ export class ApprovalsService {
         aprobacionId: id,
         tipoAprobacion: approval.tipoAprobacion,
       });
+
+      if (approval.tipoAprobacion === TipoAprobacion.NUEVO_PRESTAMO && approval.referenciaId) {
+        this.notificacionesGateway.broadcastPrestamosActualizados({
+          accion: 'RESTAURAR',
+          prestamoId: approval.referenciaId,
+        });
+
+        this.notificacionesGateway.broadcastDashboardsActualizados({
+          origen: 'RESTAURAR_PRESTAMO_PROVISIONAL',
+        });
+      }
 
       try {
         await this.notificacionesService.create({
