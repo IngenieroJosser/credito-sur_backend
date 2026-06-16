@@ -92,7 +92,7 @@ export class ApprovalsController {
   )
   async rejectItem(
     @Param('id') id: string,
-    @Body() body: { type: TipoAprobacion; motivoRechazo?: string },
+    @Body() body: { type: TipoAprobacion; motivoRechazo?: string; resultadoRevision?: 'RECHAZADO_CON_DEUDA' | 'RECHAZADO_CON_REINTEGRO' },
     @Request() req: any,
   ) {
     const rechazadoPorId = req.user?.id || req.user?.sub;
@@ -101,6 +101,7 @@ export class ApprovalsController {
       body.type,
       rechazadoPorId,
       body.motivoRechazo,
+      body.resultadoRevision,
     );
   }
 

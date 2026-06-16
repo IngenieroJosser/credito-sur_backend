@@ -286,6 +286,7 @@ export class AccountingController {
     @Query('limit') limit?: string,
     @Query('fechaInicio') fechaInicio?: string,
     @Query('fechaFin') fechaFin?: string,
+    @Query('esProvisional') esProvisional?: string,
   ) {
     return this.accountingService.getGastos({
       rutaId,
@@ -294,6 +295,7 @@ export class AccountingController {
       limit: limit ? parseInt(limit) : 50,
       fechaInicio,
       fechaFin,
+      esProvisional: esProvisional ? esProvisional === 'true' : undefined,
     });
   }
 

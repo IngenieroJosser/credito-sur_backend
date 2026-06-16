@@ -548,15 +548,17 @@ export class AccountingService {
       };
     };
 
-    // Sin comprobante no se afecta caja ni ledger, incluso para gastos operativos directos.
-    if (!comprobanteGasto || data.esPersonal) {
+    // Solo gastos personales sin comprobante no afectan caja hasta aprobación.
+    // Gastos operativos de ruta siempre afectan caja inmediatamente como provisionales.
+    if (data.esPersonal) {
       return crearAprobacionGasto(!comprobanteGasto);
     }
 
-    // ======== 1. GASTO OPERATIVO CON COMPROBANTE (GASTAR DIRECTAMENTE DE LA RUTA) ========
+    // ======== 1. GASTO OPERATIVO (GASTO PROVISIONAL) ========
+    // Afecta caja inmediatamente, pendiente de aprobación para reclasificación contable
     if (!data.esPersonal) {
-      await this.prisma.$transaction(async (tx) => {
-        // 1. Crear Gasto
+      const { gastoId, approvalId } = await this.prisma.$transaction(async (tx) => {
+        // 1. Crear Gasto como PROVISIONAL (PENDIENTE de aprobación)
         const newGasto = await tx.gasto.create({
           data: {
             numeroGasto: `G${Date.now()}-${randomUUID().slice(0, 8)}`,
@@ -569,12 +571,38 @@ export class AccountingService {
             descripcion: data.descripcion,
             fotoRecibo: comprobanteGasto,
             categoriaId: data.categoriaId || undefined,
-            aprobadoPorId: data.solicitadoPorId,
-            estadoAprobacion: EstadoAprobacion.APROBADO,
+            estadoAprobacion: EstadoAprobacion.PENDIENTE,
+            esProvisional: true,
+            aplicadoEnCaja: true,
           },
         });
 
-        // 2. Registrar egreso en caja
+        // 2. Crear Aprobación pendiente
+        const aprobacion = await tx.aprobacion.create({
+          data: {
+            tipoAprobacion: data.tipoAprobacion,
+            idempotencyKey,
+            referenciaId: newGasto.id,
+            tablaReferencia: 'Gasto',
+            solicitadoPorId: data.solicitadoPorId,
+            estado: EstadoAprobacion.PENDIENTE,
+            datosSolicitud: {
+              rutaId,
+              cobradorId,
+              cajaId: cajaRuta.id,
+              tipoGasto: 'OPERATIVO',
+              monto: data.monto,
+              descripcion: data.descripcion,
+              categoriaId: data.categoriaId,
+              fotoRecibo: comprobanteGasto,
+              esProvisional: true,
+              idempotencyKey: idempotencyKey || null,
+            },
+            montoSolicitud: data.monto,
+          },
+        });
+
+        // 3. Registrar egreso en caja (el dinero ya salió de la caja del cobrador)
         await tx.transaccion.create({
           data: {
             numeroTransaccion: this.generarNumeroTransaccion('GTRX'),
@@ -584,23 +612,23 @@ export class AccountingService {
             cajaId: cajaRuta.id,
             tipo: TipoTransaccion.EGRESO,
             monto: data.monto,
-            descripcion: `Gasto de ruta directo: ${data.descripcion}`,
+            descripcion: `Gasto provisional: ${data.descripcion}`,
             creadoPorId: data.solicitadoPorId,
-            tipoReferencia: 'GASTO',
+            tipoReferencia: 'GASTO_PROVISIONAL',
             referenciaId: newGasto.id,
           },
         });
 
-        // 3. Registrar asiento contable (Ledger mueve el saldo de la caja)
+        // 4. Registrar asiento contable en cuenta puente (Gastos por legalizar)
         await this.ledgerService.registrarAsiento(
           {
             referenceType: 'GASTO',
-            referenceId: newGasto.id,
-            description: `Gasto de ruta directo: ${data.descripcion}`,
+            referenceId: `PROVISIONAL:${newGasto.id}`,
+            description: `Gasto provisional: ${data.descripcion}`,
             createdBy: data.solicitadoPorId,
             lines: [
               {
-                accountCode: '4.1', // Gastos de Ruta
+                accountCode: '1.6.1', // Gastos por legalizar (cuenta puente)
                 debitAmount: Number(data.monto),
               },
               {
@@ -613,6 +641,28 @@ export class AccountingService {
           },
           tx,
         );
+
+        return { gastoId: newGasto.id, approvalId: aprobacion.id };
+      });
+
+      // Notificar aprobadores
+      await this.notificacionesService.notifyApprovers({
+        titulo: 'Nuevo Gasto Provisional Requiere Aprobación',
+        mensaje: `${nombreSolicitante} ha registrado un gasto provisional por ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}. La caja ya fue afectada.`,
+        tipo: 'GASTO',
+        entidad: 'Aprobacion',
+        entidadId: approvalId,
+        metadata: {
+          tipoAprobacion: 'GASTO',
+          rutaId,
+          cajaId: cajaRuta.id,
+          cobradorId,
+          monto: data.monto,
+          descripcion: data.descripcion,
+          solicitadoPor: nombreSolicitante,
+          categoriaId: data.categoriaId,
+          esProvisional: true,
+        },
       });
 
       this.notificacionesGateway.broadcastDashboardsActualizados({
@@ -622,7 +672,9 @@ export class AccountingService {
 
       return {
         success: true,
-        message: 'Gasto registrado correctamente en caja',
+        message: 'Gasto provisional registrado y enviado para aprobación',
+        gastoId,
+        approvalId,
       };
     }
   }
@@ -1436,6 +1488,9 @@ export class AccountingService {
 
         if (t.tipoReferencia === 'GASTO') {
           gastosOperativos += monto;
+        } else if (t.tipoReferencia === 'GASTO_PROVISIONAL') {
+          // Gastos provisionales no cuentan como gastos operativos hasta aprobarse
+          otrosEgresos += monto;
         } else if (
           t.tipoReferencia === 'PRESTAMO' ||
           t.descripcion.toLowerCase().includes('desembolso') ||
@@ -2911,6 +2966,7 @@ export class AccountingService {
     limit?: number;
     fechaInicio?: string;
     fechaFin?: string;
+    esProvisional?: boolean;
   }) {
     const {
       rutaId,
@@ -2919,12 +2975,14 @@ export class AccountingService {
       limit = 50,
       fechaInicio,
       fechaFin,
+      esProvisional,
     } = filtros;
     const skip = (page - 1) * limit;
 
     const where: any = {};
     if (rutaId) where.rutaId = rutaId;
     if (estado) where.estadoAprobacion = estado;
+    if (esProvisional !== undefined) where.esProvisional = esProvisional;
     if (fechaInicio || fechaFin) {
       where.fechaGasto = {};
       if (fechaInicio) {
@@ -2969,6 +3027,8 @@ export class AccountingService {
         categoriaId: g.categoriaId || null,
         categoria: g.categoria?.nombre || null,
         estado: g.estadoAprobacion,
+        esProvisional: g.esProvisional,
+        resultadoRevisionGasto: g.resultadoRevisionGasto,
       })),
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };

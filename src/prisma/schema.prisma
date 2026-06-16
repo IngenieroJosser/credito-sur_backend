@@ -593,34 +593,39 @@ model Transaccion {
 }
 
 model Gasto {
-  id                   String               @id @default(uuid())
-  numeroGasto          String               @unique @db.VarChar(50)
-  idempotencyKey       String?              @unique @db.VarChar(100)
-  rutaId               String?
-  cobradorId           String
-  cajaId               String
-  tipoGasto            TipoGasto
-  monto                Decimal              @db.Decimal(10, 2)
-  descripcion          String
-  fotoRecibo           String?              @db.VarChar(500)
-  aprobadoPorId        String?
-  estadoAprobacion     EstadoAprobacion     @default(PENDIENTE)
-  categoriaId          String?
-  fechaGasto           DateTime             @default(now())
-  creadoEn             DateTime             @default(now())
-  actualizadoEn        DateTime             @updatedAt
-  estadoSincronizacion EstadoSincronizacion @default(PENDIENTE)
-  aprobadoPor          Usuario?             @relation("GastoAprobadoPor", fields: [aprobadoPorId], references: [id])
-  caja                 Caja                 @relation(fields: [cajaId], references: [id])
-  categoria            Categoria?           @relation(fields: [categoriaId], references: [id])
-  cobrador             Usuario              @relation("GastoReportadoPor", fields: [cobradorId], references: [id])
-  ruta                 Ruta?                @relation(fields: [rutaId], references: [id])
-  archivos             Multimedia[]         @relation("MultimediaGasto")
+  id                      String                  @id @default(uuid())
+  numeroGasto             String                  @unique @db.VarChar(50)
+  idempotencyKey          String?                 @unique @db.VarChar(100)
+  rutaId                  String?
+  cobradorId              String
+  cajaId                  String
+  tipoGasto               TipoGasto
+  monto                   Decimal                 @db.Decimal(10, 2)
+  descripcion             String
+  fotoRecibo              String?                 @db.VarChar(500)
+  aprobadoPorId           String?
+  estadoAprobacion        EstadoAprobacion        @default(PENDIENTE)
+  resultadoRevisionGasto  ResultadoRevisionGasto?
+  esProvisional           Boolean                 @default(false)
+  aplicadoEnCaja          Boolean                 @default(false)
+  categoriaId             String?
+  fechaGasto              DateTime                @default(now())
+  creadoEn                DateTime                @default(now())
+  actualizadoEn           DateTime                @updatedAt
+  estadoSincronizacion    EstadoSincronizacion    @default(PENDIENTE)
+  aprobadoPor             Usuario?                @relation("GastoAprobadoPor", fields: [aprobadoPorId], references: [id])
+  caja                    Caja                    @relation(fields: [cajaId], references: [id])
+  categoria               Categoria?              @relation(fields: [categoriaId], references: [id])
+  cobrador                Usuario                 @relation("GastoReportadoPor", fields: [cobradorId], references: [id])
+  ruta                    Ruta?                   @relation(fields: [rutaId], references: [id])
+  archivos                Multimedia[]            @relation("MultimediaGasto")
 
   @@index([numeroGasto])
   @@index([rutaId])
   @@index([cobradorId])
   @@index([estadoAprobacion])
+  @@index([resultadoRevisionGasto])
+  @@index([esProvisional])
   @@index([fechaGasto])
   @@index([estadoSincronizacion])
 }
@@ -895,6 +900,12 @@ enum TipoGasto {
   OPERATIVO
   TRANSPORTE
   OTRO
+}
+
+enum ResultadoRevisionGasto {
+  APROBADO_OPERATIVO
+  RECHAZADO_CON_DEUDA
+  RECHAZADO_CON_REINTEGRO
 }
 
 enum TipoCaja {

@@ -1703,6 +1703,7 @@ export class ApprovalsService {
     _type: TipoAprobacion,
     rechazadoPorId?: string,
     motivoRechazo?: string,
+    resultadoRevision?: 'RECHAZADO_CON_DEUDA' | 'RECHAZADO_CON_REINTEGRO',
   ) {
     const approval = await this.prisma.aprobacion.findUnique({
       where: { id },
@@ -1768,6 +1769,129 @@ export class ApprovalsService {
       this.notificacionesGateway.broadcastDashboardsActualizados({});
 
       return { success: true, message: 'Aprobación rechazada' };
+    }
+
+    // Verificar si es un gasto provisional con resultado de revisión específico
+    const data =
+      typeof approval.datosSolicitud === 'string'
+        ? JSON.parse(approval.datosSolicitud)
+        : approval.datosSolicitud;
+    const esProvisional = data.esProvisional === true;
+    const tieneResultadoRevision = resultadoRevision === 'RECHAZADO_CON_DEUDA' || resultadoRevision === 'RECHAZADO_CON_REINTEGRO';
+
+    // Si es un gasto provisional, es obligatorio indicar resultadoRevision
+    if (approval.tipoAprobacion === TipoAprobacion.GASTO && esProvisional && !tieneResultadoRevision) {
+      throw new BadRequestException(
+        'Debe indicar si el gasto provisional se rechaza con deuda o con reintegro.',
+      );
+    }
+
+    if (esProvisional && tieneResultadoRevision) {
+      // ======== NUEVO FLUJO: RECHAZAR GASTO PROVISIONAL ========
+      await this.prisma.$transaction(async (tx) => {
+        const claimed = await tx.aprobacion.updateMany({
+          where: {
+            id,
+            estado: EstadoAprobacion.PENDIENTE,
+          },
+          data: {
+            estado: EstadoAprobacion.RECHAZADO,
+            aprobadoPorId: rechazadoPorId || undefined,
+            comentarios: motivoRechazo || 'Rechazado sin motivo especificado',
+            revisadoEn: new Date(),
+          },
+        });
+
+        if (claimed.count !== 1) {
+          throw new BadRequestException(
+            'Esta solicitud ya fue tomada por otro usuario',
+          );
+        }
+
+        const existingGasto = await tx.gasto.findUnique({
+          where: { id: approval.referenciaId },
+          include: {
+            ruta: { select: { id: true, nombre: true } },
+            caja: { select: { id: true, nombre: true } },
+            cobrador: { select: { id: true, nombres: true, apellidos: true } },
+          },
+        });
+
+        if (!existingGasto) {
+          throw new NotFoundException('Gasto provisional no encontrado');
+        }
+
+        // Actualizar estado del gasto
+        await tx.gasto.update({
+          where: { id: existingGasto.id },
+          data: {
+            estadoAprobacion: EstadoAprobacion.RECHAZADO,
+            resultadoRevisionGasto: resultadoRevision,
+            esProvisional: false,
+            aprobadoPorId: rechazadoPorId || undefined,
+          },
+        });
+
+        if (resultadoRevision === 'RECHAZADO_CON_DEUDA') {
+          // Reclasificar contable: de 1.6.1 (Gastos por legalizar) a 1.4.1 (Cuenta por cobrar a cobrador)
+          // NO mueve caja (ya fue afectada al solicitar)
+          await this.ledgerService.registrarAsiento(
+            {
+              referenceType: 'GASTO',
+              referenceId: `RECHAZADO_DEUDA:${existingGasto.id}`,
+              description: `Gasto provisional rechazado con deuda: ${data.descripcion}`,
+              createdBy: rechazadoPorId || approval.solicitadoPorId,
+              lines: [
+                {
+                  accountCode: '1.4.1', // Cuenta por cobrar a cobrador
+                  debitAmount: Number(data.monto),
+                  cajaId: existingGasto.cajaId, // Para atribución al cobrador
+                },
+                {
+                  accountCode: '1.6.1', // Gastos por legalizar (cuenta puente)
+                  creditAmount: Number(data.monto),
+                },
+              ],
+            },
+            tx,
+          );
+        } else if (resultadoRevision === 'RECHAZADO_CON_REINTEGRO') {
+          // Reclasificar contable: de 1.6.1 (Gastos por legalizar) a 1.2.1 (Caja Ruta)
+          // Restaura caja (reintegro del monto)
+          await this.ledgerService.registrarAsiento(
+            {
+              referenceType: 'GASTO',
+              referenceId: `RECHAZADO_REINTEGRO:${existingGasto.id}`,
+              description: `Gasto provisional rechazado con reintegro: ${data.descripcion}`,
+              createdBy: rechazadoPorId || approval.solicitadoPorId,
+              lines: [
+                {
+                  accountCode: '1.2.1', // Caja Ruta
+                  debitAmount: Number(data.monto),
+                  cajaId: existingGasto.cajaId,
+                  cajaDelta: Number(data.monto), // Ledger incrementa el saldo
+                },
+                {
+                  accountCode: '1.6.1', // Gastos por legalizar (cuenta puente)
+                  creditAmount: Number(data.monto),
+                },
+              ],
+            },
+            tx,
+          );
+        }
+      });
+
+      this.notificacionesGateway.broadcastAprobacionesActualizadas({
+        accion: 'RECHAZAR',
+        aprobacionId: id,
+        tipoAprobacion: approval.tipoAprobacion,
+      });
+      this.notificacionesGateway.broadcastDashboardsActualizados({
+        origen: 'GASTO',
+      });
+
+      return { success: true, message: 'Gasto provisional rechazado' };
     }
 
     const claimed = await this.prisma.aprobacion.updateMany({
@@ -2438,79 +2562,147 @@ export class ApprovalsService {
         ? JSON.parse(approval.datosSolicitud)
         : approval.datosSolicitud;
 
+    // Verificar si es un gasto provisional (ya existe el registro de Gasto)
+    const esProvisional = data.esProvisional === true;
+
     // Procesar en una transacción de base de datos para asegurar consistencia
     const [gasto] = await this.prisma.$transaction(async (tx) => {
-      // 1. Crear el registro de Gasto
-      const routeCash = await this.resolveActiveRouteCashContext(tx, {
-        rutaId: data.rutaId,
-        cajaId: data.cajaId,
-      });
-      const newGasto = await tx.gasto.create({
-        data: {
-          numeroGasto: `G${Date.now()}`,
-          rutaId: routeCash.rutaId,
-          cobradorId: routeCash.cobradorId,
-          cajaId: routeCash.cajaId,
-          tipoGasto: ({
-            GASTO_OPERATIVO: 'OPERATIVO',
-            OPERATIVO: 'OPERATIVO',
-            TRANSPORTE: 'TRANSPORTE',
-            OTRO: 'OTRO',
-          }[data.tipoGasto] || 'OPERATIVO') as any,
-          monto: data.monto,
-          descripcion: data.descripcion,
-          categoriaId: data.categoriaId || undefined,
-          aprobadoPorId: aprobadoPorId || undefined,
-          estadoAprobacion: EstadoAprobacion.APROBADO,
-        },
-        include: {
-          ruta: { select: { id: true, nombre: true } },
-          caja: { select: { id: true, nombre: true } },
-          cobrador: { select: { id: true, nombres: true, apellidos: true } },
-        },
-      });
+      if (esProvisional) {
+        // ======== NUEVO FLUJO: GASTO PROVISIONAL ========
+        // El gasto ya fue creado al solicitar, solo reclasificar de 1.6.1 a 4.1
+        
+        const existingGasto = await tx.gasto.findUnique({
+          where: { id: approval.referenciaId },
+          include: {
+            ruta: { select: { id: true, nombre: true } },
+            caja: { select: { id: true, nombre: true } },
+            cobrador: { select: { id: true, nombres: true, apellidos: true } },
+          },
+        });
 
-      // 2. Registrar egreso contable: gasto del cobrador = DEUDA_COBRADOR (no afecta utilidad)
-      await tx.transaccion.create({
-        data: {
-          numeroTransaccion: this.generarNumeroTransaccion('GTRX'),
-          cajaId: routeCash.cajaId,
-          tipo: TipoTransaccion.EGRESO,
-          monto: data.monto,
-          descripcion: `Gasto aprobado: ${data.descripcion}`,
-          creadoPorId: approval.solicitadoPorId,
-          aprobadoPorId: aprobadoPorId || undefined,
-          tipoReferencia: 'GASTO',
-          referenciaId: newGasto.id,
-        },
-      });
+        if (!existingGasto) {
+          throw new NotFoundException('Gasto provisional no encontrado');
+        }
 
-      // Asiento contable de Partida Doble (patrón correcto: Ledger mueve el saldo)
-      // Débito: 4.1 Gastos de Ruta (consume patrimonio)
-      // Crédito: 1.2.1 Caja Ruta (sale el efectivo) — cajaDelta real
-      await this.ledgerService.registrarAsiento(
-        {
-          referenceType: 'GASTO',
-          referenceId: newGasto.id,
-          description: `Gasto aprobado: ${data.descripcion}`,
-          createdBy: aprobadoPorId || approval.solicitadoPorId,
-          lines: [
-            {
-              accountCode: '4.1',
-              debitAmount: Number(data.monto),
-            },
-            {
-              accountCode: '1.2.1',
-              creditAmount: Number(data.monto),
-              cajaId: routeCash.cajaId,
-              cajaDelta: -Number(data.monto), // Ledger decrementa el saldo
-            },
-          ],
-        },
-        tx,
-      );
+        // Validar que el gasto sea provisional y esté pendiente
+        if (!existingGasto.esProvisional || existingGasto.estadoAprobacion !== EstadoAprobacion.PENDIENTE) {
+          throw new BadRequestException('El gasto provisional ya fue procesado o no es un gasto provisional');
+        }
 
-      return [newGasto];
+        // Actualizar estado del gasto
+        const updatedGasto = await tx.gasto.update({
+          where: { id: existingGasto.id },
+          data: {
+            estadoAprobacion: EstadoAprobacion.APROBADO,
+            resultadoRevisionGasto: 'APROBADO_OPERATIVO',
+            esProvisional: false,
+            aprobadoPorId: aprobadoPorId || undefined,
+          },
+          include: {
+            ruta: { select: { id: true, nombre: true } },
+            caja: { select: { id: true, nombre: true } },
+            cobrador: { select: { id: true, nombres: true, apellidos: true } },
+          },
+        });
+
+        // Reclasificar contable: de 1.6.1 (Gastos por legalizar) a 4.1 (Gastos de Ruta)
+        // NO mueve caja otra vez (ya fue afectada al solicitar)
+        await this.ledgerService.registrarAsiento(
+          {
+            referenceType: 'GASTO',
+            referenceId: `APROBADO:${updatedGasto.id}`,
+            description: `Gasto provisional aprobado: ${data.descripcion}`,
+            createdBy: aprobadoPorId || approval.solicitadoPorId,
+            lines: [
+              {
+                accountCode: '4.1', // Gastos de Ruta
+                debitAmount: Number(data.monto),
+              },
+              {
+                accountCode: '1.6.1', // Gastos por legalizar (cuenta puente)
+                creditAmount: Number(data.monto),
+              },
+            ],
+          },
+          tx,
+        );
+
+        return [updatedGasto];
+      } else {
+        // ======== FLUJO ANTIGUO: GASTO SIN COMPROBANTE O PERSONAL ========
+        // Crear el registro de Gasto y afectar caja
+        
+        const routeCash = await this.resolveActiveRouteCashContext(tx, {
+          rutaId: data.rutaId,
+          cajaId: data.cajaId,
+        });
+        const newGasto = await tx.gasto.create({
+          data: {
+            numeroGasto: `G${Date.now()}`,
+            rutaId: routeCash.rutaId,
+            cobradorId: routeCash.cobradorId,
+            cajaId: routeCash.cajaId,
+            tipoGasto: ({
+              GASTO_OPERATIVO: 'OPERATIVO',
+              OPERATIVO: 'OPERATIVO',
+              TRANSPORTE: 'TRANSPORTE',
+              OTRO: 'OTRO',
+            }[data.tipoGasto] || 'OPERATIVO') as any,
+            monto: data.monto,
+            descripcion: data.descripcion,
+            categoriaId: data.categoriaId || undefined,
+            aprobadoPorId: aprobadoPorId || undefined,
+            estadoAprobacion: EstadoAprobacion.APROBADO,
+          },
+          include: {
+            ruta: { select: { id: true, nombre: true } },
+            caja: { select: { id: true, nombre: true } },
+            cobrador: { select: { id: true, nombres: true, apellidos: true } },
+          },
+        });
+
+        // Registrar egreso contable: gasto del cobrador = DEUDA_COBRADOR (no afecta utilidad)
+        await tx.transaccion.create({
+          data: {
+            numeroTransaccion: this.generarNumeroTransaccion('GTRX'),
+            cajaId: routeCash.cajaId,
+            tipo: TipoTransaccion.EGRESO,
+            monto: data.monto,
+            descripcion: `Gasto aprobado: ${data.descripcion}`,
+            creadoPorId: approval.solicitadoPorId,
+            aprobadoPorId: aprobadoPorId || undefined,
+            tipoReferencia: 'GASTO',
+            referenciaId: newGasto.id,
+          },
+        });
+
+        // Asiento contable de Partida Doble (patrón correcto: Ledger mueve el saldo)
+        // Débito: 4.1 Gastos de Ruta (consume patrimonio)
+        // Crédito: 1.2.1 Caja Ruta (sale el efectivo) — cajaDelta real
+        await this.ledgerService.registrarAsiento(
+          {
+            referenceType: 'GASTO',
+            referenceId: newGasto.id,
+            description: `Gasto aprobado: ${data.descripcion}`,
+            createdBy: aprobadoPorId || approval.solicitadoPorId,
+            lines: [
+              {
+                accountCode: '4.1',
+                debitAmount: Number(data.monto),
+              },
+              {
+                accountCode: '1.2.1',
+                creditAmount: Number(data.monto),
+                cajaId: routeCash.cajaId,
+                cajaDelta: -Number(data.monto), // Ledger decrementa el saldo
+              },
+            ],
+          },
+          tx,
+        );
+
+        return [newGasto];
+      }
     });
 
     try {
@@ -2518,7 +2710,9 @@ export class ApprovalsService {
       await this.notificacionesService.create({
         usuarioId: approval.solicitadoPorId,
         titulo: 'Tu Gasto fue Aprobado',
-        mensaje: `Tu gasto de ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} fue aprobado.`,
+        mensaje: esProvisional
+          ? `Tu gasto provisional de ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} fue aprobado como gasto operativo.`
+          : `Tu gasto de ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} fue aprobado.`,
         tipo: 'EXITO',
         entidad: 'GASTO',
         entidadId: gasto.id,
@@ -2526,7 +2720,9 @@ export class ApprovalsService {
 
       await this.notificacionesService.notifyCoordinator({
         titulo: 'Gasto Aprobado',
-        mensaje: `Se aprobó un gasto de ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} en la ruta ${gasto.ruta?.nombre || 'Sin ruta'} (Caja: ${gasto.caja?.nombre || 'N/A'}) por ${gasto.cobrador ? gasto.cobrador.nombres + ' ' + gasto.cobrador.apellidos : 'usuario'}.`,
+        mensaje: esProvisional
+          ? `Se aprobó un gasto provisional de ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} en la ruta ${gasto.ruta?.nombre || 'Sin ruta'} (Caja: ${gasto.caja?.nombre || 'N/A'}) por ${gasto.cobrador ? gasto.cobrador.nombres + ' ' + gasto.cobrador.apellidos : 'usuario'}.`
+          : `Se aprobó un gasto de ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} en la ruta ${gasto.ruta?.nombre || 'Sin ruta'} (Caja: ${gasto.caja?.nombre || 'N/A'}) por ${gasto.cobrador ? gasto.cobrador.nombres + ' ' + gasto.cobrador.apellidos : 'usuario'}.`,
         tipo: 'SISTEMA',
         entidad: 'GASTO',
         entidadId: gasto.id,
@@ -2534,6 +2730,7 @@ export class ApprovalsService {
           rutaId: gasto.ruta?.id,
           cajaId: gasto.caja?.id,
           cobradorId: gasto.cobrador?.id,
+          esProvisional,
         },
       });
     } catch (error) {
