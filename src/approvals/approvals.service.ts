@@ -788,6 +788,20 @@ export class ApprovalsService {
       });
     }
 
+    // Validar que existan movimientos originales para revertir
+    if (transaccionesOriginales.length === 0 && journalsOriginales.length === 0) {
+      throw new BadRequestException(
+        `No se encontraron movimientos originales para revertir el préstamo provisional ${prestamoId}`,
+      );
+    }
+
+    // Validar que exista journal original si hay transacciones
+    if (transaccionesOriginales.length > 0 && journalsOriginales.length === 0) {
+      throw new BadRequestException(
+        `No se encontró el asiento contable original del desembolso para el préstamo ${prestamoId}. No se puede revertir caja de forma segura.`,
+      );
+    }
+
     const reversas = await this.crearReversasPrestamoProvisionalRobusto(
       tx,
       rollbackData,
