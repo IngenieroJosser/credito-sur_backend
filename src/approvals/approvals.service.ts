@@ -345,11 +345,14 @@ export class ApprovalsService {
     for (const original of journalsOriginales) {
       if (!Array.isArray(original.lines)) continue;
 
+      const reversaReferenceType = 'AJUSTE' as any;
+      const reversaReferenceId = `REVERSA:${original.id}`;
+
       // Validar idempotencia: verificar si ya existe reversa
       const existingReversa = await tx.journalEntry.findFirst({
         where: {
-          referenceType: 'REVERSA',
-          referenceId: original.id,
+          referenceType: reversaReferenceType,
+          referenceId: reversaReferenceId,
         },
         select: { id: true },
       });
@@ -363,8 +366,8 @@ export class ApprovalsService {
       try {
         const reversa = await this.ledgerService.registrarAsiento(
           {
-            referenceType: 'REVERSA' as any,
-            referenceId: original.id,
+            referenceType: reversaReferenceType,
+            referenceId: reversaReferenceId,
             description: `Reversa de asiento ${original.referenceType || ''} ${original.referenceId || ''}${motivoRechazo ? ` — ${motivoRechazo}` : ''}`,
             createdBy: reversadoPorId || original.createdBy,
             lines: original.lines
