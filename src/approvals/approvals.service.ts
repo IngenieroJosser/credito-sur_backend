@@ -1570,8 +1570,11 @@ export class ApprovalsService {
     }
 
     if (accion === 'CONFIRMAR') {
-      await this.prisma.aprobacion.update({
-        where: { id },
+      const claimed = await this.prisma.aprobacion.updateMany({
+        where: {
+          id,
+          estado: EstadoAprobacion.RECHAZADO,
+        },
         data: {
           estado: EstadoAprobacion.CANCELADO,
           comentarios: notas
@@ -1579,6 +1582,10 @@ export class ApprovalsService {
             : `[SuperAdmin] Eliminación confirmada`,
         },
       });
+
+      if (claimed.count !== 1) {
+        throw new BadRequestException('Esta revisión final ya fue procesada');
+      }
 
       this.notificacionesGateway.broadcastAprobacionesActualizadas({
         accion: 'CONFIRMAR',
@@ -1592,8 +1599,11 @@ export class ApprovalsService {
       };
     } else {
       await this.prisma.$transaction(async (tx) => {
-        await tx.aprobacion.update({
-          where: { id },
+        const claimed = await tx.aprobacion.updateMany({
+          where: {
+            id,
+            estado: EstadoAprobacion.RECHAZADO,
+          },
           data: {
             estado: EstadoAprobacion.PENDIENTE,
             aprobadoPorId: null,
@@ -1603,6 +1613,10 @@ export class ApprovalsService {
               : `[SuperAdmin] Revertido a pendiente para re-evaluación`,
           },
         });
+
+        if (claimed.count !== 1) {
+          throw new BadRequestException('Esta revisión final ya fue procesada');
+        }
 
         if (
           approval.tipoAprobacion === TipoAprobacion.NUEVO_PRESTAMO &&
@@ -1644,6 +1658,17 @@ export class ApprovalsService {
         aprobacionId: id,
         tipoAprobacion: approval.tipoAprobacion,
       });
+
+      if (approval.tipoAprobacion === TipoAprobacion.NUEVO_PRESTAMO && approval.referenciaId) {
+        this.notificacionesGateway.broadcastPrestamosActualizados({
+          accion: 'RESTAURAR',
+          prestamoId: approval.referenciaId,
+        });
+
+        this.notificacionesGateway.broadcastDashboardsActualizados({
+          origen: 'RESTAURAR_PRESTAMO_PROVISIONAL',
+        });
+      }
 
       try {
         await this.notificacionesService.create({
