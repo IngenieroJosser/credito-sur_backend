@@ -1546,18 +1546,29 @@ export class AccountingService {
       rutaId,
       cajaId: caja.id,
       fecha: formatBogotaOffsetIso(rangeStart),
+
       saldoDisponible: Number(caja.saldoActual),
+      saldoCaja: Number(caja.saldoActual),
+      baseEfectivo: Number(caja.saldoActual),
+
       recaudoDelDia: totalCobranza,
       cobranzaDelDia: totalCobranza,
       recaudosPorReferencia,
-      gastosDelDia: totalGastos,
-      // Base efectivo es el saldo acumulado de la caja de ruta (no debe reiniciarse diario)
-      baseEfectivo: Number(caja.saldoActual),
-      desembolsos: desembolsos,
+
+      // Solo gastos operativos aprobados
+      gastosDelDia: gastosOperativos,
+
+      // Gastos pendientes de revisión
+      egresosProvisionales: otrosEgresos,
+
+      // Total de salidas reales de caja del período
+      totalEgresosCaja: gastosOperativos + otrosEgresos + desembolsos,
+
+      desembolsos,
       netoPeriodo: saldoNetoPeriodo,
+
       fechaInicio: formatBogotaOffsetIso(rangeStart),
       fechaFin: formatBogotaOffsetIso(rangeEnd),
-      saldoCaja: Number(caja.saldoActual),
     };
   }
 
