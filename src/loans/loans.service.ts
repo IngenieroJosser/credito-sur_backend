@@ -506,6 +506,12 @@ export class LoansService implements OnModuleInit {
         ? 'No existe una caja/base activa para el supervisor.'
         : 'No existe una caja de ruta activa para desembolsar este crédito.';
 
+    // ADMIN/SUPER_ADMIN/COORDINADOR siempre usan Caja Oficina
+    // Ignoran cualquier cajaId explícito del payload
+    if (!esOperadorConBase) {
+      return findCajaOficina();
+    }
+
     const cajaId = String(dataAny.cajaId || '').trim();
     if (cajaId) {
       const caja = await tx.caja.findFirst({
@@ -515,31 +521,16 @@ export class LoansService implements OnModuleInit {
       if (caja?.id) {
         const esCajaRuta = String(caja.tipo || '').toUpperCase() === 'RUTA';
 
-        if (esOperadorConBase) {
-          if (caja.responsableId !== params.creador?.id) {
-            throw new BadRequestException(
-              esSupervisor
-                ? 'No puedes desembolsar desde una caja/base de supervisor que no tienes asignada.'
-                : 'No puedes desembolsar desde una caja de ruta que no tienes asignada.',
-            );
-          }
-          return caja;
-        }
-
-        // ADMIN/SUPER_ADMIN/COORDINADOR siempre usan Caja Oficina
-        // No pueden usar caja de ruta explícita
-        if (esCajaRuta) {
+        // COBRADOR/SUPERVISOR solo pueden usar su caja/base asignada
+        if (caja.responsableId !== params.creador?.id) {
           throw new BadRequestException(
-            'Los roles administrativos deben usar Caja Oficina para desembolsar créditos.',
+            esSupervisor
+              ? 'No puedes desembolsar desde una caja/base de supervisor que no tienes asignada.'
+              : 'No puedes desembolsar desde una caja de ruta que no tienes asignada.',
           );
         }
-
         return caja;
       }
-    }
-
-    if (!esOperadorConBase) {
-      return findCajaOficina();
     }
 
     const cajaBaseOperador = await findCajaBaseOperador();
