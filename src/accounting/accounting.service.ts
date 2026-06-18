@@ -92,7 +92,12 @@ export class AccountingService {
       referenciaId: t.referenciaId ?? undefined,
       responsable: `${t.creadoPor.nombres} ${t.creadoPor.apellidos}`,
       estado: 'APROBADO' as const,
-      origen: t.caja.tipo === 'RUTA' ? 'COBRADOR' : 'EMPRESA',
+      origen:
+        t.caja.tipo === 'RUTA' && !t.caja.rutaId
+          ? 'SUPERVISOR'
+          : t.caja.tipo === 'RUTA'
+            ? 'COBRADOR'
+            : 'EMPRESA',
       categoria: t.tipoReferencia || 'GENERAL',
       rutaId: t.caja.rutaId,
       cajaSaldo: Number(t.caja.saldoActual),
@@ -147,17 +152,135 @@ export class AccountingService {
     return creada;
   }
 
-  private async resolveActiveRouteCashContext(rutaId: string) {
+  async asegurarCajaSupervisor(supervisorId: string) {
+    const supervisor = await this.prisma.usuario.findUnique({
+      where: { id: supervisorId },
+      select: { id: true, nombres: true, apellidos: true, rol: true },
+    });
+
+    if (!supervisor?.id) {
+      throw new NotFoundException('Supervisor no encontrado');
+    }
+
+    if (supervisor.rol !== 'SUPERVISOR') {
+      throw new BadRequestException('El usuario no es un supervisor');
+    }
+
+    const existente = await this.prisma.caja.findFirst({
+      where: {
+        tipo: 'RUTA',
+        activa: true,
+        responsableId: supervisorId,
+        rutaId: null,
+      },
+      include: {
+        responsable: { select: { id: true, nombres: true, apellidos: true } },
+      },
+    });
+
+    if (existente?.id) {
+      return existente;
+    }
+
+    const nombreSupervisor = `${supervisor.nombres} ${supervisor.apellidos}`.trim();
+    const codigoCaja = `CAJA-SUP-${supervisorId.slice(0, 8).toUpperCase()}`;
+    const nombreCaja = `Caja Supervisor - ${nombreSupervisor}`;
+
+    const creada = await this.prisma.caja.create({
+      data: {
+        codigo: codigoCaja,
+        nombre: nombreCaja,
+        tipo: 'RUTA',
+        rutaId: null,
+        responsableId: supervisorId,
+        saldoActual: 0,
+        activa: true,
+      },
+      include: {
+        responsable: { select: { id: true, nombres: true, apellidos: true } },
+      },
+    });
+
+    this.logger.log(
+      `Caja de supervisor creada: ${nombreCaja} (${codigoCaja}) para ${nombreSupervisor}`,
+    );
+
+    return creada;
+  }
+
+  private async asegurarCajasSupervisoresActivos() {
+    const supervisores = await this.prisma.usuario.findMany({
+      where: {
+        rol: 'SUPERVISOR',
+        estado: 'ACTIVO',
+        eliminadoEn: null,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    for (const supervisor of supervisores) {
+      await this.asegurarCajaSupervisor(supervisor.id);
+    }
+  }
+
+  private async resolveActiveRouteCashContext(
+    rutaId: string,
+    actor?: { id?: string; rol?: string } | null,
+  ) {
+    const rol = String(actor?.rol || '').toUpperCase();
+
     const ruta = await this.prisma.ruta.findFirst({
-      where: { id: rutaId, eliminadoEn: null },
-      select: { id: true, cobradorId: true },
+      where: {
+        id: rutaId,
+        eliminadoEn: null,
+        ...(rol === 'SUPERVISOR' && actor?.id ? { supervisorId: actor.id } : {}),
+      },
+      select: {
+        id: true,
+        cobradorId: true,
+        supervisorId: true,
+      },
     });
 
     if (!ruta?.id) {
       throw new NotFoundException('Ruta no encontrada');
     }
+
+    if (rol === 'SUPERVISOR' && actor?.id && ruta.supervisorId !== actor.id) {
+      throw new ForbiddenException(
+        'No tienes permiso para realizar operaciones en esta ruta supervisada.',
+      );
+    }
+
     if (!ruta.cobradorId) {
       throw new BadRequestException('La ruta no tiene cobrador asignado');
+    }
+
+    // Si es supervisor, usar su caja propia
+    if (rol === 'SUPERVISOR' && actor?.id) {
+      const cajaSupervisor =
+        await this.prisma.caja.findFirst({
+          where: {
+            tipo: 'RUTA' as any,
+            activa: true,
+            responsableId: actor.id,
+            rutaId: null,
+          },
+        });
+
+      if (!cajaSupervisor) {
+        throw new BadRequestException(
+          'El supervisor no tiene una caja operativa activa asignada para registrar gastos.',
+        );
+      }
+
+      return {
+        rutaId: ruta.id,
+        cobradorId: actor.id,
+        cajaRuta: cajaSupervisor,
+      };
     }
 
     const cajaRuta = await this.prisma.caja.findFirst({
@@ -312,6 +435,7 @@ export class AccountingService {
     // Aseguramos cajas por defecto también de forma lazy.
     // onModuleInit puede no crearlas si al momento de arrancar no existía un ADMIN/SUPER_ADMIN activo.
     await this.ensureCajasDefault();
+    await this.asegurarCajasSupervisoresActivos();
     const cajas = await this.prisma.caja.findMany({
       where: { activa: true },
       include: {
@@ -342,6 +466,22 @@ export class AccountingService {
           saldoCalculado = Number(caja.saldoActual);
         }
 
+        // Si es caja de supervisor (rutaId null), obtener rutas supervisadas
+        let rutasSupervisadas: any[] = [];
+        if (caja.tipo === 'RUTA' && !caja.rutaId && caja.responsableId) {
+          rutasSupervisadas = await this.prisma.ruta.findMany({
+            where: {
+              supervisorId: caja.responsableId,
+              eliminadoEn: null,
+            },
+            select: {
+              id: true,
+              nombre: true,
+              codigo: true,
+            },
+          });
+        }
+
         return {
           id: caja.id,
           codigo: caja.codigo,
@@ -359,6 +499,7 @@ export class AccountingService {
           estado: caja.activa ? 'ABIERTA' : 'CERRADA',
           transacciones: caja._count.transacciones,
           ultimaActualizacion: formatBogotaOffsetIso(caja.actualizadoEn),
+          rutasSupervisadas,
         };
       }),
     );
@@ -456,14 +597,19 @@ export class AccountingService {
       }
     }
 
-    const { rutaId, cobradorId, cajaRuta } =
-      await this.resolveActiveRouteCashContext(data.rutaId);
-
-    // Buscar nombre del solicitante
+    // Buscar el solicitante para obtener su rol
     const solicitante = await this.prisma.usuario.findUnique({
       where: { id: data.solicitadoPorId },
-      select: { nombres: true, apellidos: true },
+      select: { id: true, nombres: true, apellidos: true, rol: true },
     });
+
+    const actor = solicitante
+      ? { id: solicitante.id, rol: solicitante.rol }
+      : undefined;
+
+    const { rutaId, cobradorId, cajaRuta } =
+      await this.resolveActiveRouteCashContext(data.rutaId, actor);
+
     const nombreSolicitante = solicitante
       ? `${solicitante.nombres} ${solicitante.apellidos}`.trim()
       : 'Cobrador';
@@ -766,8 +912,18 @@ export class AccountingService {
     cobradorId: string;
     solicitadoPorId: string;
   }) {
+    // Buscar el solicitante para obtener su rol
+    const solicitante = await this.prisma.usuario.findUnique({
+      where: { id: data.solicitadoPorId },
+      select: { id: true, rol: true },
+    });
+
+    const actor = solicitante
+      ? { id: solicitante.id, rol: solicitante.rol }
+      : undefined;
+
     const { rutaId, cobradorId, cajaRuta } =
-      await this.resolveActiveRouteCashContext(data.rutaId);
+      await this.resolveActiveRouteCashContext(data.rutaId, actor);
 
     const aprobacion = await this.prisma.aprobacion.create({
       data: {
@@ -858,10 +1014,25 @@ export class AccountingService {
     userId: string,
   ) {
     try {
+      // Permitir cajas RUTA solo para supervisor sin rutaId asignada
       if (data.tipo === 'RUTA') {
-        throw new ForbiddenException(
-          'Las cajas de ruta se crean automáticamente al crear la ruta. Si falta, use la opción de reparar/asegurar la caja de la ruta.',
-        );
+        if (data.rutaId) {
+          throw new ForbiddenException(
+            'Las cajas de ruta se crean automáticamente al crear la ruta. Si falta, use la opción de reparar/asegurar la caja de la ruta.',
+          );
+        }
+
+        // Validar que el responsable sea supervisor para cajas RUTA sin rutaId
+        const responsable = await this.prisma.usuario.findUnique({
+          where: { id: data.responsableId },
+          select: { rol: true },
+        });
+
+        if (!responsable || responsable.rol !== 'SUPERVISOR') {
+          throw new ForbiddenException(
+            'Las cajas de tipo RUTA sin ruta asignada solo pueden ser creadas para supervisores.',
+          );
+        }
       }
 
       // 1. Validar Usuario actual y Permisos
@@ -876,19 +1047,20 @@ export class AccountingService {
         );
       }
 
-      // Regla: Solo Admin, SuperAdmin, Contador y Coordinador pueden crear Cajas Principales
-      if (data.tipo === 'PRINCIPAL') {
-        const rolesPermitidos = [
-          'ADMIN',
-          'SUPER_ADMINISTRADOR',
-          'CONTADOR',
-          'COORDINADOR',
-        ];
-        if (!rolesPermitidos.includes(currentUser.rol)) {
-          throw new ForbiddenException(
-            'No tienes permisos para crear una Caja Principal',
-          );
-        }
+      const rolesPermitidosCrearCaja = [
+        'ADMIN',
+        'SUPER_ADMINISTRADOR',
+        'CONTADOR',
+        'COORDINADOR',
+      ];
+
+      if (
+        (data.tipo === 'PRINCIPAL' || data.tipo === 'RUTA') &&
+        !rolesPermitidosCrearCaja.includes(currentUser.rol)
+      ) {
+        throw new ForbiddenException(
+          'No tienes permisos para crear cajas.',
+        );
       }
 
       // 2. Validar que el responsable exista
@@ -963,7 +1135,11 @@ export class AccountingService {
               lines: [
                 {
                   accountCode:
-                    nuevaCaja.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1',
+                    nuevaCaja.tipo === 'RUTA'
+                      ? '1.2.1'
+                      : nuevaCaja.codigo === 'CAJA-BANCO'
+                        ? '1.1.2'
+                        : '1.1.1',
                   debitAmount: data.saldoInicial,
                   cajaId: nuevaCaja.id,
                   cajaDelta: +data.saldoInicial,
@@ -1710,19 +1886,31 @@ export class AccountingService {
     });
     if (!caja) throw new NotFoundException('Caja no encontrada');
 
-    // VALIDACIÓN: Si es un egreso de caja de ruta, verificar saldo disponible del día
-    if (data.tipo === 'EGRESO' && caja.tipo === 'RUTA' && caja.rutaId) {
-      const saldoInfo = await this.getSaldoDisponibleRuta(caja.rutaId);
-      if (data.monto > saldoInfo.saldoDisponible) {
-        throw new BadRequestException(
-          `Saldo insuficiente. Disponible: $${saldoInfo.saldoDisponible.toLocaleString()}, Recaudo del día: $${saldoInfo.recaudoDelDia.toLocaleString()}, Gastos del día: $${saldoInfo.gastosDelDia.toLocaleString()}`,
-        );
-      }
+    // VALIDACIÓN: Si es un egreso de caja de ruta, verificar saldo disponible
+    if (data.tipo === 'EGRESO' && caja.tipo === 'RUTA') {
+      if (caja.rutaId) {
+        // Caja de ruta normal: validar saldo disponible del día
+        const saldoInfo = await this.getSaldoDisponibleRuta(caja.rutaId);
+        if (data.monto > saldoInfo.saldoDisponible) {
+          throw new BadRequestException(
+            `Saldo insuficiente. Disponible: $${saldoInfo.saldoDisponible.toLocaleString()}, Recaudo del día: $${saldoInfo.recaudoDelDia.toLocaleString()}, Gastos del día: $${saldoInfo.gastosDelDia.toLocaleString()}`,
+          );
+        }
 
-      // Regla de negocio: los egresos realizados por el cobrador en su ruta se consideran deuda del cobrador
-      // (cuenta por cobrar), por lo que no deben afectar la utilidad del negocio.
-      if (!data.tipoReferencia) {
-        data.tipoReferencia = 'DEUDA_COBRADOR';
+        // Regla de negocio: los egresos realizados por el cobrador en su ruta se consideran deuda del cobrador
+        // (cuenta por cobrar), por lo que no deben afectar la utilidad del negocio.
+        if (!data.tipoReferencia) {
+          data.tipoReferencia = 'DEUDA_COBRADOR';
+        }
+      } else {
+        // Caja de supervisor (rutaId null): validar saldo actual de la caja
+        const saldoDisponible = Number(caja.saldoActual || 0);
+        if (data.monto > saldoDisponible) {
+          throw new BadRequestException(
+            `Saldo insuficiente. Disponible: $${saldoDisponible.toLocaleString('es-CO')}`,
+          );
+        }
+        // Para supervisor, no asumir automáticamente DEUDA_COBRADOR
       }
     }
 
@@ -2144,7 +2332,7 @@ export class AccountingService {
       where: { id: cajaId },
       select: { rutaId: true, nombre: true, tipo: true },
     });
-    if (!caja || !caja.rutaId) {
+    if (!caja) {
       return { efectivo: 0, transferencia: 0, total: 0, fecha: null };
     }
 
@@ -2154,6 +2342,37 @@ export class AccountingService {
     const fechaKey = getBogotaDayKey(baseDate);
     const { startDate: rangeStart, endDate: rangeEnd } =
       getBogotaStartEndOfDayFromKey(fechaKey);
+
+    // Si es caja de supervisor (rutaId null), calcular desde transacciones
+    if (!caja.rutaId) {
+      const transaccionesPago = await this.prisma.transaccion.findMany({
+        where: {
+          cajaId,
+          tipoReferencia: 'PAGO',
+          tipo: 'INGRESO',
+          fechaTransaccion: {
+            gte: rangeStart,
+            lte: rangeEnd,
+          },
+        },
+        select: {
+          monto: true,
+        },
+      });
+
+      const efectivo = transaccionesPago.reduce(
+        (sum, t) => sum + Number(t.monto || 0),
+        0,
+      );
+
+      return {
+        efectivo,
+        transferencia: 0,
+        total: efectivo,
+        fecha: formatBogotaOffsetIso(rangeStart),
+        cajaNombre: caja.nombre,
+      };
+    }
 
     // Obtener los clienteIds asignados a esta ruta
     const asignaciones = await this.prisma.asignacionRuta.findMany({
@@ -2402,11 +2621,12 @@ export class AccountingService {
         where: { activa: true },
         _sum: { saldoActual: true },
       }),
-      this.prisma.caja.count({ where: { tipo: 'RUTA', activa: true } }),
+      this.prisma.caja.count({ where: { tipo: 'RUTA', activa: true, rutaId: { not: null } } }),
       this.prisma.caja.count({
         where: {
           tipo: 'RUTA',
           activa: true,
+          rutaId: { not: null },
           NOT: {
             transacciones: {
               some: {
@@ -2421,6 +2641,7 @@ export class AccountingService {
         where: {
           tipo: 'RUTA',
           activa: true,
+          rutaId: { not: null },
           NOT: {
             transacciones: {
               some: {
@@ -2435,6 +2656,7 @@ export class AccountingService {
         where: {
           tipo: 'RUTA',
           activa: true,
+          rutaId: { not: null },
           transacciones: {
             some: {
               tipoReferencia: 'CIERRE_RUTA',
@@ -3224,11 +3446,13 @@ export class AccountingService {
       ruta: c.ruta?.nombre || 'N/A',
       saldo: Number(c.saldoActual),
       tipoCaja:
-        c.tipo === 'RUTA'
-          ? 'COBRADOR'
-          : c.codigo === 'CAJA-PRINCIPAL'
-            ? 'PRINCIPAL'
-            : 'EMPRESA',
+        c.tipo === 'RUTA' && !c.rutaId
+          ? 'SUPERVISOR'
+          : c.tipo === 'RUTA'
+            ? 'COBRADOR'
+            : c.codigo === 'CAJA-PRINCIPAL'
+              ? 'PRINCIPAL'
+              : 'EMPRESA',
     }));
 
     const filasTransacciones: TransaccionRow[] = journalEntries.map(
@@ -3379,6 +3603,7 @@ export class AccountingService {
         caja: {
           select: {
             ruta: { select: { cobradorId: true } },
+            responsable: { select: { id: true, rol: true } },
           },
         },
       },
@@ -3435,6 +3660,8 @@ export class AccountingService {
               caja: {
                 select: {
                   ruta: { select: { cobradorId: true } },
+                  responsableId: true,
+                  responsable: { select: { id: true, rol: true } },
                 },
               },
             },
@@ -3457,7 +3684,11 @@ export class AccountingService {
           cobradorId = String(entry.referenceId || '').split('|')[0] || null;
         } else if (entry.referenceType === 'ARQUEO') {
           const trx: any = transaccionMap.get(entry.referenceId);
-          cobradorId = trx?.caja?.ruta?.cobradorId || null;
+          cobradorId =
+            trx?.caja?.ruta?.cobradorId ||
+            (trx?.caja?.responsable?.rol === 'SUPERVISOR'
+              ? trx.caja.responsableId
+              : null);
           cajaId = trx?.cajaId || '';
           descripcion = descripcion || trx?.descripcion || '';
         }
@@ -3522,10 +3753,19 @@ export class AccountingService {
       select: {
         id: true,
         saldoActual: true,
+        responsableId: true,
+        responsable: {
+          select: {
+            id: true,
+            rol: true,
+          },
+        },
         ruta: {
-          select: { cobradorId: true }
-        }
-      }
+          select: {
+            cobradorId: true,
+          },
+        },
+      },
     });
 
     const activeCajaIds = new Set(cajasRuta.map(c => c.id));
@@ -3552,6 +3792,11 @@ export class AccountingService {
       } else {
         // DEUDA_COBRADOR / CIERRE_RUTA: obtener cobradorId desde la caja/ruta
         cobradorId = trx?.caja?.ruta?.cobradorId || null;
+
+        // Si no hay ruta (caja de supervisor), usar responsableId
+        if (!cobradorId && trx?.caja?.responsable?.rol === 'SUPERVISOR') {
+          cobradorId = trx.caja.responsable.id;
+        }
 
         // Evitar duplicados por concurrencia
         if (trx.referenciaId) {
@@ -3621,7 +3866,10 @@ export class AccountingService {
     
     const saldosCajasMap = new Map<string, number>();
     for (const caja of cajasRuta) {
-      const cid = caja.ruta?.cobradorId;
+      const cid =
+        caja.ruta?.cobradorId ||
+        (caja.responsable?.rol === 'SUPERVISOR' ? caja.responsableId : null);
+
       if (cid) {
         const actual = saldosCajasMap.get(cid) || 0;
         saldosCajasMap.set(cid, actual + Number(caja.saldoActual || 0));

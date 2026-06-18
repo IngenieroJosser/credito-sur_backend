@@ -81,6 +81,17 @@ export class AccountingController {
     return this.accountingService.asegurarCajaRuta(rutaId);
   }
 
+  @Post('cajas/supervisor/:supervisorId/asegurar')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.CONTADOR,
+    RolUsuario.COORDINADOR,
+  )
+  asegurarCajaSupervisor(@Param('supervisorId', ParseUUIDPipe) supervisorId: string) {
+    return this.accountingService.asegurarCajaSupervisor(supervisorId);
+  }
+
   @Patch('cajas/:id')
   @Roles(
     RolUsuario.SUPER_ADMINISTRADOR,
