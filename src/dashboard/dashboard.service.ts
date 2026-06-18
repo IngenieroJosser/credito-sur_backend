@@ -688,9 +688,8 @@ export class DashboardService {
         const pagos = pagosPorDiaKey.get(dayKey) || 0;
         const total = pagos;
 
-        let metaNominal = 0;
-        const acumuladoPorPrestamo = new Map<string, number>();
-        const primeraCuotaPorPrestamo = new Map<string, number>();
+        // Calcular meta operativa del día: una cuota objetivo por préstamo
+        const cuotaObjetivoPorPrestamo = new Map<string, number>();
 
         for (const c of cuotasNoPagadasHastaFin) {
           if (!c.prestamoId) continue;
@@ -706,13 +705,12 @@ export class DashboardService {
           }
 
           const pid = String(c.prestamoId);
-          const freq = String(c.prestamo?.frecuenciaPago || '').toUpperCase();
-          const isDiario = freq === 'DIARIO' || freq === 'DIA';
+
+          // Solo tomar una cuota por préstamo (la primera válida para este día)
+          if (cuotaObjetivoPorPrestamo.has(pid)) continue;
 
           const montoFull = Number(c.monto || 0);
           const montoPagado = Number(c.montoPagado || 0);
-          // If it's PARCIAL currently, and we are in the past, it might have been fully unpaid.
-          // For simplicity we just use the current montoPendiente as routes does.
           const montoPendiente =
             c.estado === EstadoCuota.PARCIAL
               ? Math.max(0, montoFull - montoPagado)
@@ -720,27 +718,13 @@ export class DashboardService {
 
           if (montoPendiente <= 0) continue;
 
-          if (isDiario) {
-            acumuladoPorPrestamo.set(
-              pid,
-              (acumuladoPorPrestamo.get(pid) || 0) + montoPendiente,
-            );
-          } else {
-            if (!primeraCuotaPorPrestamo.has(pid)) {
-              primeraCuotaPorPrestamo.set(pid, montoPendiente);
-            }
-          }
+          cuotaObjetivoPorPrestamo.set(pid, montoPendiente);
         }
 
-        for (const monto of acumuladoPorPrestamo.values()) {
-          metaNominal += monto;
-        }
-        for (const monto of primeraCuotaPorPrestamo.values()) {
-          metaNominal += monto;
-        }
-
-        // target es metaNominal del día + lo que efectivamente se recaudó ese día
-        const target = metaNominal + total;
+        const target = Array.from(cuotaObjetivoPorPrestamo.values()).reduce(
+          (sum, value) => sum + Number(value || 0),
+          0,
+        );
 
         // Crear etiqueta más descriptiva: día de semana + fecha
         const dayName = daysOfWeek[currentDate.getDay()];
@@ -781,9 +765,8 @@ export class DashboardService {
         const pagos = pagosPorDiaKey.get(dayKey) || 0;
         const value = pagos;
 
-        let metaNominal = 0;
-        const acumuladoPorPrestamo = new Map<string, number>();
-        const primeraCuotaPorPrestamo = new Map<string, number>();
+        // Calcular meta operativa del día: una cuota objetivo por préstamo
+        const cuotaObjetivoPorPrestamo = new Map<string, number>();
 
         for (const c of cuotasNoPagadasHastaFin) {
           if (!c.prestamoId) continue;
@@ -796,8 +779,9 @@ export class DashboardService {
           }
 
           const pid = String(c.prestamoId);
-          const freq = String(c.prestamo?.frecuenciaPago || '').toUpperCase();
-          const isDiario = freq === 'DIARIO' || freq === 'DIA';
+
+          // Solo tomar una cuota por préstamo (la primera válida para este día)
+          if (cuotaObjetivoPorPrestamo.has(pid)) continue;
 
           const montoFull = Number(c.monto || 0);
           const montoPagado = Number(c.montoPagado || 0);
@@ -808,26 +792,13 @@ export class DashboardService {
 
           if (montoPendiente <= 0) continue;
 
-          if (isDiario) {
-            acumuladoPorPrestamo.set(
-              pid,
-              (acumuladoPorPrestamo.get(pid) || 0) + montoPendiente,
-            );
-          } else {
-            if (!primeraCuotaPorPrestamo.has(pid)) {
-              primeraCuotaPorPrestamo.set(pid, montoPendiente);
-            }
-          }
+          cuotaObjetivoPorPrestamo.set(pid, montoPendiente);
         }
 
-        for (const monto of acumuladoPorPrestamo.values()) {
-          metaNominal += monto;
-        }
-        for (const monto of primeraCuotaPorPrestamo.values()) {
-          metaNominal += monto;
-        }
-
-        const target = metaNominal + value;
+        const target = Array.from(cuotaObjetivoPorPrestamo.values()).reduce(
+          (sum, value) => sum + Number(value || 0),
+          0,
+        );
 
         monthMapValue.set(monthKey, (monthMapValue.get(monthKey) || 0) + value);
         monthMapTarget.set(

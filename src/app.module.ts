@@ -31,6 +31,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { APP_GUARD } from '@nestjs/core';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { RateLimitGuard } from './common/guards/rate-limit.guard';
+import { HealthController } from './health.controller';
 
 const shouldEnableMirrorSync =
   process.env.MIRROR_SYNC_ENABLED === 'true' &&
@@ -85,7 +86,7 @@ const shouldEnableMirrorSync =
         ]
       : []),
   ],
-  controllers: [],
+  controllers: [HealthController],
   providers: [
     {
       provide: APP_GUARD,

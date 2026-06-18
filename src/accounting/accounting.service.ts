@@ -746,12 +746,15 @@ export class AccountingService {
           approvalId,
         };
       } catch (error) {
+        const message =
+          error instanceof Error ? error.message : JSON.stringify(error)
+
         this.logger.error(
           '[GASTO_PROVISIONAL] Error registrando gasto',
           error instanceof Error ? error.stack : JSON.stringify(error),
-        );
+        )
 
-        throw error;
+        throw new BadRequestException(`[GASTO_PROVISIONAL] ${message}`)
       }
     }
   }
@@ -1619,6 +1622,30 @@ export class AccountingService {
     const totalGastos = gastosOperativos + otrosEgresos;
     const saldoNetoPeriodo = totalRecaudoAll - totalGastos - desembolsos;
 
+    // 4. Calcular gastos desde la tabla Gasto para tener información precisa de aprobación
+    let gastosAprobados = 0;
+    let gastosPendientes = 0;
+
+    const gastos = await this.prisma.gasto.findMany({
+      where: {
+        rutaId,
+        fechaGasto: {
+          gte: rangeStart,
+          lte: rangeEnd,
+        },
+        tipoGasto: 'OPERATIVO',
+      },
+    });
+
+    gastos.forEach((g) => {
+      const monto = Number(g.monto);
+      if (g.estadoAprobacion === 'APROBADO' && g.resultadoRevisionGasto === 'APROBADO_OPERATIVO') {
+        gastosAprobados += monto;
+      } else if (g.estadoAprobacion === 'PENDIENTE' && g.esProvisional === true && g.aplicadoEnCaja === true) {
+        gastosPendientes += monto;
+      }
+    });
+
     return {
       rutaId,
       cajaId: caja.id,
@@ -1632,11 +1659,11 @@ export class AccountingService {
       cobranzaDelDia: totalCobranza,
       recaudosPorReferencia,
 
-      // Solo gastos operativos aprobados
-      gastosDelDia: gastosOperativos,
+      // Gastos operativos aprobados desde tabla Gasto
+      gastosDelDia: gastosAprobados,
 
-      // Gastos pendientes de revisión
-      egresosProvisionales: otrosEgresos,
+      // Gastos pendientes de revisión desde tabla Gasto
+      egresosProvisionales: gastosPendientes,
 
       // Total de salidas reales de caja del período
       totalEgresosCaja: gastosOperativos + otrosEgresos + desembolsos,
