@@ -61,6 +61,17 @@ export class ApprovalsController {
     return this.approvalsService.getSuperadminReviewItems();
   }
 
+  @Get(':id/context')
+  @Roles(
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPERVISOR,
+  )
+  async getApprovalContext(@Param('id') id: string) {
+    return this.approvalsService.getApprovalContext(id);
+  }
+
   @Post(':id/approve')
   @Roles(
     RolUsuario.COORDINADOR,

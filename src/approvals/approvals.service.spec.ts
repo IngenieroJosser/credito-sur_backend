@@ -187,6 +187,202 @@ describe('ApprovalsService pending loan reconciliation', () => {
     jest.clearAllMocks();
   });
 
+  it('arma contexto de evaluación para una reprogramación con créditos, pagos y alertas', async () => {
+    const approval = {
+      id: 'aprobacion-reprogramacion-1',
+      tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
+      referenciaId: 'cuota-1',
+      tablaReferencia: 'cuotas',
+      solicitadoPorId: 'supervisor-1',
+      aprobadoPorId: null,
+      estado: EstadoAprobacion.PENDIENTE,
+      comentarios: null,
+      datosAprobados: null,
+      montoSolicitud: null,
+      creadoEn: new Date('2026-06-19T13:32:00.000Z'),
+      actualizadoEn: new Date('2026-06-19T13:32:00.000Z'),
+      revisadoEn: null,
+      datosSolicitud: {
+        prestamoId: 'prestamo-solicitud',
+        cuotaId: 'cuota-1',
+        clienteId: 'cliente-1',
+        numeroPrestamo: 'PRES-000018',
+        numeroCuota: 4,
+        nuevaFecha: '2026-06-20',
+        motivo: 'Cliente solicita pagar mañana',
+        montoCuota: 45832,
+      },
+      solicitadoPor: {
+        id: 'supervisor-1',
+        nombres: 'Supervisor',
+        apellidos: 'Operativo',
+        rol: RolUsuario.SUPERVISOR,
+      },
+      aprobadoPor: null,
+    };
+
+    const prisma = {
+      aprobacion: {
+        findUnique: jest.fn().mockResolvedValue(approval),
+        count: jest.fn().mockResolvedValue(3),
+      },
+      cliente: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'cliente-1',
+          codigo: 'C001',
+          dni: '123',
+          nombres: 'Josser',
+          apellidos: 'Cordoba Rivas',
+          telefono: '300',
+          direccion: 'Calle 1',
+          nivelRiesgo: 'AMARILLO',
+          enListaNegra: false,
+          referencia1Nombre: 'Maria',
+          referencia1Telefono: '301',
+          referencia2Nombre: 'Carlos',
+          referencia2Telefono: '302',
+          asignacionesRuta: [
+            {
+              ruta: {
+                id: 'ruta-1',
+                nombre: 'Ruta Centro',
+                codigo: 'R-1',
+                cobrador: {
+                  id: 'cobrador-1',
+                  nombres: 'Cobra',
+                  apellidos: 'Dor',
+                },
+              },
+            },
+          ],
+        }),
+      },
+      prestamo: {
+        findUnique: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'prestamo-solicitud',
+            numeroPrestamo: 'PRES-000018',
+            estado: EstadoPrestamo.ACTIVO,
+            saldoPendiente: 200000,
+            monto: 500000,
+            tipoPrestamo: 'EFECTIVO',
+            frecuenciaPago: 'DIARIO',
+            cantidadCuotas: 12,
+            cuotas: [
+              {
+                id: 'cuota-1',
+                numeroCuota: 4,
+                monto: 45832,
+                montoPagado: 0,
+                estado: EstadoCuota.VENCIDA,
+                fechaVencimiento: new Date('2026-06-18T12:00:00.000Z'),
+              },
+              {
+                id: 'cuota-2',
+                numeroCuota: 5,
+                monto: 45832,
+                montoPagado: 0,
+                estado: EstadoCuota.PENDIENTE,
+                fechaVencimiento: new Date('2026-06-20T12:00:00.000Z'),
+              },
+            ],
+            producto: null,
+          },
+          {
+            id: 'prestamo-historico',
+            numeroPrestamo: 'PRES-000010',
+            estado: EstadoPrestamo.EN_MORA,
+            saldoPendiente: 100000,
+            monto: 300000,
+            tipoPrestamo: 'EFECTIVO',
+            frecuenciaPago: 'DIARIO',
+            cantidadCuotas: 6,
+            cuotas: [
+              {
+                id: 'cuota-3',
+                numeroCuota: 1,
+                monto: 50000,
+                montoPagado: 50000,
+                estado: EstadoCuota.PAGADA,
+                fechaVencimiento: new Date('2026-06-01T12:00:00.000Z'),
+              },
+              {
+                id: 'cuota-4',
+                numeroCuota: 2,
+                monto: 50000,
+                montoPagado: 0,
+                estado: EstadoCuota.VENCIDA,
+                fechaVencimiento: new Date('2026-06-05T12:00:00.000Z'),
+              },
+            ],
+            producto: null,
+          },
+        ]),
+      },
+      multimedia: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'foto-1',
+            clienteId: 'cliente-1',
+            tipoContenido: 'IMAGEN',
+            url: 'https://example.com/foto.jpg',
+            descripcion: 'Evidencia visita',
+          },
+        ]),
+      },
+      pago: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'pago-1',
+            prestamoId: 'prestamo-solicitud',
+            montoTotal: 50000,
+            metodoPago: MetodoPago.EFECTIVO,
+            fechaPago: new Date('2026-06-10T15:00:00.000Z'),
+          },
+          {
+            id: 'pago-2',
+            prestamoId: 'prestamo-historico',
+            montoTotal: 33333,
+            metodoPago: MetodoPago.EFECTIVO,
+            fechaPago: new Date('2026-06-12T15:00:00.000Z'),
+          },
+        ]),
+      },
+    };
+
+    const result = await makeService(prisma).getApprovalContext(approval.id);
+
+    expect(result.approval.datosSolicitud.prestamoId).toBe('prestamo-solicitud');
+    expect(result.cliente.id).toBe('cliente-1');
+    expect(result.creditoSolicitud.id).toBe('prestamo-solicitud');
+    expect(result.creditosCliente).toHaveLength(2);
+    expect(result.referencias).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ tipo: 'REFERENCIA_1', nombre: 'Maria' }),
+        expect.objectContaining({ tipo: 'REFERENCIA_2', nombre: 'Carlos' }),
+      ]),
+    );
+    expect(result.multimedia).toHaveLength(1);
+    expect(result.pagosUltimos30Dias).toHaveLength(2);
+    expect(result.metricas).toMatchObject({
+      saldoTotalPendiente: 300000,
+      creditosActivos: 2,
+      cuotasVencidas: 2,
+      cuotasPagadas: 1,
+      reprogramacionesPrevias: 3,
+      pagosUltimos30Dias: 2,
+      montoPagadoUltimos30Dias: 83333,
+      candidatoReprogramacion: false,
+    });
+    expect(result.metricas.alertas).toEqual(
+      expect.arrayContaining([
+        'El cliente tiene 2 cuota(s) vencida(s).',
+        'El cliente registra 3 reprogramación(es).',
+      ]),
+    );
+  });
+
   it('crea una aprobación faltante para préstamos pendientes y la expone en revisiones', async () => {
     const orphanLoan = {
       id: 'prestamo-huerfano-1',

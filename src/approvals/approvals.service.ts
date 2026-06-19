@@ -192,6 +192,280 @@ export class ApprovalsService {
     }
   }
 
+  private parseJsonObject(value: any): Record<string, any> {
+    if (!value) return {};
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+      } catch {
+        return {};
+      }
+    }
+    return typeof value === 'object' ? value : {};
+  }
+
+  private buildReferenciasCliente(cliente: any) {
+    return [
+      {
+        tipo: 'REFERENCIA_1',
+        nombre: cliente?.referencia1Nombre,
+        telefono: cliente?.referencia1Telefono,
+      },
+      {
+        tipo: 'REFERENCIA_2',
+        nombre: cliente?.referencia2Nombre,
+        telefono: cliente?.referencia2Telefono,
+      },
+      {
+        tipo: 'REFERENCIA_GENERAL',
+        nombre: cliente?.referencia,
+        telefono: null,
+      },
+    ].filter((referencia) => referencia.nombre || referencia.telefono);
+  }
+
+  async getApprovalContext(aprobacionId: string) {
+    const approval = await this.prisma.aprobacion.findUnique({
+      where: { id: aprobacionId },
+      include: {
+        solicitadoPor: {
+          select: { id: true, nombres: true, apellidos: true, rol: true },
+        },
+        aprobadoPor: {
+          select: { id: true, nombres: true, apellidos: true, rol: true },
+        },
+      },
+    });
+
+    if (!approval) {
+      throw new NotFoundException('Aprobación no encontrada');
+    }
+
+    const datosSolicitud = this.parseJsonObject(approval.datosSolicitud);
+    const prestamoId = String(datosSolicitud.prestamoId || '').trim();
+    let clienteId = String(datosSolicitud.clienteId || '').trim();
+
+    if (!clienteId && prestamoId) {
+      const prestamoBase = await this.prisma.prestamo.findUnique({
+        where: { id: prestamoId },
+        select: { clienteId: true },
+      });
+      clienteId = prestamoBase?.clienteId || '';
+    }
+
+    if (!clienteId) {
+      return {
+        approval: { ...approval, datosSolicitud },
+        cliente: null,
+        creditoSolicitud: null,
+        creditosCliente: [],
+        referencias: [],
+        multimedia: [],
+        pagosUltimos30Dias: [],
+        metricas: {
+          saldoTotalPendiente: 0,
+          creditosActivos: 0,
+          cuotasVencidas: 0,
+          cuotasPagadas: 0,
+          reprogramacionesPrevias: 0,
+          pagosUltimos30Dias: 0,
+          montoPagadoUltimos30Dias: 0,
+          candidatoReprogramacion: false,
+          alertas: ['La solicitud no tiene cliente asociado.'],
+        },
+      };
+    }
+
+    const fechaHace30Dias = new Date(Date.now() - 30 * 86_400_000);
+
+    const [
+      cliente,
+      creditosCliente,
+      multimedia,
+      reprogramacionesPrevias,
+      pagosUltimos30Dias,
+    ] = await Promise.all([
+      this.prisma.cliente.findUnique({
+        where: { id: clienteId },
+        select: {
+          id: true,
+          codigo: true,
+          dni: true,
+          nombres: true,
+          apellidos: true,
+          telefono: true,
+          direccion: true,
+          nivelRiesgo: true,
+          enListaNegra: true,
+          razonListaNegra: true,
+          referencia: true,
+          referencia1Nombre: true,
+          referencia1Telefono: true,
+          referencia2Nombre: true,
+          referencia2Telefono: true,
+          asignacionesRuta: {
+            where: { activa: true },
+            select: {
+              ruta: {
+                select: {
+                  id: true,
+                  nombre: true,
+                  codigo: true,
+                  cobrador: {
+                    select: { id: true, nombres: true, apellidos: true },
+                  },
+                },
+              },
+            },
+            take: 1,
+          },
+        },
+      }),
+      this.prisma.prestamo.findMany({
+        where: { clienteId, eliminadoEn: null },
+        orderBy: { creadoEn: 'desc' },
+        include: {
+          producto: {
+            select: { id: true, nombre: true, marca: true, modelo: true },
+          },
+          cuotas: {
+            orderBy: { numeroCuota: 'asc' },
+            select: {
+              id: true,
+              numeroCuota: true,
+              fechaVencimiento: true,
+              fechaVencimientoProrroga: true,
+              fechaPago: true,
+              monto: true,
+              montoPagado: true,
+              estado: true,
+            },
+          },
+        },
+      }),
+      this.prisma.multimedia.findMany({
+        where: {
+          clienteId,
+          estado: 'ACTIVO' as any,
+          eliminadoEn: null,
+        },
+        orderBy: { creadoEn: 'desc' },
+        take: 50,
+      }),
+      this.prisma.aprobacion.count({
+        where: {
+          tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
+          estado: {
+            in: [
+              EstadoAprobacion.PENDIENTE,
+              EstadoAprobacion.APROBADO,
+              EstadoAprobacion.RECHAZADO,
+            ],
+          },
+          datosSolicitud: {
+            path: ['clienteId'],
+            equals: clienteId,
+          } as any,
+        },
+      }),
+      this.prisma.pago.findMany({
+        where: {
+          clienteId,
+          fechaPago: { gte: fechaHace30Dias },
+        },
+        orderBy: { fechaPago: 'desc' },
+        select: {
+          id: true,
+          numeroPago: true,
+          prestamoId: true,
+          montoTotal: true,
+          metodoPago: true,
+          fechaPago: true,
+          origenGestion: true,
+          fechaOperativaRuta: true,
+        },
+      }),
+    ]);
+
+    const ahora = new Date();
+    const cuotas = creditosCliente.flatMap((credito: any) =>
+      Array.isArray(credito.cuotas) ? credito.cuotas : [],
+    );
+    const cuotasVencidas = cuotas.filter((cuota: any) => {
+      if (cuota.estado === EstadoCuota.VENCIDA) return true;
+      if (
+        cuota.estado === EstadoCuota.PAGADA ||
+        cuota.estado === EstadoCuota.PRORROGADA
+      ) {
+        return false;
+      }
+      const fecha = cuota.fechaVencimientoProrroga || cuota.fechaVencimiento;
+      return fecha ? new Date(fecha).getTime() < ahora.getTime() : false;
+    }).length;
+    const cuotasPagadas = cuotas.filter(
+      (cuota: any) => cuota.estado === EstadoCuota.PAGADA,
+    ).length;
+    const saldoTotalPendiente = creditosCliente.reduce(
+      (sum: number, credito: any) => sum + Number(credito.saldoPendiente || 0),
+      0,
+    );
+    const creditosActivos = creditosCliente.filter((credito: any) =>
+      [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA].includes(
+        credito.estado,
+      ),
+    ).length;
+    const montoPagadoUltimos30Dias = pagosUltimos30Dias.reduce(
+      (sum: number, pago: any) => sum + Number(pago.montoTotal || 0),
+      0,
+    );
+
+    const alertas: string[] = [];
+    if (cliente?.enListaNegra) {
+      alertas.push('El cliente está en lista negra.');
+    }
+    if (cuotasVencidas > 0) {
+      alertas.push(`El cliente tiene ${cuotasVencidas} cuota(s) vencida(s).`);
+    }
+    if (reprogramacionesPrevias > 0) {
+      alertas.push(
+        `El cliente registra ${reprogramacionesPrevias} reprogramación(es).`,
+      );
+    }
+    if (montoPagadoUltimos30Dias <= 0) {
+      alertas.push('No registra pagos en los últimos 30 días.');
+    }
+
+    const metricas = {
+      saldoTotalPendiente,
+      creditosActivos,
+      cuotasVencidas,
+      cuotasPagadas,
+      reprogramacionesPrevias,
+      pagosUltimos30Dias: pagosUltimos30Dias.length,
+      montoPagadoUltimos30Dias,
+      candidatoReprogramacion:
+        cuotasVencidas <= 2 &&
+        reprogramacionesPrevias <= 2 &&
+        montoPagadoUltimos30Dias > 0 &&
+        !cliente?.enListaNegra,
+      alertas,
+    };
+
+    return {
+      approval: { ...approval, datosSolicitud },
+      cliente,
+      creditoSolicitud:
+        creditosCliente.find((credito: any) => credito.id === prestamoId) ||
+        null,
+      creditosCliente,
+      referencias: this.buildReferenciasCliente(cliente),
+      multimedia,
+      pagosUltimos30Dias,
+      metricas,
+    };
+  }
+
   async getMyRequests(usuarioId: string) {
     return this.prisma.aprobacion.findMany({
       where: { solicitadoPorId: usuarioId },
