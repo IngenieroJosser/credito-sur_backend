@@ -192,6 +192,323 @@ export class ApprovalsService {
     }
   }
 
+  private parseJsonObject(value: any): Record<string, any> {
+    if (!value) return {};
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+      } catch {
+        return {};
+      }
+    }
+    return typeof value === 'object' ? value : {};
+  }
+
+  private buildReferenciasCliente(cliente: any) {
+    return [
+      {
+        tipo: 'REFERENCIA_1',
+        nombre: cliente?.referencia1Nombre,
+        telefono: cliente?.referencia1Telefono,
+      },
+      {
+        tipo: 'REFERENCIA_2',
+        nombre: cliente?.referencia2Nombre,
+        telefono: cliente?.referencia2Telefono,
+      },
+      {
+        tipo: 'REFERENCIA_GENERAL',
+        nombre: cliente?.referencia,
+        telefono: null,
+      },
+    ].filter((referencia) => referencia.nombre || referencia.telefono);
+  }
+
+  private enrichApprovalContext(approval: any, datosSolicitud: Record<string, any>) {
+    return {
+      ...approval,
+      datosSolicitud,
+      solicitante: approval.solicitadoPor
+        ? `${approval.solicitadoPor.nombres || ''} ${approval.solicitadoPor.apellidos || ''}`.trim()
+        : 'Desconocido',
+      rolSolicitante: approval.solicitadoPor?.rol || 'N/A',
+    };
+  }
+
+  async getApprovalContext(aprobacionId: string) {
+    const approval = await this.prisma.aprobacion.findUnique({
+      where: { id: aprobacionId },
+      include: {
+        solicitadoPor: {
+          select: { id: true, nombres: true, apellidos: true, rol: true },
+        },
+        aprobadoPor: {
+          select: { id: true, nombres: true, apellidos: true, rol: true },
+        },
+      },
+    });
+
+    if (!approval) {
+      throw new NotFoundException('Aprobación no encontrada');
+    }
+
+    const datosSolicitud = this.parseJsonObject(approval.datosSolicitud);
+    let prestamoId = String(
+      datosSolicitud.prestamoId ||
+        (approval.tablaReferencia === 'Prestamo' ? approval.referenciaId : '') ||
+        '',
+    ).trim();
+    const tablaReferencia = String(approval.tablaReferencia || '');
+    const cuotaId = String(
+      datosSolicitud.cuotaId ||
+        (['Cuota', 'cuotas'].includes(tablaReferencia)
+          ? approval.referenciaId
+          : '') ||
+        '',
+    ).trim();
+    let clienteId = String(datosSolicitud.clienteId || '').trim();
+
+    if ((!clienteId || !prestamoId) && cuotaId) {
+      const cuotaBase = await this.prisma.cuota.findUnique({
+        where: { id: cuotaId },
+        select: {
+          id: true,
+          prestamoId: true,
+          prestamo: { select: { clienteId: true } },
+        },
+      });
+
+      if (!prestamoId) {
+        prestamoId = cuotaBase?.prestamoId || '';
+      }
+
+      if (!clienteId) {
+        clienteId = cuotaBase?.prestamo?.clienteId || '';
+      }
+    }
+
+    if (!clienteId && prestamoId) {
+      const prestamoBase = await this.prisma.prestamo.findUnique({
+        where: { id: prestamoId },
+        select: { clienteId: true },
+      });
+      clienteId = prestamoBase?.clienteId || '';
+    }
+
+    if (!clienteId) {
+      return {
+        approval: this.enrichApprovalContext(approval, datosSolicitud),
+        cliente: null,
+        creditoSolicitud: null,
+        creditosCliente: [],
+        referencias: [],
+        multimedia: [],
+        pagosUltimos30Dias: [],
+        metricas: {
+          saldoTotalPendiente: 0,
+          creditosActivos: 0,
+          cuotasVencidas: 0,
+          cuotasPagadas: 0,
+          reprogramacionesPrevias: 0,
+          pagosUltimos30Dias: 0,
+          montoPagadoUltimos30Dias: 0,
+          candidatoReprogramacion: false,
+          alertas: ['La solicitud no tiene cliente asociado.'],
+        },
+      };
+    }
+
+    const fechaHace30Dias = new Date(Date.now() - 30 * 86_400_000);
+
+    const [
+      cliente,
+      creditosCliente,
+      multimedia,
+      reprogramacionesPrevias,
+      pagosUltimos30Dias,
+    ] = await Promise.all([
+      this.prisma.cliente.findUnique({
+        where: { id: clienteId },
+        select: {
+          id: true,
+          codigo: true,
+          dni: true,
+          nombres: true,
+          apellidos: true,
+          telefono: true,
+          direccion: true,
+          nivelRiesgo: true,
+          enListaNegra: true,
+          razonListaNegra: true,
+          referencia: true,
+          referencia1Nombre: true,
+          referencia1Telefono: true,
+          referencia2Nombre: true,
+          referencia2Telefono: true,
+          asignacionesRuta: {
+            where: { activa: true },
+            select: {
+              ruta: {
+                select: {
+                  id: true,
+                  nombre: true,
+                  codigo: true,
+                  cobrador: {
+                    select: { id: true, nombres: true, apellidos: true },
+                  },
+                },
+              },
+            },
+            take: 1,
+          },
+        },
+      }),
+      this.prisma.prestamo.findMany({
+        where: { clienteId, eliminadoEn: null },
+        orderBy: { creadoEn: 'desc' },
+        include: {
+          producto: {
+            select: { id: true, nombre: true, marca: true, modelo: true },
+          },
+          cuotas: {
+            orderBy: { numeroCuota: 'asc' },
+            select: {
+              id: true,
+              numeroCuota: true,
+              fechaVencimiento: true,
+              fechaVencimientoProrroga: true,
+              fechaPago: true,
+              monto: true,
+              montoPagado: true,
+              estado: true,
+            },
+          },
+        },
+      }),
+      this.prisma.multimedia.findMany({
+        where: {
+          clienteId,
+          estado: 'ACTIVO' as any,
+          eliminadoEn: null,
+        },
+        orderBy: { creadoEn: 'desc' },
+        take: 50,
+      }),
+      this.prisma.aprobacion.count({
+        where: {
+          id: { not: aprobacionId },
+          tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
+          estado: {
+            in: [
+              EstadoAprobacion.PENDIENTE,
+              EstadoAprobacion.APROBADO,
+              EstadoAprobacion.RECHAZADO,
+            ],
+          },
+          datosSolicitud: {
+            path: ['clienteId'],
+            equals: clienteId,
+          } as any,
+        },
+      }),
+      this.prisma.pago.findMany({
+        where: {
+          clienteId,
+          fechaPago: { gte: fechaHace30Dias },
+        },
+        orderBy: { fechaPago: 'desc' },
+        select: {
+          id: true,
+          numeroPago: true,
+          prestamoId: true,
+          montoTotal: true,
+          metodoPago: true,
+          fechaPago: true,
+          origenGestion: true,
+          fechaOperativaRuta: true,
+        },
+      }),
+    ]);
+
+    const ahora = new Date();
+    const cuotas = creditosCliente.flatMap((credito: any) =>
+      Array.isArray(credito.cuotas) ? credito.cuotas : [],
+    );
+    const cuotasVencidas = cuotas.filter((cuota: any) => {
+      if (cuota.estado === EstadoCuota.VENCIDA) return true;
+      if (
+        cuota.estado === EstadoCuota.PAGADA ||
+        cuota.estado === EstadoCuota.PRORROGADA
+      ) {
+        return false;
+      }
+      const fecha = cuota.fechaVencimientoProrroga || cuota.fechaVencimiento;
+      return fecha ? new Date(fecha).getTime() < ahora.getTime() : false;
+    }).length;
+    const cuotasPagadas = cuotas.filter(
+      (cuota: any) => cuota.estado === EstadoCuota.PAGADA,
+    ).length;
+    const saldoTotalPendiente = creditosCliente.reduce(
+      (sum: number, credito: any) => sum + Number(credito.saldoPendiente || 0),
+      0,
+    );
+    const creditosActivos = creditosCliente.filter((credito: any) =>
+      [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA].includes(
+        credito.estado,
+      ),
+    ).length;
+    const montoPagadoUltimos30Dias = pagosUltimos30Dias.reduce(
+      (sum: number, pago: any) => sum + Number(pago.montoTotal || 0),
+      0,
+    );
+
+    const alertas: string[] = [];
+    if (cliente?.enListaNegra) {
+      alertas.push('El cliente está en lista negra.');
+    }
+    if (cuotasVencidas > 0) {
+      alertas.push(`El cliente tiene ${cuotasVencidas} cuota(s) vencida(s).`);
+    }
+    if (reprogramacionesPrevias > 0) {
+      alertas.push(
+        `El cliente registra ${reprogramacionesPrevias} reprogramación(es).`,
+      );
+    }
+    if (montoPagadoUltimos30Dias <= 0) {
+      alertas.push('No registra pagos en los últimos 30 días.');
+    }
+
+    const metricas = {
+      saldoTotalPendiente,
+      creditosActivos,
+      cuotasVencidas,
+      cuotasPagadas,
+      reprogramacionesPrevias,
+      pagosUltimos30Dias: pagosUltimos30Dias.length,
+      montoPagadoUltimos30Dias,
+      candidatoReprogramacion:
+        cuotasVencidas <= 2 &&
+        reprogramacionesPrevias <= 2 &&
+        montoPagadoUltimos30Dias > 0 &&
+        !cliente?.enListaNegra,
+      alertas,
+    };
+
+    return {
+      approval: this.enrichApprovalContext(approval, datosSolicitud),
+      cliente,
+      creditoSolicitud:
+        creditosCliente.find((credito: any) => credito.id === prestamoId) ||
+        null,
+      creditosCliente,
+      referencias: this.buildReferenciasCliente(cliente),
+      multimedia,
+      pagosUltimos30Dias,
+      metricas,
+    };
+  }
+
   async getMyRequests(usuarioId: string) {
     return this.prisma.aprobacion.findMany({
       where: { solicitadoPorId: usuarioId },
@@ -769,6 +1086,213 @@ export class ApprovalsService {
     });
   }
 
+  private async rejectReprogramacionCuota(
+    approval: any,
+    efectoProvisional: any,
+    rechazadoPorId?: string,
+    motivoRechazo?: string,
+  ) {
+    if (!efectoProvisional) {
+      throw new BadRequestException(
+        'No se encontró efecto provisional para revertir la reprogramación',
+      );
+    }
+
+    if (efectoProvisional.estado !== 'PENDIENTE_REVISION') {
+      throw new BadRequestException('El efecto provisional ya fue procesado');
+    }
+
+    const rollbackData = efectoProvisional.rollbackData || {};
+
+    const cuotaId = String(
+      rollbackData.cuotaId || approval.referenciaId || '',
+    );
+
+    if (!cuotaId) {
+      throw new BadRequestException(
+        'La solicitud de reprogramación no tiene cuota asociada',
+      );
+    }
+
+    const fechaVencimientoOriginal = rollbackData.fechaVencimientoOriginal
+      ? new Date(rollbackData.fechaVencimientoOriginal)
+      : null;
+
+    if (
+      !fechaVencimientoOriginal ||
+      Number.isNaN(fechaVencimientoOriginal.getTime())
+    ) {
+      throw new BadRequestException(
+        'La solicitud no contiene una fecha original válida para revertir',
+      );
+    }
+
+    const fechaOperativaOriginal =
+      typeof rollbackData.fechaOperativaOriginal === 'string'
+        ? rollbackData.fechaOperativaOriginal
+        : null;
+
+    const registroVisitaAnterior = rollbackData.registroVisitaAnterior;
+    const debeRevertirRegistroVisita =
+      rollbackData.origenGestion === 'CIERRE_PENDIENTE' &&
+      fechaOperativaOriginal;
+
+    await this.prisma.$transaction(async (tx) => {
+      const cuotaActual = await tx.cuota.findUnique({
+        where: { id: cuotaId },
+        select: {
+          id: true,
+          prestamoId: true,
+          fechaVencimiento: true,
+          estado: true,
+        },
+      });
+
+      if (!cuotaActual) {
+        throw new BadRequestException('La cuota ya no existe');
+      }
+
+      if (cuotaActual.estado === EstadoCuota.PAGADA) {
+        throw new BadRequestException(
+          'No se puede revertir una reprogramación de una cuota ya pagada',
+        );
+      }
+
+      const fechaNuevaEsperada = rollbackData.fechaVencimientoNueva
+        ? new Date(rollbackData.fechaVencimientoNueva)
+        : null;
+
+      if (
+        fechaNuevaEsperada &&
+        !Number.isNaN(fechaNuevaEsperada.getTime())
+      ) {
+        const actualMs = new Date(cuotaActual.fechaVencimiento).getTime();
+        const esperadaMs = fechaNuevaEsperada.getTime();
+
+        if (actualMs !== esperadaMs) {
+          this.logger.warn(
+            `La cuota ${cuotaId} fue modificada después de la solicitud (esperada: ${fechaNuevaEsperada.toISOString()}, actual: ${cuotaActual.fechaVencimiento}). Revertiendo a fecha original de todas formas.`,
+          );
+        }
+      }
+
+      const claimed = await tx.aprobacion.updateMany({
+        where: {
+          id: approval.id,
+          estado: EstadoAprobacion.PENDIENTE,
+        },
+        data: {
+          estado: EstadoAprobacion.RECHAZADO,
+          aprobadoPorId: rechazadoPorId || undefined,
+          comentarios: motivoRechazo || 'Rechazado sin motivo especificado',
+          revisadoEn: new Date(),
+        },
+      });
+
+      if (claimed.count !== 1) {
+        throw new BadRequestException(
+          'Esta solicitud ya fue tomada por otro usuario',
+        );
+      }
+
+      await tx.cuota.update({
+        where: { id: cuotaId },
+        data: {
+          fechaVencimiento: fechaVencimientoOriginal,
+        },
+      });
+
+      if (debeRevertirRegistroVisita && rollbackData.rutaIdOriginal) {
+        const rutaIdOriginal = String(rollbackData.rutaIdOriginal);
+
+        if (registroVisitaAnterior?.id) {
+          await tx.registroVisita.update({
+            where: { id: String(registroVisitaAnterior.id) },
+            data: {
+              estadoVisita: registroVisitaAnterior.estadoVisita,
+              notas: registroVisitaAnterior.notas,
+              prestamoId: registroVisitaAnterior.prestamoId,
+              cobradorId: registroVisitaAnterior.cobradorId,
+            },
+          });
+        } else {
+          await tx.registroVisita.deleteMany({
+            where: {
+              rutaId: rutaIdOriginal,
+              clienteId: String(rollbackData.clienteId),
+              fechaVisita: fechaOperativaOriginal,
+            },
+          });
+        }
+      }
+
+      await tx.efectoProvisional.update({
+        where: { id: efectoProvisional.id },
+        data: {
+          estado: 'REVERTIDO',
+          revertidoEn: new Date(),
+          motivoReversion: motivoRechazo || 'Reprogramación rechazada',
+        },
+      });
+    });
+
+    try {
+      const datos =
+        typeof approval.datosSolicitud === 'string'
+          ? JSON.parse(approval.datosSolicitud)
+          : approval.datosSolicitud || {};
+
+      await this.notificacionesService.create({
+        usuarioId: approval.solicitadoPorId,
+        titulo: 'Reprogramación rechazada',
+        mensaje: `La reprogramación de la cuota del cliente ${
+          datos.clienteNombre || datos.cliente || ''
+        } fue rechazada y revertida.${
+          motivoRechazo ? ` Motivo: ${motivoRechazo}` : ''
+        }`,
+        tipo: 'REPROGRAMACION_RECHAZADA',
+        entidad: 'Aprobacion',
+        entidadId: approval.id,
+        metadata: {
+          tipoAprobacion: 'REPROGRAMACION_CUOTA',
+          estadoAprobacion: 'RECHAZADO',
+          motivoRechazo: motivoRechazo || undefined,
+          prestamoId: rollbackData.prestamoId || datos.prestamoId,
+          cuotaId: rollbackData.cuotaId || datos.cuotaId,
+        },
+      });
+    } catch {
+      // No interrumpir el rechazo si falla la notificación
+    }
+
+    this.notificacionesGateway.broadcastAprobacionesActualizadas({
+      accion: 'RECHAZAR',
+      aprobacionId: approval.id,
+      tipoAprobacion: approval.tipoAprobacion,
+    });
+
+    this.notificacionesGateway.broadcastRutasActualizadas({
+      accion: 'REPROGRAMACION_RECHAZADA',
+      prestamoId: rollbackData.prestamoId,
+      cuotaId: rollbackData.cuotaId || approval.referenciaId,
+    });
+
+    this.notificacionesGateway.broadcastPrestamosActualizados({
+      accion: 'REPROGRAMACION_RECHAZADA',
+      prestamoId: rollbackData.prestamoId,
+      cuotaId: rollbackData.cuotaId || approval.referenciaId,
+    });
+
+    this.notificacionesGateway.broadcastDashboardsActualizados({
+      origen: 'REPROGRAMACION_CUOTA',
+    });
+
+    return {
+      success: true,
+      message: 'Reprogramación rechazada y revertida',
+    };
+  }
+
   private calcularAplicacionPago(
     prestamo: any,
     montoTotal: number,
@@ -909,6 +1433,67 @@ export class ApprovalsService {
       this.prisma,
       id,
     );
+
+    if (approval.tipoAprobacion === TipoAprobacion.REPROGRAMACION_CUOTA) {
+      if (!efectoProvisional) {
+        throw new BadRequestException(
+          'No se encontró efecto provisional para confirmar la reprogramación',
+        );
+      }
+
+      await this.prisma.$transaction(async (tx) => {
+        const claimed = await tx.aprobacion.updateMany({
+          where: {
+            id,
+            estado: EstadoAprobacion.PENDIENTE,
+          },
+          data: {
+            estado: EstadoAprobacion.APROBADO,
+            aprobadoPorId: aprobadoPorId || undefined,
+            comentarios: notas || undefined,
+            datosAprobados: editedData || undefined,
+            revisadoEn: new Date(),
+          },
+        });
+
+        if (claimed.count !== 1) {
+          throw new BadRequestException(
+            'Esta solicitud ya fue tomada por otro usuario',
+          );
+        }
+
+        await this.confirmarEfectoProvisional(tx, efectoProvisional);
+      });
+
+      const rollbackData = efectoProvisional.rollbackData || {};
+
+      this.notificacionesGateway.broadcastAprobacionesActualizadas({
+        accion: 'APROBAR',
+        aprobacionId: id,
+        tipoAprobacion: approval.tipoAprobacion,
+      });
+
+      this.notificacionesGateway.broadcastRutasActualizadas({
+        accion: 'REPROGRAMACION_APROBADA',
+        prestamoId: rollbackData.prestamoId,
+        cuotaId: rollbackData.cuotaId || approval.referenciaId,
+      });
+
+      this.notificacionesGateway.broadcastPrestamosActualizados({
+        accion: 'REPROGRAMACION_APROBADA',
+        prestamoId: rollbackData.prestamoId,
+        cuotaId: rollbackData.cuotaId || approval.referenciaId,
+      });
+
+      this.notificacionesGateway.broadcastDashboardsActualizados({
+        origen: 'REPROGRAMACION_CUOTA',
+      });
+
+      return {
+        success: true,
+        message: 'Reprogramación aprobada',
+      };
+    }
 
     if (
       efectoProvisional &&
@@ -1703,6 +2288,7 @@ export class ApprovalsService {
     _type: TipoAprobacion,
     rechazadoPorId?: string,
     motivoRechazo?: string,
+    resultadoRevision?: 'RECHAZADO_CON_DEUDA' | 'RECHAZADO_CON_REINTEGRO',
   ) {
     const approval = await this.prisma.aprobacion.findUnique({
       where: { id },
@@ -1722,6 +2308,15 @@ export class ApprovalsService {
       this.prisma,
       id,
     );
+
+    if (approval.tipoAprobacion === TipoAprobacion.REPROGRAMACION_CUOTA) {
+      return this.rejectReprogramacionCuota(
+        approval,
+        efectoProvisional,
+        rechazadoPorId,
+        motivoRechazo,
+      );
+    }
 
     if (
       efectoProvisional &&
@@ -1768,6 +2363,129 @@ export class ApprovalsService {
       this.notificacionesGateway.broadcastDashboardsActualizados({});
 
       return { success: true, message: 'Aprobación rechazada' };
+    }
+
+    // Verificar si es un gasto provisional con resultado de revisión específico
+    const data =
+      typeof approval.datosSolicitud === 'string'
+        ? JSON.parse(approval.datosSolicitud)
+        : approval.datosSolicitud;
+    const esProvisional = data.esProvisional === true;
+    const tieneResultadoRevision = resultadoRevision === 'RECHAZADO_CON_DEUDA' || resultadoRevision === 'RECHAZADO_CON_REINTEGRO';
+
+    // Si es un gasto provisional, es obligatorio indicar resultadoRevision
+    if (approval.tipoAprobacion === TipoAprobacion.GASTO && esProvisional && !tieneResultadoRevision) {
+      throw new BadRequestException(
+        'Debe indicar si el gasto provisional se rechaza con deuda o con reintegro.',
+      );
+    }
+
+    if (esProvisional && tieneResultadoRevision) {
+      // ======== NUEVO FLUJO: RECHAZAR GASTO PROVISIONAL ========
+      await this.prisma.$transaction(async (tx) => {
+        const claimed = await tx.aprobacion.updateMany({
+          where: {
+            id,
+            estado: EstadoAprobacion.PENDIENTE,
+          },
+          data: {
+            estado: EstadoAprobacion.RECHAZADO,
+            aprobadoPorId: rechazadoPorId || undefined,
+            comentarios: motivoRechazo || 'Rechazado sin motivo especificado',
+            revisadoEn: new Date(),
+          },
+        });
+
+        if (claimed.count !== 1) {
+          throw new BadRequestException(
+            'Esta solicitud ya fue tomada por otro usuario',
+          );
+        }
+
+        const existingGasto = await tx.gasto.findUnique({
+          where: { id: approval.referenciaId },
+          include: {
+            ruta: { select: { id: true, nombre: true } },
+            caja: { select: { id: true, nombre: true } },
+            cobrador: { select: { id: true, nombres: true, apellidos: true } },
+          },
+        });
+
+        if (!existingGasto) {
+          throw new NotFoundException('Gasto provisional no encontrado');
+        }
+
+        // Actualizar estado del gasto
+        await tx.gasto.update({
+          where: { id: existingGasto.id },
+          data: {
+            estadoAprobacion: EstadoAprobacion.RECHAZADO,
+            resultadoRevisionGasto: resultadoRevision,
+            esProvisional: false,
+            aprobadoPorId: rechazadoPorId || undefined,
+          },
+        });
+
+        if (resultadoRevision === 'RECHAZADO_CON_DEUDA') {
+          // Reclasificar contable: de 1.6.1 (Gastos por legalizar) a 1.4.1 (Cuenta por cobrar a cobrador)
+          // NO mueve caja (ya fue afectada al solicitar)
+          await this.ledgerService.registrarAsiento(
+            {
+              referenceType: 'GASTO',
+              referenceId: `RECHAZADO_DEUDA:${existingGasto.id}`,
+              description: `Gasto provisional rechazado con deuda: ${data.descripcion}`,
+              createdBy: rechazadoPorId || approval.solicitadoPorId,
+              lines: [
+                {
+                  accountCode: '1.4.1', // Cuenta por cobrar a cobrador
+                  debitAmount: Number(data.monto),
+                  cajaId: existingGasto.cajaId, // Para atribución al cobrador
+                },
+                {
+                  accountCode: '1.6.1', // Gastos por legalizar (cuenta puente)
+                  creditAmount: Number(data.monto),
+                },
+              ],
+            },
+            tx,
+          );
+        } else if (resultadoRevision === 'RECHAZADO_CON_REINTEGRO') {
+          // Reclasificar contable: de 1.6.1 (Gastos por legalizar) a 1.2.1 (Caja Ruta)
+          // Restaura caja (reintegro del monto)
+          await this.ledgerService.registrarAsiento(
+            {
+              referenceType: 'GASTO',
+              referenceId: `RECHAZADO_REINTEGRO:${existingGasto.id}`,
+              description: `Gasto provisional rechazado con reintegro: ${data.descripcion}`,
+              createdBy: rechazadoPorId || approval.solicitadoPorId,
+              lines: [
+                {
+                  accountCode: '1.2.1', // Caja Ruta
+                  debitAmount: Number(data.monto),
+                  cajaId: existingGasto.cajaId,
+                  cajaDelta: Number(data.monto), // Ledger incrementa el saldo
+                },
+                {
+                  accountCode: '1.6.1', // Gastos por legalizar (cuenta puente)
+                  creditAmount: Number(data.monto),
+                },
+              ],
+            },
+            tx,
+          );
+        }
+      });
+
+      this.notificacionesGateway.broadcastAprobacionesActualizadas({
+        accion: 'RECHAZAR',
+        aprobacionId: id,
+        tipoAprobacion: approval.tipoAprobacion,
+      });
+      this.notificacionesGateway.broadcastDashboardsActualizados({
+        origen: 'GASTO',
+      });
+
+      return { success: true, message: 'Gasto provisional rechazado' };
     }
 
     const claimed = await this.prisma.aprobacion.updateMany({
@@ -2000,6 +2718,21 @@ export class ApprovalsService {
         finalData.cuotaInicial !== undefined
           ? Number(finalData.cuotaInicial)
           : undefined;
+      const tasaInteresNormalizada =
+        finalData.porcentaje !== undefined
+          ? Number(finalData.porcentaje)
+          : finalData.tasaInteres !== undefined
+            ? Number(finalData.tasaInteres)
+            : undefined;
+      const plazoMesesNormalizado =
+        finalData.plazoMeses !== undefined ||
+        finalData.plazo !== undefined ||
+        finalData.plajeMeses !== undefined
+          ? Number(finalData.plazoMeses || finalData.plazo || finalData.plajeMeses)
+          : undefined;
+      const tipoAmortizacionNormalizado = finalData.tipoAmortizacion
+        ? (String(finalData.tipoAmortizacion).toUpperCase() as TipoAmortizacion)
+        : undefined;
 
       const montoNormalizado = (() => {
         const monto =
@@ -2054,11 +2787,27 @@ export class ApprovalsService {
                 )
               : undefined,
           tasaInteres:
-            finalData.porcentaje !== undefined
-              ? Number(finalData.porcentaje)
+            tasaInteresNormalizada !== undefined && !Number.isNaN(tasaInteresNormalizada)
+              ? tasaInteresNormalizada
               : undefined,
           frecuenciaPago: finalData.frecuenciaPago || undefined,
+          plazoMeses:
+            plazoMesesNormalizado !== undefined && !Number.isNaN(plazoMesesNormalizado)
+              ? plazoMesesNormalizado
+              : undefined,
+          tipoAmortizacion: tipoAmortizacionNormalizado || undefined,
           cuotaInicial,
+          precioVentaArticulo: isArticulo
+            ? Number(
+                finalData.valorArticulo ||
+                  finalData.precioVentaArticulo ||
+                  finalData.precioVenta ||
+                  0,
+              ) || undefined
+            : undefined,
+          costoArticulo: isArticulo
+            ? Number(finalData.costoArticulo || finalData.costo || 0) || undefined
+            : undefined,
           fechaInicio: finalData.fechaInicio
             ? new Date(finalData.fechaInicio)
             : undefined,
@@ -2182,6 +2931,25 @@ export class ApprovalsService {
       // Si se editaron datos financieros, es probable que las cuotas (instancias de Cuota) necesiten ser regeneradas
       // o ajustadas. Para simplificar, si hay cambios, recalculamos los montos.
       if (editedData) {
+        if (fueActivo) {
+          const cuotasConPago = await tx.cuota.count({
+            where: {
+              prestamoId: prestamo.id,
+              OR: [
+                { estado: EstadoCuota.PAGADA },
+                { montoPagado: { gt: 0 } },
+                { fechaPago: { not: null } },
+              ],
+            },
+          });
+
+          if (cuotasConPago > 0) {
+            throw new BadRequestException(
+              'No se pueden regenerar las cuotas de un crédito activo con pagos registrados. Use un flujo de modificación de condiciones sobre cuotas pendientes.',
+            );
+          }
+        }
+
         // Recalcular componentes financieros del préstamo
         const montoFinanciar = Number(prestamo.monto);
         const tasaInteres = Number(prestamo.tasaInteres);
@@ -2438,79 +3206,147 @@ export class ApprovalsService {
         ? JSON.parse(approval.datosSolicitud)
         : approval.datosSolicitud;
 
+    // Verificar si es un gasto provisional (ya existe el registro de Gasto)
+    const esProvisional = data.esProvisional === true;
+
     // Procesar en una transacción de base de datos para asegurar consistencia
     const [gasto] = await this.prisma.$transaction(async (tx) => {
-      // 1. Crear el registro de Gasto
-      const routeCash = await this.resolveActiveRouteCashContext(tx, {
-        rutaId: data.rutaId,
-        cajaId: data.cajaId,
-      });
-      const newGasto = await tx.gasto.create({
-        data: {
-          numeroGasto: `G${Date.now()}`,
-          rutaId: routeCash.rutaId,
-          cobradorId: routeCash.cobradorId,
-          cajaId: routeCash.cajaId,
-          tipoGasto: ({
-            GASTO_OPERATIVO: 'OPERATIVO',
-            OPERATIVO: 'OPERATIVO',
-            TRANSPORTE: 'TRANSPORTE',
-            OTRO: 'OTRO',
-          }[data.tipoGasto] || 'OPERATIVO') as any,
-          monto: data.monto,
-          descripcion: data.descripcion,
-          categoriaId: data.categoriaId || undefined,
-          aprobadoPorId: aprobadoPorId || undefined,
-          estadoAprobacion: EstadoAprobacion.APROBADO,
-        },
-        include: {
-          ruta: { select: { id: true, nombre: true } },
-          caja: { select: { id: true, nombre: true } },
-          cobrador: { select: { id: true, nombres: true, apellidos: true } },
-        },
-      });
+      if (esProvisional) {
+        // ======== NUEVO FLUJO: GASTO PROVISIONAL ========
+        // El gasto ya fue creado al solicitar, solo reclasificar de 1.6.1 a 4.1
+        
+        const existingGasto = await tx.gasto.findUnique({
+          where: { id: approval.referenciaId },
+          include: {
+            ruta: { select: { id: true, nombre: true } },
+            caja: { select: { id: true, nombre: true } },
+            cobrador: { select: { id: true, nombres: true, apellidos: true } },
+          },
+        });
 
-      // 2. Registrar egreso contable: gasto del cobrador = DEUDA_COBRADOR (no afecta utilidad)
-      await tx.transaccion.create({
-        data: {
-          numeroTransaccion: this.generarNumeroTransaccion('GTRX'),
-          cajaId: routeCash.cajaId,
-          tipo: TipoTransaccion.EGRESO,
-          monto: data.monto,
-          descripcion: `Gasto aprobado: ${data.descripcion}`,
-          creadoPorId: approval.solicitadoPorId,
-          aprobadoPorId: aprobadoPorId || undefined,
-          tipoReferencia: 'GASTO',
-          referenciaId: newGasto.id,
-        },
-      });
+        if (!existingGasto) {
+          throw new NotFoundException('Gasto provisional no encontrado');
+        }
 
-      // Asiento contable de Partida Doble (patrón correcto: Ledger mueve el saldo)
-      // Débito: 4.1 Gastos de Ruta (consume patrimonio)
-      // Crédito: 1.2.1 Caja Ruta (sale el efectivo) — cajaDelta real
-      await this.ledgerService.registrarAsiento(
-        {
-          referenceType: 'GASTO',
-          referenceId: newGasto.id,
-          description: `Gasto aprobado: ${data.descripcion}`,
-          createdBy: aprobadoPorId || approval.solicitadoPorId,
-          lines: [
-            {
-              accountCode: '4.1',
-              debitAmount: Number(data.monto),
-            },
-            {
-              accountCode: '1.2.1',
-              creditAmount: Number(data.monto),
-              cajaId: routeCash.cajaId,
-              cajaDelta: -Number(data.monto), // Ledger decrementa el saldo
-            },
-          ],
-        },
-        tx,
-      );
+        // Validar que el gasto sea provisional y esté pendiente
+        if (!existingGasto.esProvisional || existingGasto.estadoAprobacion !== EstadoAprobacion.PENDIENTE) {
+          throw new BadRequestException('El gasto provisional ya fue procesado o no es un gasto provisional');
+        }
 
-      return [newGasto];
+        // Actualizar estado del gasto
+        const updatedGasto = await tx.gasto.update({
+          where: { id: existingGasto.id },
+          data: {
+            estadoAprobacion: EstadoAprobacion.APROBADO,
+            resultadoRevisionGasto: 'APROBADO_OPERATIVO',
+            esProvisional: false,
+            aprobadoPorId: aprobadoPorId || undefined,
+          },
+          include: {
+            ruta: { select: { id: true, nombre: true } },
+            caja: { select: { id: true, nombre: true } },
+            cobrador: { select: { id: true, nombres: true, apellidos: true } },
+          },
+        });
+
+        // Reclasificar contable: de 1.6.1 (Gastos por legalizar) a 4.1 (Gastos de Ruta)
+        // NO mueve caja otra vez (ya fue afectada al solicitar)
+        await this.ledgerService.registrarAsiento(
+          {
+            referenceType: 'GASTO',
+            referenceId: `APROBADO:${updatedGasto.id}`,
+            description: `Gasto provisional aprobado: ${data.descripcion}`,
+            createdBy: aprobadoPorId || approval.solicitadoPorId,
+            lines: [
+              {
+                accountCode: '4.1', // Gastos de Ruta
+                debitAmount: Number(data.monto),
+              },
+              {
+                accountCode: '1.6.1', // Gastos por legalizar (cuenta puente)
+                creditAmount: Number(data.monto),
+              },
+            ],
+          },
+          tx,
+        );
+
+        return [updatedGasto];
+      } else {
+        // ======== FLUJO ANTIGUO: GASTO SIN COMPROBANTE O PERSONAL ========
+        // Crear el registro de Gasto y afectar caja
+        
+        const routeCash = await this.resolveActiveRouteCashContext(tx, {
+          rutaId: data.rutaId,
+          cajaId: data.cajaId,
+        });
+        const newGasto = await tx.gasto.create({
+          data: {
+            numeroGasto: `G${Date.now()}`,
+            rutaId: routeCash.rutaId,
+            cobradorId: routeCash.cobradorId,
+            cajaId: routeCash.cajaId,
+            tipoGasto: ({
+              GASTO_OPERATIVO: 'OPERATIVO',
+              OPERATIVO: 'OPERATIVO',
+              TRANSPORTE: 'TRANSPORTE',
+              OTRO: 'OTRO',
+            }[data.tipoGasto] || 'OPERATIVO') as any,
+            monto: data.monto,
+            descripcion: data.descripcion,
+            categoriaId: data.categoriaId || undefined,
+            aprobadoPorId: aprobadoPorId || undefined,
+            estadoAprobacion: EstadoAprobacion.APROBADO,
+          },
+          include: {
+            ruta: { select: { id: true, nombre: true } },
+            caja: { select: { id: true, nombre: true } },
+            cobrador: { select: { id: true, nombres: true, apellidos: true } },
+          },
+        });
+
+        // Registrar egreso contable: gasto del cobrador = DEUDA_COBRADOR (no afecta utilidad)
+        await tx.transaccion.create({
+          data: {
+            numeroTransaccion: this.generarNumeroTransaccion('GTRX'),
+            cajaId: routeCash.cajaId,
+            tipo: TipoTransaccion.EGRESO,
+            monto: data.monto,
+            descripcion: `Gasto aprobado: ${data.descripcion}`,
+            creadoPorId: approval.solicitadoPorId,
+            aprobadoPorId: aprobadoPorId || undefined,
+            tipoReferencia: 'GASTO',
+            referenciaId: newGasto.id,
+          },
+        });
+
+        // Asiento contable de Partida Doble (patrón correcto: Ledger mueve el saldo)
+        // Débito: 4.1 Gastos de Ruta (consume patrimonio)
+        // Crédito: 1.2.1 Caja Ruta (sale el efectivo) — cajaDelta real
+        await this.ledgerService.registrarAsiento(
+          {
+            referenceType: 'GASTO',
+            referenceId: newGasto.id,
+            description: `Gasto aprobado: ${data.descripcion}`,
+            createdBy: aprobadoPorId || approval.solicitadoPorId,
+            lines: [
+              {
+                accountCode: '4.1',
+                debitAmount: Number(data.monto),
+              },
+              {
+                accountCode: '1.2.1',
+                creditAmount: Number(data.monto),
+                cajaId: routeCash.cajaId,
+                cajaDelta: -Number(data.monto), // Ledger decrementa el saldo
+              },
+            ],
+          },
+          tx,
+        );
+
+        return [newGasto];
+      }
     });
 
     try {
@@ -2518,7 +3354,9 @@ export class ApprovalsService {
       await this.notificacionesService.create({
         usuarioId: approval.solicitadoPorId,
         titulo: 'Tu Gasto fue Aprobado',
-        mensaje: `Tu gasto de ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} fue aprobado.`,
+        mensaje: esProvisional
+          ? `Tu gasto provisional de ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} fue aprobado como gasto operativo.`
+          : `Tu gasto de ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} fue aprobado.`,
         tipo: 'EXITO',
         entidad: 'GASTO',
         entidadId: gasto.id,
@@ -2526,7 +3364,9 @@ export class ApprovalsService {
 
       await this.notificacionesService.notifyCoordinator({
         titulo: 'Gasto Aprobado',
-        mensaje: `Se aprobó un gasto de ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} en la ruta ${gasto.ruta?.nombre || 'Sin ruta'} (Caja: ${gasto.caja?.nombre || 'N/A'}) por ${gasto.cobrador ? gasto.cobrador.nombres + ' ' + gasto.cobrador.apellidos : 'usuario'}.`,
+        mensaje: esProvisional
+          ? `Se aprobó un gasto provisional de ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} en la ruta ${gasto.ruta?.nombre || 'Sin ruta'} (Caja: ${gasto.caja?.nombre || 'N/A'}) por ${gasto.cobrador ? gasto.cobrador.nombres + ' ' + gasto.cobrador.apellidos : 'usuario'}.`
+          : `Se aprobó un gasto de ${Number(data.monto).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })} en la ruta ${gasto.ruta?.nombre || 'Sin ruta'} (Caja: ${gasto.caja?.nombre || 'N/A'}) por ${gasto.cobrador ? gasto.cobrador.nombres + ' ' + gasto.cobrador.apellidos : 'usuario'}.`,
         tipo: 'SISTEMA',
         entidad: 'GASTO',
         entidadId: gasto.id,
@@ -2534,6 +3374,7 @@ export class ApprovalsService {
           rutaId: gasto.ruta?.id,
           cajaId: gasto.caja?.id,
           cobradorId: gasto.cobrador?.id,
+          esProvisional,
         },
       });
     } catch (error) {
@@ -2550,48 +3391,76 @@ export class ApprovalsService {
         ? JSON.parse(approval.datosSolicitud)
         : approval.datosSolicitud;
 
-    let resolvedCashBaseCajaId = String(data.cajaId || '');
+    // Usar la caja de destino desde la aprobación o los datos de solicitud
+    // No volver a buscar por rutaId porque podría usar la caja del cobrador en lugar de la caja del supervisor
+    const cajaIdDestino = approval.referenciaId || data.cajaId;
+
+    if (!cajaIdDestino) {
+      throw new BadRequestException(
+        'La solicitud de base no tiene una caja destino válida.',
+      );
+    }
 
     // Procesar en una transacción de base de datos
     const trx = await this.prisma.$transaction(async (tx) => {
-      // 1. Buscar la Caja Principal (origen del capital)
-      const cajaPrincipal = await tx.caja.findFirst({
-        where: { tipo: 'PRINCIPAL', activa: true },
+      // 1. Buscar la Caja de Oficina como origen del capital operativo
+      const cajaOficina = await tx.caja.findFirst({
+        where: {
+          codigo: 'CAJA-OFICINA',
+          activa: true,
+        },
       });
 
-      if (!cajaPrincipal) {
+      if (!cajaOficina) {
         throw new BadRequestException(
-          'No se encontró una Caja Principal activa para entregar la base.',
+          'No se encontró una Caja de Oficina activa para entregar la base.',
+        );
+      }
+
+      // 2. Validar que la caja destino exista y esté activa
+      const cajaDestino = await tx.caja.findFirst({
+        where: {
+          id: cajaIdDestino,
+          activa: true,
+        },
+        select: {
+          id: true,
+          nombre: true,
+          codigo: true,
+          tipo: true,
+          rutaId: true,
+          responsableId: true,
+        },
+      });
+
+      if (!cajaDestino?.id) {
+        throw new NotFoundException(
+          'La caja destino de la solicitud de base no existe o no está activa.',
         );
       }
 
       const monto = Number(data.monto);
-      const routeCash = await this.resolveActiveRouteCashContext(tx, {
-        rutaId: data.rutaId,
-        cajaId: data.cajaId,
-      });
-      resolvedCashBaseCajaId = routeCash.cajaId;
 
-      // 2. Verificar fondos en Caja Principal
-      if (Number(cajaPrincipal.saldoActual) < monto) {
+      // 2. Verificar fondos en Caja de Oficina
+      if (Number(cajaOficina.saldoActual) < monto) {
         throw new BadRequestException(
-          `Fondos insuficientes en la Caja Principal (${cajaPrincipal.nombre}). Saldo actual: ${Number(
-            cajaPrincipal.saldoActual,
+          `Fondos insuficientes en la Caja de Oficina (${cajaOficina.nombre}). Saldo actual: ${Number(
+            cajaOficina.saldoActual,
           ).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
         );
       }
 
-      // 3. Crear transacción de salida (EGRESO) desde la Caja Principal
+      // 3. Crear transacción de salida (EGRESO) desde la Caja de Oficina
       await tx.transaccion.create({
         data: {
           numeroTransaccion: this.generarNumeroTransaccion('TRX-OUT'),
-          cajaId: cajaPrincipal.id,
+          cajaId: cajaOficina.id,
           tipo: TipoTransaccion.EGRESO,
           monto: monto,
-          descripcion: `Entrega de base operativa a Ruta (Caja ID: ${routeCash.cajaId}) - Solicitud #${approval.id}`,
+          descripcion: `Entrega de base operativa desde Caja de Oficina a ${cajaDestino.nombre} - Solicitud #${approval.id}`,
           creadoPorId: aprobadoPorId || approval.solicitadoPorId,
           aprobadoPorId: aprobadoPorId || undefined,
-          tipoReferencia: 'SOLICITUD_BASE',
+          tipoReferencia: 'SOLICITUD_BASE_EFECTIVO',
           referenciaId: approval.id,
         },
       });
@@ -2600,20 +3469,20 @@ export class ApprovalsService {
       const newTrx = await tx.transaccion.create({
         data: {
           numeroTransaccion: this.generarNumeroTransaccion('TRX-IN'),
-          cajaId: resolvedCashBaseCajaId,
+          cajaId: cajaIdDestino,
           tipo: TipoTransaccion.INGRESO,
           monto: monto,
           descripcion: `Base de efectivo recibida - ${data.descripcion}`,
           creadoPorId: approval.solicitadoPorId,
           aprobadoPorId: aprobadoPorId || undefined,
-          tipoReferencia: 'SOLICITUD_BASE',
+          tipoReferencia: 'SOLICITUD_BASE_EFECTIVO',
           referenciaId: approval.id,
         },
       });
 
       // Asiento contable de Partida Doble (patrón correcto: Ledger mueve ambos saldos)
-      const accountCodePrincipal =
-        cajaPrincipal.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1';
+      const accountCodeOficina =
+        cajaOficina.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1';
       await this.ledgerService.registrarAsiento(
         {
           referenceType: 'BASE',
@@ -2624,14 +3493,14 @@ export class ApprovalsService {
             {
               accountCode: '1.2.1',
               debitAmount: monto,
-              cajaId: routeCash.cajaId,
+              cajaId: cajaIdDestino,
               cajaDelta: +monto, // Caja Ruta RECIBE
             },
             {
-              accountCode: accountCodePrincipal,
+              accountCode: accountCodeOficina,
               creditAmount: monto,
-              cajaId: cajaPrincipal.id,
-              cajaDelta: -monto, // Caja Principal ENTREGA
+              cajaId: cajaOficina.id,
+              cajaDelta: -monto, // Caja de Oficina ENTREGA
             },
           ],
         },
@@ -2649,7 +3518,7 @@ export class ApprovalsService {
         entidad: 'TRANSACCION',
         entidadId: trx.id,
         metadata: {
-          cajaId: resolvedCashBaseCajaId,
+          cajaId: cajaIdDestino,
           monto: data.monto,
           solicitadoPorId: approval.solicitadoPorId,
           aprobadoPorId: aprobadoPorId,
@@ -2663,7 +3532,7 @@ export class ApprovalsService {
         entidad: 'TRANSACCION',
         entidadId: trx.id,
         metadata: {
-          cajaId: resolvedCashBaseCajaId,
+          cajaId: cajaIdDestino,
         },
       });
     } catch (error) {

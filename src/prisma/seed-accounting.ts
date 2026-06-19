@@ -118,6 +118,20 @@ const accounts = [
     nature: 'DEBITORA',
     description: 'Costo de artículos disponibles para venta',
   },
+  {
+    code: '1.6',
+    name: 'Gastos por Legalizar',
+    type: 'ACTIVO',
+    nature: 'DEBITORA',
+    description: 'Cuenta puente para gastos de ruta pendientes de revisión',
+  },
+  {
+    code: '1.6.1',
+    name: 'Gastos por Legalizar',
+    type: 'ACTIVO',
+    nature: 'DEBITORA',
+    description: 'Gastos de ruta pendientes de aprobación',
+  },
   // 2. PATRIMONIO / PASIVO
   {
     code: '2',

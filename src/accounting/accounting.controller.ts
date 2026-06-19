@@ -81,6 +81,17 @@ export class AccountingController {
     return this.accountingService.asegurarCajaRuta(rutaId);
   }
 
+  @Post('cajas/supervisor/:supervisorId/asegurar')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.CONTADOR,
+    RolUsuario.COORDINADOR,
+  )
+  asegurarCajaSupervisor(@Param('supervisorId', ParseUUIDPipe) supervisorId: string) {
+    return this.accountingService.asegurarCajaSupervisor(supervisorId);
+  }
+
   @Patch('cajas/:id')
   @Roles(
     RolUsuario.SUPER_ADMINISTRADOR,
@@ -286,6 +297,7 @@ export class AccountingController {
     @Query('limit') limit?: string,
     @Query('fechaInicio') fechaInicio?: string,
     @Query('fechaFin') fechaFin?: string,
+    @Query('esProvisional') esProvisional?: string,
   ) {
     return this.accountingService.getGastos({
       rutaId,
@@ -294,6 +306,7 @@ export class AccountingController {
       limit: limit ? parseInt(limit) : 50,
       fechaInicio,
       fechaFin,
+      esProvisional: esProvisional ? esProvisional === 'true' : undefined,
     });
   }
 
@@ -424,6 +437,27 @@ export class AccountingController {
   )
   getRutaCerradaHoy(@Param('rutaId') rutaId: string) {
     return this.accountingService.getRutaCerradaHoy(rutaId);
+  }
+
+  @Get('supervisores/:supervisorId/saldo-disponible')
+  @Roles(
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
+  getSaldoDisponibleSupervisor(
+    @Param('supervisorId') supervisorId: string,
+    @Query('fecha') fecha?: string,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
+  ) {
+    return this.accountingService.getSaldoDisponibleSupervisor(
+      supervisorId,
+      fecha,
+      fechaInicio,
+      fechaFin,
+    );
   }
 
   @Get('export')

@@ -829,6 +829,14 @@ describe('RoutesService role scoping', () => {
     );
 
     expect(resultado.resumen.visitados).toBe(1);
+    expect(prisma.aprobacion.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tipoAprobacion: 'REPROGRAMACION_CUOTA',
+          estado: { in: ['PENDIENTE', 'APROBADO'] },
+        }),
+      }),
+    );
     expect(resultado.visitas[0]).toEqual(
       expect.objectContaining({
         estadoVisita: 'reprogramado',

@@ -117,6 +117,120 @@ export class PaymentsService {
     return day === 'Sun';
   }
 
+  private async resolveCajaIngresoPago(
+    tx: Prisma.TransactionClient,
+    params: {
+      actor: PaymentActor;
+      rutaId: string;
+      metodoPago?: string;
+    },
+  ) {
+    const actorId = String(params.actor?.id || '').trim();
+    const rol = String(params.actor?.rol || '').toUpperCase();
+    const metodoPago = params.metodoPago || 'EFECTIVO';
+
+    const rolesOficina = [
+      'COORDINADOR',
+      'ADMIN',
+      'SUPER_ADMINISTRADOR',
+    ];
+
+    if (rolesOficina.includes(rol) && metodoPago === MetodoPago.EFECTIVO) {
+      // Roles de oficina registrando pago en efectivo: usar CAJA-OFICINA
+      const cajaOficina = await tx.caja.findFirst({
+        where: {
+          codigo: 'CAJA-OFICINA',
+          tipo: 'PRINCIPAL' as any,
+          activa: true,
+        },
+        select: {
+          id: true,
+          nombre: true,
+          saldoActual: true,
+          rutaId: true,
+          responsableId: true,
+          tipo: true,
+        },
+      });
+
+      if (!cajaOficina?.id) {
+        throw new BadRequestException(
+          'No existe una Caja de Oficina activa para registrar pagos en efectivo.',
+        );
+      }
+
+      return cajaOficina;
+    }
+
+    if (rol === RolUsuario.SUPERVISOR) {
+      // Validar que la ruta pertenece a la supervisión del supervisor
+      const rutaSupervisada = await tx.ruta.findFirst({
+        where: {
+          id: params.rutaId,
+          supervisorId: actorId,
+          eliminadoEn: null,
+        },
+        select: { id: true },
+      });
+
+      if (!rutaSupervisada?.id) {
+        throw new ForbiddenException(
+          'No tienes permiso para registrar cobros en esta ruta supervisada.',
+        );
+      }
+
+      const cajaSupervisor =
+        await tx.caja.findFirst({
+          where: {
+            tipo: 'RUTA' as any,
+            activa: true,
+            responsableId: actorId,
+            rutaId: null,
+          },
+          select: {
+            id: true,
+            nombre: true,
+            saldoActual: true,
+            rutaId: true,
+            responsableId: true,
+            tipo: true,
+          },
+        });
+
+      if (!cajaSupervisor?.id) {
+        throw new BadRequestException(
+          'El supervisor no tiene una caja operativa activa asignada para registrar cobros.',
+        );
+      }
+
+      return cajaSupervisor;
+    }
+
+    const cajaRuta = await tx.caja.findFirst({
+      where: {
+        rutaId: params.rutaId,
+        tipo: 'RUTA' as any,
+        activa: true,
+      },
+      select: {
+        id: true,
+        nombre: true,
+        saldoActual: true,
+        rutaId: true,
+        responsableId: true,
+        tipo: true,
+      },
+    });
+
+    if (!cajaRuta?.id) {
+      throw new BadRequestException(
+        'No existe una caja de ruta activa asociada a la ruta del cliente.',
+      );
+    }
+
+    return cajaRuta;
+  }
+
   private parseFechaOperativaPagoKey(value?: string | null, fallback?: Date) {
     if (!value) return getBogotaDayKey(fallback ?? new Date());
 
@@ -521,6 +635,12 @@ export class PaymentsService {
     const prestamoIdVal = paymentDto.prestamoId;
     let cobradorIdVal = paymentDto.cobradorId;
 
+    // Ajustar cobradorId para supervisor antes de cualquier flujo
+    const rolActor = String(actor?.rol || '').toUpperCase();
+    if (rolActor === RolUsuario.SUPERVISOR && actor?.id) {
+      cobradorIdVal = actor.id;
+    }
+
     this.logger.log(
       `Registrando pago: préstamo=${prestamoIdVal}, monto=${paymentDto.montoTotal}`,
     );
@@ -569,14 +689,26 @@ export class PaymentsService {
       );
     }
 
-    if (!this.isCollector(actor)) {
+    if (rolActor === RolUsuario.SUPERVISOR && actor?.id) {
+      cobradorIdVal = actor.id;
+    } else if (!this.isCollector(actor)) {
       const asignacionActiva = await this.prisma.asignacionRuta.findFirst({
-        where: { clienteId: prestamo.clienteId, activa: true },
+        where: {
+          clienteId: prestamo.clienteId,
+          activa: true,
+          ...(paymentDto.rutaId ? { rutaId: paymentDto.rutaId } : {}),
+        },
         select: {
           cobradorId: true,
-          ruta: { select: { cobradorId: true } },
+          rutaId: true,
+          ruta: {
+            select: {
+              cobradorId: true,
+            },
+          },
         },
       });
+
       cobradorIdVal =
         asignacionActiva?.cobradorId || asignacionActiva?.ruta?.cobradorId;
     }
@@ -745,6 +877,57 @@ export class PaymentsService {
     // Si es TRANSFERENCIA, se crea una aprobación pendiente. El pago NO afecta el crédito
     // hasta que sea aprobado en el módulo de Revisiones.
     if (paymentDto.metodoPago === MetodoPago.TRANSFERENCIA) {
+      // Resolver rutaIdOperativa para todos los roles
+      let rutaIdOperativa = paymentDto.rutaId || null;
+
+      if (!rutaIdOperativa) {
+        const asignacionActiva = await this.prisma.asignacionRuta.findFirst({
+          where: {
+            clienteId: prestamo.clienteId,
+            activa: true,
+            ...(rolActor === RolUsuario.SUPERVISOR && actor?.id
+              ? { ruta: { supervisorId: actor.id, eliminadoEn: null } }
+              : {}),
+          },
+          select: {
+            rutaId: true,
+            ruta: {
+              select: {
+                id: true,
+                supervisorId: true,
+                cobradorId: true,
+              },
+            },
+          },
+        });
+
+        rutaIdOperativa = asignacionActiva?.rutaId || null;
+      }
+
+      if (!rutaIdOperativa) {
+        throw new BadRequestException(
+          'No se pudo resolver una ruta activa para registrar este pago.',
+        );
+      }
+
+      // Validar que supervisor solo pueda registrar pagos en rutas que supervisa
+      if (rolActor === RolUsuario.SUPERVISOR && actor?.id) {
+        const rutaSupervisada = await this.prisma.ruta.findFirst({
+          where: {
+            id: rutaIdOperativa,
+            supervisorId: actor.id,
+            eliminadoEn: null,
+          },
+          select: { id: true },
+        });
+
+        if (!rutaSupervisada?.id) {
+          throw new ForbiddenException(
+            'No tienes permiso para registrar pagos en esta ruta supervisada.',
+          );
+        }
+      }
+
       const aprobacionExistente = idempotencyKey
         ? await this.prisma.aprobacion.findFirst({
             where: { idempotencyKey },
@@ -761,6 +944,27 @@ export class PaymentsService {
         };
       }
 
+      // Validar que el cliente pertenezca a la ruta indicada
+      const asignacionRutaPago = await this.prisma.asignacionRuta.findFirst({
+        where: {
+          clienteId: prestamo.clienteId,
+          rutaId: rutaIdOperativa,
+          activa: true,
+          ...(rolActor === RolUsuario.SUPERVISOR && actor?.id
+            ? { ruta: { supervisorId: actor.id, eliminadoEn: null } }
+            : {}),
+        },
+        select: {
+          rutaId: true,
+        },
+      });
+
+      if (!asignacionRutaPago?.rutaId) {
+        throw new BadRequestException(
+          'El cliente no pertenece a la ruta indicada para registrar este pago.',
+        );
+      }
+
       const approval = await this.prisma.aprobacion.create({
         data: {
           tipoAprobacion: 'PAGO_TRANSFERENCIA' as any,
@@ -774,7 +978,7 @@ export class PaymentsService {
             prestamoId: prestamoIdVal,
             clienteId: prestamo.clienteId,
             cobradorId: cobradorIdVal,
-            rutaId: paymentDto.rutaId || null,
+            rutaId: rutaIdOperativa || paymentDto.rutaId || null,
             montoTotal,
             fechaPago: formatBogotaOffsetIso(fechaPagoBogota),
             numeroReferencia: paymentDto.numeroReferencia || null,
@@ -958,11 +1162,14 @@ export class PaymentsService {
                 clienteId,
                 activa: true,
                 ...(paymentDto.rutaId ? { rutaId: paymentDto.rutaId } : {}),
+                ...(rolActor === RolUsuario.SUPERVISOR && actor?.id
+                  ? { ruta: { supervisorId: actor.id, eliminadoEn: null } }
+                  : {}),
               },
           select: {
             rutaId: true,
             cobradorId: true,
-            ruta: { select: { cobradorId: true } },
+            ruta: { select: { cobradorId: true, supervisorId: true } },
           },
         });
         if (!asignacion?.rutaId) {
@@ -971,7 +1178,9 @@ export class PaymentsService {
           );
         }
 
-        if (!this.isCollector(actor)) {
+        if (rolActor === RolUsuario.SUPERVISOR && actor?.id) {
+          cobradorIdVal = actor.id;
+        } else if (!this.isCollector(actor)) {
           cobradorIdVal = asignacion.ruta?.cobradorId || asignacion.cobradorId;
         }
 
@@ -979,16 +1188,11 @@ export class PaymentsService {
           throw new BadRequestException('El cobrador es requerido');
         }
 
-        const cajaIngreso = await tx.caja.findFirst({
-          where: { rutaId: asignacion.rutaId, tipo: 'RUTA', activa: true },
-          select: { id: true, nombre: true, saldoActual: true },
+        const cajaIngreso = await this.resolveCajaIngresoPago(tx, {
+          actor,
+          rutaId: asignacion.rutaId,
+          metodoPago: paymentDto.metodoPago,
         });
-
-        if (!cajaIngreso?.id) {
-          throw new BadRequestException(
-            'No existe una caja de ruta activa asociada a la ruta del cliente',
-          );
-        }
 
         // 1. Crear el registro de pago
         const pago = await tx.pago.create({
@@ -1139,7 +1343,7 @@ export class PaymentsService {
             tipo: TipoTransaccion.INGRESO,
             monto: montoTotal,
             descripcion: `Cobranza ${numeroPago}`,
-            creadoPorId: cobradorIdVal,
+            creadoPorId: actor?.id || cobradorIdVal,
             tipoReferencia: 'PAGO',
             referenciaId: numeroPago,
           },
@@ -1156,7 +1360,7 @@ export class PaymentsService {
             montoInteres: interesTotalFinalActual,
             montoMora: moraTotalFinalActual,
             metodoPago: pago.metodoPago,
-            createdBy: cobradorIdVal,
+            createdBy: actor?.id || cobradorIdVal,
           },
           tx,
         );
@@ -1179,7 +1383,7 @@ export class PaymentsService {
     // Auditoría
     try {
       await this.auditService.create({
-        usuarioId: cobradorIdVal,
+        usuarioId: actor?.id || cobradorIdVal,
         accion: 'REGISTRAR_PAGO',
         entidad: 'Pago',
         entidadId: resultado.pago.id,
@@ -1671,6 +1875,30 @@ export class PaymentsService {
       take: 10000,
     });
 
+    // Obtener transacciones asociadas a los pagos para determinar origenCaja
+    const numerosPago = pagos.map((p) => p.numeroPago).filter(Boolean);
+    const transaccionesPago = numerosPago.length > 0
+      ? await this.prisma.transaccion.findMany({
+          where: {
+            tipoReferencia: 'PAGO',
+            referenciaId: { in: numerosPago },
+          },
+          include: {
+            caja: {
+              select: {
+                codigo: true,
+                tipo: true,
+                rutaId: true,
+              },
+            },
+          },
+        })
+      : [];
+
+    const transaccionPorNumeroPago = new Map(
+      transaccionesPago.map((t) => [t.referenciaId, t]),
+    );
+
     const fecha = (() => {
       if (
         filters.startDate &&
@@ -1729,6 +1957,25 @@ export class PaymentsService {
     const filas: PagoRow[] = pagos.map((p: PagoConRelacionesExport) => {
       const fechaPagoKey = getBogotaDayKey(p.fechaPago);
       const gestion = visitasMap.get(`${p.clienteId}|${fechaPagoKey}`);
+      
+      // Determinar origenCaja desde la transacción asociada al pago
+      const transaccion = transaccionPorNumeroPago.get(p.numeroPago) as any;
+      const caja = transaccion?.caja;
+      
+      let origenCaja = 'Ruta';
+      if (caja) {
+        if (caja.codigo === 'CAJA-OFICINA') {
+          origenCaja = 'Oficina';
+        } else if (caja.tipo === 'RUTA' && !caja.rutaId) {
+          origenCaja = 'Supervisor';
+        } else if (caja.tipo === 'RUTA' && caja.rutaId) {
+          origenCaja = 'Ruta';
+        } else if (caja.tipo === 'PRINCIPAL' && caja.codigo !== 'CAJA-OFICINA') {
+          origenCaja = 'Principal';
+        }
+      } else if (!p.cobrador) {
+        origenCaja = 'Admin';
+      }
 
       return {
         fecha: p.fechaPago,
@@ -1746,11 +1993,7 @@ export class PaymentsService {
         interesPagado: Number((p as any).interesPagado || 0),
         moraPagada: Number((p as any).moraPagada || 0),
         comentario: (p as any).notas || '',
-        origenCaja: !p.cobrador
-          ? 'Admin'
-          : p.cobrador.rol === 'PUNTO_DE_VENTA'
-            ? 'P.Venta'
-            : 'Ruta',
+        origenCaja,
         estadoVisita: gestion?.estadoVisita || null,
         notasVisita: gestion?.notas || null,
       };
