@@ -122,10 +122,45 @@ export class PaymentsService {
     params: {
       actor: PaymentActor;
       rutaId: string;
+      metodoPago?: string;
     },
   ) {
     const actorId = String(params.actor?.id || '').trim();
     const rol = String(params.actor?.rol || '').toUpperCase();
+    const metodoPago = params.metodoPago || 'EFECTIVO';
+
+    const rolesOficina = [
+      'COORDINADOR',
+      'ADMIN',
+      'SUPER_ADMINISTRADOR',
+    ];
+
+    if (rolesOficina.includes(rol) && metodoPago === MetodoPago.EFECTIVO) {
+      // Roles de oficina registrando pago en efectivo: usar CAJA-OFICINA
+      const cajaOficina = await tx.caja.findFirst({
+        where: {
+          codigo: 'CAJA-OFICINA',
+          tipo: 'PRINCIPAL' as any,
+          activa: true,
+        },
+        select: {
+          id: true,
+          nombre: true,
+          saldoActual: true,
+          rutaId: true,
+          responsableId: true,
+          tipo: true,
+        },
+      });
+
+      if (!cajaOficina?.id) {
+        throw new BadRequestException(
+          'No existe una Caja de Oficina activa para registrar pagos en efectivo.',
+        );
+      }
+
+      return cajaOficina;
+    }
 
     if (rol === RolUsuario.SUPERVISOR) {
       // Validar que la ruta pertenece a la supervisión del supervisor
@@ -1156,6 +1191,7 @@ export class PaymentsService {
         const cajaIngreso = await this.resolveCajaIngresoPago(tx, {
           actor,
           rutaId: asignacion.rutaId,
+          metodoPago: paymentDto.metodoPago,
         });
 
         // 1. Crear el registro de pago
@@ -1307,7 +1343,7 @@ export class PaymentsService {
             tipo: TipoTransaccion.INGRESO,
             monto: montoTotal,
             descripcion: `Cobranza ${numeroPago}`,
-            creadoPorId: cobradorIdVal,
+            creadoPorId: actor?.id || cobradorIdVal,
             tipoReferencia: 'PAGO',
             referenciaId: numeroPago,
           },
@@ -1324,7 +1360,7 @@ export class PaymentsService {
             montoInteres: interesTotalFinalActual,
             montoMora: moraTotalFinalActual,
             metodoPago: pago.metodoPago,
-            createdBy: cobradorIdVal,
+            createdBy: actor?.id || cobradorIdVal,
           },
           tx,
         );
@@ -1347,7 +1383,7 @@ export class PaymentsService {
     // Auditoría
     try {
       await this.auditService.create({
-        usuarioId: cobradorIdVal,
+        usuarioId: actor?.id || cobradorIdVal,
         accion: 'REGISTRAR_PAGO',
         entidad: 'Pago',
         entidadId: resultado.pago.id,
@@ -1839,6 +1875,30 @@ export class PaymentsService {
       take: 10000,
     });
 
+    // Obtener transacciones asociadas a los pagos para determinar origenCaja
+    const numerosPago = pagos.map((p) => p.numeroPago).filter(Boolean);
+    const transaccionesPago = numerosPago.length > 0
+      ? await this.prisma.transaccion.findMany({
+          where: {
+            tipoReferencia: 'PAGO',
+            referenciaId: { in: numerosPago },
+          },
+          include: {
+            caja: {
+              select: {
+                codigo: true,
+                tipo: true,
+                rutaId: true,
+              },
+            },
+          },
+        })
+      : [];
+
+    const transaccionPorNumeroPago = new Map(
+      transaccionesPago.map((t) => [t.referenciaId, t]),
+    );
+
     const fecha = (() => {
       if (
         filters.startDate &&
@@ -1897,6 +1957,25 @@ export class PaymentsService {
     const filas: PagoRow[] = pagos.map((p: PagoConRelacionesExport) => {
       const fechaPagoKey = getBogotaDayKey(p.fechaPago);
       const gestion = visitasMap.get(`${p.clienteId}|${fechaPagoKey}`);
+      
+      // Determinar origenCaja desde la transacción asociada al pago
+      const transaccion = transaccionPorNumeroPago.get(p.numeroPago) as any;
+      const caja = transaccion?.caja;
+      
+      let origenCaja = 'Ruta';
+      if (caja) {
+        if (caja.codigo === 'CAJA-OFICINA') {
+          origenCaja = 'Oficina';
+        } else if (caja.tipo === 'RUTA' && !caja.rutaId) {
+          origenCaja = 'Supervisor';
+        } else if (caja.tipo === 'RUTA' && caja.rutaId) {
+          origenCaja = 'Ruta';
+        } else if (caja.tipo === 'PRINCIPAL' && caja.codigo !== 'CAJA-OFICINA') {
+          origenCaja = 'Principal';
+        }
+      } else if (!p.cobrador) {
+        origenCaja = 'Admin';
+      }
 
       return {
         fecha: p.fechaPago,
@@ -1914,13 +1993,7 @@ export class PaymentsService {
         interesPagado: Number((p as any).interesPagado || 0),
         moraPagada: Number((p as any).moraPagada || 0),
         comentario: (p as any).notas || '',
-        origenCaja: !p.cobrador
-          ? 'Admin'
-          : p.cobrador.rol === 'SUPERVISOR'
-            ? 'Supervisor'
-            : p.cobrador.rol === 'PUNTO_DE_VENTA'
-              ? 'P.Venta'
-              : 'Ruta',
+        origenCaja,
         estadoVisita: gestion?.estadoVisita || null,
         notasVisita: gestion?.notas || null,
       };

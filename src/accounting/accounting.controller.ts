@@ -439,6 +439,27 @@ export class AccountingController {
     return this.accountingService.getRutaCerradaHoy(rutaId);
   }
 
+  @Get('supervisores/:supervisorId/saldo-disponible')
+  @Roles(
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
+  getSaldoDisponibleSupervisor(
+    @Param('supervisorId') supervisorId: string,
+    @Query('fecha') fecha?: string,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
+  ) {
+    return this.accountingService.getSaldoDisponibleSupervisor(
+      supervisorId,
+      fecha,
+      fechaInicio,
+      fechaFin,
+    );
+  }
+
   @Get('export')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.CONTADOR)
   @HttpCode(HttpStatus.OK)

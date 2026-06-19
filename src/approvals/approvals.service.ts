@@ -769,6 +769,213 @@ export class ApprovalsService {
     });
   }
 
+  private async rejectReprogramacionCuota(
+    approval: any,
+    efectoProvisional: any,
+    rechazadoPorId?: string,
+    motivoRechazo?: string,
+  ) {
+    if (!efectoProvisional) {
+      throw new BadRequestException(
+        'No se encontró efecto provisional para revertir la reprogramación',
+      );
+    }
+
+    if (efectoProvisional.estado !== 'PENDIENTE_REVISION') {
+      throw new BadRequestException('El efecto provisional ya fue procesado');
+    }
+
+    const rollbackData = efectoProvisional.rollbackData || {};
+
+    const cuotaId = String(
+      rollbackData.cuotaId || approval.referenciaId || '',
+    );
+
+    if (!cuotaId) {
+      throw new BadRequestException(
+        'La solicitud de reprogramación no tiene cuota asociada',
+      );
+    }
+
+    const fechaVencimientoOriginal = rollbackData.fechaVencimientoOriginal
+      ? new Date(rollbackData.fechaVencimientoOriginal)
+      : null;
+
+    if (
+      !fechaVencimientoOriginal ||
+      Number.isNaN(fechaVencimientoOriginal.getTime())
+    ) {
+      throw new BadRequestException(
+        'La solicitud no contiene una fecha original válida para revertir',
+      );
+    }
+
+    const fechaOperativaOriginal =
+      typeof rollbackData.fechaOperativaOriginal === 'string'
+        ? rollbackData.fechaOperativaOriginal
+        : null;
+
+    const registroVisitaAnterior = rollbackData.registroVisitaAnterior;
+    const debeRevertirRegistroVisita =
+      rollbackData.origenGestion === 'CIERRE_PENDIENTE' &&
+      fechaOperativaOriginal;
+
+    await this.prisma.$transaction(async (tx) => {
+      const cuotaActual = await tx.cuota.findUnique({
+        where: { id: cuotaId },
+        select: {
+          id: true,
+          prestamoId: true,
+          fechaVencimiento: true,
+          estado: true,
+        },
+      });
+
+      if (!cuotaActual) {
+        throw new BadRequestException('La cuota ya no existe');
+      }
+
+      if (cuotaActual.estado === EstadoCuota.PAGADA) {
+        throw new BadRequestException(
+          'No se puede revertir una reprogramación de una cuota ya pagada',
+        );
+      }
+
+      const fechaNuevaEsperada = rollbackData.fechaVencimientoNueva
+        ? new Date(rollbackData.fechaVencimientoNueva)
+        : null;
+
+      if (
+        fechaNuevaEsperada &&
+        !Number.isNaN(fechaNuevaEsperada.getTime())
+      ) {
+        const actualMs = new Date(cuotaActual.fechaVencimiento).getTime();
+        const esperadaMs = fechaNuevaEsperada.getTime();
+
+        if (actualMs !== esperadaMs) {
+          this.logger.warn(
+            `La cuota ${cuotaId} fue modificada después de la solicitud (esperada: ${fechaNuevaEsperada.toISOString()}, actual: ${cuotaActual.fechaVencimiento}). Revertiendo a fecha original de todas formas.`,
+          );
+        }
+      }
+
+      const claimed = await tx.aprobacion.updateMany({
+        where: {
+          id: approval.id,
+          estado: EstadoAprobacion.PENDIENTE,
+        },
+        data: {
+          estado: EstadoAprobacion.RECHAZADO,
+          aprobadoPorId: rechazadoPorId || undefined,
+          comentarios: motivoRechazo || 'Rechazado sin motivo especificado',
+          revisadoEn: new Date(),
+        },
+      });
+
+      if (claimed.count !== 1) {
+        throw new BadRequestException(
+          'Esta solicitud ya fue tomada por otro usuario',
+        );
+      }
+
+      await tx.cuota.update({
+        where: { id: cuotaId },
+        data: {
+          fechaVencimiento: fechaVencimientoOriginal,
+        },
+      });
+
+      if (debeRevertirRegistroVisita && rollbackData.rutaIdOriginal) {
+        const rutaIdOriginal = String(rollbackData.rutaIdOriginal);
+
+        if (registroVisitaAnterior?.id) {
+          await tx.registroVisita.update({
+            where: { id: String(registroVisitaAnterior.id) },
+            data: {
+              estadoVisita: registroVisitaAnterior.estadoVisita,
+              notas: registroVisitaAnterior.notas,
+              prestamoId: registroVisitaAnterior.prestamoId,
+              cobradorId: registroVisitaAnterior.cobradorId,
+            },
+          });
+        } else {
+          await tx.registroVisita.deleteMany({
+            where: {
+              rutaId: rutaIdOriginal,
+              clienteId: String(rollbackData.clienteId),
+              fechaVisita: fechaOperativaOriginal,
+            },
+          });
+        }
+      }
+
+      await tx.efectoProvisional.update({
+        where: { id: efectoProvisional.id },
+        data: {
+          estado: 'REVERTIDO',
+          revertidoEn: new Date(),
+          motivoReversion: motivoRechazo || 'Reprogramación rechazada',
+        },
+      });
+    });
+
+    try {
+      const datos =
+        typeof approval.datosSolicitud === 'string'
+          ? JSON.parse(approval.datosSolicitud)
+          : approval.datosSolicitud || {};
+
+      await this.notificacionesService.create({
+        usuarioId: approval.solicitadoPorId,
+        titulo: 'Reprogramación rechazada',
+        mensaje: `La reprogramación de la cuota del cliente ${
+          datos.clienteNombre || datos.cliente || ''
+        } fue rechazada y revertida.${
+          motivoRechazo ? ` Motivo: ${motivoRechazo}` : ''
+        }`,
+        tipo: 'REPROGRAMACION_RECHAZADA',
+        entidad: 'Aprobacion',
+        entidadId: approval.id,
+        metadata: {
+          tipoAprobacion: 'REPROGRAMACION_CUOTA',
+          estadoAprobacion: 'RECHAZADO',
+          motivoRechazo: motivoRechazo || undefined,
+          prestamoId: rollbackData.prestamoId || datos.prestamoId,
+          cuotaId: rollbackData.cuotaId || datos.cuotaId,
+        },
+      });
+    } catch {
+      // No interrumpir el rechazo si falla la notificación
+    }
+
+    this.notificacionesGateway.broadcastAprobacionesActualizadas({
+      accion: 'RECHAZAR',
+      aprobacionId: approval.id,
+      tipoAprobacion: approval.tipoAprobacion,
+    });
+
+    this.notificacionesGateway.broadcastRutasActualizadas({
+      accion: 'REPROGRAMACION_RECHAZADA',
+      prestamoId: rollbackData.prestamoId,
+      cuotaId: rollbackData.cuotaId || approval.referenciaId,
+    });
+
+    this.notificacionesGateway.broadcastPrestamosActualizados({
+      accion: 'REPROGRAMACION_RECHAZADA',
+      prestamoId: rollbackData.prestamoId,
+      cuotaId: rollbackData.cuotaId || approval.referenciaId,
+    });
+
+    this.notificacionesGateway.broadcastDashboardsActualizados({
+      origen: 'REPROGRAMACION_CUOTA',
+    });
+
+    return {
+      success: true,
+      message: 'Reprogramación rechazada y revertida',
+    };
+  }
+
   private calcularAplicacionPago(
     prestamo: any,
     montoTotal: number,
@@ -909,6 +1116,67 @@ export class ApprovalsService {
       this.prisma,
       id,
     );
+
+    if (approval.tipoAprobacion === TipoAprobacion.REPROGRAMACION_CUOTA) {
+      if (!efectoProvisional) {
+        throw new BadRequestException(
+          'No se encontró efecto provisional para confirmar la reprogramación',
+        );
+      }
+
+      await this.prisma.$transaction(async (tx) => {
+        const claimed = await tx.aprobacion.updateMany({
+          where: {
+            id,
+            estado: EstadoAprobacion.PENDIENTE,
+          },
+          data: {
+            estado: EstadoAprobacion.APROBADO,
+            aprobadoPorId: aprobadoPorId || undefined,
+            comentarios: notas || undefined,
+            datosAprobados: editedData || undefined,
+            revisadoEn: new Date(),
+          },
+        });
+
+        if (claimed.count !== 1) {
+          throw new BadRequestException(
+            'Esta solicitud ya fue tomada por otro usuario',
+          );
+        }
+
+        await this.confirmarEfectoProvisional(tx, efectoProvisional);
+      });
+
+      const rollbackData = efectoProvisional.rollbackData || {};
+
+      this.notificacionesGateway.broadcastAprobacionesActualizadas({
+        accion: 'APROBAR',
+        aprobacionId: id,
+        tipoAprobacion: approval.tipoAprobacion,
+      });
+
+      this.notificacionesGateway.broadcastRutasActualizadas({
+        accion: 'REPROGRAMACION_APROBADA',
+        prestamoId: rollbackData.prestamoId,
+        cuotaId: rollbackData.cuotaId || approval.referenciaId,
+      });
+
+      this.notificacionesGateway.broadcastPrestamosActualizados({
+        accion: 'REPROGRAMACION_APROBADA',
+        prestamoId: rollbackData.prestamoId,
+        cuotaId: rollbackData.cuotaId || approval.referenciaId,
+      });
+
+      this.notificacionesGateway.broadcastDashboardsActualizados({
+        origen: 'REPROGRAMACION_CUOTA',
+      });
+
+      return {
+        success: true,
+        message: 'Reprogramación aprobada',
+      };
+    }
 
     if (
       efectoProvisional &&
@@ -1723,6 +1991,15 @@ export class ApprovalsService {
       this.prisma,
       id,
     );
+
+    if (approval.tipoAprobacion === TipoAprobacion.REPROGRAMACION_CUOTA) {
+      return this.rejectReprogramacionCuota(
+        approval,
+        efectoProvisional,
+        rechazadoPorId,
+        motivoRechazo,
+      );
+    }
 
     if (
       efectoProvisional &&
@@ -2747,48 +3024,76 @@ export class ApprovalsService {
         ? JSON.parse(approval.datosSolicitud)
         : approval.datosSolicitud;
 
-    let resolvedCashBaseCajaId = String(data.cajaId || '');
+    // Usar la caja de destino desde la aprobación o los datos de solicitud
+    // No volver a buscar por rutaId porque podría usar la caja del cobrador en lugar de la caja del supervisor
+    const cajaIdDestino = approval.referenciaId || data.cajaId;
+
+    if (!cajaIdDestino) {
+      throw new BadRequestException(
+        'La solicitud de base no tiene una caja destino válida.',
+      );
+    }
 
     // Procesar en una transacción de base de datos
     const trx = await this.prisma.$transaction(async (tx) => {
-      // 1. Buscar la Caja Principal (origen del capital)
-      const cajaPrincipal = await tx.caja.findFirst({
-        where: { tipo: 'PRINCIPAL', activa: true },
+      // 1. Buscar la Caja de Oficina como origen del capital operativo
+      const cajaOficina = await tx.caja.findFirst({
+        where: {
+          codigo: 'CAJA-OFICINA',
+          activa: true,
+        },
       });
 
-      if (!cajaPrincipal) {
+      if (!cajaOficina) {
         throw new BadRequestException(
-          'No se encontró una Caja Principal activa para entregar la base.',
+          'No se encontró una Caja de Oficina activa para entregar la base.',
+        );
+      }
+
+      // 2. Validar que la caja destino exista y esté activa
+      const cajaDestino = await tx.caja.findFirst({
+        where: {
+          id: cajaIdDestino,
+          activa: true,
+        },
+        select: {
+          id: true,
+          nombre: true,
+          codigo: true,
+          tipo: true,
+          rutaId: true,
+          responsableId: true,
+        },
+      });
+
+      if (!cajaDestino?.id) {
+        throw new NotFoundException(
+          'La caja destino de la solicitud de base no existe o no está activa.',
         );
       }
 
       const monto = Number(data.monto);
-      const routeCash = await this.resolveActiveRouteCashContext(tx, {
-        rutaId: data.rutaId,
-        cajaId: data.cajaId,
-      });
-      resolvedCashBaseCajaId = routeCash.cajaId;
 
-      // 2. Verificar fondos en Caja Principal
-      if (Number(cajaPrincipal.saldoActual) < monto) {
+      // 2. Verificar fondos en Caja de Oficina
+      if (Number(cajaOficina.saldoActual) < monto) {
         throw new BadRequestException(
-          `Fondos insuficientes en la Caja Principal (${cajaPrincipal.nombre}). Saldo actual: ${Number(
-            cajaPrincipal.saldoActual,
+          `Fondos insuficientes en la Caja de Oficina (${cajaOficina.nombre}). Saldo actual: ${Number(
+            cajaOficina.saldoActual,
           ).toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
         );
       }
 
-      // 3. Crear transacción de salida (EGRESO) desde la Caja Principal
+      // 3. Crear transacción de salida (EGRESO) desde la Caja de Oficina
       await tx.transaccion.create({
         data: {
           numeroTransaccion: this.generarNumeroTransaccion('TRX-OUT'),
-          cajaId: cajaPrincipal.id,
+          cajaId: cajaOficina.id,
           tipo: TipoTransaccion.EGRESO,
           monto: monto,
-          descripcion: `Entrega de base operativa a Ruta (Caja ID: ${routeCash.cajaId}) - Solicitud #${approval.id}`,
+          descripcion: `Entrega de base operativa desde Caja de Oficina a ${cajaDestino.nombre} - Solicitud #${approval.id}`,
           creadoPorId: aprobadoPorId || approval.solicitadoPorId,
           aprobadoPorId: aprobadoPorId || undefined,
-          tipoReferencia: 'SOLICITUD_BASE',
+          tipoReferencia: 'SOLICITUD_BASE_EFECTIVO',
           referenciaId: approval.id,
         },
       });
@@ -2797,20 +3102,20 @@ export class ApprovalsService {
       const newTrx = await tx.transaccion.create({
         data: {
           numeroTransaccion: this.generarNumeroTransaccion('TRX-IN'),
-          cajaId: resolvedCashBaseCajaId,
+          cajaId: cajaIdDestino,
           tipo: TipoTransaccion.INGRESO,
           monto: monto,
           descripcion: `Base de efectivo recibida - ${data.descripcion}`,
           creadoPorId: approval.solicitadoPorId,
           aprobadoPorId: aprobadoPorId || undefined,
-          tipoReferencia: 'SOLICITUD_BASE',
+          tipoReferencia: 'SOLICITUD_BASE_EFECTIVO',
           referenciaId: approval.id,
         },
       });
 
       // Asiento contable de Partida Doble (patrón correcto: Ledger mueve ambos saldos)
-      const accountCodePrincipal =
-        cajaPrincipal.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1';
+      const accountCodeOficina =
+        cajaOficina.codigo === 'CAJA-BANCO' ? '1.1.2' : '1.1.1';
       await this.ledgerService.registrarAsiento(
         {
           referenceType: 'BASE',
@@ -2821,14 +3126,14 @@ export class ApprovalsService {
             {
               accountCode: '1.2.1',
               debitAmount: monto,
-              cajaId: routeCash.cajaId,
+              cajaId: cajaIdDestino,
               cajaDelta: +monto, // Caja Ruta RECIBE
             },
             {
-              accountCode: accountCodePrincipal,
+              accountCode: accountCodeOficina,
               creditAmount: monto,
-              cajaId: cajaPrincipal.id,
-              cajaDelta: -monto, // Caja Principal ENTREGA
+              cajaId: cajaOficina.id,
+              cajaDelta: -monto, // Caja de Oficina ENTREGA
             },
           ],
         },
@@ -2846,7 +3151,7 @@ export class ApprovalsService {
         entidad: 'TRANSACCION',
         entidadId: trx.id,
         metadata: {
-          cajaId: resolvedCashBaseCajaId,
+          cajaId: cajaIdDestino,
           monto: data.monto,
           solicitadoPorId: approval.solicitadoPorId,
           aprobadoPorId: aprobadoPorId,
@@ -2860,7 +3165,7 @@ export class ApprovalsService {
         entidad: 'TRANSACCION',
         entidadId: trx.id,
         metadata: {
-          cajaId: resolvedCashBaseCajaId,
+          cajaId: cajaIdDestino,
         },
       });
     } catch (error) {

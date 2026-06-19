@@ -94,7 +94,7 @@ export class RoutesService {
 
   private isAssignedRouteSupervisor(actor: RouteActor) {
     const rol = String(actor?.rol || '').toUpperCase();
-    return rol === RolUsuario.SUPERVISOR || rol === RolUsuario.COORDINADOR;
+    return rol === RolUsuario.SUPERVISOR;
   }
 
   private assertCollectorOwnUser(cobradorId: string, actor?: RouteActor) {
@@ -788,13 +788,13 @@ export class RoutesService {
           where: {
             id: createRouteDto.supervisorId,
 
-            rol: { in: ['SUPERVISOR', 'COORDINADOR'] },
+            rol: 'SUPERVISOR',
           },
         });
 
         if (!supervisor) {
           throw new BadRequestException(
-            'El supervisor especificado no existe o no tiene el rol correcto',
+            'El supervisor especificado no existe o no tiene rol SUPERVISOR',
           );
         }
       }
@@ -950,13 +950,8 @@ export class RoutesService {
     actor?: RouteActor,
   ) {
     const { skip, take, search, activa, supervisorId } = options || {};
-    const cobradorId = this.isCollector(actor)
-      ? actor?.id
-      : options?.cobradorId;
-    const scopedSupervisorId = this.isAssignedRouteSupervisor(actor)
-      ? actor?.id
-      : supervisorId;
-
+    const rolActor = String(actor?.rol || '').toUpperCase();
+    
     const where: any = {
       eliminadoEn: null,
     };
@@ -977,14 +972,21 @@ export class RoutesService {
       where.activa = activa;
     }
 
-    if (cobradorId) {
-      where.cobradorId = cobradorId;
-    }
-
-    if (scopedSupervisorId) {
-      where.supervisorId = scopedSupervisorId;
-    } else if (this.isAssignedRouteSupervisor(actor)) {
-      where.supervisorId = '__NO_ACTOR_ID__';
+    // Filtrado por rol del actor
+    if (rolActor === RolUsuario.COBRADOR) {
+      where.cobradorId = actor?.id;
+    } else if (rolActor === RolUsuario.SUPERVISOR) {
+      where.supervisorId = actor?.id;
+    } else if (rolActor === RolUsuario.COORDINADOR) {
+      // Coordinador ve todas las rutas, no filtra por supervisorId ni cobradorId
+    } else {
+      // ADMIN y SUPER_ADMINISTRADOR: visibilidad total, pero pueden aplicar filtros explícitos
+      if (options?.cobradorId) {
+        where.cobradorId = options.cobradorId;
+      }
+      if (supervisorId) {
+        where.supervisorId = supervisorId;
+      }
     }
 
     try {
@@ -2294,13 +2296,13 @@ export class RoutesService {
         where: {
           id: updateRouteDto.supervisorId,
 
-          rol: { in: ['SUPERVISOR', 'COORDINADOR'] },
+          rol: 'SUPERVISOR',
         },
       });
 
       if (!supervisor) {
         throw new BadRequestException(
-          'El supervisor especificado no existe o no tiene el rol correcto',
+          'El supervisor especificado no existe o no tiene rol SUPERVISOR',
         );
       }
     }
@@ -2711,7 +2713,7 @@ export class RoutesService {
     try {
       const supervisores = await this.prisma.usuario.findMany({
         where: {
-          rol: { in: ['SUPERVISOR', 'COORDINADOR'] },
+          rol: 'SUPERVISOR',
 
           estado: 'ACTIVO',
 
@@ -3566,7 +3568,9 @@ export class RoutesService {
         ? await this.prisma.aprobacion.findMany({
             where: {
               tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
-              estado: EstadoAprobacion.APROBADO,
+              estado: {
+                in: [EstadoAprobacion.PENDIENTE, EstadoAprobacion.APROBADO],
+              },
               OR: [
                 {
                   datosSolicitud: {
@@ -4268,7 +4272,7 @@ export class RoutesService {
 
     const totalEsperadoFinal = obligacionesOperativas.reduce(
       (sum: number, item: any) =>
-        sum + Number(item.metaPendiente || 0) + Number(item.recaudado || 0),
+        sum + Number(item.metaPendiente || 0),
       0,
     );
 
@@ -5911,41 +5915,84 @@ export class RoutesService {
     return 'PENDIENTE'
   }
 
+  private normalizeGestionValue(value: any) {
+    return String(value || '')
+      .trim()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+  }
+
   private resolveEstadoGestionPrestamo(
     visita: any,
     prestamo: any,
   ): 'PAGO_REGISTRADO' | 'AUSENTE' | 'REPROGRAMADO' | 'PENDIENTE' {
-    const estadoPrestamo = String(
+    const estadoPrestamo = this.normalizeGestionValue(
       prestamo?.estadoGestion ||
         prestamo?.estadoVisita ||
         prestamo?.proximaCuota?.estado ||
         '',
-    ).toLowerCase();
+    )
 
-    const estadoVisita = String(visita?.estadoVisita || '').toLowerCase();
+    const estadoVisita = this.normalizeGestionValue(
+      visita?.estadoVisita ||
+        visita?.estadoGestion ||
+        '',
+    )
+
+    const prestamosVisita = Array.isArray(visita?.prestamos)
+      ? visita.prestamos
+      : []
+
+    const esPrestamoObjetivo =
+      String(prestamo?.id || '') === String(visita?.prestamoObjetivoId || '') ||
+      String(prestamo?.id || '') === String(visita?.cuotaObjetivoPrestamoId || '') ||
+      prestamosVisita.length === 1
 
     const recaudadoPrestamo = Number(
-      prestamo?.recaudadoDelDia || prestamo?.recaudadoHoy || 0,
-    );
+      prestamo?.recaudadoDelDia ??
+        prestamo?.recaudadoHoy ??
+        (esPrestamoObjetivo ? visita?.recaudadoDelDia : 0) ??
+        0,
+    )
 
-    if (recaudadoPrestamo > 0 || estadoPrestamo === 'gestionado' || estadoVisita === 'gestionado') {
-      return 'PAGO_REGISTRADO';
-    }
+    const estadosPago = [
+      'pagado',
+      'pago',
+      'pago_registrado',
+      'pago registrado',
+      'cobrado',
+      'cobranza',
+      'gestionado',
+    ]
 
     if (
-      estadoPrestamo === 'reprogramado' ||
-      estadoPrestamo === 'reprogramada' ||
-      estadoPrestamo === 'reprogramacion' ||
-      estadoPrestamo === 'reprogramación'
+      recaudadoPrestamo > 0 ||
+      estadosPago.includes(estadoPrestamo) ||
+      estadosPago.includes(estadoVisita)
     ) {
-      return 'REPROGRAMADO';
+      return 'PAGO_REGISTRADO'
     }
 
-    if (estadoVisita === 'ausente') {
-      return 'AUSENTE';
+    if (estadoVisita === 'ausente' || estadoPrestamo === 'ausente') {
+      return 'AUSENTE'
     }
 
-    return 'PENDIENTE';
+    const estadosReprogramado = [
+      'reprogramado',
+      'reprogramada',
+      'reprogramacion',
+      'reprogramacion de pago',
+    ]
+
+    if (
+      estadosReprogramado.includes(estadoPrestamo) ||
+      estadosReprogramado.includes(estadoVisita)
+    ) {
+      return 'REPROGRAMADO'
+    }
+
+    return 'PENDIENTE'
   }
 
   private buildObligacionesOperativas(visitas: any[]) {
@@ -5978,10 +6025,13 @@ export class RoutesService {
               (esPrestamoObjetivo ? visita?.recaudadoDelDia : 0) ||
               0,
           );
+
+          const metaBase = metaPendienteRaw > 0 ? metaPendienteRaw : recaudado
+
           const metaPendiente =
             estadoGestion === 'PENDIENTE' || recaudado > 0
-              ? metaPendienteRaw
-              : 0;
+              ? metaBase
+              : 0
 
           return {
             visita,
@@ -6028,6 +6078,35 @@ export class RoutesService {
           : [];
 
         const obligaciones = this.buildObligacionesOperativas(visitas);
+
+        const metaOperativaJornada = obligaciones.reduce((sum: number, o: any) => {
+          return sum + Number(o.metaPendiente || 0)
+        }, 0)
+
+        const recaudoOperativoJornada = obligaciones.reduce((sum: number, o: any) => {
+          return sum + Number(o.recaudado || 0)
+        }, 0)
+
+        const recaudoOperativoFinal =
+          recaudoOperativoJornada > 0
+            ? recaudoOperativoJornada
+            : Number(
+                detalleDia.resumen?.recaudoOperativo ??
+                  detalleDia.resumen?.recaudo ??
+                  0,
+              )
+
+        const metaFinal =
+          metaOperativaJornada > 0
+            ? metaOperativaJornada
+            : Number(detalleDia.resumen?.meta || 0)
+
+        const cumplimiento =
+          metaFinal > 0
+            ? Number(((recaudoOperativoFinal / metaFinal) * 100).toFixed(2))
+            : recaudoOperativoFinal > 0
+              ? 100
+              : 0
 
         const obligacionesGestionadas = obligaciones.filter((o: any) => {
           return o.estadoGestion !== 'PENDIENTE';
@@ -6088,13 +6167,11 @@ export class RoutesService {
             cobradorId: cierrePendiente.cobradorId,
             cobradorNombre: cierrePendiente.cobradorNombre,
 
-            meta: detalleDia.resumen?.meta || 0,
+            meta: metaFinal,
 
             recaudo: detalleDia.resumen?.recaudo || 0,
-            recaudoOperativo:
-              detalleDia.resumen?.recaudoOperativo ??
-              detalleDia.resumen?.recaudo ??
-              0,
+            recaudoOperativo: recaudoOperativoFinal,
+            cumplimiento,
             recaudoContable: detalleDia.resumen?.recaudoContable || 0,
             recaudoRegularizado:
               detalleDia.resumen?.recaudoRegularizado || 0,
@@ -6110,15 +6187,7 @@ export class RoutesService {
             recaudoRegularizadoTransferencia:
               detalleDia.resumen?.recaudoRegularizadoTransferencia || 0,
 
-            pendiente: Math.max(
-              Number(detalleDia.resumen?.meta || 0) -
-                Number(
-                  detalleDia.resumen?.recaudoOperativo ??
-                    detalleDia.resumen?.recaudo ??
-                    0,
-                ),
-              0,
-            ),
+            pendiente: Math.max(metaFinal - recaudoOperativoFinal, 0),
 
             gastos: detalleDia.resumen?.gastos || 0,
             netoEfectivoRuta: detalleDia.resumen?.netoEfectivoRuta || 0,
@@ -6191,11 +6260,8 @@ export class RoutesService {
             etiquetaRevision: item.prestamo?.etiquetaRevision || null,
           })),
           accionesSugeridas: this.buildAccionesSugeridasCierrePendiente({
-            meta: detalleDia.resumen?.meta || 0,
-            recaudo:
-              detalleDia.resumen?.recaudoOperativo ??
-              detalleDia.resumen?.recaudo ??
-              0,
+            meta: metaFinal,
+            recaudo: recaudoOperativoFinal,
             clientesPendientes: obligacionesPendientes.length,
             clientesAusentes: obligacionesAusentes.length,
           }),

@@ -260,21 +260,7 @@ export class AccountingService {
 
     // Si es supervisor, usar su caja propia
     if (rol === 'SUPERVISOR' && actor?.id) {
-      const cajaSupervisor =
-        await this.prisma.caja.findFirst({
-          where: {
-            tipo: 'RUTA' as any,
-            activa: true,
-            responsableId: actor.id,
-            rutaId: null,
-          },
-        });
-
-      if (!cajaSupervisor) {
-        throw new BadRequestException(
-          'El supervisor no tiene una caja operativa activa asignada para registrar gastos.',
-        );
-      }
+      const cajaSupervisor = await this.asegurarCajaSupervisor(actor.id);
 
       return {
         rutaId: ruta.id,
@@ -912,18 +898,32 @@ export class AccountingService {
     cobradorId: string;
     solicitadoPorId: string;
   }) {
-    // Buscar el solicitante para obtener su rol
+    // Buscar el solicitante para obtener su rol y nombre
     const solicitante = await this.prisma.usuario.findUnique({
       where: { id: data.solicitadoPorId },
-      select: { id: true, rol: true },
+      select: {
+        id: true,
+        nombres: true,
+        apellidos: true,
+        rol: true,
+      },
     });
 
     const actor = solicitante
       ? { id: solicitante.id, rol: solicitante.rol }
       : undefined;
 
-    const { rutaId, cobradorId, cajaRuta } =
-      await this.resolveActiveRouteCashContext(data.rutaId, actor);
+    const {
+      rutaId,
+      cobradorId: responsableCajaId,
+      cajaRuta,
+    } = await this.resolveActiveRouteCashContext(data.rutaId, actor);
+
+    const nombreSolicitante = solicitante
+      ? `${solicitante.nombres || ''} ${solicitante.apellidos || ''}`.trim()
+      : 'Usuario';
+
+    const rolSolicitante = String(solicitante?.rol || '').toUpperCase();
 
     const aprobacion = await this.prisma.aprobacion.create({
       data: {
@@ -934,8 +934,18 @@ export class AccountingService {
         estado: EstadoAprobacion.PENDIENTE,
         datosSolicitud: {
           rutaId,
-          cobradorId,
           cajaId: cajaRuta.id,
+
+          // Responsable real de la caja que recibirá la base
+          cobradorId: responsableCajaId,
+          responsableCajaId,
+
+          // Solicitante real visible en revisiones/notificaciones
+          solicitadoPorId: data.solicitadoPorId,
+          solicitadoPor: nombreSolicitante,
+          solicitadoPorNombre: nombreSolicitante,
+          solicitadoPorRol: rolSolicitante,
+
           monto: data.monto,
           descripcion: data.descripcion,
         },
@@ -943,18 +953,9 @@ export class AccountingService {
       },
     });
 
-    // Buscar nombre del solicitante
-    const solicitanteBase = await this.prisma.usuario.findUnique({
-      where: { id: data.solicitadoPorId },
-      select: { nombres: true, apellidos: true },
-    });
-    const nombreSolicitanteBase = solicitanteBase
-      ? `${solicitanteBase.nombres} ${solicitanteBase.apellidos}`.trim()
-      : 'Cobrador';
-
     await this.notificacionesService.notifyApprovers({
       titulo: 'Nueva Solicitud de Base de Efectivo',
-      mensaje: `${nombreSolicitanteBase} ha solicitado una base de efectivo por ${Number(
+      mensaje: `${nombreSolicitante} (${rolSolicitante}) ha solicitado una base de efectivo por ${Number(
         data.monto,
       ).toLocaleString('es-CO', {
         style: 'currency',
@@ -967,10 +968,19 @@ export class AccountingService {
         tipoAprobacion: 'SOLICITUD_BASE_EFECTIVO',
         rutaId,
         cajaId: cajaRuta.id,
-        cobradorId,
+
+        // Caja afectada
+        cobradorId: responsableCajaId,
+        responsableCajaId,
+
+        // Solicitante visible
+        solicitadoPorId: data.solicitadoPorId,
+        solicitadoPor: nombreSolicitante,
+        solicitadoPorNombre: nombreSolicitante,
+        solicitadoPorRol: rolSolicitante,
+
         monto: data.monto,
         descripcion: data.descripcion,
-        solicitadoPor: nombreSolicitanteBase,
       },
     });
 
@@ -987,6 +997,9 @@ export class AccountingService {
           tipoAprobacion: 'SOLICITUD_BASE_EFECTIVO',
           rutaId,
           cajaId: cajaRuta.id,
+          solicitadoPorId: data.solicitadoPorId,
+          solicitadoPor: nombreSolicitante,
+          solicitadoPorRol: rolSolicitante,
         },
       });
     } catch {}
@@ -1847,6 +1860,173 @@ export class AccountingService {
       desembolsos,
       netoPeriodo: saldoNetoPeriodo,
 
+      fechaInicio: formatBogotaOffsetIso(rangeStart),
+      fechaFin: formatBogotaOffsetIso(rangeEnd),
+    };
+  }
+
+  /**
+   * Obtener saldo disponible de la caja de un supervisor
+   */
+  async getSaldoDisponibleSupervisor(
+    supervisorId: string,
+    fecha?: string,
+    fechaInicio?: string,
+    fechaFin?: string,
+  ) {
+    let rangeStart: Date;
+    let rangeEnd: Date;
+
+    if (fechaInicio && fechaFin) {
+      const startKey = /^\d{4}-\d{2}-\d{2}$/.test(fechaInicio)
+        ? fechaInicio
+        : getBogotaDayKey(new Date(fechaInicio));
+      const endKey = /^\d{4}-\d{2}-\d{2}$/.test(fechaFin)
+        ? fechaFin
+        : getBogotaDayKey(new Date(fechaFin));
+      rangeStart = getBogotaStartEndOfDayFromKey(startKey).startDate;
+      rangeEnd = getBogotaStartEndOfDayFromKey(endKey).endDate;
+    } else {
+      const key = fecha
+        ? /^\d{4}-\d{2}-\d{2}$/.test(fecha)
+          ? fecha
+          : getBogotaDayKey(new Date(fecha))
+        : getBogotaDayKey(new Date());
+      ({ startDate: rangeStart, endDate: rangeEnd } =
+        getBogotaStartEndOfDayFromKey(key));
+    }
+
+    // Buscar la caja del supervisor (tipo RUTA, rutaId null, responsableId = supervisorId)
+    const caja = await this.prisma.caja.findFirst({
+      where: {
+        tipo: 'RUTA',
+        rutaId: null,
+        responsableId: supervisorId,
+        activa: true,
+      },
+    });
+
+    if (!caja) {
+      return {
+        rutaId: null,
+        cajaId: null,
+        recaudoDelDia: 0,
+        cobranzaDelDia: 0,
+        gastosDelDia: 0,
+        baseEfectivo: 0,
+        desembolsos: 0,
+        saldoDisponible: 0,
+        saldoCaja: 0,
+        fechaInicio: formatBogotaOffsetIso(rangeStart),
+        fechaFin: formatBogotaOffsetIso(rangeEnd),
+      };
+    }
+
+    // Obtener transacciones del período para esta caja
+    const transacciones = await this.prisma.transaccion.findMany({
+      where: {
+        cajaId: caja.id,
+        fechaTransaccion: {
+          gte: rangeStart,
+          lte: rangeEnd,
+        },
+      },
+    });
+
+    // Clasificar y sumar transacciones
+    let cobranzaTrx = 0;
+    let baseEfectivo = 0;
+    let gastosOperativos = 0;
+    let desembolsos = 0;
+    let otrosIngresos = 0;
+    let otrosEgresos = 0;
+
+    transacciones.forEach((t) => {
+      const monto = Number(t.monto);
+      if (t.tipo === 'INGRESO') {
+        if (t.tipoReferencia === 'PAGO') {
+          cobranzaTrx += monto;
+        } else if (
+          t.tipoReferencia === 'SOLICITUD_BASE_EFECTIVO' ||
+          t.tipoReferencia === 'SOLICITUD_BASE' ||
+          t.tipoReferencia === 'APERTURA_CAJA' ||
+          t.descripcion.toLowerCase().includes('apertura de caja') ||
+          t.descripcion.toLowerCase().includes('base de efectivo')
+        ) {
+          baseEfectivo += monto;
+        } else {
+          otrosIngresos += monto;
+        }
+      } else if (t.tipo === 'EGRESO') {
+        if (
+          t.tipoReferencia === 'DEUDA_COBRADOR' ||
+          t.tipoReferencia === 'CIERRE_RUTA' ||
+          t.tipoReferencia === 'ACTIVACION_RUTA'
+        ) {
+          return;
+        }
+
+        if (t.tipoReferencia === 'GASTO') {
+          gastosOperativos += monto;
+        } else if (
+          t.tipoReferencia === 'PRESTAMO' ||
+          t.descripcion.toLowerCase().includes('desembolso') ||
+          t.descripcion.toLowerCase().includes('préstamo')
+        ) {
+          desembolsos += monto;
+        } else {
+          otrosEgresos += monto;
+        }
+      } else if (t.tipo === 'TRANSFERENCIA') {
+        return;
+      }
+    });
+
+    // Para supervisor, la cobranza se calcula desde transacciones tipo PAGO
+    // ya que no tiene una ruta específica asignada
+    const totalCobranza = cobranzaTrx;
+    const totalRecaudoAll = totalCobranza + otrosIngresos;
+    const totalGastos = gastosOperativos + otrosEgresos;
+    const saldoNetoPeriodo = totalRecaudoAll - totalGastos - desembolsos;
+
+    // Calcular gastos desde la tabla Gasto para el supervisor
+    let gastosAprobados = 0;
+    let gastosPendientes = 0;
+
+    const gastos = await this.prisma.gasto.findMany({
+      where: {
+        cobradorId: supervisorId,
+        fechaGasto: {
+          gte: rangeStart,
+          lte: rangeEnd,
+        },
+        tipoGasto: 'OPERATIVO',
+      },
+    });
+
+    gastos.forEach((g) => {
+      const monto = Number(g.monto);
+      if (g.estadoAprobacion === 'APROBADO' && g.resultadoRevisionGasto === 'APROBADO_OPERATIVO') {
+        gastosAprobados += monto;
+      } else if (g.estadoAprobacion === 'PENDIENTE' && g.esProvisional === true && g.aplicadoEnCaja === true) {
+        gastosPendientes += monto;
+      }
+    });
+
+    return {
+      rutaId: null,
+      cajaId: caja.id,
+      fecha: formatBogotaOffsetIso(rangeStart),
+      saldoDisponible: Number(caja.saldoActual),
+      saldoCaja: Number(caja.saldoActual),
+      baseEfectivo: Number(caja.saldoActual),
+      recaudoDelDia: totalCobranza,
+      cobranzaDelDia: totalCobranza,
+      gastosDelDia: gastosAprobados,
+      egresosProvisionales: gastosPendientes,
+      totalEgresosCaja: gastosOperativos + otrosEgresos + desembolsos,
+      desembolsos,
+      netoPeriodo: saldoNetoPeriodo,
       fechaInicio: formatBogotaOffsetIso(rangeStart),
       fechaFin: formatBogotaOffsetIso(rangeEnd),
     };
