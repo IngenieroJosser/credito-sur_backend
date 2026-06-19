@@ -2718,6 +2718,21 @@ export class ApprovalsService {
         finalData.cuotaInicial !== undefined
           ? Number(finalData.cuotaInicial)
           : undefined;
+      const tasaInteresNormalizada =
+        finalData.porcentaje !== undefined
+          ? Number(finalData.porcentaje)
+          : finalData.tasaInteres !== undefined
+            ? Number(finalData.tasaInteres)
+            : undefined;
+      const plazoMesesNormalizado =
+        finalData.plazoMeses !== undefined ||
+        finalData.plazo !== undefined ||
+        finalData.plajeMeses !== undefined
+          ? Number(finalData.plazoMeses || finalData.plazo || finalData.plajeMeses)
+          : undefined;
+      const tipoAmortizacionNormalizado = finalData.tipoAmortizacion
+        ? (String(finalData.tipoAmortizacion).toUpperCase() as TipoAmortizacion)
+        : undefined;
 
       const montoNormalizado = (() => {
         const monto =
@@ -2772,11 +2787,27 @@ export class ApprovalsService {
                 )
               : undefined,
           tasaInteres:
-            finalData.porcentaje !== undefined
-              ? Number(finalData.porcentaje)
+            tasaInteresNormalizada !== undefined && !Number.isNaN(tasaInteresNormalizada)
+              ? tasaInteresNormalizada
               : undefined,
           frecuenciaPago: finalData.frecuenciaPago || undefined,
+          plazoMeses:
+            plazoMesesNormalizado !== undefined && !Number.isNaN(plazoMesesNormalizado)
+              ? plazoMesesNormalizado
+              : undefined,
+          tipoAmortizacion: tipoAmortizacionNormalizado || undefined,
           cuotaInicial,
+          precioVentaArticulo: isArticulo
+            ? Number(
+                finalData.valorArticulo ||
+                  finalData.precioVentaArticulo ||
+                  finalData.precioVenta ||
+                  0,
+              ) || undefined
+            : undefined,
+          costoArticulo: isArticulo
+            ? Number(finalData.costoArticulo || finalData.costo || 0) || undefined
+            : undefined,
           fechaInicio: finalData.fechaInicio
             ? new Date(finalData.fechaInicio)
             : undefined,

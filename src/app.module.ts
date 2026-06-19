@@ -27,6 +27,7 @@ import { CajasModule } from './cajas/cajas.module';
 import { SyncConflictsModule } from './sync-conflicts/sync-conflicts.module';
 import { MirrorSyncModule } from './mirror-sync/mirror-sync.module';
 import { OutboxModule } from './outbox/outbox.module';
+import { AlertasClientesModule } from './alertas-clientes/alertas-clientes.module';
 import { BullModule } from '@nestjs/bullmq';
 import { APP_GUARD } from '@nestjs/core';
 import { EventEmitterModule } from '@nestjs/event-emitter';
@@ -70,6 +71,7 @@ const shouldEnableMirrorSync =
     SyncConflictsModule,
     IntegrityModule,
     OutboxModule,
+    AlertasClientesModule,
     EventEmitterModule.forRoot(),
     ...(shouldEnableMirrorSync
       ? [

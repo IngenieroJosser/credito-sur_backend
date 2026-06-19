@@ -64,6 +64,8 @@ model Usuario {
   syncConflictsCreados   SyncConflict[]   @relation("SyncConflictCreadoPor")
   syncConflictsResueltos SyncConflict[]   @relation("SyncConflictResueltoPor")
   registrosVisitas       RegistroVisita[] @relation("VisitasRegistradas")
+  alertasClienteReportadas AlertaCliente[] @relation("AlertaClienteReportadoPor")
+  alertasClienteResueltas  AlertaCliente[] @relation("AlertaClienteResueltoPor")
 
   @@index([correo])
   @@index([rol])
@@ -206,6 +208,7 @@ model Cliente {
   archivos                  Multimedia[]         @relation("MultimediaCliente")
   registrosVisitas          RegistroVisita[]
   transacciones             Transaccion[]
+  alertasCliente            AlertaCliente[]
 
   @@index([dni])
   @@index([nivelRiesgo])
@@ -726,6 +729,38 @@ model SyncConflict {
   @@index([estadoResolucion])
   @@index([creadoEn])
   @@map("sync_conflicts")
+}
+
+model AlertaCliente {
+  id                       String    @id @default(uuid())
+  clienteId                String
+  rutaId                   String?
+  cobradorId               String?
+  reportadoPorId           String
+  resueltoPorId            String?
+  estado                   String    @default("ACTIVA") @db.VarChar(30)
+  motivo                   String    @db.VarChar(80)
+  descripcion              String    @db.Text
+  ultimaUbicacionConocida  String?   @db.Text
+  observacionesReportante  String    @db.Text
+  snapshotCliente          Json
+  evidenciaIds             Json?
+  notificadosCount         Int       @default(0)
+  creadoEn                 DateTime  @default(now())
+  actualizadoEn            DateTime  @updatedAt
+  resueltoEn               DateTime?
+  motivoResolucion         String?   @db.Text
+
+  cliente      Cliente  @relation(fields: [clienteId], references: [id])
+  reportadoPor Usuario  @relation("AlertaClienteReportadoPor", fields: [reportadoPorId], references: [id])
+  resueltoPor  Usuario? @relation("AlertaClienteResueltoPor", fields: [resueltoPorId], references: [id])
+
+  @@index([clienteId])
+  @@index([rutaId])
+  @@index([cobradorId])
+  @@index([estado])
+  @@index([creadoEn])
+  @@map("alertas_clientes")
 }
 
 model Multimedia {
