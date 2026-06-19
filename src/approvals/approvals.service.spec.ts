@@ -383,6 +383,98 @@ describe('ApprovalsService pending loan reconciliation', () => {
     );
   });
 
+  it('resuelve contexto de reprogramación desde la cuota referenciada y excluye la aprobación actual', async () => {
+    const approval = {
+      id: 'aprobacion-actual',
+      tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
+      referenciaId: 'cuota-referenciada',
+      tablaReferencia: 'cuotas',
+      solicitadoPorId: 'supervisor-1',
+      aprobadoPorId: null,
+      estado: EstadoAprobacion.PENDIENTE,
+      comentarios: null,
+      datosAprobados: null,
+      montoSolicitud: null,
+      creadoEn: new Date('2026-06-19T13:32:00.000Z'),
+      actualizadoEn: new Date('2026-06-19T13:32:00.000Z'),
+      revisadoEn: null,
+      datosSolicitud: {
+        nuevaFecha: '2026-06-20',
+        motivo: 'Cliente solicita pagar mañana',
+      },
+      solicitadoPor: {
+        id: 'supervisor-1',
+        nombres: 'Supervisor',
+        apellidos: 'Operativo',
+        rol: RolUsuario.SUPERVISOR,
+      },
+      aprobadoPor: null,
+    };
+
+    const prisma = {
+      aprobacion: {
+        findUnique: jest.fn().mockResolvedValue(approval),
+        count: jest.fn().mockResolvedValue(1),
+      },
+      cuota: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'cuota-referenciada',
+          prestamoId: 'prestamo-desde-cuota',
+          prestamo: { clienteId: 'cliente-desde-cuota' },
+        }),
+      },
+      cliente: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'cliente-desde-cuota',
+          nombres: 'Cliente',
+          apellidos: 'Sin Datos Solicitud',
+          referencia1Nombre: null,
+          referencia1Telefono: null,
+          referencia2Nombre: null,
+          referencia2Telefono: null,
+          asignacionesRuta: [],
+        }),
+      },
+      prestamo: {
+        findUnique: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'prestamo-desde-cuota',
+            numeroPrestamo: 'PRES-000020',
+            estado: EstadoPrestamo.ACTIVO,
+            saldoPendiente: 100000,
+            cuotas: [],
+            producto: null,
+          },
+        ]),
+      },
+      multimedia: { findMany: jest.fn().mockResolvedValue([]) },
+      pago: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+
+    const result = await makeService(prisma).getApprovalContext(approval.id);
+
+    expect(prisma.cuota.findUnique).toHaveBeenCalledWith({
+      where: { id: 'cuota-referenciada' },
+      select: {
+        id: true,
+        prestamoId: true,
+        prestamo: { select: { clienteId: true } },
+      },
+    });
+    expect(prisma.aprobacion.count).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: { not: 'aprobacion-actual' },
+        }),
+      }),
+    );
+    expect(result.cliente.id).toBe('cliente-desde-cuota');
+    expect(result.creditoSolicitud.id).toBe('prestamo-desde-cuota');
+    expect(result.approval.solicitante).toBe('Supervisor Operativo');
+    expect(result.approval.rolSolicitante).toBe(RolUsuario.SUPERVISOR);
+  });
+
   it('crea una aprobación faltante para préstamos pendientes y la expone en revisiones', async () => {
     const orphanLoan = {
       id: 'prestamo-huerfano-1',
@@ -956,6 +1048,49 @@ describe('ApprovalsService financial ledger controls', () => {
         confirmadoEn: expect.any(Date),
       }),
     });
+  });
+
+  it('bloquea regenerar cuotas de un crédito activo editado si ya tiene pagos', async () => {
+    const prisma = buildPrismaMock();
+    (prisma._tx.prestamo as any).findUnique = jest.fn().mockResolvedValue({
+      estado: EstadoPrestamo.ACTIVO,
+      monto: 500000,
+    });
+    prisma._tx.prestamo.update.mockResolvedValue({
+      id: 'prestamo-1',
+      numeroPrestamo: 'PRES-000021',
+      estado: EstadoPrestamo.ACTIVO,
+      monto: 500000,
+      tasaInteres: 10,
+      frecuenciaPago: 'DIARIO',
+      cantidadCuotas: 12,
+      plazoMeses: 1,
+      tipoAmortizacion: 'INTERES_SIMPLE',
+      fechaInicio: new Date('2026-06-19T12:00:00.000Z'),
+      tipoPrestamo: 'EFECTIVO',
+      cliente: { asignacionesRuta: [] },
+    });
+    prisma._tx.cuota.count.mockResolvedValue(1);
+    (prisma._tx.cuota as any).deleteMany = jest.fn();
+    (prisma._tx.cuota as any).createMany = jest.fn();
+
+    await expect(
+      (makeService(prisma) as any).approveNewLoan(
+        {
+          id: 'approval-loan-editada',
+          referenciaId: 'prestamo-1',
+          solicitadoPorId: 'supervisor-1',
+          datosSolicitud: { monto: 500000 },
+        },
+        'admin-1',
+        { monto: 600000, cantidadCuotas: 12 },
+      ),
+    ).rejects.toThrow(
+      'No se pueden regenerar las cuotas de un crédito activo con pagos registrados.',
+    );
+
+    expect((prisma._tx.cuota as any).deleteMany).not.toHaveBeenCalled();
+    expect((prisma._tx.cuota as any).createMany).not.toHaveBeenCalled();
   });
 
   it('revierte un préstamo provisional al rechazar la aprobación', async () => {

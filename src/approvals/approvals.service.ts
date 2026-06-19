@@ -225,6 +225,17 @@ export class ApprovalsService {
     ].filter((referencia) => referencia.nombre || referencia.telefono);
   }
 
+  private enrichApprovalContext(approval: any, datosSolicitud: Record<string, any>) {
+    return {
+      ...approval,
+      datosSolicitud,
+      solicitante: approval.solicitadoPor
+        ? `${approval.solicitadoPor.nombres || ''} ${approval.solicitadoPor.apellidos || ''}`.trim()
+        : 'Desconocido',
+      rolSolicitante: approval.solicitadoPor?.rol || 'N/A',
+    };
+  }
+
   async getApprovalContext(aprobacionId: string) {
     const approval = await this.prisma.aprobacion.findUnique({
       where: { id: aprobacionId },
@@ -243,8 +254,39 @@ export class ApprovalsService {
     }
 
     const datosSolicitud = this.parseJsonObject(approval.datosSolicitud);
-    const prestamoId = String(datosSolicitud.prestamoId || '').trim();
+    let prestamoId = String(
+      datosSolicitud.prestamoId ||
+        (approval.tablaReferencia === 'Prestamo' ? approval.referenciaId : '') ||
+        '',
+    ).trim();
+    const tablaReferencia = String(approval.tablaReferencia || '');
+    const cuotaId = String(
+      datosSolicitud.cuotaId ||
+        (['Cuota', 'cuotas'].includes(tablaReferencia)
+          ? approval.referenciaId
+          : '') ||
+        '',
+    ).trim();
     let clienteId = String(datosSolicitud.clienteId || '').trim();
+
+    if ((!clienteId || !prestamoId) && cuotaId) {
+      const cuotaBase = await this.prisma.cuota.findUnique({
+        where: { id: cuotaId },
+        select: {
+          id: true,
+          prestamoId: true,
+          prestamo: { select: { clienteId: true } },
+        },
+      });
+
+      if (!prestamoId) {
+        prestamoId = cuotaBase?.prestamoId || '';
+      }
+
+      if (!clienteId) {
+        clienteId = cuotaBase?.prestamo?.clienteId || '';
+      }
+    }
 
     if (!clienteId && prestamoId) {
       const prestamoBase = await this.prisma.prestamo.findUnique({
@@ -256,7 +298,7 @@ export class ApprovalsService {
 
     if (!clienteId) {
       return {
-        approval: { ...approval, datosSolicitud },
+        approval: this.enrichApprovalContext(approval, datosSolicitud),
         cliente: null,
         creditoSolicitud: null,
         creditosCliente: [],
@@ -355,6 +397,7 @@ export class ApprovalsService {
       }),
       this.prisma.aprobacion.count({
         where: {
+          id: { not: aprobacionId },
           tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
           estado: {
             in: [
@@ -453,7 +496,7 @@ export class ApprovalsService {
     };
 
     return {
-      approval: { ...approval, datosSolicitud },
+      approval: this.enrichApprovalContext(approval, datosSolicitud),
       cliente,
       creditoSolicitud:
         creditosCliente.find((credito: any) => credito.id === prestamoId) ||
@@ -2857,6 +2900,25 @@ export class ApprovalsService {
       // Si se editaron datos financieros, es probable que las cuotas (instancias de Cuota) necesiten ser regeneradas
       // o ajustadas. Para simplificar, si hay cambios, recalculamos los montos.
       if (editedData) {
+        if (fueActivo) {
+          const cuotasConPago = await tx.cuota.count({
+            where: {
+              prestamoId: prestamo.id,
+              OR: [
+                { estado: EstadoCuota.PAGADA },
+                { montoPagado: { gt: 0 } },
+                { fechaPago: { not: null } },
+              ],
+            },
+          });
+
+          if (cuotasConPago > 0) {
+            throw new BadRequestException(
+              'No se pueden regenerar las cuotas de un crédito activo con pagos registrados. Use un flujo de modificación de condiciones sobre cuotas pendientes.',
+            );
+          }
+        }
+
         // Recalcular componentes financieros del préstamo
         const montoFinanciar = Number(prestamo.monto);
         const tasaInteres = Number(prestamo.tasaInteres);
