@@ -57,6 +57,29 @@ export class LoansService implements OnModuleInit {
     return rol === RolUsuario.COBRADOR || rol === RolUsuario.SUPERVISOR;
   }
 
+  private puedeCrearCreditoConFechaAntigua(
+    rol?: RolUsuario | string | null,
+  ): boolean {
+    const normalized = String(rol || '').toUpperCase();
+    return (
+      normalized === RolUsuario.ADMIN ||
+      normalized === RolUsuario.SUPER_ADMINISTRADOR
+    );
+  }
+
+  private toBogotaDateKey(value: Date | string): string {
+    if (value instanceof Date) return getBogotaDayKey(value);
+
+    const raw = String(value || '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+    return getBogotaDayKey(this.parseBogotaDayKey(raw));
+  }
+
+  private hoyBogotaKey(): string {
+    return getBogotaDayKey(new Date());
+  }
+
   private collectorLoanScope(
     actor?: { id?: string; rol?: RolUsuario | string } | null,
   ): Prisma.PrestamoWhereInput {
@@ -3600,6 +3623,17 @@ export class LoansService implements OnModuleInit {
         ? this.parseBogotaDayKey(data.fechaInicio)
         : fechaActual;
 
+      const puedeUsarFechaAntigua =
+        this.puedeCrearCreditoConFechaAntigua(creador.rol);
+      const hoyCreacionKey = this.hoyBogotaKey();
+      const fechaInicioKey = this.toBogotaDateKey(fechaInicio);
+
+      if (!puedeUsarFechaAntigua && fechaInicioKey < hoyCreacionKey) {
+        throw new BadRequestException(
+          'No tienes permiso para crear créditos con fecha antigua.',
+        );
+      }
+
       // La fecha de vencimiento del préstamo (fechaFin) se basa estrictamente en el plazoMeses usando helper
       let fechaFin = this.calculateLoanEndDate(fechaInicio, numPlazoMeses);
 
@@ -3607,15 +3641,24 @@ export class LoansService implements OnModuleInit {
         ? this.parseBogotaDayKey(data.fechaPrimerCobro)
         : undefined;
       if (fechaPrimerCobroParsed) {
-        const hoyKey = getBogotaDayKey(new Date());
-        const { startDate: hoyStart } = getBogotaStartEndOfDayFromKey(hoyKey);
-        if (fechaPrimerCobroParsed.getTime() < hoyStart.getTime()) {
+        const fechaPrimerCobroKey = this.toBogotaDateKey(
+          fechaPrimerCobroParsed,
+        );
+
+        if (fechaPrimerCobroKey < fechaInicioKey) {
           throw new BadRequestException(
-            'La fecha de primer cobro no puede ser un día pasado.',
+            'La fecha del primer cobro no puede ser anterior a la fecha del crédito.',
           );
         }
-        const key = getBogotaDayKey(fechaPrimerCobroParsed);
-        const { startDate } = getBogotaStartEndOfDayFromKey(key);
+
+        if (!puedeUsarFechaAntigua && fechaPrimerCobroKey < hoyCreacionKey) {
+          throw new BadRequestException(
+            'No tienes permiso para crear créditos con fecha de primer cobro antigua.',
+          );
+        }
+
+        const { startDate } =
+          getBogotaStartEndOfDayFromKey(fechaPrimerCobroKey);
         fechaPrimerCobroParsed.setTime(startDate.getTime());
       }
 
