@@ -95,9 +95,204 @@ function makeService(prisma: any) {
   );
 }
 
+function buildCreateLoanPrismaMock(rol: RolUsuario, overrides: any = {}) {
+  const fechaInicio = new Date('2026-05-15T05:00:00.000Z');
+  const prestamoCreado = {
+    id: 'prestamo-fecha-1',
+    numeroPrestamo: 'PRES-000050',
+    clienteId: 'cliente-1',
+    tipoPrestamo: 'EFECTIVO',
+    tipoAmortizacion: 'INTERES_SIMPLE',
+    monto: 100000,
+    cuotaInicial: 0,
+    precioVentaArticulo: null,
+    costoArticulo: null,
+    tasaInteres: 10,
+    plazoMeses: 1,
+    frecuenciaPago: 'DIARIO',
+    cantidadCuotas: 12,
+    estadoAprobacion: EstadoAprobacion.APROBADO,
+    fechaInicio,
+    productoId: null,
+    producto: null,
+    cuotas: [{ id: 'cuota-1' }],
+    ...overrides.prestamoCreado,
+  };
+
+  return {
+    cliente: {
+      findUnique: jest.fn().mockResolvedValue({
+        id: 'cliente-1',
+        nombres: 'Cliente',
+        apellidos: 'Historico',
+        dni: '111111111',
+        telefono: '3112394628',
+        enListaNegra: false,
+        asignacionesRuta: [],
+        ...overrides.cliente,
+      }),
+    },
+    usuario: {
+      findUnique: jest.fn().mockResolvedValue({
+        id: 'usuario-1',
+        nombres: 'Usuario',
+        apellidos: 'Prueba',
+        rol,
+        ...overrides.usuario,
+      }),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+    caja: {
+      findFirst: jest.fn().mockResolvedValue({
+        id: 'caja-oficina',
+        codigo: 'CAJA-OFICINA',
+        tipo: 'PRINCIPAL',
+        nombre: 'Caja Oficina',
+        saldoActual: 10000000,
+        ...overrides.caja,
+      }),
+    },
+    prestamo: {
+      findFirst: jest.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(null),
+      create: jest.fn().mockResolvedValue(prestamoCreado),
+    },
+    aprobacion: {
+      create: jest.fn().mockResolvedValue({
+        id: 'aprobacion-fecha-1',
+        referenciaId: prestamoCreado.id,
+      }),
+    },
+    cuota: {
+      createMany: jest.fn().mockResolvedValue({ count: 12 }),
+    },
+    pago: {
+      create: jest.fn(),
+    },
+    ...overrides.prisma,
+  };
+}
+
 describe('LoansService accounting impact for approved loans', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-12T12:00:00-05:00'));
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('permite a ADMIN crear crédito con fecha antigua', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-20T12:00:00-05:00'));
+    const prisma = buildCreateLoanPrismaMock(RolUsuario.ADMIN);
+
+    try {
+      await expect(
+        makeService(prisma).createLoan({
+          clienteId: 'cliente-1',
+          tipoPrestamo: 'EFECTIVO',
+          monto: 100000,
+          tasaInteres: 10,
+          tasaInteresMora: 2,
+          plazoMeses: 1,
+          cantidadCuotas: 12,
+          frecuenciaPago: 'DIARIO' as any,
+          fechaInicio: '2026-05-15',
+          fechaPrimerCobro: '2026-05-16',
+          creadoPorId: 'admin-1',
+        } as any),
+      ).resolves.toEqual(expect.objectContaining({ id: 'prestamo-fecha-1' }));
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('permite a SUPER_ADMINISTRADOR crear crédito con fecha antigua', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-20T12:00:00-05:00'));
+    const prisma = buildCreateLoanPrismaMock(RolUsuario.SUPER_ADMINISTRADOR);
+
+    try {
+      await expect(
+        makeService(prisma).createLoan({
+          clienteId: 'cliente-1',
+          tipoPrestamo: 'EFECTIVO',
+          monto: 100000,
+          tasaInteres: 10,
+          tasaInteresMora: 2,
+          plazoMeses: 1,
+          cantidadCuotas: 12,
+          frecuenciaPago: 'DIARIO' as any,
+          fechaInicio: '2026-05-15',
+          fechaPrimerCobro: '2026-05-16',
+          creadoPorId: 'superadmin-1',
+        } as any),
+      ).resolves.toEqual(expect.objectContaining({ id: 'prestamo-fecha-1' }));
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('bloquea a SUPERVISOR crear crédito con fecha antigua', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-20T12:00:00-05:00'));
+    const prisma = buildCreateLoanPrismaMock(RolUsuario.SUPERVISOR, {
+      usuario: { id: 'supervisor-1' },
+      caja: {
+        id: 'caja-supervisor-1',
+        codigo: 'BASE-SUP-001',
+        tipo: 'RUTA',
+        nombre: 'Base Supervisor',
+        responsableId: 'supervisor-1',
+      },
+    });
+
+    try {
+      await expect(
+        makeService(prisma).createLoan({
+          clienteId: 'cliente-1',
+          tipoPrestamo: 'EFECTIVO',
+          monto: 100000,
+          tasaInteres: 10,
+          tasaInteresMora: 2,
+          plazoMeses: 1,
+          cantidadCuotas: 12,
+          frecuenciaPago: 'DIARIO' as any,
+          fechaInicio: '2026-05-15',
+          fechaPrimerCobro: '2026-06-21',
+          creadoPorId: 'supervisor-1',
+        } as any),
+      ).rejects.toThrow(
+        'No tienes permiso para crear créditos con fecha antigua.',
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('bloquea fecha de primer cobro anterior a fecha del crédito incluso para ADMIN', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-01T12:00:00-05:00'));
+    const prisma = buildCreateLoanPrismaMock(RolUsuario.ADMIN);
+
+    try {
+      await expect(
+        makeService(prisma).createLoan({
+          clienteId: 'cliente-1',
+          tipoPrestamo: 'EFECTIVO',
+          monto: 100000,
+          tasaInteres: 10,
+          tasaInteresMora: 2,
+          plazoMeses: 1,
+          cantidadCuotas: 12,
+          frecuenciaPago: 'DIARIO' as any,
+          fechaInicio: '2026-06-20',
+          fechaPrimerCobro: '2026-06-19',
+          creadoPorId: 'admin-1',
+        } as any),
+      ).rejects.toThrow(
+        'La fecha del primer cobro no puede ser anterior a la fecha del crédito.',
+      );
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('resuelve caja de oficina para crédito administrativo aunque el cliente tenga ruta asignada', async () => {
