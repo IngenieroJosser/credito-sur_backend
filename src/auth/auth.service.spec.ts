@@ -30,6 +30,7 @@ const USUARIO_ACTIVO = {
   id: 'user-1',
   nombres: 'Admin',
   apellidos: 'Test',
+  nombreUsuario: 'admin.test',
   correo: 'admin@test.com',
   rol: 'SUPER_ADMINISTRADOR',
   estado: 'ACTIVO',
@@ -169,6 +170,56 @@ describe('AuthService', () => {
           data: expect.objectContaining({ ultimoIngreso: expect.any(Date) }),
         }),
       );
+    });
+
+    it('permite iniciar sesión con correo', async () => {
+      (argon2.verify as jest.Mock).mockResolvedValue(true);
+
+      const resultado = await service.login({
+        correo: ' ADMIN@Test.com ',
+        contrasena: 'correcta',
+      } as any);
+
+      expect(resultado.access_token).toBe('jwt-token-mock');
+      expect(prisma.usuario.findFirst).toHaveBeenCalledWith({
+        where: {
+          OR: [
+            { correo: { equals: 'admin@test.com', mode: 'insensitive' } },
+            { nombreUsuario: 'admin@test.com' },
+          ],
+        },
+      });
+    });
+
+    it('permite iniciar sesión con nombreUsuario', async () => {
+      (argon2.verify as jest.Mock).mockResolvedValue(true);
+
+      const resultado = await service.login({
+        identificador: ' Admin.Test ',
+        contrasena: 'correcta',
+      } as any);
+
+      expect(resultado.usuario).toHaveProperty('id', 'user-1');
+      expect(prisma.usuario.findFirst).toHaveBeenCalledWith({
+        where: {
+          OR: [
+            { correo: { equals: 'admin.test', mode: 'insensitive' } },
+            { nombreUsuario: 'admin.test' },
+          ],
+        },
+      });
+    });
+
+    it('lanza UnauthorizedException si el nombreUsuario no existe', async () => {
+      prisma.usuario.findFirst.mockResolvedValue(null);
+      prisma.usuario.findMany.mockResolvedValue([]);
+
+      await expect(
+        service.login({
+          identificador: 'usuario.inexistente',
+          contrasena: 'correcta',
+        } as any),
+      ).rejects.toThrow(UnauthorizedException);
     });
   });
 

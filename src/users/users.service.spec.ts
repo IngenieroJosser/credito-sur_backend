@@ -1,4 +1,9 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { EstadoUsuario, RolUsuario } from '@prisma/client';
 import { UsersService } from './users.service';
 
@@ -6,10 +11,18 @@ describe('UsersService operational detail', () => {
   const buildService = (prismaOverrides: Record<string, any> = {}) => {
     const prisma: any = {
       usuario: {
+        findFirst: jest.fn(),
         findUnique: jest.fn(),
         findMany: jest.fn(),
         count: jest.fn(),
+        create: jest.fn(),
         update: jest.fn(),
+      },
+      rol: {
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
+      asignacionRolUsuario: {
+        create: jest.fn(),
       },
       ruta: {
         findMany: jest.fn(),
@@ -42,6 +55,28 @@ describe('UsersService operational detail', () => {
       registroAuditoria: {
         findMany: jest.fn(),
       },
+      $transaction: jest.fn(async (callback: any) =>
+        callback({
+          usuario: {
+            count: jest.fn().mockResolvedValue(1),
+            create: jest.fn().mockResolvedValue({
+              id: 'user-1',
+              nombres: 'Juan',
+              apellidos: 'Perez',
+              nombreUsuario: 'juan.perez',
+              correo: 'juan@test.com',
+              rol: RolUsuario.COBRADOR,
+              esPrincipal: false,
+              estado: EstadoUsuario.ACTIVO,
+              telefono: null,
+              creadoEn: new Date('2026-06-26T00:00:00.000Z'),
+            }),
+          },
+          asignacionRolUsuario: {
+            create: jest.fn(),
+          },
+        }),
+      ),
       ...prismaOverrides,
     };
 
@@ -55,6 +90,78 @@ describe('UsersService operational detail', () => {
 
     return { service, prisma, auditService, gateway };
   };
+
+  describe('crear', () => {
+    const baseDto = {
+      nombres: 'Juan',
+      apellidos: 'Perez',
+      nombreUsuario: ' Juan.Perez ',
+      correo: 'juan@test.com',
+      password: 'password123',
+      rol: RolUsuario.COBRADOR,
+      estado: EstadoUsuario.ACTIVO,
+    };
+
+    it('rejects creating users without nombreUsuario', async () => {
+      const { service, prisma } = buildService();
+      prisma.usuario.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.crear({ ...baseDto, nombreUsuario: '' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('creates users with normalized nombreUsuario', async () => {
+      const txUsuarioCreate = jest.fn().mockResolvedValue({
+        id: 'user-1',
+        nombres: 'Juan',
+        apellidos: 'Perez',
+        nombreUsuario: 'juan.perez',
+        correo: 'juan@test.com',
+        rol: RolUsuario.COBRADOR,
+        esPrincipal: false,
+        estado: EstadoUsuario.ACTIVO,
+        telefono: null,
+        creadoEn: new Date('2026-06-26T00:00:00.000Z'),
+      });
+      const { service, prisma } = buildService({
+        $transaction: jest.fn(async (callback: any) =>
+          callback({
+            usuario: {
+              count: jest.fn().mockResolvedValue(1),
+              create: txUsuarioCreate,
+            },
+            asignacionRolUsuario: {
+              create: jest.fn(),
+            },
+          }),
+        ),
+      });
+      prisma.usuario.findUnique.mockResolvedValue(null);
+      prisma.usuario.findFirst.mockResolvedValue(null);
+
+      const result = await service.crear(baseDto);
+
+      expect(result.nombreUsuario).toBe('juan.perez');
+      expect(txUsuarioCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            nombreUsuario: 'juan.perez',
+          }),
+        }),
+      );
+    });
+
+    it('rejects duplicated nombreUsuario', async () => {
+      const { service, prisma } = buildService();
+      prisma.usuario.findUnique.mockResolvedValue(null);
+      prisma.usuario.findFirst.mockResolvedValue({ id: 'existing-user' });
+
+      await expect(service.crear(baseDto)).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+    });
+  });
 
   it('returns accounting metrics for contador users', async () => {
     const { service, prisma } = buildService();

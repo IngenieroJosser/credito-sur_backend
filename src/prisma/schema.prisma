@@ -9,6 +9,7 @@ datasource db {
 model Usuario {
   id                    String               @id @default(uuid())
   correo                String               @unique @db.VarChar(255)
+  nombreUsuario         String?              @unique @db.VarChar(50)
   hashContrasena        String               @db.VarChar(255)
   nombres               String               @db.VarChar(100)
   apellidos             String               @db.VarChar(100)

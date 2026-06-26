@@ -35,6 +35,12 @@ export class AuthService {
       .toLowerCase();
   }
 
+  private normalizarIdentificadorLogin(valor: unknown) {
+    return String(valor ?? '')
+      .trim()
+      .toLowerCase();
+  }
+
   private nombreCompletoCoincide(
     usuario: { nombres: string; apellidos?: string | null },
     nombreNormalizado: string,
@@ -52,6 +58,7 @@ export class AuthService {
     nombres: string;
     apellidos?: string | null;
     correo?: string | null;
+    nombreUsuario?: string | null;
     rol: any;
   }) {
     // Obtener permisos dinámicos del usuario
@@ -135,6 +142,7 @@ export class AuthService {
         nombres: usuario.nombres,
         apellidos: usuario.apellidos ?? undefined,
         correo: usuario.correo ?? undefined,
+        nombreUsuario: usuario.nombreUsuario ?? undefined,
         rol: usuario.rol,
         permisos: uniquePermisos,
         rutaDefault,
@@ -143,31 +151,50 @@ export class AuthService {
     };
   }
 
-  async validarUsuario(nombreUsuario: string, contrasena: string) {
-    const nombreLimpio = nombreUsuario.trim().replace(/\s+/g, ' ');
-    const nombreNormalizado = this.normalizarTextoLogin(nombreLimpio);
-    const primerNombre = nombreLimpio.split(' ')[0];
+  async validarUsuario(identificadorEntrada: string, contrasena: string) {
+    const identificador = this.normalizarIdentificadorLogin(
+      identificadorEntrada,
+    );
+    const nombreLimpio = String(identificadorEntrada ?? '')
+      .trim()
+      .replace(/\s+/g, ' ');
 
-    if (!nombreLimpio) return null;
+    if (!identificador) return null;
 
-    // El inicio de sesión no usa correo: acepta "nombres" o "nombres apellidos".
-    const usuarioPorNombres = await this.prisma.usuario.findFirst({
+    const usuarioPorIdentificador = await this.prisma.usuario.findFirst({
       where: {
-        nombres: { equals: nombreLimpio, mode: 'insensitive' },
-      },
+        OR: [
+          { correo: { equals: identificador, mode: 'insensitive' } },
+          { nombreUsuario: identificador },
+        ],
+      } as any,
     });
 
-    const candidatos = usuarioPorNombres
-      ? [usuarioPorNombres]
-      : (
-          await this.prisma.usuario.findMany({
-            where: {
-              nombres: { startsWith: primerNombre, mode: 'insensitive' },
-            },
-          })
-        ).filter((usuario) =>
-          this.nombreCompletoCoincide(usuario, nombreNormalizado),
-        );
+    let candidatos = usuarioPorIdentificador ? [usuarioPorIdentificador] : [];
+
+    if (!candidatos.length) {
+      const nombreNormalizado = this.normalizarTextoLogin(nombreLimpio);
+      const primerNombre = nombreLimpio.split(' ')[0];
+
+      // Compatibilidad: acepta "nombres" o "nombres apellidos".
+      const usuarioPorNombres = await this.prisma.usuario.findFirst({
+        where: {
+          nombres: { equals: nombreLimpio, mode: 'insensitive' },
+        },
+      });
+
+      candidatos = usuarioPorNombres
+        ? [usuarioPorNombres]
+        : (
+            await this.prisma.usuario.findMany({
+              where: {
+                nombres: { startsWith: primerNombre, mode: 'insensitive' },
+              },
+            })
+          ).filter((usuario) =>
+            this.nombreCompletoCoincide(usuario, nombreNormalizado),
+          );
+    }
 
     if (!candidatos.length) return null;
 
@@ -187,8 +214,22 @@ export class AuthService {
   }
 
   async login(loginAuthDto: LoginAuthDto) {
+    const identificador = String(
+      loginAuthDto.identificador ||
+        loginAuthDto.correo ||
+        loginAuthDto.email ||
+        loginAuthDto.nombres ||
+        '',
+    )
+      .trim()
+      .toLowerCase();
+
+    if (!identificador) {
+      throw new UnauthorizedException('Credenciales invalidas');
+    }
+
     const usuario = await this.validarUsuario(
-      loginAuthDto.nombres,
+      identificador,
       loginAuthDto.contrasena,
     );
 
@@ -216,6 +257,7 @@ export class AuthService {
         nombres: true,
         apellidos: true,
         correo: true,
+        nombreUsuario: true,
         rol: true,
       },
     });
@@ -232,6 +274,7 @@ export class AuthService {
       nombres: dto.nombres,
       apellidos: dto.apellidos,
       correo: dto.correo,
+      nombreUsuario: dto.nombreUsuario,
       password: dto.password,
       rol: dto.rol,
     });

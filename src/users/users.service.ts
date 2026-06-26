@@ -49,6 +49,7 @@ const USUARIO_PUBLIC_SELECT = {
   nombres: true,
   apellidos: true,
   correo: true,
+  nombreUsuario: true,
   rol: true,
   esPrincipal: true,
   estado: true,
@@ -56,7 +57,7 @@ const USUARIO_PUBLIC_SELECT = {
   creadoEn: true,
   ultimoIngreso: true,
   eliminadoEn: true,
-} satisfies Prisma.UsuarioSelect;
+} as const;
 
 @Injectable()
 export class UsersService {
@@ -68,13 +69,54 @@ export class UsersService {
     private readonly notificacionesGateway: NotificacionesGateway,
   ) {}
 
+  private normalizarNombreUsuario(valor: unknown) {
+    return String(valor ?? '')
+      .trim()
+      .toLowerCase();
+  }
+
+  private validarYNormalizarNombreUsuario(valor: unknown) {
+    const nombreUsuario = this.normalizarNombreUsuario(valor);
+
+    if (!nombreUsuario) {
+      throw new BadRequestException('El nombre de usuario es obligatorio');
+    }
+
+    if (nombreUsuario.length < 3 || nombreUsuario.length > 50) {
+      throw new BadRequestException(
+        'El nombre de usuario debe tener entre 3 y 50 caracteres',
+      );
+    }
+
+    if (!/^[a-zA-Z0-9._-]+$/.test(nombreUsuario)) {
+      throw new BadRequestException(
+        'El nombre de usuario solo puede contener letras, números, punto, guion y guion bajo.',
+      );
+    }
+
+    return nombreUsuario;
+  }
+
   async crear(usuarioDto: CreateUserDto, usuarioCreadorId?: string) {
+    const correo = usuarioDto.correo.trim().toLowerCase();
+    const nombreUsuario = this.validarYNormalizarNombreUsuario(
+      usuarioDto.nombreUsuario,
+    );
+
     const usuarioExistente = await this.prisma.usuario.findUnique({
-      where: { correo: usuarioDto.correo },
+      where: { correo },
     });
 
     if (usuarioExistente) {
       throw new ConflictException('El correo ya está registrado');
+    }
+
+    const usuarioConNombre = await this.prisma.usuario.findFirst({
+      where: { nombreUsuario } as any,
+    });
+
+    if (usuarioConNombre) {
+      throw new ConflictException('El nombre de usuario ya está registrado');
     }
 
     // VALIDACIÓN: Solo SUPER_ADMINISTRADOR puede crear otro SUPER_ADMINISTRADOR
@@ -109,7 +151,12 @@ export class UsersService {
       }
     }
 
-    const { password, ...datosUsuario } = usuarioDto;
+    const {
+      password,
+      correo: _correo,
+      nombreUsuario: _nombreUsuario,
+      ...datosUsuario
+    } = usuarioDto;
 
     const hashContrasena = await argon2.hash(password);
 
@@ -127,7 +174,8 @@ export class UsersService {
         data: {
           nombres: datosUsuario.nombres,
           apellidos: datosUsuario.apellidos,
-          correo: datosUsuario.correo,
+          correo,
+          nombreUsuario,
           rol: datosUsuario.rol,
           telefono: datosUsuario.telefono,
           estado: datosUsuario.estado,
@@ -144,6 +192,7 @@ export class UsersService {
           nombres: true,
           apellidos: true,
           correo: true,
+          nombreUsuario: true,
           rol: true,
           esPrincipal: true,
           estado: true,
@@ -172,6 +221,7 @@ export class UsersService {
             nombres: nuevoUsuario.nombres,
             apellidos: nuevoUsuario.apellidos,
             correo: nuevoUsuario.correo,
+            nombreUsuario: nuevoUsuario.nombreUsuario,
             rol: nuevoUsuario.rol,
             estado: nuevoUsuario.estado,
           },
@@ -202,6 +252,7 @@ export class UsersService {
         nombres: true,
         apellidos: true,
         correo: true,
+        nombreUsuario: true,
         rol: true,
         esPrincipal: true,
         estado: true,
@@ -339,6 +390,7 @@ export class UsersService {
         nombres: true,
         apellidos: true,
         correo: true,
+        nombreUsuario: true,
         rol: true,
         esPrincipal: true,
         estado: true,
@@ -455,19 +507,46 @@ export class UsersService {
       }
     }
 
-    const { password, ...datos } = updateUserDto;
+    let nombreUsuario: string | undefined;
+    if (updateUserDto.nombreUsuario !== undefined) {
+      nombreUsuario = this.validarYNormalizarNombreUsuario(
+        updateUserDto.nombreUsuario,
+      );
+      const usuarioConNombre = await this.prisma.usuario.findFirst({
+        where: {
+          nombreUsuario,
+          NOT: { id },
+        } as any,
+      });
+
+      if (usuarioConNombre) {
+        throw new ConflictException('El nombre de usuario ya está registrado');
+      }
+    }
+
+    const {
+      password,
+      nombreUsuario: _nombreUsuario,
+      correo: correoDto,
+      ...datos
+    } = updateUserDto;
 
     const usuarioActualizado = await this.prisma.usuario.update({
       where: { id },
       data: {
         ...datos,
+        ...(correoDto !== undefined && {
+          correo: correoDto.trim().toLowerCase(),
+        }),
+        ...(nombreUsuario !== undefined && { nombreUsuario }),
         ...(hashContrasena && { hashContrasena }),
-      },
+      } as any,
       select: {
         id: true,
         nombres: true,
         apellidos: true,
         correo: true,
+        nombreUsuario: true,
         rol: true,
         esPrincipal: true,
         estado: true,
@@ -488,6 +567,7 @@ export class UsersService {
           nombres: usuario.nombres,
           apellidos: usuario.apellidos,
           correo: usuario.correo,
+          nombreUsuario: (usuario as any).nombreUsuario,
           rol: usuario.rol,
           estado: usuario.estado,
           telefono: usuario.telefono,
@@ -496,6 +576,7 @@ export class UsersService {
           nombres: usuarioActualizado.nombres,
           apellidos: usuarioActualizado.apellidos,
           correo: usuarioActualizado.correo,
+          nombreUsuario: usuarioActualizado.nombreUsuario,
           rol: usuarioActualizado.rol,
           estado: usuarioActualizado.estado,
           telefono: usuarioActualizado.telefono,
@@ -533,7 +614,7 @@ export class UsersService {
         eliminadoEn: new Date(),
         estado: EstadoUsuario.ARCHIVADO,
       },
-      select: USUARIO_PUBLIC_SELECT,
+      select: USUARIO_PUBLIC_SELECT as any,
     });
 
     if (usuarioEliminadorId) {
@@ -582,7 +663,7 @@ export class UsersService {
         estado: EstadoUsuario.ARCHIVADO,
         eliminadoEn: null,
       },
-      select: USUARIO_PUBLIC_SELECT,
+      select: USUARIO_PUBLIC_SELECT as any,
     });
 
     if (usuarioArchivadorId) {
@@ -625,7 +706,7 @@ export class UsersService {
         eliminadoEn: null,
         estado: EstadoUsuario.ACTIVO,
       },
-      select: USUARIO_PUBLIC_SELECT,
+      select: USUARIO_PUBLIC_SELECT as any,
     });
 
     if (usuarioRestauradorId) {
