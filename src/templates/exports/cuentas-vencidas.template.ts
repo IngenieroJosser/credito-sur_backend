@@ -10,6 +10,10 @@ import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
 import * as fs from 'fs';
 import * as path from 'path';
+import {
+  claveColorRiesgoExport,
+  etiquetaNivelRiesgoExport,
+} from './riesgo-labels';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -212,7 +216,7 @@ export async function generarExcelVencidas(
   const riesgoColor: Record<string, string> = {
     ROJO: 'FFFECACA',
     AMARILLO: 'FFFEF9C3',
-    LISTA_NEGRA: 'FFFFE4E6',
+    LEVE: 'FFECFCCB',
     VERDE: 'FFDCFCE7',
   };
   filas.forEach((fila, idx) => {
@@ -225,7 +229,9 @@ export async function generarExcelVencidas(
       fila.saldoPendiente,
       fila.montoOriginal,
       fila.interesesMora,
-      fila.nivelRiesgo,
+      etiquetaNivelRiesgoExport(fila.nivelRiesgo, {
+        dias: fila.diasVencidos,
+      }),
       fila.ruta,
       fila.estado?.replace(/_/g, ' ') || '',
     ]);
@@ -255,7 +261,12 @@ export async function generarExcelVencidas(
     );
 
     // Color por nivel de riesgo
-    const bg = riesgoColor[fila.nivelRiesgo?.toUpperCase() || ''];
+    const bg =
+      riesgoColor[
+        claveColorRiesgoExport(fila.nivelRiesgo, {
+          dias: fila.diasVencidos,
+        })
+      ];
     if (bg) {
       row.getCell(9).fill = {
         type: 'pattern',
@@ -500,7 +511,9 @@ export async function generarPDFVencidas(
       fmtCOP(fila.saldoPendiente || 0),
       fmtCOP(fila.montoOriginal || 0),
       fmtCOP(fila.interesesMora || 0),
-      fila.nivelRiesgo || '',
+      etiquetaNivelRiesgoExport(fila.nivelRiesgo, {
+        dias: fila.diasVencidos,
+      }),
       fila.ruta || '',
     ];
 
@@ -526,7 +539,9 @@ export async function generarPDFVencidas(
       doc.font('Helvetica').fontSize(7.5);
     }
 
-    const riesgo = fila.nivelRiesgo?.toUpperCase() || '';
+    const riesgo = claveColorRiesgoExport(fila.nivelRiesgo, {
+      dias: fila.diasVencidos,
+    });
     const baseBg = i % 2 === 0 ? BLANCO : PURPLE_PALE;
     const bg = fila.diasVencidos > 90 ? '#FEF2F2' : baseBg; // Rojo claro si > 90 días
 
@@ -552,7 +567,7 @@ export async function generarPDFVencidas(
       } else if (ci === 1) {
         doc.font('Helvetica-Bold').fillColor(PURPLE_DARK);
       } else if (ci === 7) {
-        if (riesgo === 'ROJO' || riesgo === 'LISTA_NEGRA')
+        if (riesgo === 'ROJO')
           doc.font('Helvetica-Bold').fillColor(ROJO_DARK);
         else doc.font('Helvetica-Bold').fillColor(GRIS_TXT);
       } else {
