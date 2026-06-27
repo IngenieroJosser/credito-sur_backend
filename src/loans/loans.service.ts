@@ -1534,28 +1534,35 @@ export class LoansService implements OnModuleInit {
           notIn: [EstadoPrestamo.BORRADOR, EstadoPrestamo.PENDIENTE_APROBACION],
         },
       };
-      const overdueCuotaScope = {
+      const { startDate: hoyInicioBogota } = getBogotaStartEndOfDay(new Date());
+      const overdueCuotaScope: Prisma.PrestamoWhereInput = {
         cuotas: {
           some: {
-            estado: EstadoCuota.VENCIDA,
+            estado: {
+              in: [
+                EstadoCuota.PENDIENTE,
+                EstadoCuota.PARCIAL,
+                EstadoCuota.VENCIDA,
+              ],
+            },
             OR: [
               {
                 fechaVencimientoProrroga: null,
-                fechaVencimiento: { lte: new Date() },
+                fechaVencimiento: { lt: hoyInicioBogota },
               },
               {
-                fechaVencimientoProrroga: { lte: new Date() },
+                fechaVencimientoProrroga: { lt: hoyInicioBogota },
               },
             ],
           },
         },
       };
-      const moraStatsWhere = {
+      const moraStatsWhere: Prisma.PrestamoWhereInput = {
         ...whereStats,
         saldoPendiente: { gt: 0 },
         OR: [{ estado: EstadoPrestamo.EN_MORA }, overdueCuotaScope],
       };
-      const activosStatsWhere = {
+      const activosStatsWhere: Prisma.PrestamoWhereInput = {
         ...whereStats,
         estado: EstadoPrestamo.ACTIVO,
         saldoPendiente: { gt: 0 },
@@ -1619,7 +1626,15 @@ export class LoansService implements OnModuleInit {
           const cuotasTotales = cuotas.length;
 
           const cuotasVencidasReal = cuotas.filter((c: any) => {
-            if (c.estado !== EstadoCuota.VENCIDA) return false;
+            if (
+              ![
+                EstadoCuota.PENDIENTE,
+                EstadoCuota.PARCIAL,
+                EstadoCuota.VENCIDA,
+              ].includes(c.estado)
+            ) {
+              return false;
+            }
             const eff = c?.fechaVencimientoProrroga
               ? new Date(c.fechaVencimientoProrroga)
               : new Date(c.fechaVencimiento);
@@ -1651,7 +1666,9 @@ export class LoansService implements OnModuleInit {
           );
 
           const estado =
-            prestamo.estado === EstadoPrestamo.EN_MORA && cuotasVencidas === 0
+            cuotasVencidas > 0
+              ? EstadoPrestamo.EN_MORA
+              : prestamo.estado === EstadoPrestamo.EN_MORA
               ? EstadoPrestamo.ACTIVO
               : prestamo.estado || EstadoPrestamo.BORRADOR;
 

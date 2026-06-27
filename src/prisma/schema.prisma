@@ -61,12 +61,13 @@ model Usuario {
   arqueosComoResponsable  ArqueoCaja[]               @relation("ArqueoCajaResponsable")
   arqueosCreados          ArqueoCaja[]               @relation("ArqueoCajaCreadoPor")
   arqueosRecibidos        ArqueoCaja[]               @relation("ArqueoCajaRecibidoPor")
+  importacionesCreadas    ImportacionLote[]
 
-  syncConflictsCreados   SyncConflict[]   @relation("SyncConflictCreadoPor")
-  syncConflictsResueltos SyncConflict[]   @relation("SyncConflictResueltoPor")
-  registrosVisitas       RegistroVisita[] @relation("VisitasRegistradas")
-  alertasClienteReportadas AlertaCliente[] @relation("AlertaClienteReportadoPor")
-  alertasClienteResueltas  AlertaCliente[] @relation("AlertaClienteResueltoPor")
+  syncConflictsCreados     SyncConflict[]   @relation("SyncConflictCreadoPor")
+  syncConflictsResueltos   SyncConflict[]   @relation("SyncConflictResueltoPor")
+  registrosVisitas         RegistroVisita[] @relation("VisitasRegistradas")
+  alertasClienteReportadas AlertaCliente[]  @relation("AlertaClienteReportadoPor")
+  alertasClienteResueltas  AlertaCliente[]  @relation("AlertaClienteResueltoPor")
 
   @@index([correo])
   @@index([rol])
@@ -597,32 +598,32 @@ model Transaccion {
 }
 
 model Gasto {
-  id                      String                  @id @default(uuid())
-  numeroGasto             String                  @unique @db.VarChar(50)
-  idempotencyKey          String?                 @unique @db.VarChar(100)
-  rutaId                  String?
-  cobradorId              String
-  cajaId                  String
-  tipoGasto               TipoGasto
-  monto                   Decimal                 @db.Decimal(10, 2)
-  descripcion             String
-  fotoRecibo              String?                 @db.VarChar(500)
-  aprobadoPorId           String?
-  estadoAprobacion        EstadoAprobacion        @default(PENDIENTE)
-  resultadoRevisionGasto  ResultadoRevisionGasto?
-  esProvisional           Boolean                 @default(false)
-  aplicadoEnCaja          Boolean                 @default(false)
-  categoriaId             String?
-  fechaGasto              DateTime                @default(now())
-  creadoEn                DateTime                @default(now())
-  actualizadoEn           DateTime                @updatedAt
-  estadoSincronizacion    EstadoSincronizacion    @default(PENDIENTE)
-  aprobadoPor             Usuario?                @relation("GastoAprobadoPor", fields: [aprobadoPorId], references: [id])
-  caja                    Caja                    @relation(fields: [cajaId], references: [id])
-  categoria               Categoria?              @relation(fields: [categoriaId], references: [id])
-  cobrador                Usuario                 @relation("GastoReportadoPor", fields: [cobradorId], references: [id])
-  ruta                    Ruta?                   @relation(fields: [rutaId], references: [id])
-  archivos                Multimedia[]            @relation("MultimediaGasto")
+  id                     String                  @id @default(uuid())
+  numeroGasto            String                  @unique @db.VarChar(50)
+  idempotencyKey         String?                 @unique @db.VarChar(100)
+  rutaId                 String?
+  cobradorId             String
+  cajaId                 String
+  tipoGasto              TipoGasto
+  monto                  Decimal                 @db.Decimal(10, 2)
+  descripcion            String
+  fotoRecibo             String?                 @db.VarChar(500)
+  aprobadoPorId          String?
+  estadoAprobacion       EstadoAprobacion        @default(PENDIENTE)
+  resultadoRevisionGasto ResultadoRevisionGasto?
+  esProvisional          Boolean                 @default(false)
+  aplicadoEnCaja         Boolean                 @default(false)
+  categoriaId            String?
+  fechaGasto             DateTime                @default(now())
+  creadoEn               DateTime                @default(now())
+  actualizadoEn          DateTime                @updatedAt
+  estadoSincronizacion   EstadoSincronizacion    @default(PENDIENTE)
+  aprobadoPor            Usuario?                @relation("GastoAprobadoPor", fields: [aprobadoPorId], references: [id])
+  caja                   Caja                    @relation(fields: [cajaId], references: [id])
+  categoria              Categoria?              @relation(fields: [categoriaId], references: [id])
+  cobrador               Usuario                 @relation("GastoReportadoPor", fields: [cobradorId], references: [id])
+  ruta                   Ruta?                   @relation(fields: [rutaId], references: [id])
+  archivos               Multimedia[]            @relation("MultimediaGasto")
 
   @@index([numeroGasto])
   @@index([rutaId])
@@ -733,24 +734,24 @@ model SyncConflict {
 }
 
 model AlertaCliente {
-  id                       String    @id @default(uuid())
-  clienteId                String
-  rutaId                   String?
-  cobradorId               String?
-  reportadoPorId           String
-  resueltoPorId            String?
-  estado                   String    @default("ACTIVA") @db.VarChar(30)
-  motivo                   String    @db.VarChar(80)
-  descripcion              String    @db.Text
-  ultimaUbicacionConocida  String?   @db.Text
-  observacionesReportante  String    @db.Text
-  snapshotCliente          Json
-  evidenciaIds             Json?
-  notificadosCount         Int       @default(0)
-  creadoEn                 DateTime  @default(now())
-  actualizadoEn            DateTime  @updatedAt
-  resueltoEn               DateTime?
-  motivoResolucion         String?   @db.Text
+  id                      String    @id @default(uuid())
+  clienteId               String
+  rutaId                  String?
+  cobradorId              String?
+  reportadoPorId          String
+  resueltoPorId           String?
+  estado                  String    @default("ACTIVA") @db.VarChar(30)
+  motivo                  String    @db.VarChar(80)
+  descripcion             String    @db.Text
+  ultimaUbicacionConocida String?   @db.Text
+  observacionesReportante String    @db.Text
+  snapshotCliente         Json
+  evidenciaIds            Json?
+  notificadosCount        Int       @default(0)
+  creadoEn                DateTime  @default(now())
+  actualizadoEn           DateTime  @updatedAt
+  resueltoEn              DateTime?
+  motivoResolucion        String?   @db.Text
 
   cliente      Cliente  @relation(fields: [clienteId], references: [id])
   reportadoPor Usuario  @relation("AlertaClienteReportadoPor", fields: [reportadoPorId], references: [id])
@@ -1150,24 +1151,24 @@ enum EstadoEfectoProvisional {
 }
 
 model EfectoProvisional {
-  id                String                @id @default(uuid())
-  aprobacionId      String
-  aprobacion        Aprobacion            @relation(fields: [aprobacionId], references: [id], onDelete: Cascade)
-  tipoAccion        String
-  tipoEntidad       String?
-  entidadId         String?
-  estado            EstadoEfectoProvisional @default(PENDIENTE_REVISION)
-  snapshotAntes     Json?
-  snapshotDespues   Json?
-  rollbackData      Json?
+  id                 String                  @id @default(uuid())
+  aprobacionId       String
+  aprobacion         Aprobacion              @relation(fields: [aprobacionId], references: [id], onDelete: Cascade)
+  tipoAccion         String
+  tipoEntidad        String?
+  entidadId          String?
+  estado             EstadoEfectoProvisional @default(PENDIENTE_REVISION)
+  snapshotAntes      Json?
+  snapshotDespues    Json?
+  rollbackData       Json?
   entidadesAfectadas Json?
-  aplicadoPorId     String
-  aplicadoEn        DateTime              @default(now())
-  confirmadoEn      DateTime?
-  revertidoEn       DateTime?
-  motivoReversion   String?
-  creadoEn          DateTime              @default(now())
-  actualizadoEn     DateTime              @updatedAt
+  aplicadoPorId      String
+  aplicadoEn         DateTime                @default(now())
+  confirmadoEn       DateTime?
+  revertidoEn        DateTime?
+  motivoReversion    String?
+  creadoEn           DateTime                @default(now())
+  actualizadoEn      DateTime                @updatedAt
 
   @@index([aprobacionId])
   @@index([tipoAccion])
@@ -1218,25 +1219,25 @@ model ArqueoCaja {
   creadoPorId   String
   recibidoPorId String?
 
-  saldoEsperado   Decimal @db.Decimal(12, 2)
-  efectivoContado Decimal @db.Decimal(12, 2)
-  diferencia      Decimal @db.Decimal(12, 2)
+  saldoEsperado    Decimal  @db.Decimal(12, 2)
+  efectivoContado  Decimal  @db.Decimal(12, 2)
+  diferencia       Decimal  @db.Decimal(12, 2)
   montoTransferido Decimal? @db.Decimal(12, 2)
 
   tipoDiferencia TipoDiferenciaArqueo
   estado         EstadoArqueoCaja     @default(CONFIRMADO)
 
   numeroComprobanteTraslado String? @unique @db.VarChar(50)
-  denominaciones Json?
-  observaciones  String?
+  denominaciones            Json?
+  observaciones             String?
 
   transaccionSalidaId  String?
   transaccionEntradaId String?
   journalEntryId       String?
 
-  creadoEn      DateTime @default(now())
+  creadoEn      DateTime  @default(now())
   recibidoEn    DateTime?
-  actualizadoEn DateTime @updatedAt
+  actualizadoEn DateTime  @updatedAt
 
   caja        Caja         @relation(fields: [cajaId], references: [id])
   ruta        Ruta?        @relation(fields: [rutaId], references: [id])
@@ -1249,4 +1250,40 @@ model ArqueoCaja {
   @@index([fechaOperativa])
   @@index([responsableId])
   @@map("arqueos_caja")
+}
+
+model ImportacionLote {
+  id            String            @id @default(uuid())
+  tipo          TipoImportacion
+  estado        EstadoImportacion @default(VALIDADO)
+  nombreArchivo String            @db.VarChar(255)
+  totalFilas    Int               @default(0)
+  filasValidas  Int               @default(0)
+  filasConError Int               @default(0)
+  advertencias  Int               @default(0)
+  resumen       Json?
+  errores       Json?
+  creadoPorId   String
+  creadoEn      DateTime          @default(now())
+  confirmadoEn  DateTime?
+
+  creadoPor Usuario @relation(fields: [creadoPorId], references: [id])
+
+  @@index([tipo])
+  @@index([estado])
+  @@index([creadoPorId])
+  @@index([creadoEn])
+  @@map("importaciones_lotes")
+}
+
+enum TipoImportacion {
+  CLIENTES_CREDITOS
+  INVENTARIO
+}
+
+enum EstadoImportacion {
+  VALIDADO
+  CONFIRMADO
+  FALLIDO
+  CANCELADO
 }

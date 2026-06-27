@@ -8,6 +8,8 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  EstadoCuota,
+  EstadoPrestamo,
   EstadoAprobacion,
   Prisma,
   TipoAprobacion,
@@ -2941,18 +2943,58 @@ export class AccountingService {
     //   EN_MORA     → 20 %  (1-90 días, en recuperación)
     //   INCUMPLIDO  → 60 %  (90-180 días, alto riesgo)
     //   PERDIDA     → 100 % (>180 días / irrecuperable)
+    const { startDate: hoyInicioProvisionBogota } = getBogotaStartEndOfDay(
+      new Date(),
+    );
+    const cuotaVencidaOperativaScope: Prisma.PrestamoWhereInput = {
+      cuotas: {
+        some: {
+          estado: {
+            in: [
+              EstadoCuota.PENDIENTE,
+              EstadoCuota.PARCIAL,
+              EstadoCuota.VENCIDA,
+            ],
+          },
+          OR: [
+            {
+              fechaVencimientoProrroga: null,
+              fechaVencimiento: { lt: hoyInicioProvisionBogota },
+            },
+            {
+              fechaVencimientoProrroga: { lt: hoyInicioProvisionBogota },
+            },
+          ],
+        },
+      },
+    };
+    const carteraEnMoraWhere: Prisma.PrestamoWhereInput = {
+      eliminadoEn: null,
+      saldoPendiente: { gt: 0 },
+      estado: {
+        notIn: [
+          EstadoPrestamo.BORRADOR,
+          EstadoPrestamo.PENDIENTE_APROBACION,
+          EstadoPrestamo.PAGADO,
+          EstadoPrestamo.INCUMPLIDO,
+          EstadoPrestamo.PERDIDA,
+        ],
+      },
+      OR: [{ estado: EstadoPrestamo.EN_MORA }, cuotaVencidaOperativaScope],
+    };
+
     const [carteraEnMoraAgg, carteraIncumplidaAgg, carteraPerdidaAgg] =
       await Promise.all([
         this.prisma.prestamo.aggregate({
-          where: { estado: 'EN_MORA', eliminadoEn: null },
+          where: carteraEnMoraWhere,
           _sum: { saldoPendiente: true },
         }),
         this.prisma.prestamo.aggregate({
-          where: { estado: 'INCUMPLIDO', eliminadoEn: null },
+          where: { estado: EstadoPrestamo.INCUMPLIDO, eliminadoEn: null },
           _sum: { saldoPendiente: true },
         }),
         this.prisma.prestamo.aggregate({
-          where: { estado: 'PERDIDA', eliminadoEn: null },
+          where: { estado: EstadoPrestamo.PERDIDA, eliminadoEn: null },
           _sum: { saldoPendiente: true },
         }),
       ]);
