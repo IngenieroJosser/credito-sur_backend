@@ -10,6 +10,10 @@ import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
 import * as fs from 'fs';
 import * as path from 'path';
+import {
+  claveColorRiesgoExport,
+  etiquetaNivelRiesgoExport,
+} from './riesgo-labels';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -43,7 +47,8 @@ const RIESGO_COLOR: Record<string, string> = {
   ROJO: 'FFdc2626',
   AMARILLO: 'FFeab308',
   VERDE: 'FF22c55e',
-  LISTA_NEGRA: 'FF1e293b',
+  LEVE: 'FF84cc16',
+  DEFAULT: 'FF64748B',
 };
 
 const AZUL_OSCURO = 'FF004F7B';
@@ -142,7 +147,7 @@ export async function generarExcelClientes(
       telefono: fila.telefono,
       correo: fila.correo || '',
       direccion: fila.direccion || '',
-      nivelRiesgo: fila.nivelRiesgo,
+      nivelRiesgo: etiquetaNivelRiesgoExport(fila.nivelRiesgo),
       estadoAprobacion: fila.estadoAprobacion?.replace(/_/g, ' '),
       prestamosActivos: fila.prestamosActivos,
       montoTotal: fila.montoTotal, // Keep as number for formula
@@ -170,7 +175,8 @@ export async function generarExcelClientes(
 
     // Color en celda de nivel de riesgo
     const riesgoCell = row.getCell(8);
-    const color = RIESGO_COLOR[fila.nivelRiesgo] || 'FF64748B';
+    const color =
+      RIESGO_COLOR[claveColorRiesgoExport(fila.nivelRiesgo)] || 'FF64748B';
     riesgoCell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     riesgoCell.fill = {
       type: 'pattern',
@@ -442,7 +448,7 @@ export async function generarPDFClientes(
       nomCompleto,
       fila.dni || '',
       fila.telefono || '',
-      fila.nivelRiesgo || '',
+      etiquetaNivelRiesgoExport(fila.nivelRiesgo),
       fila.estadoAprobacion?.replace(/_/g, ' ') || '',
       String(fila.prestamosActivos || 0),
       fmtCOP(fila.montoTotal || 0),
@@ -496,8 +502,8 @@ export async function generarPDFClientes(
       } else if (ci === 0) {
         doc.font('Helvetica-Bold').fillColor(GRIS_TXT);
       } else if (ci === 4) {
-        const rr = fila.nivelRiesgo?.toUpperCase() || '';
-        if (rr === 'ROJO' || rr === 'LISTA_NEGRA')
+        const rr = claveColorRiesgoExport(fila.nivelRiesgo);
+        if (rr === 'ROJO')
           doc.font('Helvetica-Bold').fillColor(ROJO_DARK);
         else if (rr === 'VERDE')
           doc.font('Helvetica-Bold').fillColor(VERDE_DARK);

@@ -11,6 +11,11 @@ import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
 import * as fs from 'fs';
 import * as path from 'path';
+import {
+  claveColorRiesgoExport,
+  esRiesgoCriticoExport,
+  etiquetaNivelRiesgoExport,
+} from './riesgo-labels';
 
 // ─── Paleta corporativa ────────────────────────────────────────────────────────
 const COLOR = {
@@ -283,7 +288,9 @@ export async function generarExcelMora(
       fila.interesEspecial ?? 0,
       fila.ruta,
       fila.cobrador,
-      fila.nivelRiesgo,
+      etiquetaNivelRiesgoExport(fila.nivelRiesgo, {
+        dias: fila.diasMora,
+      }),
       fila.ultimoPago || 'Sin pagos',
       fila.comentario || '',
     ]);
@@ -317,8 +324,11 @@ export async function generarExcelMora(
     }
 
     // Resaltar casos críticos
-    const riesgo = fila.nivelRiesgo?.toUpperCase() || '';
-    if (riesgo === 'ROJO' || riesgo === 'LISTA_NEGRA') {
+    if (
+      esRiesgoCriticoExport(fila.nivelRiesgo, {
+        dias: fila.diasMora,
+      })
+    ) {
       row.getCell(2).font = {
         bold: true,
         color: { argb: COLOR.rojo },
@@ -414,7 +424,9 @@ export async function generarExcelMora(
     { casos: number; mora: number; deuda: number }
   > = {};
   filas.forEach((f) => {
-    const n = f.nivelRiesgo || 'Sin clasificar';
+    const n = etiquetaNivelRiesgoExport(f.nivelRiesgo, {
+      dias: f.diasMora,
+    });
     if (!porNivel[n]) porNivel[n] = { casos: 0, mora: 0, deuda: 0 };
     porNivel[n].casos++;
     porNivel[n].mora += f.montoMora || 0;
@@ -425,7 +437,6 @@ export async function generarExcelMora(
     ROJO: 'FFFECACA',
     AMARILLO: 'FFFEF9C3',
     VERDE: 'FFDCFCE7',
-    LISTA_NEGRA: 'FFFFE4E6',
   };
 
   Object.entries(porNivel).forEach(([nivel, datos], idx) => {
@@ -638,7 +649,9 @@ export async function generarPDFMora(
       String(fila.cuotasVencidas || 0),
       fila.ruta || '',
       fila.cobrador || '',
-      fila.nivelRiesgo || '',
+      etiquetaNivelRiesgoExport(fila.nivelRiesgo, {
+        dias: fila.diasMora,
+      }),
     ];
 
     doc.font('Helvetica').fontSize(7.5);
@@ -662,10 +675,12 @@ export async function generarPDFMora(
       doc.font('Helvetica').fontSize(7.5);
     }
 
-    const riesgo = fila.nivelRiesgo?.toUpperCase() || '';
+    const riesgo = claveColorRiesgoExport(fila.nivelRiesgo, {
+      dias: fila.diasMora,
+    });
     const baseBg = i % 2 === 0 ? BLANCO : AZUL_PALE;
     const bg =
-      riesgo === 'ROJO' || riesgo === 'LISTA_NEGRA' ? ROJO_PALE : baseBg;
+      riesgo === 'ROJO' ? ROJO_PALE : baseBg;
 
     doc.rect(tableLeft, y, tableWidth, maxRowHeight).fill(bg);
     doc
@@ -689,7 +704,7 @@ export async function generarPDFMora(
         doc
           .font('Helvetica-Bold')
           .fillColor(
-            riesgo === 'ROJO' || riesgo === 'LISTA_NEGRA'
+            riesgo === 'ROJO'
               ? ROJO_DARK
               : GRIS_TXT,
           );

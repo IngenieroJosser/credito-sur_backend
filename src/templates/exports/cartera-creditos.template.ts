@@ -15,6 +15,10 @@ import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
 import * as fs from 'fs';
 import * as path from 'path';
+import {
+  claveColorRiesgoExport,
+  etiquetaNivelRiesgoExport,
+} from './riesgo-labels';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -316,7 +320,7 @@ export async function generarExcelCartera(
     ROJO: 'FFFECACA',
     AMARILLO: 'FFFEF9C3',
     VERDE: 'FFDCFCE7',
-    LISTA_NEGRA: 'FFFFE4E6',
+    LEVE: 'FFECFCCB',
   };
   // Colores por estado
   const estadoFill: Record<string, string> = {
@@ -343,7 +347,9 @@ export async function generarExcelCartera(
       fila.totalAdeudado,
       `${fila.cuotasPagadas}/${fila.cuotasTotales}`,
       fila.progreso,
-      fila.riesgo,
+      etiquetaNivelRiesgoExport(fila.riesgo, {
+        dias: fila.diasVencidos ?? null,
+      }),
       fila.ruta,
       fila.cobrador || '',
       fmtF(fila.fechaInicio),
@@ -387,7 +393,12 @@ export async function generarExcelCartera(
       };
 
     // Color riesgo (col 15)
-    const riesgoBg = riesgoFill[fila.riesgo?.toUpperCase() || ''];
+    const riesgoBg =
+      riesgoFill[
+        claveColorRiesgoExport(fila.riesgo, {
+          dias: fila.diasVencidos ?? null,
+        })
+      ];
     if (riesgoBg)
       row.getCell(15).fill = {
         type: 'pattern',
