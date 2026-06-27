@@ -1,4 +1,9 @@
-import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  OnModuleInit,
+  OnModuleDestroy,
+} from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
@@ -21,6 +26,27 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       query: {
         $allModels: {
           async $allOperations({ operation, model, args, query }) {
+            const isCajaBalanceMutation =
+              model === 'Caja' &&
+              ['update', 'updateMany', 'upsert'].includes(operation as string) &&
+              (args as any)?.data &&
+              Object.prototype.hasOwnProperty.call((args as any).data, 'saldoActual');
+
+            if (isCajaBalanceMutation) {
+              const saldoActual = (args as any).data.saldoActual;
+              const esDeltaLedger =
+                saldoActual &&
+                typeof saldoActual === 'object' &&
+                (Object.prototype.hasOwnProperty.call(saldoActual, 'increment') ||
+                  Object.prototype.hasOwnProperty.call(saldoActual, 'decrement'));
+
+              if (!esDeltaLedger) {
+                throw new BadRequestException(
+                  'Caja.saldoActual no se puede sobrescribir directamente. Use movimientos/asientos contables para ajustar la caja.',
+                );
+              }
+            }
+
             const result = await query(args);
             const watchActions = [
               'create',

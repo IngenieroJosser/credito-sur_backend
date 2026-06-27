@@ -682,39 +682,66 @@ export class ApprovalsService {
       }
 
       try {
+        const reversalLines = original.lines
+          .map((line: any) => {
+            const debit = Number(line.debitAmount || 0);
+            const credit = Number(line.creditAmount || 0);
+            const cajaDelta =
+              line.cajaId && (debit > 0 || credit > 0)
+                ? credit - debit
+                : undefined;
+
+            return {
+              accountCode: line.accountCode,
+              debitAmount: credit > 0 ? credit : undefined,
+              creditAmount: debit > 0 ? debit : undefined,
+              cajaId: line.cajaId || undefined,
+              cajaDelta,
+            };
+          })
+          .filter(
+            (line: any) =>
+              Number(line.debitAmount || 0) > 0 ||
+              Number(line.creditAmount || 0) > 0,
+          );
+
+        for (const line of reversalLines) {
+          const cajaDelta = Number(line.cajaDelta || 0);
+          if (!line.cajaId || cajaDelta >= 0) continue;
+
+          const caja = await tx.caja.findUnique({
+            where: { id: line.cajaId },
+            select: { nombre: true, saldoActual: true },
+          });
+          const saldoActual = Number(caja?.saldoActual || 0);
+          const montoRequerido = Math.abs(cajaDelta);
+
+          if (saldoActual < montoRequerido) {
+            const label =
+              original.referenceType === 'VENTA_ARTICULO'
+                ? 'devolver la cuota inicial del crédito de artículo'
+                : 'reversar el movimiento de caja';
+            throw new BadRequestException(
+              `No se puede rechazar esta solicitud porque debe ${label} por $${montoRequerido.toLocaleString('es-CO')} desde la caja ${caja?.nombre || line.cajaId}, pero el saldo actual es $${saldoActual.toLocaleString('es-CO')}. Primero ingrese saldo suficiente a esa caja o gestione el reintegro manual antes de rechazar.`,
+            );
+          }
+        }
+
         const reversa = await this.ledgerService.registrarAsiento(
           {
             referenceType: reversaReferenceType,
             referenceId: reversaReferenceId,
             description: `Reversa de asiento ${original.referenceType || ''} ${original.referenceId || ''}${motivoRechazo ? ` — ${motivoRechazo}` : ''}`,
             createdBy: reversadoPorId || original.createdBy,
-            lines: original.lines
-              .map((line: any) => {
-                const debit = Number(line.debitAmount || 0);
-                const credit = Number(line.creditAmount || 0);
-                const cajaDelta =
-                  line.cajaId && (debit > 0 || credit > 0)
-                    ? credit - debit
-                    : undefined;
-
-                return {
-                  accountCode: line.accountCode,
-                  debitAmount: credit > 0 ? credit : undefined,
-                  creditAmount: debit > 0 ? debit : undefined,
-                  cajaId: line.cajaId || undefined,
-                  cajaDelta,
-                };
-              })
-              .filter(
-                (line: any) =>
-                  Number(line.debitAmount || 0) > 0 ||
-                  Number(line.creditAmount || 0) > 0,
-              ),
+            lines: reversalLines,
           },
           tx,
         );
         if (reversa?.id) journalEntryReversaIds.push(reversa.id);
       } catch (error) {
+        if (error instanceof BadRequestException) {
+          throw error;
+        }
         this.logger.error(`Error creando reversa de journal ${original.id}:`, error);
         throw new BadRequestException(`No se pudo crear reversa de asiento contable: ${(error as Error).message}`);
       }
