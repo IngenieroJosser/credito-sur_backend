@@ -1689,6 +1689,10 @@ export class AccountingService {
         tipo: 'RUTA',
         activa: true,
       },
+      select: {
+        id: true,
+        saldoActual: true,
+      },
     });
 
     if (!caja) {
@@ -1714,6 +1718,13 @@ export class AccountingService {
           gte: rangeStart,
           lte: rangeEnd,
         },
+      },
+      select: {
+        monto: true,
+        tipo: true,
+        tipoReferencia: true,
+        referenciaId: true,
+        descripcion: true,
       },
     });
 
@@ -1797,6 +1808,10 @@ export class AccountingService {
             lte: rangeEnd,
           },
         },
+        select: {
+          montoTotal: true,
+          prestamoId: true,
+        },
       });
 
       pagosList.forEach((p) => {
@@ -1826,6 +1841,13 @@ export class AccountingService {
           lte: rangeEnd,
         },
         tipoGasto: 'OPERATIVO',
+      },
+      select: {
+        monto: true,
+        estadoAprobacion: true,
+        resultadoRevisionGasto: true,
+        esProvisional: true,
+        aplicadoEnCaja: true,
       },
     });
 
@@ -1907,6 +1929,10 @@ export class AccountingService {
         responsableId: supervisorId,
         activa: true,
       },
+      select: {
+        id: true,
+        saldoActual: true,
+      },
     });
 
     if (!caja) {
@@ -1933,6 +1959,12 @@ export class AccountingService {
           gte: rangeStart,
           lte: rangeEnd,
         },
+      },
+      select: {
+        monto: true,
+        tipo: true,
+        tipoReferencia: true,
+        descripcion: true,
       },
     });
 
@@ -2005,6 +2037,13 @@ export class AccountingService {
           lte: rangeEnd,
         },
         tipoGasto: 'OPERATIVO',
+      },
+      select: {
+        monto: true,
+        estadoAprobacion: true,
+        resultadoRevisionGasto: true,
+        esProvisional: true,
+        aplicadoEnCaja: true,
       },
     });
 
