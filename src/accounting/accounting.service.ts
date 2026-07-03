@@ -1728,6 +1728,7 @@ export class AccountingService {
 
     transacciones.forEach((t) => {
       const monto = Number(t.monto);
+      const descripcion = String(t.descripcion || '').toLowerCase();
       if (t.tipo === 'INGRESO') {
         if (t.tipoReferencia === 'PAGO') {
           cobranzaTrx += monto;
@@ -1739,8 +1740,8 @@ export class AccountingService {
           t.tipoReferencia === 'SOLICITUD_BASE_EFECTIVO' ||
           t.tipoReferencia === 'SOLICITUD_BASE' ||
           t.tipoReferencia === 'APERTURA_CAJA' ||
-          t.descripcion.toLowerCase().includes('apertura de caja') ||
-          t.descripcion.toLowerCase().includes('base de efectivo')
+          descripcion.includes('apertura de caja') ||
+          descripcion.includes('base de efectivo')
         ) {
           baseEfectivo += monto;
         } else {
@@ -1764,8 +1765,8 @@ export class AccountingService {
           otrosEgresos += monto;
         } else if (
           t.tipoReferencia === 'PRESTAMO' ||
-          t.descripcion.toLowerCase().includes('desembolso') ||
-          t.descripcion.toLowerCase().includes('préstamo')
+          descripcion.includes('desembolso') ||
+          descripcion.includes('préstamo')
         ) {
           desembolsos += monto;
         } else {
@@ -1945,6 +1946,7 @@ export class AccountingService {
 
     transacciones.forEach((t) => {
       const monto = Number(t.monto);
+      const descripcion = String(t.descripcion || '').toLowerCase();
       if (t.tipo === 'INGRESO') {
         if (t.tipoReferencia === 'PAGO') {
           cobranzaTrx += monto;
@@ -1952,8 +1954,8 @@ export class AccountingService {
           t.tipoReferencia === 'SOLICITUD_BASE_EFECTIVO' ||
           t.tipoReferencia === 'SOLICITUD_BASE' ||
           t.tipoReferencia === 'APERTURA_CAJA' ||
-          t.descripcion.toLowerCase().includes('apertura de caja') ||
-          t.descripcion.toLowerCase().includes('base de efectivo')
+          descripcion.includes('apertura de caja') ||
+          descripcion.includes('base de efectivo')
         ) {
           baseEfectivo += monto;
         } else {
@@ -1972,8 +1974,8 @@ export class AccountingService {
           gastosOperativos += monto;
         } else if (
           t.tipoReferencia === 'PRESTAMO' ||
-          t.descripcion.toLowerCase().includes('desembolso') ||
-          t.descripcion.toLowerCase().includes('préstamo')
+          descripcion.includes('desembolso') ||
+          descripcion.includes('préstamo')
         ) {
           desembolsos += monto;
         } else {
