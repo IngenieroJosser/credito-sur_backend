@@ -13,6 +13,7 @@ import {
   type InventarioRow,
   type InventarioTotales,
 } from '../templates/exports/inventario.template';
+import { generarExcelInventarioImportable } from '../templates/exports/importables.template';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { getBogotaDayKey } from '../utils/date-utils';
 
@@ -25,7 +26,58 @@ export class InventoryService {
 
   async exportarInventario(
     format: 'excel' | 'pdf',
+    options: { compatibleImportacion?: boolean } = {},
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
+    const fecha = getBogotaDayKey(new Date());
+
+    if (format === 'excel' && options.compatibleImportacion) {
+      const productos = await this.prisma.producto.findMany({
+        where: { eliminadoEn: null },
+        select: {
+          codigo: true,
+          nombre: true,
+          descripcion: true,
+          categoria: true,
+          marca: true,
+          modelo: true,
+          costo: true,
+          stock: true,
+          stockMinimo: true,
+          activo: true,
+          precios: {
+            where: { activo: true, meses: { gt: 0 } },
+            select: { meses: true, precio: true, activo: true },
+            orderBy: { meses: 'asc' },
+          },
+        },
+        orderBy: { creadoEn: 'desc' },
+      });
+
+      return generarExcelInventarioImportable(
+        productos.map((p) => ({
+          codigo: p.codigo,
+          nombre: p.nombre,
+          descripcion: p.descripcion,
+          categoria: p.categoria,
+          marca: p.marca,
+          modelo: p.modelo,
+          costo: Number(p.costo) || 0,
+          stock: Number(p.stock) || 0,
+          stockMinimo: Number(p.stockMinimo) || 0,
+          activo: Boolean(p.activo),
+        })),
+        productos.flatMap((p) =>
+          p.precios.map((precio) => ({
+            codigoProducto: p.codigo,
+            meses: Number(precio.meses),
+            precio: Number(precio.precio) || 0,
+            activo: Boolean(precio.activo),
+          })),
+        ),
+        fecha,
+      );
+    }
+
     const productos = await this.prisma.producto.findMany({
       where: { eliminadoEn: null },
       select: {
@@ -67,7 +119,6 @@ export class InventoryService {
       ).length,
     };
 
-    const fecha = getBogotaDayKey(new Date());
     if (format === 'excel')
       return generarExcelInventario(filas, totales, fecha);
     return generarPDFInventario(filas, totales, fecha);
