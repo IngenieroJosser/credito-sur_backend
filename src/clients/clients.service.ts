@@ -19,6 +19,7 @@ import {
   generarExcelClientes,
   generarPDFClientes,
 } from '../templates/exports/clientes.template';
+import { generarExcelClientesCreditosImportable } from '../templates/exports/importables.template';
 
 @Injectable()
 export class ClientsService {
@@ -1740,6 +1741,7 @@ export class ClientsService {
   async exportarClientes(
     formato: 'excel' | 'pdf',
     filtros?: { nivelRiesgo?: string; ruta?: string; search?: string },
+    options: { compatibleImportacion?: boolean } = {},
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
     const where: any = { eliminadoEn: null };
 
@@ -1765,7 +1767,7 @@ export class ClientsService {
       include: {
         asignacionesRuta: {
           where: { activa: true },
-          include: { ruta: { select: { id: true, nombre: true } } },
+          include: { ruta: { select: { id: true, nombre: true, codigo: true } } },
           take: 1,
         },
         prestamos: {
@@ -1775,6 +1777,32 @@ export class ClientsService {
       },
       orderBy: { creadoEn: 'desc' },
     });
+
+    const fecha = new Date().toISOString().split('T')[0];
+
+    if (formato === 'excel' && options.compatibleImportacion) {
+      return generarExcelClientesCreditosImportable(
+        clientes.map((c) => ({
+          codigo: c.codigo,
+          dni: c.dni,
+          nombres: c.nombres,
+          apellidos: c.apellidos,
+          telefono: c.telefono,
+          correo: c.correo,
+          direccion: c.direccion,
+          referencia: c.referencia,
+          referencia1Nombre: c.referencia1Nombre,
+          referencia1Telefono: c.referencia1Telefono,
+          referencia2Nombre: c.referencia2Nombre,
+          referencia2Telefono: c.referencia2Telefono,
+          nivelRiesgo: c.nivelRiesgo,
+          rutaCodigo: c.asignacionesRuta?.[0]?.ruta?.codigo ?? '',
+          observaciones: '',
+        })),
+        [],
+        fecha,
+      );
+    }
 
     const filas = clientes.map((c) => {
       const prestamosActivos = c.prestamos.filter(
@@ -1807,7 +1835,6 @@ export class ClientsService {
       };
     });
 
-    const fecha = new Date().toISOString().split('T')[0];
     return formato === 'pdf'
       ? generarPDFClientes(filas, fecha)
       : generarExcelClientes(filas, fecha);

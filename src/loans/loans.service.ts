@@ -33,6 +33,7 @@ import {
   CarteraRow,
   CarteraTotales,
 } from '../templates/exports/cartera-creditos.template';
+import { generarExcelClientesCreditosImportable } from '../templates/exports/importables.template';
 import { createHash, randomUUID } from 'crypto';
 import { ContratoData, generarContratoPDF } from '../templates/exports';
 import {
@@ -5361,7 +5362,117 @@ export class LoansService implements OnModuleInit {
   async exportLoans(
     format: 'excel' | 'pdf',
     filters: { estado?: string; ruta?: string; search?: string },
+    options: { compatibleImportacion?: boolean } = {},
   ) {
+    const fechaStr = getBogotaDayKey(new Date());
+
+    if (format === 'excel' && options.compatibleImportacion) {
+      const and: Prisma.PrestamoWhereInput[] = [{ eliminadoEn: null }];
+
+      if (filters.estado && filters.estado !== 'todos') {
+        and.push({ estado: filters.estado as EstadoPrestamo });
+      }
+
+      if (filters.ruta && filters.ruta !== 'todas') {
+        and.push({
+          cliente: {
+            asignacionesRuta: {
+              some: {
+                rutaId: filters.ruta,
+                activa: true,
+              },
+            },
+          },
+        });
+      }
+
+      const search = String(filters.search || '').trim();
+      if (search) {
+        and.push({
+          OR: [
+            { numeroPrestamo: { contains: search, mode: 'insensitive' } },
+            { cliente: { nombres: { contains: search, mode: 'insensitive' } } },
+            { cliente: { apellidos: { contains: search, mode: 'insensitive' } } },
+            { cliente: { dni: { contains: search, mode: 'insensitive' } } },
+          ],
+        });
+      }
+
+      const prestamos = await this.prisma.prestamo.findMany({
+        where: { AND: and },
+        include: {
+          cliente: {
+            include: {
+              asignacionesRuta: {
+                where: { activa: true },
+                include: {
+                  ruta: { select: { codigo: true, nombre: true } },
+                },
+                take: 1,
+              },
+            },
+          },
+          producto: { select: { codigo: true, nombre: true } },
+        },
+        orderBy: { creadoEn: 'desc' },
+      });
+
+      const clientesMap = new Map<string, any>();
+
+      for (const prestamo of prestamos) {
+        const cliente = prestamo.cliente;
+        if (!cliente?.id || clientesMap.has(cliente.id)) continue;
+
+        const asignacion = cliente.asignacionesRuta?.[0];
+        clientesMap.set(cliente.id, {
+          codigo: cliente.codigo || cliente.dni,
+          dni: cliente.dni,
+          nombres: cliente.nombres,
+          apellidos: cliente.apellidos,
+          telefono: cliente.telefono,
+          correo: cliente.correo,
+          direccion: cliente.direccion,
+          referencia: cliente.referencia,
+          referencia1Nombre: cliente.referencia1Nombre,
+          referencia1Telefono: cliente.referencia1Telefono,
+          referencia2Nombre: cliente.referencia2Nombre,
+          referencia2Telefono: cliente.referencia2Telefono,
+          nivelRiesgo: cliente.nivelRiesgo,
+          rutaCodigo: asignacion?.ruta?.codigo || '',
+        });
+      }
+
+      const creditos = prestamos.map((prestamo) => ({
+        codigo: this.normalizeIdempotencyKey(
+          prestamo.idempotencyKey || prestamo.numeroPrestamo || prestamo.id,
+        ),
+        numeroPrestamo: prestamo.numeroPrestamo,
+        ccCliente: prestamo.cliente?.dni || '',
+        tipoPrestamo: prestamo.tipoPrestamo,
+        productoCodigo: prestamo.producto?.codigo || '',
+        monto: Number(prestamo.monto || 0),
+        cuotaInicial: Number(prestamo.cuotaInicial || 0),
+        tasaInteres: Number(prestamo.tasaInteres || 0),
+        tasaInteresMora: Number(prestamo.tasaInteresMora || 0),
+        frecuenciaPago: prestamo.frecuenciaPago,
+        cantidadCuotas: Number(prestamo.cantidadCuotas || 0),
+        plazoMeses: Number(prestamo.plazoMeses || 0),
+        tipoAmortizacion: 'Interés simple',
+        fechaCredito: prestamo.fechaInicio,
+        fechaPrimerCobro: prestamo.fechaPrimerCobro || prestamo.fechaInicio,
+        tipoCarga: 'HISTORICA',
+        descontarCaja: 'NO',
+        garantia: prestamo.garantia,
+        notas: prestamo.notas,
+      }));
+
+      return generarExcelClientesCreditosImportable(
+        Array.from(clientesMap.values()),
+        creditos,
+        fechaStr,
+      );
+    }
+
     const rawLoans = await this.getAllLoans({
       estado: filters.estado || 'todos',
       ruta: filters.ruta || 'todas',
@@ -5414,8 +5525,6 @@ export class LoansService implements OnModuleInit {
       fechaInicio: p.fechaInicio,
       fechaFin: p.fechaFin,
     }));
-
-    const fechaStr = getBogotaDayKey(new Date());
 
     if (format === 'excel') {
       return generarExcelCartera(filas, totales, fechaStr);
