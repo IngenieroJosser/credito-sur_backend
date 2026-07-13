@@ -44,11 +44,8 @@ export class InventoryController {
   async exportInventario(
     @Res() res: Response,
     @Query('format', new DefaultValuePipe('excel')) format: 'excel' | 'pdf',
-    @Query('compatibleImportacion') compatibleImportacion?: string,
   ) {
-    const result = await this.inventoryService.exportarInventario(format, {
-      compatibleImportacion: compatibleImportacion === 'true',
-    });
+    const result = await this.inventoryService.exportarInventario(format);
     res.setHeader('Content-Type', result.contentType);
     res.setHeader(
       'Content-Disposition',

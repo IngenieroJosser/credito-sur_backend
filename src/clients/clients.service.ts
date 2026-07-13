@@ -15,10 +15,7 @@ import { ConfiguracionService } from '../configuracion/configuracion.service';
 import { NivelRiesgo, RolUsuario } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { Prisma } from '@prisma/client';
-import {
-  generarExcelClientes,
-  generarPDFClientes,
-} from '../templates/exports/clientes.template';
+import { generarPDFClientes } from '../templates/exports/clientes.template';
 import { generarExcelClientesCreditosImportable } from '../templates/exports/importables.template';
 
 @Injectable()
@@ -1741,7 +1738,6 @@ export class ClientsService {
   async exportarClientes(
     formato: 'excel' | 'pdf',
     filtros?: { nivelRiesgo?: string; ruta?: string; search?: string },
-    options: { compatibleImportacion?: boolean } = {},
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
     const where: any = { eliminadoEn: null };
 
@@ -1780,7 +1776,7 @@ export class ClientsService {
 
     const fecha = new Date().toISOString().split('T')[0];
 
-    if (formato === 'excel' && options.compatibleImportacion) {
+    if (formato === 'excel') {
       return generarExcelClientesCreditosImportable(
         clientes.map((c) => ({
           codigo: c.codigo,
@@ -1835,9 +1831,7 @@ export class ClientsService {
       };
     });
 
-    return formato === 'pdf'
-      ? generarPDFClientes(filas, fecha)
-      : generarExcelClientes(filas, fecha);
+    return generarPDFClientes(filas, fecha);
   }
 
   async getEstadoCuentaCliente(clienteId: string) {

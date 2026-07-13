@@ -163,12 +163,6 @@ export class LoansController {
   @ApiQuery({ name: 'estado', required: false })
   @ApiQuery({ name: 'ruta', required: false })
   @ApiQuery({ name: 'search', required: false })
-  @ApiQuery({
-    name: 'compatibleImportacion',
-    required: false,
-    description:
-      'Cuando es true y format=excel, genera una plantilla compatible con el módulo de importaciones.',
-  })
   @HttpCode(HttpStatus.OK)
   async exportLoans(
     @Res() res: Response,
@@ -176,17 +170,12 @@ export class LoansController {
     @Query('estado') estado?: string,
     @Query('ruta') ruta?: string,
     @Query('search') search?: string,
-    @Query('compatibleImportacion') compatibleImportacion?: string,
   ) {
-    const result = await this.loansService.exportLoans(
-      format,
-      {
-        estado,
-        ruta,
-        search,
-      },
-      { compatibleImportacion: compatibleImportacion === 'true' },
-    );
+    const result = await this.loansService.exportLoans(format, {
+      estado,
+      ruta,
+      search,
+    });
     res.setHeader('Content-Type', result.contentType);
     res.setHeader(
       'Content-Disposition',
