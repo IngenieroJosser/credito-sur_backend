@@ -28,7 +28,6 @@ import { ConfiguracionService } from '../configuracion/configuracion.service';
 import { UpdateLoanData } from '../common/types';
 import { LedgerService } from '../accounting/ledger.service';
 import {
-  generarExcelCartera,
   generarPDFCartera,
   CarteraRow,
   CarteraTotales,
@@ -5362,11 +5361,10 @@ export class LoansService implements OnModuleInit {
   async exportLoans(
     format: 'excel' | 'pdf',
     filters: { estado?: string; ruta?: string; search?: string },
-    options: { compatibleImportacion?: boolean } = {},
   ) {
     const fechaStr = getBogotaDayKey(new Date());
 
-    if (format === 'excel' && options.compatibleImportacion) {
+    if (format === 'excel') {
       const and: Prisma.PrestamoWhereInput[] = [{ eliminadoEn: null }];
 
       if (filters.estado && filters.estado !== 'todos') {
@@ -5526,10 +5524,6 @@ export class LoansService implements OnModuleInit {
       fechaFin: p.fechaFin,
     }));
 
-    if (format === 'excel') {
-      return generarExcelCartera(filas, totales, fechaStr);
-    } else {
-      return generarPDFCartera(filas, totales, fechaStr);
-    }
+    return generarPDFCartera(filas, totales, fechaStr);
   }
 }

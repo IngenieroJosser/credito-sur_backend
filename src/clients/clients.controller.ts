@@ -103,7 +103,6 @@ export class ClientsController {
   @ApiQuery({ name: 'nivelRiesgo', required: false })
   @ApiQuery({ name: 'ruta', required: false })
   @ApiQuery({ name: 'search', required: false })
-  @ApiQuery({ name: 'compatibleImportacion', required: false })
   @HttpCode(HttpStatus.OK)
   async exportarClientes(
     @Res() res: Response,
@@ -111,12 +110,10 @@ export class ClientsController {
     @Query('nivelRiesgo') nivelRiesgo?: string,
     @Query('ruta') ruta?: string,
     @Query('search') search?: string,
-    @Query('compatibleImportacion') compatibleImportacion?: string,
   ) {
     const result = await this.clientsService.exportarClientes(
       format === 'pdf' ? 'pdf' : 'excel',
       { nivelRiesgo, ruta, search },
-      { compatibleImportacion: compatibleImportacion === 'true' },
     );
     res.setHeader('Content-Type', result.contentType);
     res.setHeader(

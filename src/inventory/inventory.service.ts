@@ -8,7 +8,6 @@ import { CreateInventoryDto } from './dto/create-inventory.dto';
 import { UpdateInventoryDto } from './dto/update-inventory.dto';
 import { Prisma } from '@prisma/client';
 import {
-  generarExcelInventario,
   generarPDFInventario,
   type InventarioRow,
   type InventarioTotales,
@@ -26,11 +25,10 @@ export class InventoryService {
 
   async exportarInventario(
     format: 'excel' | 'pdf',
-    options: { compatibleImportacion?: boolean } = {},
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
     const fecha = getBogotaDayKey(new Date());
 
-    if (format === 'excel' && options.compatibleImportacion) {
+    if (format === 'excel') {
       const productos = await this.prisma.producto.findMany({
         where: { eliminadoEn: null },
         select: {
@@ -119,8 +117,6 @@ export class InventoryService {
       ).length,
     };
 
-    if (format === 'excel')
-      return generarExcelInventario(filas, totales, fecha);
     return generarPDFInventario(filas, totales, fecha);
   }
 
