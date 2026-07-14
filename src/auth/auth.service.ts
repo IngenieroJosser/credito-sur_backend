@@ -155,9 +155,6 @@ export class AuthService {
     const identificador = this.normalizarIdentificadorLogin(
       identificadorEntrada,
     );
-    const nombreLimpio = String(identificadorEntrada ?? '')
-      .trim()
-      .replace(/\s+/g, ' ');
 
     if (!identificador) return null;
 
@@ -171,30 +168,6 @@ export class AuthService {
     });
 
     let candidatos = usuarioPorIdentificador ? [usuarioPorIdentificador] : [];
-
-    if (!candidatos.length) {
-      const nombreNormalizado = this.normalizarTextoLogin(nombreLimpio);
-      const primerNombre = nombreLimpio.split(' ')[0];
-
-      // Compatibilidad: acepta "nombres" o "nombres apellidos".
-      const usuarioPorNombres = await this.prisma.usuario.findFirst({
-        where: {
-          nombres: { equals: nombreLimpio, mode: 'insensitive' },
-        },
-      });
-
-      candidatos = usuarioPorNombres
-        ? [usuarioPorNombres]
-        : (
-            await this.prisma.usuario.findMany({
-              where: {
-                nombres: { startsWith: primerNombre, mode: 'insensitive' },
-              },
-            })
-          ).filter((usuario) =>
-            this.nombreCompletoCoincide(usuario, nombreNormalizado),
-          );
-    }
 
     if (!candidatos.length) return null;
 
@@ -216,9 +189,9 @@ export class AuthService {
   async login(loginAuthDto: LoginAuthDto) {
     const identificador = String(
       loginAuthDto.identificador ||
+        loginAuthDto.nombreUsuario ||
         loginAuthDto.correo ||
         loginAuthDto.email ||
-        loginAuthDto.nombres ||
         '',
     )
       .trim()
