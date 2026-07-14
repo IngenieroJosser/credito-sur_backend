@@ -7,6 +7,8 @@ import {
   Get,
   UseGuards,
   Request,
+  Headers,
+  ForbiddenException,
 } from '@nestjs/common';
 
 import { AuthService } from './auth.service';
@@ -79,6 +81,39 @@ export class AuthController {
   @ApiBody({ type: CreateAuthDto })
   registrar(@Body() dto: CreateAuthDto) {
     return this.authService.registrarUsuario(dto);
+  }
+
+  /**
+   * Endpoint de configuración inicial.
+   * Permite crear el primer SUPER_ADMINISTRADOR sin JWT,
+   * usando el header x-setup-key con el valor de SETUP_SECRET.
+   * Solo funciona si aún no existe ningún superadmin en la base de datos.
+   */
+  @Publico()
+  @Post('setup')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary:
+      'Crear primer superadmin (requiere header x-setup-key con SETUP_SECRET)',
+  })
+  @ApiBody({ type: CreateAuthDto })
+  async setup(
+    @Headers('x-setup-key') setupKey: string,
+    @Body() dto: CreateAuthDto,
+  ) {
+    const secret = process.env.SETUP_SECRET;
+
+    if (!secret) {
+      throw new ForbiddenException(
+        'La variable SETUP_SECRET no está configurada en el servidor.',
+      );
+    }
+
+    if (!setupKey || setupKey !== secret) {
+      throw new ForbiddenException('Clave de configuración inválida.');
+    }
+
+    return this.authService.registrarPrimerSuperAdmin(dto);
   }
 
   // 👤 Perfil
