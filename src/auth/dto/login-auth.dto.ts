@@ -4,8 +4,7 @@ import { ApiProperty } from '@nestjs/swagger';
 export class LoginAuthDto {
   @ApiProperty({
     example: 'erick.manuel',
-    description:
-      'Nombre de usuario, correo o nombre completo del usuario.',
+    description: 'Nombre de usuario (nombreUsuario), correo o alias de correo.',
     required: false,
   })
   @IsString()
@@ -14,16 +13,16 @@ export class LoginAuthDto {
 
   @ApiProperty({
     example: 'erick.manuel',
-    description: 'Compatibilidad con el payload anterior del frontend.',
+    description: 'Nombre de usuario (nombreUsuario) del usuario.',
     required: false,
   })
   @IsString()
   @IsOptional()
-  nombres?: string;
+  nombreUsuario?: string;
 
   @ApiProperty({
     example: 'usuario@credisur.com',
-    description: 'Correo del usuario. Se acepta por compatibilidad.',
+    description: 'Correo del usuario.',
     required: false,
   })
   @IsString()
@@ -32,7 +31,7 @@ export class LoginAuthDto {
 
   @ApiProperty({
     example: 'usuario@credisur.com',
-    description: 'Alias de correo para clientes que envían email.',
+    description: 'Alias de correo (compatibilidad con clientes que envían email).',
     required: false,
   })
   @IsString()
