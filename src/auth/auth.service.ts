@@ -269,6 +269,21 @@ export class AuthService {
     return this.buildSessionForUser(usuario);
   }
 
+  async registrarPrimerSuperAdmin(dto: CreateAuthDto) {
+    // Verificar que no exista ningún superadmin todavía
+    const superAdminExistente = await this.prisma.usuario.findFirst({
+      where: { rol: 'SUPER_ADMINISTRADOR' },
+    });
+
+    if (superAdminExistente) {
+      throw new Error(
+        'Ya existe un superadministrador. Use el endpoint /auth/register con un token válido.',
+      );
+    }
+
+    return this.registrarUsuario(dto);
+  }
+
   async registrarUsuario(dto: CreateAuthDto) {
     const usuario = await this.usersService.crear({
       nombres: dto.nombres,
