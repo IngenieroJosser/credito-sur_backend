@@ -498,9 +498,11 @@ describe('RoutesService role scoping', () => {
           prestamoId: 'prestamo-pendiente',
           montoMetaOperativaPendiente: 282_499,
         }),
+        // La meta del día no baja porque el cliente haya pagado: el resumen
+        // de arriba (707.834) es justamente la suma de estas dos metas.
         expect.objectContaining({
           prestamoId: 'prestamo-pagado',
-          montoMetaOperativaPendiente: 0,
+          montoMetaOperativaPendiente: 425_335,
           recaudadoDelDia: 425_335,
         }),
       ]),

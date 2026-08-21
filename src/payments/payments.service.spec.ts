@@ -167,6 +167,12 @@ function buildMockPrisma(overrides: Record<string, unknown> = {}) {
       update: jest.fn().mockResolvedValue({}),
     },
     asignacionRuta: { findFirst: jest.fn().mockResolvedValue(ASIGNACION_RUTA) },
+    // Un supervisor que registra un pago valida que la ruta sea suya.
+    ruta: {
+      findFirst: jest
+        .fn()
+        .mockResolvedValue({ id: 'ruta-1', cobradorId: 'cobrador-ruta' }),
+    },
     registroVisita: {
       upsert: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -927,22 +933,29 @@ describe('PaymentsService', () => {
           }),
         }),
       );
+      // El movimiento entra a la caja de la ruta del cobrador, que es de quien
+      // es la plata. `creadoPorId` guarda quién ejecutó el registro —el admin—,
+      // porque es un dato de auditoría: quien registra no siempre es quien cobra.
       expect(prisma._txMock.transaccion.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
-            creadoPorId: 'cobrador-ruta',
+            creadoPorId: 'admin-1',
+            cajaId: 'caja-1',
           }),
         }),
       );
+      // El asiento se registra sobre la caja de la ruta, pero `createdBy` y la
+      // auditoría apuntan a quien ejecutó la acción, no a quien cobró.
       expect(mockLedgerService.registrarPago).toHaveBeenCalledWith(
         expect.objectContaining({
-          createdBy: 'cobrador-ruta',
+          createdBy: 'admin-1',
+          cajaRutaId: 'caja-1',
         }),
         expect.anything(),
       );
       expect(mockAuditService.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          usuarioId: 'cobrador-ruta',
+          usuarioId: 'admin-1',
         }),
       );
     });
@@ -963,7 +976,7 @@ describe('PaymentsService', () => {
       );
     });
 
-    it('reemplaza cualquier cobradorId enviado por roles de oficina con el cobrador real de la ruta activa', async () => {
+    it('ignora el cobradorId del body y atribuye el pago al supervisor que salió a cobrar', async () => {
       await service.create(
         {
           prestamoId: 'prestamo-1',
@@ -977,15 +990,24 @@ describe('PaymentsService', () => {
       expect(prisma._txMock.pago.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
-            cobradorId: 'cobrador-ruta',
+            cobradorId: 'supervisor-1',
           }),
         }),
       );
+      // El movimiento de caja queda a nombre del supervisor, que es quien
+      // recibió el dinero y quien responde por él al cierre. El dinero entra a
+      // su propia caja operativa, no a la de la ruta.
       expect(prisma._txMock.transaccion.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({
-            creadoPorId: 'cobrador-ruta',
-          }),
+          data: expect.objectContaining({ creadoPorId: 'supervisor-1' }),
+        }),
+      );
+
+      // Antes de aceptar el cobro se verifica que la ruta esté bajo su
+      // supervisión: un supervisor no puede cobrar en rutas ajenas.
+      expect(prisma._txMock.ruta.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ supervisorId: 'supervisor-1' }),
         }),
       );
     });

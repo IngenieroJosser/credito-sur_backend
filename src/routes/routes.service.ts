@@ -6118,7 +6118,13 @@ export class RoutesService {
               0,
           );
 
-          const metaBase = metaPendienteRaw > 0 ? metaPendienteRaw : recaudado;
+          // La meta del día es lo que había que cobrar ANTES de cobrar: el saldo
+          // que queda más lo ya recaudado hoy. Antes se tomaba solo el saldo, así
+          // que cada abono parcial le encogía la meta al cobrador y le inflaba la
+          // efectividad (que es recaudo ÷ meta). Con el pago completo no pasaba,
+          // porque un caso especial la reponía: la cifra significaba una cosa
+          // distinta según cuánto hubiera pagado el cliente.
+          const metaBase = metaPendienteRaw + recaudado;
 
           const metaPendiente =
             estadoGestion === 'PENDIENTE' || recaudado > 0 ? metaBase : 0;
