@@ -209,19 +209,19 @@ describe('Plantilla de inventario', () => {
   it('lee en una sola hoja el precio de contado y varias opciones de plazo', async () => {
     const resultado = await validarArticulo({
       Código: 'NEV-200',
-      Nombre: 'Nevera 200L',
+      'Nombre del artículo': 'Nevera 200L',
       Categoría: 'Electrodomésticos',
-      Costo: 900000,
+      'Costo unitario': 900000,
       'Precio contado': 1050000,
-      Stock: 5,
+      'Stock actual': 5,
       'Stock mínimo': 1,
       Activo: 'SI',
       'Meses opción 1': 1,
-      'Precio opción 1': 1150000,
+      'Precio total opción 1': 1150000,
       'Meses opción 2': 3,
-      'Precio opción 2': 1290000,
+      'Precio total opción 2': 1290000,
       'Meses opción 3': 6,
-      'Precio opción 3': 1450000,
+      'Precio total opción 3': 1450000,
     });
 
     expect(resultado.errores).toHaveLength(0);
@@ -237,12 +237,12 @@ describe('Plantilla de inventario', () => {
   it('solo exige código, nombre, categoría y costo', async () => {
     const resultado = await validarArticulo({
       Código: 'NEV-200',
-      Nombre: 'Nevera 200L',
+      'Nombre del artículo': 'Nevera 200L',
       Categoría: 'Electrodomésticos',
-      Costo: 900000,
+      'Costo unitario': 900000,
       'Precio contado': 1050000,
       'Meses opción 1': 1,
-      'Precio opción 1': 1150000,
+      'Precio total opción 1': 1150000,
     });
 
     expect(resultado.errores).toHaveLength(0);
@@ -255,14 +255,14 @@ describe('Plantilla de inventario', () => {
   it('rechaza dos opciones con el mismo plazo en un artículo', async () => {
     const resultado = await validarArticulo({
       Código: 'NEV-200',
-      Nombre: 'Nevera 200L',
+      'Nombre del artículo': 'Nevera 200L',
       Categoría: 'Electrodomésticos',
-      Costo: 900000,
+      'Costo unitario': 900000,
       'Precio contado': 1050000,
       'Meses opción 1': 3,
-      'Precio opción 1': 1290000,
+      'Precio total opción 1': 1290000,
       'Meses opción 2': 3,
-      'Precio opción 2': 1300000,
+      'Precio total opción 2': 1300000,
     });
 
     expect(resultado.errores).toEqual([
@@ -274,12 +274,12 @@ describe('Plantilla de inventario', () => {
     const resultado = await validarArticulo(
       {
         Código: 'NEV-200',
-        Nombre: 'Nevera 200L',
+        'Nombre del artículo': 'Nevera 200L',
         Categoría: 'Electrodomésticos',
-        Costo: 900000,
+        'Costo unitario': 900000,
         'Precio contado': 1050000,
         'Meses opción 1': 1,
-        'Precio opción 1': 1150000,
+        'Precio total opción 1': 1150000,
       },
       { productos: [{ codigo: 'NEV-200', nombre: 'Nevera 200L' }] },
     );
@@ -293,12 +293,12 @@ describe('Plantilla de inventario', () => {
   it('avisa cuando un precio queda por debajo del costo', async () => {
     const resultado = await validarArticulo({
       Código: 'NEV-200',
-      Nombre: 'Nevera 200L',
+      'Nombre del artículo': 'Nevera 200L',
       Categoría: 'Electrodomésticos',
-      Costo: 900000,
+      'Costo unitario': 900000,
       'Precio contado': 800000,
       'Meses opción 1': 1,
-      'Precio opción 1': 1150000,
+      'Precio total opción 1': 1150000,
     });
 
     expect(resultado.errores).toHaveLength(0);
@@ -1026,12 +1026,12 @@ describe('Acción ACTUALIZAR', () => {
       {
         Acción: 'ACTUALIZAR',
         Código: 'NEV-200',
-        Nombre: 'Nevera 200L Nueva',
+        'Nombre del artículo': 'Nevera 200L Nueva',
         Categoría: 'Electrodomésticos',
-        Costo: 950000,
+        'Costo unitario': 950000,
         'Precio contado': 1100000,
         'Meses opción 1': 1,
-        'Precio opción 1': 1200000,
+        'Precio total opción 1': 1200000,
       },
       { productos: [{ codigo: 'NEV-200', nombre: 'Nevera 200L' }] },
     );
@@ -1048,9 +1048,9 @@ describe('Acción ACTUALIZAR', () => {
     const resultado = await validarArticulo({
       Acción: 'ACTUALIZAR',
       Código: 'NO-EXISTE',
-      Nombre: 'Fantasma',
+      'Nombre del artículo': 'Fantasma',
       Categoría: 'Electrodomésticos',
-      Costo: 100000,
+      'Costo unitario': 100000,
       'Precio contado': 120000,
     });
 
@@ -1063,9 +1063,9 @@ describe('Acción ACTUALIZAR', () => {
     const resultado = await validarArticulo({
       Acción: 'BORRAR',
       Código: 'NEV-200',
-      Nombre: 'Nevera 200L',
+      'Nombre del artículo': 'Nevera 200L',
       Categoría: 'Electrodomésticos',
-      Costo: 900000,
+      'Costo unitario': 900000,
       'Precio contado': 1050000,
     });
 
@@ -1474,5 +1474,57 @@ describe('El archivo que se descarga abre sin que Excel pida repararlo', () => {
   it('la plantilla de inventario', async () => {
     const { data } = await generarPlantillaInventario();
     await revisar(data);
+  });
+});
+
+describe('Plantillas descargadas antes del cambio de nombres', () => {
+  // Las columnas se buscan por su encabezado, así que renombrarlas rompería el
+  // archivo que alguien ya tenga a medio llenar. Los nombres viejos siguen
+  // aceptándose como alias, y esto lo comprueba.
+  it('sigue leyendo los encabezados anteriores', async () => {
+    // Clave normalizada del encabezado actual -> como se llamaba antes.
+    const anteriores: Record<string, string> = {
+      'NOMBRE DEL ARTICULO': 'Nombre*',
+      'COSTO UNITARIO': 'Costo*',
+      'STOCK ACTUAL': 'Stock',
+      'PRECIO TOTAL OPCION 1': 'Precio opción 1',
+      'PRECIO TOTAL OPCION 2': 'Precio opción 2',
+      'PRECIO TOTAL OPCION 3': 'Precio opción 3',
+    };
+
+    const plantilla = await generarPlantillaInventario();
+    const archivo = await editarLibro(plantilla.data, (workbook) => {
+      const hoja = workbook.getWorksheet('Artículos')!;
+      hoja.getRow(6).eachCell({ includeEmpty: false }, (celda) => {
+        const viejo = anteriores[normalizarEncabezado(celda.value)];
+        if (viejo) celda.value = viejo;
+      });
+      escribirFila(hoja, FILA_DATOS, {
+        Código: 'NEV-200',
+        Nombre: 'Nevera 200L',
+        Categoría: 'Electrodomésticos',
+        Costo: 900000,
+        'Precio contado': 1050000,
+        Stock: 5,
+        'Meses opción 1': 3,
+        'Precio opción 1': 1290000,
+      });
+    });
+
+    const resultado = await new InventarioParser(prismaMock()).parseAndValidate(
+      archivo,
+      'inventario.xlsx',
+    );
+
+    expect(resultado.errores).toHaveLength(0);
+    expect(resultado.articulos?.[0]).toEqual(
+      expect.objectContaining({
+        codigo: 'NEV-200',
+        nombre: 'Nevera 200L',
+        costo: 900000,
+        stock: 5,
+        precioContado: 1050000,
+      }),
+    );
   });
 });

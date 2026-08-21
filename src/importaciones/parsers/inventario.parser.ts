@@ -126,14 +126,14 @@ export class InventarioParser {
     const cols = construirMapaColumnas(hojaArticulos);
     const colAccion = cols.indice('Acción');
     const colCodigo = cols.indice('Código');
-    const colNombre = cols.indice('Nombre');
+    const colNombre = cols.indice('Nombre del artículo', 'Nombre');
     const colDescripcion = cols.indice('Descripción');
     const colCategoria = cols.indice('Categoría');
     const colMarca = cols.indice('Marca');
     const colModelo = cols.indice('Modelo');
-    const colCosto = cols.indice('Costo');
+    const colCosto = cols.indice('Costo unitario', 'Costo');
     const colPrecioContado = cols.indice('Precio contado', 'Precio de contado');
-    const colStock = cols.indice('Stock');
+    const colStock = cols.indice('Stock actual', 'Stock');
     const colStockMinimo = cols.indice('Stock mínimo');
     const colActivo = cols.indice('Activo');
     const colObservaciones = cols.indice('Observaciones');
@@ -148,6 +148,7 @@ export class InventarioParser {
     for (let i = 1; i <= MAX_OPCIONES_PLAZO; i++) {
       const colMesesOpcion = cols.indice(`Meses opción ${i}`, `Meses op ${i}`);
       const colPrecioOpcion = cols.indice(
+        `Precio total opción ${i}`,
         `Precio opción ${i}`,
         `Precio op ${i}`,
       );
