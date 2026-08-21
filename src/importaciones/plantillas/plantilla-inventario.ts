@@ -86,9 +86,14 @@ function construirColumnas(): ColumnaPlantilla[] {
   const columnas: ColumnaPlantilla[] = [
     { header: 'Acción', key: 'accion', width: 14 },
     { header: 'Código*', key: 'codigo', width: 18 },
-    { header: 'Nombre*', key: 'nombre', width: 32 },
+    { header: 'Nombre del artículo*', key: 'nombre', width: 32 },
     { header: 'Categoría*', key: 'categoria', width: 20 },
-    { header: 'Costo*', key: 'costo', width: 15, numFmt: FORMATO_MONEDA },
+    {
+      header: 'Costo unitario*',
+      key: 'costo',
+      width: 15,
+      numFmt: FORMATO_MONEDA,
+    },
     {
       header: 'Precio contado*',
       key: 'precio_contado',
@@ -106,7 +111,7 @@ function construirColumnas(): ColumnaPlantilla[] {
     { header: 'Descripción', key: 'descripcion', width: 30 },
     { header: 'Marca', key: 'marca', width: 16 },
     { header: 'Modelo', key: 'modelo', width: 16 },
-    { header: 'Stock', key: 'stock', width: 10 },
+    { header: 'Stock actual', key: 'stock', width: 10 },
     { header: 'Stock mínimo', key: 'stock_minimo', width: 12 },
     { header: 'Activo', key: 'activo', width: 10 },
   ];
@@ -116,7 +121,7 @@ function construirColumnas(): ColumnaPlantilla[] {
     columnas.push(
       { header: `Meses opción ${i}`, key: `meses_${i}`, width: 13 },
       {
-        header: `Precio opción ${i}`,
+        header: `Precio total opción ${i}`,
         key: `precio_${i}`,
         width: 16,
         numFmt: FORMATO_MONEDA,
@@ -272,7 +277,7 @@ export function construirHojaArticulos(
   // lo que se escribe queda junto, y los cálculos quedan todos al final.
   for (let i = 1; i <= MAX_OPCIONES_PLAZO; i++) {
     const opcion = columnasDeOpcion(i);
-    etiquetarGrupo(ws, opcion.meses, opcion.precio, `OPCIÓN ${i}`);
+    etiquetarGrupo(ws, opcion.meses, opcion.precio, `PRECIO A CRÉDITO ${i}`);
     etiquetarGrupo(
       ws,
       opcion.utilidadValor,
@@ -417,9 +422,9 @@ export async function generarPlantillaInventario(): Promise<{
 
   const ejemplo: Array<[string, string]> = [
     ['Código*', 'CEL-A15'],
-    ['Nombre*', 'Samsung Galaxy A15'],
+    ['Nombre del artículo*', 'Samsung Galaxy A15'],
     ['Categoría*', 'Celulares'],
-    ['Costo*', '480.000'],
+    ['Costo unitario*', '480.000'],
     ['Marca / Modelo', 'Samsung / A15  (opcional)'],
     ['Precio contado', '540.000  → utilidad automática: $60.000 (12,5%)'],
     ['Stock / Stock mínimo', '10 / 2  (si se dejan vacíos quedan en 0)'],
