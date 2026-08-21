@@ -5280,10 +5280,26 @@ export class RoutesService {
         0,
     );
 
+    // La observación administrativa se exige por lo que quedó sin gestionar:
+    // clientes sin visitar y ausencias. No por haber recaudado menos que la
+    // meta, porque la meta es lo que había que cobrar en el día y quedar por
+    // debajo es la situación normal de cualquier ruta, no una irregularidad.
+    // Además el frontend nunca contempló esa condición, así que exigirla aquí
+    // dejaba al coordinador sin salida: no se le pedía la observación en
+    // pantalla y el cierre se rechazaba igual.
+    // Se cuenta por obligaciones cuando la jornada las tiene, y si no, por
+    // visitas. Es el mismo criterio que aplica la pantalla de cierre, para que
+    // no pase que la UI deje cerrar y el backend lo rechace.
+    const hayObligaciones = obligaciones.length > 0;
+    const pendientesParaObservacion = hayObligaciones
+      ? obligacionesPendientes.length
+      : clientesPendientes.length;
+    const ausentesParaObservacion = hayObligaciones
+      ? obligacionesAusentes.length
+      : clientesAusentes.length;
+
     const cierreAdministrativo =
-      obligacionesPendientes.length > 0 ||
-      obligacionesAusentes.length > 0 ||
-      recaudoOperativo < meta;
+      pendientesParaObservacion > 0 || ausentesParaObservacion > 0;
 
     const observacionesLimpias = observaciones?.trim();
 
@@ -5413,8 +5429,10 @@ export class RoutesService {
       partes.push(`${obligacionesAusentes.length} ausencia(s)`);
     }
 
-    if (recaudoOperativo < meta) {
-      partes.push('descuadre de recaudo');
+    if (meta > 0 && recaudoOperativo < meta) {
+      partes.push(
+        `recaudo por debajo de la meta (${recaudoOperativo.toLocaleString('es-CO')} de ${meta.toLocaleString('es-CO')})`,
+      );
     }
 
     const resumenCierre =
