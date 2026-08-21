@@ -1,10 +1,25 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import * as ExcelJS from 'exceljs';
 import { ClientesCreditosParser } from './parsers/clientes-creditos.parser';
 import { InventarioParser } from './parsers/inventario.parser';
 import { ResultadoValidacion } from './dto/validacion-resultado.dto';
 import { LedgerService } from '../accounting/ledger.service';
+import { generarPlantillaInventario } from './plantillas/plantilla-inventario';
+import {
+  generarPlantillaClientesCreditos,
+  DatosReferenciaPlantilla,
+} from './plantillas/plantilla-clientes-creditos';
+import {
+  aplicarAvanceHistorico,
+  construirPlanCuotas,
+  PlanCuota,
+  resolverEstadoPrestamoImportado,
+} from './avance-historico';
+import {
+  calcularInteresTotal,
+  plazoMesesPersistido,
+  TIPO_AMORTIZACION_POR_DEFECTO,
+} from './interes-credito';
 
 @Injectable()
 export class ImportacionesService {
@@ -25,287 +40,262 @@ export class ImportacionesService {
     return '1.1.1';
   }
 
-  // Helper para crear cabeceras bonitas
-  private formatHeader(ws: ExcelJS.Worksheet, title: string, subtitle: string, instruction: string) {
-    // Fila 1: Título Grande
-    ws.mergeCells('A1:E1');
-    const titleCell = ws.getCell('A1');
-    titleCell.value = title;
-    titleCell.font = { bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
-    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF004F7B' } };
-    titleCell.alignment = { vertical: 'middle', horizontal: 'left' };
-    ws.getRow(1).height = 30;
-
-    // Fila 2: Subtítulo/Explicación
-    ws.mergeCells('A2:E2');
-    const subtitleCell = ws.getCell('A2');
-    subtitleCell.value = subtitle;
-    subtitleCell.font = { italic: true, color: { argb: 'FF555555' } };
-    
-    // Fila 4: Instrucción Operativa
-    ws.mergeCells('A4:E4');
-    const instructionCell = ws.getCell('A4');
-    instructionCell.value = instruction;
-    instructionCell.font = { bold: true, color: { argb: 'FF004F7B' } };
-    
-    // Fila 6 es headers, estilarla
-    ws.getRow(6).font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    ws.getRow(6).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4F81BD' } };
-  }
-
   // --- Plantillas ---
 
-  async generarPlantillaClientesCreditos(): Promise<{ data: Buffer; contentType: string; filename: string }> {
-    const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'Créditos del Sur';
-
-    // Hoja: Inicio (antes INSTRUCCIONES)
-    const wsInicio = workbook.addWorksheet('Inicio');
-    wsInicio.getCell('A1').value = 'MÓDULO DE IMPORTACIÓN INICIAL';
-    wsInicio.getCell('A1').font = { bold: true, size: 16, color: { argb: 'FF004F7B' } };
-    wsInicio.getCell('A3').value = 'Siga estos pasos para diligenciar la plantilla de migración:';
-    wsInicio.getCell('A5').value = '1. Registre sus clientes en la hoja "Clientes".';
-    wsInicio.getCell('A6').value = '2. Registre los créditos asociados en la hoja "Créditos".';
-    wsInicio.getCell('A7').value = '3. Los encabezados con asterisco (*) son obligatorios.';
-    wsInicio.getCell('A8').value = '4. Ingrese CC y teléfonos como texto, sin puntos ni espacios.';
-    wsInicio.getCell('A9').value = '5. Empiece a llenar datos a partir de la fila 7 en todas las hojas.';
-    
-    wsInicio.getCell('A11').value = 'Tipos de Carga para Créditos:';
-    wsInicio.getCell('A11').font = { bold: true };
-    wsInicio.getCell('A12').value = '• HISTORICA: Créditos antiguos. Normalmente NO descuenta dinero de caja.';
-    wsInicio.getCell('A13').value = '• OPERATIVA: Créditos nuevos. Normalmente SÍ descuenta dinero de caja.';
-
-    wsInicio.getCell('A15').value = 'Niveles de Riesgo (Equivalencia en días de mora):';
-    wsInicio.getCell('A15').font = { bold: true };
-    wsInicio.getCell('A16').value = '• Mínimo: 0 días';
-    wsInicio.getCell('A17').value = '• Leve: 1 a 3 días';
-    wsInicio.getCell('A18').value = '• Precaución: 4 a 7 días';
-    wsInicio.getCell('A19').value = '• Moderado: 8 a 14 días';
-    wsInicio.getCell('A20').value = '• Crítico: 15 o más días';
-
-    // Hoja: Clientes
-    const wsClientes = workbook.addWorksheet('Clientes');
-    wsClientes.columns = [
-      { header: 'Acción*', key: 'accion', width: 15 },
-      { header: 'Código importación*', key: 'codigo_importacion_cliente', width: 25 },
-      { header: 'CC cliente*', key: 'cc', width: 20 },
-      { header: 'Nombres*', key: 'nombres', width: 25 },
-      { header: 'Apellidos*', key: 'apellidos', width: 25 },
-      { header: 'Teléfono*', key: 'telefono', width: 20 },
-      { header: 'Correo', key: 'correo', width: 25 },
-      { header: 'Dirección', key: 'direccion', width: 30 },
-      { header: 'Referencia', key: 'referencia', width: 20 },
-      { header: 'Ref1 Nombre', key: 'referencia1_nombre', width: 25 },
-      { header: 'Ref1 Teléfono', key: 'referencia1_telefono', width: 20 },
-      { header: 'Ref2 Nombre', key: 'referencia2_nombre', width: 25 },
-      { header: 'Ref2 Teléfono', key: 'referencia2_telefono', width: 20 },
-      { header: 'Nivel riesgo', key: 'nivel_riesgo', width: 15 },
-      { header: 'Ruta código', key: 'ruta_codigo', width: 15 },
-      { header: 'Observaciones', key: 'observaciones', width: 30 },
-    ];
-    // Move headers from row 1 to row 6
-    const clientesHeaders = wsClientes.getRow(1).values;
-    wsClientes.getRow(1).values = [];
-    wsClientes.getRow(6).values = clientesHeaders;
-    
-    this.formatHeader(wsClientes, 'Gestión de Clientes', 'Registre aquí los datos básicos. Una fila por cliente.', '📝 Escriba los datos desde la fila 7 hacia abajo');
-
-    wsClientes.getColumn(3).numFmt = '@'; // cc
-    wsClientes.getColumn(6).numFmt = '@'; // telefono
-    wsClientes.getColumn(11).numFmt = '@'; // ref1_tel
-    wsClientes.getColumn(13).numFmt = '@'; // ref2_tel
-
-    // Hoja: Créditos
-    const wsCreditos = workbook.addWorksheet('Créditos');
-    wsCreditos.columns = [
-      { header: 'Acción*', key: 'accion', width: 15 },
-      { header: 'Código importación*', key: 'codigo_importacion_credito', width: 25 },
-      { header: 'Número préstamo', key: 'numero_prestamo', width: 20 },
-      { header: 'CC cliente*', key: 'cc_cliente', width: 20 },
-      { header: 'Tipo préstamo*', key: 'tipo_prestamo', width: 15 },
-      { header: 'Producto código', key: 'producto_codigo', width: 20 },
-      { header: 'Monto*', key: 'monto', width: 15 },
-      { header: 'Cuota inicial', key: 'cuota_inicial', width: 15 },
-      { header: 'Tasa interés*', key: 'tasa_interes', width: 15 },
-      { header: 'Tasa interés mora', key: 'tasa_interes_mora', width: 18 },
-      { header: 'Frecuencia pago*', key: 'frecuencia_pago', width: 18 },
-      { header: 'Cantidad cuotas*', key: 'cantidad_cuotas', width: 18 },
-      { header: 'Plazo meses*', key: 'plazo_meses', width: 15 },
-      { header: 'Tipo amortización', key: 'tipo_amortizacion', width: 20 },
-      { header: 'Fecha crédito*', key: 'fecha_credito', width: 15 },
-      { header: 'Fecha primer cobro', key: 'fecha_primer_cobro', width: 20 },
-      { header: 'Tipo carga*', key: 'tipo_carga', width: 15 },
-      { header: 'Descontar dinero de caja*', key: 'descontar_dinero_de_caja', width: 25 },
-      { header: 'Garantía', key: 'garantia', width: 20 },
-      { header: 'Notas', key: 'notas', width: 30 },
-    ];
-    // Move headers from row 1 to row 6
-    const creditosHeaders = wsCreditos.getRow(1).values;
-    wsCreditos.getRow(1).values = [];
-    wsCreditos.getRow(6).values = creditosHeaders;
-    
-    this.formatHeader(wsCreditos, 'Gestión de Créditos', 'Vincule créditos a los clientes creados.', '📝 Escriba los datos desde la fila 7 hacia abajo');
-    
-    wsCreditos.getColumn(4).numFmt = '@';
-
-    // Hoja: Valores
-    const wsValores = workbook.addWorksheet('Valores');
-    wsValores.getCell('A1').value = 'Acción';
-    wsValores.getCell('A2').value = 'CREAR';
-    
-    wsValores.getCell('B1').value = 'Nivel Riesgo';
-    wsValores.getCell('B2').value = 'Mínimo';
-    wsValores.getCell('B3').value = 'Leve';
-    wsValores.getCell('B4').value = 'Precaución';
-    wsValores.getCell('B5').value = 'Moderado';
-    wsValores.getCell('B6').value = 'Crítico';
-    
-    wsValores.getCell('C1').value = 'Tipo Préstamo';
-    wsValores.getCell('C2').value = 'EFECTIVO';
-    wsValores.getCell('C3').value = 'ARTICULO';
-    
-    wsValores.getCell('D1').value = 'Frecuencia Pago';
-    wsValores.getCell('D2').value = 'DIARIO';
-    wsValores.getCell('D3').value = 'SEMANAL';
-    wsValores.getCell('D4').value = 'QUINCENAL';
-    wsValores.getCell('D5').value = 'MENSUAL';
-
-    wsValores.getCell('E1').value = 'Tipo Amortización';
-    wsValores.getCell('E2').value = 'Interés simple';
-    wsValores.getCell('E3').value = 'Amortización fija';
-
-    wsValores.getCell('F1').value = 'Tipo Carga';
-    wsValores.getCell('F2').value = 'HISTORICA';
-    wsValores.getCell('F3').value = 'OPERATIVA';
-    
-    wsValores.getCell('G1').value = 'Descontar Caja';
-    wsValores.getCell('G2').value = 'SI';
-    wsValores.getCell('G3').value = 'NO';
-
-    // Listas desplegables desde la fila 7
-    for (let i = 7; i <= 1000; i++) {
-      wsClientes.getCell(`A${i}`).dataValidation = { type: 'list', allowBlank: false, formulae: ['"CREAR"'] };
-      wsClientes.getCell(`N${i}`).dataValidation = { type: 'list', allowBlank: true, formulae: ['Valores!$B$2:$B$6'] };
-      
-      wsCreditos.getCell(`A${i}`).dataValidation = { type: 'list', allowBlank: false, formulae: ['"CREAR"'] };
-      wsCreditos.getCell(`E${i}`).dataValidation = { type: 'list', allowBlank: false, formulae: ['Valores!$C$2:$C$3'] };
-      wsCreditos.getCell(`K${i}`).dataValidation = { type: 'list', allowBlank: false, formulae: ['Valores!$D$2:$D$5'] };
-      wsCreditos.getCell(`N${i}`).dataValidation = { type: 'list', allowBlank: true, formulae: ['Valores!$E$2:$E$3'] };
-      wsCreditos.getCell(`Q${i}`).dataValidation = { type: 'list', allowBlank: false, formulae: ['Valores!$F$2:$F$3'] };
-      wsCreditos.getCell(`R${i}`).dataValidation = { type: 'list', allowBlank: false, formulae: ['Valores!$G$2:$G$3'] };
-    }
-
-    // Hoja: Ejemplos
-    const wsEjemplos = workbook.addWorksheet('Ejemplos');
-    wsEjemplos.getCell('A1').value = 'GUÍA DE EJEMPLOS';
-    wsEjemplos.getCell('A1').font = { bold: true, size: 14 };
-    
-    wsEjemplos.getCell('A3').value = 'CLIENTE TÍPICO:';
-    wsEjemplos.getCell('A4').value = 'Acción, Código importación*, CC cliente*, Nombres*, Apellidos*, Teléfono*, Nivel riesgo';
-    wsEjemplos.getCell('A5').value = 'CREAR | CLI-001 | 12345678 | Juan | Perez | 3001234567 | Mínimo';
-    
-    wsEjemplos.getCell('A7').value = 'CRÉDITO HISTÓRICO (No afecta caja actual):';
-    wsEjemplos.getCell('A8').value = 'Acción, Código importación*, CC cliente*, Tipo préstamo*, Monto*, Tasa interés*, Frecuencia pago*, Cantidad cuotas*, Plazo meses*, Fecha crédito*, Tipo carga*, Descontar dinero de caja*';
-    wsEjemplos.getCell('A9').value = 'CREAR | CRE-001 | 12345678 | EFECTIVO | 500000 | 10 | DIARIO | 30 | 1 | 2026-05-01 | HISTORICA | NO';
-
-    wsEjemplos.getCell('A11').value = 'CRÉDITO OPERATIVO (Afecta caja actual):';
-    wsEjemplos.getCell('A12').value = 'CREAR | CRE-002 | 12345678 | EFECTIVO | 300000 | 10 | DIARIO | 30 | 1 | 2026-06-26 | OPERATIVA | SI';
-
-    const buffer = await workbook.xlsx.writeBuffer();
-    return {
-      data: Buffer.from(buffer as ArrayBuffer),
-      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      filename: 'plantilla-clientes-creditos.xlsx'
-    };
+  async generarPlantillaInventario() {
+    return generarPlantillaInventario();
   }
 
-  async generarPlantillaInventario(): Promise<{ data: Buffer; contentType: string; filename: string }> {
-    const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'Créditos del Sur';
+  /**
+   * La plantilla de clientes y créditos se genera con datos vivos del sistema
+   * (clientes, artículos, préstamos y rutas). Eso permite que el Excel avise de
+   * cédulas repetidas y autocomplete nombres y precios mientras se diligencia,
+   * sin tener que subir el archivo para enterarse.
+   */
+  async generarPlantillaClientesCreditos() {
+    const [clientes, productos, prestamos, rutas] = await Promise.all([
+      this.prisma.cliente.findMany({
+        where: { eliminadoEn: null },
+        select: { dni: true, nombres: true, apellidos: true },
+        orderBy: { creadoEn: 'desc' },
+      }),
+      this.prisma.producto.findMany({
+        where: { eliminadoEn: null, activo: true },
+        select: {
+          codigo: true,
+          nombre: true,
+          costo: true,
+          precios: {
+            where: { activo: true },
+            select: { meses: true, precio: true },
+            orderBy: { meses: 'asc' },
+          },
+        },
+        orderBy: { nombre: 'asc' },
+      }),
+      this.prisma.prestamo.findMany({
+        where: { eliminadoEn: null },
+        select: { numeroPrestamo: true },
+        orderBy: { creadoEn: 'desc' },
+      }),
+      this.prisma.ruta.findMany({
+        where: { activa: true, eliminadoEn: null },
+        select: { codigo: true },
+        orderBy: { codigo: 'asc' },
+      }),
+    ]);
 
-    // Hoja: Inicio
-    const wsInicio = workbook.addWorksheet('Inicio');
-    wsInicio.getCell('A1').value = 'MÓDULO DE IMPORTACIÓN DE INVENTARIO';
-    wsInicio.getCell('A1').font = { bold: true, size: 16, color: { argb: 'FF004F7B' } };
-    wsInicio.getCell('A3').value = '1. Llene la hoja "Artículos" con los productos.';
-    wsInicio.getCell('A4').value = '2. Llene la hoja "Precios" con los precios por meses para dichos productos.';
-    wsInicio.getCell('A5').value = '3. Los encabezados con asterisco (*) son obligatorios.';
-    wsInicio.getCell('A6').value = '4. Empiece a llenar datos a partir de la fila 7.';
+    const datos: DatosReferenciaPlantilla = {
+      clientes: clientes.map((c) => ({
+        dni: String(c.dni),
+        nombre: `${c.nombres} ${c.apellidos}`.trim(),
+      })),
+      articulos: productos.flatMap((p) =>
+        p.precios.map((precio) => ({
+          codigo: String(p.codigo).toUpperCase(),
+          nombre: p.nombre,
+          meses: Number(precio.meses),
+          precio: Number(precio.precio) || 0,
+          costo: Number(p.costo) || 0,
+        })),
+      ),
+      codigosArticulo: productos.map((p) => String(p.codigo).toUpperCase()),
+      numerosPrestamo: prestamos.map((p) => String(p.numeroPrestamo)),
+      rutas: rutas.map((r) => r.codigo),
+    };
 
-    // Hoja: Artículos
-    const wsArticulos = workbook.addWorksheet('Artículos');
-    wsArticulos.columns = [
-      { header: 'Acción*', key: 'accion', width: 15 },
-      { header: 'Código*', key: 'codigo', width: 20 },
-      { header: 'Nombre*', key: 'nombre', width: 35 },
-      { header: 'Descripción', key: 'descripcion', width: 35 },
-      { header: 'Categoría*', key: 'categoria', width: 25 },
-      { header: 'Marca', key: 'marca', width: 20 },
-      { header: 'Modelo', key: 'modelo', width: 20 },
-      { header: 'Costo*', key: 'costo', width: 15 },
-      { header: 'Stock*', key: 'stock', width: 15 },
-      { header: 'Stock mínimo*', key: 'stock_minimo', width: 15 },
-      { header: 'Activo*', key: 'activo', width: 15 },
-      { header: 'Observaciones', key: 'observaciones', width: 30 },
-    ];
-    // Move headers
-    const articulosHeaders = wsArticulos.getRow(1).values;
-    wsArticulos.getRow(1).values = [];
-    wsArticulos.getRow(6).values = articulosHeaders;
-    
-    this.formatHeader(wsArticulos, 'Catálogo de Artículos', 'Defina su inventario base.', '📝 Escriba los datos desde la fila 7 hacia abajo');
+    return generarPlantillaClientesCreditos(datos);
+  }
 
-    // Hoja: Precios
-    const wsPrecios = workbook.addWorksheet('Precios');
-    wsPrecios.columns = [
-      { header: 'Código producto*', key: 'codigo_producto', width: 20 },
-      { header: 'Meses*', key: 'meses', width: 15 },
-      { header: 'Precio*', key: 'precio', width: 15 },
-      { header: 'Activo*', key: 'activo', width: 15 },
-    ];
-    // Move headers
-    const preciosHeaders = wsPrecios.getRow(1).values;
-    wsPrecios.getRow(1).values = [];
-    wsPrecios.getRow(6).values = preciosHeaders;
 
-    this.formatHeader(wsPrecios, 'Precios a Plazos', 'Defina los precios según el plazo.', '📝 Escriba los datos desde la fila 7 hacia abajo');
+  // --- Lotes e historial ---
 
-    // Hoja: Valores
-    const wsValores = workbook.addWorksheet('Valores');
-    wsValores.getCell('A1').value = 'Acción';
-    wsValores.getCell('A2').value = 'CREAR';
-    
-    wsValores.getCell('B1').value = 'Activo';
-    wsValores.getCell('B2').value = 'SI';
-    wsValores.getCell('B3').value = 'NO';
+  /** Últimas importaciones, para poder consultarlas y deshacerlas. */
+  async listarLotes(limite = 20) {
+    const lotes = await this.prisma.importacionLote.findMany({
+      orderBy: { creadoEn: 'desc' },
+      take: limite,
+      include: {
+        creadoPor: { select: { nombres: true, apellidos: true } },
+      },
+    });
 
-    // Listas desplegables desde fila 7
-    for (let i = 7; i <= 1000; i++) {
-      wsArticulos.getCell(`A${i}`).dataValidation = { type: 'list', allowBlank: false, formulae: ['"CREAR"'] };
-      wsArticulos.getCell(`K${i}`).dataValidation = { type: 'list', allowBlank: false, formulae: ['Valores!$B$2:$B$3'] };
-      
-      wsPrecios.getCell(`D${i}`).dataValidation = { type: 'list', allowBlank: false, formulae: ['Valores!$B$2:$B$3'] };
+    return lotes.map((lote) => {
+      const creado = ((lote.resumen as any)?.creado ?? {}) as {
+        clientes?: string[];
+        prestamos?: string[];
+        conMovimientosContables?: boolean;
+      };
+
+      const clientes = creado.clientes?.length ?? 0;
+      const prestamos = creado.prestamos?.length ?? 0;
+
+      return {
+        id: lote.id,
+        tipo: lote.tipo,
+        estado: lote.estado,
+        nombreArchivo: lote.nombreArchivo,
+        totalFilas: lote.totalFilas,
+        filasConError: lote.filasConError,
+        advertencias: lote.advertencias,
+        creadoEn: lote.creadoEn,
+        confirmadoEn: lote.confirmadoEn,
+        creadoPor: lote.creadoPor
+          ? `${lote.creadoPor.nombres} ${lote.creadoPor.apellidos}`.trim()
+          : null,
+        clientesCreados: clientes,
+        prestamosCreados: prestamos,
+        sePuedeDeshacer: this.evaluarSiSePuedeDeshacer(lote, creado).sePuede,
+        razonNoSePuedeDeshacer: this.evaluarSiSePuedeDeshacer(lote, creado)
+          .razon,
+      };
+    });
+  }
+
+  private evaluarSiSePuedeDeshacer(
+    lote: { estado: string; tipo: string },
+    creado: { clientes?: string[]; prestamos?: string[]; conMovimientosContables?: boolean },
+  ): { sePuede: boolean; razon: string | null } {
+    if (lote.estado !== 'CONFIRMADO') {
+      return { sePuede: false, razon: 'El lote no llegó a confirmarse.' };
     }
 
-    // Hoja: Ejemplos
-    const wsEjemplos = workbook.addWorksheet('Ejemplos');
-    wsEjemplos.getCell('A1').value = 'GUÍA DE EJEMPLOS';
-    wsEjemplos.getCell('A1').font = { bold: true, size: 14 };
-    
-    wsEjemplos.getCell('A3').value = 'EJEMPLO ARTÍCULO:';
-    wsEjemplos.getCell('A4').value = 'Acción, Código, Nombre, Categoría, Costo, Stock, Stock mínimo, Activo';
-    wsEjemplos.getCell('A5').value = 'CREAR | CEL-A15 | Samsung Galaxy A15 | Celulares | 480000 | 10 | 2 | SI';
-    
-    wsEjemplos.getCell('A7').value = 'EJEMPLO PRECIOS:';
-    wsEjemplos.getCell('A8').value = 'Código producto, Meses, Precio, Activo';
-    wsEjemplos.getCell('A9').value = 'CEL-A15 | 1 | 580000 | SI';
-    wsEjemplos.getCell('A10').value = 'CEL-A15 | 2 | 640000 | SI';
+    if (lote.tipo !== 'CLIENTES_CREDITOS') {
+      return {
+        sePuede: false,
+        razon: 'Por ahora solo se pueden deshacer importaciones de clientes y créditos.',
+      };
+    }
 
-    const buffer = await workbook.xlsx.writeBuffer();
+    if (creado.conMovimientosContables) {
+      return {
+        sePuede: false,
+        razon:
+          'El lote desembolsó dinero de caja y generó asientos contables. Reversarlo debe hacerse desde el módulo contable.',
+      };
+    }
+
+    if (!creado.clientes && !creado.prestamos) {
+      return {
+        sePuede: false,
+        razon:
+          'Este lote es anterior al registro de lo que se creó, así que no se puede deshacer automáticamente.',
+      };
+    }
+
+    return { sePuede: true, razon: null };
+  }
+
+  /**
+   * Deshace una importación: borra los clientes y créditos que creó.
+   *
+   * Solo se permite si nada se ha movido desde entonces: un crédito con pagos
+   * registrados, o un lote que movió caja, ya no se puede revertir sin tocar
+   * contabilidad, y eso no es trabajo de una importación.
+   */
+  async revertirLote(loteId: string): Promise<{
+    loteId: string;
+    clientesEliminados: number;
+    prestamosEliminados: number;
+    cuotasEliminadas: number;
+    mensajes: string[];
+  }> {
+    const lote = await this.prisma.importacionLote.findUnique({
+      where: { id: loteId },
+    });
+
+    if (!lote) {
+      throw new BadRequestException('La importación indicada no existe.');
+    }
+
+    const creado = ((lote.resumen as any)?.creado ?? {}) as {
+      clientes?: string[];
+      prestamos?: string[];
+      conMovimientosContables?: boolean;
+    };
+
+    const evaluacion = this.evaluarSiSePuedeDeshacer(lote, creado);
+    if (!evaluacion.sePuede) {
+      throw new BadRequestException(
+        evaluacion.razon || 'Esta importación no se puede deshacer.',
+      );
+    }
+
+    const idsPrestamos = creado.prestamos ?? [];
+    const idsClientes = creado.clientes ?? [];
+    const mensajes: string[] = [];
+
+    // Un crédito que ya recibió pagos deja de ser "lo que importamos".
+    const prestamosConPagos = await this.prisma.pago.findMany({
+      where: { prestamoId: { in: idsPrestamos } },
+      select: { prestamoId: true },
+      distinct: ['prestamoId'],
+    });
+
+    if (prestamosConPagos.length > 0) {
+      throw new BadRequestException(
+        `No se puede deshacer: ${prestamosConPagos.length} crédito(s) de esta importación ya tienen pagos registrados.`,
+      );
+    }
+
+    let clientesEliminados = 0;
+    let prestamosEliminados = 0;
+    let cuotasEliminadas = 0;
+
+    await this.prisma.$transaction(
+      async (tx) => {
+        const cuotas = await tx.cuota.deleteMany({
+          where: { prestamoId: { in: idsPrestamos } },
+        });
+        cuotasEliminadas = cuotas.count;
+
+        const prestamos = await tx.prestamo.deleteMany({
+          where: { id: { in: idsPrestamos } },
+        });
+        prestamosEliminados = prestamos.count;
+
+        // Los clientes que quedaron con créditos de otras importaciones se conservan.
+        const clientesConOtrosCreditos = await tx.prestamo.findMany({
+          where: { clienteId: { in: idsClientes } },
+          select: { clienteId: true },
+          distinct: ['clienteId'],
+        });
+        const conservar = new Set(
+          clientesConOtrosCreditos.map((p) => p.clienteId),
+        );
+        const eliminables = idsClientes.filter((id) => !conservar.has(id));
+
+        if (conservar.size > 0) {
+          mensajes.push(
+            `${conservar.size} cliente(s) se conservaron porque tienen créditos de otras importaciones.`,
+          );
+        }
+
+        await tx.asignacionRuta.deleteMany({
+          where: { clienteId: { in: eliminables } },
+        });
+
+        const clientes = await tx.cliente.deleteMany({
+          where: { id: { in: eliminables } },
+        });
+        clientesEliminados = clientes.count;
+
+        await tx.importacionLote.update({
+          where: { id: loteId },
+          data: { estado: 'CANCELADO' },
+        });
+      },
+      { maxWait: 60_000, timeout: 600_000 },
+    );
+
+    mensajes.unshift('Importación deshecha correctamente.');
+
     return {
-      data: Buffer.from(buffer as ArrayBuffer),
-      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      filename: 'plantilla-inventario.xlsx'
+      loteId,
+      clientesEliminados,
+      prestamosEliminados,
+      cuotasEliminadas,
+      mensajes,
     };
   }
 
@@ -342,9 +332,13 @@ export class ImportacionesService {
     loteId: string;
     estado: string;
     articulosCreados: number;
+    articulosActualizados: number;
     articulosOmitidos: number;
+    preciosActualizados: number;
     preciosCreados: number;
     preciosOmitidos: number;
+    preciosContadoCreados: number;
+    mensajes: string[];
     resumen: any;
   }> {
     if (!file || !file.buffer) {
@@ -390,13 +384,22 @@ export class ImportacionesService {
 
     // 3. Ejecutar dentro de transacción
     let articulosCreados = 0;
+    let articulosActualizados = 0;
     let articulosOmitidos = 0;
+    let preciosActualizados = 0;
+    // Códigos marcados como ACTUALIZAR: sus precios se corrigen, no se omiten.
+    const articulosPorCodigo = new Map<string, boolean>(
+      articulos.map((art: any) => [art.codigo, Boolean(art.esActualizacion)]),
+    );
     let preciosCreados = 0;
     let preciosOmitidos = 0;
+    let preciosContadoCreados = 0;
+    const mensajes: string[] = [];
 
     // La importación de inventario actual es una carga operativa inicial:
     // crea catálogo, stock y precios, pero no genera asientos contables.
-    await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(
+      async (tx) => {
       // Crear o verificar artículos (idempotencia por código)
       for (const art of articulos) {
         const existe = await tx.producto.findUnique({
@@ -404,7 +407,36 @@ export class ImportacionesService {
           select: { id: true },
         });
 
+        if (art.esActualizacion) {
+          if (!existe) {
+            articulosOmitidos++;
+            continue;
+          }
+
+          // Se corrigen los datos del artículo; los precios se actualizan más
+          // abajo, junto con los que se agregan por primera vez.
+          await tx.producto.update({
+            where: { id: existe.id },
+            data: {
+              nombre: art.nombre,
+              descripcion: art.descripcion || null,
+              categoria: art.categoria,
+              marca: art.marca || null,
+              modelo: art.modelo || null,
+              costo: art.costo,
+              stock: art.stock ?? 0,
+              stockMinimo: art.stockMinimo ?? 0,
+              activo: art.activo !== 'NO',
+            },
+          });
+
+          articulosActualizados++;
+          continue;
+        }
+
         if (existe) {
+          // El artículo ya estaba creado: se respetan sus datos actuales y más
+          // abajo solo se le agregan las opciones de precio que aún no tenga.
           articulosOmitidos++;
           continue;
         }
@@ -444,7 +476,19 @@ export class ImportacionesService {
         });
 
         if (existePrecio) {
-          preciosOmitidos++;
+          const seActualiza = articulosPorCodigo.get(precio.codigoProducto);
+          if (seActualiza) {
+            await tx.precioProducto.update({
+              where: { id: existePrecio.id },
+              data: {
+                precio: precio.precio,
+                activo: precio.activo !== 'NO',
+              },
+            });
+            preciosActualizados++;
+          } else {
+            preciosOmitidos++;
+          }
           continue;
         }
 
@@ -457,8 +501,33 @@ export class ImportacionesService {
           },
         });
         preciosCreados++;
+        // El precio de contado se guarda como una opción de 0 meses.
+        if (Number(precio.meses) === 0) preciosContadoCreados++;
       }
-    });
+      },
+      { maxWait: 60_000, timeout: 600_000 },
+    );
+
+    if (articulosActualizados > 0) {
+      mensajes.push(
+        `${articulosActualizados} artículo(s) actualizados y ${preciosActualizados} precio(s) corregidos.`,
+      );
+    }
+    if (articulosOmitidos > 0) {
+      mensajes.push(
+        `${articulosOmitidos} artículo(s) ya existían en el sistema: se conservaron sus datos y solo se agregaron las opciones de precio que faltaban.`,
+      );
+    }
+    if (preciosContadoCreados > 0) {
+      mensajes.push(
+        `Se registraron ${preciosContadoCreados} precio(s) de contado.`,
+      );
+    }
+    if (preciosOmitidos > 0) {
+      mensajes.push(
+        `${preciosOmitidos} opción(es) de precio ya estaban registradas y no se duplicaron.`,
+      );
+    }
 
     // 4. Registrar lote confirmado
     const lote = await this.prisma.importacionLote.create({
@@ -480,9 +549,13 @@ export class ImportacionesService {
       loteId: lote.id,
       estado: 'CONFIRMADO',
       articulosCreados,
+      articulosActualizados,
       articulosOmitidos,
+      preciosActualizados,
       preciosCreados,
       preciosOmitidos,
+      preciosContadoCreados,
+      mensajes,
       resumen: resultado.resumen,
     };
   }
@@ -493,11 +566,16 @@ export class ImportacionesService {
   ): Promise<{
     loteId: string;
     clientesCreados: number;
+    clientesActualizados: number;
     clientesOmitidos: number;
+    clientesAsignadosARuta: number;
     creditosHistoricosCreados: number;
     creditosOperativosCreados: number;
     creditosOmitidos: number;
     creditosNoSoportados: number;
+    creditosActualizados: number;
+    creditosAvanzados: number;
+    cuotasPagadasImportadas: number;
     transaccionesCreadas: number;
     asientosCreados: number;
     cuotasCreadas: number;
@@ -552,26 +630,33 @@ export class ImportacionesService {
     };
 
     let clientesCreados = 0;
+    let clientesActualizados = 0;
     let clientesOmitidos = 0;
+    let creditosActualizados = 0;
+    // Se guardan los ids creados para poder revertir el lote más adelante.
+    const idsClientesCreados: string[] = [];
+    const idsClientesActualizados: string[] = [];
+    const idsPrestamosActualizados: string[] = [];
+    const clientesPorAsignar: Array<{ clienteId: string; rutaCodigo: string }> = [];
+    const idsPrestamosCreados: string[] = [];
     let creditosHistoricosCreados = 0;
     let creditosOperativosCreados = 0;
     let creditosOmitidos = 0;
     let creditosNoSoportados = 0;
+    let creditosAvanzados = 0;
+    let cuotasPagadasImportadas = 0;
     let transaccionesCreadas = 0;
     let asientosCreados = 0;
     let cuotasCreadas = 0;
     const mensajes: string[] = [];
-    const rutaCodigoInformada = clientes.some((cli) => Boolean(cli.rutaCodigo));
-
-    if (rutaCodigoInformada) {
-      mensajes.push('Advertencia: rutaCodigo se valida, pero la asignación automática de ruta queda pendiente para V2.3.1.');
-    }
+    let clientesAsignadosARuta = 0;
 
     let loteId = '';
 
     // 3. Ejecutar dentro de transacción con try-catch para rollback y lote FALLIDO
     try {
-      await this.prisma.$transaction(async (tx) => {
+      await this.prisma.$transaction(
+        async (tx) => {
         for (const cli of clientes) {
         // Idempotencia por DNI o código
         const existente = await tx.cliente.findFirst({
@@ -585,12 +670,54 @@ export class ImportacionesService {
           select: { id: true },
         });
 
+        if (cli.esActualizacion) {
+          if (!existente) {
+            clientesOmitidos++;
+            continue;
+          }
+
+          // Solo se sobreescribe lo que trae el archivo: una columna vacía en el
+          // Excel no borra el dato que ya tiene el cliente.
+          const cambios: Record<string, unknown> = {
+            nombres: cli.nombres,
+            apellidos: cli.apellidos,
+            telefono: cli.telefono,
+            nivelRiesgo: mapNivelRiesgo(cli.nivelRiesgo),
+          };
+
+          const opcionales: Array<[string, string]> = [
+            ['correo', cli.correo],
+            ['direccion', cli.direccion],
+            ['referencia', cli.referencia],
+            ['referencia1Nombre', cli.referencia1Nombre],
+            ['referencia1Telefono', cli.referencia1Telefono],
+            ['referencia2Nombre', cli.referencia2Nombre],
+            ['referencia2Telefono', cli.referencia2Telefono],
+          ];
+          opcionales.forEach(([campo, valor]) => {
+            if (valor) cambios[campo] = valor;
+          });
+
+          await tx.cliente.update({
+            where: { id: existente.id },
+            data: cambios,
+          });
+
+          clientesActualizados++;
+          idsClientesActualizados.push(existente.id);
+          clientesPorAsignar.push({
+            clienteId: existente.id,
+            rutaCodigo: cli.rutaCodigo,
+          });
+          continue;
+        }
+
         if (existente) {
           clientesOmitidos++;
           continue;
         }
 
-        await tx.cliente.create({
+        const clienteCreado = await tx.cliente.create({
           data: {
             codigo: cli.codigoImp || cli.cc, // Fallback si no viene algo único
             idempotencyKey: cli.codigoImp, // Usamos el código importación del excel
@@ -614,6 +741,53 @@ export class ImportacionesService {
           },
         });
         clientesCreados++;
+        idsClientesCreados.push(clienteCreado.id);
+        clientesPorAsignar.push({ clienteId: clienteCreado.id, rutaCodigo: cli.rutaCodigo });
+      }
+
+      // Asignación a ruta. Un cliente solo puede estar activo en una ruta a la
+      // vez, así que primero se desactivan las asignaciones anteriores.
+      for (const asignacion of clientesPorAsignar) {
+        if (!asignacion.rutaCodigo) continue;
+
+        const ruta = await tx.ruta.findFirst({
+          where: { codigo: asignacion.rutaCodigo, eliminadoEn: null },
+          select: { id: true, cobradorId: true },
+        });
+
+        if (!ruta) continue;
+
+        const yaAsignado = await tx.asignacionRuta.findFirst({
+          where: {
+            clienteId: asignacion.clienteId,
+            rutaId: ruta.id,
+            fechaEspecifica: null,
+          },
+          select: { id: true },
+        });
+
+        await tx.asignacionRuta.updateMany({
+          where: { clienteId: asignacion.clienteId, activa: true },
+          data: { activa: false },
+        });
+
+        if (yaAsignado) {
+          await tx.asignacionRuta.update({
+            where: { id: yaAsignado.id },
+            data: { activa: true, cobradorId: ruta.cobradorId },
+          });
+        } else {
+          await tx.asignacionRuta.create({
+            data: {
+              rutaId: ruta.id,
+              clienteId: asignacion.clienteId,
+              cobradorId: ruta.cobradorId,
+              activa: true,
+            },
+          });
+        }
+
+        clientesAsignadosARuta++;
       }
 
         // V2.3 usa CAJA-OFICINA como caja institucional para importaciones administrativas.
@@ -666,10 +840,10 @@ export class ImportacionesService {
               { idempotencyKey: cred.codigoImp },
             ],
           },
-          select: { id: true },
+          select: { id: true, cantidadCuotas: true },
         });
 
-        if (prestamoExistente) {
+        if (!cred.esActualizacion && prestamoExistente) {
           creditosOmitidos++;
           continue;
         }
@@ -718,7 +892,7 @@ export class ImportacionesService {
               costo: true,
               precios: {
                 where: {
-                  meses: cred.plazoMeses,
+                  meses: plazoMesesPersistido(Number(cred.plazoMeses)),
                   activo: true,
                 },
                 select: {
@@ -745,18 +919,25 @@ export class ImportacionesService {
 
         // Cálculos financieros
         const monto = Number(cred.monto);
+        // Fraccionario para calcular el interés, entero para guardar: es lo
+        // mismo que hace createLoan, donde la columna plazoMeses es Int.
         const plazoMeses = Number(cred.plazoMeses);
+        const plazoMesesGuardado = Number(
+          cred.plazoMesesPersistir ?? plazoMesesPersistido(plazoMeses),
+        );
         const tasaInteres = Number(cred.tasaInteres);
         const cantidadCuotas = Number(cred.cantidadCuotas);
         
-        // Interés total simple: monto * (tasa / 100) * plazoMeses
-
-        
-        const interesTotal = roundMoney(monto * (tasaInteres / 100) * plazoMeses);
+        // El interés depende del método elegido: Interés simple aplica la tasa
+        // por cada mes de plazo, y Amortización una sola vez sobre el capital.
+        const interesTotal = calcularInteresTotal(
+          cred.tipoAmortizacion || TIPO_AMORTIZACION_POR_DEFECTO,
+          monto,
+          tasaInteres,
+          plazoMeses,
+        );
         const totalPrestamo = roundMoney(monto + interesTotal);
         
-        const capitalBase = roundMoney(monto / cantidadCuotas);
-        const interesBase = roundMoney(interesTotal / cantidadCuotas);
 
         // Pre-calcular fechas de cuotas
         const fechasCuotas: Date[] = [];
@@ -777,6 +958,117 @@ export class ImportacionesService {
 
         const fechaFin = fechasCuotas[fechasCuotas.length - 1];
 
+        const planCuotas: PlanCuota[] = construirPlanCuotas({
+          tipoAmortizacion: cred.tipoAmortizacion || TIPO_AMORTIZACION_POR_DEFECTO,
+          monto,
+          interesTotal,
+          cantidadCuotas,
+          fechasVencimiento: fechasCuotas,
+        });
+
+        // Créditos que ya venían cobrándose antes de usar el sistema.
+        const avance = aplicarAvanceHistorico(
+          planCuotas,
+          Number(cred.cuotasPagadas || 0),
+          Number(cred.abonoAdicional || 0),
+          cred.fechaUltimoPago || null,
+        );
+
+        if (avance.montoNoAplicado > 0) {
+          mensajes.push(
+            `Fila ${cred.fila}: quedaron ${avance.montoNoAplicado} sin aplicar porque superaban el total del crédito.`,
+          );
+        }
+
+        const saldoPendiente = roundMoney(totalPrestamo - avance.totalPagado);
+        const estadoPrestamo = resolverEstadoPrestamoImportado(
+          planCuotas,
+          saldoPendiente,
+        );
+
+        if (avance.cuotasPagadas > 0 || avance.totalPagado > 0) {
+          creditosAvanzados++;
+        }
+
+        if (cred.esActualizacion) {
+          if (!prestamoExistente) {
+            creditosOmitidos++;
+            continue;
+          }
+
+          // Un crédito con movimientos de caja o asientos contables no se puede
+          // reescribir por Excel: habría que reversar contabilidad.
+          const movimientos = await tx.transaccion.count({
+            where: {
+              tipoReferencia: 'PRESTAMO',
+              referenciaId: prestamoExistente.id,
+            },
+          });
+
+          if (movimientos > 0) {
+            creditosNoSoportados++;
+            mensajes.push(
+              `Fila ${cred.fila}: el crédito ${cred.numeroPrestamo} tiene movimientos de caja registrados y no se puede actualizar por importación.`,
+            );
+            continue;
+          }
+
+          if (Number(prestamoExistente.cantidadCuotas) !== cantidadCuotas) {
+            creditosNoSoportados++;
+            mensajes.push(
+              `Fila ${cred.fila}: no se puede cambiar la cantidad de cuotas de ${prestamoExistente.cantidadCuotas} a ${cantidadCuotas} por importación.`,
+            );
+            continue;
+          }
+
+          await tx.prestamo.update({
+            where: { id: prestamoExistente.id },
+            data: {
+              monto,
+              tasaInteres,
+              tasaInteresMora: cred.tasaInteresMora ?? 0,
+              plazoMeses: plazoMesesGuardado,
+              tipoAmortizacion:
+                cred.tipoAmortizacion || TIPO_AMORTIZACION_POR_DEFECTO,
+              interesTotal,
+              saldoPendiente,
+              totalPagado: avance.totalPagado,
+              capitalPagado: avance.capitalPagado,
+              interesPagado: avance.interesPagado,
+              estado: estadoPrestamo,
+              garantia: cred.garantia || null,
+              notas: cred.notas || null,
+              cuotaInicial: cred.cuotaInicial || 0,
+            },
+          });
+
+          // Se reescriben las cuotas en su sitio; no hay pagos que las
+          // referencien, porque eso ya se rechazó al validar.
+          for (const cuota of planCuotas) {
+            await tx.cuota.updateMany({
+              where: {
+                prestamoId: prestamoExistente.id,
+                numeroCuota: cuota.numeroCuota,
+              },
+              data: {
+                fechaVencimiento: cuota.fechaVencimiento,
+                monto: cuota.monto,
+                montoCapital: cuota.montoCapital,
+                montoInteres: cuota.montoInteres,
+                estado: cuota.estado,
+                montoPagado: cuota.montoPagado,
+                fechaPago: cuota.fechaPago,
+              },
+            });
+          }
+
+          creditosActualizados++;
+          idsPrestamosActualizados.push(prestamoExistente.id);
+          if (avance.cuotasPagadas > 0) creditosAvanzados++;
+          cuotasPagadasImportadas += avance.cuotasPagadas;
+          continue;
+        }
+
         const prestamo = await tx.prestamo.create({
           data: {
             numeroPrestamo: cred.numeroPrestamo,
@@ -788,27 +1080,27 @@ export class ImportacionesService {
             costoArticulo,
             margenArticulo,
             tipoPrestamo: cred.tipoPrestamo,
-            tipoAmortizacion: cred.tipoAmortizacion || 'INTERES_PLANO',
+            tipoAmortizacion: cred.tipoAmortizacion || TIPO_AMORTIZACION_POR_DEFECTO,
             monto,
             tasaInteres,
             tasaInteresMora: cred.tasaInteresMora || 0,
-            plazoMeses,
+            plazoMeses: plazoMesesGuardado,
             frecuenciaPago: cred.frecuenciaPago,
             cantidadCuotas,
             fechaInicio: cred.fechaCredito,
             fechaPrimerCobro: cred.fechaPrimerCobro || cred.fechaCredito,
             fechaFin,
-            estado: 'ACTIVO',
+            estado: estadoPrestamo,
             creadoPorId,
             aprobadoPorId: creadoPorId,
             estadoAprobacion: 'APROBADO',
             interesTotal,
-            saldoPendiente: totalPrestamo,
-            totalPagado: 0,
-            capitalPagado: 0,
-            interesPagado: 0,
+            saldoPendiente,
+            totalPagado: avance.totalPagado,
+            capitalPagado: avance.capitalPagado,
+            interesPagado: avance.interesPagado,
             interesMoraPagado: 0,
-            
+
             // Nota V2.2: En importación histórica, cuotaInicial se conserva como dato informativo
             // y no reduce el saldoPendiente ni el cálculo de cuotas históricas.
             cuotaInicial: cred.cuotaInicial || 0,
@@ -817,6 +1109,8 @@ export class ImportacionesService {
             notas: cred.notas || null,
           },
         });
+
+        idsPrestamosCreados.push(prestamo.id);
 
         if (isOperativaEfectivo) {
           creditosOperativosCreados++;
@@ -860,34 +1154,27 @@ export class ImportacionesService {
           }
         }
 
-        // Crear cuotas
-        let capitalAcumulado = 0;
-        let interesAcumulado = 0;
-
-        for (let i = 1; i <= cantidadCuotas; i++) {
-          const esUltima = i === cantidadCuotas;
-          const capitalCuota = esUltima ? roundMoney(monto - capitalAcumulado) : capitalBase;
-          const interesCuota = esUltima ? roundMoney(interesTotal - interesAcumulado) : interesBase;
-          const montoCuota = roundMoney(capitalCuota + interesCuota);
-
-          capitalAcumulado = roundMoney(capitalAcumulado + capitalCuota);
-          interesAcumulado = roundMoney(interesAcumulado + interesCuota);
-
-          await tx.cuota.create({
-            data: {
-              prestamoId: prestamo.id,
-              numeroCuota: i,
-              fechaVencimiento: fechasCuotas[i - 1],
-              monto: montoCuota,
-              montoCapital: capitalCuota,
-              montoInteres: interesCuota,
-              montoInteresMora: 0,
-              estado: 'PENDIENTE',
-              montoPagado: 0,
-            },
-          });
-          cuotasCreadas++;
-        }
+        // Crear cuotas con el estado que ya traen del cobro previo.
+        // Se insertan en bloque: una cartera real son miles de cuotas, y una
+        // inserción por cuota agota el tiempo de la transacción.
+        await tx.cuota.createMany({
+          data: planCuotas.map((cuota) => ({
+            prestamoId: prestamo.id,
+            numeroCuota: cuota.numeroCuota,
+            fechaVencimiento: cuota.fechaVencimiento,
+            monto: cuota.monto,
+            montoCapital: cuota.montoCapital,
+            montoInteres: cuota.montoInteres,
+            montoInteresMora: 0,
+            estado: cuota.estado,
+            montoPagado: cuota.montoPagado,
+            fechaPago: cuota.fechaPago,
+          })),
+        });
+        cuotasCreadas += planCuotas.length;
+        cuotasPagadasImportadas += planCuotas.filter(
+          (cuota) => cuota.estado === 'PAGADA',
+        ).length;
       }
 
       // 4. Registrar lote confirmado dentro de la transacción
@@ -900,13 +1187,27 @@ export class ImportacionesService {
           filasValidas: resultado.resumen.filasValidas,
           filasConError: resultado.resumen.filasConError,
           advertencias: resultado.resumen.advertencias,
-          resumen: resultado.resumen as any,
+          // Se registra qué creó este lote para poder deshacerlo después.
+          resumen: {
+            ...resultado.resumen,
+            creado: {
+              clientes: idsClientesCreados,
+              prestamos: idsPrestamosCreados,
+              clientesActualizados: idsClientesActualizados,
+              prestamosActualizados: idsPrestamosActualizados,
+              conMovimientosContables: creditosOperativosCreados > 0,
+            },
+          } as any,
           creadoPorId,
           confirmadoEn: new Date(),
         },
       });
       loteId = lote.id;
-    });
+        },
+        // Migrar una cartera completa no cabe en los 5 s que Prisma da por
+        // defecto a una transacción interactiva.
+        { maxWait: 60_000, timeout: 600_000 },
+      );
     } catch (error) {
       await this.prisma.importacionLote.create({
         data: {
@@ -942,11 +1243,16 @@ export class ImportacionesService {
     return {
       loteId,
       clientesCreados,
+      clientesActualizados,
       clientesOmitidos,
+      clientesAsignadosARuta,
       creditosHistoricosCreados,
       creditosOperativosCreados,
       creditosOmitidos,
       creditosNoSoportados,
+      creditosActualizados,
+      creditosAvanzados,
+      cuotasPagadasImportadas,
       transaccionesCreadas,
       asientosCreados,
       cuotasCreadas,
