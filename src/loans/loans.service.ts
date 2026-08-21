@@ -33,6 +33,7 @@ import {
   CarteraTotales,
 } from '../templates/exports/cartera-creditos.template';
 import { generarExcelClientesCreditosImportable } from '../templates/exports/importables.template';
+import { etiquetaTipoAmortizacion } from '../importaciones/interes-credito';
 import { createHash, randomUUID } from 'crypto';
 import { ContratoData, generarContratoPDF } from '../templates/exports';
 import {
@@ -5411,6 +5412,15 @@ export class LoansService implements OnModuleInit {
             },
           },
           producto: { select: { codigo: true, nombre: true } },
+          cuotas: {
+            select: {
+              numeroCuota: true,
+              estado: true,
+              montoPagado: true,
+              fechaPago: true,
+            },
+            orderBy: { numeroCuota: 'asc' },
+          },
         },
         orderBy: { creadoEn: 'desc' },
       });
@@ -5455,13 +5465,25 @@ export class LoansService implements OnModuleInit {
         frecuenciaPago: prestamo.frecuenciaPago,
         cantidadCuotas: Number(prestamo.cantidadCuotas || 0),
         plazoMeses: Number(prestamo.plazoMeses || 0),
-        tipoAmortizacion: 'Interés simple',
+        tipoAmortizacion: etiquetaTipoAmortizacion(prestamo.tipoAmortizacion),
         fechaCredito: prestamo.fechaInicio,
         fechaPrimerCobro: prestamo.fechaPrimerCobro || prestamo.fechaInicio,
         tipoCarga: 'HISTORICA',
         descontarCaja: 'NO',
         garantia: prestamo.garantia,
         notas: prestamo.notas,
+        // Avance de cobro: permite reimportar el crédito tal como está hoy.
+        cuotasPagadas: (prestamo.cuotas || []).filter(
+          (cuota) => cuota.estado === 'PAGADA',
+        ).length,
+        abonoAdicional: (prestamo.cuotas || [])
+          .filter((cuota) => cuota.estado !== 'PAGADA')
+          .reduce((suma, cuota) => suma + Number(cuota.montoPagado || 0), 0),
+        fechaUltimoPago:
+          (prestamo.cuotas || [])
+            .filter((cuota) => cuota.fechaPago)
+            .map((cuota) => cuota.fechaPago as Date)
+            .sort((a, b) => b.getTime() - a.getTime())[0] || null,
       }));
 
       return generarExcelClientesCreditosImportable(

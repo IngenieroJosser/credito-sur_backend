@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Param,
   Post,
   UseGuards,
   UseInterceptors,
@@ -33,6 +34,18 @@ export class ImportacionesController {
     if (!originalName.toLowerCase().endsWith('.xlsx')) {
       throw new BadRequestException('Solo se permiten archivos .xlsx');
     }
+  }
+
+@Get('lotes')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
+  async listarLotes() {
+    return this.importacionesService.listarLotes();
+  }
+
+  @Post('lotes/:id/revertir')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
+  async revertirLote(@Param('id') id: string) {
+    return this.importacionesService.revertirLote(id);
   }
 
   @Get('plantilla/clientes-creditos')

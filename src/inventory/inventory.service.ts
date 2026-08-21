@@ -43,7 +43,8 @@ export class InventoryService {
           stockMinimo: true,
           activo: true,
           precios: {
-            where: { activo: true, meses: { gt: 0 } },
+            // Se incluye meses = 0 porque es el precio de contado.
+            where: { activo: true },
             select: { meses: true, precio: true, activo: true },
             orderBy: { meses: 'asc' },
           },

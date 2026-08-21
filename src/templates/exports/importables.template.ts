@@ -1,4 +1,11 @@
 import * as ExcelJS from 'exceljs';
+import {
+  agregarValoresInventario,
+  construirHojaArticulos,
+  escribirFilaArticulo,
+} from '../../importaciones/plantillas/plantilla-inventario';
+import { forzarRecalculo } from '../../importaciones/plantillas/plantillas.util';
+import { etiquetaTipoAmortizacion } from '../../importaciones/interes-credito';
 
 export interface InventarioImportableArticulo {
   codigo: string;
@@ -58,6 +65,10 @@ export interface CreditoImportableRow {
   descontarCaja?: string;
   garantia?: string | null;
   notas?: string | null;
+  /** Estado de avance del crédito, para poder reimportarlo tal como está hoy. */
+  cuotasPagadas?: number | null;
+  abonoAdicional?: number | null;
+  fechaUltimoPago?: Date | string | null;
 }
 
 const DATA_START_ROW = 7;
@@ -126,6 +137,21 @@ function formatHeader(
   ws.views = [{ state: 'frozen', ySplit: 6 }];
 }
 
+/** Letra de la columna que tiene esa clave, para no fijar letras a mano. */
+function letraDe(columnas: Array<{ key: string }>, clave: string): string {
+  const indice = columnas.findIndex((c) => c.key === clave);
+  if (indice < 0) throw new Error(`No existe la columna "${clave}" en la hoja`);
+
+  let n = indice + 1;
+  let letra = '';
+  while (n > 0) {
+    const resto = (n - 1) % 26;
+    letra = String.fromCharCode(65 + resto) + letra;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letra;
+}
+
 function setColumnsAtRowSix(
   ws: ExcelJS.Worksheet,
   columns: Array<{ header: string; key: string; width: number }>,
@@ -134,20 +160,8 @@ function setColumnsAtRowSix(
   ws.getRow(6).values = columns.map((c) => c.header);
 }
 
-function addValoresInventario(workbook: ExcelJS.Workbook) {
-  const ws = workbook.addWorksheet('Valores');
-  ws.getCell('A1').value = 'Acción';
-  ws.getCell('A2').value = 'CREAR';
-  ws.getCell('B1').value = 'Activo';
-  ws.getCell('B2').value = 'SI';
-  ws.getCell('B3').value = 'NO';
-  return ws;
-}
-
 function addValoresClientesCreditos(workbook: ExcelJS.Workbook) {
   const ws = workbook.addWorksheet('Valores');
-  ws.getCell('A1').value = 'Acción';
-  ws.getCell('A2').value = 'CREAR';
   ws.getCell('B1').value = 'Nivel Riesgo';
   ['Mínimo', 'Leve', 'Precaución', 'Moderado', 'Crítico'].forEach((v, i) => {
     ws.getCell(`B${i + 2}`).value = v;
@@ -178,78 +192,72 @@ export async function generarExcelInventarioImportable(
 ): Promise<{ data: Buffer; contentType: string; filename: string }> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Créditos del Sur';
+  forzarRecalculo(workbook);
 
   const wsInicio = workbook.addWorksheet('Inicio');
-  wsInicio.getCell('A1').value = 'EXPORTACIÓN COMPATIBLE CON IMPORTACIÓN DE INVENTARIO';
+  wsInicio.getColumn(1).width = 120;
+  wsInicio.getCell('A1').value =
+    'EXPORTACIÓN COMPATIBLE CON IMPORTACIÓN DE INVENTARIO';
   wsInicio.getCell('A1').font = { bold: true, size: 16, color: { argb: 'FF004F7B' } };
-  wsInicio.getCell('A3').value = 'Este archivo puede validarse en el módulo de importaciones de inventario.';
-  wsInicio.getCell('A5').value = 'Los datos comienzan en la fila 7, como en la plantilla oficial.';
+  wsInicio.getCell('A3').value =
+    'Este archivo puede validarse tal cual en el módulo de importaciones de inventario.';
+  wsInicio.getCell('A4').value =
+    'Cada fila es un artículo completo, con su precio de contado y sus opciones de plazo.';
+  wsInicio.getCell('A5').value =
+    'Las columnas grises de utilidad las calcula Excel y no se leen al importar.';
 
-  const wsArticulos = workbook.addWorksheet('Artículos');
-  setColumnsAtRowSix(wsArticulos, [
-    { header: 'Acción*', key: 'accion', width: 15 },
-    { header: 'Código*', key: 'codigo', width: 20 },
-    { header: 'Nombre*', key: 'nombre', width: 35 },
-    { header: 'Descripción', key: 'descripcion', width: 35 },
-    { header: 'Categoría*', key: 'categoria', width: 25 },
-    { header: 'Marca', key: 'marca', width: 20 },
-    { header: 'Modelo', key: 'modelo', width: 20 },
-    { header: 'Costo*', key: 'costo', width: 15 },
-    { header: 'Stock*', key: 'stock', width: 15 },
-    { header: 'Stock mínimo*', key: 'stock_minimo', width: 15 },
-    { header: 'Activo*', key: 'activo', width: 15 },
-    { header: 'Observaciones', key: 'observaciones', width: 30 },
-  ]);
-  formatHeader(wsArticulos, 'Catálogo de Artículos', 'Exportación lista para importación.', 'Escriba o revise datos desde la fila 7 hacia abajo', 'L');
+  // Se agrupan los precios por artículo: el contado es la opción de 0 meses y
+  // el resto son las opciones de crédito, en orden de plazo.
+  const preciosPorArticulo = new Map<string, InventarioImportablePrecio[]>();
+  precios.forEach((precio) => {
+    const clave = text(precio.codigoProducto).toUpperCase();
+    const lista = preciosPorArticulo.get(clave) ?? [];
+    lista.push(precio);
+    preciosPorArticulo.set(clave, lista);
+  });
 
-  articulos.forEach((a) => {
-    wsArticulos.addRow({
-      accion: 'CREAR',
-      codigo: text(a.codigo).toUpperCase(),
-      nombre: text(a.nombre),
-      descripcion: text(a.descripcion),
-      categoria: text(a.categoria),
-      marca: text(a.marca),
-      modelo: text(a.modelo),
-      costo: money(a.costo),
-      stock: Number(a.stock || 0),
-      stock_minimo: Number(a.stockMinimo || 0),
-      activo: a.activo ? 'SI' : 'NO',
-      observaciones: '',
+  const filasPreparadas = Math.max(articulos.length, 50);
+  const ws = construirHojaArticulos(workbook, {
+    subtitulo: 'Exportación lista para volver a importarse.',
+    instruccion:
+      'Revise o ajuste los datos desde la fila 7 hacia abajo. Las columnas grises se calculan solas.',
+    filas: filasPreparadas,
+  });
+
+  articulos.forEach((articulo, indice) => {
+    const clave = text(articulo.codigo).toUpperCase();
+    const delArticulo = (preciosPorArticulo.get(clave) ?? []).sort(
+      (a, b) => Number(a.meses) - Number(b.meses),
+    );
+
+    const contado = delArticulo.find((p) => Number(p.meses) === 0);
+    const opciones = delArticulo
+      .filter((p) => Number(p.meses) > 0)
+      .map((p) => ({ meses: Number(p.meses), precio: money(p.precio) }));
+
+    escribirFilaArticulo(ws, DATA_START_ROW + indice, {
+      codigo: clave,
+      nombre: text(articulo.nombre),
+      descripcion: text(articulo.descripcion),
+      categoria: text(articulo.categoria),
+      marca: text(articulo.marca),
+      modelo: text(articulo.modelo),
+      costo: money(articulo.costo),
+      precioContado: contado ? money(contado.precio) : null,
+      stock: Number(articulo.stock || 0),
+      stockMinimo: Number(articulo.stockMinimo || 0),
+      activo: Boolean(articulo.activo),
+      opciones,
     });
   });
 
-  const wsPrecios = workbook.addWorksheet('Precios');
-  setColumnsAtRowSix(wsPrecios, [
-    { header: 'Código producto*', key: 'codigo_producto', width: 20 },
-    { header: 'Meses*', key: 'meses', width: 15 },
-    { header: 'Precio*', key: 'precio', width: 15 },
-    { header: 'Activo*', key: 'activo', width: 15 },
-  ]);
-  formatHeader(wsPrecios, 'Precios a Plazos', 'Exportación lista para importación.', 'Escriba o revise datos desde la fila 7 hacia abajo', 'D');
-  precios
-    .filter((p) => Number(p.meses) > 0)
-    .forEach((p) => {
-      wsPrecios.addRow({
-        codigo_producto: text(p.codigoProducto).toUpperCase(),
-        meses: Number(p.meses),
-        precio: money(p.precio),
-        activo: p.activo ? 'SI' : 'NO',
-      });
-    });
-
-  addValoresInventario(workbook);
-
-  for (let i = DATA_START_ROW; i <= 1000; i++) {
-    wsArticulos.getCell(`A${i}`).dataValidation = { type: 'list', allowBlank: false, formulae: ['"CREAR"'] };
-    wsArticulos.getCell(`K${i}`).dataValidation = { type: 'list', allowBlank: false, formulae: ['Valores!$B$2:$B$3'] };
-    wsPrecios.getCell(`D${i}`).dataValidation = { type: 'list', allowBlank: false, formulae: ['Valores!$B$2:$B$3'] };
-  }
+  agregarValoresInventario(workbook, ws, filasPreparadas);
 
   const buffer = await workbook.xlsx.writeBuffer();
   return {
     data: Buffer.from(buffer as ArrayBuffer),
-    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    contentType:
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     filename: `inventario-importable-${fecha}.xlsx`,
   };
 }
@@ -269,30 +277,31 @@ export async function generarExcelClientesCreditosImportable(
   wsInicio.getCell('A5').value = 'Los créditos se exportan como HISTORICA / NO para no mover caja al reimportar.';
 
   const wsClientes = workbook.addWorksheet('Clientes');
-  setColumnsAtRowSix(wsClientes, [
-    { header: 'Acción*', key: 'accion', width: 15 },
-    { header: 'Código importación*', key: 'codigo_importacion_cliente', width: 25 },
+  const columnasClientes = [
     { header: 'CC cliente*', key: 'cc', width: 20 },
     { header: 'Nombres*', key: 'nombres', width: 25 },
     { header: 'Apellidos*', key: 'apellidos', width: 25 },
     { header: 'Teléfono*', key: 'telefono', width: 20 },
     { header: 'Correo', key: 'correo', width: 25 },
     { header: 'Dirección', key: 'direccion', width: 30 },
-    { header: 'Referencia', key: 'referencia', width: 20 },
+    { header: 'Punto de referencia', key: 'referencia', width: 24 },
     { header: 'Ref1 Nombre', key: 'referencia1_nombre', width: 25 },
     { header: 'Ref1 Teléfono', key: 'referencia1_telefono', width: 20 },
     { header: 'Ref2 Nombre', key: 'referencia2_nombre', width: 25 },
     { header: 'Ref2 Teléfono', key: 'referencia2_telefono', width: 20 },
-    { header: 'Nivel riesgo', key: 'nivel_riesgo', width: 15 },
     { header: 'Ruta código', key: 'ruta_codigo', width: 15 },
-    { header: 'Observaciones', key: 'observaciones', width: 30 },
-  ]);
-  formatHeader(wsClientes, 'Gestión de Clientes', 'Exportación lista para importación.', 'Escriba o revise datos desde la fila 7 hacia abajo', 'P');
+  ];
+  setColumnsAtRowSix(wsClientes, columnasClientes);
+  formatHeader(
+    wsClientes,
+    'Gestión de Clientes',
+    'Exportación lista para importación.',
+    'Escriba o revise datos desde la fila 7 hacia abajo',
+    letraDe(columnasClientes, 'ruta_codigo'),
+  );
 
   clientes.forEach((c) => {
     wsClientes.addRow({
-      accion: 'CREAR',
-      codigo_importacion_cliente: text(c.codigo).slice(0, 20),
       cc: text(c.dni),
       nombres: text(c.nombres),
       apellidos: text(c.apellidos),
@@ -304,73 +313,125 @@ export async function generarExcelClientesCreditosImportable(
       referencia1_telefono: text(c.referencia1Telefono),
       referencia2_nombre: text(c.referencia2Nombre),
       referencia2_telefono: text(c.referencia2Telefono),
-      nivel_riesgo: riesgoImportable(c.nivelRiesgo),
       ruta_codigo: text(c.rutaCodigo),
-      observaciones: text(c.observaciones),
     });
   });
 
-  const wsCreditos = workbook.addWorksheet('Créditos');
-  setColumnsAtRowSix(wsCreditos, [
-    { header: 'Acción*', key: 'accion', width: 15 },
-    { header: 'Código importación*', key: 'codigo_importacion_credito', width: 25 },
-    { header: 'Número préstamo', key: 'numero_prestamo', width: 20 },
+  const esArticulo = (c: CreditoImportableRow) =>
+    text(c.tipoPrestamo).toUpperCase() === 'ARTICULO';
+
+  const wsCreditos = workbook.addWorksheet('Créditos de dinero');
+  const columnasCreditos = [
+    { header: 'Número de crédito', key: 'numero_prestamo', width: 20 },
     { header: 'CC cliente*', key: 'cc_cliente', width: 20 },
-    { header: 'Tipo préstamo*', key: 'tipo_prestamo', width: 15 },
-    { header: 'Producto código', key: 'producto_codigo', width: 20 },
     { header: 'Monto*', key: 'monto', width: 15 },
     { header: 'Cuota inicial', key: 'cuota_inicial', width: 15 },
     { header: 'Tasa interés*', key: 'tasa_interes', width: 15 },
-    { header: 'Tasa interés mora', key: 'tasa_interes_mora', width: 18 },
     { header: 'Frecuencia pago*', key: 'frecuencia_pago', width: 18 },
     { header: 'Cantidad cuotas*', key: 'cantidad_cuotas', width: 18 },
-    { header: 'Plazo meses*', key: 'plazo_meses', width: 15 },
     { header: 'Tipo amortización', key: 'tipo_amortizacion', width: 20 },
     { header: 'Fecha crédito*', key: 'fecha_credito', width: 15 },
     { header: 'Fecha primer cobro', key: 'fecha_primer_cobro', width: 20 },
     { header: 'Tipo carga*', key: 'tipo_carga', width: 15 },
-    { header: 'Descontar dinero de caja*', key: 'descontar_dinero_de_caja', width: 25 },
-    { header: 'Garantía', key: 'garantia', width: 20 },
     { header: 'Notas', key: 'notas', width: 30 },
-  ]);
-  formatHeader(wsCreditos, 'Gestión de Créditos', 'Exportación lista para importación.', 'Créditos históricos: no afectan caja al confirmar', 'T');
+    { header: 'Cuotas pagadas', key: 'cuotas_pagadas', width: 15 },
+    { header: 'Abono adicional', key: 'abono_adicional', width: 16 },
+    { header: 'Fecha último pago', key: 'fecha_ultimo_pago', width: 18 },
+  ];
+  setColumnsAtRowSix(wsCreditos, columnasCreditos);
+  formatHeader(
+    wsCreditos,
+    'Gestión de Créditos',
+    'Exportación lista para importación, con el avance de cobro de cada crédito.',
+    'Créditos históricos: no afectan caja al confirmar',
+    letraDe(columnasCreditos, 'fecha_ultimo_pago'),
+  );
 
-  creditos.forEach((c) => {
+  creditos.filter((c) => !esArticulo(c)).forEach((c) => {
     wsCreditos.addRow({
-      accion: 'CREAR',
-      codigo_importacion_credito: text(c.codigo).slice(0, 100),
       numero_prestamo: text(c.numeroPrestamo),
       cc_cliente: text(c.ccCliente),
-      tipo_prestamo: text(c.tipoPrestamo).toUpperCase(),
-      producto_codigo: text(c.productoCodigo).toUpperCase(),
       monto: money(c.monto),
       cuota_inicial: money(c.cuotaInicial),
       tasa_interes: money(c.tasaInteres),
-      tasa_interes_mora: money(c.tasaInteresMora),
       frecuencia_pago: text(c.frecuenciaPago).toUpperCase(),
       cantidad_cuotas: Number(c.cantidadCuotas || 0),
-      plazo_meses: Number(c.plazoMeses || 0),
-      tipo_amortizacion: text(c.tipoAmortizacion) || 'Interés simple',
+      tipo_amortizacion: etiquetaTipoAmortizacion(c.tipoAmortizacion),
       fecha_credito: dateKey(c.fechaCredito),
       fecha_primer_cobro: dateKey(c.fechaPrimerCobro),
       tipo_carga: c.tipoCarga || 'HISTORICA',
-      descontar_dinero_de_caja: c.descontarCaja || 'NO',
-      garantia: text(c.garantia),
       notas: text(c.notas),
+      cuotas_pagadas: Number(c.cuotasPagadas || 0),
+      abono_adicional: money(c.abonoAdicional),
+      fecha_ultimo_pago: dateKey(c.fechaUltimoPago),
+    });
+  });
+
+  const wsCreditosArticulo = workbook.addWorksheet('Créditos de artículo');
+  const columnasCreditosArticulo = [
+    { header: 'Número de crédito', key: 'numero_prestamo', width: 20 },
+    { header: 'CC cliente*', key: 'cc_cliente', width: 20 },
+    { header: 'Producto código*', key: 'producto_codigo', width: 20 },
+    { header: 'Plazo meses*', key: 'plazo_meses', width: 15 },
+    { header: 'Frecuencia pago*', key: 'frecuencia_pago', width: 18 },
+    { header: 'Fecha crédito*', key: 'fecha_credito', width: 15 },
+    { header: 'Tipo carga*', key: 'tipo_carga', width: 15 },
+    { header: 'Monto', key: 'monto', width: 15 },
+    { header: 'Cuota inicial', key: 'cuota_inicial', width: 15 },
+    { header: 'Tasa interés mora', key: 'tasa_interes_mora', width: 18 },
+    { header: 'Fecha primer cobro', key: 'fecha_primer_cobro', width: 20 },
+    { header: 'Notas', key: 'notas', width: 30 },
+    { header: 'Cuotas pagadas', key: 'cuotas_pagadas', width: 15 },
+    { header: 'Abono adicional', key: 'abono_adicional', width: 16 },
+    { header: 'Fecha último pago', key: 'fecha_ultimo_pago', width: 18 },
+  ];
+  setColumnsAtRowSix(wsCreditosArticulo, columnasCreditosArticulo);
+  formatHeader(
+    wsCreditosArticulo,
+    'Créditos de artículo',
+    'Exportación lista para importación. El precio del plazo ya incluye el financiamiento.',
+    'Créditos históricos: no afectan caja al confirmar',
+    letraDe(columnasCreditosArticulo, 'fecha_ultimo_pago'),
+  );
+
+  creditos.filter(esArticulo).forEach((c) => {
+    wsCreditosArticulo.addRow({
+      numero_prestamo: text(c.numeroPrestamo),
+      cc_cliente: text(c.ccCliente),
+      producto_codigo: text(c.productoCodigo).toUpperCase(),
+      plazo_meses: Number(c.plazoMeses || 0),
+      frecuencia_pago: text(c.frecuenciaPago).toUpperCase(),
+      fecha_credito: dateKey(c.fechaCredito),
+      tipo_carga: c.tipoCarga || 'HISTORICA',
+      monto: money(c.monto),
+      cuota_inicial: money(c.cuotaInicial),
+      tasa_interes_mora: money(c.tasaInteresMora),
+      fecha_primer_cobro: dateKey(c.fechaPrimerCobro),
+      notas: text(c.notas),
+      cuotas_pagadas: Number(c.cuotasPagadas || 0),
+      abono_adicional: money(c.abonoAdicional),
+      fecha_ultimo_pago: dateKey(c.fechaUltimoPago),
     });
   });
 
   addValoresClientesCreditos(workbook);
 
+  const listas: Array<[ExcelJS.Worksheet, Array<{ key: string }>, string, string, boolean]> = [
+    [wsCreditos, columnasCreditos, 'frecuencia_pago', 'Valores!$D$2:$D$5', false],
+    [wsCreditos, columnasCreditos, 'tipo_amortizacion', 'Valores!$E$2:$E$3', true],
+    [wsCreditos, columnasCreditos, 'tipo_carga', 'Valores!$F$2:$F$3', false],
+    [wsCreditosArticulo, columnasCreditosArticulo, 'frecuencia_pago', 'Valores!$D$2:$D$5', false],
+    [wsCreditosArticulo, columnasCreditosArticulo, 'tipo_carga', 'Valores!$F$2:$F$3', false],
+  ];
+
   for (let i = DATA_START_ROW; i <= 1000; i++) {
-    wsClientes.getCell(`A${i}`).dataValidation = { type: 'list', allowBlank: false, formulae: ['"CREAR"'] };
-    wsClientes.getCell(`N${i}`).dataValidation = { type: 'list', allowBlank: true, formulae: ['Valores!$B$2:$B$6'] };
-    wsCreditos.getCell(`A${i}`).dataValidation = { type: 'list', allowBlank: false, formulae: ['"CREAR"'] };
-    wsCreditos.getCell(`E${i}`).dataValidation = { type: 'list', allowBlank: false, formulae: ['Valores!$C$2:$C$3'] };
-    wsCreditos.getCell(`K${i}`).dataValidation = { type: 'list', allowBlank: false, formulae: ['Valores!$D$2:$D$5'] };
-    wsCreditos.getCell(`N${i}`).dataValidation = { type: 'list', allowBlank: true, formulae: ['Valores!$E$2:$E$3'] };
-    wsCreditos.getCell(`Q${i}`).dataValidation = { type: 'list', allowBlank: false, formulae: ['Valores!$F$2:$F$3'] };
-    wsCreditos.getCell(`R${i}`).dataValidation = { type: 'list', allowBlank: false, formulae: ['Valores!$G$2:$G$3'] };
+    listas.forEach(([hoja, columnas, clave, formula, permitirVacio]) => {
+      hoja.getCell(`${letraDe(columnas, clave)}${i}`).dataValidation = {
+        type: 'list',
+        allowBlank: permitirVacio,
+        formulae: [formula],
+      };
+    });
   }
 
   const buffer = await workbook.xlsx.writeBuffer();
