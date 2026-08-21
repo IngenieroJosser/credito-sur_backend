@@ -69,7 +69,42 @@ export function celda(row: ExcelJS.Row, indice: number): any {
   return row.getCell(indice).value;
 }
 
+/**
+ * Última fila que la plantilla preparó con fórmulas y validaciones.
+ * Debe coincidir con `FILAS_PREPARADAS` de las plantillas.
+ */
+export const ULTIMA_FILA_PREPARADA = FILA_INICIO_DATOS + 1000 - 1;
+
+/**
+ * Avisa de filas escritas más allá del rango que la plantilla preparó.
+ *
+ * Esas filas se importan igual, pero llegaron sin las fórmulas de verificación
+ * ni las listas desplegables, así que nadie las revisó antes de subirlas.
+ */
+export function avisarFilasFueraDeRango(
+  filasLeidas: number[],
+  hoja: string,
+): { fila: number; campo: string; mensaje: string; valor: any } | null {
+  const fueraDeRango = filasLeidas.filter((f) => f > ULTIMA_FILA_PREPARADA);
+  if (fueraDeRango.length === 0) return null;
+
+  return {
+    fila: fueraDeRango[0],
+    campo: 'GLOBAL',
+    mensaje:
+      `Hay ${fueraDeRango.length} fila(s) más allá de la fila ${ULTIMA_FILA_PREPARADA}, que es hasta donde llega la plantilla. ` +
+      `Se importan igual, pero no tuvieron fórmulas de verificación ni listas desplegables: revíselas con cuidado. ` +
+      `Si son muchas, conviene partir el archivo en varios.`,
+    valor: hoja,
+  };
+}
+
 /** `true` si todas las columnas indicadas están vacías en la fila. */
-export function filaVaciaEnColumnas(row: ExcelJS.Row, columnas: number[]): boolean {
-  return columnas.every((col) => !col || leerTexto(row.getCell(col).value) === '');
+export function filaVaciaEnColumnas(
+  row: ExcelJS.Row,
+  columnas: number[],
+): boolean {
+  return columnas.every(
+    (col) => !col || leerTexto(row.getCell(col).value) === '',
+  );
 }

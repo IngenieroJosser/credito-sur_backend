@@ -41,6 +41,35 @@ function buildPrismaMock(overrides: Record<string, any> = {}) {
     },
     gasto: {
       create: jest.fn().mockResolvedValue({ id: 'gasto-1' }),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
+    // La aprobación se crea dentro de la misma transacción que el gasto.
+    aprobacion: {
+      create: jest.fn().mockResolvedValue({ id: 'approval-1' }),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
+    ruta: {
+      findFirst: jest
+        .fn()
+        .mockResolvedValue({ id: 'ruta-1', cobradorId: 'cobrador-1' }),
+    },
+    usuario: {
+      findUnique: jest
+        .fn()
+        .mockResolvedValue({ nombres: 'Cobra', apellidos: 'Dor' }),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+    // El plan de cuentas se consulta dentro de la transacción del gasto.
+    account: {
+      // El plan de cuentas de prueba trae las que exige el gasto provisional.
+      findMany: jest
+        .fn()
+        .mockImplementation(({ where }: any) =>
+          Promise.resolve(
+            (where?.code?.in ?? []).map((code: string) => ({ code })),
+          ),
+        ),
+      createMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
   };
 
@@ -228,8 +257,9 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { creditAmount: 80000, debitAmount: 0 } }) // ingresos periodo anterior
       .mockResolvedValueOnce({ _sum: { debitAmount: 20000, creditAmount: 0 } }) // gastos periodo anterior
       .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } }); // costos periodo anterior
-    prisma.caja.aggregate
-      .mockResolvedValueOnce({ _sum: { saldoActual: 500000 } }); // saldo total cajas
+    prisma.caja.aggregate.mockResolvedValueOnce({
+      _sum: { saldoActual: 500000 },
+    }); // saldo total cajas
     prisma.caja.count
       .mockResolvedValueOnce(5) // total rutas
       .mockResolvedValueOnce(3) // rutas abiertas
@@ -304,7 +334,12 @@ describe('AccountingService financial ledger controls', () => {
     });
 
     await expect(
-      makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000, 'recol-001'),
+      makeService(prisma).consolidarCaja(
+        'caja-ruta-1',
+        'admin-1',
+        50000,
+        'recol-001',
+      ),
     ).rejects.toThrow(BadRequestException);
 
     expect(prisma._tx.$queryRaw).toHaveBeenCalled();
@@ -338,8 +373,15 @@ describe('AccountingService financial ledger controls', () => {
       });
 
       await expect(
-        makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000, undefined),
-      ).rejects.toThrow('La recolección requiere idempotencyKey para evitar doble ejecución.');
+        makeService(prisma).consolidarCaja(
+          'caja-ruta-1',
+          'admin-1',
+          50000,
+          undefined,
+        ),
+      ).rejects.toThrow(
+        'La recolección requiere idempotencyKey para evitar doble ejecución.',
+      );
     });
 
     it('lanza error cuando idempotencyKey está vacío', async () => {
@@ -367,8 +409,15 @@ describe('AccountingService financial ledger controls', () => {
       });
 
       await expect(
-        makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000, '   '),
-      ).rejects.toThrow('La recolección requiere idempotencyKey para evitar doble ejecución.');
+        makeService(prisma).consolidarCaja(
+          'caja-ruta-1',
+          'admin-1',
+          50000,
+          '   ',
+        ),
+      ).rejects.toThrow(
+        'La recolección requiere idempotencyKey para evitar doble ejecución.',
+      );
     });
 
     it('crea TRX-OUT y TRX-IN con idempotencyKey', async () => {
@@ -399,7 +448,12 @@ describe('AccountingService financial ledger controls', () => {
         .mockResolvedValueOnce({ id: 'trx-out-1' })
         .mockResolvedValueOnce({ id: 'trx-in-1' });
 
-      await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000, 'recol-001');
+      await makeService(prisma).consolidarCaja(
+        'caja-ruta-1',
+        'admin-1',
+        50000,
+        'recol-001',
+      );
 
       expect(prisma._tx.transaccion.create).toHaveBeenCalledTimes(2);
       expect(prisma._tx.transaccion.create).toHaveBeenNthCalledWith(1, {
@@ -443,7 +497,12 @@ describe('AccountingService financial ledger controls', () => {
           referenciaId: 'RECOL-001',
         });
 
-      const result = await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000, 'recol-001');
+      const result = await makeService(prisma).consolidarCaja(
+        'caja-ruta-1',
+        'admin-1',
+        50000,
+        'recol-001',
+      );
 
       expect(prisma._tx.transaccion.create).not.toHaveBeenCalled();
       expect(mockLedger.registrarAsiento).not.toHaveBeenCalled();
@@ -479,7 +538,12 @@ describe('AccountingService financial ledger controls', () => {
         referenciaId: 'RECOL-001',
       });
 
-      await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000, 'recol-001');
+      await makeService(prisma).consolidarCaja(
+        'caja-ruta-1',
+        'admin-1',
+        50000,
+        'recol-001',
+      );
 
       expect(prisma._tx.transaccion.create).not.toHaveBeenCalled();
       expect(mockLedger.registrarAsiento).not.toHaveBeenCalled();
@@ -504,7 +568,12 @@ describe('AccountingService financial ledger controls', () => {
       prisma.transaccion.findFirst.mockResolvedValue(null);
 
       await expect(
-        makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000, 'recol-001'),
+        makeService(prisma).consolidarCaja(
+          'caja-ruta-1',
+          'admin-1',
+          50000,
+          'recol-001',
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -536,11 +605,18 @@ describe('AccountingService financial ledger controls', () => {
         .mockResolvedValueOnce({ id: 'trx-out-1' })
         .mockResolvedValueOnce({ id: 'trx-in-1' });
 
-      await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000, 'recol-001');
+      await makeService(prisma).consolidarCaja(
+        'caja-ruta-1',
+        'admin-1',
+        50000,
+        'recol-001',
+      );
 
       expect(prisma._tx.$queryRaw).toHaveBeenCalled();
       const callArgs = prisma._tx.$queryRaw.mock.calls[0];
-      expect(callArgs[0]).toEqual(expect.arrayContaining([expect.stringContaining('FOR UPDATE')]));
+      expect(callArgs[0]).toEqual(
+        expect.arrayContaining([expect.stringContaining('FOR UPDATE')]),
+      );
     });
 
     it('mantiene destino CAJA-OFICINA o CAJA-PRINCIPAL según lógica actual', async () => {
@@ -571,7 +647,12 @@ describe('AccountingService financial ledger controls', () => {
         .mockResolvedValueOnce({ id: 'trx-out-1' })
         .mockResolvedValueOnce({ id: 'trx-in-1' });
 
-      const result = await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000, 'recol-001');
+      const result = await makeService(prisma).consolidarCaja(
+        'caja-ruta-1',
+        'admin-1',
+        50000,
+        'recol-001',
+      );
 
       expect(result.destino).toBe('Caja Oficina');
     });
@@ -604,7 +685,12 @@ describe('AccountingService financial ledger controls', () => {
         .mockResolvedValueOnce({ id: 'trx-out-1' })
         .mockResolvedValueOnce({ id: 'trx-in-1' });
 
-      await makeService(prisma).consolidarCaja('caja-ruta-1', 'admin-1', 50000, 'recol-001');
+      await makeService(prisma).consolidarCaja(
+        'caja-ruta-1',
+        'admin-1',
+        50000,
+        'recol-001',
+      );
 
       expect(prisma._tx.transaccion.create).toHaveBeenNthCalledWith(1, {
         data: expect.objectContaining({
@@ -641,8 +727,9 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { creditAmount: 80000, debitAmount: 0 } }) // ingresos anterior
       .mockResolvedValueOnce({ _sum: { debitAmount: 20000, creditAmount: 0 } }) // gastos anterior
       .mockResolvedValueOnce({ _sum: { debitAmount: 5000, creditAmount: 0 } }); // costos anterior
-    prisma.caja.aggregate
-      .mockResolvedValueOnce({ _sum: { saldoActual: 500000 } }); // saldo total cajas
+    prisma.caja.aggregate.mockResolvedValueOnce({
+      _sum: { saldoActual: 500000 },
+    }); // saldo total cajas
     prisma.caja.count
       .mockResolvedValueOnce(5) // total rutas
       .mockResolvedValueOnce(3) // rutas abiertas
@@ -697,8 +784,9 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { creditAmount: 0, debitAmount: 0 } }) // ingresos contables periodo anterior
       .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } }) // gastos periodo anterior
       .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } }); // costos periodo anterior
-    prisma.caja.aggregate
-      .mockResolvedValueOnce({ _sum: { saldoActual: 500000 } }); // saldo total cajas
+    prisma.caja.aggregate.mockResolvedValueOnce({
+      _sum: { saldoActual: 500000 },
+    }); // saldo total cajas
     prisma.caja.count
       .mockResolvedValueOnce(5) // total rutas
       .mockResolvedValueOnce(3) // rutas abiertas
@@ -769,8 +857,9 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { creditAmount: 0, debitAmount: 0 } }) // ingresos anterior
       .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } }) // gastos anterior
       .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } }); // costos anterior
-    prisma.caja.aggregate
-      .mockResolvedValueOnce({ _sum: { saldoActual: 500000 } }); // saldo total cajas
+    prisma.caja.aggregate.mockResolvedValueOnce({
+      _sum: { saldoActual: 500000 },
+    }); // saldo total cajas
     prisma.caja.count
       .mockResolvedValueOnce(5) // total rutas
       .mockResolvedValueOnce(3) // rutas abiertas
@@ -833,8 +922,9 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { monto: 0 } })
       .mockResolvedValueOnce({ _sum: { monto: 25000 } })
       .mockResolvedValueOnce({ _sum: { monto: 0 } });
-    prisma.caja.aggregate
-      .mockResolvedValueOnce({ _sum: { saldoActual: 500000 } }); // saldo total cajas
+    prisma.caja.aggregate.mockResolvedValueOnce({
+      _sum: { saldoActual: 500000 },
+    }); // saldo total cajas
     prisma.caja.count
       .mockResolvedValueOnce(5) // total rutas
       .mockResolvedValueOnce(3) // rutas abiertas
@@ -878,8 +968,9 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { monto: 500000 } })
       .mockResolvedValueOnce({ _sum: { monto: 0 } })
       .mockResolvedValueOnce({ _sum: { monto: 0 } });
-    prisma.caja.aggregate
-      .mockResolvedValueOnce({ _sum: { saldoActual: 500000 } }); // saldo total cajas
+    prisma.caja.aggregate.mockResolvedValueOnce({
+      _sum: { saldoActual: 500000 },
+    }); // saldo total cajas
     prisma.caja.count
       .mockResolvedValueOnce(5) // total rutas
       .mockResolvedValueOnce(3) // rutas abiertas
@@ -929,8 +1020,9 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { monto: 500000 } })
       .mockResolvedValueOnce({ _sum: { monto: 0 } })
       .mockResolvedValueOnce({ _sum: { monto: 0 } });
-    prisma.caja.aggregate
-      .mockResolvedValueOnce({ _sum: { saldoActual: 500000 } }); // saldo total cajas
+    prisma.caja.aggregate.mockResolvedValueOnce({
+      _sum: { saldoActual: 500000 },
+    }); // saldo total cajas
     prisma.caja.count
       .mockResolvedValueOnce(5) // total rutas
       .mockResolvedValueOnce(3) // rutas abiertas
@@ -1030,7 +1122,7 @@ describe('AccountingService financial ledger controls', () => {
     );
   });
 
-  it('deja un gasto operativo sin comprobante en aprobación pendiente sin crear ledger ni transacción', async () => {
+  it('registra el egreso de un gasto provisional aunque la aprobación quede pendiente', async () => {
     const prisma = buildPrismaMock();
 
     const result = await makeService(prisma).registrarGasto({
@@ -1043,7 +1135,7 @@ describe('AccountingService financial ledger controls', () => {
       esPersonal: false,
     });
 
-    expect(prisma.aprobacion.create).toHaveBeenCalledWith(
+    expect(prisma._tx.aprobacion.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           estado: EstadoAprobacion.PENDIENTE,
@@ -1051,8 +1143,17 @@ describe('AccountingService financial ledger controls', () => {
         }),
       }),
     );
-    expect(prisma.$transaction).not.toHaveBeenCalled();
-    expect(mockLedger.registrarAsiento).not.toHaveBeenCalled();
+    // El dinero ya salió de la caja del cobrador, así que el egreso se registra
+    // de una vez; lo que queda pendiente es la aprobación, no el movimiento.
+    expect(prisma._tx.transaccion.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          tipo: 'EGRESO',
+          tipoReferencia: 'GASTO_PROVISIONAL',
+          monto: 25000,
+        }),
+      }),
+    );
     expect(result).toMatchObject({ success: true, approvalId: 'approval-1' });
   });
 
@@ -1069,7 +1170,7 @@ describe('AccountingService financial ledger controls', () => {
       esPersonal: false,
     });
 
-    expect(prisma.aprobacion.create).toHaveBeenCalledWith(
+    expect(prisma._tx.aprobacion.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           datosSolicitud: expect.objectContaining({
@@ -1143,7 +1244,7 @@ describe('AccountingService financial ledger controls', () => {
       approvalId: 'approval-existente-1',
       idempotentReplay: true,
     });
-    expect(prisma.aprobacion.create).not.toHaveBeenCalled();
+    expect(prisma._tx.aprobacion.create).not.toHaveBeenCalled();
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 

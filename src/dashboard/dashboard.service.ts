@@ -356,32 +356,31 @@ export class DashboardService {
         ) {
           // Calcular eficiencia operativa real: pagos de cuotas / meta de cuotas.
           // La cuota inicial es entrada de caja, no recaudo operativo de ruta.
-          const [metaCobroRes, pagosRes] =
-            await Promise.all([
-              this.prisma.cuota.aggregate({
-                where: {
-                  fechaVencimiento: { gte: startDate, lte: endDate },
-                  prestamo: {
-                    cliente: {
-                      asignacionesRuta: {
-                        some: {
-                          cobradorId: item.cobradorId,
-                          activa: true,
-                        },
+          const [metaCobroRes, pagosRes] = await Promise.all([
+            this.prisma.cuota.aggregate({
+              where: {
+                fechaVencimiento: { gte: startDate, lte: endDate },
+                prestamo: {
+                  cliente: {
+                    asignacionesRuta: {
+                      some: {
+                        cobradorId: item.cobradorId,
+                        activa: true,
                       },
                     },
                   },
                 },
-                _sum: { monto: true },
-              }),
-              this.prisma.pago.aggregate({
-                where: {
-                  cobradorId: item.cobradorId,
-                  fechaPago: { gte: startDate, lte: endDate },
-                },
-                _sum: { montoTotal: true },
-              }),
-            ]);
+              },
+              _sum: { monto: true },
+            }),
+            this.prisma.pago.aggregate({
+              where: {
+                cobradorId: item.cobradorId,
+                fechaPago: { gte: startDate, lte: endDate },
+              },
+              _sum: { montoTotal: true },
+            }),
+          ]);
 
           const montoMeta = Number(metaCobroRes._sum.monto || 0);
           const collected = Number(pagosRes._sum.montoTotal || 0);
@@ -849,10 +848,12 @@ export class DashboardService {
 
   private async getLedgerCobranzaWhere(startDate: Date, endDate: Date) {
     // First get all regularized pago ids
-    const regularizedPagoIds = await this.prisma.pago.findMany({
-      where: { origenGestion: 'CIERRE_PENDIENTE' },
-      select: { id: true },
-    }).then((pagos) => pagos.map((p) => p.id));
+    const regularizedPagoIds = await this.prisma.pago
+      .findMany({
+        where: { origenGestion: 'CIERRE_PENDIENTE' },
+        select: { id: true },
+      })
+      .then((pagos) => pagos.map((p) => p.id));
 
     return {
       OR: [

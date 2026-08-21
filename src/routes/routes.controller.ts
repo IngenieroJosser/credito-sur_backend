@@ -505,7 +505,10 @@ export class RoutesController {
     type: Number,
     description: 'Cantidad maxima de registros a devolver',
   })
-  @ApiResponse({ status: 200, description: 'Historial de visitas obtenido exitosamente' })
+  @ApiResponse({
+    status: 200,
+    description: 'Historial de visitas obtenido exitosamente',
+  })
   getHistorialVisitasCliente(
     @Param('clienteId', ParseUUIDPipe) clienteId: string,
     @Query('estadoVisita') estadoVisita: string | undefined,

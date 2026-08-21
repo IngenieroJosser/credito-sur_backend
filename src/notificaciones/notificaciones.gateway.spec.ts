@@ -6,57 +6,54 @@ describe('NotificacionesGateway', () => {
     routesService?: any;
     notificacionesService?: any;
   }) => {
-    const notificacionesService =
-      overrides?.notificacionesService || {
-        notifyApprovers: jest.fn(),
-      };
-    const prisma =
-      overrides?.prisma || {
-        caja: {
-          findFirst: jest.fn().mockResolvedValue({
-            id: 'caja-ruta-1',
-            rutaId: 'ruta-1',
-            responsableId: 'cobrador-1',
-            saldoActual: 6020669,
-          }),
-        },
-        usuario: {
-          findUnique: jest.fn().mockResolvedValue({
-            id: 'cobrador-1',
-            rol: 'COBRADOR',
-          }),
-        },
-        transaccion: {
-          findFirst: jest.fn().mockResolvedValue(null),
-          create: jest.fn().mockResolvedValue({ id: 'trx-1' }),
-        },
-        rutaJornada: {
-          upsert: jest.fn().mockResolvedValue({ id: 'jornada-1' }),
-        },
-      };
-    const routesService =
-      overrides?.routesService || {
-        assertPuedeCerrarJornadaActual: jest.fn().mockResolvedValue(undefined),
-        getDailyVisits: jest.fn().mockResolvedValue({
-          resumen: {
-            meta: 1511998,
-            recaudo: 552001,
-            recaudoOperativo: 552001,
-            efectividad: 36.5,
-          },
-          visitas: [
-            { estadoGestion: 'PAGO_REGISTRADO', recaudadoDelDia: 425335 },
-            { estadoGestion: 'PAGO_REGISTRADO', recaudadoDelDia: 126666 },
-            { estadoGestion: 'PENDIENTE', recaudadoDelDia: 0 },
-          ],
+    const notificacionesService = overrides?.notificacionesService || {
+      notifyApprovers: jest.fn(),
+    };
+    const prisma = overrides?.prisma || {
+      caja: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'caja-ruta-1',
+          rutaId: 'ruta-1',
+          responsableId: 'cobrador-1',
+          saldoActual: 6020669,
         }),
-      };
+      },
+      usuario: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'cobrador-1',
+          rol: 'COBRADOR',
+        }),
+      },
+      transaccion: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'trx-1' }),
+      },
+      rutaJornada: {
+        upsert: jest.fn().mockResolvedValue({ id: 'jornada-1' }),
+      },
+    };
+    const routesService = overrides?.routesService || {
+      assertPuedeCerrarJornadaActual: jest.fn().mockResolvedValue(undefined),
+      getDailyVisits: jest.fn().mockResolvedValue({
+        resumen: {
+          meta: 1511998,
+          recaudo: 552001,
+          recaudoOperativo: 552001,
+          efectividad: 36.5,
+        },
+        visitas: [
+          { estadoGestion: 'PAGO_REGISTRADO', recaudadoDelDia: 425335 },
+          { estadoGestion: 'PAGO_REGISTRADO', recaudadoDelDia: 126666 },
+          { estadoGestion: 'PENDIENTE', recaudadoDelDia: 0 },
+        ],
+      }),
+    };
 
     return {
       gateway: new NotificacionesGateway(
-        notificacionesService as any,
-        prisma as any,
-        routesService as any,
+        notificacionesService,
+        prisma,
+        routesService,
       ),
       notificacionesService,
       prisma,
@@ -116,7 +113,9 @@ describe('NotificacionesGateway', () => {
     );
     expect(notificacionesService.notifyApprovers).toHaveBeenCalledWith(
       expect.objectContaining({
-        mensaje: expect.stringContaining('Recaudo Final: $552.001 (36.5% META)'),
+        mensaje: expect.stringContaining(
+          'Recaudo Final: $552.001 (36.5% META)',
+        ),
         metadata: expect.objectContaining({
           rutaId: 'ruta-1',
           recaudoFinal: 552001,

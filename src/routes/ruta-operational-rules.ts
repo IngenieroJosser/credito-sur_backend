@@ -1,5 +1,7 @@
 export const normalizeUpper = (value: unknown): string =>
-  String(value ?? '').trim().toUpperCase();
+  String(value ?? '')
+    .trim()
+    .toUpperCase();
 
 const operativeCuotaStates = new Set([
   'PENDIENTE',
@@ -156,9 +158,8 @@ export const resolveCuotaObjetivoOperativa = (
           getCuotaFechaEfectivaKeyRuta(b),
         ),
       )
-      .find((cuota) =>
-        isCuotaOperativaParaFechaRuta(cuota, fechaOperativa),
-      ) || null
+      .find((cuota) => isCuotaOperativaParaFechaRuta(cuota, fechaOperativa)) ||
+    null
   );
 };
 

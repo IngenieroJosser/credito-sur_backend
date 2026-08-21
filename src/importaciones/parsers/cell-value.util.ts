@@ -23,7 +23,9 @@ export function leerValorCelda(valor: any): any {
 
     // Texto enriquecido.
     if (Array.isArray(valor.richText)) {
-      return valor.richText.map((parte: any) => String(parte?.text ?? '')).join('');
+      return valor.richText
+        .map((parte: any) => String(parte?.text ?? ''))
+        .join('');
     }
 
     // Hipervínculo.
@@ -68,7 +70,8 @@ export function leerNumero(valor: any): number | null {
   // Tolera formatos escritos a mano: "$ 1.200.000", "1,200,000", "1.200.000,50"
   const sinMoneda = texto.replace(/[$\s]/g, '');
   const normalizado =
-    sinMoneda.includes(',') && sinMoneda.lastIndexOf(',') > sinMoneda.lastIndexOf('.')
+    sinMoneda.includes(',') &&
+    sinMoneda.lastIndexOf(',') > sinMoneda.lastIndexOf('.')
       ? sinMoneda.replace(/\./g, '').replace(',', '.')
       : sinMoneda.replace(/,/g, '');
 
@@ -80,7 +83,8 @@ export function leerNumero(valor: any): number | null {
 export function leerFecha(valor: any): Date | null {
   const limpio = leerValorCelda(valor);
   if (limpio === null || limpio === undefined || limpio === '') return null;
-  if (limpio instanceof Date) return Number.isNaN(limpio.getTime()) ? null : limpio;
+  if (limpio instanceof Date)
+    return Number.isNaN(limpio.getTime()) ? null : limpio;
 
   if (typeof limpio === 'number') {
     // Serial de Excel (días desde 1899-12-30).

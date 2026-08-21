@@ -184,7 +184,8 @@ export class AccountingService {
       return existente;
     }
 
-    const nombreSupervisor = `${supervisor.nombres} ${supervisor.apellidos}`.trim();
+    const nombreSupervisor =
+      `${supervisor.nombres} ${supervisor.apellidos}`.trim();
     const codigoCaja = `CAJA-SUP-${supervisorId.slice(0, 8).toUpperCase()}`;
     const nombreCaja = `Caja Supervisor - ${nombreSupervisor}`;
 
@@ -237,7 +238,9 @@ export class AccountingService {
       where: {
         id: rutaId,
         eliminadoEn: null,
-        ...(rol === 'SUPERVISOR' && actor?.id ? { supervisorId: actor.id } : {}),
+        ...(rol === 'SUPERVISOR' && actor?.id
+          ? { supervisorId: actor.id }
+          : {}),
       },
       select: {
         id: true,
@@ -692,113 +695,119 @@ export class AccountingService {
     // Afecta caja inmediatamente, pendiente de aprobación para reclasificación contable
     if (!data.esPersonal) {
       try {
-        const { gastoId, approvalId } = await this.prisma.$transaction(async (tx) => {
-          // 1. Crear Gasto como PROVISIONAL (PENDIENTE de aprobación)
-          const newGasto = await tx.gasto.create({
-            data: {
-              numeroGasto: `G${Date.now()}-${randomUUID().slice(0, 8)}`,
-              idempotencyKey,
-              rutaId,
-              cobradorId,
-              cajaId: cajaRuta.id,
-              tipoGasto: 'OPERATIVO',
-              monto: data.monto,
-              descripcion: data.descripcion,
-              fotoRecibo: comprobanteGasto,
-              categoriaId: data.categoriaId || undefined,
-              estadoAprobacion: EstadoAprobacion.PENDIENTE,
-              esProvisional: true,
-              aplicadoEnCaja: true,
-            },
-          });
-
-          // 2. Crear Aprobación pendiente
-          const aprobacion = await tx.aprobacion.create({
-            data: {
-              tipoAprobacion: data.tipoAprobacion ?? TipoAprobacion.GASTO,
-              idempotencyKey,
-              referenciaId: newGasto.id,
-              tablaReferencia: 'Gasto',
-              solicitadoPorId: data.solicitadoPorId,
-              estado: EstadoAprobacion.PENDIENTE,
-              datosSolicitud: {
+        const { gastoId, approvalId } = await this.prisma.$transaction(
+          async (tx) => {
+            // 1. Crear Gasto como PROVISIONAL (PENDIENTE de aprobación)
+            const newGasto = await tx.gasto.create({
+              data: {
+                numeroGasto: `G${Date.now()}-${randomUUID().slice(0, 8)}`,
+                idempotencyKey,
                 rutaId,
                 cobradorId,
                 cajaId: cajaRuta.id,
                 tipoGasto: 'OPERATIVO',
                 monto: data.monto,
                 descripcion: data.descripcion,
-                categoriaId: data.categoriaId,
                 fotoRecibo: comprobanteGasto,
+                categoriaId: data.categoriaId || undefined,
+                estadoAprobacion: EstadoAprobacion.PENDIENTE,
                 esProvisional: true,
-                idempotencyKey: idempotencyKey || null,
+                aplicadoEnCaja: true,
               },
-              montoSolicitud: data.monto,
-            },
-          });
+            });
 
-          // 3. Registrar egreso en caja (el dinero ya salió de la caja del cobrador)
-          await tx.transaccion.create({
-            data: {
-              numeroTransaccion: this.generarNumeroTransaccion('GTRX'),
-              idempotencyKey: idempotencyKey
-                ? `${idempotencyKey}:trx`
-                : undefined,
-              cajaId: cajaRuta.id,
-              tipo: TipoTransaccion.EGRESO,
-              monto: data.monto,
-              descripcion: `Gasto provisional: ${data.descripcion}`,
-              creadoPorId: data.solicitadoPorId,
-              tipoReferencia: 'GASTO_PROVISIONAL',
-              referenciaId: `PROVISIONAL:${newGasto.id}`,
-            },
-          });
-
-          // 3.5. Validar cuentas contables requeridas antes del asiento
-          const cuentasRequeridas = ['1.6.1', '1.2.1']
-
-          const cuentasExistentes = await (tx as any).account.findMany({
-            where: {
-              code: { in: cuentasRequeridas },
-              isActive: true,
-            },
-            select: { code: true },
-          })
-
-          const existentes = new Set(cuentasExistentes.map((c: any) => c.code))
-          const faltantes = cuentasRequeridas.filter((code) => !existentes.has(code))
-
-          if (faltantes.length > 0) {
-            throw new BadRequestException(
-              `Faltan cuentas contables requeridas para registrar gasto provisional: ${faltantes.join(', ')}`,
-            )
-          }
-
-          // 4. Registrar asiento contable en cuenta puente (Gastos por legalizar)
-          await this.ledgerService.registrarAsiento(
-            {
-              referenceType: 'GASTO',
-              referenceId: `PROVISIONAL:${newGasto.id}`,
-              description: `Gasto provisional: ${data.descripcion}`,
-              createdBy: data.solicitadoPorId,
-              lines: [
-                {
-                  accountCode: '1.6.1', // Gastos por legalizar (cuenta puente)
-                  debitAmount: Number(data.monto),
-                },
-                {
-                  accountCode: '1.2.1', // Caja Ruta
-                  creditAmount: Number(data.monto),
+            // 2. Crear Aprobación pendiente
+            const aprobacion = await tx.aprobacion.create({
+              data: {
+                tipoAprobacion: data.tipoAprobacion ?? TipoAprobacion.GASTO,
+                idempotencyKey,
+                referenciaId: newGasto.id,
+                tablaReferencia: 'Gasto',
+                solicitadoPorId: data.solicitadoPorId,
+                estado: EstadoAprobacion.PENDIENTE,
+                datosSolicitud: {
+                  rutaId,
+                  cobradorId,
                   cajaId: cajaRuta.id,
-                  cajaDelta: -Number(data.monto),
+                  tipoGasto: 'OPERATIVO',
+                  monto: data.monto,
+                  descripcion: data.descripcion,
+                  categoriaId: data.categoriaId,
+                  fotoRecibo: comprobanteGasto,
+                  esProvisional: true,
+                  idempotencyKey: idempotencyKey || null,
                 },
-              ],
-            },
-            tx,
-          );
+                montoSolicitud: data.monto,
+              },
+            });
 
-          return { gastoId: newGasto.id, approvalId: aprobacion.id };
-        });
+            // 3. Registrar egreso en caja (el dinero ya salió de la caja del cobrador)
+            await tx.transaccion.create({
+              data: {
+                numeroTransaccion: this.generarNumeroTransaccion('GTRX'),
+                idempotencyKey: idempotencyKey
+                  ? `${idempotencyKey}:trx`
+                  : undefined,
+                cajaId: cajaRuta.id,
+                tipo: TipoTransaccion.EGRESO,
+                monto: data.monto,
+                descripcion: `Gasto provisional: ${data.descripcion}`,
+                creadoPorId: data.solicitadoPorId,
+                tipoReferencia: 'GASTO_PROVISIONAL',
+                referenciaId: `PROVISIONAL:${newGasto.id}`,
+              },
+            });
+
+            // 3.5. Validar cuentas contables requeridas antes del asiento
+            const cuentasRequeridas = ['1.6.1', '1.2.1'];
+
+            const cuentasExistentes = await tx.account.findMany({
+              where: {
+                code: { in: cuentasRequeridas },
+                isActive: true,
+              },
+              select: { code: true },
+            });
+
+            const existentes = new Set(
+              cuentasExistentes.map((c: any) => c.code),
+            );
+            const faltantes = cuentasRequeridas.filter(
+              (code) => !existentes.has(code),
+            );
+
+            if (faltantes.length > 0) {
+              throw new BadRequestException(
+                `Faltan cuentas contables requeridas para registrar gasto provisional: ${faltantes.join(', ')}`,
+              );
+            }
+
+            // 4. Registrar asiento contable en cuenta puente (Gastos por legalizar)
+            await this.ledgerService.registrarAsiento(
+              {
+                referenceType: 'GASTO',
+                referenceId: `PROVISIONAL:${newGasto.id}`,
+                description: `Gasto provisional: ${data.descripcion}`,
+                createdBy: data.solicitadoPorId,
+                lines: [
+                  {
+                    accountCode: '1.6.1', // Gastos por legalizar (cuenta puente)
+                    debitAmount: Number(data.monto),
+                  },
+                  {
+                    accountCode: '1.2.1', // Caja Ruta
+                    creditAmount: Number(data.monto),
+                    cajaId: cajaRuta.id,
+                    cajaDelta: -Number(data.monto),
+                  },
+                ],
+              },
+              tx,
+            );
+
+            return { gastoId: newGasto.id, approvalId: aprobacion.id };
+          },
+        );
 
         // Notificar aprobadores (no bloqueante)
         try {
@@ -850,7 +859,8 @@ export class AccountingService {
           await this.notificacionesService.create({
             usuarioId: data.solicitadoPorId,
             titulo: 'Gasto provisional registrado',
-            mensaje: 'Tu gasto fue registrado, descontado de caja y enviado a revisión.',
+            mensaje:
+              'Tu gasto fue registrado, descontado de caja y enviado a revisión.',
             tipo: 'INFORMATIVO',
             entidad: 'Aprobacion',
             entidadId: approvalId,
@@ -881,14 +891,14 @@ export class AccountingService {
         };
       } catch (error) {
         const message =
-          error instanceof Error ? error.message : JSON.stringify(error)
+          error instanceof Error ? error.message : JSON.stringify(error);
 
         this.logger.error(
           '[GASTO_PROVISIONAL] Error registrando gasto',
           error instanceof Error ? error.stack : JSON.stringify(error),
-        )
+        );
 
-        throw new BadRequestException(`[GASTO_PROVISIONAL] ${message}`)
+        throw new BadRequestException(`[GASTO_PROVISIONAL] ${message}`);
       }
     }
   }
@@ -1073,9 +1083,7 @@ export class AccountingService {
         (data.tipo === 'PRINCIPAL' || data.tipo === 'RUTA') &&
         !rolesPermitidosCrearCaja.includes(currentUser.rol)
       ) {
-        throw new ForbiddenException(
-          'No tienes permisos para crear cajas.',
-        );
+        throw new ForbiddenException('No tienes permisos para crear cajas.');
       }
 
       // 2. Validar que el responsable exista
@@ -1351,7 +1359,10 @@ export class AccountingService {
     ]);
 
     const pagoIds = entries
-      .filter((entry: any) => String(entry.referenceType || '').toUpperCase() === 'PAGO')
+      .filter(
+        (entry: any) =>
+          String(entry.referenceType || '').toUpperCase() === 'PAGO',
+      )
       .map((entry: any) => String(entry.referenceId || '').trim())
       .filter(Boolean);
     const pagosRegularizados = pagoIds.length
@@ -1369,10 +1380,12 @@ export class AccountingService {
       : [];
     const pagoRegularizadoPorId = new Map<
       string,
-      { id: string; origenGestion: string | null; fechaOperativaRuta: string | null }
-    >(
-      pagosRegularizados.map((p: any) => [p.id, p]),
-    );
+      {
+        id: string;
+        origenGestion: string | null;
+        fechaOperativaRuta: string | null;
+      }
+    >(pagosRegularizados.map((p: any) => [p.id, p]));
 
     const data = entries.map((entry: any) => {
       const pagoRegularizado = pagoRegularizadoPorId.get(entry.referenceId);
@@ -1853,9 +1866,16 @@ export class AccountingService {
 
     gastos.forEach((g) => {
       const monto = Number(g.monto);
-      if (g.estadoAprobacion === 'APROBADO' && g.resultadoRevisionGasto === 'APROBADO_OPERATIVO') {
+      if (
+        g.estadoAprobacion === 'APROBADO' &&
+        g.resultadoRevisionGasto === 'APROBADO_OPERATIVO'
+      ) {
         gastosAprobados += monto;
-      } else if (g.estadoAprobacion === 'PENDIENTE' && g.esProvisional === true && g.aplicadoEnCaja === true) {
+      } else if (
+        g.estadoAprobacion === 'PENDIENTE' &&
+        g.esProvisional === true &&
+        g.aplicadoEnCaja === true
+      ) {
         gastosPendientes += monto;
       }
     });
@@ -2049,9 +2069,16 @@ export class AccountingService {
 
     gastos.forEach((g) => {
       const monto = Number(g.monto);
-      if (g.estadoAprobacion === 'APROBADO' && g.resultadoRevisionGasto === 'APROBADO_OPERATIVO') {
+      if (
+        g.estadoAprobacion === 'APROBADO' &&
+        g.resultadoRevisionGasto === 'APROBADO_OPERATIVO'
+      ) {
         gastosAprobados += monto;
-      } else if (g.estadoAprobacion === 'PENDIENTE' && g.esProvisional === true && g.aplicadoEnCaja === true) {
+      } else if (
+        g.estadoAprobacion === 'PENDIENTE' &&
+        g.esProvisional === true &&
+        g.aplicadoEnCaja === true
+      ) {
         gastosPendientes += monto;
       }
     });
@@ -2398,7 +2425,9 @@ export class AccountingService {
         destino: cajaDestino.nombre,
         monto: Number(existingTrxOut.monto),
         numeroRef: existingTrxOut.referenciaId,
-        transacciones: existingTrxIn ? [existingTrxOut.id, existingTrxIn.id] : [existingTrxOut.id],
+        transacciones: existingTrxIn
+          ? [existingTrxOut.id, existingTrxIn.id]
+          : [existingTrxOut.id],
         idempotente: true,
       };
     }
@@ -2818,7 +2847,10 @@ export class AccountingService {
         _sum: { debitAmount: true },
       }),
       this.prisma.journalLine.aggregate({
-        where: ledgerCobranzaNoRegularizadaWhere(ledgerInicioAnterior, ledgerFinAnterior),
+        where: ledgerCobranzaNoRegularizadaWhere(
+          ledgerInicioAnterior,
+          ledgerFinAnterior,
+        ),
         _sum: { debitAmount: true },
       }),
       this.prisma.journalLine.aggregate({
@@ -2844,7 +2876,9 @@ export class AccountingService {
         where: { activa: true },
         _sum: { saldoActual: true },
       }),
-      this.prisma.caja.count({ where: { tipo: 'RUTA', activa: true, rutaId: { not: null } } }),
+      this.prisma.caja.count({
+        where: { tipo: 'RUTA', activa: true, rutaId: { not: null } },
+      }),
       this.prisma.caja.count({
         where: {
           tipo: 'RUTA',
@@ -2946,7 +2980,9 @@ export class AccountingService {
       Number(costosHoyLedger._sum.debitAmount || 0) -
       Number(costosHoyLedger._sum.creditAmount || 0);
     const cobranzaLedger = Number(cobranzaHoyLedger._sum.debitAmount || 0);
-    const cobranzaAyerLedgerVal = Number(cobranzaAyerLedger._sum.debitAmount || 0);
+    const cobranzaAyerLedgerVal = Number(
+      cobranzaAyerLedger._sum.debitAmount || 0,
+    );
     const ingresosCajaAyerLedgerVal = Number(
       ingresosCajaAyerLedger?._sum?.debitAmount || 0,
     );
@@ -3159,11 +3195,17 @@ export class AccountingService {
     const orTransaccion: any[] = [];
     const tipo = filtros?.tipo;
     if (!tipo || tipo === undefined) {
-      orTransaccion.push({ tipoReferencia: 'CONSOLIDACION', tipo: 'TRANSFERENCIA' });
+      orTransaccion.push({
+        tipoReferencia: 'CONSOLIDACION',
+        tipo: 'TRANSFERENCIA',
+      });
       orTransaccion.push({ tipoReferencia: 'ARQUEO' });
       orTransaccion.push({ tipoReferencia: 'CIERRE_RUTA' });
     } else if (tipo === 'CONSOLIDACION') {
-      orTransaccion.push({ tipoReferencia: 'CONSOLIDACION', tipo: 'TRANSFERENCIA' });
+      orTransaccion.push({
+        tipoReferencia: 'CONSOLIDACION',
+        tipo: 'TRANSFERENCIA',
+      });
     }
     whereTransaccion.OR = orTransaccion;
     if (filtros?.cajaId) {
@@ -3192,17 +3234,19 @@ export class AccountingService {
         orderBy: { fechaTransaccion: 'desc' },
         take: 100,
       }),
-      (tipo === undefined || tipo === 'ARQUEO') ? this.prisma.arqueoCaja.findMany({
-        where: whereArqueo,
-        include: {
-          caja: true,
-          responsable: { select: { nombres: true, apellidos: true } },
-          creadoPor: { select: { nombres: true, apellidos: true } },
-          recibidoPor: { select: { nombres: true, apellidos: true } },
-        },
-        orderBy: { creadoEn: 'desc' },
-        take: 100,
-      }) : [],
+      tipo === undefined || tipo === 'ARQUEO'
+        ? this.prisma.arqueoCaja.findMany({
+            where: whereArqueo,
+            include: {
+              caja: true,
+              responsable: { select: { nombres: true, apellidos: true } },
+              creadoPor: { select: { nombres: true, apellidos: true } },
+              recibidoPor: { select: { nombres: true, apellidos: true } },
+            },
+            orderBy: { creadoEn: 'desc' },
+            take: 100,
+          })
+        : [],
     ]);
 
     let mapped: any[] = [];
@@ -3313,15 +3357,26 @@ export class AccountingService {
         fechaOperativa: a.fechaOperativa,
         caja: a.caja.nombre,
         cajaTipo: a.caja.tipo,
-        responsable: a.responsable ? `${a.responsable.nombres} ${a.responsable.apellidos}` : null,
-        creadoPor: a.creadoPor ? `${a.creadoPor.nombres} ${a.creadoPor.apellidos}` : null,
-        recibidoPor: a.recibidoPor ? `${a.recibidoPor.nombres} ${a.recibidoPor.apellidos}` : null,
+        responsable: a.responsable
+          ? `${a.responsable.nombres} ${a.responsable.apellidos}`
+          : null,
+        creadoPor: a.creadoPor
+          ? `${a.creadoPor.nombres} ${a.creadoPor.apellidos}`
+          : null,
+        recibidoPor: a.recibidoPor
+          ? `${a.recibidoPor.nombres} ${a.recibidoPor.apellidos}`
+          : null,
         saldoEsperado: Number(a.saldoEsperado),
         efectivoContado: Number(a.efectivoContado),
         diferencia: Number(a.diferencia),
         montoTransferido: Number(a.montoTransferido),
         tipoDiferencia: a.tipoDiferencia,
-        estado: a.estado === 'CONFIRMADO' ? (Number(a.diferencia) === 0 ? 'CUADRADA' : 'DESCUADRADA') : 'PENDIENTE',
+        estado:
+          a.estado === 'CONFIRMADO'
+            ? Number(a.diferencia) === 0
+              ? 'CUADRADA'
+              : 'DESCUADRADA'
+            : 'PENDIENTE',
         descripcion: a.observaciones || 'Arqueo de caja',
         tipo: 'ARQUEO',
         numeroComprobanteTraslado: a.numeroComprobanteTraslado,
@@ -3345,9 +3400,11 @@ export class AccountingService {
     });
 
     // Merge and sort by date descending
-    mapped = [...mapped, ...mappedArqueos].sort((a, b) => {
-      return new Date(b.fecha).getTime() - new Date(a.fecha).getTime();
-    }).slice(0, 200);
+    mapped = [...mapped, ...mappedArqueos]
+      .sort((a, b) => {
+        return new Date(b.fecha).getTime() - new Date(a.fecha).getTime();
+      })
+      .slice(0, 200);
 
     // Filtro opcional por estado
     if (filtros?.estado) {
@@ -4031,7 +4088,7 @@ export class AccountingService {
       },
     });
 
-    const activeCajaIds = new Set(cajasRuta.map(c => c.id));
+    const activeCajaIds = new Set(cajasRuta.map((c) => c.id));
     const processedReferences = new Set<string>();
     const cajasProcesadas = new Set<string>();
 
@@ -4044,7 +4101,11 @@ export class AccountingService {
       let esFormatoCierre = false;
       let saldoAlCierre = 0;
 
-      if (isCierreRuta && trx.referenciaId && cierreIdsConDeuda.has(trx.referenciaId)) {
+      if (
+        isCierreRuta &&
+        trx.referenciaId &&
+        cierreIdsConDeuda.has(trx.referenciaId)
+      ) {
         continue; // Omitir el cierre de ruta redundante si ya existe una DEUDA_COBRADOR correspondiente
       }
 
@@ -4101,14 +4162,15 @@ export class AccountingService {
 
       const delta = isAbono ? -montoDeuda : montoDeuda;
       const prev = ensureDebt(cobradorId);
-      
+
       // Si pertenece a una caja activa de ruta, el saldo actual de esa caja se sumará al final en tiempo real.
       // Así evitamos duplicar la deuda acumulada de esa caja.
-      const omitirDeudaAcumulada = !isAbono && esFormatoCierre && activeCajaIds.has(trx.cajaId);
+      const omitirDeudaAcumulada =
+        !isAbono && esFormatoCierre && activeCajaIds.has(trx.cajaId);
       if (!omitirDeudaAcumulada) {
         prev.descuadres += delta;
       }
-      
+
       prev.totalEventos += 1;
       deudaMap.set(cobradorId, prev);
 
@@ -4126,7 +4188,7 @@ export class AccountingService {
     }
 
     const cobradorIds = [...deudaMap.keys()];
-    
+
     const saldosCajasMap = new Map<string, number>();
     for (const caja of cajasRuta) {
       const cid =
@@ -4157,7 +4219,7 @@ export class AccountingService {
       .map(([cobradorId, deuda]) => {
         const cobrador: any = cobradorMap.get(cobradorId);
         const saldoCajaActual = saldosCajasMap.get(cobradorId) || 0;
-        
+
         // Deuda real solo viene de ledger 1.4.x y eventos DEUDA_COBRADOR/ABONO_DEUDA/CIERRE_RUTA
         // NO incluye saldo de caja actual (eso es efectivo bajo custodia, no deuda)
         const descuadres = Math.max(
@@ -4170,7 +4232,7 @@ export class AccountingService {
         );
         const deudaReal = descuadres + gastosPersonales;
         const efectivoBajoCustodia = saldoCajaActual;
-        
+
         return {
           cobradorId,
           nombreCobrador: cobrador
@@ -4185,8 +4247,16 @@ export class AccountingService {
           eventos: (eventosMap.get(cobradorId) || []).slice(0, 25),
         };
       })
-      .filter((d) => Number(d.totalDeuda || 0) > 0 || Number(d.efectivoBajoCustodia || 0) > 0)
-      .sort((a, b) => b.efectivoBajoCustodia - a.efectivoBajoCustodia || b.totalDeuda - a.totalDeuda);
+      .filter(
+        (d) =>
+          Number(d.totalDeuda || 0) > 0 ||
+          Number(d.efectivoBajoCustodia || 0) > 0,
+      )
+      .sort(
+        (a, b) =>
+          b.efectivoBajoCustodia - a.efectivoBajoCustodia ||
+          b.totalDeuda - a.totalDeuda,
+      );
   }
 
   /**

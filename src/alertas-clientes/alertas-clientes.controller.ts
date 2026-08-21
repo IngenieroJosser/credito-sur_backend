@@ -34,10 +34,7 @@ export class AlertasClientesController {
     RolUsuario.SUPERVISOR,
   )
   @ApiOperation({ summary: 'Reportar cliente no ubicado' })
-  reportarClienteNoUbicado(
-    @Body() dto: CrearAlertaClienteDto,
-    @Request() req,
-  ) {
+  reportarClienteNoUbicado(@Body() dto: CrearAlertaClienteDto, @Request() req) {
     return this.service.reportarClienteNoUbicado(dto, req.user);
   }
 
@@ -74,7 +71,9 @@ export class AlertasClientesController {
     RolUsuario.SUPERVISOR,
     RolUsuario.COBRADOR,
   )
-  @ApiOperation({ summary: 'Obtener detalle completo de una alerta de cliente' })
+  @ApiOperation({
+    summary: 'Obtener detalle completo de una alerta de cliente',
+  })
   obtenerDetalle(@Param('id') id: string) {
     return this.service.obtenerDetalleAlerta(id);
   }

@@ -45,7 +45,9 @@ function makeService(prisma: any) {
       }
     }
     if (!prisma.$transaction) {
-      prisma.$transaction = jest.fn().mockImplementation((cb: any) => cb(prisma));
+      prisma.$transaction = jest
+        .fn()
+        .mockImplementation((cb: any) => cb(prisma));
     }
     if (!prisma.cuota) {
       prisma.cuota = {
@@ -153,7 +155,10 @@ function buildCreateLoanPrismaMock(rol: RolUsuario, overrides: any = {}) {
       }),
     },
     prestamo: {
-      findFirst: jest.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(null),
+      findFirst: jest
+        .fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null),
       create: jest.fn().mockResolvedValue(prestamoCreado),
     },
     aprobacion: {
@@ -384,7 +389,10 @@ describe('LoansService accounting impact for approved loans', () => {
               responsableId: 'supervisor-1',
             });
           }
-          if (where?.tipo === 'RUTA' && where?.rutaId === 'ruta-supervisada-1') {
+          if (
+            where?.tipo === 'RUTA' &&
+            where?.rutaId === 'ruta-supervisada-1'
+          ) {
             return Promise.resolve({
               id: 'caja-ruta-cobrador-1',
               codigo: 'CAJA-RUTA-001',
@@ -711,7 +719,10 @@ describe('LoansService accounting impact for approved loans', () => {
         }),
       },
       prestamo: {
-        findFirst: jest.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(null),
+        findFirst: jest
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce(null),
         create: jest.fn().mockResolvedValue({
           id: 'prestamo-1',
           numeroPrestamo: 'PRES-000001',
@@ -795,7 +806,10 @@ describe('LoansService accounting impact for approved loans', () => {
         }),
       },
       prestamo: {
-        findFirst: jest.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(null),
+        findFirst: jest
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce(null),
         create: jest.fn().mockResolvedValue({
           id: 'prestamo-1',
           numeroPrestamo: 'PRES-000001',
@@ -921,7 +935,10 @@ describe('LoansService accounting impact for approved loans', () => {
         }),
       },
       prestamo: {
-        findFirst: jest.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(null),
+        findFirst: jest
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce(null),
         create: jest.fn().mockResolvedValue({
           id: 'prestamo-1',
           numeroPrestamo: 'PRES-000001',
@@ -1077,10 +1094,13 @@ describe('LoansService accounting impact for approved loans', () => {
         }),
       },
       prestamo: {
-        findFirst: jest.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(null),
-        create: jest.fn().mockRejectedValue(
-          new Error('prestamo creado fuera de transaccion'),
-        ),
+        findFirst: jest
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce(null),
+        create: jest
+          .fn()
+          .mockRejectedValue(new Error('prestamo creado fuera de transaccion')),
       },
     };
 
@@ -1209,7 +1229,10 @@ describe('LoansService accounting impact for approved loans', () => {
         }),
       },
       prestamo: {
-        findFirst: jest.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(null),
+        findFirst: jest
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce(null),
       },
     };
 
@@ -1285,7 +1308,10 @@ describe('LoansService accounting impact for approved loans', () => {
         }),
       },
       prestamo: {
-        findFirst: jest.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(null),
+        findFirst: jest
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce(null),
         create: jest.fn().mockResolvedValue({
           id: 'prestamo-1',
           numeroPrestamo: 'PRES-000001',
@@ -1393,7 +1419,10 @@ describe('LoansService accounting impact for approved loans', () => {
         }),
       },
       prestamo: {
-        findFirst: jest.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(null),
+        findFirst: jest
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce(null),
         create: jest.fn().mockResolvedValue({
           id: 'prestamo-1',
           numeroPrestamo: 'PRES-000001',
@@ -1930,12 +1959,15 @@ describe('LoansService calcularInteresPlano', () => {
   it('calcula interes plano correctamente para 5M, 10%, 12 cuotas', () => {
     const service = makeService(null);
     const result = (service as any).calcularInteresPlano(5000000, 10, 12);
-    
+
     expect(result.interesTotal).toBe(500000);
     expect(result.cuotaFija).toBe(458333);
     expect(result.tabla).toHaveLength(12);
-    
-    const totalCuotas = result.tabla.reduce((sum: number, c: any) => sum + c.monto, 0);
+
+    const totalCuotas = result.tabla.reduce(
+      (sum: number, c: any) => sum + c.monto,
+      0,
+    );
     expect(totalCuotas).toBe(5500000);
     expect(result.tabla[0].monto).toBe(458333);
     expect(result.tabla.at(-1)?.monto).toBe(458337);

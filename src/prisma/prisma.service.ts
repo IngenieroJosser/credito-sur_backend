@@ -28,17 +28,28 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
           async $allOperations({ operation, model, args, query }) {
             const isCajaBalanceMutation =
               model === 'Caja' &&
-              ['update', 'updateMany', 'upsert'].includes(operation as string) &&
+              ['update', 'updateMany', 'upsert'].includes(
+                operation as string,
+              ) &&
               (args as any)?.data &&
-              Object.prototype.hasOwnProperty.call((args as any).data, 'saldoActual');
+              Object.prototype.hasOwnProperty.call(
+                (args as any).data,
+                'saldoActual',
+              );
 
             if (isCajaBalanceMutation) {
               const saldoActual = (args as any).data.saldoActual;
               const esDeltaLedger =
                 saldoActual &&
                 typeof saldoActual === 'object' &&
-                (Object.prototype.hasOwnProperty.call(saldoActual, 'increment') ||
-                  Object.prototype.hasOwnProperty.call(saldoActual, 'decrement'));
+                (Object.prototype.hasOwnProperty.call(
+                  saldoActual,
+                  'increment',
+                ) ||
+                  Object.prototype.hasOwnProperty.call(
+                    saldoActual,
+                    'decrement',
+                  ));
 
               if (!esDeltaLedger) {
                 throw new BadRequestException(

@@ -167,6 +167,12 @@ function buildMockPrisma(overrides: Record<string, unknown> = {}) {
       update: jest.fn().mockResolvedValue({}),
     },
     asignacionRuta: { findFirst: jest.fn().mockResolvedValue(ASIGNACION_RUTA) },
+    // Un supervisor que registra un pago valida que la ruta sea suya.
+    ruta: {
+      findFirst: jest
+        .fn()
+        .mockResolvedValue({ id: 'ruta-1', cobradorId: 'cobrador-ruta' }),
+    },
     registroVisita: {
       upsert: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -246,17 +252,13 @@ describe('PaymentsService', () => {
   describe('isDomingoBogota', () => {
     it('detecta sábado antes de medianoche Bogotá aunque ya sea domingo UTC', () => {
       expect(
-        (service as any).isDomingoBogota(
-          new Date('2026-05-31T04:59:00.000Z'),
-        ),
+        (service as any).isDomingoBogota(new Date('2026-05-31T04:59:00.000Z')),
       ).toBe(false);
     });
 
     it('detecta domingo desde medianoche Bogotá', () => {
       expect(
-        (service as any).isDomingoBogota(
-          new Date('2026-05-31T05:00:00.000Z'),
-        ),
+        (service as any).isDomingoBogota(new Date('2026-05-31T05:00:00.000Z')),
       ).toBe(true);
     });
   });
@@ -498,20 +500,24 @@ describe('PaymentsService', () => {
       prisma.pago.findFirst.mockResolvedValueOnce(null);
 
       try {
-        await service.create({
-          prestamoId: 'prestamo-1',
-          cobradorId: 'cobrador-1',
-          montoTotal: 110000,
-          cuotaId: 'cuota-2',
-          cuotaNumeroEsperada: 2,
-          montoCuotaEsperado: 110000,
-          fechaOperativaRuta: '2026-05-27',
-          origenGestion: 'CIERRE_PENDIENTE',
-          rutaId: 'ruta-1',
-          notas: 'Recibido con nota administrativa',
-          idempotencyKey:
-            'CIERRE_PENDIENTE:ruta-1:2026-05-27:cliente-1:prestamo-1:cuota-2:1:PAGO:110000',
-        } as any, undefined, ACTOR_ADMIN);
+        await service.create(
+          {
+            prestamoId: 'prestamo-1',
+            cobradorId: 'cobrador-1',
+            montoTotal: 110000,
+            cuotaId: 'cuota-2',
+            cuotaNumeroEsperada: 2,
+            montoCuotaEsperado: 110000,
+            fechaOperativaRuta: '2026-05-27',
+            origenGestion: 'CIERRE_PENDIENTE',
+            rutaId: 'ruta-1',
+            notas: 'Recibido con nota administrativa',
+            idempotencyKey:
+              'CIERRE_PENDIENTE:ruta-1:2026-05-27:cliente-1:prestamo-1:cuota-2:1:PAGO:110000',
+          } as any,
+          undefined,
+          ACTOR_ADMIN,
+        );
       } finally {
         jest.useRealTimers();
       }
@@ -572,18 +578,22 @@ describe('PaymentsService', () => {
       prisma.pago.findFirst.mockResolvedValueOnce(null);
 
       try {
-        await service.create({
-          prestamoId: 'prestamo-1',
-          cobradorId: 'cobrador-1',
-          montoTotal: 110000,
-          cuotaId: 'cuota-2',
-          cuotaNumeroEsperada: 2,
-          montoCuotaEsperado: 110000,
-          fechaOperativaRuta: '2026-05-27',
-          origenGestion: 'CIERRE_PENDIENTE',
-          rutaId: 'ruta-1',
-          idempotencyKey: longKey,
-        } as any, undefined, ACTOR_ADMIN);
+        await service.create(
+          {
+            prestamoId: 'prestamo-1',
+            cobradorId: 'cobrador-1',
+            montoTotal: 110000,
+            cuotaId: 'cuota-2',
+            cuotaNumeroEsperada: 2,
+            montoCuotaEsperado: 110000,
+            fechaOperativaRuta: '2026-05-27',
+            origenGestion: 'CIERRE_PENDIENTE',
+            rutaId: 'ruta-1',
+            idempotencyKey: longKey,
+          } as any,
+          undefined,
+          ACTOR_ADMIN,
+        );
       } finally {
         jest.useRealTimers();
       }
@@ -722,7 +732,9 @@ describe('PaymentsService', () => {
       };
 
       prisma.prestamo.findFirst.mockResolvedValue(prestamoConResiduoCOP);
-      prisma._txMock.prestamo.findFirst.mockResolvedValue(prestamoConResiduoCOP);
+      prisma._txMock.prestamo.findFirst.mockResolvedValue(
+        prestamoConResiduoCOP,
+      );
 
       const resultado = await service.create({
         prestamoId: 'prestamo-1',
@@ -921,22 +933,29 @@ describe('PaymentsService', () => {
           }),
         }),
       );
+      // El movimiento entra a la caja de la ruta del cobrador, que es de quien
+      // es la plata. `creadoPorId` guarda quién ejecutó el registro —el admin—,
+      // porque es un dato de auditoría: quien registra no siempre es quien cobra.
       expect(prisma._txMock.transaccion.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
-            creadoPorId: 'cobrador-ruta',
+            creadoPorId: 'admin-1',
+            cajaId: 'caja-1',
           }),
         }),
       );
+      // El asiento se registra sobre la caja de la ruta, pero `createdBy` y la
+      // auditoría apuntan a quien ejecutó la acción, no a quien cobró.
       expect(mockLedgerService.registrarPago).toHaveBeenCalledWith(
         expect.objectContaining({
-          createdBy: 'cobrador-ruta',
+          createdBy: 'admin-1',
+          cajaRutaId: 'caja-1',
         }),
         expect.anything(),
       );
       expect(mockAuditService.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          usuarioId: 'cobrador-ruta',
+          usuarioId: 'admin-1',
         }),
       );
     });
@@ -957,7 +976,7 @@ describe('PaymentsService', () => {
       );
     });
 
-    it('reemplaza cualquier cobradorId enviado por roles de oficina con el cobrador real de la ruta activa', async () => {
+    it('ignora el cobradorId del body y atribuye el pago al supervisor que salió a cobrar', async () => {
       await service.create(
         {
           prestamoId: 'prestamo-1',
@@ -971,15 +990,24 @@ describe('PaymentsService', () => {
       expect(prisma._txMock.pago.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
-            cobradorId: 'cobrador-ruta',
+            cobradorId: 'supervisor-1',
           }),
         }),
       );
+      // El movimiento de caja queda a nombre del supervisor, que es quien
+      // recibió el dinero y quien responde por él al cierre. El dinero entra a
+      // su propia caja operativa, no a la de la ruta.
       expect(prisma._txMock.transaccion.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({
-            creadoPorId: 'cobrador-ruta',
-          }),
+          data: expect.objectContaining({ creadoPorId: 'supervisor-1' }),
+        }),
+      );
+
+      // Antes de aceptar el cobro se verifica que la ruta esté bajo su
+      // supervisión: un supervisor no puede cobrar en rutas ajenas.
+      expect(prisma._txMock.ruta.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ supervisorId: 'supervisor-1' }),
         }),
       );
     });
@@ -995,21 +1023,21 @@ describe('PaymentsService', () => {
         { id: 'cobrador-1', rol: RolUsuario.COBRADOR } as any,
       );
 
-      expect(prisma._txMock.asignacionRuta.findFirst).toHaveBeenCalledWith({
-        where: {
-          clienteId: 'cliente-1',
-          activa: true,
-          OR: [
-            { cobradorId: 'cobrador-1' },
-            { ruta: { cobradorId: 'cobrador-1' } },
-          ],
-        },
-        select: {
-          rutaId: true,
-          cobradorId: true,
-          ruta: { select: { cobradorId: true } },
-        },
-      });
+      // Lo que importa es el filtro: la asignación activa del cliente que
+      // corresponde a ese cobrador, sea directo o por la ruta. El `select` no
+      // se fija al detalle para que agregar un campo no rompa la prueba.
+      expect(prisma._txMock.asignacionRuta.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            clienteId: 'cliente-1',
+            activa: true,
+            OR: [
+              { cobradorId: 'cobrador-1' },
+              { ruta: { cobradorId: 'cobrador-1' } },
+            ],
+          },
+        }),
+      );
     });
   });
 

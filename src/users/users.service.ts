@@ -11,7 +11,12 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import * as argon2 from 'argon2';
-import { EstadoAprobacion, EstadoUsuario, RolUsuario, Prisma } from '@prisma/client';
+import {
+  EstadoAprobacion,
+  EstadoUsuario,
+  RolUsuario,
+  Prisma,
+} from '@prisma/client';
 import { UnauthorizedException } from '@nestjs/common';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
@@ -567,7 +572,7 @@ export class UsersService {
           nombres: usuario.nombres,
           apellidos: usuario.apellidos,
           correo: usuario.correo,
-          nombreUsuario: (usuario as any).nombreUsuario,
+          nombreUsuario: usuario.nombreUsuario,
           rol: usuario.rol,
           estado: usuario.estado,
           telefono: usuario.telefono,
@@ -754,7 +759,10 @@ export class UsersService {
     if (usuario.rol === RolUsuario.COBRADOR) {
       Object.assign(metricas, await this.buildMetricasCobrador(usuario.id));
     } else if (usuario.rol === RolUsuario.SUPERVISOR) {
-      Object.assign(metricas, await this.buildMetricasRutas({ supervisorId: usuario.id }));
+      Object.assign(
+        metricas,
+        await this.buildMetricasRutas({ supervisorId: usuario.id }),
+      );
     } else if (usuario.rol === RolUsuario.COORDINADOR) {
       Object.assign(metricas, await this.buildMetricasRutas({}));
     } else if (usuario.rol === RolUsuario.CONTADOR) {
@@ -832,7 +840,9 @@ export class UsersService {
     return getBogotaStartEndOfDay(new Date());
   }
 
-  private async buildMetricasCobrador(usuarioId: string): Promise<Partial<UsuarioDetalleMetricas>> {
+  private async buildMetricasCobrador(
+    usuarioId: string,
+  ): Promise<Partial<UsuarioDetalleMetricas>> {
     const { startDate, endDate } = this.getHoyRange();
     const rutas = await this.prisma.ruta.findMany({
       where: {
@@ -855,7 +865,10 @@ export class UsersService {
             cobradorId: usuarioId,
             rutaId: { in: rutaIds },
             fechaPago: { gte: startDate, lte: endDate },
-            OR: [{ origenGestion: null }, { origenGestion: { not: 'CIERRE_PENDIENTE' } }],
+            OR: [
+              { origenGestion: null },
+              { origenGestion: { not: 'CIERRE_PENDIENTE' } },
+            ],
           },
           _sum: { montoTotal: true },
         }),
@@ -915,7 +928,10 @@ export class UsersService {
       recaudoDia,
       metaDiaria,
       porcentajeMeta,
-      rutaNombre: rutas.length === 1 ? primeraRuta.nombre : `${rutas.length} rutas asignadas`,
+      rutaNombre:
+        rutas.length === 1
+          ? primeraRuta.nombre
+          : `${rutas.length} rutas asignadas`,
       zona: rutas.length === 1 ? primeraRuta.zona : '',
       progreso: porcentajeMeta,
       enMora,
@@ -933,7 +949,9 @@ export class UsersService {
     };
   }
 
-  private async buildMetricasRutas(filters: { supervisorId?: string }): Promise<Partial<UsuarioDetalleMetricas>> {
+  private async buildMetricasRutas(filters: {
+    supervisorId?: string;
+  }): Promise<Partial<UsuarioDetalleMetricas>> {
     const { startDate, endDate } = this.getHoyRange();
     const routeWhere: Prisma.RutaWhereInput = {
       eliminadoEn: null,
@@ -962,7 +980,10 @@ export class UsersService {
         where: {
           rutaId: { in: rutaIds },
           fechaPago: { gte: startDate, lte: endDate },
-          OR: [{ origenGestion: null }, { origenGestion: { not: 'CIERRE_PENDIENTE' } }],
+          OR: [
+            { origenGestion: null },
+            { origenGestion: { not: 'CIERRE_PENDIENTE' } },
+          ],
         },
         _sum: { montoTotal: true },
       }),
@@ -1013,7 +1034,10 @@ export class UsersService {
     };
   }
 
-  private buildCuotasRutaWhere(rutaIds: string[], endDate: Date): Prisma.CuotaWhereInput {
+  private buildCuotasRutaWhere(
+    rutaIds: string[],
+    endDate: Date,
+  ): Prisma.CuotaWhereInput {
     return {
       estado: { in: ['PENDIENTE', 'PARCIAL', 'VENCIDA'] as any },
       fechaVencimiento: { lte: endDate },
@@ -1029,7 +1053,9 @@ export class UsersService {
     };
   }
 
-  private async buildMetricasContables(): Promise<Partial<UsuarioDetalleMetricas>> {
+  private async buildMetricasContables(): Promise<
+    Partial<UsuarioDetalleMetricas>
+  > {
     const { startDate, endDate } = this.getHoyRange();
     const [ingresosAgg, egresosAgg, cajaAgg, gastosCategorias] =
       await Promise.all([
@@ -1085,7 +1111,9 @@ export class UsersService {
     };
   }
 
-  private async buildMetricasPuntoVenta(usuarioId: string): Promise<Partial<UsuarioDetalleMetricas>> {
+  private async buildMetricasPuntoVenta(
+    usuarioId: string,
+  ): Promise<Partial<UsuarioDetalleMetricas>> {
     const { startDate, endDate } = this.getHoyRange();
     const [creditosAgg, clientesCreados, cuotaInicialAgg] = await Promise.all([
       this.prisma.prestamo.aggregate({
@@ -1129,7 +1157,9 @@ export class UsersService {
     };
   }
 
-  private async getActividadReciente(usuarioId: string): Promise<UsuarioDetalleMetricas['actividadReciente']> {
+  private async getActividadReciente(
+    usuarioId: string,
+  ): Promise<UsuarioDetalleMetricas['actividadReciente']> {
     const audit = await this.prisma.registroAuditoria.findMany({
       where: { usuarioId },
       take: 12,

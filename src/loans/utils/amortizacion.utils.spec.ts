@@ -23,7 +23,10 @@ describe('calcularAmortizacionFrancesa', () => {
       monto: 458_333,
     });
 
-    const totalPagado = result.tabla.reduce((sum, cuota) => sum + cuota.monto, 0);
+    const totalPagado = result.tabla.reduce(
+      (sum, cuota) => sum + cuota.monto,
+      0,
+    );
     expect(totalPagado).toBe(5_500_000);
     expect(result.interesTotal).toBe(500_000);
     expect(result.tabla.at(-1)?.saldoRestante).toBe(0);

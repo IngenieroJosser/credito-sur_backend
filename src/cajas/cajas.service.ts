@@ -1,7 +1,16 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { LedgerService, JournalLineDto } from '../accounting/ledger.service';
-import { TipoCaja, TipoDiferenciaArqueo, EstadoArqueoCaja, RutaJornadaEstado } from '@prisma/client';
+import {
+  TipoCaja,
+  TipoDiferenciaArqueo,
+  EstadoArqueoCaja,
+  RutaJornadaEstado,
+} from '@prisma/client';
 import { getBogotaDayKey } from '../utils/date-utils';
 import { randomUUID } from 'crypto';
 
@@ -42,7 +51,7 @@ export class CajasService {
 
     for (const tx of transacciones) {
       const monto = Number(tx.monto || 0);
-      
+
       if (tx.tipo === 'INGRESO') {
         saldoEsperado += monto;
       } else if (tx.tipo === 'EGRESO' || tx.tipo === 'TRANSFERENCIA') {
@@ -54,7 +63,11 @@ export class CajasService {
     return saldoEsperado;
   }
 
-  async getArqueoPreview(cajaId: string, fechaOperativa?: string, userId?: string) {
+  async getArqueoPreview(
+    cajaId: string,
+    fechaOperativa?: string,
+    userId?: string,
+  ) {
     const fecha = fechaOperativa || getBogotaDayKey(new Date());
     const caja = await this.prisma.caja.findUnique({
       where: { id: cajaId },
@@ -90,9 +103,10 @@ export class CajasService {
       : 0;
 
     // Calcular saldo esperado desde transacciones
-    const saldoEsperadoCalculado = await this.calcularSaldoEsperadoDesdeTransacciones(cajaId, fecha);
+    const saldoEsperadoCalculado =
+      await this.calcularSaldoEsperadoDesdeTransacciones(cajaId, fecha);
     const saldoActualSistema = Number(caja.saldoActual || 0);
-    
+
     // Usar el saldo esperado calculado como fuente primaria
     const saldoEsperado = saldoEsperadoCalculado;
     const diferenciaSistema = saldoActualSistema - saldoEsperadoCalculado;
@@ -103,10 +117,12 @@ export class CajasService {
       rutaId: caja.rutaId,
       rutaNombre: caja.ruta?.nombre || null,
       fechaOperativa: fecha,
-      responsable: caja.responsable ? {
-        id: caja.responsableId,
-        nombre: `${caja.responsable.nombres} ${caja.responsable.apellidos}`,
-      } : null,
+      responsable: caja.responsable
+        ? {
+            id: caja.responsableId,
+            nombre: `${caja.responsable.nombres} ${caja.responsable.apellidos}`,
+          }
+        : null,
       cajaPrincipal: {
         id: cajaPrincipal.id,
         nombre: cajaPrincipal.nombre,
@@ -160,13 +176,16 @@ export class CajasService {
         nombre: arqueo.caja.nombre,
         saldoAnterior: Number(arqueo.saldoEsperado),
         salida: Number(arqueo.saldoEsperado),
-        saldoNuevo: Number(arqueo.saldoEsperado) - Number(arqueo.montoTransferido || 0),
+        saldoNuevo:
+          Number(arqueo.saldoEsperado) - Number(arqueo.montoTransferido || 0),
       },
-      cajaDestino: cajaPrincipal ? {
-        nombre: cajaPrincipal.nombre,
-        ingreso: Number(arqueo.montoTransferido),
-        saldoNuevo: null,
-      } : null,
+      cajaDestino: cajaPrincipal
+        ? {
+            nombre: cajaPrincipal.nombre,
+            ingreso: Number(arqueo.montoTransferido),
+            saldoNuevo: null,
+          }
+        : null,
       responsable: arqueo.responsable,
       creadoPor: arqueo.creadoPor,
       recibidoPor: arqueo.recibidoPor,
@@ -185,7 +204,9 @@ export class CajasService {
     // Validaciones iniciales
     const efectivo = Math.round(Number(efectivoContado || 0));
     if (efectivo < 0) {
-      throw new BadRequestException('El efectivo contado no puede ser negativo');
+      throw new BadRequestException(
+        'El efectivo contado no puede ser negativo',
+      );
     }
 
     return await this.prisma.$transaction(async (tx) => {
@@ -209,18 +230,32 @@ export class CajasService {
         where: { cajaId_fechaOperativa: { cajaId, fechaOperativa } },
       });
       if (arqueoExistente) {
-        throw new BadRequestException('Ya existe un arqueo para esta caja y fecha');
+        throw new BadRequestException(
+          'Ya existe un arqueo para esta caja y fecha',
+        );
       }
 
       const jornada = await tx.rutaJornada.findFirst({
         where: { cajaId, fechaOperativa },
       });
-      if (!jornada || ![RutaJornadaEstado.ABIERTA, RutaJornadaEstado.PENDIENTE_CIERRE].includes(jornada.estado)) {
-        throw new BadRequestException('La jornada no está abierta o pendiente de cierre');
+      if (
+        !jornada ||
+        ![
+          RutaJornadaEstado.ABIERTA,
+          RutaJornadaEstado.PENDIENTE_CIERRE,
+        ].includes(jornada.estado)
+      ) {
+        throw new BadRequestException(
+          'La jornada no está abierta o pendiente de cierre',
+        );
       }
 
       // Calcular saldo esperado desde transacciones
-      const saldoEsperadoCalculado = await this.calcularSaldoEsperadoDesdeTransacciones(cajaId, fechaOperativa);
+      const saldoEsperadoCalculado =
+        await this.calcularSaldoEsperadoDesdeTransacciones(
+          cajaId,
+          fechaOperativa,
+        );
       const diferencia = efectivo - saldoEsperadoCalculado;
 
       const tipoDiferencia =

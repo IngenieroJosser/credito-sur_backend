@@ -198,7 +198,11 @@ export async function generarExcelInventarioImportable(
   wsInicio.getColumn(1).width = 120;
   wsInicio.getCell('A1').value =
     'EXPORTACIÓN COMPATIBLE CON IMPORTACIÓN DE INVENTARIO';
-  wsInicio.getCell('A1').font = { bold: true, size: 16, color: { argb: 'FF004F7B' } };
+  wsInicio.getCell('A1').font = {
+    bold: true,
+    size: 16,
+    color: { argb: 'FF004F7B' },
+  };
   wsInicio.getCell('A3').value =
     'Este archivo puede validarse tal cual en el módulo de importaciones de inventario.';
   wsInicio.getCell('A4').value =
@@ -271,10 +275,17 @@ export async function generarExcelClientesCreditosImportable(
   workbook.creator = 'Créditos del Sur';
 
   const wsInicio = workbook.addWorksheet('Inicio');
-  wsInicio.getCell('A1').value = 'EXPORTACIÓN COMPATIBLE CON IMPORTACIÓN DE CLIENTES Y CRÉDITOS';
-  wsInicio.getCell('A1').font = { bold: true, size: 16, color: { argb: 'FF004F7B' } };
-  wsInicio.getCell('A3').value = 'Este archivo puede validarse en el módulo de importaciones de clientes y créditos.';
-  wsInicio.getCell('A5').value = 'Los créditos se exportan como HISTORICA / NO para no mover caja al reimportar.';
+  wsInicio.getCell('A1').value =
+    'EXPORTACIÓN COMPATIBLE CON IMPORTACIÓN DE CLIENTES Y CRÉDITOS';
+  wsInicio.getCell('A1').font = {
+    bold: true,
+    size: 16,
+    color: { argb: 'FF004F7B' },
+  };
+  wsInicio.getCell('A3').value =
+    'Este archivo puede validarse en el módulo de importaciones de clientes y créditos.';
+  wsInicio.getCell('A5').value =
+    'Los créditos se exportan como HISTORICA / NO para no mover caja al reimportar.';
 
   const wsClientes = workbook.addWorksheet('Clientes');
   const columnasClientes = [
@@ -347,25 +358,27 @@ export async function generarExcelClientesCreditosImportable(
     letraDe(columnasCreditos, 'fecha_ultimo_pago'),
   );
 
-  creditos.filter((c) => !esArticulo(c)).forEach((c) => {
-    wsCreditos.addRow({
-      numero_prestamo: text(c.numeroPrestamo),
-      cc_cliente: text(c.ccCliente),
-      monto: money(c.monto),
-      cuota_inicial: money(c.cuotaInicial),
-      tasa_interes: money(c.tasaInteres),
-      frecuencia_pago: text(c.frecuenciaPago).toUpperCase(),
-      cantidad_cuotas: Number(c.cantidadCuotas || 0),
-      tipo_amortizacion: etiquetaTipoAmortizacion(c.tipoAmortizacion),
-      fecha_credito: dateKey(c.fechaCredito),
-      fecha_primer_cobro: dateKey(c.fechaPrimerCobro),
-      tipo_carga: c.tipoCarga || 'HISTORICA',
-      notas: text(c.notas),
-      cuotas_pagadas: Number(c.cuotasPagadas || 0),
-      abono_adicional: money(c.abonoAdicional),
-      fecha_ultimo_pago: dateKey(c.fechaUltimoPago),
+  creditos
+    .filter((c) => !esArticulo(c))
+    .forEach((c) => {
+      wsCreditos.addRow({
+        numero_prestamo: text(c.numeroPrestamo),
+        cc_cliente: text(c.ccCliente),
+        monto: money(c.monto),
+        cuota_inicial: money(c.cuotaInicial),
+        tasa_interes: money(c.tasaInteres),
+        frecuencia_pago: text(c.frecuenciaPago).toUpperCase(),
+        cantidad_cuotas: Number(c.cantidadCuotas || 0),
+        tipo_amortizacion: etiquetaTipoAmortizacion(c.tipoAmortizacion),
+        fecha_credito: dateKey(c.fechaCredito),
+        fecha_primer_cobro: dateKey(c.fechaPrimerCobro),
+        tipo_carga: c.tipoCarga || 'HISTORICA',
+        notas: text(c.notas),
+        cuotas_pagadas: Number(c.cuotasPagadas || 0),
+        abono_adicional: money(c.abonoAdicional),
+        fecha_ultimo_pago: dateKey(c.fechaUltimoPago),
+      });
     });
-  });
 
   const wsCreditosArticulo = workbook.addWorksheet('Créditos de artículo');
   const columnasCreditosArticulo = [
@@ -416,12 +429,38 @@ export async function generarExcelClientesCreditosImportable(
 
   addValoresClientesCreditos(workbook);
 
-  const listas: Array<[ExcelJS.Worksheet, Array<{ key: string }>, string, string, boolean]> = [
-    [wsCreditos, columnasCreditos, 'frecuencia_pago', 'Valores!$D$2:$D$5', false],
-    [wsCreditos, columnasCreditos, 'tipo_amortizacion', 'Valores!$E$2:$E$3', true],
+  const listas: Array<
+    [ExcelJS.Worksheet, Array<{ key: string }>, string, string, boolean]
+  > = [
+    [
+      wsCreditos,
+      columnasCreditos,
+      'frecuencia_pago',
+      'Valores!$D$2:$D$5',
+      false,
+    ],
+    [
+      wsCreditos,
+      columnasCreditos,
+      'tipo_amortizacion',
+      'Valores!$E$2:$E$3',
+      true,
+    ],
     [wsCreditos, columnasCreditos, 'tipo_carga', 'Valores!$F$2:$F$3', false],
-    [wsCreditosArticulo, columnasCreditosArticulo, 'frecuencia_pago', 'Valores!$D$2:$D$5', false],
-    [wsCreditosArticulo, columnasCreditosArticulo, 'tipo_carga', 'Valores!$F$2:$F$3', false],
+    [
+      wsCreditosArticulo,
+      columnasCreditosArticulo,
+      'frecuencia_pago',
+      'Valores!$D$2:$D$5',
+      false,
+    ],
+    [
+      wsCreditosArticulo,
+      columnasCreditosArticulo,
+      'tipo_carga',
+      'Valores!$F$2:$F$3',
+      false,
+    ],
   ];
 
   for (let i = DATA_START_ROW; i <= 1000; i++) {
@@ -437,7 +476,8 @@ export async function generarExcelClientesCreditosImportable(
   const buffer = await workbook.xlsx.writeBuffer();
   return {
     data: Buffer.from(buffer as ArrayBuffer),
-    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    contentType:
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     filename: `clientes-creditos-importable-${fecha}.xlsx`,
   };
 }

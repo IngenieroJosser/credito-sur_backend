@@ -236,7 +236,7 @@ describe('RoutesService role scoping', () => {
     });
   });
 
-  it('forces route list queries from coordinators to assigned routes only', async () => {
+  it('deja que el coordinador vea todas las rutas, sin filtrar por supervisor', async () => {
     const prisma = {
       ruta: {
         findMany: jest.fn().mockResolvedValue([]),
@@ -250,20 +250,12 @@ describe('RoutesService role scoping', () => {
       rol: RolUsuario.COORDINADOR,
     } as any);
 
-    expect(prisma.ruta.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          eliminadoEn: null,
-          supervisorId: 'coordinador-propio',
-        }),
-      }),
-    );
-    expect(prisma.ruta.count).toHaveBeenCalledWith({
-      where: expect.objectContaining({
-        eliminadoEn: null,
-        supervisorId: 'coordinador-propio',
-      }),
-    });
+    // Decisión de producto: a diferencia de supervisor y cobrador, el
+    // coordinador tiene visibilidad total sobre las rutas.
+    const argumentos = prisma.ruta.findMany.mock.calls[0][0];
+    expect(argumentos.where).toEqual({ eliminadoEn: null });
+    expect(argumentos.where).not.toHaveProperty('supervisorId');
+    expect(argumentos.where).not.toHaveProperty('cobradorId');
   });
 
   it('usa el resumen operativo diario como fuente de verdad para el avance del listado', async () => {
@@ -313,7 +305,7 @@ describe('RoutesService role scoping', () => {
     } as any);
 
     const resultado = await service.findAll({ take: 10 });
-    const ruta = resultado.data[0] as any;
+    const ruta = resultado.data[0];
 
     expect(ruta.cobranzaDelDia).toBe(1_043_330);
     expect(ruta.metaDelDia).toBe(1_555_331);
@@ -506,9 +498,11 @@ describe('RoutesService role scoping', () => {
           prestamoId: 'prestamo-pendiente',
           montoMetaOperativaPendiente: 282_499,
         }),
+        // La meta del día no baja porque el cliente haya pagado: el resumen
+        // de arriba (707.834) es justamente la suma de estas dos metas.
         expect.objectContaining({
           prestamoId: 'prestamo-pagado',
-          montoMetaOperativaPendiente: 0,
+          montoMetaOperativaPendiente: 425_335,
           recaudadoDelDia: 425_335,
         }),
       ]),
@@ -1167,7 +1161,11 @@ describe('RoutesService role scoping', () => {
           .mockResolvedValueOnce({
             id: 'ruta-1',
             nombre: 'Ruta 1',
-            cobrador: { id: 'cobrador-1', nombres: 'Cobrador', apellidos: 'Uno' },
+            cobrador: {
+              id: 'cobrador-1',
+              nombres: 'Cobrador',
+              apellidos: 'Uno',
+            },
             cajas: [{ id: 'caja-ruta-1' }],
           }),
       },
@@ -1255,7 +1253,11 @@ describe('RoutesService role scoping', () => {
           .mockResolvedValueOnce({
             id: 'ruta-1',
             nombre: 'Ruta 1',
-            cobrador: { id: 'cobrador-1', nombres: 'Cobrador', apellidos: 'Uno' },
+            cobrador: {
+              id: 'cobrador-1',
+              nombres: 'Cobrador',
+              apellidos: 'Uno',
+            },
             cajas: [{ id: 'caja-ruta-1' }],
           }),
       },
@@ -1270,7 +1272,9 @@ describe('RoutesService role scoping', () => {
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
         findMany: jest.fn().mockResolvedValue([]),
       },
-      $transaction: jest.fn().mockImplementation((callback: any) => callback(tx)),
+      $transaction: jest
+        .fn()
+        .mockImplementation((callback: any) => callback(tx)),
     };
 
     await makeService(prisma).activarRutaHoy('ruta-1', 'admin-1');
@@ -1300,10 +1304,7 @@ describe('RoutesService role scoping', () => {
       },
       rutaJornada: {
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-        findMany: jest
-          .fn()
-          .mockResolvedValueOnce([])
-          .mockResolvedValueOnce([]),
+        findMany: jest.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]),
       },
       transaccion: {
         findMany: jest
@@ -1359,13 +1360,21 @@ describe('RoutesService role scoping', () => {
           .mockResolvedValueOnce({
             id: 'ruta-1',
             nombre: 'Ruta 1',
-            cobrador: { id: 'cobrador-1', nombres: 'Cobrador', apellidos: 'Uno' },
+            cobrador: {
+              id: 'cobrador-1',
+              nombres: 'Cobrador',
+              apellidos: 'Uno',
+            },
             cajas: [{ id: 'caja-ruta-1' }],
           })
           .mockResolvedValueOnce({
             id: 'ruta-1',
             nombre: 'Ruta 1',
-            cobrador: { id: 'cobrador-1', nombres: 'Cobrador', apellidos: 'Uno' },
+            cobrador: {
+              id: 'cobrador-1',
+              nombres: 'Cobrador',
+              apellidos: 'Uno',
+            },
             cajas: [{ id: 'caja-ruta-1' }],
           }),
       },
@@ -1403,7 +1412,9 @@ describe('RoutesService role scoping', () => {
           rol: RolUsuario.ADMIN,
         }),
       },
-      $transaction: jest.fn().mockImplementation((callback: any) => callback(tx)),
+      $transaction: jest
+        .fn()
+        .mockImplementation((callback: any) => callback(tx)),
     };
     const service = makeService(prisma);
     jest.spyOn(service as any, 'getDailyVisits').mockResolvedValue({
@@ -1489,7 +1500,9 @@ describe('RoutesService role scoping', () => {
     it('permite regularizar jornada pendiente sin arqueo', async () => {
       const prisma = {
         ruta: {
-          findFirst: jest.fn().mockResolvedValue({ id: 'ruta-1', nombre: 'Ruta 1' }),
+          findFirst: jest
+            .fn()
+            .mockResolvedValue({ id: 'ruta-1', nombre: 'Ruta 1' }),
         },
         rutaJornada: {
           findUnique: jest.fn().mockResolvedValue({
@@ -1545,7 +1558,9 @@ describe('RoutesService role scoping', () => {
         resumen: { meta: 100000, recaudo: 100000, recaudoOperativo: 100000 },
         visitas: [],
       });
-      jest.spyOn(service as any, 'getCierresPendientesRuta').mockResolvedValue([]);
+      jest
+        .spyOn(service as any, 'getCierresPendientesRuta')
+        .mockResolvedValue([]);
 
       await expect(
         service.cerrarJornadaRegularizada(
@@ -1564,7 +1579,9 @@ describe('RoutesService role scoping', () => {
     it('no permite regularizar jornada anulada', async () => {
       const prisma = {
         ruta: {
-          findFirst: jest.fn().mockResolvedValue({ id: 'ruta-1', nombre: 'Ruta 1' }),
+          findFirst: jest
+            .fn()
+            .mockResolvedValue({ id: 'ruta-1', nombre: 'Ruta 1' }),
         },
         $transaction: jest.fn().mockImplementation((callback: any) => {
           const tx = {
@@ -1584,7 +1601,9 @@ describe('RoutesService role scoping', () => {
         resumen: { meta: 100000, recaudo: 100000 },
         visitas: [],
       });
-      jest.spyOn(service as any, 'getCierresPendientesRuta').mockResolvedValue([]);
+      jest
+        .spyOn(service as any, 'getCierresPendientesRuta')
+        .mockResolvedValue([]);
 
       await expect(
         service.cerrarJornadaRegularizada(
@@ -1599,7 +1618,9 @@ describe('RoutesService role scoping', () => {
     it('no permite regularizar jornada ya cerrada o regularizada', async () => {
       const prisma = {
         ruta: {
-          findFirst: jest.fn().mockResolvedValue({ id: 'ruta-1', nombre: 'Ruta 1' }),
+          findFirst: jest
+            .fn()
+            .mockResolvedValue({ id: 'ruta-1', nombre: 'Ruta 1' }),
         },
         $transaction: jest.fn().mockImplementation((callback: any) => {
           const tx = {
@@ -1619,7 +1640,9 @@ describe('RoutesService role scoping', () => {
         resumen: { meta: 100000, recaudo: 100000 },
         visitas: [],
       });
-      jest.spyOn(service as any, 'getCierresPendientesRuta').mockResolvedValue([]);
+      jest
+        .spyOn(service as any, 'getCierresPendientesRuta')
+        .mockResolvedValue([]);
 
       await expect(
         service.cerrarJornadaRegularizada(
@@ -1634,7 +1657,9 @@ describe('RoutesService role scoping', () => {
     it('exige observación cuando hay pendientes, ausencias o descuadre', async () => {
       const prisma = {
         ruta: {
-          findFirst: jest.fn().mockResolvedValue({ id: 'ruta-1', nombre: 'Ruta 1' }),
+          findFirst: jest
+            .fn()
+            .mockResolvedValue({ id: 'ruta-1', nombre: 'Ruta 1' }),
         },
         $transaction: jest.fn().mockImplementation((callback: any) => {
           const tx = {
@@ -1654,7 +1679,9 @@ describe('RoutesService role scoping', () => {
         resumen: { meta: 100000, recaudo: 50000, recaudoOperativo: 50000 }, // Descuadre
         visitas: [{ estadoGestion: 'PENDIENTE' }],
       });
-      jest.spyOn(service as any, 'getCierresPendientesRuta').mockResolvedValue([]);
+      jest
+        .spyOn(service as any, 'getCierresPendientesRuta')
+        .mockResolvedValue([]);
 
       await expect(
         service.cerrarJornadaRegularizada(
@@ -1669,7 +1696,9 @@ describe('RoutesService role scoping', () => {
     it('no exige observación cuando la jornada está limpia', async () => {
       const prisma = {
         ruta: {
-          findFirst: jest.fn().mockResolvedValue({ id: 'ruta-1', nombre: 'Ruta 1' }),
+          findFirst: jest
+            .fn()
+            .mockResolvedValue({ id: 'ruta-1', nombre: 'Ruta 1' }),
         },
         rutaJornada: {
           findUnique: jest.fn().mockResolvedValue({
@@ -1713,7 +1742,9 @@ describe('RoutesService role scoping', () => {
         resumen: { meta: 100000, recaudo: 100000, recaudoOperativo: 100000 },
         visitas: [],
       });
-      jest.spyOn(service as any, 'getCierresPendientesRuta').mockResolvedValue([]);
+      jest
+        .spyOn(service as any, 'getCierresPendientesRuta')
+        .mockResolvedValue([]);
 
       await expect(
         service.cerrarJornadaRegularizada(
@@ -1732,7 +1763,9 @@ describe('RoutesService role scoping', () => {
     it('no crea transacción financiera al regularizar', async () => {
       const prisma = {
         ruta: {
-          findFirst: jest.fn().mockResolvedValue({ id: 'ruta-1', nombre: 'Ruta 1' }),
+          findFirst: jest
+            .fn()
+            .mockResolvedValue({ id: 'ruta-1', nombre: 'Ruta 1' }),
         },
         rutaJornada: {
           findUnique: jest.fn().mockResolvedValue({
@@ -1782,7 +1815,9 @@ describe('RoutesService role scoping', () => {
         resumen: { meta: 100000, recaudo: 100000 },
         visitas: [],
       });
-      jest.spyOn(service as any, 'getCierresPendientesRuta').mockResolvedValue([]);
+      jest
+        .spyOn(service as any, 'getCierresPendientesRuta')
+        .mockResolvedValue([]);
 
       await service.cerrarJornadaRegularizada(
         'ruta-1',
@@ -1798,7 +1833,9 @@ describe('RoutesService role scoping', () => {
     it('no crea JournalEntry al regularizar', async () => {
       const prisma = {
         ruta: {
-          findFirst: jest.fn().mockResolvedValue({ id: 'ruta-1', nombre: 'Ruta 1' }),
+          findFirst: jest
+            .fn()
+            .mockResolvedValue({ id: 'ruta-1', nombre: 'Ruta 1' }),
         },
         rutaJornada: {
           findUnique: jest.fn().mockResolvedValue({
@@ -1848,7 +1885,9 @@ describe('RoutesService role scoping', () => {
         resumen: { meta: 100000, recaudo: 100000 },
         visitas: [],
       });
-      jest.spyOn(service as any, 'getCierresPendientesRuta').mockResolvedValue([]);
+      jest
+        .spyOn(service as any, 'getCierresPendientesRuta')
+        .mockResolvedValue([]);
 
       await service.cerrarJornadaRegularizada(
         'ruta-1',
@@ -1899,7 +1938,9 @@ describe('RoutesService role scoping', () => {
       },
     };
 
-    await expect(makeService(prisma).getRutaActivadaHoy('ruta-1')).resolves.toEqual(
+    await expect(
+      makeService(prisma).getRutaActivadaHoy('ruta-1'),
+    ).resolves.toEqual(
       expect.objectContaining({
         rutaId: 'ruta-1',
         activadaHoy: false,

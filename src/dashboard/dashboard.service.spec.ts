@@ -66,10 +66,7 @@ describe('DashboardService accounting-backed collections', () => {
     const prisma = buildPrismaMock({
       prestamo: {
         aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 0 } }),
-        count: jest
-          .fn()
-          .mockResolvedValueOnce(3)
-          .mockResolvedValueOnce(7),
+        count: jest.fn().mockResolvedValueOnce(3).mockResolvedValueOnce(7),
         findMany: jest.fn().mockResolvedValue([]),
       },
     });
@@ -116,7 +113,9 @@ describe('DashboardService accounting-backed collections', () => {
   it('no suma cuota inicial como recaudo operativo en top cobradores', async () => {
     const prisma = buildPrismaMock({
       pago: {
-        aggregate: jest.fn().mockResolvedValue({ _sum: { montoTotal: 100000 } }),
+        aggregate: jest
+          .fn()
+          .mockResolvedValue({ _sum: { montoTotal: 100000 } }),
         count: jest.fn().mockResolvedValue(0),
         groupBy: jest.fn().mockResolvedValue([
           {

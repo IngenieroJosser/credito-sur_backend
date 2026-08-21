@@ -1,4 +1,13 @@
-import { Controller, Get, Post, Body, Param, Query, UseGuards, Request } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+  Request,
+} from '@nestjs/common';
 import { CajasService } from './cajas.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
@@ -11,9 +20,13 @@ export class CajasController {
   getArqueoPreview(
     @Param('cajaId') cajaId: string,
     @Query('fechaOperativa') fechaOperativa?: string,
-    @Request() req?: any
+    @Request() req?: any,
   ) {
-    return this.cajasService.getArqueoPreview(cajaId, fechaOperativa, req?.user?.id);
+    return this.cajasService.getArqueoPreview(
+      cajaId,
+      fechaOperativa,
+      req?.user?.id,
+    );
   }
 
   @Get('arqueos/:arqueoId')
@@ -24,14 +37,15 @@ export class CajasController {
   @Post(':cajaId/arqueos')
   confirmarArqueo(
     @Param('cajaId') cajaId: string,
-    @Body() body: {
+    @Body()
+    body: {
       fechaOperativa: string;
       efectivoContado: number;
       recibidoPorId?: string;
       denominaciones?: any;
       observaciones?: string;
     },
-    @Request() req: any
+    @Request() req: any,
   ) {
     return this.cajasService.confirmarArqueo(
       cajaId,
@@ -40,7 +54,7 @@ export class CajasController {
       req.user.id,
       body.recibidoPorId,
       body.denominaciones,
-      body.observaciones
+      body.observaciones,
     );
   }
 }

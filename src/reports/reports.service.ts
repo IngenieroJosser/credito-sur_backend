@@ -105,7 +105,9 @@ export class ReportsService {
       where: {
         fechaPago: { gte: startOfYear, lte: endOfYear },
         NOT: {
-          origenGestion: 'CIERRE_PENDIENTE' } },
+          origenGestion: 'CIERRE_PENDIENTE',
+        },
+      },
       select: { fechaPago: true, montoTotal: true },
     });
 
@@ -1115,9 +1117,7 @@ export class ReportsService {
         Number(routeDuePayments._sum.montoInteresMora || 0);
 
       const efficiency =
-        target > 0
-          ? Math.round((collected / target) * 100)
-          : 0;
+        target > 0 ? Math.round((collected / target) * 100) : 0;
 
       return {
         id: route.id,

@@ -69,18 +69,25 @@ describe('Plantillas importables de exportacion', () => {
       '2026-07-12',
     );
 
-    const resultado = await new InventarioParser(prismaVacio()).parseAndValidate(
-      archivo.data,
-      archivo.filename,
-    );
+    const resultado = await new InventarioParser(
+      prismaVacio(),
+    ).parseAndValidate(archivo.data, archivo.filename);
 
     expect(resultado.errores).toHaveLength(0);
     expect(resultado.resumen.totalFilas).toBe(1);
     expect(resultado.resumen.filasValidas).toBe(1);
     expect(Object.keys(resultado.resumen.porHoja)).toEqual(['Artículos']);
     expect(resultado.precios).toEqual([
-      expect.objectContaining({ codigoProducto: 'CEL-A15', meses: 0, precio: 540000 }),
-      expect.objectContaining({ codigoProducto: 'CEL-A15', meses: 1, precio: 580000 }),
+      expect.objectContaining({
+        codigoProducto: 'CEL-A15',
+        meses: 0,
+        precio: 540000,
+      }),
+      expect.objectContaining({
+        codigoProducto: 'CEL-A15',
+        meses: 1,
+        precio: 580000,
+      }),
     ]);
   });
 
@@ -96,20 +103,21 @@ describe('Plantillas importables de exportacion', () => {
       '2026-07-12',
     );
 
-    const resultado = await new InventarioParser(prismaVacio()).parseAndValidate(
-      archivo.data,
-      archivo.filename,
-    );
+    const resultado = await new InventarioParser(
+      prismaVacio(),
+    ).parseAndValidate(archivo.data, archivo.filename);
 
     expect(resultado.errores).toHaveLength(0);
     expect(resultado.articulos?.[0]).toEqual(
       expect.objectContaining({ codigo: 'CEL-A15', precioContado: 540000 }),
     );
-    expect(resultado.precios?.map((p: any) => p.meses).sort()).toEqual([0, 1, 2, 3]);
+    expect(resultado.precios?.map((p: any) => p.meses).sort()).toEqual([
+      0, 1, 2, 3,
+    ]);
     // La utilidad se calcula sobre el costo para poder revisarla antes de importar.
-    expect(
-      resultado.precios?.find((p: any) => p.meses === 0)?.utilidad,
-    ).toBe(60000);
+    expect(resultado.precios?.find((p: any) => p.meses === 0)?.utilidad).toBe(
+      60000,
+    );
   });
 
   it('genera clientes y creditos exportados que el parser de importacion acepta', async () => {

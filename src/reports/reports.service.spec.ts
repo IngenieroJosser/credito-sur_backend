@@ -42,10 +42,7 @@ describe('ReportsService operational report', () => {
           }),
       },
       cliente: {
-        count: jest
-          .fn()
-          .mockResolvedValueOnce(0)
-          .mockResolvedValueOnce(0),
+        count: jest.fn().mockResolvedValueOnce(0).mockResolvedValueOnce(0),
       },
       cuota: {
         aggregate: jest
@@ -58,11 +55,7 @@ describe('ReportsService operational report', () => {
           }),
       },
     };
-    const service = new ReportsService(
-      prisma as any,
-      {} as any,
-      {} as any,
-    );
+    const service = new ReportsService(prisma as any, {} as any, {} as any);
 
     const result = await service.getOperationalReport({
       period: 'week',

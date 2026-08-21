@@ -44,7 +44,9 @@ import { createHash, randomUUID } from 'crypto';
  * Truncamiento monetario estricto sin redondeo ni tolerancia.
  * Un residuo de $1 sigue siendo deuda.
  */
-function truncCop(value: number | string | Prisma.Decimal | null | undefined): number {
+function truncCop(
+  value: number | string | Prisma.Decimal | null | undefined,
+): number {
   return Math.trunc(Number(value) || 0);
 }
 
@@ -129,11 +131,7 @@ export class PaymentsService {
     const rol = String(params.actor?.rol || '').toUpperCase();
     const metodoPago = params.metodoPago || 'EFECTIVO';
 
-    const rolesOficina = [
-      'COORDINADOR',
-      'ADMIN',
-      'SUPER_ADMINISTRADOR',
-    ];
+    const rolesOficina = ['COORDINADOR', 'ADMIN', 'SUPER_ADMINISTRADOR'];
 
     if (rolesOficina.includes(rol) && metodoPago === MetodoPago.EFECTIVO) {
       // Roles de oficina registrando pago en efectivo: usar CAJA-OFICINA
@@ -179,23 +177,22 @@ export class PaymentsService {
         );
       }
 
-      const cajaSupervisor =
-        await tx.caja.findFirst({
-          where: {
-            tipo: 'RUTA' as any,
-            activa: true,
-            responsableId: actorId,
-            rutaId: null,
-          },
-          select: {
-            id: true,
-            nombre: true,
-            saldoActual: true,
-            rutaId: true,
-            responsableId: true,
-            tipo: true,
-          },
-        });
+      const cajaSupervisor = await tx.caja.findFirst({
+        where: {
+          tipo: 'RUTA' as any,
+          activa: true,
+          responsableId: actorId,
+          rutaId: null,
+        },
+        select: {
+          id: true,
+          nombre: true,
+          saldoActual: true,
+          rutaId: true,
+          responsableId: true,
+          tipo: true,
+        },
+      });
 
       if (!cajaSupervisor?.id) {
         throw new BadRequestException(
@@ -507,7 +504,8 @@ export class PaymentsService {
 
         const nuevoMontoPagado = yaPagado + totalAplicadoCuota;
 
-        const cuotaCompleta = truncCop(nuevoMontoPagado) >= truncCop(montoCuota);
+        const cuotaCompleta =
+          truncCop(nuevoMontoPagado) >= truncCop(montoCuota);
         const montoPagadoFinal = cuotaCompleta ? montoCuota : nuevoMontoPagado;
 
         const nuevoEstadoCuota = cuotaCompleta
@@ -831,7 +829,8 @@ export class PaymentsService {
 
         const nuevoMontoPagado = yaPagado + totalAplicadoCuota;
 
-        const cuotaCompleta = truncCop(nuevoMontoPagado) >= truncCop(montoCuota);
+        const cuotaCompleta =
+          truncCop(nuevoMontoPagado) >= truncCop(montoCuota);
         const montoPagadoFinal = cuotaCompleta ? montoCuota : nuevoMontoPagado;
 
         const nuevoEstadoCuota = cuotaCompleta
@@ -851,8 +850,9 @@ export class PaymentsService {
     // Fix exactitud decimal para el Ledger
     const interesTotalFinal = truncCop(interesTotal);
     const moraTotalFinal = truncCop(moraTotal);
-    const capitalTotalFinal =
-      truncCop(montoTotal - interesTotalFinal - moraTotalFinal);
+    const capitalTotalFinal = truncCop(
+      montoTotal - interesTotalFinal - moraTotalFinal,
+    );
 
     // Validar cobrador
     if (!cobradorIdVal) {
@@ -1139,13 +1139,11 @@ export class PaymentsService {
           paymentDto.origenGestion === 'CIERRE_PENDIENTE',
         );
 
-        const interesTotalFinalActual =
-          truncCop(interesTotalActual);
+        const interesTotalFinalActual = truncCop(interesTotalActual);
         const moraTotalFinalActual = truncCop(moraTotalActual);
-        const capitalTotalFinalActual =
-          truncCop(
-            montoTotal - interesTotalFinalActual - moraTotalFinalActual,
-          );
+        const capitalTotalFinalActual = truncCop(
+          montoTotal - interesTotalFinalActual - moraTotalFinalActual,
+        );
 
         const asignacion = await tx.asignacionRuta.findFirst({
           where: this.isCollector(actor)
@@ -1296,9 +1294,7 @@ export class PaymentsService {
         const nuevoSaldoPendiente =
           Number(prestamoActual.saldoPendiente) - montoTotal;
 
-          const saldoPendienteFinal =
-          Math.max(0, truncCop(nuevoSaldoPendiente));
-
+        const saldoPendienteFinal = Math.max(0, truncCop(nuevoSaldoPendiente));
 
         // Verificar si el préstamo queda pagado
         const prestamoQuedaPagado = saldoPendienteFinal <= 0;
@@ -1391,22 +1387,17 @@ export class PaymentsService {
           numeroPago,
           prestamoIdVal,
           montoTotal,
-          capitalRecuperado:
-            truncCop(
-              Number(resultado.descomposicion.capitalRecuperado || 0),
-            ),
-          interesRecuperado:
-            truncCop(
+          capitalRecuperado: truncCop(
+            Number(resultado.descomposicion.capitalRecuperado || 0),
+          ),
+          interesRecuperado: truncCop(
+            Number(resultado.descomposicion.interesRecuperado || 0),
+          ),
+          moraRecuperada: truncCop(
+            montoTotal -
+              Number(resultado.descomposicion.capitalRecuperado || 0) -
               Number(resultado.descomposicion.interesRecuperado || 0),
-            ),
-          moraRecuperada:
-            truncCop(
-              montoTotal -
-                Number(resultado.descomposicion.capitalRecuperado || 0) -
-                Number(resultado.descomposicion.interesRecuperado || 0),
-            ),
-
-
+          ),
         },
       });
     } catch (error) {
@@ -1417,8 +1408,10 @@ export class PaymentsService {
 
     if (paymentDto.origenGestion === 'CIERRE_PENDIENTE') {
       try {
-        const clienteNombre = `${resultado.pago.cliente?.nombres || ''} ${resultado.pago.cliente?.apellidos || ''}`.trim();
-        const cobradorNombre = `${resultado.pago.cobrador?.nombres || ''} ${resultado.pago.cobrador?.apellidos || ''}`.trim();
+        const clienteNombre =
+          `${resultado.pago.cliente?.nombres || ''} ${resultado.pago.cliente?.apellidos || ''}`.trim();
+        const cobradorNombre =
+          `${resultado.pago.cobrador?.nombres || ''} ${resultado.pago.cobrador?.apellidos || ''}`.trim();
         const rutaNombre = resultado.pago.ruta?.nombre || 'Ruta';
         const fechaRealPago = formatBogotaOffsetIso(fechaPagoBogota);
         const dedupeKey = [
@@ -1445,14 +1438,12 @@ export class PaymentsService {
           fechaRealPago,
           metodoPago: resultado.pago.metodoPago,
           montoTotal,
-          capitalRecuperado:
-            truncCop(
-              Number(resultado.descomposicion.capitalRecuperado || 0),
-            ),
-          interesRecuperado:
-            truncCop(
-              Number(resultado.descomposicion.interesRecuperado || 0),
-            ),
+          capitalRecuperado: truncCop(
+            Number(resultado.descomposicion.capitalRecuperado || 0),
+          ),
+          interesRecuperado: truncCop(
+            Number(resultado.descomposicion.interesRecuperado || 0),
+          ),
           saldoAnterior: resultado.descomposicion.saldoAnterior,
           saldoNuevo: resultado.descomposicion.saldoNuevo,
           cuotasAfectadas: resultado.descomposicion.cuotasAfectadas,
@@ -1543,7 +1534,13 @@ export class PaymentsService {
     },
     actor?: PaymentActor,
   ) {
-    const { prestamoId, clienteId, rutaId, page = 1, limit = 20 } = filters || {};
+    const {
+      prestamoId,
+      clienteId,
+      rutaId,
+      page = 1,
+      limit = 20,
+    } = filters || {};
     const skip = (page - 1) * limit;
 
     const where: Prisma.PagoWhereInput = {};
@@ -1728,8 +1725,6 @@ export class PaymentsService {
     const prestamoEstadoAntes = String(prestamo.estado);
     let prestamoEstadoDespues = prestamoEstadoAntes;
 
-
-
     await this.prisma.$transaction(async (tx) => {
       for (const detalle of pago.detalles) {
         const cuota = await tx.cuota.findUnique({
@@ -1765,7 +1760,8 @@ export class PaymentsService {
         const montoPagadoActual = Number(cuota.montoPagado || 0);
         const montoDetalle = Number(detalle.monto || 0);
         const nuevoMontoPagado = montoPagadoActual + montoDetalle;
-        const cuotaCompleta = truncCop(nuevoMontoPagado) >= truncCop(montoCuota);
+        const cuotaCompleta =
+          truncCop(nuevoMontoPagado) >= truncCop(montoCuota);
 
         if (!cuotaCompleta) {
           cuotasOmitidas.push({
@@ -1877,23 +1873,24 @@ export class PaymentsService {
 
     // Obtener transacciones asociadas a los pagos para determinar origenCaja
     const numerosPago = pagos.map((p) => p.numeroPago).filter(Boolean);
-    const transaccionesPago = numerosPago.length > 0
-      ? await this.prisma.transaccion.findMany({
-          where: {
-            tipoReferencia: 'PAGO',
-            referenciaId: { in: numerosPago },
-          },
-          include: {
-            caja: {
-              select: {
-                codigo: true,
-                tipo: true,
-                rutaId: true,
+    const transaccionesPago =
+      numerosPago.length > 0
+        ? await this.prisma.transaccion.findMany({
+            where: {
+              tipoReferencia: 'PAGO',
+              referenciaId: { in: numerosPago },
+            },
+            include: {
+              caja: {
+                select: {
+                  codigo: true,
+                  tipo: true,
+                  rutaId: true,
+                },
               },
             },
-          },
-        })
-      : [];
+          })
+        : [];
 
     const transaccionPorNumeroPago = new Map(
       transaccionesPago.map((t) => [t.referenciaId, t]),
@@ -1957,11 +1954,11 @@ export class PaymentsService {
     const filas: PagoRow[] = pagos.map((p: PagoConRelacionesExport) => {
       const fechaPagoKey = getBogotaDayKey(p.fechaPago);
       const gestion = visitasMap.get(`${p.clienteId}|${fechaPagoKey}`);
-      
+
       // Determinar origenCaja desde la transacción asociada al pago
       const transaccion = transaccionPorNumeroPago.get(p.numeroPago) as any;
       const caja = transaccion?.caja;
-      
+
       let origenCaja = 'Ruta';
       if (caja) {
         if (caja.codigo === 'CAJA-OFICINA') {
@@ -1970,7 +1967,10 @@ export class PaymentsService {
           origenCaja = 'Supervisor';
         } else if (caja.tipo === 'RUTA' && caja.rutaId) {
           origenCaja = 'Ruta';
-        } else if (caja.tipo === 'PRINCIPAL' && caja.codigo !== 'CAJA-OFICINA') {
+        } else if (
+          caja.tipo === 'PRINCIPAL' &&
+          caja.codigo !== 'CAJA-OFICINA'
+        ) {
           origenCaja = 'Principal';
         }
       } else if (!p.cobrador) {
@@ -2298,12 +2298,20 @@ export class PaymentsService {
 
           await tx.$queryRaw`SELECT id FROM "cajas" WHERE id = ${line.cajaId} FOR UPDATE`;
 
-          await this.ledgerService.aplicarDeltaCajaSeguro(tx, line.cajaId, -originalDelta);
+          await this.ledgerService.aplicarDeltaCajaSeguro(
+            tx,
+            line.cajaId,
+            -originalDelta,
+          );
         }
       } else if (originalTransaccion) {
         await tx.$queryRaw`SELECT id FROM "cajas" WHERE id = ${originalTransaccion.cajaId} FOR UPDATE`;
 
-        await this.ledgerService.aplicarDeltaCajaSeguro(tx, originalTransaccion.cajaId, -montoTotal);
+        await this.ledgerService.aplicarDeltaCajaSeguro(
+          tx,
+          originalTransaccion.cajaId,
+          -montoTotal,
+        );
       }
 
       await tx.recibo.deleteMany({ where: { pagoId: pago.id } });

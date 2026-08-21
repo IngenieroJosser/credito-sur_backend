@@ -4,8 +4,14 @@ import * as ExcelJS from 'exceljs';
 export const FILA_ENCABEZADOS = 6;
 export const FILA_INICIO_DATOS = 7;
 
-/** Filas preparadas con fórmulas, validaciones y formato en las plantillas. */
-export const FILAS_PREPARADAS = 500;
+/**
+ * Filas preparadas con fórmulas, validaciones y formato en las plantillas.
+ *
+ * Si alguien pega más filas que estas, las de más quedan sin fórmulas ni
+ * validaciones. El parser lo detecta y avisa, pero conviene que el tope sea
+ * holgado: una migración de cartera normal cabe de sobra en 1.000 filas.
+ */
+export const FILAS_PREPARADAS = 1000;
 
 export const COLOR_TITULO = 'FF004F7B';
 export const COLOR_ENCABEZADO = 'FF4F81BD';
@@ -101,7 +107,9 @@ export function declararColumnas(
     celda.fill = {
       type: 'pattern',
       pattern: 'solid',
-      fgColor: { argb: columna.automatica ? COLOR_AUTOMATICO : COLOR_ENCABEZADO },
+      fgColor: {
+        argb: columna.automatica ? COLOR_AUTOMATICO : COLOR_ENCABEZADO,
+      },
     };
 
     if (!columna.numFmt && !columna.automatica) return;
@@ -114,7 +122,11 @@ export function declararColumnas(
   columnas.forEach((columna, indice) => {
     if (!columna.automatica) return;
     const numeroColumna = indice + 1;
-    for (let fila = FILA_INICIO_DATOS; fila < FILA_INICIO_DATOS + filas; fila++) {
+    for (
+      let fila = FILA_INICIO_DATOS;
+      fila < FILA_INICIO_DATOS + filas;
+      fila++
+    ) {
       const celda = ws.getCell(fila, numeroColumna);
       celda.fill = {
         type: 'pattern',
@@ -265,7 +277,11 @@ export function hojaInicio(
   ws.getColumn(1).width = 130;
 
   ws.getCell('A1').value = titulo;
-  ws.getCell('A1').font = { bold: true, size: 16, color: { argb: COLOR_TITULO } };
+  ws.getCell('A1').font = {
+    bold: true,
+    size: 16,
+    color: { argb: COLOR_TITULO },
+  };
 
   lineas.forEach((linea, indice) => {
     const celda = ws.getCell(`A${indice + 3}`);

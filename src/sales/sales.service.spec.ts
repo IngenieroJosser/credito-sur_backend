@@ -4,9 +4,11 @@ import { SalesService } from './sales.service';
 
 const makeService = (prisma: any, ledger: any = {}) =>
   new SalesService(prisma, {
-    registrarVentaArticulo: jest.fn().mockResolvedValue({ id: 'journal-venta-1' }),
+    registrarVentaArticulo: jest
+      .fn()
+      .mockResolvedValue({ id: 'journal-venta-1' }),
     ...ledger,
-  } as any);
+  });
 
 describe('SalesService venta contado', () => {
   it('registra venta de contado sin crear préstamo, cuotas ni pago operativo', async () => {
@@ -58,7 +60,9 @@ describe('SalesService venta contado', () => {
       pago: {
         create: jest.fn(),
       },
-      $transaction: jest.fn().mockImplementation((callback: any) => callback(tx)),
+      $transaction: jest
+        .fn()
+        .mockImplementation((callback: any) => callback(tx)),
     };
     const ledger = {
       registrarVentaArticulo: jest.fn().mockResolvedValue({
@@ -218,7 +222,9 @@ describe('SalesService venta contado', () => {
       pago: {
         create: jest.fn(),
       },
-      $transaction: jest.fn().mockImplementation((callback: any) => callback(tx)),
+      $transaction: jest
+        .fn()
+        .mockImplementation((callback: any) => callback(tx)),
     };
 
     const ledger = {
@@ -307,7 +313,9 @@ describe('SalesService venta contado', () => {
           stock: 3,
         }),
       },
-      $transaction: jest.fn().mockImplementation((callback: any) => callback(tx)),
+      $transaction: jest
+        .fn()
+        .mockImplementation((callback: any) => callback(tx)),
     };
 
     await expect(
@@ -341,7 +349,9 @@ describe('SalesService venta contado', () => {
           stock: 3,
         }),
       },
-      $transaction: jest.fn().mockImplementation((callback: any) => callback(tx)),
+      $transaction: jest
+        .fn()
+        .mockImplementation((callback: any) => callback(tx)),
     };
 
     await expect(

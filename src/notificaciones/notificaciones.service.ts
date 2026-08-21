@@ -381,9 +381,10 @@ export class NotificacionesService {
     });
 
     if (existing?.id) {
-      const existingMeta = typeof existing.metadata === 'string'
-        ? JSON.parse(existing.metadata)
-        : (existing.metadata || {});
+      const existingMeta =
+        typeof existing.metadata === 'string'
+          ? JSON.parse(existing.metadata)
+          : existing.metadata || {};
 
       const incomingMeta = {
         ...(data.metadata || {}),
@@ -397,7 +398,7 @@ export class NotificacionesService {
 
       const cleanTitulo = this.cleanNotificationText(data.titulo);
       const cleanMensaje = this.cleanNotificationText(data.mensaje);
-      
+
       const shouldUpdate =
         JSON.stringify(existingMeta) !== JSON.stringify(mergedMetadata) ||
         this.cleanNotificationText(existing.titulo) !== cleanTitulo ||
@@ -415,9 +416,10 @@ export class NotificacionesService {
             metadata: mergedMetadata,
           },
         });
-        
-        const notificacionEnriquecida = await this.enrichNotificationForUi(updated);
-        
+
+        const notificacionEnriquecida =
+          await this.enrichNotificationForUi(updated);
+
         this.notificacionesGateway.enviarNotificacionAUsuario(
           data.usuarioId,
           notificacionEnriquecida,
@@ -426,7 +428,7 @@ export class NotificacionesService {
 
         return notificacionEnriquecida;
       }
-      
+
       return this.enrichNotificationForUi(existing);
     }
 

@@ -498,7 +498,9 @@ describe('ClientsService', () => {
       ]);
 
       (mockPrismaService.pago.findMany as jest.Mock).mockResolvedValue([]);
-      (mockPrismaService.transaccion.findMany as jest.Mock).mockResolvedValue([]);
+      (mockPrismaService.transaccion.findMany as jest.Mock).mockResolvedValue(
+        [],
+      );
 
       const result = await service.getEstadoCuentaCliente('cliente-1');
 
