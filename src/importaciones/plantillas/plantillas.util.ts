@@ -157,6 +157,19 @@ export function etiquetarGrupo(
   };
 }
 
+/**
+ * Desplegable sobre toda la columna de datos.
+ *
+ * Se declara el rango completo de una sola vez y no celda por celda. ExcelJS
+ * agrupa las validaciones sueltas ordenando las direcciones como texto, así que
+ * con más de nueve filas le quedan en el orden A10, A100, A1000… y al final A7,
+ * A8, A9. Al recorrerlas expande primero desde A10 hasta el fondo, y cuando
+ * llega a A7 vuelve a expandir hasta el fondo porque no comprueba lo que ya
+ * marcó. Salen dos rangos encimados sobre las mismas celdas, y Excel no admite
+ * dos validaciones en una misma celda: abre el archivo pidiendo repararlo y
+ * descarta contenido. Pasando el rango como clave el optimizador lo emite tal
+ * cual, sin recorrer nada.
+ */
 export function listaDesplegable(
   ws: ExcelJS.Worksheet,
   columna: number,
@@ -164,13 +177,19 @@ export function listaDesplegable(
   permitirVacio = false,
   filas = FILAS_PREPARADAS,
 ) {
-  for (let fila = FILA_INICIO_DATOS; fila < FILA_INICIO_DATOS + filas; fila++) {
-    ws.getCell(fila, columna).dataValidation = {
-      type: 'list',
-      allowBlank: permitirVacio,
-      formulae: [formula],
+  const letra = colLetra(columna);
+  const rango = `${letra}${FILA_INICIO_DATOS}:${letra}${FILA_INICIO_DATOS + filas - 1}`;
+  // `dataValidations` existe en ExcelJS pero no está declarado en sus tipos.
+  const hoja = ws as unknown as {
+    dataValidations: {
+      add: (rango: string, validacion: ExcelJS.DataValidation) => void;
     };
-  }
+  };
+  hoja.dataValidations.add(rango, {
+    type: 'list',
+    allowBlank: permitirVacio,
+    formulae: [formula],
+  });
 }
 
 /** Escribe la misma fórmula en toda la columna, sustituyendo `{f}` por el número de fila. */

@@ -1,4 +1,5 @@
 import * as ExcelJS from 'exceljs';
+import * as JSZip from 'jszip';
 import { FrecuenciaPago, TipoAmortizacion } from '@prisma/client';
 import { LoansService } from '../loans/loans.service';
 import { generarPlantillaInventario } from './plantillas/plantilla-inventario';
@@ -1366,5 +1367,112 @@ describe('Las fórmulas del Excel dan lo mismo que el sistema', () => {
     const cuota = formulaDe('Valor cuota');
     expect(cuota).toContain('INT(');
     expect(cuota).not.toContain('ROUND(');
+  });
+});
+
+describe('El archivo que se descarga abre sin que Excel pida repararlo', () => {
+  // Excel no admite dos validaciones de datos sobre una misma celda: al abrir
+  // avisa que se perdió contenido y, si uno no acepta la reparación, el libro
+  // queda en blanco. Pasó de verdad, y no lo detectaba ninguna prueba porque el
+  // XML seguía siendo válido: el archivo se leía bien con ExcelJS y solo Excel
+  // se quejaba. Por eso esto se revisa sobre el .xlsx ya comprimido.
+  const hojasDe = async (data: Buffer) => {
+    const zip = await JSZip.loadAsync(data);
+    const nombres = Object.keys(zip.files).filter((n) =>
+      /^xl\/worksheets\/sheet\d+\.xml$/.test(n),
+    );
+    return Promise.all(
+      nombres.map(async (n) => ({
+        nombre: n,
+        xml: await zip.files[n].async('string'),
+      })),
+    );
+  };
+
+  const aRango = (ref: string) => {
+    const m = /^([A-Z]+)(\d+)(?::([A-Z]+)(\d+))?$/.exec(ref);
+    if (!m) return null;
+    const num = (c: string) =>
+      c.split('').reduce((a, ch) => a * 26 + ch.charCodeAt(0) - 64, 0);
+    return {
+      col1: num(m[1]),
+      fila1: Number(m[2]),
+      col2: num(m[3] ?? m[1]),
+      fila2: Number(m[4] ?? m[2]),
+    };
+  };
+
+  const seSolapan = (a: any, b: any) =>
+    !(
+      a.col2 < b.col1 ||
+      b.col2 < a.col1 ||
+      a.fila2 < b.fila1 ||
+      b.fila2 < a.fila1
+    );
+
+  const solapes = (xml: string, patron: RegExp) => {
+    const refs = [...xml.matchAll(patron)]
+      .map((m) => aRango(m[1]))
+      .filter(Boolean);
+    const encontrados: string[] = [];
+    for (let i = 0; i < refs.length; i++) {
+      for (let j = i + 1; j < refs.length; j++) {
+        if (seSolapan(refs[i], refs[j])) encontrados.push(`${i}-${j}`);
+      }
+    }
+    return encontrados;
+  };
+
+  const revisar = async (data: Buffer) => {
+    for (const hoja of await hojasDe(data)) {
+      // Dos desplegables sobre la misma celda: el error que rompía el archivo.
+      expect({
+        hoja: hoja.nombre,
+        solapes: solapes(hoja.xml, /<dataValidation\b[^>]*sqref="([^"]+)"/g),
+      }).toEqual({ hoja: hoja.nombre, solapes: [] });
+
+      // Celdas combinadas encimadas: Excel las rechaza igual.
+      expect({
+        hoja: hoja.nombre,
+        solapes: solapes(hoja.xml, /<mergeCell ref="([^"]+)"/g),
+      }).toEqual({ hoja: hoja.nombre, solapes: [] });
+    }
+  };
+
+  it('la plantilla de clientes y créditos', async () => {
+    const { data } =
+      await generarPlantillaClientesCreditos(datosPlantillaVacios);
+    await revisar(data);
+  });
+
+  it('la plantilla de clientes y créditos con datos de referencia', async () => {
+    const { data } = await generarPlantillaClientesCreditos({
+      clientes: [{ dni: '1088123456', nombre: 'Ana Gómez' }],
+      articulos: [
+        {
+          codigo: 'TV-01',
+          nombre: 'Televisor 32',
+          meses: 0,
+          precio: 900000,
+          costo: 700000,
+        },
+        {
+          codigo: 'TV-01',
+          nombre: 'Televisor 32',
+          meses: 6,
+          precio: 1200000,
+          costo: 700000,
+        },
+      ],
+      codigosArticulo: ['TV-01'],
+      numerosPrestamo: ['PR-001'],
+      rutas: ['Ruta Centro'],
+    });
+    await revisar(data);
+  });
+
+  it('la plantilla de inventario', async () => {
+    const { data } = await generarPlantillaInventario();
+    await revisar(data);
   });
 });
