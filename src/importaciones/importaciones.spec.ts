@@ -1221,3 +1221,150 @@ describe('Cuota inicial en créditos de artículo', () => {
     expect(resultado.creditos?.[0].monto).toBe(400000);
   });
 });
+
+describe('Las fórmulas del Excel dan lo mismo que el sistema', () => {
+  const servicioPrestamos = new LoansService(
+    {} as any,
+    {} as any,
+    {} as any,
+    {} as any,
+    {} as any,
+    {} as any,
+    {} as any,
+  );
+
+  /**
+   * Transcripción de las fórmulas que la plantilla escribe en las columnas
+   * grises. Si alguien cambia una fórmula sin cambiar esto, la prueba se cae.
+   */
+  const comoLoCalculaElExcel = (
+    monto: number,
+    tasa: number,
+    cuotas: number,
+    plazoMeses: number,
+  ) => {
+    // =ROUND(monto*(tasa/100)*MAX(1,plazo),0)
+    const interesTotal = Math.round(
+      monto * (tasa / 100) * Math.max(1, plazoMeses),
+    );
+    // =monto+interés
+    const totalPagar = monto + interesTotal;
+    // =INT((total-interés)/cuotas)+INT(interés/cuotas)
+    const valorCuota =
+      Math.trunc((totalPagar - interesTotal) / cuotas) +
+      Math.trunc(interesTotal / cuotas);
+    return { interesTotal, totalPagar, valorCuota };
+  };
+
+  const casos = [
+    {
+      nombre: '30 cuotas diarias',
+      monto: 500000,
+      tasa: 10,
+      cuotas: 30,
+      frecuencia: FrecuenciaPago.DIARIO,
+    },
+    {
+      nombre: '45 cuotas diarias (plazo fraccionario)',
+      monto: 500000,
+      tasa: 10,
+      cuotas: 45,
+      frecuencia: FrecuenciaPago.DIARIO,
+    },
+    {
+      nombre: '13 quincenales con monto que no divide exacto',
+      monto: 777777,
+      tasa: 7.5,
+      cuotas: 13,
+      frecuencia: FrecuenciaPago.QUINCENAL,
+    },
+    {
+      nombre: '8 semanales',
+      monto: 1300000,
+      tasa: 15,
+      cuotas: 8,
+      frecuencia: FrecuenciaPago.SEMANAL,
+    },
+    {
+      nombre: '6 mensuales',
+      monto: 2400000,
+      tasa: 4,
+      cuotas: 6,
+      frecuencia: FrecuenciaPago.MENSUAL,
+    },
+  ];
+
+  it.each(casos)(
+    'interés, total y valor de cuota coinciden: $nombre',
+    ({ monto, tasa, cuotas, frecuencia }) => {
+      const plazoMeses = derivarPlazoMeses(cuotas, frecuencia);
+
+      const delSistema = (servicioPrestamos as any).calculateInterestAndCuotas(
+        'INTERES_SIMPLE' as TipoAmortizacion,
+        monto,
+        tasa,
+        cuotas,
+        plazoMeses,
+        frecuencia,
+        new Date('2026-05-01'),
+        new Date('2026-05-01'),
+      );
+
+      const excel = comoLoCalculaElExcel(monto, tasa, cuotas, plazoMeses);
+
+      expect(excel.interesTotal).toBe(delSistema.interesTotal);
+      expect(excel.totalPagar).toBe(monto + delSistema.interesTotal);
+      // La primera cuota es la que el Excel muestra como "Valor cuota".
+      expect(excel.valorCuota).toBe(delSistema.cuotas[0].monto);
+    },
+  );
+
+  it('la fórmula de amortización aplica la tasa una sola vez', () => {
+    const monto = 500000;
+    const tasa = 10;
+    const cuotas = 60;
+    const plazoMeses = derivarPlazoMeses(cuotas, FrecuenciaPago.DIARIO);
+
+    // =ROUND(monto*(tasa/100),0), sin multiplicar por el plazo
+    const excelInteres = Math.round(monto * (tasa / 100));
+
+    const delSistema = (servicioPrestamos as any).calculateInterestAndCuotas(
+      'INTERES_PLANO' as TipoAmortizacion,
+      monto,
+      tasa,
+      cuotas,
+      plazoMeses,
+      FrecuenciaPago.DIARIO,
+      new Date('2026-05-01'),
+      new Date('2026-05-01'),
+    );
+
+    expect(excelInteres).toBe(delSistema.interesTotal);
+  });
+
+  it('la plantilla sigue usando exactamente esas fórmulas', async () => {
+    const plantilla = await plantillaClientesCacheada();
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(plantilla.data as any);
+    const hoja = wb.getWorksheet('Créditos de dinero')!;
+    const encabezados = (hoja.getRow(6).values as any[]).slice(1) as string[];
+
+    const formulaDe = (nombre: string) => {
+      const i = encabezados.findIndex((h) => h && h.startsWith(nombre));
+      return String((hoja.getCell(7, i + 1).value as any)?.formula || '');
+    };
+
+    // Si alguien cambia el orden de operaciones o el redondeo, esta prueba lo
+    // delata: son justo los dos puntos donde aparecía el peso de diferencia.
+    const interes = formulaDe('Interés total');
+    // Interés simple: multiplica todo y divide al final.
+    expect(interes).toContain('ROUND($C7*$D7*MAX(1,$R7)/100,0)');
+    // Amortización: la tasa se aplica una sola vez dividiendo primero, que es
+    // como lo hace `calcularInteresPlano`.
+    expect(interes).toContain('ROUND($C7*($D7/100),0)');
+
+    const cuota = formulaDe('Valor cuota');
+    expect(cuota).toContain('INT(');
+    expect(cuota).not.toContain('ROUND(');
+  });
+});

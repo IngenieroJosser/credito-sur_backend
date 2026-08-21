@@ -387,25 +387,61 @@ function formulaCliente(colCc: number): string {
   );
 }
 
-function formulaValorCuota(colTotal: number, colCuotas: number): string {
+/**
+ * Valor de la cuota, con el mismo redondeo que usa el sistema al crear el
+ * crédito: trunca el capital y el interés por separado (`Math.floor`) y deja el
+ * residuo en la última cuota. Repartir el total con `ROUND` daría un peso de
+ * diferencia frente a lo que el sistema va a guardar.
+ */
+function formulaValorCuota(
+  colTotal: number,
+  colCuotas: number,
+  colInteres?: number,
+  colTipoAmortizacion?: number,
+): string {
   const total = ref(colTotal);
   const cuotas = ref(colCuotas);
+  const guarda = `OR(NOT(ISNUMBER(${total})),NOT(ISNUMBER(${cuotas})),${cuotas}=0)`;
+
+  // Sin columna de interés (créditos de artículo) el interés es cero, así que
+  // los dos métodos coinciden y basta con repartir el total.
+  if (!colInteres || !colTipoAmortizacion) {
+    return `IF(${guarda},"",INT(${total}/${cuotas}))`;
+  }
+
+  const interes = ref(colInteres);
+  // Amortización reparte el total de una vez; interés simple trunca el capital
+  // y el interés por separado. No es lo mismo: los residuos caen distinto y dan
+  // un peso de diferencia.
+  const amortizacion = `INT(${total}/${cuotas})`;
+  const simple = `INT((${total}-${interes})/${cuotas})+INT(${interes}/${cuotas})`;
+
   return (
-    `IF(OR(NOT(ISNUMBER(${total})),NOT(ISNUMBER(${cuotas})),${cuotas}=0),"",` +
-    `ROUND(${total}/${cuotas},0))`
+    `IF(${guarda},"",` +
+    `IF(${ref(colTipoAmortizacion)}="${ETIQUETA_AMORTIZACION}",${amortizacion},${simple}))`
   );
 }
 
+/**
+ * Lo ya abonado: las cuotas canceladas valen todas lo mismo salvo la última,
+ * que absorbe el residuo. Por eso, si el crédito quedó saldado se toma el total
+ * y no `cuota x cantidad`, que se quedaría corto por unos pesos.
+ */
 function formulaYaAbonado(
   colValorCuota: number,
   colCuotasPagadas: number,
   colAbono: number,
+  colTotal: number,
+  colCuotas: number,
 ): string {
   const cuota = ref(colValorCuota);
+  const pagadas = `IF(${ref(colCuotasPagadas)}="",0,${ref(colCuotasPagadas)})`;
+  const abono = `IF(${ref(colAbono)}="",0,${ref(colAbono)})`;
+
   return (
     `IF(NOT(ISNUMBER(${cuota})),"",` +
-    `ROUND(${cuota}*IF(${ref(colCuotasPagadas)}="",0,${ref(colCuotasPagadas)})` +
-    `+IF(${ref(colAbono)}="",0,${ref(colAbono)}),0))`
+    `IF(AND(ISNUMBER(${ref(colCuotas)}),${pagadas}>=${ref(colCuotas)}),${ref(colTotal)},` +
+    `${cuota}*${pagadas})+${abono})`
   );
 }
 
@@ -701,7 +737,11 @@ export async function generarPlantillaClientesCreditos(
       `IF(${ref(DIN.tipoAmortizacion)}="${ETIQUETA_AMORTIZACION}",` +
       `ROUND(${ref(DIN.monto)}*(${ref(DIN.tasaInteres)}/100),0),` +
       `IF(${ref(DIN.plazoMesesAuto)}="","",` +
-      `ROUND(${ref(DIN.monto)}*(${ref(DIN.tasaInteres)}/100)*MAX(1,${ref(DIN.plazoMesesAuto)}),0))))`,
+      // Se multiplica todo y se divide al final, en ese orden: dividir la tasa
+      // primero deja un residuo de coma flotante (…,4999999 en vez de …,5) que
+      // al redondear cae para el otro lado y da un peso de diferencia contra
+      // lo que el sistema va a guardar.
+      `ROUND(${ref(DIN.monto)}*${ref(DIN.tasaInteres)}*MAX(1,${ref(DIN.plazoMesesAuto)})/100,0))))`,
   );
 
   formulaEnColumna(
@@ -712,12 +752,23 @@ export async function generarPlantillaClientesCreditos(
   formulaEnColumna(
     wsDinero,
     DIN.valorCuota,
-    formulaValorCuota(DIN.totalPagar, DIN.cantidadCuotas),
+    formulaValorCuota(
+      DIN.totalPagar,
+      DIN.cantidadCuotas,
+      DIN.interesTotal,
+      DIN.tipoAmortizacion,
+    ),
   );
   formulaEnColumna(
     wsDinero,
     DIN.yaAbonado,
-    formulaYaAbonado(DIN.valorCuota, DIN.cuotasPagadas, DIN.abonoAdicional),
+    formulaYaAbonado(
+      DIN.valorCuota,
+      DIN.cuotasPagadas,
+      DIN.abonoAdicional,
+      DIN.totalPagar,
+      DIN.cantidadCuotas,
+    ),
   );
   formulaEnColumna(
     wsDinero,
@@ -809,7 +860,13 @@ export async function generarPlantillaClientesCreditos(
   formulaEnColumna(
     wsArticulo,
     ART.yaAbonado,
-    formulaYaAbonado(ART.valorCuota, ART.cuotasPagadas, ART.abonoAdicional),
+    formulaYaAbonado(
+      ART.valorCuota,
+      ART.cuotasPagadas,
+      ART.abonoAdicional,
+      ART.totalPagar,
+      ART.cantidadCuotasAuto,
+    ),
   );
   formulaEnColumna(
     wsArticulo,
