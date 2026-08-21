@@ -40,10 +40,7 @@ describe('MoraService', () => {
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       prestamo: {
-        findMany: jest
-          .fn()
-          .mockResolvedValueOnce([])
-          .mockResolvedValueOnce([]),
+        findMany: jest.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]),
         update: jest.fn(),
       },
       cliente: {
@@ -116,9 +113,8 @@ describe('MoraService', () => {
       },
     };
 
-    const result = await makeService(prisma).recalcularNivelRiesgoCliente(
-      'cliente-1',
-    );
+    const result =
+      await makeService(prisma).recalcularNivelRiesgoCliente('cliente-1');
 
     expect(result).toEqual({
       clienteId: 'cliente-1',

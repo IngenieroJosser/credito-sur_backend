@@ -137,9 +137,11 @@ const makePrisma = () => {
     },
     alertaCliente: {
       findFirst: jest.fn().mockResolvedValue(null),
-      findMany: jest.fn().mockResolvedValue([
-        { id: 'alerta-1', clienteId: 'cliente-1', estado: 'ACTIVA' },
-      ]),
+      findMany: jest
+        .fn()
+        .mockResolvedValue([
+          { id: 'alerta-1', clienteId: 'cliente-1', estado: 'ACTIVA' },
+        ]),
       findUnique: jest.fn().mockResolvedValue({
         id: 'alerta-1',
         clienteId: 'cliente-1',
@@ -152,13 +154,10 @@ const makePrisma = () => {
 };
 
 const makeService = (prisma: any) =>
-  new AlertasClientesService(
-    prisma,
-    {
-      broadcastClientesActualizados: jest.fn(),
-      broadcastNotificacionesActualizadas: jest.fn(),
-    } as any,
-  );
+  new AlertasClientesService(prisma, {
+    broadcastClientesActualizados: jest.fn(),
+    broadcastNotificacionesActualizadas: jest.fn(),
+  } as any);
 
 describe('AlertasClientesService', () => {
   it('bloquea al cobrador para emitir alertas de cliente no ubicado', async () => {
@@ -363,9 +362,13 @@ describe('AlertasClientesService', () => {
           OR: expect.arrayContaining([
             { motivo: { contains: 'Ana', mode: 'insensitive' } },
             { descripcion: { contains: 'Ana', mode: 'insensitive' } },
-            { observacionesReportante: { contains: 'Ana', mode: 'insensitive' } },
+            {
+              observacionesReportante: { contains: 'Ana', mode: 'insensitive' },
+            },
             { cliente: { nombres: { contains: 'Ana', mode: 'insensitive' } } },
-            { cliente: { apellidos: { contains: 'Ana', mode: 'insensitive' } } },
+            {
+              cliente: { apellidos: { contains: 'Ana', mode: 'insensitive' } },
+            },
             { cliente: { dni: { contains: 'Ana', mode: 'insensitive' } } },
             { cliente: { telefono: { contains: 'Ana', mode: 'insensitive' } } },
           ]),

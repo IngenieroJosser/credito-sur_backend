@@ -13,11 +13,12 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { CajasService } from './cajas.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { LedgerService } from '../accounting/ledger.service';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import {
-  BadRequestException,
-  NotFoundException,
-} from '@nestjs/common';
-import { TipoCaja, TipoDiferenciaArqueo, RutaJornadaEstado } from '@prisma/client';
+  TipoCaja,
+  TipoDiferenciaArqueo,
+  RutaJornadaEstado,
+} from '@prisma/client';
 
 // Mocks de los servicios de soporte
 const mockLedgerService = {
@@ -27,7 +28,10 @@ const mockLedgerService = {
 // Helper para validar asiento balanceado
 function assertAsientoBalanceado(lines: any[]) {
   const debitos = lines.reduce((sum, l) => sum + Number(l.debitAmount || 0), 0);
-  const creditos = lines.reduce((sum, l) => sum + Number(l.creditAmount || 0), 0);
+  const creditos = lines.reduce(
+    (sum, l) => sum + Number(l.creditAmount || 0),
+    0,
+  );
 
   expect(debitos).toBe(creditos);
 }
@@ -110,7 +114,11 @@ function buildMockPrisma(overrides: Record<string, unknown> = {}) {
       }),
       findUniqueOrThrow: jest.fn().mockImplementation(({ where }: any) => {
         if (where.id === CAJA_RUTA_ACTIVA.id) return CAJA_RUTA_ACTIVA;
-        if (where.id === CAJA_PRINCIPAL.id) return { ...CAJA_PRINCIPAL, saldoActual: CAJA_PRINCIPAL.saldoActual + 5000000 };
+        if (where.id === CAJA_PRINCIPAL.id)
+          return {
+            ...CAJA_PRINCIPAL,
+            saldoActual: CAJA_PRINCIPAL.saldoActual + 5000000,
+          };
         return null;
       }),
       findFirst: jest.fn().mockImplementation(({ where }: any) => {
@@ -202,7 +210,10 @@ describe('CajasService', () => {
     });
 
     it('devuelve preview correctamente cuando la caja existe', async () => {
-      const result = await service.getArqueoPreview(CAJA_RUTA_ACTIVA.id, '2026-06-13');
+      const result = await service.getArqueoPreview(
+        CAJA_RUTA_ACTIVA.id,
+        '2026-06-13',
+      );
 
       expect(result).toHaveProperty('cajaId', CAJA_RUTA_ACTIVA.id);
       expect(result).toHaveProperty('saldoEsperado');
@@ -213,9 +224,9 @@ describe('CajasService', () => {
     it('lanza error cuando la caja no existe', async () => {
       prisma.caja.findUnique.mockResolvedValueOnce(null);
 
-      await expect(service.getArqueoPreview('caja-inexistente')).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.getArqueoPreview('caja-inexistente'),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('calcula saldo esperado desde transacciones', async () => {
@@ -226,7 +237,10 @@ describe('CajasService', () => {
         { tipo: 'EGRESO', monto: 200000 },
       ]);
 
-      const result = await service.getArqueoPreview(CAJA_RUTA_ACTIVA.id, '2026-06-13');
+      const result = await service.getArqueoPreview(
+        CAJA_RUTA_ACTIVA.id,
+        '2026-06-13',
+      );
 
       // Saldo esperado = 1000000 + 500000 - 200000 = 1300000
       expect(result.desglose.saldoEsperadoCalculado).toBe(1300000);
@@ -251,7 +265,10 @@ describe('CajasService', () => {
         ]);
       });
 
-      const result = await service.getArqueoPreview(CAJA_RUTA_ACTIVA.id, '2026-06-13');
+      const result = await service.getArqueoPreview(
+        CAJA_RUTA_ACTIVA.id,
+        '2026-06-13',
+      );
 
       // Saldo esperado = 1000000 - 200000 = 800000 (excluye VENTA_CONTADO)
       expect(result.desglose.saldoEsperadoCalculado).toBe(800000);
@@ -282,29 +299,34 @@ describe('CajasService', () => {
 
       expect(result).toHaveProperty('arqueoId', ARQUEO_CREADO.id);
       expect(result).toHaveProperty('diferencia', 0);
-      expect(result).toHaveProperty('tipoDiferencia', TipoDiferenciaArqueo.SIN_DIFERENCIA);
-      
+      expect(result).toHaveProperty(
+        'tipoDiferencia',
+        TipoDiferenciaArqueo.SIN_DIFERENCIA,
+      );
+
       expect(ledgerService.registrarAsiento).toHaveBeenCalled();
       const call = ledgerService.registrarAsiento.mock.calls[0][0];
       assertAsientoBalanceado(call.lines);
-      
-      expect(call).toEqual(expect.objectContaining({
-        referenceType: 'ARQUEO',
-        lines: expect.arrayContaining([
-          expect.objectContaining({
-            accountCode: '1.1.1',
-            debitAmount: 5000000,
-            cajaId: CAJA_PRINCIPAL.id,
-            cajaDelta: 5000000,
-          }),
-          expect.objectContaining({
-            accountCode: '1.2.1',
-            creditAmount: 5000000,
-            cajaId: CAJA_RUTA_ACTIVA.id,
-            cajaDelta: -5000000,
-          }),
-        ]),
-      }));
+
+      expect(call).toEqual(
+        expect.objectContaining({
+          referenceType: 'ARQUEO',
+          lines: expect.arrayContaining([
+            expect.objectContaining({
+              accountCode: '1.1.1',
+              debitAmount: 5000000,
+              cajaId: CAJA_PRINCIPAL.id,
+              cajaDelta: 5000000,
+            }),
+            expect.objectContaining({
+              accountCode: '1.2.1',
+              creditAmount: 5000000,
+              cajaId: CAJA_RUTA_ACTIVA.id,
+              cajaDelta: -5000000,
+            }),
+          ]),
+        }),
+      );
     });
 
     it('confirmar arqueo con faltante registra línea débito por deuda cobrador', async () => {
@@ -319,32 +341,34 @@ describe('CajasService', () => {
       );
 
       expect(result).toHaveProperty('arqueoId');
-      
+
       expect(ledgerService.registrarAsiento).toHaveBeenCalled();
       const call = ledgerService.registrarAsiento.mock.calls[0][0];
       assertAsientoBalanceado(call.lines);
-      
-      expect(call).toEqual(expect.objectContaining({
-        referenceType: 'ARQUEO',
-        lines: expect.arrayContaining([
-          expect.objectContaining({
-            accountCode: '1.1.1',
-            debitAmount: 4900000,
-            cajaId: CAJA_PRINCIPAL.id,
-            cajaDelta: 4900000,
-          }),
-          expect.objectContaining({
-            accountCode: '1.2.1',
-            creditAmount: 5000000,
-            cajaId: CAJA_RUTA_ACTIVA.id,
-            cajaDelta: -5000000,
-          }),
-          expect.objectContaining({
-            accountCode: '1.4.1',
-            debitAmount: 100000,
-          }),
-        ]),
-      }));
+
+      expect(call).toEqual(
+        expect.objectContaining({
+          referenceType: 'ARQUEO',
+          lines: expect.arrayContaining([
+            expect.objectContaining({
+              accountCode: '1.1.1',
+              debitAmount: 4900000,
+              cajaId: CAJA_PRINCIPAL.id,
+              cajaDelta: 4900000,
+            }),
+            expect.objectContaining({
+              accountCode: '1.2.1',
+              creditAmount: 5000000,
+              cajaId: CAJA_RUTA_ACTIVA.id,
+              cajaDelta: -5000000,
+            }),
+            expect.objectContaining({
+              accountCode: '1.4.1',
+              debitAmount: 100000,
+            }),
+          ]),
+        }),
+      );
     });
 
     it('confirmar arqueo con sobrante registra línea crédito por ajuste pendiente', async () => {
@@ -359,63 +383,71 @@ describe('CajasService', () => {
       );
 
       expect(result).toHaveProperty('arqueoId');
-      
+
       expect(ledgerService.registrarAsiento).toHaveBeenCalled();
       const call = ledgerService.registrarAsiento.mock.calls[0][0];
       assertAsientoBalanceado(call.lines);
-      
-      expect(call).toEqual(expect.objectContaining({
-        referenceType: 'ARQUEO',
-        lines: expect.arrayContaining([
-          expect.objectContaining({
-            accountCode: '1.1.1',
-            debitAmount: 5100000,
-            cajaId: CAJA_PRINCIPAL.id,
-            cajaDelta: 5100000,
-          }),
-          expect.objectContaining({
-            accountCode: '1.2.1',
-            creditAmount: 5000000,
-            cajaId: CAJA_RUTA_ACTIVA.id,
-            cajaDelta: -5000000,
-          }),
-          expect.objectContaining({
-            accountCode: '2.4',
-            creditAmount: 100000,
-          }),
-        ]),
-      }));
+
+      expect(call).toEqual(
+        expect.objectContaining({
+          referenceType: 'ARQUEO',
+          lines: expect.arrayContaining([
+            expect.objectContaining({
+              accountCode: '1.1.1',
+              debitAmount: 5100000,
+              cajaId: CAJA_PRINCIPAL.id,
+              cajaDelta: 5100000,
+            }),
+            expect.objectContaining({
+              accountCode: '1.2.1',
+              creditAmount: 5000000,
+              cajaId: CAJA_RUTA_ACTIVA.id,
+              cajaDelta: -5000000,
+            }),
+            expect.objectContaining({
+              accountCode: '2.4',
+              creditAmount: 100000,
+            }),
+          ]),
+        }),
+      );
     });
 
     it('no permite efectivo negativo', async () => {
-      await expect(service.confirmarArqueo(
-        CAJA_RUTA_ACTIVA.id,
-        '2026-06-13',
-        -100000,
-        USUARIO_ADMIN.id,
-      )).rejects.toThrow(BadRequestException);
+      await expect(
+        service.confirmarArqueo(
+          CAJA_RUTA_ACTIVA.id,
+          '2026-06-13',
+          -100000,
+          USUARIO_ADMIN.id,
+        ),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('no permite arquear Caja Principal', async () => {
       prisma.caja.findUnique.mockResolvedValueOnce(CAJA_PRINCIPAL);
 
-      await expect(service.confirmarArqueo(
-        CAJA_PRINCIPAL.id,
-        '2026-06-13',
-        1000000,
-        USUARIO_ADMIN.id,
-      )).rejects.toThrow(BadRequestException);
+      await expect(
+        service.confirmarArqueo(
+          CAJA_PRINCIPAL.id,
+          '2026-06-13',
+          1000000,
+          USUARIO_ADMIN.id,
+        ),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('no permite arqueo duplicado', async () => {
       prisma._tx.arqueoCaja.findUnique.mockResolvedValueOnce(ARQUEO_CREADO);
 
-      await expect(service.confirmarArqueo(
-        CAJA_RUTA_ACTIVA.id,
-        '2026-06-13',
-        5000000,
-        USUARIO_ADMIN.id,
-      )).rejects.toThrow(BadRequestException);
+      await expect(
+        service.confirmarArqueo(
+          CAJA_RUTA_ACTIVA.id,
+          '2026-06-13',
+          5000000,
+          USUARIO_ADMIN.id,
+        ),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('permite recibidoPorId diferente de creadoPorId', async () => {
@@ -442,12 +474,14 @@ describe('CajasService', () => {
         return cb(prisma._tx);
       });
 
-      await expect(service.confirmarArqueo(
-        CAJA_RUTA_ACTIVA.id,
-        '2026-06-13',
-        5000000,
-        USUARIO_ADMIN.id,
-      )).rejects.toThrow(NotFoundException);
+      await expect(
+        service.confirmarArqueo(
+          CAJA_RUTA_ACTIVA.id,
+          '2026-06-13',
+          5000000,
+          USUARIO_ADMIN.id,
+        ),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('no permite jornada inexistente', async () => {
@@ -456,26 +490,33 @@ describe('CajasService', () => {
         return cb(prisma._tx);
       });
 
-      await expect(service.confirmarArqueo(
-        CAJA_RUTA_ACTIVA.id,
-        '2026-06-13',
-        5000000,
-        USUARIO_ADMIN.id,
-      )).rejects.toThrow(BadRequestException);
+      await expect(
+        service.confirmarArqueo(
+          CAJA_RUTA_ACTIVA.id,
+          '2026-06-13',
+          5000000,
+          USUARIO_ADMIN.id,
+        ),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('no permite jornada con estado CERRADA', async () => {
       prisma.$transaction.mockImplementationOnce((cb: any) => {
-        prisma._tx.rutaJornada.findFirst.mockResolvedValueOnce({ ...RUTA_JORNADA_ABIERTA, estado: RutaJornadaEstado.CERRADA });
+        prisma._tx.rutaJornada.findFirst.mockResolvedValueOnce({
+          ...RUTA_JORNADA_ABIERTA,
+          estado: RutaJornadaEstado.CERRADA,
+        });
         return cb(prisma._tx);
       });
 
-      await expect(service.confirmarArqueo(
-        CAJA_RUTA_ACTIVA.id,
-        '2026-06-13',
-        5000000,
-        USUARIO_ADMIN.id,
-      )).rejects.toThrow(BadRequestException);
+      await expect(
+        service.confirmarArqueo(
+          CAJA_RUTA_ACTIVA.id,
+          '2026-06-13',
+          5000000,
+          USUARIO_ADMIN.id,
+        ),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('no permite usuario receptor inexistente', async () => {
@@ -484,27 +525,34 @@ describe('CajasService', () => {
         return cb(prisma._tx);
       });
 
-      await expect(service.confirmarArqueo(
-        CAJA_RUTA_ACTIVA.id,
-        '2026-06-13',
-        5000000,
-        USUARIO_ADMIN.id,
-        'usuario-inexistente',
-      )).rejects.toThrow(NotFoundException);
+      await expect(
+        service.confirmarArqueo(
+          CAJA_RUTA_ACTIVA.id,
+          '2026-06-13',
+          5000000,
+          USUARIO_ADMIN.id,
+          'usuario-inexistente',
+        ),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('no permite caja inactiva', async () => {
       prisma.$transaction.mockImplementationOnce((cb: any) => {
-        prisma._tx.caja.findUnique.mockResolvedValueOnce({ ...CAJA_RUTA_ACTIVA, activa: false });
+        prisma._tx.caja.findUnique.mockResolvedValueOnce({
+          ...CAJA_RUTA_ACTIVA,
+          activa: false,
+        });
         return cb(prisma._tx);
       });
 
-      await expect(service.confirmarArqueo(
-        CAJA_RUTA_ACTIVA.id,
-        '2026-06-13',
-        5000000,
-        USUARIO_ADMIN.id,
-      )).rejects.toThrow(BadRequestException);
+      await expect(
+        service.confirmarArqueo(
+          CAJA_RUTA_ACTIVA.id,
+          '2026-06-13',
+          5000000,
+          USUARIO_ADMIN.id,
+        ),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 });

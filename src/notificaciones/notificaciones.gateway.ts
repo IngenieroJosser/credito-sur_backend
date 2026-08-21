@@ -215,7 +215,9 @@ export class NotificacionesGateway
                 ? Math.round((recaudoBackend / metaBackend) * 1000) / 10
                 : Number(resumen.efectividad || 0);
             const clientesAusentesBackend = visitas.filter((v: any) =>
-              String(v.estadoGestion || '').toUpperCase().includes('AUSENTE'),
+              String(v.estadoGestion || '')
+                .toUpperCase()
+                .includes('AUSENTE'),
             ).length;
             const clientesFaltantesBackend = visitas.filter((v: any) => {
               const estado = String(v.estadoGestion || '').toUpperCase();

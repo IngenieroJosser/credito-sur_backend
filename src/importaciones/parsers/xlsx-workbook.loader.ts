@@ -28,7 +28,9 @@ async function sanitizePrefixedSpreadsheetXml(buffer: Buffer): Promise<Buffer> {
   });
 }
 
-export async function loadWorkbookFromBuffer(buffer: Buffer): Promise<ExcelJS.Workbook> {
+export async function loadWorkbookFromBuffer(
+  buffer: Buffer,
+): Promise<ExcelJS.Workbook> {
   const workbook = new ExcelJS.Workbook();
 
   try {

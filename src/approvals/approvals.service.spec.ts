@@ -353,7 +353,9 @@ describe('ApprovalsService pending loan reconciliation', () => {
 
     const result = await makeService(prisma).getApprovalContext(approval.id);
 
-    expect(result.approval.datosSolicitud.prestamoId).toBe('prestamo-solicitud');
+    expect(result.approval.datosSolicitud.prestamoId).toBe(
+      'prestamo-solicitud',
+    );
     expect(result.cliente.id).toBe('cliente-1');
     expect(result.creditoSolicitud.id).toBe('prestamo-solicitud');
     expect(result.creditosCliente).toHaveLength(2);

@@ -170,27 +170,93 @@ const COLUMNAS_CREDITOS_DINERO: ColumnaPlantilla[] = [
   { header: 'Tasa interés*', key: 'tasa_interes', width: 13 },
   { header: 'Frecuencia pago*', key: 'frecuencia_pago', width: 16 },
   { header: 'Cantidad cuotas*', key: 'cantidad_cuotas', width: 15 },
-  { header: 'Fecha crédito*', key: 'fecha_credito', width: 15, numFmt: FORMATO_FECHA },
+  {
+    header: 'Fecha crédito*',
+    key: 'fecha_credito',
+    width: 15,
+    numFmt: FORMATO_FECHA,
+  },
   { header: 'Tipo carga*', key: 'tipo_carga', width: 14 },
   // Verificación
-  { header: 'Cliente (automático)', key: 'cliente_auto', width: 28, automatica: true },
-  { header: 'Revisión (automático)', key: 'revision_auto', width: 42, automatica: true },
+  {
+    header: 'Cliente (automático)',
+    key: 'cliente_auto',
+    width: 28,
+    automatica: true,
+  },
+  {
+    header: 'Revisión (automático)',
+    key: 'revision_auto',
+    width: 42,
+    automatica: true,
+  },
   // Opcionales
   { header: 'Número de crédito', key: 'numero_prestamo', width: 18 },
   { header: 'Tipo amortización', key: 'tipo_amortizacion', width: 18 },
-  { header: 'Fecha primer cobro', key: 'fecha_primer_cobro', width: 17, numFmt: FORMATO_FECHA },
+  {
+    header: 'Fecha primer cobro',
+    key: 'fecha_primer_cobro',
+    width: 17,
+    numFmt: FORMATO_FECHA,
+  },
   { header: 'Notas', key: 'notas', width: 26 },
   // Estado actual del crédito
   { header: 'Cuotas pagadas', key: 'cuotas_pagadas', width: 14 },
-  { header: 'Abono adicional', key: 'abono_adicional', width: 15, numFmt: FORMATO_MONEDA },
-  { header: 'Fecha último pago', key: 'fecha_ultimo_pago', width: 16, numFmt: FORMATO_FECHA },
+  {
+    header: 'Abono adicional',
+    key: 'abono_adicional',
+    width: 15,
+    numFmt: FORMATO_MONEDA,
+  },
+  {
+    header: 'Fecha último pago',
+    key: 'fecha_ultimo_pago',
+    width: 16,
+    numFmt: FORMATO_FECHA,
+  },
   // Cálculos
-  { header: 'Plazo en meses (automático)', key: 'plazo_meses_auto', width: 16, automatica: true, numFmt: '0.00' },
-  { header: 'Interés total (automático)', key: 'interes_total_auto', width: 16, automatica: true, numFmt: FORMATO_MONEDA },
-  { header: 'Total a pagar (automático)', key: 'total_pagar_auto', width: 16, automatica: true, numFmt: FORMATO_MONEDA },
-  { header: 'Valor cuota (automático)', key: 'valor_cuota_auto', width: 15, automatica: true, numFmt: FORMATO_MONEDA },
-  { header: 'Ya abonado (automático)', key: 'ya_abonado_auto', width: 16, automatica: true, numFmt: FORMATO_MONEDA },
-  { header: 'Saldo pendiente (automático)', key: 'saldo_pendiente_auto', width: 17, automatica: true, numFmt: FORMATO_MONEDA },
+  {
+    header: 'Plazo en meses (automático)',
+    key: 'plazo_meses_auto',
+    width: 16,
+    automatica: true,
+    numFmt: '0.00',
+  },
+  {
+    header: 'Interés total (automático)',
+    key: 'interes_total_auto',
+    width: 16,
+    automatica: true,
+    numFmt: FORMATO_MONEDA,
+  },
+  {
+    header: 'Total a pagar (automático)',
+    key: 'total_pagar_auto',
+    width: 16,
+    automatica: true,
+    numFmt: FORMATO_MONEDA,
+  },
+  {
+    header: 'Valor cuota (automático)',
+    key: 'valor_cuota_auto',
+    width: 15,
+    automatica: true,
+    numFmt: FORMATO_MONEDA,
+  },
+  {
+    header: 'Ya abonado (automático)',
+    key: 'ya_abonado_auto',
+    width: 16,
+    automatica: true,
+    numFmt: FORMATO_MONEDA,
+  },
+  {
+    header: 'Saldo pendiente (automático)',
+    key: 'saldo_pendiente_auto',
+    width: 17,
+    automatica: true,
+    numFmt: FORMATO_MONEDA,
+  },
 ];
 
 const COLUMNAS_CREDITOS_ARTICULO: ColumnaPlantilla[] = [
@@ -200,29 +266,104 @@ const COLUMNAS_CREDITOS_ARTICULO: ColumnaPlantilla[] = [
   { header: 'Producto código*', key: 'producto_codigo', width: 18 },
   { header: 'Plazo meses*', key: 'plazo_meses', width: 13 },
   { header: 'Frecuencia pago*', key: 'frecuencia_pago', width: 16 },
-  { header: 'Fecha crédito*', key: 'fecha_credito', width: 15, numFmt: FORMATO_FECHA },
+  {
+    header: 'Fecha crédito*',
+    key: 'fecha_credito',
+    width: 15,
+    numFmt: FORMATO_FECHA,
+  },
   { header: 'Tipo carga*', key: 'tipo_carga', width: 14 },
   // Verificación
-  { header: 'Cliente (automático)', key: 'cliente_auto', width: 28, automatica: true },
-  { header: 'Artículo (automático)', key: 'articulo_auto', width: 28, automatica: true },
-  { header: 'Revisión (automático)', key: 'revision_auto', width: 42, automatica: true },
+  {
+    header: 'Cliente (automático)',
+    key: 'cliente_auto',
+    width: 28,
+    automatica: true,
+  },
+  {
+    header: 'Artículo (automático)',
+    key: 'articulo_auto',
+    width: 28,
+    automatica: true,
+  },
+  {
+    header: 'Revisión (automático)',
+    key: 'revision_auto',
+    width: 42,
+    automatica: true,
+  },
   // Opcionales
   { header: 'Número de crédito', key: 'numero_prestamo', width: 18 },
   { header: 'Monto', key: 'monto', width: 15, numFmt: FORMATO_MONEDA },
-  { header: 'Cuota inicial', key: 'cuota_inicial', width: 14, numFmt: FORMATO_MONEDA },
-  { header: 'Fecha primer cobro', key: 'fecha_primer_cobro', width: 17, numFmt: FORMATO_FECHA },
+  {
+    header: 'Cuota inicial',
+    key: 'cuota_inicial',
+    width: 14,
+    numFmt: FORMATO_MONEDA,
+  },
+  {
+    header: 'Fecha primer cobro',
+    key: 'fecha_primer_cobro',
+    width: 17,
+    numFmt: FORMATO_FECHA,
+  },
   { header: 'Notas', key: 'notas', width: 26 },
   // Estado actual del crédito
   { header: 'Cuotas pagadas', key: 'cuotas_pagadas', width: 14 },
-  { header: 'Abono adicional', key: 'abono_adicional', width: 15, numFmt: FORMATO_MONEDA },
-  { header: 'Fecha último pago', key: 'fecha_ultimo_pago', width: 16, numFmt: FORMATO_FECHA },
+  {
+    header: 'Abono adicional',
+    key: 'abono_adicional',
+    width: 15,
+    numFmt: FORMATO_MONEDA,
+  },
+  {
+    header: 'Fecha último pago',
+    key: 'fecha_ultimo_pago',
+    width: 16,
+    numFmt: FORMATO_FECHA,
+  },
   // Cálculos
-  { header: 'Precio del plazo (automático)', key: 'precio_plazo_auto', width: 18, automatica: true, numFmt: FORMATO_MONEDA },
-  { header: 'Cantidad cuotas (automático)', key: 'cantidad_cuotas_auto', width: 16, automatica: true },
-  { header: 'Total a pagar (automático)', key: 'total_pagar_auto', width: 16, automatica: true, numFmt: FORMATO_MONEDA },
-  { header: 'Valor cuota (automático)', key: 'valor_cuota_auto', width: 15, automatica: true, numFmt: FORMATO_MONEDA },
-  { header: 'Ya abonado (automático)', key: 'ya_abonado_auto', width: 16, automatica: true, numFmt: FORMATO_MONEDA },
-  { header: 'Saldo pendiente (automático)', key: 'saldo_pendiente_auto', width: 17, automatica: true, numFmt: FORMATO_MONEDA },
+  {
+    header: 'Precio del plazo (automático)',
+    key: 'precio_plazo_auto',
+    width: 18,
+    automatica: true,
+    numFmt: FORMATO_MONEDA,
+  },
+  {
+    header: 'Cantidad cuotas (automático)',
+    key: 'cantidad_cuotas_auto',
+    width: 16,
+    automatica: true,
+  },
+  {
+    header: 'Total a pagar (automático)',
+    key: 'total_pagar_auto',
+    width: 16,
+    automatica: true,
+    numFmt: FORMATO_MONEDA,
+  },
+  {
+    header: 'Valor cuota (automático)',
+    key: 'valor_cuota_auto',
+    width: 15,
+    automatica: true,
+    numFmt: FORMATO_MONEDA,
+  },
+  {
+    header: 'Ya abonado (automático)',
+    key: 'ya_abonado_auto',
+    width: 16,
+    automatica: true,
+    numFmt: FORMATO_MONEDA,
+  },
+  {
+    header: 'Saldo pendiente (automático)',
+    key: 'saldo_pendiente_auto',
+    width: 17,
+    automatica: true,
+    numFmt: FORMATO_MONEDA,
+  },
 ];
 
 function ref(columna: number): string {
@@ -284,7 +425,10 @@ function creditoYaExiste(colNumero: number): string {
   );
 }
 
-function operativaConAbonos(colTipoCarga: number, colCuotasPagadas: number): string {
+function operativaConAbonos(
+  colTipoCarga: number,
+  colCuotasPagadas: number,
+): string {
   return (
     `IF(AND(${ref(colTipoCarga)}="OPERATIVA",` +
     `IF(${ref(colCuotasPagadas)}="",0,${ref(colCuotasPagadas)})>0),` +
@@ -307,7 +451,9 @@ function hojasDeReferencia(
 ) {
   // Estas hojas alimentan las columnas automáticas. Se ocultan porque son
   // datos de apoyo: nadie tiene que verlas ni tocarlas.
-  const wsClientes = workbook.addWorksheet('BD Clientes', { state: 'veryHidden' });
+  const wsClientes = workbook.addWorksheet('BD Clientes', {
+    state: 'veryHidden',
+  });
   wsClientes.getColumn(1).width = 18;
   wsClientes.getColumn(1).numFmt = '@';
   wsClientes.getColumn(2).width = 36;
@@ -319,7 +465,9 @@ function hojasDeReferencia(
     wsClientes.getCell(`B${i + 2}`).value = c.nombre;
   });
 
-  const wsArticulos = workbook.addWorksheet('BD Artículos', { state: 'veryHidden' });
+  const wsArticulos = workbook.addWorksheet('BD Artículos', {
+    state: 'veryHidden',
+  });
   ['Clave', 'Código', 'Nombre', 'Meses', 'Precio', 'Costo'].forEach((h, i) => {
     wsArticulos.getCell(1, i + 1).value = h;
   });
@@ -337,7 +485,9 @@ function hojasDeReferencia(
     wsArticulos.getCell(`F${fila}`).value = a.costo;
   });
 
-  const wsPrestamos = workbook.addWorksheet('BD Préstamos', { state: 'veryHidden' });
+  const wsPrestamos = workbook.addWorksheet('BD Préstamos', {
+    state: 'veryHidden',
+  });
   wsPrestamos.getColumn(1).width = 24;
   wsPrestamos.getCell('A1').value = 'Número préstamo';
   wsPrestamos.getRow(1).font = { bold: true };
@@ -465,7 +615,7 @@ export async function generarPlantillaClientesCreditos(
     '',
     '# Tipos de carga',
     '• HISTORICA: créditos que ya existían. No mueve dinero de caja.',
-    '• OPERATIVA: créditos nuevos que se desembolsan al confirmar. Descuenta de la caja de oficina.',
+    '• OPERATIVA: créditos nuevos que se entregan al confirmar. En los de dinero descuenta de la caja de oficina; en los de artículo descuenta una unidad del inventario y registra la venta.',
     '',
     '# El riesgo no se importa',
     'No hay columna de nivel de riesgo: el sistema lo calcula solo con los días de mora, y lo actualiza en cada pago. Cualquier valor que se pusiera aquí quedaría pisado.',
@@ -517,8 +667,18 @@ export async function generarPlantillaClientesCreditos(
   etiquetarGrupo(wsDinero, DIN.cc, DIN.tipoCarga, 'DATOS OBLIGATORIOS');
   etiquetarGrupo(wsDinero, DIN.cliente, DIN.revision, 'VERIFICACIÓN');
   etiquetarGrupo(wsDinero, DIN.numeroCredito, DIN.notas, 'DATOS OPCIONALES');
-  etiquetarGrupo(wsDinero, DIN.cuotasPagadas, DIN.fechaUltimoPago, 'ESTADO ACTUAL');
-  etiquetarGrupo(wsDinero, DIN.plazoMesesAuto, DIN.saldoPendiente, 'CÁLCULOS AUTOMÁTICOS');
+  etiquetarGrupo(
+    wsDinero,
+    DIN.cuotasPagadas,
+    DIN.fechaUltimoPago,
+    'ESTADO ACTUAL',
+  );
+  etiquetarGrupo(
+    wsDinero,
+    DIN.plazoMesesAuto,
+    DIN.saldoPendiente,
+    'CÁLCULOS AUTOMÁTICOS',
+  );
 
   wsDinero.getColumn(DIN.cc).numFmt = '@';
 
@@ -595,8 +755,18 @@ export async function generarPlantillaClientesCreditos(
   etiquetarGrupo(wsArticulo, ART.cc, ART.tipoCarga, 'DATOS OBLIGATORIOS');
   etiquetarGrupo(wsArticulo, ART.cliente, ART.revision, 'VERIFICACIÓN');
   etiquetarGrupo(wsArticulo, ART.numeroCredito, ART.notas, 'DATOS OPCIONALES');
-  etiquetarGrupo(wsArticulo, ART.cuotasPagadas, ART.fechaUltimoPago, 'ESTADO ACTUAL');
-  etiquetarGrupo(wsArticulo, ART.precioPlazo, ART.saldoPendiente, 'CÁLCULOS AUTOMÁTICOS');
+  etiquetarGrupo(
+    wsArticulo,
+    ART.cuotasPagadas,
+    ART.fechaUltimoPago,
+    'ESTADO ACTUAL',
+  );
+  etiquetarGrupo(
+    wsArticulo,
+    ART.precioPlazo,
+    ART.saldoPendiente,
+    'CÁLCULOS AUTOMÁTICOS',
+  );
 
   wsArticulo.getColumn(ART.cc).numFmt = '@';
 

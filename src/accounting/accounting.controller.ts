@@ -88,7 +88,9 @@ export class AccountingController {
     RolUsuario.CONTADOR,
     RolUsuario.COORDINADOR,
   )
-  asegurarCajaSupervisor(@Param('supervisorId', ParseUUIDPipe) supervisorId: string) {
+  asegurarCajaSupervisor(
+    @Param('supervisorId', ParseUUIDPipe) supervisorId: string,
+  ) {
     return this.accountingService.asegurarCajaSupervisor(supervisorId);
   }
 
@@ -129,7 +131,12 @@ export class AccountingController {
     @Request() req,
     @Body() body?: { monto?: number; idempotencyKey?: string },
   ) {
-    return this.accountingService.consolidarCaja(id, req.user.id, body?.monto, body?.idempotencyKey);
+    return this.accountingService.consolidarCaja(
+      id,
+      req.user.id,
+      body?.monto,
+      body?.idempotencyKey,
+    );
   }
 
   @Get('cajas/:id/desglose-pagos')

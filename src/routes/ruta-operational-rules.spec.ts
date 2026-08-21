@@ -58,9 +58,9 @@ describe('ruta-operational-rules', () => {
     expect(
       isCuotaOperativaParaFechaRuta(prestamo.cuotas[0], '2026-06-14'),
     ).toBe(false);
-    expect(
-      resolveCuotaObjetivoOperativa(prestamo, '2026-06-14'),
-    ).toMatchObject({ id: 'cuota-hoy' });
+    expect(resolveCuotaObjetivoOperativa(prestamo, '2026-06-14')).toMatchObject(
+      { id: 'cuota-hoy' },
+    );
     expect(
       isObligacionOperativaRuta(
         { prestamo, cuota: prestamo.cuotas[1] },

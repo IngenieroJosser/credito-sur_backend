@@ -567,8 +567,7 @@ export async function generarPDFVencidas(
       } else if (ci === 1) {
         doc.font('Helvetica-Bold').fillColor(PURPLE_DARK);
       } else if (ci === 7) {
-        if (riesgo === 'ROJO')
-          doc.font('Helvetica-Bold').fillColor(ROJO_DARK);
+        if (riesgo === 'ROJO') doc.font('Helvetica-Bold').fillColor(ROJO_DARK);
         else doc.font('Helvetica-Bold').fillColor(GRIS_TXT);
       } else {
         doc.font('Helvetica').fillColor(GRIS_TXT);

@@ -50,7 +50,9 @@ export class AuthService {
       `${usuario.nombres} ${usuario.apellidos ?? ''}`,
     );
 
-    return nombres === nombreNormalizado || nombreCompleto === nombreNormalizado;
+    return (
+      nombres === nombreNormalizado || nombreCompleto === nombreNormalizado
+    );
   }
 
   private async buildSessionForUser(usuario: {
@@ -152,9 +154,8 @@ export class AuthService {
   }
 
   async validarUsuario(identificadorEntrada: string, contrasena: string) {
-    const identificador = this.normalizarIdentificadorLogin(
-      identificadorEntrada,
-    );
+    const identificador =
+      this.normalizarIdentificadorLogin(identificadorEntrada);
 
     if (!identificador) return null;
 
@@ -167,7 +168,7 @@ export class AuthService {
       } as any,
     });
 
-    let candidatos = usuarioPorIdentificador ? [usuarioPorIdentificador] : [];
+    const candidatos = usuarioPorIdentificador ? [usuarioPorIdentificador] : [];
 
     if (!candidatos.length) return null;
 

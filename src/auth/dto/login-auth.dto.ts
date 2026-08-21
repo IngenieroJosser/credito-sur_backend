@@ -31,7 +31,8 @@ export class LoginAuthDto {
 
   @ApiProperty({
     example: 'usuario@credisur.com',
-    description: 'Alias de correo (compatibilidad con clientes que envían email).',
+    description:
+      'Alias de correo (compatibilidad con clientes que envían email).',
     required: false,
   })
   @IsString()

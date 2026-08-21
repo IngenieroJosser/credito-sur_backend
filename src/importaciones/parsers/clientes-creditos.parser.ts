@@ -16,6 +16,7 @@ import {
   leerTextoNormalizado,
 } from './cell-value.util';
 import {
+  avisarFilasFueraDeRango,
   celda,
   construirMapaColumnas,
   filaVaciaEnColumnas,
@@ -113,7 +114,10 @@ export class ClientesCreditosParser {
       });
     }
 
-    const hojaArticulo = getWorksheetByAliases(workbook, SHEETS.creditosArticulo);
+    const hojaArticulo = getWorksheetByAliases(
+      workbook,
+      SHEETS.creditosArticulo,
+    );
     if (hojaArticulo) {
       hojasCredito.push({
         hoja: hojaArticulo,
@@ -208,7 +212,7 @@ export class ClientesCreditosParser {
     const preciosPorPlazo = new Map<string, number>();
     productosBd.forEach((p) => {
       const codigo = String(p.codigo).trim().toUpperCase();
-      ((p as any).precios ?? []).forEach((precio: any) => {
+      (p.precios ?? []).forEach((precio: any) => {
         preciosPorPlazo.set(
           `${codigo}|${Number(precio.meses)}`,
           Number(precio.precio) || 0,
@@ -247,7 +251,7 @@ export class ClientesCreditosParser {
     );
     const prestamosConPagos = new Set(
       prestamosBd
-        .filter((p) => (p as any)._count?.pagos > 0)
+        .filter((p) => p._count?.pagos > 0)
         .map((p) => String(p.numeroPrestamo).trim()),
     );
     const codigosCreditoBd = new Set(
@@ -303,6 +307,7 @@ export class ClientesCreditosParser {
 
     let totalClientes = 0;
     let clientesConError = 0;
+    const filasClientes: number[] = [];
     const codigosClientes = new Set<string>();
     const ccsClientes = new Set<string>();
 
@@ -312,6 +317,7 @@ export class ClientesCreditosParser {
 
       totalFilas++;
       totalClientes++;
+      filasClientes.push(rowNumber);
       let tieneError = false;
 
       // Acción vacía equivale a CREAR.
@@ -331,15 +337,21 @@ export class ClientesCreditosParser {
       const correo = limpiarCorreo(leerTexto(celda(row, cliCorreo)));
       const direccion = limpiarTexto(leerTexto(celda(row, cliDireccion)));
       const referencia = limpiarTexto(leerTexto(celda(row, cliReferencia)));
-      const referencia1Nombre = limpiarNombre(leerTexto(celda(row, cliRef1Nombre)));
+      const referencia1Nombre = limpiarNombre(
+        leerTexto(celda(row, cliRef1Nombre)),
+      );
       const referencia1Telefono = limpiarTelefono(
         leerTexto(celda(row, cliRef1Telefono)),
       );
-      const referencia2Nombre = limpiarNombre(leerTexto(celda(row, cliRef2Nombre)));
+      const referencia2Nombre = limpiarNombre(
+        leerTexto(celda(row, cliRef2Nombre)),
+      );
       const referencia2Telefono = limpiarTelefono(
         leerTexto(celda(row, cliRef2Telefono)),
       );
-      const observaciones = limpiarTexto(leerTexto(celda(row, cliObservaciones)));
+      const observaciones = limpiarTexto(
+        leerTexto(celda(row, cliObservaciones)),
+      );
 
       const addError = (campo: string, mensaje: string, valor: any) => {
         errores.push({
@@ -379,7 +391,11 @@ export class ClientesCreditosParser {
           codigoImp,
         );
       } else if (codigosClientes.has(codigoImp)) {
-        addError('codigo_importacion_cliente', 'Duplicado en el archivo', codigoImp);
+        addError(
+          'codigo_importacion_cliente',
+          'Duplicado en el archivo',
+          codigoImp,
+        );
       } else {
         codigosClientes.add(codigoImp);
         if (!esActualizacion && codigosClienteBd.has(codigoImp)) {
@@ -432,7 +448,11 @@ export class ClientesCreditosParser {
       }
 
       if (rutaCodigo && !rutasEnBd.has(rutaCodigo)) {
-        addError('ruta_codigo', 'La ruta no existe en la base de datos', rutaCodigo);
+        addError(
+          'ruta_codigo',
+          'La ruta no existe en la base de datos',
+          rutaCodigo,
+        );
       }
 
       if (tieneError) {
@@ -463,7 +483,10 @@ export class ClientesCreditosParser {
     });
 
     // ── Posibles duplicados por nombre ─────────────────────────────────────
-    const nombresDelArchivo = new Map<string, Array<{ cc: string; fila: number }>>();
+    const nombresDelArchivo = new Map<
+      string,
+      Array<{ cc: string; fila: number }>
+    >();
     clientesValidar.forEach((cli) => {
       const clave = claveNombre(cli.nombres, cli.apellidos);
       if (!clave) return;
@@ -502,6 +525,14 @@ export class ClientesCreditosParser {
       });
     });
 
+    const avisoClientes = avisarFilasFueraDeRango(
+      filasClientes,
+      SHEET_DISPLAY.clientes,
+    );
+    if (avisoClientes) {
+      advertencias.push({ hoja: SHEET_DISPLAY.clientes, ...avisoClientes });
+    }
+
     porHoja[SHEET_DISPLAY.clientes] = {
       totalFilas: totalClientes,
       filasValidas: totalClientes - clientesConError,
@@ -519,9 +550,15 @@ export class ClientesCreditosParser {
       const colsCre = construirMapaColumnas(hoja);
       const creAccion = colsCre.indice('Acción');
       const creCodigo = colsCre.indice('Código importación');
-      const creNumeroPrestamo = colsCre.indice('Número de crédito', 'Número préstamo');
+      const creNumeroPrestamo = colsCre.indice(
+        'Número de crédito',
+        'Número préstamo',
+      );
       const creCc = colsCre.indice('CC cliente');
-      const creTipoPrestamo = colsCre.indice('Tipo de crédito', 'Tipo préstamo');
+      const creTipoPrestamo = colsCre.indice(
+        'Tipo de crédito',
+        'Tipo préstamo',
+      );
       const creProductoCodigo = colsCre.indice('Producto código');
       const creMonto = colsCre.indice('Monto');
       const creCuotaInicial = colsCre.indice('Cuota inicial');
@@ -585,6 +622,7 @@ export class ClientesCreditosParser {
 
       let totalCreditos = 0;
       let creditosConError = 0;
+      const filasCreditos: number[] = [];
 
       hoja.eachRow((row, rowNumber) => {
         if (rowNumber < FILA_INICIO_DATOS) return;
@@ -592,6 +630,7 @@ export class ClientesCreditosParser {
 
         totalFilas++;
         totalCreditos++;
+        filasCreditos.push(rowNumber);
         let tieneError = false;
 
         const accion = leerTextoMayus(celda(row, creAccion)) || 'CREAR';
@@ -623,7 +662,9 @@ export class ClientesCreditosParser {
 
         // Interés simple y Amortización calculan distinto: la primera aplica la
         // tasa por cada mes de plazo y la segunda una sola vez sobre el capital.
-        const tipoAmortizacionInformado = Boolean(leerTexto(tipoAmortizacionRaw));
+        const tipoAmortizacionInformado = Boolean(
+          leerTexto(tipoAmortizacionRaw),
+        );
         const tipoAmortizacion = tipoAmortizacionInformado
           ? mapTipoAmortizacionExcel(tipoAmortizacionRaw)
           : TIPO_AMORTIZACION_POR_DEFECTO;
@@ -717,7 +758,11 @@ export class ClientesCreditosParser {
             codigoImp,
           );
         } else if (codigosCreditos.has(codigoImp)) {
-          addError('codigo_importacion_credito', 'Duplicado en el archivo', codigoImp);
+          addError(
+            'codigo_importacion_credito',
+            'Duplicado en el archivo',
+            codigoImp,
+          );
         } else {
           codigosCreditos.add(codigoImp);
           if (!esActualizacion && codigosCreditoBd.has(codigoImp)) {
@@ -736,9 +781,17 @@ export class ClientesCreditosParser {
             numeroPrestamo,
           );
         } else if (numeroPrestamo.length > 50) {
-          addError('numero_prestamo', 'Debe tener máximo 50 caracteres', numeroPrestamo);
+          addError(
+            'numero_prestamo',
+            'Debe tener máximo 50 caracteres',
+            numeroPrestamo,
+          );
         } else if (numerosPrestamo.has(numeroPrestamo)) {
-          addError('numero_prestamo', 'Duplicado en el archivo', numeroPrestamo);
+          addError(
+            'numero_prestamo',
+            'Duplicado en el archivo',
+            numeroPrestamo,
+          );
         } else {
           numerosPrestamo.add(numeroPrestamo);
 
@@ -774,8 +827,15 @@ export class ClientesCreditosParser {
         if (!ccCliente) {
           addError('cc_cliente', 'Es requerido', ccCliente);
         } else if (!/^\d{6,10}$/.test(ccCliente)) {
-          addError('cc_cliente', 'Debe ser solo dígitos, entre 6 y 10 caracteres', ccCliente);
-        } else if (!ccsClientes.has(ccCliente) && !clientesPorCcBd.has(ccCliente)) {
+          addError(
+            'cc_cliente',
+            'Debe ser solo dígitos, entre 6 y 10 caracteres',
+            ccCliente,
+          );
+        } else if (
+          !ccsClientes.has(ccCliente) &&
+          !clientesPorCcBd.has(ccCliente)
+        ) {
           addError(
             'cc_cliente',
             'El cliente no existe en la hoja Clientes ni en la base de datos',
@@ -810,17 +870,21 @@ export class ClientesCreditosParser {
         let montoEfectivo = monto;
 
         if (esArticulo && montoEfectivo === null && productoCodigo) {
-          // El total del crédito de artículo es el precio de su plazo.
+          // Igual que createLoan: lo que se financia es el precio del plazo
+          // menos la cuota inicial, no el precio completo.
           const precioPlazo = preciosPorPlazo.get(
             `${productoCodigo}|${plazoMeses ?? ''}`,
           );
 
           if (precioPlazo && precioPlazo > 0) {
-            montoEfectivo = precioPlazo;
+            const inicial = Math.max(0, cuotaInicial ?? 0);
+            montoEfectivo = Math.max(0, precioPlazo - inicial);
             addAdver(
               'monto',
-              `Se tomó el precio del plazo del artículo: ${precioPlazo}.`,
-              precioPlazo,
+              inicial > 0
+                ? `Se financia el precio del plazo (${precioPlazo}) menos la cuota inicial (${inicial}): ${montoEfectivo}.`
+                : `Se tomó el precio del plazo del artículo: ${precioPlazo}.`,
+              montoEfectivo,
             );
           } else if (productosEnBd.has(productoCodigo)) {
             addError(
@@ -836,9 +900,16 @@ export class ClientesCreditosParser {
           Number.isNaN(montoEfectivo) ||
           montoEfectivo <= 0
         ) {
-          addError('monto', 'Debe ser un número mayor a 0', celda(row, creMonto));
+          addError(
+            'monto',
+            'Debe ser un número mayor a 0',
+            celda(row, creMonto),
+          );
         }
-        if (cuotaInicial !== null && (Number.isNaN(cuotaInicial) || cuotaInicial < 0)) {
+        if (
+          cuotaInicial !== null &&
+          (Number.isNaN(cuotaInicial) || cuotaInicial < 0)
+        ) {
           addError(
             'cuota_inicial',
             'Debe ser un número mayor o igual a 0',
@@ -848,7 +919,11 @@ export class ClientesCreditosParser {
         if (esArticulo) {
           // El financiamiento ya está incluido en el precio del plazo del artículo,
           // así que no se cobra una tasa aparte.
-          if (tasaInteres !== null && !Number.isNaN(tasaInteres) && tasaInteres > 0) {
+          if (
+            tasaInteres !== null &&
+            !Number.isNaN(tasaInteres) &&
+            tasaInteres > 0
+          ) {
             addAdver(
               'tasa_interes',
               'Los créditos de artículo no llevan tasa: el interés ya está dentro del precio del plazo. Se ignorará.',
@@ -948,7 +1023,11 @@ export class ClientesCreditosParser {
             celda(row, creCantidadCuotas),
           );
         } else if (!Number.isInteger(cantidadCuotas)) {
-          addError('cantidad_cuotas', 'Debe ser un número entero', cantidadCuotas);
+          addError(
+            'cantidad_cuotas',
+            'Debe ser un número entero',
+            cantidadCuotas,
+          );
         }
 
         if (!tipoAmortizacion) {
@@ -973,7 +1052,11 @@ export class ClientesCreditosParser {
           );
         }
 
-        if (fechaPrimerCobro && fechaCredito && fechaPrimerCobro < fechaCredito) {
+        if (
+          fechaPrimerCobro &&
+          fechaCredito &&
+          fechaPrimerCobro < fechaCredito
+        ) {
           addError(
             'fecha_primer_cobro',
             'No puede ser anterior a la fecha de crédito',
@@ -985,14 +1068,22 @@ export class ClientesCreditosParser {
           addError('tipo_carga', 'Debe ser HISTORICA u OPERATIVA', tipoCarga);
         }
         if (descontarCaja !== 'SI' && descontarCaja !== 'NO') {
-          addError('descontar_dinero_de_caja', 'Debe ser SI o NO', descontarCaja);
+          addError(
+            'descontar_dinero_de_caja',
+            'Debe ser SI o NO',
+            descontarCaja,
+          );
         }
 
         // ── Estado de avance: créditos que ya vienen abonados ────────────────
         const cuotasPagadasNum =
-          cuotasPagadas === null || Number.isNaN(cuotasPagadas) ? 0 : cuotasPagadas;
+          cuotasPagadas === null || Number.isNaN(cuotasPagadas)
+            ? 0
+            : cuotasPagadas;
         const abonoAdicionalNum =
-          abonoAdicional === null || Number.isNaN(abonoAdicional) ? 0 : abonoAdicional;
+          abonoAdicional === null || Number.isNaN(abonoAdicional)
+            ? 0
+            : abonoAdicional;
 
         if (cuotasPagadas !== null && Number.isNaN(cuotasPagadas)) {
           addError(
@@ -1000,7 +1091,10 @@ export class ClientesCreditosParser {
             'Debe ser un número entero mayor o igual a 0',
             celda(row, creCuotasPagadas),
           );
-        } else if (cuotasPagadasNum < 0 || !Number.isInteger(cuotasPagadasNum)) {
+        } else if (
+          cuotasPagadasNum < 0 ||
+          !Number.isInteger(cuotasPagadasNum)
+        ) {
           addError(
             'cuotas_pagadas',
             'Debe ser un número entero mayor o igual a 0',
@@ -1018,7 +1112,10 @@ export class ClientesCreditosParser {
           );
         }
 
-        if (abonoAdicional !== null && (Number.isNaN(abonoAdicional) || abonoAdicionalNum < 0)) {
+        if (
+          abonoAdicional !== null &&
+          (Number.isNaN(abonoAdicional) || abonoAdicionalNum < 0)
+        ) {
           addError(
             'abono_adicional',
             'Debe ser un número mayor o igual a 0',
@@ -1081,15 +1178,11 @@ export class ClientesCreditosParser {
             descontarCaja,
           );
         }
-        if (
-          tipoCarga === 'OPERATIVA' &&
-          descontarCaja === 'SI' &&
-          tipoPrestamo === 'ARTICULO'
-        ) {
+        if (tipoCarga === 'OPERATIVA' && tipoPrestamo === 'ARTICULO') {
           addAdver(
-            'descontar_dinero_de_caja',
-            'La importación operativa de créditos por artículo no está soportada en esta fase.',
-            descontarCaja,
+            'tipo_carga',
+            'Al confirmar se descontará una unidad del inventario y se registrará la venta del artículo.',
+            tipoCarga,
           );
         }
 
@@ -1110,7 +1203,9 @@ export class ClientesCreditosParser {
         const valorCuota =
           Math.round((totalCredito / (cantidadCuotas as number)) * 100) / 100;
         const totalAbonado =
-          Math.round((valorCuota * cuotasPagadasNum + abonoAdicionalNum) * 100) / 100;
+          Math.round(
+            (valorCuota * cuotasPagadasNum + abonoAdicionalNum) * 100,
+          ) / 100;
 
         if (totalAbonado > totalCredito) {
           errores.push({
@@ -1141,7 +1236,9 @@ export class ClientesCreditosParser {
           cantidadCuotas,
           // Fraccionario para el cálculo de interés; entero al guardar en la base.
           plazoMeses: plazoMesesEfectivo,
-          plazoMesesPersistir: plazoMesesPersistido(plazoMesesEfectivo as number),
+          plazoMesesPersistir: plazoMesesPersistido(
+            plazoMesesEfectivo as number,
+          ),
           tipoAmortizacion,
           fechaCredito,
           fechaPrimerCobro,
@@ -1159,6 +1256,11 @@ export class ClientesCreditosParser {
           fila: rowNumber,
         });
       });
+
+      const avisoCreditos = avisarFilasFueraDeRango(filasCreditos, nombre);
+      if (avisoCreditos) {
+        advertencias.push({ hoja: nombre, ...avisoCreditos });
+      }
 
       porHoja[nombre] = {
         totalFilas: totalCreditos,

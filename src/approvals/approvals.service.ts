@@ -225,7 +225,10 @@ export class ApprovalsService {
     ].filter((referencia) => referencia.nombre || referencia.telefono);
   }
 
-  private enrichApprovalContext(approval: any, datosSolicitud: Record<string, any>) {
+  private enrichApprovalContext(
+    approval: any,
+    datosSolicitud: Record<string, any>,
+  ) {
     return {
       ...approval,
       datosSolicitud,
@@ -256,7 +259,9 @@ export class ApprovalsService {
     const datosSolicitud = this.parseJsonObject(approval.datosSolicitud);
     let prestamoId = String(
       datosSolicitud.prestamoId ||
-        (approval.tablaReferencia === 'Prestamo' ? approval.referenciaId : '') ||
+        (approval.tablaReferencia === 'Prestamo'
+          ? approval.referenciaId
+          : '') ||
         '',
     ).trim();
     const tablaReferencia = String(approval.tablaReferencia || '');
@@ -454,9 +459,7 @@ export class ApprovalsService {
       0,
     );
     const creditosActivos = creditosCliente.filter((credito: any) =>
-      [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA].includes(
-        credito.estado,
-      ),
+      [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA].includes(credito.estado),
     ).length;
     const montoPagadoUltimos30Dias = pagosUltimos30Dias.reduce(
       (sum: number, pago: any) => sum + Number(pago.montoTotal || 0),
@@ -627,7 +630,9 @@ export class ApprovalsService {
       });
 
       if (existingReversa?.id) {
-        this.logger.log(`Reversa de transacción ${original.id} ya existe, saltando`);
+        this.logger.log(
+          `Reversa de transacción ${original.id} ya existe, saltando`,
+        );
         transaccionReversaIds.push(existingReversa.id);
         continue;
       }
@@ -654,8 +659,13 @@ export class ApprovalsService {
         });
         transaccionReversaIds.push(reversa.id);
       } catch (error) {
-        this.logger.error(`Error creando reversa de transacción ${original.id}:`, error);
-        throw new BadRequestException(`No se pudo crear reversa de transacción: ${(error as Error).message}`);
+        this.logger.error(
+          `Error creando reversa de transacción ${original.id}:`,
+          error,
+        );
+        throw new BadRequestException(
+          `No se pudo crear reversa de transacción: ${(error as Error).message}`,
+        );
       }
     }
 
@@ -676,7 +686,9 @@ export class ApprovalsService {
       });
 
       if (existingReversa?.id) {
-        this.logger.log(`Reversa de journal ${original.id} ya existe, saltando`);
+        this.logger.log(
+          `Reversa de journal ${original.id} ya existe, saltando`,
+        );
         journalEntryReversaIds.push(existingReversa.id);
         continue;
       }
@@ -742,8 +754,13 @@ export class ApprovalsService {
         if (error instanceof BadRequestException) {
           throw error;
         }
-        this.logger.error(`Error creando reversa de journal ${original.id}:`, error);
-        throw new BadRequestException(`No se pudo crear reversa de asiento contable: ${(error as Error).message}`);
+        this.logger.error(
+          `Error creando reversa de journal ${original.id}:`,
+          error,
+        );
+        throw new BadRequestException(
+          `No se pudo crear reversa de asiento contable: ${(error as Error).message}`,
+        );
       }
     }
 
@@ -831,7 +848,8 @@ export class ApprovalsService {
       transaccionIds.push(nueva.id);
     }
 
-    const originalJournalIds = rollbackData.journalEntryIds || rollbackData.journalReferenceIds || [];
+    const originalJournalIds =
+      rollbackData.journalEntryIds || rollbackData.journalReferenceIds || [];
     for (const journalEntryId of originalJournalIds) {
       const original = await tx.journalEntry.findUnique?.({
         where: { id: journalEntryId },
@@ -951,7 +969,9 @@ export class ApprovalsService {
   ) {
     // Validar idempotencia
     if (efecto.estado === 'REVERTIDO') {
-      this.logger.log(`Efecto provisional ${efecto.id} ya está revertido, retornando idempotente`);
+      this.logger.log(
+        `Efecto provisional ${efecto.id} ya está revertido, retornando idempotente`,
+      );
       return;
     }
 
@@ -1044,7 +1064,10 @@ export class ApprovalsService {
     }
 
     // Validar que existan movimientos originales para revertir
-    if (transaccionesOriginales.length === 0 && journalsOriginales.length === 0) {
+    if (
+      transaccionesOriginales.length === 0 &&
+      journalsOriginales.length === 0
+    ) {
       throw new BadRequestException(
         `No se encontraron movimientos originales para revertir el préstamo provisional ${prestamoId}`,
       );
@@ -1131,9 +1154,7 @@ export class ApprovalsService {
 
     const rollbackData = efectoProvisional.rollbackData || {};
 
-    const cuotaId = String(
-      rollbackData.cuotaId || approval.referenciaId || '',
-    );
+    const cuotaId = String(rollbackData.cuotaId || approval.referenciaId || '');
 
     if (!cuotaId) {
       throw new BadRequestException(
@@ -1189,10 +1210,7 @@ export class ApprovalsService {
         ? new Date(rollbackData.fechaVencimientoNueva)
         : null;
 
-      if (
-        fechaNuevaEsperada &&
-        !Number.isNaN(fechaNuevaEsperada.getTime())
-      ) {
+      if (fechaNuevaEsperada && !Number.isNaN(fechaNuevaEsperada.getTime())) {
         const actualMs = new Date(cuotaActual.fechaVencimiento).getTime();
         const esperadaMs = fechaNuevaEsperada.getTime();
 
@@ -1547,11 +1565,7 @@ export class ApprovalsService {
           );
         }
 
-        await this.confirmarPrestamoProvisional(
-          tx,
-          approval,
-          aprobadoPorId,
-        );
+        await this.confirmarPrestamoProvisional(tx, approval, aprobadoPorId);
         await this.confirmarEfectoProvisional(tx, efectoProvisional);
       });
 
@@ -2278,7 +2292,10 @@ export class ApprovalsService {
         tipoAprobacion: approval.tipoAprobacion,
       });
 
-      if (approval.tipoAprobacion === TipoAprobacion.NUEVO_PRESTAMO && approval.referenciaId) {
+      if (
+        approval.tipoAprobacion === TipoAprobacion.NUEVO_PRESTAMO &&
+        approval.referenciaId
+      ) {
         this.notificacionesGateway.broadcastPrestamosActualizados({
           accion: 'RESTAURAR',
           prestamoId: approval.referenciaId,
@@ -2398,10 +2415,16 @@ export class ApprovalsService {
         ? JSON.parse(approval.datosSolicitud)
         : approval.datosSolicitud;
     const esProvisional = data.esProvisional === true;
-    const tieneResultadoRevision = resultadoRevision === 'RECHAZADO_CON_DEUDA' || resultadoRevision === 'RECHAZADO_CON_REINTEGRO';
+    const tieneResultadoRevision =
+      resultadoRevision === 'RECHAZADO_CON_DEUDA' ||
+      resultadoRevision === 'RECHAZADO_CON_REINTEGRO';
 
     // Si es un gasto provisional, es obligatorio indicar resultadoRevision
-    if (approval.tipoAprobacion === TipoAprobacion.GASTO && esProvisional && !tieneResultadoRevision) {
+    if (
+      approval.tipoAprobacion === TipoAprobacion.GASTO &&
+      esProvisional &&
+      !tieneResultadoRevision
+    ) {
       throw new BadRequestException(
         'Debe indicar si el gasto provisional se rechaza con deuda o con reintegro.',
       );
@@ -2755,7 +2778,9 @@ export class ApprovalsService {
         finalData.plazoMeses !== undefined ||
         finalData.plazo !== undefined ||
         finalData.plajeMeses !== undefined
-          ? Number(finalData.plazoMeses || finalData.plazo || finalData.plajeMeses)
+          ? Number(
+              finalData.plazoMeses || finalData.plazo || finalData.plajeMeses,
+            )
           : undefined;
       const tipoAmortizacionNormalizado = finalData.tipoAmortizacion
         ? (String(finalData.tipoAmortizacion).toUpperCase() as TipoAmortizacion)
@@ -2814,12 +2839,14 @@ export class ApprovalsService {
                 )
               : undefined,
           tasaInteres:
-            tasaInteresNormalizada !== undefined && !Number.isNaN(tasaInteresNormalizada)
+            tasaInteresNormalizada !== undefined &&
+            !Number.isNaN(tasaInteresNormalizada)
               ? tasaInteresNormalizada
               : undefined,
           frecuenciaPago: finalData.frecuenciaPago || undefined,
           plazoMeses:
-            plazoMesesNormalizado !== undefined && !Number.isNaN(plazoMesesNormalizado)
+            plazoMesesNormalizado !== undefined &&
+            !Number.isNaN(plazoMesesNormalizado)
               ? plazoMesesNormalizado
               : undefined,
           tipoAmortizacion: tipoAmortizacionNormalizado || undefined,
@@ -2833,7 +2860,8 @@ export class ApprovalsService {
               ) || undefined
             : undefined,
           costoArticulo: isArticulo
-            ? Number(finalData.costoArticulo || finalData.costo || 0) || undefined
+            ? Number(finalData.costoArticulo || finalData.costo || 0) ||
+              undefined
             : undefined,
           fechaInicio: finalData.fechaInicio
             ? new Date(finalData.fechaInicio)
@@ -3026,7 +3054,6 @@ export class ApprovalsService {
           );
           interesTotal = amortizacion.interesTotal;
           cuotasData = amortizacion.tabla;
-
         } else {
           // INTERES SIMPLE
           const mesesInteres = Math.max(1, realPlazoMeses);
@@ -3241,7 +3268,7 @@ export class ApprovalsService {
       if (esProvisional) {
         // ======== NUEVO FLUJO: GASTO PROVISIONAL ========
         // El gasto ya fue creado al solicitar, solo reclasificar de 1.6.1 a 4.1
-        
+
         const existingGasto = await tx.gasto.findUnique({
           where: { id: approval.referenciaId },
           include: {
@@ -3256,8 +3283,13 @@ export class ApprovalsService {
         }
 
         // Validar que el gasto sea provisional y esté pendiente
-        if (!existingGasto.esProvisional || existingGasto.estadoAprobacion !== EstadoAprobacion.PENDIENTE) {
-          throw new BadRequestException('El gasto provisional ya fue procesado o no es un gasto provisional');
+        if (
+          !existingGasto.esProvisional ||
+          existingGasto.estadoAprobacion !== EstadoAprobacion.PENDIENTE
+        ) {
+          throw new BadRequestException(
+            'El gasto provisional ya fue procesado o no es un gasto provisional',
+          );
         }
 
         // Actualizar estado del gasto
@@ -3302,7 +3334,7 @@ export class ApprovalsService {
       } else {
         // ======== FLUJO ANTIGUO: GASTO SIN COMPROBANTE O PERSONAL ========
         // Crear el registro de Gasto y afectar caja
-        
+
         const routeCash = await this.resolveActiveRouteCashContext(tx, {
           rutaId: data.rutaId,
           cajaId: data.cajaId,

@@ -113,7 +113,7 @@ describe('AuthService', () => {
       (argon2.verify as jest.Mock).mockResolvedValue(true);
 
       const resultado = await service.login({
-        nombres: 'Admin',
+        identificador: 'admin.test',
         contrasena: 'contraseña-correcta',
       });
 
@@ -129,7 +129,7 @@ describe('AuthService', () => {
       prisma.usuario.findMany.mockResolvedValue([]);
 
       await expect(
-        service.login({ nombres: 'No Existe', contrasena: '123456' }),
+        service.login({ identificador: 'no.existe', contrasena: '123456' }),
       ).rejects.toThrow(UnauthorizedException);
     });
 
@@ -138,7 +138,7 @@ describe('AuthService', () => {
 
       await expect(
         service.login({
-          nombres: 'Admin',
+          identificador: 'admin.test',
           contrasena: 'contraseña-mal',
         }),
       ).rejects.toThrow(UnauthorizedException);
@@ -152,7 +152,7 @@ describe('AuthService', () => {
       });
 
       await expect(
-        service.login({ nombres: 'Admin', contrasena: 'correcta' }),
+        service.login({ identificador: 'admin.test', contrasena: 'correcta' }),
       ).rejects.toThrow(UnauthorizedException);
     });
 
@@ -160,7 +160,7 @@ describe('AuthService', () => {
       (argon2.verify as jest.Mock).mockResolvedValue(true);
 
       await service.login({
-        nombres: 'Admin',
+        identificador: 'admin.test',
         contrasena: 'correcta',
       });
 
@@ -246,41 +246,55 @@ describe('AuthService', () => {
       expect(result).toHaveProperty('id', 'user-1');
     });
 
-    it('acepta el nombre completo formado por nombres y apellidos sin usar correo', async () => {
-      prisma.usuario.findFirst.mockResolvedValue(null);
-      prisma.usuario.findMany.mockResolvedValue([
-        {
-          ...USUARIO_ACTIVO,
-          id: 'coordinador-1',
-          nombres: 'Coordinador',
-          apellidos: 'Prueba',
-          correo: 'coordinador@gmail.com',
-          rol: 'COORDINADOR',
-        },
-      ]);
+    it('identifica al usuario por su nombre de usuario, no por su nombre', async () => {
+      prisma.usuario.findFirst.mockResolvedValue({
+        ...USUARIO_ACTIVO,
+        id: 'coordinador-1',
+        nombres: 'Coordinador',
+        apellidos: 'Prueba',
+        nombreUsuario: 'coordinador.prueba',
+        rol: 'COORDINADOR',
+      });
       (argon2.verify as jest.Mock).mockResolvedValue(true);
+
+      const result = await service.validarUsuario(
+        'coordinador.prueba',
+        'CoordinadorPrueba',
+      );
+
+      // Se busca por nombre de usuario o correo; la búsqueda por nombre y
+      // apellido se retiró porque dos personas pueden llamarse igual.
+      expect(prisma.usuario.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            OR: [
+              {
+                correo: {
+                  equals: 'coordinador.prueba',
+                  mode: 'insensitive',
+                },
+              },
+              { nombreUsuario: 'coordinador.prueba' },
+            ],
+          }),
+        }),
+      );
+      expect(result).toMatchObject({
+        id: 'coordinador-1',
+        nombreUsuario: 'coordinador.prueba',
+      });
+      expect(result).not.toHaveProperty('hashContrasena');
+    });
+
+    it('no encuentra al usuario si se intenta entrar con el nombre completo', async () => {
+      prisma.usuario.findFirst.mockResolvedValue(null);
 
       const result = await service.validarUsuario(
         'Coordinador Prueba',
         'CoordinadorPrueba',
       );
 
-      expect(prisma.usuario.findFirst).toHaveBeenCalledWith({
-        where: {
-          nombres: { equals: 'Coordinador Prueba', mode: 'insensitive' },
-        },
-      });
-      expect(prisma.usuario.findMany).toHaveBeenCalledWith({
-        where: {
-          nombres: { startsWith: 'Coordinador', mode: 'insensitive' },
-        },
-      });
-      expect(result).toMatchObject({
-        id: 'coordinador-1',
-        nombres: 'Coordinador',
-        apellidos: 'Prueba',
-      });
-      expect(result).not.toHaveProperty('hashContrasena');
+      expect(result).toBeNull();
     });
   });
 });

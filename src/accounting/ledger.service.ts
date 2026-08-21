@@ -1,4 +1,9 @@
-import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  Logger,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
 
@@ -144,11 +149,7 @@ export class LedgerService {
    * Solo debe usarse para operaciones que RESTAN saldo (egresos, reversas, gastos).
    * Para operaciones que SUMAN saldo (pagos, ingresos), el delta positivo no requiere validación.
    */
-  private async applyCajaDeltaSafely(
-    tx: any,
-    cajaId: string,
-    delta: number,
-  ) {
+  private async applyCajaDeltaSafely(tx: any, cajaId: string, delta: number) {
     if (delta === 0) return;
 
     // Solo validar si el delta es negativo (resta saldo)
@@ -187,11 +188,7 @@ export class LedgerService {
    * Delega internamente a applyCajaDeltaSafely.
    * Usado por servicios externos que necesitan actualizar caja con validación de saldo.
    */
-  async aplicarDeltaCajaSeguro(
-    tx: any,
-    cajaId: string,
-    delta: number,
-  ) {
+  async aplicarDeltaCajaSeguro(tx: any, cajaId: string, delta: number) {
     return this.applyCajaDeltaSafely(tx, cajaId, delta);
   }
 

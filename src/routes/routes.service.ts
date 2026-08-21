@@ -255,17 +255,16 @@ export class RoutesService {
     const { inicio, fin } = this.getInicioFinHoy();
     const activacionRutaHoy =
       (await this.prisma.transaccion.findFirst({
-      where: {
-        idempotencyKey: activacionIdempotencyKey,
-      },
-      select: {
-        id: true,
-        fechaTransaccion: true,
-        creadoPorId: true,
-        tipoReferencia: true,
-      },
-      })) ||
-      (await this.buscarActivacionRutaDia(cajaRuta.id, inicio, fin));
+        where: {
+          idempotencyKey: activacionIdempotencyKey,
+        },
+        select: {
+          id: true,
+          fechaTransaccion: true,
+          creadoPorId: true,
+          tipoReferencia: true,
+        },
+      })) || (await this.buscarActivacionRutaDia(cajaRuta.id, inicio, fin));
 
     return {
       rutaId,
@@ -456,12 +455,7 @@ export class RoutesService {
               fechaTransaccion: true,
               tipoReferencia: true,
             },
-          })) ||
-          (await this.buscarActivacionRutaDia(
-            cajaRuta.id,
-            inicio,
-            fin,
-          ));
+          })) || (await this.buscarActivacionRutaDia(cajaRuta.id, inicio, fin));
 
         if (activacionExistente?.id) {
           resultadoActivacion = {
@@ -659,37 +653,49 @@ export class RoutesService {
       for (const p of prestamos) {
         // Step 1: Validate prestamo is operational
         if (!isPrestamoOperativoRuta(p)) continue;
-        
+
         // Step 2: Resolve cuota objetivo
         const cuotaObjetivoBase = resolveCuotaObjetivoOperativa(p, hoyKey);
         if (!cuotaObjetivoBase) continue;
-        
+
         // Step 3: Validate obligacion is operational
-        if (!isObligacionOperativaRuta({ prestamo: p, cuota: cuotaObjetivoBase }, hoyKey)) continue;
-        
+        if (
+          !isObligacionOperativaRuta(
+            { prestamo: p, cuota: cuotaObjetivoBase },
+            hoyKey,
+          )
+        )
+          continue;
+
         // Step 4: Get revision state
         const estadoRevision = getEstadoRevisionOperacion(p);
-        
+
         // Step 5: Enrich cuota objetivo with necessary fields
         const cuotaObjetivo = {
           ...cuotaObjetivoBase,
           montoCuota: Number(
-            cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0
+            cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0,
           ),
           montoNominal: Number(
-            cuotaObjetivoBase.montoNominal ?? cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0
+            cuotaObjetivoBase.montoNominal ??
+              cuotaObjetivoBase.montoCuota ??
+              cuotaObjetivoBase.monto ??
+              0,
           ),
           montoPagado: Number(cuotaObjetivoBase.montoPagado ?? 0),
-          saldoExigibleEnFechaOperativa: Math.max(0, Number(
-            cuotaObjetivoBase.saldoExigibleEnFechaOperativa ?? (
-              (cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0) - 
-              (cuotaObjetivoBase.montoPagado ?? 0)
-            )
-          )),
-          fechaEfectiva: getCuotaFechaEfectivaKeyRuta(cuotaObjetivoBase)
+          saldoExigibleEnFechaOperativa: Math.max(
+            0,
+            Number(
+              cuotaObjetivoBase.saldoExigibleEnFechaOperativa ??
+                (cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0) -
+                  (cuotaObjetivoBase.montoPagado ?? 0),
+            ),
+          ),
+          fechaEfectiva: getCuotaFechaEfectivaKeyRuta(cuotaObjetivoBase),
         };
-        
-        const cuotaEnProrroga = (cuotaObjetivo.estadoActual ?? cuotaObjetivo.estado) === 'PRORROGADA';
+
+        const cuotaEnProrroga =
+          (cuotaObjetivo.estadoActual ?? cuotaObjetivo.estado) === 'PRORROGADA';
 
         filas.push({
           asignacionId: asig.id,
@@ -733,7 +739,8 @@ export class RoutesService {
             cuotaObjetivo,
             cuotaObjetivoId: cuotaObjetivo.id,
             montoCuotaNormal: cuotaObjetivo.montoNominal,
-            montoMetaOperativaPendiente: cuotaObjetivo.saldoExigibleEnFechaOperativa,
+            montoMetaOperativaPendiente:
+              cuotaObjetivo.saldoExigibleEnFechaOperativa,
             estadoAprobacion: estadoRevision.estadoAprobacion,
             estadoEfectoProvisional: estadoRevision.estadoEfectoProvisional,
             esProvisional: estadoRevision.esProvisional,
@@ -951,7 +958,7 @@ export class RoutesService {
   ) {
     const { skip, take, search, activa, supervisorId } = options || {};
     const rolActor = String(actor?.rol || '').toUpperCase();
-    
+
     const where: any = {
       eliminadoEn: null,
     };
@@ -1067,8 +1074,10 @@ export class RoutesService {
       // Calcular estadísticas para cada ruta
 
       const rutaIds = rutas.map((r) => r.id);
-      const cierresPendientesMap =
-        await this.getCierresPendientesRutasMap(rutaIds, actor?.id);
+      const cierresPendientesMap = await this.getCierresPendientesRutasMap(
+        rutaIds,
+        actor?.id,
+      );
 
       const rutasConEstadisticas = await Promise.all(
         rutas.map(async (ruta) => {
@@ -1143,9 +1152,9 @@ export class RoutesService {
                   lte: finHoy,
                 },
                 OR: [
-              { origenGestion: null },
-              { origenGestion: { not: 'CIERRE_PENDIENTE' } },
-            ],
+                  { origenGestion: null },
+                  { origenGestion: { not: 'CIERRE_PENDIENTE' } },
+                ],
               },
               select: {
                 clienteId: true,
@@ -1826,8 +1835,7 @@ export class RoutesService {
               (sum, p) => sum + Number(p.montoTotal || 0),
               0,
             ) + montoMetaInicial;
-          (estadisticas as any).recaudoRegularizadoHoy =
-            recaudoRegularizadoHoy;
+          (estadisticas as any).recaudoRegularizadoHoy = recaudoRegularizadoHoy;
           (estadisticas as any).recaudoContableHoy =
             estadisticas.cobranzaDelDia + recaudoRegularizadoHoy;
 
@@ -1839,7 +1847,7 @@ export class RoutesService {
             if (primeraCuotaPorPrestamo.has(pid)) continue;
             const monto = Math.max(
               0,
-              Number(c.monto || 0) - Number((c as any).montoPagado || 0),
+              Number(c.monto || 0) - Number(c.montoPagado || 0),
             );
             if (monto <= 0) continue;
             primeraCuotaPorPrestamo.set(pid, monto);
@@ -1861,7 +1869,7 @@ export class RoutesService {
               if (!diariosIdsSet.has(pid)) continue;
               const monto = Math.max(
                 0,
-                Number(c.monto || 0) - Number((c as any).montoPagado || 0),
+                Number(c.monto || 0) - Number(c.montoPagado || 0),
               );
               if (monto <= 0) continue;
               metaDiariaPorPrestamo.set(
@@ -1881,8 +1889,7 @@ export class RoutesService {
             metaNominal += Number(primeraCuotaPorPrestamo.get(pid) || 0);
           }
 
-          estadisticas.metaDelDia =
-            metaNominal + estadisticas.cobranzaDelDia;
+          estadisticas.metaDelDia = metaNominal + estadisticas.cobranzaDelDia;
         }
 
         const cuotasCriterio = prestamosActivos.flatMap((p) => p?.cuotas || []);
@@ -1935,8 +1942,7 @@ export class RoutesService {
       }
 
       // BUG-01 FIX (instancia 3): una sola llamada con alias para hoyInicio y hoyFinUTC.
-      const { startDate: hoyInicio } =
-        getBogotaStartEndOfDay(new Date());
+      const { startDate: hoyInicio } = getBogotaStartEndOfDay(new Date());
 
       const ultimoCierre = await this.prisma.transaccion.findFirst({
         where: {
@@ -1967,8 +1973,6 @@ export class RoutesService {
       const efectivoEntregadoTotal = Number(
         efectivoEntregadoAgg._sum?.monto || 0,
       );
-
-
 
       const hoyKey2 = getBogotaDayKey(new Date());
 
@@ -2169,11 +2173,13 @@ export class RoutesService {
             const visitaOperativa: any = visitasOperativas.get(
               String(asig.clienteId || ''),
             );
-            
-            asig.estadoVisita = visitaOperativa?.estadoVisita ?? asig.estadoVisita;
+
+            asig.estadoVisita =
+              visitaOperativa?.estadoVisita ?? asig.estadoVisita;
             asig.notasVisita = visitaOperativa?.notasVisita ?? asig.notasVisita;
             asig.recaudadoDelDia = Number(
-              visitaOperativa?.recaudadoDelDia || asig.recaudadoDelDia || 0);
+              visitaOperativa?.recaudadoDelDia || asig.recaudadoDelDia || 0,
+            );
 
             if (asig.cliente) {
               if (!visitaOperativa) {
@@ -2596,9 +2602,9 @@ export class RoutesService {
                 lte: hoyFin,
               },
               OR: [
-              { origenGestion: null },
-              { origenGestion: { not: 'CIERRE_PENDIENTE' } },
-            ],
+                { origenGestion: null },
+                { origenGestion: { not: 'CIERRE_PENDIENTE' } },
+              ],
             },
 
             _sum: {
@@ -2864,8 +2870,8 @@ export class RoutesService {
           },
         });
 
-          // Nota: Prestamo no tiene campo cobradorId; el cobrador se gestiona
-          // a través de la AsignacionRuta. No se actualiza aquí.
+        // Nota: Prestamo no tiene campo cobradorId; el cobrador se gestiona
+        // a través de la AsignacionRuta. No se actualiza aquí.
 
         return created;
       });
@@ -3339,12 +3345,7 @@ export class RoutesService {
             prestamos: {
               where: {
                 estado: {
-                  in: [
-                    'ACTIVO',
-                    'EN_MORA',
-                    'PAGADO',
-                    'PENDIENTE_APROBACION',
-                  ],
+                  in: ['ACTIVO', 'EN_MORA', 'PAGADO', 'PENDIENTE_APROBACION'],
                 },
                 eliminadoEn: null,
                 estadoAprobacion: { not: EstadoAprobacion.RECHAZADO },
@@ -3386,13 +3387,11 @@ export class RoutesService {
         const prestamosPagados = (cliente.prestamos || []).filter(
           (prestamo: any) =>
             normalizeUpper(prestamo?.estado) === 'PAGADO' &&
-            !prestamosConPrestamoOperativo.some(
-              (p) => p.id === prestamo.id
-            )
+            !prestamosConPrestamoOperativo.some((p) => p.id === prestamo.id),
         );
         prestamosConPrestamoOperativo = [
           ...prestamosConPrestamoOperativo,
-          ...prestamosPagados
+          ...prestamosPagados,
         ];
       }
 
@@ -3405,107 +3404,124 @@ export class RoutesService {
               ? [...prestamo.cuotas]
                   .sort((a, b) =>
                     getCuotaFechaEfectivaKeyRuta(a).localeCompare(
-                      getCuotaFechaEfectivaKeyRuta(b)
-                    )
+                      getCuotaFechaEfectivaKeyRuta(b),
+                    ),
                   )
                   .find(
                     (c) =>
                       getCuotaFechaEfectivaKeyRuta(c) <= fechaKey &&
                       !['ANULADO', 'ANULADA'].includes(
-                        normalizeUpper(c.estado || c.estadoActual)
-                      )
+                        normalizeUpper(c.estado || c.estadoActual),
+                      ),
                   )
               : null);
-          
+
           if (!cuotaObjetivoBase) return null;
-          
+
           const isValid =
             isObligacionOperativaRuta(
               { prestamo, cuota: cuotaObjetivoBase },
-              fechaKey
+              fechaKey,
             ) ||
-            (tienePagoHoy &&
-              normalizeUpper(prestamo?.estado) === 'PAGADO');
+            (tienePagoHoy && normalizeUpper(prestamo?.estado) === 'PAGADO');
 
           if (!isValid) return null;
 
           return {
             prestamo,
-            cuotaObjetivoBase
+            cuotaObjetivoBase,
           };
         })
-        .filter(Boolean) as Array<{ prestamo: any, cuotaObjetivoBase: any }>;
+        .filter(Boolean) as Array<{ prestamo: any; cuotaObjetivoBase: any }>;
 
       // Step 3: If no operational prestamos AND no payment today, don't add to visitas
       if (prestamosOperativos.length === 0 && !tienePagoHoy) continue;
 
       {
         // Compute cuotaObjetivo for each prestamo
-        const prestamosConCuotaObjetivo = prestamosOperativos.map(({ prestamo, cuotaObjetivoBase }) => {
-          const estadoRevision = getEstadoRevisionOperacion(prestamo);
-          const montoTotalCuotas = prestamo.cuotas.reduce(
-            (sum, c) => sum + Number(c.monto),
-            0,
-          );
-          const cuotaObjetivo = {
-            ...cuotaObjetivoBase,
-            montoCuota: Number(
-              cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0
-            ),
-            montoNominal: Number(
-              cuotaObjetivoBase.montoNominal ?? cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0
-            ),
-            montoPagado: Number(cuotaObjetivoBase.montoPagado ?? 0),
-            saldoExigibleEnFechaOperativa: Math.max(0, Number(
-              cuotaObjetivoBase.saldoExigibleEnFechaOperativa ?? (
-                (cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0) - 
-                (cuotaObjetivoBase.montoPagado ?? 0)
-              )
-            )),
-            fechaEfectiva: getCuotaFechaEfectivaKeyRuta(cuotaObjetivoBase)
-          };
-          return {
-            id: prestamo.id,
-            numeroPrestamo: prestamo.numeroPrestamo,
-            monto: Number(prestamo.monto),
-            saldoPendiente: Number(prestamo.saldoPendiente),
-            frecuenciaPago: prestamo.frecuenciaPago,
-            cantidadCuotas: prestamo.cantidadCuotas,
-            estado: prestamo.estado,
-            estadoAprobacion: estadoRevision.estadoAprobacion,
-            estadoEfectoProvisional: estadoRevision.estadoEfectoProvisional,
-            esProvisional: estadoRevision.esProvisional,
-            esRevertido: estadoRevision.esRevertido,
-            etiquetaRevision: estadoRevision.etiquetaRevision,
-            montoMetaOperativaPendiente:
-              cuotaObjetivo.saldoExigibleEnFechaOperativa ??
-              this.computePendienteOperativoPrestamo(prestamo, fechaKey),
-            proximaCuota: {
-              id: cuotaObjetivo.id,
-              numeroCuota: cuotaObjetivo.numeroCuota,
-              monto: cuotaObjetivo.montoCuota,
-              montoTotalDeuda: montoTotalCuotas,
-              montoNominal: cuotaObjetivo.montoNominal,
-              montoPagado: cuotaObjetivo.montoPagado,
-              saldoExigibleEnFechaOperativa: cuotaObjetivo.saldoExigibleEnFechaOperativa,
-              estado: cuotaObjetivo.estadoActual ?? cuotaObjetivo.estado,
-              fechaVencimiento: cuotaObjetivo.fechaVencimiento,
-              fechaVencimientoProrroga: cuotaObjetivo.fechaVencimientoProrroga,
-              fechaEfectiva: cuotaObjetivo.fechaEfectiva,
-              enProrroga: String(cuotaObjetivo.estadoActual ?? cuotaObjetivo.estado).toUpperCase() === 'PRORROGADA',
-            },
-            cuotaObjetivo,
-          };
-        });
+        const prestamosConCuotaObjetivo = prestamosOperativos.map(
+          ({ prestamo, cuotaObjetivoBase }) => {
+            const estadoRevision = getEstadoRevisionOperacion(prestamo);
+            const montoTotalCuotas = prestamo.cuotas.reduce(
+              (sum, c) => sum + Number(c.monto),
+              0,
+            );
+            const cuotaObjetivo = {
+              ...cuotaObjetivoBase,
+              montoCuota: Number(
+                cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0,
+              ),
+              montoNominal: Number(
+                cuotaObjetivoBase.montoNominal ??
+                  cuotaObjetivoBase.montoCuota ??
+                  cuotaObjetivoBase.monto ??
+                  0,
+              ),
+              montoPagado: Number(cuotaObjetivoBase.montoPagado ?? 0),
+              saldoExigibleEnFechaOperativa: Math.max(
+                0,
+                Number(
+                  cuotaObjetivoBase.saldoExigibleEnFechaOperativa ??
+                    (cuotaObjetivoBase.montoCuota ??
+                      cuotaObjetivoBase.monto ??
+                      0) - (cuotaObjetivoBase.montoPagado ?? 0),
+                ),
+              ),
+              fechaEfectiva: getCuotaFechaEfectivaKeyRuta(cuotaObjetivoBase),
+            };
+            return {
+              id: prestamo.id,
+              numeroPrestamo: prestamo.numeroPrestamo,
+              monto: Number(prestamo.monto),
+              saldoPendiente: Number(prestamo.saldoPendiente),
+              frecuenciaPago: prestamo.frecuenciaPago,
+              cantidadCuotas: prestamo.cantidadCuotas,
+              estado: prestamo.estado,
+              estadoAprobacion: estadoRevision.estadoAprobacion,
+              estadoEfectoProvisional: estadoRevision.estadoEfectoProvisional,
+              esProvisional: estadoRevision.esProvisional,
+              esRevertido: estadoRevision.esRevertido,
+              etiquetaRevision: estadoRevision.etiquetaRevision,
+              montoMetaOperativaPendiente:
+                cuotaObjetivo.saldoExigibleEnFechaOperativa ??
+                this.computePendienteOperativoPrestamo(prestamo, fechaKey),
+              proximaCuota: {
+                id: cuotaObjetivo.id,
+                numeroCuota: cuotaObjetivo.numeroCuota,
+                monto: cuotaObjetivo.montoCuota,
+                montoTotalDeuda: montoTotalCuotas,
+                montoNominal: cuotaObjetivo.montoNominal,
+                montoPagado: cuotaObjetivo.montoPagado,
+                saldoExigibleEnFechaOperativa:
+                  cuotaObjetivo.saldoExigibleEnFechaOperativa,
+                estado: cuotaObjetivo.estadoActual ?? cuotaObjetivo.estado,
+                fechaVencimiento: cuotaObjetivo.fechaVencimiento,
+                fechaVencimientoProrroga:
+                  cuotaObjetivo.fechaVencimientoProrroga,
+                fechaEfectiva: cuotaObjetivo.fechaEfectiva,
+                enProrroga:
+                  String(
+                    cuotaObjetivo.estadoActual ?? cuotaObjetivo.estado,
+                  ).toUpperCase() === 'PRORROGADA',
+              },
+              cuotaObjetivo,
+            };
+          },
+        );
         // Find the best prestamo with cuotaObjetivo (prioritize pagable/reprogrammable)
-        const prestamoObjetivo = prestamosConCuotaObjetivo.find((p) => {
-          return p.cuotaObjetivo?.puedePagar || p.cuotaObjetivo?.puedeReprogramar;
-        }) || prestamosConCuotaObjetivo.find(p => p.cuotaObjetivo) || null;
-        
+        const prestamoObjetivo =
+          prestamosConCuotaObjetivo.find((p) => {
+            return (
+              p.cuotaObjetivo?.puedePagar || p.cuotaObjetivo?.puedeReprogramar
+            );
+          }) ||
+          prestamosConCuotaObjetivo.find((p) => p.cuotaObjetivo) ||
+          null;
+
         const clienteCuotaObjetivo = prestamoObjetivo?.cuotaObjetivo || null;
         const prestamoObjetivoId = prestamoObjetivo?.id || null;
         const cuotaObjetivoId = clienteCuotaObjetivo?.id || null;
-        
+
         visitasDelDia.push({
           asignacionId: asignacion.id,
           ordenVisita: asignacion.ordenVisita,
@@ -3563,8 +3579,7 @@ export class RoutesService {
       ),
     ];
     const reprogramacionesJornada =
-      clientesRutaIds.length > 0 &&
-      this.prisma.aprobacion?.findMany
+      clientesRutaIds.length > 0 && this.prisma.aprobacion?.findMany
         ? await this.prisma.aprobacion.findMany({
             where: {
               tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
@@ -3599,7 +3614,7 @@ export class RoutesService {
     const resolvePrestamoIdFromReprogramacion = (
       aprobacion: any,
     ): string | null => {
-      const datos = (aprobacion?.datosSolicitud || {}) as any;
+      const datos = aprobacion?.datosSolicitud || {};
 
       const prestamoIdDirecto = String(datos?.prestamoId || '').trim();
       if (prestamoIdDirecto) return prestamoIdDirecto;
@@ -3631,7 +3646,7 @@ export class RoutesService {
     const reprogramacionPorPrestamo = new Map<string, any>();
 
     reprogramacionesJornada.forEach((aprobacion: any) => {
-      const datos = (aprobacion?.datosSolicitud || {}) as any;
+      const datos = aprobacion?.datosSolicitud || {};
       const clienteId = String(datos?.clienteId || '');
       const fechaGestion = String(
         datos?.fechaOperativaRuta || datos?.fechaGestionOriginal || '',
@@ -3655,17 +3670,23 @@ export class RoutesService {
     const clientesEnVisitasIniciales = new Set(
       visitasDelDia.map((v: any) => v?.cliente?.id || v?.clienteId),
     );
-    for (const [prestamoId, reprogramacion] of reprogramacionPorPrestamo.entries()) {
-      const cuotaReprogramada =
-        this.buildCuotaObjetivoDesdeReprogramacion(reprogramacion, prestamoId);
+    for (const [
+      prestamoId,
+      reprogramacion,
+    ] of reprogramacionPorPrestamo.entries()) {
+      const cuotaReprogramada = this.buildCuotaObjetivoDesdeReprogramacion(
+        reprogramacion,
+        prestamoId,
+      );
       if (!cuotaReprogramada) continue;
 
-      const datosReprogramacion = (reprogramacion?.datosSolicitud || {}) as any;
+      const datosReprogramacion = reprogramacion?.datosSolicitud || {};
       const clienteId = String(datosReprogramacion?.clienteId || '');
       if (!clienteId || !prestamoId) continue;
 
       const visitaInicial = visitasDelDia.find((v: any) => {
-        if (String(v?.cliente?.id || v?.clienteId || '') !== clienteId) return false;
+        if (String(v?.cliente?.id || v?.clienteId || '') !== clienteId)
+          return false;
         return (v?.prestamos || []).some(
           (p: any) => String(p?.id || '') === prestamoId,
         );
@@ -3680,41 +3701,46 @@ export class RoutesService {
       if (!cliente) continue;
 
       const clienteTienePagoHoy = Number(pagosPorCliente[cliente.id] || 0) > 0;
-      const prestamosOperativosReprogramacion = (cliente.prestamos || []).filter(
-        (prestamo: any) => isPrestamoOperativoRuta(prestamo) || 
-          (clienteTienePagoHoy && normalizeUpper(prestamo?.estado) === 'PAGADO'),
+      const prestamosOperativosReprogramacion = (
+        cliente.prestamos || []
+      ).filter(
+        (prestamo: any) =>
+          isPrestamoOperativoRuta(prestamo) ||
+          (clienteTienePagoHoy &&
+            normalizeUpper(prestamo?.estado) === 'PAGADO'),
       );
-      const prestamosConCuotaObjetivoReprogramacion = prestamosOperativosReprogramacion.map((p: any) => {
-        const estadoRevision = getEstadoRevisionOperacion(p);
-        const isObjetivo = String(p?.id || '') === prestamoId;
-        return {
-          id: p.id,
-          numeroPrestamo: p.numeroPrestamo,
-          monto: Number(p.monto || 0),
-          saldoPendiente: Number(p.saldoPendiente || 0),
-          frecuenciaPago: p.frecuenciaPago,
-          cantidadCuotas: p.cantidadCuotas,
-          estado: p.estado,
-          estadoAprobacion: estadoRevision.estadoAprobacion,
-          estadoEfectivoProvisional: estadoRevision.estadoEfectoProvisional,
-          esProvisional: estadoRevision.esProvisional,
-          esRevertido: estadoRevision.esRevertido,
-          etiquetaRevision: estadoRevision.etiquetaRevision,
-          montoMetaOperativaPendiente: isObjetivo ? 0 : undefined,
-          proximaCuota: isObjetivo
-            ? {
-                id: cuotaReprogramada.id,
-                numeroCuota: cuotaReprogramada.numeroCuota,
-                fechaVencimiento: cuotaReprogramada.fechaVencimiento,
-                monto: cuotaReprogramada.montoCuota,
-                montoTotalDeuda: cuotaReprogramada.montoCuota,
-                montoNominal: 0,
-                estado: 'REPROGRAMADA',
-              }
-            : null,
-          cuotaObjetivo: isObjetivo ? cuotaReprogramada : null,
-        };
-      });
+      const prestamosConCuotaObjetivoReprogramacion =
+        prestamosOperativosReprogramacion.map((p: any) => {
+          const estadoRevision = getEstadoRevisionOperacion(p);
+          const isObjetivo = String(p?.id || '') === prestamoId;
+          return {
+            id: p.id,
+            numeroPrestamo: p.numeroPrestamo,
+            monto: Number(p.monto || 0),
+            saldoPendiente: Number(p.saldoPendiente || 0),
+            frecuenciaPago: p.frecuenciaPago,
+            cantidadCuotas: p.cantidadCuotas,
+            estado: p.estado,
+            estadoAprobacion: estadoRevision.estadoAprobacion,
+            estadoEfectivoProvisional: estadoRevision.estadoEfectoProvisional,
+            esProvisional: estadoRevision.esProvisional,
+            esRevertido: estadoRevision.esRevertido,
+            etiquetaRevision: estadoRevision.etiquetaRevision,
+            montoMetaOperativaPendiente: isObjetivo ? 0 : undefined,
+            proximaCuota: isObjetivo
+              ? {
+                  id: cuotaReprogramada.id,
+                  numeroCuota: cuotaReprogramada.numeroCuota,
+                  fechaVencimiento: cuotaReprogramada.fechaVencimiento,
+                  monto: cuotaReprogramada.montoCuota,
+                  montoTotalDeuda: cuotaReprogramada.montoCuota,
+                  montoNominal: 0,
+                  estado: 'REPROGRAMADA',
+                }
+              : null,
+            cuotaObjetivo: isObjetivo ? cuotaReprogramada : null,
+          };
+        });
 
       visitasDelDia.push({
         asignacionId: asignacion.id,
@@ -3740,7 +3766,7 @@ export class RoutesService {
         recaudadoDelDia: pagosPorCliente[cliente.id] || 0,
         estadoVisita: 'reprogramado',
         notasVisita: `Reprogramación aprobada: ${
-          (reprogramacion?.datosSolicitud as any)?.motivo || 'Sin motivo'
+          reprogramacion?.datosSolicitud?.motivo || 'Sin motivo'
         }`,
       });
       clientesEnVisitasIniciales.add(clienteId);
@@ -3771,7 +3797,10 @@ export class RoutesService {
       .filter((p) => isFechaPagoEnRango(p) || isRegularizadoParaJornada(p))
       .reduce((sum, p) => sum + Number(p.montoTotal || 0), 0);
 
-    const sumPagosByMetodo = (pagos: any[], metodo: 'EFECTIVO' | 'TRANSFERENCIA') => {
+    const sumPagosByMetodo = (
+      pagos: any[],
+      metodo: 'EFECTIVO' | 'TRANSFERENCIA',
+    ) => {
       return pagos.reduce((sum, p) => {
         const metodoPago = String(p.metodoPago || 'EFECTIVO').toUpperCase();
         if (metodoPago !== metodo) return sum;
@@ -3791,9 +3820,10 @@ export class RoutesService {
       const detalle = Array.isArray(pago?.detalles)
         ? [...pago.detalles]
             .filter((d: any) => d?.cuota)
-            .sort((a: any, b: any) =>
-              Number(a?.cuota?.numeroCuota || 0) -
-              Number(b?.cuota?.numeroCuota || 0),
+            .sort(
+              (a: any, b: any) =>
+                Number(a?.cuota?.numeroCuota || 0) -
+                Number(b?.cuota?.numeroCuota || 0),
             )[0]
         : null;
       const cuota = detalle?.cuota;
@@ -3809,7 +3839,9 @@ export class RoutesService {
         Number(cuota.montoPagado || 0),
         Number(detalle?.monto || 0),
       );
-      const saldoCuota = estadoTerminal ? 0 : Math.max(0, montoCuota - montoPagado);
+      const saldoCuota = estadoTerminal
+        ? 0
+        : Math.max(0, montoCuota - montoPagado);
       const esCuotaFuturaEnFechaOperativa = fechaEfectivaKey > fechaKey;
       const saldoExigibleEnFechaOperativa =
         estadoTerminal || esCuotaFuturaEnFechaOperativa ? 0 : saldoCuota;
@@ -3820,21 +3852,23 @@ export class RoutesService {
         !esCuotaFuturaEnFechaOperativa &&
         saldoExigibleEnFechaOperativa > 0;
 
-      const motivoBloqueoPago = pagada || cubiertaPorPagoJornada
-        ? 'La cuota objetivo ya está pagada.'
-        : anulada
-          ? 'La cuota objetivo está anulada.'
-          : esCuotaFuturaEnFechaOperativa
-            ? 'La cuota encontrada es futura para esta jornada.'
-            : null;
+      const motivoBloqueoPago =
+        pagada || cubiertaPorPagoJornada
+          ? 'La cuota objetivo ya está pagada.'
+          : anulada
+            ? 'La cuota objetivo está anulada.'
+            : esCuotaFuturaEnFechaOperativa
+              ? 'La cuota encontrada es futura para esta jornada.'
+              : null;
 
-      const motivoBloqueoReprogramacion = pagada || cubiertaPorPagoJornada
-        ? 'La cuota objetivo ya está pagada.'
-        : anulada
-          ? 'La cuota objetivo está anulada.'
-          : esCuotaFuturaEnFechaOperativa
-            ? 'No se recomienda reprogramar una cuota futura desde una jornada pasada.'
-            : null;
+      const motivoBloqueoReprogramacion =
+        pagada || cubiertaPorPagoJornada
+          ? 'La cuota objetivo ya está pagada.'
+          : anulada
+            ? 'La cuota objetivo está anulada.'
+            : esCuotaFuturaEnFechaOperativa
+              ? 'No se recomienda reprogramar una cuota futura desde una jornada pasada.'
+              : null;
 
       return {
         id: cuota.id,
@@ -3907,11 +3941,10 @@ export class RoutesService {
           const reprogramacion = prestamoId
             ? reprogramacionPorPrestamo.get(prestamoId)
             : null;
-          const cuotaReprogramada =
-            this.buildCuotaObjetivoDesdeReprogramacion(
-              reprogramacion,
-              prestamoId,
-            );
+          const cuotaReprogramada = this.buildCuotaObjetivoDesdeReprogramacion(
+            reprogramacion,
+            prestamoId,
+          );
           if (!cuotaReprogramada) {
             return {
               ...prestamo,
@@ -3929,7 +3962,7 @@ export class RoutesService {
             estadoGestion: 'REPROGRAMADO',
             estadoVisita: 'reprogramado',
             notasVisita: `Reprogramación aprobada: ${
-              (reprogramacion?.datosSolicitud as any)?.motivo || 'Sin motivo'
+              reprogramacion?.datosSolicitud?.motivo || 'Sin motivo'
             }`,
             montoMetaOperativaPendiente: 0,
             cuotaObjetivo: cuotaReprogramada,
@@ -3953,7 +3986,9 @@ export class RoutesService {
             }
             const objetivo = prestamo?.cuotaObjetivo;
             const meta = Number(prestamo?.montoMetaOperativaPendiente || 0);
-            return meta > 0 && (objetivo?.puedePagar || objetivo?.puedeReprogramar);
+            return (
+              meta > 0 && (objetivo?.puedePagar || objetivo?.puedeReprogramar)
+            );
           }) ||
           v.prestamos.find((prestamo: any) => {
             if (reprogramacionPorPrestamo.has(String(prestamo?.id || ''))) {
@@ -3976,7 +4011,7 @@ export class RoutesService {
       if (cuotaReprogramadaObjetivo) {
         v.estadoVisita = 'reprogramado';
         v.notasVisita = `Reprogramación aprobada: ${
-          (reprogramacionObjetivo?.datosSolicitud as any)?.motivo || 'Sin motivo'
+          reprogramacionObjetivo?.datosSolicitud?.motivo || 'Sin motivo'
         }`;
         v.cuotaObjetivo = cuotaReprogramadaObjetivo;
         v.cuotaObjetivoId = cuotaReprogramadaObjetivo.id;
@@ -4029,7 +4064,8 @@ export class RoutesService {
           : null;
         const estadoCliente = String(registro.estadoVisita || '').toLowerCase();
         const registroAplicable =
-          registroPorPrestamo || (estadoCliente === 'ausente' ? registro : null);
+          registroPorPrestamo ||
+          (estadoCliente === 'ausente' ? registro : null);
         if (!registroAplicable) return;
 
         // @ts-ignore - Prisma type inference issue, properties exist at runtime
@@ -4037,15 +4073,17 @@ export class RoutesService {
         // @ts-ignore - Prisma type inference issue, properties exist at runtime
         v.notasVisita = registroAplicable.notas;
 
-        if (String(registroAplicable.estadoVisita || '').toLowerCase() === 'reprogramado') {
+        if (
+          String(registroAplicable.estadoVisita || '').toLowerCase() ===
+          'reprogramado'
+        ) {
           const reprogramacion = prestamoId
             ? reprogramacionPorPrestamo.get(prestamoId)
             : null;
-          const cuotaReprogramada =
-            this.buildCuotaObjetivoDesdeReprogramacion(
-              reprogramacion,
-              prestamoId,
-            );
+          const cuotaReprogramada = this.buildCuotaObjetivoDesdeReprogramacion(
+            reprogramacion,
+            prestamoId,
+          );
           if (cuotaReprogramada) {
             // @ts-ignore - Prisma type inference issue, properties exist at runtime
             v.cuotaObjetivo = cuotaReprogramada;
@@ -4138,78 +4176,113 @@ export class RoutesService {
             },
           },
         });
-        const prestamosConPrestamoOperativo = (clienteFull?.prestamos || []).filter(
-          (p: any) => isPrestamoOperativoRuta(p),
-        );
+        const prestamosConPrestamoOperativo = (
+          clienteFull?.prestamos || []
+        ).filter((p: any) => isPrestamoOperativoRuta(p));
         const prestamosOperativos = prestamosConPrestamoOperativo
           .map((p: any) => {
-            const cuotaObjetivoBase = resolveCuotaObjetivoOperativa(p, fechaKey);
+            const cuotaObjetivoBase = resolveCuotaObjetivoOperativa(
+              p,
+              fechaKey,
+            );
             if (!cuotaObjetivoBase) return null;
-            if (!isObligacionOperativaRuta({ prestamo: p, cuota: cuotaObjetivoBase }, fechaKey)) return null;
+            if (
+              !isObligacionOperativaRuta(
+                { prestamo: p, cuota: cuotaObjetivoBase },
+                fechaKey,
+              )
+            )
+              return null;
             return { prestamo: p, cuotaObjetivoBase };
           })
-          .filter(Boolean) as Array<{ prestamo: any, cuotaObjetivoBase: any }>;
-        
+          .filter(Boolean) as Array<{ prestamo: any; cuotaObjetivoBase: any }>;
+
         if (prestamosOperativos.length === 0) continue;
 
-        const prestamosConCuotaObjetivo = prestamosOperativos.map(({ prestamo, cuotaObjetivoBase }) => {
-          const estadoRevision = getEstadoRevisionOperacion(prestamo);
-          const cuotaObjetivo = {
-            ...cuotaObjetivoBase,
-            montoCuota: Number(cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0),
-            montoNominal: Number(cuotaObjetivoBase.montoNominal ?? cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0),
-            montoPagado: Number(cuotaObjetivoBase.montoPagado ?? 0),
-            saldoExigibleEnFechaOperativa: Math.max(0, Number(
-              cuotaObjetivoBase.saldoExigibleEnFechaOperativa ?? (
-                (cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0) - 
-                (cuotaObjetivoBase.montoPagado ?? 0)
-              )
-            )),
-            fechaEfectiva: getCuotaFechaEfectivaKeyRuta(cuotaObjetivoBase)
-          };
-          return {
-            id: prestamo.id,
-            numeroPrestamo: prestamo.numeroPrestamo,
-            monto: Number(prestamo.monto),
-            saldoPendiente: Number(prestamo.saldoPendiente),
-            frecuenciaPago: prestamo.frecuenciaPago,
-            cantidadCuotas: prestamo.cantidadCuotas,
-            estado: prestamo.estado,
-            estadoAprobacion: estadoRevision.estadoAprobacion,
-            estadoEfectoProvisional: estadoRevision.estadoEfectoProvisional,
-            esProvisional: estadoRevision.esProvisional,
-            esRevertido: estadoRevision.esRevertido,
-            etiquetaRevision: estadoRevision.etiquetaRevision,
-            montoMetaOperativaPendiente: cuotaObjetivo.saldoExigibleEnFechaOperativa,
-            proximaCuota: {
-              id: cuotaObjetivo.id,
-              numeroCuota: cuotaObjetivo.numeroCuota,
-              monto: cuotaObjetivo.montoCuota,
-              montoTotalDeuda: prestamo.cuotas.reduce((sum, c) => sum + Number(c.monto), 0),
-              montoNominal: cuotaObjetivo.montoNominal,
-              montoPagado: cuotaObjetivo.montoPagado,
-              saldoExigibleEnFechaOperativa: cuotaObjetivo.saldoExigibleEnFechaOperativa,
-              estado: cuotaObjetivo.estadoActual ?? cuotaObjetivo.estado,
-              fechaVencimiento: cuotaObjetivo.fechaVencimiento,
-              fechaVencimientoProrroga: cuotaObjetivo.fechaVencimientoProrroga,
-              fechaEfectiva: cuotaObjetivo.fechaEfectiva,
-              enProrroga: String(cuotaObjetivo.estadoActual ?? cuotaObjetivo.estado).toUpperCase() === 'PRORROGADA',
-            },
-            registroSintetico: true,
-            origenGestion: 'CIERRE_PENDIENTE',
-            cuotaObjetivo,
-          };
-        });
-        
+        const prestamosConCuotaObjetivo = prestamosOperativos.map(
+          ({ prestamo, cuotaObjetivoBase }) => {
+            const estadoRevision = getEstadoRevisionOperacion(prestamo);
+            const cuotaObjetivo = {
+              ...cuotaObjetivoBase,
+              montoCuota: Number(
+                cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0,
+              ),
+              montoNominal: Number(
+                cuotaObjetivoBase.montoNominal ??
+                  cuotaObjetivoBase.montoCuota ??
+                  cuotaObjetivoBase.monto ??
+                  0,
+              ),
+              montoPagado: Number(cuotaObjetivoBase.montoPagado ?? 0),
+              saldoExigibleEnFechaOperativa: Math.max(
+                0,
+                Number(
+                  cuotaObjetivoBase.saldoExigibleEnFechaOperativa ??
+                    (cuotaObjetivoBase.montoCuota ??
+                      cuotaObjetivoBase.monto ??
+                      0) - (cuotaObjetivoBase.montoPagado ?? 0),
+                ),
+              ),
+              fechaEfectiva: getCuotaFechaEfectivaKeyRuta(cuotaObjetivoBase),
+            };
+            return {
+              id: prestamo.id,
+              numeroPrestamo: prestamo.numeroPrestamo,
+              monto: Number(prestamo.monto),
+              saldoPendiente: Number(prestamo.saldoPendiente),
+              frecuenciaPago: prestamo.frecuenciaPago,
+              cantidadCuotas: prestamo.cantidadCuotas,
+              estado: prestamo.estado,
+              estadoAprobacion: estadoRevision.estadoAprobacion,
+              estadoEfectoProvisional: estadoRevision.estadoEfectoProvisional,
+              esProvisional: estadoRevision.esProvisional,
+              esRevertido: estadoRevision.esRevertido,
+              etiquetaRevision: estadoRevision.etiquetaRevision,
+              montoMetaOperativaPendiente:
+                cuotaObjetivo.saldoExigibleEnFechaOperativa,
+              proximaCuota: {
+                id: cuotaObjetivo.id,
+                numeroCuota: cuotaObjetivo.numeroCuota,
+                monto: cuotaObjetivo.montoCuota,
+                montoTotalDeuda: prestamo.cuotas.reduce(
+                  (sum, c) => sum + Number(c.monto),
+                  0,
+                ),
+                montoNominal: cuotaObjetivo.montoNominal,
+                montoPagado: cuotaObjetivo.montoPagado,
+                saldoExigibleEnFechaOperativa:
+                  cuotaObjetivo.saldoExigibleEnFechaOperativa,
+                estado: cuotaObjetivo.estadoActual ?? cuotaObjetivo.estado,
+                fechaVencimiento: cuotaObjetivo.fechaVencimiento,
+                fechaVencimientoProrroga:
+                  cuotaObjetivo.fechaVencimientoProrroga,
+                fechaEfectiva: cuotaObjetivo.fechaEfectiva,
+                enProrroga:
+                  String(
+                    cuotaObjetivo.estadoActual ?? cuotaObjetivo.estado,
+                  ).toUpperCase() === 'PRORROGADA',
+              },
+              registroSintetico: true,
+              origenGestion: 'CIERRE_PENDIENTE',
+              cuotaObjetivo,
+            };
+          },
+        );
+
         // Find the best prestamo with cuotaObjetivo (prioritize pagable/reprogrammable)
-        const prestamoObjetivo = prestamosConCuotaObjetivo.find((p) => {
-          return p.cuotaObjetivo?.puedePagar || p.cuotaObjetivo?.puedeReprogramar;
-        }) || prestamosConCuotaObjetivo.find(p => p.cuotaObjetivo) || null;
-        
+        const prestamoObjetivo =
+          prestamosConCuotaObjetivo.find((p) => {
+            return (
+              p.cuotaObjetivo?.puedePagar || p.cuotaObjetivo?.puedeReprogramar
+            );
+          }) ||
+          prestamosConCuotaObjetivo.find((p) => p.cuotaObjetivo) ||
+          null;
+
         const clienteCuotaObjetivo = prestamoObjetivo?.cuotaObjetivo || null;
         const prestamoObjetivoId = prestamoObjetivo?.id || null;
         const cuotaObjetivoId = clienteCuotaObjetivo?.id || null;
-        
+
         visitasDelDia.push({
           asignacionId: null,
           ordenVisita: 9999,
@@ -4271,8 +4344,7 @@ export class RoutesService {
       this.buildObligacionesOperativas(visitasDelDiaFinales);
 
     const totalEsperadoFinal = obligacionesOperativas.reduce(
-      (sum: number, item: any) =>
-        sum + Number(item.metaPendiente || 0),
+      (sum: number, item: any) => sum + Number(item.metaPendiente || 0),
       0,
     );
 
@@ -4316,7 +4388,9 @@ export class RoutesService {
         total: totalObligaciones,
         clientesOperativosHoy: new Set(
           obligacionesOperativas
-            .map((item: any) => item.visita?.cliente?.id || item.visita?.clienteId)
+            .map(
+              (item: any) => item.visita?.cliente?.id || item.visita?.clienteId,
+            )
             .filter(Boolean),
         ).size,
       },
@@ -4345,8 +4419,7 @@ export class RoutesService {
         recaudadoDelDia: item.recaudado,
         montoMetaOperativaPendiente: item.metaPendiente,
         estadoAprobacion: item.prestamo?.estadoAprobacion || null,
-        estadoEfectoProvisional:
-          item.prestamo?.estadoEfectoProvisional || null,
+        estadoEfectoProvisional: item.prestamo?.estadoEfectoProvisional || null,
         esProvisional: Boolean(item.prestamo?.esProvisional),
         esRevertido: Boolean(item.prestamo?.esRevertido),
         etiquetaRevision: item.prestamo?.etiquetaRevision || null,
@@ -4369,7 +4442,9 @@ export class RoutesService {
 
         const cuotas = Array.isArray(prestamo?.cuotas) ? prestamo.cuotas : [];
         if (fechaKey && cuotas.length > 0) {
-          return sum + this.computePendienteOperativoPrestamo(prestamo, fechaKey);
+          return (
+            sum + this.computePendienteOperativoPrestamo(prestamo, fechaKey)
+          );
         }
 
         const objetivo = prestamo?.cuotaObjetivo;
@@ -4420,22 +4495,24 @@ export class RoutesService {
       );
     });
 
-    const cuotaPagadaHistorica = 
-      cuotasHastaFecha.length > 0 
-        ? cuotasHastaFecha[cuotasHastaFecha.length - 1] 
+    const cuotaPagadaHistorica =
+      cuotasHastaFecha.length > 0
+        ? cuotasHastaFecha[cuotasHastaFecha.length - 1]
         : null;
 
     const cuotaFutura = sortedCuotas.find((cuota) => {
       return getCuotaFechaEfectivaKeyRuta(cuota) > fechaKey;
     });
 
-    const cuotaObjetivo = 
+    const cuotaObjetivo =
       cuotaNoPagadaVencida || cuotaPagadaHistorica || cuotaFutura || null;
 
     if (!cuotaObjetivo) return null;
 
     const estado = String(cuotaObjetivo.estado || '').toUpperCase();
-    const estadoTerminal = ['PAGADA', 'PAGADO', 'ANULADA', 'ANULADO'].includes(estado);
+    const estadoTerminal = ['PAGADA', 'PAGADO', 'ANULADA', 'ANULADO'].includes(
+      estado,
+    );
     const pagada = ['PAGADA', 'PAGADO'].includes(estado);
     const anulada = ['ANULADA', 'ANULADO'].includes(estado);
 
@@ -4455,11 +4532,17 @@ export class RoutesService {
     });
     const montoMoraAcumulada = cuotasVencidasPendientes.reduce(
       (sum: number, cuota: any) =>
-        sum + Math.max(0, Number(cuota?.monto || 0) - Number(cuota?.montoPagado || 0)),
+        sum +
+        Math.max(
+          0,
+          Number(cuota?.monto || 0) - Number(cuota?.montoPagado || 0),
+        ),
       0,
     );
 
-    const saldoCuota = estadoTerminal ? 0 : Math.max(0, montoCuota - montoPagado);
+    const saldoCuota = estadoTerminal
+      ? 0
+      : Math.max(0, montoCuota - montoPagado);
 
     const saldoExigibleEnFechaOperativa =
       estadoTerminal || esCuotaFuturaEnFechaOperativa ? 0 : saldoCuota;
@@ -4513,7 +4596,7 @@ export class RoutesService {
     aprobacion: any,
     prestamoIdFallback?: string | null,
   ) {
-    const datos = (aprobacion?.datosSolicitud || {}) as any;
+    const datos = aprobacion?.datosSolicitud || {};
     const cuotaId = String(datos?.cuotaId || aprobacion?.referenciaId || '');
     if (!cuotaId) return null;
 
@@ -4960,7 +5043,10 @@ export class RoutesService {
     limit?: string,
   ) {
     const takeRaw = Number.parseInt(String(limit || '20'), 10);
-    const take = Math.min(Math.max(Number.isFinite(takeRaw) ? takeRaw : 20, 1), 50);
+    const take = Math.min(
+      Math.max(Number.isFinite(takeRaw) ? takeRaw : 20, 1),
+      50,
+    );
 
     const where: Prisma.RegistroVisitaWhereInput = {
       clienteId,
@@ -4973,7 +5059,9 @@ export class RoutesService {
 
     if (this.isCollector(actor)) {
       if (!actor?.id) {
-        throw new ForbiddenException('No tienes permiso para consultar este historial.');
+        throw new ForbiddenException(
+          'No tienes permiso para consultar este historial.',
+        );
       }
       where.cobradorId = actor.id;
     }
@@ -5023,7 +5111,8 @@ export class RoutesService {
       cobrador: registro.cobrador
         ? {
             id: registro.cobrador.id,
-            nombre: `${registro.cobrador.nombres || ''} ${registro.cobrador.apellidos || ''}`.trim(),
+            nombre:
+              `${registro.cobrador.nombres || ''} ${registro.cobrador.apellidos || ''}`.trim(),
           }
         : null,
     }));
@@ -5146,11 +5235,7 @@ export class RoutesService {
     ).find((cierre) => cierre.fechaOperativa === fechaOperativa);
 
     // Validar que tenga observaciones si hay clientes pendientes, ausentes o descuadre
-    const detalleDia = await this.getDailyVisits(
-      rutaId,
-      fechaOperativa,
-      actor,
-    );
+    const detalleDia = await this.getDailyVisits(rutaId, fechaOperativa, actor);
 
     const visitas = Array.isArray(detalleDia.visitas) ? detalleDia.visitas : [];
     const obligaciones = this.buildObligacionesOperativas(visitas);
@@ -5243,7 +5328,9 @@ export class RoutesService {
       }
 
       if (jornadaRegularizable.estado === 'ANULADA') {
-        throw new BadRequestException('La jornada está anulada y no puede cerrarse.');
+        throw new BadRequestException(
+          'La jornada está anulada y no puede cerrarse.',
+        );
       }
 
       if (jornadaRegularizable.estado !== 'PENDIENTE_CIERRE') {
@@ -5297,20 +5384,16 @@ export class RoutesService {
     const advertencias: string[] = [];
     const cierrePendiente = await this.getCierrePendienteRuta(rutaId);
 
-    const getNombreClienteVisita = (v: any) => 
-      ( 
-        v.nombreCliente || 
-        `${v.cliente?.nombres || ''} ${v.cliente?.apellidos || ''}`.trim() 
-      ) || 'Cliente sin nombre';
+    const getNombreClienteVisita = (v: any) =>
+      v.nombreCliente ||
+      `${v.cliente?.nombres || ''} ${v.cliente?.apellidos || ''}`.trim() ||
+      'Cliente sin nombre';
 
     visitas.forEach((cliente: any) => {
       const estadoGestion = this.resolveEstadoGestionCierrePendiente(cliente);
       const tienePagoReal = Number(cliente.recaudadoDelDia || 0) > 0;
 
-      if (
-        estadoGestion === 'PAGO_REGISTRADO' &&
-        !tienePagoReal
-      ) {
+      if (estadoGestion === 'PAGO_REGISTRADO' && !tienePagoReal) {
         advertencias.push(
           `Visita pagada sin pago financiero asociado: ${getNombreClienteVisita(cliente)}`,
         );
@@ -5327,9 +5410,7 @@ export class RoutesService {
     }
 
     if (obligacionesAusentes.length > 0) {
-      partes.push(
-        `${obligacionesAusentes.length} ausencia(s)`,
-      );
+      partes.push(`${obligacionesAusentes.length} ausencia(s)`);
     }
 
     if (recaudoOperativo < meta) {
@@ -5337,9 +5418,7 @@ export class RoutesService {
     }
 
     const resumenCierre =
-      partes.length > 0
-        ? partes.join(', ')
-        : 'sin inconsistencias operativas';
+      partes.length > 0 ? partes.join(', ') : 'sin inconsistencias operativas';
 
     const tipoCierre = cierreAdministrativo
       ? 'ADMINISTRATIVO_CON_OBSERVACION'
@@ -5350,19 +5429,21 @@ export class RoutesService {
     if (actor?.id) {
       const usuario = await this.prisma.usuario.findUnique({
         where: { id: actor.id },
-        select: { nombres: true, apellidos: true, correo: true }
+        select: { nombres: true, apellidos: true, correo: true },
       });
       if (usuario) {
-        cerradaPorNombre = 
-          `${usuario.nombres || ''} ${usuario.apellidos || ''}`.trim() || 
-          usuario.correo || 
+        cerradaPorNombre =
+          `${usuario.nombres || ''} ${usuario.apellidos || ''}`.trim() ||
+          usuario.correo ||
           'Usuario del sistema';
       }
     }
 
     const totalClientes = visitas.length;
     const recaudoContable = Number(detalleDia.resumen?.recaudoContable || 0);
-    const recaudoRegularizado = Number(detalleDia.resumen?.recaudoRegularizado || 0);
+    const recaudoRegularizado = Number(
+      detalleDia.resumen?.recaudoRegularizado || 0,
+    );
     const recaudoEfectivo = Number(detalleDia.resumen?.recaudoEfectivo || 0);
     const recaudoTransferencia = Number(
       detalleDia.resumen?.recaudoTransferencia || 0,
@@ -5385,9 +5466,7 @@ export class RoutesService {
         Math.max(0, recaudoEfectivo - gastosRuta),
     );
     const cumplimiento =
-      meta > 0
-        ? Math.round(((recaudoOperativo / meta) * 100) * 10) / 10
-        : 0;
+      meta > 0 ? Math.round((recaudoOperativo / meta) * 100 * 10) / 10 : 0;
     const resumirClienteGestionado = (visita: any) => {
       const cliente = visita?.cliente || {};
       const nombreCliente =
@@ -5403,9 +5482,7 @@ export class RoutesService {
         ordenVisita: visita?.ordenVisita ?? null,
         cuotaObjetivoId: visita?.cuotaObjetivoId ?? null,
         prestamoObjetivoId:
-          visita?.prestamoObjetivoId ||
-          visita?.cuotaObjetivoPrestamoId ||
-          null,
+          visita?.prestamoObjetivoId || visita?.cuotaObjetivoPrestamoId || null,
         recaudado: Number(visita?.recaudadoDelDia || 0),
       };
     };
@@ -5538,33 +5615,36 @@ export class RoutesService {
     esUltimaJornada: boolean = true,
   ) {
     // Check for existing transactions for this jornada
-    const { startDate: fechaOperativaStart, endDate: fechaOperativaEnd } = 
+    const { startDate: fechaOperativaStart, endDate: fechaOperativaEnd } =
       getBogotaStartEndOfDayFromKey(jornada.fechaOperativa);
-    
+
     const existingCierreRuta = await this.prisma.transaccion.findFirst({
       where: {
         cajaId: cajaRuta.id,
         tipoReferencia: 'CIERRE_RUTA',
         fechaTransaccion: {
           gte: fechaOperativaStart,
-          lte: fechaOperativaEnd
-        }
+          lte: fechaOperativaEnd,
+        },
       },
     });
-    
+
     const existingDeudaCobrador = await this.prisma.transaccion.findFirst({
       where: {
         cajaId: cajaRuta.id,
         tipoReferencia: 'DEUDA_COBRADOR',
         fechaTransaccion: {
           gte: fechaOperativaStart,
-          lte: fechaOperativaEnd
-        }
+          lte: fechaOperativaEnd,
+        },
       },
     });
 
     // Get daily details to calculate meta, recaudo, etc.
-    const detalleDia = await this.getDailyVisits(rutaId, jornada.fechaOperativa);
+    const detalleDia = await this.getDailyVisits(
+      rutaId,
+      jornada.fechaOperativa,
+    );
     const resumen = detalleDia?.resumen || ({} as any);
     const visitas = detalleDia?.visitas || [];
     const obligaciones = Array.isArray((detalleDia as any)?.obligaciones)
@@ -5585,7 +5665,9 @@ export class RoutesService {
     const recaudo = Number(resumen.recaudoOperativo || resumen.recaudo || 0);
     const meta = Number(resumen.meta || 0);
     const efectividad = meta > 0 ? Math.round((recaudo / meta) * 1000) / 10 : 0;
-    const saldoAlCierre = esUltimaJornada ? Number(cajaRuta.saldoActual || 0) : 0;
+    const saldoAlCierre = esUltimaJornada
+      ? Number(cajaRuta.saldoActual || 0)
+      : 0;
     const deudaPorFaltantes = 0; // Se elimina la deuda por clientes/metas faltantes
     const deudaTotal = Math.max(deudaPorFaltantes + saldoAlCierre, 0);
     const hayDescuadre = deudaTotal > 0;
@@ -5597,10 +5679,11 @@ export class RoutesService {
 
     const referenciaIdCierre = `RC:${recaudo}|MT:${meta}|EF:${efectividad}|CF:${clientesFaltantes}|CO:${cobradorNombre}|SD:${saldoAlCierre}`;
 
-    const userId = creadoPorId || jornada.ruta?.cobradorId || cajaRuta.responsableId;
+    const userId =
+      creadoPorId || jornada.ruta?.cobradorId || cajaRuta.responsableId;
     if (!userId) {
       throw new Error(
-        `No se pudo determinar el usuario creador (creadoPorId) para las transacciones del cierre de jornada ${jornada.fechaOperativa}.`
+        `No se pudo determinar el usuario creador (creadoPorId) para las transacciones del cierre de jornada ${jornada.fechaOperativa}.`,
       );
     }
 
@@ -5646,7 +5729,7 @@ export class RoutesService {
     // If there's a descuadre, create OR update DEUDA_COBRADOR transaction
     if (hayDescuadre) {
       const referenciaIdDeuda = `DD:${deudaTotal}|SD:${saldoAlCierre}|FD:${deudaPorFaltantes}|${referenciaIdCierre}`;
-      
+
       if (existingDeudaCobrador) {
         // Update existing DEUDA_COBRADOR
         await this.prisma.transaccion.update({
@@ -5859,12 +5942,18 @@ export class RoutesService {
     return pendientes[0] || null;
   }
 
-  private async getCierresPendientesRutasMap(rutaIds: string[], creadoPorId?: string) {
+  private async getCierresPendientesRutasMap(
+    rutaIds: string[],
+    creadoPorId?: string,
+  ) {
     if (!rutaIds.length) return new Map<string, any>();
 
     const cierresPendientes = await Promise.all(
       rutaIds.map(async (rutaId) => {
-        const pendientes = await this.getCierresPendientesRuta(rutaId, creadoPorId);
+        const pendientes = await this.getCierresPendientesRuta(
+          rutaId,
+          creadoPorId,
+        );
         return [
           rutaId,
           {
@@ -5888,19 +5977,22 @@ export class RoutesService {
   private resolveEstadoGestionCierrePendiente(
     v: any,
   ): 'PAGO_REGISTRADO' | 'AUSENTE' | 'REPROGRAMADO' | 'PENDIENTE' {
-    const estadoVisita = String(v?.estadoVisita || '').toLowerCase()
-    const recaudado = Number(v?.recaudadoDelDia || 0)
+    const estadoVisita = String(v?.estadoVisita || '').toLowerCase();
+    const recaudado = Number(v?.recaudadoDelDia || 0);
 
-    const esPagadoPorVisita = ['pagado', 'pago', 'pago_registrado', 'gestionado'].includes(
-      estadoVisita,
-    )
+    const esPagadoPorVisita = [
+      'pagado',
+      'pago',
+      'pago_registrado',
+      'gestionado',
+    ].includes(estadoVisita);
 
     if (recaudado > 0 || esPagadoPorVisita) {
-      return 'PAGO_REGISTRADO'
+      return 'PAGO_REGISTRADO';
     }
 
     if (estadoVisita === 'ausente') {
-      return 'AUSENTE'
+      return 'AUSENTE';
     }
 
     if (
@@ -5909,10 +6001,10 @@ export class RoutesService {
       estadoVisita === 'reprogramacion' ||
       estadoVisita === 'reprogramación'
     ) {
-      return 'REPROGRAMADO'
+      return 'REPROGRAMADO';
     }
 
-    return 'PENDIENTE'
+    return 'PENDIENTE';
   }
 
   private normalizeGestionValue(value: any) {
@@ -5920,7 +6012,7 @@ export class RoutesService {
       .trim()
       .toLowerCase()
       .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[\u0300-\u036f]/g, '');
   }
 
   private resolveEstadoGestionPrestamo(
@@ -5932,29 +6024,28 @@ export class RoutesService {
         prestamo?.estadoVisita ||
         prestamo?.proximaCuota?.estado ||
         '',
-    )
+    );
 
     const estadoVisita = this.normalizeGestionValue(
-      visita?.estadoVisita ||
-        visita?.estadoGestion ||
-        '',
-    )
+      visita?.estadoVisita || visita?.estadoGestion || '',
+    );
 
     const prestamosVisita = Array.isArray(visita?.prestamos)
       ? visita.prestamos
-      : []
+      : [];
 
     const esPrestamoObjetivo =
       String(prestamo?.id || '') === String(visita?.prestamoObjetivoId || '') ||
-      String(prestamo?.id || '') === String(visita?.cuotaObjetivoPrestamoId || '') ||
-      prestamosVisita.length === 1
+      String(prestamo?.id || '') ===
+        String(visita?.cuotaObjetivoPrestamoId || '') ||
+      prestamosVisita.length === 1;
 
     const recaudadoPrestamo = Number(
       prestamo?.recaudadoDelDia ??
         prestamo?.recaudadoHoy ??
         (esPrestamoObjetivo ? visita?.recaudadoDelDia : 0) ??
         0,
-    )
+    );
 
     const estadosPago = [
       'pagado',
@@ -5964,18 +6055,18 @@ export class RoutesService {
       'cobrado',
       'cobranza',
       'gestionado',
-    ]
+    ];
 
     if (
       recaudadoPrestamo > 0 ||
       estadosPago.includes(estadoPrestamo) ||
       estadosPago.includes(estadoVisita)
     ) {
-      return 'PAGO_REGISTRADO'
+      return 'PAGO_REGISTRADO';
     }
 
     if (estadoVisita === 'ausente' || estadoPrestamo === 'ausente') {
-      return 'AUSENTE'
+      return 'AUSENTE';
     }
 
     const estadosReprogramado = [
@@ -5983,16 +6074,16 @@ export class RoutesService {
       'reprogramada',
       'reprogramacion',
       'reprogramacion de pago',
-    ]
+    ];
 
     if (
       estadosReprogramado.includes(estadoPrestamo) ||
       estadosReprogramado.includes(estadoVisita)
     ) {
-      return 'REPROGRAMADO'
+      return 'REPROGRAMADO';
     }
 
-    return 'PENDIENTE'
+    return 'PENDIENTE';
   }
 
   private buildObligacionesOperativas(visitas: any[]) {
@@ -6017,7 +6108,8 @@ export class RoutesService {
             ? visita.prestamos
             : [];
           const esPrestamoObjetivo =
-            String(prestamo?.id || '') === String(visita?.prestamoObjetivoId || '') ||
+            String(prestamo?.id || '') ===
+              String(visita?.prestamoObjetivoId || '') ||
             prestamosVisita.length === 1;
           const recaudado = Number(
             prestamo?.recaudadoDelDia ||
@@ -6026,12 +6118,10 @@ export class RoutesService {
               0,
           );
 
-          const metaBase = metaPendienteRaw > 0 ? metaPendienteRaw : recaudado
+          const metaBase = metaPendienteRaw > 0 ? metaPendienteRaw : recaudado;
 
           const metaPendiente =
-            estadoGestion === 'PENDIENTE' || recaudado > 0
-              ? metaBase
-              : 0
+            estadoGestion === 'PENDIENTE' || recaudado > 0 ? metaBase : 0;
 
           return {
             visita,
@@ -6054,7 +6144,10 @@ export class RoutesService {
   async getCierrePendienteDetalle(rutaId: string, actor?: RouteActor) {
     await this.assertCollectorOwnRoute(rutaId, actor);
 
-    const jornadasPendientes = await this.getCierresPendientesRuta(rutaId, actor?.id);
+    const jornadasPendientes = await this.getCierresPendientesRuta(
+      rutaId,
+      actor?.id,
+    );
 
     if (!jornadasPendientes.length) {
       return {
@@ -6079,13 +6172,19 @@ export class RoutesService {
 
         const obligaciones = this.buildObligacionesOperativas(visitas);
 
-        const metaOperativaJornada = obligaciones.reduce((sum: number, o: any) => {
-          return sum + Number(o.metaPendiente || 0)
-        }, 0)
+        const metaOperativaJornada = obligaciones.reduce(
+          (sum: number, o: any) => {
+            return sum + Number(o.metaPendiente || 0);
+          },
+          0,
+        );
 
-        const recaudoOperativoJornada = obligaciones.reduce((sum: number, o: any) => {
-          return sum + Number(o.recaudado || 0)
-        }, 0)
+        const recaudoOperativoJornada = obligaciones.reduce(
+          (sum: number, o: any) => {
+            return sum + Number(o.recaudado || 0);
+          },
+          0,
+        );
 
         const recaudoOperativoFinal =
           recaudoOperativoJornada > 0
@@ -6094,19 +6193,19 @@ export class RoutesService {
                 detalleDia.resumen?.recaudoOperativo ??
                   detalleDia.resumen?.recaudo ??
                   0,
-              )
+              );
 
         const metaFinal =
           metaOperativaJornada > 0
             ? metaOperativaJornada
-            : Number(detalleDia.resumen?.meta || 0)
+            : Number(detalleDia.resumen?.meta || 0);
 
         const cumplimiento =
           metaFinal > 0
             ? Number(((recaudoOperativoFinal / metaFinal) * 100).toFixed(2))
             : recaudoOperativoFinal > 0
               ? 100
-              : 0
+              : 0;
 
         const obligacionesGestionadas = obligaciones.filter((o: any) => {
           return o.estadoGestion !== 'PENDIENTE';
@@ -6129,7 +6228,9 @@ export class RoutesService {
         });
 
         const clientesPagaron = visitas.filter((v: any) => {
-          return this.resolveEstadoGestionCierrePendiente(v) === 'PAGO_REGISTRADO';
+          return (
+            this.resolveEstadoGestionCierrePendiente(v) === 'PAGO_REGISTRADO'
+          );
         });
 
         const clientesAusentes = visitas.filter((v: any) => {
@@ -6173,11 +6274,9 @@ export class RoutesService {
             recaudoOperativo: recaudoOperativoFinal,
             cumplimiento,
             recaudoContable: detalleDia.resumen?.recaudoContable || 0,
-            recaudoRegularizado:
-              detalleDia.resumen?.recaudoRegularizado || 0,
+            recaudoRegularizado: detalleDia.resumen?.recaudoRegularizado || 0,
             recaudoEfectivo: detalleDia.resumen?.recaudoEfectivo || 0,
-            recaudoTransferencia:
-              detalleDia.resumen?.recaudoTransferencia || 0,
+            recaudoTransferencia: detalleDia.resumen?.recaudoTransferencia || 0,
             recaudoContableEfectivo:
               detalleDia.resumen?.recaudoContableEfectivo || 0,
             recaudoContableTransferencia:
@@ -6208,7 +6307,8 @@ export class RoutesService {
             asignacionId: v.asignacionId,
             ordenVisita: v.ordenVisita,
             clienteId: v.cliente?.id,
-            nombreCliente: `${v.cliente?.nombres || ''} ${v.cliente?.apellidos || ''}`.trim(),
+            nombreCliente:
+              `${v.cliente?.nombres || ''} ${v.cliente?.apellidos || ''}`.trim(),
             dni: v.cliente?.dni,
             telefono: v.cliente?.telefono,
             direccion: v.cliente?.direccion,
@@ -6218,7 +6318,8 @@ export class RoutesService {
 
             recaudadoDelDia: Number(v.recaudadoDelDia || 0),
             saldoOperativoJornada: getSaldoOperativoJornada(v),
-            metaOperativaJornada: getSaldoOperativoJornada(v) + Number(v.recaudadoDelDia || 0),
+            metaOperativaJornada:
+              getSaldoOperativoJornada(v) + Number(v.recaudadoDelDia || 0),
             estadoVisita: v.estadoVisita || null,
             notasVisita: v.notasVisita || null,
 

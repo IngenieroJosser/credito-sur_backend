@@ -9,6 +9,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { loadWorkbookFromBuffer } from './xlsx-workbook.loader';
 import { leerNumero, leerTexto, leerTextoMayus } from './cell-value.util';
 import {
+  avisarFilasFueraDeRango,
   celda,
   construirMapaColumnas,
   filaVaciaEnColumnas,
@@ -146,9 +147,15 @@ export class InventarioParser {
     const columnasOpciones: Array<{ meses: number; precio: number }> = [];
     for (let i = 1; i <= MAX_OPCIONES_PLAZO; i++) {
       const colMesesOpcion = cols.indice(`Meses opción ${i}`, `Meses op ${i}`);
-      const colPrecioOpcion = cols.indice(`Precio opción ${i}`, `Precio op ${i}`);
+      const colPrecioOpcion = cols.indice(
+        `Precio opción ${i}`,
+        `Precio op ${i}`,
+      );
       if (colMesesOpcion && colPrecioOpcion) {
-        columnasOpciones.push({ meses: colMesesOpcion, precio: colPrecioOpcion });
+        columnasOpciones.push({
+          meses: colMesesOpcion,
+          precio: colPrecioOpcion,
+        });
       }
     }
 
@@ -172,6 +179,7 @@ export class InventarioParser {
     let totalArticulos = 0;
     let articulosConError = 0;
     const codigosArticulos = new Set<string>();
+    const filasLeidas: number[] = [];
 
     hojaArticulos.eachRow((row, rowNumber) => {
       if (rowNumber < FILA_INICIO_DATOS) return;
@@ -179,6 +187,7 @@ export class InventarioParser {
 
       totalFilas++;
       totalArticulos++;
+      filasLeidas.push(rowNumber);
       let tieneError = false;
 
       const accion = leerTextoMayus(celda(row, colAccion)) || 'CREAR';
@@ -229,7 +238,11 @@ export class InventarioParser {
         addAdver('costo', AVISO_CENTAVOS, celda(row, colCosto));
       }
       if (tieneCentavos(precioContadoCelda)) {
-        addAdver('precio_contado', AVISO_CENTAVOS, celda(row, colPrecioContado));
+        addAdver(
+          'precio_contado',
+          AVISO_CENTAVOS,
+          celda(row, colPrecioContado),
+        );
       }
 
       if (!codigo) {
@@ -261,12 +274,23 @@ export class InventarioParser {
       if (!categoria) addError('categoria', 'Es requerida', categoria);
 
       if (costo === null || Number.isNaN(costo) || costo < 0) {
-        addError('costo', 'Debe ser un número mayor o igual a 0', celda(row, colCosto));
+        addError(
+          'costo',
+          'Debe ser un número mayor o igual a 0',
+          celda(row, colCosto),
+        );
       }
       if (stock !== null && (Number.isNaN(stock) || stock < 0)) {
-        addError('stock', 'Debe ser un número mayor o igual a 0', celda(row, colStock));
+        addError(
+          'stock',
+          'Debe ser un número mayor o igual a 0',
+          celda(row, colStock),
+        );
       }
-      if (stockMinimo !== null && (Number.isNaN(stockMinimo) || stockMinimo < 0)) {
+      if (
+        stockMinimo !== null &&
+        (Number.isNaN(stockMinimo) || stockMinimo < 0)
+      ) {
         addError(
           'stock_minimo',
           'Debe ser un número mayor o igual a 0',
@@ -425,6 +449,14 @@ export class InventarioParser {
       });
     });
 
+    const avisoRango = avisarFilasFueraDeRango(
+      filasLeidas,
+      SHEET_DISPLAY.articulos,
+    );
+    if (avisoRango) {
+      advertencias.push({ hoja: SHEET_DISPLAY.articulos, ...avisoRango });
+    }
+
     porHoja[SHEET_DISPLAY.articulos] = {
       totalFilas: totalArticulos,
       filasValidas: totalArticulos - articulosConError,
@@ -492,13 +524,26 @@ export class InventarioParser {
           }
 
           if (meses === null || Number.isNaN(meses) || meses < 0) {
-            addError('meses', 'Debe ser un número mayor o igual a 0', celda(row, colMeses));
+            addError(
+              'meses',
+              'Debe ser un número mayor o igual a 0',
+              celda(row, colMeses),
+            );
           }
           if (precio === null || Number.isNaN(precio) || precio <= 0) {
-            addError('precio', 'Debe ser un número mayor a 0', celda(row, colPrecio));
+            addError(
+              'precio',
+              'Debe ser un número mayor a 0',
+              celda(row, colPrecio),
+            );
           }
 
-          if (codigoProducto && meses !== null && !Number.isNaN(meses) && meses >= 0) {
+          if (
+            codigoProducto &&
+            meses !== null &&
+            !Number.isNaN(meses) &&
+            meses >= 0
+          ) {
             const combinacion = `${codigoProducto}-${meses}`;
             if (combinacionesPrecios.has(combinacion)) {
               addError(

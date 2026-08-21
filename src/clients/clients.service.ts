@@ -340,7 +340,12 @@ export class ClientsService {
         `Getting clients with filters: ${JSON.stringify(filters)}`,
       );
 
-      const { nivelRiesgo = 'all', ruta = '', search = '', forCredit = false } = filters;
+      const {
+        nivelRiesgo = 'all',
+        ruta = '',
+        search = '',
+        forCredit = false,
+      } = filters;
 
       // Construir filtros de forma segura.
       // En contexto de creación de crédito el cobrador usa el scope amplio
@@ -1763,7 +1768,9 @@ export class ClientsService {
       include: {
         asignacionesRuta: {
           where: { activa: true },
-          include: { ruta: { select: { id: true, nombre: true, codigo: true } } },
+          include: {
+            ruta: { select: { id: true, nombre: true, codigo: true } },
+          },
           take: 1,
         },
         prestamos: {
@@ -1863,11 +1870,7 @@ export class ClientsService {
         not: 'RECHAZADO',
       },
       estado: {
-        notIn: [
-          'BORRADOR',
-          'PENDIENTE_APROBACION',
-          'PERDIDA',
-        ],
+        notIn: ['BORRADOR', 'PENDIENTE_APROBACION', 'PERDIDA'],
       },
     };
 
@@ -1971,8 +1974,9 @@ export class ClientsService {
       prestamosActivos: prestamos.filter((p: any) =>
         ['ACTIVO', 'EN_MORA', 'INCUMPLIDO'].includes(String(p.estado)),
       ).length,
-      prestamosPagados: prestamos.filter((p: any) => String(p.estado) === 'PAGADO')
-        .length,
+      prestamosPagados: prestamos.filter(
+        (p: any) => String(p.estado) === 'PAGADO',
+      ).length,
       totalVentasContado: ventasContado.reduce(
         (sum: number, v: any) => sum + Number(v.monto || 0),
         0,
@@ -2007,9 +2011,7 @@ export class ClientsService {
           prestamoId: p.id,
           numeroPrestamo: p.numeroPrestamo,
         })),
-    ].sort(
-      (a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime(),
-    );
+    ].sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
 
     return {
       cliente: {

@@ -503,8 +503,7 @@ export async function generarPDFClientes(
         doc.font('Helvetica-Bold').fillColor(GRIS_TXT);
       } else if (ci === 4) {
         const rr = claveColorRiesgoExport(fila.nivelRiesgo);
-        if (rr === 'ROJO')
-          doc.font('Helvetica-Bold').fillColor(ROJO_DARK);
+        if (rr === 'ROJO') doc.font('Helvetica-Bold').fillColor(ROJO_DARK);
         else if (rr === 'VERDE')
           doc.font('Helvetica-Bold').fillColor(VERDE_DARK);
         else if (rr === 'AMARILLO')

@@ -67,7 +67,9 @@ export class AlertasClientesService {
       const cuotas = Array.isArray(prestamo.cuotas) ? prestamo.cuotas : [];
       const pagos = Array.isArray(prestamo.pagos) ? prestamo.pagos : [];
       const estadoPrestamo = String(prestamo.estado || '').toUpperCase();
-      const estadoAprobacion = String(prestamo.estadoAprobacion || '').toUpperCase();
+      const estadoAprobacion = String(
+        prestamo.estadoAprobacion || '',
+      ).toUpperCase();
       const esCarteraActiva =
         ['ACTIVO', 'EN_MORA', 'INCUMPLIDO'].includes(estadoPrestamo) &&
         !['PENDIENTE', 'RECHAZADO'].includes(estadoAprobacion);
@@ -88,7 +90,11 @@ export class AlertasClientesService {
         cuotasVencidas: cuotasVencidas.length,
         saldoVencido: cuotasVencidas.reduce(
           (sum: number, cuota: any) =>
-            sum + Math.max(0, this.toNumber(cuota.monto) - this.toNumber(cuota.montoPagado)),
+            sum +
+            Math.max(
+              0,
+              this.toNumber(cuota.monto) - this.toNumber(cuota.montoPagado),
+            ),
           0,
         ),
         cuotas: cuotas.map((cuota: any) => ({
@@ -179,14 +185,16 @@ export class AlertasClientesService {
         : null,
       creditos,
       metricas,
-      historialVisitas: (cliente.registrosVisitas || []).map((registro: any) => ({
-        id: registro.id,
-        fechaVisita: registro.fechaVisita,
-        estadoVisita: registro.estadoVisita,
-        notas: registro.notas,
-        ruta: registro.ruta,
-        cobrador: registro.cobrador,
-      })),
+      historialVisitas: (cliente.registrosVisitas || []).map(
+        (registro: any) => ({
+          id: registro.id,
+          fechaVisita: registro.fechaVisita,
+          estadoVisita: registro.estadoVisita,
+          notas: registro.notas,
+          ruta: registro.ruta,
+          cobrador: registro.cobrador,
+        }),
+      ),
       evidencias: (cliente.archivos || []).map((archivo: any) => ({
         id: archivo.id,
         tipoContenido: archivo.tipoContenido,
@@ -209,7 +217,9 @@ export class AlertasClientesService {
                 id: true,
                 nombre: true,
                 codigo: true,
-                cobrador: { select: { id: true, nombres: true, apellidos: true } },
+                cobrador: {
+                  select: { id: true, nombres: true, apellidos: true },
+                },
               },
             },
           },
@@ -260,7 +270,9 @@ export class AlertasClientesService {
     this.validateText(dto.descripcion, 'descripcion');
     this.validateText(dto.observacionesReportante, 'observacionesReportante');
 
-    const alertaActivaExistente = await (this.prisma as any).alertaCliente.findFirst({
+    const alertaActivaExistente = await (
+      this.prisma as any
+    ).alertaCliente.findFirst({
       where: {
         clienteId: dto.clienteId,
         estado: 'ACTIVA',
@@ -298,7 +310,8 @@ export class AlertasClientesService {
       },
       select: { id: true, rol: true },
     });
-    const clienteNombre = `${cliente.nombres || ''} ${cliente.apellidos || ''}`.trim();
+    const clienteNombre =
+      `${cliente.nombres || ''} ${cliente.apellidos || ''}`.trim();
     const cobradorNombre = asignacion?.ruta?.cobrador
       ? `${asignacion.ruta.cobrador.nombres || ''} ${asignacion.ruta.cobrador.apellidos || ''}`.trim()
       : null;
@@ -308,7 +321,8 @@ export class AlertasClientesService {
         data: {
           clienteId: dto.clienteId,
           rutaId: rutaIdOperacion,
-          cobradorId: asignacion?.cobradorId || asignacion?.ruta?.cobrador?.id || null,
+          cobradorId:
+            asignacion?.cobradorId || asignacion?.ruta?.cobrador?.id || null,
           reportadoPorId: actor.id,
           estado: 'ACTIVA',
           motivo: dto.motivo.trim(),
@@ -348,14 +362,16 @@ export class AlertasClientesService {
               cobradorNombre,
               motivo: dto.motivo.trim(),
               descripcion: dto.descripcion.trim(),
-              ultimaUbicacionConocida: dto.ultimaUbicacionConocida?.trim() || null,
+              ultimaUbicacionConocida:
+                dto.ultimaUbicacionConocida?.trim() || null,
               observacionesReportante: dto.observacionesReportante.trim(),
               estadoAlerta: 'ACTIVA',
               prioridad: 'ALTA',
               saldoPendienteTotal:
                 snapshotCliente.metricas?.saldoPendienteTotal ?? 0,
               cuotasVencidas: snapshotCliente.metricas?.cuotasVencidas ?? 0,
-              saldoVencidoTotal: snapshotCliente.metricas?.saldoVencidoTotal ?? 0,
+              saldoVencidoTotal:
+                snapshotCliente.metricas?.saldoVencidoTotal ?? 0,
               deepLink: `/admin/revisiones?tab=alertas-clientes&alertaId=${creada.id}`,
             },
           })),
@@ -484,16 +500,17 @@ export class AlertasClientesService {
       throw new BadRequestException('La alerta ya fue resuelta.');
     }
 
-    const actualizada = await (this.prisma as any).$transaction(async (tx: any) =>
-      tx.alertaCliente.update({
-        where: { id },
-        data: {
-          estado: 'RESUELTA',
-          resueltoPorId: actor.id,
-          resueltoEn: new Date(),
-          motivoResolucion: dto.motivoResolucion.trim(),
-        },
-      }),
+    const actualizada = await (this.prisma as any).$transaction(
+      async (tx: any) =>
+        tx.alertaCliente.update({
+          where: { id },
+          data: {
+            estado: 'RESUELTA',
+            resueltoPorId: actor.id,
+            resueltoEn: new Date(),
+            motivoResolucion: dto.motivoResolucion.trim(),
+          },
+        }),
     );
 
     this.emitirCambios(id, alerta.clienteId);
@@ -507,11 +524,13 @@ export class AlertasClientesService {
         alertaId,
         clienteId,
       });
-      (this.notificacionesGateway as any).broadcastNotificacionesActualizadas?.({
-        accion: 'ALERTA_CLIENTE_NO_UBICADO',
-        alertaId,
-        clienteId,
-      });
+      (this.notificacionesGateway as any).broadcastNotificacionesActualizadas?.(
+        {
+          accion: 'ALERTA_CLIENTE_NO_UBICADO',
+          alertaId,
+          clienteId,
+        },
+      );
     } catch (error) {
       this.logger.warn(
         `No se pudo emitir actualización realtime de alerta ${alertaId}: ${(error as Error)?.message || error}`,

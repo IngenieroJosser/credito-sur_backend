@@ -679,8 +679,7 @@ export async function generarPDFMora(
       dias: fila.diasMora,
     });
     const baseBg = i % 2 === 0 ? BLANCO : AZUL_PALE;
-    const bg =
-      riesgo === 'ROJO' ? ROJO_PALE : baseBg;
+    const bg = riesgo === 'ROJO' ? ROJO_PALE : baseBg;
 
     doc.rect(tableLeft, y, tableWidth, maxRowHeight).fill(bg);
     doc
@@ -703,11 +702,7 @@ export async function generarPDFMora(
       } else if (ci === 8) {
         doc
           .font('Helvetica-Bold')
-          .fillColor(
-            riesgo === 'ROJO'
-              ? ROJO_DARK
-              : GRIS_TXT,
-          );
+          .fillColor(riesgo === 'ROJO' ? ROJO_DARK : GRIS_TXT);
       } else {
         doc.font('Helvetica').fillColor(GRIS_TXT);
       }

@@ -37,7 +37,9 @@ export class CreateLoanDto {
   precioProductoId?: string;
 
   @Transform(({ value }) => {
-    const normalized = String(value || '').trim().toUpperCase();
+    const normalized = String(value || '')
+      .trim()
+      .toUpperCase();
     if (normalized === 'PRESTAMO') return TipoPrestamoDto.EFECTIVO;
     if (normalized === 'ARTICULO') return TipoPrestamoDto.ARTICULO;
     return normalized;
@@ -62,9 +64,7 @@ export class CreateLoanDto {
   )
   @IsNumber()
   @Min(0)
-  @ValidateIf(
-    (o) => String(o.tipoPrestamo || '').toUpperCase() !== 'ARTICULO',
-  )
+  @ValidateIf((o) => String(o.tipoPrestamo || '').toUpperCase() !== 'ARTICULO')
   tasaInteres: number;
 
   @Transform(({ value }) =>

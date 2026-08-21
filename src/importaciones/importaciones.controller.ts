@@ -36,7 +36,7 @@ export class ImportacionesController {
     }
   }
 
-@Get('lotes')
+  @Get('lotes')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   async listarLotes() {
     return this.importacionesService.listarLotes();
@@ -51,7 +51,8 @@ export class ImportacionesController {
   @Get('plantilla/clientes-creditos')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   async descargarPlantillaClientesCreditos(@Res() res: Response) {
-    const { data, contentType, filename } = await this.importacionesService.generarPlantillaClientesCreditos();
+    const { data, contentType, filename } =
+      await this.importacionesService.generarPlantillaClientesCreditos();
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(data);
@@ -60,7 +61,8 @@ export class ImportacionesController {
   @Get('plantilla/inventario')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   async descargarPlantillaInventario(@Res() res: Response) {
-    const { data, contentType, filename } = await this.importacionesService.generarPlantillaInventario();
+    const { data, contentType, filename } =
+      await this.importacionesService.generarPlantillaInventario();
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(data);
@@ -85,7 +87,8 @@ export class ImportacionesController {
           new MaxFileSizeValidator({ maxSize: 10 * 1024 * 1024 }), // 10MB
         ],
       }),
-    ) file: Express.Multer.File,
+    )
+    file: Express.Multer.File,
   ) {
     this.assertXlsxFile(file);
     return this.importacionesService.validarClientesCreditos(file);
@@ -110,7 +113,8 @@ export class ImportacionesController {
           new MaxFileSizeValidator({ maxSize: 5 * 1024 * 1024 }), // 5MB
         ],
       }),
-    ) file: Express.Multer.File,
+    )
+    file: Express.Multer.File,
   ) {
     this.assertXlsxFile(file);
     return this.importacionesService.validarInventario(file);
@@ -135,13 +139,17 @@ export class ImportacionesController {
           new MaxFileSizeValidator({ maxSize: 5 * 1024 * 1024 }), // 5MB
         ],
       }),
-    ) file: Express.Multer.File,
+    )
+    file: Express.Multer.File,
     @Req() req: any,
   ) {
     this.assertXlsxFile(file);
-    const creadoPorId: string = req.user?.sub || req.user?.id || req.user?.userId;
+    const creadoPorId: string =
+      req.user?.sub || req.user?.id || req.user?.userId;
     if (!creadoPorId) {
-      throw new BadRequestException('No se pudo identificar el usuario autenticado.');
+      throw new BadRequestException(
+        'No se pudo identificar el usuario autenticado.',
+      );
     }
     return this.importacionesService.confirmarInventario(file, creadoPorId);
   }
@@ -165,14 +173,21 @@ export class ImportacionesController {
           new MaxFileSizeValidator({ maxSize: 10 * 1024 * 1024 }), // 10MB
         ],
       }),
-    ) file: Express.Multer.File,
+    )
+    file: Express.Multer.File,
     @Req() req: any,
   ) {
     this.assertXlsxFile(file);
-    const creadoPorId: string = req.user?.sub || req.user?.id || req.user?.userId;
+    const creadoPorId: string =
+      req.user?.sub || req.user?.id || req.user?.userId;
     if (!creadoPorId) {
-      throw new BadRequestException('No se pudo identificar el usuario autenticado.');
+      throw new BadRequestException(
+        'No se pudo identificar el usuario autenticado.',
+      );
     }
-    return this.importacionesService.confirmarClientesCreditos(file, creadoPorId);
+    return this.importacionesService.confirmarClientesCreditos(
+      file,
+      creadoPorId,
+    );
   }
 }

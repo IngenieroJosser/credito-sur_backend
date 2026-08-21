@@ -18,7 +18,10 @@ export class DashboardController {
     RolUsuario.SUPERVISOR,
     RolUsuario.PUNTO_DE_VENTA,
   )
-  async getDashboardData(@Query('timeFilter') timeFilter: string, @Request() req: any) {
+  async getDashboardData(
+    @Query('timeFilter') timeFilter: string,
+    @Request() req: any,
+  ) {
     return this.dashboardService.getDashboardData(timeFilter, req.user);
   }
 

@@ -72,9 +72,7 @@ export class PaymentsController {
         createPaymentDto.cobradorId?.toString().trim() ||
         (req.user?.rol === RolUsuario.COBRADOR ? req.user?.id : undefined),
       montoTotal: Number(createPaymentDto.montoTotal),
-      metodoPago: createPaymentDto.metodoPago
-        ?.toString()
-        .toUpperCase() as any,
+      metodoPago: createPaymentDto.metodoPago?.toString().toUpperCase() as any,
       numeroReferencia: createPaymentDto.numeroReferencia?.toString().trim(),
       notas: createPaymentDto.notas?.toString(),
       fechaPago: createPaymentDto.fechaPago?.toString().trim(),

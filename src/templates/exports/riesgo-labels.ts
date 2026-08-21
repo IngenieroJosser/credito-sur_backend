@@ -11,7 +11,9 @@ export function etiquetaNivelRiesgoExport(
     return 'Crítico';
   }
 
-  const normalized = String(nivel || '').trim().toUpperCase();
+  const normalized = String(nivel || '')
+    .trim()
+    .toUpperCase();
   switch (normalized) {
     case 'VERDE':
     case 'AL_DIA':
@@ -30,7 +32,10 @@ export function etiquetaNivelRiesgoExport(
     case 'CRÍTICO':
       return 'Crítico';
     default:
-      if (normalized === ['LISTA', 'NEGRA'].join('_') || normalized === ['LISTA', 'NEGRA'].join(' ')) {
+      if (
+        normalized === ['LISTA', 'NEGRA'].join('_') ||
+        normalized === ['LISTA', 'NEGRA'].join(' ')
+      ) {
         return 'Crítico';
       }
       return normalized ? normalized.replace(/_/g, ' ') : 'Sin clasificar';

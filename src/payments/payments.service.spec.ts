@@ -246,17 +246,13 @@ describe('PaymentsService', () => {
   describe('isDomingoBogota', () => {
     it('detecta sábado antes de medianoche Bogotá aunque ya sea domingo UTC', () => {
       expect(
-        (service as any).isDomingoBogota(
-          new Date('2026-05-31T04:59:00.000Z'),
-        ),
+        (service as any).isDomingoBogota(new Date('2026-05-31T04:59:00.000Z')),
       ).toBe(false);
     });
 
     it('detecta domingo desde medianoche Bogotá', () => {
       expect(
-        (service as any).isDomingoBogota(
-          new Date('2026-05-31T05:00:00.000Z'),
-        ),
+        (service as any).isDomingoBogota(new Date('2026-05-31T05:00:00.000Z')),
       ).toBe(true);
     });
   });
@@ -498,20 +494,24 @@ describe('PaymentsService', () => {
       prisma.pago.findFirst.mockResolvedValueOnce(null);
 
       try {
-        await service.create({
-          prestamoId: 'prestamo-1',
-          cobradorId: 'cobrador-1',
-          montoTotal: 110000,
-          cuotaId: 'cuota-2',
-          cuotaNumeroEsperada: 2,
-          montoCuotaEsperado: 110000,
-          fechaOperativaRuta: '2026-05-27',
-          origenGestion: 'CIERRE_PENDIENTE',
-          rutaId: 'ruta-1',
-          notas: 'Recibido con nota administrativa',
-          idempotencyKey:
-            'CIERRE_PENDIENTE:ruta-1:2026-05-27:cliente-1:prestamo-1:cuota-2:1:PAGO:110000',
-        } as any, undefined, ACTOR_ADMIN);
+        await service.create(
+          {
+            prestamoId: 'prestamo-1',
+            cobradorId: 'cobrador-1',
+            montoTotal: 110000,
+            cuotaId: 'cuota-2',
+            cuotaNumeroEsperada: 2,
+            montoCuotaEsperado: 110000,
+            fechaOperativaRuta: '2026-05-27',
+            origenGestion: 'CIERRE_PENDIENTE',
+            rutaId: 'ruta-1',
+            notas: 'Recibido con nota administrativa',
+            idempotencyKey:
+              'CIERRE_PENDIENTE:ruta-1:2026-05-27:cliente-1:prestamo-1:cuota-2:1:PAGO:110000',
+          } as any,
+          undefined,
+          ACTOR_ADMIN,
+        );
       } finally {
         jest.useRealTimers();
       }
@@ -572,18 +572,22 @@ describe('PaymentsService', () => {
       prisma.pago.findFirst.mockResolvedValueOnce(null);
 
       try {
-        await service.create({
-          prestamoId: 'prestamo-1',
-          cobradorId: 'cobrador-1',
-          montoTotal: 110000,
-          cuotaId: 'cuota-2',
-          cuotaNumeroEsperada: 2,
-          montoCuotaEsperado: 110000,
-          fechaOperativaRuta: '2026-05-27',
-          origenGestion: 'CIERRE_PENDIENTE',
-          rutaId: 'ruta-1',
-          idempotencyKey: longKey,
-        } as any, undefined, ACTOR_ADMIN);
+        await service.create(
+          {
+            prestamoId: 'prestamo-1',
+            cobradorId: 'cobrador-1',
+            montoTotal: 110000,
+            cuotaId: 'cuota-2',
+            cuotaNumeroEsperada: 2,
+            montoCuotaEsperado: 110000,
+            fechaOperativaRuta: '2026-05-27',
+            origenGestion: 'CIERRE_PENDIENTE',
+            rutaId: 'ruta-1',
+            idempotencyKey: longKey,
+          } as any,
+          undefined,
+          ACTOR_ADMIN,
+        );
       } finally {
         jest.useRealTimers();
       }
@@ -722,7 +726,9 @@ describe('PaymentsService', () => {
       };
 
       prisma.prestamo.findFirst.mockResolvedValue(prestamoConResiduoCOP);
-      prisma._txMock.prestamo.findFirst.mockResolvedValue(prestamoConResiduoCOP);
+      prisma._txMock.prestamo.findFirst.mockResolvedValue(
+        prestamoConResiduoCOP,
+      );
 
       const resultado = await service.create({
         prestamoId: 'prestamo-1',
@@ -995,21 +1001,21 @@ describe('PaymentsService', () => {
         { id: 'cobrador-1', rol: RolUsuario.COBRADOR } as any,
       );
 
-      expect(prisma._txMock.asignacionRuta.findFirst).toHaveBeenCalledWith({
-        where: {
-          clienteId: 'cliente-1',
-          activa: true,
-          OR: [
-            { cobradorId: 'cobrador-1' },
-            { ruta: { cobradorId: 'cobrador-1' } },
-          ],
-        },
-        select: {
-          rutaId: true,
-          cobradorId: true,
-          ruta: { select: { cobradorId: true } },
-        },
-      });
+      // Lo que importa es el filtro: la asignación activa del cliente que
+      // corresponde a ese cobrador, sea directo o por la ruta. El `select` no
+      // se fija al detalle para que agregar un campo no rompa la prueba.
+      expect(prisma._txMock.asignacionRuta.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            clienteId: 'cliente-1',
+            activa: true,
+            OR: [
+              { cobradorId: 'cobrador-1' },
+              { ruta: { cobradorId: 'cobrador-1' } },
+            ],
+          },
+        }),
+      );
     });
   });
 

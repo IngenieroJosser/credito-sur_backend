@@ -19,6 +19,36 @@ import {
 
 const FILA_DATOS = 7;
 
+/**
+ * Generar una plantilla cuesta cerca de medio segundo, y casi todas las pruebas
+ * necesitan la misma. Se genera una vez y se reutiliza: `editarLibro` parte del
+ * buffer sin modificarlo.
+ */
+const cachePlantillas = new Map<
+  string,
+  Promise<{ data: Buffer; filename: string }>
+>();
+
+function plantillaCacheada(
+  clave: string,
+  generar: () => Promise<{
+    data: Buffer;
+    contentType: string;
+    filename: string;
+  }>,
+) {
+  if (!cachePlantillas.has(clave)) cachePlantillas.set(clave, generar());
+  return cachePlantillas.get(clave)!;
+}
+
+const plantillaInventarioCacheada = () =>
+  plantillaCacheada('inventario', generarPlantillaInventario);
+
+const plantillaClientesCacheada = () =>
+  plantillaCacheada('clientes', () =>
+    generarPlantillaClientesCreditos(datosPlantillaVacios),
+  );
+
 const prismaMock = (datos?: {
   clientes?: any[];
   productos?: any[];
@@ -114,13 +144,9 @@ async function validarCredito(
   datosBd: Parameters<typeof prismaMock>[0] = { clientes: [clienteEnBd] },
   hojaCredito = 'Créditos de dinero',
 ) {
-  const plantilla = await generarPlantillaClientesCreditos(datosPlantillaVacios);
+  const plantilla = await plantillaClientesCacheada();
   const archivo = await editarLibro(plantilla.data, (workbook) => {
-    escribirFila(
-      workbook.getWorksheet(hojaCredito)!,
-      FILA_DATOS,
-      valores,
-    );
+    escribirFila(workbook.getWorksheet(hojaCredito)!, FILA_DATOS, valores);
   });
   return new ClientesCreditosParser(prismaMock(datosBd)).parseAndValidate(
     archivo,
@@ -157,7 +183,7 @@ const validarCreditoArticulo = (
 ) => validarCredito(valores, datosBd, 'Créditos de artículo');
 
 async function validarArticulo(valores: Record<string, any>, datosBd?: any) {
-  const plantilla = await generarPlantillaInventario();
+  const plantilla = await plantillaInventarioCacheada();
   const archivo = await editarLibro(plantilla.data, (workbook) => {
     escribirFila(workbook.getWorksheet('Artículos')!, FILA_DATOS, valores);
   });
@@ -283,7 +309,8 @@ describe('Plantilla de inventario', () => {
 
 describe('Plantilla de clientes y créditos', () => {
   it('recién descargada no reporta filas ni errores', async () => {
-    const plantilla = await generarPlantillaClientesCreditos(datosPlantillaVacios);
+    const plantilla =
+      await generarPlantillaClientesCreditos(datosPlantillaVacios);
     const resultado = await new ClientesCreditosParser(
       prismaMock(),
     ).parseAndValidate(plantilla.data, plantilla.filename);
@@ -322,7 +349,8 @@ describe('Plantilla de clientes y créditos', () => {
   });
 
   it('crea el cliente sin exigir acción ni código de importación', async () => {
-    const plantilla = await generarPlantillaClientesCreditos(datosPlantillaVacios);
+    const plantilla =
+      await generarPlantillaClientesCreditos(datosPlantillaVacios);
 
     const archivo = await editarLibro(plantilla.data, (workbook) => {
       escribirFila(workbook.getWorksheet('Clientes')!, FILA_DATOS, {
@@ -550,7 +578,9 @@ describe('Avance histórico de créditos importados', () => {
     expect(avance.cuotasPagadas).toBe(12);
     expect(avance.totalPagado).toBe(274000);
     // El reparto respeta el orden interés → capital de los pagos reales.
-    expect(avance.interesPagado + avance.capitalPagado).toBe(avance.totalPagado);
+    expect(avance.interesPagado + avance.capitalPagado).toBe(
+      avance.totalPagado,
+    );
     expect(avance.montoNoAplicado).toBe(0);
   });
 
@@ -588,7 +618,9 @@ describe('Avance histórico de créditos importados', () => {
     expect(resolverEstadoPrestamoImportado(pagado, 0, hoy)).toBe('PAGADO');
 
     const enMora = planDe(5);
-    expect(resolverEstadoPrestamoImportado(enMora, 660000, hoy)).toBe('EN_MORA');
+    expect(resolverEstadoPrestamoImportado(enMora, 660000, hoy)).toBe(
+      'EN_MORA',
+    );
 
     const alDia = construirPlanCuotas({
       tipoAmortizacion: 'INTERES_SIMPLE',
@@ -747,13 +779,14 @@ describe('Equivalencia con la creación de créditos del sistema', () => {
 
 describe('Limpieza de datos al importar', () => {
   it('normaliza nombres en mayúsculas, teléfonos y correos', async () => {
-    const plantilla = await generarPlantillaClientesCreditos(datosPlantillaVacios);
+    const plantilla =
+      await generarPlantillaClientesCreditos(datosPlantillaVacios);
     const archivo = await editarLibro(plantilla.data, (workbook) => {
       escribirFila(workbook.getWorksheet('Clientes')!, FILA_DATOS, {
         'CC cliente': '12345678',
         Nombres: 'MARIA  DE LOS ANGELES',
         Apellidos: 'PEREZ  GOMEZ',
-        'Teléfono': '300-123 45 67',
+        Teléfono: '300-123 45 67',
         Correo: '  Juan.Perez@Example.COM ',
       });
     });
@@ -773,13 +806,14 @@ describe('Limpieza de datos al importar', () => {
   });
 
   it('respeta el nombre cuando la persona ya lo escribió con formato propio', async () => {
-    const plantilla = await generarPlantillaClientesCreditos(datosPlantillaVacios);
+    const plantilla =
+      await generarPlantillaClientesCreditos(datosPlantillaVacios);
     const archivo = await editarLibro(plantilla.data, (workbook) => {
       escribirFila(workbook.getWorksheet('Clientes')!, FILA_DATOS, {
         'CC cliente': '12345678',
         Nombres: 'María del Carmen',
         Apellidos: 'McDonald',
-        'Teléfono': '3001234567',
+        Teléfono: '3001234567',
       });
     });
 
@@ -797,7 +831,8 @@ describe('Posibles clientes duplicados', () => {
     filas: Array<Record<string, any>>,
     datosBd?: Parameters<typeof prismaMock>[0],
   ) => {
-    const plantilla = await generarPlantillaClientesCreditos(datosPlantillaVacios);
+    const plantilla =
+      await generarPlantillaClientesCreditos(datosPlantillaVacios);
     const archivo = await editarLibro(plantilla.data, (workbook) => {
       const hoja = workbook.getWorksheet('Clientes')!;
       filas.forEach((fila, i) => escribirFila(hoja, FILA_DATOS + i, fila));
@@ -814,18 +849,20 @@ describe('Posibles clientes duplicados', () => {
         'CC cliente': '11111111',
         Nombres: 'Juan',
         Apellidos: 'Pérez',
-        'Teléfono': '3001111111',
+        Teléfono: '3001111111',
       },
       {
         'CC cliente': '11111112',
         Nombres: 'JUAN',
         Apellidos: 'PEREZ',
-        'Teléfono': '3002222222',
+        Teléfono: '3002222222',
       },
     ]);
 
     expect(resultado.errores).toHaveLength(0);
-    expect(resultado.advertencias.filter((a) => a.campo === 'nombres')).toHaveLength(2);
+    expect(
+      resultado.advertencias.filter((a) => a.campo === 'nombres'),
+    ).toHaveLength(2);
   });
 
   it('avisa cuando el nombre ya existe en el sistema con otra cédula', async () => {
@@ -835,7 +872,7 @@ describe('Posibles clientes duplicados', () => {
           'CC cliente': '99999999',
           Nombres: 'Juan',
           Apellidos: 'Pérez',
-          'Teléfono': '3001111111',
+          Teléfono: '3001111111',
         },
       ],
       { clientes: [clienteEnBd] },
@@ -856,17 +893,20 @@ describe('Posibles clientes duplicados', () => {
         'CC cliente': '11111111',
         Nombres: 'Juan',
         Apellidos: 'Pérez',
-        'Teléfono': '3001111111',
+        Teléfono: '3001111111',
       },
     ]);
 
-    expect(resultado.advertencias.filter((a) => a.campo === 'nombres')).toHaveLength(0);
+    expect(
+      resultado.advertencias.filter((a) => a.campo === 'nombres'),
+    ).toHaveLength(0);
   });
 });
 
 describe('Acción ACTUALIZAR', () => {
   it('permite actualizar un cliente que ya existe', async () => {
-    const plantilla = await generarPlantillaClientesCreditos(datosPlantillaVacios);
+    const plantilla =
+      await generarPlantillaClientesCreditos(datosPlantillaVacios);
     const archivo = await editarLibro(plantilla.data, (workbook) => {
       escribirFila(workbook.getWorksheet('Clientes')!, FILA_DATOS, {
         Acción: 'ACTUALIZAR',
@@ -883,12 +923,16 @@ describe('Acción ACTUALIZAR', () => {
 
     expect(resultado.errores).toHaveLength(0);
     expect(resultado.clientes?.[0]).toEqual(
-      expect.objectContaining({ esActualizacion: true, nombres: 'Juan Carlos' }),
+      expect.objectContaining({
+        esActualizacion: true,
+        nombres: 'Juan Carlos',
+      }),
     );
   });
 
   it('rechaza ACTUALIZAR sobre una cédula que no existe', async () => {
-    const plantilla = await generarPlantillaClientesCreditos(datosPlantillaVacios);
+    const plantilla =
+      await generarPlantillaClientesCreditos(datosPlantillaVacios);
     const archivo = await editarLibro(plantilla.data, (workbook) => {
       escribirFila(workbook.getWorksheet('Clientes')!, FILA_DATOS, {
         Acción: 'ACTUALIZAR',
@@ -909,7 +953,8 @@ describe('Acción ACTUALIZAR', () => {
   });
 
   it('sugiere ACTUALIZAR cuando se intenta crear una cédula existente', async () => {
-    const plantilla = await generarPlantillaClientesCreditos(datosPlantillaVacios);
+    const plantilla =
+      await generarPlantillaClientesCreditos(datosPlantillaVacios);
     const archivo = await editarLibro(plantilla.data, (workbook) => {
       escribirFila(workbook.getWorksheet('Clientes')!, FILA_DATOS, {
         'CC cliente': '12345678',
@@ -937,7 +982,11 @@ describe('Acción ACTUALIZAR', () => {
       {
         clientes: [clienteEnBd],
         prestamos: [
-          { numeroPrestamo: 'IMP-001', idempotencyKey: null, _count: { pagos: 3 } },
+          {
+            numeroPrestamo: 'IMP-001',
+            idempotencyKey: null,
+            _count: { pagos: 3 },
+          },
         ],
       },
     );
@@ -956,7 +1005,11 @@ describe('Acción ACTUALIZAR', () => {
       {
         clientes: [clienteEnBd],
         prestamos: [
-          { numeroPrestamo: 'IMP-001', idempotencyKey: null, _count: { pagos: 0 } },
+          {
+            numeroPrestamo: 'IMP-001',
+            idempotencyKey: null,
+            _count: { pagos: 0 },
+          },
         ],
       },
     );
@@ -1033,7 +1086,8 @@ describe('Diferencias entre crédito de artículo y préstamo en efectivo', () =
   });
 
   it('la hoja de artículo no tiene columna de tasa ni de amortización', async () => {
-    const plantilla = await generarPlantillaClientesCreditos(datosPlantillaVacios);
+    const plantilla =
+      await generarPlantillaClientesCreditos(datosPlantillaVacios);
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(plantilla.data as any);
     const encabezados = (
@@ -1086,5 +1140,84 @@ describe('Diferencias entre crédito de artículo y préstamo en efectivo', () =
         expect.objectContaining({ campo: 'producto_codigo' }),
       ]),
     );
+  });
+});
+
+describe('Filas más allá del rango preparado', () => {
+  it('avisa cuando se pegan filas donde la plantilla ya no tiene fórmulas', async () => {
+    const plantilla = await plantillaClientesCacheada();
+    const filaFueraDeRango = FILA_DATOS + 1000; // la plantilla llega hasta 1006
+
+    const archivo = await editarLibro(plantilla.data, (workbook) => {
+      const hoja = workbook.getWorksheet('Clientes')!;
+      escribirFila(hoja, FILA_DATOS, {
+        'CC cliente': '11111111',
+        Nombres: 'Dentro',
+        Apellidos: 'Del rango',
+        Teléfono: '3001111111',
+      });
+      escribirFila(hoja, filaFueraDeRango, {
+        'CC cliente': '22222222',
+        Nombres: 'Fuera',
+        Apellidos: 'Del rango',
+        Teléfono: '3002222222',
+      });
+    });
+
+    const resultado = await new ClientesCreditosParser(
+      prismaMock(),
+    ).parseAndValidate(archivo, 'clientes.xlsx');
+
+    // Las dos filas se importan; solo se avisa de la que quedó sin fórmulas.
+    expect(resultado.errores).toHaveLength(0);
+    expect(resultado.clientes).toHaveLength(2);
+    expect(resultado.advertencias).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          campo: 'GLOBAL',
+          mensaje: expect.stringContaining('más allá de la fila'),
+        }),
+      ]),
+    );
+  });
+
+  it('no avisa cuando todas las filas están dentro del rango', async () => {
+    const resultado = await validarCredito(creditoMinimo);
+
+    expect(
+      resultado.advertencias.filter((a) => a.campo === 'GLOBAL'),
+    ).toHaveLength(0);
+  });
+});
+
+describe('Cuota inicial en créditos de artículo', () => {
+  it('financia el precio del plazo menos la cuota inicial, como el sistema', async () => {
+    const resultado = await validarCreditoArticulo({
+      ...creditoArticuloMinimo,
+      'Cuota inicial': 190000,
+    });
+
+    expect(resultado.errores).toHaveLength(0);
+    // Precio del plazo de 3 meses: 690.000 · inicial 190.000 → se financian 500.000
+    expect(resultado.creditos?.[0].monto).toBe(500000);
+    expect(resultado.creditos?.[0].cuotaInicial).toBe(190000);
+  });
+
+  it('sin cuota inicial financia el precio completo del plazo', async () => {
+    const resultado = await validarCreditoArticulo(creditoArticuloMinimo);
+
+    expect(resultado.errores).toHaveLength(0);
+    expect(resultado.creditos?.[0].monto).toBe(690000);
+  });
+
+  it('respeta el monto escrito a mano por encima del cálculo', async () => {
+    const resultado = await validarCreditoArticulo({
+      ...creditoArticuloMinimo,
+      Monto: 400000,
+      'Cuota inicial': 190000,
+    });
+
+    expect(resultado.errores).toHaveLength(0);
+    expect(resultado.creditos?.[0].monto).toBe(400000);
   });
 });

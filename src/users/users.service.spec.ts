@@ -172,8 +172,12 @@ describe('UsersService operational detail', () => {
       apellidos: 'Prueba',
     });
     prisma.journalLine.aggregate
-      .mockResolvedValueOnce({ _sum: { creditAmount: 250000, debitAmount: 10000 } })
-      .mockResolvedValueOnce({ _sum: { debitAmount: 45000, creditAmount: 5000 } });
+      .mockResolvedValueOnce({
+        _sum: { creditAmount: 250000, debitAmount: 10000 },
+      })
+      .mockResolvedValueOnce({
+        _sum: { debitAmount: 45000, creditAmount: 5000 },
+      });
     prisma.gasto.groupBy.mockResolvedValue([
       { tipoGasto: 'TRANSPORTE', _sum: { monto: 20000 } },
     ]);
@@ -228,16 +232,18 @@ describe('UsersService operational detail', () => {
     expect(detalle.metricas.rutasActivas).toBe(1);
     expect(detalle.metricas.enMora).toBe(2);
     expect(detalle.metricas.gastosHoy).toBe(20000);
-    expect(detalle.metricas.actividadReciente[0].action).toBe('Pago registrado');
+    expect(detalle.metricas.actividadReciente[0].action).toBe(
+      'Pago registrado',
+    );
   });
 
   it('throws when user does not exist', async () => {
     const { service, prisma } = buildService();
     prisma.usuario.findUnique.mockResolvedValue(null);
 
-    await expect(service.obtenerDetalleOperativo('missing')).rejects.toBeInstanceOf(
-      NotFoundException,
-    );
+    await expect(
+      service.obtenerDetalleOperativo('missing'),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('returns real active users count for admin users', async () => {
