@@ -4088,7 +4088,6 @@ export class AccountingService {
       },
     });
 
-    const activeCajaIds = new Set(cajasRuta.map((c) => c.id));
     const processedReferences = new Set<string>();
     const cajasProcesadas = new Set<string>();
 
@@ -4163,13 +4162,18 @@ export class AccountingService {
       const delta = isAbono ? -montoDeuda : montoDeuda;
       const prev = ensureDebt(cobradorId);
 
-      // Si pertenece a una caja activa de ruta, el saldo actual de esa caja se sumará al final en tiempo real.
-      // Así evitamos duplicar la deuda acumulada de esa caja.
-      const omitirDeudaAcumulada =
-        !isAbono && esFormatoCierre && activeCajaIds.has(trx.cajaId);
-      if (!omitirDeudaAcumulada) {
-        prev.descuadres += delta;
-      }
+      // La deuda de un cierre cuenta siempre, tenga o no la caja abierta.
+      //
+      // Antes se omitía cuando la caja de ruta seguía activa, porque al final
+      // se le sumaba a la deuda el saldo actual de esa caja y el cierre habría
+      // quedado contado dos veces. Ese saldo se dejó de sumar al separar la
+      // custodia de la deuda: el efectivo que el cobrador tiene en la mano se
+      // informa aparte, en `efectivoBajoCustodia`, porque es dinero de la
+      // empresa bajo su cuidado y no algo que deba. Pero la omisión se quedó
+      // sin su contrapartida, así que la deuda de un cierre anterior
+      // desaparecía del informe mientras el cobrador siguiera trabajando, y
+      // con ella la línea 1.4.1 del balance, que se arma con estos totales.
+      prev.descuadres += delta;
 
       prev.totalEventos += 1;
       deudaMap.set(cobradorId, prev);

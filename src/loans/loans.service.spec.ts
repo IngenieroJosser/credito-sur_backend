@@ -2056,49 +2056,41 @@ describe('LoansService role scoping', () => {
       { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
     );
 
-    expect(prisma.prestamo.count).toHaveBeenCalledWith({
-      where: expect.objectContaining({
-        OR: expect.arrayContaining([
-          { estado: 'EN_MORA' },
-          expect.objectContaining({
-            cuotas: expect.objectContaining({
-              some: expect.objectContaining({
-                estado: 'VENCIDA',
-              }),
-            }),
-          }),
-        ]),
-      }),
-    });
-    expect(prisma.prestamo.count).toHaveBeenCalledWith({
-      where: expect.objectContaining({
-        estado: 'ACTIVO',
-        NOT: expect.objectContaining({
-          cuotas: expect.objectContaining({
-            some: expect.objectContaining({
-              estado: 'VENCIDA',
-            }),
-          }),
-        }),
-      }),
-    });
-    expect(prisma.prestamo.aggregate).toHaveBeenCalledWith({
-      where: expect.objectContaining({
-        OR: expect.arrayContaining([
-          { estado: 'EN_MORA' },
-          expect.objectContaining({
-            cuotas: expect.objectContaining({
-              some: expect.objectContaining({
-                estado: 'VENCIDA',
-              }),
-            }),
-          }),
-        ]),
-      }),
-      _sum: {
-        saldoPendiente: true,
-      },
-    });
+    // Se comprueba el sentido de la consulta y no su forma exacta: lo que
+    // importa es que un préstamo con cuotas vencidas cuente como mora aunque
+    // su estado siga en ACTIVO, y que entonces no se cuente además como activo
+    // al día. Escribir aquí el objeto literal ataba la prueba a un `where`
+    // concreto y la dejaba en rojo cada vez que la consulta se afinaba.
+    const wheres = prisma.prestamo.count.mock.calls.map(
+      ([argumento]: any[]) => argumento.where,
+    );
+
+    const porVencidas = (alcance: any) => {
+      const cuotas = alcance?.cuotas?.some;
+      if (!cuotas) return false;
+      const estados = cuotas.estado?.in ?? [cuotas.estado];
+      const miraLaFecha = JSON.stringify(cuotas).includes('fechaVencimiento');
+      return estados.includes('VENCIDA') && miraLaFecha;
+    };
+
+    const whereMora = wheres.find((w: any) => Array.isArray(w?.OR));
+    expect(whereMora).toBeDefined();
+    expect(whereMora.OR).toContainEqual({ estado: 'EN_MORA' });
+    expect(whereMora.OR.some(porVencidas)).toBe(true);
+    // Sin saldo no hay mora, por mucho que la cuota esté vencida.
+    expect(whereMora.saldoPendiente).toEqual({ gt: 0 });
+
+    const whereActivos = wheres.find((w: any) => w?.estado === 'ACTIVO');
+    expect(whereActivos).toBeDefined();
+    expect(porVencidas(whereActivos.NOT)).toBe(true);
+
+    // La cartera en mora se suma con el mismo criterio que se cuenta.
+    const [argumentoAgregado] = prisma.prestamo.aggregate.mock.calls.find(
+      ([argumento]: any[]) => Array.isArray(argumento?.where?.OR),
+    );
+    expect(argumentoAgregado.where.OR).toContainEqual({ estado: 'EN_MORA' });
+    expect(argumentoAgregado.where.OR.some(porVencidas)).toBe(true);
+    expect(argumentoAgregado._sum).toEqual({ saldoPendiente: true });
   });
 
   it('calcula cartera con capital más interés para coincidir con la columna Monto', async () => {

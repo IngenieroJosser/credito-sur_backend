@@ -32,6 +32,11 @@ const mockLedger = {
     .mockResolvedValue({ id: 'journal-ajuste-cartera' }),
 };
 
+/** Fecha desplazada respecto a hoy, para que las pruebas no dependan del día. */
+function diasDesdeHoy(dias: number) {
+  return new Date(Date.now() + dias * 24 * 60 * 60 * 1000);
+}
+
 function buildPrismaMock() {
   const tx = {
     $queryRaw: jest.fn().mockResolvedValue([]),
@@ -46,6 +51,11 @@ function buildPrismaMock() {
       count: jest.fn().mockResolvedValue(0),
     },
     prestamo: {
+      // La reversión valida contra el préstamo antes de deshacer nada, y de
+      // paso mira si era de artículo para devolver el stock.
+      findUnique: jest
+        .fn()
+        .mockResolvedValue({ id: 'prestamo-1', productoId: null }),
       findFirst: jest.fn().mockResolvedValue({
         id: 'prestamo-1',
         clienteId: 'cliente-1',
@@ -82,7 +92,12 @@ function buildPrismaMock() {
         cobradorId: 'cobrador-1',
       }),
     },
-    transaccion: { create: jest.fn().mockResolvedValue({ id: 'trx-bank-1' }) },
+    transaccion: {
+      create: jest.fn().mockResolvedValue({ id: 'trx-bank-1' }),
+      findMany: jest.fn().mockResolvedValue([]),
+      // Antes de crear una reversa se comprueba que no exista ya.
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
     gasto: {
       create: jest.fn().mockResolvedValue({
         id: 'gasto-1',
@@ -90,6 +105,12 @@ function buildPrismaMock() {
         caja: { id: 'caja-ruta-1', nombre: 'Caja Ruta 1' },
         cobrador: { id: 'cobrador-1', nombres: 'Cobra', apellidos: 'Dor' },
       }),
+      findUnique: jest.fn().mockResolvedValue({
+        id: 'gasto-1',
+        cajaId: 'caja-ruta-1',
+        monto: 25000,
+      }),
+      update: jest.fn().mockResolvedValue({}),
     },
     caja: {
       findUnique: jest.fn().mockResolvedValue({
@@ -108,7 +129,11 @@ function buildPrismaMock() {
       create: jest.fn(),
       update: jest.fn().mockResolvedValue({}),
     },
-    journalEntry: { findFirst: jest.fn().mockResolvedValue(null) },
+    producto: { update: jest.fn().mockResolvedValue({}) },
+    journalEntry: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     usuario: {
       findFirst: jest.fn(),
       findUnique: jest.fn().mockResolvedValue(null),
@@ -276,15 +301,27 @@ describe('ApprovalsService pending loan reconciliation', () => {
                 monto: 45832,
                 montoPagado: 0,
                 estado: EstadoCuota.VENCIDA,
-                fechaVencimiento: new Date('2026-06-18T12:00:00.000Z'),
+                fechaVencimiento: diasDesdeHoy(-20),
               },
               {
+                // Sigue marcada PENDIENTE pero su fecha ya pasó: cuenta
+                // como vencida igual, porque el estado se queda atrás hasta
+                // que algo lo actualice.
                 id: 'cuota-2',
                 numeroCuota: 5,
                 monto: 45832,
                 montoPagado: 0,
                 estado: EstadoCuota.PENDIENTE,
-                fechaVencimiento: new Date('2026-06-20T12:00:00.000Z'),
+                fechaVencimiento: diasDesdeHoy(-5),
+              },
+              {
+                // Esta todavía no vence, así que no debe contarse.
+                id: 'cuota-5',
+                numeroCuota: 6,
+                monto: 45832,
+                montoPagado: 0,
+                estado: EstadoCuota.PENDIENTE,
+                fechaVencimiento: diasDesdeHoy(10),
               },
             ],
             producto: null,
@@ -305,7 +342,7 @@ describe('ApprovalsService pending loan reconciliation', () => {
                 monto: 50000,
                 montoPagado: 50000,
                 estado: EstadoCuota.PAGADA,
-                fechaVencimiento: new Date('2026-06-01T12:00:00.000Z'),
+                fechaVencimiento: diasDesdeHoy(-40),
               },
               {
                 id: 'cuota-4',
@@ -313,7 +350,7 @@ describe('ApprovalsService pending loan reconciliation', () => {
                 monto: 50000,
                 montoPagado: 0,
                 estado: EstadoCuota.VENCIDA,
-                fechaVencimiento: new Date('2026-06-05T12:00:00.000Z'),
+                fechaVencimiento: diasDesdeHoy(-35),
               },
             ],
             producto: null,
@@ -370,7 +407,7 @@ describe('ApprovalsService pending loan reconciliation', () => {
     expect(result.metricas).toMatchObject({
       saldoTotalPendiente: 300000,
       creditosActivos: 2,
-      cuotasVencidas: 2,
+      cuotasVencidas: 3,
       cuotasPagadas: 1,
       reprogramacionesPrevias: 3,
       pagosUltimos30Dias: 2,
@@ -379,7 +416,7 @@ describe('ApprovalsService pending loan reconciliation', () => {
     });
     expect(result.metricas.alertas).toEqual(
       expect.arrayContaining([
-        'El cliente tiene 2 cuota(s) vencida(s).',
+        'El cliente tiene 3 cuota(s) vencida(s).',
         'El cliente registra 3 reprogramación(es).',
       ]),
     );
@@ -926,32 +963,36 @@ describe('ApprovalsService financial ledger controls', () => {
     );
   });
 
-  it('aprueba base de efectivo hacia la caja activa de la ruta aunque la solicitud traiga otra caja', async () => {
+  it('entrega la base a la caja de la solicitud y no a la que resulte de la ruta', async () => {
+    // Antes la caja destino se volvía a resolver por rutaId. Eso rompía el
+    // caso del supervisor que cubre una ruta: la base le caía en la caja del
+    // cobrador titular y no en la suya. Ahora manda la caja que viene en la
+    // solicitud, y lo único que se exige es que exista y esté activa.
     const prisma = buildPrismaMock();
     prisma._tx.caja.findFirst
       .mockResolvedValueOnce({
-        id: 'caja-principal',
-        codigo: 'CAJA-PRINCIPAL',
-        nombre: 'Caja Principal',
+        id: 'caja-oficina',
+        codigo: 'CAJA-OFICINA',
+        nombre: 'Caja de Oficina',
         tipo: 'PRINCIPAL',
         saldoActual: 500000,
       })
       .mockResolvedValueOnce({
-        id: 'caja-ruta-1',
-        nombre: 'Caja Ruta 1',
+        id: 'caja-supervisor',
+        nombre: 'Caja Supervisor',
         tipo: 'RUTA',
         rutaId: 'ruta-1',
-        responsableId: 'cobrador-1',
+        responsableId: 'supervisor-1',
       });
 
     await (makeService(prisma) as any).approveCashBase(
       {
         id: 'approval-base-1',
-        solicitadoPorId: 'cobrador-1',
+        solicitadoPorId: 'supervisor-1',
         datosSolicitud: {
           rutaId: 'ruta-1',
-          cobradorId: 'cobrador-viejo',
-          cajaId: 'caja-vieja',
+          cobradorId: 'cobrador-1',
+          cajaId: 'caja-supervisor',
           monto: 50000,
           descripcion: 'Base inicial',
         },
@@ -959,12 +1000,23 @@ describe('ApprovalsService financial ledger controls', () => {
       'admin-1',
     );
 
+    // Sale de la Caja de Oficina...
     expect(prisma._tx.transaccion.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          cajaId: 'caja-ruta-1',
+          cajaId: 'caja-oficina',
+          tipo: 'EGRESO',
+          tipoReferencia: 'SOLICITUD_BASE_EFECTIVO',
+        }),
+      }),
+    );
+    // ...y entra en la caja de quien la pidió, no en la del cobrador titular.
+    expect(prisma._tx.transaccion.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          cajaId: 'caja-supervisor',
           tipo: 'INGRESO',
-          tipoReferencia: 'SOLICITUD_BASE',
+          tipoReferencia: 'SOLICITUD_BASE_EFECTIVO',
         }),
       }),
     );
@@ -974,7 +1026,7 @@ describe('ApprovalsService financial ledger controls', () => {
         lines: expect.arrayContaining([
           expect.objectContaining({
             accountCode: '1.2.1',
-            cajaId: 'caja-ruta-1',
+            cajaId: 'caja-supervisor',
             cajaDelta: 50000,
           }),
         ]),
@@ -1120,6 +1172,41 @@ describe('ApprovalsService financial ledger controls', () => {
         asignacionRutaId: 'asignacion-nueva',
       },
     });
+    // Revertir exige encontrar los movimientos que el desembolso provisional
+    // dejó: no se puede deshacer lo que no se sabe qué movió.
+    prisma._tx.transaccion.findMany.mockResolvedValue([
+      {
+        id: 'trx-desembolso-1',
+        cajaId: 'caja-ruta-1',
+        tipo: 'EGRESO',
+        monto: 5000000,
+        descripcion: 'Desembolso de préstamo',
+        creadoPorId: 'supervisor-1',
+        tipoReferencia: 'PRESTAMO',
+        referenciaId: 'prestamo-1',
+      },
+    ]);
+    prisma._tx.journalEntry.findMany.mockResolvedValue([
+      {
+        id: 'journal-desembolso-1',
+        referenceType: 'DESEMBOLSO',
+        referenceId: 'prestamo-1',
+        lines: [
+          {
+            accountCode: '1.3.1',
+            debitAmount: 5000000,
+            creditAmount: 0,
+            cajaId: null,
+          },
+          {
+            accountCode: '1.2.1',
+            debitAmount: 0,
+            creditAmount: 5000000,
+            cajaId: 'caja-ruta-1',
+          },
+        ],
+      },
+    ]);
 
     await makeService(prisma).rejectItem(
       'approval-loan-1',
@@ -1203,8 +1290,12 @@ describe('ApprovalsService financial ledger controls', () => {
       'Revisar de nuevo',
     );
 
-    expect(prisma._tx.aprobacion.update).toHaveBeenCalledWith({
-      where: { id: 'approval-loan-1' },
+    // Se reclama con `updateMany` condicionado al estado RECHAZADO, y no con
+    // un `update` a secas, para que dos superadministradores no puedan
+    // restaurar la misma revisión a la vez: el segundo encuentra cero filas y
+    // se le rechaza la operación.
+    expect(prisma._tx.aprobacion.updateMany).toHaveBeenCalledWith({
+      where: { id: 'approval-loan-1', estado: EstadoAprobacion.RECHAZADO },
       data: expect.objectContaining({
         estado: EstadoAprobacion.PENDIENTE,
         aprobadoPorId: null,
