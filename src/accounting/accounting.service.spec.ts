@@ -1674,7 +1674,7 @@ describe('AccountingService financial ledger controls', () => {
     });
   });
 
-  it('usa el saldo actual de la caja activa sin duplicar deudas de cierres previos', async () => {
+  it('no pierde la deuda de un cierre previo porque la caja siga activa', async () => {
     const prisma = buildPrismaMock({
       journalLine: {
         aggregate: jest.fn(),
@@ -1733,8 +1733,14 @@ describe('AccountingService financial ledger controls', () => {
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({
       cobradorId: 'cobrador-1',
-      totalDeuda: 700000,
-      descuadres: 700000,
+      // El cierre dejó una deuda de 500.000 y sigue debiéndose, esté la caja
+      // abierta o cerrada.
+      totalDeuda: 500000,
+      descuadres: 500000,
+      // Los 700.000 que hay hoy en la caja son plata de la empresa que el
+      // cobrador tiene en la mano, no algo que deba: van aparte y no se suman
+      // a la deuda.
+      efectivoBajoCustodia: 700000,
     });
   });
 });
