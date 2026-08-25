@@ -1614,15 +1614,33 @@ describe('Las columnas automáticas no se pueden escribir', () => {
 
     const automaticas: string[] = [];
     const captura: string[] = [];
+    const encabezadosSueltos: string[] = [];
+    // La 1500 va a propósito más allá de las mil filas preparadas: esas filas
+    // se importan igual, así que tienen que poder escribirse. Marcando solo el
+    // rango preparado, pegar una lista larga se topaba con la hoja protegida.
+    const filasAProbar = [7, 1006, 1500];
     hoja.getRow(6).eachCell({ includeEmpty: false }, (celda, columna) => {
       const encabezado = normalizarEncabezado(celda.value);
       if (!encabezado) return;
-      const bloqueada = hoja.getCell(7, columna).protection?.locked !== false;
+
+      // El encabezado es la llave con la que se localiza cada columna:
+      // pisarlo rompe la importación, así que va bloqueado.
+      if (celda.protection?.locked === false)
+        encabezadosSueltos.push(encabezado);
+
+      const bloqueada = filasAProbar.some(
+        (fila) => hoja.getCell(fila, columna).protection?.locked !== false,
+      );
       if (/AUTOMATICO/.test(encabezado)) {
         if (!bloqueada) automaticas.push(encabezado);
       } else if (bloqueada) {
         captura.push(encabezado);
       }
+    });
+
+    expect({ hoja: hoja.name, encabezadosSueltos }).toEqual({
+      hoja: hoja.name,
+      encabezadosSueltos: [],
     });
 
     expect({

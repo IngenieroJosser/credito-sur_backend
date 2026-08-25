@@ -118,20 +118,28 @@ export function declararColumnas(
     if (columna.numFmt) columnaExcel.numFmt = columna.numFmt;
   });
 
-  // Sombreado del cuerpo de las columnas automáticas, y bloqueo para que no se
-  // puedan escribir. En Excel todas las celdas nacen bloqueadas y el candado
-  // solo surte efecto al proteger la hoja, así que hay que abrir a mano las de
-  // captura: si no, protegerla dejaría la plantilla entera de solo lectura.
+  // Bloqueo de lo automático y sombreado de su cuerpo.
+  //
+  // En Excel toda celda nace bloqueada y el candado solo surte efecto al
+  // proteger la hoja, así que hay que abrir a mano las de captura: de lo
+  // contrario la plantilla entera quedaría de solo lectura.
+  //
+  // El permiso se da sobre la columna completa y no celda por celda. Marcando
+  // solo las mil filas preparadas, escribir en la 1007 quedaba prohibido, y
+  // esas filas sí se importan: quien pegue una lista más larga se toparía con
+  // el aviso de hoja protegida a mitad de camino.
   columnas.forEach((columna, indice) => {
     const numeroColumna = indice + 1;
+    const columnaExcel = ws.getColumn(numeroColumna);
+    columnaExcel.protection = { locked: Boolean(columna.automatica) };
+
+    if (!columna.automatica) return;
     for (
       let fila = FILA_INICIO_DATOS;
       fila < FILA_INICIO_DATOS + filas;
       fila++
     ) {
       const celda = ws.getCell(fila, numeroColumna);
-      celda.protection = { locked: Boolean(columna.automatica) };
-      if (!columna.automatica) continue;
       celda.fill = {
         type: 'pattern',
         pattern: 'solid',
@@ -140,6 +148,14 @@ export function declararColumnas(
       celda.font = { color: { argb: 'FF444444' } };
     }
   });
+
+  // Título, instrucciones y encabezados se quedan bloqueados. Las columnas se
+  // localizan por su nombre, así que pisar la fila 6 rompe la importación.
+  for (let fila = 1; fila <= FILA_ENCABEZADOS; fila++) {
+    for (let col = 1; col <= columnas.length; col++) {
+      ws.getCell(fila, col).protection = { locked: true };
+    }
+  }
 }
 
 /**
