@@ -377,7 +377,7 @@ export async function generarPlantillaInventario(): Promise<{
     'Escriba los datos desde la fila 7 hacia abajo.',
     '',
     '# Qué es obligatorio',
-    'Las primeras cinco columnas: Código, Nombre, Categoría, Costo y Precio contado.',
+    'Las primeras cinco columnas: Código, Nombre del artículo, Categoría, Costo unitario y Precio contado.',
     'Todo artículo debe poder venderse de contado, por eso su precio es obligatorio.',
     '',
     '# Corregir algo que ya está en el sistema',
@@ -405,7 +405,7 @@ export async function generarPlantillaInventario(): Promise<{
 
   const ws = construirHojaArticulos(workbook, {
     subtitulo:
-      'Una fila por artículo: datos del producto, precio de contado y hasta 6 opciones de plazo.',
+      'Una fila por artículo: datos del producto, precio de contado y hasta 3 opciones de plazo.',
     instruccion:
       '📝 Escriba los datos desde la fila 7 hacia abajo. Las columnas grises se calculan solas.',
     filas: FILAS_PREPARADAS,
@@ -432,20 +432,15 @@ export async function generarPlantillaInventario(): Promise<{
     ['Opción 1', '1 mes  →  580.000'],
     ['Opción 2', '3 meses →  690.000'],
     ['Opción 3', '6 meses →  790.000'],
-    ['Opciones 4 a 6', 'Se dejan vacías si el artículo no las maneja'],
+    ['Opciones sin usar', 'Se dejan vacías si el artículo no maneja ese plazo'],
     ['', ''],
-    ['CÓMO LEER LA RENTABILIDAD', ''],
-    [
-      'Opción 1 (1 mes)',
-      'Utilidad $100.000 · neta $71.000 · rentabilidad mensual 14,8%',
-    ],
-    [
-      'Opción 3 (6 meses)',
-      'Utilidad $310.000 · neta $270.500 · rentabilidad mensual 9,4%',
-    ],
+    ['CÓMO LEER LA UTILIDAD', ''],
+    ['Contado (540.000)', 'Utilidad $60.000 · 12,5% sobre el costo'],
+    ['Opción 1 (1 mes, 580.000)', 'Utilidad $100.000 · 20,8% sobre el costo'],
+    ['Opción 3 (6 meses, 790.000)', 'Utilidad $310.000 · 64,6% sobre el costo'],
     [
       'Conclusión',
-      'El plazo largo deja más plata en total, pero rinde menos por mes. Esa comparación es la que hace la columna "Rentabilidad mensual".',
+      'El plazo largo deja más utilidad en total, pero se demora más en volver. Compare esa ganancia contra el tiempo que la plata queda afuera.',
     ],
   ];
 
