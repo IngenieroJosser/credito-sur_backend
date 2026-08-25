@@ -29,6 +29,20 @@ import {
  * y al final los cálculos. Las columnas grises quedan agrupadas al final para
  * que no interrumpan el tabulador mientras se escribe.
  */
+/** Cada opción de plazo aporta dos columnas de captura: meses y precio. */
+const COLUMNAS_POR_OPCION = 2;
+const COLUMNAS_CALCULADAS_POR_OPCION = 2;
+
+/**
+ * Los precios a crédito van pegados a lo obligatorio: son la razón de ser del
+ * artículo en este negocio, y quien llena la fila los tiene a mano.
+ */
+const PRIMERA_COLUMNA_OPCION = 7;
+
+/** Lo opcional arranca donde terminan las opciones de plazo. */
+const PRIMERA_COLUMNA_OPCIONAL =
+  PRIMERA_COLUMNA_OPCION + MAX_OPCIONES_PLAZO * COLUMNAS_POR_OPCION;
+
 const COL = {
   accion: 1,
   // Obligatorios
@@ -37,25 +51,19 @@ const COL = {
   categoria: 4,
   costo: 5,
   precioContado: 6,
-  // Verificación
-  revision: 7,
-  // Opcionales
-  descripcion: 8,
-  marca: 9,
-  modelo: 10,
-  stock: 11,
-  stockMinimo: 12,
-  activo: 13,
+  // (aquí van las opciones de plazo)
+  // Opcionales, de lo más útil a lo que casi no se usa
+  stock: PRIMERA_COLUMNA_OPCIONAL,
+  stockMinimo: PRIMERA_COLUMNA_OPCIONAL + 1,
+  marca: PRIMERA_COLUMNA_OPCIONAL + 2,
+  modelo: PRIMERA_COLUMNA_OPCIONAL + 3,
+  descripcion: PRIMERA_COLUMNA_OPCIONAL + 4,
+  activo: PRIMERA_COLUMNA_OPCIONAL + 5,
+  // Automáticas, al final
+  revision: PRIMERA_COLUMNA_OPCIONAL + 6,
 };
 
-const PRIMERA_COLUMNA_OPCION = 14;
-/** Cada opción de plazo aporta dos columnas de captura: meses y precio. */
-const COLUMNAS_POR_OPCION = 2;
-
-/** Las columnas calculadas van todas juntas, después de las opciones de plazo. */
-const PRIMERA_COLUMNA_CALCULADA =
-  PRIMERA_COLUMNA_OPCION + MAX_OPCIONES_PLAZO * COLUMNAS_POR_OPCION;
-const COLUMNAS_CALCULADAS_POR_OPCION = 2;
+const PRIMERA_COLUMNA_CALCULADA = COL.revision + 1;
 
 export function columnasDeOpcion(numeroOpcion: number) {
   const captura =
@@ -101,20 +109,6 @@ function construirColumnas(): ColumnaPlantilla[] {
       width: 16,
       numFmt: FORMATO_MONEDA,
     },
-    // Verificación: avisa qué falta o qué está mal en la fila.
-    {
-      header: 'Revisión de la fila (automático)',
-      key: 'revision',
-      width: 40,
-      automatica: true,
-    },
-    // Opcionales
-    { header: 'Descripción', key: 'descripcion', width: 30 },
-    { header: 'Marca', key: 'marca', width: 16 },
-    { header: 'Modelo', key: 'modelo', width: 16 },
-    { header: 'Stock actual', key: 'stock', width: 10 },
-    { header: 'Stock mínimo', key: 'stock_minimo', width: 12 },
-    { header: 'Activo', key: 'activo', width: 10 },
   ];
 
   // Opciones de plazo: solo lo que se escribe (meses y precio).
@@ -129,6 +123,24 @@ function construirColumnas(): ColumnaPlantilla[] {
       },
     );
   }
+
+  // Opcionales, de lo más útil a lo que casi no se usa.
+  columnas.push(
+    { header: 'Stock actual', key: 'stock', width: 10 },
+    { header: 'Stock mínimo', key: 'stock_minimo', width: 12 },
+    { header: 'Marca', key: 'marca', width: 16 },
+    { header: 'Modelo', key: 'modelo', width: 16 },
+    { header: 'Descripción', key: 'descripcion', width: 30 },
+    { header: 'Activo', key: 'activo', width: 10 },
+  );
+
+  // Verificación: avisa qué falta o qué está mal en la fila.
+  columnas.push({
+    header: 'Revisión de la fila (automático)',
+    key: 'revision',
+    width: 40,
+    automatica: true,
+  });
 
   // Cálculos, todos juntos al final.
   columnas.push(
@@ -264,8 +276,8 @@ export async function construirHojaArticulos(
   );
 
   etiquetarGrupo(ws, COL.codigo, COL.precioContado, 'DATOS OBLIGATORIOS');
+  etiquetarGrupo(ws, COL.stock, COL.activo, 'DATOS OPCIONALES');
   etiquetarGrupo(ws, COL.revision, COL.revision, 'VERIFICACIÓN');
-  etiquetarGrupo(ws, COL.descripcion, COL.activo, 'DATOS OPCIONALES');
   etiquetarGrupo(
     ws,
     COL_UTILIDAD_CONTADO_VALOR,

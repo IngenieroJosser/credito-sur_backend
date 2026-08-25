@@ -52,19 +52,22 @@ export interface DatosReferenciaPlantilla {
 // lo opcional.
 const CLI = {
   accion: 1,
+  // Obligatorios
   cc: 2,
   nombres: 3,
   apellidos: 4,
   telefono: 5,
-  revision: 6,
-  correo: 7,
-  direccion: 8,
-  referencia: 9,
-  ref1Nombre: 10,
-  ref1Telefono: 11,
-  ref2Nombre: 12,
-  ref2Telefono: 13,
-  rutaCodigo: 14,
+  // Opcionales, de lo más útil a lo que casi no se usa
+  direccion: 6,
+  rutaCodigo: 7,
+  referencia: 8,
+  ref1Nombre: 9,
+  ref1Telefono: 10,
+  ref2Nombre: 11,
+  ref2Telefono: 12,
+  correo: 13,
+  // Automáticas, al final
+  revision: 14,
 };
 
 // ── Columnas de "Créditos de dinero" (préstamo en efectivo) ────────────────
@@ -78,19 +81,19 @@ const DIN = {
   cantidadCuotas: 6,
   fechaCredito: 7,
   tipoCarga: 8,
-  // Verificación
-  cliente: 9,
-  revision: 10,
+  // Cambia el cálculo del interés, así que va enseguida
+  tipoAmortizacion: 9,
+  // Lo ya cobrado, para créditos que vienen andando
+  cuotasPagadas: 10,
+  abonoAdicional: 11,
+  fechaUltimoPago: 12,
   // Opcionales
-  numeroCredito: 11,
-  tipoAmortizacion: 12,
   fechaPrimerCobro: 13,
-  notas: 14,
-  // Estado actual
-  cuotasPagadas: 15,
-  abonoAdicional: 16,
-  fechaUltimoPago: 17,
-  // Cálculos
+  numeroCredito: 14,
+  notas: 15,
+  // Automáticas, al final
+  cliente: 16,
+  revision: 17,
   plazoMesesAuto: 18,
   interesTotal: 19,
   totalPagar: 20,
@@ -111,21 +114,21 @@ const ART = {
   frecuencia: 5,
   fechaCredito: 6,
   tipoCarga: 7,
-  // Verificación
-  cliente: 8,
-  articulo: 9,
-  revision: 10,
+  // Baja lo que queda por financiar, así que va enseguida
+  cuotaInicial: 8,
+  // Lo ya cobrado, para créditos que vienen andando
+  cuotasPagadas: 9,
+  abonoAdicional: 10,
+  fechaUltimoPago: 11,
   // Opcionales
-  numeroCredito: 11,
-  monto: 12,
-  cuotaInicial: 13,
-  fechaPrimerCobro: 14,
+  fechaPrimerCobro: 12,
+  monto: 13,
+  numeroCredito: 14,
   notas: 15,
-  // Estado actual
-  cuotasPagadas: 16,
-  abonoAdicional: 17,
-  fechaUltimoPago: 18,
-  // Cálculos
+  // Automáticas, al final
+  cliente: 16,
+  articulo: 17,
+  revision: 18,
   precioPlazo: 19,
   cantidadCuotasAuto: 20,
   totalPagar: 21,
@@ -145,22 +148,22 @@ const COLUMNAS_CLIENTES: ColumnaPlantilla[] = [
   { header: 'Nombres*', key: 'nombres', width: 22 },
   { header: 'Apellidos*', key: 'apellidos', width: 22 },
   { header: 'Teléfono*', key: 'telefono', width: 16 },
-  // Verificación
+  // Opcionales, de lo más útil a lo que casi no se usa
+  { header: 'Dirección', key: 'direccion', width: 28 },
+  { header: 'Ruta código', key: 'ruta_codigo', width: 14 },
+  { header: 'Punto de referencia', key: 'referencia', width: 24 },
+  { header: 'Ref1 Nombre', key: 'referencia1_nombre', width: 20 },
+  { header: 'Ref1 Teléfono', key: 'referencia1_telefono', width: 16 },
+  { header: 'Ref2 Nombre', key: 'referencia2_nombre', width: 20 },
+  { header: 'Ref2 Teléfono', key: 'referencia2_telefono', width: 16 },
+  { header: 'Correo', key: 'correo', width: 24 },
+  // Automáticas, al final
   {
     header: 'Revisión de cédula (automático)',
     key: 'revision_cc',
     width: 38,
     automatica: true,
   },
-  // Opcionales
-  { header: 'Correo', key: 'correo', width: 24 },
-  { header: 'Dirección', key: 'direccion', width: 28 },
-  { header: 'Punto de referencia', key: 'referencia', width: 24 },
-  { header: 'Ref1 Nombre', key: 'referencia1_nombre', width: 20 },
-  { header: 'Ref1 Teléfono', key: 'referencia1_telefono', width: 16 },
-  { header: 'Ref2 Nombre', key: 'referencia2_nombre', width: 20 },
-  { header: 'Ref2 Teléfono', key: 'referencia2_telefono', width: 16 },
-  { header: 'Ruta código', key: 'ruta_codigo', width: 14 },
 ];
 
 const COLUMNAS_CREDITOS_DINERO: ColumnaPlantilla[] = [
@@ -178,30 +181,9 @@ const COLUMNAS_CREDITOS_DINERO: ColumnaPlantilla[] = [
     numFmt: FORMATO_FECHA,
   },
   { header: 'Tipo carga*', key: 'tipo_carga', width: 14 },
-  // Verificación
-  {
-    header: 'Cliente encontrado (automático)',
-    key: 'cliente_auto',
-    width: 28,
-    automatica: true,
-  },
-  {
-    header: 'Revisión de la fila (automático)',
-    key: 'revision_auto',
-    width: 42,
-    automatica: true,
-  },
-  // Opcionales
-  { header: 'Número de crédito', key: 'numero_prestamo', width: 18 },
+  // Cambia el cálculo del interés, así que va enseguida
   { header: 'Tipo amortización', key: 'tipo_amortizacion', width: 18 },
-  {
-    header: 'Fecha primer cobro',
-    key: 'fecha_primer_cobro',
-    width: 17,
-    numFmt: FORMATO_FECHA,
-  },
-  { header: 'Notas', key: 'notas', width: 26 },
-  // Estado actual del crédito
+  // Lo ya cobrado, para créditos que vienen andando
   { header: 'Cuotas pagadas', key: 'cuotas_pagadas', width: 14 },
   {
     header: 'Abono adicional',
@@ -215,7 +197,28 @@ const COLUMNAS_CREDITOS_DINERO: ColumnaPlantilla[] = [
     width: 16,
     numFmt: FORMATO_FECHA,
   },
-  // Cálculos
+  // Opcionales
+  {
+    header: 'Fecha primer cobro',
+    key: 'fecha_primer_cobro',
+    width: 17,
+    numFmt: FORMATO_FECHA,
+  },
+  { header: 'Número de crédito', key: 'numero_prestamo', width: 18 },
+  { header: 'Notas', key: 'notas', width: 26 },
+  // Automáticas, al final
+  {
+    header: 'Cliente encontrado (automático)',
+    key: 'cliente_auto',
+    width: 28,
+    automatica: true,
+  },
+  {
+    header: 'Revisión de la fila (automático)',
+    key: 'revision_auto',
+    width: 42,
+    automatica: true,
+  },
   {
     header: 'Plazo en meses (automático)',
     key: 'plazo_meses_auto',
@@ -274,7 +277,38 @@ const COLUMNAS_CREDITOS_ARTICULO: ColumnaPlantilla[] = [
     numFmt: FORMATO_FECHA,
   },
   { header: 'Tipo carga*', key: 'tipo_carga', width: 14 },
-  // Verificación
+  // Baja lo que queda por financiar, así que va enseguida
+  {
+    header: 'Cuota inicial',
+    key: 'cuota_inicial',
+    width: 14,
+    numFmt: FORMATO_MONEDA,
+  },
+  // Lo ya cobrado, para créditos que vienen andando
+  { header: 'Cuotas pagadas', key: 'cuotas_pagadas', width: 14 },
+  {
+    header: 'Abono adicional',
+    key: 'abono_adicional',
+    width: 15,
+    numFmt: FORMATO_MONEDA,
+  },
+  {
+    header: 'Fecha último pago',
+    key: 'fecha_ultimo_pago',
+    width: 16,
+    numFmt: FORMATO_FECHA,
+  },
+  // Opcionales
+  {
+    header: 'Fecha primer cobro',
+    key: 'fecha_primer_cobro',
+    width: 17,
+    numFmt: FORMATO_FECHA,
+  },
+  { header: 'Monto', key: 'monto', width: 15, numFmt: FORMATO_MONEDA },
+  { header: 'Número de crédito', key: 'numero_prestamo', width: 18 },
+  { header: 'Notas', key: 'notas', width: 26 },
+  // Automáticas, al final
   {
     header: 'Cliente encontrado (automático)',
     key: 'cliente_auto',
@@ -293,37 +327,6 @@ const COLUMNAS_CREDITOS_ARTICULO: ColumnaPlantilla[] = [
     width: 42,
     automatica: true,
   },
-  // Opcionales
-  { header: 'Número de crédito', key: 'numero_prestamo', width: 18 },
-  { header: 'Monto', key: 'monto', width: 15, numFmt: FORMATO_MONEDA },
-  {
-    header: 'Cuota inicial',
-    key: 'cuota_inicial',
-    width: 14,
-    numFmt: FORMATO_MONEDA,
-  },
-  {
-    header: 'Fecha primer cobro',
-    key: 'fecha_primer_cobro',
-    width: 17,
-    numFmt: FORMATO_FECHA,
-  },
-  { header: 'Notas', key: 'notas', width: 26 },
-  // Estado actual del crédito
-  { header: 'Cuotas pagadas', key: 'cuotas_pagadas', width: 14 },
-  {
-    header: 'Abono adicional',
-    key: 'abono_adicional',
-    width: 15,
-    numFmt: FORMATO_MONEDA,
-  },
-  {
-    header: 'Fecha último pago',
-    key: 'fecha_ultimo_pago',
-    width: 16,
-    numFmt: FORMATO_FECHA,
-  },
-  // Cálculos
   {
     header: 'Precio del plazo (automático)',
     key: 'precio_plazo_auto',
@@ -689,12 +692,12 @@ export async function generarPlantillaClientesCreditos(
     'Gestión de Clientes',
     'Una fila por cliente NUEVO. Los clientes que ya están en el sistema no se registran aquí.',
     '📝 Escriba los datos desde la fila 7 hacia abajo. La columna "Revisión de cédula" avisa si la cédula ya existe.',
-    colLetra(CLI.rutaCodigo),
+    colLetra(CLI.revision),
   );
 
   etiquetarGrupo(wsClientes, CLI.cc, CLI.telefono, 'DATOS OBLIGATORIOS');
+  etiquetarGrupo(wsClientes, CLI.direccion, CLI.correo, 'DATOS OPCIONALES');
   etiquetarGrupo(wsClientes, CLI.revision, CLI.revision, 'VERIFICACIÓN');
-  etiquetarGrupo(wsClientes, CLI.correo, CLI.rutaCodigo, 'DATOS OPCIONALES');
 
   [CLI.cc, CLI.telefono, CLI.ref1Telefono, CLI.ref2Telefono].forEach((col) => {
     wsClientes.getColumn(col).numFmt = '@';
@@ -712,7 +715,7 @@ export async function generarPlantillaClientesCreditos(
   resaltarSiContiene(wsClientes, CLI.revision, '⚠');
 
   congelarEncabezados(wsClientes, CLI.cc);
-  activarFiltro(wsClientes, CLI.rutaCodigo);
+  activarFiltro(wsClientes, CLI.revision);
   await protegerAutomaticas(wsClientes);
 
   // ── Hoja Créditos de dinero ───────────────────────────────────────────────
@@ -727,8 +730,14 @@ export async function generarPlantillaClientesCreditos(
   );
 
   etiquetarGrupo(wsDinero, DIN.cc, DIN.tipoCarga, 'DATOS OBLIGATORIOS');
+  etiquetarGrupo(
+    wsDinero,
+    DIN.tipoAmortizacion,
+    DIN.tipoAmortizacion,
+    'MÉTODO',
+  );
+  etiquetarGrupo(wsDinero, DIN.fechaPrimerCobro, DIN.notas, 'DATOS OPCIONALES');
   etiquetarGrupo(wsDinero, DIN.cliente, DIN.revision, 'VERIFICACIÓN');
-  etiquetarGrupo(wsDinero, DIN.numeroCredito, DIN.notas, 'DATOS OPCIONALES');
   etiquetarGrupo(
     wsDinero,
     DIN.cuotasPagadas,
@@ -841,8 +850,14 @@ export async function generarPlantillaClientesCreditos(
   );
 
   etiquetarGrupo(wsArticulo, ART.cc, ART.tipoCarga, 'DATOS OBLIGATORIOS');
+  etiquetarGrupo(wsArticulo, ART.cuotaInicial, ART.cuotaInicial, 'INICIAL');
+  etiquetarGrupo(
+    wsArticulo,
+    ART.fechaPrimerCobro,
+    ART.notas,
+    'DATOS OPCIONALES',
+  );
   etiquetarGrupo(wsArticulo, ART.cliente, ART.revision, 'VERIFICACIÓN');
-  etiquetarGrupo(wsArticulo, ART.numeroCredito, ART.notas, 'DATOS OPCIONALES');
   etiquetarGrupo(
     wsArticulo,
     ART.cuotasPagadas,
