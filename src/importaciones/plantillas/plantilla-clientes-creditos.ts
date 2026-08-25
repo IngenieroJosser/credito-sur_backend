@@ -598,11 +598,11 @@ export async function generarPlantillaClientesCreditos(
     'Solo las columnas marcadas con asterisco (*), que están todas al principio de cada hoja.',
     'Clientes: CC, Nombres, Apellidos y Teléfono.',
     'Créditos de dinero: CC cliente, Monto, Tasa interés, Frecuencia, Cantidad cuotas, Fecha crédito y Tipo carga.',
+    'Créditos de artículo: CC cliente, Producto código, Plazo meses, Frecuencia, Fecha crédito y Tipo carga.',
     '',
     '# Para qué sirve el "Número de crédito"',
     'Es el identificador del crédito. Puede dejarlo vacío: el sistema lo genera solo.',
     'Escríbalo solo en dos casos: si quiere conservar la numeración que ya usaba en su sistema anterior, o si va a ACTUALIZAR un crédito, porque es la llave con la que el sistema sabe cuál corregir.',
-    'Créditos de artículo: CC cliente, Producto código, Plazo meses, Frecuencia, Fecha crédito y Tipo carga.',
     '',
     '# Clientes que ya están en el sistema',
     'No los repita en la hoja "Clientes": basta con escribir su cédula en la hoja de créditos.',
@@ -664,7 +664,7 @@ export async function generarPlantillaClientesCreditos(
     wsClientes,
     'Gestión de Clientes',
     'Una fila por cliente NUEVO. Los clientes que ya están en el sistema no se registran aquí.',
-    '📝 Escriba los datos desde la fila 7 hacia abajo. La última columna avisa si la cédula ya existe.',
+    '📝 Escriba los datos desde la fila 7 hacia abajo. La columna "Revisión de cédula" avisa si la cédula ya existe.',
     colLetra(CLI.rutaCodigo),
   );
 
@@ -940,14 +940,14 @@ export async function generarPlantillaClientesCreditos(
     ['Código / Número préstamo / CC', 'CRE-001 / IMP-001 / 12345678'],
     ['Tipo / Monto / Tasa', 'EFECTIVO / 500.000 / 10'],
     ['Frecuencia / Cuotas / Plazo', 'DIARIO / 30 / 1'],
-    ['Fecha crédito / Tipo carga / Caja', '2026-05-01 / HISTORICA / NO'],
+    ['Fecha crédito / Tipo carga', '2026-05-01 / HISTORICA'],
     ['Cuotas pagadas / Abono adicional', '0 / (vacío)'],
     ['', ''],
     ['CRÉDITO HISTÓRICO YA AVANZADO', ''],
     ['Código / Número préstamo / CC', 'CRE-002 / IMP-002 / 12345678'],
     ['Tipo / Monto / Tasa', 'EFECTIVO / 600.000 / 10'],
     ['Frecuencia / Cuotas / Plazo', 'DIARIO / 30 / 1'],
-    ['Fecha crédito / Tipo carga / Caja', '2026-06-01 / HISTORICA / NO'],
+    ['Fecha crédito / Tipo carga', '2026-06-01 / HISTORICA'],
     [
       'Cuotas pagadas / Abono adicional',
       '12 / 10.000  → 12 cuotas quedan PAGADAS y la 13 queda PARCIAL',
@@ -956,8 +956,14 @@ export async function generarPlantillaClientesCreditos(
     ['', ''],
     ['CRÉDITO OPERATIVO (desembolsa hoy)', ''],
     ['Código / Número préstamo / CC', 'CRE-003 / IMP-003 / 12345678'],
-    ['Tipo carga / Descontar caja', 'OPERATIVA / SI'],
+    ['Tipo carga', 'OPERATIVA'],
     ['Cuotas pagadas', 'Debe ir vacío o en 0'],
+    ['', ''],
+    ['¿Y el descuento de caja?', ''],
+    [
+      'No hay que escribirlo',
+      'Sale del tipo de carga: OPERATIVA entrega la plata hoy y descuenta de la caja; HISTORICA es un crédito que ya venía andando y no la toca.',
+    ],
   ];
 
   bloques.forEach(([campo, valor], indice) => {
