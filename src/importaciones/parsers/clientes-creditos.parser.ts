@@ -559,7 +559,10 @@ export class ClientesCreditosParser {
         'Tipo de crédito',
         'Tipo préstamo',
       );
-      const creProductoCodigo = colsCre.indice('Producto código');
+      const creProductoCodigo = colsCre.indice(
+        'Código del artículo',
+        'Producto código',
+      );
       const creMonto = colsCre.indice('Monto');
       const creCuotaInicial = colsCre.indice('Cuota inicial');
       const creTasaInteres = colsCre.indice('Tasa interés');

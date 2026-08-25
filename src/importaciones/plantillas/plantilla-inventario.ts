@@ -102,7 +102,7 @@ function construirColumnas(): ColumnaPlantilla[] {
     },
     // Verificación: avisa qué falta o qué está mal en la fila.
     {
-      header: 'Revisión (automático)',
+      header: 'Revisión de la fila (automático)',
       key: 'revision',
       width: 40,
       automatica: true,
@@ -150,14 +150,14 @@ function construirColumnas(): ColumnaPlantilla[] {
   for (let i = 1; i <= MAX_OPCIONES_PLAZO; i++) {
     columnas.push(
       {
-        header: `Utilidad ${i} $ (automático)`,
+        header: `Utilidad opción ${i} $ (automático)`,
         key: `utilidad_${i}_valor`,
         width: 15,
         automatica: true,
         numFmt: FORMATO_MONEDA,
       },
       {
-        header: `Utilidad ${i} % (automático)`,
+        header: `Utilidad opción ${i} % (automático)`,
         key: `utilidad_${i}_pct`,
         width: 13,
         automatica: true,
@@ -263,6 +263,7 @@ export function construirHojaArticulos(
   );
 
   etiquetarGrupo(ws, COL.codigo, COL.precioContado, 'DATOS OBLIGATORIOS');
+  etiquetarGrupo(ws, COL.revision, COL.revision, 'VERIFICACIÓN');
   etiquetarGrupo(ws, COL.descripcion, COL.activo, 'DATOS OPCIONALES');
   etiquetarGrupo(
     ws,
@@ -301,7 +302,7 @@ export function agregarValoresInventario(
   wsArticulos: ExcelJS.Worksheet,
   filas: number,
 ) {
-  const ws = workbook.addWorksheet('Valores');
+  const ws = workbook.addWorksheet('Valores', { state: 'veryHidden' });
   ws.getCell('A1').value = 'Acción';
   ws.getCell('A2').value = 'CREAR';
   ws.getCell('A3').value = 'ACTUALIZAR';
@@ -396,10 +397,11 @@ export async function generarPlantillaInventario(): Promise<{
     '# Utilidad automática (columnas grises)',
     'Al final de la hoja Excel calcula, para el contado y para cada plazo, la utilidad en pesos y en porcentaje: precio de venta menos costo.',
     'No hay que diligenciarlas y el sistema no las lee al importar. Si una sale en rojo, ese precio está por debajo del costo.',
-    'La columna "Revisión" resume en una sola celda lo que falta o está mal en cada artículo.',
+    'La columna "Revisión de la fila" resume en una sola celda lo que le falta o le sobra a ese artículo. Si dice OK, la fila está lista para subir.',
     '',
     '# Al confirmar la importación',
-    'Los artículos cuyo código ya exista no se modifican: solo se les agregan las opciones de precio que aún no tengan.',
+    'Con ACTUALIZAR: se corrigen los datos del artículo y sus precios.',
+    'Con CREAR y un código que ya existe: no se toca el artículo, solo se le agregan las opciones de precio que aún no tenga.',
     'Los artículos nuevos se crean con su stock inicial y todos sus precios.',
   ]);
 

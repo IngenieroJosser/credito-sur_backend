@@ -159,7 +159,7 @@ async function validarCredito(
 const creditoArticuloMinimo = {
   'Número de crédito': 'IMP-ART-1',
   'CC cliente': '12345678',
-  'Producto código': 'CEL-A15',
+  'Código del artículo': 'CEL-A15',
   'Plazo meses': 3,
   'Frecuencia pago': 'DIARIO',
   'Fecha crédito': '2026-05-01',
@@ -1100,7 +1100,7 @@ describe('Diferencias entre crédito de artículo y préstamo en efectivo', () =
 
     expect(encabezados).not.toContain('Tasa interés*');
     expect(encabezados).not.toContain('Tipo amortización');
-    expect(encabezados).toContain('Producto código*');
+    expect(encabezados).toContain('Código del artículo*');
   });
 
   it('sigue exigiendo la tasa en un préstamo en efectivo', async () => {
@@ -1132,7 +1132,7 @@ describe('Diferencias entre crédito de artículo y préstamo en efectivo', () =
   });
 
   it('exige el código del artículo en su hoja', async () => {
-    const { 'Producto código': _cod, ...resto } = creditoArticuloMinimo;
+    const { 'Código del artículo': _cod, ...resto } = creditoArticuloMinimo;
     const resultado = await validarCreditoArticulo(resto);
 
     // Sin artículo tampoco se puede deducir el monto: se reportan ambos.
@@ -1423,6 +1423,34 @@ describe('El archivo que se descarga abre sin que Excel pida repararlo', () => {
     return encontrados;
   };
 
+  /** Paréntesis abiertos menos cerrados, ignorando los que van entre comillas. */
+  const desbalance = (formula: string) => {
+    let profundidad = 0;
+    let dentroDeTexto = false;
+    for (const caracter of formula) {
+      if (caracter === '"') dentroDeTexto = !dentroDeTexto;
+      else if (!dentroDeTexto) {
+        if (caracter === '(') profundidad++;
+        else if (caracter === ')') profundidad--;
+      }
+    }
+    return profundidad;
+  };
+
+  const formulasDesbalanceadas = (xml: string) => {
+    const vistas = new Set<string>();
+    for (const [, cruda] of xml.matchAll(/<f>([\s\S]*?)<\/f>/g)) {
+      const formula = cruda
+        .replace(/&quot;/g, '"')
+        .replace(/&apos;/g, "'")
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&');
+      if (desbalance(formula) !== 0) vistas.add(formula.slice(0, 120));
+    }
+    return [...vistas];
+  };
+
   const revisar = async (data: Buffer) => {
     for (const hoja of await hojasDe(data)) {
       // Dos desplegables sobre la misma celda: el error que rompía el archivo.
@@ -1436,6 +1464,15 @@ describe('El archivo que se descarga abre sin que Excel pida repararlo', () => {
         hoja: hoja.nombre,
         solapes: solapes(hoja.xml, /<mergeCell ref="([^"]+)"/g),
       }).toEqual({ hoja: hoja.nombre, solapes: [] });
+
+      // Paréntesis sin cerrar. A la columna Revisión le faltaba uno y Excel
+      // descartaba la fórmula de las mil filas de las dos hojas de crédito,
+      // avisando de contenido perdido al abrir. El XML seguía siendo válido,
+      // así que solo se ve mirando la fórmula misma.
+      expect({
+        hoja: hoja.nombre,
+        desbalanceadas: formulasDesbalanceadas(hoja.xml),
+      }).toEqual({ hoja: hoja.nombre, desbalanceadas: [] });
     }
   };
 
@@ -1526,5 +1563,40 @@ describe('Plantillas descargadas antes del cambio de nombres', () => {
         precioContado: 1050000,
       }),
     );
+  });
+  it('sigue leyendo el encabezado anterior del código de artículo', async () => {
+    const plantilla =
+      await generarPlantillaClientesCreditos(datosPlantillaVacios);
+    const archivo = await editarLibro(plantilla.data, (workbook) => {
+      const hoja = workbook.getWorksheet('Créditos de artículo')!;
+      hoja.getRow(6).eachCell({ includeEmpty: false }, (celda) => {
+        if (normalizarEncabezado(celda.value) === 'CODIGO DEL ARTICULO') {
+          celda.value = 'Producto código*';
+        }
+      });
+      escribirFila(hoja, FILA_DATOS, {
+        'CC cliente': '12345678',
+        'Producto código': 'CEL-A15',
+        'Plazo meses': 3,
+        'Frecuencia pago': 'DIARIO',
+        'Fecha crédito': '2026-05-01',
+        'Tipo carga': 'HISTORICA',
+      });
+    });
+
+    const resultado = await new ClientesCreditosParser(
+      prismaMock({
+        clientes: [clienteEnBd],
+        productos: [
+          {
+            codigo: 'CEL-A15',
+            nombre: 'Samsung Galaxy A15',
+            precios: [{ meses: 3, precio: 690000 }],
+          },
+        ],
+      }),
+    ).parseAndValidate(archivo, 'clientes.xlsx');
+
+    expect(resultado.errores).toHaveLength(0);
   });
 });
