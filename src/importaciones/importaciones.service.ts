@@ -20,6 +20,7 @@ import {
   plazoMesesPersistido,
   TIPO_AMORTIZACION_POR_DEFECTO,
 } from './interes-credito';
+import { pesos } from '../common/dinero.util';
 
 @Injectable()
 export class ImportacionesService {
@@ -838,7 +839,7 @@ export class ImportacionesService {
 
           // Procesar créditos
           const creditos: any[] = (resultado as any).creditos ?? [];
-          const roundMoney = (value: number) => Math.round(value * 100) / 100;
+          const roundMoney = (value: number) => pesos(value);
           const hayCreditoOperativoEfectivo = creditos.some(
             (cred) =>
               cred.tipoCarga === 'OPERATIVA' &&

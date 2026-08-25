@@ -102,6 +102,7 @@ const DIN = {
   valorCuota: 21,
   yaAbonado: 22,
   saldoPendiente: 23,
+  movimiento: 24,
 };
 
 // ── Columnas de "Créditos de artículo" ─────────────────────────────────────
@@ -137,6 +138,7 @@ const ART = {
   valorCuota: 22,
   yaAbonado: 23,
   saldoPendiente: 24,
+  movimiento: 25,
 };
 
 const COLUMNAS_CLIENTES: ColumnaPlantilla[] = [
@@ -263,6 +265,12 @@ const COLUMNAS_CREDITOS_DINERO: ColumnaPlantilla[] = [
     automatica: true,
     numFmt: FORMATO_MONEDA,
   },
+  {
+    header: 'Al confirmar (automático)',
+    key: 'movimiento_auto',
+    width: 46,
+    automatica: true,
+  },
 ];
 
 const COLUMNAS_CREDITOS_ARTICULO: ColumnaPlantilla[] = [
@@ -370,6 +378,12 @@ const COLUMNAS_CREDITOS_ARTICULO: ColumnaPlantilla[] = [
     automatica: true,
     numFmt: FORMATO_MONEDA,
   },
+  {
+    header: 'Al confirmar (automático)',
+    key: 'movimiento_auto',
+    width: 46,
+    automatica: true,
+  },
 ];
 
 function ref(columna: number): string {
@@ -448,6 +462,39 @@ function formulaYaAbonado(
     `IF(NOT(ISNUMBER(${cuota})),"",` +
     `IF(AND(ISNUMBER(${ref(colCuotas)}),${pagadas}>=${ref(colCuotas)}),${ref(colTotal)},` +
     `${cuota}*${pagadas})+${abono})`
+  );
+}
+
+/**
+ * Qué va a pasar con la caja al confirmar esta fila, dicho en una frase y con
+ * la cifra. La decisión sale del tipo de carga, así que aquí se traduce a algo
+ * que se entienda sin saber cómo funciona el importador por dentro.
+ */
+function formulaMovimientoDinero(colTipoCarga: number, colMonto: number) {
+  const carga = ref(colTipoCarga);
+  const monto = ref(colMonto);
+  return (
+    `IF(${carga}="","",` +
+    `IF(${carga}="OPERATIVA",` +
+    `IF(${monto}="","Saldrá el monto del crédito de la Caja de Oficina",` +
+    `"Saldrán "&TEXT(${monto},"$#,##0")&" de la Caja de Oficina, porque el crédito se entrega hoy"),` +
+    `"No mueve caja: el crédito ya venía cobrándose"))`
+  );
+}
+
+function formulaMovimientoArticulo(
+  colTipoCarga: number,
+  colCuotaInicial: number,
+) {
+  const carga = ref(colTipoCarga);
+  const inicial = ref(colCuotaInicial);
+  return (
+    `IF(${carga}="","",` +
+    `IF(${carga}="OPERATIVA",` +
+    `"Sale 1 unidad del inventario, porque el artículo se entrega hoy"&` +
+    `IF(IF(${inicial}="",0,${inicial})>0,` +
+    `" · Entran "&TEXT(${inicial},"$#,##0")&" de cuota inicial a la Caja de Oficina",""),` +
+    `"No mueve caja ni inventario: el crédito ya venía cobrándose"))`
   );
 }
 
@@ -755,7 +802,7 @@ export async function generarPlantillaClientesCreditos(
     'Créditos de dinero (préstamo en efectivo)',
     'Una fila por préstamo. Admite créditos nuevos y créditos que ya llevan cuotas pagadas.',
     '📝 Escriba los datos desde la fila 7 hacia abajo. Las columnas grises se calculan solas.',
-    colLetra(DIN.saldoPendiente),
+    colLetra(DIN.movimiento),
   );
 
   etiquetarGrupo(wsDinero, DIN.cc, DIN.tipoCarga, 'DATOS OBLIGATORIOS');
@@ -776,7 +823,7 @@ export async function generarPlantillaClientesCreditos(
   etiquetarGrupo(
     wsDinero,
     DIN.plazoMesesAuto,
-    DIN.saldoPendiente,
+    DIN.movimiento,
     'CÁLCULOS AUTOMÁTICOS',
   );
 
@@ -842,6 +889,12 @@ export async function generarPlantillaClientesCreditos(
 
   formulaEnColumna(
     wsDinero,
+    DIN.movimiento,
+    formulaMovimientoDinero(DIN.tipoCarga, DIN.monto),
+  );
+
+  formulaEnColumna(
+    wsDinero,
     DIN.revision,
     cadenaRevision(
       [
@@ -864,7 +917,7 @@ export async function generarPlantillaClientesCreditos(
   resaltarSiContiene(wsDinero, DIN.revision, '⚠');
 
   congelarEncabezados(wsDinero, DIN.cc);
-  activarFiltro(wsDinero, DIN.saldoPendiente);
+  activarFiltro(wsDinero, DIN.movimiento);
   await protegerAutomaticas(wsDinero);
 
   // ── Hoja Créditos de artículo ─────────────────────────────────────────────
@@ -875,7 +928,7 @@ export async function generarPlantillaClientesCreditos(
     'Créditos de artículo',
     'Una fila por crédito de artículo. El precio del plazo ya incluye el financiamiento: aquí no se escribe tasa.',
     '📝 Escriba los datos desde la fila 7 hacia abajo. Las columnas grises se calculan solas.',
-    colLetra(ART.saldoPendiente),
+    colLetra(ART.movimiento),
   );
 
   etiquetarGrupo(wsArticulo, ART.cc, ART.tipoCarga, 'DATOS OBLIGATORIOS');
@@ -896,7 +949,7 @@ export async function generarPlantillaClientesCreditos(
   etiquetarGrupo(
     wsArticulo,
     ART.precioPlazo,
-    ART.saldoPendiente,
+    ART.movimiento,
     'CÁLCULOS AUTOMÁTICOS',
   );
 
@@ -957,6 +1010,12 @@ export async function generarPlantillaClientesCreditos(
 
   formulaEnColumna(
     wsArticulo,
+    ART.movimiento,
+    formulaMovimientoArticulo(ART.tipoCarga, ART.cuotaInicial),
+  );
+
+  formulaEnColumna(
+    wsArticulo,
     ART.revision,
     cadenaRevision(
       [
@@ -993,7 +1052,7 @@ export async function generarPlantillaClientesCreditos(
   resaltarSiContiene(wsArticulo, ART.revision, '⚠');
 
   congelarEncabezados(wsArticulo, ART.cc);
-  activarFiltro(wsArticulo, ART.saldoPendiente);
+  activarFiltro(wsArticulo, ART.movimiento);
   await protegerAutomaticas(wsArticulo);
 
   // ── Hojas de apoyo ────────────────────────────────────────────────────────

@@ -22,6 +22,7 @@ import { formatBogotaOffsetIso } from '../utils/date-utils';
 import { LedgerService } from '../accounting/ledger.service';
 import { randomUUID } from 'crypto';
 import { calcularAmortizacionFrancesa } from '../loans/utils/amortizacion.utils';
+import { pesos } from '../common/dinero.util';
 
 @Injectable()
 export class ApprovalsService {
@@ -1796,11 +1797,13 @@ export class ApprovalsService {
         esCierrePendiente,
       );
 
-      const interesTotalFinal = Math.round(interesTotal * 100) / 100;
-      const moraTotalFinal = Math.round(moraTotal * 100) / 100;
-      const capitalTotalFinal =
-        Math.round((montoTotal - interesTotalFinal - moraTotalFinal) * 100) /
-        100;
+      // Pesos enteros: el peso colombiano no tiene centavos y guardar
+      // fracciones aquí las arrastraba a la descomposición del pago.
+      const interesTotalFinal = pesos(interesTotal);
+      const moraTotalFinal = pesos(moraTotal);
+      const capitalTotalFinal = pesos(
+        montoTotal - interesTotalFinal - moraTotalFinal,
+      );
 
       const pago = await tx.pago.create({
         data: {

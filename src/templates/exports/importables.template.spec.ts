@@ -11,6 +11,13 @@ const prismaVacio = () =>
     producto: { findMany: jest.fn().mockResolvedValue([]) },
     ruta: { findMany: jest.fn().mockResolvedValue([]) },
     prestamo: { findMany: jest.fn().mockResolvedValue([]) },
+    // La validación arma la vista previa del movimiento de caja y para
+    // eso consulta el saldo real de la Caja de Oficina.
+    caja: {
+      findFirst: jest
+        .fn()
+        .mockResolvedValue({ nombre: 'Caja de Oficina', saldoActual: 0 }),
+    },
   }) as any;
 
 const articuloBase = {

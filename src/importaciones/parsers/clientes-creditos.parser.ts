@@ -31,12 +31,14 @@ import {
 } from '../normalizacion';
 import {
   calcularInteresTotal,
+  construirTablaCuotas,
   derivarCantidadCuotas,
   derivarPlazoMeses,
   mapTipoAmortizacionExcel,
   plazoMesesPersistido,
   TIPO_AMORTIZACION_POR_DEFECTO,
 } from '../interes-credito';
+import { pesos } from '../../common/dinero.util';
 
 const SHEETS = {
   clientes: ['Clientes'],
@@ -1224,14 +1226,29 @@ export class ClientesCreditosParser {
           tasaInteres as number,
           plazoMesesEfectivo as number,
         );
-        const totalCredito =
-          Math.round(((montoEfectivo as number) + interesTotal) * 100) / 100;
-        const valorCuota =
-          Math.round((totalCredito / (cantidadCuotas as number)) * 100) / 100;
+        const totalCredito = pesos((montoEfectivo as number) + interesTotal);
+
+        // El reparto sale de `construirTablaCuotas`, que es la misma que arma
+        // las cuotas al confirmar. Antes aquí se dividía el total entre el
+        // número de cuotas y se redondeaba, y eso no es lo que hace el
+        // sistema: trunca capital e interés por separado y deja el residuo en
+        // la última cuota. La vista previa mostraba un saldo que después no
+        // coincidía con el guardado, por unos pesos.
+        const tablaCuotas = construirTablaCuotas(
+          tipoAmortizacion as any,
+          montoEfectivo as number,
+          interesTotal,
+          cantidadCuotas as number,
+        );
+        const valorCuota = tablaCuotas[0]?.monto ?? 0;
+        const cuotasCubiertas = Math.max(
+          0,
+          Math.min(Math.trunc(cuotasPagadasNum), tablaCuotas.length),
+        );
         const totalAbonado =
-          Math.round(
-            (valorCuota * cuotasPagadasNum + abonoAdicionalNum) * 100,
-          ) / 100;
+          tablaCuotas
+            .slice(0, cuotasCubiertas)
+            .reduce((suma, cuota) => suma + cuota.monto, 0) + abonoAdicionalNum;
 
         if (totalAbonado > totalCredito) {
           errores.push({
@@ -1277,8 +1294,9 @@ export class ClientesCreditosParser {
           fechaUltimoPago,
           interesTotal,
           totalCredito,
+          valorCuota,
           totalAbonado,
-          saldoPendiente: Math.round((totalCredito - totalAbonado) * 100) / 100,
+          saldoPendiente: pesos(totalCredito - totalAbonado),
           fila: rowNumber,
         });
       });
@@ -1295,9 +1313,15 @@ export class ClientesCreditosParser {
       };
     }
 
+    // Vista previa del impacto en caja: lo que va a pasar al confirmar, con la
+    // cifra y el motivo. Se calcula aquí, con el saldo real del momento, para
+    // que el usuario lo vea antes de decidir.
+    const impactoCaja = await this.calcularImpactoCaja(creditosValidar);
+
     return {
       tipo: 'clientes-creditos',
       archivo: fileName,
+      impactoCaja,
       resumen: {
         totalFilas,
         filasValidas: totalFilas - filasConError,
@@ -1309,6 +1333,73 @@ export class ClientesCreditosParser {
       creditos: creditosValidar,
       errores,
       advertencias,
+    };
+  }
+
+  /**
+   * Resume qué movimientos hará la confirmación y si la caja alcanza.
+   *
+   * Solo los créditos OPERATIVA mueven algo: los históricos se registran sin
+   * tocar caja porque ese dinero se entregó antes de usar el sistema. El saldo
+   * se consulta al validar y no se guarda en la plantilla: cambia a cada rato,
+   * y una cifra vieja dentro del archivo engañaría más de lo que ayuda.
+   */
+  private async calcularImpactoCaja(creditos: any[]) {
+    const operativos = creditos.filter((c) => c.tipoCarga === 'OPERATIVA');
+
+    const movimientos = operativos.map((credito) => {
+      const esArticulo = credito.tipoPrestamo === 'ARTICULO';
+      const inicial = Number(credito.cuotaInicial || 0);
+      return esArticulo
+        ? {
+            fila: credito.fila,
+            numeroPrestamo: credito.numeroPrestamo,
+            ccCliente: credito.ccCliente,
+            tipo: 'ARTICULO' as const,
+            concepto: 'Sale 1 unidad del inventario',
+            porque: 'El artículo se entrega al cliente al confirmar',
+            salidaEfectivo: 0,
+            entradaEfectivo: inicial,
+            unidadesInventario: 1,
+          }
+        : {
+            fila: credito.fila,
+            numeroPrestamo: credito.numeroPrestamo,
+            ccCliente: credito.ccCliente,
+            tipo: 'EFECTIVO' as const,
+            concepto: 'Sale efectivo de la Caja de Oficina',
+            porque: 'El crédito se desembolsa al cliente al confirmar',
+            salidaEfectivo: Number(credito.monto || 0),
+            entradaEfectivo: 0,
+            unidadesInventario: 0,
+          };
+    });
+
+    const totalSalida = movimientos.reduce((a, m) => a + m.salidaEfectivo, 0);
+    const totalEntrada = movimientos.reduce((a, m) => a + m.entradaEfectivo, 0);
+
+    const cajaOficina = await this.prisma.caja.findFirst({
+      where: { codigo: 'CAJA-OFICINA' },
+      select: { nombre: true, saldoActual: true },
+    });
+    const saldoCajaOficina = Number(cajaOficina?.saldoActual || 0);
+
+    return {
+      hayMovimientos: movimientos.length > 0,
+      creditosHistoricos: creditos.length - operativos.length,
+      creditosOperativos: operativos.length,
+      totalSalida,
+      totalEntrada,
+      unidadesInventario: movimientos.reduce(
+        (a, m) => a + m.unidadesInventario,
+        0,
+      ),
+      cajaOficinaEncontrada: Boolean(cajaOficina),
+      nombreCaja: cajaOficina?.nombre ?? 'Caja de Oficina',
+      saldoCajaOficina,
+      alcanzaElSaldo: totalSalida <= saldoCajaOficina,
+      faltante: Math.max(0, totalSalida - saldoCajaOficina),
+      movimientos,
     };
   }
 }

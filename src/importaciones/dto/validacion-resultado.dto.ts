@@ -20,6 +20,35 @@ export interface ResumenHoja {
   filasConError: number;
 }
 
+/** Un movimiento que hará la confirmación, con su motivo y su cifra. */
+export interface MovimientoPrevisto {
+  fila: number;
+  numeroPrestamo?: string;
+  ccCliente?: string;
+  tipo: 'EFECTIVO' | 'ARTICULO';
+  concepto: string;
+  porque: string;
+  salidaEfectivo: number;
+  entradaEfectivo: number;
+  unidadesInventario: number;
+}
+
+/** Vista previa de lo que la confirmación le hará a la caja y al inventario. */
+export interface ImpactoCaja {
+  hayMovimientos: boolean;
+  creditosHistoricos: number;
+  creditosOperativos: number;
+  totalSalida: number;
+  totalEntrada: number;
+  unidadesInventario: number;
+  cajaOficinaEncontrada: boolean;
+  nombreCaja: string;
+  saldoCajaOficina: number;
+  alcanzaElSaldo: boolean;
+  faltante: number;
+  movimientos: MovimientoPrevisto[];
+}
+
 export interface ResultadoValidacion {
   tipo: 'clientes-creditos' | 'inventario';
   archivo: string;
@@ -30,6 +59,7 @@ export interface ResultadoValidacion {
     advertencias: number;
     porHoja: Record<string, ResumenHoja>;
   };
+  impactoCaja?: ImpactoCaja;
   clientes?: any[];
   creditos?: any[];
   articulos?: any[];
