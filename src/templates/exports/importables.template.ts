@@ -221,7 +221,7 @@ export async function generarExcelInventarioImportable(
   });
 
   const filasPreparadas = Math.max(articulos.length, 50);
-  const ws = construirHojaArticulos(workbook, {
+  const ws = await construirHojaArticulos(workbook, {
     subtitulo: 'Exportación lista para volver a importarse.',
     instruccion:
       'Revise o ajuste los datos desde la fila 7 hacia abajo. Las columnas grises se calculan solas.',

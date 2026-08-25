@@ -13,6 +13,7 @@ import {
   FORMATO_FECHA,
   FORMATO_MONEDA,
   formulaEnColumna,
+  protegerAutomaticas,
   forzarRecalculo,
   hojaInicio,
   listaDesplegable,
@@ -712,6 +713,7 @@ export async function generarPlantillaClientesCreditos(
 
   congelarEncabezados(wsClientes, CLI.cc);
   activarFiltro(wsClientes, CLI.rutaCodigo);
+  await protegerAutomaticas(wsClientes);
 
   // ── Hoja Créditos de dinero ───────────────────────────────────────────────
   const wsDinero = workbook.addWorksheet('Créditos de dinero');
@@ -825,6 +827,7 @@ export async function generarPlantillaClientesCreditos(
 
   congelarEncabezados(wsDinero, DIN.cc);
   activarFiltro(wsDinero, DIN.saldoPendiente);
+  await protegerAutomaticas(wsDinero);
 
   // ── Hoja Créditos de artículo ─────────────────────────────────────────────
   const wsArticulo = workbook.addWorksheet('Créditos de artículo');
@@ -937,6 +940,7 @@ export async function generarPlantillaClientesCreditos(
 
   congelarEncabezados(wsArticulo, ART.cc);
   activarFiltro(wsArticulo, ART.saldoPendiente);
+  await protegerAutomaticas(wsArticulo);
 
   // ── Hojas de apoyo ────────────────────────────────────────────────────────
   hojaValores(workbook, datos);

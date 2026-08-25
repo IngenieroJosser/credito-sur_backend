@@ -1600,3 +1600,70 @@ describe('Plantillas descargadas antes del cambio de nombres', () => {
     expect(resultado.errores).toHaveLength(0);
   });
 });
+
+describe('Las columnas automáticas no se pueden escribir', () => {
+  // La hoja va protegida para que nadie borre por accidente una fórmula, pero
+  // las columnas de captura tienen que seguir abiertas: si se protegiera sin
+  // desbloquearlas, la plantilla entera quedaría de solo lectura y no se
+  // podría llenar.
+  const revisarHoja = (hoja: ExcelJS.Worksheet) => {
+    expect({ hoja: hoja.name, protegida: Boolean(hoja.protect) }).toEqual({
+      hoja: hoja.name,
+      protegida: true,
+    });
+
+    const automaticas: string[] = [];
+    const captura: string[] = [];
+    hoja.getRow(6).eachCell({ includeEmpty: false }, (celda, columna) => {
+      const encabezado = normalizarEncabezado(celda.value);
+      if (!encabezado) return;
+      const bloqueada = hoja.getCell(7, columna).protection?.locked !== false;
+      if (/AUTOMATICO/.test(encabezado)) {
+        if (!bloqueada) automaticas.push(encabezado);
+      } else if (bloqueada) {
+        captura.push(encabezado);
+      }
+    });
+
+    expect({
+      hoja: hoja.name,
+      automaticasDesbloqueadas: automaticas,
+      capturaBloqueada: captura,
+    }).toEqual({
+      hoja: hoja.name,
+      automaticasDesbloqueadas: [],
+      capturaBloqueada: [],
+    });
+  };
+
+  const hojasDeDatos = async (data: Buffer) => {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(data as any);
+    const hojas: ExcelJS.Worksheet[] = [];
+    workbook.eachSheet((hoja) => {
+      if (normalizarEncabezado(hoja.getRow(6).getCell(1).value) === 'ACCION') {
+        hojas.push(hoja);
+      }
+    });
+    return hojas;
+  };
+
+  it('en la plantilla de clientes y créditos', async () => {
+    const { data } =
+      await generarPlantillaClientesCreditos(datosPlantillaVacios);
+    const hojas = await hojasDeDatos(data);
+    expect(hojas.map((h) => h.name)).toEqual([
+      'Clientes',
+      'Créditos de dinero',
+      'Créditos de artículo',
+    ]);
+    hojas.forEach(revisarHoja);
+  });
+
+  it('en la plantilla de inventario', async () => {
+    const { data } = await generarPlantillaInventario();
+    const hojas = await hojasDeDatos(data);
+    expect(hojas.map((h) => h.name)).toEqual(['Artículos']);
+    hojas.forEach(revisarHoja);
+  });
+});

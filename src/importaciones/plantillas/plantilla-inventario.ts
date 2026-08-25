@@ -14,6 +14,7 @@ import {
   FORMATO_PORCENTAJE,
   forzarRecalculo,
   formulaEnColumna,
+  protegerAutomaticas,
   hojaInicio,
   listaDesplegable,
   resaltarNegativos,
@@ -246,10 +247,10 @@ function formulaRevision(ws: ExcelJS.Worksheet, filas: number) {
  * La usan tanto la plantilla en blanco como la exportación compatible con
  * importación, para que ambas tengan exactamente las mismas columnas.
  */
-export function construirHojaArticulos(
+export async function construirHojaArticulos(
   workbook: ExcelJS.Workbook,
   opciones: { subtitulo: string; instruccion: string; filas: number },
-): ExcelJS.Worksheet {
+): Promise<ExcelJS.Worksheet> {
   const { subtitulo, instruccion, filas } = opciones;
 
   const ws = workbook.addWorksheet('Artículos');
@@ -292,6 +293,7 @@ export function construirHojaArticulos(
 
   congelarEncabezados(ws, COL.nombre);
   activarFiltro(ws, ULTIMA_COLUMNA, filas);
+  await protegerAutomaticas(ws);
 
   return ws;
 }
@@ -405,7 +407,7 @@ export async function generarPlantillaInventario(): Promise<{
     'Los artículos nuevos se crean con su stock inicial y todos sus precios.',
   ]);
 
-  const ws = construirHojaArticulos(workbook, {
+  const ws = await construirHojaArticulos(workbook, {
     subtitulo:
       'Una fila por artículo: datos del producto, precio de contado y hasta 3 opciones de plazo.',
     instruccion:
