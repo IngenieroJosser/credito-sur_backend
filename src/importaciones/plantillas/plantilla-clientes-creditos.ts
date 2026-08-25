@@ -35,6 +35,8 @@ export interface ArticuloReferencia {
   meses: number;
   precio: number;
   costo: number;
+  /** Unidades disponibles hoy: sirve para avisar antes de subir el archivo. */
+  stock: number;
 }
 
 export interface DatosReferenciaPlantilla {
@@ -531,9 +533,11 @@ function hojasDeReferencia(
   const wsArticulos = workbook.addWorksheet('BD Artículos', {
     state: 'veryHidden',
   });
-  ['Clave', 'Código', 'Nombre', 'Meses', 'Precio', 'Costo'].forEach((h, i) => {
-    wsArticulos.getCell(1, i + 1).value = h;
-  });
+  ['Clave', 'Código', 'Nombre', 'Meses', 'Precio', 'Costo', 'Stock'].forEach(
+    (h, i) => {
+      wsArticulos.getCell(1, i + 1).value = h;
+    },
+  );
   wsArticulos.getRow(1).font = { bold: true };
   wsArticulos.getColumn(1).width = 22;
   wsArticulos.getColumn(2).width = 18;
@@ -546,6 +550,7 @@ function hojasDeReferencia(
     wsArticulos.getCell(`D${fila}`).value = a.meses;
     wsArticulos.getCell(`E${fila}`).value = a.precio;
     wsArticulos.getCell(`F${fila}`).value = a.costo;
+    wsArticulos.getCell(`G${fila}`).value = a.stock;
   });
 
   const wsPrestamos = workbook.addWorksheet('BD Préstamos', {
@@ -676,9 +681,33 @@ export async function generarPlantillaClientesCreditos(
     '# Ruta',
     'Si escribe el código de una ruta activa, el cliente queda asignado a esa ruta con su cobrador. Un cliente solo puede estar en una ruta a la vez.',
     '',
-    '# Tipos de carga',
-    '• HISTORICA: créditos que ya existían. No mueve dinero de caja.',
-    '• OPERATIVA: créditos nuevos que se entregan al confirmar. En los de dinero descuenta de la caja de oficina; en los de artículo descuenta una unidad del inventario y registra la venta.',
+    '# Cuándo se mueve la plata (léalo antes de confirmar)',
+    'Nada se mueve por subir el archivo. Revisar la plantilla es seguro: la caja y el inventario solo se tocan cuando usted le da CONFIRMAR.',
+    '',
+    'Y lo decide una sola columna: Tipo carga. No hay nada más que escribir.',
+    '',
+    'HISTORICA → no se mueve nada.',
+    '   Es un crédito que ya venía cobrándose. Esa plata se entregó antes de',
+    '   usar el sistema, así que registrar hoy la salida inventaría un egreso',
+    '   que nunca ocurrió y le descuadraría la caja. Solo se crea el crédito',
+    '   con sus cuotas y lo que ya se le abonó.',
+    '',
+    'OPERATIVA en un crédito de dinero → sale efectivo de la Caja de Oficina.',
+    '   Es un crédito que usted entrega hoy. Al confirmar se registra el egreso',
+    '   y su asiento contable, igual que si lo hubiera hecho desde la pantalla',
+    '   de crear crédito.',
+    '',
+    'OPERATIVA en un crédito de artículo → sale mercancía, no efectivo.',
+    '   Se descuenta una unidad del inventario y se registra la venta. Si el',
+    '   cliente dio cuota inicial, esa plata sí entra como ingreso a la Caja',
+    '   de Oficina.',
+    '',
+    '# Antes de mover un peso, el sistema revisa',
+    'Suma lo que va a desembolsar por todos los créditos OPERATIVA del archivo y lo compara contra el saldo de la Caja de Oficina. Si no alcanza, no importa nada: le avisa cuánto hay y cuánto hacía falta. Así diez créditos de un millón no pasan contra una caja que tiene tres.',
+    'Con los artículos hace lo mismo con el inventario: si a uno no le queda stock, esa fila detiene la importación en vez de dejar el stock en negativo.',
+    '',
+    '# Si algo no cuadra, no se importa a medias',
+    'Todo el archivo entra o no entra nada. Si una fila hace fallar la confirmación, se deshace lo ya hecho y la caja queda como estaba: no se quedan cinco créditos cargados y cinco afuera.',
     '',
     '# El riesgo no se importa',
     'No hay columna de nivel de riesgo: el sistema lo calcula solo con los días de mora, y lo actualiza en cada pago. Cualquier valor que se pusiera aquí quedaría pisado.',
@@ -943,6 +972,16 @@ export async function generarPlantillaClientesCreditos(
         {
           condicion: `NOT(ISNUMBER(${ref(ART.precioPlazo)}))`,
           mensaje: '"⚠ El artículo no tiene precio para ese plazo"',
+        },
+        // Un crédito OPERATIVA entrega el artículo al confirmar. Si no queda
+        // stock, esa fila hace fallar toda la importación, así que conviene
+        // saberlo aquí y no después de subir el archivo.
+        {
+          condicion:
+            `AND(${ref(ART.tipoCarga)}="OPERATIVA",` +
+            `IFERROR(VLOOKUP(${ref(ART.productoCodigo)},'BD Artículos'!$B:$G,6,FALSE),0)<1)`,
+          mensaje:
+            '"⚠ No queda stock de este artículo: la importación se detendría"',
         },
         creditoYaExiste(ART.numeroCredito),
         operativaConAbonos(ART.tipoCarga, ART.cuotasPagadas),

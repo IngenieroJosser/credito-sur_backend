@@ -1492,6 +1492,7 @@ describe('El archivo que se descarga abre sin que Excel pida repararlo', () => {
           meses: 0,
           precio: 900000,
           costo: 700000,
+          stock: 10,
         },
         {
           codigo: 'TV-01',
@@ -1499,6 +1500,7 @@ describe('El archivo que se descarga abre sin que Excel pida repararlo', () => {
           meses: 6,
           precio: 1200000,
           costo: 700000,
+          stock: 10,
         },
       ],
       codigosArticulo: ['TV-01'],
@@ -1683,5 +1685,59 @@ describe('Las columnas automáticas no se pueden escribir', () => {
     const hojas = await hojasDeDatos(data);
     expect(hojas.map((h) => h.name)).toEqual(['Artículos']);
     hojas.forEach(revisarHoja);
+  });
+});
+
+describe('Avisos de la columna Revisión', () => {
+  const hojaDe = async (data: Buffer, nombre: string) => {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(data as any);
+    return workbook.getWorksheet(nombre)!;
+  };
+
+  const revisionDe = (hoja: ExcelJS.Worksheet) => {
+    let columna = 0;
+    hoja.getRow(6).eachCell({ includeEmpty: false }, (celda, n) => {
+      if (normalizarEncabezado(celda.value).startsWith('REVISION DE LA FILA')) {
+        columna = n;
+      }
+    });
+    expect(columna).toBeGreaterThan(0);
+    return String((hoja.getCell(7, columna).value as any)?.formula || '');
+  };
+
+  it('avisa si el artículo se va a entregar y no queda stock', async () => {
+    // Un crédito OPERATIVA entrega el artículo al confirmar; sin stock, esa
+    // fila hace fallar la importación entera. Vale más saberlo antes de subir
+    // el archivo que después.
+    const { data } =
+      await generarPlantillaClientesCreditos(datosPlantillaVacios);
+    const formula = revisionDe(await hojaDe(data, 'Créditos de artículo'));
+
+    expect(formula).toContain('"OPERATIVA"');
+    expect(formula).toContain("'BD Artículos'");
+    expect(formula).toContain('No queda stock');
+  });
+
+  it('el stock de cada artículo viaja dentro del archivo', async () => {
+    const { data } = await generarPlantillaClientesCreditos({
+      ...datosPlantillaVacios,
+      articulos: [
+        {
+          codigo: 'SIN-STOCK',
+          nombre: 'Nevera agotada',
+          meses: 6,
+          precio: 900000,
+          costo: 700000,
+          stock: 0,
+        },
+      ],
+      codigosArticulo: ['SIN-STOCK'],
+    });
+    const hoja = await hojaDe(data, 'BD Artículos');
+    const encabezados = hoja.getRow(1).values as any[];
+    const columnaStock = encabezados.indexOf('Stock');
+    expect(columnaStock).toBeGreaterThan(0);
+    expect(hoja.getCell(2, columnaStock).value).toBe(0);
   });
 });

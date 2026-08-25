@@ -65,6 +65,7 @@ export class ImportacionesService {
           codigo: true,
           nombre: true,
           costo: true,
+          stock: true,
           precios: {
             where: { activo: true },
             select: { meses: true, precio: true },
@@ -97,6 +98,7 @@ export class ImportacionesService {
           meses: Number(precio.meses),
           precio: Number(precio.precio) || 0,
           costo: Number(p.costo) || 0,
+          stock: Number(p.stock) || 0,
         })),
       ),
       codigosArticulo: productos.map((p) => String(p.codigo).toUpperCase()),

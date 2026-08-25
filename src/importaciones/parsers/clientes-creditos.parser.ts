@@ -408,11 +408,19 @@ export class ClientesCreditosParser {
       }
 
       if (!cc) {
-        addError('cc', 'Es requerido', cc);
+        addError('cc', 'Escriba la cédula del cliente', cc);
       } else if (!/^\d{6,10}$/.test(cc)) {
-        addError('cc', 'Debe ser solo dígitos, entre 6 y 10 caracteres', cc);
+        addError(
+          'cc',
+          'La cédula debe tener solo números, entre 6 y 10 dígitos',
+          cc,
+        );
       } else if (ccsClientes.has(cc)) {
-        addError('cc', 'Duplicado en el archivo', cc);
+        addError(
+          'cc',
+          'Esta cédula ya aparece en otra fila de este mismo archivo',
+          cc,
+        );
       } else {
         ccsClientes.add(cc);
 
@@ -435,9 +443,16 @@ export class ClientesCreditosParser {
         }
       }
 
-      if (!nombres) addError('nombres', 'Es requerido', nombres);
-      if (!apellidos) addError('apellidos', 'Es requerido', apellidos);
-      if (!telefono) addError('telefono', 'Es requerido', telefono);
+      if (!nombres)
+        addError('nombres', 'Escriba los nombres del cliente', nombres);
+      if (!apellidos)
+        addError('apellidos', 'Escriba los apellidos del cliente', apellidos);
+      if (!telefono)
+        addError(
+          'telefono',
+          'Escriba el teléfono de contacto del cliente',
+          telefono,
+        );
 
       if (nivelRiesgo && !NIVELES_RIESGO_NORMALIZADOS.includes(nivelRiesgo)) {
         addError(
@@ -828,7 +843,11 @@ export class ClientesCreditosParser {
         }
 
         if (!ccCliente) {
-          addError('cc_cliente', 'Es requerido', ccCliente);
+          addError(
+            'cc_cliente',
+            'Escriba la cédula del cliente dueño del crédito',
+            ccCliente,
+          );
         } else if (!/^\d{6,10}$/.test(ccCliente)) {
           addError(
             'cc_cliente',
@@ -956,7 +975,11 @@ export class ClientesCreditosParser {
         }
 
         if (!Object.values(FrecuenciaPago).includes(frecuenciaPago as any)) {
-          addError('frecuencia_pago', 'Valor no permitido', frecuenciaPago);
+          addError(
+            'frecuencia_pago',
+            'Debe ser DIARIO, SEMANAL, QUINCENAL o MENSUAL',
+            frecuenciaPago,
+          );
         }
 
         // El modal pide cantidad de cuotas y frecuencia, y de ahí deriva el plazo
