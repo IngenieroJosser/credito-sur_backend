@@ -55,12 +55,22 @@ const prismaMock = (datos?: {
   productos?: any[];
   prestamos?: any[];
   rutas?: any[];
+  cajaOficina?: { nombre: string; saldoActual: number } | null;
 }) =>
   ({
     cliente: { findMany: jest.fn().mockResolvedValue(datos?.clientes ?? []) },
     producto: { findMany: jest.fn().mockResolvedValue(datos?.productos ?? []) },
     prestamo: { findMany: jest.fn().mockResolvedValue(datos?.prestamos ?? []) },
     ruta: { findMany: jest.fn().mockResolvedValue(datos?.rutas ?? []) },
+    // La vista previa consulta el saldo real para decir si alcanza.
+    caja: {
+      findFirst: jest.fn().mockResolvedValue(
+        datos?.cajaOficina ?? {
+          nombre: 'Caja de Oficina',
+          saldoActual: 50_000_000,
+        },
+      ),
+    },
   }) as any;
 
 const datosPlantillaVacios = {
@@ -159,7 +169,7 @@ async function validarCredito(
 const creditoArticuloMinimo = {
   'Número de crédito': 'IMP-ART-1',
   'CC cliente': '12345678',
-  'Producto código': 'CEL-A15',
+  'Código del artículo': 'CEL-A15',
   'Plazo meses': 3,
   'Frecuencia pago': 'DIARIO',
   'Fecha crédito': '2026-05-01',
@@ -1100,7 +1110,7 @@ describe('Diferencias entre crédito de artículo y préstamo en efectivo', () =
 
     expect(encabezados).not.toContain('Tasa interés*');
     expect(encabezados).not.toContain('Tipo amortización');
-    expect(encabezados).toContain('Producto código*');
+    expect(encabezados).toContain('Código del artículo*');
   });
 
   it('sigue exigiendo la tasa en un préstamo en efectivo', async () => {
@@ -1132,7 +1142,7 @@ describe('Diferencias entre crédito de artículo y préstamo en efectivo', () =
   });
 
   it('exige el código del artículo en su hoja', async () => {
-    const { 'Producto código': _cod, ...resto } = creditoArticuloMinimo;
+    const { 'Código del artículo': _cod, ...resto } = creditoArticuloMinimo;
     const resultado = await validarCreditoArticulo(resto);
 
     // Sin artículo tampoco se puede deducir el monto: se reportan ambos.
@@ -1423,6 +1433,34 @@ describe('El archivo que se descarga abre sin que Excel pida repararlo', () => {
     return encontrados;
   };
 
+  /** Paréntesis abiertos menos cerrados, ignorando los que van entre comillas. */
+  const desbalance = (formula: string) => {
+    let profundidad = 0;
+    let dentroDeTexto = false;
+    for (const caracter of formula) {
+      if (caracter === '"') dentroDeTexto = !dentroDeTexto;
+      else if (!dentroDeTexto) {
+        if (caracter === '(') profundidad++;
+        else if (caracter === ')') profundidad--;
+      }
+    }
+    return profundidad;
+  };
+
+  const formulasDesbalanceadas = (xml: string) => {
+    const vistas = new Set<string>();
+    for (const [, cruda] of xml.matchAll(/<f>([\s\S]*?)<\/f>/g)) {
+      const formula = cruda
+        .replace(/&quot;/g, '"')
+        .replace(/&apos;/g, "'")
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&');
+      if (desbalance(formula) !== 0) vistas.add(formula.slice(0, 120));
+    }
+    return [...vistas];
+  };
+
   const revisar = async (data: Buffer) => {
     for (const hoja of await hojasDe(data)) {
       // Dos desplegables sobre la misma celda: el error que rompía el archivo.
@@ -1436,6 +1474,15 @@ describe('El archivo que se descarga abre sin que Excel pida repararlo', () => {
         hoja: hoja.nombre,
         solapes: solapes(hoja.xml, /<mergeCell ref="([^"]+)"/g),
       }).toEqual({ hoja: hoja.nombre, solapes: [] });
+
+      // Paréntesis sin cerrar. A la columna Revisión le faltaba uno y Excel
+      // descartaba la fórmula de las mil filas de las dos hojas de crédito,
+      // avisando de contenido perdido al abrir. El XML seguía siendo válido,
+      // así que solo se ve mirando la fórmula misma.
+      expect({
+        hoja: hoja.nombre,
+        desbalanceadas: formulasDesbalanceadas(hoja.xml),
+      }).toEqual({ hoja: hoja.nombre, desbalanceadas: [] });
     }
   };
 
@@ -1455,6 +1502,7 @@ describe('El archivo que se descarga abre sin que Excel pida repararlo', () => {
           meses: 0,
           precio: 900000,
           costo: 700000,
+          stock: 10,
         },
         {
           codigo: 'TV-01',
@@ -1462,6 +1510,7 @@ describe('El archivo que se descarga abre sin que Excel pida repararlo', () => {
           meses: 6,
           precio: 1200000,
           costo: 700000,
+          stock: 10,
         },
       ],
       codigosArticulo: ['TV-01'],
@@ -1526,5 +1575,332 @@ describe('Plantillas descargadas antes del cambio de nombres', () => {
         precioContado: 1050000,
       }),
     );
+  });
+  it('sigue leyendo el encabezado anterior del código de artículo', async () => {
+    const plantilla =
+      await generarPlantillaClientesCreditos(datosPlantillaVacios);
+    const archivo = await editarLibro(plantilla.data, (workbook) => {
+      const hoja = workbook.getWorksheet('Créditos de artículo')!;
+      hoja.getRow(6).eachCell({ includeEmpty: false }, (celda) => {
+        if (normalizarEncabezado(celda.value) === 'CODIGO DEL ARTICULO') {
+          celda.value = 'Producto código*';
+        }
+      });
+      escribirFila(hoja, FILA_DATOS, {
+        'CC cliente': '12345678',
+        'Producto código': 'CEL-A15',
+        'Plazo meses': 3,
+        'Frecuencia pago': 'DIARIO',
+        'Fecha crédito': '2026-05-01',
+        'Tipo carga': 'HISTORICA',
+      });
+    });
+
+    const resultado = await new ClientesCreditosParser(
+      prismaMock({
+        clientes: [clienteEnBd],
+        productos: [
+          {
+            codigo: 'CEL-A15',
+            nombre: 'Samsung Galaxy A15',
+            precios: [{ meses: 3, precio: 690000 }],
+          },
+        ],
+      }),
+    ).parseAndValidate(archivo, 'clientes.xlsx');
+
+    expect(resultado.errores).toHaveLength(0);
+  });
+});
+
+describe('Las columnas automáticas no se pueden escribir', () => {
+  // La hoja va protegida para que nadie borre por accidente una fórmula, pero
+  // las columnas de captura tienen que seguir abiertas: si se protegiera sin
+  // desbloquearlas, la plantilla entera quedaría de solo lectura y no se
+  // podría llenar.
+  const revisarHoja = (hoja: ExcelJS.Worksheet) => {
+    expect({ hoja: hoja.name, protegida: Boolean(hoja.protect) }).toEqual({
+      hoja: hoja.name,
+      protegida: true,
+    });
+
+    const automaticas: string[] = [];
+    const captura: string[] = [];
+    const encabezadosSueltos: string[] = [];
+    // La 1500 va a propósito más allá de las mil filas preparadas: esas filas
+    // se importan igual, así que tienen que poder escribirse. Marcando solo el
+    // rango preparado, pegar una lista larga se topaba con la hoja protegida.
+    const filasAProbar = [7, 1006, 1500];
+    hoja.getRow(6).eachCell({ includeEmpty: false }, (celda, columna) => {
+      const encabezado = normalizarEncabezado(celda.value);
+      if (!encabezado) return;
+
+      // El encabezado es la llave con la que se localiza cada columna:
+      // pisarlo rompe la importación, así que va bloqueado.
+      if (celda.protection?.locked === false)
+        encabezadosSueltos.push(encabezado);
+
+      const bloqueada = filasAProbar.some(
+        (fila) => hoja.getCell(fila, columna).protection?.locked !== false,
+      );
+      if (/AUTOMATICO/.test(encabezado)) {
+        if (!bloqueada) automaticas.push(encabezado);
+      } else if (bloqueada) {
+        captura.push(encabezado);
+      }
+    });
+
+    expect({ hoja: hoja.name, encabezadosSueltos }).toEqual({
+      hoja: hoja.name,
+      encabezadosSueltos: [],
+    });
+
+    expect({
+      hoja: hoja.name,
+      automaticasDesbloqueadas: automaticas,
+      capturaBloqueada: captura,
+    }).toEqual({
+      hoja: hoja.name,
+      automaticasDesbloqueadas: [],
+      capturaBloqueada: [],
+    });
+  };
+
+  const hojasDeDatos = async (data: Buffer) => {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(data as any);
+    const hojas: ExcelJS.Worksheet[] = [];
+    workbook.eachSheet((hoja) => {
+      if (normalizarEncabezado(hoja.getRow(6).getCell(1).value) === 'ACCION') {
+        hojas.push(hoja);
+      }
+    });
+    return hojas;
+  };
+
+  it('en la plantilla de clientes y créditos', async () => {
+    const { data } =
+      await generarPlantillaClientesCreditos(datosPlantillaVacios);
+    const hojas = await hojasDeDatos(data);
+    expect(hojas.map((h) => h.name)).toEqual([
+      'Clientes',
+      'Créditos de dinero',
+      'Créditos de artículo',
+    ]);
+    hojas.forEach(revisarHoja);
+  });
+
+  it('en la plantilla de inventario', async () => {
+    const { data } = await generarPlantillaInventario();
+    const hojas = await hojasDeDatos(data);
+    expect(hojas.map((h) => h.name)).toEqual(['Artículos']);
+    hojas.forEach(revisarHoja);
+  });
+});
+
+describe('Avisos de la columna Revisión', () => {
+  const hojaDe = async (data: Buffer, nombre: string) => {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(data as any);
+    return workbook.getWorksheet(nombre)!;
+  };
+
+  const revisionDe = (hoja: ExcelJS.Worksheet) => {
+    let columna = 0;
+    hoja.getRow(6).eachCell({ includeEmpty: false }, (celda, n) => {
+      if (normalizarEncabezado(celda.value).startsWith('REVISION DE LA FILA')) {
+        columna = n;
+      }
+    });
+    expect(columna).toBeGreaterThan(0);
+    return String((hoja.getCell(7, columna).value as any)?.formula || '');
+  };
+
+  it('avisa si el artículo se va a entregar y no queda stock', async () => {
+    // Un crédito OPERATIVA entrega el artículo al confirmar; sin stock, esa
+    // fila hace fallar la importación entera. Vale más saberlo antes de subir
+    // el archivo que después.
+    const { data } =
+      await generarPlantillaClientesCreditos(datosPlantillaVacios);
+    const formula = revisionDe(await hojaDe(data, 'Créditos de artículo'));
+
+    expect(formula).toContain('"OPERATIVA"');
+    expect(formula).toContain("'BD Artículos'");
+    expect(formula).toContain('No queda stock');
+  });
+
+  it('el stock de cada artículo viaja dentro del archivo', async () => {
+    const { data } = await generarPlantillaClientesCreditos({
+      ...datosPlantillaVacios,
+      articulos: [
+        {
+          codigo: 'SIN-STOCK',
+          nombre: 'Nevera agotada',
+          meses: 6,
+          precio: 900000,
+          costo: 700000,
+          stock: 0,
+        },
+      ],
+      codigosArticulo: ['SIN-STOCK'],
+    });
+    const hoja = await hojaDe(data, 'BD Artículos');
+    const encabezados = hoja.getRow(1).values as any[];
+    const columnaStock = encabezados.indexOf('Stock');
+    expect(columnaStock).toBeGreaterThan(0);
+    expect(hoja.getCell(2, columnaStock).value).toBe(0);
+  });
+});
+
+describe('La vista previa muestra las mismas cifras que se van a guardar', () => {
+  // La vista previa no puede ser una segunda versión del cálculo. Si dice un
+  // saldo y después se guarda otro, aunque sea por un peso, el usuario aprueba
+  // una cosa y queda otra.
+  const casos = [
+    { tasa: 20, cuotas: 30, frecuencia: 'DIARIO', metodo: 'Interés simple' },
+    { tasa: 20, cuotas: 45, frecuencia: 'DIARIO', metodo: 'Interés simple' },
+    { tasa: 10, cuotas: 8, frecuencia: 'SEMANAL', metodo: 'Amortización' },
+    { tasa: 5, cuotas: 6, frecuencia: 'MENSUAL', metodo: 'Interés simple' },
+    { tasa: 15, cuotas: 4, frecuencia: 'QUINCENAL', metodo: 'Amortización' },
+  ];
+
+  it.each(casos)(
+    'coincide con $cuotas cuotas $frecuencia por $metodo',
+    async ({ tasa, cuotas, frecuencia, metodo }) => {
+      const monto = 1_234_567;
+      const cuotasPagadas = 3;
+
+      const resultado = await validarCredito(
+        {
+          'CC cliente': '12345678',
+          Monto: monto,
+          'Tasa interés': tasa,
+          'Frecuencia pago': frecuencia,
+          'Cantidad cuotas': cuotas,
+          'Fecha crédito': '2026-05-01',
+          'Tipo carga': 'HISTORICA',
+          'Tipo amortización': metodo,
+          'Cuotas pagadas': cuotasPagadas,
+        },
+        { clientes: [clienteEnBd] },
+        'Créditos de dinero',
+      );
+
+      expect(resultado.errores).toHaveLength(0);
+      const previa: any = resultado.creditos?.[0];
+      expect(previa).toBeDefined();
+
+      // Lo mismo que hará la confirmación, con las funciones del sistema.
+      const plan = construirPlanCuotas({
+        tipoAmortizacion: previa.tipoAmortizacion,
+        monto: previa.monto,
+        interesTotal: previa.interesTotal,
+        cantidadCuotas: previa.cantidadCuotas,
+        fechasVencimiento: Array.from(
+          { length: previa.cantidadCuotas },
+          (_, i) => {
+            const fecha = new Date('2026-05-01T12:00:00.000Z');
+            fecha.setDate(fecha.getDate() + i);
+            return fecha;
+          },
+        ),
+      });
+      const avance = aplicarAvanceHistorico(plan, cuotasPagadas, 0, null);
+
+      expect(previa.valorCuota).toBe(plan[0].monto);
+      expect(previa.totalAbonado).toBe(avance.totalPagado);
+      expect(previa.saldoPendiente).toBe(
+        previa.totalCredito - avance.totalPagado,
+      );
+    },
+  );
+});
+
+describe('Vista previa del movimiento de caja', () => {
+  it('resume qué sale, qué entra y si el saldo alcanza', async () => {
+    const plantilla = await plantillaClientesCacheada();
+    const archivo = await editarLibro(plantilla.data, (workbook) => {
+      const dinero = workbook.getWorksheet('Créditos de dinero')!;
+      escribirFila(dinero, FILA_DATOS, {
+        'CC cliente': '12345678',
+        Monto: 800000,
+        'Tasa interés': 20,
+        'Frecuencia pago': 'DIARIO',
+        'Cantidad cuotas': 30,
+        'Fecha crédito': '2026-08-03',
+        'Tipo carga': 'OPERATIVA',
+      });
+      escribirFila(dinero, FILA_DATOS + 1, {
+        'CC cliente': '12345678',
+        Monto: 500000,
+        'Tasa interés': 10,
+        'Frecuencia pago': 'DIARIO',
+        'Cantidad cuotas': 30,
+        'Fecha crédito': '2026-06-01',
+        'Tipo carga': 'HISTORICA',
+      });
+      const articulo = workbook.getWorksheet('Créditos de artículo')!;
+      escribirFila(articulo, FILA_DATOS, {
+        'CC cliente': '12345678',
+        'Código del artículo': 'CEL-A15',
+        'Plazo meses': 3,
+        'Frecuencia pago': 'SEMANAL',
+        'Fecha crédito': '2026-08-01',
+        'Tipo carga': 'OPERATIVA',
+        'Cuota inicial': 150000,
+      });
+    });
+
+    const resultado = await new ClientesCreditosParser(
+      prismaMock({
+        clientes: [clienteEnBd],
+        productos: [
+          {
+            codigo: 'CEL-A15',
+            nombre: 'Samsung Galaxy A15',
+            stock: 5,
+            precios: [{ meses: 3, precio: 690000 }],
+          },
+        ],
+        cajaOficina: { nombre: 'Caja de Oficina', saldoActual: 1_000_000 },
+      }),
+    ).parseAndValidate(archivo, 'clientes.xlsx');
+
+    const impacto = (resultado as any).impactoCaja;
+    expect(impacto.hayMovimientos).toBe(true);
+    // Solo los OPERATIVA mueven algo; el histórico no.
+    expect(impacto.creditosOperativos).toBe(2);
+    expect(impacto.creditosHistoricos).toBe(1);
+    // Sale el desembolso del crédito de dinero, no el del artículo.
+    expect(impacto.totalSalida).toBe(800000);
+    // Entra la cuota inicial del artículo.
+    expect(impacto.totalEntrada).toBe(150000);
+    expect(impacto.unidadesInventario).toBe(1);
+    expect(impacto.saldoCajaOficina).toBe(1_000_000);
+    expect(impacto.alcanzaElSaldo).toBe(true);
+    expect(impacto.movimientos).toHaveLength(2);
+  });
+
+  it('avisa cuánto falta cuando el saldo no alcanza', async () => {
+    const resultado = await validarCredito(
+      {
+        'CC cliente': '12345678',
+        Monto: 5_000_000,
+        'Tasa interés': 20,
+        'Frecuencia pago': 'DIARIO',
+        'Cantidad cuotas': 30,
+        'Fecha crédito': '2026-08-03',
+        'Tipo carga': 'OPERATIVA',
+      },
+      {
+        clientes: [clienteEnBd],
+        cajaOficina: { nombre: 'Caja de Oficina', saldoActual: 2_000_000 },
+      },
+      'Créditos de dinero',
+    );
+
+    const impacto = (resultado as any).impactoCaja;
+    expect(impacto.alcanzaElSaldo).toBe(false);
+    expect(impacto.faltante).toBe(3_000_000);
   });
 });

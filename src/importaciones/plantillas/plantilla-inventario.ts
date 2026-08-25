@@ -14,6 +14,7 @@ import {
   FORMATO_PORCENTAJE,
   forzarRecalculo,
   formulaEnColumna,
+  protegerAutomaticas,
   hojaInicio,
   listaDesplegable,
   resaltarNegativos,
@@ -28,6 +29,20 @@ import {
  * y al final los cálculos. Las columnas grises quedan agrupadas al final para
  * que no interrumpan el tabulador mientras se escribe.
  */
+/** Cada opción de plazo aporta dos columnas de captura: meses y precio. */
+const COLUMNAS_POR_OPCION = 2;
+const COLUMNAS_CALCULADAS_POR_OPCION = 2;
+
+/**
+ * Los precios a crédito van pegados a lo obligatorio: son la razón de ser del
+ * artículo en este negocio, y quien llena la fila los tiene a mano.
+ */
+const PRIMERA_COLUMNA_OPCION = 7;
+
+/** Lo opcional arranca donde terminan las opciones de plazo. */
+const PRIMERA_COLUMNA_OPCIONAL =
+  PRIMERA_COLUMNA_OPCION + MAX_OPCIONES_PLAZO * COLUMNAS_POR_OPCION;
+
 const COL = {
   accion: 1,
   // Obligatorios
@@ -36,25 +51,19 @@ const COL = {
   categoria: 4,
   costo: 5,
   precioContado: 6,
-  // Verificación
-  revision: 7,
-  // Opcionales
-  descripcion: 8,
-  marca: 9,
-  modelo: 10,
-  stock: 11,
-  stockMinimo: 12,
-  activo: 13,
+  // (aquí van las opciones de plazo)
+  // Opcionales, de lo más útil a lo que casi no se usa
+  stock: PRIMERA_COLUMNA_OPCIONAL,
+  stockMinimo: PRIMERA_COLUMNA_OPCIONAL + 1,
+  marca: PRIMERA_COLUMNA_OPCIONAL + 2,
+  modelo: PRIMERA_COLUMNA_OPCIONAL + 3,
+  descripcion: PRIMERA_COLUMNA_OPCIONAL + 4,
+  activo: PRIMERA_COLUMNA_OPCIONAL + 5,
+  // Automáticas, al final
+  revision: PRIMERA_COLUMNA_OPCIONAL + 6,
 };
 
-const PRIMERA_COLUMNA_OPCION = 14;
-/** Cada opción de plazo aporta dos columnas de captura: meses y precio. */
-const COLUMNAS_POR_OPCION = 2;
-
-/** Las columnas calculadas van todas juntas, después de las opciones de plazo. */
-const PRIMERA_COLUMNA_CALCULADA =
-  PRIMERA_COLUMNA_OPCION + MAX_OPCIONES_PLAZO * COLUMNAS_POR_OPCION;
-const COLUMNAS_CALCULADAS_POR_OPCION = 2;
+const PRIMERA_COLUMNA_CALCULADA = COL.revision + 1;
 
 export function columnasDeOpcion(numeroOpcion: number) {
   const captura =
@@ -100,20 +109,6 @@ function construirColumnas(): ColumnaPlantilla[] {
       width: 16,
       numFmt: FORMATO_MONEDA,
     },
-    // Verificación: avisa qué falta o qué está mal en la fila.
-    {
-      header: 'Revisión (automático)',
-      key: 'revision',
-      width: 40,
-      automatica: true,
-    },
-    // Opcionales
-    { header: 'Descripción', key: 'descripcion', width: 30 },
-    { header: 'Marca', key: 'marca', width: 16 },
-    { header: 'Modelo', key: 'modelo', width: 16 },
-    { header: 'Stock actual', key: 'stock', width: 10 },
-    { header: 'Stock mínimo', key: 'stock_minimo', width: 12 },
-    { header: 'Activo', key: 'activo', width: 10 },
   ];
 
   // Opciones de plazo: solo lo que se escribe (meses y precio).
@@ -128,6 +123,24 @@ function construirColumnas(): ColumnaPlantilla[] {
       },
     );
   }
+
+  // Opcionales, de lo más útil a lo que casi no se usa.
+  columnas.push(
+    { header: 'Stock actual', key: 'stock', width: 10 },
+    { header: 'Stock mínimo', key: 'stock_minimo', width: 12 },
+    { header: 'Marca', key: 'marca', width: 16 },
+    { header: 'Modelo', key: 'modelo', width: 16 },
+    { header: 'Descripción', key: 'descripcion', width: 30 },
+    { header: 'Activo', key: 'activo', width: 10 },
+  );
+
+  // Verificación: avisa qué falta o qué está mal en la fila.
+  columnas.push({
+    header: 'Revisión de la fila (automático)',
+    key: 'revision',
+    width: 40,
+    automatica: true,
+  });
 
   // Cálculos, todos juntos al final.
   columnas.push(
@@ -150,14 +163,14 @@ function construirColumnas(): ColumnaPlantilla[] {
   for (let i = 1; i <= MAX_OPCIONES_PLAZO; i++) {
     columnas.push(
       {
-        header: `Utilidad ${i} $ (automático)`,
+        header: `Utilidad opción ${i} $ (automático)`,
         key: `utilidad_${i}_valor`,
         width: 15,
         automatica: true,
         numFmt: FORMATO_MONEDA,
       },
       {
-        header: `Utilidad ${i} % (automático)`,
+        header: `Utilidad opción ${i} % (automático)`,
         key: `utilidad_${i}_pct`,
         width: 13,
         automatica: true,
@@ -246,10 +259,10 @@ function formulaRevision(ws: ExcelJS.Worksheet, filas: number) {
  * La usan tanto la plantilla en blanco como la exportación compatible con
  * importación, para que ambas tengan exactamente las mismas columnas.
  */
-export function construirHojaArticulos(
+export async function construirHojaArticulos(
   workbook: ExcelJS.Workbook,
   opciones: { subtitulo: string; instruccion: string; filas: number },
-): ExcelJS.Worksheet {
+): Promise<ExcelJS.Worksheet> {
   const { subtitulo, instruccion, filas } = opciones;
 
   const ws = workbook.addWorksheet('Artículos');
@@ -263,7 +276,8 @@ export function construirHojaArticulos(
   );
 
   etiquetarGrupo(ws, COL.codigo, COL.precioContado, 'DATOS OBLIGATORIOS');
-  etiquetarGrupo(ws, COL.descripcion, COL.activo, 'DATOS OPCIONALES');
+  etiquetarGrupo(ws, COL.stock, COL.activo, 'DATOS OPCIONALES');
+  etiquetarGrupo(ws, COL.revision, COL.revision, 'VERIFICACIÓN');
   etiquetarGrupo(
     ws,
     COL_UTILIDAD_CONTADO_VALOR,
@@ -291,6 +305,7 @@ export function construirHojaArticulos(
 
   congelarEncabezados(ws, COL.nombre);
   activarFiltro(ws, ULTIMA_COLUMNA, filas);
+  await protegerAutomaticas(ws);
 
   return ws;
 }
@@ -301,7 +316,7 @@ export function agregarValoresInventario(
   wsArticulos: ExcelJS.Worksheet,
   filas: number,
 ) {
-  const ws = workbook.addWorksheet('Valores');
+  const ws = workbook.addWorksheet('Valores', { state: 'veryHidden' });
   ws.getCell('A1').value = 'Acción';
   ws.getCell('A2').value = 'CREAR';
   ws.getCell('A3').value = 'ACTUALIZAR';
@@ -396,14 +411,15 @@ export async function generarPlantillaInventario(): Promise<{
     '# Utilidad automática (columnas grises)',
     'Al final de la hoja Excel calcula, para el contado y para cada plazo, la utilidad en pesos y en porcentaje: precio de venta menos costo.',
     'No hay que diligenciarlas y el sistema no las lee al importar. Si una sale en rojo, ese precio está por debajo del costo.',
-    'La columna "Revisión" resume en una sola celda lo que falta o está mal en cada artículo.',
+    'La columna "Revisión de la fila" resume en una sola celda lo que le falta o le sobra a ese artículo. Si dice OK, la fila está lista para subir.',
     '',
     '# Al confirmar la importación',
-    'Los artículos cuyo código ya exista no se modifican: solo se les agregan las opciones de precio que aún no tengan.',
+    'Con ACTUALIZAR: se corrigen los datos del artículo y sus precios.',
+    'Con CREAR y un código que ya existe: no se toca el artículo, solo se le agregan las opciones de precio que aún no tenga.',
     'Los artículos nuevos se crean con su stock inicial y todos sus precios.',
   ]);
 
-  const ws = construirHojaArticulos(workbook, {
+  const ws = await construirHojaArticulos(workbook, {
     subtitulo:
       'Una fila por artículo: datos del producto, precio de contado y hasta 3 opciones de plazo.',
     instruccion:

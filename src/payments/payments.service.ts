@@ -1494,7 +1494,7 @@ export class PaymentsService {
     // Para EFECTIVO no se genera revisión.
 
     this.logger.log(
-      `Pago ${numeroPago} registrado: capital=${Number(resultado.descomposicion.capitalRecuperado).toFixed(2)}, interés=${Number(resultado.descomposicion.interesRecuperado).toFixed(2)}, saldo=${resultado.descomposicion.saldoNuevo.toFixed(2)}`,
+      `Pago ${numeroPago} registrado: capital=${truncCop(resultado.descomposicion.capitalRecuperado)}, interés=${truncCop(resultado.descomposicion.interesRecuperado)}, saldo=${truncCop(resultado.descomposicion.saldoNuevo)}`,
     );
 
     try {
@@ -1767,7 +1767,7 @@ export class PaymentsService {
           cuotasOmitidas.push({
             cuotaId: cuota.id,
             numeroCuota: Number(cuota.numeroCuota || 0),
-            razon: `Pago insuficiente: ${nuevoMontoPagado.toFixed(2)} de ${montoCuota.toFixed(2)}`,
+            razon: `Pago insuficiente: ${truncCop(nuevoMontoPagado)} de ${truncCop(montoCuota)}`,
           });
           continue;
         }

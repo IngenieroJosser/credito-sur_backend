@@ -35,8 +35,11 @@ import {
   construirTablaCuotas,
   TipoAmortizacionImportacion,
 } from './interes-credito';
+import { pesos } from '../common/dinero.util';
 
-const redondear = (valor: number) => Math.round(valor * 100) / 100;
+// Pesos enteros en toda la cascada: un residuo por debajo del peso sigue
+// siendo deuda y se arrastra a la última cuota, no se regala ni se inventa.
+const redondear = (valor: number) => pesos(valor);
 
 /**
  * Construye el plan de cuotas del crédito.

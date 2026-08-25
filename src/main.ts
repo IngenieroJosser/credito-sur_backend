@@ -132,12 +132,21 @@ async function bootstrap() {
     new SanitizePipe(),
   );
 
+  // Orígenes adicionales para desarrollo, separados por coma. Sirve para
+  // levantar el frontend en otro puerto cuando el 3000 está ocupado, sin tocar
+  // la lista de siempre.
+  const origenesExtra = (process.env.CORS_ORIGINS ?? '')
+    .split(',')
+    .map((origen) => origen.trim())
+    .filter(Boolean);
+
   app.enableCors({
     origin: [
       'http://localhost:3000',
       'http://127.0.0.1:3000',
       'https://credito-sur-frontend.onrender.com',
       'https://creditos-del-sur.vercel.app',
+      ...origenesExtra,
     ],
     exposedHeaders: ['Content-Disposition', 'Content-Type', 'Content-Length'],
     credentials: true,

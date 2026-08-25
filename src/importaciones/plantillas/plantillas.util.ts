@@ -118,10 +118,22 @@ export function declararColumnas(
     if (columna.numFmt) columnaExcel.numFmt = columna.numFmt;
   });
 
-  // Sombreado del cuerpo de las columnas automáticas.
+  // Bloqueo de lo automático y sombreado de su cuerpo.
+  //
+  // En Excel toda celda nace bloqueada y el candado solo surte efecto al
+  // proteger la hoja, así que hay que abrir a mano las de captura: de lo
+  // contrario la plantilla entera quedaría de solo lectura.
+  //
+  // El permiso se da sobre la columna completa y no celda por celda. Marcando
+  // solo las mil filas preparadas, escribir en la 1007 quedaba prohibido, y
+  // esas filas sí se importan: quien pegue una lista más larga se toparía con
+  // el aviso de hoja protegida a mitad de camino.
   columnas.forEach((columna, indice) => {
-    if (!columna.automatica) return;
     const numeroColumna = indice + 1;
+    const columnaExcel = ws.getColumn(numeroColumna);
+    columnaExcel.protection = { locked: Boolean(columna.automatica) };
+
+    if (!columna.automatica) return;
     for (
       let fila = FILA_INICIO_DATOS;
       fila < FILA_INICIO_DATOS + filas;
@@ -135,6 +147,39 @@ export function declararColumnas(
       };
       celda.font = { color: { argb: 'FF444444' } };
     }
+  });
+
+  // Título, instrucciones y encabezados se quedan bloqueados. Las columnas se
+  // localizan por su nombre, así que pisar la fila 6 rompe la importación.
+  for (let fila = 1; fila <= FILA_ENCABEZADOS; fila++) {
+    for (let col = 1; col <= columnas.length; col++) {
+      ws.getCell(fila, col).protection = { locked: true };
+    }
+  }
+}
+
+/**
+ * Deja la hoja de solo lectura salvo en las celdas de captura.
+ *
+ * Sin contraseña a propósito: es un seguro contra el borrón accidental de una
+ * fórmula, no un candado. Quien de verdad necesite tocarlas quita la
+ * protección desde Revisar › Desproteger hoja, sin pedirle nada a nadie.
+ */
+export async function protegerAutomaticas(ws: ExcelJS.Worksheet) {
+  await ws.protect('', {
+    selectLockedCells: true,
+    selectUnlockedCells: true,
+    // Que puedan ensanchar columnas, ordenar y filtrar: la hoja se protege
+    // para cuidar las fórmulas, no para estorbar.
+    formatCells: true,
+    formatColumns: true,
+    formatRows: true,
+    sort: true,
+    autoFilter: true,
+    insertRows: false,
+    insertColumns: false,
+    deleteRows: false,
+    deleteColumns: false,
   });
 }
 

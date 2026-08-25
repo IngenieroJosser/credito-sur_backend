@@ -13,6 +13,7 @@ import {
   FORMATO_FECHA,
   FORMATO_MONEDA,
   formulaEnColumna,
+  protegerAutomaticas,
   forzarRecalculo,
   hojaInicio,
   listaDesplegable,
@@ -34,6 +35,8 @@ export interface ArticuloReferencia {
   meses: number;
   precio: number;
   costo: number;
+  /** Unidades disponibles hoy: sirve para avisar antes de subir el archivo. */
+  stock: number;
 }
 
 export interface DatosReferenciaPlantilla {
@@ -51,19 +54,22 @@ export interface DatosReferenciaPlantilla {
 // lo opcional.
 const CLI = {
   accion: 1,
+  // Obligatorios
   cc: 2,
   nombres: 3,
   apellidos: 4,
   telefono: 5,
-  revision: 6,
-  correo: 7,
-  direccion: 8,
-  referencia: 9,
-  ref1Nombre: 10,
-  ref1Telefono: 11,
-  ref2Nombre: 12,
-  ref2Telefono: 13,
-  rutaCodigo: 14,
+  // Opcionales, de lo más útil a lo que casi no se usa
+  direccion: 6,
+  rutaCodigo: 7,
+  referencia: 8,
+  ref1Nombre: 9,
+  ref1Telefono: 10,
+  ref2Nombre: 11,
+  ref2Telefono: 12,
+  correo: 13,
+  // Automáticas, al final
+  revision: 14,
 };
 
 // ── Columnas de "Créditos de dinero" (préstamo en efectivo) ────────────────
@@ -77,25 +83,26 @@ const DIN = {
   cantidadCuotas: 6,
   fechaCredito: 7,
   tipoCarga: 8,
-  // Verificación
-  cliente: 9,
-  revision: 10,
+  // Cambia el cálculo del interés, así que va enseguida
+  tipoAmortizacion: 9,
+  // Lo ya cobrado, para créditos que vienen andando
+  cuotasPagadas: 10,
+  abonoAdicional: 11,
+  fechaUltimoPago: 12,
   // Opcionales
-  numeroCredito: 11,
-  tipoAmortizacion: 12,
   fechaPrimerCobro: 13,
-  notas: 14,
-  // Estado actual
-  cuotasPagadas: 15,
-  abonoAdicional: 16,
-  fechaUltimoPago: 17,
-  // Cálculos
+  numeroCredito: 14,
+  notas: 15,
+  // Automáticas, al final
+  cliente: 16,
+  revision: 17,
   plazoMesesAuto: 18,
   interesTotal: 19,
   totalPagar: 20,
   valorCuota: 21,
   yaAbonado: 22,
   saldoPendiente: 23,
+  movimiento: 24,
 };
 
 // ── Columnas de "Créditos de artículo" ─────────────────────────────────────
@@ -110,27 +117,28 @@ const ART = {
   frecuencia: 5,
   fechaCredito: 6,
   tipoCarga: 7,
-  // Verificación
-  cliente: 8,
-  articulo: 9,
-  revision: 10,
+  // Baja lo que queda por financiar, así que va enseguida
+  cuotaInicial: 8,
+  // Lo ya cobrado, para créditos que vienen andando
+  cuotasPagadas: 9,
+  abonoAdicional: 10,
+  fechaUltimoPago: 11,
   // Opcionales
-  numeroCredito: 11,
-  monto: 12,
-  cuotaInicial: 13,
-  fechaPrimerCobro: 14,
+  fechaPrimerCobro: 12,
+  monto: 13,
+  numeroCredito: 14,
   notas: 15,
-  // Estado actual
-  cuotasPagadas: 16,
-  abonoAdicional: 17,
-  fechaUltimoPago: 18,
-  // Cálculos
+  // Automáticas, al final
+  cliente: 16,
+  articulo: 17,
+  revision: 18,
   precioPlazo: 19,
   cantidadCuotasAuto: 20,
   totalPagar: 21,
   valorCuota: 22,
   yaAbonado: 23,
   saldoPendiente: 24,
+  movimiento: 25,
 };
 
 const COLUMNAS_CLIENTES: ColumnaPlantilla[] = [
@@ -144,22 +152,22 @@ const COLUMNAS_CLIENTES: ColumnaPlantilla[] = [
   { header: 'Nombres*', key: 'nombres', width: 22 },
   { header: 'Apellidos*', key: 'apellidos', width: 22 },
   { header: 'Teléfono*', key: 'telefono', width: 16 },
-  // Verificación
+  // Opcionales, de lo más útil a lo que casi no se usa
+  { header: 'Dirección', key: 'direccion', width: 28 },
+  { header: 'Ruta código', key: 'ruta_codigo', width: 14 },
+  { header: 'Punto de referencia', key: 'referencia', width: 24 },
+  { header: 'Ref1 Nombre', key: 'referencia1_nombre', width: 20 },
+  { header: 'Ref1 Teléfono', key: 'referencia1_telefono', width: 16 },
+  { header: 'Ref2 Nombre', key: 'referencia2_nombre', width: 20 },
+  { header: 'Ref2 Teléfono', key: 'referencia2_telefono', width: 16 },
+  { header: 'Correo', key: 'correo', width: 24 },
+  // Automáticas, al final
   {
     header: 'Revisión de cédula (automático)',
     key: 'revision_cc',
     width: 38,
     automatica: true,
   },
-  // Opcionales
-  { header: 'Correo', key: 'correo', width: 24 },
-  { header: 'Dirección', key: 'direccion', width: 28 },
-  { header: 'Punto de referencia', key: 'referencia', width: 24 },
-  { header: 'Ref1 Nombre', key: 'referencia1_nombre', width: 20 },
-  { header: 'Ref1 Teléfono', key: 'referencia1_telefono', width: 16 },
-  { header: 'Ref2 Nombre', key: 'referencia2_nombre', width: 20 },
-  { header: 'Ref2 Teléfono', key: 'referencia2_telefono', width: 16 },
-  { header: 'Ruta código', key: 'ruta_codigo', width: 14 },
 ];
 
 const COLUMNAS_CREDITOS_DINERO: ColumnaPlantilla[] = [
@@ -177,30 +185,9 @@ const COLUMNAS_CREDITOS_DINERO: ColumnaPlantilla[] = [
     numFmt: FORMATO_FECHA,
   },
   { header: 'Tipo carga*', key: 'tipo_carga', width: 14 },
-  // Verificación
-  {
-    header: 'Cliente (automático)',
-    key: 'cliente_auto',
-    width: 28,
-    automatica: true,
-  },
-  {
-    header: 'Revisión (automático)',
-    key: 'revision_auto',
-    width: 42,
-    automatica: true,
-  },
-  // Opcionales
-  { header: 'Número de crédito', key: 'numero_prestamo', width: 18 },
+  // Cambia el cálculo del interés, así que va enseguida
   { header: 'Tipo amortización', key: 'tipo_amortizacion', width: 18 },
-  {
-    header: 'Fecha primer cobro',
-    key: 'fecha_primer_cobro',
-    width: 17,
-    numFmt: FORMATO_FECHA,
-  },
-  { header: 'Notas', key: 'notas', width: 26 },
-  // Estado actual del crédito
+  // Lo ya cobrado, para créditos que vienen andando
   { header: 'Cuotas pagadas', key: 'cuotas_pagadas', width: 14 },
   {
     header: 'Abono adicional',
@@ -214,7 +201,28 @@ const COLUMNAS_CREDITOS_DINERO: ColumnaPlantilla[] = [
     width: 16,
     numFmt: FORMATO_FECHA,
   },
-  // Cálculos
+  // Opcionales
+  {
+    header: 'Fecha primer cobro',
+    key: 'fecha_primer_cobro',
+    width: 17,
+    numFmt: FORMATO_FECHA,
+  },
+  { header: 'Número de crédito', key: 'numero_prestamo', width: 18 },
+  { header: 'Notas', key: 'notas', width: 26 },
+  // Automáticas, al final
+  {
+    header: 'Cliente encontrado (automático)',
+    key: 'cliente_auto',
+    width: 28,
+    automatica: true,
+  },
+  {
+    header: 'Revisión de la fila (automático)',
+    key: 'revision_auto',
+    width: 42,
+    automatica: true,
+  },
   {
     header: 'Plazo en meses (automático)',
     key: 'plazo_meses_auto',
@@ -257,13 +265,19 @@ const COLUMNAS_CREDITOS_DINERO: ColumnaPlantilla[] = [
     automatica: true,
     numFmt: FORMATO_MONEDA,
   },
+  {
+    header: 'Al confirmar (automático)',
+    key: 'movimiento_auto',
+    width: 46,
+    automatica: true,
+  },
 ];
 
 const COLUMNAS_CREDITOS_ARTICULO: ColumnaPlantilla[] = [
   { header: 'Acción', key: 'accion', width: 14 },
   // Obligatorios
   { header: 'CC cliente*', key: 'cc_cliente', width: 16 },
-  { header: 'Producto código*', key: 'producto_codigo', width: 18 },
+  { header: 'Código del artículo*', key: 'producto_codigo', width: 20 },
   { header: 'Plazo meses*', key: 'plazo_meses', width: 13 },
   { header: 'Frecuencia pago*', key: 'frecuencia_pago', width: 16 },
   {
@@ -273,42 +287,14 @@ const COLUMNAS_CREDITOS_ARTICULO: ColumnaPlantilla[] = [
     numFmt: FORMATO_FECHA,
   },
   { header: 'Tipo carga*', key: 'tipo_carga', width: 14 },
-  // Verificación
-  {
-    header: 'Cliente (automático)',
-    key: 'cliente_auto',
-    width: 28,
-    automatica: true,
-  },
-  {
-    header: 'Artículo (automático)',
-    key: 'articulo_auto',
-    width: 28,
-    automatica: true,
-  },
-  {
-    header: 'Revisión (automático)',
-    key: 'revision_auto',
-    width: 42,
-    automatica: true,
-  },
-  // Opcionales
-  { header: 'Número de crédito', key: 'numero_prestamo', width: 18 },
-  { header: 'Monto', key: 'monto', width: 15, numFmt: FORMATO_MONEDA },
+  // Baja lo que queda por financiar, así que va enseguida
   {
     header: 'Cuota inicial',
     key: 'cuota_inicial',
     width: 14,
     numFmt: FORMATO_MONEDA,
   },
-  {
-    header: 'Fecha primer cobro',
-    key: 'fecha_primer_cobro',
-    width: 17,
-    numFmt: FORMATO_FECHA,
-  },
-  { header: 'Notas', key: 'notas', width: 26 },
-  // Estado actual del crédito
+  // Lo ya cobrado, para créditos que vienen andando
   { header: 'Cuotas pagadas', key: 'cuotas_pagadas', width: 14 },
   {
     header: 'Abono adicional',
@@ -322,7 +308,35 @@ const COLUMNAS_CREDITOS_ARTICULO: ColumnaPlantilla[] = [
     width: 16,
     numFmt: FORMATO_FECHA,
   },
-  // Cálculos
+  // Opcionales
+  {
+    header: 'Fecha primer cobro',
+    key: 'fecha_primer_cobro',
+    width: 17,
+    numFmt: FORMATO_FECHA,
+  },
+  { header: 'Monto', key: 'monto', width: 15, numFmt: FORMATO_MONEDA },
+  { header: 'Número de crédito', key: 'numero_prestamo', width: 18 },
+  { header: 'Notas', key: 'notas', width: 26 },
+  // Automáticas, al final
+  {
+    header: 'Cliente encontrado (automático)',
+    key: 'cliente_auto',
+    width: 28,
+    automatica: true,
+  },
+  {
+    header: 'Artículo encontrado (automático)',
+    key: 'articulo_auto',
+    width: 28,
+    automatica: true,
+  },
+  {
+    header: 'Revisión de la fila (automático)',
+    key: 'revision_auto',
+    width: 42,
+    automatica: true,
+  },
   {
     header: 'Precio del plazo (automático)',
     key: 'precio_plazo_auto',
@@ -363,6 +377,12 @@ const COLUMNAS_CREDITOS_ARTICULO: ColumnaPlantilla[] = [
     width: 17,
     automatica: true,
     numFmt: FORMATO_MONEDA,
+  },
+  {
+    header: 'Al confirmar (automático)',
+    key: 'movimiento_auto',
+    width: 46,
+    automatica: true,
   },
 ];
 
@@ -445,6 +465,39 @@ function formulaYaAbonado(
   );
 }
 
+/**
+ * Qué va a pasar con la caja al confirmar esta fila, dicho en una frase y con
+ * la cifra. La decisión sale del tipo de carga, así que aquí se traduce a algo
+ * que se entienda sin saber cómo funciona el importador por dentro.
+ */
+function formulaMovimientoDinero(colTipoCarga: number, colMonto: number) {
+  const carga = ref(colTipoCarga);
+  const monto = ref(colMonto);
+  return (
+    `IF(${carga}="","",` +
+    `IF(${carga}="OPERATIVA",` +
+    `IF(${monto}="","Saldrá el monto del crédito de la Caja de Oficina",` +
+    `"Saldrán "&TEXT(${monto},"$#,##0")&" de la Caja de Oficina, porque el crédito se entrega hoy"),` +
+    `"No mueve caja: el crédito ya venía cobrándose"))`
+  );
+}
+
+function formulaMovimientoArticulo(
+  colTipoCarga: number,
+  colCuotaInicial: number,
+) {
+  const carga = ref(colTipoCarga);
+  const inicial = ref(colCuotaInicial);
+  return (
+    `IF(${carga}="","",` +
+    `IF(${carga}="OPERATIVA",` +
+    `"Sale 1 unidad del inventario, porque el artículo se entrega hoy"&` +
+    `IF(IF(${inicial}="",0,${inicial})>0,` +
+    `" · Entran "&TEXT(${inicial},"$#,##0")&" de cuota inicial a la Caja de Oficina",""),` +
+    `"No mueve caja ni inventario: el crédito ya venía cobrándose"))`
+  );
+}
+
 function formulaSaldo(colTotal: number, colAbonado: number): string {
   const total = ref(colTotal);
   const abonado = ref(colAbonado);
@@ -453,32 +506,55 @@ function formulaSaldo(colTotal: number, colAbonado: number): string {
 
 // ── Tramos reutilizables de la columna Revisión ────────────────────────────
 
-function creditoYaExiste(colNumero: number): string {
+/** Un aviso de la columna Revisión: cuándo salta y qué dice. */
+interface TramoRevision {
+  condicion: string;
+  mensaje: string;
+}
+
+/**
+ * Encadena los avisos y cierra los paréntesis contándolos.
+ *
+ * Antes el cierre era un `")))))"` escrito a mano al final de la cadena, lejos
+ * de los tramos que lo abrían. Al agregar un aviso el conteo dejó de cuadrar y
+ * la fórmula quedó con un paréntesis de menos: Excel la descartaba entera y
+ * abría el archivo pidiendo repararlo. Contándolos aquí, agregar o quitar un
+ * aviso no puede volver a descuadrarlo.
+ */
+function cadenaRevision(tramos: TramoRevision[], siTodoVaBien: string): string {
+  const aperturas = tramos
+    .map(({ condicion, mensaje }) => `IF(${condicion},${mensaje},`)
+    .join('');
+  return aperturas + siTodoVaBien + ')'.repeat(tramos.length);
+}
+
+function creditoYaExiste(colNumero: number): TramoRevision {
   const numero = ref(colNumero);
-  return (
-    `IF(AND(${numero}<>"",COUNTIF('BD Préstamos'!$A:$A,${numero})>0),` +
-    `"⚠ El número de crédito ya existe en el sistema",`
-  );
+  return {
+    condicion: `AND(${numero}<>"",COUNTIF('BD Préstamos'!$A:$A,${numero})>0)`,
+    mensaje: '"⚠ El número de crédito ya existe en el sistema"',
+  };
 }
 
 function operativaConAbonos(
   colTipoCarga: number,
   colCuotasPagadas: number,
-): string {
-  return (
-    `IF(AND(${ref(colTipoCarga)}="OPERATIVA",` +
-    `IF(${ref(colCuotasPagadas)}="",0,${ref(colCuotasPagadas)})>0),` +
-    `"⚠ Un crédito OPERATIVA no puede traer cuotas pagadas",`
-  );
+): TramoRevision {
+  return {
+    condicion:
+      `AND(${ref(colTipoCarga)}="OPERATIVA",` +
+      `IF(${ref(colCuotasPagadas)}="",0,${ref(colCuotasPagadas)})>0)`,
+    mensaje: '"⚠ Un crédito OPERATIVA no puede traer cuotas pagadas"',
+  };
 }
 
-function abonoSuperaTotal(colAbonado: number, colTotal: number): string {
+function abonoSuperaTotal(colAbonado: number, colTotal: number): TramoRevision {
   const abonado = ref(colAbonado);
   const total = ref(colTotal);
-  return (
-    `IF(AND(ISNUMBER(${abonado}),ISNUMBER(${total}),${abonado}>${total}),` +
-    `"⚠ Lo abonado supera el total del crédito",`
-  );
+  return {
+    condicion: `AND(ISNUMBER(${abonado}),ISNUMBER(${total}),${abonado}>${total})`,
+    mensaje: '"⚠ Lo abonado supera el total del crédito"',
+  };
 }
 
 function hojasDeReferencia(
@@ -504,9 +580,11 @@ function hojasDeReferencia(
   const wsArticulos = workbook.addWorksheet('BD Artículos', {
     state: 'veryHidden',
   });
-  ['Clave', 'Código', 'Nombre', 'Meses', 'Precio', 'Costo'].forEach((h, i) => {
-    wsArticulos.getCell(1, i + 1).value = h;
-  });
+  ['Clave', 'Código', 'Nombre', 'Meses', 'Precio', 'Costo', 'Stock'].forEach(
+    (h, i) => {
+      wsArticulos.getCell(1, i + 1).value = h;
+    },
+  );
   wsArticulos.getRow(1).font = { bold: true };
   wsArticulos.getColumn(1).width = 22;
   wsArticulos.getColumn(2).width = 18;
@@ -519,6 +597,7 @@ function hojasDeReferencia(
     wsArticulos.getCell(`D${fila}`).value = a.meses;
     wsArticulos.getCell(`E${fila}`).value = a.precio;
     wsArticulos.getCell(`F${fila}`).value = a.costo;
+    wsArticulos.getCell(`G${fila}`).value = a.stock;
   });
 
   const wsPrestamos = workbook.addWorksheet('BD Préstamos', {
@@ -598,7 +677,7 @@ export async function generarPlantillaClientesCreditos(
     'Solo las columnas marcadas con asterisco (*), que están todas al principio de cada hoja.',
     'Clientes: CC, Nombres, Apellidos y Teléfono.',
     'Créditos de dinero: CC cliente, Monto, Tasa interés, Frecuencia, Cantidad cuotas, Fecha crédito y Tipo carga.',
-    'Créditos de artículo: CC cliente, Producto código, Plazo meses, Frecuencia, Fecha crédito y Tipo carga.',
+    'Créditos de artículo: CC cliente, Código del artículo, Plazo meses, Frecuencia, Fecha crédito y Tipo carga.',
     '',
     '# Para qué sirve el "Número de crédito"',
     'Es el identificador del crédito. Puede dejarlo vacío: el sistema lo genera solo.',
@@ -649,9 +728,33 @@ export async function generarPlantillaClientesCreditos(
     '# Ruta',
     'Si escribe el código de una ruta activa, el cliente queda asignado a esa ruta con su cobrador. Un cliente solo puede estar en una ruta a la vez.',
     '',
-    '# Tipos de carga',
-    '• HISTORICA: créditos que ya existían. No mueve dinero de caja.',
-    '• OPERATIVA: créditos nuevos que se entregan al confirmar. En los de dinero descuenta de la caja de oficina; en los de artículo descuenta una unidad del inventario y registra la venta.',
+    '# Cuándo se mueve la plata (léalo antes de confirmar)',
+    'Nada se mueve por subir el archivo. Revisar la plantilla es seguro: la caja y el inventario solo se tocan cuando usted le da CONFIRMAR.',
+    '',
+    'Y lo decide una sola columna: Tipo carga. No hay nada más que escribir.',
+    '',
+    'HISTORICA → no se mueve nada.',
+    '   Es un crédito que ya venía cobrándose. Esa plata se entregó antes de',
+    '   usar el sistema, así que registrar hoy la salida inventaría un egreso',
+    '   que nunca ocurrió y le descuadraría la caja. Solo se crea el crédito',
+    '   con sus cuotas y lo que ya se le abonó.',
+    '',
+    'OPERATIVA en un crédito de dinero → sale efectivo de la Caja de Oficina.',
+    '   Es un crédito que usted entrega hoy. Al confirmar se registra el egreso',
+    '   y su asiento contable, igual que si lo hubiera hecho desde la pantalla',
+    '   de crear crédito.',
+    '',
+    'OPERATIVA en un crédito de artículo → sale mercancía, no efectivo.',
+    '   Se descuenta una unidad del inventario y se registra la venta. Si el',
+    '   cliente dio cuota inicial, esa plata sí entra como ingreso a la Caja',
+    '   de Oficina.',
+    '',
+    '# Antes de mover un peso, el sistema revisa',
+    'Suma lo que va a desembolsar por todos los créditos OPERATIVA del archivo y lo compara contra el saldo de la Caja de Oficina. Si no alcanza, no importa nada: le avisa cuánto hay y cuánto hacía falta. Así diez créditos de un millón no pasan contra una caja que tiene tres.',
+    'Con los artículos hace lo mismo con el inventario: si a uno no le queda stock, esa fila detiene la importación en vez de dejar el stock en negativo.',
+    '',
+    '# Si algo no cuadra, no se importa a medias',
+    'Todo el archivo entra o no entra nada. Si una fila hace fallar la confirmación, se deshace lo ya hecho y la caja queda como estaba: no se quedan cinco créditos cargados y cinco afuera.',
     '',
     '# El riesgo no se importa',
     'No hay columna de nivel de riesgo: el sistema lo calcula solo con los días de mora, y lo actualiza en cada pago. Cualquier valor que se pusiera aquí quedaría pisado.',
@@ -665,11 +768,12 @@ export async function generarPlantillaClientesCreditos(
     'Gestión de Clientes',
     'Una fila por cliente NUEVO. Los clientes que ya están en el sistema no se registran aquí.',
     '📝 Escriba los datos desde la fila 7 hacia abajo. La columna "Revisión de cédula" avisa si la cédula ya existe.',
-    colLetra(CLI.rutaCodigo),
+    colLetra(CLI.revision),
   );
 
   etiquetarGrupo(wsClientes, CLI.cc, CLI.telefono, 'DATOS OBLIGATORIOS');
-  etiquetarGrupo(wsClientes, CLI.correo, CLI.rutaCodigo, 'DATOS OPCIONALES');
+  etiquetarGrupo(wsClientes, CLI.direccion, CLI.correo, 'DATOS OPCIONALES');
+  etiquetarGrupo(wsClientes, CLI.revision, CLI.revision, 'VERIFICACIÓN');
 
   [CLI.cc, CLI.telefono, CLI.ref1Telefono, CLI.ref2Telefono].forEach((col) => {
     wsClientes.getColumn(col).numFmt = '@';
@@ -687,7 +791,8 @@ export async function generarPlantillaClientesCreditos(
   resaltarSiContiene(wsClientes, CLI.revision, '⚠');
 
   congelarEncabezados(wsClientes, CLI.cc);
-  activarFiltro(wsClientes, CLI.rutaCodigo);
+  activarFiltro(wsClientes, CLI.revision);
+  await protegerAutomaticas(wsClientes);
 
   // ── Hoja Créditos de dinero ───────────────────────────────────────────────
   const wsDinero = workbook.addWorksheet('Créditos de dinero');
@@ -697,12 +802,18 @@ export async function generarPlantillaClientesCreditos(
     'Créditos de dinero (préstamo en efectivo)',
     'Una fila por préstamo. Admite créditos nuevos y créditos que ya llevan cuotas pagadas.',
     '📝 Escriba los datos desde la fila 7 hacia abajo. Las columnas grises se calculan solas.',
-    colLetra(DIN.saldoPendiente),
+    colLetra(DIN.movimiento),
   );
 
   etiquetarGrupo(wsDinero, DIN.cc, DIN.tipoCarga, 'DATOS OBLIGATORIOS');
+  etiquetarGrupo(
+    wsDinero,
+    DIN.tipoAmortizacion,
+    DIN.tipoAmortizacion,
+    'MÉTODO',
+  );
+  etiquetarGrupo(wsDinero, DIN.fechaPrimerCobro, DIN.notas, 'DATOS OPCIONALES');
   etiquetarGrupo(wsDinero, DIN.cliente, DIN.revision, 'VERIFICACIÓN');
-  etiquetarGrupo(wsDinero, DIN.numeroCredito, DIN.notas, 'DATOS OPCIONALES');
   etiquetarGrupo(
     wsDinero,
     DIN.cuotasPagadas,
@@ -712,7 +823,7 @@ export async function generarPlantillaClientesCreditos(
   etiquetarGrupo(
     wsDinero,
     DIN.plazoMesesAuto,
-    DIN.saldoPendiente,
+    DIN.movimiento,
     'CÁLCULOS AUTOMÁTICOS',
   );
 
@@ -778,19 +889,36 @@ export async function generarPlantillaClientesCreditos(
 
   formulaEnColumna(
     wsDinero,
+    DIN.movimiento,
+    formulaMovimientoDinero(DIN.tipoCarga, DIN.monto),
+  );
+
+  formulaEnColumna(
+    wsDinero,
     DIN.revision,
-    `IF(${ref(DIN.cc)}="","",` +
-      `IF(${ref(DIN.monto)}="","⚠ Falta el monto",` +
-      `IF(${ref(DIN.tasaInteres)}="","⚠ Falta la tasa de interés",` +
-      creditoYaExiste(DIN.numeroCredito) +
-      operativaConAbonos(DIN.tipoCarga, DIN.cuotasPagadas) +
-      abonoSuperaTotal(DIN.yaAbonado, DIN.totalPagar) +
-      `"OK")))))`,
+    cadenaRevision(
+      [
+        { condicion: `${ref(DIN.cc)}=""`, mensaje: '""' },
+        {
+          condicion: `${ref(DIN.monto)}=""`,
+          mensaje: '"⚠ Falta el monto"',
+        },
+        {
+          condicion: `${ref(DIN.tasaInteres)}=""`,
+          mensaje: '"⚠ Falta la tasa de interés"',
+        },
+        creditoYaExiste(DIN.numeroCredito),
+        operativaConAbonos(DIN.tipoCarga, DIN.cuotasPagadas),
+        abonoSuperaTotal(DIN.yaAbonado, DIN.totalPagar),
+      ],
+      '"OK"',
+    ),
   );
   resaltarSiContiene(wsDinero, DIN.revision, '⚠');
 
   congelarEncabezados(wsDinero, DIN.cc);
-  activarFiltro(wsDinero, DIN.saldoPendiente);
+  activarFiltro(wsDinero, DIN.movimiento);
+  await protegerAutomaticas(wsDinero);
 
   // ── Hoja Créditos de artículo ─────────────────────────────────────────────
   const wsArticulo = workbook.addWorksheet('Créditos de artículo');
@@ -800,12 +928,18 @@ export async function generarPlantillaClientesCreditos(
     'Créditos de artículo',
     'Una fila por crédito de artículo. El precio del plazo ya incluye el financiamiento: aquí no se escribe tasa.',
     '📝 Escriba los datos desde la fila 7 hacia abajo. Las columnas grises se calculan solas.',
-    colLetra(ART.saldoPendiente),
+    colLetra(ART.movimiento),
   );
 
   etiquetarGrupo(wsArticulo, ART.cc, ART.tipoCarga, 'DATOS OBLIGATORIOS');
+  etiquetarGrupo(wsArticulo, ART.cuotaInicial, ART.cuotaInicial, 'INICIAL');
+  etiquetarGrupo(
+    wsArticulo,
+    ART.fechaPrimerCobro,
+    ART.notas,
+    'DATOS OPCIONALES',
+  );
   etiquetarGrupo(wsArticulo, ART.cliente, ART.revision, 'VERIFICACIÓN');
-  etiquetarGrupo(wsArticulo, ART.numeroCredito, ART.notas, 'DATOS OPCIONALES');
   etiquetarGrupo(
     wsArticulo,
     ART.cuotasPagadas,
@@ -815,7 +949,7 @@ export async function generarPlantillaClientesCreditos(
   etiquetarGrupo(
     wsArticulo,
     ART.precioPlazo,
-    ART.saldoPendiente,
+    ART.movimiento,
     'CÁLCULOS AUTOMÁTICOS',
   );
 
@@ -876,20 +1010,50 @@ export async function generarPlantillaClientesCreditos(
 
   formulaEnColumna(
     wsArticulo,
+    ART.movimiento,
+    formulaMovimientoArticulo(ART.tipoCarga, ART.cuotaInicial),
+  );
+
+  formulaEnColumna(
+    wsArticulo,
     ART.revision,
-    `IF(${ref(ART.cc)}="","",` +
-      `IF(${ref(ART.productoCodigo)}="","⚠ Falta el código del artículo",` +
-      `IF(${ref(ART.plazoMeses)}="","⚠ Falta el plazo en meses",` +
-      `IF(NOT(ISNUMBER(${ref(ART.precioPlazo)})),"⚠ El artículo no tiene precio para ese plazo",` +
-      creditoYaExiste(ART.numeroCredito) +
-      operativaConAbonos(ART.tipoCarga, ART.cuotasPagadas) +
-      abonoSuperaTotal(ART.yaAbonado, ART.totalPagar) +
-      `"OK"))))))`,
+    cadenaRevision(
+      [
+        { condicion: `${ref(ART.cc)}=""`, mensaje: '""' },
+        {
+          condicion: `${ref(ART.productoCodigo)}=""`,
+          mensaje: '"⚠ Falta el código del artículo"',
+        },
+        {
+          condicion: `${ref(ART.plazoMeses)}=""`,
+          mensaje: '"⚠ Falta el plazo en meses"',
+        },
+        {
+          condicion: `NOT(ISNUMBER(${ref(ART.precioPlazo)}))`,
+          mensaje: '"⚠ El artículo no tiene precio para ese plazo"',
+        },
+        // Un crédito OPERATIVA entrega el artículo al confirmar. Si no queda
+        // stock, esa fila hace fallar toda la importación, así que conviene
+        // saberlo aquí y no después de subir el archivo.
+        {
+          condicion:
+            `AND(${ref(ART.tipoCarga)}="OPERATIVA",` +
+            `IFERROR(VLOOKUP(${ref(ART.productoCodigo)},'BD Artículos'!$B:$G,6,FALSE),0)<1)`,
+          mensaje:
+            '"⚠ No queda stock de este artículo: la importación se detendría"',
+        },
+        creditoYaExiste(ART.numeroCredito),
+        operativaConAbonos(ART.tipoCarga, ART.cuotasPagadas),
+        abonoSuperaTotal(ART.yaAbonado, ART.totalPagar),
+      ],
+      '"OK"',
+    ),
   );
   resaltarSiContiene(wsArticulo, ART.revision, '⚠');
 
   congelarEncabezados(wsArticulo, ART.cc);
-  activarFiltro(wsArticulo, ART.saldoPendiente);
+  activarFiltro(wsArticulo, ART.movimiento);
+  await protegerAutomaticas(wsArticulo);
 
   // ── Hojas de apoyo ────────────────────────────────────────────────────────
   hojaValores(workbook, datos);
@@ -930,39 +1094,69 @@ export async function generarPlantillaClientesCreditos(
   wsEjemplos.getCell('A1').value = 'GUÍA DE EJEMPLOS';
   wsEjemplos.getCell('A1').font = { bold: true, size: 14 };
 
+  // Cada ejemplo nombra las columnas tal como salen en la hoja. Antes esta
+  // guía hablaba de columnas que ya no existen —código de importación, nivel
+  // de riesgo, tipo de crédito, plazo— y mandaba a llenar cosas que no están.
   const bloques: Array<[string, string]> = [
-    ['CLIENTE NUEVO', ''],
-    ['Acción / Código importación', 'CREAR / CLI-001'],
-    ['CC / Nombres / Apellidos', '12345678 / Juan / Pérez'],
-    ['Teléfono / Nivel riesgo', '3001234567 / Mínimo'],
+    ['HOJA "Clientes" — un cliente nuevo', ''],
+    ['CC cliente*', '12345678'],
+    ['Nombres* / Apellidos*', 'Juan Carlos / Pérez Gómez'],
+    ['Teléfono*', '3001234567'],
+    ['Ruta código', 'El código de la ruta, si va a quedar asignado a una'],
+    ['El resto', 'Opcional: correo, dirección, referencias'],
     ['', ''],
-    ['CRÉDITO HISTÓRICO NUEVO (sin abonos)', ''],
-    ['Código / Número préstamo / CC', 'CRE-001 / IMP-001 / 12345678'],
-    ['Tipo / Monto / Tasa', 'EFECTIVO / 500.000 / 10'],
-    ['Frecuencia / Cuotas / Plazo', 'DIARIO / 30 / 1'],
-    ['Fecha crédito / Tipo carga', '2026-05-01 / HISTORICA'],
-    ['Cuotas pagadas / Abono adicional', '0 / (vacío)'],
+
+    ['HOJA "Créditos de dinero" — crédito nuevo que se entrega hoy', ''],
+    ['CC cliente*', '12345678'],
+    ['Monto* / Tasa interés*', '500.000 / 10'],
+    ['Frecuencia pago* / Cantidad cuotas*', 'DIARIO / 30'],
+    ['Fecha crédito* / Tipo carga*', '2026-05-01 / OPERATIVA'],
+    ['Cuotas pagadas', 'Vacío: un crédito que se entrega hoy no trae abonos'],
+    [
+      'Lo que aparece solo',
+      'Plazo 1 mes · Interés 50.000 · Total 550.000 · Cuota 18.333',
+    ],
     ['', ''],
-    ['CRÉDITO HISTÓRICO YA AVANZADO', ''],
-    ['Código / Número préstamo / CC', 'CRE-002 / IMP-002 / 12345678'],
-    ['Tipo / Monto / Tasa', 'EFECTIVO / 600.000 / 10'],
-    ['Frecuencia / Cuotas / Plazo', 'DIARIO / 30 / 1'],
-    ['Fecha crédito / Tipo carga', '2026-06-01 / HISTORICA'],
+
+    ['HOJA "Créditos de dinero" — crédito que ya venía cobrándose', ''],
+    ['CC cliente*', '12345678'],
+    ['Monto* / Tasa interés*', '600.000 / 10'],
+    ['Frecuencia pago* / Cantidad cuotas*', 'DIARIO / 30'],
+    ['Fecha crédito* / Tipo carga*', '2026-06-01 / HISTORICA'],
     [
       'Cuotas pagadas / Abono adicional',
-      '12 / 10.000  → 12 cuotas quedan PAGADAS y la 13 queda PARCIAL',
+      '12 / 10.000  → las 12 primeras quedan PAGADAS y la 13 PARCIAL',
     ],
     ['Fecha último pago', '2026-07-10'],
     ['', ''],
-    ['CRÉDITO OPERATIVO (desembolsa hoy)', ''],
-    ['Código / Número préstamo / CC', 'CRE-003 / IMP-003 / 12345678'],
-    ['Tipo carga', 'OPERATIVA'],
-    ['Cuotas pagadas', 'Debe ir vacío o en 0'],
+
+    ['HOJA "Créditos de artículo"', ''],
+    ['CC cliente*', '12345678'],
+    [
+      'Código del artículo*',
+      'CEL-A15  (el mismo código que tiene en el inventario)',
+    ],
+    ['Plazo meses*', '6  (debe ser un plazo con precio en ese artículo)'],
+    ['Frecuencia pago* / Fecha crédito*', 'SEMANAL / 2026-08-01'],
+    ['Tipo carga*', 'OPERATIVA'],
+    ['Cuota inicial', 'Lo que el cliente abonó al llevárselo, si dio algo'],
+    [
+      'Aquí no se escribe',
+      'Ni monto ni tasa: salen del precio del plazo, que ya trae el financiamiento',
+    ],
     ['', ''],
+
     ['¿Y el descuento de caja?', ''],
     [
       'No hay que escribirlo',
       'Sale del tipo de carga: OPERATIVA entrega la plata hoy y descuenta de la caja; HISTORICA es un crédito que ya venía andando y no la toca.',
+    ],
+    ['', ''],
+
+    ['¿Y el número de crédito?', ''],
+    [
+      'Puede dejarlo vacío',
+      'El sistema lo genera. Escríbalo solo para conservar su numeración anterior, o para ACTUALIZAR un crédito ya cargado.',
     ],
   ];
 
