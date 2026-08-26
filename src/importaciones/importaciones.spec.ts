@@ -1254,9 +1254,14 @@ describe('Las fórmulas del Excel dan lo mismo que el sistema', () => {
     cuotas: number,
     plazoMeses: number,
   ) => {
-    // =ROUND(monto*(tasa/100)*MAX(1,plazo),0)
+    // =ROUND(monto*tasa*MAX(1,plazo)/100,0)
+    //
+    // El orden importa. Dividir la tasa primero da un residuo de coma flotante
+    // distinto, y en 1 de cada 450 casos el redondeo cae para el otro lado.
+    // Esta transcripción tenía la división adelante y por eso podía pasar
+    // aunque la plantilla se hubiera separado del sistema.
     const interesTotal = Math.round(
-      monto * (tasa / 100) * Math.max(1, plazoMeses),
+      (monto * tasa * Math.max(1, plazoMeses)) / 100,
     );
     // =monto+interés
     const totalPagar = monto + interesTotal;
