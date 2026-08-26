@@ -214,3 +214,65 @@ describe('NotificacionesService', () => {
     });
   });
 });
+
+describe('Las alertas por rol salen también por push', () => {
+  // `notifyRolesDeduped` no llama a `create` directamente sino a
+  // `createDeduped`, y ahí es fácil perder el push sin darse cuenta. La alerta
+  // de integridad contable depende de esto para llegarle a alguien.
+  it('la primera alerta del día dispara push a cada destinatario', async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        NotificacionesService,
+        {
+          provide: PrismaService,
+          useValue: {
+            notificacion: {
+              create: (jest.fn() as any).mockImplementation(
+                ({ data }: any) => ({ id: 'n-1', ...data }),
+              ),
+              // Nadie tiene todavía una alerta con esa clave.
+              findFirst: (jest.fn() as any).mockResolvedValue(null),
+            },
+            usuario: {
+              findMany: (jest.fn() as any).mockResolvedValue([
+                { id: 'contador-1' },
+                { id: 'admin-1' },
+              ]),
+            },
+          },
+        },
+        {
+          provide: NotificacionesGateway,
+          useValue: {
+            enviarNotificacionAUsuario: jest.fn() as any,
+            notificarActualizacion: jest.fn() as any,
+          },
+        },
+        {
+          provide: PushService,
+          useValue: {
+            sendPushNotification: (jest.fn() as any).mockResolvedValue(
+              undefined,
+            ),
+          },
+        },
+      ],
+    }).compile();
+
+    const servicio = module.get<NotificacionesService>(NotificacionesService);
+    const push = module.get<PushService>(PushService);
+
+    await servicio.notifyRolesDeduped({
+      roles: [RolUsuario.CONTADOR, RolUsuario.ADMIN],
+      titulo: 'Alerta de Integridad Contable',
+      mensaje: 'Balance global descuadrado.',
+      dedupeKey: 'integridad-contable:2026-08-26',
+    });
+
+    expect(push.sendPushNotification).toHaveBeenCalledTimes(2);
+    const destinatarios = (push.sendPushNotification as any).mock.calls.map(
+      ([argumento]: any[]) => argumento.userId,
+    );
+    expect(destinatarios.sort()).toEqual(['admin-1', 'contador-1']);
+  });
+});
