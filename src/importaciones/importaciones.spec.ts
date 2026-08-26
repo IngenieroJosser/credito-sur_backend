@@ -1974,3 +1974,79 @@ describe('La cuota inicial baja lo que se financia', () => {
     expect(formula).toContain('MAX(0,');
   });
 });
+
+describe('La cuota inicial no puede comerse el precio', () => {
+  const conArticulo = {
+    clientes: [clienteEnBd],
+    productos: [
+      {
+        codigo: 'TV-43',
+        nombre: 'Smart TV 43',
+        stock: 5,
+        precios: [{ meses: 6, precio: 980000 }],
+      },
+    ],
+  };
+
+  const conInicial = (inicial: number) =>
+    validarCreditoArticulo(
+      {
+        'CC cliente': '12345678',
+        'Código del artículo': 'TV-43',
+        'Plazo meses': 6,
+        'Frecuencia pago': 'QUINCENAL',
+        'Fecha crédito': '2026-08-01',
+        'Tipo carga': 'OPERATIVA',
+        'Cuota inicial': inicial,
+      },
+      conArticulo,
+    );
+
+  it('dice que el problema es la inicial, no el monto', async () => {
+    // Antes caía en la validación genérica y salía "Debe ser un número mayor a
+    // 0" sobre la columna Monto, que el usuario ni había llenado.
+    const resultado = await conInicial(1_500_000);
+
+    expect(resultado.errores).toHaveLength(1);
+    const error = resultado.errores[0];
+    expect(error.campo).toBe('cuota_inicial');
+    expect(error.mensaje).toContain('1500000');
+    expect(error.mensaje).toContain('980000');
+    expect(resultado.creditos ?? []).toHaveLength(0);
+  });
+
+  it('también avisa cuando la inicial iguala el precio', async () => {
+    const resultado = await conInicial(980000);
+
+    expect(resultado.errores).toHaveLength(1);
+    expect(resultado.errores[0].campo).toBe('cuota_inicial');
+    expect(resultado.errores[0].mensaje).toContain('venta de contado');
+  });
+
+  it('una inicial normal sigue pasando sin ruido', async () => {
+    const resultado = await conInicial(150000);
+
+    expect(resultado.errores).toHaveLength(0);
+    expect(resultado.creditos?.[0].monto).toBe(830000);
+  });
+
+  it('el Excel lo avisa antes de subir el archivo', async () => {
+    const { data } =
+      await generarPlantillaClientesCreditos(datosPlantillaVacios);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(data as any);
+    const hoja = workbook.getWorksheet('Créditos de artículo')!;
+
+    let columna = 0;
+    hoja.getRow(6).eachCell({ includeEmpty: false }, (celda, n) => {
+      if (normalizarEncabezado(celda.value).startsWith('REVISION DE LA FILA')) {
+        columna = n;
+      }
+    });
+    const formula = String(
+      (hoja.getCell(7, columna).value as any)?.formula || '',
+    );
+
+    expect(formula).toContain('La cuota inicial cubre el precio');
+  });
+});

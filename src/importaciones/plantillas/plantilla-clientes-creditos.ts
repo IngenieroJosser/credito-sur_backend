@@ -1044,6 +1044,15 @@ export async function generarPlantillaClientesCreditos(
           condicion: `NOT(ISNUMBER(${ref(ART.precioPlazo)}))`,
           mensaje: '"⚠ El artículo no tiene precio para ese plazo"',
         },
+        // Si la inicial cubre el precio no queda nada que financiar, y un
+        // crédito sin monto no es un crédito.
+        {
+          condicion:
+            `AND(ISNUMBER(${ref(ART.precioPlazo)}),` +
+            `IF(${ref(ART.cuotaInicial)}="",0,${ref(ART.cuotaInicial)})>=${ref(ART.precioPlazo)})`,
+          mensaje:
+            '"⚠ La cuota inicial cubre el precio del artículo: no queda nada que financiar"',
+        },
         // Un crédito OPERATIVA entrega el artículo al confirmar. Si no queda
         // stock, esa fila hace fallar toda la importación, así que conviene
         // saberlo aquí y no después de subir el archivo.

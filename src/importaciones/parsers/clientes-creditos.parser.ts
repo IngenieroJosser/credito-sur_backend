@@ -892,6 +892,9 @@ export class ClientesCreditosParser {
         }
 
         let montoEfectivo = monto;
+        // Cuando la inicial cubre el precio ya se avisó con su propio mensaje;
+        // repetir el genérico del monto solo confunde.
+        let inicialCubreElPrecio = false;
 
         if (esArticulo && montoEfectivo === null && productoCodigo) {
           // Igual que createLoan: lo que se financia es el precio del plazo
@@ -902,14 +905,33 @@ export class ClientesCreditosParser {
 
           if (precioPlazo && precioPlazo > 0) {
             const inicial = Math.max(0, cuotaInicial ?? 0);
+
+            // Si la inicial se come el precio no queda nada que financiar, y
+            // un crédito sin monto no es un crédito. El error se nombra aquí
+            // para que diga cuál es el problema: antes caía en la validación
+            // genérica del monto y salía "Debe ser un número mayor a 0" sobre
+            // una columna que el usuario ni siquiera había llenado.
+            if (inicial >= precioPlazo) {
+              inicialCubreElPrecio = true;
+              addError(
+                'cuota_inicial',
+                inicial > precioPlazo
+                  ? `La cuota inicial (${inicial}) es mayor que el precio del artículo a ${plazoMeses} meses (${precioPlazo}). Revise la inicial o el plazo.`
+                  : `La cuota inicial (${inicial}) cubre todo el precio del artículo, así que no queda nada que financiar. Si el cliente pagó completo, es una venta de contado, no un crédito.`,
+                celda(row, creCuotaInicial),
+              );
+            }
+
             montoEfectivo = Math.max(0, precioPlazo - inicial);
-            addAdver(
-              'monto',
-              inicial > 0
-                ? `Se financia el precio del plazo (${precioPlazo}) menos la cuota inicial (${inicial}): ${montoEfectivo}.`
-                : `Se tomó el precio del plazo del artículo: ${precioPlazo}.`,
-              montoEfectivo,
-            );
+            if (!inicialCubreElPrecio) {
+              addAdver(
+                'monto',
+                inicial > 0
+                  ? `Se financia el precio del plazo (${precioPlazo}) menos la cuota inicial (${inicial}): ${montoEfectivo}.`
+                  : `Se tomó el precio del plazo del artículo: ${precioPlazo}.`,
+                montoEfectivo,
+              );
+            }
           } else if (productosEnBd.has(productoCodigo)) {
             addError(
               'monto',
@@ -920,13 +942,14 @@ export class ClientesCreditosParser {
         }
 
         if (
-          montoEfectivo === null ||
-          Number.isNaN(montoEfectivo) ||
-          montoEfectivo <= 0
+          !inicialCubreElPrecio &&
+          (montoEfectivo === null ||
+            Number.isNaN(montoEfectivo) ||
+            montoEfectivo <= 0)
         ) {
           addError(
             'monto',
-            'Debe ser un número mayor a 0',
+            'Escriba el monto del crédito: debe ser mayor a 0',
             celda(row, creMonto),
           );
         }
@@ -1298,6 +1321,9 @@ export class ClientesCreditosParser {
           totalAbonado,
           saldoPendiente: pesos(totalCredito - totalAbonado),
           fila: rowNumber,
+          // De qué hoja salió: en las dos hojas de crédito la primera fila es
+          // la 7, así que decir "fila 7" a secas no distingue una de la otra.
+          hoja: nombre,
         });
       });
 
@@ -1353,6 +1379,7 @@ export class ClientesCreditosParser {
       return esArticulo
         ? {
             fila: credito.fila,
+            hoja: credito.hoja,
             numeroPrestamo: credito.numeroPrestamo,
             ccCliente: credito.ccCliente,
             tipo: 'ARTICULO' as const,
@@ -1364,6 +1391,7 @@ export class ClientesCreditosParser {
           }
         : {
             fila: credito.fila,
+            hoja: credito.hoja,
             numeroPrestamo: credito.numeroPrestamo,
             ccCliente: credito.ccCliente,
             tipo: 'EFECTIVO' as const,

@@ -23,6 +23,7 @@ export interface ResumenHoja {
 /** Un movimiento que hará la confirmación, con su motivo y su cifra. */
 export interface MovimientoPrevisto {
   fila: number;
+  hoja?: string;
   numeroPrestamo?: string;
   ccCliente?: string;
   tipo: 'EFECTIVO' | 'ARTICULO';
