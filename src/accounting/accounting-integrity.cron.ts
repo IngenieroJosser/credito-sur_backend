@@ -42,6 +42,9 @@ export class AccountingIntegrityCron {
         // descuadrado tiene que llegarle a quien pueda ordenar que se revise.
         await this.notificacionesService.notifyRolesDeduped({
           roles: [
+            // El contador es quien entiende y resuelve un libro descuadrado;
+            // los demás son quienes pueden ordenar que se revise.
+            RolUsuario.CONTADOR,
             RolUsuario.COORDINADOR,
             RolUsuario.ADMIN,
             RolUsuario.SUPER_ADMINISTRADOR,

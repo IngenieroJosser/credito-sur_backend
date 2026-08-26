@@ -43,6 +43,7 @@ describe('La alerta de integridad contable llega a quien puede actuar', () => {
     const [aviso] = (notificaciones.notifyRolesDeduped as jest.Mock).mock
       .calls[0];
     expect(aviso.roles).toEqual([
+      RolUsuario.CONTADOR,
       RolUsuario.COORDINADOR,
       RolUsuario.ADMIN,
       RolUsuario.SUPER_ADMINISTRADOR,
