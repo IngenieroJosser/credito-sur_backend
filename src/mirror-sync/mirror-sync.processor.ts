@@ -2,6 +2,7 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { createHmac, randomUUID } from 'crypto';
 
 @Processor('mirror-sync-queue', {
   // Reduce polling agresivo cuando la cola está vacía (Upstash rate-limit).
@@ -41,7 +42,13 @@ export class MirrorSyncProcessor extends WorkerHost {
     let baseUrl = mirrorUrl;
     if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
 
-    const endpointRegex = `${baseUrl}/api/v1/mirror-sync/receiver/${model}/${action}`;
+    const endpointRegex = `${baseUrl}/api-credisur/mirror-sync/receiver/${model}/${action}`;
+    const timestamp = Date.now().toString();
+    const nonce = randomUUID();
+    const body = JSON.stringify({ payload: data });
+    const signature = createHmac('sha256', mirrorToken)
+      .update(`${timestamp}.${nonce}.${body}`)
+      .digest('hex');
 
     try {
       const response = await fetch(endpointRegex, {
@@ -50,10 +57,12 @@ export class MirrorSyncProcessor extends WorkerHost {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${mirrorToken}`,
           'X-Mirror-Sync-Engine': 'BullMQ-Engine-v1', // Firma de seguridad
-          'X-Mirror-Sync-Timestamp': Date.now().toString(), // Prevención de ataque por repetición (Replay Attack)
+          'X-Mirror-Sync-Timestamp': timestamp,
+          'X-Mirror-Sync-Nonce': nonce,
+          'X-Mirror-Sync-Signature': signature,
         },
         // Enviamos el Row crudo como payload a insertar o actualizar en la tabla espejo
-        body: JSON.stringify({ payload: data }),
+        body,
       });
 
       if (!response.ok) {

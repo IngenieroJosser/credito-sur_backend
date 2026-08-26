@@ -13,17 +13,31 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { Response } from 'express';
+import { basename } from 'path';
 import { ApiTags, ApiOperation, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolUsuario } from '@prisma/client';
 import { CloudinaryService } from './cloudinary.service';
-import { Publico } from '../auth/decorators/public.decorator';
 
 // ─── Tipos de archivos permitidos ─────────────────────────────────────────────
 const EXTENSIONES_PERMITIDAS = /\.(jpg|jpeg|png|gif|mp4|webm|pdf)$/i;
 const TAMANO_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
+
+function contenidoPermitido(file: Express.Multer.File): boolean {
+  const header = file.buffer.subarray(0, 12);
+  const hex = header.toString('hex').toLowerCase();
+  const mime = file.mimetype.toLowerCase();
+
+  if (mime === 'application/pdf') return hex.startsWith('255044462d');
+  if (mime === 'image/png') return hex.startsWith('89504e470d0a1a0a');
+  if (mime === 'image/jpeg') return hex.startsWith('ffd8ff');
+  if (mime === 'image/gif') return header.toString('ascii', 0, 6).startsWith('GIF8');
+  if (mime === 'video/mp4') return hex.includes('66747970');
+  if (mime === 'video/webm') return hex.startsWith('1a45dfa3');
+  return false;
+}
 
 @ApiTags('Uploads')
 @Controller('uploads')
@@ -85,6 +99,9 @@ export class UploadController {
     },
   ) {
     if (!file) throw new BadRequestException('El archivo es requerido');
+    if (!contenidoPermitido(file)) {
+      throw new BadRequestException('El contenido del archivo no coincide con su tipo');
+    }
 
     // Construir sub-carpeta según el tipo de contenido y datos del cliente
     const sanitize = (v?: string) =>
@@ -130,10 +147,13 @@ export class UploadController {
     };
   }
 
-  @Publico()
   @Get(':filename')
   @ApiOperation({ summary: 'Obtener un archivo subido localmente' })
   serveFile(@Param('filename') filename: string, @Res() res: Response) {
-    res.sendFile(filename, { root: './uploads' });
+    const safeFilename = basename(filename);
+    if (safeFilename !== filename || safeFilename === '.' || safeFilename === '..') {
+      return res.status(400).json({ message: 'Nombre de archivo inválido' });
+    }
+    res.sendFile(safeFilename, { root: './uploads' });
   }
 }

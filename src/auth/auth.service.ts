@@ -233,10 +233,11 @@ export class AuthService {
         correo: true,
         nombreUsuario: true,
         rol: true,
+        estado: true,
       },
     });
 
-    if (!usuario) {
+    if (!usuario || usuario.estado !== 'ACTIVO') {
       throw new NotFoundException('Usuario no encontrado');
     }
 
@@ -281,7 +282,20 @@ export class AuthService {
   }
 
   async obtenerTodosLosUsuarios() {
-    const mostrarUsuarios = await this.prisma.usuario.findMany();
+    const mostrarUsuarios = await this.prisma.usuario.findMany({
+      select: {
+        id: true,
+        nombres: true,
+        apellidos: true,
+        correo: true,
+        nombreUsuario: true,
+        rol: true,
+        estado: true,
+        ultimoIngreso: true,
+        creadoEn: true,
+        actualizadoEn: true,
+      },
+    });
     return mostrarUsuarios;
   }
 
