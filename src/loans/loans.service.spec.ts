@@ -2595,3 +2595,54 @@ describe('La corrección de intereses del arranque', () => {
     expect(ajustes.reduce((a: number, b: number) => a + b, 0)).toBe(60_000);
   });
 });
+
+describe('El arranque no reescribe deudas por su cuenta', () => {
+  const original = process.env.AUTOFIX_INTERESES;
+  afterEach(() => {
+    if (original === undefined) delete process.env.AUTOFIX_INTERESES;
+    else process.env.AUTOFIX_INTERESES = original;
+  });
+
+  const conServicio = () => {
+    const prisma = {
+      prestamo: {
+        findMany: jest.fn().mockResolvedValue([]),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      cuota: { update: jest.fn().mockResolvedValue({}) },
+    };
+    return { prisma, service: makeService(prisma) };
+  };
+
+  it('por defecto no toca nada al arrancar', async () => {
+    // Reescribe interés y saldo de créditos vivos sin que nadie la invoque:
+    // es una reparación de datos viejos, no algo de cada arranque.
+    delete process.env.AUTOFIX_INTERESES;
+    const { prisma, service } = conServicio();
+
+    await (service as any).onModuleInit();
+
+    expect(prisma.prestamo.findMany).not.toHaveBeenCalled();
+  });
+
+  it('solo corre si se pide expresamente', async () => {
+    process.env.AUTOFIX_INTERESES = '1';
+    const { prisma, service } = conServicio();
+
+    await (service as any).onModuleInit();
+
+    expect(prisma.prestamo.findMany).toHaveBeenCalled();
+  });
+
+  it('el endpoint la sigue pudiendo ejecutar a mano', async () => {
+    // Apagada al arranque, pero disponible cuando alguien la pida, que además
+    // deja rastro de quién la ejecutó.
+    delete process.env.AUTOFIX_INTERESES;
+    const { prisma, service } = conServicio();
+
+    const resultado = await (service as any).fixInterestCalculations();
+
+    expect(prisma.prestamo.findMany).toHaveBeenCalled();
+    expect(resultado.processed).toBe(0);
+  });
+});

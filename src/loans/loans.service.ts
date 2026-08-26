@@ -203,6 +203,20 @@ export class LoansService implements OnModuleInit {
   }
 
   async onModuleInit() {
+    // Esta rutina reescribe el interés y el saldo de créditos vivos sin que
+    // nadie la invoque. Es una reparación de datos viejos, no algo que deba
+    // pasar en cada arranque, así que va apagada salvo que se pida.
+    //
+    // Para encenderla: AUTOFIX_INTERESES=1. Y queda el endpoint del
+    // controlador para correrla a mano cuando se quiera, que además deja
+    // rastro de quién la ejecutó.
+    if (process.env.AUTOFIX_INTERESES !== '1') {
+      this.logger.log(
+        '[AUTO-FIX] Corrección de intereses desactivada. Para ejecutarla, use el endpoint o defina AUTOFIX_INTERESES=1.',
+      );
+      return;
+    }
+
     this.logger.log(
       '🔄 [AUTO-FIX] Verificando e iniciando corrección de intereses al arranque...',
     );
