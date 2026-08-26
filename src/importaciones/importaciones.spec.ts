@@ -1904,3 +1904,68 @@ describe('Vista previa del movimiento de caja', () => {
     expect(impacto.faltante).toBe(3_000_000);
   });
 });
+
+describe('La cuota inicial baja lo que se financia', () => {
+  // El cliente ya entregó la inicial y no la vuelve a pagar en cuotas. Si el
+  // Excel reparte el precio completo, muestra una cuota más alta que la que el
+  // sistema va a crear, y quien revisa aprueba una cifra equivocada.
+  const articuloConPrecio = {
+    clientes: [clienteEnBd],
+    productos: [
+      {
+        codigo: 'TV-43',
+        nombre: 'Smart TV 43',
+        stock: 5,
+        precios: [{ meses: 6, precio: 980000 }],
+      },
+    ],
+  };
+
+  it('el sistema financia el precio menos la inicial', async () => {
+    const resultado = await validarCreditoArticulo(
+      {
+        'CC cliente': '12345678',
+        'Código del artículo': 'TV-43',
+        'Plazo meses': 6,
+        'Frecuencia pago': 'QUINCENAL',
+        'Fecha crédito': '2026-08-01',
+        'Tipo carga': 'OPERATIVA',
+        'Cuota inicial': 150000,
+      },
+      articuloConPrecio,
+    );
+
+    expect(resultado.errores).toHaveLength(0);
+    const credito: any = resultado.creditos?.[0];
+    expect(credito.monto).toBe(830000); // 980.000 - 150.000
+    expect(credito.cantidadCuotas).toBe(12); // 6 meses quincenales
+    expect(credito.valorCuota).toBe(69166); // no 81.666
+  });
+
+  it('la fórmula del Excel resta la inicial igual que el sistema', async () => {
+    const { data } =
+      await generarPlantillaClientesCreditos(datosPlantillaVacios);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(data as any);
+    const hoja = workbook.getWorksheet('Créditos de artículo')!;
+
+    let columnaTotal = 0;
+    let columnaInicial = 0;
+    hoja.getRow(6).eachCell({ includeEmpty: false }, (celda, n) => {
+      const encabezado = normalizarEncabezado(celda.value);
+      if (encabezado.startsWith('TOTAL A PAGAR')) columnaTotal = n;
+      if (encabezado === 'CUOTA INICIAL') columnaInicial = n;
+    });
+    expect(columnaTotal).toBeGreaterThan(0);
+    expect(columnaInicial).toBeGreaterThan(0);
+
+    const formula = String(
+      (hoja.getCell(7, columnaTotal).value as any)?.formula || '',
+    );
+    // La columna de la cuota inicial tiene que aparecer restando.
+    const letraInicial = hoja.getColumn(columnaInicial).letter;
+    expect(formula).toContain(`-IF($${letraInicial}7=""`);
+    // Y nunca puede quedar negativo.
+    expect(formula).toContain('MAX(0,');
+  });
+});
