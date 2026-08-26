@@ -257,3 +257,56 @@ describe('LedgerService consolidacion', () => {
     ).rejects.toThrow();
   });
 });
+
+describe('El asiento de venta de artículo tiene que cuadrar', () => {
+  it('rechaza el asiento si el precio no es lo financiado más la inicial', async () => {
+    const { service } = makeService();
+
+    // Este era el caso real: al escribir un monto a mano en la hoja de
+    // artículo, el asiento acreditaba el precio del catálogo mientras la
+    // cartera cargaba el monto escrito. La partida doble no cerraba.
+    await expect(
+      service.registrarVentaArticulo({
+        prestamoId: 'prestamo-art-2',
+        precioVenta: 980000, // precio de lista
+        costoArticulo: 620000,
+        montoFinanciado: 700000, // lo que de verdad se financió
+        cuotaInicial: 150000, // 700.000 + 150.000 = 850.000, no 980.000
+        cajaId: 'caja-oficina',
+        accountCodeCaja: '1.1.1',
+        createdBy: 'admin-1',
+      }),
+    ).rejects.toThrow('Desbalance contable');
+  });
+
+  it('acepta el asiento cuando el precio es el que el cliente paga de verdad', async () => {
+    const { service, prisma } = makeService();
+
+    await service.registrarVentaArticulo({
+      prestamoId: 'prestamo-art-3',
+      precioVenta: 850000, // 700.000 financiados + 150.000 de inicial
+      costoArticulo: 620000,
+      montoFinanciado: 700000,
+      cuotaInicial: 150000,
+      cajaId: 'caja-oficina',
+      accountCodeCaja: '1.1.1',
+      createdBy: 'admin-1',
+    });
+
+    const [[argumento]] = (prisma._tx.journalEntry.create as jest.Mock).mock
+      .calls;
+    const lineas = argumento.data.lines.create as Array<{
+      debitAmount?: number;
+      creditAmount?: number;
+    }>;
+    const debitos = lineas.reduce((a, l) => a + Number(l.debitAmount || 0), 0);
+    const creditos = lineas.reduce(
+      (a, l) => a + Number(l.creditAmount || 0),
+      0,
+    );
+
+    expect(debitos).toBe(creditos);
+    // 150.000 de caja + 700.000 de cartera + 620.000 de costo
+    expect(debitos).toBe(1_470_000);
+  });
+});

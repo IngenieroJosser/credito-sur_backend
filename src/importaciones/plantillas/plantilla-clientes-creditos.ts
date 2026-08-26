@@ -983,8 +983,20 @@ export async function generarPlantillaClientesCreditos(
   formulaEnColumna(
     wsArticulo,
     ART.totalPagar,
+    // Lo que se financia, que es sobre lo que se reparten las cuotas.
+    //
+    // La cuota inicial se resta: el cliente ya la entregó y no la vuelve a
+    // pagar en cuotas. Antes esta fórmula tomaba el precio completo, así que
+    // en un artículo con inicial el Excel mostraba una cuota más alta que la
+    // que el sistema iba a crear. Con 980.000 a 12 quincenas y 150.000 de
+    // inicial, eran 81.666 contra 69.166: 12.500 por cuota.
+    //
+    // Si se escribe el monto a mano no se resta nada, porque en ese caso el
+    // monto ya es lo que se financia. Es el mismo criterio del parser.
     `IF(${ref(ART.monto)}<>"",${ref(ART.monto)},` +
-      `IF(ISNUMBER(${ref(ART.precioPlazo)}),${ref(ART.precioPlazo)},""))`,
+      `IF(ISNUMBER(${ref(ART.precioPlazo)}),` +
+      `MAX(0,${ref(ART.precioPlazo)}-IF(${ref(ART.cuotaInicial)}="",0,${ref(ART.cuotaInicial)})),` +
+      `""))`,
   );
   formulaEnColumna(
     wsArticulo,
@@ -1031,6 +1043,15 @@ export async function generarPlantillaClientesCreditos(
         {
           condicion: `NOT(ISNUMBER(${ref(ART.precioPlazo)}))`,
           mensaje: '"⚠ El artículo no tiene precio para ese plazo"',
+        },
+        // Si la inicial cubre el precio no queda nada que financiar, y un
+        // crédito sin monto no es un crédito.
+        {
+          condicion:
+            `AND(ISNUMBER(${ref(ART.precioPlazo)}),` +
+            `IF(${ref(ART.cuotaInicial)}="",0,${ref(ART.cuotaInicial)})>=${ref(ART.precioPlazo)})`,
+          mensaje:
+            '"⚠ La cuota inicial cubre el precio del artículo: no queda nada que financiar"',
         },
         // Un crédito OPERATIVA entrega el artículo al confirmar. Si no queda
         // stock, esa fila hace fallar toda la importación, así que conviene
