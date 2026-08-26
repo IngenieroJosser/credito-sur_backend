@@ -989,6 +989,27 @@ export class ImportacionesService {
 
             // Cálculos financieros
             const monto = Number(cred.monto);
+
+            // Precio de venta del artículo: lo que el cliente paga en total,
+            // que es lo que se financia más lo que dio de inicial.
+            //
+            // Antes se tomaba el precio del catálogo. Mientras el monto salía
+            // del propio catálogo daba igual, pero si alguien escribía un monto
+            // a mano —la columna Monto de la hoja de artículo lo permite— el
+            // asiento acreditaba el precio de lista mientras la cartera cargaba
+            // el monto real. Los débitos no cuadraban con los créditos y
+            // `registrarAsiento` abortaba la importación entera con un
+            // "Desbalance contable" que no le decía nada al usuario. Y el
+            // margen guardado tampoco era el de la venta que de verdad ocurrió.
+            const cuotaInicialArticulo = pesos(cred.cuotaInicial || 0);
+            const precioVentaReal = pesos(monto + cuotaInicialArticulo);
+            if (cred.tipoPrestamo === 'ARTICULO') {
+              precioVentaArticulo = precioVentaReal;
+              margenArticulo =
+                costoArticulo !== undefined
+                  ? pesos(precioVentaReal - costoArticulo)
+                  : undefined;
+            }
             // Fraccionario para calcular el interés, entero para guardar: es lo
             // mismo que hace createLoan, donde la columna plazoMeses es Int.
             const plazoMeses = Number(cred.plazoMeses);
@@ -1216,9 +1237,8 @@ export class ImportacionesService {
 
               articulosDescontados++;
 
-              const inicial = Number(cred.cuotaInicial || 0);
-              const precioVenta =
-                precioVentaArticulo ?? roundMoney(monto + inicial);
+              const inicial = cuotaInicialArticulo;
+              const precioVenta = precioVentaReal;
 
               // La cuota inicial entra en efectivo a la caja de oficina.
               if (inicial > 0 && cajaOficina) {
