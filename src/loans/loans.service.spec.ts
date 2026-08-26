@@ -2528,3 +2528,70 @@ describe('LoansService archive accounting reversal', () => {
     expect(mockGateway.broadcastDashboardsActualizados).toHaveBeenCalled();
   });
 });
+
+describe('La corrección de intereses del arranque', () => {
+  // Corre en cada arranque del backend y toca dinero de clientes reales, así
+  // que no puede "corregir" lo que ya está bien.
+  const prestamoDiario = (interesGuardado: number) => ({
+    id: 'prestamo-1',
+    numeroPrestamo: 'PRES-45D',
+    monto: 1_200_000,
+    tasaInteres: 20,
+    // 45 cuotas diarias son 1,5 meses, pero la columna es Int y guarda 2.
+    plazoMeses: 2,
+    cantidadCuotas: 45,
+    frecuenciaPago: 'DIARIO',
+    interesTotal: interesGuardado,
+    saldoPendiente: 1_200_000 + interesGuardado,
+    cuotas: Array.from({ length: 45 }, (_, i) => ({
+      id: `cuota-${i + 1}`,
+      numeroCuota: i + 1,
+      estado: 'PENDIENTE',
+    })),
+  });
+
+  const conPrestamo = (prestamo: any) => ({
+    prestamo: {
+      findMany: jest.fn().mockResolvedValue([prestamo]),
+      update: jest.fn().mockResolvedValue({}),
+    },
+    cuota: { update: jest.fn().mockResolvedValue({}) },
+  });
+
+  it('deja en paz un crédito con plazo fraccionario bien calculado', async () => {
+    // 1.200.000 al 20% por 1,5 meses son 360.000. Tomar el plazo guardado (2)
+    // daba 480.000 y le sumaba 120.000 a la deuda del cliente, en cada
+    // arranque.
+    const prisma = conPrestamo(prestamoDiario(360_000));
+    const service = makeService(prisma);
+
+    const resultado = await (service as any).fixInterestCalculations();
+
+    expect(resultado.corrected).toBe(0);
+    expect(prisma.prestamo.update).not.toHaveBeenCalled();
+    expect(prisma.cuota.update).not.toHaveBeenCalled();
+  });
+
+  it('sí corrige uno que de verdad está mal, y reparte en pesos enteros', async () => {
+    // Este viene con 300.000 cuando le corresponden 360.000.
+    const prisma = conPrestamo(prestamoDiario(300_000));
+    const service = makeService(prisma);
+
+    const resultado = await (service as any).fixInterestCalculations();
+
+    expect(resultado.corrected).toBe(1);
+    expect(prisma.prestamo.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ interesTotal: 360_000 }),
+      }),
+    );
+
+    // Los 60.000 de diferencia se reparten entre las 45 cuotas sin dejar
+    // centavos ni perder pesos: 44 de 1.333 y la última con el residuo.
+    const ajustes = (prisma.cuota.update as jest.Mock).mock.calls.map(
+      ([argumento]) => argumento.data.monto.increment,
+    );
+    expect(ajustes.every((a: number) => Number.isInteger(a))).toBe(true);
+    expect(ajustes.reduce((a: number, b: number) => a + b, 0)).toBe(60_000);
+  });
+});

@@ -1958,7 +1958,7 @@ describe('La cuota inicial baja lo que se financia', () => {
     let columnaInicial = 0;
     hoja.getRow(6).eachCell({ includeEmpty: false }, (celda, n) => {
       const encabezado = normalizarEncabezado(celda.value);
-      if (encabezado.startsWith('TOTAL A PAGAR')) columnaTotal = n;
+      if (encabezado.startsWith('TOTAL EN CUOTAS')) columnaTotal = n;
       if (encabezado === 'CUOTA INICIAL') columnaInicial = n;
     });
     expect(columnaTotal).toBeGreaterThan(0);

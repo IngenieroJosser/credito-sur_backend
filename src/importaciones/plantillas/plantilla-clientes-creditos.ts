@@ -238,7 +238,7 @@ const COLUMNAS_CREDITOS_DINERO: ColumnaPlantilla[] = [
     numFmt: FORMATO_MONEDA,
   },
   {
-    header: 'Total a pagar (automático)',
+    header: 'Total en cuotas (automático)',
     key: 'total_pagar_auto',
     width: 16,
     automatica: true,
@@ -351,7 +351,7 @@ const COLUMNAS_CREDITOS_ARTICULO: ColumnaPlantilla[] = [
     automatica: true,
   },
   {
-    header: 'Total a pagar (automático)',
+    header: 'Total en cuotas (automático)',
     key: 'total_pagar_auto',
     width: 16,
     automatica: true,

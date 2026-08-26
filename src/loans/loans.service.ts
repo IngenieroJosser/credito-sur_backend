@@ -4671,23 +4671,28 @@ export class LoansService implements OnModuleInit {
         const capital = Number(loan.monto);
         const tasaMensual = Number(loan.tasaInteres);
 
-        // Calcular plazo en meses aproximado si no existe, o usar el guardado
-        let plazoMeses = loan.plazoMeses;
+        // El plazo guardado es entero porque la columna es Int, pero el
+        // interés se calcula con el plazo exacto, que puede ser fraccionario:
+        // 45 cuotas diarias son 1,5 meses, no 2.
+        //
+        // Tomar el guardado hacía que esta rutina "corrigiera" hacia arriba
+        // créditos que estaban bien. Un crédito de 1.200.000 al 20% a 45 días
+        // pasaba de 360.000 de interés a 480.000, y esos 120.000 se repartían
+        // entre las cuotas sin pagar. En cada arranque del backend.
+        let plazoMeses = this.recuperarPlazoExacto(loan);
         if (!plazoMeses || plazoMeses === 0) {
           const factor =
-            loan.frecuenciaPago === 'MENSUAL'
-              ? 1
-              : loan.frecuenciaPago === 'QUINCENAL'
-                ? 2
-                : loan.frecuenciaPago === 'SEMANAL'
-                  ? 4
-                  : 30;
-          plazoMeses = Math.ceil(loan.cantidadCuotas / factor);
+            CUOTAS_POR_MES_LOANS[
+              String(loan.frecuenciaPago || '').toUpperCase()
+            ] ?? 30;
+          plazoMeses = loan.cantidadCuotas / factor;
         }
 
-        // INTERES SIMPLE: I = C * i * t
-        const interesCorrecto = this.trunc2(
-          capital * (tasaMensual / 100) * plazoMeses,
+        // La misma fórmula que usa la creación del crédito: se multiplica todo
+        // y se divide al final, en pesos enteros. Dividir la tasa primero deja
+        // un residuo de coma flotante que cae para el otro lado al redondear.
+        const interesCorrecto = Math.round(
+          (capital * tasaMensual * Math.max(1, plazoMeses)) / 100,
         );
         const interesActual = Number(loan.interesTotal);
 
@@ -4729,17 +4734,26 @@ export class LoansService implements OnModuleInit {
           );
 
           if (cuotasAjustables.length > 0) {
-            const ajustePorCuota = this.trunc2(
+            // En pesos enteros, y el residuo a la última cuota: repartir con
+            // decimales dejaba centavos que no existen, y truncar cada parte
+            // por separado perdía pesos del ajuste.
+            const ajustePorCuota = Math.floor(
               diferenciaInteres / cuotasAjustables.length,
             );
+            const residuo =
+              diferenciaInteres - ajustePorCuota * cuotasAjustables.length;
 
-            // Aplicar ajuste
-            for (const cuota of cuotasAjustables) {
+            for (let i = 0; i < cuotasAjustables.length; i++) {
+              const esUltima = i === cuotasAjustables.length - 1;
+              const ajuste = esUltima
+                ? ajustePorCuota + residuo
+                : ajustePorCuota;
+              if (ajuste === 0) continue;
               await this.prisma.cuota.update({
-                where: { id: cuota.id },
+                where: { id: cuotasAjustables[i].id },
                 data: {
-                  montoInteres: { increment: ajustePorCuota },
-                  monto: { increment: ajustePorCuota },
+                  montoInteres: { increment: ajuste },
+                  monto: { increment: ajuste },
                 },
               });
             }
