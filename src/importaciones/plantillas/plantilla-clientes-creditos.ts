@@ -186,7 +186,7 @@ const COLUMNAS_CREDITOS_DINERO: ColumnaPlantilla[] = [
   },
   { header: 'Tipo carga*', key: 'tipo_carga', width: 14 },
   // Cambia el cálculo del interés, así que va enseguida
-  { header: 'Tipo amortización', key: 'tipo_amortizacion', width: 18 },
+  { header: 'Tipo de interés', key: 'tipo_amortizacion', width: 18 },
   // Lo ya cobrado, para créditos que vienen andando
   { header: 'Cuotas pagadas', key: 'cuotas_pagadas', width: 14 },
   {
@@ -711,7 +711,7 @@ export async function generarPlantillaClientesCreditos(
     '# Lo que el sistema completa solo',
     'Acción: se asume CREAR.',
     'Número de crédito: se genera con la cédula y un consecutivo.',
-    'Tipo amortización: se asume Interés simple.',
+    'Tipo de interés: se asume Interés simple.',
     'Plazo en meses: sale de las cuotas y la frecuencia (créditos de dinero) o del plan del artículo.',
     'Si descuenta o no de caja: se deduce del tipo de carga (HISTORICA no mueve caja, OPERATIVA sí).',
     'Fecha primer cobro: se asume igual a la fecha del crédito.',

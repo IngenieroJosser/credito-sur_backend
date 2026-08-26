@@ -587,7 +587,10 @@ export class ClientesCreditosParser {
       const creFrecuencia = colsCre.indice('Frecuencia pago');
       const creCantidadCuotas = colsCre.indice('Cantidad cuotas');
       const crePlazoMeses = colsCre.indice('Plazo meses');
-      const creTipoAmortizacion = colsCre.indice('Tipo amortización');
+      const creTipoAmortizacion = colsCre.indice(
+        'Tipo de interés',
+        'Tipo amortización',
+      );
       const creFechaCredito = colsCre.indice('Fecha crédito');
       const creFechaPrimerCobro = colsCre.indice('Fecha primer cobro');
       const creTipoCarga = colsCre.indice('Tipo carga');

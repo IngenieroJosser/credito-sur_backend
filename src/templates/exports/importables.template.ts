@@ -340,7 +340,7 @@ export async function generarExcelClientesCreditosImportable(
     { header: 'Tasa interés*', key: 'tasa_interes', width: 15 },
     { header: 'Frecuencia pago*', key: 'frecuencia_pago', width: 18 },
     { header: 'Cantidad cuotas*', key: 'cantidad_cuotas', width: 18 },
-    { header: 'Tipo amortización', key: 'tipo_amortizacion', width: 20 },
+    { header: 'Tipo de interés', key: 'tipo_amortizacion', width: 20 },
     { header: 'Fecha crédito*', key: 'fecha_credito', width: 15 },
     { header: 'Fecha primer cobro', key: 'fecha_primer_cobro', width: 20 },
     { header: 'Tipo carga*', key: 'tipo_carga', width: 15 },
