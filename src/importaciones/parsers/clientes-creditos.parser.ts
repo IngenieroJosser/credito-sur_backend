@@ -977,6 +977,17 @@ export class ClientesCreditosParser {
             celda(row, creCuotaInicial),
           );
         }
+        // En un crédito de artículo la inicial es obligatoria: el cliente
+        // entrega algo al llevarse la mercancía. Dejarla vacía y escribir cero
+        // significan lo mismo, así que las dos se rechazan. Los casos raros
+        // —NaN o negativa— ya los cubre la validación de arriba.
+        if (esArticulo && (cuotaInicial === null || cuotaInicial === 0)) {
+          addError(
+            'cuota_inicial',
+            'Es obligatoria en un crédito de artículo: escriba cuánto entregó el cliente al llevarse el artículo.',
+            celda(row, creCuotaInicial),
+          );
+        }
         if (esArticulo) {
           // El financiamiento ya está incluido en el precio del plazo del artículo,
           // así que no se cobra una tasa aparte.
@@ -1218,9 +1229,9 @@ export class ClientesCreditosParser {
 
         if (tieneAvance && tipoCarga === 'OPERATIVA') {
           addError(
-            'cuotas_pagadas',
-            'Un crédito OPERATIVA se registra como nuevo: no puede traer cuotas pagadas ni abonos previos. Use tipo de carga HISTORICA.',
-            cuotasPagadasNum,
+            'total_abonado',
+            'Un crédito OPERATIVA se registra como nuevo: no puede traer nada abonado. Use tipo de carga HISTORICA.',
+            abonadoDeclarado ?? cuotasPagadasNum,
           );
         }
 

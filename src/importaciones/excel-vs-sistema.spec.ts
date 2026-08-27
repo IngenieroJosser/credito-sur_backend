@@ -141,7 +141,7 @@ const CADENA = [
   'Interés total',
   'Total en cuotas',
   'Valor cuota',
-  'Total abonado (automático)',
+  'Cuotas pagadas (automático)',
   'Saldo pendiente',
 ];
 
@@ -202,8 +202,7 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
     cuotas: number;
     frecuencia: FrecuenciaPago;
     metodo: string;
-    cuotasPagadas: number;
-    abono: number;
+    totalAbonado: number;
   }) => {
     const celdas: Record<string, ValorCelda> = {};
     const poner = (encabezado: string, valor: ValorCelda) => {
@@ -215,8 +214,7 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
     poner('Frecuencia pago', caso.frecuencia);
     poner('Cantidad cuotas', caso.cuotas);
     poner('Tipo de interés', caso.metodo);
-    poner('Cuotas pagadas', caso.cuotasPagadas);
-    poner('Abono adicional', caso.abono);
+    poner('Total abonado', caso.totalAbonado);
 
     for (const columna of CADENA) {
       celdas[`${letraDe(columna)}7`] = evaluarFormula(
@@ -231,7 +229,7 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
       interesTotal: leer('Interés total'),
       totalEnCuotas: leer('Total en cuotas'),
       valorCuota: leer('Valor cuota'),
-      yaAbonado: leer('Total abonado (automático)'),
+      cuotasPagadas: leer('Cuotas pagadas (automático)'),
       saldoPendiente: leer('Saldo pendiente'),
     };
   };
@@ -249,8 +247,7 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
         cuotas,
         frecuencia,
         metodo: metodo.etiqueta,
-        cuotasPagadas: 0,
-        abono: 0,
+        totalAbonado: 0,
       });
 
       const plazoMeses = derivarPlazoMeses(cuotas, frecuencia);
@@ -274,54 +271,92 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
     },
   );
 
-  it('la columna gris muestra la suma de las dos que se escriben', () => {
-    // Es la razón de que exista: quien pone una cuota y un abono tiene que ver
-    // el total antes de subir el archivo, no descubrirlo después en el saldo.
+  it('la columna gris reparte en cuotas la plata abonada', () => {
+    // Es la razón de que exista. Antes se escribían dos casillas —cuotas y
+    // abono— que se sumaban sin que se notara: quien anotaba una cuota pagada
+    // y un abono de 150.000 esperaba que el saldo bajara 150.000 y bajaba
+    // 325.000. Ahora se escribe la plata y las cuotas se deducen, así que esa
+    // lectura doble ya no existe.
     const fallos: string[] = [];
 
     for (const { monto, tasa, cuotas, frecuencia, nombre } of CASOS) {
-      const combinaciones: Array<[number, number]> = [
-        [0, 0],
-        [0, 150_000],
-        [1, 0],
-        [1, 150_000],
-        [cuotas, 0],
+      const base = calcularConElExcel({
+        monto,
+        tasa,
+        cuotas,
+        frecuencia,
+        metodo: 'Interés simple',
+        totalAbonado: 0,
+      });
+      const cuota = Number(base.valorCuota);
+      const total = Number(base.totalEnCuotas);
+
+      // Con montos ínfimos la cuota puede caer a cero y no hay nada que
+      // repartir; la fórmula deja la celda en blanco a propósito.
+      if (!(cuota > 0)) continue;
+
+      const abonos = [
+        0,
+        1,
+        cuota - 1,
+        cuota,
+        cuota + 1,
+        cuota * 2,
+        total - 1,
+        total,
       ];
 
-      for (const [cuotasPagadas, abono] of combinaciones) {
+      for (const totalAbonado of abonos) {
+        if (totalAbonado < 0 || totalAbonado > total) continue;
+
         const r = calcularConElExcel({
           monto,
           tasa,
           cuotas,
           frecuencia,
           metodo: 'Interés simple',
-          cuotasPagadas,
-          abono,
+          totalAbonado,
         });
-        const total = Number(r.totalEnCuotas);
-        const donde = `${nombre} · ${cuotasPagadas} cuotas + ${abono}`;
+        const donde = `${nombre} · abonado ${totalAbonado}`;
 
-        // Con todas las cuotas declaradas se toma el total del crédito, para
-        // que la última —que absorbe el residuo— no quede por fuera.
-        const esperado =
-          cuotasPagadas >= cuotas
-            ? total + abono
-            : Number(r.valorCuota) * cuotasPagadas + abono;
+        // Cuántas cuotas completas caben en esa plata, sin pasarse del
+        // crédito: la última absorbe el residuo y vale unos pesos más.
+        const esperado = Math.min(cuotas, Math.floor(totalAbonado / cuota));
 
-        if (r.yaAbonado !== esperado) {
+        if (r.cuotasPagadas !== esperado) {
           fallos.push(
-            `${donde} → el Excel dice ${r.yaAbonado}, no ${esperado}`,
+            `${donde} → el Excel dice ${r.cuotasPagadas} cuotas, no ${esperado}`,
           );
         }
-        if (r.saldoPendiente !== total - esperado) {
+        // El saldo baja exactamente lo que se abonó: ni un peso más.
+        if (r.saldoPendiente !== total - totalAbonado) {
           fallos.push(
-            `${donde} → saldo ${r.saldoPendiente} en vez de ${total - esperado}`,
+            `${donde} → saldo ${r.saldoPendiente} en vez de ${total - totalAbonado}`,
           );
         }
       }
     }
 
     expect(fallos).toEqual([]);
+  });
+
+  it('el caso que se venía escribiendo mal ahora da 550.000', () => {
+    // 500.000 al 20% en 4 quincenas son 2 meses: 700.000 en total, cuotas de
+    // 175.000. Un abono de 150.000 tiene que dejar 550.000 de saldo.
+    const r = calcularConElExcel({
+      monto: 500_000,
+      tasa: 20,
+      cuotas: 4,
+      frecuencia: FrecuenciaPago.QUINCENAL,
+      metodo: 'Interés simple',
+      totalAbonado: 150_000,
+    });
+
+    expect(r.totalEnCuotas).toBe(700_000);
+    expect(r.valorCuota).toBe(175_000);
+    // No alcanza para una cuota completa: la primera queda PARCIAL.
+    expect(r.cuotasPagadas).toBe(0);
+    expect(r.saldoPendiente).toBe(550_000);
   });
 
   it('una fila vacía no muestra ninguna cifra', () => {
@@ -334,8 +369,7 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
       'Frecuencia pago',
       'Cantidad cuotas',
       'Tipo de interés',
-      'Cuotas pagadas',
-      'Abono adicional',
+      'Total abonado',
     ]) {
       celdas[`${letraDe(encabezado)}7`] = '';
     }
@@ -351,6 +385,7 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
     expect(celdas[`${letraDe('Interés total')}7`]).toBe('');
     expect(celdas[`${letraDe('Total en cuotas')}7`]).toBe('');
     expect(celdas[`${letraDe('Valor cuota')}7`]).toBe('');
+    expect(celdas[`${letraDe('Cuotas pagadas')}7`]).toBe('');
     expect(celdas[`${letraDe('Saldo pendiente')}7`]).toBe('');
   });
 
@@ -401,8 +436,7 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
         cuotas,
         frecuencia,
         metodo: metodo.etiqueta,
-        cuotasPagadas: 0,
-        abono: 0,
+        totalAbonado: 0,
       });
 
       const plazoMeses = derivarPlazoMeses(cuotas, frecuencia);
