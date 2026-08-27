@@ -91,8 +91,8 @@ const DIN = {
   fechaUltimoPago: 11,
   // Opcionales
   fechaPrimerCobro: 12,
-  numeroCredito: 13,
-  notas: 14,
+  notas: 13,
+  numeroCredito: 14,
   // Automáticas, al final
   cliente: 15,
   revision: 16,
@@ -125,8 +125,8 @@ const ART = {
   // Opcionales
   fechaPrimerCobro: 11,
   monto: 12,
-  numeroCredito: 13,
-  notas: 14,
+  notas: 13,
+  numeroCredito: 14,
   // Automáticas, al final
   cliente: 15,
   articulo: 16,
@@ -206,13 +206,13 @@ const COLUMNAS_CREDITOS_DINERO: ColumnaPlantilla[] = [
     width: 17,
     numFmt: FORMATO_FECHA,
   },
+  { header: 'Notas', key: 'notas', width: 26 },
   {
     header: 'Número de crédito',
     key: 'numero_prestamo',
     width: 26,
     sugerida: true,
   },
-  { header: 'Notas', key: 'notas', width: 26 },
   // Automáticas, al final
   {
     header: 'Cliente encontrado (automático)',
@@ -317,13 +317,13 @@ const COLUMNAS_CREDITOS_ARTICULO: ColumnaPlantilla[] = [
     numFmt: FORMATO_FECHA,
   },
   { header: 'Monto', key: 'monto', width: 15, numFmt: FORMATO_MONEDA },
+  { header: 'Notas', key: 'notas', width: 26 },
   {
     header: 'Número de crédito',
     key: 'numero_prestamo',
     width: 26,
     sugerida: true,
   },
-  { header: 'Notas', key: 'notas', width: 26 },
   // Automáticas, al final
   {
     header: 'Cliente encontrado (automático)',
@@ -858,7 +858,12 @@ export async function generarPlantillaClientesCreditos(
     DIN.tipoAmortizacion,
     'MÉTODO',
   );
-  etiquetarGrupo(wsDinero, DIN.fechaPrimerCobro, DIN.notas, 'DATOS OPCIONALES');
+  etiquetarGrupo(
+    wsDinero,
+    DIN.fechaPrimerCobro,
+    DIN.numeroCredito,
+    'DATOS OPCIONALES',
+  );
   etiquetarGrupo(wsDinero, DIN.cliente, DIN.revision, 'VERIFICACIÓN');
   etiquetarGrupo(
     wsDinero,
@@ -985,7 +990,7 @@ export async function generarPlantillaClientesCreditos(
   etiquetarGrupo(
     wsArticulo,
     ART.fechaPrimerCobro,
-    ART.notas,
+    ART.numeroCredito,
     'DATOS OPCIONALES',
   );
   etiquetarGrupo(wsArticulo, ART.cliente, ART.revision, 'VERIFICACIÓN');
