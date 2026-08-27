@@ -174,6 +174,7 @@ const creditoArticuloMinimo = {
   'Frecuencia pago': 'DIARIO',
   'Fecha crédito': '2026-05-01',
   'Tipo carga': 'HISTORICA',
+  'Cuota inicial': 190000,
 };
 
 const validarCreditoArticulo = (
@@ -1090,6 +1091,7 @@ describe('Diferencias entre crédito de artículo y préstamo en efectivo', () =
     // financiamiento ya está dentro del precio del plazo.
     expect(resultado.creditos?.[0].interesTotal).toBe(0);
     expect(resultado.creditos?.[0].tipoPrestamo).toBe('ARTICULO');
+    expect(resultado.creditos?.[0].monto).toBe(500000);
   });
 
   it('la hoja de artículo no tiene columna de tasa ni de amortización', async () => {
@@ -1210,11 +1212,33 @@ describe('Cuota inicial en créditos de artículo', () => {
     expect(resultado.creditos?.[0].cuotaInicial).toBe(190000);
   });
 
-  it('sin cuota inicial financia el precio completo del plazo', async () => {
-    const resultado = await validarCreditoArticulo(creditoArticuloMinimo);
+  it('sin cuota inicial la fila se rechaza', async () => {
+    // El cliente siempre entrega algo al llevarse el artículo, así que una
+    // fila sin inicial es un dato que falta, no un crédito sin entrada.
+    const { 'Cuota inicial': _sin, ...resto } = creditoArticuloMinimo;
+    const resultado = await validarCreditoArticulo(resto);
 
-    expect(resultado.errores).toHaveLength(0);
-    expect(resultado.creditos?.[0].monto).toBe(690000);
+    expect(resultado.errores).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          campo: 'cuota_inicial',
+          mensaje: expect.stringContaining('obligatoria'),
+        }),
+      ]),
+    );
+  });
+
+  it('escribir cero es lo mismo que dejarla vacía', async () => {
+    const resultado = await validarCreditoArticulo({
+      ...creditoArticuloMinimo,
+      'Cuota inicial': 0,
+    });
+
+    expect(resultado.errores).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ campo: 'cuota_inicial' }),
+      ]),
+    );
   });
 
   it('respeta el monto escrito a mano por encima del cálculo', async () => {
@@ -1596,6 +1620,7 @@ describe('Plantillas descargadas antes del cambio de nombres', () => {
         'Frecuencia pago': 'DIARIO',
         'Fecha crédito': '2026-05-01',
         'Tipo carga': 'HISTORICA',
+        'Cuota inicial': 190000,
       });
     });
 

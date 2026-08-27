@@ -291,7 +291,7 @@ const COLUMNAS_CREDITOS_ARTICULO: ColumnaPlantilla[] = [
   { header: 'Tipo carga*', key: 'tipo_carga', width: 14 },
   // Baja lo que queda por financiar, así que va enseguida
   {
-    header: 'Cuota inicial',
+    header: 'Cuota inicial*',
     key: 'cuota_inicial',
     width: 14,
     numFmt: FORMATO_MONEDA,
@@ -720,7 +720,7 @@ export async function generarPlantillaClientesCreditos(
     'Solo las columnas marcadas con asterisco (*), que están todas al principio de cada hoja.',
     'Clientes: CC, Nombres, Apellidos y Teléfono.',
     'Créditos de dinero: CC cliente, Monto, Tasa interés, Frecuencia, Cantidad cuotas, Fecha crédito y Tipo carga.',
-    'Créditos de artículo: CC cliente, Código del artículo, Plazo meses, Frecuencia, Fecha crédito y Tipo carga.',
+    'Créditos de artículo: CC cliente, Código del artículo, Plazo meses, Frecuencia, Fecha crédito, Tipo carga y Cuota inicial.',
     '',
     '# Para qué sirve el "Número de crédito"',
     'Es el identificador del crédito. No hay que escribirlo: la columna ya viene con el número que le va a quedar, calculado con la cédula y un consecutivo.',
@@ -981,8 +981,7 @@ export async function generarPlantillaClientesCreditos(
     colLetra(ART.movimiento),
   );
 
-  etiquetarGrupo(wsArticulo, ART.cc, ART.tipoCarga, 'DATOS OBLIGATORIOS');
-  etiquetarGrupo(wsArticulo, ART.cuotaInicial, ART.cuotaInicial, 'INICIAL');
+  etiquetarGrupo(wsArticulo, ART.cc, ART.cuotaInicial, 'DATOS OBLIGATORIOS');
   etiquetarGrupo(
     wsArticulo,
     ART.fechaPrimerCobro,
@@ -1099,6 +1098,14 @@ export async function generarPlantillaClientesCreditos(
         {
           condicion: `NOT(ISNUMBER(${ref(ART.precioPlazo)}))`,
           mensaje: '"⚠ El artículo no tiene precio para ese plazo"',
+        },
+        // En un crédito de artículo el cliente siempre entrega algo al
+        // llevarse la mercancía, así que la inicial no puede quedar en blanco.
+        // Vacía y cero significan lo mismo, y las dos se avisan.
+        {
+          condicion:
+            `OR(${ref(ART.cuotaInicial)}="",${ref(ART.cuotaInicial)}=0)`,
+          mensaje: '"⚠ Falta la cuota inicial"',
         },
         // Si la inicial cubre el precio no queda nada que financiar, y un
         // crédito sin monto no es un crédito.
@@ -1220,7 +1227,10 @@ export async function generarPlantillaClientesCreditos(
     ['Plazo meses*', '6  (debe ser un plazo con precio en ese artículo)'],
     ['Frecuencia pago* / Fecha crédito*', 'SEMANAL / 2026-08-01'],
     ['Tipo carga*', 'OPERATIVA'],
-    ['Cuota inicial', 'Lo que el cliente abonó al llevárselo, si dio algo'],
+    [
+      'Cuota inicial*',
+      '150.000  → lo que el cliente entregó al llevarse el artículo. Obligatoria: se resta del precio y el resto es lo que se financia',
+    ],
     [
       'Aquí no se escribe',
       'Ni monto ni tasa: salen del precio del plazo, que ya trae el financiamiento',
