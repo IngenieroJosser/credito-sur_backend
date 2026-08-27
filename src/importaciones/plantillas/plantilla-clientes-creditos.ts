@@ -86,23 +86,22 @@ const DIN = {
   // Cambia el cálculo del interés, así que va enseguida
   tipoAmortizacion: 9,
   // Lo ya cobrado, para créditos que vienen andando
-  cuotasPagadas: 10,
-  abonoAdicional: 11,
-  fechaUltimoPago: 12,
+  totalAbonado: 10,
+  fechaUltimoPago: 11,
   // Opcionales
-  fechaPrimerCobro: 13,
-  numeroCredito: 14,
-  notas: 15,
+  fechaPrimerCobro: 12,
+  numeroCredito: 13,
+  notas: 14,
   // Automáticas, al final
-  cliente: 16,
-  revision: 17,
-  plazoMesesAuto: 18,
-  interesTotal: 19,
-  totalPagar: 20,
-  valorCuota: 21,
-  yaAbonado: 22,
-  saldoPendiente: 23,
-  movimiento: 24,
+  cliente: 15,
+  revision: 16,
+  plazoMesesAuto: 17,
+  interesTotal: 18,
+  totalPagar: 19,
+  valorCuota: 20,
+  yaAbonado: 21,
+  saldoPendiente: 22,
+  movimiento: 23,
 };
 
 // ── Columnas de "Créditos de artículo" ─────────────────────────────────────
@@ -120,25 +119,24 @@ const ART = {
   // Baja lo que queda por financiar, así que va enseguida
   cuotaInicial: 8,
   // Lo ya cobrado, para créditos que vienen andando
-  cuotasPagadas: 9,
-  abonoAdicional: 10,
-  fechaUltimoPago: 11,
+  totalAbonado: 9,
+  fechaUltimoPago: 10,
   // Opcionales
-  fechaPrimerCobro: 12,
-  monto: 13,
-  numeroCredito: 14,
-  notas: 15,
+  fechaPrimerCobro: 11,
+  monto: 12,
+  numeroCredito: 13,
+  notas: 14,
   // Automáticas, al final
-  cliente: 16,
-  articulo: 17,
-  revision: 18,
-  precioPlazo: 19,
-  cantidadCuotasAuto: 20,
-  totalPagar: 21,
-  valorCuota: 22,
-  yaAbonado: 23,
-  saldoPendiente: 24,
-  movimiento: 25,
+  cliente: 15,
+  articulo: 16,
+  revision: 17,
+  precioPlazo: 18,
+  cantidadCuotasAuto: 19,
+  totalPagar: 20,
+  valorCuota: 21,
+  yaAbonado: 22,
+  saldoPendiente: 23,
+  movimiento: 24,
 };
 
 const COLUMNAS_CLIENTES: ColumnaPlantilla[] = [
@@ -188,11 +186,10 @@ const COLUMNAS_CREDITOS_DINERO: ColumnaPlantilla[] = [
   // Cambia el cálculo del interés, así que va enseguida
   { header: 'Tipo de interés', key: 'tipo_amortizacion', width: 18 },
   // Lo ya cobrado, para créditos que vienen andando
-  { header: 'Cuotas pagadas', key: 'cuotas_pagadas', width: 14 },
   {
-    header: 'Abono adicional',
-    key: 'abono_adicional',
-    width: 15,
+    header: 'Total abonado',
+    key: 'total_abonado',
+    width: 16,
     numFmt: FORMATO_MONEDA,
   },
   {
@@ -295,11 +292,10 @@ const COLUMNAS_CREDITOS_ARTICULO: ColumnaPlantilla[] = [
     numFmt: FORMATO_MONEDA,
   },
   // Lo ya cobrado, para créditos que vienen andando
-  { header: 'Cuotas pagadas', key: 'cuotas_pagadas', width: 14 },
   {
-    header: 'Abono adicional',
-    key: 'abono_adicional',
-    width: 15,
+    header: 'Total abonado',
+    key: 'total_abonado',
+    width: 16,
     numFmt: FORMATO_MONEDA,
   },
   {
@@ -447,22 +443,17 @@ function formulaValorCuota(
  * que absorbe el residuo. Por eso, si el crédito quedó saldado se toma el total
  * y no `cuota x cantidad`, que se quedaría corto por unos pesos.
  */
-function formulaYaAbonado(
-  colValorCuota: number,
-  colCuotasPagadas: number,
-  colAbono: number,
-  colTotal: number,
-  colCuotas: number,
-): string {
-  const cuota = ref(colValorCuota);
-  const pagadas = `IF(${ref(colCuotasPagadas)}="",0,${ref(colCuotasPagadas)})`;
-  const abono = `IF(${ref(colAbono)}="",0,${ref(colAbono)})`;
-
-  return (
-    `IF(NOT(ISNUMBER(${cuota})),"",` +
-    `IF(AND(ISNUMBER(${ref(colCuotas)}),${pagadas}>=${ref(colCuotas)}),${ref(colTotal)},` +
-    `${cuota}*${pagadas})+${abono})`
-  );
+/**
+ * Lo que el cliente lleva pagado.
+ *
+ * Ahora es una sola cifra escrita a mano, así que no hay nada que calcular.
+ * Antes salía de multiplicar la cuota por las cuotas pagadas y sumarle el
+ * abono suelto, y esa suma era justo lo que confundía: quien ponía una cuota y
+ * un abono creía haber declarado el abono solo.
+ */
+function formulaYaAbonado(colTotalAbonado: number): string {
+  const abonado = ref(colTotalAbonado);
+  return `IF(${abonado}="",0,${abonado})`;
 }
 
 /**
@@ -538,13 +529,14 @@ function creditoYaExiste(colNumero: number): TramoRevision {
 
 function operativaConAbonos(
   colTipoCarga: number,
-  colCuotasPagadas: number,
+  colTotalAbonado: number,
 ): TramoRevision {
   return {
     condicion:
       `AND(${ref(colTipoCarga)}="OPERATIVA",` +
-      `IF(${ref(colCuotasPagadas)}="",0,${ref(colCuotasPagadas)})>0)`,
-    mensaje: '"⚠ Un crédito OPERATIVA no puede traer cuotas pagadas"',
+      `IF(${ref(colTotalAbonado)}="",0,${ref(colTotalAbonado)})>0)`,
+    mensaje:
+      '"⚠ Un crédito OPERATIVA se entrega hoy: no puede traer nada abonado"',
   };
 }
 
@@ -703,8 +695,9 @@ export async function generarPlantillaClientesCreditos(
     '',
     '# Créditos ya existentes y avanzados',
     'Las dos hojas admiten créditos que ya llevan tiempo cobrándose:',
-    '• Cuotas pagadas: cuántas cuotas ha cancelado el cliente. Esas cuotas se cargan como PAGADAS.',
-    '• Abono adicional: dinero abonado a la cuota siguiente sin completarla. Esa cuota queda como PARCIAL.',
+    '• Total abonado: cuánto lleva pagado el cliente en total, sumando todo lo que ha entregado. Una sola cifra: no hay que contar cuotas.',
+    '   El sistema la reparte solo. Con lo que alcance para cuotas completas quedan PAGADAS, y si sobra para una parte de la siguiente, esa queda PARCIAL.',
+    '   De cada peso se cobra primero el interés de la cuota y después su capital, igual que en un pago de mostrador.',
     '• Fecha último pago: fecha del último abono recibido (opcional).',
     'Solo aplica con Tipo carga = HISTORICA. No se generan movimientos de caja: ese dinero se recibió antes de usar el sistema.',
     '',
@@ -800,7 +793,7 @@ export async function generarPlantillaClientesCreditos(
   escribirCabecera(
     wsDinero,
     'Créditos de dinero (préstamo en efectivo)',
-    'Una fila por préstamo. Admite créditos nuevos y créditos que ya llevan cuotas pagadas.',
+    'Una fila por préstamo. Admite créditos nuevos y créditos que ya llevan tiempo cobrándose.',
     '📝 Escriba los datos desde la fila 7 hacia abajo. Las columnas grises se calculan solas.',
     colLetra(DIN.movimiento),
   );
@@ -816,7 +809,7 @@ export async function generarPlantillaClientesCreditos(
   etiquetarGrupo(wsDinero, DIN.cliente, DIN.revision, 'VERIFICACIÓN');
   etiquetarGrupo(
     wsDinero,
-    DIN.cuotasPagadas,
+    DIN.totalAbonado,
     DIN.fechaUltimoPago,
     'ESTADO ACTUAL',
   );
@@ -870,17 +863,7 @@ export async function generarPlantillaClientesCreditos(
       DIN.tipoAmortizacion,
     ),
   );
-  formulaEnColumna(
-    wsDinero,
-    DIN.yaAbonado,
-    formulaYaAbonado(
-      DIN.valorCuota,
-      DIN.cuotasPagadas,
-      DIN.abonoAdicional,
-      DIN.totalPagar,
-      DIN.cantidadCuotas,
-    ),
-  );
+  formulaEnColumna(wsDinero, DIN.yaAbonado, formulaYaAbonado(DIN.totalAbonado));
   formulaEnColumna(
     wsDinero,
     DIN.saldoPendiente,
@@ -908,7 +891,7 @@ export async function generarPlantillaClientesCreditos(
           mensaje: '"⚠ Falta la tasa de interés"',
         },
         creditoYaExiste(DIN.numeroCredito),
-        operativaConAbonos(DIN.tipoCarga, DIN.cuotasPagadas),
+        operativaConAbonos(DIN.tipoCarga, DIN.totalAbonado),
         abonoSuperaTotal(DIN.yaAbonado, DIN.totalPagar),
       ],
       '"OK"',
@@ -942,7 +925,7 @@ export async function generarPlantillaClientesCreditos(
   etiquetarGrupo(wsArticulo, ART.cliente, ART.revision, 'VERIFICACIÓN');
   etiquetarGrupo(
     wsArticulo,
-    ART.cuotasPagadas,
+    ART.totalAbonado,
     ART.fechaUltimoPago,
     'ESTADO ACTUAL',
   );
@@ -1006,13 +989,7 @@ export async function generarPlantillaClientesCreditos(
   formulaEnColumna(
     wsArticulo,
     ART.yaAbonado,
-    formulaYaAbonado(
-      ART.valorCuota,
-      ART.cuotasPagadas,
-      ART.abonoAdicional,
-      ART.totalPagar,
-      ART.cantidadCuotasAuto,
-    ),
+    formulaYaAbonado(ART.totalAbonado),
   );
   formulaEnColumna(
     wsArticulo,
@@ -1064,7 +1041,7 @@ export async function generarPlantillaClientesCreditos(
             '"⚠ No queda stock de este artículo: la importación se detendría"',
         },
         creditoYaExiste(ART.numeroCredito),
-        operativaConAbonos(ART.tipoCarga, ART.cuotasPagadas),
+        operativaConAbonos(ART.tipoCarga, ART.totalAbonado),
         abonoSuperaTotal(ART.yaAbonado, ART.totalPagar),
       ],
       '"OK"',
@@ -1132,7 +1109,7 @@ export async function generarPlantillaClientesCreditos(
     ['Monto* / Tasa interés*', '500.000 / 10'],
     ['Frecuencia pago* / Cantidad cuotas*', 'DIARIO / 30'],
     ['Fecha crédito* / Tipo carga*', '2026-05-01 / OPERATIVA'],
-    ['Cuotas pagadas', 'Vacío: un crédito que se entrega hoy no trae abonos'],
+    ['Total abonado', 'Vacío: un crédito que se entrega hoy no trae abonos'],
     [
       'Lo que aparece solo',
       'Plazo 1 mes · Interés 50.000 · Total 550.000 · Cuota 18.333',
@@ -1145,8 +1122,8 @@ export async function generarPlantillaClientesCreditos(
     ['Frecuencia pago* / Cantidad cuotas*', 'DIARIO / 30'],
     ['Fecha crédito* / Tipo carga*', '2026-06-01 / HISTORICA'],
     [
-      'Cuotas pagadas / Abono adicional',
-      '12 / 10.000  → las 12 primeras quedan PAGADAS y la 13 PARCIAL',
+      'Total abonado',
+      '2.110.000  → alcanza para 12 cuotas completas y una parte de la 13',
     ],
     ['Fecha último pago', '2026-07-10'],
     ['', ''],
