@@ -1218,9 +1218,9 @@ export class ClientesCreditosParser {
 
         if (tieneAvance && tipoCarga === 'OPERATIVA') {
           addError(
-            'cuotas_pagadas',
-            'Un crédito OPERATIVA se registra como nuevo: no puede traer cuotas pagadas ni abonos previos. Use tipo de carga HISTORICA.',
-            cuotasPagadasNum,
+            'total_abonado',
+            'Un crédito OPERATIVA se registra como nuevo: no puede traer nada abonado. Use tipo de carga HISTORICA.',
+            abonadoDeclarado ?? cuotasPagadasNum,
           );
         }
 
