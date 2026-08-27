@@ -3,7 +3,11 @@ import { FrecuenciaPago, TipoAmortizacion } from '@prisma/client';
 import { LoansService } from '../loans/loans.service';
 import { generarPlantillaClientesCreditos } from './plantillas/plantilla-clientes-creditos';
 import { evaluarFormula, ValorCelda } from './evaluador-formulas';
-import { derivarPlazoMeses } from './interes-credito';
+import {
+  calcularInteresTotal,
+  construirTablaCuotas,
+  derivarPlazoMeses,
+} from './interes-credito';
 
 /**
  * El Excel tiene que dar lo mismo que el sistema, y hay que comprobarlo con la
@@ -137,7 +141,7 @@ const CADENA = [
   'Interés total',
   'Total en cuotas',
   'Valor cuota',
-  'Ya abonado',
+  'Total abonado (automático)',
   'Saldo pendiente',
 ];
 
@@ -198,7 +202,8 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
     cuotas: number;
     frecuencia: FrecuenciaPago;
     metodo: string;
-    abonado: number;
+    cuotasPagadas: number;
+    abono: number;
   }) => {
     const celdas: Record<string, ValorCelda> = {};
     const poner = (encabezado: string, valor: ValorCelda) => {
@@ -210,7 +215,8 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
     poner('Frecuencia pago', caso.frecuencia);
     poner('Cantidad cuotas', caso.cuotas);
     poner('Tipo de interés', caso.metodo);
-    poner('Total abonado', caso.abonado);
+    poner('Cuotas pagadas', caso.cuotasPagadas);
+    poner('Abono adicional', caso.abono);
 
     for (const columna of CADENA) {
       celdas[`${letraDe(columna)}7`] = evaluarFormula(
@@ -225,7 +231,7 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
       interesTotal: leer('Interés total'),
       totalEnCuotas: leer('Total en cuotas'),
       valorCuota: leer('Valor cuota'),
-      yaAbonado: leer('Ya abonado'),
+      yaAbonado: leer('Total abonado (automático)'),
       saldoPendiente: leer('Saldo pendiente'),
     };
   };
@@ -243,7 +249,8 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
         cuotas,
         frecuencia,
         metodo: metodo.etiqueta,
-        abonado: 0,
+        cuotasPagadas: 0,
+        abono: 0,
       });
 
       const plazoMeses = derivarPlazoMeses(cuotas, frecuencia);
@@ -267,29 +274,48 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
     },
   );
 
-  it('lo abonado y el saldo salen de lo que se escribe, sin inventar nada', () => {
+  it('la columna gris muestra la suma de las dos que se escriben', () => {
+    // Es la razón de que exista: quien pone una cuota y un abono tiene que ver
+    // el total antes de subir el archivo, no descubrirlo después en el saldo.
     const fallos: string[] = [];
 
     for (const { monto, tasa, cuotas, frecuencia, nombre } of CASOS) {
-      for (const abonado of [0, 1, 150_000]) {
+      const combinaciones: Array<[number, number]> = [
+        [0, 0],
+        [0, 150_000],
+        [1, 0],
+        [1, 150_000],
+        [cuotas, 0],
+      ];
+
+      for (const [cuotasPagadas, abono] of combinaciones) {
         const r = calcularConElExcel({
           monto,
           tasa,
           cuotas,
           frecuencia,
           metodo: 'Interés simple',
-          abonado,
+          cuotasPagadas,
+          abono,
         });
         const total = Number(r.totalEnCuotas);
+        const donde = `${nombre} · ${cuotasPagadas} cuotas + ${abono}`;
 
-        if (r.yaAbonado !== abonado) {
+        // Con todas las cuotas declaradas se toma el total del crédito, para
+        // que la última —que absorbe el residuo— no quede por fuera.
+        const esperado =
+          cuotasPagadas >= cuotas
+            ? total + abono
+            : Number(r.valorCuota) * cuotasPagadas + abono;
+
+        if (r.yaAbonado !== esperado) {
           fallos.push(
-            `${nombre} · abonado ${abonado} → el Excel dice ${r.yaAbonado}`,
+            `${donde} → el Excel dice ${r.yaAbonado}, no ${esperado}`,
           );
         }
-        if (r.saldoPendiente !== total - abonado) {
+        if (r.saldoPendiente !== total - esperado) {
           fallos.push(
-            `${nombre} · abonado ${abonado} → saldo ${r.saldoPendiente} en vez de ${total - abonado}`,
+            `${donde} → saldo ${r.saldoPendiente} en vez de ${total - esperado}`,
           );
         }
       }
@@ -308,7 +334,8 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
       'Frecuencia pago',
       'Cantidad cuotas',
       'Tipo de interés',
-      'Total abonado',
+      'Cuotas pagadas',
+      'Abono adicional',
     ]) {
       celdas[`${letraDe(encabezado)}7`] = '';
     }
@@ -325,5 +352,84 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
     expect(celdas[`${letraDe('Total en cuotas')}7`]).toBe('');
     expect(celdas[`${letraDe('Valor cuota')}7`]).toBe('');
     expect(celdas[`${letraDe('Saldo pendiente')}7`]).toBe('');
+  });
+
+  // ── Barrido masivo ───────────────────────────────────────────────────
+
+  /**
+   * El fallo del orden de operaciones aparecía en 1 de cada 450 combinaciones.
+   * Eso no significa que hoy falle 1 de cada 450: significa que era así de
+   * difícil de ver, y por eso pasó desapercibido. Aquí se comprueba que no
+   * aparece en ninguna.
+   *
+   * Se compara contra `calcularInteresTotal` y `construirTablaCuotas`, que son
+   * lo que usa la importación, y que a su vez se comparan contra
+   * `LoansService` en toda su malla en consistencia-dinero.spec.
+   */
+  const semilla = 20260826;
+  let estado = semilla;
+  const aleatorio = () => {
+    // Generador propio para que el barrido sea siempre el mismo: si algún día
+    // falla, falla con los mismos números y se puede reproducir.
+    estado = (estado * 1103515245 + 12345) & 0x7fffffff;
+    return estado / 0x7fffffff;
+  };
+  const entre = (min: number, max: number) =>
+    min + Math.floor(aleatorio() * (max - min + 1));
+
+  const TASAS = [2, 4, 5, 7.5, 10, 12.5, 15, 20, 33.33];
+  const FRECUENCIAS = [
+    FrecuenciaPago.DIARIO,
+    FrecuenciaPago.SEMANAL,
+    FrecuenciaPago.QUINCENAL,
+    FrecuenciaPago.MENSUAL,
+  ];
+
+  it('50.000 combinaciones al azar, ni una diferencia', () => {
+    const fallos: string[] = [];
+
+    for (let i = 0; i < 50_000 && fallos.length < 5; i++) {
+      const monto = entre(1, 50_000_000);
+      const tasa = TASAS[entre(0, TASAS.length - 1)];
+      const cuotas = entre(1, 72);
+      const frecuencia = FRECUENCIAS[entre(0, FRECUENCIAS.length - 1)];
+      const metodo = aleatorio() < 0.5 ? METODOS[0] : METODOS[1];
+
+      const delExcel = calcularConElExcel({
+        monto,
+        tasa,
+        cuotas,
+        frecuencia,
+        metodo: metodo.etiqueta,
+        cuotasPagadas: 0,
+        abono: 0,
+      });
+
+      const plazoMeses = derivarPlazoMeses(cuotas, frecuencia);
+      const interes = calcularInteresTotal(
+        metodo.enum,
+        monto,
+        tasa,
+        plazoMeses,
+      );
+      const tabla = construirTablaCuotas(metodo.enum, monto, interes, cuotas);
+      const donde = `${metodo.etiqueta} · ${monto} · ${tasa}% · ${cuotas} ${frecuencia}`;
+
+      if (delExcel.interesTotal !== interes) {
+        fallos.push(
+          `${donde} — interés ${delExcel.interesTotal} contra ${interes}`,
+        );
+      }
+      if (delExcel.totalEnCuotas !== monto + interes) {
+        fallos.push(`${donde} — total ${delExcel.totalEnCuotas}`);
+      }
+      if (delExcel.valorCuota !== tabla[0].monto) {
+        fallos.push(
+          `${donde} — cuota ${delExcel.valorCuota} contra ${tabla[0].monto}`,
+        );
+      }
+    }
+
+    expect(fallos).toEqual([]);
   });
 });

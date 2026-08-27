@@ -486,7 +486,7 @@ describe('Plantilla de clientes y créditos', () => {
     const resultado = await validarCredito({
       ...creditoMinimo,
       'Tipo carga': 'OPERATIVA',
-      'Total abonado': 100000,
+      'Cuotas pagadas': 5,
     });
 
     expect(resultado.errores).toEqual([
@@ -499,8 +499,8 @@ describe('Plantilla de clientes y créditos', () => {
       ...creditoMinimo,
       Monto: 600000,
       'Fecha crédito': '2026-06-01',
-      // 12 cuotas de 22.000 más 10.000 sueltos, en una sola cifra.
-      'Total abonado': 274000,
+      'Cuotas pagadas': 12,
+      'Abono adicional': 10000,
       'Fecha último pago': '2026-07-10',
     });
 
@@ -516,7 +516,8 @@ describe('Plantilla de clientes y créditos', () => {
     const resultado = await validarCredito({
       ...creditoMinimo,
       Monto: 600000,
-      'Total abonado': 1000000,
+      'Cuotas pagadas': 29,
+      'Abono adicional': 500000,
     });
 
     expect(resultado.errores).toEqual([
@@ -1009,7 +1010,7 @@ describe('Acción ACTUALIZAR', () => {
 
   it('permite actualizar un crédito importado sin pagos', async () => {
     const resultado = await validarCredito(
-      { ...creditoMinimo, Acción: 'ACTUALIZAR', 'Total abonado': 100000 },
+      { ...creditoMinimo, Acción: 'ACTUALIZAR', 'Cuotas pagadas': 5 },
       {
         clientes: [clienteEnBd],
         prestamos: [
@@ -1024,7 +1025,7 @@ describe('Acción ACTUALIZAR', () => {
 
     expect(resultado.errores).toHaveLength(0);
     expect(resultado.creditos?.[0]).toEqual(
-      expect.objectContaining({ esActualizacion: true, totalAbonado: 100000 }),
+      expect.objectContaining({ esActualizacion: true, cuotasPagadas: 5 }),
     );
   });
 
@@ -1800,7 +1801,7 @@ describe('La vista previa muestra las mismas cifras que se van a guardar', () =>
           'Fecha crédito': '2026-05-01',
           'Tipo carga': 'HISTORICA',
           'Tipo de interés': metodo,
-          'Total abonado': abonado,
+          'Cuotas pagadas': cuotasPagadas,
         },
         { clientes: [clienteEnBd] },
         'Créditos de dinero',
@@ -1825,7 +1826,7 @@ describe('La vista previa muestra las mismas cifras que se van a guardar', () =>
           },
         ),
       });
-      const avance = aplicarAvanceHistorico(plan, 0, abonado, null);
+      const avance = aplicarAvanceHistorico(plan, cuotasPagadas, 0, null);
 
       expect(previa.valorCuota).toBe(plan[0].monto);
       expect(previa.totalAbonado).toBe(avance.totalPagado);
@@ -2087,7 +2088,7 @@ describe('Cómo se descuenta un abono', () => {
     );
 
   it('lo abonado baja el saldo peso a peso', async () => {
-    const resultado = await credito({ 'Total abonado': 150000 });
+    const resultado = await credito({ 'Abono adicional': 150000 });
     const c: any = resultado.creditos?.[0];
 
     expect(c.interesTotal).toBe(200000);
@@ -2101,7 +2102,10 @@ describe('Cómo se descuenta un abono', () => {
   it('se escribe el total, no una cuota más un abono', async () => {
     // Con las dos columnas de antes, poner una cuota y un abono daba 325.000
     // sin que nadie lo pidiera. Ahora lo que se escribe es lo que cuenta.
-    const resultado = await credito({ 'Total abonado': 325000 });
+    const resultado = await credito({
+      'Cuotas pagadas': 1,
+      'Abono adicional': 150000,
+    });
     const c: any = resultado.creditos?.[0];
 
     expect(c.totalAbonado).toBe(325000);
@@ -2140,25 +2144,24 @@ describe('El nombre anterior del tipo de interés sigue sirviendo', () => {
   });
 });
 
-describe('Archivos con las dos columnas de antes', () => {
-  it('reconstruye lo abonado desde "Cuotas pagadas" y "Abono adicional"', async () => {
-    // Alguien puede tener un archivo a medio llenar con las columnas viejas.
-    // Se sigue leyendo, y da lo mismo que escribir el total de una vez.
+describe('Un archivo con la columna "Total abonado"', () => {
+  it('toma la cifra escrita tal cual', async () => {
+    // Hubo una versión con una sola columna de captura. Si alguien tiene un
+    // archivo así, se sigue leyendo: se toma lo que diga y no se suma nada.
     const plantilla = await plantillaClientesCacheada();
     const archivo = await editarLibro(plantilla.data, (workbook) => {
       const hoja = workbook.getWorksheet('Créditos de dinero')!;
 
-      // Se devuelve la hoja al estado anterior: la columna de hoy se parte en
-      // las dos que había, aprovechando una vecina que no se usa en el caso.
-      let columnaTotal = 0;
-      let columnaLibre = 0;
+      let columnaCuotas = 0;
+      let columnaAbono = 0;
       hoja.getRow(6).eachCell({ includeEmpty: false }, (celda, n) => {
         const encabezado = normalizarEncabezado(celda.value);
-        if (encabezado === 'TOTAL ABONADO') columnaTotal = n;
-        if (encabezado === 'NOTAS') columnaLibre = n;
+        if (encabezado === 'CUOTAS PAGADAS') columnaCuotas = n;
+        if (encabezado === 'ABONO ADICIONAL') columnaAbono = n;
       });
-      hoja.getCell(6, columnaTotal).value = 'Cuotas pagadas';
-      hoja.getCell(6, columnaLibre).value = 'Abono adicional';
+      // Se deja una sola columna de captura, como en aquella versión.
+      hoja.getCell(6, columnaCuotas).value = 'Total abonado';
+      hoja.getCell(6, columnaAbono).value = 'Notas internas';
 
       escribirFila(hoja, FILA_DATOS, {
         'CC cliente': '12345678',
@@ -2169,8 +2172,7 @@ describe('Archivos con las dos columnas de antes', () => {
         'Fecha crédito': '2026-06-01',
         'Tipo carga': 'HISTORICA',
         'Tipo de interés': 'Interés simple',
-        'Cuotas pagadas': 12,
-        'Abono adicional': 10000,
+        'Total abonado': 274000,
       });
     });
 
@@ -2180,7 +2182,6 @@ describe('Archivos con las dos columnas de antes', () => {
 
     expect(resultado.errores).toHaveLength(0);
     const credito: any = resultado.creditos?.[0];
-    // 12 cuotas de 22.000 más 10.000 sueltos.
     expect(credito.totalCredito).toBe(660000);
     expect(credito.totalAbonado).toBe(274000);
     expect(credito.saldoPendiente).toBe(386000);
