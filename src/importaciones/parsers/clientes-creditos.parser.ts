@@ -587,7 +587,10 @@ export class ClientesCreditosParser {
       const creFrecuencia = colsCre.indice('Frecuencia pago');
       const creCantidadCuotas = colsCre.indice('Cantidad cuotas');
       const crePlazoMeses = colsCre.indice('Plazo meses');
-      const creTipoAmortizacion = colsCre.indice('Tipo amortización');
+      const creTipoAmortizacion = colsCre.indice(
+        'Tipo de interés',
+        'Tipo amortización',
+      );
       const creFechaCredito = colsCre.indice('Fecha crédito');
       const creFechaPrimerCobro = colsCre.indice('Fecha primer cobro');
       const creTipoCarga = colsCre.indice('Tipo carga');
@@ -595,6 +598,12 @@ export class ClientesCreditosParser {
       const creGarantia = colsCre.indice('Garantía');
       const creNotas = colsCre.indice('Notas');
       // Estado de avance del crédito (migración de cartera ya en curso).
+      // Una sola columna con lo que el cliente lleva pagado. Antes eran dos,
+      // "Cuotas pagadas" y "Abono adicional", que se sumaban entre sí: quien
+      // ponía una cuota y un abono creía haber declarado el abono solo, y el
+      // saldo le salía más bajo de lo que esperaba. Las viejas se siguen
+      // leyendo para no romper un archivo ya descargado.
+      const creTotalAbonado = colsCre.indice('Total abonado');
       const creCuotasPagadas = colsCre.indice('Cuotas pagadas');
       const creAbonoAdicional = colsCre.indice('Abono adicional');
       const creFechaUltimoPago = colsCre.indice('Fecha último pago');
@@ -635,6 +644,7 @@ export class ClientesCreditosParser {
         creDescontarCaja,
         creGarantia,
         creNotas,
+        creTotalAbonado,
         creCuotasPagadas,
         creAbonoAdicional,
         creFechaUltimoPago,
@@ -674,6 +684,7 @@ export class ClientesCreditosParser {
         const descontarCajaCelda = leerTextoMayus(celda(row, creDescontarCaja));
         const garantia = leerTexto(celda(row, creGarantia));
         const notas = leerTexto(celda(row, creNotas));
+        const totalAbonadoCelda = leerNumero(celda(row, creTotalAbonado));
         const cuotasPagadas = leerNumero(celda(row, creCuotasPagadas));
         const abonoAdicionalCelda = leerNumero(celda(row, creAbonoAdicional));
         const fechaUltimoPago = leerFecha(celda(row, creFechaUltimoPago));
@@ -708,11 +719,14 @@ export class ClientesCreditosParser {
 
         const montoConCentavos = tieneCentavos(montoCelda);
         const cuotaInicialConCentavos = tieneCentavos(cuotaInicialCelda);
-        const abonoConCentavos = tieneCentavos(abonoAdicionalCelda);
+        const abonoConCentavos =
+          tieneCentavos(abonoAdicionalCelda) ||
+          tieneCentavos(totalAbonadoCelda);
 
         const monto = aPesos(montoCelda);
         const cuotaInicial = aPesos(cuotaInicialCelda);
         const abonoAdicional = aPesos(abonoAdicionalCelda);
+        const totalAbonadoEscrito = aPesos(totalAbonadoCelda);
 
         const addError = (campo: string, mensaje: string, valor: any) => {
           errores.push({
@@ -1174,7 +1188,33 @@ export class ClientesCreditosParser {
           );
         }
 
-        const tieneAvance = cuotasPagadasNum > 0 || abonoAdicionalNum > 0;
+        if (
+          totalAbonadoEscrito !== null &&
+          (Number.isNaN(totalAbonadoEscrito) || totalAbonadoEscrito < 0)
+        ) {
+          addError(
+            'total_abonado',
+            'Escriba cuánto lleva pagado el cliente: un número mayor o igual a 0',
+            celda(row, creTotalAbonado),
+          );
+        }
+
+        // Lo que el cliente lleva pagado, en una sola cifra.
+        //
+        // Si el archivo trae la columna nueva manda esa. Si es uno viejo, se
+        // arma con las dos anteriores: las cuotas completas más el abono
+        // suelto, que es como se venían sumando.
+        const declaroTotalAbonado =
+          creTotalAbonado > 0 &&
+          totalAbonadoEscrito !== null &&
+          !Number.isNaN(totalAbonadoEscrito);
+        const abonadoDeclarado = declaroTotalAbonado
+          ? Number(totalAbonadoEscrito)
+          : null;
+
+        const tieneAvance = declaroTotalAbonado
+          ? Number(totalAbonadoEscrito) > 0
+          : cuotasPagadasNum > 0 || abonoAdicionalNum > 0;
 
         if (tieneAvance && tipoCarga === 'OPERATIVA') {
           addError(
@@ -1264,11 +1304,16 @@ export class ClientesCreditosParser {
           cantidadCuotas as number,
         );
         const valorCuota = tablaCuotas[0]?.monto ?? 0;
+
+        // Con la columna nueva, lo abonado es lo que se escribió y punto. Con
+        // un archivo viejo hay que reconstruirlo: las cuotas completas valen lo
+        // que dice la tabla, más el abono suelto.
         const cuotasCubiertas = Math.max(
           0,
           Math.min(Math.trunc(cuotasPagadasNum), tablaCuotas.length),
         );
         const totalAbonado =
+          abonadoDeclarado ??
           tablaCuotas
             .slice(0, cuotasCubiertas)
             .reduce((suma, cuota) => suma + cuota.monto, 0) + abonoAdicionalNum;
@@ -1277,8 +1322,8 @@ export class ClientesCreditosParser {
           errores.push({
             hoja: nombre,
             fila: rowNumber,
-            campo: 'abono_adicional',
-            mensaje: `Lo abonado (${totalAbonado}) supera el total del crédito (${totalCredito}). Revise las cuotas pagadas y el abono adicional.`,
+            campo: 'total_abonado',
+            mensaje: `Lo abonado (${totalAbonado}) supera el total del crédito (${totalCredito}). Revise el total abonado.`,
             valor: abonoAdicionalNum,
           });
           filasConError++;

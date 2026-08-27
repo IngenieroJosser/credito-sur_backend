@@ -1060,10 +1060,13 @@ export class ImportacionesService {
             });
 
             // Créditos que ya venían cobrándose antes de usar el sistema.
+            // Lo abonado llega en una sola cifra: el parser ya resolvió si
+            // vino de la columna nueva o de las dos viejas. La cascada reparte
+            // ese total entre las cuotas, cobrando interés y capital en orden.
             const avance = aplicarAvanceHistorico(
               planCuotas,
-              Number(cred.cuotasPagadas || 0),
-              Number(cred.abonoAdicional || 0),
+              0,
+              Number(cred.totalAbonado || 0),
               cred.fechaUltimoPago || null,
             );
 

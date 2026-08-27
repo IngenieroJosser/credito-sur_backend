@@ -145,7 +145,7 @@ const creditoMinimo = {
   'Tasa interés': 10,
   'Frecuencia pago': 'DIARIO',
   'Cantidad cuotas': 30,
-  'Tipo amortización': 'Interés simple',
+  'Tipo de interés': 'Interés simple',
   'Fecha crédito': '2026-05-01',
   'Tipo carga': 'HISTORICA',
 };
@@ -402,7 +402,7 @@ describe('Plantilla de clientes y créditos', () => {
   });
 
   it('asume interés simple cuando no se indica el tipo de amortización', async () => {
-    const { 'Tipo amortización': _tipo, ...resto } = creditoMinimo;
+    const { 'Tipo de interés': _tipo, ...resto } = creditoMinimo;
     const resultado = await validarCredito(resto);
 
     expect(resultado.errores).toHaveLength(0);
@@ -418,7 +418,7 @@ describe('Plantilla de clientes y créditos', () => {
 
     const simple = await validarCredito({
       ...base,
-      'Tipo amortización': 'Interés simple',
+      'Tipo de interés': 'Interés simple',
     });
     expect(simple.errores).toHaveLength(0);
     expect(simple.creditos?.[0].tipoAmortizacion).toBe('INTERES_SIMPLE');
@@ -427,7 +427,7 @@ describe('Plantilla de clientes y créditos', () => {
 
     const amortizacion = await validarCredito({
       ...base,
-      'Tipo amortización': 'Amortización',
+      'Tipo de interés': 'Amortización',
     });
     expect(amortizacion.errores).toHaveLength(0);
     expect(amortizacion.creditos?.[0].tipoAmortizacion).toBe('INTERES_PLANO');
@@ -438,11 +438,11 @@ describe('Plantilla de clientes y créditos', () => {
   it('los dos métodos coinciden cuando el plazo es de un mes', async () => {
     const simple = await validarCredito({
       ...creditoMinimo,
-      'Tipo amortización': 'Interés simple',
+      'Tipo de interés': 'Interés simple',
     });
     const amortizacion = await validarCredito({
       ...creditoMinimo,
-      'Tipo amortización': 'Amortización',
+      'Tipo de interés': 'Amortización',
     });
 
     expect(simple.creditos?.[0].interesTotal).toBe(50000);
@@ -452,7 +452,7 @@ describe('Plantilla de clientes y créditos', () => {
   it('rechaza un método de interés que no existe', async () => {
     const resultado = await validarCredito({
       ...creditoMinimo,
-      'Tipo amortización': 'Francesa alemana',
+      'Tipo de interés': 'Francesa alemana',
     });
 
     expect(resultado.errores).toEqual([
@@ -482,7 +482,7 @@ describe('Plantilla de clientes y créditos', () => {
     );
   });
 
-  it('no permite que un crédito OPERATIVA traiga cuotas pagadas', async () => {
+  it('no permite que un crédito OPERATIVA traiga algo abonado', async () => {
     const resultado = await validarCredito({
       ...creditoMinimo,
       'Tipo carga': 'OPERATIVA',
@@ -494,7 +494,7 @@ describe('Plantilla de clientes y créditos', () => {
     ]);
   });
 
-  it('acepta un crédito histórico con cuotas pagadas y abono parcial', async () => {
+  it('acepta un crédito histórico con parte abonada', async () => {
     const resultado = await validarCredito({
       ...creditoMinimo,
       Monto: 600000,
@@ -506,9 +506,7 @@ describe('Plantilla de clientes y créditos', () => {
 
     expect(resultado.errores).toHaveLength(0);
     const credito = resultado.creditos?.[0];
-    expect(credito.cuotasPagadas).toBe(12);
-    expect(credito.abonoAdicional).toBe(10000);
-    // 600.000 + 10% x 1 mes = 660.000 · cuota 22.000 · 12 cuotas + 10.000
+    // 600.000 + 10% x 1 mes = 660.000 · cuota 22.000
     expect(credito.totalCredito).toBe(660000);
     expect(credito.totalAbonado).toBe(274000);
     expect(credito.saldoPendiente).toBe(386000);
@@ -523,7 +521,7 @@ describe('Plantilla de clientes y créditos', () => {
     });
 
     expect(resultado.errores).toEqual([
-      expect.objectContaining({ campo: 'abono_adicional' }),
+      expect.objectContaining({ campo: 'total_abonado' }),
     ]);
   });
 
@@ -1109,7 +1107,7 @@ describe('Diferencias entre crédito de artículo y préstamo en efectivo', () =
       .map(String);
 
     expect(encabezados).not.toContain('Tasa interés*');
-    expect(encabezados).not.toContain('Tipo amortización');
+    expect(encabezados).not.toContain('Tipo de interés');
     expect(encabezados).toContain('Código del artículo*');
   });
 
@@ -1373,8 +1371,10 @@ describe('Las fórmulas del Excel dan lo mismo que el sistema', () => {
     // Si alguien cambia el orden de operaciones o el redondeo, esta prueba lo
     // delata: son justo los dos puntos donde aparecía el peso de diferencia.
     const interes = formulaDe('Interés total');
-    // Interés simple: multiplica todo y divide al final.
-    expect(interes).toContain('ROUND($C7*$D7*MAX(1,$R7)/100,0)');
+    // Interés simple: multiplica todo y divide al final. La letra de la
+    // columna del plazo se deja abierta, para que mover una columna no haga
+    // fallar una prueba que habla del orden de las operaciones.
+    expect(interes).toMatch(/ROUND\(\$C7\*\$D7\*MAX\(1,\$[A-Z]+7\)\/100,0\)/);
     // Amortización: la tasa se aplica una sola vez dividiendo primero, que es
     // como lo hace `calcularInteresPlano`.
     expect(interes).toContain('ROUND($C7*($D7/100),0)');
@@ -1773,7 +1773,23 @@ describe('La vista previa muestra las mismas cifras que se van a guardar', () =>
     'coincide con $cuotas cuotas $frecuencia por $metodo',
     async ({ tasa, cuotas, frecuencia, metodo }) => {
       const monto = 1_234_567;
+      // Se declara lo abonado: el equivalente a tres cuotas completas, que es
+      // lo que la confirmación va a repartir.
       const cuotasPagadas = 3;
+      const interesPrevio = calcularInteresTotal(
+        metodo === 'Amortización' ? 'INTERES_PLANO' : 'INTERES_SIMPLE',
+        monto,
+        tasa,
+        derivarPlazoMeses(cuotas, frecuencia as any),
+      );
+      const abonado = construirTablaCuotas(
+        metodo === 'Amortización' ? 'INTERES_PLANO' : 'INTERES_SIMPLE',
+        monto,
+        interesPrevio,
+        cuotas,
+      )
+        .slice(0, cuotasPagadas)
+        .reduce((suma, cuota) => suma + cuota.monto, 0);
 
       const resultado = await validarCredito(
         {
@@ -1784,7 +1800,7 @@ describe('La vista previa muestra las mismas cifras que se van a guardar', () =>
           'Cantidad cuotas': cuotas,
           'Fecha crédito': '2026-05-01',
           'Tipo carga': 'HISTORICA',
-          'Tipo amortización': metodo,
+          'Tipo de interés': metodo,
           'Cuotas pagadas': cuotasPagadas,
         },
         { clientes: [clienteEnBd] },
@@ -2048,5 +2064,126 @@ describe('La cuota inicial no puede comerse el precio', () => {
     );
 
     expect(formula).toContain('La cuota inicial cubre el precio');
+  });
+});
+
+describe('Cómo se descuenta un abono', () => {
+  // Caso real que generó dudas: crédito quincenal a 4 cuotas, o sea 2 meses,
+  // al 20% mensual. El interés son 200.000 y el total 700.000.
+  const credito = (extra: Record<string, any>) =>
+    validarCredito(
+      {
+        'CC cliente': '12345678',
+        Monto: 500000,
+        'Tasa interés': 20,
+        'Frecuencia pago': 'QUINCENAL',
+        'Cantidad cuotas': 4,
+        'Fecha crédito': '2026-08-01',
+        'Tipo carga': 'HISTORICA',
+        'Tipo de interés': 'Interés simple',
+        ...extra,
+      },
+      { clientes: [clienteEnBd] },
+      'Créditos de dinero',
+    );
+
+  it('lo abonado baja el saldo peso a peso', async () => {
+    const resultado = await credito({ 'Abono adicional': 150000 });
+    const c: any = resultado.creditos?.[0];
+
+    expect(c.interesTotal).toBe(200000);
+    expect(c.totalCredito).toBe(700000);
+    expect(c.valorCuota).toBe(175000);
+    // 700.000 menos los 150.000 abonados. Ni más ni menos.
+    expect(c.totalAbonado).toBe(150000);
+    expect(c.saldoPendiente).toBe(550000);
+  });
+
+  it('se escribe el total, no una cuota más un abono', async () => {
+    // Con las dos columnas de antes, poner una cuota y un abono daba 325.000
+    // sin que nadie lo pidiera. Ahora lo que se escribe es lo que cuenta.
+    const resultado = await credito({
+      'Cuotas pagadas': 1,
+      'Abono adicional': 150000,
+    });
+    const c: any = resultado.creditos?.[0];
+
+    expect(c.totalAbonado).toBe(325000);
+    expect(c.saldoPendiente).toBe(375000);
+  });
+});
+
+describe('El nombre anterior del tipo de interés sigue sirviendo', () => {
+  it('acepta "Tipo amortización" en un archivo ya descargado', async () => {
+    const plantilla = await plantillaClientesCacheada();
+    const archivo = await editarLibro(plantilla.data, (workbook) => {
+      const hoja = workbook.getWorksheet('Créditos de dinero')!;
+      hoja.getRow(6).eachCell({ includeEmpty: false }, (celda) => {
+        if (normalizarEncabezado(celda.value) === 'TIPO DE INTERES') {
+          celda.value = 'Tipo amortización';
+        }
+      });
+      escribirFila(hoja, FILA_DATOS, {
+        'CC cliente': '12345678',
+        Monto: 500000,
+        'Tasa interés': 10,
+        'Frecuencia pago': 'DIARIO',
+        'Cantidad cuotas': 30,
+        'Fecha crédito': '2026-05-01',
+        'Tipo carga': 'HISTORICA',
+        'Tipo amortización': 'Amortización',
+      });
+    });
+
+    const resultado = await new ClientesCreditosParser(
+      prismaMock({ clientes: [clienteEnBd] }),
+    ).parseAndValidate(archivo, 'clientes.xlsx');
+
+    expect(resultado.errores).toHaveLength(0);
+    expect(resultado.creditos?.[0].tipoAmortizacion).toBe('INTERES_PLANO');
+  });
+});
+
+describe('Un archivo con la columna "Total abonado"', () => {
+  it('toma la cifra escrita tal cual', async () => {
+    // Hubo una versión con una sola columna de captura. Si alguien tiene un
+    // archivo así, se sigue leyendo: se toma lo que diga y no se suma nada.
+    const plantilla = await plantillaClientesCacheada();
+    const archivo = await editarLibro(plantilla.data, (workbook) => {
+      const hoja = workbook.getWorksheet('Créditos de dinero')!;
+
+      let columnaCuotas = 0;
+      let columnaAbono = 0;
+      hoja.getRow(6).eachCell({ includeEmpty: false }, (celda, n) => {
+        const encabezado = normalizarEncabezado(celda.value);
+        if (encabezado === 'CUOTAS PAGADAS') columnaCuotas = n;
+        if (encabezado === 'ABONO ADICIONAL') columnaAbono = n;
+      });
+      // Se deja una sola columna de captura, como en aquella versión.
+      hoja.getCell(6, columnaCuotas).value = 'Total abonado';
+      hoja.getCell(6, columnaAbono).value = 'Notas internas';
+
+      escribirFila(hoja, FILA_DATOS, {
+        'CC cliente': '12345678',
+        Monto: 600000,
+        'Tasa interés': 10,
+        'Frecuencia pago': 'DIARIO',
+        'Cantidad cuotas': 30,
+        'Fecha crédito': '2026-06-01',
+        'Tipo carga': 'HISTORICA',
+        'Tipo de interés': 'Interés simple',
+        'Total abonado': 274000,
+      });
+    });
+
+    const resultado = await new ClientesCreditosParser(
+      prismaMock({ clientes: [clienteEnBd] }),
+    ).parseAndValidate(archivo, 'clientes.xlsx');
+
+    expect(resultado.errores).toHaveLength(0);
+    const credito: any = resultado.creditos?.[0];
+    expect(credito.totalCredito).toBe(660000);
+    expect(credito.totalAbonado).toBe(274000);
+    expect(credito.saldoPendiente).toBe(386000);
   });
 });

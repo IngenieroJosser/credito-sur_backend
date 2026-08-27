@@ -5552,12 +5552,12 @@ export class LoansService implements OnModuleInit {
         garantia: prestamo.garantia,
         notas: prestamo.notas,
         // Avance de cobro: permite reimportar el crédito tal como está hoy.
-        cuotasPagadas: (prestamo.cuotas || []).filter(
-          (cuota) => cuota.estado === 'PAGADA',
-        ).length,
-        abonoAdicional: (prestamo.cuotas || [])
-          .filter((cuota) => cuota.estado !== 'PAGADA')
-          .reduce((suma, cuota) => suma + Number(cuota.montoPagado || 0), 0),
+        // Es todo lo que el cliente ha entregado, sin separar cuotas completas
+        // de abonos sueltos: la importación lo reparte igual que aquí.
+        totalAbonado: (prestamo.cuotas || []).reduce(
+          (suma, cuota) => suma + Number(cuota.montoPagado || 0),
+          0,
+        ),
         fechaUltimoPago:
           (prestamo.cuotas || [])
             .filter((cuota) => cuota.fechaPago)
