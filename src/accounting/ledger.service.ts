@@ -763,6 +763,116 @@ export class LedgerService {
   }
 
   /**
+   * Radiografía completa del estado contable, para mirarla cuando uno quiera.
+   *
+   * Las comprobaciones existían pero solo corrían en el cron de las 2 de la
+   * mañana, y solo avisaban si algo estaba roto. Para hacer una prueba en
+   * producción hace falta lo contrario: mirar el estado ANTES de tocar nada,
+   * hacer la operación, y volver a mirar. Si los números son los mismos, la
+   * operación no rompió nada; si cambiaron, se sabe exactamente cuál.
+   *
+   * Solo lee. No escribe ni corrige nada.
+   */
+  async revisarIntegridad() {
+    const q = (sql: string): Promise<any[]> =>
+      (this.prisma as any).$queryRawUnsafe(sql);
+    const n = (v: any) => Number(v ?? 0);
+
+    const [global, cajas, descuadrados, centavos, negativas, inventario] =
+      await Promise.all([
+        this.verificarIntegridadGlobal(),
+        this.verificarIntegridadCajas(),
+        // Un asiento que no cuadra consigo mismo. Es más fuerte que el balance
+        // global: dos asientos torcidos al revés se compensan y el global sale
+        // limpio.
+        q(`select count(*)::int t from (
+             select e.id from asientos_contables e
+             join asientos_lineas l on l."journalEntryId" = e.id
+             group by e.id
+             having sum(coalesce(l."debitAmount",0) - coalesce(l."creditAmount",0)) <> 0
+           ) x`),
+        q(`select
+             (select count(*)::int from asientos_lineas
+               where coalesce("debitAmount",0) % 1 <> 0
+                  or coalesce("creditAmount",0) % 1 <> 0) lineas,
+             (select count(*)::int from cajas where "saldoActual" % 1 <> 0) cajas,
+             (select count(*)::int from cuotas where monto % 1 <> 0) cuotas`),
+        q(`select count(*)::int t from cajas where "saldoActual" < 0 and activa = true`),
+        q(`select
+             (select coalesce(sum(coalesce("debitAmount",0)-coalesce("creditAmount",0)),0)
+                from asientos_lineas where "accountCode" like '1.5%') libro,
+             (select coalesce(sum(stock*costo),0) from "Producto" where "eliminadoEn" is null) bodega`),
+      ]);
+
+    const cajasDescuadradas = cajas.filter((c) => !c.correct);
+    const totalCentavos =
+      n(centavos[0].lineas) + n(centavos[0].cajas) + n(centavos[0].cuotas);
+    const difInventario = n(inventario[0].libro) - n(inventario[0].bodega);
+
+    const problemas: string[] = [];
+    if (!global.balanced) {
+      problemas.push(`El libro no cuadra por ${global.diferencia}.`);
+    }
+    if (n(descuadrados[0].t) > 0) {
+      problemas.push(`${descuadrados[0].t} asiento(s) no cuadran por sí solos.`);
+    }
+    if (cajasDescuadradas.length > 0) {
+      problemas.push(
+        `${cajasDescuadradas.length} caja(s) con saldo distinto al del libro: ` +
+          cajasDescuadradas
+            .map((c) => `${c.nombre} (${c.diferencia})`)
+            .join(', '),
+      );
+    }
+    if (n(negativas[0].t) > 0) {
+      problemas.push(`${negativas[0].t} caja(s) en negativo.`);
+    }
+    if (totalCentavos > 0) {
+      problemas.push(
+        `${totalCentavos} valor(es) con centavos. El sistema maneja pesos enteros.`,
+      );
+    }
+    if (difInventario !== 0) {
+      problemas.push(
+        `El inventario del libro difiere de la bodega en ${difInventario}. ` +
+          'Se corrige una vez con "regularizar inventario".',
+      );
+    }
+
+    return {
+      revisadoEn: new Date().toISOString(),
+      todoEnOrden: problemas.length === 0,
+      problemas,
+      libro: {
+        cuadrado: global.balanced,
+        debitos: global.totalDebitos,
+        creditos: global.totalCreditos,
+        diferencia: global.diferencia,
+        asientosDescuadrados: n(descuadrados[0].t),
+      },
+      cajas: cajas.map((c) => ({
+        nombre: c.nombre,
+        saldo: c.saldoCaja,
+        segunElLibro: c.saldoLibro,
+        diferencia: c.diferencia,
+        cuadra: c.correct,
+      })),
+      cajasEnNegativo: n(negativas[0].t),
+      centavos: {
+        total: totalCentavos,
+        lineasDeAsiento: n(centavos[0].lineas),
+        cajas: n(centavos[0].cajas),
+        cuotas: n(centavos[0].cuotas),
+      },
+      inventario: {
+        segunElLibro: n(inventario[0].libro),
+        enBodega: n(inventario[0].bodega),
+        diferencia: difInventario,
+      },
+    };
+  }
+
+  /**
    * Verifica que el `saldoActual` de cada Caja coincida con la suma de sus líneas en el Ledger.
    */
   async verificarIntegridadCajas(): Promise<
