@@ -4640,6 +4640,82 @@ export class AccountingService {
    * Migra los saldos actuales de Cajas y Cartera al libro mayor.
    * SOLO puede ejecutarse si el libro está vacío.
    */
+  /**
+   * Pone la cuenta de inventario al día con la mercancía que hay en bodega.
+   *
+   * Durante mucho tiempo registrar stock no tocaba el libro: la cuenta 1.5 solo
+   * se acreditaba al vender —contra el costo del artículo— así que bajaba con
+   * cada venta y no subía nunca. Terminó en negativo, un activo imposible, con
+   * la bodega llena. El asiento de apertura tampoco la incluyó.
+   *
+   * Desde que entrar mercancía genera su asiento, el problema no se repite,
+   * pero el hueco que quedó no se cierra solo: hace falta un asiento que
+   * reconozca de una vez el inventario que ya estaba ahí.
+   *
+   * La contrapartida es el capital del propietario, el mismo criterio de la
+   * apertura: esa mercancía se compró con plata que no salió de ninguna caja
+   * del sistema.
+   *
+   * `dryRun` calcula y no escribe, para poder mirar la cifra antes.
+   */
+  async regularizarInventario(userId: string, dryRun = true) {
+    const productos = await this.prisma.producto.findMany({
+      where: { eliminadoEn: null },
+      select: { codigo: true, stock: true, costo: true },
+    });
+
+    const valorBodega = productos.reduce(
+      (suma, p) => suma + Math.round(Number(p.stock || 0) * Number(p.costo || 0)),
+      0,
+    );
+
+    const lineas = await (this.prisma as any).journalLine.aggregate({
+      where: { accountCode: { startsWith: '1.5' } },
+      _sum: { debitAmount: true, creditAmount: true },
+    });
+    const saldoLibro =
+      Number(lineas._sum.debitAmount ?? 0) -
+      Number(lineas._sum.creditAmount ?? 0);
+
+    // Lo que falta por reconocer. Puede ser negativo si el libro quedara por
+    // encima de la bodega, y entonces el asiento va al revés.
+    const ajuste = Math.round(valorBodega - saldoLibro);
+
+    const resumen = {
+      valorBodega,
+      saldoLibro,
+      ajuste,
+      articulos: productos.length,
+      aplicado: false,
+    };
+
+    if (dryRun || ajuste === 0) return resumen;
+
+    const entra = ajuste > 0;
+    const monto = Math.abs(ajuste);
+
+    await this.ledgerService.registrarAsiento({
+      referenceType: 'AJUSTE',
+      referenceId: `REGULARIZACION_INVENTARIO:${new Date().toISOString().slice(0, 10)}`,
+      description:
+        `Regularización de inventario: se reconoce la mercancía en bodega ` +
+        `($${valorBodega}) frente al saldo del libro ($${saldoLibro})`,
+      createdBy: userId,
+      lines: [
+        {
+          accountCode: '1.5',
+          ...(entra ? { debitAmount: monto } : { creditAmount: monto }),
+        },
+        {
+          accountCode: '2.1',
+          ...(entra ? { creditAmount: monto } : { debitAmount: monto }),
+        },
+      ],
+    });
+
+    return { ...resumen, aplicado: true };
+  }
+
   async ejecutarAperturaContable(userId: string) {
     const existingEntries = await this.prisma.journalEntry.count();
     if (existingEntries > 0) {

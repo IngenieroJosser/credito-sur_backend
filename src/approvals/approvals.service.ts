@@ -760,7 +760,10 @@ export class ApprovalsService {
           error,
         );
         throw new BadRequestException(
-          `No se pudo crear reversa de asiento contable: ${(error as Error).message}`,
+          'No se pudo deshacer el movimiento contable, así que la operación se ' +
+            'canceló completa y nada quedó a medias. Vuelva a intentarlo; si ' +
+            'sigue pasando, repórtelo. ' +
+            `Detalle: ${(error as Error)?.message || 'sin detalle'}`,
         );
       }
     }
