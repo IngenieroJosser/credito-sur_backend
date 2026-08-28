@@ -14,7 +14,9 @@ function makeService() {
     },
     // El saldo se lee con `SELECT ... FOR UPDATE` para que dos egresos
     // simultáneos no lean la misma foto vieja y pasen los dos.
-    $queryRaw: jest.fn().mockResolvedValue([{ saldoActual: 100000 }]),
+    $queryRaw: jest
+      .fn()
+      .mockResolvedValue([{ saldoActual: 100000, nombre: 'Caja de Ruta' }]),
   };
 
   const prisma = {
@@ -244,7 +246,9 @@ describe('LedgerService consolidacion', () => {
     const { service, prisma } = makeService();
 
     // El saldo se lee con la fila bloqueada, no con `findUnique`.
-    prisma._tx.$queryRaw.mockResolvedValueOnce([{ saldoActual: 40000 }]);
+    prisma._tx.$queryRaw.mockResolvedValueOnce([
+      { saldoActual: 40000, nombre: 'Caja de Ruta' },
+    ]);
 
     await expect(
       service.registrarConsolidacion({
@@ -277,7 +281,8 @@ describe('El asiento de venta de artículo tiene que cuadrar', () => {
         accountCodeCaja: '1.1.1',
         createdBy: 'admin-1',
       }),
-    ).rejects.toThrow('Desbalance contable');
+      // El mensaje ya no es jerga contable: dice qué pasó y qué hacer.
+    ).rejects.toThrow('La operación no se registró porque las cuentas no cuadran');
   });
 
   it('acepta el asiento cuando el precio es el que el cliente paga de verdad', async () => {

@@ -176,20 +176,32 @@ export class LedgerService {
       // ninguno. `FOR NO KEY UPDATE` es compatible con `KEY SHARE` —no toca la
       // llave— y sigue siendo excluyente entre quienes mueven el saldo, que es
       // justo lo que hace falta.
-      const filas = await tx.$queryRaw<Array<{ saldoActual: any }>>`
-        SELECT "saldoActual" FROM cajas WHERE id = ${cajaId} FOR NO KEY UPDATE
+      const filas = await tx.$queryRaw<
+        Array<{ saldoActual: any; nombre: string }>
+      >`
+        SELECT "saldoActual", nombre FROM cajas WHERE id = ${cajaId} FOR NO KEY UPDATE
       `;
 
       if (!filas || filas.length === 0) {
-        throw new NotFoundException(`Caja ${cajaId} no encontrada`);
+        throw new NotFoundException(
+          'La caja de esta operación ya no existe. Actualice la pantalla y vuelva a intentarlo.',
+        );
       }
 
       const saldoActual = Number(filas[0].saldoActual || 0);
       const nuevoSaldo = saldoActual + delta;
 
       if (nuevoSaldo < 0) {
+        // El mensaje decía el UUID de la caja y las cifras sin puntos: quien lo
+        // leía no sabía de qué caja hablaba ni cuánto le faltaba.
+        const pesos = (v: number) =>
+          `$${Math.round(v).toLocaleString('es-CO')}`;
+        const falta = Math.abs(delta) - saldoActual;
+
         throw new BadRequestException(
-          `Saldo insuficiente en caja ${cajaId}. Saldo actual: $${saldoActual}, Intento de restar: $${Math.abs(delta)}`,
+          `No hay suficiente efectivo en ${filas[0].nombre}. ` +
+            `Necesita ${pesos(Math.abs(delta))} y hay ${pesos(saldoActual)}: ` +
+            `faltan ${pesos(falta)}.`,
         );
       }
     }
@@ -238,7 +250,8 @@ export class LedgerService {
     // 1. Validaciones (antes de abrir transacción → falla rápida)
     if (!lines || lines.length < 2) {
       throw new BadRequestException(
-        'Un asiento contable debe tener al menos dos líneas.',
+        'La operación no se registró: el movimiento contable quedó incompleto. ' +
+          'Es un fallo del sistema, no de los datos que usted escribió: repórtelo.',
       );
     }
 
@@ -251,12 +264,15 @@ export class LedgerService {
 
       if (debit.greaterThan(0) && credit.greaterThan(0)) {
         throw new BadRequestException(
-          `Cuenta ${line.accountCode}: no puede tener débito y crédito simultáneamente.`,
+          'La operación no se registró: un movimiento contable quedó mal armado ' +
+            `(cuenta ${line.accountCode}, con débito y crédito a la vez). ` +
+            'Es un fallo del sistema: repórtelo.',
         );
       }
       if (debit.isZero() && credit.isZero()) {
         throw new BadRequestException(
-          `Cuenta ${line.accountCode}: debe tener un valor mayor a cero.`,
+          'La operación no se registró: un movimiento contable quedó en cero ' +
+            `(cuenta ${line.accountCode}). Es un fallo del sistema: repórtelo.`,
         );
       }
 
@@ -285,7 +301,11 @@ export class LedgerService {
     // 2. Validación de Partida Doble (D = C) — con Decimal para exactitud
     if (!totalDebitos.equals(totalCreditos)) {
       throw new BadRequestException(
-        `Desbalance contable — Débitos: ${totalDebitos} | Créditos: ${totalCreditos}`,
+        // El detalle se conserva porque es lo que permite encontrar el fallo,
+        // pero primero se dice qué pasó y qué hacer.
+        'La operación no se registró porque las cuentas no cuadran ' +
+          `(débitos $${totalDebitos} contra créditos $${totalCreditos}). ` +
+          'Es un fallo del sistema, no de los datos que usted escribió: repórtelo.',
       );
     }
 

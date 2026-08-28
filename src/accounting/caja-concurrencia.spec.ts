@@ -18,7 +18,9 @@ function servicio(saldos: number[]) {
   let i = 0;
   const $queryRaw = jest.fn().mockImplementation(() => {
     const saldo = saldos[Math.min(i++, saldos.length - 1)];
-    return Promise.resolve([{ saldoActual: saldo }]);
+    // La consulta trae también el nombre: el mensaje de saldo insuficiente
+    // nombra la caja, y sin esto diria "undefined".
+    return Promise.resolve([{ saldoActual: saldo, nombre: 'Caja de Oficina' }]);
   });
 
   const tx = {
@@ -90,7 +92,11 @@ describe('El saldo de una caja se lee con la fila bloqueada', () => {
 
     await expect(
       service.registrarAsiento(egreso('caja-1', 100000) as any),
-    ).rejects.toThrow(/Saldo insuficiente/);
+      // El mensaje nombra la caja y dice cuánto falta, no el UUID ni cifras
+      // pegadas: es lo que va a leer alguien que está en la caja.
+    ).rejects.toThrow(
+      'No hay suficiente efectivo en Caja de Oficina. Necesita $100.000 y hay $20.000: faltan $80.000.',
+    );
   });
 
   it('un ingreso no necesita bloquear: sumar no puede dejar la caja negativa', async () => {

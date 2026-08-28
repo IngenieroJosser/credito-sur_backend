@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { ValidationPipe, Logger } from '@nestjs/common';
+import { ErroresClarosFilter } from './common/filters/errores-claros.filter';
 import helmet from 'helmet';
 import { SanitizePipe } from './common/pipes/sanitize.pipe';
 import { validateEnv } from './common/env.validation';
@@ -131,6 +132,10 @@ async function bootstrap() {
     }),
     new SanitizePipe(),
   );
+
+  // Ningún error sale crudo hacia la pantalla: los de base de datos se
+  // traducen y los desconocidos salen con un código de referencia.
+  app.useGlobalFilters(new ErroresClarosFilter());
 
   // Orígenes adicionales para desarrollo, separados por coma. Sirve para
   // levantar el frontend en otro puerto cuando el 3000 está ocupado, sin tocar
