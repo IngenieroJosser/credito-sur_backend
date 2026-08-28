@@ -154,16 +154,37 @@ export class LedgerService {
 
     // Solo validar si el delta es negativo (resta saldo)
     if (delta < 0) {
-      const caja = await tx.caja.findUnique({
-        where: { id: cajaId },
-        select: { saldoActual: true },
-      });
+      // El saldo se lee con la fila bloqueada.
+      //
+      // Sin el bloqueo esto era leer-y-después-escribir: cinco egresos
+      // simultáneos leían el mismo saldo, cada uno concluía que alcanzaba, y
+      // los cinco se guardaban. Medido contra la base real: cinco retiros de
+      // $14.804.944 contra una caja de $44.414.832 pasaron todos y la dejaron
+      // en -$29.609.888. No es un caso raro: es un día de trabajo con dos
+      // personas en la misma caja.
+      //
+      // El bloqueo hace que la segunda transacción espere a que la primera
+      // termine y vuelva a leer el saldo ya descontado. La comprobación deja de
+      // ser una foto vieja.
+      //
+      // Es `FOR NO KEY UPDATE` y no `FOR UPDATE` a propósito. Al insertar una
+      // transacción o una línea de asiento que apunta a esta caja, Postgres ya
+      // tomó un `KEY SHARE` sobre la fila para comprobar la llave foránea.
+      // `FOR UPDATE` choca con ese bloqueo, así que cada transacción tendría
+      // que subir de nivel mientras las otras siguen agarradas al suyo: medido,
+      // seis egresos simultáneos terminaron los seis en deadlock y no pasó
+      // ninguno. `FOR NO KEY UPDATE` es compatible con `KEY SHARE` —no toca la
+      // llave— y sigue siendo excluyente entre quienes mueven el saldo, que es
+      // justo lo que hace falta.
+      const filas = await tx.$queryRaw<Array<{ saldoActual: any }>>`
+        SELECT "saldoActual" FROM cajas WHERE id = ${cajaId} FOR NO KEY UPDATE
+      `;
 
-      if (!caja) {
+      if (!filas || filas.length === 0) {
         throw new NotFoundException(`Caja ${cajaId} no encontrada`);
       }
 
-      const saldoActual = Number(caja.saldoActual || 0);
+      const saldoActual = Number(filas[0].saldoActual || 0);
       const nuevoSaldo = saldoActual + delta;
 
       if (nuevoSaldo < 0) {
@@ -296,6 +317,19 @@ export class LedgerService {
       // El delta usa `cajaDelta` si está declarado explícitamente.
       // Si no, lo infiere como débito - crédito (solo correcto para activos).
       // Los servicios de alto nivel SIEMPRE deben declarar cajaDelta.
+      // Se suman por caja y se aplican en orden de id.
+      //
+      // Sumar: un asiento que toca la misma caja en dos líneas debe validarse
+      // por el neto. Aplicadas por separado, una salida seguida de una entrada
+      // podía rebotar por saldo insuficiente aunque el asiento completo lo
+      // dejara en positivo.
+      //
+      // Ordenar: cada delta negativo bloquea la fila de su caja hasta que la
+      // transacción termina. Dos asientos que tocan las mismas dos cajas en
+      // orden contrario —una consolidación de ida y otra de vuelta— se
+      // quedarían esperando el uno al otro. Con un orden fijo eso no puede
+      // pasar.
+      const deltas = new Map<string, number>();
       for (const line of lines) {
         if (!line.cajaId) continue;
 
@@ -306,7 +340,11 @@ export class LedgerService {
 
         if (delta === 0) continue;
 
-        await this.applyCajaDeltaSafely(tx, line.cajaId, delta);
+        deltas.set(line.cajaId, (deltas.get(line.cajaId) ?? 0) + delta);
+      }
+
+      for (const cajaId of [...deltas.keys()].sort()) {
+        await this.applyCajaDeltaSafely(tx, cajaId, deltas.get(cajaId)!);
       }
 
       return journalEntry;
