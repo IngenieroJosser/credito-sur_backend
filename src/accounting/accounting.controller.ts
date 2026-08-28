@@ -554,6 +554,20 @@ export class AccountingController {
     });
   }
 
+  /**
+   * Pone la cuenta de inventario al día con la bodega. Sin `aplicar` solo
+   * calcula la cifra, para poder mirarla antes de escribir el asiento.
+   */
+  @Post('regularizar-inventario')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
+  regularizarInventario(@Request() req, @Body() body: { aplicar?: boolean }) {
+    if (!req.user || !req.user.id) throw new UnauthorizedException();
+    return this.accountingService.regularizarInventario(
+      req.user.id,
+      body?.aplicar !== true,
+    );
+  }
+
   @Post('apertura-day-zero')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   ejecutarAperturaContable(@Request() req) {

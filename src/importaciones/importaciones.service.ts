@@ -35,6 +35,56 @@ export class ImportacionesService {
     this.inventarioParser = new InventarioParser(this.prisma);
   }
 
+  /**
+   * Asiento por la mercancía que entra o sale con una importación de
+   * inventario.
+   *
+   * Importar artículos llenaba la bodega sin tocar el libro: la cuenta 1.5 solo
+   * se acreditaba al vender, así que bajaba con cada venta y no subía nunca,
+   * hasta quedar en negativo. Es el mismo asiento que hace el inventario
+   * cuando se crea un artículo desde la pantalla, con el capital del
+   * propietario como contrapartida.
+   */
+  private async asentarInventario(
+    tx: any,
+    params: {
+      productoId: string;
+      codigo: string;
+      unidades: number;
+      costoUnitario: number;
+      usuarioId: string;
+    },
+  ) {
+    const { productoId, codigo, unidades, costoUnitario, usuarioId } = params;
+    // El libro solo admite pesos enteros: se redondea aquí, no allá.
+    const valor = Math.round(Math.abs(unidades) * Number(costoUnitario || 0));
+    if (valor <= 0 || !usuarioId) return;
+
+    const entra = unidades > 0;
+
+    await this.ledgerService.registrarAsiento(
+      {
+        referenceType: 'AJUSTE' as any,
+        referenceId: productoId,
+        description:
+          `${entra ? 'Entrada' : 'Salida'} de inventario por importación — ` +
+          `${codigo}: ${Math.abs(unidades)} und a $${costoUnitario}`,
+        createdBy: usuarioId,
+        lines: [
+          {
+            accountCode: '1.5',
+            ...(entra ? { debitAmount: valor } : { creditAmount: valor }),
+          },
+          {
+            accountCode: '2.1',
+            ...(entra ? { creditAmount: valor } : { debitAmount: valor }),
+          },
+        ],
+      } as any,
+      tx,
+    );
+  }
+
   private getAccountCodeCaja(caja: any) {
     if (caja?.codigo === 'CAJA-BANCO') return '1.1.2';
     if (String(caja?.tipo || '').toUpperCase() === 'RUTA') return '1.2.1';
@@ -456,6 +506,16 @@ export class ImportacionesService {
               },
             });
 
+            // Solo la diferencia: el stock que ya estaba contabilizado no se
+            // vuelve a sumar porque el archivo lo repita.
+            await this.asentarInventario(tx, {
+              productoId: existe.id,
+              codigo: art.codigo,
+              unidades: Number(art.stock ?? 0) - Number(existe.stock ?? 0),
+              costoUnitario: Number(art.costo || 0),
+              usuarioId: creadoPorId,
+            });
+
             articulosActualizados++;
             continue;
           }
@@ -467,7 +527,7 @@ export class ImportacionesService {
             continue;
           }
 
-          await tx.producto.create({
+          const creado = await tx.producto.create({
             data: {
               codigo: art.codigo,
               nombre: art.nombre,
@@ -481,6 +541,15 @@ export class ImportacionesService {
               activo: art.activo !== 'NO',
             },
           });
+
+          await this.asentarInventario(tx, {
+            productoId: creado.id,
+            codigo: art.codigo,
+            unidades: Number(art.stock ?? 0),
+            costoUnitario: Number(art.costo || 0),
+            usuarioId: creadoPorId,
+          });
+
           articulosCreados++;
         }
 

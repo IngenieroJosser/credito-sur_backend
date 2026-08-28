@@ -239,6 +239,24 @@ export class LedgerService {
         );
       }
 
+      // El peso colombiano no tiene centavos: no circula una moneda que valga
+      // menos de un peso. Un asiento con decimales no se puede pagar ni contar
+      // en un arqueo, y el residuo se arrastra: 34 centavos que entraron por
+      // aquí dejaron la cuenta de cartera descuadrada frente al capital
+      // pendiente de los préstamos, sin que ninguna otra comprobación lo viera.
+      //
+      // Quien calcule un monto tiene que redondearlo antes de llegar aquí; el
+      // libro no adivina para qué lado.
+      const conDecimales = [debit, credit].find(
+        (v) => !v.isZero() && !v.mod(1).isZero(),
+      );
+      if (conDecimales) {
+        throw new BadRequestException(
+          `Cuenta ${line.accountCode}: ${conDecimales.toString()} tiene centavos. ` +
+            'El sistema maneja pesos enteros: redondee el monto antes de registrar el asiento.',
+        );
+      }
+
       totalDebitos = totalDebitos.add(debit);
       totalCreditos = totalCreditos.add(credit);
     }
