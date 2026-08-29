@@ -284,6 +284,7 @@ export class ImportacionesService {
         cliente: `${p.cliente?.nombres ?? ''} ${p.cliente?.apellidos ?? ''}`.trim(),
         cedula: p.cliente?.dni ?? '',
         articulo: p.producto ? `${p.producto.codigo} — ${p.producto.nombre}` : null,
+        articuloCodigo: p.producto?.codigo ?? null,
         monto: Number(p.monto || 0),
         cuotaInicial: Number(p.cuotaInicial || 0),
         totalPagado: Number(p.totalPagado || 0),
@@ -304,7 +305,46 @@ export class ImportacionesService {
 
     const deshacibles = creditos.filter((c) => c.sePuedeDeshacer);
 
+    // El estado de hoy de lo que se va a tocar.
+    //
+    // Decir "vuelven $800.000 a la caja" no le dice a nadie en cuánto va a
+    // quedar la caja. Con el saldo de ahora, la pantalla puede mostrar el
+    // antes y el después, que es lo que uno mira para saber si el resultado
+    // tiene sentido.
+    const [cajaOficina, productos] = await Promise.all([
+      this.prisma.caja.findFirst({
+        where: { codigo: 'CAJA-OFICINA' },
+        select: { nombre: true, saldoActual: true },
+      }),
+      this.prisma.producto.findMany({
+        where: {
+          codigo: {
+            in: [
+              ...new Set(
+                creditos
+                  .map((c) => c.articuloCodigo)
+                  .filter((c): c is string => Boolean(c)),
+              ),
+            ],
+          },
+        },
+        select: { codigo: true, nombre: true, stock: true },
+      }),
+    ]);
+
     return {
+      estadoActual: {
+        caja: {
+          nombre: cajaOficina?.nombre ?? 'Caja de Oficina',
+          saldo: Number(cajaOficina?.saldoActual ?? 0),
+        },
+        articulos: productos.map((p) => ({
+          codigo: p.codigo,
+          nombre: p.nombre,
+          stock: p.stock,
+        })),
+        creditosVivos: creditos.filter((c) => !c.razonNoSePuedeDeshacer).length,
+      },
       id: lote.id,
       tipo: lote.tipo,
       estado: lote.estado,
