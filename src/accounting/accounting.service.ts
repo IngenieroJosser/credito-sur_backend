@@ -2268,8 +2268,32 @@ export class AccountingService {
           ? 'INGRESO'
           : 'EGRESO';
 
-      // Si el usuario especifica una cuenta, la usamos como contrapartida.
-      // Si no, usamos las cuentas genéricas por concepto (3.3 Otros Ingresos / 4.x Otros Gastos).
+      // La categoría que se elige en pantalla decide la cuenta.
+      //
+      // La pantalla de cajas ofrece "Aporte de Capital", "Retiro de
+      // Utilidades", "Entrega Base a Cobrador"… pero solo mandaba la etiqueta,
+      // sin cuenta, así que todo terminaba en las genéricas: cualquier ingreso
+      // se anotaba como 3.3 Otros Ingresos. La plata que el dueño mete al
+      // negocio se registraba como una ganancia, e inflaba la utilidad desde
+      // el primer día. Un retiro de utilidades se anotaba como gasto
+      // administrativo, y la reducía otra vez.
+      //
+      // Aquí se traduce cada categoría a la cuenta que le corresponde. Sigue
+      // mandando `accountCode` si quien llama lo indica.
+      const CUENTA_POR_CATEGORIA: Record<string, string> = {
+        // Ingresos
+        APORTE_CAPITAL: '2.1', // Capital del Propietario: no es una ganancia
+        AJUSTE_POSITIVO: '2.4', // Ajustes Pendientes: hay que explicarlo después
+        OTROS_INGRESOS: '3.3',
+        // Egresos
+        GASTO_OPERATIVO: '4.1',
+        GASTO_ADMINISTRATIVO: '4.2',
+        BASE_COBRADOR: '1.4.1', // No es gasto: es plata que el cobrador debe
+        RETIRO_UTILIDADES: '2.2', // Sale del patrimonio, no es un gasto
+        AJUSTE_NEGATIVO: '2.4',
+        DEUDA_COBRADOR: '1.4.1',
+      };
+
       const contrapartidaDefecto = isIngreso
         ? '3.3'
         : refUpper === 'DEUDA_COBRADOR'
@@ -2277,7 +2301,11 @@ export class AccountingService {
           : caja.tipo === 'RUTA'
             ? '4.1'
             : '4.2';
-      const accountCodeContrapartida = data.accountCode || contrapartidaDefecto;
+
+      const accountCodeContrapartida =
+        data.accountCode ||
+        CUENTA_POR_CATEGORIA[refUpper] ||
+        contrapartidaDefecto;
 
       await this.ledgerService.registrarAsiento(
         {
