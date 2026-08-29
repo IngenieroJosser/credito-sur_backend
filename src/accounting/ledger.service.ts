@@ -763,6 +763,101 @@ export class LedgerService {
   }
 
   /**
+   * Deshace asientos ya registrados, dejando rastro de los dos.
+   *
+   * No borra nada: por cada asiento original escribe otro con los débitos y
+   * los créditos cambiados de lado, que es como se deshace en contabilidad.
+   * El original queda para saber qué pasó y la reversa para saber que se
+   * deshizo. La caja vuelve sola, porque cada línea lleva su `cajaDelta` con
+   * el signo contrario al que tuvo.
+   *
+   * Es idempotente: una reversa se identifica por el asiento que deshace, así
+   * que llamar dos veces no descuenta dos veces.
+   *
+   * Devuelve los ids de las reversas que escribió.
+   */
+  async reversarAsientos(
+    tx: any,
+    params: {
+      referenceIds: string[];
+      referenceTypes: ReferenceTypeContable[];
+      createdBy: string;
+      motivo?: string;
+    },
+  ): Promise<string[]> {
+    const { referenceIds, referenceTypes, createdBy, motivo } = params;
+    if (!referenceIds?.length) return [];
+
+    const originales = await tx.journalEntry.findMany({
+      where: {
+        referenceId: { in: referenceIds },
+        referenceType: { in: referenceTypes as any[] },
+      },
+      include: { lines: true },
+    });
+
+    const reversas: string[] = [];
+
+    for (const original of originales) {
+      if (!Array.isArray(original.lines) || original.lines.length === 0) {
+        continue;
+      }
+
+      const referenceIdReversa = `REVERSA:${original.id}`;
+
+      const yaRevertido = await tx.journalEntry.findFirst({
+        where: { referenceType: 'AJUSTE', referenceId: referenceIdReversa },
+        select: { id: true },
+      });
+      if (yaRevertido?.id) {
+        reversas.push(yaRevertido.id);
+        continue;
+      }
+
+      const lineas = original.lines
+        .map((line: any) => {
+          const debito = Number(line.debitAmount || 0);
+          const credito = Number(line.creditAmount || 0);
+
+          return {
+            accountCode: line.accountCode,
+            debitAmount: credito > 0 ? credito : undefined,
+            creditAmount: debito > 0 ? debito : undefined,
+            cajaId: line.cajaId || undefined,
+            // Lo que salió de la caja vuelve y lo que entró sale.
+            cajaDelta:
+              line.cajaId && (debito > 0 || credito > 0)
+                ? credito - debito
+                : undefined,
+          };
+        })
+        .filter(
+          (l: any) =>
+            Number(l.debitAmount || 0) > 0 || Number(l.creditAmount || 0) > 0,
+        );
+
+      if (lineas.length < 2) continue;
+
+      const reversa = await this.registrarAsiento(
+        {
+          referenceType: 'AJUSTE',
+          referenceId: referenceIdReversa,
+          description:
+            `Reversa de ${original.referenceType} ${original.referenceId}` +
+            (motivo ? ` — ${motivo}` : ''),
+          createdBy,
+          lines: lineas,
+        },
+        tx,
+      );
+
+      if (reversa?.id) reversas.push(reversa.id);
+    }
+
+    return reversas;
+  }
+
+  /**
    * Radiografía completa del estado contable, para mirarla cuando uno quiera.
    *
    * Las comprobaciones existían pero solo corrían en el cron de las 2 de la

@@ -204,6 +204,172 @@ export class ImportacionesService {
     });
   }
 
+  /**
+   * Todo lo que creó una importación, crédito por crédito.
+   *
+   * El listado solo dice "12 créditos", y con eso nadie puede decidir cuál
+   * deshacer. Aquí va cada uno con su cliente, su monto, si movió caja y
+   * cuánto, para poder mirarlo antes de tocar nada. Se marca también el que
+   * ya no se puede deshacer —los que recibieron pagos— con su razón, para que
+   * la pantalla lo muestre bloqueado y no se descubra al intentarlo.
+   */
+  async detalleLote(loteId: string) {
+    const lote = await this.prisma.importacionLote.findUnique({
+      where: { id: loteId },
+      include: { creadoPor: { select: { nombres: true, apellidos: true } } },
+    });
+
+    if (!lote) {
+      throw new BadRequestException('La importación indicada no existe.');
+    }
+
+    const creado = (lote.resumen?.creado ?? {}) as {
+      clientes?: string[];
+      prestamos?: string[];
+      conMovimientosContables?: boolean;
+    };
+    const ids = creado.prestamos ?? [];
+
+    const [prestamos, pagos, transacciones] = await Promise.all([
+      this.prisma.prestamo.findMany({
+        where: { id: { in: ids } },
+        select: {
+          id: true,
+          numeroPrestamo: true,
+          tipoPrestamo: true,
+          monto: true,
+          cuotaInicial: true,
+          totalPagado: true,
+          saldoPendiente: true,
+          estado: true,
+          eliminadoEn: true,
+          fechaInicio: true,
+          cliente: { select: { dni: true, nombres: true, apellidos: true } },
+          producto: { select: { codigo: true, nombre: true } },
+        },
+      }),
+      this.prisma.pago.findMany({
+        where: { prestamoId: { in: ids } },
+        select: { prestamoId: true },
+        distinct: ['prestamoId'],
+      }),
+      this.prisma.transaccion.findMany({
+        where: { tipoReferencia: 'PRESTAMO', referenciaId: { in: ids } },
+        select: { referenciaId: true, tipo: true, monto: true },
+      }),
+    ]);
+
+    const conPagos = new Set(pagos.map((p) => p.prestamoId));
+
+    // Lo que volvería a la caja por cada crédito: lo que salió menos lo que
+    // entró. Un desembolso devuelve plata; una cuota inicial la saca.
+    const impactoPorPrestamo = new Map<string, number>();
+    for (const t of transacciones) {
+      const id = String(t.referenciaId);
+      const signo = t.tipo === 'EGRESO' ? 1 : -1;
+      impactoPorPrestamo.set(
+        id,
+        (impactoPorPrestamo.get(id) ?? 0) + signo * Number(t.monto || 0),
+      );
+    }
+
+    const creditos = prestamos.map((p) => {
+      const yaBorrado = Boolean(p.eliminadoEn);
+      const tienePagos = conPagos.has(p.id);
+
+      return {
+        id: p.id,
+        numeroPrestamo: p.numeroPrestamo,
+        tipo: p.tipoPrestamo,
+        cliente: `${p.cliente?.nombres ?? ''} ${p.cliente?.apellidos ?? ''}`.trim(),
+        cedula: p.cliente?.dni ?? '',
+        articulo: p.producto ? `${p.producto.codigo} — ${p.producto.nombre}` : null,
+        articuloCodigo: p.producto?.codigo ?? null,
+        monto: Number(p.monto || 0),
+        cuotaInicial: Number(p.cuotaInicial || 0),
+        totalPagado: Number(p.totalPagado || 0),
+        saldoPendiente: Number(p.saldoPendiente || 0),
+        estado: p.estado,
+        fechaCredito: p.fechaInicio,
+        // Lo que la caja recuperaría si se deshace este crédito.
+        devolucionACaja: impactoPorPrestamo.get(p.id) ?? 0,
+        movioCaja: impactoPorPrestamo.has(p.id),
+        sePuedeDeshacer: !yaBorrado && !tienePagos,
+        razonNoSePuedeDeshacer: yaBorrado
+          ? 'Ya se deshizo antes.'
+          : tienePagos
+            ? 'Ya recibió pagos. Corríjalo desde la ficha del crédito.'
+            : null,
+      };
+    });
+
+    const deshacibles = creditos.filter((c) => c.sePuedeDeshacer);
+
+    // El estado de hoy de lo que se va a tocar.
+    //
+    // Decir "vuelven $800.000 a la caja" no le dice a nadie en cuánto va a
+    // quedar la caja. Con el saldo de ahora, la pantalla puede mostrar el
+    // antes y el después, que es lo que uno mira para saber si el resultado
+    // tiene sentido.
+    const [cajaOficina, productos] = await Promise.all([
+      this.prisma.caja.findFirst({
+        where: { codigo: 'CAJA-OFICINA' },
+        select: { nombre: true, saldoActual: true },
+      }),
+      this.prisma.producto.findMany({
+        where: {
+          codigo: {
+            in: [
+              ...new Set(
+                creditos
+                  .map((c) => c.articuloCodigo)
+                  .filter((c): c is string => Boolean(c)),
+              ),
+            ],
+          },
+        },
+        select: { codigo: true, nombre: true, stock: true },
+      }),
+    ]);
+
+    return {
+      estadoActual: {
+        caja: {
+          nombre: cajaOficina?.nombre ?? 'Caja de Oficina',
+          saldo: Number(cajaOficina?.saldoActual ?? 0),
+        },
+        articulos: productos.map((p) => ({
+          codigo: p.codigo,
+          nombre: p.nombre,
+          stock: p.stock,
+        })),
+        creditosVivos: creditos.filter((c) => !c.razonNoSePuedeDeshacer).length,
+      },
+      id: lote.id,
+      tipo: lote.tipo,
+      estado: lote.estado,
+      nombreArchivo: lote.nombreArchivo,
+      creadoEn: lote.creadoEn,
+      confirmadoEn: lote.confirmadoEn,
+      creadoPor: lote.creadoPor
+        ? `${lote.creadoPor.nombres} ${lote.creadoPor.apellidos}`.trim()
+        : null,
+      creditos,
+      totales: {
+        creditos: creditos.length,
+        deshacibles: deshacibles.length,
+        bloqueados: creditos.length - deshacibles.length,
+        // El total que volvería a la caja si se deshace todo lo deshacible.
+        devolucionACaja: deshacibles.reduce(
+          (suma, c) => suma + c.devolucionACaja,
+          0,
+        ),
+        articulosADevolver: deshacibles.filter((c) => c.articulo).length,
+      },
+      ...this.evaluarSiSePuedeDeshacer(lote, creado),
+    };
+  }
+
   private evaluarSiSePuedeDeshacer(
     lote: { estado: string; tipo: string },
     creado: {
@@ -224,14 +390,6 @@ export class ImportacionesService {
       };
     }
 
-    if (creado.conMovimientosContables) {
-      return {
-        sePuede: false,
-        razon:
-          'El lote desembolsó dinero de caja y generó asientos contables. Reversarlo debe hacerse desde el módulo contable.',
-      };
-    }
-
     if (!creado.clientes && !creado.prestamos) {
       return {
         sePuede: false,
@@ -244,17 +402,36 @@ export class ImportacionesService {
   }
 
   /**
-   * Deshace una importación: borra los clientes y créditos que creó.
+   * Deshace una importación, entera o solo algunos de sus créditos.
    *
-   * Solo se permite si nada se ha movido desde entonces: un crédito con pagos
-   * registrados, o un lote que movió caja, ya no se puede revertir sin tocar
-   * contabilidad, y eso no es trabajo de una importación.
+   * Un lote que desembolsó dinero también se deshace. Antes se rechazaba, con
+   * el argumento de que reversar caja no era trabajo de una importación; el
+   * resultado práctico era que un error en una carga operativa no tenía vuelta
+   * atrás y había que arreglarlo a mano, asiento por asiento.
+   *
+   * La plata se devuelve escribiendo la reversa de cada asiento —el original
+   * queda, la reversa también— y la contraria de cada transacción de caja. El
+   * inventario que salió con un crédito de artículo vuelve a la bodega.
+   *
+   * Con `prestamoIds` se deshacen solo esos créditos y el resto del lote queda
+   * como estaba: un archivo de doscientas filas con tres malas no debería
+   * obligar a rehacer las doscientas.
+   *
+   * Lo que no se deshace nunca: un crédito que ya recibió pagos. Ahí hay
+   * dinero de un cliente de por medio y eso se corrige desde su ficha.
    */
-  async revertirLote(loteId: string): Promise<{
+  async revertirLote(
+    loteId: string,
+    opciones: { prestamoIds?: string[]; usuarioId: string },
+  ): Promise<{
     loteId: string;
+    parcial: boolean;
     clientesEliminados: number;
     prestamosEliminados: number;
     cuotasEliminadas: number;
+    asientosReversados: number;
+    transaccionesReversadas: number;
+    stockDevuelto: number;
     mensajes: string[];
   }> {
     const lote = await this.prisma.importacionLote.findUnique({
@@ -278,9 +455,29 @@ export class ImportacionesService {
       );
     }
 
-    const idsPrestamos = creado.prestamos ?? [];
+    const prestamosDelLote = creado.prestamos ?? [];
     const idsClientes = creado.clientes ?? [];
     const mensajes: string[] = [];
+
+    // Selección: todo el lote, o solo los créditos que se pidan.
+    const pedidos = (opciones.prestamoIds ?? []).filter(Boolean);
+    const ajenos = pedidos.filter((id) => !prestamosDelLote.includes(id));
+
+    if (ajenos.length > 0) {
+      throw new BadRequestException(
+        `${ajenos.length} de los créditos indicados no pertenecen a esta importación. ` +
+          'Solo se puede deshacer lo que este archivo creó.',
+      );
+    }
+
+    const idsPrestamos = pedidos.length > 0 ? pedidos : prestamosDelLote;
+    const parcial = pedidos.length > 0 && pedidos.length < prestamosDelLote.length;
+
+    if (idsPrestamos.length === 0) {
+      throw new BadRequestException(
+        'Esta importación no registró créditos que se puedan deshacer.',
+      );
+    }
 
     // Un crédito que ya recibió pagos deja de ser "lo que importamos".
     const prestamosConPagos = await this.prisma.pago.findMany({
@@ -298,9 +495,75 @@ export class ImportacionesService {
     let clientesEliminados = 0;
     let prestamosEliminados = 0;
     let cuotasEliminadas = 0;
+    let asientosReversados = 0;
+    let transaccionesReversadas = 0;
+    let stockDevuelto = 0;
 
     await this.prisma.$transaction(
       async (tx) => {
+        // 1. La plata vuelve antes de borrar nada.
+        //
+        // Se escribe la reversa de cada asiento de desembolso o de venta de
+        // artículo: el original queda y la reversa también, que es como se
+        // deshace en contabilidad. La caja se recompone sola, porque cada línea
+        // de la reversa lleva el `cajaDelta` con el signo contrario.
+        const reversas = await this.ledgerService.reversarAsientos(tx, {
+          referenceIds: idsPrestamos,
+          referenceTypes: ['DESEMBOLSO', 'VENTA_ARTICULO'],
+          createdBy: opciones.usuarioId,
+          motivo: `Importación deshecha (lote ${loteId})`,
+        });
+        asientosReversados = reversas.length;
+
+        // 2. Las transacciones de caja llevan su contraria, para que el
+        //    movimiento se vea en el detalle de la caja y no solo en el libro.
+        const transaccionesOriginales = await tx.transaccion.findMany({
+          where: {
+            tipoReferencia: 'PRESTAMO',
+            referenciaId: { in: idsPrestamos },
+          },
+        });
+
+        for (const original of transaccionesOriginales) {
+          const idempotencyKey = `IMP-REVERSA-${original.id}`;
+          const yaRevertida = await tx.transaccion.findFirst({
+            where: { idempotencyKey },
+            select: { id: true },
+          });
+          if (yaRevertida?.id) continue;
+
+          await tx.transaccion.create({
+            data: {
+              numeroTransaccion: `IMP-REV-${original.id.slice(0, 24)}`,
+              idempotencyKey,
+              cajaId: original.cajaId,
+              clienteId: original.clienteId,
+              tipo: original.tipo === 'EGRESO' ? 'INGRESO' : 'EGRESO',
+              monto: original.monto,
+              descripcion: `Reversa de: ${original.descripcion}`,
+              creadoPorId: opciones.usuarioId,
+              tipoReferencia: 'PRESTAMO',
+              referenciaId: original.referenciaId,
+            },
+          });
+          transaccionesReversadas++;
+        }
+
+        // 3. El artículo que salió con el crédito vuelve a la bodega.
+        const creditosDeArticulo = await tx.prestamo.findMany({
+          where: { id: { in: idsPrestamos }, productoId: { not: null } },
+          select: { id: true, productoId: true },
+        });
+
+        for (const credito of creditosDeArticulo) {
+          if (!credito.productoId) continue;
+          await tx.producto.update({
+            where: { id: credito.productoId },
+            data: { stock: { increment: 1 } },
+          });
+          stockDevuelto++;
+        }
+
         const cuotas = await tx.cuota.deleteMany({
           where: { prestamoId: { in: idsPrestamos } },
         });
@@ -312,15 +575,19 @@ export class ImportacionesService {
         prestamosEliminados = prestamos.count;
 
         // Los clientes que quedaron con créditos de otras importaciones se conservan.
+        // En una reversión parcial no se borra ninguno: el cliente sigue
+        // teniendo los créditos del lote que no se deshicieron.
         const clientesConOtrosCreditos = await tx.prestamo.findMany({
-          where: { clienteId: { in: idsClientes } },
+          where: { clienteId: { in: parcial ? [] : idsClientes } },
           select: { clienteId: true },
           distinct: ['clienteId'],
         });
         const conservar = new Set(
           clientesConOtrosCreditos.map((p) => p.clienteId),
         );
-        const eliminables = idsClientes.filter((id) => !conservar.has(id));
+        const eliminables = parcial
+          ? []
+          : idsClientes.filter((id) => !conservar.has(id));
 
         if (conservar.size > 0) {
           mensajes.push(
@@ -337,21 +604,56 @@ export class ImportacionesService {
         });
         clientesEliminados = clientes.count;
 
+        // Un lote deshecho a medias sigue confirmado: lo que no se revirtió
+        // sigue vivo. Se anota qué créditos quedaron fuera para que un segundo
+        // intento no vuelva a tocarlos.
+        const quedanVivos = prestamosDelLote.filter(
+          (id) => !idsPrestamos.includes(id),
+        );
+
         await tx.importacionLote.update({
           where: { id: loteId },
-          data: { estado: 'CANCELADO' },
+          data: {
+            estado: parcial ? 'CONFIRMADO' : 'CANCELADO',
+            resumen: {
+              ...((lote.resumen ?? {}) as any),
+              creado: {
+                ...creado,
+                prestamos: quedanVivos,
+                clientes: parcial ? idsClientes : [],
+              },
+            } as any,
+          },
         });
       },
       { maxWait: 60_000, timeout: 600_000 },
     );
 
-    mensajes.unshift('Importación deshecha correctamente.');
+    mensajes.unshift(
+      parcial
+        ? `Se deshicieron ${prestamosEliminados} crédito(s) de la importación. El resto sigue vigente.`
+        : 'Importación deshecha correctamente.',
+    );
+
+    if (asientosReversados > 0 || transaccionesReversadas > 0) {
+      mensajes.push(
+        `Se devolvió el dinero a caja: ${asientosReversados} asiento(s) y ` +
+          `${transaccionesReversadas} movimiento(s) reversados.`,
+      );
+    }
+    if (stockDevuelto > 0) {
+      mensajes.push(`${stockDevuelto} artículo(s) volvieron al inventario.`);
+    }
 
     return {
       loteId,
+      parcial,
       clientesEliminados,
       prestamosEliminados,
       cuotasEliminadas,
+      asientosReversados,
+      transaccionesReversadas,
+      stockDevuelto,
       mensajes,
     };
   }

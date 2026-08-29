@@ -11,6 +11,9 @@ import {
   MaxFileSizeValidator,
   BadRequestException,
   Req,
+  Request,
+  Body,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ImportacionesService } from './importaciones.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -42,10 +45,41 @@ export class ImportacionesController {
     return this.importacionesService.listarLotes();
   }
 
-  @Post('lotes/:id/revertir')
+  /**
+   * Todo lo que creó una importación, crédito por crédito.
+   *
+   * El listado solo dice cuántos créditos hizo, y con eso nadie puede decidir
+   * cuál deshacer. Esto es lo que alimenta la pantalla donde se revisa antes.
+   */
+  @Get('lotes/:id')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
-  async revertirLote(@Param('id') id: string) {
-    return this.importacionesService.revertirLote(id);
+  async detalleLote(@Param('id') id: string) {
+    return this.importacionesService.detalleLote(id);
+  }
+
+  /**
+   * Deshace una importación, entera o solo algunos de sus créditos.
+   *
+   * Solo el superadministrador. Deshacer devuelve plata a la caja y artículos
+   * a la bodega, y borra créditos de clientes reales: no es una operación de
+   * uso corriente aunque quien importó sea administrador.
+   *
+   * Sin `prestamoIds` se deshace todo el lote. Con la lista, solo esos.
+   */
+  @Post('lotes/:id/revertir')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR)
+  async revertirLote(
+    @Request() req,
+    @Param('id') id: string,
+    @Body() body?: { prestamoIds?: string[] },
+  ) {
+    if (!req?.user?.id) {
+      throw new UnauthorizedException('Usuario no autenticado');
+    }
+    return this.importacionesService.revertirLote(id, {
+      prestamoIds: body?.prestamoIds,
+      usuarioId: req.user.id,
+    });
   }
 
   @Get('plantilla/clientes-creditos')
