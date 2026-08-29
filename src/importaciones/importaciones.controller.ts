@@ -46,6 +46,18 @@ export class ImportacionesController {
   }
 
   /**
+   * Todo lo que creó una importación, crédito por crédito.
+   *
+   * El listado solo dice cuántos créditos hizo, y con eso nadie puede decidir
+   * cuál deshacer. Esto es lo que alimenta la pantalla donde se revisa antes.
+   */
+  @Get('lotes/:id')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
+  async detalleLote(@Param('id') id: string) {
+    return this.importacionesService.detalleLote(id);
+  }
+
+  /**
    * Deshace una importación, entera o solo algunos de sus créditos.
    *
    * Solo el superadministrador. Deshacer devuelve plata a la caja y artículos

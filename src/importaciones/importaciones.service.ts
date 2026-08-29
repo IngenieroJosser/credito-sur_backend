@@ -204,6 +204,132 @@ export class ImportacionesService {
     });
   }
 
+  /**
+   * Todo lo que creó una importación, crédito por crédito.
+   *
+   * El listado solo dice "12 créditos", y con eso nadie puede decidir cuál
+   * deshacer. Aquí va cada uno con su cliente, su monto, si movió caja y
+   * cuánto, para poder mirarlo antes de tocar nada. Se marca también el que
+   * ya no se puede deshacer —los que recibieron pagos— con su razón, para que
+   * la pantalla lo muestre bloqueado y no se descubra al intentarlo.
+   */
+  async detalleLote(loteId: string) {
+    const lote = await this.prisma.importacionLote.findUnique({
+      where: { id: loteId },
+      include: { creadoPor: { select: { nombres: true, apellidos: true } } },
+    });
+
+    if (!lote) {
+      throw new BadRequestException('La importación indicada no existe.');
+    }
+
+    const creado = (lote.resumen?.creado ?? {}) as {
+      clientes?: string[];
+      prestamos?: string[];
+      conMovimientosContables?: boolean;
+    };
+    const ids = creado.prestamos ?? [];
+
+    const [prestamos, pagos, transacciones] = await Promise.all([
+      this.prisma.prestamo.findMany({
+        where: { id: { in: ids } },
+        select: {
+          id: true,
+          numeroPrestamo: true,
+          tipoPrestamo: true,
+          monto: true,
+          cuotaInicial: true,
+          totalPagado: true,
+          saldoPendiente: true,
+          estado: true,
+          eliminadoEn: true,
+          fechaInicio: true,
+          cliente: { select: { dni: true, nombres: true, apellidos: true } },
+          producto: { select: { codigo: true, nombre: true } },
+        },
+      }),
+      this.prisma.pago.findMany({
+        where: { prestamoId: { in: ids } },
+        select: { prestamoId: true },
+        distinct: ['prestamoId'],
+      }),
+      this.prisma.transaccion.findMany({
+        where: { tipoReferencia: 'PRESTAMO', referenciaId: { in: ids } },
+        select: { referenciaId: true, tipo: true, monto: true },
+      }),
+    ]);
+
+    const conPagos = new Set(pagos.map((p) => p.prestamoId));
+
+    // Lo que volvería a la caja por cada crédito: lo que salió menos lo que
+    // entró. Un desembolso devuelve plata; una cuota inicial la saca.
+    const impactoPorPrestamo = new Map<string, number>();
+    for (const t of transacciones) {
+      const id = String(t.referenciaId);
+      const signo = t.tipo === 'EGRESO' ? 1 : -1;
+      impactoPorPrestamo.set(
+        id,
+        (impactoPorPrestamo.get(id) ?? 0) + signo * Number(t.monto || 0),
+      );
+    }
+
+    const creditos = prestamos.map((p) => {
+      const yaBorrado = Boolean(p.eliminadoEn);
+      const tienePagos = conPagos.has(p.id);
+
+      return {
+        id: p.id,
+        numeroPrestamo: p.numeroPrestamo,
+        tipo: p.tipoPrestamo,
+        cliente: `${p.cliente?.nombres ?? ''} ${p.cliente?.apellidos ?? ''}`.trim(),
+        cedula: p.cliente?.dni ?? '',
+        articulo: p.producto ? `${p.producto.codigo} — ${p.producto.nombre}` : null,
+        monto: Number(p.monto || 0),
+        cuotaInicial: Number(p.cuotaInicial || 0),
+        totalPagado: Number(p.totalPagado || 0),
+        saldoPendiente: Number(p.saldoPendiente || 0),
+        estado: p.estado,
+        fechaCredito: p.fechaInicio,
+        // Lo que la caja recuperaría si se deshace este crédito.
+        devolucionACaja: impactoPorPrestamo.get(p.id) ?? 0,
+        movioCaja: impactoPorPrestamo.has(p.id),
+        sePuedeDeshacer: !yaBorrado && !tienePagos,
+        razonNoSePuedeDeshacer: yaBorrado
+          ? 'Ya se deshizo antes.'
+          : tienePagos
+            ? 'Ya recibió pagos. Corríjalo desde la ficha del crédito.'
+            : null,
+      };
+    });
+
+    const deshacibles = creditos.filter((c) => c.sePuedeDeshacer);
+
+    return {
+      id: lote.id,
+      tipo: lote.tipo,
+      estado: lote.estado,
+      nombreArchivo: lote.nombreArchivo,
+      creadoEn: lote.creadoEn,
+      confirmadoEn: lote.confirmadoEn,
+      creadoPor: lote.creadoPor
+        ? `${lote.creadoPor.nombres} ${lote.creadoPor.apellidos}`.trim()
+        : null,
+      creditos,
+      totales: {
+        creditos: creditos.length,
+        deshacibles: deshacibles.length,
+        bloqueados: creditos.length - deshacibles.length,
+        // El total que volvería a la caja si se deshace todo lo deshacible.
+        devolucionACaja: deshacibles.reduce(
+          (suma, c) => suma + c.devolucionACaja,
+          0,
+        ),
+        articulosADevolver: deshacibles.filter((c) => c.articulo).length,
+      },
+      ...this.evaluarSiSePuedeDeshacer(lote, creado),
+    };
+  }
+
   private evaluarSiSePuedeDeshacer(
     lote: { estado: string; tipo: string },
     creado: {
