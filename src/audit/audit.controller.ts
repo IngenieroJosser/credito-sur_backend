@@ -33,6 +33,7 @@ export class AuditController {
    * Normalmente se crean automáticamente desde otros servicios
    */
   @Post()
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   create(
     @Body()
     data: {
@@ -52,6 +53,11 @@ export class AuditController {
    * Listar todos los registros de auditoría (con paginación opcional)
    */
   @Get()
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPERVISOR,
+  )
   findAll(@Query('pagina') pagina?: string, @Query('limite') limite?: string) {
     if (pagina || limite) {
       const p = pagina ? parseInt(pagina) : 1;
@@ -65,6 +71,11 @@ export class AuditController {
    * Obtener historial de auditoría por usuario
    */
   @Get('user/:id')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPERVISOR,
+  )
   findByUser(
     @Param('id') id: string,
     @Query('page') page?: string,
@@ -108,18 +119,25 @@ export class AuditController {
   }
 
   @Get('hidden-archived')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   @HttpCode(HttpStatus.OK)
   listHiddenArchived() {
     return this.auditService.listHiddenArchivedItems();
   }
 
   @Post('hide-archived')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   @HttpCode(HttpStatus.OK)
   hideArchived(@Body() body: { entidad: string; entidadId: string }) {
     return this.auditService.hideArchivedItem(body);
   }
 
   @Get(':id')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPERVISOR,
+  )
   findOne(@Param('id') id: string) {
     return this.auditService.findOne(id);
   }
