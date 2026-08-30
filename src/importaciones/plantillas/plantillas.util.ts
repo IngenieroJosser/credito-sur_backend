@@ -38,6 +38,12 @@ export interface ColumnaPlantilla {
   width: number;
   /** Columna calculada por Excel: no se lee al importar. */
   automatica?: boolean;
+  /**
+   * Trae un valor resuelto por fórmula pero se puede escribir encima. Se pinta
+   * igual que las automáticas, para que se vea que ya viene lista, y se deja
+   * abierta porque hay casos en los que hay que corregirla a mano.
+   */
+  sugerida?: boolean;
   numFmt?: string;
 }
 
@@ -108,11 +114,14 @@ export function declararColumnas(
       type: 'pattern',
       pattern: 'solid',
       fgColor: {
-        argb: columna.automatica ? COLOR_AUTOMATICO : COLOR_ENCABEZADO,
+        argb:
+          columna.automatica || columna.sugerida
+            ? COLOR_AUTOMATICO
+            : COLOR_ENCABEZADO,
       },
     };
 
-    if (!columna.numFmt && !columna.automatica) return;
+    if (!columna.numFmt && !columna.automatica && !columna.sugerida) return;
 
     const columnaExcel = ws.getColumn(numeroColumna);
     if (columna.numFmt) columnaExcel.numFmt = columna.numFmt;
@@ -133,7 +142,9 @@ export function declararColumnas(
     const columnaExcel = ws.getColumn(numeroColumna);
     columnaExcel.protection = { locked: Boolean(columna.automatica) };
 
-    if (!columna.automatica) return;
+    // Las sugeridas se sombrean igual pero quedan abiertas: el sombreado dice
+    // "ya viene resuelta", no "no la toque".
+    if (!columna.automatica && !columna.sugerida) return;
     for (
       let fila = FILA_INICIO_DATOS;
       fila < FILA_INICIO_DATOS + filas;

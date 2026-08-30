@@ -384,6 +384,43 @@ export class NotificacionesGateway
   }
 
   /**
+   * Emisión defensiva.
+   *
+   * `server` solo existe cuando Nest levantó el servidor de websockets. En un
+   * contexto sin HTTP —un script, una migración, una prueba— no está, y hasta
+   * ahora eso reventaba a quien avisara: rechazar una aprobación devolvía la
+   * plata a caja, guardaba el asiento de reversa, y después moría al emitir el
+   * evento. El usuario veía un error sobre una operación que sí se había hecho.
+   *
+   * Avisar es un efecto secundario. Si falla, se anota y se sigue: nunca puede
+   * tumbar la operación que ya movió dinero.
+   */
+  private emitir(evento: string, payload: any) {
+    try {
+      if (!this.server) {
+        this.logger.warn(`Sin servidor de websockets: no se emitió ${evento}`);
+        return;
+      }
+      this.server.emit(evento, payload);
+    } catch (error) {
+      this.logger.warn(`No se pudo emitir ${evento}: ${error}`);
+    }
+  }
+
+  /** Igual que `emitir`, pero a la sala de un usuario. */
+  private emitirA(sala: string, evento: string, payload: any) {
+    try {
+      if (!this.server) {
+        this.logger.warn(`Sin servidor de websockets: no se emitió ${evento}`);
+        return;
+      }
+      this.server.to(sala).emit(evento, payload);
+    } catch (error) {
+      this.logger.warn(`No se pudo emitir ${evento}: ${error}`);
+    }
+  }
+
+  /**
    * Enviar notificación a un usuario específico
    */
   enviarNotificacionAUsuario(userId: string, notificacion: any) {
@@ -391,51 +428,14 @@ export class NotificacionesGateway
       `Emitiendo notificación a user_${userId}: ${notificacion.titulo}`,
     );
     // Emitimos a la sala específica del usuario
-    this.emitirA(userId, 'nueva_notificacion', notificacion);
-  }
-
-  /**
-   * Un solo punto de salida hacia el websocket. Si el servidor todavia no
-   * esta levantado (arranque, scripts, pruebas) se registra y se sigue: una
-   * notificacion perdida no puede tumbar la operacion que la disparo.
-   */
-  private emitir(evento: string, payload?: any) {
-    if (!this.server) {
-      this.logger.warn(`Websocket sin servidor: se omite "${evento}"`);
-      return;
-    }
-
-    try {
-      this.server.emit(evento, payload);
-    } catch (error) {
-      this.logger.error(
-        `Fallo al emitir "${evento}"`,
-        error instanceof Error ? error.stack : String(error),
-      );
-    }
-  }
-
-  private emitirA(userId: string, evento: string, payload?: any) {
-    if (!this.server) {
-      this.logger.warn(`Websocket sin servidor: se omite "${evento}"`);
-      return;
-    }
-
-    try {
-      this.server.to(`user_${userId}`).emit(evento, payload);
-    } catch (error) {
-      this.logger.error(
-        `Fallo al emitir "${evento}" a ${userId}`,
-        error instanceof Error ? error.stack : String(error),
-      );
-    }
+    this.emitirA(`user_${userId}`, 'nueva_notificacion', notificacion);
   }
 
   /**
    * Enviar evento estructurado a un usuario para indicar que la cuenta de notificaciones no leidas cambió
    */
   notificarActualizacion(userId: string) {
-    this.emitirA(userId, 'notificaciones_actualizadas', {
+    this.emitirA(`user_${userId}`, 'notificaciones_actualizadas', {
       timestamp: new Date(),
     });
   }

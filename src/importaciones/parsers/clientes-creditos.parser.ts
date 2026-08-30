@@ -587,7 +587,10 @@ export class ClientesCreditosParser {
       const creFrecuencia = colsCre.indice('Frecuencia pago');
       const creCantidadCuotas = colsCre.indice('Cantidad cuotas');
       const crePlazoMeses = colsCre.indice('Plazo meses');
-      const creTipoAmortizacion = colsCre.indice('Tipo amortización');
+      const creTipoAmortizacion = colsCre.indice(
+        'Tipo de interés',
+        'Tipo amortización',
+      );
       const creFechaCredito = colsCre.indice('Fecha crédito');
       const creFechaPrimerCobro = colsCre.indice('Fecha primer cobro');
       const creTipoCarga = colsCre.indice('Tipo carga');
@@ -595,6 +598,12 @@ export class ClientesCreditosParser {
       const creGarantia = colsCre.indice('Garantía');
       const creNotas = colsCre.indice('Notas');
       // Estado de avance del crédito (migración de cartera ya en curso).
+      // Una sola columna con lo que el cliente lleva pagado. Antes eran dos,
+      // "Cuotas pagadas" y "Abono adicional", que se sumaban entre sí: quien
+      // ponía una cuota y un abono creía haber declarado el abono solo, y el
+      // saldo le salía más bajo de lo que esperaba. Las viejas se siguen
+      // leyendo para no romper un archivo ya descargado.
+      const creTotalAbonado = colsCre.indice('Total abonado');
       const creCuotasPagadas = colsCre.indice('Cuotas pagadas');
       const creAbonoAdicional = colsCre.indice('Abono adicional');
       const creFechaUltimoPago = colsCre.indice('Fecha último pago');
@@ -635,6 +644,7 @@ export class ClientesCreditosParser {
         creDescontarCaja,
         creGarantia,
         creNotas,
+        creTotalAbonado,
         creCuotasPagadas,
         creAbonoAdicional,
         creFechaUltimoPago,
@@ -674,6 +684,7 @@ export class ClientesCreditosParser {
         const descontarCajaCelda = leerTextoMayus(celda(row, creDescontarCaja));
         const garantia = leerTexto(celda(row, creGarantia));
         const notas = leerTexto(celda(row, creNotas));
+        const totalAbonadoCelda = leerNumero(celda(row, creTotalAbonado));
         const cuotasPagadas = leerNumero(celda(row, creCuotasPagadas));
         const abonoAdicionalCelda = leerNumero(celda(row, creAbonoAdicional));
         const fechaUltimoPago = leerFecha(celda(row, creFechaUltimoPago));
@@ -708,11 +719,14 @@ export class ClientesCreditosParser {
 
         const montoConCentavos = tieneCentavos(montoCelda);
         const cuotaInicialConCentavos = tieneCentavos(cuotaInicialCelda);
-        const abonoConCentavos = tieneCentavos(abonoAdicionalCelda);
+        const abonoConCentavos =
+          tieneCentavos(abonoAdicionalCelda) ||
+          tieneCentavos(totalAbonadoCelda);
 
         const monto = aPesos(montoCelda);
         const cuotaInicial = aPesos(cuotaInicialCelda);
         const abonoAdicional = aPesos(abonoAdicionalCelda);
+        const totalAbonadoEscrito = aPesos(totalAbonadoCelda);
 
         const addError = (campo: string, mensaje: string, valor: any) => {
           errores.push({
@@ -892,6 +906,9 @@ export class ClientesCreditosParser {
         }
 
         let montoEfectivo = monto;
+        // Cuando la inicial cubre el precio ya se avisó con su propio mensaje;
+        // repetir el genérico del monto solo confunde.
+        let inicialCubreElPrecio = false;
 
         if (esArticulo && montoEfectivo === null && productoCodigo) {
           // Igual que createLoan: lo que se financia es el precio del plazo
@@ -902,14 +919,33 @@ export class ClientesCreditosParser {
 
           if (precioPlazo && precioPlazo > 0) {
             const inicial = Math.max(0, cuotaInicial ?? 0);
+
+            // Si la inicial se come el precio no queda nada que financiar, y
+            // un crédito sin monto no es un crédito. El error se nombra aquí
+            // para que diga cuál es el problema: antes caía en la validación
+            // genérica del monto y salía "Debe ser un número mayor a 0" sobre
+            // una columna que el usuario ni siquiera había llenado.
+            if (inicial >= precioPlazo) {
+              inicialCubreElPrecio = true;
+              addError(
+                'cuota_inicial',
+                inicial > precioPlazo
+                  ? `La cuota inicial (${inicial}) es mayor que el precio del artículo a ${plazoMeses} meses (${precioPlazo}). Revise la inicial o el plazo.`
+                  : `La cuota inicial (${inicial}) cubre todo el precio del artículo, así que no queda nada que financiar. Si el cliente pagó completo, es una venta de contado, no un crédito.`,
+                celda(row, creCuotaInicial),
+              );
+            }
+
             montoEfectivo = Math.max(0, precioPlazo - inicial);
-            addAdver(
-              'monto',
-              inicial > 0
-                ? `Se financia el precio del plazo (${precioPlazo}) menos la cuota inicial (${inicial}): ${montoEfectivo}.`
-                : `Se tomó el precio del plazo del artículo: ${precioPlazo}.`,
-              montoEfectivo,
-            );
+            if (!inicialCubreElPrecio) {
+              addAdver(
+                'monto',
+                inicial > 0
+                  ? `Se financia el precio del plazo (${precioPlazo}) menos la cuota inicial (${inicial}): ${montoEfectivo}.`
+                  : `Se tomó el precio del plazo del artículo: ${precioPlazo}.`,
+                montoEfectivo,
+              );
+            }
           } else if (productosEnBd.has(productoCodigo)) {
             addError(
               'monto',
@@ -920,13 +956,14 @@ export class ClientesCreditosParser {
         }
 
         if (
-          montoEfectivo === null ||
-          Number.isNaN(montoEfectivo) ||
-          montoEfectivo <= 0
+          !inicialCubreElPrecio &&
+          (montoEfectivo === null ||
+            Number.isNaN(montoEfectivo) ||
+            montoEfectivo <= 0)
         ) {
           addError(
             'monto',
-            'Debe ser un número mayor a 0',
+            'Escriba el monto del crédito: debe ser mayor a 0',
             celda(row, creMonto),
           );
         }
@@ -937,6 +974,17 @@ export class ClientesCreditosParser {
           addError(
             'cuota_inicial',
             'Debe ser un número mayor o igual a 0',
+            celda(row, creCuotaInicial),
+          );
+        }
+        // En un crédito de artículo la inicial es obligatoria: el cliente
+        // entrega algo al llevarse la mercancía. Dejarla vacía y escribir cero
+        // significan lo mismo, así que las dos se rechazan. Los casos raros
+        // —NaN o negativa— ya los cubre la validación de arriba.
+        if (esArticulo && (cuotaInicial === null || cuotaInicial === 0)) {
+          addError(
+            'cuota_inicial',
+            'Es obligatoria en un crédito de artículo: escriba cuánto entregó el cliente al llevarse el artículo.',
             celda(row, creCuotaInicial),
           );
         }
@@ -1151,13 +1199,39 @@ export class ClientesCreditosParser {
           );
         }
 
-        const tieneAvance = cuotasPagadasNum > 0 || abonoAdicionalNum > 0;
+        if (
+          totalAbonadoEscrito !== null &&
+          (Number.isNaN(totalAbonadoEscrito) || totalAbonadoEscrito < 0)
+        ) {
+          addError(
+            'total_abonado',
+            'Escriba cuánto lleva pagado el cliente: un número mayor o igual a 0',
+            celda(row, creTotalAbonado),
+          );
+        }
+
+        // Lo que el cliente lleva pagado, en una sola cifra.
+        //
+        // Si el archivo trae la columna nueva manda esa. Si es uno viejo, se
+        // arma con las dos anteriores: las cuotas completas más el abono
+        // suelto, que es como se venían sumando.
+        const declaroTotalAbonado =
+          creTotalAbonado > 0 &&
+          totalAbonadoEscrito !== null &&
+          !Number.isNaN(totalAbonadoEscrito);
+        const abonadoDeclarado = declaroTotalAbonado
+          ? Number(totalAbonadoEscrito)
+          : null;
+
+        const tieneAvance = declaroTotalAbonado
+          ? Number(totalAbonadoEscrito) > 0
+          : cuotasPagadasNum > 0 || abonoAdicionalNum > 0;
 
         if (tieneAvance && tipoCarga === 'OPERATIVA') {
           addError(
-            'cuotas_pagadas',
-            'Un crédito OPERATIVA se registra como nuevo: no puede traer cuotas pagadas ni abonos previos. Use tipo de carga HISTORICA.',
-            cuotasPagadasNum,
+            'total_abonado',
+            'Un crédito OPERATIVA se registra como nuevo: no puede traer nada abonado. Use tipo de carga HISTORICA.',
+            abonadoDeclarado ?? cuotasPagadasNum,
           );
         }
 
@@ -1241,11 +1315,16 @@ export class ClientesCreditosParser {
           cantidadCuotas as number,
         );
         const valorCuota = tablaCuotas[0]?.monto ?? 0;
+
+        // Con la columna nueva, lo abonado es lo que se escribió y punto. Con
+        // un archivo viejo hay que reconstruirlo: las cuotas completas valen lo
+        // que dice la tabla, más el abono suelto.
         const cuotasCubiertas = Math.max(
           0,
           Math.min(Math.trunc(cuotasPagadasNum), tablaCuotas.length),
         );
         const totalAbonado =
+          abonadoDeclarado ??
           tablaCuotas
             .slice(0, cuotasCubiertas)
             .reduce((suma, cuota) => suma + cuota.monto, 0) + abonoAdicionalNum;
@@ -1254,8 +1333,8 @@ export class ClientesCreditosParser {
           errores.push({
             hoja: nombre,
             fila: rowNumber,
-            campo: 'abono_adicional',
-            mensaje: `Lo abonado (${totalAbonado}) supera el total del crédito (${totalCredito}). Revise las cuotas pagadas y el abono adicional.`,
+            campo: 'total_abonado',
+            mensaje: `Lo abonado (${totalAbonado}) supera el total del crédito (${totalCredito}). Revise el total abonado.`,
             valor: abonoAdicionalNum,
           });
           filasConError++;
@@ -1298,6 +1377,9 @@ export class ClientesCreditosParser {
           totalAbonado,
           saldoPendiente: pesos(totalCredito - totalAbonado),
           fila: rowNumber,
+          // De qué hoja salió: en las dos hojas de crédito la primera fila es
+          // la 7, así que decir "fila 7" a secas no distingue una de la otra.
+          hoja: nombre,
         });
       });
 
@@ -1353,6 +1435,7 @@ export class ClientesCreditosParser {
       return esArticulo
         ? {
             fila: credito.fila,
+            hoja: credito.hoja,
             numeroPrestamo: credito.numeroPrestamo,
             ccCliente: credito.ccCliente,
             tipo: 'ARTICULO' as const,
@@ -1364,6 +1447,7 @@ export class ClientesCreditosParser {
           }
         : {
             fila: credito.fila,
+            hoja: credito.hoja,
             numeroPrestamo: credito.numeroPrestamo,
             ccCliente: credito.ccCliente,
             tipo: 'EFECTIVO' as const,

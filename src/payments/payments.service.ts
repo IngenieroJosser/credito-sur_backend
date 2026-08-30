@@ -712,7 +712,11 @@ export class PaymentsService {
     }
 
     if (!cobradorIdVal) {
-      throw new BadRequestException('El cobrador es requerido');
+      throw new BadRequestException(
+        'No se puede registrar el pago porque el cliente no esta asignado a ninguna ' +
+          'ruta, asi que el sistema no sabe a que cobrador acreditarlo. Asigne el ' +
+          'cliente a una ruta, o indique el cobrador al registrar el pago.',
+      );
     }
 
     const montoTotal = Number(paymentDto.montoTotal);
@@ -856,7 +860,11 @@ export class PaymentsService {
 
     // Validar cobrador
     if (!cobradorIdVal) {
-      throw new BadRequestException('El cobrador es requerido');
+      throw new BadRequestException(
+        'No se puede registrar el pago porque el cliente no esta asignado a ninguna ' +
+          'ruta, asi que el sistema no sabe a que cobrador acreditarlo. Asigne el ' +
+          'cliente a una ruta, o indique el cobrador al registrar el pago.',
+      );
     }
 
     const rawFechaPago = (paymentDto.fechaPago || '').toString().trim();
@@ -1183,7 +1191,11 @@ export class PaymentsService {
         }
 
         if (!cobradorIdVal) {
-          throw new BadRequestException('El cobrador es requerido');
+          throw new BadRequestException(
+            'No se puede registrar el pago porque el cliente no esta asignado a ninguna ' +
+              'ruta, asi que el sistema no sabe a que cobrador acreditarlo. Asigne el ' +
+              'cliente a una ruta, o indique el cobrador al registrar el pago.',
+          );
         }
 
         const cajaIngreso = await this.resolveCajaIngresoPago(tx, {

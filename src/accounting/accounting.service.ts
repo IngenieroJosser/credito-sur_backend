@@ -2296,8 +2296,32 @@ export class AccountingService {
           ? 'INGRESO'
           : 'EGRESO';
 
-      // Si el usuario especifica una cuenta, la usamos como contrapartida.
-      // Si no, usamos las cuentas genéricas por concepto (3.3 Otros Ingresos / 4.x Otros Gastos).
+      // La categoría que se elige en pantalla decide la cuenta.
+      //
+      // La pantalla de cajas ofrece "Aporte de Capital", "Retiro de
+      // Utilidades", "Entrega Base a Cobrador"… pero solo mandaba la etiqueta,
+      // sin cuenta, así que todo terminaba en las genéricas: cualquier ingreso
+      // se anotaba como 3.3 Otros Ingresos. La plata que el dueño mete al
+      // negocio se registraba como una ganancia, e inflaba la utilidad desde
+      // el primer día. Un retiro de utilidades se anotaba como gasto
+      // administrativo, y la reducía otra vez.
+      //
+      // Aquí se traduce cada categoría a la cuenta que le corresponde. Sigue
+      // mandando `accountCode` si quien llama lo indica.
+      const CUENTA_POR_CATEGORIA: Record<string, string> = {
+        // Ingresos
+        APORTE_CAPITAL: '2.1', // Capital del Propietario: no es una ganancia
+        AJUSTE_POSITIVO: '2.4', // Ajustes Pendientes: hay que explicarlo después
+        OTROS_INGRESOS: '3.3',
+        // Egresos
+        GASTO_OPERATIVO: '4.1',
+        GASTO_ADMINISTRATIVO: '4.2',
+        BASE_COBRADOR: '1.4.1', // No es gasto: es plata que el cobrador debe
+        RETIRO_UTILIDADES: '2.2', // Sale del patrimonio, no es un gasto
+        AJUSTE_NEGATIVO: '2.4',
+        DEUDA_COBRADOR: '1.4.1',
+      };
+
       const contrapartidaDefecto = isIngreso
         ? '3.3'
         : refUpper === 'DEUDA_COBRADOR'
@@ -2305,7 +2329,11 @@ export class AccountingService {
           : caja.tipo === 'RUTA'
             ? '4.1'
             : '4.2';
-      const accountCodeContrapartida = data.accountCode || contrapartidaDefecto;
+
+      const accountCodeContrapartida =
+        data.accountCode ||
+        CUENTA_POR_CATEGORIA[refUpper] ||
+        contrapartidaDefecto;
 
       await this.ledgerService.registrarAsiento(
         {
@@ -4665,6 +4693,82 @@ export class AccountingService {
    * Migra los saldos actuales de Cajas y Cartera al libro mayor.
    * SOLO puede ejecutarse si el libro está vacío.
    */
+  /**
+   * Pone la cuenta de inventario al día con la mercancía que hay en bodega.
+   *
+   * Durante mucho tiempo registrar stock no tocaba el libro: la cuenta 1.5 solo
+   * se acreditaba al vender —contra el costo del artículo— así que bajaba con
+   * cada venta y no subía nunca. Terminó en negativo, un activo imposible, con
+   * la bodega llena. El asiento de apertura tampoco la incluyó.
+   *
+   * Desde que entrar mercancía genera su asiento, el problema no se repite,
+   * pero el hueco que quedó no se cierra solo: hace falta un asiento que
+   * reconozca de una vez el inventario que ya estaba ahí.
+   *
+   * La contrapartida es el capital del propietario, el mismo criterio de la
+   * apertura: esa mercancía se compró con plata que no salió de ninguna caja
+   * del sistema.
+   *
+   * `dryRun` calcula y no escribe, para poder mirar la cifra antes.
+   */
+  async regularizarInventario(userId: string, dryRun = true) {
+    const productos = await this.prisma.producto.findMany({
+      where: { eliminadoEn: null },
+      select: { codigo: true, stock: true, costo: true },
+    });
+
+    const valorBodega = productos.reduce(
+      (suma, p) => suma + Math.round(Number(p.stock || 0) * Number(p.costo || 0)),
+      0,
+    );
+
+    const lineas = await (this.prisma as any).journalLine.aggregate({
+      where: { accountCode: { startsWith: '1.5' } },
+      _sum: { debitAmount: true, creditAmount: true },
+    });
+    const saldoLibro =
+      Number(lineas._sum.debitAmount ?? 0) -
+      Number(lineas._sum.creditAmount ?? 0);
+
+    // Lo que falta por reconocer. Puede ser negativo si el libro quedara por
+    // encima de la bodega, y entonces el asiento va al revés.
+    const ajuste = Math.round(valorBodega - saldoLibro);
+
+    const resumen = {
+      valorBodega,
+      saldoLibro,
+      ajuste,
+      articulos: productos.length,
+      aplicado: false,
+    };
+
+    if (dryRun || ajuste === 0) return resumen;
+
+    const entra = ajuste > 0;
+    const monto = Math.abs(ajuste);
+
+    await this.ledgerService.registrarAsiento({
+      referenceType: 'AJUSTE',
+      referenceId: `REGULARIZACION_INVENTARIO:${new Date().toISOString().slice(0, 10)}`,
+      description:
+        `Regularización de inventario: se reconoce la mercancía en bodega ` +
+        `($${valorBodega}) frente al saldo del libro ($${saldoLibro})`,
+      createdBy: userId,
+      lines: [
+        {
+          accountCode: '1.5',
+          ...(entra ? { debitAmount: monto } : { creditAmount: monto }),
+        },
+        {
+          accountCode: '2.1',
+          ...(entra ? { creditAmount: monto } : { debitAmount: monto }),
+        },
+      ],
+    });
+
+    return { ...resumen, aplicado: true };
+  }
+
   async ejecutarAperturaContable(userId: string) {
     const existingEntries = await this.prisma.journalEntry.count();
     if (existingEntries > 0) {

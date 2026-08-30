@@ -66,8 +66,7 @@ export interface CreditoImportableRow {
   garantia?: string | null;
   notas?: string | null;
   /** Estado de avance del crédito, para poder reimportarlo tal como está hoy. */
-  cuotasPagadas?: number | null;
-  abonoAdicional?: number | null;
+  totalAbonado?: number | null;
   fechaUltimoPago?: Date | string | null;
 }
 
@@ -340,13 +339,12 @@ export async function generarExcelClientesCreditosImportable(
     { header: 'Tasa interés*', key: 'tasa_interes', width: 15 },
     { header: 'Frecuencia pago*', key: 'frecuencia_pago', width: 18 },
     { header: 'Cantidad cuotas*', key: 'cantidad_cuotas', width: 18 },
-    { header: 'Tipo amortización', key: 'tipo_amortizacion', width: 20 },
+    { header: 'Tipo de interés', key: 'tipo_amortizacion', width: 20 },
     { header: 'Fecha crédito*', key: 'fecha_credito', width: 15 },
     { header: 'Fecha primer cobro', key: 'fecha_primer_cobro', width: 20 },
     { header: 'Tipo carga*', key: 'tipo_carga', width: 15 },
     { header: 'Notas', key: 'notas', width: 30 },
-    { header: 'Cuotas pagadas', key: 'cuotas_pagadas', width: 15 },
-    { header: 'Abono adicional', key: 'abono_adicional', width: 16 },
+    { header: 'Total abonado', key: 'total_abonado', width: 16 },
     { header: 'Fecha último pago', key: 'fecha_ultimo_pago', width: 18 },
   ];
   setColumnsAtRowSix(wsCreditos, columnasCreditos);
@@ -374,8 +372,7 @@ export async function generarExcelClientesCreditosImportable(
         fecha_primer_cobro: dateKey(c.fechaPrimerCobro),
         tipo_carga: c.tipoCarga || 'HISTORICA',
         notas: text(c.notas),
-        cuotas_pagadas: Number(c.cuotasPagadas || 0),
-        abono_adicional: money(c.abonoAdicional),
+        total_abonado: money(c.totalAbonado),
         fecha_ultimo_pago: dateKey(c.fechaUltimoPago),
       });
     });
@@ -421,8 +418,7 @@ export async function generarExcelClientesCreditosImportable(
       tasa_interes_mora: money(c.tasaInteresMora),
       fecha_primer_cobro: dateKey(c.fechaPrimerCobro),
       notas: text(c.notas),
-      cuotas_pagadas: Number(c.cuotasPagadas || 0),
-      abono_adicional: money(c.abonoAdicional),
+      total_abonado: money(c.totalAbonado),
       fecha_ultimo_pago: dateKey(c.fechaUltimoPago),
     });
   });

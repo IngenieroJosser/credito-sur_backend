@@ -14,6 +14,7 @@ import {
 } from '../templates/exports/inventario.template';
 import { generarExcelInventarioImportable } from '../templates/exports/importables.template';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+import { LedgerService } from '../accounting/ledger.service';
 import { getBogotaDayKey } from '../utils/date-utils';
 
 @Injectable()
@@ -21,7 +22,65 @@ export class InventoryService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificacionesGateway: NotificacionesGateway,
+    private readonly ledgerService: LedgerService,
   ) {}
+
+  /**
+   * Asiento de entrada o salida de mercancía.
+   *
+   * Hasta ahora registrar stock no tocaba el libro. La cuenta de inventario
+   * (1.5) solo se acreditaba al vender —contra el costo del artículo— así que
+   * bajaba con cada venta y no subía nunca: quedó en negativo, un activo
+   * imposible, con la bodega llena. El asiento de apertura tampoco la incluyó.
+   *
+   * La contrapartida es el capital del propietario, el mismo criterio que usa
+   * `ejecutarAperturaContable`: el sistema no tiene un flujo de compra que
+   * descuente de una caja, así que la mercancía entra como aporte. Si algún día
+   * se paga la mercancía desde una caja, esta es la línea que hay que cambiar.
+   *
+   * Las unidades negativas son salidas por ajuste (una merma, un conteo), no
+   * ventas: las ventas ya llevan su propio asiento en `registrarVentaArticulo`.
+   */
+  private async registrarMovimientoInventario(
+    tx: any,
+    params: {
+      productoId: string;
+      codigo: string;
+      unidades: number;
+      costoUnitario: number;
+      usuarioId: string;
+    },
+  ) {
+    const { productoId, codigo, unidades, costoUnitario, usuarioId } = params;
+    // El libro solo admite pesos enteros, así que el valor se redondea aquí y
+    // no en el motor contable, que lo rechazaría.
+    const valor = Math.round(Math.abs(unidades) * Number(costoUnitario || 0));
+    if (valor <= 0 || !usuarioId) return;
+
+    const entra = unidades > 0;
+
+    await this.ledgerService.registrarAsiento(
+      {
+        referenceType: 'AJUSTE' as any,
+        referenceId: productoId,
+        description:
+          `${entra ? 'Entrada' : 'Salida'} de inventario — ${codigo}: ` +
+          `${Math.abs(unidades)} und a $${costoUnitario}`,
+        createdBy: usuarioId,
+        lines: [
+          {
+            accountCode: '1.5',
+            ...(entra ? { debitAmount: valor } : { creditAmount: valor }),
+          },
+          {
+            accountCode: '2.1',
+            ...(entra ? { creditAmount: valor } : { debitAmount: valor }),
+          },
+        ],
+      } as any,
+      tx,
+    );
+  }
 
   async exportarInventario(
     format: 'excel' | 'pdf',
@@ -146,7 +205,7 @@ export class InventoryService {
     };
   }
 
-  async create(createInventoryDto: CreateInventoryDto) {
+  async create(createInventoryDto: CreateInventoryDto, usuarioId?: string) {
     try {
       const existingProduct = await this.prisma.producto.findUnique({
         where: { codigo: createInventoryDto.codigo },
@@ -202,29 +261,43 @@ export class InventoryService {
         }
       }
 
-      const product = await this.prisma.producto.create({
-        data: {
-          codigo: createInventoryDto.codigo,
-          nombre: createInventoryDto.nombre,
-          descripcion: createInventoryDto.descripcion,
-          categoria: categoriaNombre,
-          categoriaId: categoriaId,
-          marca: createInventoryDto.marca,
-          modelo: createInventoryDto.modelo,
-          costo: createInventoryDto.costo,
-          stock: createInventoryDto.stock,
-          stockMinimo: createInventoryDto.stockMinimo,
-          activo: createInventoryDto.activo ?? true,
-          precios: {
-            create: preciosData.map((p) => ({
-              meses: p.meses,
-              precio: p.precio,
-            })),
+      // El producto y su asiento de inventario van juntos: si el asiento
+      // falla, el producto no queda registrado sin respaldo contable.
+      const product = await this.prisma.$transaction(async (tx) => {
+        const creado = await tx.producto.create({
+          data: {
+            codigo: createInventoryDto.codigo,
+            nombre: createInventoryDto.nombre,
+            descripcion: createInventoryDto.descripcion,
+            categoria: categoriaNombre,
+            categoriaId: categoriaId,
+            marca: createInventoryDto.marca,
+            modelo: createInventoryDto.modelo,
+            costo: createInventoryDto.costo,
+            stock: createInventoryDto.stock,
+            stockMinimo: createInventoryDto.stockMinimo,
+            activo: createInventoryDto.activo ?? true,
+            precios: {
+              create: preciosData.map((p) => ({
+                meses: p.meses,
+                precio: p.precio,
+              })),
+            },
+          } as any,
+          include: {
+            precios: true,
           },
-        } as any,
-        include: {
-          precios: true,
-        },
+        } as any);
+
+        await this.registrarMovimientoInventario(tx, {
+          productoId: creado.id,
+          codigo: creado.codigo,
+          unidades: Number(creado.stock || 0),
+          costoUnitario: Number(creado.costo || 0),
+          usuarioId: usuarioId || '',
+        });
+
+        return creado;
       });
 
       this.notificacionesGateway.broadcastInventarioActualizado({
@@ -274,7 +347,11 @@ export class InventoryService {
     return product;
   }
 
-  async update(id: string, updateInventoryDto: UpdateInventoryDto) {
+  async update(
+    id: string,
+    updateInventoryDto: UpdateInventoryDto,
+    usuarioId?: string,
+  ) {
     const existingProduct = await this.prisma.producto.findUnique({
       where: { id },
     });
@@ -402,10 +479,27 @@ export class InventoryService {
           }
         }
 
-        return await tx.producto.findUnique({
+        // Si cambió el stock, el libro tiene que enterarse. Se registra la
+        // diferencia, no el total: sumar el stock entero cada vez que se edita
+        // el nombre del artículo inflaría el inventario.
+        const despues = await tx.producto.findUnique({
           where: { id },
           include: { precios: { orderBy: { meses: 'asc' } } },
         });
+
+        const diferencia =
+          Number(despues?.stock ?? 0) - Number(existingProduct.stock ?? 0);
+        if (diferencia !== 0) {
+          await this.registrarMovimientoInventario(tx, {
+            productoId: id,
+            codigo: despues?.codigo ?? existingProduct.codigo,
+            unidades: diferencia,
+            costoUnitario: Number(despues?.costo ?? existingProduct.costo ?? 0),
+            usuarioId: usuarioId || '',
+          });
+        }
+
+        return despues;
       });
 
       this.notificacionesGateway.broadcastInventarioActualizado({

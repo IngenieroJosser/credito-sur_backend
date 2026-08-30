@@ -17,6 +17,7 @@ import {
   Res,
 } from '@nestjs/common';
 import { AccountingService } from './accounting.service';
+import { LedgerService } from './ledger.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { TipoCaja, TipoTransaccion, TipoAprobacion } from '@prisma/client';
 
@@ -28,7 +29,28 @@ import { Response } from 'express';
 @Controller('accounting')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class AccountingController {
-  constructor(private readonly accountingService: AccountingService) {}
+  constructor(
+    private readonly accountingService: AccountingService,
+    private readonly ledgerService: LedgerService,
+  ) {}
+
+  /**
+   * Radiografia del estado contable, para mirarla cuando uno quiera.
+   *
+   * Estas comprobaciones solo corrian en el cron de las 2 de la manana, y solo
+   * avisaban si algo estaba roto. Para probar algo en produccion hace falta lo
+   * contrario: mirar el estado antes de tocar nada, hacer la operacion, y
+   * volver a mirar. Solo lee.
+   */
+  @Get('integridad')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.CONTADOR,
+  )
+  revisarIntegridad() {
+    return this.ledgerService.revisarIntegridad();
+  }
 
   // =====================
   // CAJAS
@@ -552,6 +574,20 @@ export class AccountingController {
       dryRun: false,
       userId: req.user.id,
     });
+  }
+
+  /**
+   * Pone la cuenta de inventario al día con la bodega. Sin `aplicar` solo
+   * calcula la cifra, para poder mirarla antes de escribir el asiento.
+   */
+  @Post('regularizar-inventario')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
+  regularizarInventario(@Request() req, @Body() body: { aplicar?: boolean }) {
+    if (!req.user || !req.user.id) throw new UnauthorizedException();
+    return this.accountingService.regularizarInventario(
+      req.user.id,
+      body?.aplicar !== true,
+    );
   }
 
   @Post('apertura-day-zero')

@@ -154,8 +154,8 @@ describe('Plantillas importables de exportacion', () => {
       [
         {
           ...creditoBase,
-          cuotasPagadas: 4,
-          abonoAdicional: 2500,
+          // Lo que el cliente lleva pagado, en una sola cifra.
+          totalAbonado: 42500,
           fechaUltimoPago: '2026-07-20',
         },
       ],
@@ -168,7 +168,7 @@ describe('Plantillas importables de exportacion', () => {
 
     expect(resultado.errores).toHaveLength(0);
     expect(resultado.creditos?.[0]).toEqual(
-      expect.objectContaining({ cuotasPagadas: 4, abonoAdicional: 2500 }),
+      expect.objectContaining({ totalAbonado: 42500 }),
     );
     expect(resultado.creditos?.[0].fechaUltimoPago).toBeInstanceOf(Date);
   });

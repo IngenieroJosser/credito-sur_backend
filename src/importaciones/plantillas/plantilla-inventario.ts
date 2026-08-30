@@ -152,7 +152,7 @@ function construirColumnas(): ColumnaPlantilla[] {
       numFmt: FORMATO_MONEDA,
     },
     {
-      header: 'Utilidad contado % (automático)',
+      header: 'Utilidad contado % sobre costo (automático)',
       key: 'utilidad_contado_pct',
       width: 14,
       automatica: true,
@@ -170,7 +170,7 @@ function construirColumnas(): ColumnaPlantilla[] {
         numFmt: FORMATO_MONEDA,
       },
       {
-        header: `Utilidad opción ${i} % (automático)`,
+        header: `Utilidad opción ${i} % sobre costo (automático)`,
         key: `utilidad_${i}_pct`,
         width: 13,
         automatica: true,
@@ -409,7 +409,9 @@ export async function generarPlantillaInventario(): Promise<{
     'Use solo las opciones que necesite; las que deje vacías se ignoran. No repita el mismo número de meses en un artículo.',
     '',
     '# Utilidad automática (columnas grises)',
-    'Al final de la hoja Excel calcula, para el contado y para cada plazo, la utilidad en pesos y en porcentaje: precio de venta menos costo.',
+    'Al final de la hoja Excel calcula, para el contado y para cada plazo, la utilidad en pesos: precio de venta menos costo.',
+    'El porcentaje va sobre el COSTO, que es como se mira cuando uno compra y remarca: un artículo de 480.000 vendido en 540.000 deja 60.000, o sea 12,5% sobre lo que costó.',
+    'No lo confunda con el margen sobre la venta, que es el que sale en los informes del sistema y con esos mismos números da 11,1%. La utilidad en pesos es la misma; lo que cambia es contra qué se divide. El de costo siempre da un número más alto.',
     'No hay que diligenciarlas y el sistema no las lee al importar. Si una sale en rojo, ese precio está por debajo del costo.',
     'La columna "Revisión de la fila" resume en una sola celda lo que le falta o le sobra a ese artículo. Si dice OK, la fila está lista para subir.',
     '',

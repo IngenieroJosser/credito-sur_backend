@@ -12,6 +12,8 @@ import {
   HttpCode,
   HttpStatus,
   UseGuards,
+  Request,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { InventoryService } from './inventory.service';
@@ -35,8 +37,9 @@ export class InventoryController {
   }
 
   @Post()
-  create(@Body() createInventoryDto: CreateInventoryDto) {
-    return this.inventoryService.create(createInventoryDto);
+  create(@Request() req, @Body() createInventoryDto: CreateInventoryDto) {
+    // El asiento de inventario necesita saber quien lo registro.
+    return this.inventoryService.create(createInventoryDto, this.actor(req));
   }
 
   @Get('export')
@@ -66,10 +69,18 @@ export class InventoryController {
 
   @Patch(':id')
   update(
+    @Request() req,
     @Param('id') id: string,
     @Body() updateInventoryDto: UpdateInventoryDto,
   ) {
-    return this.inventoryService.update(id, updateInventoryDto);
+    return this.inventoryService.update(id, updateInventoryDto, this.actor(req));
+  }
+
+  private actor(req: any): string {
+    if (!req?.user?.id) {
+      throw new UnauthorizedException('Usuario no autenticado o token invalido');
+    }
+    return req.user.id;
   }
 
   @Patch(':id/restore')

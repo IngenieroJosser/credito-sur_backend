@@ -154,21 +154,54 @@ export class LedgerService {
 
     // Solo validar si el delta es negativo (resta saldo)
     if (delta < 0) {
-      const caja = await tx.caja.findUnique({
-        where: { id: cajaId },
-        select: { saldoActual: true },
-      });
+      // El saldo se lee con la fila bloqueada.
+      //
+      // Sin el bloqueo esto era leer-y-después-escribir: cinco egresos
+      // simultáneos leían el mismo saldo, cada uno concluía que alcanzaba, y
+      // los cinco se guardaban. Medido contra la base real: cinco retiros de
+      // $14.804.944 contra una caja de $44.414.832 pasaron todos y la dejaron
+      // en -$29.609.888. No es un caso raro: es un día de trabajo con dos
+      // personas en la misma caja.
+      //
+      // El bloqueo hace que la segunda transacción espere a que la primera
+      // termine y vuelva a leer el saldo ya descontado. La comprobación deja de
+      // ser una foto vieja.
+      //
+      // Es `FOR NO KEY UPDATE` y no `FOR UPDATE` a propósito. Al insertar una
+      // transacción o una línea de asiento que apunta a esta caja, Postgres ya
+      // tomó un `KEY SHARE` sobre la fila para comprobar la llave foránea.
+      // `FOR UPDATE` choca con ese bloqueo, así que cada transacción tendría
+      // que subir de nivel mientras las otras siguen agarradas al suyo: medido,
+      // seis egresos simultáneos terminaron los seis en deadlock y no pasó
+      // ninguno. `FOR NO KEY UPDATE` es compatible con `KEY SHARE` —no toca la
+      // llave— y sigue siendo excluyente entre quienes mueven el saldo, que es
+      // justo lo que hace falta.
+      const filas = await tx.$queryRaw<
+        Array<{ saldoActual: any; nombre: string }>
+      >`
+        SELECT "saldoActual", nombre FROM cajas WHERE id = ${cajaId} FOR NO KEY UPDATE
+      `;
 
-      if (!caja) {
-        throw new NotFoundException(`Caja ${cajaId} no encontrada`);
+      if (!filas || filas.length === 0) {
+        throw new NotFoundException(
+          'La caja de esta operación ya no existe. Actualice la pantalla y vuelva a intentarlo.',
+        );
       }
 
-      const saldoActual = Number(caja.saldoActual || 0);
+      const saldoActual = Number(filas[0].saldoActual || 0);
       const nuevoSaldo = saldoActual + delta;
 
       if (nuevoSaldo < 0) {
+        // El mensaje decía el UUID de la caja y las cifras sin puntos: quien lo
+        // leía no sabía de qué caja hablaba ni cuánto le faltaba.
+        const pesos = (v: number) =>
+          `$${Math.round(v).toLocaleString('es-CO')}`;
+        const falta = Math.abs(delta) - saldoActual;
+
         throw new BadRequestException(
-          `Saldo insuficiente en caja ${cajaId}. Saldo actual: $${saldoActual}, Intento de restar: $${Math.abs(delta)}`,
+          `No hay suficiente efectivo en ${filas[0].nombre}. ` +
+            `Necesita ${pesos(Math.abs(delta))} y hay ${pesos(saldoActual)}: ` +
+            `faltan ${pesos(falta)}.`,
         );
       }
     }
@@ -217,7 +250,8 @@ export class LedgerService {
     // 1. Validaciones (antes de abrir transacción → falla rápida)
     if (!lines || lines.length < 2) {
       throw new BadRequestException(
-        'Un asiento contable debe tener al menos dos líneas.',
+        'La operación no se registró: el movimiento contable quedó incompleto. ' +
+          'Es un fallo del sistema, no de los datos que usted escribió: repórtelo.',
       );
     }
 
@@ -230,12 +264,33 @@ export class LedgerService {
 
       if (debit.greaterThan(0) && credit.greaterThan(0)) {
         throw new BadRequestException(
-          `Cuenta ${line.accountCode}: no puede tener débito y crédito simultáneamente.`,
+          'La operación no se registró: un movimiento contable quedó mal armado ' +
+            `(cuenta ${line.accountCode}, con débito y crédito a la vez). ` +
+            'Es un fallo del sistema: repórtelo.',
         );
       }
       if (debit.isZero() && credit.isZero()) {
         throw new BadRequestException(
-          `Cuenta ${line.accountCode}: debe tener un valor mayor a cero.`,
+          'La operación no se registró: un movimiento contable quedó en cero ' +
+            `(cuenta ${line.accountCode}). Es un fallo del sistema: repórtelo.`,
+        );
+      }
+
+      // El peso colombiano no tiene centavos: no circula una moneda que valga
+      // menos de un peso. Un asiento con decimales no se puede pagar ni contar
+      // en un arqueo, y el residuo se arrastra: 34 centavos que entraron por
+      // aquí dejaron la cuenta de cartera descuadrada frente al capital
+      // pendiente de los préstamos, sin que ninguna otra comprobación lo viera.
+      //
+      // Quien calcule un monto tiene que redondearlo antes de llegar aquí; el
+      // libro no adivina para qué lado.
+      const conDecimales = [debit, credit].find(
+        (v) => !v.isZero() && !v.mod(1).isZero(),
+      );
+      if (conDecimales) {
+        throw new BadRequestException(
+          `Cuenta ${line.accountCode}: ${conDecimales.toString()} tiene centavos. ` +
+            'El sistema maneja pesos enteros: redondee el monto antes de registrar el asiento.',
         );
       }
 
@@ -246,7 +301,11 @@ export class LedgerService {
     // 2. Validación de Partida Doble (D = C) — con Decimal para exactitud
     if (!totalDebitos.equals(totalCreditos)) {
       throw new BadRequestException(
-        `Desbalance contable — Débitos: ${totalDebitos} | Créditos: ${totalCreditos}`,
+        // El detalle se conserva porque es lo que permite encontrar el fallo,
+        // pero primero se dice qué pasó y qué hacer.
+        'La operación no se registró porque las cuentas no cuadran ' +
+          `(débitos $${totalDebitos} contra créditos $${totalCreditos}). ` +
+          'Es un fallo del sistema, no de los datos que usted escribió: repórtelo.',
       );
     }
 
@@ -278,6 +337,19 @@ export class LedgerService {
       // El delta usa `cajaDelta` si está declarado explícitamente.
       // Si no, lo infiere como débito - crédito (solo correcto para activos).
       // Los servicios de alto nivel SIEMPRE deben declarar cajaDelta.
+      // Se suman por caja y se aplican en orden de id.
+      //
+      // Sumar: un asiento que toca la misma caja en dos líneas debe validarse
+      // por el neto. Aplicadas por separado, una salida seguida de una entrada
+      // podía rebotar por saldo insuficiente aunque el asiento completo lo
+      // dejara en positivo.
+      //
+      // Ordenar: cada delta negativo bloquea la fila de su caja hasta que la
+      // transacción termina. Dos asientos que tocan las mismas dos cajas en
+      // orden contrario —una consolidación de ida y otra de vuelta— se
+      // quedarían esperando el uno al otro. Con un orden fijo eso no puede
+      // pasar.
+      const deltas = new Map<string, number>();
       for (const line of lines) {
         if (!line.cajaId) continue;
 
@@ -288,7 +360,11 @@ export class LedgerService {
 
         if (delta === 0) continue;
 
-        await this.applyCajaDeltaSafely(tx, line.cajaId, delta);
+        deltas.set(line.cajaId, (deltas.get(line.cajaId) ?? 0) + delta);
+      }
+
+      for (const cajaId of [...deltas.keys()].sort()) {
+        await this.applyCajaDeltaSafely(tx, cajaId, deltas.get(cajaId)!);
       }
 
       return journalEntry;
@@ -683,6 +759,211 @@ export class LedgerService {
       totalDebitos: Number(totalDebitos),
       totalCreditos: Number(totalCreditos),
       diferencia: diferencia.toNumber(),
+    };
+  }
+
+  /**
+   * Deshace asientos ya registrados, dejando rastro de los dos.
+   *
+   * No borra nada: por cada asiento original escribe otro con los débitos y
+   * los créditos cambiados de lado, que es como se deshace en contabilidad.
+   * El original queda para saber qué pasó y la reversa para saber que se
+   * deshizo. La caja vuelve sola, porque cada línea lleva su `cajaDelta` con
+   * el signo contrario al que tuvo.
+   *
+   * Es idempotente: una reversa se identifica por el asiento que deshace, así
+   * que llamar dos veces no descuenta dos veces.
+   *
+   * Devuelve los ids de las reversas que escribió.
+   */
+  async reversarAsientos(
+    tx: any,
+    params: {
+      referenceIds: string[];
+      referenceTypes: ReferenceTypeContable[];
+      createdBy: string;
+      motivo?: string;
+    },
+  ): Promise<string[]> {
+    const { referenceIds, referenceTypes, createdBy, motivo } = params;
+    if (!referenceIds?.length) return [];
+
+    const originales = await tx.journalEntry.findMany({
+      where: {
+        referenceId: { in: referenceIds },
+        referenceType: { in: referenceTypes as any[] },
+      },
+      include: { lines: true },
+    });
+
+    const reversas: string[] = [];
+
+    for (const original of originales) {
+      if (!Array.isArray(original.lines) || original.lines.length === 0) {
+        continue;
+      }
+
+      const referenceIdReversa = `REVERSA:${original.id}`;
+
+      const yaRevertido = await tx.journalEntry.findFirst({
+        where: { referenceType: 'AJUSTE', referenceId: referenceIdReversa },
+        select: { id: true },
+      });
+      if (yaRevertido?.id) {
+        reversas.push(yaRevertido.id);
+        continue;
+      }
+
+      const lineas = original.lines
+        .map((line: any) => {
+          const debito = Number(line.debitAmount || 0);
+          const credito = Number(line.creditAmount || 0);
+
+          return {
+            accountCode: line.accountCode,
+            debitAmount: credito > 0 ? credito : undefined,
+            creditAmount: debito > 0 ? debito : undefined,
+            cajaId: line.cajaId || undefined,
+            // Lo que salió de la caja vuelve y lo que entró sale.
+            cajaDelta:
+              line.cajaId && (debito > 0 || credito > 0)
+                ? credito - debito
+                : undefined,
+          };
+        })
+        .filter(
+          (l: any) =>
+            Number(l.debitAmount || 0) > 0 || Number(l.creditAmount || 0) > 0,
+        );
+
+      if (lineas.length < 2) continue;
+
+      const reversa = await this.registrarAsiento(
+        {
+          referenceType: 'AJUSTE',
+          referenceId: referenceIdReversa,
+          description:
+            `Reversa de ${original.referenceType} ${original.referenceId}` +
+            (motivo ? ` — ${motivo}` : ''),
+          createdBy,
+          lines: lineas,
+        },
+        tx,
+      );
+
+      if (reversa?.id) reversas.push(reversa.id);
+    }
+
+    return reversas;
+  }
+
+  /**
+   * Radiografía completa del estado contable, para mirarla cuando uno quiera.
+   *
+   * Las comprobaciones existían pero solo corrían en el cron de las 2 de la
+   * mañana, y solo avisaban si algo estaba roto. Para hacer una prueba en
+   * producción hace falta lo contrario: mirar el estado ANTES de tocar nada,
+   * hacer la operación, y volver a mirar. Si los números son los mismos, la
+   * operación no rompió nada; si cambiaron, se sabe exactamente cuál.
+   *
+   * Solo lee. No escribe ni corrige nada.
+   */
+  async revisarIntegridad() {
+    const q = (sql: string): Promise<any[]> =>
+      (this.prisma as any).$queryRawUnsafe(sql);
+    const n = (v: any) => Number(v ?? 0);
+
+    const [global, cajas, descuadrados, centavos, negativas, inventario] =
+      await Promise.all([
+        this.verificarIntegridadGlobal(),
+        this.verificarIntegridadCajas(),
+        // Un asiento que no cuadra consigo mismo. Es más fuerte que el balance
+        // global: dos asientos torcidos al revés se compensan y el global sale
+        // limpio.
+        q(`select count(*)::int t from (
+             select e.id from asientos_contables e
+             join asientos_lineas l on l."journalEntryId" = e.id
+             group by e.id
+             having sum(coalesce(l."debitAmount",0) - coalesce(l."creditAmount",0)) <> 0
+           ) x`),
+        q(`select
+             (select count(*)::int from asientos_lineas
+               where coalesce("debitAmount",0) % 1 <> 0
+                  or coalesce("creditAmount",0) % 1 <> 0) lineas,
+             (select count(*)::int from cajas where "saldoActual" % 1 <> 0) cajas,
+             (select count(*)::int from cuotas where monto % 1 <> 0) cuotas`),
+        q(`select count(*)::int t from cajas where "saldoActual" < 0 and activa = true`),
+        q(`select
+             (select coalesce(sum(coalesce("debitAmount",0)-coalesce("creditAmount",0)),0)
+                from asientos_lineas where "accountCode" like '1.5%') libro,
+             (select coalesce(sum(stock*costo),0) from "Producto" where "eliminadoEn" is null) bodega`),
+      ]);
+
+    const cajasDescuadradas = cajas.filter((c) => !c.correct);
+    const totalCentavos =
+      n(centavos[0].lineas) + n(centavos[0].cajas) + n(centavos[0].cuotas);
+    const difInventario = n(inventario[0].libro) - n(inventario[0].bodega);
+
+    const problemas: string[] = [];
+    if (!global.balanced) {
+      problemas.push(`El libro no cuadra por ${global.diferencia}.`);
+    }
+    if (n(descuadrados[0].t) > 0) {
+      problemas.push(`${descuadrados[0].t} asiento(s) no cuadran por sí solos.`);
+    }
+    if (cajasDescuadradas.length > 0) {
+      problemas.push(
+        `${cajasDescuadradas.length} caja(s) con saldo distinto al del libro: ` +
+          cajasDescuadradas
+            .map((c) => `${c.nombre} (${c.diferencia})`)
+            .join(', '),
+      );
+    }
+    if (n(negativas[0].t) > 0) {
+      problemas.push(`${negativas[0].t} caja(s) en negativo.`);
+    }
+    if (totalCentavos > 0) {
+      problemas.push(
+        `${totalCentavos} valor(es) con centavos. El sistema maneja pesos enteros.`,
+      );
+    }
+    if (difInventario !== 0) {
+      problemas.push(
+        `El inventario del libro difiere de la bodega en ${difInventario}. ` +
+          'Se corrige una vez con "regularizar inventario".',
+      );
+    }
+
+    return {
+      revisadoEn: new Date().toISOString(),
+      todoEnOrden: problemas.length === 0,
+      problemas,
+      libro: {
+        cuadrado: global.balanced,
+        debitos: global.totalDebitos,
+        creditos: global.totalCreditos,
+        diferencia: global.diferencia,
+        asientosDescuadrados: n(descuadrados[0].t),
+      },
+      cajas: cajas.map((c) => ({
+        nombre: c.nombre,
+        saldo: c.saldoCaja,
+        segunElLibro: c.saldoLibro,
+        diferencia: c.diferencia,
+        cuadra: c.correct,
+      })),
+      cajasEnNegativo: n(negativas[0].t),
+      centavos: {
+        total: totalCentavos,
+        lineasDeAsiento: n(centavos[0].lineas),
+        cajas: n(centavos[0].cajas),
+        cuotas: n(centavos[0].cuotas),
+      },
+      inventario: {
+        segunElLibro: n(inventario[0].libro),
+        enBodega: n(inventario[0].bodega),
+        diferencia: difInventario,
+      },
     };
   }
 
