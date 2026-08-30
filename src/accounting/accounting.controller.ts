@@ -618,6 +618,34 @@ export class AccountingController {
     );
   }
 
+  /**
+   * Quita los centavos ya guardados en cuotas y asientos. Sin `aplicar` solo
+   * informa de lo que cambiaría.
+   */
+  @Post('regularizar-centavos')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
+  regularizarCentavos(@Request() req, @Body() body: { aplicar?: boolean }) {
+    if (!req.user || !req.user.id) throw new UnauthorizedException();
+    return this.accountingService.regularizarCentavos(
+      req.user.id,
+      body?.aplicar !== true,
+    );
+  }
+
+  /**
+   * Pone el saldo de cada caja de acuerdo con el libro. Sin `aplicar` solo
+   * informa de las diferencias.
+   */
+  @Post('reparar-saldos-caja')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR)
+  repararSaldosCaja(@Request() req, @Body() body: { aplicar?: boolean }) {
+    if (!req.user || !req.user.id) throw new UnauthorizedException();
+    return this.accountingService.repararSaldosCaja(
+      req.user.id,
+      body?.aplicar !== true,
+    );
+  }
+
   @Post('apertura-day-zero')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   ejecutarAperturaContable(@Request() req) {

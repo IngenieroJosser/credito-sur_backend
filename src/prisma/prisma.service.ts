@@ -71,12 +71,22 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
             if (watchActions.includes(operation as string) && model) {
               if (model !== 'OutboxEvent') {
+                // Solo sirve un id suelto. En deleteMany/updateMany el
+                // `where.id` suele ser un objeto ({ in: [...] }, { not: x })
+                // y Prisma rechazaba el create entero: cada borrado masivo
+                // dejaba un "[OUTBOX] Error creando evento" en el registro
+                // y se perdia el evento.
+                const idDelResultado = (result as any)?.id;
+                const idDelWhere = Array.isArray(result)
+                  ? undefined
+                  : (args as any)?.where?.id;
+
                 const aggregateId =
-                  (result as any)?.id ||
-                  (Array.isArray(result)
-                    ? undefined
-                    : (args as any)?.where?.id) ||
-                  undefined;
+                  typeof idDelResultado === 'string'
+                    ? idDelResultado
+                    : typeof idDelWhere === 'string'
+                      ? idDelWhere
+                      : undefined;
 
                 (basePrisma as any).outboxEvent
                   ?.create({

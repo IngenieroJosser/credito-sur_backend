@@ -4702,6 +4702,219 @@ export class AccountingService {
    *
    * `dryRun` calcula y no escribe, para poder mirar la cifra antes.
    */
+  /**
+   * Quita los centavos que quedaron guardados. El peso colombiano no tiene
+   * centavos: no hay moneda que valga menos de un peso, así que un saldo con
+   * decimales no se puede contar en un arqueo y el residuo se arrastra.
+   *
+   * La guarda del libro impide que entren nuevos, pero no limpia lo anterior.
+   *
+   * Reglas, para no cambiar lo que nadie debe ni descuadrar un asiento:
+   *   - Las cuotas ya cobradas (PAGADA o PARCIAL) no se tocan.
+   *   - Al redondear las cuotas de un crédito, el resto se deja en la última
+   *     cuota pendiente, de forma que la suma siga siendo el total del crédito.
+   *   - Capital e interés se ajustan para que sigan sumando la cuota.
+   *   - Las líneas de asiento se redondean solo si el asiento sigue cuadrando.
+   *
+   * Sin `aplicar` solo informa de lo que haría.
+   */
+  async regularizarCentavos(usuarioId: string, dryRun = true) {
+    const q = (sql: string, ...args: any[]) =>
+      this.prisma.$queryRawUnsafe(sql, ...args) as Promise<any[]>;
+
+    // ── Cuotas ────────────────────────────────────────────────────────────
+    const prestamos = await q(`
+      SELECT DISTINCT c."prestamoId" AS id
+      FROM cuotas c
+      WHERE c.monto % 1 <> 0
+         OR c."montoCapital" % 1 <> 0
+         OR c."montoInteres" % 1 <> 0
+         OR c.monto <> c."montoCapital" + c."montoInteres"
+    `);
+
+    const cambiosCuotas: Array<{
+      prestamo: string;
+      cuotas: number;
+      totalAntes: number;
+      totalDespues: number;
+    }> = [];
+    const omitidos: string[] = [];
+
+    for (const { id } of prestamos) {
+      const cuotas = await this.prisma.cuota.findMany({
+        where: { prestamoId: id },
+        orderBy: { numeroCuota: 'asc' },
+      });
+      const prestamo = await this.prisma.prestamo.findUnique({
+        where: { id },
+        select: { numeroPrestamo: true },
+      });
+
+      const totalAntes = cuotas.reduce((a, c) => a + Number(c.monto), 0);
+      const objetivo = Math.round(totalAntes);
+
+      const editables = cuotas.filter(
+        (c) => !['PAGADA', 'PARCIAL'].includes(String(c.estado)),
+      );
+      if (editables.length === 0) {
+        omitidos.push(
+          `${prestamo?.numeroPrestamo}: todas las cuotas están cobradas`,
+        );
+        continue;
+      }
+
+      const nuevos = new Map<string, number>();
+      for (const c of cuotas) {
+        nuevos.set(
+          c.id,
+          ['PAGADA', 'PARCIAL'].includes(String(c.estado))
+            ? Number(c.monto)
+            : Math.round(Number(c.monto)),
+        );
+      }
+
+      // El resto va a la última cuota pendiente, para que la suma siga
+      // siendo el total del crédito.
+      const ultima = editables[editables.length - 1];
+      const suma = [...nuevos.values()].reduce((a, b) => a + b, 0);
+      nuevos.set(ultima.id, (nuevos.get(ultima.id) ?? 0) + (objetivo - suma));
+
+      const totalDespues = [...nuevos.values()].reduce((a, b) => a + b, 0);
+
+      if (!dryRun) {
+        for (const c of cuotas) {
+          const monto = nuevos.get(c.id)!;
+          if (monto === Number(c.monto) && Number(c.montoCapital) % 1 === 0)
+            continue;
+
+          const capital = Math.round(Number(c.montoCapital));
+          await this.prisma.cuota.update({
+            where: { id: c.id },
+            data: {
+              monto,
+              montoCapital: Math.min(capital, monto),
+              // El interés absorbe el ajuste para que capital + interés
+              // siga siendo la cuota.
+              montoInteres: monto - Math.min(capital, monto),
+            },
+          });
+        }
+      }
+
+      cambiosCuotas.push({
+        prestamo: prestamo?.numeroPrestamo ?? id,
+        cuotas: cuotas.length,
+        totalAntes,
+        totalDespues,
+      });
+    }
+
+    // ── Líneas de asiento ─────────────────────────────────────────────────
+    const asientos = await q(`
+      SELECT e.id
+      FROM asientos_contables e
+      JOIN asientos_lineas l ON l."journalEntryId" = e.id
+      GROUP BY e.id
+      HAVING SUM(CASE WHEN COALESCE(l."debitAmount",0) % 1 <> 0
+                       OR COALESCE(l."creditAmount",0) % 1 <> 0
+                  THEN 1 ELSE 0 END) > 0
+    `);
+
+    let lineasArregladas = 0;
+    const asientosOmitidos: string[] = [];
+
+    for (const { id } of asientos) {
+      const lineas = await this.prisma.journalLine.findMany({
+        where: { journalEntryId: id },
+      });
+      const neto = lineas.reduce(
+        (a, l) =>
+          a +
+          Math.round(Number(l.debitAmount ?? 0)) -
+          Math.round(Number(l.creditAmount ?? 0)),
+        0,
+      );
+
+      // Si al redondear el asiento dejaría de cuadrar, no se toca: es peor
+      // un asiento torcido que unos centavos.
+      if (neto !== 0) {
+        asientosOmitidos.push(id);
+        continue;
+      }
+
+      if (!dryRun) {
+        for (const l of lineas) {
+          await this.prisma.journalLine.update({
+            where: { id: l.id },
+            data: {
+              debitAmount:
+                l.debitAmount === null
+                  ? null
+                  : Math.round(Number(l.debitAmount)),
+              creditAmount:
+                l.creditAmount === null
+                  ? null
+                  : Math.round(Number(l.creditAmount)),
+            },
+          });
+        }
+      }
+      lineasArregladas += lineas.length;
+    }
+
+    return {
+      aplicado: !dryRun,
+      cuotas: {
+        creditos: cambiosCuotas.length,
+        detalle: cambiosCuotas,
+        omitidos,
+      },
+      asientos: {
+        revisados: asientos.length,
+        lineasArregladas,
+        omitidosPorQuedarDescuadrados: asientosOmitidos.length,
+      },
+      usuarioId,
+    };
+  }
+
+  /**
+   * Pone el saldo de cada caja de acuerdo con lo que dice el libro.
+   *
+   * El libro es la fuente de verdad: `saldoActual` es una copia que se va
+   * actualizando a mano y puede quedarse atrás si algo se borra o falla a
+   * medias. Aquí no se escribe ningún asiento nuevo, solo se corrige la copia.
+   *
+   * Sin `aplicar` solo informa de las diferencias.
+   */
+  async repararSaldosCaja(usuarioId: string, dryRun = true) {
+    const informe = await this.ledgerService.verificarIntegridadCajas();
+    const descuadradas = informe.filter((c) => !c.correct);
+
+    if (!dryRun) {
+      for (const caja of descuadradas) {
+        // En forma de incremento: escribir `saldoActual` directamente está
+        // prohibido por la guarda de PrismaService, y con razón.
+        await this.prisma.caja.update({
+          where: { id: caja.cajaId },
+          data: { saldoActual: { increment: -caja.diferencia } },
+        });
+      }
+    }
+
+    return {
+      aplicado: !dryRun,
+      revisadas: informe.length,
+      descuadradas: descuadradas.map((c) => ({
+        caja: c.nombre,
+        saldoCaja: c.saldoCaja,
+        saldoLibro: c.saldoLibro,
+        diferencia: c.diferencia,
+      })),
+      usuarioId,
+    };
+  }
+
   async regularizarInventario(userId: string, dryRun = true) {
     const productos = await this.prisma.producto.findMany({
       where: { eliminadoEn: null },
