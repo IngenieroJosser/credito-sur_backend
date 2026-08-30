@@ -470,6 +470,27 @@ export class UsersService {
       throw new NotFoundException(`Usuario con ID ${id} no encontrado`);
     }
 
+    // PROTECCIÓN: solo un SUPER_ADMINISTRADOR puede ELEVAR a alguien a
+    // SUPER_ADMINISTRADOR. create() ya lo impedía, pero actualizar() no: un
+    // ADMIN podía convertir a cualquier usuario en superadmin (escalada
+    // vertical). Se comprueba el rol de quien hace el cambio.
+    if (
+      updateUserDto.rol === RolUsuario.SUPER_ADMINISTRADOR &&
+      usuario.rol !== RolUsuario.SUPER_ADMINISTRADOR
+    ) {
+      const modificador = usuarioModificadorId
+        ? await this.prisma.usuario.findUnique({
+            where: { id: usuarioModificadorId },
+            select: { rol: true },
+          })
+        : null;
+      if (modificador?.rol !== RolUsuario.SUPER_ADMINISTRADOR) {
+        throw new ForbiddenException(
+          'Solo un Superadministrador puede asignar el rol de Superadministrador.',
+        );
+      }
+    }
+
     // PROTECCIÓN: Un SUPER_ADMINISTRADOR solo puede ser modificado por:
     //   1. Sí mismo (auto-modificación)
     //   2. El SUPER_ADMINISTRADOR principal (tiene esPrincipal = true)

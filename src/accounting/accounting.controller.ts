@@ -58,6 +58,14 @@ export class AccountingController {
   // =====================
 
   @Get('cajas')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.CONTADOR,
+    RolUsuario.COBRADOR,
+  )
   getCajas(@Request() req: any) {
     // Se pasa el actor: un cobrador solo debe ver las cajas de sus rutas, no
     // toda la posicion de caja de la empresa. Antes no habia ni @Roles ni
@@ -66,6 +74,14 @@ export class AccountingController {
   }
 
   @Get('cajas/:id')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.CONTADOR,
+    RolUsuario.COBRADOR,
+  )
   getCajaById(@Param('id') id: string, @Request() req: any) {
     return this.accountingService.getCajaById(id, req.user);
   }
@@ -208,6 +224,12 @@ export class AccountingController {
   // =====================
 
   @Get('ledger/movimientos')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.CONTADOR,
+  )
   getMovimientosLedger(
     @Query('fechaInicio') fechaInicio?: string,
     @Query('fechaFin') fechaFin?: string,
@@ -231,6 +253,12 @@ export class AccountingController {
   }
 
   @Get('transacciones')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.CONTADOR,
+  )
   getTransacciones(
     @Query('cajaId') cajaId?: string,
     @Query('tipo') tipo?: TipoTransaccion,
@@ -250,11 +278,18 @@ export class AccountingController {
   }
 
   @Get('transacciones/:id')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.CONTADOR,
+  )
   getTransaccionById(@Param('id', ParseUUIDPipe) id: string) {
     return this.accountingService.getTransaccionById(id);
   }
 
   @Post('transacciones')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   createTransaccion(
     @Request() req,
     @Body()
@@ -288,6 +323,12 @@ export class AccountingController {
   // =====================
 
   @Get('resumen')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.CONTADOR,
+  )
   getResumenFinanciero(
     @Query('fechaInicio') fechaInicio?: string,
     @Query('fechaFin') fechaFin?: string,
@@ -300,6 +341,13 @@ export class AccountingController {
   // =====================
 
   @Get('cierres')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.CONTADOR,
+    RolUsuario.SUPERVISOR,
+  )
   getHistorialCierres(
     @Query('tipo') tipo?: 'ARQUEO' | 'CONSOLIDACION',
     @Query('cajaId') cajaId?: string,
@@ -323,6 +371,13 @@ export class AccountingController {
   // =====================
 
   @Get('gastos')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.CONTADOR,
+    RolUsuario.SUPERVISOR,
+  )
   getGastos(
     @Query('rutaId') rutaId?: string,
     @Query('estado') estado?: string,
