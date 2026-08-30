@@ -73,6 +73,8 @@ const USUARIO_ADMIN = {
   apellidos: 'Prueba',
 };
 
+const ACTOR_ADMIN = { id: 'admin-1', rol: 'SUPER_ADMINISTRADOR' as const };
+
 const ARQUEO_CREADO = {
   id: 'arqueo-1',
   cajaId: 'caja-ruta-1',
@@ -213,6 +215,7 @@ describe('CajasService', () => {
       const result = await service.getArqueoPreview(
         CAJA_RUTA_ACTIVA.id,
         '2026-06-13',
+        ACTOR_ADMIN,
       );
 
       expect(result).toHaveProperty('cajaId', CAJA_RUTA_ACTIVA.id);
@@ -225,7 +228,11 @@ describe('CajasService', () => {
       prisma.caja.findUnique.mockResolvedValueOnce(null);
 
       await expect(
-        service.getArqueoPreview('caja-inexistente'),
+        service.getArqueoPreview(
+        'caja-inexistente',
+        undefined,
+        ACTOR_ADMIN,
+      ),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -240,6 +247,7 @@ describe('CajasService', () => {
       const result = await service.getArqueoPreview(
         CAJA_RUTA_ACTIVA.id,
         '2026-06-13',
+        ACTOR_ADMIN,
       );
 
       // Saldo esperado = 1000000 + 500000 - 200000 = 1300000
@@ -268,6 +276,7 @@ describe('CajasService', () => {
       const result = await service.getArqueoPreview(
         CAJA_RUTA_ACTIVA.id,
         '2026-06-13',
+        ACTOR_ADMIN,
       );
 
       // Saldo esperado = 1000000 - 200000 = 800000 (excluye VENTA_CONTADO)
@@ -294,7 +303,8 @@ describe('CajasService', () => {
         USUARIO_ADMIN.id,
         undefined,
         undefined,
-        undefined, // Sin observación porque no hay diferencia
+        undefined,
+        ACTOR_ADMIN,
       );
 
       expect(result).toHaveProperty('arqueoId', ARQUEO_CREADO.id);
@@ -337,7 +347,8 @@ describe('CajasService', () => {
         USUARIO_ADMIN.id,
         undefined,
         undefined,
-        'Faltante por error de conteo', // Observación requerida
+        'Faltante por error de conteo',
+        ACTOR_ADMIN,
       );
 
       expect(result).toHaveProperty('arqueoId');
@@ -379,7 +390,8 @@ describe('CajasService', () => {
         USUARIO_ADMIN.id,
         undefined,
         undefined,
-        'Sobrante por error de conteo', // Observación requerida
+        'Sobrante por error de conteo',
+        ACTOR_ADMIN,
       );
 
       expect(result).toHaveProperty('arqueoId');
@@ -416,11 +428,15 @@ describe('CajasService', () => {
     it('no permite efectivo negativo', async () => {
       await expect(
         service.confirmarArqueo(
-          CAJA_RUTA_ACTIVA.id,
-          '2026-06-13',
-          -100000,
-          USUARIO_ADMIN.id,
-        ),
+        CAJA_RUTA_ACTIVA.id,
+        '2026-06-13',
+        -100000,
+        USUARIO_ADMIN.id,
+        undefined,
+        undefined,
+        undefined,
+        ACTOR_ADMIN,
+      ),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -429,11 +445,15 @@ describe('CajasService', () => {
 
       await expect(
         service.confirmarArqueo(
-          CAJA_PRINCIPAL.id,
-          '2026-06-13',
-          1000000,
-          USUARIO_ADMIN.id,
-        ),
+        CAJA_PRINCIPAL.id,
+        '2026-06-13',
+        1000000,
+        USUARIO_ADMIN.id,
+        undefined,
+        undefined,
+        undefined,
+        ACTOR_ADMIN,
+      ),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -442,11 +462,15 @@ describe('CajasService', () => {
 
       await expect(
         service.confirmarArqueo(
-          CAJA_RUTA_ACTIVA.id,
-          '2026-06-13',
-          5000000,
-          USUARIO_ADMIN.id,
-        ),
+        CAJA_RUTA_ACTIVA.id,
+        '2026-06-13',
+        5000000,
+        USUARIO_ADMIN.id,
+        undefined,
+        undefined,
+        undefined,
+        ACTOR_ADMIN,
+      ),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -457,6 +481,9 @@ describe('CajasService', () => {
         5000000,
         USUARIO_ADMIN.id,
         'otro-usuario-1',
+        undefined,
+        undefined,
+        ACTOR_ADMIN,
       );
 
       expect(prisma._tx.arqueoCaja.create).toHaveBeenCalledWith(
@@ -476,11 +503,15 @@ describe('CajasService', () => {
 
       await expect(
         service.confirmarArqueo(
-          CAJA_RUTA_ACTIVA.id,
-          '2026-06-13',
-          5000000,
-          USUARIO_ADMIN.id,
-        ),
+        CAJA_RUTA_ACTIVA.id,
+        '2026-06-13',
+        5000000,
+        USUARIO_ADMIN.id,
+        undefined,
+        undefined,
+        undefined,
+        ACTOR_ADMIN,
+      ),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -492,11 +523,15 @@ describe('CajasService', () => {
 
       await expect(
         service.confirmarArqueo(
-          CAJA_RUTA_ACTIVA.id,
-          '2026-06-13',
-          5000000,
-          USUARIO_ADMIN.id,
-        ),
+        CAJA_RUTA_ACTIVA.id,
+        '2026-06-13',
+        5000000,
+        USUARIO_ADMIN.id,
+        undefined,
+        undefined,
+        undefined,
+        ACTOR_ADMIN,
+      ),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -511,11 +546,15 @@ describe('CajasService', () => {
 
       await expect(
         service.confirmarArqueo(
-          CAJA_RUTA_ACTIVA.id,
-          '2026-06-13',
-          5000000,
-          USUARIO_ADMIN.id,
-        ),
+        CAJA_RUTA_ACTIVA.id,
+        '2026-06-13',
+        5000000,
+        USUARIO_ADMIN.id,
+        undefined,
+        undefined,
+        undefined,
+        ACTOR_ADMIN,
+      ),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -527,12 +566,15 @@ describe('CajasService', () => {
 
       await expect(
         service.confirmarArqueo(
-          CAJA_RUTA_ACTIVA.id,
-          '2026-06-13',
-          5000000,
-          USUARIO_ADMIN.id,
-          'usuario-inexistente',
-        ),
+        CAJA_RUTA_ACTIVA.id,
+        '2026-06-13',
+        5000000,
+        USUARIO_ADMIN.id,
+        'usuario-inexistente',
+        undefined,
+        undefined,
+        ACTOR_ADMIN,
+      ),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -547,11 +589,15 @@ describe('CajasService', () => {
 
       await expect(
         service.confirmarArqueo(
-          CAJA_RUTA_ACTIVA.id,
-          '2026-06-13',
-          5000000,
-          USUARIO_ADMIN.id,
-        ),
+        CAJA_RUTA_ACTIVA.id,
+        '2026-06-13',
+        5000000,
+        USUARIO_ADMIN.id,
+        undefined,
+        undefined,
+        undefined,
+        ACTOR_ADMIN,
+      ),
       ).rejects.toThrow(BadRequestException);
     });
   });

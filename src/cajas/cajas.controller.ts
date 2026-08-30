@@ -36,7 +36,7 @@ export class CajasController {
     return this.cajasService.getArqueoPreview(
       cajaId,
       fechaOperativa,
-      req?.user?.id,
+      req?.user,
     );
   }
 
@@ -49,8 +49,11 @@ export class CajasController {
     RolUsuario.CONTADOR,
     RolUsuario.COBRADOR,
   )
-  async getArqueoById(@Param('arqueoId') arqueoId: string) {
-    return this.cajasService.getArqueoById(arqueoId);
+  async getArqueoById(
+    @Param('arqueoId') arqueoId: string,
+    @Request() req?: any,
+  ) {
+    return this.cajasService.getArqueoById(arqueoId, req?.user);
   }
 
   @Post(':cajaId/arqueos')
@@ -82,6 +85,7 @@ export class CajasController {
       body.recibidoPorId,
       body.denominaciones,
       body.observaciones,
+      req.user,
     );
   }
 }
