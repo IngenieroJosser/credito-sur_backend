@@ -13,11 +13,30 @@ interface JwtPayload {
   permisos: string[];
 }
 
+// Lee el token de la cookie httpOnly 'token' parseando la cabecera Cookie a
+// mano (sin depender de cookie-parser). Devuelve null si no está.
+function cookieExtractor(req: any): string | null {
+  const raw = req?.headers?.cookie;
+  if (!raw || typeof raw !== 'string') return null;
+  const parte = raw
+    .split(';')
+    .map((c: string) => c.trim())
+    .find((c: string) => c.startsWith('token='));
+  if (!parte) return null;
+  return decodeURIComponent(parte.slice('token='.length));
+}
+
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(private readonly prisma: PrismaService) {
     super({
-      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      // Acepta el token por cookie httpOnly (web) o por el header Authorization
+      // (apps/PWA/offline). El header sigue funcionando: nada del flujo actual
+      // se rompe.
+      jwtFromRequest: ExtractJwt.fromExtractors([
+        cookieExtractor,
+        ExtractJwt.fromAuthHeaderAsBearerToken(),
+      ]),
       ignoreExpiration: false,
       secretOrKey: jwtConstants.secret,
     });
