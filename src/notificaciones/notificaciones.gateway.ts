@@ -7,9 +7,12 @@ import {
   SubscribeMessage,
   MessageBody,
   ConnectedSocket,
+  WsException,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Logger, forwardRef, Inject, Injectable } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { RolUsuario } from '@prisma/client';
 import { OnEvent } from '@nestjs/event-emitter';
 import { NotificacionesService } from './notificaciones.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -32,12 +35,13 @@ export class NotificacionesGateway
   implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
 {
   @WebSocketServer()
-  server: Server;
+  server!: Server;
 
   constructor(
     @Inject(forwardRef(() => NotificacionesService))
     private notificacionesService: NotificacionesService,
     private prisma: PrismaService,
+    private jwtService: JwtService,
     @Inject(forwardRef(() => RoutesService))
     private routesService: RoutesService,
   ) {}
@@ -47,6 +51,36 @@ export class NotificacionesGateway
   private userSockets = new Map<string, Set<string>>();
 
   afterInit(server: Server) {
+    server.use(async (client, next) => {
+      try {
+        const authorization = client.handshake.headers.authorization;
+        const token =
+          client.handshake.auth?.token ||
+          (authorization?.startsWith('Bearer ')
+            ? authorization.slice('Bearer '.length)
+            : undefined);
+
+        if (!token) throw new WsException('Autenticación requerida');
+
+        const payload = await this.jwtService.verifyAsync<{
+          sub?: string;
+        }>(token);
+        if (!payload.sub) throw new WsException('Sesión inválida');
+
+        const usuario = await this.prisma.usuario.findUnique({
+          where: { id: payload.sub },
+          select: { id: true, rol: true, estado: true },
+        });
+        if (!usuario || usuario.estado !== 'ACTIVO') {
+          throw new WsException('Sesión inválida');
+        }
+
+        client.data.user = usuario;
+        next();
+      } catch {
+        next(new WsException('Autenticación requerida'));
+      }
+    });
     this.logger.log('WebSocket Gateway Inicializado');
   }
 
@@ -75,11 +109,13 @@ export class NotificacionesGateway
    */
   @SubscribeMessage('register')
   handleRegister(
-    @MessageBody() data: { userId: string },
+    @MessageBody() data: { userId?: string },
     @ConnectedSocket() client: Socket,
   ) {
-    const { userId } = data;
-    if (!userId) return;
+    const userId = client.data.user?.id as string | undefined;
+    if (!userId || (data?.userId && data.userId !== userId)) {
+      throw new WsException('Identidad de usuario inválida');
+    }
 
     if (!this.userSockets.has(userId)) {
       this.userSockets.set(userId, new Set());
@@ -139,18 +175,11 @@ export class NotificacionesGateway
               getBogotaStartEndOfDay(new Date());
 
             // Validar actor contra base de datos (no confiar en actorRol del frontend)
-            const actorId = data.actorId || cajaDeLaRuta.responsableId;
-            const actor = await this.prisma.usuario.findUnique({
-              where: { id: actorId },
-              select: {
-                id: true,
-                rol: true,
-              },
-            });
-            const actorCierre = {
-              id: actor?.id || cajaDeLaRuta.responsableId,
-              rol: actor?.rol || 'COBRADOR',
+            const actor = client.data.user as {
+              id: string;
+              rol: RolUsuario;
             };
+            const actorCierre = { id: actor.id, rol: actor.rol };
 
             // Validar si puede cerrar la jornada actual (verifica cierre pendiente anterior)
             try {

@@ -10,10 +10,22 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
+import { createHmac, timingSafeEqual } from 'crypto';
 
 @Controller('mirror-sync')
 export class MirrorSyncController {
   private readonly logger = new Logger(MirrorSyncController.name);
+  private readonly usedNonces = new Map<string, number>();
+  private readonly allowedModels = new Set([
+    'Notificacion', 'Cliente', 'Producto', 'PrecioProducto', 'Prestamo',
+    'Cuota', 'ExtensionPago', 'Pago', 'DetallePago', 'Recibo', 'Ruta',
+    'AsignacionRuta', 'Aprobacion', 'Caja', 'Transaccion', 'Gasto',
+    'ArchivadoOculto', 'AlertaCliente', 'Multimedia', 'Categoria',
+    'ConfiguracionSistema', 'RegistroVisita', 'EfectoProvisional',
+    'RutaJornada', 'ArqueoCaja', 'ImportacionLote', 'JournalEntry',
+    'JournalLine',
+  ]);
+  private readonly allowedActions = new Set(['create', 'update', 'upsert', 'delete']);
 
   constructor(
     private readonly configService: ConfigService,
@@ -27,6 +39,8 @@ export class MirrorSyncController {
     @Headers('authorization') authHeader: string,
     @Headers('x-mirror-sync-engine') engineHeader: string,
     @Headers('x-mirror-sync-timestamp') timestampHeader: string,
+    @Headers('x-mirror-sync-nonce') nonceHeader: string,
+    @Headers('x-mirror-sync-signature') signatureHeader: string,
     @Body() body: { payload: any },
   ) {
     // 1. Verificación Estricta de Seguridad (Búnker con expiración)
@@ -45,8 +59,7 @@ export class MirrorSyncController {
       );
     }
 
-    // Prevención de Replay Attack (Daño permanente si se roba el Token estático)
-    if (!timestampHeader) {
+    if (!timestampHeader || !nonceHeader || !signatureHeader) {
       this.logger.warn(`Petición rechazada: Falta el Timestamp de seguridad.`);
       throw new UnauthorizedException(
         'Firma de tiempo requerida para evitar Replay Attacks',
@@ -69,6 +82,29 @@ export class MirrorSyncController {
       );
     }
 
+    const signedBody = JSON.stringify(body);
+    const expectedSignature = createHmac('sha256', expectedToken)
+      .update(`${timestampHeader}.${nonceHeader}.${signedBody}`)
+      .digest('hex');
+    const provided = Buffer.from(signatureHeader, 'hex');
+    const expected = Buffer.from(expectedSignature, 'hex');
+    if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
+      throw new UnauthorizedException('Firma de sincronización inválida');
+    }
+
+    const nonceExpiry = currentTime + toleranceWindowMs;
+    for (const [nonce, expiresAt] of this.usedNonces) {
+      if (expiresAt <= currentTime) this.usedNonces.delete(nonce);
+    }
+    if (this.usedNonces.has(nonceHeader)) {
+      throw new UnauthorizedException('Solicitud de sincronización repetida');
+    }
+    this.usedNonces.set(nonceHeader, nonceExpiry);
+
+    if (!this.allowedModels.has(model) || !this.allowedActions.has(action)) {
+      throw new UnauthorizedException('Modelo u operación no permitidos');
+    }
+
     // 2. Ejecutar la acción cruda en el Prisma del VPS
     this.logger.log(
       `Recibiendo Mirror Sync: Modelo=${model}, Accion=${action}`,
@@ -88,6 +124,9 @@ export class MirrorSyncController {
 
     try {
       const { payload } = body;
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        throw new UnauthorizedException('Payload de sincronización inválido');
+      }
 
       if (action === 'create' || action === 'update' || action === 'upsert') {
         const id = payload.id;
@@ -140,9 +179,7 @@ export class MirrorSyncController {
         `Error crítico procesando réplica en VPS Espejo -> ${e.message}`,
         e.stack,
       );
-      throw new InternalServerErrorException(
-        `Fallo de persistencia en el VPS: ${e.message}`,
-      );
+      throw new InternalServerErrorException('Fallo de persistencia en el VPS');
     }
   }
 }

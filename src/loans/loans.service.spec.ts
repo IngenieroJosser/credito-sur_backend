@@ -1154,6 +1154,7 @@ describe('LoansService accounting impact for approved loans', () => {
 
     const tx: any = {
       prestamo: {
+        update: jest.fn().mockResolvedValue({}),
         create: jest.fn().mockResolvedValue(prestamoCreado),
       },
       ruta: {
@@ -1419,6 +1420,7 @@ describe('LoansService accounting impact for approved loans', () => {
         }),
       },
       prestamo: {
+        update: jest.fn().mockResolvedValue({}),
         findFirst: jest
           .fn()
           .mockResolvedValueOnce(null)
@@ -2008,11 +2010,13 @@ describe('LoansService role scoping', () => {
       expect.objectContaining({
         where: expect.objectContaining({
           eliminadoEn: null,
-          cliente: expect.objectContaining({
-            asignacionesRuta: expect.objectContaining({
-              some: expect.objectContaining({
-                activa: true,
-              }),
+          // La ruta la lleva el crédito: el cobrador ve los créditos de su
+          // ruta, no todos los del cliente.
+          ruta: expect.objectContaining({
+            is: expect.objectContaining({
+              OR: expect.arrayContaining([
+                expect.objectContaining({ cobradorId: 'cobrador-propio' }),
+              ]),
             }),
           }),
         }),
@@ -2021,11 +2025,11 @@ describe('LoansService role scoping', () => {
     expect(prisma.prestamo.count).toHaveBeenCalledWith({
       where: expect.objectContaining({
         eliminadoEn: null,
-        cliente: expect.objectContaining({
-          asignacionesRuta: expect.objectContaining({
-            some: expect.objectContaining({
-              activa: true,
-            }),
+        ruta: expect.objectContaining({
+          is: expect.objectContaining({
+            OR: expect.arrayContaining([
+              expect.objectContaining({ cobradorId: 'cobrador-propio' }),
+            ]),
           }),
         }),
       }),
@@ -2158,11 +2162,13 @@ describe('LoansService role scoping', () => {
         where: expect.objectContaining({
           id: 'prestamo-ajeno',
           eliminadoEn: null,
-          cliente: expect.objectContaining({
-            asignacionesRuta: expect.objectContaining({
-              some: expect.objectContaining({
-                activa: true,
-              }),
+          // La ruta la lleva el crédito: el cobrador ve los créditos de su
+          // ruta, no todos los del cliente.
+          ruta: expect.objectContaining({
+            is: expect.objectContaining({
+              OR: expect.arrayContaining([
+                expect.objectContaining({ cobradorId: 'cobrador-propio' }),
+              ]),
             }),
           }),
         }),

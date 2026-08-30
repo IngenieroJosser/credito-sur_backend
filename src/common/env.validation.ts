@@ -100,6 +100,12 @@ export function validateEnv(): void {
         '❌ FALTA VARIABLE CRÍTICA: REDIS_PASSWORD\n   → Password/Token de Redis requerido en producción (BullMQ/colas)',
       );
     }
+
+    if (!process.env.SETUP_SECRET || process.env.SETUP_SECRET.length < 32) {
+      errors.push(
+        '❌ FALTA VARIABLE CRÍTICA: SETUP_SECRET\n   → Debe existir y tener al menos 32 caracteres en producción',
+      );
+    }
   }
 
   for (const envVar of ENV_VARS) {

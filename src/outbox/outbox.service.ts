@@ -23,6 +23,7 @@ export class OutboxService {
   @Cron('*/30 * * * * *')
   async handleOutboxTick() {
     await this.processPending();
+    await this.pruneProcessed();
   }
 
   async processPending(limit = 100) {
@@ -30,11 +31,13 @@ export class OutboxService {
     this.processing = true;
 
     try {
+      const staleBefore = new Date(Date.now() - 10 * 60 * 1000);
       const events = await this.prisma.outboxEvent.findMany({
         where: {
           OR: [
             { status: 'PENDING' },
             { status: 'FAILED', attempts: { lt: this.maxAttempts } },
+            { status: 'PROCESSING', updatedAt: { lt: staleBefore } },
           ],
         },
         orderBy: { createdAt: 'asc' },
@@ -94,6 +97,15 @@ export class OutboxService {
         },
       });
     }
+  }
+
+  private async pruneProcessed() {
+    await this.prisma.outboxEvent.deleteMany({
+      where: {
+        status: 'PROCESSED',
+        processedAt: { lt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
+      },
+    });
   }
 
   private async publish(event: { aggregateType: string; payload: unknown }) {

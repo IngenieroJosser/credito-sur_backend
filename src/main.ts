@@ -1,3 +1,7 @@
+// Primero de todo: sin esto, los modulos que leen process.env al importarse
+// (por ejemplo auth/constants.ts) se evaluan antes de que ConfigModule cargue
+// el .env y se quedan con undefined.
+import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
@@ -176,10 +180,11 @@ async function bootstrap() {
     )
     .build();
 
-  const document = SwaggerModule.createDocument(app, config);
-  document.security = [{ [SWAGGER_JWT_AUTH]: [] }];
+  if (process.env.NODE_ENV !== 'production') {
+    const document = SwaggerModule.createDocument(app, config);
+    document.security = [{ [SWAGGER_JWT_AUTH]: [] }];
 
-  SwaggerModule.setup('api-credisur', app, document, {
+    SwaggerModule.setup('api-credisur', app, document, {
     explorer: true,
     swaggerOptions: {
       persistAuthorization: true,
@@ -293,7 +298,8 @@ async function bootstrap() {
     customSiteTitle: 'Créditos del Sur API',
     customfavIcon:
       'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text x=%2212%22 y=%2262%22 font-size=%2232%22 font-family=%22Arial%22 font-weight=%22700%22>CDS</text></svg>',
-  });
+    });
+  }
 
   await app.listen(process.env.PORT ?? 3001);
 

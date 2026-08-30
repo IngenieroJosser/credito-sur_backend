@@ -53,6 +53,7 @@ describe('NotificacionesGateway', () => {
       gateway: new NotificacionesGateway(
         notificacionesService,
         prisma,
+        { verifyAsync: jest.fn() } as any,
         routesService,
       ),
       notificacionesService,
@@ -77,7 +78,7 @@ describe('NotificacionesGateway', () => {
         actorId: 'cobrador-1',
         actorRol: 'COBRADOR',
       },
-      {} as any,
+      { data: { user: { id: 'cobrador-1', rol: 'COBRADOR' } } } as any,
     );
 
     expect(response).toEqual({

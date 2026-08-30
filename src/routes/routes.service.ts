@@ -7,9 +7,11 @@ import {
   InternalServerErrorException,
   Inject,
   forwardRef,
+  Logger,
 } from '@nestjs/common';
 
 import { PrismaService } from '../prisma/prisma.service';
+import { sincronizarAsignacionesCliente } from './sincronizar-asignaciones';
 
 import { AuditService } from '../audit/audit.service';
 
@@ -62,6 +64,8 @@ type RouteActor =
 
 @Injectable()
 export class RoutesService {
+  private readonly logger = new Logger(RoutesService.name);
+
   constructor(
     private prisma: PrismaService,
 
@@ -570,6 +574,10 @@ export class RoutesService {
               where: {
                 eliminadoEn: null,
 
+                // Solo los creditos de las rutas de este cobrador: el cliente
+                // puede tener otros en la ruta de otro companero.
+                ruta: { cobradorId },
+
                 estado: {
                   in: [
                     'ACTIVO',
@@ -608,29 +616,24 @@ export class RoutesService {
                     },
                   },
                   take: 100,
+                  // montoCuota, montoNominal, estadoActual y
+                  // saldoExigibleEnFechaOperativa NO son columnas de Cuota:
+                  // se derivan mas abajo a partir de monto y montoPagado.
+                  // Pedirselas a Prisma hacia fallar la consulta entera.
                   select: {
                     id: true,
                     numeroCuota: true,
                     monto: true,
-                    montoCuota: true,
-                    montoNominal: true,
-                    estadoActual: true,
                     estado: true,
                     fechaVencimiento: true,
                     fechaVencimientoProrroga: true,
                     montoPagado: true,
-                    saldoExigibleEnFechaOperativa: true,
                   },
                 },
                 extensiones: {
                   orderBy: { creadoEn: 'desc' },
                   take: 1,
                   select: { id: true, nuevaFechaVencimiento: true },
-                },
-                efectoProvisional: {
-                  select: {
-                    estado: true,
-                  },
                 },
               },
             },
@@ -2759,6 +2762,33 @@ export class RoutesService {
     }
   }
 
+  /**
+   * Envuelve un fallo inesperado en un 500 con mensaje fijo, pero deja la
+   * causa real en el log. Sin esto, mover o quitar clientes devolvía "Error
+   * al mover el cliente" y no quedaba rastro de por qué.
+   */
+  private fallaInesperada(
+    operacion: string,
+    mensaje: string,
+    error: unknown,
+  ): never {
+    if (error instanceof NotFoundException) throw error;
+
+    this.logger.error(
+      `${operacion} falló`,
+      error instanceof Error ? error.stack : String(error),
+    );
+
+    throw new InternalServerErrorException(mensaje);
+  }
+
+  private sincronizarAsignacionesCliente(
+    tx: Prisma.TransactionClient,
+    clienteId: string,
+  ) {
+    return sincronizarAsignacionesCliente(tx, clienteId);
+  }
+
   async assignClient(rutaId: string, clienteId: string, cobradorId: string) {
     try {
       // Verificar si la ruta existe
@@ -2794,69 +2824,22 @@ export class RoutesService {
       const assignmentCobradorId = ruta.cobradorId;
 
       const asignacion = await this.prisma.$transaction(async (tx) => {
-        const existingAssignment = await tx.asignacionRuta.findFirst({
-          where: {
-            clienteId,
-            rutaId,
-            activa: true,
-          },
+        // Asignar un CLIENTE a una ruta mueve todos sus creditos a esa ruta.
+        // Para mover uno solo esta moveLoan.
+        await tx.prestamo.updateMany({
+          where: { clienteId, eliminadoEn: null },
+          data: { rutaId },
         });
 
-        if (existingAssignment) {
-          await tx.asignacionRuta.updateMany({
-            where: {
-              clienteId,
-              activa: true,
-              id: { not: existingAssignment.id },
-            },
-            data: { activa: false },
-          });
-
-          const updated = await tx.asignacionRuta.update({
-            where: { id: existingAssignment.id },
-            data: {
-              cobradorId: assignmentCobradorId,
-              activa: true,
-            },
-            include: {
-              cliente: {
-                select: {
-                  id: true,
-                  nombres: true,
-                  apellidos: true,
-                  dni: true,
-                  telefono: true,
-                },
-              },
-            },
-          });
-
-          // Nota: Prestamo no tiene campo cobradorId; el cobrador se gestiona
-          // a través de la AsignacionRuta. No se actualiza aquí.
-
-          return updated;
-        }
+        await this.sincronizarAsignacionesCliente(tx, clienteId);
 
         await tx.asignacionRuta.updateMany({
-          where: { clienteId, activa: true },
-          data: { activa: false },
+          where: { clienteId, rutaId, activa: true },
+          data: { cobradorId: assignmentCobradorId },
         });
 
-        const maxOrden = await tx.asignacionRuta.aggregate({
-          where: { rutaId, activa: true },
-          _max: { ordenVisita: true },
-        });
-
-        const nuevoOrden = (maxOrden._max.ordenVisita || 0) + 1;
-
-        const created = await tx.asignacionRuta.create({
-          data: {
-            rutaId,
-            clienteId,
-            cobradorId: assignmentCobradorId,
-            ordenVisita: nuevoOrden,
-            activa: true,
-          },
+        return tx.asignacionRuta.findFirstOrThrow({
+          where: { clienteId, rutaId, activa: true },
           include: {
             cliente: {
               select: {
@@ -2869,11 +2852,6 @@ export class RoutesService {
             },
           },
         });
-
-        // Nota: Prestamo no tiene campo cobradorId; el cobrador se gestiona
-        // a través de la AsignacionRuta. No se actualiza aquí.
-
-        return created;
       });
 
       if (assignmentCobradorId) {
@@ -2928,12 +2906,15 @@ export class RoutesService {
         throw new NotFoundException('Asignación no encontrada');
       }
 
-      // Actualizar el estado de la asignación
+      // Sacar de la ruta los creditos que el cliente tiene en ella; la
+      // asignacion se apaga sola al no quedar ninguno.
+      await this.prisma.$transaction(async (tx) => {
+        await tx.prestamo.updateMany({
+          where: { clienteId, rutaId },
+          data: { rutaId: null },
+        });
 
-      await this.prisma.asignacionRuta.update({
-        where: { id: asignacion.id },
-
-        data: { activa: false },
+        await this.sincronizarAsignacionesCliente(tx, clienteId);
       });
 
       // Reordenar las asignaciones restantes
@@ -2966,7 +2947,11 @@ export class RoutesService {
 
       return { message: 'Cliente removido de la ruta correctamente' };
     } catch (error) {
-      throw new InternalServerErrorException('Error al remover el cliente');
+      this.fallaInesperada(
+        `removeClient(rutaId=${rutaId}, clienteId=${clienteId})`,
+        'Error al remover el cliente',
+        error,
+      );
     }
   }
 
@@ -3018,60 +3003,19 @@ export class RoutesService {
       // cobradorId en los préstamos activos. Sin esto, los pagos del nuevo cobrador
       // no se reflejan correctamente en sus estadísticas de recaudo.
       await this.prisma.$transaction(async (tx) => {
-        const existingInDestination = await tx.asignacionRuta.findFirst({
-          where: {
-            clienteId: clientId,
-            rutaId: toRutaId,
-            activa: true,
-          },
+        // Mover el cliente = mover los creditos que tiene en la ruta origen.
+        // Los que tenga en otras rutas no se tocan.
+        await tx.prestamo.updateMany({
+          where: { clienteId: clientId, rutaId: fromRutaId },
+          data: { rutaId: toRutaId },
         });
 
         await tx.asignacionRuta.updateMany({
-          where: {
-            clienteId: clientId,
-            activa: true,
-            ...(existingInDestination
-              ? { id: { not: existingInDestination.id } }
-              : {}),
-          },
-          data: { activa: false },
+          where: { clienteId: clientId, rutaId: toRutaId },
+          data: { cobradorId: rutaDestino.cobradorId },
         });
 
-        if (existingInDestination) {
-          await tx.asignacionRuta.update({
-            where: { id: existingInDestination.id },
-            data: {
-              cobradorId: rutaDestino.cobradorId,
-              activa: true,
-            },
-          });
-        } else {
-          const maxOrdenDestino = await tx.asignacionRuta.aggregate({
-            where: { rutaId: toRutaId, activa: true },
-            _max: { ordenVisita: true },
-          });
-
-          await tx.asignacionRuta.create({
-            data: {
-              rutaId: toRutaId,
-              clienteId: clientId,
-              cobradorId: rutaDestino.cobradorId,
-              ordenVisita: (maxOrdenDestino._max.ordenVisita || 0) + 1,
-              activa: true,
-            },
-          });
-        }
-
-        if (rutaDestino.cobradorId) {
-          await tx.prestamo.updateMany({
-            where: {
-              clienteId: clientId,
-              estado: { in: ['ACTIVO', 'EN_MORA'] },
-              eliminadoEn: null,
-            },
-            data: { cobradorId: rutaDestino.cobradorId },
-          });
-        }
+        await this.sincronizarAsignacionesCliente(tx, clientId);
       });
 
       // Reordenar ambas rutas
@@ -3102,7 +3046,11 @@ export class RoutesService {
 
       return { message: 'Cliente movido correctamente' };
     } catch (error) {
-      throw new InternalServerErrorException('Error al mover el cliente');
+      this.fallaInesperada(
+        `moveClient(clientId=${clientId}, ${fromRutaId} -> ${toRutaId})`,
+        'Error al mover el cliente',
+        error,
+      );
     }
   }
 
@@ -3137,48 +3085,19 @@ export class RoutesService {
         throw new NotFoundException('Ruta destino no encontrada');
 
       await this.prisma.$transaction(async (tx) => {
-        const yaAsignado = await tx.asignacionRuta.findFirst({
-          where: {
-            clienteId: prestamo.clienteId,
-            rutaId: toRutaId,
-            activa: true,
-          },
+        // Se mueve ESTE credito, no el cliente entero: sus demas creditos se
+        // quedan en la ruta donde esten.
+        await tx.prestamo.update({
+          where: { id: prestamo.id },
+          data: { rutaId: toRutaId },
         });
 
         await tx.asignacionRuta.updateMany({
-          where: {
-            clienteId: prestamo.clienteId,
-            activa: true,
-            ...(yaAsignado ? { id: { not: yaAsignado.id } } : {}),
-          },
-          data: { activa: false },
+          where: { clienteId: prestamo.clienteId, rutaId: toRutaId },
+          data: { cobradorId: rutaDestino.cobradorId },
         });
 
-        if (yaAsignado) {
-          await tx.asignacionRuta.update({
-            where: { id: yaAsignado.id },
-            data: {
-              cobradorId: rutaDestino.cobradorId,
-              activa: true,
-            },
-          });
-          return;
-        }
-
-        const maxOrden = await tx.asignacionRuta.aggregate({
-          where: { rutaId: toRutaId, activa: true },
-          _max: { ordenVisita: true },
-        });
-
-        await tx.asignacionRuta.create({
-          data: {
-            rutaId: toRutaId,
-            clienteId: prestamo.clienteId,
-            cobradorId: rutaDestino.cobradorId,
-            ordenVisita: (maxOrden._max.ordenVisita || 0) + 1,
-            activa: true,
-          },
-        });
+        await this.sincronizarAsignacionesCliente(tx, prestamo.clienteId);
       });
 
       this.notificacionesGateway.broadcastRutasActualizadas({
@@ -3207,9 +3126,11 @@ export class RoutesService {
 
       return { message: 'Crédito asignado a la nueva ruta correctamente' };
     } catch (error) {
-      if (error instanceof NotFoundException) throw error;
-
-      throw new InternalServerErrorException('Error al mover el crédito');
+      this.fallaInesperada(
+        `moveLoan(prestamoId=${prestamoId}, toRutaId=${toRutaId})`,
+        'Error al mover el crédito',
+        error,
+      );
     }
   }
 
@@ -3275,13 +3196,7 @@ export class RoutesService {
       getBogotaStartEndOfDayFromKey(fechaKey);
     const pagosDeHoy = await this.prisma.pago.findMany({
       where: {
-        prestamo: {
-          cliente: {
-            asignacionesRuta: {
-              some: { rutaId, activa: true },
-            },
-          },
-        },
+        prestamo: { rutaId },
         OR: [
           {
             fechaPago: { gte: fInicio, lte: fFin },
@@ -3344,6 +3259,9 @@ export class RoutesService {
           include: {
             prestamos: {
               where: {
+                // Solo los creditos de ESTA ruta: el cliente puede tener
+                // otros en otra ruta y no son de esta jornada.
+                rutaId,
                 estado: {
                   in: ['ACTIVO', 'EN_MORA', 'PAGADO', 'PENDIENTE_APROBACION'],
                 },

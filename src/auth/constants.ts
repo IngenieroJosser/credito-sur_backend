@@ -1,3 +1,7 @@
 export const jwtConstants = {
-  secret: process.env.JWT_SECRET || 'secretKey_creditos_sur_2025', // En producción usar variable de entorno
+  // Getter, no valor: si se lee al importar el modulo, el .env todavia no
+  // esta cargado y el secreto queda undefined.
+  get secret(): string {
+    return process.env.JWT_SECRET as string;
+  },
 };

@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EstadoAprobacion } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
@@ -561,7 +565,9 @@ export class ReportsService {
     if (formato === 'excel') return generarExcelMora(filas, totales, fecha);
     if (formato === 'pdf') return generarPDFMora(filas, totales, fecha);
 
-    throw new Error(`Formato no soportado: ${formato}`);
+    throw new BadRequestException(
+      `Formato de exportacion no valido: ${formato ?? 'ninguno'}. Use "excel" o "pdf".`,
+    );
   }
 
   async obtenerEstadisticasMora() {
@@ -887,7 +893,9 @@ export class ReportsService {
     if (formato === 'excel') return generarExcelVencidas(filas, totales, fecha);
     if (formato === 'pdf') return generarPDFVencidas(filas, totales, fecha);
 
-    throw new Error(`Formato no soportado: ${formato}`);
+    throw new BadRequestException(
+      `Formato de exportacion no valido: ${formato ?? 'ninguno'}. Use "excel" o "pdf".`,
+    );
   }
 
   async getOperationalReport(
@@ -922,9 +930,9 @@ export class ReportsService {
                   EstadoPrestamo.PAGADO,
                 ],
               },
-              cliente: {
-                asignacionesRuta: { some: { rutaId: r.id, activa: true } },
-              },
+              // Por rutaId del credito: si el cliente esta en dos rutas,
+              // un filtro por sus asignaciones contaria el credito en ambas.
+              rutaId: r.id,
             },
             _sum: { monto: true },
             _count: { id: true },
@@ -1421,7 +1429,9 @@ export class ReportsService {
     if (format === 'excel') return generarExcelOperativo(filas, resumen, fecha);
     if (format === 'pdf') return generarPDFOperativo(filas, resumen, fecha);
 
-    throw new Error(`Formato no soportado: ${format}`);
+    throw new BadRequestException(
+      `Formato de exportacion no valido: ${format ?? 'ninguno'}. Use "excel" o "pdf".`,
+    );
   }
 
   async exportFinancialReport(
@@ -1441,6 +1451,8 @@ export class ReportsService {
     if (format === 'pdf')
       return generarPDFFinanciero(summary, monthly, expenses, fecha);
 
-    throw new Error(`Formato no soportado: ${format}`);
+    throw new BadRequestException(
+      `Formato de exportacion no valido: ${format ?? 'ninguno'}. Use "excel" o "pdf".`,
+    );
   }
 }

@@ -13,7 +13,8 @@ import { NotificacionesGateway } from './notificaciones.gateway';
  */
 describe('El gateway sin servidor de websockets', () => {
   const construir = () =>
-    new NotificacionesGateway({} as any, {} as any, {} as any);
+    // El cuarto es JwtService: el gateway pasó a verificar el token del socket.
+    new NotificacionesGateway({} as any, {} as any, {} as any, {} as any);
 
   it('no revienta al emitir a todos', () => {
     const gateway = construir();

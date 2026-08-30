@@ -120,38 +120,57 @@ export class AccountingService {
       throw new BadRequestException('La ruta no tiene cobrador asignado');
     }
 
-    const existente = await this.prisma.caja.findFirst({
-      where: { rutaId: ruta.id, tipo: 'RUTA', activa: true },
-      include: {
-        responsable: { select: { id: true, nombres: true, apellidos: true } },
-        ruta: { select: { id: true, nombre: true, codigo: true } },
-      },
-    });
+    const incluir = {
+      responsable: { select: { id: true, nombres: true, apellidos: true } },
+      ruta: { select: { id: true, nombre: true, codigo: true } },
+    };
 
-    if (existente?.id) {
-      return existente;
+    // Sin filtrar por `activa`: si la caja de la ruta existe pero está
+    // desactivada hay que reactivar esa misma, no crear otra. El código de
+    // caja es único y determinista (CAJA-<codigoRuta>), así que crear una
+    // segunda fallaría y la ruta se quedaría sin caja para siempre.
+    const buscarYReactivar = async () => {
+      const caja = await this.prisma.caja.findFirst({
+        where: { rutaId: ruta.id, tipo: 'RUTA' },
+        orderBy: [{ activa: 'desc' }, { creadoEn: 'asc' }],
+        include: incluir,
+      });
+
+      if (!caja) return null;
+      if (caja.activa) return caja;
+
+      return this.prisma.caja.update({
+        where: { id: caja.id },
+        data: { activa: true, responsableId: ruta.cobradorId },
+        include: incluir,
+      });
+    };
+
+    const existente = await buscarYReactivar();
+    if (existente) return existente;
+
+    try {
+      return await this.prisma.caja.create({
+        data: {
+          codigo: this.buildCodigoCajaRuta(ruta.codigo),
+          nombre: `Caja ${ruta.nombre}`,
+          tipo: 'RUTA',
+          rutaId: ruta.id,
+          responsableId: ruta.cobradorId,
+          saldoActual: 0,
+          activa: true,
+        },
+        include: incluir,
+      });
+    } catch (error: any) {
+      // Otra petición la creó entre la búsqueda y el create.
+      if (error?.code !== 'P2002') throw error;
+
+      const ganadora = await buscarYReactivar();
+      if (!ganadora) throw error;
+
+      return ganadora;
     }
-
-    const codigoCaja = this.buildCodigoCajaRuta(ruta.codigo);
-    const nombreCaja = `Caja ${ruta.nombre}`;
-
-    const creada = await this.prisma.caja.create({
-      data: {
-        codigo: codigoCaja,
-        nombre: nombreCaja,
-        tipo: 'RUTA',
-        rutaId: ruta.id,
-        responsableId: ruta.cobradorId,
-        saldoActual: 0,
-        activa: true,
-      },
-      include: {
-        responsable: { select: { id: true, nombres: true, apellidos: true } },
-        ruta: { select: { id: true, nombre: true, codigo: true } },
-      },
-    });
-
-    return creada;
   }
 
   async asegurarCajaSupervisor(supervisorId: string) {
@@ -3494,14 +3513,7 @@ export class AccountingService {
         prestamo: {
           estado: { in: ['ACTIVO', 'EN_MORA'] as any },
           eliminadoEn: null,
-          cliente: {
-            asignacionesRuta: {
-              some: {
-                rutaId: caja.rutaId,
-                activa: true,
-              },
-            },
-          },
+          rutaId: caja.rutaId,
         },
       },
       include: {
@@ -3839,7 +3851,9 @@ export class AccountingService {
     if (format === 'pdf')
       return generarPDFContable(filasCjas, filasTransacciones, fecha);
 
-    throw new Error(`Formato no soportado: ${format}`);
+    throw new BadRequestException(
+      `Formato de exportacion no valido: ${format ?? 'ninguno'}. Use "excel" o "pdf".`,
+    );
   }
 
   async exportGastos(
@@ -3901,7 +3915,9 @@ export class AccountingService {
       return generarExcelGastos(filasGastos, totales, fecha);
     if (format === 'pdf') return generarPDFGastos(filasGastos, totales, fecha);
 
-    throw new Error(`Formato no soportado: ${format}`);
+    throw new BadRequestException(
+      `Formato de exportacion no valido: ${format ?? 'ninguno'}. Use "excel" o "pdf".`,
+    );
   }
 
   /**
