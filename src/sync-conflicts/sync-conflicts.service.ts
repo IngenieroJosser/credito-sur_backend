@@ -7,12 +7,14 @@ import { CreateSyncConflictDto } from './dto/create-sync-conflict.dto';
 import { UpdateSyncConflictDto } from './dto/update-sync-conflict.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
 
 @Injectable()
 export class SyncConflictsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
+    private readonly jwtService: JwtService,
   ) {}
 
   async create(createSyncConflictDto: CreateSyncConflictDto, userId?: string) {
@@ -107,7 +109,37 @@ export class SyncConflictsService {
     let extraError = null;
 
     if (accion === 'RESOLVER') {
-      // Intentar reprocesar
+      // Intentar reprocesar CON LA IDENTIDAD DEL CREADOR del conflicto, no la
+      // de quien resuelve. Antes se reenviaba con el token del que hacía clic:
+      // un rol bajo podía guardar (report-failed) una operación privilegiada y,
+      // al resolverla un admin, se ejecutaba con privilegios de admin (deputy
+      // confundido / falsificación de petición almacenada). Al correr como el
+      // creador, la operación queda limitada a lo que ese usuario podía hacer.
+      const creador = conflict.creadoPorId
+        ? await this.prisma.usuario.findUnique({
+            where: { id: conflict.creadoPorId },
+            select: { id: true, nombres: true, rol: true, estado: true },
+          })
+        : null;
+
+      if (!creador || creador.estado !== 'ACTIVO') {
+        throw new BadRequestException(
+          'No se puede reprocesar: el usuario que originó el conflicto no existe o está inactivo.',
+        );
+      }
+
+      // Token efímero del creador. permisos vacío: los endpoints por rol
+      // (@Roles) se cubren; si alguno exige un permiso fino, el replay se
+      // deniega (a prueba de fallos), nunca se eleva.
+      const tokenCreador =
+        'Bearer ' +
+        this.jwtService.sign({
+          sub: creador.id,
+          nombres: creador.nombres,
+          rol: creador.rol,
+          permisos: [],
+        });
+
       try {
         let endpoint = conflict.endpoint;
         // Make sure it starts with a slash
@@ -125,7 +157,7 @@ export class SyncConflictsService {
           method: conflict.operacion,
           headers: {
             'Content-Type': 'application/json',
-            Authorization: token, // Reprocesamos en nombre de quien hace click, o forzamos permisos
+            Authorization: tokenCreador, // Se reprocesa como el CREADOR del conflicto, no como quien resuelve.
           },
           body: JSON.stringify(conflict.datos),
         });
