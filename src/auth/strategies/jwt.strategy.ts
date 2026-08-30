@@ -26,10 +26,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(payload: JwtPayload) {
     const usuario = await this.prisma.usuario.findUnique({
       where: { id: payload.sub },
-      select: { id: true, estado: true },
+      select: { id: true, estado: true, eliminadoEn: true, rol: true },
     });
 
-    if (!usuario || usuario.estado !== 'ACTIVO') {
+    // Rechaza tambien a los archivados/eliminados, no solo a los no ACTIVO.
+    if (!usuario || usuario.estado !== 'ACTIVO' || usuario.eliminadoEn) {
       throw new UnauthorizedException('Sesión inválida');
     }
 
@@ -37,7 +38,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       id: payload.sub,
       correo: payload.email,
       nombres: payload.nombres,
-      rol: payload.rol,
+      // El rol se toma de la BD, no del token: si a un usuario se le baja el
+      // rol (p. ej. de ADMIN a COBRADOR), el cambio surte efecto en la
+      // siguiente peticion en vez de esperar a que caduque el token (8 h).
+      rol: usuario.rol,
       permisos: payload.permisos || [],
     };
   }
