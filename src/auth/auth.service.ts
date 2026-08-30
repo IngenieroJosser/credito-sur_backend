@@ -7,6 +7,7 @@ import {
 import { UsersService } from '../users/users.service';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
+import { randomInt } from 'node:crypto';
 import { LoginAuthDto } from './dto/login-auth.dto';
 import { CreateAuthDto } from './dto/create-auth.dto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -20,6 +21,12 @@ import * as path from 'path';
 
 @Injectable()
 export class AuthService {
+  // Hash argon2 fijo para verificar contra el en logins de usuarios que no
+  // existen, y que el coste sea igual exista o no la cuenta (anti-enumeracion
+  // por tiempo). No corresponde a ninguna contrasena real.
+  private static readonly HASH_SENUELO =
+    '$argon2id$v=19$m=65536,t=3,p=4$4/faloz0q2/ifMTAdbiqSg$60z5homPUjlkhfirjsIZQ9y4OGqSEj/8TYvRSwM2BiQ';
+
   constructor(
     private usersService: UsersService,
     private jwtService: JwtService,
@@ -170,7 +177,15 @@ export class AuthService {
 
     const candidatos = usuarioPorIdentificador ? [usuarioPorIdentificador] : [];
 
-    if (!candidatos.length) return null;
+    // Enumeracion por tiempo: si no se encontro el usuario y se devuelve al
+    // instante, la respuesta tarda ~0,3 s; con usuario, argon2.verify la lleva
+    // a ~1,7 s. Esa diferencia delata que cuentas existen aunque el mensaje de
+    // error sea el mismo. Se verifica siempre contra un hash señuelo para que
+    // el coste de argon2 sea igual exista o no la cuenta.
+    if (!candidatos.length) {
+      await argon2.verify(AuthService.HASH_SENUELO, contrasena).catch(() => false);
+      return null;
+    }
 
     try {
       for (const usuario of candidatos) {
@@ -326,7 +341,9 @@ export class AuthService {
     }
 
     // Generar código OTP de 6 dígitos
-    const codigo = Math.floor(100000 + Math.random() * 900000).toString();
+    // randomInt (CSPRNG), no Math.random: un OTP de recuperacion es un
+    // secreto y Math.random es predecible.
+    const codigo = randomInt(100000, 1000000).toString();
     const expiracion = new Date(Date.now() + 15 * 60 * 1000); // 15 minutos
     const codigoHash = await argon2.hash(codigo);
 
