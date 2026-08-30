@@ -448,13 +448,28 @@ export class AccountingService {
     actor?: { id?: string; rol?: RolUsuario | string } | null,
   ) {
     const rol = String(actor?.rol || '').toUpperCase();
-    if (rol !== 'COBRADOR' || !actor?.id) return {};
-    return {
-      OR: [
-        { responsableId: actor.id },
-        { ruta: { cobradorId: actor.id } },
-      ],
-    };
+    if (!actor?.id) return {};
+
+    if (rol === 'COBRADOR') {
+      return {
+        OR: [
+          { responsableId: actor.id },
+          { ruta: { cobradorId: actor.id } },
+        ],
+      };
+    }
+
+    // El supervisor ve su caja de supervisor y las cajas de sus rutas.
+    if (rol === 'SUPERVISOR') {
+      return {
+        OR: [
+          { responsableId: actor.id },
+          { ruta: { supervisorId: actor.id } },
+        ],
+      };
+    }
+
+    return {};
   }
 
   async getCajas(actor?: { id?: string; rol?: RolUsuario | string } | null) {

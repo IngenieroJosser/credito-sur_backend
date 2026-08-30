@@ -92,19 +92,30 @@ export class LoansService implements OnModuleInit {
   private collectorLoanScope(
     actor?: { id?: string; rol?: RolUsuario | string } | null,
   ): Prisma.PrestamoWhereInput {
-    if (!this.isCollector(actor) || !actor?.id) return {};
+    const rol = String(actor?.rol || '').toUpperCase();
+    if (!actor?.id) return {};
+
     // La ruta la lleva el credito, no el cliente: un cliente puede tener
     // creditos en dos rutas y el cobrador solo debe ver los de la suya.
-    return {
-      ruta: {
-        is: {
-          OR: [
-            { cobradorId: actor.id },
-            { asignaciones: { some: { activa: true, cobradorId: actor.id } } },
-          ],
+    if (this.isCollector(actor)) {
+      return {
+        ruta: {
+          is: {
+            OR: [
+              { cobradorId: actor.id },
+              { asignaciones: { some: { activa: true, cobradorId: actor.id } } },
+            ],
+          },
         },
-      },
-    };
+      };
+    }
+
+    // El supervisor solo ve los creditos de las rutas que supervisa.
+    if (rol === RolUsuario.SUPERVISOR) {
+      return { ruta: { is: { supervisorId: actor.id } } };
+    }
+
+    return {};
   }
 
   private trunc2(n: number): number {

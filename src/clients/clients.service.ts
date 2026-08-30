@@ -33,18 +33,36 @@ export class ClientsService {
   private collectorClientScope(
     actor?: { id?: string; rol?: RolUsuario | string } | null,
   ): Prisma.ClienteWhereInput {
-    if (!this.isCollector(actor) || !actor?.id) return {};
-    return {
-      asignacionesRuta: {
-        some: {
-          activa: true,
-          OR: [
-            { cobradorId: actor.id } as any,
-            { ruta: { cobradorId: actor.id } } as any,
-          ],
+    const rol = String(actor?.rol || '').toUpperCase();
+    if (!actor?.id) return {};
+
+    if (this.isCollector(actor)) {
+      return {
+        asignacionesRuta: {
+          some: {
+            activa: true,
+            OR: [
+              { cobradorId: actor.id } as any,
+              { ruta: { cobradorId: actor.id } } as any,
+            ],
+          },
         },
-      },
-    };
+      };
+    }
+
+    // El supervisor solo ve clientes con asignacion activa en una ruta suya.
+    if (rol === RolUsuario.SUPERVISOR) {
+      return {
+        asignacionesRuta: {
+          some: {
+            activa: true,
+            ruta: { supervisorId: actor.id } as any,
+          },
+        },
+      };
+    }
+
+    return {};
   }
 
   /**

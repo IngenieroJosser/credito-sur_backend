@@ -1559,7 +1559,15 @@ export class PaymentsService {
     if (prestamoId) where.prestamoId = prestamoId;
     if (clienteId) where.clienteId = clienteId;
     if (rutaId) where.rutaId = rutaId;
-    if (this.isCollector(actor) && actor?.id) where.cobradorId = actor.id;
+    if (this.isCollector(actor) && actor?.id) {
+      where.cobradorId = actor.id;
+    } else if (
+      String(actor?.rol || '').toUpperCase() === RolUsuario.SUPERVISOR &&
+      actor?.id
+    ) {
+      // El supervisor solo ve pagos de rutas que supervisa.
+      where.ruta = { supervisorId: actor.id };
+    }
 
     const [pagos, total] = await Promise.all([
       this.prisma.pago.findMany({
