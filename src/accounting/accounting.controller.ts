@@ -15,6 +15,7 @@ import {
   HttpCode,
   HttpStatus,
   Res,
+  BadRequestException,
 } from '@nestjs/common';
 import { AccountingService } from './accounting.service';
 import { LedgerService } from './ledger.service';
@@ -391,9 +392,36 @@ export class AccountingController {
     if (!req.user || !req.user.id) {
       throw new UnauthorizedException('Usuario no autenticado');
     }
+
+    // Sin esto, un cuerpo incompleto llegaba tal cual a Prisma y el usuario
+    // recibia un 400 con la traza interna y las rutas de los ficheros.
+    const faltan = (
+      [
+        ['descripcion', body?.descripcion],
+        ['valor', body?.valor],
+        ['rutaId', body?.rutaId],
+        ['cobradorId', body?.cobradorId],
+      ] as Array<[string, unknown]>
+    )
+      .filter(([, valor]) => valor === undefined || valor === null || valor === '')
+      .map(([campo]) => campo);
+
+    if (faltan.length > 0) {
+      throw new BadRequestException(
+        `Faltan datos del gasto: ${faltan.join(', ')}.`,
+      );
+    }
+
+    const valor = Number(body.valor);
+    if (!Number.isFinite(valor) || valor <= 0) {
+      throw new BadRequestException(
+        `El valor del gasto debe ser un numero mayor que cero (llego: ${body.valor}).`,
+      );
+    }
+
     return this.accountingService.registrarGasto({
       descripcion: body.descripcion,
-      monto: body.valor,
+      monto: valor,
       rutaId: body.rutaId,
       cobradorId: body.cobradorId,
       solicitadoPorId: req.user.id,
