@@ -615,6 +615,8 @@ export class ClientsService {
             id: cliente.id,
             codigo: cliente.codigo,
             dni: cliente.dni,
+            // version: para el control de conflictos al editar desde la lista.
+            version: cliente.version,
             nombres: cliente.nombres,
             apellidos: cliente.apellidos,
             telefono: cliente.telefono,
@@ -644,6 +646,7 @@ export class ClientsService {
             id: cliente.id,
             codigo: cliente.codigo || 'ERROR',
             dni: cliente.dni || '',
+            version: cliente.version,
             nombres: cliente.nombres || 'Error',
             apellidos: cliente.apellidos || '',
             telefono: cliente.telefono || '',
