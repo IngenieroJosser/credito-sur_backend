@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import {
   generarExcelAuditoria,
   generarPDFAuditoria,
@@ -157,7 +157,9 @@ export class AuditService {
     if (format === 'excel') return generarExcelAuditoria(filas, fecha);
     if (format === 'pdf') return generarPDFAuditoria(filas, fecha);
 
-    throw new Error(`Formato no soportado: ${format}`);
+    throw new BadRequestException(
+      `Formato de exportacion no valido: ${format ?? 'ninguno'}. Use "excel" o "pdf".`,
+    );
   }
 
   async hideArchivedItem(data: { entidad: string; entidadId: string }) {

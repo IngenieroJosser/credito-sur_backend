@@ -574,6 +574,10 @@ export class RoutesService {
               where: {
                 eliminadoEn: null,
 
+                // Solo los creditos de las rutas de este cobrador: el cliente
+                // puede tener otros en la ruta de otro companero.
+                ruta: { cobradorId },
+
                 estado: {
                   in: [
                     'ACTIVO',
@@ -612,29 +616,24 @@ export class RoutesService {
                     },
                   },
                   take: 100,
+                  // montoCuota, montoNominal, estadoActual y
+                  // saldoExigibleEnFechaOperativa NO son columnas de Cuota:
+                  // se derivan mas abajo a partir de monto y montoPagado.
+                  // Pedirselas a Prisma hacia fallar la consulta entera.
                   select: {
                     id: true,
                     numeroCuota: true,
                     monto: true,
-                    montoCuota: true,
-                    montoNominal: true,
-                    estadoActual: true,
                     estado: true,
                     fechaVencimiento: true,
                     fechaVencimientoProrroga: true,
                     montoPagado: true,
-                    saldoExigibleEnFechaOperativa: true,
                   },
                 },
                 extensiones: {
                   orderBy: { creadoEn: 'desc' },
                   take: 1,
                   select: { id: true, nuevaFechaVencimiento: true },
-                },
-                efectoProvisional: {
-                  select: {
-                    estado: true,
-                  },
                 },
               },
             },

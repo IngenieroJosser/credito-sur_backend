@@ -3832,7 +3832,9 @@ export class AccountingService {
     if (format === 'pdf')
       return generarPDFContable(filasCjas, filasTransacciones, fecha);
 
-    throw new Error(`Formato no soportado: ${format}`);
+    throw new BadRequestException(
+      `Formato de exportacion no valido: ${format ?? 'ninguno'}. Use "excel" o "pdf".`,
+    );
   }
 
   async exportGastos(
@@ -3894,7 +3896,9 @@ export class AccountingService {
       return generarExcelGastos(filasGastos, totales, fecha);
     if (format === 'pdf') return generarPDFGastos(filasGastos, totales, fecha);
 
-    throw new Error(`Formato no soportado: ${format}`);
+    throw new BadRequestException(
+      `Formato de exportacion no valido: ${format ?? 'ninguno'}. Use "excel" o "pdf".`,
+    );
   }
 
   /**
