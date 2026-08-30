@@ -109,7 +109,36 @@ export class SalesService {
       );
     }
 
-    const resultado = await this.prisma.$transaction(async (tx) => {
+    // Idempotencia: si esta venta ya se registró (mismo idempotencyKey, p. ej.
+    // un reintento tras sincronizar offline), devolvemos la existente SIN volver
+    // a descontar stock ni duplicar el movimiento de dinero.
+    if (dto.idempotencyKey) {
+      const existente = await this.prisma.transaccion.findUnique({
+        where: { idempotencyKey: dto.idempotencyKey },
+        select: { id: true, numeroTransaccion: true, referenciaId: true, monto: true },
+      });
+      if (existente) {
+        return {
+          success: true,
+          ventaId: existente.referenciaId || referenciaId,
+          clienteId: dto.clienteId,
+          productoId: dto.productoId,
+          precioVenta: Number(existente.monto ?? precioVenta),
+          metodoPago,
+          transaccionId: existente.id,
+          numeroTransaccion: existente.numeroTransaccion,
+          journalEntryId: null,
+          duplicada: true,
+        };
+      }
+    }
+
+    let resultado: {
+      transaccion: { id: string; numeroTransaccion: string };
+      journalEntry: { id: string } | null;
+    };
+    try {
+      resultado = await this.prisma.$transaction(async (tx) => {
       const stockUpdate = await tx.producto.updateMany({
         where: { id: dto.productoId, stock: { gt: 0 } },
         data: { stock: { decrement: 1 } },
@@ -133,6 +162,7 @@ export class SalesService {
           creadoPorId: dto.creadoPorId!,
           tipoReferencia: 'VENTA_CONTADO',
           referenciaId,
+          idempotencyKey: dto.idempotencyKey || null,
         },
         select: {
           id: true,
@@ -158,7 +188,32 @@ export class SalesService {
         transaccion,
         journalEntry,
       };
-    });
+      });
+    } catch (error: any) {
+      // Carrera de idempotencia: otro reintento idéntico ganó la creación.
+      // Devolvemos la venta ya registrada en vez de duplicar o fallar.
+      if (error?.code === 'P2002' && dto.idempotencyKey) {
+        const existente = await this.prisma.transaccion.findUnique({
+          where: { idempotencyKey: dto.idempotencyKey },
+          select: { id: true, numeroTransaccion: true, referenciaId: true, monto: true },
+        });
+        if (existente) {
+          return {
+            success: true,
+            ventaId: existente.referenciaId || referenciaId,
+            clienteId: dto.clienteId,
+            productoId: dto.productoId,
+            precioVenta: Number(existente.monto ?? precioVenta),
+            metodoPago,
+            transaccionId: existente.id,
+            numeroTransaccion: existente.numeroTransaccion,
+            journalEntryId: null,
+            duplicada: true,
+          };
+        }
+      }
+      throw error;
+    }
 
     return {
       success: true,

@@ -613,7 +613,13 @@ export class AccountingController {
   )
   registrarAbonoDeuda(
     @Param('cobradorId') cobradorId: string,
-    @Body() body: { monto: number; nota: string; cajaIdDestino?: string },
+    @Body()
+    body: {
+      monto: number;
+      nota: string;
+      cajaIdDestino?: string;
+      idempotencyKey?: string;
+    },
     @Request() req,
   ) {
     if (!req.user || !req.user.id)
@@ -628,6 +634,7 @@ export class AccountingController {
       body.nota,
       req.user.id,
       body.cajaIdDestino,
+      body.idempotencyKey,
     );
   }
 

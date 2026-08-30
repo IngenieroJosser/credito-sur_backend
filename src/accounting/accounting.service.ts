@@ -4352,6 +4352,7 @@ export class AccountingService {
     nota: string,
     userId: string,
     cajaIdDestino?: string,
+    idempotencyKey?: string,
   ) {
     const cobrador = await this.prisma.usuario.findUnique({
       where: { id: cobradorId },
@@ -4360,6 +4361,16 @@ export class AccountingService {
 
     const montoClean = Number(monto || 0);
     if (!(montoClean > 0)) throw new BadRequestException('Monto inválido');
+
+    // Idempotencia: si este abono ya se registró (mismo idempotencyKey, p. ej.
+    // un reintento tras sincronizar offline), devolvemos el existente sin
+    // duplicar el movimiento de dinero.
+    if (idempotencyKey) {
+      const existente = await this.prisma.transaccion.findUnique({
+        where: { idempotencyKey },
+      });
+      if (existente) return existente;
+    }
 
     // 1. Resolver caja destino (por defecto Caja Principal)
     let cajaDestino = null as any;
@@ -4385,35 +4396,48 @@ export class AccountingService {
     }
 
     // 2. Ejecutar transacción contable
-    return this.prisma.$transaction(async (tx) => {
-      // a. Crear la transacción INGRESO (histórico)
-      const transaccion = await tx.transaccion.create({
-        data: {
-          numeroTransaccion: this.generarNumeroTransaccion('ABN'),
-          cajaId: cajaDestino.id,
-          tipo: TipoTransaccion.INGRESO,
-          monto: montoClean,
-          descripcion: `Abono de deuda pendiente - Cobrador: ${cobrador.nombres} ${cobrador.apellidos}${nota ? ' - ' + nota : ''}`,
-          creadoPorId: userId,
-          tipoReferencia: 'ABONO_DEUDA',
-          referenciaId: `${cobradorId}|${cobrador.nombres} ${cobrador.apellidos}`,
-        },
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        // a. Crear la transacción INGRESO (histórico)
+        const transaccion = await tx.transaccion.create({
+          data: {
+            numeroTransaccion: this.generarNumeroTransaccion('ABN'),
+            cajaId: cajaDestino.id,
+            tipo: TipoTransaccion.INGRESO,
+            monto: montoClean,
+            descripcion: `Abono de deuda pendiente - Cobrador: ${cobrador.nombres} ${cobrador.apellidos}${nota ? ' - ' + nota : ''}`,
+            creadoPorId: userId,
+            tipoReferencia: 'ABONO_DEUDA',
+            referenciaId: `${cobradorId}|${cobrador.nombres} ${cobrador.apellidos}`,
+            idempotencyKey: idempotencyKey || null,
+          },
+        });
+
+        // b. Registrar asiento contable (Ledger mueve el saldo de la caja)
+        await this.ledgerService.registrarAbonoDeuda(
+          {
+            cobradorId,
+            monto: montoClean,
+            cajaId: cajaDestino.id,
+            accountCode: cajaDestino.tipo === 'RUTA' ? '1.2.1' : '1.1.1',
+            createdBy: userId,
+          },
+          tx,
+        );
+
+        return transaccion;
       });
-
-      // b. Registrar asiento contable (Ledger mueve el saldo de la caja)
-      await this.ledgerService.registrarAbonoDeuda(
-        {
-          cobradorId,
-          monto: montoClean,
-          cajaId: cajaDestino.id,
-          accountCode: cajaDestino.tipo === 'RUTA' ? '1.2.1' : '1.1.1',
-          createdBy: userId,
-        },
-        tx,
-      );
-
-      return transaccion;
-    });
+    } catch (error: any) {
+      // Carrera de idempotencia: otro reintento idéntico ganó. La restricción
+      // única del idempotencyKey hizo rollback de todo; devolvemos el existente.
+      if (error?.code === 'P2002' && idempotencyKey) {
+        const existente = await this.prisma.transaccion.findUnique({
+          where: { idempotencyKey },
+        });
+        if (existente) return existente;
+      }
+      throw error;
+    }
   }
 
   async repararCajaOficinaIngresosMalAsignados(params?: { dryRun?: boolean }) {

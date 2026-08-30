@@ -330,6 +330,50 @@ describe('SalesService venta contado', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
+  it('es idempotente: un reintento con la misma idempotencyKey no duplica la venta', async () => {
+    const prisma = {
+      producto: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'producto-1',
+          nombre: 'Nevera',
+          costo: 650_000,
+          stock: 3,
+        }),
+      },
+      transaccion: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'trx-existente-1',
+          numeroTransaccion: 'VC-EXIST-1',
+          referenciaId: 'VENTA:PREV',
+          monto: 1_000_000,
+        }),
+      },
+      $transaction: jest.fn(),
+    };
+
+    const resultado = await makeService(prisma).registrarVentaContado({
+      clienteId: 'cliente-1',
+      productoId: 'producto-1',
+      precioVenta: 1_000_000,
+      cajaId: 'caja-pv-1',
+      creadoPorId: 'vendedor-1',
+      metodoPago: 'EFECTIVO',
+      idempotencyKey: 'venta-abc-123',
+    } as any);
+
+    // No se ejecuta la transacción (no se descuenta stock ni se duplica dinero)
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.transaccion.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { idempotencyKey: 'venta-abc-123' } }),
+    );
+    expect(resultado).toMatchObject({
+      success: true,
+      transaccionId: 'trx-existente-1',
+      ventaId: 'VENTA:PREV',
+      duplicada: true,
+    });
+  });
+
   it('rechaza venta de contado en efectivo si no existe Caja Oficina activa', async () => {
     const tx = {
       producto: {
