@@ -575,10 +575,13 @@ export class NotificacionesService {
     return enriquecidas;
   }
 
-  async markAsRead(id: string) {
-    return this.prisma.notificacion.update({
-      where: { id },
+  async markAsRead(id: string, usuarioId?: string) {
+    // updateMany con el dueño en el where: si la notificación no es del
+    // usuario, no cambia nada (count 0) en vez de marcar la de otro.
+    const res = await this.prisma.notificacion.updateMany({
+      where: { id, ...(usuarioId ? { usuarioId } : {}) },
       data: { leida: true },
     });
+    return { actualizadas: res.count };
   }
 }
