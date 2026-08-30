@@ -244,7 +244,21 @@ export class UsersService {
     return nuevoUsuario;
   }
 
-  async obtenerTodos(includeArchived = false) {
+  async obtenerTodos(
+    includeArchived = false,
+    actor?: { rol?: RolUsuario | string } | null,
+  ) {
+    // Roles que pueden ver el directorio completo (correo, telefono, ultimo
+    // ingreso, permisos). El resto recibe solo lo minimo para mostrar nombres
+    // en la app y en la sincronizacion offline: antes cualquier rol veia el
+    // directorio entero, incluidos correos de superadmins.
+    const rolActor = String(actor?.rol || '').toUpperCase();
+    const puedeVerDirectorioCompleto = [
+      'SUPER_ADMINISTRADOR',
+      'ADMIN',
+      'COORDINADOR',
+      'SUPERVISOR',
+    ].includes(rolActor);
     const usuarios = (await this.prisma.usuario.findMany({
       where: {
         eliminadoEn: null,
@@ -309,6 +323,17 @@ export class UsersService {
 
       const { asignacionesRoles, permisosPersonalizados, ...userData } =
         usuario;
+
+      if (!puedeVerDirectorioCompleto) {
+        // Solo lo necesario para pintar nombres/estado.
+        return {
+          id: userData.id,
+          nombres: userData.nombres,
+          apellidos: userData.apellidos,
+          rol: userData.rol,
+          estado: userData.estado,
+        };
+      }
 
       return {
         ...userData,

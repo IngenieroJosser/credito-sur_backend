@@ -1112,6 +1112,11 @@ model JournalLine {
   debitAmount    Decimal?     @db.Decimal(15, 2)
   creditAmount   Decimal?     @db.Decimal(15, 2)
   cajaId         String?
+  // Lo que esta linea movio en la caja, con signo. Antes solo existia en
+  // tiempo de ejecucion, asi que el saldo de una caja no se podia reconciliar
+  // contra el libro: no quedaba rastro de que asiento la movio.
+  // Nulo en las lineas anteriores a que se empezara a guardar.
+  cajaDelta      Decimal?     @db.Decimal(15, 2)
   caja           Caja?        @relation(fields: [cajaId], references: [id])
 
   @@index([journalEntryId])

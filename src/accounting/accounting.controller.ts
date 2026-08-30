@@ -58,13 +58,16 @@ export class AccountingController {
   // =====================
 
   @Get('cajas')
-  getCajas() {
-    return this.accountingService.getCajas();
+  getCajas(@Request() req: any) {
+    // Se pasa el actor: un cobrador solo debe ver las cajas de sus rutas, no
+    // toda la posicion de caja de la empresa. Antes no habia ni @Roles ni
+    // scope y cualquier autenticado veia todas las cajas.
+    return this.accountingService.getCajas(req.user);
   }
 
   @Get('cajas/:id')
-  getCajaById(@Param('id') id: string) {
-    return this.accountingService.getCajaById(id);
+  getCajaById(@Param('id') id: string, @Request() req: any) {
+    return this.accountingService.getCajaById(id, req.user);
   }
 
   @Post('cajas')
@@ -613,6 +616,34 @@ export class AccountingController {
   regularizarInventario(@Request() req, @Body() body: { aplicar?: boolean }) {
     if (!req.user || !req.user.id) throw new UnauthorizedException();
     return this.accountingService.regularizarInventario(
+      req.user.id,
+      body?.aplicar !== true,
+    );
+  }
+
+  /**
+   * Quita los centavos ya guardados en cuotas y asientos. Sin `aplicar` solo
+   * informa de lo que cambiaría.
+   */
+  @Post('regularizar-centavos')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
+  regularizarCentavos(@Request() req, @Body() body: { aplicar?: boolean }) {
+    if (!req.user || !req.user.id) throw new UnauthorizedException();
+    return this.accountingService.regularizarCentavos(
+      req.user.id,
+      body?.aplicar !== true,
+    );
+  }
+
+  /**
+   * Pone el saldo de cada caja de acuerdo con el libro. Sin `aplicar` solo
+   * informa de las diferencias.
+   */
+  @Post('reparar-saldos-caja')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR)
+  repararSaldosCaja(@Request() req, @Body() body: { aplicar?: boolean }) {
+    if (!req.user || !req.user.id) throw new UnauthorizedException();
+    return this.accountingService.repararSaldosCaja(
       req.user.id,
       body?.aplicar !== true,
     );

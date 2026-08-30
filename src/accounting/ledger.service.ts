@@ -309,6 +309,14 @@ export class LedgerService {
       );
     }
 
+    // El delta de una linea: lo declarado, o débito - crédito si no se
+    // declaró (solo correcto para cuentas de activo). Se usa tanto para
+    // guardar la columna como para mover el saldo, así no pueden separarse.
+    const deltaDeLinea = (line: JournalLineDto) =>
+      line.cajaDelta !== undefined
+        ? line.cajaDelta
+        : (line.debitAmount ?? 0) - (line.creditAmount ?? 0);
+
     // 3. Función de escritura (tipada como any para compatibilidad con el
     //    PrismaClient extendido que usa PrismaService internamente)
     const execute = async (tx: any) => {
@@ -326,6 +334,9 @@ export class LedgerService {
               debitAmount: line.debitAmount ?? null,
               creditAmount: line.creditAmount ?? null,
               cajaId: line.cajaId ?? null,
+              // Se guarda lo que la linea mueve en la caja para poder
+              // reconciliar despues el saldo contra el libro.
+              cajaDelta: line.cajaId ? deltaDeLinea(line) : null,
             })),
           },
         },
@@ -353,10 +364,7 @@ export class LedgerService {
       for (const line of lines) {
         if (!line.cajaId) continue;
 
-        const delta =
-          line.cajaDelta !== undefined
-            ? line.cajaDelta
-            : (line.debitAmount ?? 0) - (line.creditAmount ?? 0);
+        const delta = deltaDeLinea(line);
 
         if (delta === 0) continue;
 
@@ -997,14 +1005,26 @@ export class LedgerService {
     for (const caja of cajas) {
       const linesSum = await (this.prisma as any).journalLine.aggregate({
         where: { cajaId: caja.id },
-        _sum: { debitAmount: true, creditAmount: true },
+        _sum: { debitAmount: true, creditAmount: true, cajaDelta: true },
       });
 
       const debitos = linesSum._sum.debitAmount ?? new Prisma.Decimal(0);
       const creditos = linesSum._sum.creditAmount ?? new Prisma.Decimal(0);
 
-      // El saldo del libro para una caja (activo) es Débitos - Créditos
-      const saldoLibro = Number(debitos) - Number(creditos);
+      // Las líneas guardadas desde que existe `cajaDelta` dicen exactamente
+      // cuánto movieron la caja. Antes había que deducirlo como
+      // débitos - créditos, que solo es correcto para cuentas de activo.
+      const conDelta = await (this.prisma as any).journalLine.count({
+        where: { cajaId: caja.id, cajaDelta: { not: null } },
+      });
+      const total = await (this.prisma as any).journalLine.count({
+        where: { cajaId: caja.id },
+      });
+
+      const saldoLibro =
+        total > 0 && conDelta === total
+          ? Number(linesSum._sum.cajaDelta ?? 0)
+          : Number(debitos) - Number(creditos);
       const saldoCaja = Number(caja.saldoActual);
       const diferencia = saldoCaja - saldoLibro;
 
