@@ -139,6 +139,14 @@ export class PaymentsController {
   }
 
   @Get()
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.CONTADOR,
+    RolUsuario.COBRADOR,
+  )
   findAll(
     @Query('prestamoId') prestamoId?: string,
     @Query('clienteId') clienteId?: string,
