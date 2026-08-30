@@ -3,6 +3,7 @@ import {
   Logger,
   BadRequestException,
   NotFoundException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -1470,6 +1471,24 @@ export class ApprovalsService {
 
     if (!approval) {
       throw new NotFoundException('Aprobación no encontrada');
+    }
+
+    // Segregación de funciones: nadie aprueba su propia solicitud (cuatro
+    // ojos). El SUPER_ADMINISTRADOR queda como escape para no bloquear una
+    // operación donde sea el único aprobador posible.
+    if (
+      aprobadoPorId &&
+      approval.solicitadoPorId === aprobadoPorId
+    ) {
+      const aprobador = await this.prisma.usuario.findUnique({
+        where: { id: aprobadoPorId },
+        select: { rol: true },
+      });
+      if (aprobador?.rol !== RolUsuario.SUPER_ADMINISTRADOR) {
+        throw new ForbiddenException(
+          'No puedes aprobar tu propia solicitud. Debe revisarla otra persona.',
+        );
+      }
     }
 
     if (approval.estado !== EstadoAprobacion.PENDIENTE) {
