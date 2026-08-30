@@ -1954,248 +1954,190 @@ describe('RoutesService role scoping', () => {
     jest.useRealTimers();
   });
 
-  it('convierte el índice único de asignación activa en ConflictException legible', async () => {
-    const tx = {
-      asignacionRuta: {
-        findFirst: jest.fn().mockResolvedValue(null),
-        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
-        create: jest
-          .fn()
-          .mockRejectedValue(
-            new Prisma.PrismaClientKnownRequestError(
-              'Unique constraint failed on active route assignment',
-              { code: 'P2002', clientVersion: 'test' },
-            ),
-          ),
-      },
+  // ── Rutas por crédito ────────────────────────────────────────────────────
+  // La ruta la lleva el crédito, no el cliente: un cliente puede tener el
+  // crédito A en una ruta y el B en otra, y varios créditos en la misma.
+  // Estas pruebas usan una base falsa en memoria en lugar de comprobar
+  // llamadas, porque lo que importa es en qué rutas acaba el cliente.
+  const baseFalsa = (opciones: {
+    prestamos: Array<{ id: string; clienteId: string; rutaId: string | null }>;
+    asignaciones?: Array<{
+      id: string;
+      rutaId: string;
+      clienteId: string;
+      activa: boolean;
+    }>;
+    rutas?: Array<{ id: string; cobradorId: string }>;
+  }) => {
+    const prestamos = opciones.prestamos.map((p) => ({ ...p }));
+    const asignaciones = (opciones.asignaciones || []).map((a) => ({
+      ...a,
+      cobradorId: 'cobrador-x',
+      ordenVisita: 1,
+      creadoEn: new Date(),
+    }));
+    const rutas = opciones.rutas || [
+      { id: 'ruta-a', cobradorId: 'cobrador-a' },
+      { id: 'ruta-b', cobradorId: 'cobrador-b' },
+    ];
+
+    const cumple = (fila: any, where: any = {}): boolean =>
+      Object.entries(where).every(([campo, valor]: [string, any]) => {
+        // Un campo ausente en el falso equivale a null, como en la base.
+        const actual = fila[campo] ?? null;
+        if (valor && typeof valor === 'object') {
+          if ('not' in valor) return actual !== (valor.not ?? null);
+          if ('in' in valor) return valor.in.includes(actual);
+        }
+        return actual === (valor ?? null);
+      });
+
+    let siguienteId = 1;
+
+    const tx: any = {
       prestamo: {
-        updateMany: jest.fn(),
-      },
-    };
-    const prisma = {
-      ruta: {
-        findUnique: jest.fn().mockResolvedValue({
-          id: 'ruta-1',
-          nombre: 'Ruta 1',
-          cobradorId: 'cobrador-1',
+        findMany: jest.fn(async ({ where, distinct }: any) => {
+          let filas = prestamos.filter((p) => cumple(p, where));
+          if (distinct?.includes('rutaId')) {
+            const vistos = new Set();
+            filas = filas.filter((p) =>
+              vistos.has(p.rutaId) ? false : vistos.add(p.rutaId),
+            );
+          }
+          return filas.map((p) => ({ ...p }));
+        }),
+        update: jest.fn(async ({ where, data }: any) => {
+          const fila = prestamos.find((p) => p.id === where.id);
+          Object.assign(fila as any, data);
+          return { ...(fila as any) };
+        }),
+        updateMany: jest.fn(async ({ where, data }: any) => {
+          const filas = prestamos.filter((p) => cumple(p, where));
+          filas.forEach((p) => Object.assign(p, data));
+          return { count: filas.length };
         }),
       },
-      cliente: {
-        findUnique: jest.fn().mockResolvedValue({
-          id: 'cliente-1',
-          nombres: 'Ana',
-          apellidos: 'Perez',
-        }),
-      },
-      $transaction: jest
-        .fn()
-        .mockImplementation((input: any) =>
-          typeof input === 'function' ? input(tx) : Promise.all(input),
+      asignacionRuta: {
+        findMany: jest.fn(async ({ where }: any = {}) =>
+          asignaciones.filter((a) => cumple(a, where)).map((a) => ({ ...a })),
         ),
-    };
-
-    await expect(
-      makeService(prisma).assignClient('ruta-1', 'cliente-1', 'cobrador-1'),
-    ).rejects.toBeInstanceOf(ConflictException);
-  });
-
-  it('asigna clientes usando el cobrador real de la ruta aunque el body traiga otro cobradorId', async () => {
-    const tx = {
-      asignacionRuta: {
-        findFirst: jest.fn().mockResolvedValue(null),
-        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
-        create: jest.fn().mockResolvedValue({
-          id: 'asignacion-1',
-          clienteId: 'cliente-1',
-          cobradorId: 'cobrador-ruta',
-          cliente: { nombres: 'Ana', apellidos: 'Perez' },
+        findFirst: jest.fn(async ({ where }: any = {}) => {
+          const fila = asignaciones.find((a) => cumple(a, where));
+          return fila ? { ...fila } : null;
+        }),
+        findFirstOrThrow: jest.fn(async ({ where }: any = {}) => {
+          const fila = asignaciones.find((a) => cumple(a, where));
+          if (!fila) throw new Error('no encontrada');
+          return { ...fila, cliente: { id: fila.clienteId } };
+        }),
+        update: jest.fn(async ({ where, data }: any) => {
+          const fila = asignaciones.find((a) => a.id === where.id);
+          Object.assign(fila as any, data);
+          return { ...(fila as any) };
+        }),
+        updateMany: jest.fn(async ({ where, data }: any) => {
+          const filas = asignaciones.filter((a) => cumple(a, where));
+          filas.forEach((a) => Object.assign(a, data));
+          return { count: filas.length };
+        }),
+        aggregate: jest.fn(async () => ({ _max: { ordenVisita: 1 } })),
+        create: jest.fn(async ({ data }: any) => {
+          const fila = {
+            id: `asignacion-${siguienteId++}`,
+            creadoEn: new Date(),
+            ...data,
+          };
+          asignaciones.push(fila);
+          return { ...fila, cliente: { id: fila.clienteId } };
         }),
       },
-      prestamo: {
-        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-      },
-    };
-    const prisma = {
       ruta: {
-        findUnique: jest.fn().mockResolvedValue({
-          id: 'ruta-1',
-          nombre: 'Ruta 1',
-          cobradorId: 'cobrador-ruta',
+        findUnique: jest.fn(async ({ where }: any) => {
+          const fila = rutas.find((r) => r.id === where.id);
+          return fila ? { ...fila } : null;
         }),
       },
-      cliente: {
-        findUnique: jest.fn().mockResolvedValue({
-          id: 'cliente-1',
-          nombres: 'Ana',
-          apellidos: 'Perez',
-        }),
-      },
-      $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
     };
 
-    await makeService(prisma).assignClient(
-      'ruta-1',
-      'cliente-1',
-      'cobrador-equivocado',
-    );
-
-    expect(tx.asignacionRuta.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          rutaId: 'ruta-1',
-          clienteId: 'cliente-1',
-          cobradorId: 'cobrador-ruta',
-        }),
-      }),
-    );
-  });
-
-  it('al asignar un cliente a una ruta desactiva asignaciones activas de otras rutas', async () => {
-    const tx = {
-      asignacionRuta: {
-        findFirst: jest.fn().mockResolvedValue(null),
-        updateMany: jest.fn().mockResolvedValue({ count: 2 }),
-        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 3 } }),
-        create: jest.fn().mockResolvedValue({
-          id: 'asignacion-nueva',
-          clienteId: 'cliente-1',
-          cobradorId: 'cobrador-destino',
-          cliente: { nombres: 'Ana', apellidos: 'Perez' },
-        }),
-      },
-      prestamo: {
-        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-      },
+    return {
+      tx,
+      prestamos,
+      asignaciones,
+      rutasActivasDe: (clienteId: string) =>
+        asignaciones
+          .filter((a) => a.clienteId === clienteId && a.activa)
+          .map((a) => a.rutaId)
+          .sort(),
     };
-    const prisma = {
-      ruta: {
-        findUnique: jest.fn().mockResolvedValue({
-          id: 'ruta-destino',
-          nombre: 'Ruta Destino',
-          cobradorId: 'cobrador-destino',
-        }),
-      },
-      cliente: {
-        findUnique: jest.fn().mockResolvedValue({
-          id: 'cliente-1',
-          nombres: 'Ana',
-          apellidos: 'Perez',
-        }),
-      },
-      $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
-    };
+  };
 
-    await makeService(prisma).assignClient(
-      'ruta-destino',
-      'cliente-1',
-      'cobrador-equivocado',
-    );
-
-    expect(tx.asignacionRuta.updateMany).toHaveBeenCalledWith({
-      where: { clienteId: 'cliente-1', activa: true },
-      data: { activa: false },
-    });
-    expect(tx.asignacionRuta.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          rutaId: 'ruta-destino',
+  it('al mover un crédito el cliente queda activo en las dos rutas', async () => {
+    const falsa = baseFalsa({
+      prestamos: [
+        { id: 'prestamo-1', clienteId: 'cliente-1', rutaId: 'ruta-a' },
+        { id: 'prestamo-2', clienteId: 'cliente-1', rutaId: 'ruta-a' },
+      ],
+      asignaciones: [
+        {
+          id: 'asignacion-a',
+          rutaId: 'ruta-a',
           clienteId: 'cliente-1',
-          cobradorId: 'cobrador-destino',
-          ordenVisita: 4,
           activa: true,
-        }),
-      }),
-    );
-  });
+        },
+      ],
+    });
 
-  it('al mover un cliente reutiliza la asignación destino existente y apaga duplicados activos', async () => {
-    const tx = {
-      asignacionRuta: {
-        findFirst: jest.fn().mockResolvedValue({
-          id: 'asignacion-destino-existente',
-        }),
-        updateMany: jest.fn().mockResolvedValue({ count: 2 }),
-        update: jest
-          .fn()
-          .mockResolvedValue({ id: 'asignacion-destino-existente' }),
-        aggregate: jest.fn(),
-        create: jest.fn(),
-      },
-      prestamo: {
-        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-      },
-    };
     const prisma = {
+      prestamo: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'prestamo-2',
+          clienteId: 'cliente-1',
+          frecuenciaPago: 'DIARIO',
+          estado: 'ACTIVO',
+        }),
+      },
       ruta: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'ruta-b',
+          nombre: 'Ruta B',
+          cobradorId: 'cobrador-b',
+        }),
+      },
+      cliente: {
         findUnique: jest
           .fn()
-          .mockResolvedValueOnce({
-            id: 'ruta-origen',
-            nombre: 'Ruta Origen',
-            cobradorId: 'cobrador-origen',
-          })
-          .mockResolvedValueOnce({
-            id: 'ruta-destino',
-            nombre: 'Ruta Destino',
-            cobradorId: 'cobrador-destino',
-          }),
+          .mockResolvedValue({ nombres: 'Ana', apellidos: 'Perez' }),
       },
-      asignacionRuta: {
-        findFirst: jest.fn().mockResolvedValue({
-          id: 'asignacion-origen',
-        }),
-        findMany: jest.fn().mockResolvedValue([]),
-        update: jest.fn(),
-      },
-      cliente: {
-        findUnique: jest.fn().mockResolvedValue({
-          nombres: 'Ana',
-          apellidos: 'Perez',
-        }),
-      },
-      $transaction: jest
-        .fn()
-        .mockImplementation((input: any) =>
-          typeof input === 'function' ? input(tx) : Promise.all(input),
-        ),
+      $transaction: jest.fn().mockImplementation((cb: any) => cb(falsa.tx)),
     };
 
-    await makeService(prisma).moveClient(
-      'cliente-1',
-      'ruta-origen',
-      'ruta-destino',
+    await makeService(prisma).moveLoan('prestamo-2', 'ruta-b');
+
+    // El crédito movido cambia de ruta; el otro se queda donde estaba.
+    expect(falsa.prestamos.find((p) => p.id === 'prestamo-2')?.rutaId).toBe(
+      'ruta-b',
+    );
+    expect(falsa.prestamos.find((p) => p.id === 'prestamo-1')?.rutaId).toBe(
+      'ruta-a',
     );
 
-    expect(tx.asignacionRuta.updateMany).toHaveBeenCalledWith({
-      where: {
-        clienteId: 'cliente-1',
-        activa: true,
-        id: { not: 'asignacion-destino-existente' },
-      },
-      data: { activa: false },
-    });
-    expect(tx.asignacionRuta.update).toHaveBeenCalledWith({
-      where: { id: 'asignacion-destino-existente' },
-      data: {
-        cobradorId: 'cobrador-destino',
-        activa: true,
-      },
-    });
-    expect(tx.asignacionRuta.create).not.toHaveBeenCalled();
+    // Y el cliente sigue en la ruta de origen, porque le queda un crédito ahí.
+    expect(falsa.rutasActivasDe('cliente-1')).toEqual(['ruta-a', 'ruta-b']);
   });
 
-  it('al mover un crédito no deja al cliente activo en dos rutas', async () => {
-    const tx = {
-      asignacionRuta: {
-        findFirst: jest.fn().mockResolvedValue(null),
-        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 2 } }),
-        create: jest.fn().mockResolvedValue({ id: 'asignacion-nueva' }),
-        update: jest.fn(),
-      },
-    };
+  it('al mover el último crédito de una ruta el cliente sale de ella', async () => {
+    const falsa = baseFalsa({
+      prestamos: [{ id: 'prestamo-1', clienteId: 'cliente-1', rutaId: 'ruta-a' }],
+      asignaciones: [
+        {
+          id: 'asignacion-a',
+          rutaId: 'ruta-a',
+          clienteId: 'cliente-1',
+          activa: true,
+        },
+      ],
+    });
+
     const prisma = {
       prestamo: {
         findUnique: jest.fn().mockResolvedValue({
@@ -2206,39 +2148,172 @@ describe('RoutesService role scoping', () => {
         }),
       },
       ruta: {
-        findUnique: jest.fn().mockResolvedValue({
-          id: 'ruta-destino',
-          nombre: 'Ruta Destino',
-          cobradorId: 'cobrador-destino',
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'ruta-b',
+          nombre: 'Ruta B',
+          cobradorId: 'cobrador-b',
         }),
       },
       cliente: {
-        findUnique: jest.fn().mockResolvedValue({
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ nombres: 'Ana', apellidos: 'Perez' }),
+      },
+      $transaction: jest.fn().mockImplementation((cb: any) => cb(falsa.tx)),
+    };
+
+    await makeService(prisma).moveLoan('prestamo-1', 'ruta-b');
+
+    expect(falsa.rutasActivasDe('cliente-1')).toEqual(['ruta-b']);
+  });
+
+  it('asignar un cliente a una ruta mueve todos sus créditos a esa ruta', async () => {
+    const falsa = baseFalsa({
+      prestamos: [
+        { id: 'prestamo-1', clienteId: 'cliente-1', rutaId: 'ruta-a' },
+        { id: 'prestamo-2', clienteId: 'cliente-1', rutaId: 'ruta-b' },
+      ],
+      asignaciones: [
+        {
+          id: 'asignacion-a',
+          rutaId: 'ruta-a',
+          clienteId: 'cliente-1',
+          activa: true,
+        },
+        {
+          id: 'asignacion-b',
+          rutaId: 'ruta-b',
+          clienteId: 'cliente-1',
+          activa: true,
+        },
+      ],
+    });
+
+    const prisma = {
+      ruta: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'ruta-b',
+          nombre: 'Ruta B',
+          cobradorId: 'cobrador-b',
+        }),
+      },
+      cliente: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'cliente-1',
           nombres: 'Ana',
           apellidos: 'Perez',
         }),
       },
-      $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
+      $transaction: jest.fn().mockImplementation((cb: any) => cb(falsa.tx)),
     };
 
-    await makeService(prisma).moveLoan('prestamo-1', 'ruta-destino');
+    await makeService(prisma).assignClient(
+      'ruta-b',
+      'cliente-1',
+      'cobrador-equivocado',
+    );
 
-    expect(tx.asignacionRuta.updateMany).toHaveBeenCalledWith({
-      where: {
-        clienteId: 'cliente-1',
-        activa: true,
+    expect(falsa.prestamos.every((p) => p.rutaId === 'ruta-b')).toBe(true);
+    expect(falsa.rutasActivasDe('cliente-1')).toEqual(['ruta-b']);
+  });
+
+  it('asigna clientes usando el cobrador real de la ruta aunque el body traiga otro cobradorId', async () => {
+    const falsa = baseFalsa({
+      prestamos: [{ id: 'prestamo-1', clienteId: 'cliente-1', rutaId: null }],
+    });
+
+    const prisma = {
+      ruta: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'ruta-b',
+          nombre: 'Ruta B',
+          cobradorId: 'cobrador-b',
+        }),
       },
-      data: { activa: false },
+      cliente: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'cliente-1',
+          nombres: 'Ana',
+          apellidos: 'Perez',
+        }),
+      },
+      $transaction: jest.fn().mockImplementation((cb: any) => cb(falsa.tx)),
+    };
+
+    await makeService(prisma).assignClient(
+      'ruta-b',
+      'cliente-1',
+      'cobrador-equivocado',
+    );
+
+    const asignacion = falsa.asignaciones.find(
+      (a) => a.clienteId === 'cliente-1' && a.activa,
+    );
+    expect(asignacion?.rutaId).toBe('ruta-b');
+    expect((asignacion as any)?.cobradorId).toBe('cobrador-b');
+  });
+
+  it('al mover un cliente solo se llevan los créditos de la ruta de origen', async () => {
+    const falsa = baseFalsa({
+      prestamos: [
+        { id: 'prestamo-1', clienteId: 'cliente-1', rutaId: 'ruta-a' },
+        { id: 'prestamo-2', clienteId: 'cliente-1', rutaId: 'ruta-c' },
+      ],
+      asignaciones: [
+        {
+          id: 'asignacion-a',
+          rutaId: 'ruta-a',
+          clienteId: 'cliente-1',
+          activa: true,
+        },
+        {
+          id: 'asignacion-c',
+          rutaId: 'ruta-c',
+          clienteId: 'cliente-1',
+          activa: true,
+        },
+      ],
+      rutas: [
+        { id: 'ruta-a', cobradorId: 'cobrador-a' },
+        { id: 'ruta-b', cobradorId: 'cobrador-b' },
+        { id: 'ruta-c', cobradorId: 'cobrador-c' },
+      ],
     });
-    expect(tx.asignacionRuta.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        rutaId: 'ruta-destino',
-        clienteId: 'cliente-1',
-        cobradorId: 'cobrador-destino',
-        ordenVisita: 3,
-        activa: true,
-      }),
-    });
+
+    const prisma = {
+      ruta: {
+        findFirst: jest.fn().mockImplementation(({ where }: any) =>
+          Promise.resolve({
+            id: where.id,
+            nombre: `Ruta ${where.id}`,
+            cobradorId: where.id === 'ruta-b' ? 'cobrador-b' : 'cobrador-a',
+          }),
+        ),
+      },
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'asignacion-a' }),
+      },
+      cliente: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ nombres: 'Ana', apellidos: 'Perez' }),
+      },
+      $transaction: jest.fn().mockImplementation((cb: any) => cb(falsa.tx)),
+      asignacionRutaReorder: jest.fn(),
+    };
+
+    const servicio = makeService(prisma);
+    (servicio as any).reorderAssignments = jest.fn();
+
+    await servicio.moveClient('cliente-1', 'ruta-a', 'ruta-b');
+
+    expect(falsa.prestamos.find((p) => p.id === 'prestamo-1')?.rutaId).toBe(
+      'ruta-b',
+    );
+    expect(falsa.prestamos.find((p) => p.id === 'prestamo-2')?.rutaId).toBe(
+      'ruta-c',
+    );
+    expect(falsa.rutasActivasDe('cliente-1')).toEqual(['ruta-b', 'ruta-c']);
   });
 
   it('al cambiar el cobrador de una ruta sincroniza asignaciones activas y responsable de caja', async () => {

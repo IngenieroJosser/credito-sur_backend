@@ -3494,14 +3494,7 @@ export class AccountingService {
         prestamo: {
           estado: { in: ['ACTIVO', 'EN_MORA'] as any },
           eliminadoEn: null,
-          cliente: {
-            asignacionesRuta: {
-              some: {
-                rutaId: caja.rutaId,
-                activa: true,
-              },
-            },
-          },
+          rutaId: caja.rutaId,
         },
       },
       include: {

@@ -307,6 +307,9 @@ model Prestamo {
   cuotaInicial         Decimal              @default(0) @db.Decimal(12, 2)
   notas                String?
   garantia             String?
+  // Ruta a la que pertenece ESTE credito. Antes la ruta se deducia del
+  // cliente, asi que todos sus creditos caian forzosamente en la misma.
+  rutaId               String?
   pagos                Pago[]
   aprobadoPor          Usuario?             @relation("PrestamoAprobadoPor", fields: [aprobadoPorId], references: [id])
   cliente              Cliente              @relation(fields: [clienteId], references: [id])
@@ -316,8 +319,10 @@ model Prestamo {
   cuotas               Cuota[]
   extensiones          ExtensionPago[]
   archivos             Multimedia[]         @relation("MultimediaPrestamo")
+  ruta                 Ruta?                @relation(fields: [rutaId], references: [id])
 
   @@index([numeroPrestamo])
+  @@index([rutaId])
   @@index([clienteId])
   @@index([estado])
   @@index([estadoAprobacion])
@@ -461,6 +466,7 @@ model Ruta {
   creadoEn         DateTime         @default(now())
   actualizadoEn    DateTime         @updatedAt
   gastos           Gasto[]
+  prestamos        Prestamo[]
   asignaciones     AsignacionRuta[]
   registrosVisitas RegistroVisita[]
   pagos            Pago[]

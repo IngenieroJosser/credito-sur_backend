@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { sincronizarAsignacionesCliente } from '../routes/sincronizar-asignaciones';
 import { ClientesCreditosParser } from './parsers/clientes-creditos.parser';
 import { InventarioParser } from './parsers/inventario.parser';
 import { ResultadoValidacion } from './dto/validacion-resultado.dto';
@@ -782,8 +783,12 @@ export class ImportacionesService {
             });
           }
 
-          // Asignación a ruta. Un cliente solo puede estar activo en una ruta a la
-          // vez, así que primero se desactivan las asignaciones anteriores.
+          // Asignación a ruta. La ruta la llevan los créditos, así que aquí
+          // solo se deja lista la asignación de la ruta que trae el archivo;
+          // las de otras rutas se recalculan al final, cuando ya se sabe qué
+          // créditos quedaron en cada una.
+          const clientesConRuta = new Map<string, string>();
+
           for (const asignacion of clientesPorAsignar) {
             if (!asignacion.rutaCodigo) continue;
 
@@ -794,6 +799,8 @@ export class ImportacionesService {
 
             if (!ruta) continue;
 
+            clientesConRuta.set(asignacion.clienteId, ruta.id);
+
             const yaAsignado = await tx.asignacionRuta.findFirst({
               where: {
                 clienteId: asignacion.clienteId,
@@ -801,11 +808,6 @@ export class ImportacionesService {
                 fechaEspecifica: null,
               },
               select: { id: true },
-            });
-
-            await tx.asignacionRuta.updateMany({
-              where: { clienteId: asignacion.clienteId, activa: true },
-              data: { activa: false },
             });
 
             if (yaAsignado) {
@@ -1315,6 +1317,32 @@ export class ImportacionesService {
             cuotasPagadasImportadas += planCuotas.filter(
               (cuota) => cuota.estado === 'PAGADA',
             ).length;
+          }
+
+          // La ruta la lleva el crédito: se le pone la del cliente y luego se
+          // recalculan sus asignaciones, para no sacarlo de rutas donde
+          // todavía tiene créditos de otra importación.
+          if (clientesConRuta.size > 0 && idsPrestamosCreados.length > 0) {
+            const porRuta = new Map<string, string[]>();
+            for (const [clienteId, rutaId] of clientesConRuta) {
+              const lista = porRuta.get(rutaId) || [];
+              lista.push(clienteId);
+              porRuta.set(rutaId, lista);
+            }
+
+            for (const [rutaId, clienteIds] of porRuta) {
+              await tx.prestamo.updateMany({
+                where: {
+                  id: { in: idsPrestamosCreados },
+                  clienteId: { in: clienteIds },
+                },
+                data: { rutaId },
+              });
+            }
+          }
+
+          for (const clienteId of clientesConRuta.keys()) {
+            await sincronizarAsignacionesCliente(tx, clienteId);
           }
 
           // 4. Registrar lote confirmado dentro de la transacción

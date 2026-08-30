@@ -922,9 +922,9 @@ export class ReportsService {
                   EstadoPrestamo.PAGADO,
                 ],
               },
-              cliente: {
-                asignacionesRuta: { some: { rutaId: r.id, activa: true } },
-              },
+              // Por rutaId del credito: si el cliente esta en dos rutas,
+              // un filtro por sus asignaciones contaria el credito en ambas.
+              rutaId: r.id,
             },
             _sum: { monto: true },
             _count: { id: true },

@@ -361,14 +361,7 @@ export class DashboardService {
               where: {
                 fechaVencimiento: { gte: startDate, lte: endDate },
                 prestamo: {
-                  cliente: {
-                    asignacionesRuta: {
-                      some: {
-                        cobradorId: item.cobradorId,
-                        activa: true,
-                      },
-                    },
-                  },
+                  ruta: { cobradorId: item.cobradorId },
                 },
               },
               _sum: { monto: true },
@@ -468,15 +461,10 @@ export class DashboardService {
 
     const supervisedRouteScope = isSupervisor
       ? {
-          cliente: {
-            asignacionesRuta: {
-              some: {
-                activa: true,
-                ruta: {
-                  supervisorId: String(actor?.id),
-                  eliminadoEn: null,
-                },
-              },
+          ruta: {
+            is: {
+              supervisorId: String(actor?.id),
+              eliminadoEn: null,
             },
           },
         }

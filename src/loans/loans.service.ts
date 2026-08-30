@@ -93,16 +93,15 @@ export class LoansService implements OnModuleInit {
     actor?: { id?: string; rol?: RolUsuario | string } | null,
   ): Prisma.PrestamoWhereInput {
     if (!this.isCollector(actor) || !actor?.id) return {};
+    // La ruta la lleva el credito, no el cliente: un cliente puede tener
+    // creditos en dos rutas y el cobrador solo debe ver los de la suya.
     return {
-      cliente: {
-        asignacionesRuta: {
-          some: {
-            activa: true,
-            OR: [
-              { cobradorId: actor.id } as any,
-              { ruta: { cobradorId: actor.id } } as any,
-            ],
-          },
+      ruta: {
+        is: {
+          OR: [
+            { cobradorId: actor.id },
+            { asignaciones: { some: { activa: true, cobradorId: actor.id } } },
+          ],
         },
       },
     };
@@ -1423,18 +1422,9 @@ export class LoansService implements OnModuleInit {
         }
       }
 
-      // Filtro por ruta (usando asignaciones de ruta)
+      // Filtro por ruta: la ruta es del credito.
       if (ruta !== 'todas' && ruta !== '') {
-        where.cliente = {
-          ...((where.cliente as any) || {}),
-          asignacionesRuta: {
-            some: {
-              ...((where.cliente as any)?.asignacionesRuta?.some || {}),
-              rutaId: ruta,
-              activa: true,
-            },
-          },
-        };
+        (where as Record<string, unknown>).rutaId = ruta;
       }
 
       // Filtro por búsqueda
@@ -3889,6 +3879,7 @@ export class LoansService implements OnModuleInit {
           });
 
           let asignacionRutaTxId: string | null = null;
+          let rutaIdDelCredito: string | null = null;
           if (!data.esContado && startDate.getTime() === today.getTime()) {
             const rutaPreferida = cliente.asignacionesRuta?.find(
               (a: any) => a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
@@ -3916,6 +3907,8 @@ export class LoansService implements OnModuleInit {
               rutaCobrador?.cobradorId;
 
             if (rutaIdAsignar && cobradorIdAsignar) {
+              rutaIdDelCredito = rutaIdAsignar;
+
               const asignacionExistente = await tx.asignacionRuta.findFirst({
                 where: {
                   rutaId: rutaIdAsignar,
@@ -3959,6 +3952,26 @@ export class LoansService implements OnModuleInit {
                   }
                 }
               }
+            }
+          }
+
+          // La ruta la lleva el credito. Si arriba no se resolvio (por
+          // ejemplo un credito que empieza en otra fecha), hereda la del
+          // cliente, que es lo que antes se deducia solo.
+          if (!data.esContado) {
+            const rutaFinal =
+              rutaIdDelCredito ||
+              cliente.asignacionesRuta?.find(
+                (a: any) =>
+                  a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
+              )?.rutaId ||
+              null;
+
+            if (rutaFinal) {
+              await tx.prestamo.update({
+                where: { id: prestamoTx.id },
+                data: { rutaId: rutaFinal },
+              });
             }
           }
 
@@ -5423,14 +5436,7 @@ export class LoansService implements OnModuleInit {
 
       if (filters.ruta && filters.ruta !== 'todas') {
         and.push({
-          cliente: {
-            asignacionesRuta: {
-              some: {
-                rutaId: filters.ruta,
-                activa: true,
-              },
-            },
-          },
+          rutaId: filters.ruta,
         });
       }
 

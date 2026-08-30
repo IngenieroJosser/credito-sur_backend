@@ -391,28 +391,65 @@ export class NotificacionesGateway
       `Emitiendo notificación a user_${userId}: ${notificacion.titulo}`,
     );
     // Emitimos a la sala específica del usuario
-    this.server.to(`user_${userId}`).emit('nueva_notificacion', notificacion);
+    this.emitirA(userId, 'nueva_notificacion', notificacion);
+  }
+
+  /**
+   * Un solo punto de salida hacia el websocket. Si el servidor todavia no
+   * esta levantado (arranque, scripts, pruebas) se registra y se sigue: una
+   * notificacion perdida no puede tumbar la operacion que la disparo.
+   */
+  private emitir(evento: string, payload?: any) {
+    if (!this.server) {
+      this.logger.warn(`Websocket sin servidor: se omite "${evento}"`);
+      return;
+    }
+
+    try {
+      this.server.emit(evento, payload);
+    } catch (error) {
+      this.logger.error(
+        `Fallo al emitir "${evento}"`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
+  private emitirA(userId: string, evento: string, payload?: any) {
+    if (!this.server) {
+      this.logger.warn(`Websocket sin servidor: se omite "${evento}"`);
+      return;
+    }
+
+    try {
+      this.server.to(`user_${userId}`).emit(evento, payload);
+    } catch (error) {
+      this.logger.error(
+        `Fallo al emitir "${evento}" a ${userId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
   }
 
   /**
    * Enviar evento estructurado a un usuario para indicar que la cuenta de notificaciones no leidas cambió
    */
   notificarActualizacion(userId: string) {
-    this.server
-      .to(`user_${userId}`)
-      .emit('notificaciones_actualizadas', { timestamp: new Date() });
+    this.emitirA(userId, 'notificaciones_actualizadas', {
+      timestamp: new Date(),
+    });
   }
 
   /**
    * Enviar a todos los usuarios
    */
   enviarNotificacionATodos(notificacion: any) {
-    this.server.emit('nueva_notificacion_global', notificacion);
+    this.emitir('nueva_notificacion_global', notificacion);
   }
 
   broadcastUsuariosActualizados(payload?: any) {
     this.logger.log('Emitiendo evento usuarios_actualizados');
-    this.server.emit('usuarios_actualizados', {
+    this.emitir('usuarios_actualizados', {
       timestamp: new Date(),
       ...(payload || {}),
     });
@@ -420,7 +457,7 @@ export class NotificacionesGateway
 
   broadcastClientesActualizados(payload?: any) {
     this.logger.log('Emitiendo evento clientes_actualizados');
-    this.server.emit('clientes_actualizados', {
+    this.emitir('clientes_actualizados', {
       timestamp: new Date(),
       ...(payload || {}),
     });
@@ -428,7 +465,7 @@ export class NotificacionesGateway
 
   broadcastAprobacionesActualizadas(payload?: any) {
     this.logger.log('Emitiendo evento aprobaciones_actualizadas');
-    this.server.emit('aprobaciones_actualizadas', {
+    this.emitir('aprobaciones_actualizadas', {
       timestamp: new Date(),
       ...(payload || {}),
     });
@@ -436,7 +473,7 @@ export class NotificacionesGateway
 
   broadcastPrestamosActualizados(payload?: any) {
     this.logger.log('Emitiendo evento prestamos_actualizados');
-    this.server.emit('prestamos_actualizados', {
+    this.emitir('prestamos_actualizados', {
       timestamp: new Date(),
       ...(payload || {}),
     });
@@ -444,7 +481,7 @@ export class NotificacionesGateway
 
   broadcastPagosActualizados(payload?: any) {
     this.logger.log('Emitiendo evento pagos_actualizados');
-    this.server.emit('pagos_actualizados', {
+    this.emitir('pagos_actualizados', {
       timestamp: new Date(),
       ...(payload || {}),
     });
@@ -452,7 +489,7 @@ export class NotificacionesGateway
 
   broadcastRutasActualizadas(payload?: any) {
     this.logger.log('Emitiendo evento rutas_actualizadas');
-    this.server.emit('rutas_actualizadas', {
+    this.emitir('rutas_actualizadas', {
       timestamp: new Date(),
       ...(payload || {}),
     });
@@ -460,7 +497,7 @@ export class NotificacionesGateway
 
   broadcastJornadasActualizadas(payload?: any) {
     this.logger.log('Emitiendo evento jornadas_actualizadas');
-    this.server.emit('jornadas_actualizadas', {
+    this.emitir('jornadas_actualizadas', {
       timestamp: new Date(),
       ...(payload || {}),
     });
@@ -468,7 +505,7 @@ export class NotificacionesGateway
 
   broadcastDashboardsActualizados(payload?: any) {
     this.logger.log('Emitiendo evento dashboards_actualizados');
-    this.server.emit('dashboards_actualizados', {
+    this.emitir('dashboards_actualizados', {
       timestamp: new Date(),
       ...(payload || {}),
     });
@@ -476,7 +513,7 @@ export class NotificacionesGateway
 
   broadcastInventarioActualizado(payload?: any) {
     this.logger.log('Emitiendo evento inventario_actualizado');
-    this.server.emit('inventario_actualizado', {
+    this.emitir('inventario_actualizado', {
       timestamp: new Date(),
       ...(payload || {}),
     });

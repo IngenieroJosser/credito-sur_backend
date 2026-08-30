@@ -81,13 +81,10 @@ describe('DashboardService accounting-backed collections', () => {
       expect.objectContaining({
         where: expect.objectContaining({
           estado: 'PAGADO',
-          cliente: expect.objectContaining({
-            asignacionesRuta: expect.objectContaining({
-              some: expect.objectContaining({
-                ruta: expect.objectContaining({
-                  supervisorId: 'supervisor-1',
-                }),
-              }),
+          // La ruta la lleva el credito, no el cliente.
+          ruta: expect.objectContaining({
+            is: expect.objectContaining({
+              supervisorId: 'supervisor-1',
             }),
           }),
         }),
