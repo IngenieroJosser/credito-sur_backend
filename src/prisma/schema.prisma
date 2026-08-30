@@ -477,6 +477,13 @@ model Ruta {
   @@map("rutas")
 }
 
+// AVISO: esta tabla tiene un indice UNICO PARCIAL creado a mano en una
+// migracion, que Prisma no sabe representar aqui:
+//   asignaciones_rutas_one_active_client_route_idx
+//     UNIQUE("rutaId","clienteId") WHERE activa = true
+// Como no aparece en este fichero, `prisma migrate dev` lo detecta como drift
+// y genera un DROP. Ya paso una vez (migracion 20260826003912). Si vuelve a
+// aparecer un DROP INDEX de ese nombre en una migracion generada, quitalo.
 model AsignacionRuta {
   id              String    @id @default(uuid())
   rutaId          String
@@ -533,6 +540,10 @@ model Aprobacion {
   @@map("aprobaciones")
 }
 
+// AVISO: igual que AsignacionRuta, esta tabla tiene un indice unico parcial
+// creado a mano que Prisma no representa y borra si se regenera:
+//   cajas_one_active_route_box_per_route_idx
+//     UNIQUE("rutaId") WHERE activa = true AND tipo = 'RUTA' AND "rutaId" IS NOT NULL
 model Caja {
   id            String        @id @default(uuid())
   codigo        String        @unique @db.VarChar(20)

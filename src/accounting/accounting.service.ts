@@ -120,38 +120,66 @@ export class AccountingService {
       throw new BadRequestException('La ruta no tiene cobrador asignado');
     }
 
+    const incluir = {
+      responsable: { select: { id: true, nombres: true, apellidos: true } },
+      ruta: { select: { id: true, nombre: true, codigo: true } },
+    };
+
+    // Sin filtrar por `activa`: si la caja de la ruta existe pero está
+    // desactivada hay que reactivar esa misma, no crear otra. El código de
+    // caja es único y determinista (CAJA-<codigoRuta>), así que crear una
+    // segunda fallaría y la ruta se quedaría sin caja para siempre.
     const existente = await this.prisma.caja.findFirst({
-      where: { rutaId: ruta.id, tipo: 'RUTA', activa: true },
-      include: {
-        responsable: { select: { id: true, nombres: true, apellidos: true } },
-        ruta: { select: { id: true, nombre: true, codigo: true } },
-      },
+      where: { rutaId: ruta.id, tipo: 'RUTA' },
+      orderBy: [{ activa: 'desc' }, { creadoEn: 'asc' }],
+      include: incluir,
     });
 
     if (existente?.id) {
-      return existente;
+      if (existente.activa) return existente;
+
+      return this.prisma.caja.update({
+        where: { id: existente.id },
+        data: { activa: true, responsableId: ruta.cobradorId },
+        include: incluir,
+      });
     }
 
     const codigoCaja = this.buildCodigoCajaRuta(ruta.codigo);
     const nombreCaja = `Caja ${ruta.nombre}`;
 
-    const creada = await this.prisma.caja.create({
-      data: {
-        codigo: codigoCaja,
-        nombre: nombreCaja,
-        tipo: 'RUTA',
-        rutaId: ruta.id,
-        responsableId: ruta.cobradorId,
-        saldoActual: 0,
-        activa: true,
-      },
-      include: {
-        responsable: { select: { id: true, nombres: true, apellidos: true } },
-        ruta: { select: { id: true, nombre: true, codigo: true } },
-      },
-    });
+    try {
+      return await this.prisma.caja.create({
+        data: {
+          codigo: codigoCaja,
+          nombre: nombreCaja,
+          tipo: 'RUTA',
+          rutaId: ruta.id,
+          responsableId: ruta.cobradorId,
+          saldoActual: 0,
+          activa: true,
+        },
+        include: incluir,
+      });
+    } catch (error: any) {
+      // Otra petición la creó entre el findFirst y el create.
+      if (error?.code !== 'P2002') throw error;
 
-    return creada;
+      const ganadora = await this.prisma.caja.findFirst({
+        where: { rutaId: ruta.id, tipo: 'RUTA' },
+        orderBy: [{ activa: 'desc' }, { creadoEn: 'asc' }],
+        include: incluir,
+      });
+
+      if (!ganadora) throw error;
+      if (ganadora.activa) return ganadora;
+
+      return this.prisma.caja.update({
+        where: { id: ganadora.id },
+        data: { activa: true, responsableId: ruta.cobradorId },
+        include: incluir,
+      });
+    }
   }
 
   async asegurarCajaSupervisor(supervisorId: string) {
