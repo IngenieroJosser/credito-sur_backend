@@ -21,7 +21,9 @@ export class NotificacionesController {
   }
 
   @Patch(':id/read')
-  markAsRead(@Param('id') id: string) {
-    return this.notificacionesService.markAsRead(id);
+  markAsRead(@Param('id') id: string, @Request() req: any) {
+    // Se pasa el usuario para que nadie marque como leída una notificación
+    // ajena (antes markAsRead recibía solo el id, sin dueño).
+    return this.notificacionesService.markAsRead(id, req.user?.id);
   }
 }

@@ -10,13 +10,24 @@ import {
 } from '@nestjs/common';
 import { CajasService } from './cajas.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { RolUsuario } from '@prisma/client';
 
 @Controller('cajas')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class CajasController {
   constructor(private readonly cajasService: CajasService) {}
 
   @Get(':cajaId/arqueo/preview')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.CONTADOR,
+    RolUsuario.COBRADOR,
+  )
   getArqueoPreview(
     @Param('cajaId') cajaId: string,
     @Query('fechaOperativa') fechaOperativa?: string,
@@ -25,16 +36,35 @@ export class CajasController {
     return this.cajasService.getArqueoPreview(
       cajaId,
       fechaOperativa,
-      req?.user?.id,
+      req?.user,
     );
   }
 
   @Get('arqueos/:arqueoId')
-  async getArqueoById(@Param('arqueoId') arqueoId: string) {
-    return this.cajasService.getArqueoById(arqueoId);
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.CONTADOR,
+    RolUsuario.COBRADOR,
+  )
+  async getArqueoById(
+    @Param('arqueoId') arqueoId: string,
+    @Request() req?: any,
+  ) {
+    return this.cajasService.getArqueoById(arqueoId, req?.user);
   }
 
   @Post(':cajaId/arqueos')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.CONTADOR,
+    RolUsuario.COBRADOR,
+  )
   confirmarArqueo(
     @Param('cajaId') cajaId: string,
     @Body()
@@ -55,6 +85,7 @@ export class CajasController {
       body.recibidoPorId,
       body.denominaciones,
       body.observaciones,
+      req.user,
     );
   }
 }
