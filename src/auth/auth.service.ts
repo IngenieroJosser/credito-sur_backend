@@ -400,7 +400,26 @@ export class AuthService {
     }
 
     if (!codigoValido) {
-      throw new BadRequestException('El código ingresado no es correcto');
+      // Cuenta los intentos y, tras varios fallos, invalida el codigo para
+      // que no se pueda forzar por fuerza bruta sobre los 6 digitos.
+      const MAX_INTENTOS = 5;
+      const intentos = ((usuario as any).resetPasswordIntentos ?? 0) + 1;
+      const agotados = intentos >= MAX_INTENTOS;
+      await this.prisma.usuario.update({
+        where: { id: usuario.id },
+        data: agotados
+          ? ({
+              resetPasswordIntentos: 0,
+              resetPasswordToken: null,
+              resetPasswordExpires: null,
+            } as any)
+          : ({ resetPasswordIntentos: intentos } as any),
+      });
+      throw new BadRequestException(
+        agotados
+          ? 'Demasiados intentos fallidos. Solicita un código nuevo.'
+          : 'El código ingresado no es correcto',
+      );
     }
 
     // Cambiar la contraseña
@@ -411,6 +430,7 @@ export class AuthService {
         hashContrasena: nuevoHash,
         resetPasswordToken: null,
         resetPasswordExpires: null,
+        resetPasswordIntentos: 0,
       } as any,
     });
 

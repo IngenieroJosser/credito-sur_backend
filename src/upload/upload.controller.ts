@@ -1,4 +1,5 @@
 import {
+  Request,
   Controller,
   Post,
   Body,
@@ -20,6 +21,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolUsuario } from '@prisma/client';
 import { CloudinaryService } from './cloudinary.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 // ─── Tipos de archivos permitidos ─────────────────────────────────────────────
 const EXTENSIONES_PERMITIDAS = /\.(jpg|jpeg|png|gif|mp4|webm|pdf)$/i;
@@ -43,7 +45,10 @@ function contenidoPermitido(file: Express.Multer.File): boolean {
 @Controller('uploads')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class UploadController {
-  constructor(private readonly cloudinaryService: CloudinaryService) {}
+  constructor(
+    private readonly cloudinaryService: CloudinaryService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   @Post()
   @Roles(
@@ -149,11 +154,87 @@ export class UploadController {
 
   @Get(':filename')
   @ApiOperation({ summary: 'Obtener un archivo subido localmente' })
-  serveFile(@Param('filename') filename: string, @Res() res: Response) {
+  async serveFile(
+    @Param('filename') filename: string,
+    @Request() req: any,
+    @Res() res: Response,
+  ) {
     const safeFilename = basename(filename);
-    if (safeFilename !== filename || safeFilename === '.' || safeFilename === '..') {
+    if (
+      safeFilename !== filename ||
+      safeFilename === '.' ||
+      safeFilename === '..'
+    ) {
       return res.status(400).json({ message: 'Nombre de archivo inválido' });
     }
+
+    // Antes cualquier usuario autenticado servía cualquier fichero de
+    // ./uploads por nombre (IDOR sobre documentos de clientes). Ahora el
+    // fichero debe existir en Multimedia y el usuario debe poder ver a quién
+    // pertenece.
+    const media = await this.prisma.multimedia.findFirst({
+      where: {
+        OR: [
+          { nombreAlmacenamiento: filename },
+          { url: { contains: filename } },
+          { ruta: { contains: filename } },
+        ],
+      },
+      select: { clienteId: true, usuarioId: true, esPublico: true },
+    });
+
+    // No servir ficheros locales que no estén registrados: evita enumerar
+    // el directorio ./uploads.
+    if (!media) {
+      return res.status(404).json({ message: 'Archivo no encontrado' });
+    }
+
+    const actor = req.user || {};
+    const rol = String(actor.rol || '').toUpperCase();
+    const rolesAmplios = [
+      RolUsuario.SUPER_ADMINISTRADOR,
+      RolUsuario.ADMIN,
+      RolUsuario.COORDINADOR,
+      RolUsuario.CONTADOR,
+      RolUsuario.PUNTO_DE_VENTA,
+    ];
+
+    let permitido =
+      media.esPublico ||
+      rolesAmplios.includes(rol as any) ||
+      (media.usuarioId && media.usuarioId === actor.id);
+
+    if (!permitido && media.clienteId) {
+      const scope =
+        rol === RolUsuario.SUPERVISOR
+          ? { asignacionesRuta: { some: { activa: true, ruta: { supervisorId: actor.id } } } }
+          : rol === RolUsuario.COBRADOR
+            ? {
+                asignacionesRuta: {
+                  some: {
+                    activa: true,
+                    OR: [
+                      { cobradorId: actor.id },
+                      { ruta: { cobradorId: actor.id } },
+                    ],
+                  },
+                },
+              }
+            : null;
+      if (scope) {
+        const cliente = await this.prisma.cliente.findFirst({
+          where: { id: media.clienteId, ...(scope as any) },
+          select: { id: true },
+        });
+        permitido = !!cliente;
+      }
+    }
+
+    if (!permitido) {
+      // 404 en vez de 403 para no confirmar la existencia del fichero.
+      return res.status(404).json({ message: 'Archivo no encontrado' });
+    }
+
     res.sendFile(safeFilename, { root: './uploads' });
   }
 }

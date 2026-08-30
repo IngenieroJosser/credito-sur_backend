@@ -29,6 +29,7 @@ model Usuario {
   errorSincronizacion   String?
   resetPasswordToken    String?
   resetPasswordExpires  DateTime?
+  resetPasswordIntentos Int                  @default(0)
 
   clientesListaNegra      Cliente[]                  @relation("ClienteListaNegraPor")
   clientesAprobados       Cliente[]                  @relation("ClienteAprobadoPor")
