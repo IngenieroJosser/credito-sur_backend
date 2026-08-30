@@ -1551,8 +1551,9 @@ export class PaymentsService {
       clienteId,
       rutaId,
       page = 1,
-      limit = 20,
+      limit: limitRaw = 20,
     } = filters || {};
+    const limit = Math.min(Math.max(1, Number(limitRaw) || 20), 200);
     const skip = (page - 1) * limit;
 
     const where: Prisma.PagoWhereInput = {};
