@@ -10,7 +10,7 @@ import {
   UseGuards,
   Request,
   Query,
-} from '@nestjs/common';
+  ForbiddenException,} from '@nestjs/common';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -62,8 +62,25 @@ export class UsersController {
   }
 
   @Get(':id')
-  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
-  obtenerPorId(@Param('id', ParseUUIDPipe) id: string) {
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COBRADOR,
+    RolUsuario.CONTADOR,
+    RolUsuario.PUNTO_DE_VENTA,
+  )
+  obtenerPorId(@Param('id', ParseUUIDPipe) id: string, @Request() req: any) {
+    // Cualquiera puede ver SU propio perfil; solo admin/superadmin, el de
+    // otros. Antes era solo admin y rompia la pantalla de perfil del resto.
+    const actor = req.user || {};
+    const esAdmin =
+      actor.rol === RolUsuario.SUPER_ADMINISTRADOR ||
+      actor.rol === RolUsuario.ADMIN;
+    if (!esAdmin && actor.id !== id) {
+      throw new ForbiddenException('Solo puedes ver tu propio perfil.');
+    }
     return this.usersService.obtenerPorId(id);
   }
 
