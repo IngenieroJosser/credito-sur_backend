@@ -129,30 +129,31 @@ export class AccountingService {
     // desactivada hay que reactivar esa misma, no crear otra. El código de
     // caja es único y determinista (CAJA-<codigoRuta>), así que crear una
     // segunda fallaría y la ruta se quedaría sin caja para siempre.
-    const existente = await this.prisma.caja.findFirst({
-      where: { rutaId: ruta.id, tipo: 'RUTA' },
-      orderBy: [{ activa: 'desc' }, { creadoEn: 'asc' }],
-      include: incluir,
-    });
+    const buscarYReactivar = async () => {
+      const caja = await this.prisma.caja.findFirst({
+        where: { rutaId: ruta.id, tipo: 'RUTA' },
+        orderBy: [{ activa: 'desc' }, { creadoEn: 'asc' }],
+        include: incluir,
+      });
 
-    if (existente?.id) {
-      if (existente.activa) return existente;
+      if (!caja) return null;
+      if (caja.activa) return caja;
 
       return this.prisma.caja.update({
-        where: { id: existente.id },
+        where: { id: caja.id },
         data: { activa: true, responsableId: ruta.cobradorId },
         include: incluir,
       });
-    }
+    };
 
-    const codigoCaja = this.buildCodigoCajaRuta(ruta.codigo);
-    const nombreCaja = `Caja ${ruta.nombre}`;
+    const existente = await buscarYReactivar();
+    if (existente) return existente;
 
     try {
       return await this.prisma.caja.create({
         data: {
-          codigo: codigoCaja,
-          nombre: nombreCaja,
+          codigo: this.buildCodigoCajaRuta(ruta.codigo),
+          nombre: `Caja ${ruta.nombre}`,
           tipo: 'RUTA',
           rutaId: ruta.id,
           responsableId: ruta.cobradorId,
@@ -162,23 +163,13 @@ export class AccountingService {
         include: incluir,
       });
     } catch (error: any) {
-      // Otra petición la creó entre el findFirst y el create.
+      // Otra petición la creó entre la búsqueda y el create.
       if (error?.code !== 'P2002') throw error;
 
-      const ganadora = await this.prisma.caja.findFirst({
-        where: { rutaId: ruta.id, tipo: 'RUTA' },
-        orderBy: [{ activa: 'desc' }, { creadoEn: 'asc' }],
-        include: incluir,
-      });
-
+      const ganadora = await buscarYReactivar();
       if (!ganadora) throw error;
-      if (ganadora.activa) return ganadora;
 
-      return this.prisma.caja.update({
-        where: { id: ganadora.id },
-        data: { activa: true, responsableId: ruta.cobradorId },
-        include: incluir,
-      });
+      return ganadora;
     }
   }
 

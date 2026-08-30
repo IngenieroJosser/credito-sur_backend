@@ -2762,6 +2762,26 @@ export class RoutesService {
     }
   }
 
+  /**
+   * Envuelve un fallo inesperado en un 500 con mensaje fijo, pero deja la
+   * causa real en el log. Sin esto, mover o quitar clientes devolvía "Error
+   * al mover el cliente" y no quedaba rastro de por qué.
+   */
+  private fallaInesperada(
+    operacion: string,
+    mensaje: string,
+    error: unknown,
+  ): never {
+    if (error instanceof NotFoundException) throw error;
+
+    this.logger.error(
+      `${operacion} falló`,
+      error instanceof Error ? error.stack : String(error),
+    );
+
+    throw new InternalServerErrorException(mensaje);
+  }
+
   private sincronizarAsignacionesCliente(
     tx: Prisma.TransactionClient,
     clienteId: string,
@@ -2927,14 +2947,11 @@ export class RoutesService {
 
       return { message: 'Cliente removido de la ruta correctamente' };
     } catch (error) {
-      if (error instanceof NotFoundException) throw error;
-
-      this.logger.error(
-        `removeClient(rutaId=${rutaId}, clienteId=${clienteId}) falló`,
-        error instanceof Error ? error.stack : String(error),
+      this.fallaInesperada(
+        `removeClient(rutaId=${rutaId}, clienteId=${clienteId})`,
+        'Error al remover el cliente',
+        error,
       );
-
-      throw new InternalServerErrorException('Error al remover el cliente');
     }
   }
 
@@ -3029,14 +3046,11 @@ export class RoutesService {
 
       return { message: 'Cliente movido correctamente' };
     } catch (error) {
-      if (error instanceof NotFoundException) throw error;
-
-      this.logger.error(
-        `moveClient(clientId=${clientId}, ${fromRutaId} -> ${toRutaId}) falló`,
-        error instanceof Error ? error.stack : String(error),
+      this.fallaInesperada(
+        `moveClient(clientId=${clientId}, ${fromRutaId} -> ${toRutaId})`,
+        'Error al mover el cliente',
+        error,
       );
-
-      throw new InternalServerErrorException('Error al mover el cliente');
     }
   }
 
@@ -3112,14 +3126,11 @@ export class RoutesService {
 
       return { message: 'Crédito asignado a la nueva ruta correctamente' };
     } catch (error) {
-      if (error instanceof NotFoundException) throw error;
-
-      this.logger.error(
-        `moveLoan(prestamoId=${prestamoId}, toRutaId=${toRutaId}) falló`,
-        error instanceof Error ? error.stack : String(error),
+      this.fallaInesperada(
+        `moveLoan(prestamoId=${prestamoId}, toRutaId=${toRutaId})`,
+        'Error al mover el crédito',
+        error,
       );
-
-      throw new InternalServerErrorException('Error al mover el crédito');
     }
   }
 
