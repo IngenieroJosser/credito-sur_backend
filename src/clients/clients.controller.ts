@@ -32,8 +32,22 @@ export class ClientsController {
   constructor(private readonly clientsService: ClientsService) {}
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateClientDto: UpdateClientDto) {
-    return this.clientsService.update(id, updateClientDto);
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COBRADOR,
+  )
+  update(
+    @Param('id') id: string,
+    @Body() updateClientDto: UpdateClientDto,
+    @Request() req: any,
+  ) {
+    // Se pasa el actor para que un cobrador solo pueda modificar clientes de
+    // sus rutas. Antes este endpoint no tenia ni @Roles ni scope: cualquier
+    // usuario autenticado modificaba cualquier cliente (IDOR de escritura).
+    return this.clientsService.update(id, updateClientDto, req.user);
   }
 
   @Delete(':id')
@@ -133,8 +147,8 @@ export class ClientsController {
     RolUsuario.CONTADOR,
     RolUsuario.PUNTO_DE_VENTA,
   )
-  async getEstadoCuenta(@Param('id') id: string) {
-    return this.clientsService.getEstadoCuentaCliente(id);
+  async getEstadoCuenta(@Param('id') id: string, @Request() req: any) {
+    return this.clientsService.getEstadoCuentaCliente(id, req.user);
   }
 
   @Get(':id')

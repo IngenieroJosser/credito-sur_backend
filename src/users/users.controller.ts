@@ -45,8 +45,14 @@ export class UsersController {
     RolUsuario.PUNTO_DE_VENTA,
     RolUsuario.CONTADOR,
   )
-  obtenerTodos(@Query('includeArchived') includeArchived?: string) {
-    return this.usersService.obtenerTodos(includeArchived === 'true');
+  obtenerTodos(
+    @Query('includeArchived') includeArchived?: string,
+    @Request() req?: any,
+  ) {
+    return this.usersService.obtenerTodos(
+      includeArchived === 'true',
+      req?.user,
+    );
   }
 
   @Get(':id/operational-detail')

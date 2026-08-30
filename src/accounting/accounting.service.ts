@@ -15,6 +15,7 @@ import {
   TipoAprobacion,
   TipoCaja,
   TipoTransaccion,
+  RolUsuario,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
@@ -441,13 +442,28 @@ export class AccountingService {
     };
   }
 
-  async getCajas() {
+  // Un cobrador solo puede ver las cajas de sus rutas (la que responsabiliza
+  // el, o la de una ruta suya). Los demas roles ven todas.
+  private scopeCajasPorActor(
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
+  ) {
+    const rol = String(actor?.rol || '').toUpperCase();
+    if (rol !== 'COBRADOR' || !actor?.id) return {};
+    return {
+      OR: [
+        { responsableId: actor.id },
+        { ruta: { cobradorId: actor.id } },
+      ],
+    };
+  }
+
+  async getCajas(actor?: { id?: string; rol?: RolUsuario | string } | null) {
     // Aseguramos cajas por defecto también de forma lazy.
     // onModuleInit puede no crearlas si al momento de arrancar no existía un ADMIN/SUPER_ADMIN activo.
     await this.ensureCajasDefault();
     await this.asegurarCajasSupervisoresActivos();
     const cajas = await this.prisma.caja.findMany({
-      where: { activa: true },
+      where: { activa: true, ...this.scopeCajasPorActor(actor) },
       include: {
         responsable: {
           select: { id: true, nombres: true, apellidos: true },
@@ -517,11 +533,14 @@ export class AccountingService {
     return cajasConSaldo;
   }
 
-  async getCajaById(id: string) {
+  async getCajaById(
+    id: string,
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
+  ) {
     // Mantener consistencia con getCajas(): garantizar defaults antes de responder.
     await this.ensureCajasDefault();
     const caja = await this.prisma.caja.findFirst({
-      where: { id, activa: true },
+      where: { id, activa: true, ...this.scopeCajasPorActor(actor) },
       include: {
         responsable: {
           select: { id: true, nombres: true, apellidos: true },

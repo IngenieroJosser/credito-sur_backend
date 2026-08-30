@@ -58,13 +58,16 @@ export class AccountingController {
   // =====================
 
   @Get('cajas')
-  getCajas() {
-    return this.accountingService.getCajas();
+  getCajas(@Request() req: any) {
+    // Se pasa el actor: un cobrador solo debe ver las cajas de sus rutas, no
+    // toda la posicion de caja de la empresa. Antes no habia ni @Roles ni
+    // scope y cualquier autenticado veia todas las cajas.
+    return this.accountingService.getCajas(req.user);
   }
 
   @Get('cajas/:id')
-  getCajaById(@Param('id') id: string) {
-    return this.accountingService.getCajaById(id);
+  getCajaById(@Param('id') id: string, @Request() req: any) {
+    return this.accountingService.getCajaById(id, req.user);
   }
 
   @Post('cajas')

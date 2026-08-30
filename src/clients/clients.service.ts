@@ -148,13 +148,28 @@ export class ClientsService {
     });
   }
 
-  async update(id: string, updateClientDto: UpdateClientDto) {
+  async update(
+    id: string,
+    updateClientDto: UpdateClientDto,
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
+  ) {
     const {
       rutaId: _rutaId,
       observaciones: _observaciones,
       archivos,
       ...clientData
     } = updateClientDto;
+
+    // Un cobrador solo puede modificar clientes de sus rutas. Se comprueba
+    // con el mismo scope que las lecturas; si no lo alcanza, 404 (no se revela
+    // que el cliente existe).
+    const accesible = await this.prisma.cliente.findFirst({
+      where: { id, eliminadoEn: null, ...this.collectorClientScope(actor) },
+      select: { id: true },
+    });
+    if (!accesible) {
+      throw new NotFoundException('Cliente no encontrado');
+    }
 
     // Actualizar datos básicos del cliente
     const clienteActualizado = await this.prisma.cliente.update({
@@ -1841,11 +1856,16 @@ export class ClientsService {
     return generarPDFClientes(filas, fecha);
   }
 
-  async getEstadoCuentaCliente(clienteId: string) {
+  async getEstadoCuentaCliente(
+    clienteId: string,
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
+  ) {
     const cliente = await this.prisma.cliente.findFirst({
       where: {
         id: clienteId,
         eliminadoEn: null,
+        // Un cobrador solo ve el estado de cuenta de clientes de sus rutas.
+        ...this.collectorClientScope(actor),
       },
       select: {
         id: true,
