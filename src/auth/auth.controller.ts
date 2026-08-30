@@ -9,8 +9,9 @@ import {
   Request,
   Headers,
   ForbiddenException,
-} from '@nestjs/common';
+  Res,} from '@nestjs/common';
 
+import type { Response } from 'express';
 import { AuthService } from './auth.service';
 import { LoginAuthDto } from './dto/login-auth.dto';
 import { CreateAuthDto } from './dto/create-auth.dto';
@@ -70,8 +71,36 @@ export class AuthController {
       },
     },
   })
-  login(@Body() dto: LoginAuthDto) {
-    return this.authService.login(dto);
+  async login(
+    @Body() dto: LoginAuthDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.login(dto);
+    this.setAuthCookie(res, result.access_token);
+    return result;
+  }
+
+  @Publico()
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Cerrar sesión (borra la cookie httpOnly)' })
+  logout(@Res({ passthrough: true }) res: Response) {
+    res.clearCookie('token', { path: '/' });
+    return { message: 'Sesión cerrada' };
+  }
+
+  private setAuthCookie(res: Response, token: string) {
+    const esProd = process.env.NODE_ENV === 'production';
+    // Front y back estan en dominios distintos (vercel / render), por eso en
+    // produccion la cookie va con sameSite 'none' + secure. httpOnly: no la
+    // puede leer JavaScript, asi que un XSS no la roba.
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: esProd,
+      sameSite: esProd ? 'none' : 'lax',
+      maxAge: 8 * 60 * 60 * 1000,
+      path: '/',
+    });
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

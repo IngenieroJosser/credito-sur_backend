@@ -1421,8 +1421,11 @@ export class LoansService implements OnModuleInit {
         search = '',
         tipo = 'todos',
         page = 1,
-        limit = 8,
+        limit: limitRaw = 8,
       } = filters;
+      // Tope al tamaño de página: sin esto, ?limit=9999999 pedía millones de
+      // filas (denegación de servicio y volcado masivo).
+      const limit = Math.min(Math.max(1, Number(limitRaw) || 8), 200);
 
       const skip = (page - 1) * limit;
 
