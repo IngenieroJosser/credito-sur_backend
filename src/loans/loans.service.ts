@@ -3911,11 +3911,27 @@ export class LoansService implements OnModuleInit {
                   })
                 : null;
 
+            // La ruta que venga en la peticion manda: se ignoraba, y el
+            // credito acababa sin ruta aunque quien lo creo dijera cual.
+            const rutaDelPayload = String((data as any)?.rutaId || '').trim();
+            const rutaPedida = rutaDelPayload
+              ? await tx.ruta.findFirst({
+                  where: {
+                    id: rutaDelPayload,
+                    eliminadoEn: null,
+                    activa: true,
+                  },
+                  select: { id: true, cobradorId: true },
+                })
+              : null;
+
             const rutaIdAsignar =
+              rutaPedida?.id ||
               rutaPreferida?.rutaId ||
               rutaPreferida?.ruta?.id ||
               rutaCobrador?.id;
             const cobradorIdAsignar =
+              rutaPedida?.cobradorId ||
               rutaPreferida?.cobradorId ||
               rutaPreferida?.ruta?.cobradorId ||
               rutaCobrador?.cobradorId;
@@ -3975,6 +3991,7 @@ export class LoansService implements OnModuleInit {
           if (!data.esContado) {
             const rutaFinal =
               rutaIdDelCredito ||
+              String((data as any)?.rutaId || '').trim() ||
               cliente.asignacionesRuta?.find(
                 (a: any) =>
                   a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
