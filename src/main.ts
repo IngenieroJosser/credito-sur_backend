@@ -15,6 +15,7 @@ import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { ExpressAdapter } from '@bull-board/express';
 import { getQueueToken } from '@nestjs/bullmq';
 import type { Request, Response, NextFunction } from 'express';
+import { timingSafeEqual } from 'crypto';
 import { SWAGGER_JWT_AUTH } from './auth/constants/swagger-auth.constants';
 
 const shouldEnableMirrorSync =
@@ -77,7 +78,15 @@ async function bootstrap() {
           const incomingUser = idx >= 0 ? decoded.slice(0, idx) : '';
           const incomingPass = idx >= 0 ? decoded.slice(idx + 1) : '';
 
-          if (incomingUser !== user || incomingPass !== pass) {
+          // Comparacion en tiempo constante para no filtrar el usuario/clave
+          // por el tiempo de respuesta (este panel va como middleware crudo,
+          // fuera del rate-limit de Nest).
+          const iguales = (a: string, b: string) => {
+            const ba = Buffer.from(a);
+            const bb = Buffer.from(b);
+            return ba.length === bb.length && timingSafeEqual(ba, bb);
+          };
+          if (!iguales(incomingUser, user) || !iguales(incomingPass, pass)) {
             res.setHeader('WWW-Authenticate', 'Basic realm="Bull Board"');
             return res.status(401).send('Unauthorized');
           }

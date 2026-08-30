@@ -54,6 +54,11 @@ export class SyncConflictsController {
     RolUsuario.COORDINADOR,
   )
   @Patch(':id/resolve')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+  )
   resolve(
     @Param('id') id: string,
     @Body('accion') accion: string,
