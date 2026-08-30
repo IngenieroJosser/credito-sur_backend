@@ -1421,6 +1421,14 @@ export class LoansService implements OnModuleInit {
         ...this.collectorLoanScope(actor),
       };
 
+      // Punto de venta solo maneja créditos de artículo: sin esto veía el
+      // libro de créditos completo (todos los de dinero incluidos).
+      if (
+        String(actor?.rol || '').toUpperCase() === RolUsuario.PUNTO_DE_VENTA
+      ) {
+        where.tipoPrestamo = 'ARTICULO';
+      }
+
       // Filtro por tipo de préstamo
       if (tipo !== 'todos' && tipo !== '') {
         where.tipoPrestamo = tipo;
