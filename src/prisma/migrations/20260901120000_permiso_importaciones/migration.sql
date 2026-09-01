@@ -20,12 +20,14 @@ VALUES (
 )
 ON CONFLICT (modulo, accion) DO NOTHING;
 
--- 2) Concederlo a ADMIN y SUPER_ADMINISTRADOR (idempotente)
+-- 2) Concederlo SOLO a SUPER_ADMINISTRADOR (idempotente).
+--    ADMIN no debe tener todos los módulos: el superadmin le concede
+--    'importaciones' desde la matriz de permisos cuando lo decida.
 INSERT INTO "roles_permisos" (id, "rolId", "permisoId")
 SELECT gen_random_uuid(), r.id, p.id
 FROM "roles" r
 CROSS JOIN "permisos" p
-WHERE r.nombre IN ('ADMIN', 'SUPER_ADMINISTRADOR')
+WHERE r.nombre = 'SUPER_ADMINISTRADOR'
   AND p.modulo = 'Sistema'
   AND p.accion = 'importaciones'
 ON CONFLICT ("rolId", "permisoId") DO NOTHING;
