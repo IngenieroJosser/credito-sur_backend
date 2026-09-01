@@ -19,6 +19,8 @@ import { ImportacionesService } from './importaciones.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { PermisosGuard } from '../auth/guards/permisos.guard';
+import { Permisos } from '../auth/decorators/permisos.decorator';
 import { RolUsuario } from '@prisma/client';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
@@ -27,7 +29,12 @@ import { SWAGGER_JWT_AUTH } from '../auth/constants/swagger-auth.constants';
 
 @ApiTags('Importaciones')
 @ApiBearerAuth(SWAGGER_JWT_AUTH)
-@UseGuards(JwtAuthGuard, RolesGuard)
+// Acceso por la MATRIZ DE PERMISOS (permiso 'importaciones'), no por rol fijo:
+// así un coordinador puede recibir acceso a importar sin abrir el rol entero.
+// SUPER_ADMINISTRADOR pasa siempre (PermisosGuard). La reversión de lotes
+// conserva su candado de solo-superadmin con RolesGuard a nivel de método.
+@UseGuards(JwtAuthGuard, PermisosGuard)
+@Permisos('importaciones')
 @Controller('importaciones')
 export class ImportacionesController {
   constructor(private readonly importacionesService: ImportacionesService) {}
@@ -67,6 +74,10 @@ export class ImportacionesController {
    * Sin `prestamoIds` se deshace todo el lote. Con la lista, solo esos.
    */
   @Post('lotes/:id/revertir')
+  // La reversión (deshacer un lote, mueve dinero y cartera) queda SOLO para
+  // superadmin: se re-activa RolesGuard a nivel de método sobre el @Permisos
+  // de la clase.
+  @UseGuards(RolesGuard)
   @Roles(RolUsuario.SUPER_ADMINISTRADOR)
   async revertirLote(
     @Request() req,
