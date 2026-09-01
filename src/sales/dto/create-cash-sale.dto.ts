@@ -29,4 +29,10 @@ export class CreateCashSaleDto {
   @IsString()
   @IsOptional()
   notas?: string;
+
+  // Clave de idempotencia: si la venta se registró offline y se reintenta al
+  // sincronizar, la misma clave evita duplicar el movimiento de dinero.
+  @IsString()
+  @IsOptional()
+  idempotencyKey?: string;
 }

@@ -175,6 +175,7 @@ export class ClientsService {
       rutaId: _rutaId,
       observaciones: _observaciones,
       archivos,
+      version: versionBase,
       ...clientData
     } = updateClientDto;
 
@@ -183,16 +184,29 @@ export class ClientsService {
     // que el cliente existe).
     const accesible = await this.prisma.cliente.findFirst({
       where: { id, eliminadoEn: null, ...this.collectorClientScope(actor) },
-      select: { id: true },
+      select: { id: true, version: true },
     });
     if (!accesible) {
       throw new NotFoundException('Cliente no encontrado');
     }
 
-    // Actualizar datos básicos del cliente
+    // Control de conflictos (bloqueo optimista): si el cliente fue modificado
+    // por otra persona/dispositivo DESPUÉS de que este usuario empezó a editar,
+    // no sobrescribimos en silencio. Se rechaza como conflicto (409) y el sync
+    // lo enruta al pipeline de conflictos para revisión manual. Opcional: solo
+    // se verifica si el cliente envió su `version` base.
+    if (versionBase != null && Number(versionBase) !== Number(accesible.version ?? 1)) {
+      throw new ConflictException(
+        'El cliente fue modificado por otra persona desde que empezaste a editarlo. Revisa los cambios antes de guardar.',
+      );
+    }
+
+    // Actualizar datos básicos del cliente. Se incrementa la versión SOLO en
+    // esta ruta de edición de usuario (las escrituras internas del sistema no
+    // la tocan, para no generar conflictos falsos).
     const clienteActualizado = await this.prisma.cliente.update({
       where: { id },
-      data: clientData,
+      data: { ...clientData, version: { increment: 1 } },
     });
 
     // Si vienen archivos, procesar actualización (incluso si el array está vacío, significa que se eliminaron todos)
@@ -601,6 +615,8 @@ export class ClientsService {
             id: cliente.id,
             codigo: cliente.codigo,
             dni: cliente.dni,
+            // version: para el control de conflictos al editar desde la lista.
+            version: cliente.version,
             nombres: cliente.nombres,
             apellidos: cliente.apellidos,
             telefono: cliente.telefono,
@@ -630,6 +646,7 @@ export class ClientsService {
             id: cliente.id,
             codigo: cliente.codigo || 'ERROR',
             dni: cliente.dni || '',
+            version: cliente.version,
             nombres: cliente.nombres || 'Error',
             apellidos: cliente.apellidos || '',
             telefono: cliente.telefono || '',

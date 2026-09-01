@@ -596,6 +596,16 @@ async function seedRolesYPermisos() {
       orden: 52,
       esNavegable: true,
     },
+    {
+      modulo: 'Sistema',
+      accion: 'importaciones',
+      nombre: 'Importaciones',
+      descripcion: 'Carga masiva de clientes, créditos e inventario',
+      icono: 'Upload',
+      ruta: '/admin/sistema/importaciones',
+      orden: 53,
+      esNavegable: true,
+    },
 
     // Reportes
     {
@@ -759,6 +769,8 @@ async function seedRolesYPermisos() {
         'pagos-historial',
         'auditoria',
         'reportes-operativos',
+        // 'importaciones' NO va por defecto: ADMIN no debe tener todos los
+        // módulos. El superadmin se lo concede desde la matriz de permisos.
         // Granulares (ProtectedPage)
         'CONTABLE_VIEW',
         'CUENTAS_VENCIDAS_VIEW',

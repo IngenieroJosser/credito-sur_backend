@@ -28,7 +28,9 @@ export const RELLENO_GRUPO = 'FFDCE6F1';
  * (`truncCop` en el backend, `Math.trunc` en el frontend), así que mostrar
  * centavos daría a entender una precisión que después se pierde al guardar.
  */
-export const FORMATO_MONEDA = '[$$-240A]#,##0';
+// "$" literal + separador de miles: muestra el símbolo de pesos en cualquier
+// Excel/LibreOffice (el código de locale [$$-240A] no siempre pinta el "$").
+export const FORMATO_MONEDA = '"$" #,##0';
 export const FORMATO_PORCENTAJE = '0.0%';
 export const FORMATO_FECHA = 'yyyy-mm-dd';
 

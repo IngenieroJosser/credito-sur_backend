@@ -316,10 +316,12 @@ export class UsersService {
         (p: { permiso: { accion: string } }) => p.permiso.accion,
       );
 
-      // Si tiene permisos personalizados, tienen precedencia total.
-      // Si no, se usan los del rol.
-      const permisosFinales =
-        permisosCustom.length > 0 ? permisosCustom : permisosRol;
+      // Permisos efectivos = los del rol + los personalizados (FUSIÓN), igual
+      // que en el login (auth.service). Antes se reemplazaban: si un usuario
+      // tenía un solo permiso personalizado, "perdía" todos los de su rol en la
+      // matriz, mostrando un estado inconsistente con lo que realmente puede
+      // hacer. La matriz debe reflejar lo mismo que gobierna el acceso.
+      const permisosFinales = [...permisosRol, ...permisosCustom];
 
       const { asignacionesRoles, permisosPersonalizados, ...userData } =
         usuario;
