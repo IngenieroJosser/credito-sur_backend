@@ -103,6 +103,7 @@ const DIN = {
   cuotasPagadasAuto: 21,
   saldoPendiente: 22,
   movimiento: 23,
+  debeCuotaAuto: 24,
 };
 
 // ── Columnas de "Créditos de artículo" ─────────────────────────────────────
@@ -138,6 +139,7 @@ const ART = {
   cuotasPagadasAuto: 22,
   saldoPendiente: 23,
   movimiento: 24,
+  debeCuotaAuto: 25,
 };
 
 const COLUMNAS_CLIENTES: ColumnaPlantilla[] = [
@@ -273,6 +275,16 @@ const COLUMNAS_CREDITOS_DINERO: ColumnaPlantilla[] = [
     width: 46,
     automatica: true,
   },
+  {
+    // Cuánto falta para completar la CUOTA que está a medias. Ej.: cuota de
+    // $175 con $150 abonados en ella → "$25". Si la cuota está completa o el
+    // crédito ya está pagado, muestra $0.
+    header: 'Debe de la cuota actual (automático)',
+    key: 'debe_cuota_auto',
+    width: 24,
+    automatica: true,
+    numFmt: FORMATO_MONEDA,
+  },
 ];
 
 const COLUMNAS_CREDITOS_ARTICULO: ColumnaPlantilla[] = [
@@ -388,6 +400,13 @@ const COLUMNAS_CREDITOS_ARTICULO: ColumnaPlantilla[] = [
     key: 'movimiento_auto',
     width: 46,
     automatica: true,
+  },
+  {
+    header: 'Debe de la cuota actual (automático)',
+    key: 'debe_cuota_auto',
+    width: 24,
+    automatica: true,
+    numFmt: FORMATO_MONEDA,
   },
 ];
 
@@ -544,6 +563,27 @@ function formulaSaldo(colTotal: number, colAbonado: number): string {
   // "todavía no se puede calcular".
   const abonado = `IF(${ref(colAbonado)}="",0,${ref(colAbonado)})`;
   return `IF(OR(NOT(ISNUMBER(${total})),NOT(ISNUMBER(${abonado}))),"",${total}-${abonado})`;
+}
+
+/**
+ * Cuánto falta para completar la CUOTA que está a medias.
+ * Ej.: cuota de $175 con $150 abonados en ella → $25.
+ * Si la cuota está justa (múltiplo exacto) o el crédito ya está pagado → $0.
+ */
+function formulaDebeCuota(
+  colValorCuota: number,
+  colAbonado: number,
+  colTotalPagar: number,
+): string {
+  const cuota = ref(colValorCuota);
+  const total = ref(colTotalPagar);
+  const abonado = `IF(${ref(colAbonado)}="",0,${ref(colAbonado)})`;
+  return (
+    `IF(OR(NOT(ISNUMBER(${cuota})),${cuota}=0),"",` +
+    `IF(${abonado}>=${total},0,` +
+    `IF(MOD(${abonado},${cuota})=0,0,` +
+    `${cuota}-MOD(${abonado},${cuota}))))`
+  );
 }
 
 // ── Tramos reutilizables de la columna Revisión ────────────────────────────
@@ -935,6 +975,11 @@ export async function generarPlantillaClientesCreditos(
     DIN.saldoPendiente,
     formulaSaldo(DIN.totalPagar, DIN.totalAbonado),
   );
+  formulaEnColumna(
+    wsDinero,
+    DIN.debeCuotaAuto,
+    formulaDebeCuota(DIN.valorCuota, DIN.totalAbonado, DIN.totalPagar),
+  );
 
   formulaEnColumna(
     wsDinero,
@@ -1070,6 +1115,11 @@ export async function generarPlantillaClientesCreditos(
     wsArticulo,
     ART.saldoPendiente,
     formulaSaldo(ART.totalPagar, ART.totalAbonado),
+  );
+  formulaEnColumna(
+    wsArticulo,
+    ART.debeCuotaAuto,
+    formulaDebeCuota(ART.valorCuota, ART.totalAbonado, ART.totalPagar),
   );
 
   // El consecutivo cuenta también los créditos de dinero del archivo, que se
