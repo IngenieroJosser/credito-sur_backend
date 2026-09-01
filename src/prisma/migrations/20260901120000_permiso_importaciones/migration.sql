@@ -6,7 +6,10 @@
 -- Segura de re-ejecutar: usa ON CONFLICT DO NOTHING.
 
 -- 1) El permiso
-INSERT INTO "permisos" (id, modulo, accion, nombre, descripcion, icono, ruta, orden, "esNavegable")
+--    OJO: "actualizadoEn" es @updatedAt en Prisma, que NO crea default en la
+--    base de datos (lo llena el cliente). En SQL crudo hay que darle valor o
+--    viola el NOT NULL.
+INSERT INTO "permisos" (id, modulo, accion, nombre, descripcion, icono, ruta, orden, "esNavegable", "creadoEn", "actualizadoEn")
 VALUES (
   gen_random_uuid(),
   'Sistema',
@@ -16,7 +19,9 @@ VALUES (
   'Upload',
   '/admin/sistema/importaciones',
   53,
-  true
+  true,
+  now(),
+  now()
 )
 ON CONFLICT (modulo, accion) DO NOTHING;
 
