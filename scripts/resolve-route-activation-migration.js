@@ -1,4 +1,5 @@
 const { execFileSync } = require('node:child_process');
+const path = require('node:path');
 
 const schema = 'src/prisma/schema.prisma';
 
@@ -15,9 +16,28 @@ const schema = 'src/prisma/schema.prisma';
  */
 const MIGRACIONES_AUTO_REPARABLES = ['20260901120000_permiso_importaciones'];
 
-function run(command, args, options = {}) {
-  return execFileSync(command, args, {
-    stdio: options.stdio || 'pipe',
+/**
+ * Ruta al CLI de Prisma, resuelta desde el propio paquete.
+ *
+ * A propósito NO se invoca a través del gestor de paquetes (`pnpm exec` /
+ * `npx`): el servidor de producción decide con qué gestor instala, y si instala
+ * con npm entonces `pnpm` no existe y el arranque falla en bucle. Además `npx`
+ * puede intentar DESCARGAR prisma del registro en pleno arranque.
+ *
+ * `require.resolve` encuentra el paquete ya instalado con cualquier gestor
+ * (incluido el almacén anidado de pnpm), y ejecutarlo con el mismo Node evita
+ * depender del PATH y de shells distintos según el sistema.
+ */
+function cliPrisma() {
+  const manifiesto = require.resolve('prisma/package.json');
+  const { bin } = require('prisma/package.json');
+  const entrada = typeof bin === 'string' ? bin : bin.prisma;
+  return path.join(path.dirname(manifiesto), entrada);
+}
+
+function prisma(args) {
+  return execFileSync(process.execPath, [cliPrisma(), ...args], {
+    stdio: 'pipe',
     encoding: 'utf8',
     env: process.env,
   });
@@ -26,7 +46,7 @@ function run(command, args, options = {}) {
 /** Salida de `prisma migrate status`, aunque termine con código distinto de 0. */
 function estadoMigraciones() {
   try {
-    return run('pnpm', ['exec', 'prisma', 'migrate', 'status', '--schema', schema]);
+    return prisma(['migrate', 'status', '--schema', schema]);
   } catch (error) {
     return `${error.stdout || ''}\n${error.stderr || ''}`;
   }
@@ -48,7 +68,7 @@ function main() {
     if (!mencionada || !hayFallo) continue;
 
     try {
-      run('pnpm', ['exec', 'prisma', 'migrate', 'resolve', '--rolled-back', nombre, '--schema', schema]);
+      prisma(['migrate', 'resolve', '--rolled-back', nombre, '--schema', schema]);
       console.log(
         `[migrate] '${nombre}' estaba fallida: se marcó como revertida para re-aplicarla corregida.`,
       );
