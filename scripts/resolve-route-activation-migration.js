@@ -26,7 +26,7 @@ function run(command, args, options = {}) {
 /** Salida de `prisma migrate status`, aunque termine con código distinto de 0. */
 function estadoMigraciones() {
   try {
-    return run('npx', ['prisma', 'migrate', 'status', '--schema', schema]);
+    return run('pnpm', ['exec', 'prisma', 'migrate', 'status', '--schema', schema]);
   } catch (error) {
     return `${error.stdout || ''}\n${error.stderr || ''}`;
   }
@@ -48,7 +48,7 @@ function main() {
     if (!mencionada || !hayFallo) continue;
 
     try {
-      run('npx', ['prisma', 'migrate', 'resolve', '--rolled-back', nombre, '--schema', schema]);
+      run('pnpm', ['exec', 'prisma', 'migrate', 'resolve', '--rolled-back', nombre, '--schema', schema]);
       console.log(
         `[migrate] '${nombre}' estaba fallida: se marcó como revertida para re-aplicarla corregida.`,
       );
