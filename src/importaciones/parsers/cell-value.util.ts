@@ -79,7 +79,21 @@ export function leerNumero(valor: any): number | null {
   return Number.isFinite(numero) ? numero : NaN;
 }
 
-/** Fecha de una celda: acepta Date nativo, serial de Excel o texto YYYY-MM-DD. */
+/**
+ * Fecha de una celda. Acepta SOLO formatos inequívocos:
+ *  - Date nativo (celda con formato de fecha en Excel) y serial de Excel.
+ *  - Texto ISO `YYYY-MM-DD` (el formato que declara la plantilla).
+ *  - Texto `DD/MM/YYYY` o `DD-MM-YYYY`, interpretado con el DÍA primero
+ *    (convención colombiana).
+ * Cualquier otra cosa devuelve null para que la validación reporte la fila.
+ *
+ * Antes se usaba `new Date(texto)`, y eso traía tres problemas graves:
+ *  - `02/09/2026` (2 de septiembre) se leía como 9 de FEBRERO, porque JS asume
+ *    formato de EE.UU. Un error silencioso de meses que corre todo el
+ *    calendario de cuotas.
+ *  - Texto mal escrito como `02/09 2026` se ACEPTABA en vez de rechazarse.
+ *  - Fechas válidas aquí como `31/12/2026` se rechazaban.
+ */
 export function leerFecha(valor: any): Date | null {
   const limpio = leerValorCelda(valor);
   if (limpio === null || limpio === undefined || limpio === '') return null;
@@ -92,6 +106,38 @@ export function leerFecha(valor: any): Date | null {
     return Number.isNaN(fecha.getTime()) ? null : fecha;
   }
 
-  const fecha = new Date(String(limpio).trim());
-  return Number.isNaN(fecha.getTime()) ? null : fecha;
+  const texto = String(limpio).trim();
+
+  // Solo construye la fecha si día/mes/año existen de verdad: rechaza 31/02,
+  // mes 13, etc. (comprobando que la fecha no se "desborde" a otro día).
+  const construir = (anio: number, mes: number, dia: number): Date | null => {
+    if (anio < 1900 || anio > 2999) return null;
+    if (mes < 1 || mes > 12) return null;
+    if (dia < 1 || dia > 31) return null;
+    const fecha = new Date(Date.UTC(anio, mes - 1, dia));
+    if (Number.isNaN(fecha.getTime())) return null;
+    if (
+      fecha.getUTCFullYear() !== anio ||
+      fecha.getUTCMonth() !== mes - 1 ||
+      fecha.getUTCDate() !== dia
+    ) {
+      return null;
+    }
+    return fecha;
+  };
+
+  const iso = texto.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (iso) return construir(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+
+  const diaPrimero = texto.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (diaPrimero) {
+    return construir(
+      Number(diaPrimero[3]),
+      Number(diaPrimero[2]),
+      Number(diaPrimero[1]),
+    );
+  }
+
+  // Formato desconocido o mal escrito: se rechaza a propósito.
+  return null;
 }
