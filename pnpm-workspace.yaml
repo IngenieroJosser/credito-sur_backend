@@ -1,0 +1,20 @@
+# pnpm 10+ bloquea por defecto los scripts de instalacion de las dependencias, y
+# un script sin decidir hace que `pnpm install` termine con error (rompe el
+# despliegue). Aqui queda decidido explicitamente cuales pueden ejecutarse:
+#
+#   argon2, @prisma/engines : modulos nativos. Sin ellos no hay hasheo de
+#                             contrasenas ni motor de consultas.
+#   prisma                  : genera el cliente tipado tras instalar.
+#   @nestjs/core, @swc/core : postinstall del framework y transpilacion de pruebas.
+#   msgpackr-extract        : acelerador nativo opcional.
+#   @scarf/scarf            : telemetria del ecosistema; se permite para que el
+#                             install no quede pendiente de decision.
+allowBuilds:
+  argon2: true
+  '@prisma/engines': true
+  prisma: true
+  '@nestjs/core': true
+  '@swc/core': true
+  msgpackr-extract: true
+  '@scarf/scarf': true
+  '@parcel/watcher': true
