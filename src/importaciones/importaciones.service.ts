@@ -1765,6 +1765,27 @@ export class ImportacionesService {
             },
           });
           loteId = lote.id;
+
+          // 5. Enlazar lo creado con su lote.
+          //
+          // El lote se registra al final de la transaccion, cuando los
+          // clientes y prestamos ya existen, asi que el enlace se hace ahora.
+          // El resumen del lote ya guardaba estos ids, pero eso solo permite ir
+          // del lote a los registros; la columna permite el camino inverso, que
+          // es el que necesitan el detalle del credito y las aprobaciones para
+          // decir de donde salio.
+          if (idsClientesCreados.length > 0) {
+            await tx.cliente.updateMany({
+              where: { id: { in: idsClientesCreados } },
+              data: { loteImportacionId: lote.id },
+            });
+          }
+          if (idsPrestamosCreados.length > 0) {
+            await tx.prestamo.updateMany({
+              where: { id: { in: idsPrestamosCreados } },
+              data: { loteImportacionId: lote.id },
+            });
+          }
         },
         // Migrar una cartera completa no cabe en los 5 s que Prisma da por
         // defecto a una transacción interactiva.
