@@ -1894,6 +1894,16 @@ export class LoansService implements OnModuleInit {
           ...this.collectorLoanScope(actor),
         },
         include: {
+          // Origen del registro: si vino de una carga masiva, la pantalla lo
+          // dice de forma explicita en vez de presentarlo como un alta normal.
+          loteImportacion: {
+            select: {
+              id: true,
+              nombreArchivo: true,
+              creadoEn: true,
+              confirmadoEn: true,
+            },
+          },
           archivos: {
             where: { estado: 'ACTIVO' },
           },

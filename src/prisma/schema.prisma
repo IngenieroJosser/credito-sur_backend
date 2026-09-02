@@ -213,12 +213,19 @@ model Cliente {
   transacciones             Transaccion[]
   alertasCliente            AlertaCliente[]
 
+  /// Lote de importacion del que salio este registro, si vino de uno.
+  /// Permite decir de forma explicita "proviene de la importacion X" y hace
+  /// que deshacer un lote sea exacto en vez de heuristico.
+  loteImportacionId String?
+  loteImportacion   ImportacionLote? @relation(fields: [loteImportacionId], references: [id])
+
   @@index([dni])
   @@index([nivelRiesgo])
   @@index([enListaNegra])
   @@index([estadoAprobacion])
   @@index([creadoPorId])
   @@index([estadoSincronizacion])
+  @@index([loteImportacionId])
 }
 
 model Producto {
@@ -322,6 +329,12 @@ model Prestamo {
   archivos             Multimedia[]         @relation("MultimediaPrestamo")
   ruta                 Ruta?                @relation(fields: [rutaId], references: [id])
 
+  /// Lote de importacion del que salio este registro, si vino de uno.
+  /// Permite decir de forma explicita "proviene de la importacion X" y hace
+  /// que deshacer un lote sea exacto en vez de heuristico.
+  loteImportacionId String?
+  loteImportacion   ImportacionLote? @relation(fields: [loteImportacionId], references: [id])
+
   @@index([numeroPrestamo])
   @@index([rutaId])
   @@index([clienteId])
@@ -331,6 +344,7 @@ model Prestamo {
   @@index([estadoSincronizacion])
   @@index([fechaInicio])
   @@index([fechaFin])
+  @@index([loteImportacionId])
 }
 
 model Cuota {
@@ -1290,7 +1304,9 @@ model ImportacionLote {
   creadoEn      DateTime          @default(now())
   confirmadoEn  DateTime?
 
-  creadoPor Usuario @relation(fields: [creadoPorId], references: [id])
+  creadoPor Usuario   @relation(fields: [creadoPorId], references: [id])
+  clientes  Cliente[]
+  prestamos Prestamo[]
 
   @@index([tipo])
   @@index([estado])
