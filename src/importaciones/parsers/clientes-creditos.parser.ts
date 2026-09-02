@@ -1128,6 +1128,35 @@ export class ClientesCreditosParser {
           );
         }
 
+        // Una fecha mal escrita (p. ej. `02/09 2026`) ya no se interpreta a la
+        // fuerza: `leerFecha` devuelve null. Si la celda TENÍA algo escrito, se
+        // reporta la fila en vez de perder el dato en silencio.
+        const avisarFechaInvalida = (
+          campo: string,
+          columna: number,
+          fecha: Date | null,
+        ) => {
+          if (fecha) return;
+          const escrito = leerTexto(celda(row, columna));
+          if (!escrito) return;
+          addError(
+            campo,
+            'Fecha no válida. Escríbela como AAAA-MM-DD (o DD/MM/AAAA)',
+            celda(row, columna),
+          );
+        };
+
+        avisarFechaInvalida(
+          'fecha_primer_cobro',
+          creFechaPrimerCobro,
+          fechaPrimerCobro,
+        );
+        avisarFechaInvalida(
+          'fecha_ultimo_pago',
+          creFechaUltimoPago,
+          fechaUltimoPago,
+        );
+
         if (
           fechaPrimerCobro &&
           fechaCredito &&

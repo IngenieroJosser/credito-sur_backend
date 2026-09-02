@@ -92,18 +92,20 @@ const DIN = {
   // Opcionales
   fechaPrimerCobro: 12,
   notas: 13,
-  numeroCredito: 14,
-  // Automáticas, al final
-  cliente: 15,
-  revision: 16,
-  plazoMesesAuto: 17,
-  interesTotal: 18,
-  totalPagar: 19,
-  valorCuota: 20,
-  cuotasPagadasAuto: 21,
-  saldoPendiente: 22,
-  movimiento: 23,
-  debeCuotaAuto: 24,
+  // Automáticas / calculadas, al final. El número de crédito va aquí porque el
+  // sistema lo genera si se deja vacío (queda gris junto a las demás), aunque
+  // sigue siendo editable para conservar números reales al migrar histórico.
+  cliente: 14,
+  revision: 15,
+  plazoMesesAuto: 16,
+  interesTotal: 17,
+  totalPagar: 18,
+  valorCuota: 19,
+  cuotasPagadasAuto: 20,
+  saldoPendiente: 21,
+  movimiento: 22,
+  debeCuotaAuto: 23,
+  numeroCredito: 24,
 };
 
 // ── Columnas de "Créditos de artículo" ─────────────────────────────────────
@@ -127,19 +129,19 @@ const ART = {
   fechaPrimerCobro: 11,
   monto: 12,
   notas: 13,
-  numeroCredito: 14,
-  // Automáticas, al final
-  cliente: 15,
-  articulo: 16,
-  revision: 17,
-  precioPlazo: 18,
-  cantidadCuotasAuto: 19,
-  totalPagar: 20,
-  valorCuota: 21,
-  cuotasPagadasAuto: 22,
-  saldoPendiente: 23,
-  movimiento: 24,
-  debeCuotaAuto: 25,
+  // Automáticas / calculadas, al final (ver nota en DIN sobre el número).
+  cliente: 14,
+  articulo: 15,
+  revision: 16,
+  precioPlazo: 17,
+  cantidadCuotasAuto: 18,
+  totalPagar: 19,
+  valorCuota: 20,
+  cuotasPagadasAuto: 21,
+  saldoPendiente: 22,
+  movimiento: 23,
+  debeCuotaAuto: 24,
+  numeroCredito: 25,
 };
 
 const COLUMNAS_CLIENTES: ColumnaPlantilla[] = [
@@ -209,12 +211,6 @@ const COLUMNAS_CREDITOS_DINERO: ColumnaPlantilla[] = [
     numFmt: FORMATO_FECHA,
   },
   { header: 'Notas', key: 'notas', width: 26 },
-  {
-    header: 'Número de crédito',
-    key: 'numero_prestamo',
-    width: 26,
-    sugerida: true,
-  },
   // Automáticas, al final
   {
     header: 'Cliente encontrado (automático)',
@@ -285,6 +281,15 @@ const COLUMNAS_CREDITOS_DINERO: ColumnaPlantilla[] = [
     automatica: true,
     numFmt: FORMATO_MONEDA,
   },
+  {
+    // Se genera solo si se deja vacío (IMP-<cc>-<n>). Va gris al final junto a
+    // las calculadas, pero editable: permite conservar el número real del
+    // crédito al migrar cartera histórica.
+    header: 'Número de crédito',
+    key: 'numero_prestamo',
+    width: 26,
+    sugerida: true,
+  },
 ];
 
 const COLUMNAS_CREDITOS_ARTICULO: ColumnaPlantilla[] = [
@@ -330,12 +335,6 @@ const COLUMNAS_CREDITOS_ARTICULO: ColumnaPlantilla[] = [
   },
   { header: 'Monto', key: 'monto', width: 15, numFmt: FORMATO_MONEDA },
   { header: 'Notas', key: 'notas', width: 26 },
-  {
-    header: 'Número de crédito',
-    key: 'numero_prestamo',
-    width: 26,
-    sugerida: true,
-  },
   // Automáticas, al final
   {
     header: 'Cliente encontrado (automático)',
@@ -407,6 +406,15 @@ const COLUMNAS_CREDITOS_ARTICULO: ColumnaPlantilla[] = [
     width: 24,
     automatica: true,
     numFmt: FORMATO_MONEDA,
+  },
+  {
+    // Se genera solo si se deja vacío (IMP-<cc>-<n>). Va gris al final junto a
+    // las calculadas, pero editable: permite conservar el número real del
+    // crédito al migrar cartera histórica.
+    header: 'Número de crédito',
+    key: 'numero_prestamo',
+    width: 26,
+    sugerida: true,
   },
 ];
 
@@ -901,7 +909,7 @@ export async function generarPlantillaClientesCreditos(
   etiquetarGrupo(
     wsDinero,
     DIN.fechaPrimerCobro,
-    DIN.numeroCredito,
+    DIN.notas,
     'DATOS OPCIONALES',
   );
   etiquetarGrupo(wsDinero, DIN.cliente, DIN.revision, 'VERIFICACIÓN');
@@ -914,7 +922,7 @@ export async function generarPlantillaClientesCreditos(
   etiquetarGrupo(
     wsDinero,
     DIN.plazoMesesAuto,
-    DIN.movimiento,
+    DIN.numeroCredito,
     'CÁLCULOS AUTOMÁTICOS',
   );
 
@@ -1035,7 +1043,7 @@ export async function generarPlantillaClientesCreditos(
   etiquetarGrupo(
     wsArticulo,
     ART.fechaPrimerCobro,
-    ART.numeroCredito,
+    ART.notas,
     'DATOS OPCIONALES',
   );
   etiquetarGrupo(wsArticulo, ART.cliente, ART.revision, 'VERIFICACIÓN');
@@ -1048,7 +1056,7 @@ export async function generarPlantillaClientesCreditos(
   etiquetarGrupo(
     wsArticulo,
     ART.precioPlazo,
-    ART.movimiento,
+    ART.numeroCredito,
     'CÁLCULOS AUTOMÁTICOS',
   );
 
