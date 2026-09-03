@@ -320,6 +320,11 @@ class Interprete {
         return Math.max(...args.map(aNumero));
       case 'MIN':
         return Math.min(...args.map(aNumero));
+      case 'FIXED':
+        // Excel aplica aqui los separadores del equipo de quien abre el
+        // archivo. Se reproduce el caso colombiano, que es el de esta empresa:
+        // punto para los miles y coma para los decimales.
+        return formatoColombiano(aNumero(args[0]), aNumero(args[1] ?? 2));
       default:
         throw new Error(`Función no soportada por el evaluador: ${nombre}`);
     }
@@ -338,4 +343,20 @@ export function evaluarFormula(
 ): ValorCelda {
   const limpia = formula.startsWith('=') ? formula.slice(1) : formula;
   return new Interprete(tokenizar(limpia), celdas).evaluar();
+}
+
+/**
+ * Numero con separadores colombianos: miles con punto, decimales con coma.
+ *
+ * Reproduce lo que hace FIXED en un Excel configurado en español, que es lo que
+ * ve la empresa. Existe para poder comprobar en las pruebas el texto exacto de
+ * la columna "Al confirmar": esa columna no se evaluaba, y por eso paso sin
+ * detectarse que mostraba «$500000,0» en vez de «$500.000».
+ */
+export function formatoColombiano(valor: number, decimales: number): string {
+  const fijo = Math.abs(valor).toFixed(Math.max(0, decimales));
+  const [entera, decimal] = fijo.split('.');
+  const conMiles = entera.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  const signo = valor < 0 ? '-' : '';
+  return decimal ? `${signo}${conMiles},${decimal}` : `${signo}${conMiles}`;
 }

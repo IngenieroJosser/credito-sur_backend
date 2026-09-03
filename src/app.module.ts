@@ -34,6 +34,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { RateLimitGuard } from './common/guards/rate-limit.guard';
 import { HealthController } from './health.controller';
+import { ArchivadosModule } from './archivados/archivados.module';
 
 const shouldEnableMirrorSync =
   process.env.MIRROR_SYNC_ENABLED === 'true' &&
@@ -42,6 +43,7 @@ const shouldEnableMirrorSync =
 
 @Module({
   imports: [
+    ArchivadosModule,
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',

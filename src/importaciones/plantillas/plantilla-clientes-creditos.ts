@@ -18,6 +18,7 @@ import {
   hojaInicio,
   listaDesplegable,
   resaltarSiContiene,
+  ajustarTextoLargo,
 } from './plantillas.util';
 import {
   ETIQUETA_AMORTIZACION,
@@ -537,6 +538,15 @@ function formulaNumeroCredito(colCc: number, hojaPrevia?: string): string {
  * la cifra. La decisión sale del tipo de carga, así que aquí se traduce a algo
  * que se entienda sin saber cómo funciona el importador por dentro.
  */
+/**
+ * El importe se compone con FIXED y no con TEXT.
+ *
+ * TEXT lleva la máscara escrita dentro de la fórmula ("$#,##0"), y Excel la
+ * interpreta con los separadores del idioma de quien abre el archivo: en
+ * configuración española la coma es el separador DECIMAL, así que leía la
+ * máscara como "un decimal" y escribía «$500000,0» en vez de «$500.000».
+ * FIXED no lleva máscara: aplica los separadores que ya use ese Excel.
+ */
 function formulaMovimientoDinero(colTipoCarga: number, colMonto: number) {
   const carga = ref(colTipoCarga);
   const monto = ref(colMonto);
@@ -544,7 +554,7 @@ function formulaMovimientoDinero(colTipoCarga: number, colMonto: number) {
     `IF(${carga}="","",` +
     `IF(${carga}="OPERATIVA",` +
     `IF(${monto}="","Saldrá el monto del crédito de la Caja de Oficina",` +
-    `"Saldrán "&TEXT(${monto},"$#,##0")&" de la Caja de Oficina, porque el crédito se entrega hoy"),` +
+    `"Saldrán $"&FIXED(${monto},0)&" de la Caja de Oficina, porque el crédito se entrega hoy"),` +
     `"No mueve caja: el crédito ya venía cobrándose"))`
   );
 }
@@ -560,7 +570,7 @@ function formulaMovimientoArticulo(
     `IF(${carga}="OPERATIVA",` +
     `"Sale 1 unidad del inventario, porque el artículo se entrega hoy"&` +
     `IF(IF(${inicial}="",0,${inicial})>0,` +
-    `" · Entran "&TEXT(${inicial},"$#,##0")&" de cuota inicial a la Caja de Oficina",""),` +
+    `" · Entran $"&FIXED(${inicial},0)&" de cuota inicial a la Caja de Oficina",""),` +
     `"No mueve caja ni inventario: el crédito ya venía cobrándose"))`
   );
 }
@@ -1023,6 +1033,7 @@ export async function generarPlantillaClientesCreditos(
     ),
   );
   resaltarSiContiene(wsDinero, DIN.revision, '⚠');
+  ajustarTextoLargo(wsDinero, [DIN.revision, DIN.movimiento]);
 
   congelarEncabezados(wsDinero, DIN.cc);
   activarFiltro(wsDinero, DIN.movimiento);
@@ -1197,6 +1208,7 @@ export async function generarPlantillaClientesCreditos(
     ),
   );
   resaltarSiContiene(wsArticulo, ART.revision, '⚠');
+  ajustarTextoLargo(wsArticulo, [ART.revision, ART.movimiento]);
 
   congelarEncabezados(wsArticulo, ART.cc);
   activarFiltro(wsArticulo, ART.movimiento);

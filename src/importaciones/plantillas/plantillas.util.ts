@@ -390,3 +390,27 @@ export function comoBuffer(
     filename,
   };
 }
+
+/**
+ * Deja que los mensajes largos se lean enteros.
+ *
+ * Las columnas de revision y de "al confirmar" llevan frases, no cifras. Sin
+ * ajuste de texto Excel las corta en el borde de la celda en cuanto la de al
+ * lado tiene contenido, y el usuario solo ve el principio: justo el aviso que
+ * necesitaba leer. Con wrapText la fila crece de alto y la frase se lee entera.
+ *
+ * Se reponen despues los encabezados, porque dar formato a la columna tambien
+ * alcanza a su cabecera y le quitaria el centrado del resto.
+ */
+export function ajustarTextoLargo(
+  ws: ExcelJS.Worksheet,
+  columnas: number[],
+): void {
+  for (const indice of columnas) {
+    ws.getColumn(indice).alignment = { wrapText: true, vertical: 'top' };
+    ws.getRow(FILA_ENCABEZADOS).getCell(indice).alignment = {
+      vertical: 'middle',
+      wrapText: true,
+    };
+  }
+}
