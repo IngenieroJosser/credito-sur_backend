@@ -2,9 +2,10 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { EstadoAprobacion } from '@prisma/client';
+import { EstadoAprobacion, RolUsuario } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import {
   PrestamosMoraFiltrosDto,
@@ -1245,7 +1246,11 @@ export class ReportsService {
     };
   }
 
-  async getRouteDetail(routeId: string, filters: any) {
+  async getRouteDetail(
+    routeId: string,
+    filters: any,
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
+  ) {
     const route = await this.prisma.ruta.findUnique({
       where: { id: routeId },
       include: {
@@ -1269,6 +1274,18 @@ export class ReportsService {
 
     if (!route) {
       throw new NotFoundException(`Ruta con ID ${routeId} no encontrada`);
+    }
+
+    // Un supervisor solo puede ver el detalle de las rutas que supervisa; de lo
+    // contrario podria consultar el recaudo y los clientes de cualquier ruta.
+    // Admin, coordinador y superadmin tienen vision total.
+    const rolActor = String(actor?.rol || '').toUpperCase();
+    if (
+      rolActor === RolUsuario.SUPERVISOR &&
+      actor?.id &&
+      (route as any).supervisorId !== actor.id
+    ) {
+      throw new ForbiddenException('No supervisa esta ruta');
     }
 
     const dateRange = calculateDateRange(

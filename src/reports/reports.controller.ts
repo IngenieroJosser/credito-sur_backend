@@ -302,14 +302,19 @@ export class ReportsController {
   async getRouteDetail(
     @Param('routeId') routeId: string,
     @Query('period') period: string,
+    @Req() req: any,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
-    return this.reportsService.getRouteDetail(routeId, {
-      period,
-      startDate,
-      endDate,
-    });
+    return this.reportsService.getRouteDetail(
+      routeId,
+      {
+        period,
+        startDate,
+        endDate,
+      },
+      req?.user,
+    );
   }
 
   @Get('financial/export')
