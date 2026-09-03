@@ -114,3 +114,58 @@ describe('ReportsService getRouteDetail: jurisdicción del supervisor', () => {
     expect(prisma.ruta.findUnique).toHaveBeenCalled();
   });
 })
+
+describe('ReportsService: scope de rutas por rol en reportes de mora/vencidas', () => {
+  // Captura el where con que se consulta, para verificar que lleva el filtro de ruta.
+  function prismaEspia() {
+    const capturado: any = { estadisticas: [] };
+    return {
+      capturado,
+      prisma: {
+        prestamo: {
+          findMany: jest.fn().mockImplementation(({ where }: any) => {
+            capturado.moraWhere = where;
+            return Promise.resolve([]);
+          }),
+          count: jest.fn().mockImplementation(({ where }: any) => {
+            capturado.estadisticas.push(where);
+            return Promise.resolve(0);
+          }),
+          aggregate: jest.fn().mockResolvedValue({ _sum: {}, _count: {} }),
+        },
+        cuota: { aggregate: jest.fn().mockResolvedValue({ _sum: {} }) },
+      } as any,
+    };
+  }
+
+  it('el supervisor filtra la mora por sus rutas (supervisorId)', async () => {
+    const { prisma, capturado } = prismaEspia();
+    const service = new ReportsService(prisma, {} as any, {} as any);
+    await service.obtenerPrestamosEnMora({} as any, 1, 50, {
+      id: 'sup-1',
+      rol: 'SUPERVISOR',
+    });
+    expect(capturado.moraWhere?.ruta?.is?.supervisorId).toBe('sup-1');
+  });
+
+  it('el admin NO filtra por ruta (ve todo)', async () => {
+    const { prisma, capturado } = prismaEspia();
+    const service = new ReportsService(prisma, {} as any, {} as any);
+    await service.obtenerPrestamosEnMora({} as any, 1, 50, {
+      id: 'admin-1',
+      rol: 'ADMIN',
+    });
+    expect(capturado.moraWhere?.ruta).toBeUndefined();
+  });
+
+  it('las estadísticas de mora del supervisor van filtradas por su ruta', async () => {
+    const { prisma, capturado } = prismaEspia();
+    const service = new ReportsService(prisma, {} as any, {} as any);
+    await service.obtenerEstadisticasMora({ id: 'sup-9', rol: 'SUPERVISOR' });
+    // todos los count deben llevar el scope de ruta
+    expect(capturado.estadisticas.length).toBeGreaterThan(0);
+    for (const w of capturado.estadisticas) {
+      expect(w?.ruta?.is?.supervisorId).toBe('sup-9');
+    }
+  });
+})

@@ -183,10 +183,44 @@ export class ReportsService {
     return { metaMargen };
   }
 
+  /**
+   * Filtro de ruta según el rol del actor, para restringir los reportes a lo
+   * que le corresponde SIN alterar los cálculos: solo acota el conjunto.
+   *
+   * - Supervisor: solo las rutas que supervisa.
+   * - Cobrador: solo las suyas (asignación activa o cobrador de la ruta).
+   * - Admin, coordinador, superadmin (o sin actor): sin filtro, ven todo.
+   *
+   * Se aplica sobre consultas de Préstamo (`{ ruta: { is: ... } }`).
+   */
+  private filtroRutaScopePrestamo(
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
+  ): Record<string, any> {
+    const rol = String(actor?.rol || '').toUpperCase();
+    if (!actor?.id) return {};
+    if (rol === RolUsuario.SUPERVISOR) {
+      return { ruta: { is: { supervisorId: actor.id } } };
+    }
+    if (rol === RolUsuario.COBRADOR) {
+      return {
+        ruta: {
+          is: {
+            OR: [
+              { cobradorId: actor.id },
+              { asignaciones: { some: { activa: true, cobradorId: actor.id } } },
+            ],
+          },
+        },
+      };
+    }
+    return {};
+  }
+
   async obtenerPrestamosEnMora(
     filtros: PrestamosMoraFiltrosDto,
     pagina: number = 1,
     limite: number = 50,
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
   ): Promise<PrestamosMoraResponseDto> {
     const skip = (pagina - 1) * limite;
 
@@ -225,6 +259,8 @@ export class ReportsService {
 
     const whereConditions: any = {
       estado: { in: ['EN_MORA', 'ACTIVO'] },
+      // El supervisor/cobrador solo ve la mora de sus rutas.
+      ...this.filtroRutaScopePrestamo(actor),
     };
 
     // Nota importante:
@@ -571,7 +607,11 @@ export class ReportsService {
     );
   }
 
-  async obtenerEstadisticasMora() {
+  async obtenerEstadisticasMora(
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
+  ) {
+    // El supervisor/cobrador solo cuenta la mora de sus rutas.
+    const scope = this.filtroRutaScopePrestamo(actor);
     const [
       totalPrestamosMora,
       prestamosRojos,
@@ -580,7 +620,7 @@ export class ReportsService {
       deudaTotal,
     ] = await Promise.all([
       this.prisma.prestamo.count({
-        where: { estado: 'EN_MORA' },
+        where: { estado: 'EN_MORA', ...scope },
       }),
       this.prisma.prestamo.count({
         where: {
@@ -588,6 +628,7 @@ export class ReportsService {
           cliente: {
             nivelRiesgo: 'ROJO',
           },
+          ...scope,
         },
       }),
       this.prisma.prestamo.count({
@@ -596,6 +637,7 @@ export class ReportsService {
           cliente: {
             nivelRiesgo: 'LISTA_NEGRA',
           },
+          ...scope,
         },
       }),
       this.prisma.cuota.aggregate({
@@ -603,6 +645,7 @@ export class ReportsService {
           estado: 'VENCIDA',
           prestamo: {
             estado: 'EN_MORA',
+            ...scope,
           },
         },
         _sum: {
@@ -610,7 +653,7 @@ export class ReportsService {
         },
       }),
       this.prisma.prestamo.aggregate({
-        where: { estado: 'EN_MORA' },
+        where: { estado: 'EN_MORA', ...scope },
         _sum: {
           saldoPendiente: true,
         },
@@ -629,6 +672,7 @@ export class ReportsService {
     filtros: CuentasVencidasFiltrosDto,
     pagina: number = 1,
     limite: number = 50,
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
   ): Promise<CuentasVencidasResponseDto> {
     const skip = (pagina - 1) * limite;
     const hoy = new Date();
@@ -637,6 +681,8 @@ export class ReportsService {
       fechaFin: { lt: hoy },
       estado: { in: ['EN_MORA', 'INCUMPLIDO', 'PERDIDA'] },
       saldoPendiente: { gt: 0 },
+      // El supervisor/cobrador solo ve las vencidas de sus rutas.
+      ...this.filtroRutaScopePrestamo(actor),
     };
 
     if (filtros.busqueda) {
@@ -899,8 +945,31 @@ export class ReportsService {
     );
   }
 
+  /**
+   * Filtro directo sobre la tabla Ruta según el actor (para consultas
+   * `ruta.findMany`). Mismo criterio que `filtroRutaScopePrestamo` pero al
+   * nivel de la propia ruta.
+   */
+  private filtroRutaDirectoPorActor(
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
+  ): Record<string, any> {
+    const rol = String(actor?.rol || '').toUpperCase();
+    if (!actor?.id) return {};
+    if (rol === RolUsuario.SUPERVISOR) return { supervisorId: actor.id };
+    if (rol === RolUsuario.COBRADOR) {
+      return {
+        OR: [
+          { cobradorId: actor.id },
+          { asignaciones: { some: { activa: true, cobradorId: actor.id } } },
+        ],
+      };
+    }
+    return {};
+  }
+
   async getOperationalReport(
     filters: GetOperationalReportDto,
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
   ): Promise<OperationalReportResponse> {
     const { period, routeId, startDate, endDate } = filters;
 
@@ -908,7 +977,11 @@ export class ReportsService {
     // igual a la vista del listado de rutas (metaDelDia/cobranzaDelDia/avanceDiario).
     // Esto evita discrepancias y hace que el objetivo tenga sentido operativo.
     if (period === 'today') {
-      const rutasListado = await this.routesService.findAll({ activa: true });
+      // El actor filtra las rutas: el supervisor/cobrador solo ve las suyas.
+      const rutasListado = await this.routesService.findAll(
+        { activa: true },
+        actor as any,
+      );
       const rutas = (rutasListado as any)?.data || [];
 
       const rutasFiltradas = routeId
@@ -1024,6 +1097,8 @@ export class ReportsService {
       where: {
         ...(routeId && { id: routeId }),
         activa: true,
+        // El supervisor/cobrador solo ve sus rutas en el reporte operativo.
+        ...this.filtroRutaDirectoPorActor(actor),
       },
       include: {
         cobrador: {
