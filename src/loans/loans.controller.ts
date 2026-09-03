@@ -1240,8 +1240,11 @@ export class LoansController {
     required: false,
     enum: ['PENDIENTE', 'APROBADO', 'RECHAZADO', 'TODOS'],
   })
-  async listarReprogramacionesPendientes(@Query('estado') estado?: string) {
-    return this.loansService.listarReprogramacionesPendientes(estado);
+  async listarReprogramacionesPendientes(
+    @Query('estado') estado?: string,
+    @Request() req?: any,
+  ) {
+    return this.loansService.listarReprogramacionesPendientes(estado, req?.user);
   }
 
   @Patch('reprogramaciones/:id/aprobar')
@@ -1254,7 +1257,7 @@ export class LoansController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Aprobar solicitud de reprogramación' })
   async aprobarReprogramacion(@Param('id') id: string, @Request() req: any) {
-    return this.loansService.aprobarReprogramacion(id, req.user.id);
+    return this.loansService.aprobarReprogramacion(id, req.user.id, req.user);
   }
 
   @Patch('reprogramaciones/:id/rechazar')
@@ -1275,6 +1278,7 @@ export class LoansController {
       id,
       req.user.id,
       body.comentarios,
+      req.user,
     );
   }
 }

@@ -1,6 +1,7 @@
 import {
   Injectable,
   NotFoundException,
+  ForbiddenException,
   Logger,
   BadRequestException,
   ConflictException,
@@ -5241,7 +5242,34 @@ export class LoansService implements OnModuleInit {
   /**
    * Lista todas las reprogramaciones PENDIENTES para el módulo de revisiones.
    */
-  async listarReprogramacionesPendientes(estado?: string) {
+  /**
+   * Préstamos (de una lista de ids) sobre los que el actor tiene jurisdicción.
+   *
+   * El supervisor solo manda en las rutas que supervisa y el cobrador en las
+   * suyas; admin, coordinador y superadmin ven todo. Se reutiliza el mismo
+   * criterio de `collectorLoanScope` para no tener dos definiciones de "mi
+   * ruta" que se puedan desincronizar.
+   */
+  private async prestamosBajoJurisdiccion(
+    prestamoIds: string[],
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
+  ): Promise<Set<string> | null> {
+    const scope = this.collectorLoanScope(actor);
+    // Sin restricción (admin/coordinador/super): jurisdicción total.
+    if (!scope || Object.keys(scope).length === 0) return null;
+    if (prestamoIds.length === 0) return new Set();
+
+    const permitidos = await this.prisma.prestamo.findMany({
+      where: { id: { in: prestamoIds }, ...scope },
+      select: { id: true },
+    });
+    return new Set(permitidos.map((p) => p.id));
+  }
+
+  async listarReprogramacionesPendientes(
+    estado?: string,
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
+  ) {
     const where: any = {
       tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
     };
@@ -5262,7 +5290,20 @@ export class LoansService implements OnModuleInit {
       },
     });
 
-    return solicitudes.map((s) => ({
+    // El supervisor/cobrador solo debe ver las reprogramaciones de sus rutas.
+    const idsPrestamo = solicitudes
+      .map((s) => (s.datosSolicitud as any)?.prestamoId)
+      .filter((id): id is string => typeof id === 'string');
+    const permitidos = await this.prestamosBajoJurisdiccion(idsPrestamo, actor);
+
+    const visibles =
+      permitidos === null
+        ? solicitudes
+        : solicitudes.filter((s) =>
+            permitidos.has((s.datosSolicitud as any)?.prestamoId),
+          );
+
+    return visibles.map((s) => ({
       ...s,
       datosSolicitud: s.datosSolicitud as Record<string, any>,
     }));
@@ -5271,12 +5312,38 @@ export class LoansService implements OnModuleInit {
   /**
    * SUPERVISOR/ADMIN aprueba una reprogramación: confirma el efecto provisional.
    */
-  async aprobarReprogramacion(aprobacionId: string, aprobadoPorId: string) {
+  /**
+   * Verifica que el actor pueda intervenir en la reprogramación de este
+   * préstamo. Un supervisor/cobrador solo manda en sus rutas; si intenta
+   * aprobar o rechazar una de otra ruta, se rechaza con 403.
+   */
+  private async exigirJurisdiccionReprogramacion(
+    aprobacion: { datosSolicitud: any },
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
+  ): Promise<void> {
+    const prestamoId = (aprobacion.datosSolicitud as any)?.prestamoId;
+    if (typeof prestamoId !== 'string') return;
+    const permitidos = await this.prestamosBajoJurisdiccion([prestamoId], actor);
+    // null = jurisdicción total (admin/coordinador/super).
+    if (permitidos === null) return;
+    if (!permitidos.has(prestamoId)) {
+      throw new ForbiddenException(
+        'No puede intervenir en reprogramaciones de rutas que no supervisa',
+      );
+    }
+  }
+
+  async aprobarReprogramacion(
+    aprobacionId: string,
+    aprobadoPorId: string,
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
+  ) {
     const aprobacion = await this.prisma.aprobacion.findUnique({
       where: { id: aprobacionId },
       include: { efectosProvisionales: true },
     });
     if (!aprobacion) throw new NotFoundException('Solicitud no encontrada');
+    await this.exigirJurisdiccionReprogramacion(aprobacion, actor);
     if (aprobacion.estado !== EstadoAprobacion.PENDIENTE) {
       throw new BadRequestException(
         'Solo se pueden aprobar solicitudes pendientes',
@@ -5348,12 +5415,14 @@ export class LoansService implements OnModuleInit {
     aprobacionId: string,
     rechazadoPorId: string,
     comentarios?: string,
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
   ) {
     const aprobacion = await this.prisma.aprobacion.findUnique({
       where: { id: aprobacionId },
       include: { efectosProvisionales: true },
     });
     if (!aprobacion) throw new NotFoundException('Solicitud no encontrada');
+    await this.exigirJurisdiccionReprogramacion(aprobacion, actor);
     if (aprobacion.estado !== EstadoAprobacion.PENDIENTE) {
       throw new BadRequestException(
         'Solo se pueden rechazar solicitudes pendientes',
