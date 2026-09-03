@@ -23,6 +23,20 @@ import {
 } from './interes-credito';
 import { pesos } from '../common/dinero.util';
 
+/**
+ * Clave de comparacion de categorias: sin mayusculas, sin acentos y sin
+ * espacios sobrantes, para no duplicar la misma categoria escrita distinto.
+ */
+export function normalizarNombreCategoria(valor: unknown): string {
+  if (typeof valor !== 'string') return '';
+  return valor
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '') // marcas de acento
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
 @Injectable()
 export class ImportacionesService {
   private clientesCreditosParser: ClientesCreditosParser;
@@ -779,6 +793,16 @@ export class ImportacionesService {
     // crea catálogo, stock y precios, pero no genera asientos contables.
     await this.prisma.$transaction(
       async (tx) => {
+        // El archivo trae la categoría escrita a mano. Se resuelve una sola vez
+        // contra el catálogo para que el artículo importado quede enlazado
+        // igual que uno creado a mano, y no solo con el nombre suelto.
+        const categoriasPorNombre = await this.resolverCategoriasArticulo(
+          tx,
+          articulos.map((art: any) => art.categoria),
+        );
+        const idCategoria = (nombre: unknown) =>
+          categoriasPorNombre.get(normalizarNombreCategoria(nombre)) ?? null;
+
         // Crear o verificar artículos (idempotencia por código)
         for (const art of articulos) {
           const existe = await tx.producto.findUnique({
@@ -800,6 +824,7 @@ export class ImportacionesService {
                 nombre: art.nombre,
                 descripcion: art.descripcion || null,
                 categoria: art.categoria,
+                categoriaId: idCategoria(art.categoria),
                 marca: art.marca || null,
                 modelo: art.modelo || null,
                 costo: art.costo,
@@ -836,6 +861,7 @@ export class ImportacionesService {
               nombre: art.nombre,
               descripcion: art.descripcion || null,
               categoria: art.categoria,
+              categoriaId: idCategoria(art.categoria),
               marca: art.marca || null,
               modelo: art.modelo || null,
               costo: art.costo,
@@ -1844,4 +1870,55 @@ export class ImportacionesService {
       resumen: resultado.resumen,
     };
   }
+
+  /**
+   * Deja cada categoria del archivo dada de alta en el catalogo del sistema.
+   *
+   * La importacion guardaba la categoria solo como texto libre en el producto,
+   * asi que una categoria que llegaba por archivo no existia para el resto del
+   * sistema: no salia en el desplegable al crear un articulo a mano, ni servia
+   * para filtrar el inventario. Ahora se busca por nombre y, si no esta, se
+   * crea con tipo ARTICULO, que es el que usa el catalogo de productos.
+   *
+   * La comparacion ignora mayusculas, acentos y espacios sobrantes para que
+   * "Celulares", "celulares" y "Celualres " no acaben siendo tres categorias
+   * distintas. Se reutiliza siempre la que ya existiera: nunca se renombra ni
+   * se toca una categoria creada a mano.
+   */
+  private async resolverCategoriasArticulo(
+    // Mismo tipado que el resto de ayudantes transaccionales del servicio.
+    tx: any,
+    nombres: unknown[],
+  ): Promise<Map<string, string>> {
+    const porClave = new Map<string, string>();
+
+    const pedidas = new Map<string, string>();
+    for (const nombre of nombres) {
+      const clave = normalizarNombreCategoria(nombre);
+      if (!clave || pedidas.has(clave)) continue;
+      pedidas.set(clave, String(nombre).trim());
+    }
+    if (pedidas.size === 0) return porClave;
+
+    const existentes = await tx.categoria.findMany({
+      where: { tipo: 'ARTICULO', eliminadoEn: null },
+      select: { id: true, nombre: true },
+    });
+    for (const categoria of existentes) {
+      const clave = normalizarNombreCategoria(categoria.nombre);
+      if (clave && !porClave.has(clave)) porClave.set(clave, categoria.id);
+    }
+
+    for (const [clave, nombre] of pedidas) {
+      if (porClave.has(clave)) continue;
+      const creada = await tx.categoria.create({
+        data: { nombre, tipo: 'ARTICULO', activa: true },
+        select: { id: true },
+      });
+      porClave.set(clave, creada.id);
+    }
+
+    return porClave;
+  }
+
 }
