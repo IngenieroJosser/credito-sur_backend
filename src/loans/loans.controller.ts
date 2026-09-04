@@ -322,6 +322,35 @@ export class LoansController {
     return this.loansService.getLoanCuotas(id, req.user);
   }
 
+  @Post('simular')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.COBRADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.PUNTO_DE_VENTA,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Simular el plan de cuotas sin guardar',
+    description:
+      'Proyecta interés, total y cuotas con la misma fórmula que la creación real. Solo lectura: no persiste nada.',
+  })
+  async simularPlan(@Body() body: any) {
+    return this.loansService.simularCredito({
+      tipoAmortizacion: body?.tipoAmortizacion,
+      monto: Number(body?.monto) || 0,
+      tasaInteres: Number(body?.tasaInteres) || 0,
+      cantidadCuotas: Number(body?.cantidadCuotas) || 0,
+      plazoMeses: Number(body?.plazoMeses) || 0,
+      frecuenciaPago: body?.frecuenciaPago,
+      fechaInicio: body?.fechaInicio,
+      tipoPrestamo: body?.tipoPrestamo,
+      cuotaInicial: Number(body?.cuotaInicial) || 0,
+    });
+  }
+
   @Post()
   @Roles(
     RolUsuario.SUPER_ADMINISTRADOR,
@@ -1240,8 +1269,11 @@ export class LoansController {
     required: false,
     enum: ['PENDIENTE', 'APROBADO', 'RECHAZADO', 'TODOS'],
   })
-  async listarReprogramacionesPendientes(@Query('estado') estado?: string) {
-    return this.loansService.listarReprogramacionesPendientes(estado);
+  async listarReprogramacionesPendientes(
+    @Query('estado') estado?: string,
+    @Request() req?: any,
+  ) {
+    return this.loansService.listarReprogramacionesPendientes(estado, req?.user);
   }
 
   @Patch('reprogramaciones/:id/aprobar')
@@ -1254,7 +1286,7 @@ export class LoansController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Aprobar solicitud de reprogramación' })
   async aprobarReprogramacion(@Param('id') id: string, @Request() req: any) {
-    return this.loansService.aprobarReprogramacion(id, req.user.id);
+    return this.loansService.aprobarReprogramacion(id, req.user.id, req.user);
   }
 
   @Patch('reprogramaciones/:id/rechazar')
@@ -1275,6 +1307,7 @@ export class LoansController {
       id,
       req.user.id,
       body.comentarios,
+      req.user,
     );
   }
 }

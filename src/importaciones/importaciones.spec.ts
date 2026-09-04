@@ -783,6 +783,55 @@ describe('Equivalencia con la creación de créditos del sistema', () => {
       expect(sumaInteres).toBe(interesImportacion);
     },
   );
+
+  // Regresión: con capital=100 y tasa=29, el interés exacto es 29. Dividir la
+  // tasa antes de truncar (100 * (29/100)) da 28.999999996 y truncaba a 28.
+  // La tasa debe entrar en base entera (centésimas) para recuperar el 29.
+  it('no pierde un peso por el error binario al truncar (100 * 29% = 29, no 28)', () => {
+    const plazoMeses = derivarPlazoMeses(3, FrecuenciaPago.QUINCENAL);
+    expect(calcularInteresTotal('INTERES_PLANO', 100, 29, plazoMeses)).toBe(29);
+    // El sistema real y la importación coinciden en el caso que fallaba.
+    const sistema = calcularConElSistema(
+      'INTERES_PLANO',
+      100,
+      29,
+      3,
+      plazoMeses,
+      FrecuenciaPago.QUINCENAL,
+    );
+    expect(sistema.interesTotal).toBe(29);
+  });
+
+  // La vista previa del modal de edición se apoya en simularCredito: debe dar
+  // exactamente lo mismo que la creación real, o volvería la divergencia en pesos.
+  it('simularCredito proyecta lo mismo que la creación real, sin guardar', () => {
+    const plazoMeses = derivarPlazoMeses(13, FrecuenciaPago.QUINCENAL);
+    const sim = (servicioPrestamos as any).simularCredito({
+      tipoAmortizacion: 'INTERES_SIMPLE',
+      monto: 777777,
+      tasaInteres: 7.5,
+      cantidadCuotas: 13,
+      plazoMeses,
+      frecuenciaPago: FrecuenciaPago.QUINCENAL,
+      fechaInicio: '2026-05-01',
+      tipoPrestamo: 'EFECTIVO',
+    });
+    const real = calcularConElSistema(
+      'INTERES_SIMPLE',
+      777777,
+      7.5,
+      13,
+      plazoMeses,
+      FrecuenciaPago.QUINCENAL,
+    );
+    expect(sim.interesTotal).toBe(real.interesTotal);
+    expect(sim.cuotas).toHaveLength(real.cuotas.length);
+    sim.cuotas.forEach((c: any, i: number) => {
+      expect(c.monto).toBe(real.cuotas[i].monto);
+      expect(c.montoCapital).toBe(real.cuotas[i].montoCapital);
+      expect(c.montoInteres).toBe(real.cuotas[i].montoInteres);
+    });
+  });
 });
 
 describe('Limpieza de datos al importar', () => {
@@ -1396,10 +1445,11 @@ describe('Las fórmulas del Excel dan lo mismo que el sistema', () => {
     // Interés simple: multiplica todo y divide al final. La letra de la
     // columna del plazo se deja abierta, para que mover una columna no haga
     // fallar una prueba que habla del orden de las operaciones.
-    expect(interes).toMatch(/ROUND\(\$C7\*\$D7\*MAX\(1,\$[A-Z]+7\)\/100,0\)/);
+    // INT trunca (no redondea): coherente con Math.trunc del sistema.
+    expect(interes).toMatch(/INT\(\$C7\*\$D7\*MAX\(1,\$[A-Z]+7\)\/100\)/);
     // Amortización: la tasa se aplica una sola vez dividiendo primero, que es
     // como lo hace `calcularInteresPlano`.
-    expect(interes).toContain('ROUND($C7*($D7/100),0)');
+    expect(interes).toContain('INT($C7*($D7/100))');
 
     const cuota = formulaDe('Valor cuota');
     expect(cuota).toContain('INT(');

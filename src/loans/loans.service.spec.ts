@@ -2652,3 +2652,48 @@ describe('El arranque no reescribe deudas por su cuenta', () => {
     expect(resultado.processed).toBe(0);
   });
 });
+
+describe('Reprogramaciones: jurisdicción por rol', () => {
+  const solicitudes = [
+    { id: 'ap-1', estado: 'PENDIENTE', datosSolicitud: { prestamoId: 'p-mia' }, creadoEn: new Date() },
+    { id: 'ap-2', estado: 'PENDIENTE', datosSolicitud: { prestamoId: 'p-ajena' }, creadoEn: new Date() },
+  ];
+
+  function prismaConReprogramaciones() {
+    return {
+      aprobacion: {
+        findMany: jest.fn().mockResolvedValue(solicitudes),
+      },
+      // el supervisor solo "es dueño" de p-mia
+      prestamo: {
+        findMany: jest.fn().mockImplementation(({ where }: any) => {
+          const ids: string[] = where?.id?.in ?? [];
+          // simula el filtro por ruta.supervisorId: solo p-mia pasa
+          return Promise.resolve(ids.filter((id) => id === 'p-mia').map((id) => ({ id })));
+        }),
+      },
+    };
+  }
+
+  it('el supervisor solo ve las reprogramaciones de sus rutas', async () => {
+    const prisma = prismaConReprogramaciones();
+    const service = makeService(prisma);
+    const res = await service.listarReprogramacionesPendientes('PENDIENTE', {
+      id: 'sup-1',
+      rol: RolUsuario.SUPERVISOR,
+    });
+    expect(res.map((r: any) => r.id)).toEqual(['ap-1']);
+  });
+
+  it('el admin ve todas las reprogramaciones', async () => {
+    const prisma = prismaConReprogramaciones();
+    const service = makeService(prisma);
+    const res = await service.listarReprogramacionesPendientes('PENDIENTE', {
+      id: 'admin-1',
+      rol: RolUsuario.ADMIN,
+    });
+    expect(res.map((r: any) => r.id)).toEqual(['ap-1', 'ap-2']);
+    // sin restricción no hace falta consultar prestamos
+    expect(prisma.prestamo.findMany).not.toHaveBeenCalled();
+  });
+})

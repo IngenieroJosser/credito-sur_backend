@@ -1,6 +1,7 @@
 import {
   Injectable,
   NotFoundException,
+  ForbiddenException,
   Logger,
   BadRequestException,
   ConflictException,
@@ -1047,7 +1048,12 @@ export class LoansService implements OnModuleInit {
       return { cuotaFija: 0, interesTotal: 0, tabla: [] };
     }
 
-    const interesTotal = Math.round(capital * (tasaTotal / 100));
+    // Interés truncado (no redondeado): nunca se cobra de más y queda coherente
+    // con el reparto de cuotas, que ya trunca. La tasa se pasa a centésimas
+    // (base entera) antes de truncar: dividir /100 primero deja un residuo
+    // binario (capital*(29/100) = 28.999999996 -> truncaría a 28 en vez de 29).
+    const tasaCent = Math.round(tasaTotal * 100);
+    const interesTotal = Math.trunc((capital * tasaCent) / 10000);
     const totalFinanciado = capital + interesTotal;
     const cuotaBase = Math.floor(totalFinanciado / numCuotas);
 
@@ -1361,7 +1367,11 @@ export class LoansService implements OnModuleInit {
       case TipoAmortizacion.INTERES_SIMPLE:
       default: {
         const mesesInteres = Math.max(1, plazoMeses);
-        interesTotal = Math.round((monto * tasaInteres * mesesInteres) / 100);
+        // Interés truncado, coherente con el reparto de cuotas (floor). La tasa
+        // va en centésimas (base entera) para no arrastrar el error de coma
+        // flotante de dividir /100 antes de truncar.
+        const tasaCent = Math.round(tasaInteres * 100);
+        interesTotal = Math.trunc((monto * tasaCent * mesesInteres) / 10000);
 
         const baseCapital = Math.floor(monto / cantidadCuotas);
         const baseInteres = Math.floor(interesTotal / cantidadCuotas);
@@ -1399,6 +1409,74 @@ export class LoansService implements OnModuleInit {
     }
 
     return { interesTotal: Math.round(interesTotal), cuotas };
+  }
+
+  /**
+   * Proyecta el plan de cuotas SIN guardar nada. Reutiliza exactamente el mismo
+   * `calculateInterestAndCuotas` que usa la creación, así que la vista previa del
+   * modal de edición muestra pesos idénticos a los que se persistirían al guardar
+   * (interés, cuota y fechas). Cualquier cambio de fórmula queda en un solo sitio.
+   */
+  simularCredito(params: {
+    tipoAmortizacion?: TipoAmortizacion | string;
+    monto: number;
+    tasaInteres: number;
+    cantidadCuotas: number;
+    plazoMeses: number;
+    frecuenciaPago?: FrecuenciaPago | string;
+    fechaInicio?: string;
+    tipoPrestamo?: string;
+    cuotaInicial?: number;
+  }) {
+    const monto = Number(params.monto) || 0;
+    const cantidadCuotas = Number(params.cantidadCuotas) || 0;
+    if (!(monto > 0) || !(cantidadCuotas > 0)) {
+      return { interesTotal: 0, totalFinal: monto, cuotaProyectada: 0, cuotas: [] };
+    }
+
+    const esArticulo = String(params.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
+    const frecuencia = (String(
+      params.frecuenciaPago || 'MENSUAL',
+    ).toUpperCase() as FrecuenciaPago);
+    const tipo = esArticulo
+      ? TipoAmortizacion.INTERES_SIMPLE
+      : ((String(
+          params.tipoAmortizacion || TipoAmortizacion.INTERES_SIMPLE,
+        ) as TipoAmortizacion));
+
+    // La fecha base se ancla a la zona de Bogotá para que los vencimientos
+    // coincidan con los que calcula la creación real.
+    const base = params.fechaInicio
+      ? new Date(`${params.fechaInicio}T00:00:00-05:00`)
+      : new Date();
+
+    // Un crédito de artículo no cobra interés: se reparte el monto financiado
+    // (tasa 0, interés simple), igual que en la creación.
+    const { interesTotal, cuotas } = this.calculateInterestAndCuotas(
+      tipo,
+      monto,
+      esArticulo ? 0 : Number(params.tasaInteres) || 0,
+      cantidadCuotas,
+      Number(params.plazoMeses) || 0,
+      frecuencia,
+      base,
+      undefined,
+      false,
+    );
+
+    const interesFinal = esArticulo ? 0 : interesTotal;
+    return {
+      interesTotal: interesFinal,
+      totalFinal: monto + interesFinal,
+      cuotaProyectada: cuotas.length > 0 ? cuotas[0].monto : 0,
+      cuotas: cuotas.map((c) => ({
+        numeroCuota: c.numeroCuota,
+        fechaVencimiento: c.fechaVencimiento,
+        monto: c.monto,
+        montoCapital: c.montoCapital,
+        montoInteres: c.montoInteres,
+      })),
+    };
   }
 
   async getAllLoans(
@@ -5241,7 +5319,34 @@ export class LoansService implements OnModuleInit {
   /**
    * Lista todas las reprogramaciones PENDIENTES para el módulo de revisiones.
    */
-  async listarReprogramacionesPendientes(estado?: string) {
+  /**
+   * Préstamos (de una lista de ids) sobre los que el actor tiene jurisdicción.
+   *
+   * El supervisor solo manda en las rutas que supervisa y el cobrador en las
+   * suyas; admin, coordinador y superadmin ven todo. Se reutiliza el mismo
+   * criterio de `collectorLoanScope` para no tener dos definiciones de "mi
+   * ruta" que se puedan desincronizar.
+   */
+  private async prestamosBajoJurisdiccion(
+    prestamoIds: string[],
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
+  ): Promise<Set<string> | null> {
+    const scope = this.collectorLoanScope(actor);
+    // Sin restricción (admin/coordinador/super): jurisdicción total.
+    if (!scope || Object.keys(scope).length === 0) return null;
+    if (prestamoIds.length === 0) return new Set();
+
+    const permitidos = await this.prisma.prestamo.findMany({
+      where: { id: { in: prestamoIds }, ...scope },
+      select: { id: true },
+    });
+    return new Set(permitidos.map((p) => p.id));
+  }
+
+  async listarReprogramacionesPendientes(
+    estado?: string,
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
+  ) {
     const where: any = {
       tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
     };
@@ -5262,7 +5367,20 @@ export class LoansService implements OnModuleInit {
       },
     });
 
-    return solicitudes.map((s) => ({
+    // El supervisor/cobrador solo debe ver las reprogramaciones de sus rutas.
+    const idsPrestamo = solicitudes
+      .map((s) => (s.datosSolicitud as any)?.prestamoId)
+      .filter((id): id is string => typeof id === 'string');
+    const permitidos = await this.prestamosBajoJurisdiccion(idsPrestamo, actor);
+
+    const visibles =
+      permitidos === null
+        ? solicitudes
+        : solicitudes.filter((s) =>
+            permitidos.has((s.datosSolicitud as any)?.prestamoId),
+          );
+
+    return visibles.map((s) => ({
       ...s,
       datosSolicitud: s.datosSolicitud as Record<string, any>,
     }));
@@ -5271,12 +5389,38 @@ export class LoansService implements OnModuleInit {
   /**
    * SUPERVISOR/ADMIN aprueba una reprogramación: confirma el efecto provisional.
    */
-  async aprobarReprogramacion(aprobacionId: string, aprobadoPorId: string) {
+  /**
+   * Verifica que el actor pueda intervenir en la reprogramación de este
+   * préstamo. Un supervisor/cobrador solo manda en sus rutas; si intenta
+   * aprobar o rechazar una de otra ruta, se rechaza con 403.
+   */
+  private async exigirJurisdiccionReprogramacion(
+    aprobacion: { datosSolicitud: any },
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
+  ): Promise<void> {
+    const prestamoId = (aprobacion.datosSolicitud as any)?.prestamoId;
+    if (typeof prestamoId !== 'string') return;
+    const permitidos = await this.prestamosBajoJurisdiccion([prestamoId], actor);
+    // null = jurisdicción total (admin/coordinador/super).
+    if (permitidos === null) return;
+    if (!permitidos.has(prestamoId)) {
+      throw new ForbiddenException(
+        'No puede intervenir en reprogramaciones de rutas que no supervisa',
+      );
+    }
+  }
+
+  async aprobarReprogramacion(
+    aprobacionId: string,
+    aprobadoPorId: string,
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
+  ) {
     const aprobacion = await this.prisma.aprobacion.findUnique({
       where: { id: aprobacionId },
       include: { efectosProvisionales: true },
     });
     if (!aprobacion) throw new NotFoundException('Solicitud no encontrada');
+    await this.exigirJurisdiccionReprogramacion(aprobacion, actor);
     if (aprobacion.estado !== EstadoAprobacion.PENDIENTE) {
       throw new BadRequestException(
         'Solo se pueden aprobar solicitudes pendientes',
@@ -5348,12 +5492,14 @@ export class LoansService implements OnModuleInit {
     aprobacionId: string,
     rechazadoPorId: string,
     comentarios?: string,
+    actor?: { id?: string; rol?: RolUsuario | string } | null,
   ) {
     const aprobacion = await this.prisma.aprobacion.findUnique({
       where: { id: aprobacionId },
       include: { efectosProvisionales: true },
     });
     if (!aprobacion) throw new NotFoundException('Solicitud no encontrada');
+    await this.exigirJurisdiccionReprogramacion(aprobacion, actor);
     if (aprobacion.estado !== EstadoAprobacion.PENDIENTE) {
       throw new BadRequestException(
         'Solo se pueden rechazar solicitudes pendientes',

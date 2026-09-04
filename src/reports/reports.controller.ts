@@ -97,8 +97,9 @@ export class ReportsController {
     @Query() filtros: PrestamosMoraFiltrosDto,
     @Query('pagina', new DefaultValuePipe(1), ParseIntPipe) pagina: number,
     @Query('limite', new DefaultValuePipe(50), ParseIntPipe) limite: number,
+    @Req() req?: any,
   ) {
-    return this.reportsService.obtenerPrestamosEnMora(filtros, pagina, limite);
+    return this.reportsService.obtenerPrestamosEnMora(filtros, pagina, limite, req?.user);
   }
 
   @Post('exportar-mora')
@@ -143,8 +144,8 @@ export class ReportsController {
     status: HttpStatus.OK,
     description: 'Estadísticas de préstamos en mora',
   })
-  async obtenerEstadisticasMora() {
-    return this.reportsService.obtenerEstadisticasMora();
+  async obtenerEstadisticasMora(@Req() req?: any) {
+    return this.reportsService.obtenerEstadisticasMora(req?.user);
   }
 
   @Get('cuentas-vencidas')
@@ -161,11 +162,19 @@ export class ReportsController {
     description: 'Lista de cuentas vencidas',
     type: CuentasVencidasResponseDto,
   })
-  async obtenerCuentasVencidas(@Query() filtros: CuentasVencidasFiltrosDto) {
+  async obtenerCuentasVencidas(
+    @Query() filtros: CuentasVencidasFiltrosDto,
+    @Req() req?: any,
+  ) {
     const pagina = filtros.pagina || 1;
     const limite = filtros.limite || 50;
 
-    return this.reportsService.obtenerCuentasVencidas(filtros, pagina, limite);
+    return this.reportsService.obtenerCuentasVencidas(
+      filtros,
+      pagina,
+      limite,
+      req?.user,
+    );
   }
 
   @Post('cuentas-vencidas/decision')
@@ -243,8 +252,11 @@ export class ReportsController {
     description: 'Permisos insuficientes',
   })
   @HttpCode(HttpStatus.OK)
-  async getOperationalReport(@Query() query: GetOperationalReportDto) {
-    return this.reportsService.getOperationalReport(query);
+  async getOperationalReport(
+    @Query() query: GetOperationalReportDto,
+    @Req() req?: any,
+  ) {
+    return this.reportsService.getOperationalReport(query, req?.user);
   }
 
   @Get('operational/export')
@@ -302,14 +314,19 @@ export class ReportsController {
   async getRouteDetail(
     @Param('routeId') routeId: string,
     @Query('period') period: string,
+    @Req() req: any,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
-    return this.reportsService.getRouteDetail(routeId, {
-      period,
-      startDate,
-      endDate,
-    });
+    return this.reportsService.getRouteDetail(
+      routeId,
+      {
+        period,
+        startDate,
+        endDate,
+      },
+      req?.user,
+    );
   }
 
   @Get('financial/export')

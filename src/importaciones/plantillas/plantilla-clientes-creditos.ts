@@ -802,6 +802,12 @@ export async function generarPlantillaClientesCreditos(
     '• Amortización: la tasa se aplica una sola vez sobre el capital. $500.000 al 10% a 2 meses = $50.000 de interés.',
     'Coinciden cuando el plazo es de un mes, que es lo habitual en los créditos diarios. Si deja la columna vacía se asume Interés simple.',
     '',
+    '# Tipo de carga: HISTORICA u OPERATIVA',
+    'Es lo único que decide si el crédito mueve la caja HOY o no. No es "activo vs archivado": en ambos casos el crédito queda vivo y cobrable en la ruta.',
+    '• OPERATIVA: el dinero sale hoy de la caja (se registra el desembolso con fecha de hoy). Es para créditos que usted entrega ahora, por eso no puede traer nada abonado.',
+    '• HISTORICA: el dinero ya salió antes de usar el sistema, así que NO toca la caja de hoy. Es la opción para cargar créditos que ya llevan tiempo, con sus cuotas pagadas y abonos.',
+    'Regla simple: si el crédito ya tiene pagos o lleva tiempo cobrándose, va como HISTORICA. Si lo está entregando hoy, OPERATIVA.',
+    '',
     '# Créditos ya existentes y avanzados',
     'Las dos hojas admiten créditos que ya llevan tiempo cobrándose:',
     '• Total abonado: cuánta plata lleva pagada el cliente en total. Una sola cifra, en pesos.',
@@ -955,13 +961,13 @@ export async function generarPlantillaClientesCreditos(
     DIN.interesTotal,
     `IF(OR(${ref(DIN.monto)}="",${ref(DIN.tasaInteres)}=""),"",` +
       `IF(${ref(DIN.tipoAmortizacion)}="${ETIQUETA_AMORTIZACION}",` +
-      `ROUND(${ref(DIN.monto)}*(${ref(DIN.tasaInteres)}/100),0),` +
+      // INT trunca (nunca cobra de más); el sistema hace lo mismo con Math.trunc.
+      `INT(${ref(DIN.monto)}*(${ref(DIN.tasaInteres)}/100)),` +
       `IF(${ref(DIN.plazoMesesAuto)}="","",` +
       // Se multiplica todo y se divide al final, en ese orden: dividir la tasa
-      // primero deja un residuo de coma flotante (…,4999999 en vez de …,5) que
-      // al redondear cae para el otro lado y da un peso de diferencia contra
-      // lo que el sistema va a guardar.
-      `ROUND(${ref(DIN.monto)}*${ref(DIN.tasaInteres)}*MAX(1,${ref(DIN.plazoMesesAuto)})/100,0))))`,
+      // primero deja un residuo de coma flotante que, al truncar, podría caer
+      // para el otro lado y dar un peso de diferencia contra lo que se guarda.
+      `INT(${ref(DIN.monto)}*${ref(DIN.tasaInteres)}*MAX(1,${ref(DIN.plazoMesesAuto)})/100))))`,
   );
 
   formulaEnColumna(
