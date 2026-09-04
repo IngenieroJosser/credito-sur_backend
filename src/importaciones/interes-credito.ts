@@ -138,12 +138,19 @@ export function calcularInteresTotal(
     // Se TRUNCA (no se redondea): en un préstamo nunca se cobra al cliente más
     // interés del que corresponde, y queda coherente con el reparto de cuotas,
     // que también trunca. Solo cambia el resultado cuando hay decimales.
-    return Math.trunc(monto * (tasaInteres / 100));
+    //
+    // La tasa se pasa a centésimas (base entera) antes de truncar. Dividir /100
+    // primero deja un residuo binario: monto*(29/100) da 28.999999996 y truncaría
+    // a 28 en vez de 29. La tasa es Decimal(5,2), así que *100 es exacto.
+    const tasaCent = Math.round(tasaInteres * 100);
+    return Math.trunc((monto * tasaCent) / 10000);
   }
 
-  // Interés simple: la tasa se aplica por cada mes de plazo. Se trunca igual.
+  // Interés simple: la tasa se aplica por cada mes de plazo. Se trunca igual y
+  // con la misma base entera para no arrastrar el error de coma flotante.
   const mesesInteres = Math.max(1, plazoMeses);
-  return Math.trunc((monto * tasaInteres * mesesInteres) / 100);
+  const tasaCent = Math.round(tasaInteres * 100);
+  return Math.trunc((monto * tasaCent * mesesInteres) / 10000);
 }
 
 /**

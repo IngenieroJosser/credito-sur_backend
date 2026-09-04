@@ -783,6 +783,24 @@ describe('Equivalencia con la creación de créditos del sistema', () => {
       expect(sumaInteres).toBe(interesImportacion);
     },
   );
+
+  // Regresión: con capital=100 y tasa=29, el interés exacto es 29. Dividir la
+  // tasa antes de truncar (100 * (29/100)) da 28.999999996 y truncaba a 28.
+  // La tasa debe entrar en base entera (centésimas) para recuperar el 29.
+  it('no pierde un peso por el error binario al truncar (100 * 29% = 29, no 28)', () => {
+    const plazoMeses = derivarPlazoMeses(3, FrecuenciaPago.QUINCENAL);
+    expect(calcularInteresTotal('INTERES_PLANO', 100, 29, plazoMeses)).toBe(29);
+    // El sistema real y la importación coinciden en el caso que fallaba.
+    const sistema = calcularConElSistema(
+      'INTERES_PLANO',
+      100,
+      29,
+      3,
+      plazoMeses,
+      FrecuenciaPago.QUINCENAL,
+    );
+    expect(sistema.interesTotal).toBe(29);
+  });
 });
 
 describe('Limpieza de datos al importar', () => {

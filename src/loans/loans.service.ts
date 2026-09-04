@@ -1049,8 +1049,11 @@ export class LoansService implements OnModuleInit {
     }
 
     // Interés truncado (no redondeado): nunca se cobra de más y queda coherente
-    // con el reparto de cuotas, que ya trunca.
-    const interesTotal = Math.trunc(capital * (tasaTotal / 100));
+    // con el reparto de cuotas, que ya trunca. La tasa se pasa a centésimas
+    // (base entera) antes de truncar: dividir /100 primero deja un residuo
+    // binario (capital*(29/100) = 28.999999996 -> truncaría a 28 en vez de 29).
+    const tasaCent = Math.round(tasaTotal * 100);
+    const interesTotal = Math.trunc((capital * tasaCent) / 10000);
     const totalFinanciado = capital + interesTotal;
     const cuotaBase = Math.floor(totalFinanciado / numCuotas);
 
@@ -1364,8 +1367,11 @@ export class LoansService implements OnModuleInit {
       case TipoAmortizacion.INTERES_SIMPLE:
       default: {
         const mesesInteres = Math.max(1, plazoMeses);
-        // Interés truncado, coherente con el reparto de cuotas (floor).
-        interesTotal = Math.trunc((monto * tasaInteres * mesesInteres) / 100);
+        // Interés truncado, coherente con el reparto de cuotas (floor). La tasa
+        // va en centésimas (base entera) para no arrastrar el error de coma
+        // flotante de dividir /100 antes de truncar.
+        const tasaCent = Math.round(tasaInteres * 100);
+        interesTotal = Math.trunc((monto * tasaCent * mesesInteres) / 10000);
 
         const baseCapital = Math.floor(monto / cantidadCuotas);
         const baseInteres = Math.floor(interesTotal / cantidadCuotas);
