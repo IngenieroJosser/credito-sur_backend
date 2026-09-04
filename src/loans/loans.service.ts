@@ -1411,6 +1411,74 @@ export class LoansService implements OnModuleInit {
     return { interesTotal: Math.round(interesTotal), cuotas };
   }
 
+  /**
+   * Proyecta el plan de cuotas SIN guardar nada. Reutiliza exactamente el mismo
+   * `calculateInterestAndCuotas` que usa la creación, así que la vista previa del
+   * modal de edición muestra pesos idénticos a los que se persistirían al guardar
+   * (interés, cuota y fechas). Cualquier cambio de fórmula queda en un solo sitio.
+   */
+  simularCredito(params: {
+    tipoAmortizacion?: TipoAmortizacion | string;
+    monto: number;
+    tasaInteres: number;
+    cantidadCuotas: number;
+    plazoMeses: number;
+    frecuenciaPago?: FrecuenciaPago | string;
+    fechaInicio?: string;
+    tipoPrestamo?: string;
+    cuotaInicial?: number;
+  }) {
+    const monto = Number(params.monto) || 0;
+    const cantidadCuotas = Number(params.cantidadCuotas) || 0;
+    if (!(monto > 0) || !(cantidadCuotas > 0)) {
+      return { interesTotal: 0, totalFinal: monto, cuotaProyectada: 0, cuotas: [] };
+    }
+
+    const esArticulo = String(params.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
+    const frecuencia = (String(
+      params.frecuenciaPago || 'MENSUAL',
+    ).toUpperCase() as FrecuenciaPago);
+    const tipo = esArticulo
+      ? TipoAmortizacion.INTERES_SIMPLE
+      : ((String(
+          params.tipoAmortizacion || TipoAmortizacion.INTERES_SIMPLE,
+        ) as TipoAmortizacion));
+
+    // La fecha base se ancla a la zona de Bogotá para que los vencimientos
+    // coincidan con los que calcula la creación real.
+    const base = params.fechaInicio
+      ? new Date(`${params.fechaInicio}T00:00:00-05:00`)
+      : new Date();
+
+    // Un crédito de artículo no cobra interés: se reparte el monto financiado
+    // (tasa 0, interés simple), igual que en la creación.
+    const { interesTotal, cuotas } = this.calculateInterestAndCuotas(
+      tipo,
+      monto,
+      esArticulo ? 0 : Number(params.tasaInteres) || 0,
+      cantidadCuotas,
+      Number(params.plazoMeses) || 0,
+      frecuencia,
+      base,
+      undefined,
+      false,
+    );
+
+    const interesFinal = esArticulo ? 0 : interesTotal;
+    return {
+      interesTotal: interesFinal,
+      totalFinal: monto + interesFinal,
+      cuotaProyectada: cuotas.length > 0 ? cuotas[0].monto : 0,
+      cuotas: cuotas.map((c) => ({
+        numeroCuota: c.numeroCuota,
+        fechaVencimiento: c.fechaVencimiento,
+        monto: c.monto,
+        montoCapital: c.montoCapital,
+        montoInteres: c.montoInteres,
+      })),
+    };
+  }
+
   async getAllLoans(
     filters: {
       estado?: string;

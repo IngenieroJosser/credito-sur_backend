@@ -801,6 +801,37 @@ describe('Equivalencia con la creación de créditos del sistema', () => {
     );
     expect(sistema.interesTotal).toBe(29);
   });
+
+  // La vista previa del modal de edición se apoya en simularCredito: debe dar
+  // exactamente lo mismo que la creación real, o volvería la divergencia en pesos.
+  it('simularCredito proyecta lo mismo que la creación real, sin guardar', () => {
+    const plazoMeses = derivarPlazoMeses(13, FrecuenciaPago.QUINCENAL);
+    const sim = (servicioPrestamos as any).simularCredito({
+      tipoAmortizacion: 'INTERES_SIMPLE',
+      monto: 777777,
+      tasaInteres: 7.5,
+      cantidadCuotas: 13,
+      plazoMeses,
+      frecuenciaPago: FrecuenciaPago.QUINCENAL,
+      fechaInicio: '2026-05-01',
+      tipoPrestamo: 'EFECTIVO',
+    });
+    const real = calcularConElSistema(
+      'INTERES_SIMPLE',
+      777777,
+      7.5,
+      13,
+      plazoMeses,
+      FrecuenciaPago.QUINCENAL,
+    );
+    expect(sim.interesTotal).toBe(real.interesTotal);
+    expect(sim.cuotas).toHaveLength(real.cuotas.length);
+    sim.cuotas.forEach((c: any, i: number) => {
+      expect(c.monto).toBe(real.cuotas[i].monto);
+      expect(c.montoCapital).toBe(real.cuotas[i].montoCapital);
+      expect(c.montoInteres).toBe(real.cuotas[i].montoInteres);
+    });
+  });
 });
 
 describe('Limpieza de datos al importar', () => {
