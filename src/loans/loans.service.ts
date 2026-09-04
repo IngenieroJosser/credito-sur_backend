@@ -1048,7 +1048,9 @@ export class LoansService implements OnModuleInit {
       return { cuotaFija: 0, interesTotal: 0, tabla: [] };
     }
 
-    const interesTotal = Math.round(capital * (tasaTotal / 100));
+    // Interés truncado (no redondeado): nunca se cobra de más y queda coherente
+    // con el reparto de cuotas, que ya trunca.
+    const interesTotal = Math.trunc(capital * (tasaTotal / 100));
     const totalFinanciado = capital + interesTotal;
     const cuotaBase = Math.floor(totalFinanciado / numCuotas);
 
@@ -1362,7 +1364,8 @@ export class LoansService implements OnModuleInit {
       case TipoAmortizacion.INTERES_SIMPLE:
       default: {
         const mesesInteres = Math.max(1, plazoMeses);
-        interesTotal = Math.round((monto * tasaInteres * mesesInteres) / 100);
+        // Interés truncado, coherente con el reparto de cuotas (floor).
+        interesTotal = Math.trunc((monto * tasaInteres * mesesInteres) / 100);
 
         const baseCapital = Math.floor(monto / cantidadCuotas);
         const baseInteres = Math.floor(interesTotal / cantidadCuotas);

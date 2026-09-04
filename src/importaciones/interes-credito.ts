@@ -135,12 +135,15 @@ export function calcularInteresTotal(
 
   if (tipoAmortizacion === 'INTERES_PLANO') {
     // Amortización: la tasa se aplica una sola vez sobre el capital.
-    return Math.round(monto * (tasaInteres / 100));
+    // Se TRUNCA (no se redondea): en un préstamo nunca se cobra al cliente más
+    // interés del que corresponde, y queda coherente con el reparto de cuotas,
+    // que también trunca. Solo cambia el resultado cuando hay decimales.
+    return Math.trunc(monto * (tasaInteres / 100));
   }
 
-  // Interés simple: la tasa se aplica por cada mes de plazo.
+  // Interés simple: la tasa se aplica por cada mes de plazo. Se trunca igual.
   const mesesInteres = Math.max(1, plazoMeses);
-  return Math.round((monto * tasaInteres * mesesInteres) / 100);
+  return Math.trunc((monto * tasaInteres * mesesInteres) / 100);
 }
 
 /**

@@ -1396,10 +1396,11 @@ describe('Las fórmulas del Excel dan lo mismo que el sistema', () => {
     // Interés simple: multiplica todo y divide al final. La letra de la
     // columna del plazo se deja abierta, para que mover una columna no haga
     // fallar una prueba que habla del orden de las operaciones.
-    expect(interes).toMatch(/ROUND\(\$C7\*\$D7\*MAX\(1,\$[A-Z]+7\)\/100,0\)/);
+    // INT trunca (no redondea): coherente con Math.trunc del sistema.
+    expect(interes).toMatch(/INT\(\$C7\*\$D7\*MAX\(1,\$[A-Z]+7\)\/100\)/);
     // Amortización: la tasa se aplica una sola vez dividiendo primero, que es
     // como lo hace `calcularInteresPlano`.
-    expect(interes).toContain('ROUND($C7*($D7/100),0)');
+    expect(interes).toContain('INT($C7*($D7/100))');
 
     const cuota = formulaDe('Valor cuota');
     expect(cuota).toContain('INT(');

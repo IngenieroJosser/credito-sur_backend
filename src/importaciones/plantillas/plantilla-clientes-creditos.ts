@@ -955,13 +955,13 @@ export async function generarPlantillaClientesCreditos(
     DIN.interesTotal,
     `IF(OR(${ref(DIN.monto)}="",${ref(DIN.tasaInteres)}=""),"",` +
       `IF(${ref(DIN.tipoAmortizacion)}="${ETIQUETA_AMORTIZACION}",` +
-      `ROUND(${ref(DIN.monto)}*(${ref(DIN.tasaInteres)}/100),0),` +
+      // INT trunca (nunca cobra de más); el sistema hace lo mismo con Math.trunc.
+      `INT(${ref(DIN.monto)}*(${ref(DIN.tasaInteres)}/100)),` +
       `IF(${ref(DIN.plazoMesesAuto)}="","",` +
       // Se multiplica todo y se divide al final, en ese orden: dividir la tasa
-      // primero deja un residuo de coma flotante (…,4999999 en vez de …,5) que
-      // al redondear cae para el otro lado y da un peso de diferencia contra
-      // lo que el sistema va a guardar.
-      `ROUND(${ref(DIN.monto)}*${ref(DIN.tasaInteres)}*MAX(1,${ref(DIN.plazoMesesAuto)})/100,0))))`,
+      // primero deja un residuo de coma flotante que, al truncar, podría caer
+      // para el otro lado y dar un peso de diferencia contra lo que se guarda.
+      `INT(${ref(DIN.monto)}*${ref(DIN.tasaInteres)}*MAX(1,${ref(DIN.plazoMesesAuto)})/100))))`,
   );
 
   formulaEnColumna(
