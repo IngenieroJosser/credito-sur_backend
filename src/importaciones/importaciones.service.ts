@@ -192,6 +192,10 @@ export class ImportacionesService {
         clientes?: string[];
         prestamos?: string[];
         conMovimientosContables?: boolean;
+        // Inventario no se puede deshacer, así que aquí se guardan conteos
+        // (no ids de qué revertir) solo para mostrarlos en el historial.
+        articulos?: number;
+        precios?: number;
       };
 
       const clientes = creado.clientes?.length ?? 0;
@@ -212,6 +216,10 @@ export class ImportacionesService {
           : null,
         clientesCreados: clientes,
         prestamosCreados: prestamos,
+        // null (no 0) cuando el lote es anterior a que se empezara a guardar
+        // este conteo: "0" insinuaría que no se creó nada, y sí se creó.
+        articulosCreados: creado.articulos ?? null,
+        preciosCreados: creado.precios ?? null,
         sePuedeDeshacer: this.evaluarSiSePuedeDeshacer(lote, creado).sePuede,
         razonNoSePuedeDeshacer: this.evaluarSiSePuedeDeshacer(lote, creado)
           .razon,
@@ -963,7 +971,16 @@ export class ImportacionesService {
         filasValidas: resultado.resumen.filasValidas,
         filasConError: resultado.resumen.filasConError,
         advertencias: resultado.resumen.advertencias,
-        resumen: resultado.resumen as any,
+        // Se guarda qué creó este lote para que el historial (listarLotes)
+        // pueda mostrarlo. No lleva ids porque inventario no se puede deshacer
+        // (a diferencia de clientes/créditos): basta con el conteo.
+        resumen: {
+          ...resultado.resumen,
+          creado: {
+            articulos: articulosCreados,
+            precios: preciosCreados,
+          },
+        } as any,
         creadoPorId,
         confirmadoEn: new Date(),
       },
