@@ -198,8 +198,16 @@ export class ImportacionesService {
         precios?: number;
       };
 
-      const clientes = creado.clientes?.length ?? 0;
-      const prestamos = creado.prestamos?.length ?? 0;
+      // Si el lote nunca guardó "creado" (lotes de antes de que existiera este
+      // registro), no se sabe cuántos clientes/créditos hizo: null, no 0, para
+      // no mostrar "0 cliente(s) · 0 crédito(s)" en un CONFIRMADO que sí creó.
+      const tieneRegistroDeCreacion = Boolean(lote.resumen?.creado);
+      const clientes = tieneRegistroDeCreacion
+        ? (creado.clientes?.length ?? 0)
+        : null;
+      const prestamos = tieneRegistroDeCreacion
+        ? (creado.prestamos?.length ?? 0)
+        : null;
 
       return {
         id: lote.id,
