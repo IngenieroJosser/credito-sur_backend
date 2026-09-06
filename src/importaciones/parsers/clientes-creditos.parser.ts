@@ -167,43 +167,59 @@ export class ClientesCreditosParser {
     }
 
     // ── Datos de referencia en base de datos ───────────────────────────────
-    const [rutasBd, clientesBd, productosBd, prestamosBd] = await Promise.all([
-      this.prisma.ruta.findMany({
-        select: { codigo: true },
-        where: { activa: true },
-      }),
-      this.prisma.cliente.findMany({
-        select: {
-          dni: true,
-          codigo: true,
-          idempotencyKey: true,
-          nombres: true,
-          apellidos: true,
-        },
-        where: { eliminadoEn: null },
-      }),
-      this.prisma.producto.findMany({
-        select: {
-          codigo: true,
-          nombre: true,
-          // Precios por plazo: en los créditos de artículo el monto sale de aquí.
-          precios: {
-            where: { activo: true },
-            select: { meses: true, precio: true },
+    // Las 5 consultas van en paralelo. La de pagos reemplaza lo que antes era
+    // un `_count: { select: { pagos: true } }` dentro del findMany de préstamos:
+    // un COUNT correlacionado que Postgres ejecuta por CADA préstamo de la base.
+    // Con una cartera real (miles de créditos) eso es lo que dejaba la
+    // validación "pensando" mucho tiempo; en local, con pocos datos de prueba,
+    // no se notaba. Aquí se resuelve con una consulta aparte, indexada por
+    // prestamoId, que no depende de cuántos préstamos haya.
+    const [rutasBd, clientesBd, productosBd, prestamosBd, pagosPrestamoIds] =
+      await Promise.all([
+        this.prisma.ruta.findMany({
+          select: { codigo: true },
+          where: { activa: true },
+        }),
+        this.prisma.cliente.findMany({
+          select: {
+            dni: true,
+            codigo: true,
+            idempotencyKey: true,
+            nombres: true,
+            apellidos: true,
           },
-        },
-        where: { eliminadoEn: null },
-      }),
-      this.prisma.prestamo.findMany({
-        select: {
-          numeroPrestamo: true,
-          idempotencyKey: true,
-          // Un crédito con pagos registrados no se puede reescribir por Excel.
-          _count: { select: { pagos: true } },
-        },
-        where: { eliminadoEn: null },
-      }),
-    ]);
+          where: { eliminadoEn: null },
+        }),
+        this.prisma.producto.findMany({
+          select: {
+            codigo: true,
+            nombre: true,
+            // Precios por plazo: en los créditos de artículo el monto sale de aquí.
+            precios: {
+              where: { activo: true },
+              select: { meses: true, precio: true },
+            },
+          },
+          where: { eliminadoEn: null },
+        }),
+        this.prisma.prestamo.findMany({
+          select: {
+            id: true,
+            numeroPrestamo: true,
+            idempotencyKey: true,
+          },
+          where: { eliminadoEn: null },
+        }),
+        this.prisma.pago.findMany({
+          select: { prestamoId: true },
+          distinct: ['prestamoId'],
+        }),
+      ]);
+
+    // Un crédito con pagos registrados no se puede reescribir por Excel.
+    const prestamoIdsConPagos = new Set(
+      pagosPrestamoIds.map((p) => p.prestamoId),
+    );
 
     const rutasEnBd = new Set(rutasBd.map((r) => r.codigo));
     const productosEnBd = new Map(
@@ -253,7 +269,7 @@ export class ClientesCreditosParser {
     );
     const prestamosConPagos = new Set(
       prestamosBd
-        .filter((p) => p._count?.pagos > 0)
+        .filter((p) => prestamoIdsConPagos.has(p.id))
         .map((p) => String(p.numeroPrestamo).trim()),
     );
     const codigosCreditoBd = new Set(
