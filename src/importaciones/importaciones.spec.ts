@@ -55,12 +55,17 @@ const prismaMock = (datos?: {
   productos?: any[];
   prestamos?: any[];
   rutas?: any[];
+  // Quién tiene pagos: antes se marcaba con `_count: { pagos: N }` en el propio
+  // mock del préstamo; ahora el parser lo resuelve con una consulta aparte a
+  // `pago` (ver clientes-creditos.parser.ts), así que aquí se simula esa tabla.
+  pagos?: Array<{ prestamoId: string }>;
   cajaOficina?: { nombre: string; saldoActual: number } | null;
 }) =>
   ({
     cliente: { findMany: jest.fn().mockResolvedValue(datos?.clientes ?? []) },
     producto: { findMany: jest.fn().mockResolvedValue(datos?.productos ?? []) },
     prestamo: { findMany: jest.fn().mockResolvedValue(datos?.prestamos ?? []) },
+    pago: { findMany: jest.fn().mockResolvedValue(datos?.pagos ?? []) },
     ruta: { findMany: jest.fn().mockResolvedValue(datos?.rutas ?? []) },
     // La vista previa consulta el saldo real para decir si alcanza.
     caja: {
@@ -1040,10 +1045,15 @@ describe('Acción ACTUALIZAR', () => {
         clientes: [clienteEnBd],
         prestamos: [
           {
+            id: 'prestamo-1',
             numeroPrestamo: 'IMP-001',
             idempotencyKey: null,
-            _count: { pagos: 3 },
           },
+        ],
+        pagos: [
+          { prestamoId: 'prestamo-1' },
+          { prestamoId: 'prestamo-1' },
+          { prestamoId: 'prestamo-1' },
         ],
       },
     );
@@ -1063,11 +1073,12 @@ describe('Acción ACTUALIZAR', () => {
         clientes: [clienteEnBd],
         prestamos: [
           {
+            id: 'prestamo-1',
             numeroPrestamo: 'IMP-001',
             idempotencyKey: null,
-            _count: { pagos: 0 },
           },
         ],
+        pagos: [],
       },
     );
 
