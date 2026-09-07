@@ -1273,7 +1273,10 @@ export class LoansController {
     @Query('estado') estado?: string,
     @Request() req?: any,
   ) {
-    return this.loansService.listarReprogramacionesPendientes(estado, req?.user);
+    return this.loansService.listarReprogramacionesPendientes(
+      estado,
+      req?.user,
+    );
   }
 
   @Patch('reprogramaciones/:id/aprobar')

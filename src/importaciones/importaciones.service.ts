@@ -312,9 +312,12 @@ export class ImportacionesService {
         id: p.id,
         numeroPrestamo: p.numeroPrestamo,
         tipo: p.tipoPrestamo,
-        cliente: `${p.cliente?.nombres ?? ''} ${p.cliente?.apellidos ?? ''}`.trim(),
+        cliente:
+          `${p.cliente?.nombres ?? ''} ${p.cliente?.apellidos ?? ''}`.trim(),
         cedula: p.cliente?.dni ?? '',
-        articulo: p.producto ? `${p.producto.codigo} — ${p.producto.nombre}` : null,
+        articulo: p.producto
+          ? `${p.producto.codigo} — ${p.producto.nombre}`
+          : null,
         articuloCodigo: p.producto?.codigo ?? null,
         monto: Number(p.monto || 0),
         cuotaInicial: Number(p.cuotaInicial || 0),
@@ -502,7 +505,8 @@ export class ImportacionesService {
     }
 
     const idsPrestamos = pedidos.length > 0 ? pedidos : prestamosDelLote;
-    const parcial = pedidos.length > 0 && pedidos.length < prestamosDelLote.length;
+    const parcial =
+      pedidos.length > 0 && pedidos.length < prestamosDelLote.length;
 
     if (idsPrestamos.length === 0) {
       throw new BadRequestException(
@@ -1945,5 +1949,4 @@ export class ImportacionesService {
 
     return porClave;
   }
-
 }

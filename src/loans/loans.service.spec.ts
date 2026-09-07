@@ -2655,8 +2655,18 @@ describe('El arranque no reescribe deudas por su cuenta', () => {
 
 describe('Reprogramaciones: jurisdicción por rol', () => {
   const solicitudes = [
-    { id: 'ap-1', estado: 'PENDIENTE', datosSolicitud: { prestamoId: 'p-mia' }, creadoEn: new Date() },
-    { id: 'ap-2', estado: 'PENDIENTE', datosSolicitud: { prestamoId: 'p-ajena' }, creadoEn: new Date() },
+    {
+      id: 'ap-1',
+      estado: 'PENDIENTE',
+      datosSolicitud: { prestamoId: 'p-mia' },
+      creadoEn: new Date(),
+    },
+    {
+      id: 'ap-2',
+      estado: 'PENDIENTE',
+      datosSolicitud: { prestamoId: 'p-ajena' },
+      creadoEn: new Date(),
+    },
   ];
 
   function prismaConReprogramaciones() {
@@ -2669,7 +2679,9 @@ describe('Reprogramaciones: jurisdicción por rol', () => {
         findMany: jest.fn().mockImplementation(({ where }: any) => {
           const ids: string[] = where?.id?.in ?? [];
           // simula el filtro por ruta.supervisorId: solo p-mia pasa
-          return Promise.resolve(ids.filter((id) => id === 'p-mia').map((id) => ({ id })));
+          return Promise.resolve(
+            ids.filter((id) => id === 'p-mia').map((id) => ({ id })),
+          );
         }),
       },
     };
@@ -2696,4 +2708,4 @@ describe('Reprogramaciones: jurisdicción por rol', () => {
     // sin restricción no hace falta consultar prestamos
     expect(prisma.prestamo.findMany).not.toHaveBeenCalled();
   });
-})
+});

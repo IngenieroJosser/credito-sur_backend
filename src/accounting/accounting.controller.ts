@@ -44,11 +44,7 @@ export class AccountingController {
    * volver a mirar. Solo lee.
    */
   @Get('integridad')
-  @Roles(
-    RolUsuario.SUPER_ADMINISTRADOR,
-    RolUsuario.ADMIN,
-    RolUsuario.CONTADOR,
-  )
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.CONTADOR)
   revisarIntegridad() {
     return this.ledgerService.revisarIntegridad();
   }
@@ -461,7 +457,9 @@ export class AccountingController {
         ['cobradorId', body?.cobradorId],
       ] as Array<[string, unknown]>
     )
-      .filter(([, valor]) => valor === undefined || valor === null || valor === '')
+      .filter(
+        ([, valor]) => valor === undefined || valor === null || valor === '',
+      )
       .map(([campo]) => campo);
 
     if (faltan.length > 0) {

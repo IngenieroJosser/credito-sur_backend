@@ -104,7 +104,9 @@ export class LoansService implements OnModuleInit {
           is: {
             OR: [
               { cobradorId: actor.id },
-              { asignaciones: { some: { activa: true, cobradorId: actor.id } } },
+              {
+                asignaciones: { some: { activa: true, cobradorId: actor.id } },
+              },
             ],
           },
         },
@@ -1431,18 +1433,24 @@ export class LoansService implements OnModuleInit {
     const monto = Number(params.monto) || 0;
     const cantidadCuotas = Number(params.cantidadCuotas) || 0;
     if (!(monto > 0) || !(cantidadCuotas > 0)) {
-      return { interesTotal: 0, totalFinal: monto, cuotaProyectada: 0, cuotas: [] };
+      return {
+        interesTotal: 0,
+        totalFinal: monto,
+        cuotaProyectada: 0,
+        cuotas: [],
+      };
     }
 
-    const esArticulo = String(params.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
-    const frecuencia = (String(
+    const esArticulo =
+      String(params.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
+    const frecuencia = String(
       params.frecuenciaPago || 'MENSUAL',
-    ).toUpperCase() as FrecuenciaPago);
+    ).toUpperCase() as FrecuenciaPago;
     const tipo = esArticulo
       ? TipoAmortizacion.INTERES_SIMPLE
-      : ((String(
+      : (String(
           params.tipoAmortizacion || TipoAmortizacion.INTERES_SIMPLE,
-        ) as TipoAmortizacion));
+        ) as TipoAmortizacion);
 
     // La fecha base se ancla a la zona de Bogotá para que los vencimientos
     // coincidan con los que calcula la creación real.
@@ -5400,7 +5408,10 @@ export class LoansService implements OnModuleInit {
   ): Promise<void> {
     const prestamoId = (aprobacion.datosSolicitud as any)?.prestamoId;
     if (typeof prestamoId !== 'string') return;
-    const permitidos = await this.prestamosBajoJurisdiccion([prestamoId], actor);
+    const permitidos = await this.prestamosBajoJurisdiccion(
+      [prestamoId],
+      actor,
+    );
     // null = jurisdicción total (admin/coordinador/super).
     if (permitidos === null) return;
     if (!permitidos.has(prestamoId)) {

@@ -195,7 +195,10 @@ export class ClientsService {
     // no sobrescribimos en silencio. Se rechaza como conflicto (409) y el sync
     // lo enruta al pipeline de conflictos para revisión manual. Opcional: solo
     // se verifica si el cliente envió su `version` base.
-    if (versionBase != null && Number(versionBase) !== Number(accesible.version ?? 1)) {
+    if (
+      versionBase != null &&
+      Number(versionBase) !== Number(accesible.version ?? 1)
+    ) {
       throw new ConflictException(
         'El cliente fue modificado por otra persona desde que empezaste a editarlo. Revisa los cambios antes de guardar.',
       );

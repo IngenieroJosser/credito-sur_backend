@@ -900,7 +900,9 @@ export class LedgerService {
                   or coalesce("creditAmount",0) % 1 <> 0) lineas,
              (select count(*)::int from cajas where "saldoActual" % 1 <> 0) cajas,
              (select count(*)::int from cuotas where monto % 1 <> 0) cuotas`),
-        q(`select count(*)::int t from cajas where "saldoActual" < 0 and activa = true`),
+        q(
+          `select count(*)::int t from cajas where "saldoActual" < 0 and activa = true`,
+        ),
         q(`select
              (select coalesce(sum(coalesce("debitAmount",0)-coalesce("creditAmount",0)),0)
                 from asientos_lineas where "accountCode" like '1.5%') libro,
@@ -917,7 +919,9 @@ export class LedgerService {
       problemas.push(`El libro no cuadra por ${global.diferencia}.`);
     }
     if (n(descuadrados[0].t) > 0) {
-      problemas.push(`${descuadrados[0].t} asiento(s) no cuadran por sí solos.`);
+      problemas.push(
+        `${descuadrados[0].t} asiento(s) no cuadran por sí solos.`,
+      );
     }
     if (cajasDescuadradas.length > 0) {
       problemas.push(

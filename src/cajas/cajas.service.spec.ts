@@ -228,11 +228,7 @@ describe('CajasService', () => {
       prisma.caja.findUnique.mockResolvedValueOnce(null);
 
       await expect(
-        service.getArqueoPreview(
-        'caja-inexistente',
-        undefined,
-        ACTOR_ADMIN,
-      ),
+        service.getArqueoPreview('caja-inexistente', undefined, ACTOR_ADMIN),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -428,15 +424,15 @@ describe('CajasService', () => {
     it('no permite efectivo negativo', async () => {
       await expect(
         service.confirmarArqueo(
-        CAJA_RUTA_ACTIVA.id,
-        '2026-06-13',
-        -100000,
-        USUARIO_ADMIN.id,
-        undefined,
-        undefined,
-        undefined,
-        ACTOR_ADMIN,
-      ),
+          CAJA_RUTA_ACTIVA.id,
+          '2026-06-13',
+          -100000,
+          USUARIO_ADMIN.id,
+          undefined,
+          undefined,
+          undefined,
+          ACTOR_ADMIN,
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -445,15 +441,15 @@ describe('CajasService', () => {
 
       await expect(
         service.confirmarArqueo(
-        CAJA_PRINCIPAL.id,
-        '2026-06-13',
-        1000000,
-        USUARIO_ADMIN.id,
-        undefined,
-        undefined,
-        undefined,
-        ACTOR_ADMIN,
-      ),
+          CAJA_PRINCIPAL.id,
+          '2026-06-13',
+          1000000,
+          USUARIO_ADMIN.id,
+          undefined,
+          undefined,
+          undefined,
+          ACTOR_ADMIN,
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -462,15 +458,15 @@ describe('CajasService', () => {
 
       await expect(
         service.confirmarArqueo(
-        CAJA_RUTA_ACTIVA.id,
-        '2026-06-13',
-        5000000,
-        USUARIO_ADMIN.id,
-        undefined,
-        undefined,
-        undefined,
-        ACTOR_ADMIN,
-      ),
+          CAJA_RUTA_ACTIVA.id,
+          '2026-06-13',
+          5000000,
+          USUARIO_ADMIN.id,
+          undefined,
+          undefined,
+          undefined,
+          ACTOR_ADMIN,
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -503,15 +499,15 @@ describe('CajasService', () => {
 
       await expect(
         service.confirmarArqueo(
-        CAJA_RUTA_ACTIVA.id,
-        '2026-06-13',
-        5000000,
-        USUARIO_ADMIN.id,
-        undefined,
-        undefined,
-        undefined,
-        ACTOR_ADMIN,
-      ),
+          CAJA_RUTA_ACTIVA.id,
+          '2026-06-13',
+          5000000,
+          USUARIO_ADMIN.id,
+          undefined,
+          undefined,
+          undefined,
+          ACTOR_ADMIN,
+        ),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -523,15 +519,15 @@ describe('CajasService', () => {
 
       await expect(
         service.confirmarArqueo(
-        CAJA_RUTA_ACTIVA.id,
-        '2026-06-13',
-        5000000,
-        USUARIO_ADMIN.id,
-        undefined,
-        undefined,
-        undefined,
-        ACTOR_ADMIN,
-      ),
+          CAJA_RUTA_ACTIVA.id,
+          '2026-06-13',
+          5000000,
+          USUARIO_ADMIN.id,
+          undefined,
+          undefined,
+          undefined,
+          ACTOR_ADMIN,
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -546,15 +542,15 @@ describe('CajasService', () => {
 
       await expect(
         service.confirmarArqueo(
-        CAJA_RUTA_ACTIVA.id,
-        '2026-06-13',
-        5000000,
-        USUARIO_ADMIN.id,
-        undefined,
-        undefined,
-        undefined,
-        ACTOR_ADMIN,
-      ),
+          CAJA_RUTA_ACTIVA.id,
+          '2026-06-13',
+          5000000,
+          USUARIO_ADMIN.id,
+          undefined,
+          undefined,
+          undefined,
+          ACTOR_ADMIN,
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -566,15 +562,15 @@ describe('CajasService', () => {
 
       await expect(
         service.confirmarArqueo(
-        CAJA_RUTA_ACTIVA.id,
-        '2026-06-13',
-        5000000,
-        USUARIO_ADMIN.id,
-        'usuario-inexistente',
-        undefined,
-        undefined,
-        ACTOR_ADMIN,
-      ),
+          CAJA_RUTA_ACTIVA.id,
+          '2026-06-13',
+          5000000,
+          USUARIO_ADMIN.id,
+          'usuario-inexistente',
+          undefined,
+          undefined,
+          ACTOR_ADMIN,
+        ),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -589,15 +585,15 @@ describe('CajasService', () => {
 
       await expect(
         service.confirmarArqueo(
-        CAJA_RUTA_ACTIVA.id,
-        '2026-06-13',
-        5000000,
-        USUARIO_ADMIN.id,
-        undefined,
-        undefined,
-        undefined,
-        ACTOR_ADMIN,
-      ),
+          CAJA_RUTA_ACTIVA.id,
+          '2026-06-13',
+          5000000,
+          USUARIO_ADMIN.id,
+          undefined,
+          undefined,
+          undefined,
+          ACTOR_ADMIN,
+        ),
       ).rejects.toThrow(BadRequestException);
     });
   });

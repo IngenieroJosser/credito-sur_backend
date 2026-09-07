@@ -183,7 +183,9 @@ export class AuthService {
     // error sea el mismo. Se verifica siempre contra un hash señuelo para que
     // el coste de argon2 sea igual exista o no la cuenta.
     if (!candidatos.length) {
-      await argon2.verify(AuthService.HASH_SENUELO, contrasena).catch(() => false);
+      await argon2
+        .verify(AuthService.HASH_SENUELO, contrasena)
+        .catch(() => false);
       return null;
     }
 

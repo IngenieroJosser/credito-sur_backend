@@ -99,7 +99,12 @@ export class ReportsController {
     @Query('limite', new DefaultValuePipe(50), ParseIntPipe) limite: number,
     @Req() req?: any,
   ) {
-    return this.reportsService.obtenerPrestamosEnMora(filtros, pagina, limite, req?.user);
+    return this.reportsService.obtenerPrestamosEnMora(
+      filtros,
+      pagina,
+      limite,
+      req?.user,
+    );
   }
 
   @Post('exportar-mora')

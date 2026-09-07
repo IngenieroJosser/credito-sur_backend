@@ -2127,7 +2127,9 @@ describe('RoutesService role scoping', () => {
 
   it('al mover el último crédito de una ruta el cliente sale de ella', async () => {
     const falsa = baseFalsa({
-      prestamos: [{ id: 'prestamo-1', clienteId: 'cliente-1', rutaId: 'ruta-a' }],
+      prestamos: [
+        { id: 'prestamo-1', clienteId: 'cliente-1', rutaId: 'ruta-a' },
+      ],
       asignaciones: [
         {
           id: 'asignacion-a',

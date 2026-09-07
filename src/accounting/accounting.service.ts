@@ -452,20 +452,14 @@ export class AccountingService {
 
     if (rol === 'COBRADOR') {
       return {
-        OR: [
-          { responsableId: actor.id },
-          { ruta: { cobradorId: actor.id } },
-        ],
+        OR: [{ responsableId: actor.id }, { ruta: { cobradorId: actor.id } }],
       };
     }
 
     // El supervisor ve su caja de supervisor y las cajas de sus rutas.
     if (rol === 'SUPERVISOR') {
       return {
-        OR: [
-          { responsableId: actor.id },
-          { ruta: { supervisorId: actor.id } },
-        ],
+        OR: [{ responsableId: actor.id }, { ruta: { supervisorId: actor.id } }],
       };
     }
 
@@ -4980,7 +4974,8 @@ export class AccountingService {
     });
 
     const valorBodega = productos.reduce(
-      (suma, p) => suma + Math.round(Number(p.stock || 0) * Number(p.costo || 0)),
+      (suma, p) =>
+        suma + Math.round(Number(p.stock || 0) * Number(p.costo || 0)),
       0,
     );
 

@@ -86,7 +86,9 @@ describe('ReportsService getRouteDetail: jurisdicción del supervisor', () => {
       },
       asignacionRuta: { findMany: jest.fn().mockResolvedValue([]) },
       pago: { aggregate: jest.fn().mockResolvedValue({ _sum: {} }) },
-      prestamo: { aggregate: jest.fn().mockResolvedValue({ _sum: {}, _count: {} }) },
+      prestamo: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: {}, _count: {} }),
+      },
       cliente: { count: jest.fn().mockResolvedValue(0) },
       cuota: { aggregate: jest.fn().mockResolvedValue({ _sum: {} }) },
     } as any;
@@ -96,10 +98,14 @@ describe('ReportsService getRouteDetail: jurisdicción del supervisor', () => {
     const prisma = prismaConRuta('otro-supervisor');
     const service = new ReportsService(prisma, {} as any, {} as any);
     await expect(
-      service.getRouteDetail('ruta-x', { period: 'week' }, {
-        id: 'sup-1',
-        rol: 'SUPERVISOR',
-      }),
+      service.getRouteDetail(
+        'ruta-x',
+        { period: 'week' },
+        {
+          id: 'sup-1',
+          rol: 'SUPERVISOR',
+        },
+      ),
     ).rejects.toThrow(/No supervisa/);
   });
 
@@ -107,13 +113,19 @@ describe('ReportsService getRouteDetail: jurisdicción del supervisor', () => {
     const prisma = prismaConRuta('otro-supervisor');
     const service = new ReportsService(prisma, {} as any, {} as any);
     // no debe lanzar por jurisdicción (puede fallar más adelante por mocks, se ignora)
-    await service.getRouteDetail('ruta-x', { period: 'week' }, {
-      id: 'admin-1',
-      rol: 'ADMIN',
-    }).catch(() => undefined);
+    await service
+      .getRouteDetail(
+        'ruta-x',
+        { period: 'week' },
+        {
+          id: 'admin-1',
+          rol: 'ADMIN',
+        },
+      )
+      .catch(() => undefined);
     expect(prisma.ruta.findUnique).toHaveBeenCalled();
   });
-})
+});
 
 describe('ReportsService: scope de rutas por rol en reportes de mora/vencidas', () => {
   // Captura el where con que se consulta, para verificar que lleva el filtro de ruta.
@@ -168,4 +180,4 @@ describe('ReportsService: scope de rutas por rol en reportes de mora/vencidas', 
       expect(w?.ruta?.is?.supervisorId).toBe('sup-9');
     }
   });
-})
+});

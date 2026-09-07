@@ -194,25 +194,25 @@ async function bootstrap() {
     document.security = [{ [SWAGGER_JWT_AUTH]: [] }];
 
     SwaggerModule.setup('api-credisur', app, document, {
-    explorer: true,
-    swaggerOptions: {
-      persistAuthorization: true,
-      docExpansion: 'list',
-      filter: true,
-      showExtensions: true,
-      showCommonExtensions: true,
-      tagsSorter: 'alpha',
-      operationsSorter: 'alpha',
-      displayRequestDuration: true,
-      defaultModelsExpandDepth: 2,
-      defaultModelExpandDepth: 2,
-      tryItOutEnabled: true,
-      syntaxHighlight: {
-        activate: true,
-        theme: 'tomorrow-night',
+      explorer: true,
+      swaggerOptions: {
+        persistAuthorization: true,
+        docExpansion: 'list',
+        filter: true,
+        showExtensions: true,
+        showCommonExtensions: true,
+        tagsSorter: 'alpha',
+        operationsSorter: 'alpha',
+        displayRequestDuration: true,
+        defaultModelsExpandDepth: 2,
+        defaultModelExpandDepth: 2,
+        tryItOutEnabled: true,
+        syntaxHighlight: {
+          activate: true,
+          theme: 'tomorrow-night',
+        },
       },
-    },
-    customCss: `
+      customCss: `
       .swagger-ui {
         background: #f8fafc;
         color: #0f172a;
@@ -304,9 +304,9 @@ async function bootstrap() {
         color: #0f172a;
       }
     `,
-    customSiteTitle: 'Créditos del Sur API',
-    customfavIcon:
-      'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text x=%2212%22 y=%2262%22 font-size=%2232%22 font-family=%22Arial%22 font-weight=%22700%22>CDS</text></svg>',
+      customSiteTitle: 'Créditos del Sur API',
+      customfavIcon:
+        'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text x=%2212%22 y=%2262%22 font-size=%2232%22 font-family=%22Arial%22 font-weight=%22700%22>CDS</text></svg>',
     });
   }
 

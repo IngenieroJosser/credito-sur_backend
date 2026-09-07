@@ -121,7 +121,9 @@ export class RateLimitGuard implements CanActivate {
     } catch (e: any) {
       // Un fallo de Redis nunca debe tumbar la petición: se cae a memoria.
       this.redisSano = false;
-      this.logger.warn(`Fallo al contar en Redis, se usa memoria: ${e?.message}`);
+      this.logger.warn(
+        `Fallo al contar en Redis, se usa memoria: ${e?.message}`,
+      );
       return null;
     }
   }
@@ -164,7 +166,10 @@ export class RateLimitGuard implements CanActivate {
 
     response?.setHeader?.('X-RateLimit-Limit', profile.max);
     response?.setHeader?.('X-RateLimit-Remaining', remaining);
-    response?.setHeader?.('X-RateLimit-Reset', Math.ceil(conteo.resetAt / 1000));
+    response?.setHeader?.(
+      'X-RateLimit-Reset',
+      Math.ceil(conteo.resetAt / 1000),
+    );
 
     if (conteo.count > profile.max) {
       response?.setHeader?.('Retry-After', retryAfterSeconds);

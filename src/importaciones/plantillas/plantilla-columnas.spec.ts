@@ -18,30 +18,67 @@ import { generarPlantillaInventario } from './plantilla-inventario';
 const base: DatosReferenciaPlantilla = {
   clientes: [{ dni: '123', nombre: 'Prueba' }],
   articulos: [
-    { codigo: 'ART1', nombre: 'Nevera', meses: 12, precio: 1000, costo: 700, stock: 5 },
+    {
+      codigo: 'ART1',
+      nombre: 'Nevera',
+      meses: 12,
+      precio: 1000,
+      costo: 700,
+      stock: 5,
+    },
   ],
   codigosArticulo: ['ART1'],
   numerosPrestamo: [],
   rutas: ['R1'],
 };
 
-const COMBINACIONES: Array<{ nombre: string; datos: DatosReferenciaPlantilla }> = [
+const COMBINACIONES: Array<{
+  nombre: string;
+  datos: DatosReferenciaPlantilla;
+}> = [
   {
     nombre: 'base (1 cliente, 1 artículo, 1 ruta)',
     datos: base,
   },
   {
     nombre: 'todo vacío (instalación nueva)',
-    datos: { clientes: [], articulos: [], codigosArticulo: [], numerosPrestamo: [], rutas: [] },
+    datos: {
+      clientes: [],
+      articulos: [],
+      codigosArticulo: [],
+      numerosPrestamo: [],
+      rutas: [],
+    },
   },
   {
     nombre: 'artículo con varios plazos',
     datos: {
       ...base,
       articulos: [
-        { codigo: 'ART1', nombre: 'Nevera', meses: 3, precio: 400, costo: 300, stock: 2 },
-        { codigo: 'ART1', nombre: 'Nevera', meses: 6, precio: 700, costo: 300, stock: 2 },
-        { codigo: 'ART1', nombre: 'Nevera', meses: 12, precio: 1200, costo: 300, stock: 2 },
+        {
+          codigo: 'ART1',
+          nombre: 'Nevera',
+          meses: 3,
+          precio: 400,
+          costo: 300,
+          stock: 2,
+        },
+        {
+          codigo: 'ART1',
+          nombre: 'Nevera',
+          meses: 6,
+          precio: 700,
+          costo: 300,
+          stock: 2,
+        },
+        {
+          codigo: 'ART1',
+          nombre: 'Nevera',
+          meses: 12,
+          precio: 1200,
+          costo: 300,
+          stock: 2,
+        },
       ],
     },
   },
@@ -58,11 +95,18 @@ const COMBINACIONES: Array<{ nombre: string; datos: DatosReferenciaPlantilla }> 
     datos: {
       ...base,
       clientes: [
-        { dni: '999', nombre: "Ñandú O'Brien \"El Grande\"" },
+        { dni: '999', nombre: 'Ñandú O\'Brien "El Grande"' },
         { dni: '998', nombre: 'María José Gutiérrez' },
       ],
       articulos: [
-        { codigo: 'A-Ñ1', nombre: 'Televisor 50" Ultra', meses: 6, precio: 900, costo: 600, stock: 1 },
+        {
+          codigo: 'A-Ñ1',
+          nombre: 'Televisor 50" Ultra',
+          meses: 6,
+          precio: 900,
+          costo: 600,
+          stock: 1,
+        },
       ],
       codigosArticulo: ['A-Ñ1'],
     },
@@ -96,16 +140,24 @@ const encabezados = (wb: ExcelJS.Workbook, hoja: string): string[] => {
 };
 
 describe('Plantilla de clientes y créditos: estructura con varias combinaciones', () => {
-  it.each(COMBINACIONES)('se genera sin errores: $nombre', async ({ datos }) => {
-    const { data, filename } = await generarPlantillaClientesCreditos(datos);
-    expect(data.length).toBeGreaterThan(0);
-    expect(filename).toMatch(/\.xlsx$/);
+  it.each(COMBINACIONES)(
+    'se genera sin errores: $nombre',
+    async ({ datos }) => {
+      const { data, filename } = await generarPlantillaClientesCreditos(datos);
+      expect(data.length).toBeGreaterThan(0);
+      expect(filename).toMatch(/\.xlsx$/);
 
-    const wb = await cargar(data);
-    for (const hoja of ['Clientes', 'Créditos de dinero', 'Créditos de artículo']) {
-      expect(wb.getWorksheet(hoja)).toBeDefined();
-    }
-  }, 60000);
+      const wb = await cargar(data);
+      for (const hoja of [
+        'Clientes',
+        'Créditos de dinero',
+        'Créditos de artículo',
+      ]) {
+        expect(wb.getWorksheet(hoja)).toBeDefined();
+      }
+    },
+    60000,
+  );
 
   it('el número de crédito queda al final en AMBAS hojas de crédito', async () => {
     const { data } = await generarPlantillaClientesCreditos(base);
@@ -129,11 +181,19 @@ describe('Plantilla de clientes y créditos: estructura con varias combinaciones
   it('no quedan huecos: ningún encabezado vacío dentro del rango usado', async () => {
     const { data } = await generarPlantillaClientesCreditos(base);
     const wb = await cargar(data);
-    for (const hoja of ['Clientes', 'Créditos de dinero', 'Créditos de artículo']) {
+    for (const hoja of [
+      'Clientes',
+      'Créditos de dinero',
+      'Créditos de artículo',
+    ]) {
       const h = encabezados(wb, hoja);
       const ultima = h.length - 1;
       for (let col = 1; col <= ultima; col++) {
-        expect({ hoja, col, valor: h[col] }).toEqual({ hoja, col, valor: expect.any(String) });
+        expect({ hoja, col, valor: h[col] }).toEqual({
+          hoja,
+          col,
+          valor: expect.any(String),
+        });
         expect(h[col]).not.toBe('');
       }
     }

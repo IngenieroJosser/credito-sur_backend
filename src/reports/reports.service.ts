@@ -207,7 +207,9 @@ export class ReportsService {
           is: {
             OR: [
               { cobradorId: actor.id },
-              { asignaciones: { some: { activa: true, cobradorId: actor.id } } },
+              {
+                asignaciones: { some: { activa: true, cobradorId: actor.id } },
+              },
             ],
           },
         },

@@ -35,7 +35,13 @@ export class CajasService {
    * Cualquier otro rol: denegado.
    */
   private assertPuedeAccederCaja(
-    caja: { responsableId?: string | null; ruta?: { cobradorId?: string | null; supervisorId?: string | null } | null },
+    caja: {
+      responsableId?: string | null;
+      ruta?: {
+        cobradorId?: string | null;
+        supervisorId?: string | null;
+      } | null;
+    },
     actor?: { id?: string; rol?: RolUsuario | string } | null,
   ) {
     const rol = this.actorRol(actor);
@@ -50,11 +56,7 @@ export class CajasService {
       return;
     }
 
-    if (
-      rol === RolUsuario.SUPERVISOR &&
-      id &&
-      caja.ruta?.supervisorId === id
-    ) {
+    if (rol === RolUsuario.SUPERVISOR && id && caja.ruta?.supervisorId === id) {
       return;
     }
 

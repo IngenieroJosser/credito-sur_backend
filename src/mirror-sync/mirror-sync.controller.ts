@@ -17,15 +17,41 @@ export class MirrorSyncController {
   private readonly logger = new Logger(MirrorSyncController.name);
   private readonly usedNonces = new Map<string, number>();
   private readonly allowedModels = new Set([
-    'Notificacion', 'Cliente', 'Producto', 'PrecioProducto', 'Prestamo',
-    'Cuota', 'ExtensionPago', 'Pago', 'DetallePago', 'Recibo', 'Ruta',
-    'AsignacionRuta', 'Aprobacion', 'Caja', 'Transaccion', 'Gasto',
-    'ArchivadoOculto', 'AlertaCliente', 'Multimedia', 'Categoria',
-    'ConfiguracionSistema', 'RegistroVisita', 'EfectoProvisional',
-    'RutaJornada', 'ArqueoCaja', 'ImportacionLote', 'JournalEntry',
+    'Notificacion',
+    'Cliente',
+    'Producto',
+    'PrecioProducto',
+    'Prestamo',
+    'Cuota',
+    'ExtensionPago',
+    'Pago',
+    'DetallePago',
+    'Recibo',
+    'Ruta',
+    'AsignacionRuta',
+    'Aprobacion',
+    'Caja',
+    'Transaccion',
+    'Gasto',
+    'ArchivadoOculto',
+    'AlertaCliente',
+    'Multimedia',
+    'Categoria',
+    'ConfiguracionSistema',
+    'RegistroVisita',
+    'EfectoProvisional',
+    'RutaJornada',
+    'ArqueoCaja',
+    'ImportacionLote',
+    'JournalEntry',
     'JournalLine',
   ]);
-  private readonly allowedActions = new Set(['create', 'update', 'upsert', 'delete']);
+  private readonly allowedActions = new Set([
+    'create',
+    'update',
+    'upsert',
+    'delete',
+  ]);
 
   constructor(
     private readonly configService: ConfigService,
@@ -88,7 +114,10 @@ export class MirrorSyncController {
       .digest('hex');
     const provided = Buffer.from(signatureHeader, 'hex');
     const expected = Buffer.from(expectedSignature, 'hex');
-    if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
+    if (
+      provided.length !== expected.length ||
+      !timingSafeEqual(provided, expected)
+    ) {
       throw new UnauthorizedException('Firma de sincronización inválida');
     }
 

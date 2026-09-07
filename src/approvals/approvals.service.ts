@@ -1476,10 +1476,7 @@ export class ApprovalsService {
     // Segregación de funciones: nadie aprueba su propia solicitud (cuatro
     // ojos). El SUPER_ADMINISTRADOR queda como escape para no bloquear una
     // operación donde sea el único aprobador posible.
-    if (
-      aprobadoPorId &&
-      approval.solicitadoPorId === aprobadoPorId
-    ) {
+    if (aprobadoPorId && approval.solicitadoPorId === aprobadoPorId) {
       const aprobador = await this.prisma.usuario.findUnique({
         where: { id: aprobadoPorId },
         select: { rol: true },
