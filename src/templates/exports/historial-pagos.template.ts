@@ -586,7 +586,7 @@ export async function generarExcelPagos(
 
   const buffer = await workbook.xlsx.writeBuffer();
   return {
-    data: Buffer.from(buffer as ArrayBuffer),
+    data: Buffer.from(buffer),
     contentType:
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     filename: `historial-pagos-${fecha}.xlsx`,

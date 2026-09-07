@@ -223,7 +223,7 @@ export class ReportsController {
   ) {
     const result = await this.reportsService.exportarCuentasVencidas(
       exportRequest.formato,
-      exportRequest.filtros as CuentasVencidasFiltrosDto,
+      exportRequest.filtros,
     );
     res.setHeader('Content-Type', result.contentType);
     res.setHeader(

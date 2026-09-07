@@ -445,7 +445,7 @@ export class AccountingService {
   // Un cobrador solo puede ver las cajas de sus rutas (la que responsabiliza
   // el, o la de una ruta suya). Los demas roles ven todas.
   private scopeCajasPorActor(
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     const rol = String(actor?.rol || '').toUpperCase();
     if (!actor?.id) return {};
@@ -466,7 +466,7 @@ export class AccountingService {
     return {};
   }
 
-  async getCajas(actor?: { id?: string; rol?: RolUsuario | string } | null) {
+  async getCajas(actor?: { id?: string; rol?: RolUsuario } | null) {
     // Aseguramos cajas por defecto también de forma lazy.
     // onModuleInit puede no crearlas si al momento de arrancar no existía un ADMIN/SUPER_ADMIN activo.
     await this.ensureCajasDefault();
@@ -544,7 +544,7 @@ export class AccountingService {
 
   async getCajaById(
     id: string,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     // Mantener consistencia con getCajas(): garantizar defaults antes de responder.
     await this.ensureCajasDefault();

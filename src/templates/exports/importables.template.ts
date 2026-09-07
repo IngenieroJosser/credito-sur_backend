@@ -155,7 +155,7 @@ function setColumnsAtRowSix(
   ws: ExcelJS.Worksheet,
   columns: Array<{ header: string; key: string; width: number }>,
 ) {
-  ws.columns = columns.map(({ key, width }) => ({ key, width })) as any;
+  ws.columns = columns.map(({ key, width }) => ({ key, width }));
   ws.getRow(6).values = columns.map((c) => c.header);
 }
 
@@ -258,7 +258,7 @@ export async function generarExcelInventarioImportable(
 
   const buffer = await workbook.xlsx.writeBuffer();
   return {
-    data: Buffer.from(buffer as ArrayBuffer),
+    data: Buffer.from(buffer),
     contentType:
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     filename: `inventario-importable-${fecha}.xlsx`,
@@ -471,7 +471,7 @@ export async function generarExcelClientesCreditosImportable(
 
   const buffer = await workbook.xlsx.writeBuffer();
   return {
-    data: Buffer.from(buffer as ArrayBuffer),
+    data: Buffer.from(buffer),
     contentType:
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     filename: `clientes-creditos-importable-${fecha}.xlsx`,

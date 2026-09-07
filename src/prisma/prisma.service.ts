@@ -28,9 +28,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
           async $allOperations({ operation, model, args, query }) {
             const isCajaBalanceMutation =
               model === 'Caja' &&
-              ['update', 'updateMany', 'upsert'].includes(
-                operation as string,
-              ) &&
+              ['update', 'updateMany', 'upsert'].includes(operation) &&
               (args as any)?.data &&
               Object.prototype.hasOwnProperty.call(
                 (args as any).data,
@@ -69,7 +67,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
               'deleteMany',
             ];
 
-            if (watchActions.includes(operation as string) && model) {
+            if (watchActions.includes(operation) && model) {
               if (model !== 'OutboxEvent') {
                 // Solo sirve un id suelto. En deleteMany/updateMany el
                 // `where.id` suele ser un objeto ({ in: [...] }, { not: x })

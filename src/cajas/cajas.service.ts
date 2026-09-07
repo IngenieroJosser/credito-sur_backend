@@ -23,7 +23,7 @@ export class CajasService {
     private ledgerService: LedgerService,
   ) {}
 
-  private actorRol(actor?: { rol?: RolUsuario | string } | null): string {
+  private actorRol(actor?: { rol?: RolUsuario } | null): string {
     return String(actor?.rol || '').toUpperCase();
   }
 
@@ -42,7 +42,7 @@ export class CajasService {
         supervisorId?: string | null;
       } | null;
     },
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     const rol = this.actorRol(actor);
     const id = actor?.id;
@@ -118,7 +118,7 @@ export class CajasService {
   async getArqueoPreview(
     cajaId: string,
     fechaOperativa?: string,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     const fecha = fechaOperativa || getBogotaDayKey(new Date());
     const caja = await this.prisma.caja.findUnique({
@@ -196,7 +196,7 @@ export class CajasService {
 
   async getArqueoById(
     arqueoId: string,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     const arqueo = await this.prisma.arqueoCaja.findUnique({
       where: { id: arqueoId },
@@ -213,7 +213,7 @@ export class CajasService {
     }
 
     // Mismo criterio que el arqueo: cada quien solo ve los de sus cajas.
-    this.assertPuedeAccederCaja(arqueo.caja as any, actor);
+    this.assertPuedeAccederCaja(arqueo.caja, actor);
 
     const cajaPrincipal = await this.prisma.caja.findFirst({
       where: { tipo: TipoCaja.PRINCIPAL, activa: true },
@@ -260,7 +260,7 @@ export class CajasService {
     recibidoPorId?: string,
     denominaciones?: any,
     observaciones?: string,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     // Validaciones iniciales
     const efectivo = Math.round(Number(efectivoContado || 0));
@@ -288,7 +288,7 @@ export class CajasService {
       }
 
       // Un cobrador solo arquea su caja; un supervisor, las de sus rutas.
-      this.assertPuedeAccederCaja(caja as any, actor);
+      this.assertPuedeAccederCaja(caja, actor);
 
       const arqueoExistente = await tx.arqueoCaja.findUnique({
         where: { cajaId_fechaOperativa: { cajaId, fechaOperativa } },

@@ -194,7 +194,7 @@ export class ReportsService {
    * Se aplica sobre consultas de Préstamo (`{ ruta: { is: ... } }`).
    */
   private filtroRutaScopePrestamo(
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ): Record<string, any> {
     const rol = String(actor?.rol || '').toUpperCase();
     if (!actor?.id) return {};
@@ -222,7 +222,7 @@ export class ReportsService {
     filtros: PrestamosMoraFiltrosDto,
     pagina: number = 1,
     limite: number = 50,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ): Promise<PrestamosMoraResponseDto> {
     const skip = (pagina - 1) * limite;
 
@@ -610,7 +610,7 @@ export class ReportsService {
   }
 
   async obtenerEstadisticasMora(
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     // El supervisor/cobrador solo cuenta la mora de sus rutas.
     const scope = this.filtroRutaScopePrestamo(actor);
@@ -674,7 +674,7 @@ export class ReportsService {
     filtros: CuentasVencidasFiltrosDto,
     pagina: number = 1,
     limite: number = 50,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ): Promise<CuentasVencidasResponseDto> {
     const skip = (pagina - 1) * limite;
     const hoy = new Date();
@@ -953,7 +953,7 @@ export class ReportsService {
    * nivel de la propia ruta.
    */
   private filtroRutaDirectoPorActor(
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ): Record<string, any> {
     const rol = String(actor?.rol || '').toUpperCase();
     if (!actor?.id) return {};
@@ -971,7 +971,7 @@ export class ReportsService {
 
   async getOperationalReport(
     filters: GetOperationalReportDto,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ): Promise<OperationalReportResponse> {
     const { period, routeId, startDate, endDate } = filters;
 
@@ -982,7 +982,7 @@ export class ReportsService {
       // El actor filtra las rutas: el supervisor/cobrador solo ve las suyas.
       const rutasListado = await this.routesService.findAll(
         { activa: true },
-        actor as any,
+        actor,
       );
       const rutas = (rutasListado as any)?.data || [];
 
@@ -1089,11 +1089,7 @@ export class ReportsService {
       };
     }
 
-    const dateRange = calculateDateRange(
-      period as TimeFilterPeriod,
-      startDate,
-      endDate,
-    );
+    const dateRange = calculateDateRange(period, startDate, endDate);
 
     const routes = await this.prisma.ruta.findMany({
       where: {
@@ -1326,7 +1322,7 @@ export class ReportsService {
   async getRouteDetail(
     routeId: string,
     filters: any,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     const route = await this.prisma.ruta.findUnique({
       where: { id: routeId },
@@ -1360,7 +1356,7 @@ export class ReportsService {
     if (
       rolActor === RolUsuario.SUPERVISOR &&
       actor?.id &&
-      (route as any).supervisorId !== actor.id
+      route.supervisorId !== actor.id
     ) {
       throw new ForbiddenException('No supervisa esta ruta');
     }

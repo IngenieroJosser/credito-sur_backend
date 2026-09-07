@@ -153,7 +153,7 @@ describe('ReportsService: scope de rutas por rol en reportes de mora/vencidas', 
   it('el supervisor filtra la mora por sus rutas (supervisorId)', async () => {
     const { prisma, capturado } = prismaEspia();
     const service = new ReportsService(prisma, {} as any, {} as any);
-    await service.obtenerPrestamosEnMora({} as any, 1, 50, {
+    await service.obtenerPrestamosEnMora({}, 1, 50, {
       id: 'sup-1',
       rol: 'SUPERVISOR',
     });
@@ -163,7 +163,7 @@ describe('ReportsService: scope de rutas por rol en reportes de mora/vencidas', 
   it('el admin NO filtra por ruta (ve todo)', async () => {
     const { prisma, capturado } = prismaEspia();
     const service = new ReportsService(prisma, {} as any, {} as any);
-    await service.obtenerPrestamosEnMora({} as any, 1, 50, {
+    await service.obtenerPrestamosEnMora({}, 1, 50, {
       id: 'admin-1',
       rol: 'ADMIN',
     });

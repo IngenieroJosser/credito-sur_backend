@@ -47,7 +47,7 @@ export async function generarExcelAuditoria(
     { header: 'ID Entidad', key: 'entidadId', width: 20 },
     { header: 'Datos Anteriores', key: 'datosAnteriores', width: 40 },
     { header: 'Datos Nuevos', key: 'datosNuevos', width: 40 },
-  ] as any;
+  ];
 
   // Título
   const titleRow = ws.addRow(['CRÉDITOS DEL SUR — LOG DE AUDITORÍA']);
@@ -133,7 +133,7 @@ export async function generarExcelAuditoria(
 
   const buffer = await workbook.xlsx.writeBuffer();
   return {
-    data: Buffer.from(buffer as ArrayBuffer),
+    data: Buffer.from(buffer),
     contentType:
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     filename: `auditoria-${fecha}.xlsx`,

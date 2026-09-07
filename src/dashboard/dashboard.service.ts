@@ -23,7 +23,7 @@ export class DashboardService {
 
   async getDashboardData(
     timeFilter: string,
-    actor?: { id?: string; rol?: RolUsuario | string },
+    actor?: { id?: string; rol?: RolUsuario },
   ) {
     try {
       const { startDate, endDate } =
@@ -453,7 +453,7 @@ export class DashboardService {
 
   private async getLoanCompletionMetrics(actor?: {
     id?: string;
-    rol?: RolUsuario | string;
+    rol?: RolUsuario;
   }) {
     const isSupervisor =
       String(actor?.rol || '').toUpperCase() === RolUsuario.SUPERVISOR &&

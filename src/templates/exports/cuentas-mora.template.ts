@@ -132,7 +132,7 @@ export async function generarExcelMora(
     { key: 'riesgo', width: 13 },
     { key: 'ultimoPago', width: 14 },
     { key: 'comentario', width: 28 },
-  ] as any;
+  ];
   const moraLastCol = 'P';
 
   // Fila 1: Encabezado institucional
@@ -394,7 +394,7 @@ export async function generarExcelMora(
     { key: 'casos', width: 12 },
     { key: 'mora', width: 20 },
     { key: 'deuda', width: 20 },
-  ] as any;
+  ];
 
   wsResumen.mergeCells('A1:D1');
   const rT = wsResumen.getCell('A1');
@@ -455,7 +455,7 @@ export async function generarExcelMora(
 
   const buffer = await workbook.xlsx.writeBuffer();
   return {
-    data: Buffer.from(buffer as ArrayBuffer),
+    data: Buffer.from(buffer),
     contentType:
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     filename: `cuentas-mora-${fecha}.xlsx`,

@@ -108,11 +108,7 @@ export class PaymentsController {
     }
 
     try {
-      return await this.paymentsService.create(
-        dto as CreatePaymentDto,
-        comprobante,
-        req.user,
-      );
+      return await this.paymentsService.create(dto, comprobante, req.user);
     } catch (error: any) {
       this.logger.error(
         `[PaymentsController.create] Error registrando pago: ${error?.message}`,

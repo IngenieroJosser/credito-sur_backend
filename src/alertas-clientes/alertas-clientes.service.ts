@@ -13,7 +13,7 @@ import { PushService } from '../push/push.service';
 import { CrearAlertaClienteDto } from './dto/crear-alerta-cliente.dto';
 import { ResolverAlertaClienteDto } from './dto/resolver-alerta-cliente.dto';
 
-type ActorAlerta = { id?: string; rol?: RolUsuario | string };
+type ActorAlerta = { id?: string; rol?: RolUsuario };
 
 const ROLES_EMISORES = new Set<string>([
   RolUsuario.SUPER_ADMINISTRADOR,

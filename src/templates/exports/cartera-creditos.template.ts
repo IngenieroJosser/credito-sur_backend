@@ -510,7 +510,7 @@ export async function generarExcelCartera(
     { key: 'recaudo', width: 20 },
     { key: 'mora', width: 20 },
     { key: 'adeudado', width: 20 },
-  ] as any;
+  ];
 
   ws2.mergeCells('A1:G1');
   const ws2T = ws2.getCell('A1');
@@ -620,7 +620,7 @@ export async function generarExcelCartera(
 
   const buffer = await workbook.xlsx.writeBuffer();
   return {
-    data: Buffer.from(buffer as ArrayBuffer),
+    data: Buffer.from(buffer),
     contentType:
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     filename: `listado-creditos-${fecha}.xlsx`,

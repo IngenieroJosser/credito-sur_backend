@@ -1326,5 +1326,5 @@ export async function generarPlantillaClientesCreditos(
   });
 
   const buffer = await workbook.xlsx.writeBuffer();
-  return comoBuffer(buffer as ArrayBuffer, 'plantilla-clientes-creditos.xlsx');
+  return comoBuffer(buffer, 'plantilla-clientes-creditos.xlsx');
 }

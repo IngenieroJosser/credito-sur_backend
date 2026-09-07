@@ -185,10 +185,13 @@ describe('RoutesService role scoping', () => {
     };
     const service = makeService(prisma);
 
-    await service.findAll({ cobradorId: 'cobrador-ajeno', take: 10 }, {
-      id: 'cobrador-propio',
-      rol: RolUsuario.COBRADOR,
-    } as any);
+    await service.findAll(
+      { cobradorId: 'cobrador-ajeno', take: 10 },
+      {
+        id: 'cobrador-propio',
+        rol: RolUsuario.COBRADOR,
+      },
+    );
 
     expect(prisma.ruta.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -215,10 +218,13 @@ describe('RoutesService role scoping', () => {
     };
     const service = makeService(prisma);
 
-    await service.findAll({ supervisorId: 'supervisor-ajeno', take: 10 }, {
-      id: 'supervisor-propio',
-      rol: RolUsuario.SUPERVISOR,
-    } as any);
+    await service.findAll(
+      { supervisorId: 'supervisor-ajeno', take: 10 },
+      {
+        id: 'supervisor-propio',
+        rol: RolUsuario.SUPERVISOR,
+      },
+    );
 
     expect(prisma.ruta.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -245,10 +251,13 @@ describe('RoutesService role scoping', () => {
     };
     const service = makeService(prisma);
 
-    await service.findAll({ take: 10 }, {
-      id: 'coordinador-propio',
-      rol: RolUsuario.COORDINADOR,
-    } as any);
+    await service.findAll(
+      { take: 10 },
+      {
+        id: 'coordinador-propio',
+        rol: RolUsuario.COORDINADOR,
+      },
+    );
 
     // Decisión de producto: a diferencia de supervisor y cobrador, el
     // coordinador tiene visibilidad total sobre las rutas.
@@ -1321,7 +1330,7 @@ describe('RoutesService role scoping', () => {
 
     const cierre = await makeService(prisma).getCierrePendienteRutaPublic(
       'ruta-1',
-      { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+      { id: 'admin-1', rol: RolUsuario.ADMIN },
     );
 
     expect(cierre).toEqual(
@@ -1823,7 +1832,7 @@ describe('RoutesService role scoping', () => {
         'ruta-1',
         '2026-06-13',
         'Jornada regularizada',
-        { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+        { id: 'admin-1', rol: RolUsuario.ADMIN },
       );
 
       // Verificar que no se creó transacción financiera
@@ -1893,7 +1902,7 @@ describe('RoutesService role scoping', () => {
         'ruta-1',
         '2026-06-13',
         'Jornada regularizada',
-        { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+        { id: 'admin-1', rol: RolUsuario.ADMIN },
       );
 
       // Verificar que no se creó JournalEntry
@@ -2359,7 +2368,7 @@ describe('RoutesService role scoping', () => {
 
     await makeService(prisma).update('ruta-1', {
       cobradorId: 'cobrador-nuevo',
-    } as any);
+    });
 
     expect(tx.ruta.update).toHaveBeenCalled();
     expect(tx.asignacionRuta.updateMany).toHaveBeenCalledWith({

@@ -63,7 +63,7 @@ export async function generarExcelOperativo(
     { header: 'Préstamos Nuevos', key: 'nuevosPrestamos', width: 17 },
     { header: 'Clientes Nuevos', key: 'nuevosClientes', width: 16 },
     { header: 'Monto Nuevos', key: 'montoNuevosPrestamos', width: 18 },
-  ] as any;
+  ];
 
   // Título
   const titleRow = ws.addRow(['CRÉDITOS DEL SUR — REPORTE OPERATIVO']);
@@ -184,7 +184,7 @@ export async function generarExcelOperativo(
   ws2.columns = [
     { header: 'Indicador', key: 'indicador', width: 30 },
     { header: 'Valor', key: 'valor', width: 22 },
-  ] as any;
+  ];
 
   const h2 = ws2.getRow(1);
   ws2.columns.forEach((col: any, i: number) => {
@@ -222,7 +222,7 @@ export async function generarExcelOperativo(
 
   const buffer = await workbook.xlsx.writeBuffer();
   return {
-    data: Buffer.from(buffer as ArrayBuffer),
+    data: Buffer.from(buffer),
     contentType:
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     filename: `reporte-operativo-${resumen.periodo}-${fecha}.xlsx`,

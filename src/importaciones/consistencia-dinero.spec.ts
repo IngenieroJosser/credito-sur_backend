@@ -216,7 +216,7 @@ describe('La importación calcula el interés igual que el sistema', () => {
       const { plazoMeses, interesTotal, tabla } = planDe(caso);
 
       const delSistema = (servicio as any).calculateInterestAndCuotas(
-        caso.metodo as TipoAmortizacion,
+        caso.metodo,
         caso.monto,
         caso.tasa,
         caso.cuotas,

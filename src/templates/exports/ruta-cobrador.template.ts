@@ -150,7 +150,7 @@ export async function generarExcelRutaCobrador(
     { header: 'Gestión Ruta', key: 'gestionRuta', width: 18 },
     { header: 'Cobrado ✔', key: 'cobrado', width: 14 },
     { header: 'Notas', key: 'notas', width: 22 },
-  ] as any;
+  ];
 
   const title = ws.addRow([
     `CRÉDITOS DEL SUR — RUTA ${meta.rutaNombre.toUpperCase()}` +
@@ -272,7 +272,7 @@ export async function generarExcelRutaCobrador(
 
   const buffer = await workbook.xlsx.writeBuffer();
   return {
-    data: Buffer.from(buffer as ArrayBuffer),
+    data: Buffer.from(buffer),
     contentType:
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     filename: `ruta-${meta.rutaNombre}-${fecha}.xlsx`,

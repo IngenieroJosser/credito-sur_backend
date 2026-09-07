@@ -252,7 +252,7 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
 
       const plazoMeses = derivarPlazoMeses(cuotas, frecuencia);
       const delSistema = (servicio as any).calculateInterestAndCuotas(
-        metodo.enum as TipoAmortizacion,
+        metodo.enum,
         monto,
         tasa,
         cuotas,

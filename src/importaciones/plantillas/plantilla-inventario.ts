@@ -471,5 +471,5 @@ export async function generarPlantillaInventario(): Promise<{
   });
 
   const buffer = await workbook.xlsx.writeBuffer();
-  return comoBuffer(buffer as ArrayBuffer, 'plantilla-inventario.xlsx');
+  return comoBuffer(buffer, 'plantilla-inventario.xlsx');
 }

@@ -137,7 +137,7 @@ export async function generarExcelInventario(
     key: c.key,
     width: c.width,
     ...(c.key === 'costo' ? { style: { numFmt: '"$"#,##0' } } : {}),
-  })) as any;
+  }));
 
   // ── Fila 1: Título ──────────────────────────────────────────────────────────
   const titleRow = ws.addRow([`CRÉDITOS DEL SUR — INVENTARIO DE ARTÍCULOS`]);

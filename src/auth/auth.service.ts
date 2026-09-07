@@ -405,7 +405,7 @@ export class AuthService {
       // Cuenta los intentos y, tras varios fallos, invalida el codigo para
       // que no se pueda forzar por fuerza bruta sobre los 6 digitos.
       const MAX_INTENTOS = 5;
-      const intentos = ((usuario as any).resetPasswordIntentos ?? 0) + 1;
+      const intentos = (usuario.resetPasswordIntentos ?? 0) + 1;
       const agotados = intentos >= MAX_INTENTOS;
       await this.prisma.usuario.update({
         where: { id: usuario.id },

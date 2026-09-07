@@ -85,7 +85,7 @@ export async function generarExcelClientes(
     { header: 'Saldo en Mora', key: 'montoMora', width: 18 },
     { header: 'Ruta', key: 'rutaNombre', width: 20 },
     { header: 'Registrado', key: 'creadoEn', width: 18 },
-  ] as any;
+  ];
 
   // Título
   const titleRow = ws.addRow(['CRÉDITOS DEL SUR — LISTADO DE CLIENTES']);
@@ -244,7 +244,7 @@ export async function generarExcelClientes(
 
   const buffer = await workbook.xlsx.writeBuffer();
   return {
-    data: Buffer.from(buffer as ArrayBuffer),
+    data: Buffer.from(buffer),
     contentType:
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     filename: `clientes-${fecha}.xlsx`,

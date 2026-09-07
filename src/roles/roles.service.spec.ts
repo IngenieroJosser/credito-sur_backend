@@ -12,12 +12,10 @@ describe('RolesService', () => {
       create: jest
         .fn()
         .mockImplementation(({ data }: any) => ({ id: 'r1', ...data })),
-      update: jest
-        .fn()
-        .mockImplementation(({ where, data }: any) => ({
-          id: where.id,
-          ...data,
-        })),
+      update: jest.fn().mockImplementation(({ where, data }: any) => ({
+        id: where.id,
+        ...data,
+      })),
       ...(over.rol || {}),
     },
     permiso: {
@@ -70,7 +68,7 @@ describe('RolesService', () => {
       await service.eliminar('r1');
       const args = prisma.rol.update.mock.calls[0][0];
       expect(args.data.eliminadoEn).toBeInstanceOf(Date);
-      expect((prisma.rol as any).delete).toBeUndefined();
+      expect(prisma.rol.delete).toBeUndefined();
     });
   });
 

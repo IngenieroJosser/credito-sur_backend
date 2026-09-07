@@ -95,7 +95,7 @@ export async function generarExcelVencidas(
     { key: 'riesgo', width: 13 },
     { key: 'ruta', width: 20 },
     { key: 'estado', width: 14 },
-  ] as any;
+  ];
 
   // Fila 1: Encabezado institucional
   ws.mergeCells('A1:K1');
@@ -318,7 +318,7 @@ export async function generarExcelVencidas(
 
   const buffer = await workbook.xlsx.writeBuffer();
   return {
-    data: Buffer.from(buffer as ArrayBuffer),
+    data: Buffer.from(buffer),
     contentType:
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     filename: `cuentas-vencidas-${fecha}.xlsx`,

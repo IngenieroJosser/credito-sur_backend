@@ -310,7 +310,7 @@ describe('AlertasClientesService', () => {
         motivo: 'NO_LOCALIZADO',
         descripcion: 'No fue ubicado desde una ruta concreta',
         observacionesReportante: 'Usar ruta de la pantalla',
-      } as any,
+      },
       makeActor(),
     );
 

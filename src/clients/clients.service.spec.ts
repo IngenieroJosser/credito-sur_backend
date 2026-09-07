@@ -131,7 +131,7 @@ describe('ClientsService', () => {
         ...mockClientData,
       });
 
-      const result = await service.create(mockClientData as any);
+      const result = await service.create(mockClientData);
 
       // Verificaciones
       expect(prismaService.cliente.count).toHaveBeenCalled();
@@ -182,7 +182,7 @@ describe('ClientsService', () => {
         dni: '12345678',
         telefono: '3001234567',
         idempotencyKey: 'offline-cliente-1',
-      } as any);
+      });
 
       expect(result).toMatchObject({
         aprobacionId: 'approval-existente',
@@ -223,7 +223,7 @@ describe('ClientsService', () => {
 
       await service.getAllClients(
         { nivelRiesgo: 'all', ruta: '', search: '' },
-        { id: 'cobrador-propio', rol: RolUsuario.COBRADOR } as any,
+        { id: 'cobrador-propio', rol: RolUsuario.COBRADOR },
       );
 
       expect(prismaService.cliente.findMany).toHaveBeenCalledWith(

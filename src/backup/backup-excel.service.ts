@@ -1482,7 +1482,7 @@ export class BackupExcelService {
     // ── Escritura ────────────────────────────────────────────────────────────
     const tmpPath = `${filePath}.tmp`;
     const buf = await wb.xlsx.writeBuffer();
-    await fs.writeFile(tmpPath, Buffer.from(buf as ArrayBuffer));
+    await fs.writeFile(tmpPath, Buffer.from(buf));
     try {
       await fs.rm(filePath, { force: true });
     } catch {

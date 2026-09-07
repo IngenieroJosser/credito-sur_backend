@@ -103,7 +103,7 @@ async function editarLibro(
   await workbook.xlsx.load(data as any);
   editar(workbook);
   const buffer = await workbook.xlsx.writeBuffer();
-  return Buffer.from(buffer as ArrayBuffer);
+  return Buffer.from(buffer);
 }
 
 const normalizarEncabezado = (texto: any) =>
@@ -671,7 +671,7 @@ describe('Equivalencia con la creación de créditos del sistema', () => {
     frecuencia: FrecuenciaPago = FrecuenciaPago.DIARIO,
   ) =>
     (servicioPrestamos as any).calculateInterestAndCuotas(
-      tipo as TipoAmortizacion,
+      tipo,
       monto,
       tasa,
       cantidadCuotas,
@@ -1396,7 +1396,7 @@ describe('Las fórmulas del Excel dan lo mismo que el sistema', () => {
       const plazoMeses = derivarPlazoMeses(cuotas, frecuencia);
 
       const delSistema = (servicioPrestamos as any).calculateInterestAndCuotas(
-        'INTERES_SIMPLE' as TipoAmortizacion,
+        'INTERES_SIMPLE',
         monto,
         tasa,
         cuotas,
@@ -1425,7 +1425,7 @@ describe('Las fórmulas del Excel dan lo mismo que el sistema', () => {
     const excelInteres = Math.round(monto * (tasa / 100));
 
     const delSistema = (servicioPrestamos as any).calculateInterestAndCuotas(
-      'INTERES_PLANO' as TipoAmortizacion,
+      'INTERES_PLANO',
       monto,
       tasa,
       cuotas,
@@ -1864,7 +1864,7 @@ describe('La vista previa muestra las mismas cifras que se van a guardar', () =>
         metodo === 'Amortización' ? 'INTERES_PLANO' : 'INTERES_SIMPLE',
         monto,
         tasa,
-        derivarPlazoMeses(cuotas, frecuencia as any),
+        derivarPlazoMeses(cuotas, frecuencia),
       );
       const abonado = construirTablaCuotas(
         metodo === 'Amortización' ? 'INTERES_PLANO' : 'INTERES_SIMPLE',

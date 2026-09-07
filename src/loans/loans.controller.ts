@@ -1057,9 +1057,7 @@ export class LoansController {
     }
 
     const tipoAprobacion: TipoAprobacion =
-      body.decision === 'CASTIGAR'
-        ? ('BAJA_POR_PERDIDA' as TipoAprobacion)
-        : ('PRORROGA_PAGO' as TipoAprobacion);
+      body.decision === 'CASTIGAR' ? 'BAJA_POR_PERDIDA' : 'PRORROGA_PAGO';
 
     const dias =
       Number(body.diasGracia || 0) > 0 ? Number(body.diasGracia) : 30;

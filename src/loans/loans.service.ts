@@ -58,17 +58,17 @@ const CUOTAS_POR_MES_LOANS: Record<string, number> = {
 export class LoansService implements OnModuleInit {
   private readonly logger = new Logger(LoansService.name);
 
-  private isCollector(actor?: { rol?: RolUsuario | string } | null) {
+  private isCollector(actor?: { rol?: RolUsuario } | null) {
     return String(actor?.rol || '').toUpperCase() === RolUsuario.COBRADOR;
   }
 
-  private isOperatorWithBase(actor?: { rol?: RolUsuario | string } | null) {
+  private isOperatorWithBase(actor?: { rol?: RolUsuario } | null) {
     const rol = String(actor?.rol || '').toUpperCase();
     return rol === RolUsuario.COBRADOR || rol === RolUsuario.SUPERVISOR;
   }
 
   private puedeCrearCreditoConFechaAntigua(
-    rol?: RolUsuario | string | null,
+    rol?: RolUsuario | null,
   ): boolean {
     const normalized = String(rol || '').toUpperCase();
     return (
@@ -91,7 +91,7 @@ export class LoansService implements OnModuleInit {
   }
 
   private collectorLoanScope(
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ): Prisma.PrestamoWhereInput {
     const rol = String(actor?.rol || '').toUpperCase();
     if (!actor?.id) return {};
@@ -1496,7 +1496,7 @@ export class LoansService implements OnModuleInit {
       page?: number;
       limit?: number;
     },
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     try {
       this.logger.log(`Getting loans with filters: ${JSON.stringify(filters)}`);
@@ -1556,7 +1556,7 @@ export class LoansService implements OnModuleInit {
           {
             numeroPrestamo: {
               contains: searchTerm,
-              mode: 'insensitive' as any,
+              mode: 'insensitive',
             },
           },
           {
@@ -1970,7 +1970,7 @@ export class LoansService implements OnModuleInit {
 
   async getLoanById(
     id: string,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     try {
       const prestamo = await this.prisma.prestamo.findFirst({
@@ -2990,7 +2990,7 @@ export class LoansService implements OnModuleInit {
         monto: cuota.monto,
         montoCapital: cuota.montoCapital,
         montoInteres: cuota.montoInteres,
-        estado: EstadoCuota.PENDIENTE as typeof EstadoCuota.PENDIENTE,
+        estado: EstadoCuota.PENDIENTE,
       }));
 
       // Homogeneizar vencimiento del préstamo con el cronograma real
@@ -3494,7 +3494,7 @@ export class LoansService implements OnModuleInit {
 
   async getLoanCuotas(
     prestamoId: string,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     try {
       if (this.isCollector(actor)) {
@@ -5337,7 +5337,7 @@ export class LoansService implements OnModuleInit {
    */
   private async prestamosBajoJurisdiccion(
     prestamoIds: string[],
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ): Promise<Set<string> | null> {
     const scope = this.collectorLoanScope(actor);
     // Sin restricción (admin/coordinador/super): jurisdicción total.
@@ -5353,7 +5353,7 @@ export class LoansService implements OnModuleInit {
 
   async listarReprogramacionesPendientes(
     estado?: string,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     const where: any = {
       tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
@@ -5377,7 +5377,7 @@ export class LoansService implements OnModuleInit {
 
     // El supervisor/cobrador solo debe ver las reprogramaciones de sus rutas.
     const idsPrestamo = solicitudes
-      .map((s) => (s.datosSolicitud as any)?.prestamoId)
+      .map((s) => s.datosSolicitud?.prestamoId)
       .filter((id): id is string => typeof id === 'string');
     const permitidos = await this.prestamosBajoJurisdiccion(idsPrestamo, actor);
 
@@ -5385,7 +5385,7 @@ export class LoansService implements OnModuleInit {
       permitidos === null
         ? solicitudes
         : solicitudes.filter((s) =>
-            permitidos.has((s.datosSolicitud as any)?.prestamoId),
+            permitidos.has(s.datosSolicitud?.prestamoId),
           );
 
     return visibles.map((s) => ({
@@ -5404,9 +5404,9 @@ export class LoansService implements OnModuleInit {
    */
   private async exigirJurisdiccionReprogramacion(
     aprobacion: { datosSolicitud: any },
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ): Promise<void> {
-    const prestamoId = (aprobacion.datosSolicitud as any)?.prestamoId;
+    const prestamoId = aprobacion.datosSolicitud?.prestamoId;
     if (typeof prestamoId !== 'string') return;
     const permitidos = await this.prestamosBajoJurisdiccion(
       [prestamoId],
@@ -5424,7 +5424,7 @@ export class LoansService implements OnModuleInit {
   async aprobarReprogramacion(
     aprobacionId: string,
     aprobadoPorId: string,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     const aprobacion = await this.prisma.aprobacion.findUnique({
       where: { id: aprobacionId },
@@ -5503,7 +5503,7 @@ export class LoansService implements OnModuleInit {
     aprobacionId: string,
     rechazadoPorId: string,
     comentarios?: string,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     const aprobacion = await this.prisma.aprobacion.findUnique({
       where: { id: aprobacionId },

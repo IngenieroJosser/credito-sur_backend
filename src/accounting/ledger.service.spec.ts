@@ -301,8 +301,7 @@ describe('El asiento de venta de artículo tiene que cuadrar', () => {
       createdBy: 'admin-1',
     });
 
-    const [[argumento]] = (prisma._tx.journalEntry.create as jest.Mock).mock
-      .calls;
+    const [[argumento]] = prisma._tx.journalEntry.create.mock.calls;
     const lineas = argumento.data.lines.create as Array<{
       debitAmount?: number;
       creditAmount?: number;

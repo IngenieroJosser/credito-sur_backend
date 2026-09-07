@@ -79,7 +79,7 @@ export class ImportacionesService {
 
     await this.ledgerService.registrarAsiento(
       {
-        referenceType: 'AJUSTE' as any,
+        referenceType: 'AJUSTE',
         referenceId: productoId,
         description:
           `${entra ? 'Entrada' : 'Salida'} de inventario por importación — ` +
@@ -95,7 +95,7 @@ export class ImportacionesService {
             ...(entra ? { creditAmount: valor } : { debitAmount: valor }),
           },
         ],
-      } as any,
+      },
       tx,
     );
   }
@@ -651,13 +651,13 @@ export class ImportacionesService {
           data: {
             estado: parcial ? 'CONFIRMADO' : 'CANCELADO',
             resumen: {
-              ...((lote.resumen ?? {}) as any),
+              ...(lote.resumen ?? {}),
               creado: {
                 ...creado,
                 prestamos: quedanVivos,
                 clientes: parcial ? idsClientes : [],
               },
-            } as any,
+            },
           },
         });
       },

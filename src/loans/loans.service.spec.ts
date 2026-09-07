@@ -2003,7 +2003,7 @@ describe('LoansService role scoping', () => {
         page: 1,
         limit: 8,
       },
-      { id: 'cobrador-propio', rol: RolUsuario.COBRADOR } as any,
+      { id: 'cobrador-propio', rol: RolUsuario.COBRADOR },
     );
 
     expect(prisma.prestamo.findMany).toHaveBeenCalledWith(
@@ -2057,7 +2057,7 @@ describe('LoansService role scoping', () => {
         page: 1,
         limit: 8,
       },
-      { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+      { id: 'admin-1', rol: RolUsuario.ADMIN },
     );
 
     // Se comprueba el sentido de la consulta y no su forma exacta: lo que
@@ -2125,7 +2125,7 @@ describe('LoansService role scoping', () => {
         page: 1,
         limit: 8,
       },
-      { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+      { id: 'admin-1', rol: RolUsuario.ADMIN },
     );
 
     expect(prisma.prestamo.aggregate).toHaveBeenCalledWith(
@@ -2594,7 +2594,7 @@ describe('La corrección de intereses del arranque', () => {
 
     // Los 60.000 de diferencia se reparten entre las 45 cuotas sin dejar
     // centavos ni perder pesos: 44 de 1.333 y la última con el residuo.
-    const ajustes = (prisma.cuota.update as jest.Mock).mock.calls.map(
+    const ajustes = prisma.cuota.update.mock.calls.map(
       ([argumento]) => argumento.data.monto.increment,
     );
     expect(ajustes.every((a: number) => Number.isInteger(a))).toBe(true);

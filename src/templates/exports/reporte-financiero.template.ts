@@ -62,7 +62,7 @@ export async function generarExcelFinanciero(
     { header: 'Concepto', key: 'concepto', width: 28 },
     { header: 'Monto', key: 'monto', width: 22 },
     { header: 'Detalle', key: 'detalle', width: 25 },
-  ] as any;
+  ];
 
   const t1 = ws1.addRow(['CRÉDITOS DEL SUR — REPORTE FINANCIERO']);
   t1.font = { bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
@@ -157,7 +157,7 @@ export async function generarExcelFinanciero(
     { header: 'Ingresos', key: 'ingresos', width: 18 },
     { header: 'Egresos', key: 'egresos', width: 18 },
     { header: 'Utilidad', key: 'utilidad', width: 18 },
-  ] as any;
+  ];
 
   const t2 = ws2.addRow(['Evolución Mensual']);
   t2.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
@@ -218,7 +218,7 @@ export async function generarExcelFinanciero(
     { header: 'Categoría', key: 'categoria', width: 28 },
     { header: 'Monto', key: 'monto', width: 18 },
     { header: 'Porcentaje', key: 'porcentaje', width: 16 },
-  ] as any;
+  ];
 
   const t3 = ws3.addRow(['Distribución de Gastos']);
   t3.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
@@ -268,7 +268,7 @@ export async function generarExcelFinanciero(
 
   const buffer = await workbook.xlsx.writeBuffer();
   return {
-    data: Buffer.from(buffer as ArrayBuffer),
+    data: Buffer.from(buffer),
     contentType:
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     filename: `reporte-financiero-${fecha}.xlsx`,

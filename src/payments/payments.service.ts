@@ -53,7 +53,7 @@ function truncCop(
 type PaymentActor =
   | {
       id?: string;
-      rol?: RolUsuario | string;
+      rol?: RolUsuario;
     }
   | null
   | undefined;

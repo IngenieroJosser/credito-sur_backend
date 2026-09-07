@@ -246,7 +246,7 @@ export class UsersService {
 
   async obtenerTodos(
     includeArchived = false,
-    actor?: { rol?: RolUsuario | string } | null,
+    actor?: { rol?: RolUsuario } | null,
   ) {
     // Roles que pueden ver el directorio completo (correo, telefono, ultimo
     // ingreso, permisos). El resto recibe solo lo minimo para mostrar nombres

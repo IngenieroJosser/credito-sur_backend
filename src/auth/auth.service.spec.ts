@@ -178,7 +178,7 @@ describe('AuthService', () => {
       const resultado = await service.login({
         correo: ' ADMIN@Test.com ',
         contrasena: 'correcta',
-      } as any);
+      });
 
       expect(resultado.access_token).toBe('jwt-token-mock');
       expect(prisma.usuario.findFirst).toHaveBeenCalledWith({
@@ -197,7 +197,7 @@ describe('AuthService', () => {
       const resultado = await service.login({
         identificador: ' Admin.Test ',
         contrasena: 'correcta',
-      } as any);
+      });
 
       expect(resultado.usuario).toHaveProperty('id', 'user-1');
       expect(prisma.usuario.findFirst).toHaveBeenCalledWith({

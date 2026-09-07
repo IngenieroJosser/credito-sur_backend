@@ -22,7 +22,7 @@ import { generarExcelClientesCreditosImportable } from '../templates/exports/imp
 export class ClientsService {
   private readonly logger = new Logger(ClientsService.name);
 
-  private isCollector(actor?: { rol?: RolUsuario | string } | null) {
+  private isCollector(actor?: { rol?: RolUsuario } | null) {
     return String(actor?.rol || '').toUpperCase() === RolUsuario.COBRADOR;
   }
 
@@ -31,7 +31,7 @@ export class ClientsService {
    * Se usa en listados operativos del dashboard.
    */
   private collectorClientScope(
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ): Prisma.ClienteWhereInput {
     const rol = String(actor?.rol || '').toUpperCase();
     if (!actor?.id) return {};
@@ -41,10 +41,7 @@ export class ClientsService {
         asignacionesRuta: {
           some: {
             activa: true,
-            OR: [
-              { cobradorId: actor.id } as any,
-              { ruta: { cobradorId: actor.id } } as any,
-            ],
+            OR: [{ cobradorId: actor.id }, { ruta: { cobradorId: actor.id } }],
           },
         },
       };
@@ -56,7 +53,7 @@ export class ClientsService {
         asignacionesRuta: {
           some: {
             activa: true,
-            ruta: { supervisorId: actor.id } as any,
+            ruta: { supervisorId: actor.id },
           },
         },
       };
@@ -71,7 +68,7 @@ export class ClientsService {
    * Esto le permite asignar un crédito a cualquier cliente activo.
    */
   private creditCreationClientScope(
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ): Prisma.ClienteWhereInput {
     if (!this.isCollector(actor)) return {};
     // Para el cobrador en contexto de crédito: excluir solo lista negra.
@@ -169,7 +166,7 @@ export class ClientsService {
   async update(
     id: string,
     updateClientDto: UpdateClientDto,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     const {
       rutaId: _rutaId,
@@ -383,7 +380,7 @@ export class ClientsService {
        */
       forCredit?: boolean;
     },
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     try {
       this.logger.log(
@@ -744,7 +741,7 @@ export class ClientsService {
 
   async getClientById(
     id: string,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     this.logger.log(`[DEBUG] getClientById called with ID: ${id}`);
     try {
@@ -1896,7 +1893,7 @@ export class ClientsService {
 
   async getEstadoCuentaCliente(
     clienteId: string,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     const cliente = await this.prisma.cliente.findFirst({
       where: {

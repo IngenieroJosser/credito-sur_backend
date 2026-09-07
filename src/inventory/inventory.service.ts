@@ -61,7 +61,7 @@ export class InventoryService {
 
     await this.ledgerService.registrarAsiento(
       {
-        referenceType: 'AJUSTE' as any,
+        referenceType: 'AJUSTE',
         referenceId: productoId,
         description:
           `${entra ? 'Entrada' : 'Salida'} de inventario — ${codigo}: ` +
@@ -77,7 +77,7 @@ export class InventoryService {
             ...(entra ? { creditAmount: valor } : { debitAmount: valor }),
           },
         ],
-      } as any,
+      },
       tx,
     );
   }

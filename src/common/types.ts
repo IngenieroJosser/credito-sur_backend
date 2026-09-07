@@ -11,7 +11,7 @@
  * puso cuotas de otros clientes en 0.
  */
 
-import { Prisma, EstadoPrestamo } from '@prisma/client';
+import { Prisma, EstadoPrestamo, RolUsuario } from '@prisma/client';
 
 /**
  * Filtros para consultas de pagos (findMany / count).
@@ -107,3 +107,18 @@ export type PagoConRelacionesExport = Prisma.PagoGetPayload<{
     cobrador: { select: { nombres: true; apellidos: true; rol: true } };
   };
 }>;
+
+/**
+ * Quién hace la petición: es lo que `JwtStrategy.validate()` deja en `req.user`
+ * y lo que los servicios reciben como `actor` para filtrar por jurisdicción
+ * (un supervisor solo ve sus rutas, un cobrador solo sus clientes).
+ *
+ * El rol va tipado con el enum a secas. Antes las 41 firmas repetían
+ * `RolUsuario` unido a `string`, y ese `string` anulaba el enum: TypeScript no
+ * podía avisar de un `'COORDINADRO'` mal escrito. Quitarlo no rompió nada,
+ * porque el valor real siempre es el enum: `validate()` lo lee de la base.
+ */
+export interface ActorUsuario {
+  id?: string;
+  rol?: RolUsuario;
+}
