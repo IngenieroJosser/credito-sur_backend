@@ -623,7 +623,7 @@ export class AccountingController {
     if (!req.user || !req.user.id)
       throw new UnauthorizedException('Usuario no autenticado');
     // Ensure monto is parsing correctly
-    const montoClean =
+    const _montoClean =
       typeof body.monto === 'number' ? body.monto : Number(body.monto) || 0;
 
     return this.accountingService.registrarAbonoDeuda(

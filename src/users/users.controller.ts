@@ -118,7 +118,7 @@ export class UsersController {
   cambiarContrasena(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ChangePasswordDto,
-    @Request() req: any,
+    @Request() _req: any,
   ) {
     return this.usersService.changePassword(id, dto);
   }

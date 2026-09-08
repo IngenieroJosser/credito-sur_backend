@@ -604,7 +604,7 @@ export class DashboardService {
     //      -> tomar la más antigua.
     //   b) Si NO existe deuda hasta ese día, contar una cuota PAGADA en ESE día (fechaPago en el día)
     //      -> tomar la más antigua por fechaVencimiento para determinismo.
-    const { startDate: endDayStartUTC, endDate: endDayEndUTC } =
+    const { startDate: _endDayStartUTC, endDate: endDayEndUTC } =
       getBogotaStartEndOfDay(endDate);
 
     const cuotasNoPagadasHastaFin = await this.prisma.cuota.findMany({

@@ -144,7 +144,10 @@ export async function generarContratoPDF(
         doc.image(lp, (PW - 280) / 2, (PH - 280) / 2, { width: 280 });
         doc.restore();
       }
-    } catch (_) {}
+    } catch {
+      // El watermark es decorativo: si el logo no se puede dibujar
+      // (falta el archivo, o el PDF ya se cerro), el reporte sale igual.
+    }
   };
 
   // ── Helpers de dibujo ───────────────────────────────────────────────────────

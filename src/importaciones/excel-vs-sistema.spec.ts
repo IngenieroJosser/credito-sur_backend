@@ -1,5 +1,5 @@
 import * as ExcelJS from 'exceljs';
-import { FrecuenciaPago, TipoAmortizacion } from '@prisma/client';
+import { FrecuenciaPago } from '@prisma/client';
 import { LoansService } from '../loans/loans.service';
 import { generarPlantillaClientesCreditos } from './plantillas/plantilla-clientes-creditos';
 import { evaluarFormula, ValorCelda } from './evaluador-formulas';

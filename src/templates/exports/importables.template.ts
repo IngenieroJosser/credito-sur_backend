@@ -91,7 +91,7 @@ function dateKey(value: Date | string | null | undefined): string {
   return d.toISOString().slice(0, 10);
 }
 
-function riesgoImportable(nivel?: string | null): string {
+function _riesgoImportable(nivel?: string | null): string {
   const n = text(nivel).toUpperCase();
   if (n === 'AMARILLO') return 'Precaución';
   if (n === 'ROJO' || n === 'LISTA_NEGRA') return 'Crítico';

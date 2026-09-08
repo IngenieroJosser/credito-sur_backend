@@ -1238,7 +1238,14 @@ export class ClientsService {
               apellidos: data.apellidos,
             },
           });
-        } catch {}
+        } catch (error) {
+          // No se corta la operacion principal por esto, pero se deja
+          // registrado: en silencio nadie se entera de que fallo.
+          this.logger.warn(
+            'No se pudo notificar el cliente nuevo',
+            error as any,
+          );
+        }
 
         try {
           await this.notificacionesService.create({
@@ -1254,7 +1261,14 @@ export class ClientsService {
               clienteId: cliente.id,
             },
           });
-        } catch {}
+        } catch (error) {
+          // No se corta la operacion principal por esto, pero se deja
+          // registrado: en silencio nadie se entera de que fallo.
+          this.logger.warn(
+            'No se pudo notificar la aprobacion del cliente',
+            error as any,
+          );
+        }
       }
 
       this.notificacionesGateway.broadcastClientesActualizados({
@@ -1539,7 +1553,7 @@ export class ClientsService {
       const { archivos, version: _version, ...clientData } = data;
 
       // Actualizar datos básicos del cliente
-      const clienteActualizado = await this.prisma.cliente.update({
+      const _clienteActualizado = await this.prisma.cliente.update({
         where: { id },
         data: {
           ...clientData,

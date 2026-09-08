@@ -10,7 +10,7 @@ import {
   WsException,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Logger, forwardRef, Inject, Injectable } from '@nestjs/common';
+import { Logger, forwardRef, Inject } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { RolUsuario } from '@prisma/client';
 import { OnEvent } from '@nestjs/event-emitter';
@@ -90,7 +90,7 @@ export class NotificacionesGateway
     this.logger.log('WebSocket Gateway Inicializado');
   }
 
-  handleConnection(client: Socket, ...args: any[]) {
+  handleConnection(client: Socket, ..._args: any[]) {
     // Al principio, no sabemos quién es. Esperamos a que el cliente lo diga.
     this.logger.log(`Cliente conectado: ${client.id}`);
   }

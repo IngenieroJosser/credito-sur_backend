@@ -1,4 +1,4 @@
-import { FrecuenciaPago, TipoAmortizacion } from '@prisma/client';
+import { FrecuenciaPago } from '@prisma/client';
 import { LoansService } from '../loans/loans.service';
 import {
   calcularInteresTotal,

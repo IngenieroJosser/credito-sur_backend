@@ -978,7 +978,10 @@ export class LoansController {
           prestamoId,
         },
       });
-    } catch {}
+    } catch {
+      // Es accesorio: si falla, la operacion principal ya quedo hecha
+      // y se sigue con el valor por defecto.
+    }
 
     // ⚡ Tiempo real: badge revisiones actualiza al instante
     this.notificacionesGateway.broadcastAprobacionesActualizadas({
@@ -1190,7 +1193,10 @@ export class LoansController {
           gestionadoPor: nombreUsuario,
         },
       });
-    } catch {}
+    } catch {
+      // Es accesorio: si falla, la operacion principal ya quedo hecha
+      // y se sigue con el valor por defecto.
+    }
 
     try {
       await this.notificacionesService.create({
@@ -1208,7 +1214,10 @@ export class LoansController {
           prestamoId,
         },
       });
-    } catch {}
+    } catch {
+      // Es accesorio: si falla, la operacion principal ya quedo hecha
+      // y se sigue con el valor por defecto.
+    }
 
     // ⚡ Tiempo real: notificar a todos los clientes conectados que hay una nueva revisión pendiente
     this.notificacionesGateway.broadcastAprobacionesActualizadas({

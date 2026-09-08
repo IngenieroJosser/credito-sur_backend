@@ -36,7 +36,7 @@ export interface ClienteExportRow {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const COP = (n: number) =>
+const _COP = (n: number) =>
   new Intl.NumberFormat('es-CO', {
     style: 'currency',
     currency: 'COP',
@@ -222,7 +222,7 @@ export async function generarExcelClientes(
   ws.mergeCells(`A${sumRow.number}:J${sumRow.number}`);
   mergeCell.alignment = { horizontal: 'right', vertical: 'middle' };
   sumRow.height = 24;
-  sumRow.eachCell({ includeEmpty: true }, (c, cn) => {
+  sumRow.eachCell({ includeEmpty: true }, (c, _cn) => {
     c.border = {
       top: { style: 'medium', color: { argb: 'FFFFFFFF' } },
       right: { style: 'thin', color: { argb: 'FFFFFFFF' } },
@@ -300,7 +300,10 @@ export async function generarPDFClientes(
         doc.image(lp, (W - 300) / 2, (H - 300) / 2, { width: 300 });
         doc.restore();
       }
-    } catch (e) {}
+    } catch {
+      // El watermark es decorativo: si el logo no se puede dibujar
+      // (falta el archivo, o el PDF ya se cerro), el reporte sale igual.
+    }
   };
 
   let pageNumber = 1;

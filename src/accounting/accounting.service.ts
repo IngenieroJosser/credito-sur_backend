@@ -444,9 +444,7 @@ export class AccountingService {
 
   // Un cobrador solo puede ver las cajas de sus rutas (la que responsabiliza
   // el, o la de una ruta suya). Los demas roles ven todas.
-  private scopeCajasPorActor(
-    actor?: { id?: string; rol?: RolUsuario } | null,
-  ) {
+  private scopeCajasPorActor(actor?: { id?: string; rol?: RolUsuario } | null) {
     const rol = String(actor?.rol || '').toUpperCase();
     if (!actor?.id) return {};
 
@@ -487,7 +485,7 @@ export class AccountingService {
       orderBy: { creadoEn: 'desc' },
     });
 
-    const { startDate: fechaInicio, endDate: fechaFin } =
+    const { startDate: _fechaInicio, endDate: _fechaFin } =
       getBogotaStartEndOfDay(new Date());
 
     const cajasConSaldo = await Promise.all(
@@ -716,7 +714,14 @@ export class AccountingService {
             cajaId: cajaRuta.id,
           },
         });
-      } catch {}
+      } catch (error) {
+        // No se corta la operacion principal por esto, pero se deja
+        // registrado: en silencio nadie se entera de que fallo.
+        this.logger.warn(
+          'No se pudo notificar la solicitud de gasto',
+          error as any,
+        );
+      }
 
       this.notificacionesGateway.broadcastDashboardsActualizados({
         origen: 'GASTO',
@@ -1061,7 +1066,11 @@ export class AccountingService {
           solicitadoPorRol: rolSolicitante,
         },
       });
-    } catch {}
+    } catch (error) {
+      // No se corta la operacion principal por esto, pero se deja
+      // registrado: en silencio nadie se entera de que fallo.
+      this.logger.warn('No se pudo notificar la solicitud', error as any);
+    }
 
     this.notificacionesGateway.broadcastDashboardsActualizados({
       origen: 'BASE',
@@ -2857,7 +2866,7 @@ export class AccountingService {
       articulosHoyLedger,
       gastosHoyLedger,
       costosHoyLedger,
-      carteraLedger,
+      _carteraLedger,
       deudaCobradorLedger,
       cobranzaHoyLedger,
       cobranzaAyerLedger,
@@ -3058,7 +3067,7 @@ export class AccountingService {
     const cobranzaAyerLedgerVal = Number(
       cobranzaAyerLedger._sum.debitAmount || 0,
     );
-    const ingresosCajaAyerLedgerVal = Number(
+    const _ingresosCajaAyerLedgerVal = Number(
       ingresosCajaAyerLedger?._sum?.debitAmount || 0,
     );
     const ingresosAyerLedgerVal =
@@ -4263,7 +4272,7 @@ export class AccountingService {
       eventosMap.set(cobradorId, arr);
     }
 
-    const cobradorIds = [...deudaMap.keys()];
+    const _cobradorIds = [...deudaMap.keys()];
 
     const saldosCajasMap = new Map<string, number>();
     for (const caja of cajasRuta) {
@@ -4594,7 +4603,7 @@ export class AccountingService {
 
     const mapReferenceType = (
       tipoReferencia?: string | null,
-      tipo?: string,
+      _tipo?: string,
     ) => {
       const ref = String(tipoReferencia || '').toUpperCase();
       if (ref === 'PAGO' || ref === 'ABONO') return 'PAGO';

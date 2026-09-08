@@ -4,7 +4,7 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, RolUsuario } from '@prisma/client';
+import { RolUsuario } from '@prisma/client';
 import { RoutesService } from './routes.service';
 
 const makeService = (prisma: any) => {

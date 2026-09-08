@@ -633,7 +633,10 @@ export async function generarPDFPagos(
       const H = doc.page.height;
       doc.image(logoPath, (W - 300) / 2, (H - 300) / 2, { width: 300 });
       doc.restore();
-    } catch (_) {}
+    } catch {
+      // El watermark es decorativo: si el logo no se puede dibujar
+      // (falta el archivo, o el PDF ya se cerro), el reporte sale igual.
+    }
   };
 
   // ── Encabezado de página ───────────────────────────────────────────────────

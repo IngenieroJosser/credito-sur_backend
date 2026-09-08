@@ -11,7 +11,7 @@ import { PermisosGuard } from './permisos.guard';
 describe('PermisosGuard', () => {
   const contexto = (
     user: any,
-    permisosRequeridos?: string[],
+    _permisosRequeridos?: string[],
   ): ExecutionContext =>
     ({
       switchToHttp: () => ({ getRequest: () => ({ user }) }),

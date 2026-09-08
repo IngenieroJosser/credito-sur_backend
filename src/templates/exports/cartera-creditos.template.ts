@@ -63,7 +63,7 @@ export interface CarteraTotales {
 
 // ─── Colores corporativos ─────────────────────────────────────────────────────
 const AZUL = 'FF004F7B';
-const AZUL_CLARO = 'FFF0F9FF';
+const _AZUL_CLARO = 'FFF0F9FF';
 const NARANJA = 'FFF37920';
 const NARANJA_CLARO = 'FFFFEDD5';
 const GRIS_OSC = 'FF1E293B';
@@ -71,7 +71,7 @@ const GRIS_OSC = 'FF1E293B';
 const BORDER_HAIR = { style: 'hair', color: { argb: 'FFE2E8F0' } } as any;
 const BORDER_MEDIUM = { style: 'medium', color: { argb: 'FF94A3B8' } } as any;
 
-const BASE_CELL_STYLE = {
+const _BASE_CELL_STYLE = {
   alignment: { vertical: 'middle' } as ExcelJS.Alignment,
   border: { bottom: BORDER_HAIR, right: BORDER_HAIR } as ExcelJS.Borders,
 };
@@ -180,7 +180,7 @@ export async function generarExcelCartera(
     },
   ] as any;
 
-  const numCols = ws.columns.length;
+  const _numCols = ws.columns.length;
   const lastColLetter = 'T';
 
   // F1 — Encabezado institucional
@@ -672,7 +672,10 @@ export async function generarPDFCartera(
         doc.image(lp, (W - 300) / 2, (H - 300) / 2, { width: 300 });
         doc.restore();
       }
-    } catch (e) {}
+    } catch {
+      // El watermark es decorativo: si el logo no se puede dibujar
+      // (falta el archivo, o el PDF ya se cerro), el reporte sale igual.
+    }
   };
 
   let pageNumber = 1;

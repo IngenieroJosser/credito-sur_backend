@@ -323,7 +323,7 @@ export class UsersService {
       // hacer. La matriz debe reflejar lo mismo que gobierna el acceso.
       const permisosFinales = [...permisosRol, ...permisosCustom];
 
-      const { asignacionesRoles, permisosPersonalizados, ...userData } =
+      const { _asignacionesRoles, _permisosPersonalizados, ...userData } =
         usuario;
 
       if (!puedeVerDirectorioCompleto) {
@@ -578,7 +578,7 @@ export class UsersService {
     }
 
     const {
-      password,
+      password: _password,
       nombreUsuario: _nombreUsuario,
       correo: correoDto,
       ...datos

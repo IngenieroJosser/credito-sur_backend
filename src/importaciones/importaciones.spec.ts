@@ -1,6 +1,6 @@
 import * as ExcelJS from 'exceljs';
 import * as JSZip from 'jszip';
-import { FrecuenciaPago, TipoAmortizacion } from '@prisma/client';
+import { FrecuenciaPago } from '@prisma/client';
 import { LoansService } from '../loans/loans.service';
 import { generarPlantillaInventario } from './plantillas/plantilla-inventario';
 import { generarPlantillaClientesCreditos } from './plantillas/plantilla-clientes-creditos';

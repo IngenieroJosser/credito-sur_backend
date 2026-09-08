@@ -34,7 +34,6 @@ import {
   getEstadoRevisionOperacion,
   isPrestamoOperativoRuta,
   resolveCuotaObjetivoOperativa,
-  isCuotaOperativaParaFechaRuta,
   isObligacionOperativaRuta,
   normalizeUpper,
 } from './ruta-operational-rules';
@@ -1230,7 +1229,7 @@ export class RoutesService {
             const { startDate: dInicioBogota, endDate: dFinBogota } =
               getBogotaStartEndOfDay(new Date());
             const dInicioUTC = dInicioBogota;
-            const dFinUTC = dFinBogota;
+            const _dFinUTC = dFinBogota;
 
             if (pIds.length > 0) {
               const resAgregados = await Promise.all([
@@ -1769,7 +1768,7 @@ export class RoutesService {
         // Una sola llamada: getBogotaStartEndOfDay devuelve límites del día bogotano en UTC.
         const { startDate: dInicioBogota, endDate: dFinBogota } =
           getBogotaStartEndOfDay(new Date());
-        const dInicioUTC = dInicioBogota;
+        const _dInicioUTC = dInicioBogota;
         const dFinUTC = dFinBogota;
 
         if (pIds.length > 0) {
@@ -2786,7 +2785,7 @@ export class RoutesService {
     return sincronizarAsignacionesCliente(tx, clienteId);
   }
 
-  async assignClient(rutaId: string, clienteId: string, cobradorId: string) {
+  async assignClient(rutaId: string, clienteId: string, _cobradorId: string) {
     try {
       // Verificar si la ruta existe
 
@@ -3168,7 +3167,7 @@ export class RoutesService {
 
     const fechaKey = this.parseFechaOperativaBogotaKey(fecha);
 
-    const { startDate: fechaConsulta } =
+    const { startDate: _fechaConsulta } =
       getBogotaStartEndOfDayFromKey(fechaKey);
 
     const jornada = await this.prisma.rutaJornada?.findUnique?.({
@@ -3486,7 +3485,7 @@ export class RoutesService {
           .filter(Boolean),
       ),
     ];
-    const clientesVisitaIds = [
+    const _clientesVisitaIds = [
       ...new Set(
         visitasDelDia
           .map((v: any) => v?.cliente?.id || v?.clienteId)
@@ -3846,7 +3845,7 @@ export class RoutesService {
     );
 
     visitasDelDia.forEach((v: any) => {
-      const cid = String(v?.cliente?.id || v?.clienteId || '');
+      const _cid = String(v?.cliente?.id || v?.clienteId || '');
       let reprogramacionObjetivo: any = null;
       let cuotaReprogramadaObjetivo: any = null;
 

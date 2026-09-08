@@ -307,7 +307,10 @@ export async function generarPDFRutaCobrador(
         doc.image(lp, (PW - 300) / 2, (PH - 300) / 2, { width: 300 });
         doc.restore();
       }
-    } catch {}
+    } catch {
+      // El watermark es decorativo: si el logo no se puede dibujar
+      // (falta el archivo, o el PDF ya se cerro), el reporte sale igual.
+    }
   };
 
   let pageNumber = 1;

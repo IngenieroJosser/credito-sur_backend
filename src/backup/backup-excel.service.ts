@@ -40,7 +40,7 @@ const n2 = (v: any): number => {
   const x = Number(v);
   return isNaN(x) ? 0 : x;
 };
-const $ = (n: number) => n; // valor numérico para celdas con numFmt
+const _$ = (n: number) => n; // valor numérico para celdas con numFmt
 
 function hdrCell(cell: ExcelJS.Cell): void {
   cell.font = { bold: true, color: { argb: BLANCO }, size: 9 };
@@ -1266,7 +1266,7 @@ export class BackupExcelService {
 
     // ══ 14. EXTENSIONES DE PAGO ══════════════════════════════════════════════
     {
-      const LC = 'G';
+      const _LC = 'G';
       const ws = mkSheet(
         wb,
         'Extensiones Pago',

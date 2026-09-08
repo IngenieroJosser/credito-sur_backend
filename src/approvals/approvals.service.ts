@@ -925,7 +925,7 @@ export class ApprovalsService {
     tx: any,
     approval: any,
     rechazadoPorId?: string,
-    motivoRechazo?: string,
+    _motivoRechazo?: string,
   ) {
     if (!approval.referenciaId) {
       throw new BadRequestException('La aprobación no tiene préstamo asociado');
@@ -3724,7 +3724,7 @@ export class ApprovalsService {
   private async approveLoanLoss(
     approval: any,
     aprobadoPorId?: string,
-    editedData?: any,
+    _editedData?: any,
   ) {
     const prestamoId = approval.referenciaId;
 

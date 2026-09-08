@@ -471,7 +471,7 @@ describe('CajasService', () => {
     });
 
     it('permite recibidoPorId diferente de creadoPorId', async () => {
-      const result = await service.confirmarArqueo(
+      const _result = await service.confirmarArqueo(
         CAJA_RUTA_ACTIVA.id,
         '2026-06-13',
         5000000,

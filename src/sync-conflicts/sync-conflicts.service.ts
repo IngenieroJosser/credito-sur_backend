@@ -96,7 +96,7 @@ export class SyncConflictsService {
     id: string,
     accion: string,
     userId: string,
-    token: string,
+    _token: string,
   ) {
     const conflict = await this.prisma.syncConflict.findUnique({
       where: { id },

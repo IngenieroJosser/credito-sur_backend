@@ -38,7 +38,6 @@ import { etiquetaTipoAmortizacion } from '../importaciones/interes-credito';
 import { createHash, randomUUID } from 'crypto';
 import { ContratoData, generarContratoPDF } from '../templates/exports';
 import {
-  calculateDateRange,
   formatBogotaOffsetIso,
   getBogotaDayKey,
   getBogotaWeekday,
@@ -67,9 +66,7 @@ export class LoansService implements OnModuleInit {
     return rol === RolUsuario.COBRADOR || rol === RolUsuario.SUPERVISOR;
   }
 
-  private puedeCrearCreditoConFechaAntigua(
-    rol?: RolUsuario | null,
-  ): boolean {
+  private puedeCrearCreditoConFechaAntigua(rol?: RolUsuario | null): boolean {
     const normalized = String(rol || '').toUpperCase();
     return (
       normalized === RolUsuario.ADMIN ||
@@ -474,7 +471,7 @@ export class LoansService implements OnModuleInit {
     const esCobrador = rolCreador === RolUsuario.COBRADOR;
     const esSupervisor = rolCreador === RolUsuario.SUPERVISOR;
     const esOperadorConBase = esCobrador || esSupervisor;
-    const rolesAdminConCajaRutaExplicita = [
+    const _rolesAdminConCajaRutaExplicita = [
       RolUsuario.ADMIN,
       RolUsuario.SUPER_ADMINISTRADOR,
       RolUsuario.COORDINADOR,
@@ -578,7 +575,7 @@ export class LoansService implements OnModuleInit {
         select: selectCajaOperacion,
       });
       if (caja?.id) {
-        const esCajaRuta = String(caja.tipo || '').toUpperCase() === 'RUTA';
+        const _esCajaRuta = String(caja.tipo || '').toUpperCase() === 'RUTA';
 
         // COBRADOR/SUPERVISOR solo pueden usar su caja/base asignada
         if (caja.responsableId !== params.creador?.id) {
@@ -969,8 +966,8 @@ export class LoansService implements OnModuleInit {
     capital: number,
     tasaTotal: number,
     numCuotas: number,
-    plazoMeses: number,
-    frecuencia: FrecuenciaPago,
+    _plazoMeses: number,
+    _frecuencia: FrecuenciaPago,
   ) {
     if (numCuotas <= 0 || capital <= 0) {
       return { cuotaFija: 0, interesTotal: 0, tabla: [] };
@@ -2780,7 +2777,14 @@ export class LoansService implements OnModuleInit {
               actorNombre =
                 `${usuario.nombres || ''} ${usuario.apellidos || ''}`.trim();
             }
-          } catch {}
+          } catch (error) {
+            // No se corta la operacion principal por esto, pero se deja
+            // registrado: en silencio nadie se entera de que fallo.
+            this.logger.warn(
+              'No se pudo resolver el nombre del actor',
+              error as any,
+            );
+          }
 
           const metadataBase = {
             estadoAnterior,
@@ -3156,7 +3160,7 @@ export class LoansService implements OnModuleInit {
       );
 
       // Crear solicitud de aprobación automáticamente
-      const aprobacion = await this.prisma.aprobacion.create({
+      const _aprobacion = await this.prisma.aprobacion.create({
         data: {
           tipoAprobacion: TipoAprobacion.NUEVO_PRESTAMO,
           referenciaId: prestamo.id,
@@ -3663,10 +3667,10 @@ export class LoansService implements OnModuleInit {
         RolUsuario.SUPER_ADMINISTRADOR,
       ];
       const requiereAprobacion = !rolesAutoAprobacion.includes(creador.rol);
-      const estadoInicial = requiereAprobacion
+      const _estadoInicial = requiereAprobacion
         ? EstadoPrestamo.PENDIENTE_APROBACION
         : EstadoPrestamo.ACTIVO;
-      const estadoAprobacionInicial = requiereAprobacion
+      const _estadoAprobacionInicial = requiereAprobacion
         ? EstadoAprobacion.PENDIENTE
         : EstadoAprobacion.APROBADO;
 
@@ -4350,7 +4354,11 @@ export class LoansService implements OnModuleInit {
               tasaInteres,
             }),
           });
-        } catch {}
+        } catch (error) {
+          // No se corta la operacion principal por esto, pero se deja
+          // registrado: en silencio nadie se entera de que fallo.
+          this.logger.warn('No se pudo notificar el credito', error as any);
+        }
 
         try {
           await this.notificacionesService.create({
@@ -4375,7 +4383,11 @@ export class LoansService implements OnModuleInit {
               tasaInteres,
             }),
           });
-        } catch {}
+        } catch (error) {
+          // No se corta la operacion principal por esto, pero se deja
+          // registrado: en silencio nadie se entera de que fallo.
+          this.logger.warn('No se pudo notificar el credito', error as any);
+        }
       }
 
       if (esAutoAprobado || data.esContado) {
@@ -5280,7 +5292,11 @@ export class LoansService implements OnModuleInit {
           ...contextoRegularizacion,
         },
       });
-    } catch {}
+    } catch (error) {
+      // No se corta la operacion principal por esto, pero se deja
+      // registrado: en silencio nadie se entera de que fallo.
+      this.logger.warn('No se pudo notificar la regularizacion', error as any);
+    }
 
     // ⚡ Tiempo real: notificar a todos los clientes conectados.
     try {

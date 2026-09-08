@@ -862,7 +862,10 @@ export class ReportsService {
       });
       if (u)
         nombreUsuario = `${u.nombres} ${u.apellidos}`.trim() || nombreUsuario;
-    } catch {}
+    } catch {
+      // Es accesorio: si falla, la operacion principal ya quedo hecha
+      // y se sigue con el valor por defecto.
+    }
 
     if (decisionDto.decision !== 'PRORROGAR') {
       try {
@@ -879,7 +882,10 @@ export class ReportsService {
             montoInteres: decisionDto.montoInteres || 0,
           },
         });
-      } catch {}
+      } catch {
+        // Es accesorio: si falla, la operacion principal ya quedo hecha
+        // y se sigue con el valor por defecto.
+      }
 
       try {
         await this.notificacionesService.create({
@@ -895,7 +901,10 @@ export class ReportsService {
             decision: decisionDto.decision,
           },
         });
-      } catch {}
+      } catch {
+        // Es accesorio: si falla, la operacion principal ya quedo hecha
+        // y se sigue con el valor por defecto.
+      }
     }
 
     return {
