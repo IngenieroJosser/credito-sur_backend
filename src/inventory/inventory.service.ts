@@ -42,7 +42,7 @@ export class InventoryService {
    * ventas: las ventas ya llevan su propio asiento en `registrarVentaArticulo`.
    */
   private async registrarMovimientoInventario(
-    tx: any,
+    tx: Prisma.TransactionClient,
     params: {
       productoId: string;
       codigo: string;

@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { MetodoPago, TipoTransaccion } from '@prisma/client';
+import { Prisma, MetodoPago, TipoTransaccion } from '@prisma/client';
 import { LedgerService } from '../accounting/ledger.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCashSaleDto } from './dto/create-cash-sale.dto';
@@ -35,7 +35,10 @@ export class SalesService {
     return '1.1.1';
   }
 
-  private async resolveCajaVenta(tx: any, metodoPago: MetodoPago) {
+  private async resolveCajaVenta(
+    tx: Prisma.TransactionClient,
+    metodoPago: MetodoPago,
+  ) {
     const metodo = String(metodoPago || '').toUpperCase();
 
     const codigoCaja =

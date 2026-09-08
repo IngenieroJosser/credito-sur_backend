@@ -6,7 +6,7 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { RolUsuario } from '@prisma/client';
+import { Prisma, RolUsuario } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { PushService } from '../push/push.service';

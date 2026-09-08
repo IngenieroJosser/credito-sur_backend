@@ -149,7 +149,11 @@ export class LedgerService {
    * Solo debe usarse para operaciones que RESTAN saldo (egresos, reversas, gastos).
    * Para operaciones que SUMAN saldo (pagos, ingresos), el delta positivo no requiere validación.
    */
-  private async applyCajaDeltaSafely(tx: any, cajaId: string, delta: number) {
+  private async applyCajaDeltaSafely(
+    tx: Prisma.TransactionClient,
+    cajaId: string,
+    delta: number,
+  ) {
     if (delta === 0) return;
 
     // Solo validar si el delta es negativo (resta saldo)
@@ -221,7 +225,11 @@ export class LedgerService {
    * Delega internamente a applyCajaDeltaSafely.
    * Usado por servicios externos que necesitan actualizar caja con validación de saldo.
    */
-  async aplicarDeltaCajaSeguro(tx: any, cajaId: string, delta: number) {
+  async aplicarDeltaCajaSeguro(
+    tx: Prisma.TransactionClient,
+    cajaId: string,
+    delta: number,
+  ) {
     return this.applyCajaDeltaSafely(tx, cajaId, delta);
   }
 
@@ -319,7 +327,7 @@ export class LedgerService {
 
     // 3. Función de escritura (tipada como any para compatibilidad con el
     //    PrismaClient extendido que usa PrismaService internamente)
-    const execute = async (tx: any) => {
+    const execute = async (tx: Prisma.TransactionClient) => {
       // a. Crear el encabezado del asiento con sus líneas
       const journalEntry = await tx.journalEntry.create({
         data: {
@@ -785,7 +793,7 @@ export class LedgerService {
    * Devuelve los ids de las reversas que escribió.
    */
   async reversarAsientos(
-    tx: any,
+    tx: Prisma.TransactionClient,
     params: {
       referenceIds: string[];
       referenceTypes: ReferenceTypeContable[];

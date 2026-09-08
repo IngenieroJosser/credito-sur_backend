@@ -458,7 +458,7 @@ export class LoansService implements OnModuleInit {
   }
 
   private async resolveCajaOperacionPrestamo(
-    tx: any,
+    tx: Prisma.TransactionClient,
     params: {
       data: CreateLoanDto;
       creador: any;
@@ -641,7 +641,7 @@ export class LoansService implements OnModuleInit {
   }
 
   private async aplicarImpactoProvisionalPrestamo(
-    tx: any,
+    tx: Prisma.TransactionClient,
     params: {
       prestamo: any;
       data: CreateLoanDto;
@@ -2277,7 +2277,7 @@ export class LoansService implements OnModuleInit {
   }
 
   private async reversarImpactoContableArticuloArchivado(
-    tx: any,
+    tx: Prisma.TransactionClient,
     prestamo: any,
     userId: string,
   ) {
@@ -2400,7 +2400,7 @@ export class LoansService implements OnModuleInit {
   }
 
   private async restaurarImpactoContableArticuloArchivado(
-    tx: any,
+    tx: Prisma.TransactionClient,
     prestamo: any,
     userId: string,
   ) {

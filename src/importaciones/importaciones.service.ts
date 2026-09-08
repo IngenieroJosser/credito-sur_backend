@@ -37,6 +37,8 @@ export function normalizarNombreCategoria(valor: unknown): string {
     .toLowerCase();
 }
 
+import { Prisma } from '@prisma/client';
+
 @Injectable()
 export class ImportacionesService {
   private clientesCreditosParser: ClientesCreditosParser;
@@ -61,7 +63,7 @@ export class ImportacionesService {
    * propietario como contrapartida.
    */
   private async asentarInventario(
-    tx: any,
+    tx: Prisma.TransactionClient,
     params: {
       productoId: string;
       codigo: string;
@@ -1916,7 +1918,7 @@ export class ImportacionesService {
    */
   private async resolverCategoriasArticulo(
     // Mismo tipado que el resto de ayudantes transaccionales del servicio.
-    tx: any,
+    tx: Prisma.TransactionClient,
     nombres: unknown[],
   ): Promise<Map<string, string>> {
     const porClave = new Map<string, string>();
