@@ -1,3 +1,41 @@
+/**
+ * Forma minima que estas reglas necesitan de una cuota y un prestamo.
+ *
+ * No se usa el tipo de Prisma a secas por dos motivos: aqui llegan tanto filas
+ * de la base como proyecciones armadas a mano (con campos calculados como
+ * `estadoActual` o `fechaEfectiva`, que no existen en el modelo), y ademas todo
+ * se lee de forma defensiva con `?.`. Por eso los campos van opcionales: el
+ * tipo describe lo que se lee, no obliga a traerlo todo.
+ */
+export interface CuotaOperativa {
+  id?: string;
+  numeroCuota?: number;
+  estado?: string | null;
+  estadoActual?: string | null;
+  fechaVencimiento?: Date | string | null;
+  fechaEfectiva?: Date | string | null;
+  fechaVencimientoProrroga?: Date | string | null;
+  // Los campos no listados siguen sin tipar: aqui llegan objetos con
+  // muchisimos campos mas y tiparlos todos no aporta nada a estas reglas.
+  [extra: string]: any;
+}
+
+export interface PrestamoOperativo {
+  estado?: string | null;
+  estadoAprobacion?: string | null;
+  estadoEfectoProvisional?: string | null;
+  efectoProvisional?: { estado?: string | null } | null;
+  efectosProvisionales?: Array<{ estado?: string | null }> | null;
+  eliminadoEn?: Date | string | null;
+  tipoPrestamo?: string | null;
+  tipo?: string | null;
+  esContado?: boolean | null;
+  cuotas?: CuotaOperativa[] | null;
+  // Los campos no listados siguen sin tipar: aqui llegan objetos con
+  // muchisimos campos mas y tiparlos todos no aporta nada a estas reglas.
+  [extra: string]: any;
+}
+
 export const normalizeUpper = (value: unknown): string =>
   String(value ?? '')
     .trim()
@@ -53,7 +91,9 @@ const normalizeFechaOperativaKey = (value: unknown): string => {
   return key === '9999-12-31' ? '' : key;
 };
 
-export const getCuotaFechaEfectivaKeyRuta = (cuota: any): string => {
+export const getCuotaFechaEfectivaKeyRuta = (
+  cuota: CuotaOperativa | null | undefined,
+): string => {
   const estado = normalizeUpper(cuota?.estadoActual || cuota?.estado);
 
   const raw =
@@ -66,7 +106,9 @@ export const getCuotaFechaEfectivaKeyRuta = (cuota: any): string => {
   return toBogotaDayKey(raw);
 };
 
-export const getEstadoRevisionOperacion = (prestamo: any) => {
+export const getEstadoRevisionOperacion = (
+  prestamo: PrestamoOperativo | null | undefined,
+) => {
   const estadoAprobacion = normalizeUpper(prestamo?.estadoAprobacion);
 
   const estadoEfectoProvisional = normalizeUpper(
@@ -102,7 +144,9 @@ export const getEstadoRevisionOperacion = (prestamo: any) => {
   };
 };
 
-export const isPrestamoOperativoRuta = (prestamo: any): boolean => {
+export const isPrestamoOperativoRuta = (
+  prestamo: PrestamoOperativo | null | undefined,
+): boolean => {
   if (!prestamo) return false;
   if (prestamo.eliminadoEn) return false;
 
@@ -119,7 +163,7 @@ export const isPrestamoOperativoRuta = (prestamo: any): boolean => {
 };
 
 export const isCuotaOperativaParaFechaRuta = (
-  cuota: any,
+  cuota: CuotaOperativa | null | undefined,
   fechaOperativaKey: string,
 ): boolean => {
   const fechaOperativa = normalizeFechaOperativaKey(fechaOperativaKey);
@@ -138,7 +182,7 @@ export const isCuotaOperativaParaFechaRuta = (
 };
 
 export const resolveCuotaObjetivoOperativa = (
-  prestamo: any,
+  prestamo: PrestamoOperativo | null | undefined,
   fechaOperativaKey: string,
 ) => {
   const fechaOperativa = normalizeFechaOperativaKey(fechaOperativaKey);
