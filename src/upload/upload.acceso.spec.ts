@@ -40,7 +40,11 @@ describe('UploadController.serveFile: quién puede ver un archivo', () => {
   it('rechaza nombres con recorrido de directorios', async () => {
     const { ctrl, prisma } = controlador(null);
     const res = hacerRes();
-    await ctrl.serveFile('../../.env', { user: {} }, res);
+    await ctrl.serveFile(
+      '../../.env',
+      { user: { id: 'u1', rol: RolUsuario.ADMIN } },
+      res,
+    );
     expect(res.code).toBe(400);
     // Ni siquiera consulta la base: se corta antes.
     expect(prisma.multimedia.findFirst).not.toHaveBeenCalled();
@@ -51,7 +55,7 @@ describe('UploadController.serveFile: quién puede ver un archivo', () => {
     const res = hacerRes();
     await ctrl.serveFile(
       'cualquiera.pdf',
-      { user: { rol: RolUsuario.ADMIN } },
+      { user: { id: 'u1', rol: RolUsuario.ADMIN } },
       res,
     );
     expect(res.code).toBe(404);

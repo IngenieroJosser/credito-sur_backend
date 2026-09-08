@@ -26,6 +26,8 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { RolUsuario } from '@prisma/client';
 import { Response } from 'express';
 
+import { RequestConUsuario } from '../common/types';
+
 @Controller('payments')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class PaymentsController {
@@ -61,7 +63,7 @@ export class PaymentsController {
   )
   async create(
     @Body() createPaymentDto: CreatePaymentDto,
-    @Request() req: any,
+    @Request() req: RequestConUsuario,
     @UploadedFile() comprobante?: Express.Multer.File,
   ) {
     const dto = {
@@ -144,12 +146,12 @@ export class PaymentsController {
     RolUsuario.COBRADOR,
   )
   findAll(
-    @Query('prestamoId') prestamoId?: string,
-    @Query('clienteId') clienteId?: string,
-    @Query('rutaId') rutaId?: string,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-    @Request() req?: any,
+    @Query('prestamoId') prestamoId: string | undefined,
+    @Query('clienteId') clienteId: string | undefined,
+    @Query('rutaId') rutaId: string | undefined,
+    @Query('page') page: string | undefined,
+    @Query('limit') limit: string | undefined,
+    @Request() req: RequestConUsuario,
   ) {
     return this.paymentsService.findAll(
       {
@@ -218,7 +220,7 @@ export class PaymentsController {
   async revertPayment(
     @Param('pagoId') pagoId: string,
     @Body() body: { confirmPagoId?: string; motivo?: string },
-    @Request() req: any,
+    @Request() req: RequestConUsuario,
   ) {
     return this.paymentsService.revertPaymentForRepair({
       pagoId,
@@ -229,7 +231,7 @@ export class PaymentsController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string, @Request() req?: any) {
+  findOne(@Param('id') id: string, @Request() req: RequestConUsuario) {
     return this.paymentsService.findOne(id, req?.user);
   }
 

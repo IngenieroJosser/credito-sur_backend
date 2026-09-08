@@ -42,6 +42,8 @@ function contenidoPermitido(file: Express.Multer.File): boolean {
   return false;
 }
 
+import { RequestConUsuario } from '../common/types';
+
 @ApiTags('Uploads')
 @Controller('uploads')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -159,7 +161,7 @@ export class UploadController {
   @ApiOperation({ summary: 'Obtener un archivo subido localmente' })
   async serveFile(
     @Param('filename') filename: string,
-    @Request() req: any,
+    @Request() req: RequestConUsuario,
     @Res() res: Response,
   ) {
     const safeFilename = basename(filename);

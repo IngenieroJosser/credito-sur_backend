@@ -14,6 +14,8 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolUsuario, TipoAprobacion } from '@prisma/client';
 
+import { RequestConUsuario } from '../common/types';
+
 @Controller('approvals')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ApprovalsController {
@@ -29,8 +31,8 @@ export class ApprovalsController {
     RolUsuario.ADMIN,
     RolUsuario.SUPER_ADMINISTRADOR,
   )
-  async getMyRequests(@Request() req: any) {
-    const usuarioId = req.user?.id || req.user?.sub;
+  async getMyRequests(@Request() req: RequestConUsuario) {
+    const usuarioId = req.user?.id;
     return this.approvalsService.getMyRequests(usuarioId);
   }
 
@@ -82,9 +84,9 @@ export class ApprovalsController {
   async approveItem(
     @Param('id') id: string,
     @Body() body: { type: TipoAprobacion; notas?: string; editedData?: any },
-    @Request() req: any,
+    @Request() req: RequestConUsuario,
   ) {
-    const aprobadoPorId = req.user?.id || req.user?.sub;
+    const aprobadoPorId = req.user?.id;
     return this.approvalsService.approveItem(
       id,
       body.type,
@@ -109,9 +111,9 @@ export class ApprovalsController {
       motivoRechazo?: string;
       resultadoRevision?: 'RECHAZADO_CON_DEUDA' | 'RECHAZADO_CON_REINTEGRO';
     },
-    @Request() req: any,
+    @Request() req: RequestConUsuario,
   ) {
-    const rechazadoPorId = req.user?.id || req.user?.sub;
+    const rechazadoPorId = req.user?.id;
     return this.approvalsService.rejectItem(
       id,
       body.type,
@@ -126,9 +128,9 @@ export class ApprovalsController {
   async confirmDeletion(
     @Param('id') id: string,
     @Body() body: { accion: 'CONFIRMAR' | 'REVERTIR'; notas?: string },
-    @Request() req: any,
+    @Request() req: RequestConUsuario,
   ) {
-    const userId = req.user?.id || req.user?.sub;
+    const userId = req.user?.id;
     return this.approvalsService.confirmSuperadminAction(
       id,
       body.accion,

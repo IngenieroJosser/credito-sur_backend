@@ -23,6 +23,8 @@ import { RolUsuario } from '@prisma/client';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { SWAGGER_JWT_AUTH } from '../auth/constants/swagger-auth.constants';
 
+import { RequestConUsuario } from '../common/types';
+
 @ApiTags('Usuarios')
 @ApiBearerAuth(SWAGGER_JWT_AUTH)
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -32,7 +34,7 @@ export class UsersController {
 
   @Post()
   @Roles(RolUsuario.SUPER_ADMINISTRADOR)
-  crear(@Body() usuarioDto: CreateUserDto, @Request() req: any) {
+  crear(@Body() usuarioDto: CreateUserDto, @Request() req: RequestConUsuario) {
     return this.usersService.crear(usuarioDto, req.user?.id);
   }
 
@@ -47,8 +49,8 @@ export class UsersController {
     RolUsuario.CONTADOR,
   )
   obtenerTodos(
-    @Query('includeArchived') includeArchived?: string,
-    @Request() req?: any,
+    @Query('includeArchived') includeArchived: string | undefined,
+    @Request() req: RequestConUsuario,
   ) {
     return this.usersService.obtenerTodos(
       includeArchived === 'true',
@@ -72,7 +74,10 @@ export class UsersController {
     RolUsuario.CONTADOR,
     RolUsuario.PUNTO_DE_VENTA,
   )
-  obtenerPorId(@Param('id', ParseUUIDPipe) id: string, @Request() req: any) {
+  obtenerPorId(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Request() req: RequestConUsuario,
+  ) {
     // Cualquiera puede ver SU propio perfil; solo admin/superadmin, el de
     // otros. Antes era solo admin y rompia la pantalla de perfil del resto.
     const actor = req.user || {};
@@ -90,26 +95,35 @@ export class UsersController {
   actualizar(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() usuarioDto: UpdateUserDto,
-    @Request() req: any,
+    @Request() req: RequestConUsuario,
   ) {
     return this.usersService.actualizar(id, usuarioDto, req.user?.id);
   }
 
   @Delete(':id')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR)
-  eliminar(@Param('id', ParseUUIDPipe) id: string, @Request() req: any) {
+  eliminar(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Request() req: RequestConUsuario,
+  ) {
     return this.usersService.eliminar(id, req.user?.id);
   }
 
   @Patch(':id/archive')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR)
-  archivar(@Param('id', ParseUUIDPipe) id: string, @Request() req: any) {
+  archivar(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Request() req: RequestConUsuario,
+  ) {
     return this.usersService.archivar(id, req.user?.id);
   }
 
   @Patch(':id/restore')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR)
-  restaurar(@Param('id', ParseUUIDPipe) id: string, @Request() req: any) {
+  restaurar(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Request() req: RequestConUsuario,
+  ) {
     return this.usersService.restaurar(id, req.user?.id);
   }
 
@@ -127,7 +141,7 @@ export class UsersController {
   @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   resetearContrasena(
     @Param('id', ParseUUIDPipe) id: string,
-    @Request() req: any,
+    @Request() req: RequestConUsuario,
   ) {
     return (this.usersService as any).resetearContrasena(
       id,

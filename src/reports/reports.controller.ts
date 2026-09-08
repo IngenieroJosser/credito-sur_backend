@@ -32,6 +32,8 @@ import { CuentasVencidasResponseDto } from './dto/responses-cuentas-vencidas.dto
 import { GetOperationalReportDto } from './dto/get-operational-report.dto';
 import { Response } from 'express';
 
+import { RequestConUsuario } from '../common/types';
+
 @ApiTags('reports')
 @Controller('reports')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -97,7 +99,7 @@ export class ReportsController {
     @Query() filtros: PrestamosMoraFiltrosDto,
     @Query('pagina', new DefaultValuePipe(1), ParseIntPipe) pagina: number,
     @Query('limite', new DefaultValuePipe(50), ParseIntPipe) limite: number,
-    @Req() req?: any,
+    @Req() req: RequestConUsuario,
   ) {
     return this.reportsService.obtenerPrestamosEnMora(
       filtros,
@@ -149,7 +151,7 @@ export class ReportsController {
     status: HttpStatus.OK,
     description: 'Estadísticas de préstamos en mora',
   })
-  async obtenerEstadisticasMora(@Req() req?: any) {
+  async obtenerEstadisticasMora(@Req() req: RequestConUsuario) {
     return this.reportsService.obtenerEstadisticasMora(req?.user);
   }
 
@@ -169,7 +171,7 @@ export class ReportsController {
   })
   async obtenerCuentasVencidas(
     @Query() filtros: CuentasVencidasFiltrosDto,
-    @Req() req?: any,
+    @Req() req: RequestConUsuario,
   ) {
     const pagina = filtros.pagina || 1;
     const limite = filtros.limite || 50;
@@ -259,7 +261,7 @@ export class ReportsController {
   @HttpCode(HttpStatus.OK)
   async getOperationalReport(
     @Query() query: GetOperationalReportDto,
-    @Req() req?: any,
+    @Req() req: RequestConUsuario,
   ) {
     return this.reportsService.getOperationalReport(query, req?.user);
   }
@@ -319,7 +321,7 @@ export class ReportsController {
   async getRouteDetail(
     @Param('routeId') routeId: string,
     @Query('period') period: string,
-    @Req() req: any,
+    @Req() req: RequestConUsuario,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {

@@ -9,6 +9,8 @@ import {
 import { NotificacionesService } from './notificaciones.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
+import { RequestConUsuario } from '../common/types';
+
 @Controller('notificaciones')
 @UseGuards(JwtAuthGuard)
 export class NotificacionesController {
@@ -21,7 +23,7 @@ export class NotificacionesController {
   }
 
   @Patch(':id/read')
-  markAsRead(@Param('id') id: string, @Request() req: any) {
+  markAsRead(@Param('id') id: string, @Request() req: RequestConUsuario) {
     // Se pasa el usuario para que nadie marque como leída una notificación
     // ajena (antes markAsRead recibía solo el id, sin dueño).
     return this.notificacionesService.markAsRead(id, req.user?.id);

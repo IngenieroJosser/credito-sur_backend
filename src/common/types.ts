@@ -122,3 +122,26 @@ export interface ActorUsuario {
   id?: string;
   rol?: RolUsuario;
 }
+
+/**
+ * Lo que el JWT deja en `req.user` (ver `JwtStrategy.validate`).
+ *
+ * Los controladores lo recibían como `req: any`, y por eso nadie se enteraba de
+ * que en varios sitios se leían campos inexistentes: `req.user.sub` y
+ * `req.user.userId`. Casi siempre iban en cadena detrás de `id`, así que no se
+ * notaba; en la configuración del sistema no había cadena y el resultado era
+ * que se guardaba sin registrar quién la había cambiado.
+ */
+export interface UsuarioAutenticado {
+  id: string;
+  correo?: string;
+  nombres?: string;
+  rol: RolUsuario;
+  permisos?: string[];
+}
+
+/** Request de Express ya autenticado por el guard de JWT. */
+export interface RequestConUsuario {
+  user: UsuarioAutenticado;
+  headers?: Record<string, string | string[] | undefined>;
+}

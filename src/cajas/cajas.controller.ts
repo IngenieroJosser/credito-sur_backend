@@ -14,6 +14,8 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolUsuario } from '@prisma/client';
 
+import { RequestConUsuario } from '../common/types';
+
 @Controller('cajas')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class CajasController {
@@ -30,8 +32,8 @@ export class CajasController {
   )
   getArqueoPreview(
     @Param('cajaId') cajaId: string,
-    @Query('fechaOperativa') fechaOperativa?: string,
-    @Request() req?: any,
+    @Query('fechaOperativa') fechaOperativa: string | undefined,
+    @Request() req: RequestConUsuario,
   ) {
     return this.cajasService.getArqueoPreview(
       cajaId,
@@ -51,7 +53,7 @@ export class CajasController {
   )
   async getArqueoById(
     @Param('arqueoId') arqueoId: string,
-    @Request() req?: any,
+    @Request() req: RequestConUsuario,
   ) {
     return this.cajasService.getArqueoById(arqueoId, req?.user);
   }
@@ -75,7 +77,7 @@ export class CajasController {
       denominaciones?: any;
       observaciones?: string;
     },
-    @Request() req: any,
+    @Request() req: RequestConUsuario,
   ) {
     return this.cajasService.confirmarArqueo(
       cajaId,

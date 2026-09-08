@@ -27,6 +27,8 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { RolUsuario } from '@prisma/client';
 import { Response } from 'express';
 
+import { RequestConUsuario } from '../common/types';
+
 @Controller('accounting')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class AccountingController {
@@ -62,7 +64,7 @@ export class AccountingController {
     RolUsuario.CONTADOR,
     RolUsuario.COBRADOR,
   )
-  getCajas(@Request() req: any) {
+  getCajas(@Request() req: RequestConUsuario) {
     // Se pasa el actor: un cobrador solo debe ver las cajas de sus rutas, no
     // toda la posicion de caja de la empresa. Antes no habia ni @Roles ni
     // scope y cualquier autenticado veia todas las cajas.
@@ -78,7 +80,7 @@ export class AccountingController {
     RolUsuario.CONTADOR,
     RolUsuario.COBRADOR,
   )
-  getCajaById(@Param('id') id: string, @Request() req: any) {
+  getCajaById(@Param('id') id: string, @Request() req: RequestConUsuario) {
     return this.accountingService.getCajaById(id, req.user);
   }
 

@@ -46,6 +46,8 @@ import { AuditService } from '../audit/audit.service';
 import { ApprovalsService } from '../approvals/approvals.service';
 import { formatBogotaOffsetIso } from '../utils/date-utils';
 
+import { RequestConUsuario } from '../common/types';
+
 @ApiTags('loans')
 @ApiBearerAuth(SWAGGER_JWT_AUTH)
 @Controller('loans')
@@ -875,9 +877,9 @@ export class LoansController {
       diasGracia: number;
       comentarios?: string;
     },
-    @Request() req: any,
+    @Request() req: RequestConUsuario,
   ) {
-    const usuarioId: string = req.user?.sub || req.user?.id;
+    const usuarioId: string = req.user?.id;
     if (!usuarioId) throw new Error('Usuario no autenticado');
 
     // Cargar el préstamo con datos del cliente
@@ -1019,9 +1021,9 @@ export class LoansController {
       diasGracia?: number;
       comentarios?: string;
     },
-    @Request() req: any,
+    @Request() req: RequestConUsuario,
   ) {
-    const usuarioId: string = req.user?.sub || req.user?.id;
+    const usuarioId: string = req.user?.id;
     if (!usuarioId) throw new Error('Usuario no autenticado');
 
     const prestamo = await this.prisma.prestamo.findUnique({
@@ -1246,9 +1248,9 @@ export class LoansController {
   async solicitarReprogramacion(
     @Param('id') prestamoId: string,
     @Body() body: ReprogramarCuotaDto,
-    @Request() req: any,
+    @Request() req: RequestConUsuario,
   ) {
-    const usuarioId: string = req.user?.sub || req.user?.id;
+    const usuarioId: string = req.user?.id;
     if (!usuarioId) throw new Error('Usuario no autenticado');
 
     return this.loansService.solicitarReprogramacion({
@@ -1277,8 +1279,8 @@ export class LoansController {
     enum: ['PENDIENTE', 'APROBADO', 'RECHAZADO', 'TODOS'],
   })
   async listarReprogramacionesPendientes(
-    @Query('estado') estado?: string,
-    @Request() req?: any,
+    @Query('estado') estado: string | undefined,
+    @Request() req: RequestConUsuario,
   ) {
     return this.loansService.listarReprogramacionesPendientes(
       estado,
@@ -1295,7 +1297,10 @@ export class LoansController {
   )
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Aprobar solicitud de reprogramación' })
-  async aprobarReprogramacion(@Param('id') id: string, @Request() req: any) {
+  async aprobarReprogramacion(
+    @Param('id') id: string,
+    @Request() req: RequestConUsuario,
+  ) {
     return this.loansService.aprobarReprogramacion(id, req.user.id, req.user);
   }
 
@@ -1311,7 +1316,7 @@ export class LoansController {
   async rechazarReprogramacion(
     @Param('id') id: string,
     @Body() body: { comentarios?: string },
-    @Request() req: any,
+    @Request() req: RequestConUsuario,
   ) {
     return this.loansService.rechazarReprogramacion(
       id,

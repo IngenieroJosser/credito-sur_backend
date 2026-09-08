@@ -5,6 +5,8 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolUsuario } from '@prisma/client';
 
+import { RequestConUsuario } from '../common/types';
+
 @Controller('dashboard')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class DashboardController {
@@ -20,7 +22,7 @@ export class DashboardController {
   )
   async getDashboardData(
     @Query('timeFilter') timeFilter: string,
-    @Request() req: any,
+    @Request() req: RequestConUsuario,
   ) {
     return this.dashboardService.getDashboardData(timeFilter, req.user);
   }
