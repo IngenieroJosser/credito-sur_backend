@@ -73,7 +73,7 @@ export async function generarExcelContable(
     { header: 'Egresos', key: 'egresos', width: 16 },
     { header: 'Gastos Pend.', key: 'egresosPend', width: 16 },
     { header: 'Base Asignada', key: 'baseAsignada', width: 16 },
-  ] as any;
+  ];
 
   const t1 = ws1.addRow(['CRÉDITOS DEL SUR — ESTADO DE CAJAS']);
   t1.font = { bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
@@ -202,7 +202,7 @@ export async function generarExcelContable(
     { header: 'Caja', key: 'caja', width: 18 },
     { header: 'Usuario', key: 'usuario', width: 22 },
     { header: 'Aprobado Por', key: 'aprobadoPor', width: 20 },
-  ] as any;
+  ];
 
   const t2 = ws2.addRow(['Últimos Movimientos']);
   t2.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
@@ -286,7 +286,7 @@ export async function generarExcelContable(
 
   const buffer = await workbook.xlsx.writeBuffer();
   return {
-    data: Buffer.from(buffer as ArrayBuffer),
+    data: Buffer.from(buffer),
     contentType:
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     filename: `reporte-contable-${fecha}.xlsx`,
@@ -338,7 +338,10 @@ export async function generarPDFContable(
         doc.image(lp, (W - 300) / 2, (H - 300) / 2, { width: 300 });
         doc.restore();
       }
-    } catch (e) {}
+    } catch {
+      // El watermark es decorativo: si el logo no se puede dibujar
+      // (falta el archivo, o el PDF ya se cerro), el reporte sale igual.
+    }
   };
 
   let pageNumber = 1;

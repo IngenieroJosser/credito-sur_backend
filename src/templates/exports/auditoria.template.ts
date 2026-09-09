@@ -47,7 +47,7 @@ export async function generarExcelAuditoria(
     { header: 'ID Entidad', key: 'entidadId', width: 20 },
     { header: 'Datos Anteriores', key: 'datosAnteriores', width: 40 },
     { header: 'Datos Nuevos', key: 'datosNuevos', width: 40 },
-  ] as any;
+  ];
 
   // Título
   const titleRow = ws.addRow(['CRÉDITOS DEL SUR — LOG DE AUDITORÍA']);
@@ -133,7 +133,7 @@ export async function generarExcelAuditoria(
 
   const buffer = await workbook.xlsx.writeBuffer();
   return {
-    data: Buffer.from(buffer as ArrayBuffer),
+    data: Buffer.from(buffer),
     contentType:
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     filename: `auditoria-${fecha}.xlsx`,
@@ -180,7 +180,10 @@ export async function generarPDFAuditoria(
         doc.image(lp, (W - 300) / 2, (H - 300) / 2, { width: 300 });
         doc.restore();
       }
-    } catch (e) {}
+    } catch {
+      // El watermark es decorativo: si el logo no se puede dibujar
+      // (falta el archivo, o el PDF ya se cerro), el reporte sale igual.
+    }
   };
 
   let pageNumber = 1;

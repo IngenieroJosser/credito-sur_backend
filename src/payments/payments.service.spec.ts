@@ -823,10 +823,13 @@ describe('PaymentsService', () => {
 
   describe('findAll — alcance por rol', () => {
     it('limita la consulta de pagos del cobrador a su propio id', async () => {
-      await service.findAll({ prestamoId: 'prestamo-1', limit: 50 }, {
-        id: 'cobrador-propio',
-        rol: RolUsuario.COBRADOR,
-      } as any);
+      await service.findAll(
+        { prestamoId: 'prestamo-1', limit: 50 },
+        {
+          id: 'cobrador-propio',
+          rol: RolUsuario.COBRADOR,
+        },
+      );
 
       expect(prisma.pago.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -850,7 +853,7 @@ describe('PaymentsService', () => {
       await service.findOne('pago-1', {
         id: 'cobrador-propio',
         rol: RolUsuario.COBRADOR,
-      } as any);
+      });
 
       expect(prisma.pago.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -872,7 +875,7 @@ describe('PaymentsService', () => {
           montoTotal: 110000,
         },
         undefined,
-        { id: 'cobrador-propio', rol: RolUsuario.COBRADOR } as any,
+        { id: 'cobrador-propio', rol: RolUsuario.COBRADOR },
       );
 
       expect(prisma._txMock.pago.create).toHaveBeenCalledWith(
@@ -923,7 +926,7 @@ describe('PaymentsService', () => {
       await service.create(
         { prestamoId: 'prestamo-1', montoTotal: 110000 },
         undefined,
-        { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+        { id: 'admin-1', rol: RolUsuario.ADMIN },
       );
 
       expect(prisma._txMock.pago.create).toHaveBeenCalledWith(
@@ -964,7 +967,7 @@ describe('PaymentsService', () => {
       await service.create(
         { prestamoId: 'prestamo-1', cobradorId: 'admin-1', montoTotal: 110000 },
         undefined,
-        { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+        { id: 'admin-1', rol: RolUsuario.ADMIN },
       );
 
       expect(prisma._txMock.pago.create).toHaveBeenCalledWith(
@@ -984,7 +987,7 @@ describe('PaymentsService', () => {
           montoTotal: 110000,
         },
         undefined,
-        { id: 'supervisor-1', rol: RolUsuario.SUPERVISOR } as any,
+        { id: 'supervisor-1', rol: RolUsuario.SUPERVISOR },
       );
 
       expect(prisma._txMock.pago.create).toHaveBeenCalledWith(
@@ -1020,7 +1023,7 @@ describe('PaymentsService', () => {
           montoTotal: 110000,
         },
         undefined,
-        { id: 'cobrador-1', rol: RolUsuario.COBRADOR } as any,
+        { id: 'cobrador-1', rol: RolUsuario.COBRADOR },
       );
 
       // Lo que importa es el filtro: la asignación activa del cliente que
@@ -1050,7 +1053,7 @@ describe('PaymentsService', () => {
         cobradorId: 'cobrador-1',
         montoTotal: 110000,
         idempotencyKey: 'offline-op-1',
-      } as any);
+      });
 
       expect(resultado.pago.id).toBe('pago-existente-1');
       expect(resultado.idempotentReplay).toBe(true);
@@ -1073,7 +1076,7 @@ describe('PaymentsService', () => {
           montoTotal: 110000,
           metodoPago: MetodoPago.TRANSFERENCIA,
           idempotencyKey: 'offline-transfer-1',
-        } as any,
+        },
         { originalname: 'comprobante.jpg', mimetype: 'image/jpeg' } as any,
       );
 

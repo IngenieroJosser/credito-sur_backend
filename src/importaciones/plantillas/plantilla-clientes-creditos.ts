@@ -922,12 +922,7 @@ export async function generarPlantillaClientesCreditos(
     DIN.tipoAmortizacion,
     'MÉTODO',
   );
-  etiquetarGrupo(
-    wsDinero,
-    DIN.fechaPrimerCobro,
-    DIN.notas,
-    'DATOS OPCIONALES',
-  );
+  etiquetarGrupo(wsDinero, DIN.fechaPrimerCobro, DIN.notas, 'DATOS OPCIONALES');
   etiquetarGrupo(wsDinero, DIN.cliente, DIN.revision, 'VERIFICACIÓN');
   etiquetarGrupo(
     wsDinero,
@@ -988,11 +983,7 @@ export async function generarPlantillaClientesCreditos(
   formulaEnColumna(
     wsDinero,
     DIN.cuotasPagadasAuto,
-    formulaCuotasPagadas(
-      DIN.totalAbonado,
-      DIN.valorCuota,
-      DIN.cantidadCuotas,
-    ),
+    formulaCuotasPagadas(DIN.totalAbonado, DIN.valorCuota, DIN.cantidadCuotas),
   );
   formulaEnColumna(
     wsDinero,
@@ -1005,11 +996,7 @@ export async function generarPlantillaClientesCreditos(
     formulaDebeCuota(DIN.valorCuota, DIN.totalAbonado, DIN.totalPagar),
   );
 
-  formulaEnColumna(
-    wsDinero,
-    DIN.numeroCredito,
-    formulaNumeroCredito(DIN.cc),
-  );
+  formulaEnColumna(wsDinero, DIN.numeroCredito, formulaNumeroCredito(DIN.cc));
 
   formulaEnColumna(
     wsDinero,
@@ -1183,8 +1170,7 @@ export async function generarPlantillaClientesCreditos(
         // llevarse la mercancía, así que la inicial no puede quedar en blanco.
         // Vacía y cero significan lo mismo, y las dos se avisan.
         {
-          condicion:
-            `OR(${ref(ART.cuotaInicial)}="",${ref(ART.cuotaInicial)}=0)`,
+          condicion: `OR(${ref(ART.cuotaInicial)}="",${ref(ART.cuotaInicial)}=0)`,
           mensaje: '"⚠ Falta la cuota inicial"',
         },
         // Si la inicial cubre el precio no queda nada que financiar, y un
@@ -1340,5 +1326,5 @@ export async function generarPlantillaClientesCreditos(
   });
 
   const buffer = await workbook.xlsx.writeBuffer();
-  return comoBuffer(buffer as ArrayBuffer, 'plantilla-clientes-creditos.xlsx');
+  return comoBuffer(buffer, 'plantilla-clientes-creditos.xlsx');
 }

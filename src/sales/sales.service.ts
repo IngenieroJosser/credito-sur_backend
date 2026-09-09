@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { MetodoPago, TipoTransaccion } from '@prisma/client';
+import { Prisma, MetodoPago, TipoTransaccion } from '@prisma/client';
 import { LedgerService } from '../accounting/ledger.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCashSaleDto } from './dto/create-cash-sale.dto';
@@ -35,7 +35,10 @@ export class SalesService {
     return '1.1.1';
   }
 
-  private async resolveCajaVenta(tx: any, metodoPago: MetodoPago) {
+  private async resolveCajaVenta(
+    tx: Prisma.TransactionClient,
+    metodoPago: MetodoPago,
+  ) {
     const metodo = String(metodoPago || '').toUpperCase();
 
     const codigoCaja =
@@ -115,7 +118,12 @@ export class SalesService {
     if (dto.idempotencyKey) {
       const existente = await this.prisma.transaccion.findUnique({
         where: { idempotencyKey: dto.idempotencyKey },
-        select: { id: true, numeroTransaccion: true, referenciaId: true, monto: true },
+        select: {
+          id: true,
+          numeroTransaccion: true,
+          referenciaId: true,
+          monto: true,
+        },
       });
       if (existente) {
         return {
@@ -139,55 +147,55 @@ export class SalesService {
     };
     try {
       resultado = await this.prisma.$transaction(async (tx) => {
-      const stockUpdate = await tx.producto.updateMany({
-        where: { id: dto.productoId, stock: { gt: 0 } },
-        data: { stock: { decrement: 1 } },
-      });
+        const stockUpdate = await tx.producto.updateMany({
+          where: { id: dto.productoId, stock: { gt: 0 } },
+          data: { stock: { decrement: 1 } },
+        });
 
-      if (stockUpdate.count !== 1) {
-        throw new BadRequestException('Producto sin stock disponible');
-      }
+        if (stockUpdate.count !== 1) {
+          throw new BadRequestException('Producto sin stock disponible');
+        }
 
-      const caja = await this.resolveCajaVenta(tx, metodoPago);
+        const caja = await this.resolveCajaVenta(tx, metodoPago);
 
-      const transaccion = await tx.transaccion.create({
-        data: {
-          numeroTransaccion: this.generarNumeroTransaccion(),
-          cajaId: caja.id,
-          clienteId: dto.clienteId,
-          tipo: TipoTransaccion.INGRESO,
-          monto: precioVenta,
-          descripcion: `Venta de contado ${metodoPago}: ${producto.nombre}`,
-          notas: dto.notas,
-          creadoPorId: dto.creadoPorId!,
-          tipoReferencia: 'VENTA_CONTADO',
-          referenciaId,
-          idempotencyKey: dto.idempotencyKey || null,
-        },
-        select: {
-          id: true,
-          numeroTransaccion: true,
-        },
-      });
+        const transaccion = await tx.transaccion.create({
+          data: {
+            numeroTransaccion: this.generarNumeroTransaccion(),
+            cajaId: caja.id,
+            clienteId: dto.clienteId,
+            tipo: TipoTransaccion.INGRESO,
+            monto: precioVenta,
+            descripcion: `Venta de contado ${metodoPago}: ${producto.nombre}`,
+            notas: dto.notas,
+            creadoPorId: dto.creadoPorId!,
+            tipoReferencia: 'VENTA_CONTADO',
+            referenciaId,
+            idempotencyKey: dto.idempotencyKey || null,
+          },
+          select: {
+            id: true,
+            numeroTransaccion: true,
+          },
+        });
 
-      const journalEntry = await this.ledgerService.registrarVentaArticulo(
-        {
-          prestamoId: referenciaId,
-          precioVenta,
-          costoArticulo: Number(producto.costo || 0),
-          montoFinanciado: 0,
-          cuotaInicial: precioVenta,
-          cajaId: caja.id,
-          accountCodeCaja: this.getAccountCodeCaja(caja, metodoPago),
-          createdBy: dto.creadoPorId!,
-        },
-        tx,
-      );
+        const journalEntry = await this.ledgerService.registrarVentaArticulo(
+          {
+            prestamoId: referenciaId,
+            precioVenta,
+            costoArticulo: Number(producto.costo || 0),
+            montoFinanciado: 0,
+            cuotaInicial: precioVenta,
+            cajaId: caja.id,
+            accountCodeCaja: this.getAccountCodeCaja(caja, metodoPago),
+            createdBy: dto.creadoPorId!,
+          },
+          tx,
+        );
 
-      return {
-        transaccion,
-        journalEntry,
-      };
+        return {
+          transaccion,
+          journalEntry,
+        };
       });
     } catch (error: any) {
       // Carrera de idempotencia: otro reintento idéntico ganó la creación.
@@ -195,7 +203,12 @@ export class SalesService {
       if (error?.code === 'P2002' && dto.idempotencyKey) {
         const existente = await this.prisma.transaccion.findUnique({
           where: { idempotencyKey: dto.idempotencyKey },
-          select: { id: true, numeroTransaccion: true, referenciaId: true, monto: true },
+          select: {
+            id: true,
+            numeroTransaccion: true,
+            referenciaId: true,
+            monto: true,
+          },
         });
         if (existente) {
           return {

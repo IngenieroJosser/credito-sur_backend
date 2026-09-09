@@ -16,6 +16,8 @@ import { InjectQueue } from '@nestjs/bullmq';
 import type { Job, Queue } from 'bullmq';
 import { formatBogotaOffsetIso } from '../utils/date-utils';
 
+import { RequestConUsuario } from '../common/types';
+
 @Controller('configuracion')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ConfiguracionController {
@@ -40,12 +42,12 @@ export class ConfiguracionController {
       autoAprobarClientes?: boolean;
       autoAprobarCreditos?: boolean;
     },
-    @Req() req: any,
+    @Req() req: RequestConUsuario,
   ) {
-    return this.configuracionService.updateConfiguracion(
-      data,
-      req.user?.userId,
-    );
+    // Antes decía `req.user?.userId`, un campo que el JWT nunca devuelve (pone
+    // `id`), así que siempre llegaba undefined y la configuración se guardaba
+    // sin dejar constancia de quién la cambió.
+    return this.configuracionService.updateConfiguracion(data, req.user?.id);
   }
 
   @Get('colas/status')

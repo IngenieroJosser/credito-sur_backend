@@ -14,7 +14,7 @@ import { Pool } from 'pg';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
-const prisma = new PrismaClient({ adapter } as any);
+const prisma = new PrismaClient({ adapter });
 
 // Las cuentas se definen como literales para evitar dependencia de los enums
 // generados (que pueden tener problemas de caché en TS al ejecutar ts-node).

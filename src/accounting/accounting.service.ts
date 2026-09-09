@@ -444,35 +444,27 @@ export class AccountingService {
 
   // Un cobrador solo puede ver las cajas de sus rutas (la que responsabiliza
   // el, o la de una ruta suya). Los demas roles ven todas.
-  private scopeCajasPorActor(
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
-  ) {
+  private scopeCajasPorActor(actor?: { id?: string; rol?: RolUsuario } | null) {
     const rol = String(actor?.rol || '').toUpperCase();
     if (!actor?.id) return {};
 
     if (rol === 'COBRADOR') {
       return {
-        OR: [
-          { responsableId: actor.id },
-          { ruta: { cobradorId: actor.id } },
-        ],
+        OR: [{ responsableId: actor.id }, { ruta: { cobradorId: actor.id } }],
       };
     }
 
     // El supervisor ve su caja de supervisor y las cajas de sus rutas.
     if (rol === 'SUPERVISOR') {
       return {
-        OR: [
-          { responsableId: actor.id },
-          { ruta: { supervisorId: actor.id } },
-        ],
+        OR: [{ responsableId: actor.id }, { ruta: { supervisorId: actor.id } }],
       };
     }
 
     return {};
   }
 
-  async getCajas(actor?: { id?: string; rol?: RolUsuario | string } | null) {
+  async getCajas(actor?: { id?: string; rol?: RolUsuario } | null) {
     // Aseguramos cajas por defecto también de forma lazy.
     // onModuleInit puede no crearlas si al momento de arrancar no existía un ADMIN/SUPER_ADMIN activo.
     await this.ensureCajasDefault();
@@ -493,7 +485,7 @@ export class AccountingService {
       orderBy: { creadoEn: 'desc' },
     });
 
-    const { startDate: fechaInicio, endDate: fechaFin } =
+    const { startDate: _fechaInicio, endDate: _fechaFin } =
       getBogotaStartEndOfDay(new Date());
 
     const cajasConSaldo = await Promise.all(
@@ -550,7 +542,7 @@ export class AccountingService {
 
   async getCajaById(
     id: string,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     // Mantener consistencia con getCajas(): garantizar defaults antes de responder.
     await this.ensureCajasDefault();
@@ -722,7 +714,14 @@ export class AccountingService {
             cajaId: cajaRuta.id,
           },
         });
-      } catch {}
+      } catch (error) {
+        // No se corta la operacion principal por esto, pero se deja
+        // registrado: en silencio nadie se entera de que fallo.
+        this.logger.warn(
+          'No se pudo notificar la solicitud de gasto',
+          error as any,
+        );
+      }
 
       this.notificacionesGateway.broadcastDashboardsActualizados({
         origen: 'GASTO',
@@ -1067,7 +1066,11 @@ export class AccountingService {
           solicitadoPorRol: rolSolicitante,
         },
       });
-    } catch {}
+    } catch (error) {
+      // No se corta la operacion principal por esto, pero se deja
+      // registrado: en silencio nadie se entera de que fallo.
+      this.logger.warn('No se pudo notificar la solicitud', error as any);
+    }
 
     this.notificacionesGateway.broadcastDashboardsActualizados({
       origen: 'BASE',
@@ -2863,7 +2866,7 @@ export class AccountingService {
       articulosHoyLedger,
       gastosHoyLedger,
       costosHoyLedger,
-      carteraLedger,
+      _carteraLedger,
       deudaCobradorLedger,
       cobranzaHoyLedger,
       cobranzaAyerLedger,
@@ -3064,7 +3067,7 @@ export class AccountingService {
     const cobranzaAyerLedgerVal = Number(
       cobranzaAyerLedger._sum.debitAmount || 0,
     );
-    const ingresosCajaAyerLedgerVal = Number(
+    const _ingresosCajaAyerLedgerVal = Number(
       ingresosCajaAyerLedger?._sum?.debitAmount || 0,
     );
     const ingresosAyerLedgerVal =
@@ -3145,15 +3148,15 @@ export class AccountingService {
       await Promise.all([
         this.prisma.prestamo.aggregate({
           where: carteraEnMoraWhere,
-          _sum: { saldoPendiente: true },
+          _sum: { saldoPendiente: true, monto: true, capitalPagado: true },
         }),
         this.prisma.prestamo.aggregate({
           where: { estado: EstadoPrestamo.INCUMPLIDO, eliminadoEn: null },
-          _sum: { saldoPendiente: true },
+          _sum: { saldoPendiente: true, monto: true, capitalPagado: true },
         }),
         this.prisma.prestamo.aggregate({
           where: { estado: EstadoPrestamo.PERDIDA, eliminadoEn: null },
-          _sum: { saldoPendiente: true },
+          _sum: { saldoPendiente: true, monto: true, capitalPagado: true },
         }),
       ]);
 
@@ -3164,9 +3167,27 @@ export class AccountingService {
     const saldoPerdida = Number(carteraPerdidaAgg._sum.saldoPendiente || 0);
     const cartaraTotalMora = saldoEnMora + saldoIncumplido + saldoPerdida;
 
-    const provisionEnMora = saldoEnMora * 0.2;
-    const provisionIncumplida = saldoIncumplido * 0.6;
-    const provisionPerdida = saldoPerdida * 1.0;
+    // La provision cubre el riesgo de no recuperar lo PRESTADO, asi que la base
+    // es el capital expuesto (monto - capital ya pagado), no el saldo total.
+    // Antes se calculaba sobre saldoPendiente, que incluye el interes todavia no
+    // devengado: se reservaba plata contra un ingreso que nunca se reconocio, y
+    // eso inflaba la perdida. El interes se gana con el tiempo; si no se cobra,
+    // simplemente no se registra como ingreso, no hace falta provisionarlo.
+    const capitalEnRiesgo = (agg: {
+      _sum: { monto: unknown; capitalPagado: unknown };
+    }) =>
+      Math.max(
+        0,
+        Number(agg._sum.monto || 0) - Number(agg._sum.capitalPagado || 0),
+      );
+
+    const capitalEnMora = capitalEnRiesgo(carteraEnMoraAgg);
+    const capitalIncumplido = capitalEnRiesgo(carteraIncumplidaAgg);
+    const capitalPerdida = capitalEnRiesgo(carteraPerdidaAgg);
+
+    const provisionEnMora = capitalEnMora * 0.2;
+    const provisionIncumplida = capitalIncumplido * 0.6;
+    const provisionPerdida = capitalPerdida * 1.0;
     const provisionTotal =
       provisionEnMora + provisionIncumplida + provisionPerdida;
 
@@ -4269,7 +4290,7 @@ export class AccountingService {
       eventosMap.set(cobradorId, arr);
     }
 
-    const cobradorIds = [...deudaMap.keys()];
+    const _cobradorIds = [...deudaMap.keys()];
 
     const saldosCajasMap = new Map<string, number>();
     for (const caja of cajasRuta) {
@@ -4600,7 +4621,7 @@ export class AccountingService {
 
     const mapReferenceType = (
       tipoReferencia?: string | null,
-      tipo?: string,
+      _tipo?: string,
     ) => {
       const ref = String(tipoReferencia || '').toUpperCase();
       if (ref === 'PAGO' || ref === 'ABONO') return 'PAGO';
@@ -4980,7 +5001,8 @@ export class AccountingService {
     });
 
     const valorBodega = productos.reduce(
-      (suma, p) => suma + Math.round(Number(p.stock || 0) * Number(p.costo || 0)),
+      (suma, p) =>
+        suma + Math.round(Number(p.stock || 0) * Number(p.costo || 0)),
       0,
     );
 

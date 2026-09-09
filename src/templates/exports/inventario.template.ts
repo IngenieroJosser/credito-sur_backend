@@ -137,7 +137,7 @@ export async function generarExcelInventario(
     key: c.key,
     width: c.width,
     ...(c.key === 'costo' ? { style: { numFmt: '"$"#,##0' } } : {}),
-  })) as any;
+  }));
 
   // ── Fila 1: Título ──────────────────────────────────────────────────────────
   const titleRow = ws.addRow([`CRÉDITOS DEL SUR — INVENTARIO DE ARTÍCULOS`]);
@@ -173,7 +173,7 @@ export async function generarExcelInventario(
   // ── Fila 4: Encabezados ─────────────────────────────────────────────────────
   const headerRow = ws.addRow(EXCEL_COLS.map((c) => c.label));
   headerRow.height = 22;
-  headerRow.eachCell((cell, colNum) => {
+  headerRow.eachCell((cell, _colNum) => {
     cell.font = { bold: true, size: 9, color: { argb: XL.BLANCO } };
     cell.fill = solidFill(XL.AZUL_MED);
     cell.alignment = {
@@ -315,7 +315,10 @@ export async function generarPDFInventario(
       doc.opacity(0.08);
       doc.image(logoPath, (PW - 300) / 2, (PH - 300) / 2, { width: 300 });
       doc.restore();
-    } catch (_) {}
+    } catch {
+      // El watermark es decorativo: si el logo no se puede dibujar
+      // (falta el archivo, o el PDF ya se cerro), el reporte sale igual.
+    }
   };
 
   // ── Footer ─────────────────────────────────────────────────────────────────

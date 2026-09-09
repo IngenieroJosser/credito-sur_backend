@@ -124,9 +124,7 @@ export class ErroresClarosFilter implements ExceptionFilter {
             status: conflicto,
             mensaje:
               'Ya existe un registro con ese dato' +
-              (meta.target
-                ? ` (${[].concat(meta.target).join(', ')})`
-                : '') +
+              (meta.target ? ` (${[].concat(meta.target).join(', ')})` : '') +
               '. Revise si lo está creando dos veces.',
           };
 

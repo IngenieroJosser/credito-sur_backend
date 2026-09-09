@@ -14,7 +14,6 @@ import {
   EstadoCuota,
   MetodoPago,
   TipoTransaccion,
-  TipoAprobacion,
   EstadoAprobacion,
   Prisma,
   RolUsuario,
@@ -33,7 +32,6 @@ import { CloudinaryService } from '../upload/cloudinary.service';
 import {
   formatBogotaOffsetIso,
   getBogotaDayKey,
-  getBogotaStartEndOfDay,
   getBogotaStartEndOfDayFromKey,
 } from '../utils/date-utils';
 import { LedgerService } from '../accounting/ledger.service';
@@ -53,7 +51,7 @@ function truncCop(
 type PaymentActor =
   | {
       id?: string;
-      rol?: RolUsuario | string;
+      rol?: RolUsuario;
     }
   | null
   | undefined;
@@ -742,7 +740,7 @@ export class PaymentsService {
       );
     }
 
-    const tasaInteres = Number(prestamo.tasaInteres);
+    const _tasaInteres = Number(prestamo.tasaInteres);
 
     const numeroPago = this.generarNumeroPago();
 
@@ -854,7 +852,7 @@ export class PaymentsService {
     // Fix exactitud decimal para el Ledger
     const interesTotalFinal = truncCop(interesTotal);
     const moraTotalFinal = truncCop(moraTotal);
-    const capitalTotalFinal = truncCop(
+    const _capitalTotalFinal = truncCop(
       montoTotal - interesTotalFinal - moraTotalFinal,
     );
 

@@ -40,8 +40,7 @@ describe('La alerta de integridad contable llega a quien puede actuar', () => {
     expect(notificaciones.notifyCoordinator).not.toHaveBeenCalled();
     expect(notificaciones.notifyRolesDeduped).toHaveBeenCalledTimes(1);
 
-    const [aviso] = (notificaciones.notifyRolesDeduped as jest.Mock).mock
-      .calls[0];
+    const [aviso] = notificaciones.notifyRolesDeduped.mock.calls[0];
     expect(aviso.roles).toEqual([
       RolUsuario.CONTADOR,
       RolUsuario.COORDINADOR,

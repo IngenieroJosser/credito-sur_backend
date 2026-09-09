@@ -246,7 +246,7 @@ export class UsersService {
 
   async obtenerTodos(
     includeArchived = false,
-    actor?: { rol?: RolUsuario | string } | null,
+    actor?: { rol?: RolUsuario } | null,
   ) {
     // Roles que pueden ver el directorio completo (correo, telefono, ultimo
     // ingreso, permisos). El resto recibe solo lo minimo para mostrar nombres
@@ -323,7 +323,7 @@ export class UsersService {
       // hacer. La matriz debe reflejar lo mismo que gobierna el acceso.
       const permisosFinales = [...permisosRol, ...permisosCustom];
 
-      const { asignacionesRoles, permisosPersonalizados, ...userData } =
+      const { _asignacionesRoles, _permisosPersonalizados, ...userData } =
         usuario;
 
       if (!puedeVerDirectorioCompleto) {
@@ -578,7 +578,7 @@ export class UsersService {
     }
 
     const {
-      password,
+      password: _password,
       nombreUsuario: _nombreUsuario,
       correo: correoDto,
       ...datos

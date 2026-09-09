@@ -2003,7 +2003,7 @@ describe('LoansService role scoping', () => {
         page: 1,
         limit: 8,
       },
-      { id: 'cobrador-propio', rol: RolUsuario.COBRADOR } as any,
+      { id: 'cobrador-propio', rol: RolUsuario.COBRADOR },
     );
 
     expect(prisma.prestamo.findMany).toHaveBeenCalledWith(
@@ -2057,7 +2057,7 @@ describe('LoansService role scoping', () => {
         page: 1,
         limit: 8,
       },
-      { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+      { id: 'admin-1', rol: RolUsuario.ADMIN },
     );
 
     // Se comprueba el sentido de la consulta y no su forma exacta: lo que
@@ -2125,7 +2125,7 @@ describe('LoansService role scoping', () => {
         page: 1,
         limit: 8,
       },
-      { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+      { id: 'admin-1', rol: RolUsuario.ADMIN },
     );
 
     expect(prisma.prestamo.aggregate).toHaveBeenCalledWith(
@@ -2594,7 +2594,7 @@ describe('La corrección de intereses del arranque', () => {
 
     // Los 60.000 de diferencia se reparten entre las 45 cuotas sin dejar
     // centavos ni perder pesos: 44 de 1.333 y la última con el residuo.
-    const ajustes = (prisma.cuota.update as jest.Mock).mock.calls.map(
+    const ajustes = prisma.cuota.update.mock.calls.map(
       ([argumento]) => argumento.data.monto.increment,
     );
     expect(ajustes.every((a: number) => Number.isInteger(a))).toBe(true);
@@ -2655,8 +2655,18 @@ describe('El arranque no reescribe deudas por su cuenta', () => {
 
 describe('Reprogramaciones: jurisdicción por rol', () => {
   const solicitudes = [
-    { id: 'ap-1', estado: 'PENDIENTE', datosSolicitud: { prestamoId: 'p-mia' }, creadoEn: new Date() },
-    { id: 'ap-2', estado: 'PENDIENTE', datosSolicitud: { prestamoId: 'p-ajena' }, creadoEn: new Date() },
+    {
+      id: 'ap-1',
+      estado: 'PENDIENTE',
+      datosSolicitud: { prestamoId: 'p-mia' },
+      creadoEn: new Date(),
+    },
+    {
+      id: 'ap-2',
+      estado: 'PENDIENTE',
+      datosSolicitud: { prestamoId: 'p-ajena' },
+      creadoEn: new Date(),
+    },
   ];
 
   function prismaConReprogramaciones() {
@@ -2669,7 +2679,9 @@ describe('Reprogramaciones: jurisdicción por rol', () => {
         findMany: jest.fn().mockImplementation(({ where }: any) => {
           const ids: string[] = where?.id?.in ?? [];
           // simula el filtro por ruta.supervisorId: solo p-mia pasa
-          return Promise.resolve(ids.filter((id) => id === 'p-mia').map((id) => ({ id })));
+          return Promise.resolve(
+            ids.filter((id) => id === 'p-mia').map((id) => ({ id })),
+          );
         }),
       },
     };
@@ -2696,4 +2708,4 @@ describe('Reprogramaciones: jurisdicción por rol', () => {
     // sin restricción no hace falta consultar prestamos
     expect(prisma.prestamo.findMany).not.toHaveBeenCalled();
   });
-})
+});

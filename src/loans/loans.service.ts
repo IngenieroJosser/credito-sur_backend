@@ -38,7 +38,6 @@ import { etiquetaTipoAmortizacion } from '../importaciones/interes-credito';
 import { createHash, randomUUID } from 'crypto';
 import { ContratoData, generarContratoPDF } from '../templates/exports';
 import {
-  calculateDateRange,
   formatBogotaOffsetIso,
   getBogotaDayKey,
   getBogotaWeekday,
@@ -58,18 +57,16 @@ const CUOTAS_POR_MES_LOANS: Record<string, number> = {
 export class LoansService implements OnModuleInit {
   private readonly logger = new Logger(LoansService.name);
 
-  private isCollector(actor?: { rol?: RolUsuario | string } | null) {
+  private isCollector(actor?: { rol?: RolUsuario } | null) {
     return String(actor?.rol || '').toUpperCase() === RolUsuario.COBRADOR;
   }
 
-  private isOperatorWithBase(actor?: { rol?: RolUsuario | string } | null) {
+  private isOperatorWithBase(actor?: { rol?: RolUsuario } | null) {
     const rol = String(actor?.rol || '').toUpperCase();
     return rol === RolUsuario.COBRADOR || rol === RolUsuario.SUPERVISOR;
   }
 
-  private puedeCrearCreditoConFechaAntigua(
-    rol?: RolUsuario | string | null,
-  ): boolean {
+  private puedeCrearCreditoConFechaAntigua(rol?: RolUsuario | null): boolean {
     const normalized = String(rol || '').toUpperCase();
     return (
       normalized === RolUsuario.ADMIN ||
@@ -91,7 +88,7 @@ export class LoansService implements OnModuleInit {
   }
 
   private collectorLoanScope(
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ): Prisma.PrestamoWhereInput {
     const rol = String(actor?.rol || '').toUpperCase();
     if (!actor?.id) return {};
@@ -104,7 +101,9 @@ export class LoansService implements OnModuleInit {
           is: {
             OR: [
               { cobradorId: actor.id },
-              { asignaciones: { some: { activa: true, cobradorId: actor.id } } },
+              {
+                asignaciones: { some: { activa: true, cobradorId: actor.id } },
+              },
             ],
           },
         },
@@ -459,7 +458,7 @@ export class LoansService implements OnModuleInit {
   }
 
   private async resolveCajaOperacionPrestamo(
-    tx: any,
+    tx: Prisma.TransactionClient,
     params: {
       data: CreateLoanDto;
       creador: any;
@@ -472,7 +471,7 @@ export class LoansService implements OnModuleInit {
     const esCobrador = rolCreador === RolUsuario.COBRADOR;
     const esSupervisor = rolCreador === RolUsuario.SUPERVISOR;
     const esOperadorConBase = esCobrador || esSupervisor;
-    const rolesAdminConCajaRutaExplicita = [
+    const _rolesAdminConCajaRutaExplicita = [
       RolUsuario.ADMIN,
       RolUsuario.SUPER_ADMINISTRADOR,
       RolUsuario.COORDINADOR,
@@ -576,7 +575,7 @@ export class LoansService implements OnModuleInit {
         select: selectCajaOperacion,
       });
       if (caja?.id) {
-        const esCajaRuta = String(caja.tipo || '').toUpperCase() === 'RUTA';
+        const _esCajaRuta = String(caja.tipo || '').toUpperCase() === 'RUTA';
 
         // COBRADOR/SUPERVISOR solo pueden usar su caja/base asignada
         if (caja.responsableId !== params.creador?.id) {
@@ -642,7 +641,7 @@ export class LoansService implements OnModuleInit {
   }
 
   private async aplicarImpactoProvisionalPrestamo(
-    tx: any,
+    tx: Prisma.TransactionClient,
     params: {
       prestamo: any;
       data: CreateLoanDto;
@@ -967,8 +966,8 @@ export class LoansService implements OnModuleInit {
     capital: number,
     tasaTotal: number,
     numCuotas: number,
-    plazoMeses: number,
-    frecuencia: FrecuenciaPago,
+    _plazoMeses: number,
+    _frecuencia: FrecuenciaPago,
   ) {
     if (numCuotas <= 0 || capital <= 0) {
       return { cuotaFija: 0, interesTotal: 0, tabla: [] };
@@ -1431,18 +1430,24 @@ export class LoansService implements OnModuleInit {
     const monto = Number(params.monto) || 0;
     const cantidadCuotas = Number(params.cantidadCuotas) || 0;
     if (!(monto > 0) || !(cantidadCuotas > 0)) {
-      return { interesTotal: 0, totalFinal: monto, cuotaProyectada: 0, cuotas: [] };
+      return {
+        interesTotal: 0,
+        totalFinal: monto,
+        cuotaProyectada: 0,
+        cuotas: [],
+      };
     }
 
-    const esArticulo = String(params.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
-    const frecuencia = (String(
+    const esArticulo =
+      String(params.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
+    const frecuencia = String(
       params.frecuenciaPago || 'MENSUAL',
-    ).toUpperCase() as FrecuenciaPago);
+    ).toUpperCase() as FrecuenciaPago;
     const tipo = esArticulo
       ? TipoAmortizacion.INTERES_SIMPLE
-      : ((String(
+      : (String(
           params.tipoAmortizacion || TipoAmortizacion.INTERES_SIMPLE,
-        ) as TipoAmortizacion));
+        ) as TipoAmortizacion);
 
     // La fecha base se ancla a la zona de Bogotá para que los vencimientos
     // coincidan con los que calcula la creación real.
@@ -1488,7 +1493,7 @@ export class LoansService implements OnModuleInit {
       page?: number;
       limit?: number;
     },
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     try {
       this.logger.log(`Getting loans with filters: ${JSON.stringify(filters)}`);
@@ -1548,7 +1553,7 @@ export class LoansService implements OnModuleInit {
           {
             numeroPrestamo: {
               contains: searchTerm,
-              mode: 'insensitive' as any,
+              mode: 'insensitive',
             },
           },
           {
@@ -1962,7 +1967,7 @@ export class LoansService implements OnModuleInit {
 
   async getLoanById(
     id: string,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     try {
       const prestamo = await this.prisma.prestamo.findFirst({
@@ -2272,7 +2277,7 @@ export class LoansService implements OnModuleInit {
   }
 
   private async reversarImpactoContableArticuloArchivado(
-    tx: any,
+    tx: Prisma.TransactionClient,
     prestamo: any,
     userId: string,
   ) {
@@ -2395,7 +2400,7 @@ export class LoansService implements OnModuleInit {
   }
 
   private async restaurarImpactoContableArticuloArchivado(
-    tx: any,
+    tx: Prisma.TransactionClient,
     prestamo: any,
     userId: string,
   ) {
@@ -2772,7 +2777,14 @@ export class LoansService implements OnModuleInit {
               actorNombre =
                 `${usuario.nombres || ''} ${usuario.apellidos || ''}`.trim();
             }
-          } catch {}
+          } catch (error) {
+            // No se corta la operacion principal por esto, pero se deja
+            // registrado: en silencio nadie se entera de que fallo.
+            this.logger.warn(
+              'No se pudo resolver el nombre del actor',
+              error as any,
+            );
+          }
 
           const metadataBase = {
             estadoAnterior,
@@ -2982,7 +2994,7 @@ export class LoansService implements OnModuleInit {
         monto: cuota.monto,
         montoCapital: cuota.montoCapital,
         montoInteres: cuota.montoInteres,
-        estado: EstadoCuota.PENDIENTE as typeof EstadoCuota.PENDIENTE,
+        estado: EstadoCuota.PENDIENTE,
       }));
 
       // Homogeneizar vencimiento del préstamo con el cronograma real
@@ -3148,7 +3160,7 @@ export class LoansService implements OnModuleInit {
       );
 
       // Crear solicitud de aprobación automáticamente
-      const aprobacion = await this.prisma.aprobacion.create({
+      const _aprobacion = await this.prisma.aprobacion.create({
         data: {
           tipoAprobacion: TipoAprobacion.NUEVO_PRESTAMO,
           referenciaId: prestamo.id,
@@ -3486,7 +3498,7 @@ export class LoansService implements OnModuleInit {
 
   async getLoanCuotas(
     prestamoId: string,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     try {
       if (this.isCollector(actor)) {
@@ -3655,10 +3667,10 @@ export class LoansService implements OnModuleInit {
         RolUsuario.SUPER_ADMINISTRADOR,
       ];
       const requiereAprobacion = !rolesAutoAprobacion.includes(creador.rol);
-      const estadoInicial = requiereAprobacion
+      const _estadoInicial = requiereAprobacion
         ? EstadoPrestamo.PENDIENTE_APROBACION
         : EstadoPrestamo.ACTIVO;
-      const estadoAprobacionInicial = requiereAprobacion
+      const _estadoAprobacionInicial = requiereAprobacion
         ? EstadoAprobacion.PENDIENTE
         : EstadoAprobacion.APROBADO;
 
@@ -4342,7 +4354,11 @@ export class LoansService implements OnModuleInit {
               tasaInteres,
             }),
           });
-        } catch {}
+        } catch (error) {
+          // No se corta la operacion principal por esto, pero se deja
+          // registrado: en silencio nadie se entera de que fallo.
+          this.logger.warn('No se pudo notificar el credito', error as any);
+        }
 
         try {
           await this.notificacionesService.create({
@@ -4367,7 +4383,11 @@ export class LoansService implements OnModuleInit {
               tasaInteres,
             }),
           });
-        } catch {}
+        } catch (error) {
+          // No se corta la operacion principal por esto, pero se deja
+          // registrado: en silencio nadie se entera de que fallo.
+          this.logger.warn('No se pudo notificar el credito', error as any);
+        }
       }
 
       if (esAutoAprobado || data.esContado) {
@@ -5272,7 +5292,11 @@ export class LoansService implements OnModuleInit {
           ...contextoRegularizacion,
         },
       });
-    } catch {}
+    } catch (error) {
+      // No se corta la operacion principal por esto, pero se deja
+      // registrado: en silencio nadie se entera de que fallo.
+      this.logger.warn('No se pudo notificar la regularizacion', error as any);
+    }
 
     // ⚡ Tiempo real: notificar a todos los clientes conectados.
     try {
@@ -5329,7 +5353,7 @@ export class LoansService implements OnModuleInit {
    */
   private async prestamosBajoJurisdiccion(
     prestamoIds: string[],
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ): Promise<Set<string> | null> {
     const scope = this.collectorLoanScope(actor);
     // Sin restricción (admin/coordinador/super): jurisdicción total.
@@ -5345,7 +5369,7 @@ export class LoansService implements OnModuleInit {
 
   async listarReprogramacionesPendientes(
     estado?: string,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     const where: any = {
       tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
@@ -5369,7 +5393,7 @@ export class LoansService implements OnModuleInit {
 
     // El supervisor/cobrador solo debe ver las reprogramaciones de sus rutas.
     const idsPrestamo = solicitudes
-      .map((s) => (s.datosSolicitud as any)?.prestamoId)
+      .map((s) => s.datosSolicitud?.prestamoId)
       .filter((id): id is string => typeof id === 'string');
     const permitidos = await this.prestamosBajoJurisdiccion(idsPrestamo, actor);
 
@@ -5377,7 +5401,7 @@ export class LoansService implements OnModuleInit {
       permitidos === null
         ? solicitudes
         : solicitudes.filter((s) =>
-            permitidos.has((s.datosSolicitud as any)?.prestamoId),
+            permitidos.has(s.datosSolicitud?.prestamoId),
           );
 
     return visibles.map((s) => ({
@@ -5396,11 +5420,14 @@ export class LoansService implements OnModuleInit {
    */
   private async exigirJurisdiccionReprogramacion(
     aprobacion: { datosSolicitud: any },
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ): Promise<void> {
-    const prestamoId = (aprobacion.datosSolicitud as any)?.prestamoId;
+    const prestamoId = aprobacion.datosSolicitud?.prestamoId;
     if (typeof prestamoId !== 'string') return;
-    const permitidos = await this.prestamosBajoJurisdiccion([prestamoId], actor);
+    const permitidos = await this.prestamosBajoJurisdiccion(
+      [prestamoId],
+      actor,
+    );
     // null = jurisdicción total (admin/coordinador/super).
     if (permitidos === null) return;
     if (!permitidos.has(prestamoId)) {
@@ -5413,7 +5440,7 @@ export class LoansService implements OnModuleInit {
   async aprobarReprogramacion(
     aprobacionId: string,
     aprobadoPorId: string,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     const aprobacion = await this.prisma.aprobacion.findUnique({
       where: { id: aprobacionId },
@@ -5492,7 +5519,7 @@ export class LoansService implements OnModuleInit {
     aprobacionId: string,
     rechazadoPorId: string,
     comentarios?: string,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     const aprobacion = await this.prisma.aprobacion.findUnique({
       where: { id: aprobacionId },

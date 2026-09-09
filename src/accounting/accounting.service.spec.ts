@@ -1237,7 +1237,7 @@ describe('AccountingService financial ledger controls', () => {
       tipoAprobacion: TipoAprobacion.GASTO,
       esPersonal: false,
       idempotencyKey: 'offline-gasto-1',
-    } as any);
+    });
 
     expect(result).toMatchObject({
       success: true,
@@ -1262,7 +1262,7 @@ describe('AccountingService financial ledger controls', () => {
       descripcion: 'Ingreso manual',
       creadoPorId: 'admin-1',
       idempotencyKey: 'offline-trx-1',
-    } as any);
+    });
 
     expect(result).toMatchObject({
       id: 'trx-existente-1',
@@ -1280,7 +1280,7 @@ describe('AccountingService financial ledger controls', () => {
       monto: 30000,
       descripcion: 'Ingreso manual',
       creadoPorId: 'admin-1',
-    } as any);
+    });
 
     expect(prisma.transaccion.count).not.toHaveBeenCalled();
     expect(prisma._tx.transaccion.create).toHaveBeenCalledWith(
@@ -1444,7 +1444,7 @@ describe('AccountingService financial ledger controls', () => {
       page: 1,
       limit: 10,
       cajaId: 'caja-1',
-    } as any);
+    });
 
     expect((prisma as any).journalEntry.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1510,7 +1510,7 @@ describe('AccountingService financial ledger controls', () => {
       page: 1,
       limit: 10,
       cajaId: 'caja-1',
-    } as any);
+    });
 
     expect((prisma as any).pago.findMany).toHaveBeenCalledWith({
       where: {

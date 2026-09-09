@@ -282,7 +282,9 @@ describe('El asiento de venta de artículo tiene que cuadrar', () => {
         createdBy: 'admin-1',
       }),
       // El mensaje ya no es jerga contable: dice qué pasó y qué hacer.
-    ).rejects.toThrow('La operación no se registró porque las cuentas no cuadran');
+    ).rejects.toThrow(
+      'La operación no se registró porque las cuentas no cuadran',
+    );
   });
 
   it('acepta el asiento cuando el precio es el que el cliente paga de verdad', async () => {
@@ -299,8 +301,7 @@ describe('El asiento de venta de artículo tiene que cuadrar', () => {
       createdBy: 'admin-1',
     });
 
-    const [[argumento]] = (prisma._tx.journalEntry.create as jest.Mock).mock
-      .calls;
+    const [[argumento]] = prisma._tx.journalEntry.create.mock.calls;
     const lineas = argumento.data.lines.create as Array<{
       debitAmount?: number;
       creditAmount?: number;

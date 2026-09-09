@@ -10,7 +10,7 @@ import {
   WsException,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Logger, forwardRef, Inject, Injectable } from '@nestjs/common';
+import { Logger, forwardRef, Inject } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { RolUsuario } from '@prisma/client';
 import { OnEvent } from '@nestjs/event-emitter';
@@ -51,40 +51,46 @@ export class NotificacionesGateway
   private userSockets = new Map<string, Set<string>>();
 
   afterInit(server: Server) {
-    server.use(async (client, next) => {
-      try {
-        const authorization = client.handshake.headers.authorization;
-        const token =
-          client.handshake.auth?.token ||
-          (authorization?.startsWith('Bearer ')
-            ? authorization.slice('Bearer '.length)
-            : undefined);
+    // El middleware de Socket.IO espera una función que no devuelva promesa.
+    // La verificación del token sí es asíncrona, así que se envuelve y se
+    // descarta la promesa explícitamente: el try/catch de adentro cubre todos
+    // los caminos y siempre llama a `next()`, de modo que nunca queda colgada.
+    server.use((client, next) => {
+      void (async () => {
+        try {
+          const authorization = client.handshake.headers.authorization;
+          const token =
+            client.handshake.auth?.token ||
+            (authorization?.startsWith('Bearer ')
+              ? authorization.slice('Bearer '.length)
+              : undefined);
 
-        if (!token) throw new WsException('Autenticación requerida');
+          if (!token) throw new WsException('Autenticación requerida');
 
-        const payload = await this.jwtService.verifyAsync<{
-          sub?: string;
-        }>(token);
-        if (!payload.sub) throw new WsException('Sesión inválida');
+          const payload = await this.jwtService.verifyAsync<{
+            sub?: string;
+          }>(token);
+          if (!payload.sub) throw new WsException('Sesión inválida');
 
-        const usuario = await this.prisma.usuario.findUnique({
-          where: { id: payload.sub },
-          select: { id: true, rol: true, estado: true },
-        });
-        if (!usuario || usuario.estado !== 'ACTIVO') {
-          throw new WsException('Sesión inválida');
+          const usuario = await this.prisma.usuario.findUnique({
+            where: { id: payload.sub },
+            select: { id: true, rol: true, estado: true },
+          });
+          if (!usuario || usuario.estado !== 'ACTIVO') {
+            throw new WsException('Sesión inválida');
+          }
+
+          client.data.user = usuario;
+          next();
+        } catch {
+          next(new WsException('Autenticación requerida'));
         }
-
-        client.data.user = usuario;
-        next();
-      } catch {
-        next(new WsException('Autenticación requerida'));
-      }
+      })();
     });
     this.logger.log('WebSocket Gateway Inicializado');
   }
 
-  handleConnection(client: Socket, ...args: any[]) {
+  handleConnection(client: Socket, ..._args: any[]) {
     // Al principio, no sabemos quién es. Esperamos a que el cliente lo diga.
     this.logger.log(`Cliente conectado: ${client.id}`);
   }
@@ -122,8 +128,10 @@ export class NotificacionesGateway
     }
     this.userSockets.get(userId)!.add(client.id);
 
-    // Opcional: unirlo a una sala con su propio ID para emisiones directas
-    client.join(`user_${userId}`);
+    // Opcional: unirlo a una sala con su propio ID para emisiones directas.
+    // `join` devuelve promesa con adaptadores externos (Redis); aquí no se
+    // espera a propósito: el registro no depende de que la sala ya esté lista.
+    void client.join(`user_${userId}`);
 
     this.logger.log(`Usuario ${userId} registrado con socket ${client.id}`);
     return { success: true };

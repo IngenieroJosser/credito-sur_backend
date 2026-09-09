@@ -9,7 +9,8 @@ import {
   Request,
   Headers,
   ForbiddenException,
-  Res,} from '@nestjs/common';
+  Res,
+} from '@nestjs/common';
 
 import type { Response } from 'express';
 import { AuthService } from './auth.service';

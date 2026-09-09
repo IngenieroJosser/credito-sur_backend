@@ -25,6 +25,8 @@ import { UpdateClientDto } from './dto/update-client.dto';
 import { NivelRiesgo, RolUsuario } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
 
+import { RequestConUsuario } from '../common/types';
+
 @ApiTags('clients')
 @Controller('clients')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -42,7 +44,7 @@ export class ClientsController {
   update(
     @Param('id') id: string,
     @Body() updateClientDto: UpdateClientDto,
-    @Request() req: any,
+    @Request() req: RequestConUsuario,
   ) {
     // Se pasa el actor para que un cobrador solo pueda modificar clientes de
     // sus rutas. Antes este endpoint no tenia ni @Roles ni scope: cualquier
@@ -56,7 +58,7 @@ export class ClientsController {
     RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
   )
-  remove(@Param('id') id: string, @Request() req: any) {
+  remove(@Param('id') id: string, @Request() req: RequestConUsuario) {
     const userId = req.user.id;
     return this.clientsService.remove(id, userId);
   }
@@ -67,7 +69,7 @@ export class ClientsController {
     RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
   )
-  restore(@Param('id') id: string, @Request() req: any) {
+  restore(@Param('id') id: string, @Request() req: RequestConUsuario) {
     const userId = req.user.id;
     return this.clientsService.restore(id, userId);
   }
@@ -87,7 +89,7 @@ export class ClientsController {
     @Query('ruta') ruta: string,
     @Query('search') search: string,
     @Query('forCredit') forCredit: string,
-    @Request() req: any,
+    @Request() req: RequestConUsuario,
   ) {
     return this.clientsService.getAllClients(
       {
@@ -147,7 +149,10 @@ export class ClientsController {
     RolUsuario.CONTADOR,
     RolUsuario.PUNTO_DE_VENTA,
   )
-  async getEstadoCuenta(@Param('id') id: string, @Request() req: any) {
+  async getEstadoCuenta(
+    @Param('id') id: string,
+    @Request() req: RequestConUsuario,
+  ) {
     return this.clientsService.getEstadoCuentaCliente(id, req.user);
   }
 
@@ -161,7 +166,10 @@ export class ClientsController {
     RolUsuario.CONTADOR,
     RolUsuario.PUNTO_DE_VENTA,
   )
-  async getClientById(@Param('id') id: string, @Request() req: any) {
+  async getClientById(
+    @Param('id') id: string,
+    @Request() req: RequestConUsuario,
+  ) {
     return this.clientsService.getClientById(id, req.user);
   }
 
@@ -176,11 +184,14 @@ export class ClientsController {
     RolUsuario.COBRADOR,
     RolUsuario.SUPERVISOR,
   )
-  async createClient(@Body() body: CreateClientDto, @Request() req: any) {
+  async createClient(
+    @Body() body: CreateClientDto,
+    @Request() req: RequestConUsuario,
+  ) {
     this.logger.log(`Creando cliente con datos: ${JSON.stringify(body)}`);
     return this.clientsService.createClient({
       ...body,
-      creadoPorId: req.user?.id || req.user?.sub,
+      creadoPorId: req.user?.id,
     });
   }
 
@@ -193,11 +204,11 @@ export class ClientsController {
   async approveClient(
     @Param('id') id: string,
     @Body() body: { aprobadoPorId: string; datosAprobados?: any },
-    @Request() req: any,
+    @Request() req: RequestConUsuario,
   ) {
     return this.clientsService.approveClient(
       id,
-      req.user?.id || req.user?.sub,
+      req.user?.id,
       body.datosAprobados,
     );
   }
@@ -211,13 +222,9 @@ export class ClientsController {
   async rejectClient(
     @Param('id') id: string,
     @Body() body: { rechazadoPorId: string; razon?: string },
-    @Request() req: any,
+    @Request() req: RequestConUsuario,
   ) {
-    return this.clientsService.rejectClient(
-      id,
-      req.user?.id || req.user?.sub,
-      body.razon,
-    );
+    return this.clientsService.rejectClient(id, req.user?.id, body.razon);
   }
 
   @Put(':id')

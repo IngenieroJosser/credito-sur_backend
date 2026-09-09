@@ -40,7 +40,11 @@ describe('UploadController.serveFile: quién puede ver un archivo', () => {
   it('rechaza nombres con recorrido de directorios', async () => {
     const { ctrl, prisma } = controlador(null);
     const res = hacerRes();
-    await ctrl.serveFile('../../.env', { user: {} }, res);
+    await ctrl.serveFile(
+      '../../.env',
+      { user: { id: 'u1', rol: RolUsuario.ADMIN } },
+      res,
+    );
     expect(res.code).toBe(400);
     // Ni siquiera consulta la base: se corta antes.
     expect(prisma.multimedia.findFirst).not.toHaveBeenCalled();
@@ -49,38 +53,72 @@ describe('UploadController.serveFile: quién puede ver un archivo', () => {
   it('un archivo que no está registrado devuelve 404 (no se puede enumerar la carpeta)', async () => {
     const { ctrl } = controlador(null);
     const res = hacerRes();
-    await ctrl.serveFile('cualquiera.pdf', { user: { rol: RolUsuario.ADMIN } }, res);
+    await ctrl.serveFile(
+      'cualquiera.pdf',
+      { user: { id: 'u1', rol: RolUsuario.ADMIN } },
+      res,
+    );
     expect(res.code).toBe(404);
     expect(res.enviado).toBeNull();
   });
 
   it('sirve un archivo público a cualquiera', async () => {
-    const { ctrl } = controlador({ esPublico: true, clienteId: null, usuarioId: null });
+    const { ctrl } = controlador({
+      esPublico: true,
+      clienteId: null,
+      usuarioId: null,
+    });
     const res = hacerRes();
-    await ctrl.serveFile('logo.png', { user: { rol: RolUsuario.COBRADOR, id: 'u1' } }, res);
+    await ctrl.serveFile(
+      'logo.png',
+      { user: { rol: RolUsuario.COBRADOR, id: 'u1' } },
+      res,
+    );
     expect(res.enviado).toBe('logo.png');
   });
 
   it('sirve el archivo a su propio dueño', async () => {
-    const { ctrl } = controlador({ esPublico: false, clienteId: null, usuarioId: 'u1' });
+    const { ctrl } = controlador({
+      esPublico: false,
+      clienteId: null,
+      usuarioId: 'u1',
+    });
     const res = hacerRes();
-    await ctrl.serveFile('mi-foto.png', { user: { rol: RolUsuario.COBRADOR, id: 'u1' } }, res);
+    await ctrl.serveFile(
+      'mi-foto.png',
+      { user: { rol: RolUsuario.COBRADOR, id: 'u1' } },
+      res,
+    );
     expect(res.enviado).toBe('mi-foto.png');
   });
 
   it('un cobrador NO ve el documento de un cliente que no es de su ruta', async () => {
     // El cliente no aparece dentro de su alcance: cliente.findFirst devuelve null
-    const { ctrl } = controlador({ esPublico: false, clienteId: 'c9', usuarioId: null }, null);
+    const { ctrl } = controlador(
+      { esPublico: false, clienteId: 'c9', usuarioId: null },
+      null,
+    );
     const res = hacerRes();
-    await ctrl.serveFile('cedula-c9.jpg', { user: { rol: RolUsuario.COBRADOR, id: 'u1' } }, res);
+    await ctrl.serveFile(
+      'cedula-c9.jpg',
+      { user: { rol: RolUsuario.COBRADOR, id: 'u1' } },
+      res,
+    );
     expect(res.code).toBe(404);
     expect(res.enviado).toBeNull();
   });
 
   it('un cobrador SÍ ve el documento de un cliente de su ruta', async () => {
-    const { ctrl } = controlador({ esPublico: false, clienteId: 'c1', usuarioId: null }, { id: 'c1' });
+    const { ctrl } = controlador(
+      { esPublico: false, clienteId: 'c1', usuarioId: null },
+      { id: 'c1' },
+    );
     const res = hacerRes();
-    await ctrl.serveFile('cedula-c1.jpg', { user: { rol: RolUsuario.COBRADOR, id: 'u1' } }, res);
+    await ctrl.serveFile(
+      'cedula-c1.jpg',
+      { user: { rol: RolUsuario.COBRADOR, id: 'u1' } },
+      res,
+    );
     expect(res.enviado).toBe('cedula-c1.jpg');
   });
 
@@ -91,10 +129,17 @@ describe('UploadController.serveFile: quién puede ver un archivo', () => {
       RolUsuario.COORDINADOR,
       RolUsuario.CONTADOR,
     ]) {
-      const { ctrl } = controlador({ esPublico: false, clienteId: 'c1', usuarioId: null });
+      const { ctrl } = controlador({
+        esPublico: false,
+        clienteId: 'c1',
+        usuarioId: null,
+      });
       const res = hacerRes();
       await ctrl.serveFile('doc.pdf', { user: { rol, id: 'x' } }, res);
-      expect({ rol, enviado: res.enviado }).toEqual({ rol, enviado: 'doc.pdf' });
+      expect({ rol, enviado: res.enviado }).toEqual({
+        rol,
+        enviado: 'doc.pdf',
+      });
     }
   });
 });

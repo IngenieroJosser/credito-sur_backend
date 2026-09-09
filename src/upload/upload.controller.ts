@@ -35,11 +35,14 @@ function contenidoPermitido(file: Express.Multer.File): boolean {
   if (mime === 'application/pdf') return hex.startsWith('255044462d');
   if (mime === 'image/png') return hex.startsWith('89504e470d0a1a0a');
   if (mime === 'image/jpeg') return hex.startsWith('ffd8ff');
-  if (mime === 'image/gif') return header.toString('ascii', 0, 6).startsWith('GIF8');
+  if (mime === 'image/gif')
+    return header.toString('ascii', 0, 6).startsWith('GIF8');
   if (mime === 'video/mp4') return hex.includes('66747970');
   if (mime === 'video/webm') return hex.startsWith('1a45dfa3');
   return false;
 }
+
+import { RequestConUsuario } from '../common/types';
 
 @ApiTags('Uploads')
 @Controller('uploads')
@@ -105,7 +108,9 @@ export class UploadController {
   ) {
     if (!file) throw new BadRequestException('El archivo es requerido');
     if (!contenidoPermitido(file)) {
-      throw new BadRequestException('El contenido del archivo no coincide con su tipo');
+      throw new BadRequestException(
+        'El contenido del archivo no coincide con su tipo',
+      );
     }
 
     // Construir sub-carpeta según el tipo de contenido y datos del cliente
@@ -156,7 +161,7 @@ export class UploadController {
   @ApiOperation({ summary: 'Obtener un archivo subido localmente' })
   async serveFile(
     @Param('filename') filename: string,
-    @Request() req: any,
+    @Request() req: RequestConUsuario,
     @Res() res: Response,
   ) {
     const safeFilename = basename(filename);
@@ -207,7 +212,11 @@ export class UploadController {
     if (!permitido && media.clienteId) {
       const scope =
         rol === RolUsuario.SUPERVISOR
-          ? { asignacionesRuta: { some: { activa: true, ruta: { supervisorId: actor.id } } } }
+          ? {
+              asignacionesRuta: {
+                some: { activa: true, ruta: { supervisorId: actor.id } },
+              },
+            }
           : rol === RolUsuario.COBRADOR
             ? {
                 asignacionesRuta: {

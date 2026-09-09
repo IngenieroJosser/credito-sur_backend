@@ -3,7 +3,7 @@ import * as sanitizeHtml from 'sanitize-html';
 
 @Injectable()
 export class SanitizePipe implements PipeTransform {
-  transform(value: any, metadata: ArgumentMetadata) {
+  transform(value: any, _metadata: ArgumentMetadata) {
     if (typeof value === 'object' && value !== null) {
       this.sanitizeObject(value);
     } else if (typeof value === 'string') {

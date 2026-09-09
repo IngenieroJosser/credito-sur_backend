@@ -101,7 +101,7 @@ export function declararColumnas(
   columnas: ColumnaPlantilla[],
   filas = FILAS_PREPARADAS,
 ) {
-  ws.columns = columnas.map(({ key, width }) => ({ key, width })) as any;
+  ws.columns = columnas.map(({ key, width }) => ({ key, width }));
 
   const filaEncabezados = ws.getRow(FILA_ENCABEZADOS);
   filaEncabezados.values = columnas.map((c) => c.header);
@@ -260,7 +260,7 @@ export function formulaEnColumna(
   for (let fila = FILA_INICIO_DATOS; fila < FILA_INICIO_DATOS + filas; fila++) {
     ws.getCell(fila, columna).value = {
       formula: plantilla.replace(/\{f\}/g, String(fila)),
-    } as any;
+    };
   }
 }
 
@@ -376,7 +376,7 @@ export function hojaInicio(
 
 /** Marca el libro para que Excel recalcule todas las fórmulas al abrirlo. */
 export function forzarRecalculo(workbook: ExcelJS.Workbook) {
-  workbook.calcProperties = { fullCalcOnLoad: true } as any;
+  workbook.calcProperties = { fullCalcOnLoad: true };
 }
 
 export function comoBuffer(

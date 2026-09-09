@@ -11,7 +11,7 @@
  * puso cuotas de otros clientes en 0.
  */
 
-import { Prisma, EstadoPrestamo } from '@prisma/client';
+import { Prisma, EstadoPrestamo, RolUsuario } from '@prisma/client';
 
 /**
  * Filtros para consultas de pagos (findMany / count).
@@ -107,3 +107,41 @@ export type PagoConRelacionesExport = Prisma.PagoGetPayload<{
     cobrador: { select: { nombres: true; apellidos: true; rol: true } };
   };
 }>;
+
+/**
+ * Quién hace la petición: es lo que `JwtStrategy.validate()` deja en `req.user`
+ * y lo que los servicios reciben como `actor` para filtrar por jurisdicción
+ * (un supervisor solo ve sus rutas, un cobrador solo sus clientes).
+ *
+ * El rol va tipado con el enum a secas. Antes las 41 firmas repetían
+ * `RolUsuario` unido a `string`, y ese `string` anulaba el enum: TypeScript no
+ * podía avisar de un `'COORDINADRO'` mal escrito. Quitarlo no rompió nada,
+ * porque el valor real siempre es el enum: `validate()` lo lee de la base.
+ */
+export interface ActorUsuario {
+  id?: string;
+  rol?: RolUsuario;
+}
+
+/**
+ * Lo que el JWT deja en `req.user` (ver `JwtStrategy.validate`).
+ *
+ * Los controladores lo recibían como `req: any`, y por eso nadie se enteraba de
+ * que en varios sitios se leían campos inexistentes: `req.user.sub` y
+ * `req.user.userId`. Casi siempre iban en cadena detrás de `id`, así que no se
+ * notaba; en la configuración del sistema no había cadena y el resultado era
+ * que se guardaba sin registrar quién la había cambiado.
+ */
+export interface UsuarioAutenticado {
+  id: string;
+  correo?: string;
+  nombres?: string;
+  rol: RolUsuario;
+  permisos?: string[];
+}
+
+/** Request de Express ya autenticado por el guard de JWT. */
+export interface RequestConUsuario {
+  user: UsuarioAutenticado;
+  headers?: Record<string, string | string[] | undefined>;
+}

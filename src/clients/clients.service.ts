@@ -22,7 +22,7 @@ import { generarExcelClientesCreditosImportable } from '../templates/exports/imp
 export class ClientsService {
   private readonly logger = new Logger(ClientsService.name);
 
-  private isCollector(actor?: { rol?: RolUsuario | string } | null) {
+  private isCollector(actor?: { rol?: RolUsuario } | null) {
     return String(actor?.rol || '').toUpperCase() === RolUsuario.COBRADOR;
   }
 
@@ -31,7 +31,7 @@ export class ClientsService {
    * Se usa en listados operativos del dashboard.
    */
   private collectorClientScope(
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ): Prisma.ClienteWhereInput {
     const rol = String(actor?.rol || '').toUpperCase();
     if (!actor?.id) return {};
@@ -41,10 +41,7 @@ export class ClientsService {
         asignacionesRuta: {
           some: {
             activa: true,
-            OR: [
-              { cobradorId: actor.id } as any,
-              { ruta: { cobradorId: actor.id } } as any,
-            ],
+            OR: [{ cobradorId: actor.id }, { ruta: { cobradorId: actor.id } }],
           },
         },
       };
@@ -56,7 +53,7 @@ export class ClientsService {
         asignacionesRuta: {
           some: {
             activa: true,
-            ruta: { supervisorId: actor.id } as any,
+            ruta: { supervisorId: actor.id },
           },
         },
       };
@@ -71,7 +68,7 @@ export class ClientsService {
    * Esto le permite asignar un crédito a cualquier cliente activo.
    */
   private creditCreationClientScope(
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ): Prisma.ClienteWhereInput {
     if (!this.isCollector(actor)) return {};
     // Para el cobrador en contexto de crédito: excluir solo lista negra.
@@ -169,7 +166,7 @@ export class ClientsService {
   async update(
     id: string,
     updateClientDto: UpdateClientDto,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     const {
       rutaId: _rutaId,
@@ -195,7 +192,10 @@ export class ClientsService {
     // no sobrescribimos en silencio. Se rechaza como conflicto (409) y el sync
     // lo enruta al pipeline de conflictos para revisión manual. Opcional: solo
     // se verifica si el cliente envió su `version` base.
-    if (versionBase != null && Number(versionBase) !== Number(accesible.version ?? 1)) {
+    if (
+      versionBase != null &&
+      Number(versionBase) !== Number(accesible.version ?? 1)
+    ) {
       throw new ConflictException(
         'El cliente fue modificado por otra persona desde que empezaste a editarlo. Revisa los cambios antes de guardar.',
       );
@@ -380,7 +380,7 @@ export class ClientsService {
        */
       forCredit?: boolean;
     },
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     try {
       this.logger.log(
@@ -741,7 +741,7 @@ export class ClientsService {
 
   async getClientById(
     id: string,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     this.logger.log(`[DEBUG] getClientById called with ID: ${id}`);
     try {
@@ -1238,7 +1238,14 @@ export class ClientsService {
               apellidos: data.apellidos,
             },
           });
-        } catch {}
+        } catch (error) {
+          // No se corta la operacion principal por esto, pero se deja
+          // registrado: en silencio nadie se entera de que fallo.
+          this.logger.warn(
+            'No se pudo notificar el cliente nuevo',
+            error as any,
+          );
+        }
 
         try {
           await this.notificacionesService.create({
@@ -1254,7 +1261,14 @@ export class ClientsService {
               clienteId: cliente.id,
             },
           });
-        } catch {}
+        } catch (error) {
+          // No se corta la operacion principal por esto, pero se deja
+          // registrado: en silencio nadie se entera de que fallo.
+          this.logger.warn(
+            'No se pudo notificar la aprobacion del cliente',
+            error as any,
+          );
+        }
       }
 
       this.notificacionesGateway.broadcastClientesActualizados({
@@ -1539,7 +1553,7 @@ export class ClientsService {
       const { archivos, version: _version, ...clientData } = data;
 
       // Actualizar datos básicos del cliente
-      const clienteActualizado = await this.prisma.cliente.update({
+      const _clienteActualizado = await this.prisma.cliente.update({
         where: { id },
         data: {
           ...clientData,
@@ -1893,7 +1907,7 @@ export class ClientsService {
 
   async getEstadoCuentaCliente(
     clienteId: string,
-    actor?: { id?: string; rol?: RolUsuario | string } | null,
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     const cliente = await this.prisma.cliente.findFirst({
       where: {

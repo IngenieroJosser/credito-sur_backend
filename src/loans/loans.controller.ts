@@ -46,6 +46,8 @@ import { AuditService } from '../audit/audit.service';
 import { ApprovalsService } from '../approvals/approvals.service';
 import { formatBogotaOffsetIso } from '../utils/date-utils';
 
+import { RequestConUsuario } from '../common/types';
+
 @ApiTags('loans')
 @ApiBearerAuth(SWAGGER_JWT_AUTH)
 @Controller('loans')
@@ -875,9 +877,9 @@ export class LoansController {
       diasGracia: number;
       comentarios?: string;
     },
-    @Request() req: any,
+    @Request() req: RequestConUsuario,
   ) {
-    const usuarioId: string = req.user?.sub || req.user?.id;
+    const usuarioId: string = req.user?.id;
     if (!usuarioId) throw new Error('Usuario no autenticado');
 
     // Cargar el préstamo con datos del cliente
@@ -978,7 +980,10 @@ export class LoansController {
           prestamoId,
         },
       });
-    } catch {}
+    } catch {
+      // Es accesorio: si falla, la operacion principal ya quedo hecha
+      // y se sigue con el valor por defecto.
+    }
 
     // ⚡ Tiempo real: badge revisiones actualiza al instante
     this.notificacionesGateway.broadcastAprobacionesActualizadas({
@@ -1016,9 +1021,9 @@ export class LoansController {
       diasGracia?: number;
       comentarios?: string;
     },
-    @Request() req: any,
+    @Request() req: RequestConUsuario,
   ) {
-    const usuarioId: string = req.user?.sub || req.user?.id;
+    const usuarioId: string = req.user?.id;
     if (!usuarioId) throw new Error('Usuario no autenticado');
 
     const prestamo = await this.prisma.prestamo.findUnique({
@@ -1057,9 +1062,7 @@ export class LoansController {
     }
 
     const tipoAprobacion: TipoAprobacion =
-      body.decision === 'CASTIGAR'
-        ? ('BAJA_POR_PERDIDA' as TipoAprobacion)
-        : ('PRORROGA_PAGO' as TipoAprobacion);
+      body.decision === 'CASTIGAR' ? 'BAJA_POR_PERDIDA' : 'PRORROGA_PAGO';
 
     const dias =
       Number(body.diasGracia || 0) > 0 ? Number(body.diasGracia) : 30;
@@ -1192,7 +1195,10 @@ export class LoansController {
           gestionadoPor: nombreUsuario,
         },
       });
-    } catch {}
+    } catch {
+      // Es accesorio: si falla, la operacion principal ya quedo hecha
+      // y se sigue con el valor por defecto.
+    }
 
     try {
       await this.notificacionesService.create({
@@ -1210,7 +1216,10 @@ export class LoansController {
           prestamoId,
         },
       });
-    } catch {}
+    } catch {
+      // Es accesorio: si falla, la operacion principal ya quedo hecha
+      // y se sigue con el valor por defecto.
+    }
 
     // ⚡ Tiempo real: notificar a todos los clientes conectados que hay una nueva revisión pendiente
     this.notificacionesGateway.broadcastAprobacionesActualizadas({
@@ -1239,9 +1248,9 @@ export class LoansController {
   async solicitarReprogramacion(
     @Param('id') prestamoId: string,
     @Body() body: ReprogramarCuotaDto,
-    @Request() req: any,
+    @Request() req: RequestConUsuario,
   ) {
-    const usuarioId: string = req.user?.sub || req.user?.id;
+    const usuarioId: string = req.user?.id;
     if (!usuarioId) throw new Error('Usuario no autenticado');
 
     return this.loansService.solicitarReprogramacion({
@@ -1270,10 +1279,13 @@ export class LoansController {
     enum: ['PENDIENTE', 'APROBADO', 'RECHAZADO', 'TODOS'],
   })
   async listarReprogramacionesPendientes(
-    @Query('estado') estado?: string,
-    @Request() req?: any,
+    @Query('estado') estado: string | undefined,
+    @Request() req: RequestConUsuario,
   ) {
-    return this.loansService.listarReprogramacionesPendientes(estado, req?.user);
+    return this.loansService.listarReprogramacionesPendientes(
+      estado,
+      req?.user,
+    );
   }
 
   @Patch('reprogramaciones/:id/aprobar')
@@ -1285,7 +1297,10 @@ export class LoansController {
   )
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Aprobar solicitud de reprogramación' })
-  async aprobarReprogramacion(@Param('id') id: string, @Request() req: any) {
+  async aprobarReprogramacion(
+    @Param('id') id: string,
+    @Request() req: RequestConUsuario,
+  ) {
     return this.loansService.aprobarReprogramacion(id, req.user.id, req.user);
   }
 
@@ -1301,7 +1316,7 @@ export class LoansController {
   async rechazarReprogramacion(
     @Param('id') id: string,
     @Body() body: { comentarios?: string },
-    @Request() req: any,
+    @Request() req: RequestConUsuario,
   ) {
     return this.loansService.rechazarReprogramacion(
       id,

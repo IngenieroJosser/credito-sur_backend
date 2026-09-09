@@ -95,7 +95,7 @@ export async function generarExcelVencidas(
     { key: 'riesgo', width: 13 },
     { key: 'ruta', width: 20 },
     { key: 'estado', width: 14 },
-  ] as any;
+  ];
 
   // Fila 1: Encabezado institucional
   ws.mergeCells('A1:K1');
@@ -318,7 +318,7 @@ export async function generarExcelVencidas(
 
   const buffer = await workbook.xlsx.writeBuffer();
   return {
-    data: Buffer.from(buffer as ArrayBuffer),
+    data: Buffer.from(buffer),
     contentType:
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     filename: `cuentas-vencidas-${fecha}.xlsx`,
@@ -369,7 +369,10 @@ export async function generarPDFVencidas(
         doc.image(lp, (W - 300) / 2, (H - 300) / 2, { width: 300 });
         doc.restore();
       }
-    } catch (e) {}
+    } catch {
+      // El watermark es decorativo: si el logo no se puede dibujar
+      // (falta el archivo, o el PDF ya se cerro), el reporte sale igual.
+    }
   };
 
   let pageNumber = 1;

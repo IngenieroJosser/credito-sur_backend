@@ -67,7 +67,7 @@ describe('El saldo de una caja se lee con la fila bloqueada', () => {
   it('lee el saldo bloqueando la fila, no con una consulta suelta', async () => {
     const { service, tx, $queryRaw } = servicio([500000]);
 
-    await service.registrarAsiento(egreso('caja-1', 100000) as any);
+    await service.registrarAsiento(egreso('caja-1', 100000));
 
     expect($queryRaw).toHaveBeenCalled();
     expect(sqlDe($queryRaw.mock.calls[0])).toMatch(/FOR NO KEY UPDATE/);
@@ -81,7 +81,7 @@ describe('El saldo de una caja se lee con la fila bloqueada', () => {
     // los seis en deadlock y no pasó ninguno. Seguro, pero inservible.
     const { service, $queryRaw } = servicio([500000]);
 
-    await service.registrarAsiento(egreso('caja-1', 100000) as any);
+    await service.registrarAsiento(egreso('caja-1', 100000));
 
     expect(sqlDe($queryRaw.mock.calls[0])).not.toMatch(/FOR UPDATE/);
   });
@@ -103,7 +103,7 @@ describe('El saldo de una caja se lee con la fila bloqueada', () => {
     const { service, $queryRaw } = servicio([0]);
 
     await service.registrarAsiento({
-      referenceType: 'INGRESO' as any,
+      referenceType: 'INGRESO',
       referenceId: 'ref-2',
       description: 'Aporte',
       createdBy: 'admin-1',
@@ -116,7 +116,7 @@ describe('El saldo de una caja se lee con la fila bloqueada', () => {
         },
         { accountCode: '3.3', creditAmount: 100000 },
       ],
-    } as any);
+    });
 
     expect($queryRaw).not.toHaveBeenCalled();
   });
@@ -129,7 +129,7 @@ describe('Los movimientos de caja de un asiento se suman y se ordenan', () => {
     const { service, tx } = servicio([50000]);
 
     await service.registrarAsiento({
-      referenceType: 'AJUSTE' as any,
+      referenceType: 'AJUSTE',
       referenceId: 'ref-3',
       description: 'Sale y entra',
       createdBy: 'admin-1',
@@ -149,7 +149,7 @@ describe('Los movimientos de caja de un asiento se suman y se ordenan', () => {
         { accountCode: '3.3', creditAmount: 80000 },
         { accountCode: '4.2', debitAmount: 100000 },
       ],
-    } as any);
+    });
 
     // Una sola actualización, por el neto de -20.000.
     expect(tx.caja.update).toHaveBeenCalledTimes(1);
@@ -167,7 +167,7 @@ describe('Los movimientos de caja de un asiento se suman y se ordenan', () => {
     const { service, tx } = servicio([900000, 900000]);
 
     await service.registrarAsiento({
-      referenceType: 'CONSOLIDACION' as any,
+      referenceType: 'CONSOLIDACION',
       referenceId: 'ref-4',
       description: 'Traslado',
       createdBy: 'admin-1',
@@ -187,7 +187,7 @@ describe('Los movimientos de caja de un asiento se suman y se ordenan', () => {
         { accountCode: '4.2', debitAmount: 100000 },
         { accountCode: '3.3', creditAmount: 100000 },
       ],
-    } as any);
+    });
 
     const orden = tx.caja.update.mock.calls.map((c: any) => c[0].where.id);
     expect(orden).toEqual(['caja-a', 'caja-z']);

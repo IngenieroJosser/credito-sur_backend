@@ -269,7 +269,7 @@ export async function generarPDFGastos(
   const AZUL_PALE = '#EBF4FB';
   const NAR_MED = '#F07A28';
   const NAR_DARK = '#D4600A';
-  const NAR_SOFT = '#FDE8D5';
+  const _NAR_SOFT = '#FDE8D5';
   const BLANCO = '#FFFFFF';
   const GRIS_TXT = '#2D3748';
   const GRIS_MED = '#718096';
@@ -286,7 +286,10 @@ export async function generarPDFGastos(
       const H = doc.page.height;
       doc.image(logoPath, (W - 300) / 2, (H - 300) / 2, { width: 300 });
       doc.restore();
-    } catch (_) {}
+    } catch {
+      // El watermark es decorativo: si el logo no se puede dibujar
+      // (falta el archivo, o el PDF ya se cerro), el reporte sale igual.
+    }
   };
 
   // ── Encabezado de página ───────────────────────────────────────────────────

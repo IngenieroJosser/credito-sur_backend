@@ -16,6 +16,8 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { CreateCashSaleDto } from './dto/create-cash-sale.dto';
 import { SalesService } from './sales.service';
 
+import { RequestConUsuario } from '../common/types';
+
 @Controller('sales')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class SalesController {
@@ -31,7 +33,10 @@ export class SalesController {
     RolUsuario.CONTADOR,
     RolUsuario.PUNTO_DE_VENTA,
   )
-  registrarVentaContado(@Body() dto: CreateCashSaleDto, @Request() req: any) {
+  registrarVentaContado(
+    @Body() dto: CreateCashSaleDto,
+    @Request() req: RequestConUsuario,
+  ) {
     if (!req?.user?.id) {
       throw new BadRequestException('Usuario autenticado requerido');
     }

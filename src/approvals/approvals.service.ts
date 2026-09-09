@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  Prisma,
   EstadoAprobacion,
   EstadoPrestamo,
   EstadoCuota,
@@ -864,7 +865,7 @@ export class ApprovalsService {
 
       const nuevo = await this.ledgerService.registrarAsiento(
         {
-          referenceType: 'AJUSTE' as any,
+          referenceType: 'AJUSTE',
           referenceId: `REAPERTURA:${original.id}`,
           description: `Reapertura provisional de ${original.referenceType || ''} ${original.referenceId || ''}${notas ? ` — ${notas}` : ''}`,
           createdBy: userId,
@@ -925,7 +926,7 @@ export class ApprovalsService {
     tx: any,
     approval: any,
     rechazadoPorId?: string,
-    motivoRechazo?: string,
+    _motivoRechazo?: string,
   ) {
     if (!approval.referenciaId) {
       throw new BadRequestException('La aprobación no tiene préstamo asociado');
@@ -1476,10 +1477,7 @@ export class ApprovalsService {
     // Segregación de funciones: nadie aprueba su propia solicitud (cuatro
     // ojos). El SUPER_ADMINISTRADOR queda como escape para no bloquear una
     // operación donde sea el único aprobador posible.
-    if (
-      aprobadoPorId &&
-      approval.solicitadoPorId === aprobadoPorId
-    ) {
+    if (aprobadoPorId && approval.solicitadoPorId === aprobadoPorId) {
       const aprobador = await this.prisma.usuario.findUnique({
         where: { id: aprobadoPorId },
         select: { rol: true },
@@ -3727,7 +3725,7 @@ export class ApprovalsService {
   private async approveLoanLoss(
     approval: any,
     aprobadoPorId?: string,
-    editedData?: any,
+    _editedData?: any,
   ) {
     const prestamoId = approval.referenciaId;
 

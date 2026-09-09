@@ -5,6 +5,7 @@ import { ClientesCreditosParser } from './parsers/clientes-creditos.parser';
 import { InventarioParser } from './parsers/inventario.parser';
 import { ResultadoValidacion } from './dto/validacion-resultado.dto';
 import { LedgerService } from '../accounting/ledger.service';
+import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { generarPlantillaInventario } from './plantillas/plantilla-inventario';
 import {
   generarPlantillaClientesCreditos,
@@ -37,6 +38,8 @@ export function normalizarNombreCategoria(valor: unknown): string {
     .toLowerCase();
 }
 
+import { Prisma } from '@prisma/client';
+
 @Injectable()
 export class ImportacionesService {
   private clientesCreditosParser: ClientesCreditosParser;
@@ -45,9 +48,38 @@ export class ImportacionesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ledgerService: LedgerService,
+    private readonly notificacionesGateway: NotificacionesGateway,
   ) {
     this.clientesCreditosParser = new ClientesCreditosParser(this.prisma);
     this.inventarioParser = new InventarioParser(this.prisma);
+  }
+
+  /**
+   * Avisa a las pantallas abiertas de que la importacion cambio los datos.
+   *
+   * El resto del sistema ya emitia estos eventos al crear o editar, pero la
+   * importacion no emitia ninguno: quien tuviera abierto el listado de
+   * clientes o de creditos no veia lo importado hasta recargar a mano.
+   *
+   * Va en try/catch porque avisar es accesorio: si el websocket falla, la
+   * importacion ya quedo hecha y no se puede deshacer por esto.
+   */
+  private avisarCambioPorImportacion(tipo: 'CLIENTES_CREDITOS' | 'INVENTARIO') {
+    try {
+      if (tipo === 'CLIENTES_CREDITOS') {
+        this.notificacionesGateway.broadcastClientesActualizados({
+          origen: 'importacion',
+        });
+        this.notificacionesGateway.broadcastPrestamosActualizados({
+          origen: 'importacion',
+        });
+        this.notificacionesGateway.broadcastRutasActualizadas({
+          origen: 'importacion',
+        });
+      }
+    } catch {
+      // Si no se pudo avisar, la pantalla se actualiza al recargar.
+    }
   }
 
   /**
@@ -61,7 +93,7 @@ export class ImportacionesService {
    * propietario como contrapartida.
    */
   private async asentarInventario(
-    tx: any,
+    tx: Prisma.TransactionClient,
     params: {
       productoId: string;
       codigo: string;
@@ -79,7 +111,7 @@ export class ImportacionesService {
 
     await this.ledgerService.registrarAsiento(
       {
-        referenceType: 'AJUSTE' as any,
+        referenceType: 'AJUSTE',
         referenceId: productoId,
         description:
           `${entra ? 'Entrada' : 'Salida'} de inventario por importación — ` +
@@ -95,7 +127,7 @@ export class ImportacionesService {
             ...(entra ? { creditAmount: valor } : { debitAmount: valor }),
           },
         ],
-      } as any,
+      },
       tx,
     );
   }
@@ -312,9 +344,12 @@ export class ImportacionesService {
         id: p.id,
         numeroPrestamo: p.numeroPrestamo,
         tipo: p.tipoPrestamo,
-        cliente: `${p.cliente?.nombres ?? ''} ${p.cliente?.apellidos ?? ''}`.trim(),
+        cliente:
+          `${p.cliente?.nombres ?? ''} ${p.cliente?.apellidos ?? ''}`.trim(),
         cedula: p.cliente?.dni ?? '',
-        articulo: p.producto ? `${p.producto.codigo} — ${p.producto.nombre}` : null,
+        articulo: p.producto
+          ? `${p.producto.codigo} — ${p.producto.nombre}`
+          : null,
         articuloCodigo: p.producto?.codigo ?? null,
         monto: Number(p.monto || 0),
         cuotaInicial: Number(p.cuotaInicial || 0),
@@ -502,7 +537,8 @@ export class ImportacionesService {
     }
 
     const idsPrestamos = pedidos.length > 0 ? pedidos : prestamosDelLote;
-    const parcial = pedidos.length > 0 && pedidos.length < prestamosDelLote.length;
+    const parcial =
+      pedidos.length > 0 && pedidos.length < prestamosDelLote.length;
 
     if (idsPrestamos.length === 0) {
       throw new BadRequestException(
@@ -647,13 +683,13 @@ export class ImportacionesService {
           data: {
             estado: parcial ? 'CONFIRMADO' : 'CANCELADO',
             resumen: {
-              ...((lote.resumen ?? {}) as any),
+              ...(lote.resumen ?? {}),
               creado: {
                 ...creado,
                 prestamos: quedanVivos,
                 clientes: parcial ? idsClientes : [],
               },
-            } as any,
+            },
           },
         });
       },
@@ -993,6 +1029,8 @@ export class ImportacionesService {
         confirmadoEn: new Date(),
       },
     });
+
+    this.avisarCambioPorImportacion('INVENTARIO');
 
     return {
       loteId: lote.id,
@@ -1708,7 +1746,7 @@ export class ImportacionesService {
             // Si es operativo, registrar transacción de desembolso
             if (isOperativaEfectivo && cajaOficina) {
               const montoDesembolso = Number(cred.monto);
-              const transaccion = await tx.transaccion.create({
+              const _transaccion = await tx.transaccion.create({
                 data: {
                   numeroTransaccion: `IMP-DES-${prestamo.id.slice(0, 24)}`,
                   idempotencyKey: `IMP-DESEMBOLSO-${prestamo.id}`,
@@ -1874,6 +1912,8 @@ export class ImportacionesService {
 
     mensajes.push('Clientes y créditos confirmados correctamente.');
 
+    this.avisarCambioPorImportacion('CLIENTES_CREDITOS');
+
     return {
       loteId,
       clientesCreados,
@@ -1912,7 +1952,7 @@ export class ImportacionesService {
    */
   private async resolverCategoriasArticulo(
     // Mismo tipado que el resto de ayudantes transaccionales del servicio.
-    tx: any,
+    tx: Prisma.TransactionClient,
     nombres: unknown[],
   ): Promise<Map<string, string>> {
     const porClave = new Map<string, string>();
@@ -1945,5 +1985,4 @@ export class ImportacionesService {
 
     return porClave;
   }
-
 }

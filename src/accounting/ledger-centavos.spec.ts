@@ -74,7 +74,7 @@ describe('El libro no admite centavos', () => {
   it('deja pasar los pesos enteros', async () => {
     const { service, prisma } = servicio();
 
-    await service.registrarAsiento(asiento(100, 100) as any);
+    await service.registrarAsiento(asiento(100, 100));
 
     expect(prisma._tx.journalEntry.create).toHaveBeenCalled();
   });
@@ -85,7 +85,7 @@ describe('El libro no admite centavos', () => {
     const { service, prisma } = servicio();
 
     await service.registrarAsiento({
-      referenceType: 'AJUSTE' as any,
+      referenceType: 'AJUSTE',
       referenceId: 'ref-3',
       description: 'Prueba',
       createdBy: 'admin-1',
@@ -93,7 +93,7 @@ describe('El libro no admite centavos', () => {
         { accountCode: '1.1.1', debitAmount: 250000, creditAmount: 0 },
         { accountCode: '3.3', creditAmount: 250000 },
       ],
-    } as any);
+    });
 
     expect(prisma._tx.journalEntry.create).toHaveBeenCalled();
   });

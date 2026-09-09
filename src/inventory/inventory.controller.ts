@@ -133,12 +133,18 @@ export class InventoryController {
     @Param('id') id: string,
     @Body() updateInventoryDto: UpdateInventoryDto,
   ) {
-    return this.inventoryService.update(id, updateInventoryDto, this.actor(req));
+    return this.inventoryService.update(
+      id,
+      updateInventoryDto,
+      this.actor(req),
+    );
   }
 
   private actor(req: any): string {
     if (!req?.user?.id) {
-      throw new UnauthorizedException('Usuario no autenticado o token invalido');
+      throw new UnauthorizedException(
+        'Usuario no autenticado o token invalido',
+      );
     }
     return req.user.id;
   }

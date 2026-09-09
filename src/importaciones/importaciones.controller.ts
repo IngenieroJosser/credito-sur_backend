@@ -27,6 +27,8 @@ import { Response } from 'express';
 import { ApiTags, ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { SWAGGER_JWT_AUTH } from '../auth/constants/swagger-auth.constants';
 
+import { RequestConUsuario } from '../common/types';
+
 @ApiTags('Importaciones')
 @ApiBearerAuth(SWAGGER_JWT_AUTH)
 // Acceso por la MATRIZ DE PERMISOS (permiso 'importaciones'), no por rol fijo:
@@ -186,11 +188,10 @@ export class ImportacionesController {
       }),
     )
     file: Express.Multer.File,
-    @Req() req: any,
+    @Req() req: RequestConUsuario,
   ) {
     this.assertXlsxFile(file);
-    const creadoPorId: string =
-      req.user?.sub || req.user?.id || req.user?.userId;
+    const creadoPorId: string = req.user?.id;
     if (!creadoPorId) {
       throw new BadRequestException(
         'No se pudo identificar el usuario autenticado.',
@@ -220,11 +221,10 @@ export class ImportacionesController {
       }),
     )
     file: Express.Multer.File,
-    @Req() req: any,
+    @Req() req: RequestConUsuario,
   ) {
     this.assertXlsxFile(file);
-    const creadoPorId: string =
-      req.user?.sub || req.user?.id || req.user?.userId;
+    const creadoPorId: string = req.user?.id;
     if (!creadoPorId) {
       throw new BadRequestException(
         'No se pudo identificar el usuario autenticado.',

@@ -132,7 +132,7 @@ export async function generarExcelMora(
     { key: 'riesgo', width: 13 },
     { key: 'ultimoPago', width: 14 },
     { key: 'comentario', width: 28 },
-  ] as any;
+  ];
   const moraLastCol = 'P';
 
   // Fila 1: Encabezado institucional
@@ -394,7 +394,7 @@ export async function generarExcelMora(
     { key: 'casos', width: 12 },
     { key: 'mora', width: 20 },
     { key: 'deuda', width: 20 },
-  ] as any;
+  ];
 
   wsResumen.mergeCells('A1:D1');
   const rT = wsResumen.getCell('A1');
@@ -455,7 +455,7 @@ export async function generarExcelMora(
 
   const buffer = await workbook.xlsx.writeBuffer();
   return {
-    data: Buffer.from(buffer as ArrayBuffer),
+    data: Buffer.from(buffer),
     contentType:
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     filename: `cuentas-mora-${fecha}.xlsx`,
@@ -485,7 +485,7 @@ export async function generarPDFMora(
   const AZUL_MED = '#2676AC';
   const AZUL_PALE = '#F0F9FF';
   const NAR_DARK = '#D95C0F';
-  const NAR_MED = '#F07A28';
+  const _NAR_MED = '#F07A28';
   const NAR_SOFT = '#FDE8D5';
   const ROJO_DARK = '#B91C1C';
   const ROJO_PALE = '#FEF2F2';
@@ -509,7 +509,10 @@ export async function generarPDFMora(
         doc.image(lp, (W - 300) / 2, (H - 300) / 2, { width: 300 });
         doc.restore();
       }
-    } catch (e) {}
+    } catch {
+      // El watermark es decorativo: si el logo no se puede dibujar
+      // (falta el archivo, o el PDF ya se cerro), el reporte sale igual.
+    }
   };
 
   let pageNumber = 1;

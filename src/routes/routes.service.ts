@@ -34,7 +34,6 @@ import {
   getEstadoRevisionOperacion,
   isPrestamoOperativoRuta,
   resolveCuotaObjetivoOperativa,
-  isCuotaOperativaParaFechaRuta,
   isObligacionOperativaRuta,
   normalizeUpper,
 } from './ruta-operational-rules';
@@ -57,7 +56,7 @@ import {
 type RouteActor =
   | {
       id?: string;
-      rol?: RolUsuario | string;
+      rol?: RolUsuario;
     }
   | null
   | undefined;
@@ -1230,7 +1229,7 @@ export class RoutesService {
             const { startDate: dInicioBogota, endDate: dFinBogota } =
               getBogotaStartEndOfDay(new Date());
             const dInicioUTC = dInicioBogota;
-            const dFinUTC = dFinBogota;
+            const _dFinUTC = dFinBogota;
 
             if (pIds.length > 0) {
               const resAgregados = await Promise.all([
@@ -1769,7 +1768,7 @@ export class RoutesService {
         // Una sola llamada: getBogotaStartEndOfDay devuelve límites del día bogotano en UTC.
         const { startDate: dInicioBogota, endDate: dFinBogota } =
           getBogotaStartEndOfDay(new Date());
-        const dInicioUTC = dInicioBogota;
+        const _dInicioUTC = dInicioBogota;
         const dFinUTC = dFinBogota;
 
         if (pIds.length > 0) {
@@ -2045,15 +2044,12 @@ export class RoutesService {
           recaudoHoyPorCliente.get(String(asig.clienteId)) || 0,
         );
         if (reg) {
-          // @ts-ignore - Prisma type inference issue, properties exist at runtime
           asig.estadoVisita =
             reg.estadoVisita === 'ausente' && recaudoClienteHoy > 0
               ? 'pagado'
               : reg.estadoVisita;
-          // @ts-ignore - Prisma type inference issue, properties exist at runtime
           asig.notasVisita = reg.notas;
         }
-        // @ts-ignore - campo calculado para el frontend
         asig.recaudadoDelDia = recaudoClienteHoy;
         if (!asig.cliente || !asig.cliente.prestamos) continue;
         for (const p of asig.cliente.prestamos) {
@@ -2789,7 +2785,7 @@ export class RoutesService {
     return sincronizarAsignacionesCliente(tx, clienteId);
   }
 
-  async assignClient(rutaId: string, clienteId: string, cobradorId: string) {
+  async assignClient(rutaId: string, clienteId: string, _cobradorId: string) {
     try {
       // Verificar si la ruta existe
 
@@ -3171,7 +3167,7 @@ export class RoutesService {
 
     const fechaKey = this.parseFechaOperativaBogotaKey(fecha);
 
-    const { startDate: fechaConsulta } =
+    const { startDate: _fechaConsulta } =
       getBogotaStartEndOfDayFromKey(fechaKey);
 
     const jornada = await this.prisma.rutaJornada?.findUnique?.({
@@ -3489,7 +3485,7 @@ export class RoutesService {
           .filter(Boolean),
       ),
     ];
-    const clientesVisitaIds = [
+    const _clientesVisitaIds = [
       ...new Set(
         visitasDelDia
           .map((v: any) => v?.cliente?.id || v?.clienteId)
@@ -3849,7 +3845,7 @@ export class RoutesService {
     );
 
     visitasDelDia.forEach((v: any) => {
-      const cid = String(v?.cliente?.id || v?.clienteId || '');
+      const _cid = String(v?.cliente?.id || v?.clienteId || '');
       let reprogramacionObjetivo: any = null;
       let cuotaReprogramadaObjetivo: any = null;
 
@@ -3942,7 +3938,6 @@ export class RoutesService {
     // Enriquecer visitas con su recaudo individual del día y su estado de visita (ausente)
     visitasDelDia.forEach((v) => {
       const cid = v.cliente?.id || v.clienteId;
-      // @ts-ignore - Prisma type inference issue, properties exist at runtime
       v.recaudadoDelDia = pagosPorCliente[cid] || 0;
 
       if (Number(v.recaudadoDelDia || 0) > 0) {
@@ -3952,11 +3947,8 @@ export class RoutesService {
           cuotaPagadaPorCliente.get(String(cid || ''));
 
         if (cuotaPagada) {
-          // @ts-ignore - Prisma type inference issue, properties exist at runtime
           v.cuotaObjetivo = cuotaPagada;
-          // @ts-ignore - Prisma type inference issue, properties exist at runtime
           v.cuotaObjetivoId = cuotaPagada.id;
-          // @ts-ignore - Prisma type inference issue, properties exist at runtime
           v.cuotaObjetivoPrestamoId = cuotaPagada.id;
 
           if (Array.isArray(v.prestamos)) {
@@ -3986,9 +3978,7 @@ export class RoutesService {
           (estadoCliente === 'ausente' ? registro : null);
         if (!registroAplicable) return;
 
-        // @ts-ignore - Prisma type inference issue, properties exist at runtime
         v.estadoVisita = registroAplicable.estadoVisita;
-        // @ts-ignore - Prisma type inference issue, properties exist at runtime
         v.notasVisita = registroAplicable.notas;
 
         if (
@@ -4003,13 +3993,9 @@ export class RoutesService {
             prestamoId,
           );
           if (cuotaReprogramada) {
-            // @ts-ignore - Prisma type inference issue, properties exist at runtime
             v.cuotaObjetivo = cuotaReprogramada;
-            // @ts-ignore - Prisma type inference issue, properties exist at runtime
             v.cuotaObjetivoId = cuotaReprogramada.id;
-            // @ts-ignore - Prisma type inference issue, properties exist at runtime
             v.cuotaObjetivoPrestamoId = cuotaReprogramada.id;
-            // @ts-ignore - Prisma type inference issue, properties exist at runtime
             v.prestamoObjetivoId =
               cuotaReprogramada.prestamoId || v.prestamoObjetivoId || null;
 
