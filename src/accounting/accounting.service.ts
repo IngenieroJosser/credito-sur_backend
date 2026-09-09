@@ -3148,15 +3148,15 @@ export class AccountingService {
       await Promise.all([
         this.prisma.prestamo.aggregate({
           where: carteraEnMoraWhere,
-          _sum: { saldoPendiente: true },
+          _sum: { saldoPendiente: true, monto: true, capitalPagado: true },
         }),
         this.prisma.prestamo.aggregate({
           where: { estado: EstadoPrestamo.INCUMPLIDO, eliminadoEn: null },
-          _sum: { saldoPendiente: true },
+          _sum: { saldoPendiente: true, monto: true, capitalPagado: true },
         }),
         this.prisma.prestamo.aggregate({
           where: { estado: EstadoPrestamo.PERDIDA, eliminadoEn: null },
-          _sum: { saldoPendiente: true },
+          _sum: { saldoPendiente: true, monto: true, capitalPagado: true },
         }),
       ]);
 
@@ -3167,9 +3167,27 @@ export class AccountingService {
     const saldoPerdida = Number(carteraPerdidaAgg._sum.saldoPendiente || 0);
     const cartaraTotalMora = saldoEnMora + saldoIncumplido + saldoPerdida;
 
-    const provisionEnMora = saldoEnMora * 0.2;
-    const provisionIncumplida = saldoIncumplido * 0.6;
-    const provisionPerdida = saldoPerdida * 1.0;
+    // La provision cubre el riesgo de no recuperar lo PRESTADO, asi que la base
+    // es el capital expuesto (monto - capital ya pagado), no el saldo total.
+    // Antes se calculaba sobre saldoPendiente, que incluye el interes todavia no
+    // devengado: se reservaba plata contra un ingreso que nunca se reconocio, y
+    // eso inflaba la perdida. El interes se gana con el tiempo; si no se cobra,
+    // simplemente no se registra como ingreso, no hace falta provisionarlo.
+    const capitalEnRiesgo = (agg: {
+      _sum: { monto: unknown; capitalPagado: unknown };
+    }) =>
+      Math.max(
+        0,
+        Number(agg._sum.monto || 0) - Number(agg._sum.capitalPagado || 0),
+      );
+
+    const capitalEnMora = capitalEnRiesgo(carteraEnMoraAgg);
+    const capitalIncumplido = capitalEnRiesgo(carteraIncumplidaAgg);
+    const capitalPerdida = capitalEnRiesgo(carteraPerdidaAgg);
+
+    const provisionEnMora = capitalEnMora * 0.2;
+    const provisionIncumplida = capitalIncumplido * 0.6;
+    const provisionPerdida = capitalPerdida * 1.0;
     const provisionTotal =
       provisionEnMora + provisionIncumplida + provisionPerdida;
 
