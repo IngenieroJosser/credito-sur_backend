@@ -469,74 +469,68 @@ export class ClientsService {
       this.logger.log(`Query where clause: ${JSON.stringify(where)}`);
 
       // Obtener clientes con relaciones necesarias
-      const clientesRaw = await this.prisma.cliente.findMany({
-        where,
-        include: {
-          asignacionesRuta: {
-            where: { activa: true },
-            include: {
-              ruta: {
-                select: {
-                  id: true,
-                  nombre: true,
-                  codigo: true,
-                },
+      // Las 5 consultas van en paralelo. Estaban encadenadas con await una tras
+      // otra: la lista, y despues tres conteos y un promedio que no dependen de
+      // nada. Con la base en la nube cada viaje suma su latencia, asi que el
+      // listado tardaba cinco esperas en vez de una. Es lo que lo hacia sentir
+      // mucho mas lento que el de creditos.
+      const statsScope = this.collectorClientScope(actor);
+      const [
+        clientesRaw,
+        totalClientes,
+        buenComportamiento,
+        enRiesgo,
+        promedioScore,
+      ] = await Promise.all([
+        this.prisma.cliente.findMany({
+          where,
+          include: {
+            asignacionesRuta: {
+              where: { activa: true },
+              include: {
+                ruta: { select: { id: true, nombre: true, codigo: true } },
               },
+              take: 1,
             },
-            take: 1,
-          },
-          prestamos: {
-            where: { eliminadoEn: null },
-            select: {
-              id: true,
-              estado: true,
-              saldoPendiente: true,
+            prestamos: {
+              where: { eliminadoEn: null },
+              select: { id: true, estado: true, saldoPendiente: true },
+            },
+            pagos: {
+              select: { fechaPago: true },
+              orderBy: { fechaPago: 'desc' },
+              take: 1,
             },
           },
-          pagos: {
-            select: {
-              fechaPago: true,
-            },
-            orderBy: { fechaPago: 'desc' },
-            take: 1,
+          orderBy: { creadoEn: 'desc' },
+        }),
+        this.prisma.cliente.count({
+          where: { eliminadoEn: null, ...statsScope },
+        }),
+        this.prisma.cliente.count({
+          where: {
+            eliminadoEn: null,
+            ...statsScope,
+            nivelRiesgo: 'VERDE',
+            puntaje: { gte: 80 },
           },
-        },
-        orderBy: { creadoEn: 'desc' },
-      });
+        }),
+        this.prisma.cliente.count({
+          where: {
+            eliminadoEn: null,
+            ...statsScope,
+            OR: [{ nivelRiesgo: 'ROJO' }, { nivelRiesgo: 'LISTA_NEGRA' }],
+          },
+        }),
+        this.prisma.cliente.aggregate({
+          where: { eliminadoEn: null, ...statsScope },
+          _avg: { puntaje: true },
+        }),
+      ]);
 
       // Ya no necesitamos incluir aprobacionesPendientes por separado porque ahora
       // todos los clientes se crean en la tabla principal con estado PENDIENTE.
       const aprobacionesPendientes: any[] = [];
-
-      // Calcular estadísticas (Restaurado)
-      const statsScope = this.collectorClientScope(actor);
-      const totalClientes = await this.prisma.cliente.count({
-        where: { eliminadoEn: null, ...statsScope },
-      });
-
-      const buenComportamiento = await this.prisma.cliente.count({
-        where: {
-          eliminadoEn: null,
-          ...statsScope,
-          nivelRiesgo: 'VERDE',
-          puntaje: { gte: 80 },
-        },
-      });
-
-      const enRiesgo = await this.prisma.cliente.count({
-        where: {
-          eliminadoEn: null,
-          ...statsScope,
-          OR: [{ nivelRiesgo: 'ROJO' }, { nivelRiesgo: 'LISTA_NEGRA' }],
-        },
-      });
-
-      const promedioScore = await this.prisma.cliente.aggregate({
-        where: { eliminadoEn: null, ...statsScope },
-        _avg: {
-          puntaje: true,
-        },
-      });
 
       this.logger.log(
         `Found ${clientesRaw.length} active clients and ${aprobacionesPendientes.length} pending approvals`,
