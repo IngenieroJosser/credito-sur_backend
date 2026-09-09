@@ -3191,6 +3191,67 @@ export class AccountingService {
     const provisionTotal =
       provisionEnMora + provisionIncumplida + provisionPerdida;
 
+    // Gasto de provision DEL PERIODO.
+    //
+    // provisionTotal de arriba es un saldo: la reserva que hoy necesita toda la
+    // cartera. Restarselo al resultado del periodo mezclaba un saldo acumulado
+    // con un flujo, y hacia que el mismo importe se restara en Hoy, en Mes y en
+    // Anio, y que se repitiera cada dia aunque no pasara nada nuevo.
+    //
+    // La reserva de un credito nace cuando se le vence la cuota impaga mas
+    // antigua, asi que ese vencimiento decide a que periodo pertenece el gasto.
+    const prestamosProvisionables = await this.prisma.prestamo.findMany({
+      where: {
+        OR: [
+          carteraEnMoraWhere,
+          { estado: EstadoPrestamo.INCUMPLIDO, eliminadoEn: null },
+          { estado: EstadoPrestamo.PERDIDA, eliminadoEn: null },
+        ],
+      },
+      select: {
+        estado: true,
+        monto: true,
+        capitalPagado: true,
+        cuotas: {
+          where: {
+            estado: {
+              in: [
+                EstadoCuota.PENDIENTE,
+                EstadoCuota.PARCIAL,
+                EstadoCuota.VENCIDA,
+              ],
+            },
+          },
+          orderBy: { fechaVencimiento: 'asc' },
+          take: 1,
+          select: { fechaVencimiento: true, fechaVencimientoProrroga: true },
+        },
+      },
+    });
+
+    const tasaProvision = (estado: EstadoPrestamo) =>
+      estado === EstadoPrestamo.PERDIDA
+        ? 1
+        : estado === EstadoPrestamo.INCUMPLIDO
+          ? 0.6
+          : 0.2;
+
+    const provisionPeriodo = prestamosProvisionables.reduce(
+      (total, prestamo) => {
+        const cuota = prestamo.cuotas[0];
+        if (!cuota) return total;
+        const vencimiento =
+          cuota.fechaVencimientoProrroga ?? cuota.fechaVencimiento;
+        if (vencimiento < inicioHoy || vencimiento > finHoy) return total;
+        const capital = Math.max(
+          0,
+          Number(prestamo.monto) - Number(prestamo.capitalPagado),
+        );
+        return total + capital * tasaProvision(prestamo.estado);
+      },
+      0,
+    );
+
     const esUnSoloDiaLedger = ledgerDuration < 24 * 60 * 60 * 1000;
     const porcentajeCierreLedger =
       totalRutasCountLedger > 0
@@ -3203,7 +3264,7 @@ export class AccountingService {
     // Aportes, inyecciones de capital y otros ingresos externos no son ganancia operativa.
     const utilidadOperativaLedger = ingresosDevengadosLedger - egresosLedger;
     // Utilidad Neta = Utilidad Operativa − Provisión de Cartera
-    const utilidadNetaLedger = utilidadOperativaLedger - provisionTotal;
+    const utilidadNetaLedger = utilidadOperativaLedger - provisionPeriodo;
 
     return {
       // Ingreso de cartera del periodo. No incluye cartera futura, cuota inicial, artículos ni otros ingresos externos.
@@ -3228,6 +3289,9 @@ export class AccountingService {
       provisionCarteraIncumplida: provisionIncumplida,
       provisionCarteraPerdida: provisionPerdida,
       provisionCarteraTotal: provisionTotal,
+      // Reserva que nacio en el periodo: es la que entra al resultado.
+      // provisionCarteraTotal sigue siendo el saldo acumulado de la cartera.
+      provisionCarteraPeriodo: provisionPeriodo,
       carteraTotalEnMora: cartaraTotalMora,
       saldoCarteraEnMora: saldoEnMora,
       saldoCarteraIncumplida: saldoIncumplido,
