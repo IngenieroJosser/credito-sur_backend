@@ -5,6 +5,7 @@ import { ClientesCreditosParser } from './parsers/clientes-creditos.parser';
 import { InventarioParser } from './parsers/inventario.parser';
 import { ResultadoValidacion } from './dto/validacion-resultado.dto';
 import { LedgerService } from '../accounting/ledger.service';
+import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { generarPlantillaInventario } from './plantillas/plantilla-inventario';
 import {
   generarPlantillaClientesCreditos,
@@ -47,9 +48,38 @@ export class ImportacionesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ledgerService: LedgerService,
+    private readonly notificacionesGateway: NotificacionesGateway,
   ) {
     this.clientesCreditosParser = new ClientesCreditosParser(this.prisma);
     this.inventarioParser = new InventarioParser(this.prisma);
+  }
+
+  /**
+   * Avisa a las pantallas abiertas de que la importacion cambio los datos.
+   *
+   * El resto del sistema ya emitia estos eventos al crear o editar, pero la
+   * importacion no emitia ninguno: quien tuviera abierto el listado de
+   * clientes o de creditos no veia lo importado hasta recargar a mano.
+   *
+   * Va en try/catch porque avisar es accesorio: si el websocket falla, la
+   * importacion ya quedo hecha y no se puede deshacer por esto.
+   */
+  private avisarCambioPorImportacion(tipo: 'CLIENTES_CREDITOS' | 'INVENTARIO') {
+    try {
+      if (tipo === 'CLIENTES_CREDITOS') {
+        this.notificacionesGateway.broadcastClientesActualizados({
+          origen: 'importacion',
+        });
+        this.notificacionesGateway.broadcastPrestamosActualizados({
+          origen: 'importacion',
+        });
+        this.notificacionesGateway.broadcastRutasActualizadas({
+          origen: 'importacion',
+        });
+      }
+    } catch {
+      // Si no se pudo avisar, la pantalla se actualiza al recargar.
+    }
   }
 
   /**
@@ -1000,6 +1030,8 @@ export class ImportacionesService {
       },
     });
 
+    this.avisarCambioPorImportacion('INVENTARIO');
+
     return {
       loteId: lote.id,
       estado: 'CONFIRMADO',
@@ -1879,6 +1911,8 @@ export class ImportacionesService {
     }
 
     mensajes.push('Clientes y créditos confirmados correctamente.');
+
+    this.avisarCambioPorImportacion('CLIENTES_CREDITOS');
 
     return {
       loteId,
