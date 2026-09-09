@@ -6,6 +6,7 @@ import {
   ResumenHoja,
 } from '../dto/validacion-resultado.dto';
 import { PrismaService } from '../../prisma/prisma.service';
+import { getBogotaDayKey } from '../../utils/date-utils';
 import { FrecuenciaPago } from '@prisma/client';
 import { loadWorkbookFromBuffer } from './xlsx-workbook.loader';
 import {
@@ -1290,6 +1291,23 @@ export class ClientesCreditosParser {
             'El crédito ya quedaría totalmente pagado con las cuotas indicadas: no puede haber abono adicional.',
             abonoAdicionalNum,
           );
+        }
+
+        // Un credito OPERATIVA se desembolsa hoy, asi que su fecha deberia ser
+        // de hoy o casi. Si viene de semanas atras, las cuotas se generan con
+        // fechas ya pasadas y el credito nace EN MORA: entra de una a la cartera
+        // vencida y castiga la provision del dia. No se bloquea (puede ser
+        // intencional), pero se avisa antes de confirmar.
+        if (tipoCarga === 'OPERATIVA' && fechaCredito) {
+          const hoyKey = getBogotaDayKey(new Date());
+          const fechaKey = getBogotaDayKey(fechaCredito);
+          if (fechaKey < hoyKey) {
+            addAdver(
+              'fecha_credito',
+              'La fecha es anterior a hoy y la carga es OPERATIVA (el dinero sale hoy): las cuotas ya vencidas haran que el credito quede EN MORA apenas se confirme. Si el credito ya venia corriendo, use Tipo carga HISTORICA.',
+              celda(row, creFechaCredito),
+            );
+          }
         }
 
         if (fechaUltimoPago && fechaCredito && fechaUltimoPago < fechaCredito) {
