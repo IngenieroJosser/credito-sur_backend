@@ -150,6 +150,9 @@ function buildPrismaMock(overrides: Record<string, any> = {}) {
     },
     prestamo: {
       aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 0 } }),
+      // El resumen consulta los creditos provisionables para saber que
+      // reserva nacio en el periodo; sin cartera en mora, ninguno.
+      findMany: jest.fn().mockResolvedValue([]),
     },
     detallePago: {
       aggregate: jest
