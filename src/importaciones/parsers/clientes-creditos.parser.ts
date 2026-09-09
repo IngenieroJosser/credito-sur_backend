@@ -1314,17 +1314,12 @@ export class ClientesCreditosParser {
             descontarCaja,
           );
         }
-        if (
-          tipoCarga === 'OPERATIVA' &&
-          descontarCaja === 'SI' &&
-          tipoPrestamo === 'EFECTIVO'
-        ) {
-          addAdver(
-            'descontar_dinero_de_caja',
-            'En confirmación, este crédito moverá caja',
-            descontarCaja,
-          );
-        }
+        // Aqui iba una advertencia por credito diciendo que moveria caja. Se
+        // quito: la vista de impacto que se muestra antes de confirmar ya lo
+        // dice mejor y de una sola vez (cuanto sale, de que caja y con que saldo
+        // queda). Repetirlo por fila solo llenaba de ruido la lista de
+        // advertencias, y encima nombraba una columna que ya no esta en la
+        // plantilla.
         if (tipoCarga === 'OPERATIVA' && tipoPrestamo === 'ARTICULO') {
           addAdver(
             'tipo_carga',
