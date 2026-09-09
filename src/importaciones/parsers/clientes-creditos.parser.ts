@@ -1293,19 +1293,22 @@ export class ClientesCreditosParser {
           );
         }
 
-        // Un credito OPERATIVA se desembolsa hoy, asi que su fecha deberia ser
-        // de hoy o casi. Si viene de semanas atras, las cuotas se generan con
-        // fechas ya pasadas y el credito nace EN MORA: entra de una a la cartera
-        // vencida y castiga la provision del dia. No se bloquea (puede ser
-        // intencional), pero se avisa antes de confirmar.
-        if (tipoCarga === 'OPERATIVA' && fechaCredito) {
+        // Lo que decide si sale dinero de la caja HOY es la columna
+        // `descontar_dinero_de_caja`, no el tipo de carga: OPERATIVA solo fija
+        // su valor por defecto y un credito operativo puede venir corriendo de
+        // antes. Por eso el aviso mira esa columna y no el tipo de carga.
+        //
+        // El caso raro es: la fecha del credito es de dias atras pero igual se
+        // descuenta de la caja de hoy. Ahi conviene confirmar que el desembolso
+        // de verdad ocurre hoy y no ocurrio ya en su momento.
+        if (descontarCaja === 'SI' && fechaCredito) {
           const hoyKey = getBogotaDayKey(new Date());
           const fechaKey = getBogotaDayKey(fechaCredito);
           if (fechaKey < hoyKey) {
             addAdver(
-              'fecha_credito',
-              'La fecha es anterior a hoy y la carga es OPERATIVA (el dinero sale hoy): las cuotas ya vencidas haran que el credito quede EN MORA apenas se confirme. Si el credito ya venia corriendo, use Tipo carga HISTORICA.',
-              celda(row, creFechaCredito),
+              'descontar_dinero_de_caja',
+              `La fecha del credito (${fechaKey}) es anterior a hoy pero se va a descontar de la caja de hoy. Si el dinero ya se habia entregado en su momento, ponga NO en esta columna para no descuadrar la caja del dia.`,
+              descontarCaja,
             );
           }
         }
