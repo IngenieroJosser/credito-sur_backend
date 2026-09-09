@@ -1154,6 +1154,8 @@ export class ImportacionesService {
         async (tx) => {
           for (const cli of clientes) {
             // Idempotencia por DNI o código
+            // Se busca sin filtrar por eliminadoEn a proposito: si la cedula
+            // ya existe pero el cliente estaba borrado, hay que darse cuenta.
             const existente = await tx.cliente.findFirst({
               where: {
                 OR: [
@@ -1162,8 +1164,21 @@ export class ImportacionesService {
                   { idempotencyKey: cli.codigoImp },
                 ],
               },
-              select: { id: true },
+              select: { id: true, eliminadoEn: true },
             });
+
+            // Un cliente borrado que vuelve a aparecer en una importacion se
+            // reactiva. Antes se contaba como "omitido" y se seguia de largo:
+            // los creditos de la fila terminaban colgados de un cliente borrado,
+            // asi que salian en mora pero su perfil daba 404 y no aparecia en el
+            // listado. Si se esta importando con creditos vivos, el cliente esta
+            // vivo.
+            if (existente?.eliminadoEn) {
+              await tx.cliente.update({
+                where: { id: existente.id },
+                data: { eliminadoEn: null },
+              });
+            }
 
             if (cli.esActualizacion) {
               if (!existente) {
