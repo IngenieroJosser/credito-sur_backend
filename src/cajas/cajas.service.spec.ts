@@ -205,12 +205,6 @@ describe('CajasService', () => {
   });
 
   describe('getArqueoPreview', () => {
-    beforeEach(() => {
-      // Limpiar mocks de transacciones antes de cada test de getArqueoPreview
-      prisma.transaccion.findMany.mockClear();
-      prisma.transaccion.findMany.mockResolvedValue([]);
-    });
-
     it('devuelve preview correctamente cuando la caja existe', async () => {
       const result = await service.getArqueoPreview(
         CAJA_RUTA_ACTIVA.id,
@@ -232,12 +226,16 @@ describe('CajasService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('calcula saldo esperado desde transacciones', async () => {
-      // Mock de transacciones para el cálculo de saldo esperado
+    it('toma el saldo esperado del saldo en libros de la caja', async () => {
+      // Caso medido en la base local: 10.000 en libros mientras las
+      // transacciones sumaban negativo. Las transacciones ya no se usan.
+      prisma.caja.findUnique.mockResolvedValueOnce({
+        ...CAJA_RUTA_ACTIVA,
+        saldoActual: 10000,
+      });
       prisma.transaccion.findMany.mockResolvedValue([
-        { tipo: 'INGRESO', monto: 1000000 },
-        { tipo: 'INGRESO', monto: 500000 },
-        { tipo: 'EGRESO', monto: 200000 },
+        { tipo: 'EGRESO', monto: 1644496 },
+        { tipo: 'TRANSFERENCIA', monto: 1000000 },
       ]);
 
       const result = await service.getArqueoPreview(
@@ -246,51 +244,13 @@ describe('CajasService', () => {
         ACTOR_ADMIN,
       );
 
-      // Saldo esperado = 1000000 + 500000 - 200000 = 1300000
-      expect(result.desglose.saldoEsperadoCalculado).toBe(1300000);
-      expect(result.desglose.diferenciaSistema).toBeDefined();
-    });
-
-    it('excluye ventas contado del cálculo de saldo esperado', async () => {
-      // Configurar mock que simula el filtro tipoReferencia
-      prisma.transaccion.findMany.mockImplementation(({ where }: any) => {
-        if (where?.tipoReferencia?.notIn?.includes('VENTA_CONTADO')) {
-          // Cuando se filtra por notIn VENTA_CONTADO, devolver transacciones sin VENTA_CONTADO
-          return Promise.resolve([
-            { tipo: 'INGRESO', monto: 1000000 },
-            { tipo: 'EGRESO', monto: 200000 },
-          ]);
-        }
-        // Sin filtro, devolver todas las transacciones
-        return Promise.resolve([
-          { tipo: 'INGRESO', monto: 1000000 },
-          { tipo: 'INGRESO', monto: 500000, tipoReferencia: 'VENTA_CONTADO' },
-          { tipo: 'EGRESO', monto: 200000 },
-        ]);
-      });
-
-      const result = await service.getArqueoPreview(
-        CAJA_RUTA_ACTIVA.id,
-        '2026-06-13',
-        ACTOR_ADMIN,
-      );
-
-      // Saldo esperado = 1000000 - 200000 = 800000 (excluye VENTA_CONTADO)
-      expect(result.desglose.saldoEsperadoCalculado).toBe(800000);
+      expect(result.saldoEsperado).toBe(10000);
+      expect(result.desglose.saldoEsperadoCalculado).toBe(10000);
+      expect(result.desglose.diferenciaSistema).toBe(0);
     });
   });
 
   describe('confirmarArqueo', () => {
-    beforeEach(() => {
-      // Configurar mock de transacciones por defecto para confirmarArqueo
-      prisma.transaccion.findMany.mockResolvedValue([
-        { tipo: 'INGRESO', monto: 5000000 },
-      ]);
-      prisma._tx.transaccion.findMany.mockResolvedValue([
-        { tipo: 'INGRESO', monto: 5000000 },
-      ]);
-    });
-
     it('confirmar arqueo sin diferencia', async () => {
       const result = await service.confirmarArqueo(
         CAJA_RUTA_ACTIVA.id,
@@ -418,6 +378,40 @@ describe('CajasService', () => {
             }),
           ]),
         }),
+      );
+    });
+
+    it('usa el saldo en libros de la caja como esperado al confirmar', async () => {
+      prisma._tx.caja.findUnique.mockImplementationOnce(() => ({
+        ...CAJA_RUTA_ACTIVA,
+        saldoActual: 750000,
+      }));
+
+      await service.confirmarArqueo(
+        CAJA_RUTA_ACTIVA.id,
+        '2026-06-13',
+        700000,
+        USUARIO_ADMIN.id,
+        undefined,
+        undefined,
+        'Faltante al contar',
+        ACTOR_ADMIN,
+      );
+
+      const call = ledgerService.registrarAsiento.mock.calls[0][0];
+      assertAsientoBalanceado(call.lines);
+      expect(call.lines).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            accountCode: '1.2.1',
+            creditAmount: 750000,
+            cajaDelta: -750000,
+          }),
+          expect.objectContaining({
+            accountCode: '1.4.1',
+            debitAmount: 50000,
+          }),
+        ]),
       );
     });
 
