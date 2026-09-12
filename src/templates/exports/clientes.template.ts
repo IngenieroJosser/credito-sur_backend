@@ -158,7 +158,7 @@ export async function generarExcelClientes(
         : '',
     });
 
-    // Format currency columns
+    // Dar formato de moneda a las columnas de dinero
     row.getCell(11).numFmt = '"$"#,##0';
     row.getCell(12).numFmt = '"$"#,##0';
 

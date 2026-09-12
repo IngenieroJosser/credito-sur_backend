@@ -30,14 +30,14 @@ export class SyncConflictsService {
     let whereClause = {};
 
     if (user.rol === 'COORDINADOR') {
-      // Find all routes supervised by this user
+      // Buscar todas las rutas que supervisa este usuario
       const rutas = await this.prisma.ruta.findMany({
         where: { supervisorId: user.id },
         select: { cobradorId: true },
       });
       const cobradorIds = rutas.map((r) => r.cobradorId);
 
-      // If no routes assigned, they can't see anything unless they are the creators
+      // Sin rutas asignadas solo puede ver lo que él mismo creó
       if (cobradorIds.length === 0) {
         whereClause = { creadoPorId: user.id };
       } else {
@@ -142,11 +142,11 @@ export class SyncConflictsService {
 
       try {
         let endpoint = conflict.endpoint;
-        // Make sure it starts with a slash
+        // Asegurar que empiece con barra
         if (!endpoint.startsWith('/')) endpoint = '/' + endpoint;
 
-        // Remove /api/v1 if present in endpoint to build internal logic nicely, or just append to PORT
-        // We will make a raw HTTP request back to ourselves
+        // Se quita /api/v1 del endpoint si viene incluido y se arma una petición HTTP
+        // contra el propio backend
         const baseUrl =
           this.configService.get<string>('API_URL') ||
           'http://localhost:3000/api/v1';

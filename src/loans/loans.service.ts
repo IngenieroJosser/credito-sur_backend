@@ -2529,8 +2529,7 @@ export class LoansService implements OnModuleInit {
 
       const archivos = updateData?.archivos;
 
-      // Build update payload - only allow safe fields
-      // Record tipado con los campos permitidos del schema
+      // Payload de actualización: solo se permiten los campos seguros del schema
       const data: Record<string, unknown> = {
         estadoSincronizacion: 'PENDIENTE',
         version: { increment: 1 },
@@ -2609,7 +2608,7 @@ export class LoansService implements OnModuleInit {
             : prestamo.tipoAmortizacion || TipoAmortizacion.INTERES_PLANO
         ) as TipoAmortizacion;
 
-        // Delete existing cuotas
+        // Eliminar las cuotas existentes
         await this.prisma.cuota.deleteMany({
           where: { prestamoId: id },
         });
@@ -2646,7 +2645,7 @@ export class LoansService implements OnModuleInit {
           prestamoId: id,
         }));
 
-        // Create new cuotas
+        // Crear las cuotas nuevas
         await this.prisma.cuota.createMany({
           data: cuotasData,
         });
