@@ -58,4 +58,38 @@ describe('PushController', () => {
       'authenticated-user',
     );
   });
+
+  it('envía la prueba solo al usuario autenticado y devuelve el resultado', async () => {
+    const resultado = {
+      configurado: true,
+      suscripciones: 1,
+      enviadas: 1,
+      desactivadas: 0,
+      fallidas: 0,
+    };
+    const pushService = {
+      sendPushNotification: jest.fn().mockResolvedValue(resultado),
+    };
+    const controller = new PushController(pushService as any);
+
+    const respuesta = await controller.enviarPrueba({
+      user: { id: 'authenticated-user' },
+    });
+
+    expect(pushService.sendPushNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'authenticated-user',
+        data: expect.objectContaining({ tipo: 'TEST' }),
+      }),
+    );
+    expect(respuesta).toEqual(resultado);
+  });
+
+  it('no envía la prueba sin usuario: con userId vacío llegaría a todos', async () => {
+    const pushService = { sendPushNotification: jest.fn() };
+    const controller = new PushController(pushService as any);
+
+    await expect(controller.enviarPrueba({})).rejects.toThrow();
+    expect(pushService.sendPushNotification).not.toHaveBeenCalled();
+  });
 });

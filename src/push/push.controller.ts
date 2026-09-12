@@ -6,6 +6,7 @@ import {
   Body,
   Param,
   Request,
+  UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
 import { PushService } from './push.service';
@@ -51,6 +52,30 @@ export class PushController {
   })
   async getUserSubscriptions(@Request() req: { user?: { id?: string } }) {
     return this.pushService.getUserSubscriptions(String(req.user?.id || ''));
+  }
+
+  /**
+   * Envía una notificación de prueba SOLO a los dispositivos de quien la pide.
+   *
+   * Existe aparte de `send` porque esa ruta está limitada a roles de oficina:
+   * el botón de prueba fallaba siempre para cobradores y supervisores.
+   * Devuelve el resultado para que la app muestre si la prueba llegó.
+   */
+  @Post('test')
+  @ApiOperation({
+    summary: 'Enviar una notificación de prueba al usuario autenticado',
+  })
+  async enviarPrueba(@Request() req: { user?: { id?: string } }) {
+    const userId = String(req.user?.id || '');
+    // Sin usuario no se envía: con userId vacío el servicio no filtra y le
+    // llegaría la prueba a TODOS los dispositivos registrados.
+    if (!userId) throw new UnauthorizedException('Usuario no autenticado');
+    return this.pushService.sendPushNotification({
+      userId,
+      title: 'Notificación de prueba',
+      body: 'Si ves esto, las notificaciones de Credisur llegan a este dispositivo.',
+      data: { tipo: 'TEST', url: '/' },
+    });
   }
 
   @Post('send')
