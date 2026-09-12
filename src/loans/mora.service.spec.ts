@@ -52,6 +52,7 @@ describe('MoraService', () => {
             dni: '123',
             telefono: '300',
             nivelRiesgo: 'VERDE',
+            nivelMoraNotificado: 1,
             asignacionesRuta: [],
             prestamos: [
               {
@@ -75,7 +76,17 @@ describe('MoraService', () => {
 
     await makeService(prisma).procesarMoraAutomatica();
 
-    expect(prisma.cliente.update).not.toHaveBeenCalled();
+    // Leve (2 dias) no sube el riesgo: sigue en VERDE. Lo unico que se guarda
+    // es el nivel de mora, para no volver a notificarlo tras un reinicio.
+    expect(prisma.cliente.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ nivelRiesgo: expect.anything() }),
+      }),
+    );
+    expect(prisma.cliente.update).toHaveBeenCalledWith({
+      where: { id: 'cliente-1' },
+      data: { nivelMoraNotificado: 2 },
+    });
     expect(mockNotifications.notifyApprovers).toHaveBeenCalledWith(
       expect.objectContaining({
         metadata: expect.objectContaining({
@@ -128,6 +139,88 @@ describe('MoraService', () => {
         nivelRiesgo: 'VERDE',
         ultimaActualizacionRiesgo: expect.any(Date),
       }),
+    });
+  });
+
+  describe('nivel de mora guardado en la base', () => {
+    const clienteEnMora = (nivelMoraNotificado: number | null) => ({
+      id: 'cliente-2',
+      nombres: 'Cliente',
+      apellidos: 'Mora',
+      dni: '456',
+      telefono: '300',
+      nivelRiesgo: 'ROJO',
+      nivelMoraNotificado,
+      asignacionesRuta: [],
+      prestamos: [
+        {
+          numeroPrestamo: 'P-2',
+          saldoPendiente: 100000,
+          frecuenciaPago: 'SEMANAL',
+          cuotas: [
+            {
+              // 9 dias de atraso al 2026-06-10: nivel Critico (5)
+              fechaVencimiento: new Date('2026-06-01T05:00:00.000Z'),
+              monto: 50000,
+            },
+          ],
+        },
+      ],
+    });
+
+    // La "base" es el mismo objeto cliente: lo que se guarda con update queda
+    // disponible para la siguiente instancia, como pasa tras un reinicio.
+    const prismaCon = (cliente: ReturnType<typeof clienteEnMora>) => ({
+      cuota: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      prestamo: {
+        findMany: jest.fn().mockResolvedValue([]),
+        update: jest.fn(),
+      },
+      cliente: {
+        findMany: jest.fn().mockImplementation(async () => [cliente]),
+        update: jest
+          .fn()
+          .mockImplementation(async ({ data }: { data: any }) =>
+            Object.assign(cliente, data),
+          ),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+    });
+
+    beforeEach(() => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-06-10T15:00:00.000Z'));
+    });
+
+    it('no vuelve a notificar el mismo nivel tras un reinicio', async () => {
+      const cliente = clienteEnMora(1);
+
+      await makeService(prismaCon(cliente)).procesarMoraAutomatica();
+      expect(mockNotifications.notifyApprovers).toHaveBeenCalledTimes(1);
+      expect(cliente.nivelMoraNotificado).toBe(5);
+
+      // Reinicio: instancia nueva, mismo cliente leido de la base.
+      await makeService(prismaCon(cliente)).procesarMoraAutomatica();
+      expect(mockNotifications.notifyApprovers).toHaveBeenCalledTimes(1);
+      expect(mockPush.sendPushNotification).toHaveBeenCalledTimes(1);
+    });
+
+    it('siembra sin notificar a los clientes sin nivel previo', async () => {
+      const cliente = clienteEnMora(null);
+
+      await makeService(prismaCon(cliente)).procesarMoraAutomatica();
+
+      expect(mockNotifications.notifyApprovers).not.toHaveBeenCalled();
+      expect(mockPush.sendPushNotification).not.toHaveBeenCalled();
+      expect(cliente.nivelMoraNotificado).toBe(5);
+    });
+
+    it('notifica cuando el cliente sube respecto del nivel guardado', async () => {
+      const cliente = clienteEnMora(3);
+
+      await makeService(prismaCon(cliente)).procesarMoraAutomatica();
+
+      expect(mockNotifications.notifyApprovers).toHaveBeenCalledTimes(1);
+      expect(cliente.nivelMoraNotificado).toBe(5);
     });
   });
 });

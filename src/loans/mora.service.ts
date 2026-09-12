@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
@@ -83,6 +84,20 @@ function shiftBogotaKey(key: string, days: number): string {
   return getBogotaDayKey(shifted);
 }
 
+/**
+ * Días de atraso de una cuota, contados como los cuenta la operación.
+ *
+ *  - Frecuencia DIARIO: se cuentan días hábiles de ruta, SIN domingos. El
+ *    domingo no hay jornada, así que un cliente diario no puede atrasarse ese
+ *    día; contarlo lo haría subir de nivel por un cobro que nadie salió a hacer.
+ *  - Resto de frecuencias: días calendario.
+ *
+ * Se compara por clave de día de Bogotá y se ancla cada día al mediodía
+ * (`buildBogotaNoon`): así la resta de fechas nunca cae en el borde de
+ * medianoche, donde el desfase con UTC cambiaría el día.
+ *
+ * Devuelve 0 si la cuota vence hoy o después.
+ */
 export function calcularDiasMoraOperativos(
   fechaVencimiento: Date,
   hoy: Date,
@@ -129,10 +144,6 @@ type MoraDbClient = PrismaService | Prisma.TransactionClient;
 export class MoraService implements OnModuleInit {
   private readonly logger = new Logger(MoraService.name);
 
-  // Cache en memoria para detectar cambios de sub-nivel entre ejecuciones
-  // Estructura: clienteId → nivelMoraNumerico anterior
-  private readonly cacheNivelesMora = new Map<string, number>();
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificacionesService: NotificacionesService,
@@ -156,6 +167,7 @@ export class MoraService implements OnModuleInit {
       select: {
         id: true,
         nivelRiesgo: true,
+        nivelMoraNotificado: true,
         enListaNegra: true,
         prestamos: {
           where: {
@@ -193,17 +205,28 @@ export class MoraService implements OnModuleInit {
     const nuevoNivel =
       diasMoraMax > 0 ? nivelRiesgoPorDias(diasMoraMax) : 'VERDE';
 
-    if (cliente.nivelRiesgo !== nuevoNivel) {
+    const cambioRiesgo = cliente.nivelRiesgo !== nuevoNivel;
+
+    // Esto corre despues de un pago, donde el nivel de mora solo puede bajar.
+    // Se guarda SOLO la bajada: si se guardara una subida, el proceso de mora
+    // la tomaria como ya conocida y nunca la notificaria. Un NULL se deja
+    // intacto para que el proceso de mora lo siembre.
+    const nuevoNivelMora = nivelMoraNumerico(diasMoraMax);
+    const bajoNivelMora =
+      cliente.nivelMoraNotificado != null &&
+      nuevoNivelMora < cliente.nivelMoraNotificado;
+
+    if (cambioRiesgo || bajoNivelMora) {
       await db.cliente.update({
         where: { id: cliente.id },
         data: {
-          nivelRiesgo: nuevoNivel,
-          ultimaActualizacionRiesgo: new Date(),
+          ...(cambioRiesgo
+            ? { nivelRiesgo: nuevoNivel, ultimaActualizacionRiesgo: new Date() }
+            : {}),
+          ...(bajoNivelMora ? { nivelMoraNotificado: nuevoNivelMora } : {}),
         },
       });
     }
-
-    this.cacheNivelesMora.set(cliente.id, nivelMoraNumerico(diasMoraMax));
 
     return {
       clienteId: cliente.id,
@@ -213,6 +236,14 @@ export class MoraService implements OnModuleInit {
     };
   }
 
+  /**
+   * En produccion corre el proceso de mora al arrancar, ademas de la corrida
+   * diaria (`procesarMoraDiaria`). Fuera de produccion no corre, para no
+   * notificar desde entornos de desarrollo.
+   *
+   * Arrancar ya no vuelve a notificar a todos: el ultimo nivel de cada cliente
+   * esta guardado en `Cliente.nivelMoraNotificado`.
+   */
   async onModuleInit() {
     if (process.env.NODE_ENV !== 'production') return;
     this.logger.log('⏰ [MORA] Procesando mora automática al arranque...');
@@ -230,8 +261,32 @@ export class MoraService implements OnModuleInit {
   }
 
   /**
+   * Corrida diaria del proceso de mora a las 6:00 a. m. de Bogota, antes de que
+   * salgan las rutas.
+   *
+   * Sin esta corrida el nivel de riesgo y las notificaciones solo se
+   * actualizaban cuando el servidor se reiniciaba. La zona horaria va
+   * explicita: el repo no fija TZ y un cron sin `timeZone` usa el reloj del
+   * proceso, que en un servidor UTC seria otra hora.
+   */
+  @Cron('0 6 * * *', { name: 'mora-diaria', timeZone: 'America/Bogota' })
+  async procesarMoraDiaria() {
+    if (process.env.NODE_ENV !== 'production') return;
+    try {
+      const result = await this.procesarMoraAutomatica();
+      this.logger.log(
+        `[MORA] Corrida diaria: ${result.cuotasVencidas} cuotas vencidas, ` +
+          `${result.notificacionesEnviadas} notificaciones enviadas`,
+      );
+    } catch (err) {
+      this.logger.error(`[MORA] Error en la corrida diaria: ${err.message}`);
+    }
+  }
+
+  /**
    * Proceso principal de mora.
-   * Se ejecuta al arrancar el servidor y puede llamarse manualmente vía endpoint.
+   * Se ejecuta al arrancar el servidor (produccion), todos los dias a las 6:00
+   * a. m. de Bogota (`procesarMoraDiaria`) y manualmente via endpoint.
    *
    * Pasos:
    * 1. Marcar cuotas PENDIENTE/PARCIAL vencidas como VENCIDA
@@ -365,6 +420,7 @@ export class MoraService implements OnModuleInit {
           dni: true,
           telefono: true,
           nivelRiesgo: true,
+          nivelMoraNotificado: true,
           asignacionesRuta: {
             where: { activa: true },
             take: 1,
@@ -426,29 +482,41 @@ export class MoraService implements OnModuleInit {
 
           const nuevaEtiqueta = etiquetaMora(diasMoraMax);
           const nuevoNivelNumerico = nivelMoraNumerico(diasMoraMax);
-          const nivelNumericoAnterior =
-            this.cacheNivelesMora.get(cliente.id) ?? 1;
+          // Ultimo nivel guardado en la base (antes era un Map en memoria que se
+          // vaciaba en cada reinicio y hacia notificar a todos otra vez).
+          // NULL = cliente anterior a la columna: se siembra sin notificar.
+          const nivelNumericoAnterior = cliente.nivelMoraNotificado;
 
           // Detectar si el cliente subió de nivel de mora (o acaba de entrar a mora)
           const subioDeNivel =
-            nuevoNivelNumerico > nivelNumericoAnterior && diasMoraMax > 0;
+            nivelNumericoAnterior != null &&
+            nuevoNivelNumerico > nivelNumericoAnterior &&
+            diasMoraMax > 0;
           const esNuevoEnMora =
             nivelNumericoAnterior === 1 && nuevoNivelNumerico > 1;
 
-          // Actualizar nivelRiesgo en DB si cambió
-          if (cliente.nivelRiesgo !== nuevoNivelPrisma) {
+          const cambioRiesgo = cliente.nivelRiesgo !== nuevoNivelPrisma;
+          // El nivel de mora se guarda tambien cuando BAJA: asi una recaida
+          // posterior vuelve a notificarse.
+          const cambioNivelMora = nivelNumericoAnterior !== nuevoNivelNumerico;
+
+          if (cambioRiesgo || cambioNivelMora) {
             await this.prisma.cliente.update({
               where: { id: cliente.id },
               data: {
-                nivelRiesgo: nuevoNivelPrisma,
-                ultimaActualizacionRiesgo: new Date(),
+                ...(cambioRiesgo
+                  ? {
+                      nivelRiesgo: nuevoNivelPrisma,
+                      ultimaActualizacionRiesgo: new Date(),
+                    }
+                  : {}),
+                ...(cambioNivelMora
+                  ? { nivelMoraNotificado: nuevoNivelNumerico }
+                  : {}),
               },
             });
-            resultado.clientesRiesgoActualizado++;
+            if (cambioRiesgo) resultado.clientesRiesgoActualizado++;
           }
-
-          // Actualizar cache
-          this.cacheNivelesMora.set(cliente.id, nuevoNivelNumerico);
 
           // ─── Enviar notificaciones si el cliente subió de nivel ────────────
           if (subioDeNivel || esNuevoEnMora) {
@@ -600,6 +668,22 @@ export class MoraService implements OnModuleInit {
         },
       });
 
+      // Clientes que ya no tienen prestamos activos ni en mora no pasan por el
+      // ciclo de arriba. Su nivel de mora vuelve a 1 para que, si reciben un
+      // credito nuevo y se atrasan, se les vuelva a notificar.
+      await this.prisma.cliente.updateMany({
+        where: {
+          nivelMoraNotificado: { gt: 1 },
+          prestamos: {
+            none: {
+              estado: { in: ['ACTIVO', 'EN_MORA'] },
+              eliminadoEn: null,
+            },
+          },
+        },
+        data: { nivelMoraNotificado: 1 },
+      });
+
       this.logger.log(
         `[MORA] Paso 4: ${resultado.clientesRiesgoActualizado} clientes riesgo actualizado, ` +
           `${resultado.notificacionesEnviadas} notificaciones enviadas`,
@@ -624,6 +708,17 @@ export class MoraService implements OnModuleInit {
     return resultado;
   }
 
+  /**
+   * Devuelve a PENDIENTE las cuotas que se marcaron VENCIDA el mismo día en que
+   * vencen, sin ningún abono.
+   *
+   * Una cuota que vence hoy todavía se puede cobrar hoy. Si un corte de fecha
+   * mal calculado la marca vencida antes de tiempo, el cliente aparece en mora
+   * sin estarlo. Después reactiva los préstamos EN_MORA que quedaron sin
+   * cuotas vencidas.
+   *
+   * Con `dryRun` solo cuenta lo que repararía, sin escribir nada.
+   */
   async repararFalsosVencidosHoy(params?: {
     prestamoId?: string;
     dryRun?: boolean;

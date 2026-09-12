@@ -108,6 +108,13 @@ export class PaymentsService {
     }
   }
 
+  /**
+   * Si el dia operativo es domingo en Bogota.
+   *
+   * Se compara en la zona de Bogota y no con `getDay()` del servidor: Render
+   * corre en UTC, asi que un pago de domingo por la noche en Colombia ya es
+   * lunes en UTC y se clasificaria en el dia equivocado.
+   */
   private isDomingoBogota(date = new Date()) {
     const day = new Intl.DateTimeFormat('en-US', {
       timeZone: 'America/Bogota',
@@ -117,6 +124,20 @@ export class PaymentsService {
     return day === 'Sun';
   }
 
+  /**
+   * Decide a que caja entra la plata de un pago.
+   *
+   * No es una sola caja: depende de quien cobra y como.
+   *  - Oficina (coordinador/admin) en efectivo -> CAJA-OFICINA: el dinero se
+   *    recibe en la sede, no en la calle.
+   *  - Cualquier metodo distinto de efectivo -> CAJA-BANCO: no hay billete que
+   *    entre a ninguna caja fisica, el movimiento es bancario.
+   *  - Cobrador en efectivo -> la caja de la ruta: el dinero queda en su poder
+   *    hasta el cierre, y es lo que despues se cuadra contra el recaudo.
+   *
+   * Equivocar la caja aqui no se nota en el momento: aparece al cierre de ruta,
+   * como un descuadre que nadie sabe de donde salio.
+   */
   private async resolveCajaIngresoPago(
     tx: Prisma.TransactionClient,
     params: {
@@ -226,6 +247,14 @@ export class PaymentsService {
     return cajaRuta;
   }
 
+  /**
+   * Normaliza la fecha operativa de un pago a la clave `YYYY-MM-DD` de Bogota.
+   *
+   * La fecha operativa es el dia de ruta al que se imputa el pago, que no siempre
+   * es el instante en que se registro: un cobro de la noche puede cerrarse al dia
+   * siguiente. Si ya viene en formato de clave se respeta tal cual, para no
+   * reinterpretar con zona horaria algo que el cliente ya decidio.
+   */
   private parseFechaOperativaPagoKey(value?: string | null, fallback?: Date) {
     if (!value) return getBogotaDayKey(fallback ?? new Date());
 
@@ -403,6 +432,41 @@ export class PaymentsService {
     });
   }
 
+  /**
+   * Reparte el dinero recibido entre las cuotas del prestamo.
+   *
+   * ── Orden de imputacion (cascada) ───────────────────────────────────────────
+   * Dentro de cada cuota el dinero se aplica SIEMPRE en este orden:
+   *
+   *     mora  ->  interes  ->  capital
+   *
+   * Primero se cobra lo que el atraso genero, despues el rendimiento pactado y
+   * de ultimo se abona al capital. Invertir el orden haria que un cliente en
+   * mora fuera bajando su deuda mientras la mora sigue viva y sin registrar, y
+   * la contabilidad reconoceria capital recuperado que en realidad no lo esta.
+   *
+   * El `montoPagado` que trae la cuota es un acumulado sin desglosar, asi que
+   * antes de aplicar hay que reconstruir cuanto de ese acumulado ya cubrio mora,
+   * interes y capital (los `yaPagado*`), y solo entonces saber que falta.
+   *
+   * ── Los tres modos ──────────────────────────────────────────────────────────
+   *  - Sin `cuotaIdObjetivo`: se recorren todas las cuotas en orden y el sobrante
+   *    de una pasa a la siguiente. Es el pago normal de ruta.
+   *  - Con `cuotaIdObjetivo` y `aplicarDesdeCuotaObjetivo = false`: el pago se
+   *    encierra en esa cuota. Si sobra plata se rechaza, en lugar de derramarla
+   *    a las siguientes: quien apunto a una cuota concreta no pidio adelantar.
+   *  - Con `cuotaIdObjetivo` y `aplicarDesdeCuotaObjetivo = true`: se arranca en
+   *    esa cuota y se sigue hacia adelante. Es el abono a capital / adelanto.
+   *
+   * ── Por que `truncCop` al cerrar la cuota ───────────────────────────────────
+   * La comparacion de "ya quedo pagada" se hace truncada a pesos. Los repartos
+   * dejan residuos de centavos que no existen en efectivo; sin truncar, una cuota
+   * pagada completa se quedaria en PARCIAL por dos centavos y el cliente seguiria
+   * apareciendo como deudor.
+   *
+   * No escribe nada: devuelve el plan (`detallesPago`, `cuotasActualizar`) para
+   * que quien llama lo aplique dentro de su propia transaccion.
+   */
   private calcularAplicacionPago(
     prestamo: any,
     montoTotal: number,
@@ -539,6 +603,17 @@ export class PaymentsService {
     };
   }
 
+  /**
+   * Evita que un pago se registre contra una vista vieja de la ruta.
+   *
+   * El cobrador puede tener la pantalla cargada desde hace rato: en el medio otro
+   * usuario pudo pagar o modificar esa cuota. Se compara la cuota que el cliente
+   * creia estar pagando (`cuotaNumeroEsperada`) contra la que hoy esta pendiente,
+   * y si no coinciden se rechaza pidiendo refrescar.
+   *
+   * Es tambien la proteccion contra el doble clic: el segundo envio llega con un
+   * numero de cuota que ya avanzo.
+   */
   private validatePagoIntentAgainstCurrentCuota(
     paymentDto: CreatePaymentDto,
     prestamoActual: any,
@@ -2121,6 +2196,18 @@ export class PaymentsService {
     };
   }
 
+  /**
+   * Estado en que queda una cuota despues de revertirle un pago.
+   *
+   * No basta con devolverla a PENDIENTE: hay que recalcularlo desde el monto que
+   * queda pagado (`nextPaid`), porque la cuota pudo tener otros abonos que siguen
+   * siendo validos. Si ya no queda nada pagado, el estado depende de la fecha:
+   * una cuota cuyo vencimiento ya paso vuelve a VENCIDA, no a PENDIENTE, o el
+   * atraso desapareceria del sistema al revertir.
+   *
+   * La `fechaPago` solo se conserva si la cuota sigue completa; en cualquier otro
+   * caso se limpia, porque ya no esta saldada.
+   */
   private getCuotaStateAfterRevert(cuota: any, nextPaid: number) {
     const amount = Number(cuota?.monto || 0);
     if (nextPaid >= amount) {

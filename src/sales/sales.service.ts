@@ -9,6 +9,21 @@ import { LedgerService } from '../accounting/ledger.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCashSaleDto } from './dto/create-cash-sale.dto';
 
+/**
+ * Ventas de contado de artículos.
+ *
+ * Una venta de contado no crea préstamo ni cuotas: el cliente paga completo en
+ * el momento. Por eso no aparece en la ruta ni en la cartera, y el arqueo de
+ * las cajas de ruta la excluye (`VENTA_CONTADO`).
+ *
+ * El dinero entra a una caja institucional, nunca a la de un cobrador:
+ *  - Efectivo      -> CAJA-OFICINA (cuenta 1.1.1)
+ *  - Transferencia -> CAJA-BANCO   (cuenta 1.1.2)
+ *
+ * La contabilidad reutiliza `registrarVentaArticulo` con `montoFinanciado: 0`
+ * y la cuota inicial igual al precio: una venta de contado es, contablemente,
+ * una venta de artículo pagada entera por adelantado.
+ */
 @Injectable()
 export class SalesService {
   private readonly CAJA_OFICINA_CODIGO = 'CAJA-OFICINA';
@@ -27,6 +42,11 @@ export class SalesService {
     return `VC-${Date.now()}-${randomUUID().slice(0, 8)}`;
   }
 
+  /**
+   * Cuenta contable de la caja según el método: 1.1.2 (bancos) para
+   * transferencia y 1.1.1 (caja) para lo demás. Hoy solo decide el método; el
+   * parámetro `caja` no se usa.
+   */
   private getAccountCodeCaja(caja: any, metodoPago?: MetodoPago | string) {
     const metodo = String(metodoPago || '').toUpperCase();
 
@@ -70,6 +90,18 @@ export class SalesService {
     return caja;
   }
 
+  /**
+   * Registra una venta de contado: descuenta una unidad de stock, crea el
+   * INGRESO en la caja y el asiento contable, todo en una transacción.
+   *
+   * Dos protecciones contra duplicados, porque la venta puede llegar desde la
+   * cola offline con reintentos:
+   *  1. Antes de la transacción se busca una venta con el mismo
+   *     `idempotencyKey` y, si existe, se devuelve esa (`duplicada: true`).
+   *  2. Si dos reintentos entran a la vez y ambos pasan esa búsqueda, la
+   *     restricción única del `idempotencyKey` hace fallar al segundo (P2002),
+   *     y en vez de propagar el error se devuelve la venta del primero.
+   */
   async registrarVentaContado(dto: CreateCashSaleDto) {
     const precioVenta = Number(dto.precioVenta || 0);
     if (!Number.isFinite(precioVenta) || precioVenta <= 0) {
@@ -147,6 +179,9 @@ export class SalesService {
     };
     try {
       resultado = await this.prisma.$transaction(async (tx) => {
+        // Descuento atómico: la condición stock > 0 va en el mismo UPDATE. Leer
+        // el stock y restar en dos pasos dejaría vender dos veces la última
+        // unidad si dos ventas llegan a la vez.
         const stockUpdate = await tx.producto.updateMany({
           where: { id: dto.productoId, stock: { gt: 0 } },
           data: { stock: { decrement: 1 } },

@@ -1330,6 +1330,29 @@ export class ImportacionesService {
             );
           }
 
+          // ── Que combinaciones de credito sabe importar el sistema ────────────
+          //
+          // Dos columnas del Excel deciden si el credito mueve plata:
+          //
+          //   tipo_carga               -> solo fija el valor POR DEFECTO de la
+          //                               siguiente columna. No decide nada por
+          //                               si sola. OPERATIVA no quiere decir que
+          //                               el dinero salga hoy: puede ser un
+          //                               credito que ya venia funcionando.
+          //   descontar_dinero_de_caja -> esta si decide. Es la que dice si hay
+          //                               que sacar el desembolso de la caja.
+          //
+          // De ahi salen tres casos soportados:
+          //
+          //   HISTORICA + NO       -> solo se registra la deuda. La plata salio
+          //                           antes de que existiera el sistema, asi que
+          //                           tocar la caja hoy la descuadraria.
+          //   OPERATIVA + SI + EFECTIVO -> desembolso real: sale de CAJA-OFICINA.
+          //   OPERATIVA + ARTICULO      -> entrega mercancia, no efectivo:
+          //                           descuenta stock y registra la venta.
+          //
+          // OPERATIVA + NO (credito ya operando que no debe mover caja) todavia
+          // no esta implementado: esas filas se saltan y se avisan abajo.
           for (const cred of creditos) {
             const isHistorica =
               cred.tipoCarga === 'HISTORICA' && cred.descontarCaja === 'NO';

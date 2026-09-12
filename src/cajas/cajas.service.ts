@@ -74,45 +74,36 @@ export class CajasService {
   }
 
   /**
-   * Calcula el saldo esperado de una caja desde sus transacciones.
-   * Suma INGRESOS y resta EGRESOS para la fecha operativa dada.
-   * No incluye transacciones de otras cajas ni ventas contado de CAJA-OFICINA/BANCO.
+   * Cuanto efectivo deberia entregar la caja de ruta en el arqueo.
+   *
+   * Es el saldo en libros de la caja (`saldoActual`), no una suma de las
+   * transacciones del dia. Antes se sumaban las transacciones de la fecha
+   * operativa, y eso fallaba de tres formas (medido en la base local: en 8 de
+   * 13 dias con movimientos daba distinto que el dia real):
+   *  - La ventana del dia era UTC (`T00:00Z` a `T23:59Z`): lo registrado desde
+   *    las 7 p. m. de Bogota caia en el arqueo del dia siguiente.
+   *  - Toda TRANSFERENCIA restaba, incluida la mitad que ENTRA a la caja en una
+   *    transferencia interna.
+   *  - Ignoraba la plata que la caja traia de dias anteriores: habia dias con
+   *    esperado negativo, y una caja con 10.000 en libros tenia transacciones
+   *    que sumaban -3.059.497.
+   *
+   * `saldoActual` lo mueve el libro contable (el `cajaDelta` de cada linea de
+   * asiento) y la verificacion nocturna lo compara contra ese libro. Tambien es
+   * lo unico coherente con el asiento del arqueo, que saca de la caja de ruta
+   * exactamente el esperado: con el saldo en libros la caja queda en cero; con
+   * cualquier otra cifra quedaria un residuo.
+   *
+   * Consecuencia: si una caja tiene dos jornadas pendientes, el primer arqueo
+   * recoge todo el efectivo y el segundo espera cero. Es lo que pasa en la
+   * realidad: el cobrador entrega una sola vez lo que tiene.
+   *
+   * Un pago que entre mientras se confirma el arqueo no se pierde: el libro
+   * mueve la caja con incrementos, asi que ese pago queda en el saldo para el
+   * siguiente arqueo.
    */
-  private async calcularSaldoEsperadoDesdeTransacciones(
-    cajaId: string,
-    fechaOperativa: string,
-  ): Promise<number> {
-    const transacciones = await this.prisma.transaccion.findMany({
-      where: {
-        cajaId,
-        fechaTransaccion: {
-          gte: new Date(`${fechaOperativa}T00:00:00.000Z`),
-          lt: new Date(`${fechaOperativa}T23:59:59.999Z`),
-        },
-        tipoReferencia: {
-          notIn: ['VENTA_CONTADO'], // Excluir ventas contado que van a CAJA-OFICINA/BANCO
-        },
-      },
-      select: {
-        tipo: true,
-        monto: true,
-      },
-    });
-
-    let saldoEsperado = 0;
-
-    for (const tx of transacciones) {
-      const monto = Number(tx.monto || 0);
-
-      if (tx.tipo === 'INGRESO') {
-        saldoEsperado += monto;
-      } else if (tx.tipo === 'EGRESO' || tx.tipo === 'TRANSFERENCIA') {
-        saldoEsperado -= monto;
-      }
-      // ACTIVACION_RUTA no afecta saldo esperado (es solo marca de inicio)
-    }
-
-    return saldoEsperado;
+  private saldoEsperadoArqueo(caja: { saldoActual: unknown }): number {
+    return Number(caja.saldoActual || 0);
   }
 
   async getArqueoPreview(
@@ -156,13 +147,12 @@ export class CajasService {
       ? Number(jornada.activacionTransaccion.monto)
       : 0;
 
-    // Calcular saldo esperado desde transacciones
-    const saldoEsperadoCalculado =
-      await this.calcularSaldoEsperadoDesdeTransacciones(cajaId, fecha);
+    // El esperado es el saldo en libros de la caja (ver `saldoEsperadoArqueo`).
+    // `saldoEsperadoCalculado` y `diferenciaSistema` se conservan en el desglose
+    // para no cambiar la forma de la respuesta; la diferencia ahora es 0.
     const saldoActualSistema = Number(caja.saldoActual || 0);
-
-    // Usar el saldo esperado calculado como fuente primaria
-    const saldoEsperado = saldoEsperadoCalculado;
+    const saldoEsperado = this.saldoEsperadoArqueo(caja);
+    const saldoEsperadoCalculado = saldoEsperado;
     const diferenciaSistema = saldoActualSistema - saldoEsperadoCalculado;
 
     return {
@@ -314,12 +304,8 @@ export class CajasService {
         );
       }
 
-      // Calcular saldo esperado desde transacciones
-      const saldoEsperadoCalculado =
-        await this.calcularSaldoEsperadoDesdeTransacciones(
-          cajaId,
-          fechaOperativa,
-        );
+      // Saldo en libros leido dentro de la transaccion (ver `saldoEsperadoArqueo`).
+      const saldoEsperadoCalculado = this.saldoEsperadoArqueo(caja);
       const diferencia = efectivo - saldoEsperadoCalculado;
 
       const tipoDiferencia =

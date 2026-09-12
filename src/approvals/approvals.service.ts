@@ -26,6 +26,40 @@ import { randomUUID } from 'crypto';
 import { calcularAmortizacionFrancesa } from '../loans/utils/amortizacion.utils';
 import { pesos } from '../common/dinero.util';
 
+/**
+ * Aprobaciones y "efecto provisional".
+ *
+ * ── El problema que resuelve ─────────────────────────────────────────────────
+ * Un cobrador en la calle no puede quedarse esperando a que un admin apruebe un
+ * credito: el cliente esta enfrente. Asi que la operacion no se bloquea; el
+ * credito surte efecto de inmediato (sale la plata de la caja, se crean las
+ * cuotas, entra a la ruta) pero queda marcado como PENDIENTE de aprobacion.
+ * Eso es el efecto provisional.
+ *
+ * ── Ciclo de vida ────────────────────────────────────────────────────────────
+ *   PENDIENTE_REVISION  --aprobar-->  CONFIRMADO
+ *                       --rechazar--> REVERTIDO  --reaplicar--> CONFIRMADO
+ *
+ *  - Aprobar (`confirmarEfectoProvisional` + `confirmarPrestamoProvisional`) no
+ *    mueve plata: solo sella lo que ya paso.
+ *  - Rechazar (`revertirPrestamoProvisional`) si mueve plata, y en sentido
+ *    contrario: hay que deshacer transacciones y asientos que YA se registraron.
+ *    Por eso no se borran, se crean reversas
+ *    (`crearReversasPrestamoProvisionalRobusto`): la contabilidad no se edita
+ *    hacia atras, se corrige hacia adelante, y asi queda la huella de lo que
+ *    paso.
+ *  - Reaplicar (`reaplicarPrestamoProvisionalRevertido`) es para el rechazo
+ *    equivocado: revive un credito ya revertido.
+ *
+ * ── Idempotencia ─────────────────────────────────────────────────────────────
+ * Casi todos los metodos empiezan comprobando si el efecto ya esta en el estado
+ * destino y salen sin hacer nada. Estas operaciones se disparan desde la app en
+ * campo, con reintentos y conexion intermitente: sin esa guarda, un reintento
+ * duplicaria reversas y descuadraria la caja.
+ *
+ * El `rollbackData` guardado en el efecto es lo que permite revertir: lleva el
+ * estado previo del credito y los ids de lo que se creo al aplicarlo.
+ */
 @Injectable()
 export class ApprovalsService {
   private readonly logger = new Logger(ApprovalsService.name);
@@ -549,6 +583,15 @@ export class ApprovalsService {
     return `${prefix}-${Date.now()}-${randomUUID().slice(0, 8)}`;
   }
 
+  /**
+   * Trae el efecto provisional de una aprobacion, exigiendo que siga pendiente.
+   *
+   * Si ya fue procesado (confirmado o revertido) lanza, en vez de devolverlo:
+   * aprobar dos veces la misma solicitud duplicaria los movimientos.
+   *
+   * Devuelve `null` si no hay efecto, que es valido: no todas las aprobaciones
+   * nacen de algo que ya surtio efecto.
+   */
   private async cargarEfectoProvisionalPendiente(
     db: any,
     aprobacionId: string,
@@ -609,6 +652,17 @@ export class ApprovalsService {
     }
   }
 
+  /**
+   * Deshace los movimientos de un credito provisional rechazado.
+   *
+   * No borra las transacciones ni los asientos originales: crea contrapartidas
+   * marcadas con `REVERSA:<id original>`. Borrar seria reescribir la
+   * contabilidad hacia atras y dejaria sin rastro que el credito existio.
+   *
+   * Esa misma referencia es la que da la idempotencia: antes de crear cada
+   * reversa se busca si ya existe una con esa marca y, si esta, se reutiliza. Un
+   * reintento desde la app en campo no duplica el movimiento.
+   */
   private async crearReversasPrestamoProvisionalRobusto(
     tx: any,
     rollbackData: any,

@@ -2781,7 +2781,7 @@ export class AccountingService {
     );
     const ledgerFinAnterior = new Date(inicioHoy.getTime() - 1);
 
-    // Fetch ids of regularized pagos to exclude from cobranza
+    // Obtener los ids de pagos regularizados para excluirlos de la cobranza
     const regularizedPagoIds = await this.prisma.pago
       .findMany({
         where: {
@@ -3417,7 +3417,7 @@ export class AccountingService {
 
     let mapped: any[] = [];
 
-    // Map transacciones
+    // Mapear las transacciones
     mapped = transacciones.map((t) => {
       if (t.tipoReferencia === 'ARQUEO') {
         let saldoSistema = 0;
@@ -3515,7 +3515,7 @@ export class AccountingService {
       };
     });
 
-    // Map arqueos
+    // Mapear los arqueos
     const mappedArqueos = arqueos.map((a) => {
       return {
         id: a.id,
@@ -3565,7 +3565,7 @@ export class AccountingService {
       };
     });
 
-    // Merge and sort by date descending
+    // Unir y ordenar por fecha descendente
     mapped = [...mapped, ...mappedArqueos]
       .sort((a, b) => {
         return new Date(b.fecha).getTime() - new Date(a.fecha).getTime();

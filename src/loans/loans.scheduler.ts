@@ -4,10 +4,23 @@ import { PrismaService } from '../prisma/prisma.service';
 import { getBogotaStartEndOfDay } from '../utils/date-utils';
 
 /**
- * Job nocturno que revisa prórrogas expiradas y vuelve a marcar los préstamos
- * como EN_MORA si el plazo de gracia venció sin pago.
+ * Jobs nocturnos sobre el estado de cuotas y préstamos.
  *
- * Se ejecuta todos los días a las 00:05 AM.
+ *  - `revisarProrrogasExpiradas` (EVERY_DAY_AT_1AM): prórrogas vencidas sin
+ *    pago vuelven a VENCIDA y el préstamo a EN_MORA.
+ *  - `marcarCuotasVencidas` ('10 0 * * *'): cuotas PENDIENTE/PARCIAL con fecha
+ *    anterior a hoy pasan a VENCIDA y su préstamo a EN_MORA.
+ *
+ * ── Hora real de ejecución ─────────────────────────────────────────────────
+ * Estos dos `@Cron` no declaran `timeZone`, y el repo no fija `TZ`: corren con
+ * el reloj del proceso. En un servidor en UTC, "1 AM" son las 8 p. m. del día
+ * anterior en Bogotá y "00:10" son las 7:10 p. m.
+ *
+ * ── Lo que NO hacen ────────────────────────────────────────────────────────
+ * No recalculan el nivel de riesgo del cliente ni envían notificaciones de
+ * mora. Eso es `MoraService.procesarMoraAutomatica`, que tiene su propio cron
+ * (`procesarMoraDiaria`, 6:00 a. m. de Bogotá con zona explícita) y además
+ * corre al arrancar en producción.
  */
 @Injectable()
 export class LoansScheduler {
@@ -90,8 +103,11 @@ export class LoansScheduler {
   }
 
   /**
-   * También revisa cuotas PENDIENTE cuya fecha ya pasó y las marca VENCIDA.
-   * Se ejecuta a las 00:10 AM.
+   * Marca VENCIDA las cuotas PENDIENTE/PARCIAL cuya fecha ya pasó.
+   *
+   * El corte es el inicio del día de HOY en Bogotá, no el instante actual: una
+   * cuota que vence hoy sigue cobrable hasta que termine el día, aunque el cron
+   * corra de noche. Hora real de ejecución: ver la nota de la clase.
    */
   @Cron('10 0 * * *')
   async marcarCuotasVencidas() {

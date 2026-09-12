@@ -14,6 +14,17 @@ export interface SendPushNotificationDto {
   roleFilter?: string[];
 }
 
+/** Resultado de un envío, para poder comprobar desde la app si llegó. */
+export interface ResultadoEnvioPush {
+  /** Si hay llaves VAPID configuradas. Sin ellas no se envía nada. */
+  configurado: boolean;
+  suscripciones: number;
+  enviadas: number;
+  /** Rechazadas por el servicio push con 404/410: el registro venció y se desactiva. */
+  desactivadas: number;
+  fallidas: number;
+}
+
 @Injectable()
 export class PushService {
   private readonly logger = new Logger(PushService.name);
@@ -40,12 +51,21 @@ export class PushService {
     }
   }
 
-  async sendPushNotification(data: SendPushNotificationDto): Promise<void> {
+  async sendPushNotification(
+    data: SendPushNotificationDto,
+  ): Promise<ResultadoEnvioPush> {
+    const resultado: ResultadoEnvioPush = {
+      configurado: this.isInitialized,
+      suscripciones: 0,
+      enviadas: 0,
+      desactivadas: 0,
+      fallidas: 0,
+    };
     if (!this.isInitialized) {
       this.logger.warn(
         'Intento de enviar notificación push pero el servicio no está configurado',
       );
-      return;
+      return resultado;
     }
     try {
       // Obtener suscripciones de push
@@ -80,13 +100,17 @@ export class PushService {
         body: data.body,
         icon: data.icon || '/android-chrome-192x192.png',
         badge: data.badge || '/android-chrome-192x192.png',
-        tag: data.tag || 'general',
+        // Sin tag por defecto. Antes todo iba con 'general' y el service worker
+        // usa el tag tal cual: cada notificación reemplazaba a la anterior, así
+        // que de varios avisos de mora solo quedaba visible el último.
+        tag: data.tag,
         data: {
           ...data.data,
           timestamp: formatBogotaOffsetIso(new Date()),
         },
       };
 
+      resultado.suscripciones = subscriptions.length;
       for (const subscription of subscriptions) {
         const pushSub = {
           endpoint: subscription.endpoint,
@@ -95,24 +119,27 @@ export class PushService {
             auth: subscription.auth,
           },
         };
-        await this.sendToSubscription(pushSub, payload);
+        const estado = await this.sendToSubscription(pushSub, payload);
+        resultado[estado]++;
       }
 
       this.logger.log(
-        `Push notification sent to ${subscriptions.length} subscribers`,
+        `Push: ${resultado.enviadas} enviadas, ${resultado.desactivadas} desactivadas y ${resultado.fallidas} fallidas de ${subscriptions.length}`,
       );
     } catch (error) {
       this.logger.error('Error sending push notification:', error);
     }
+    return resultado;
   }
 
   private async sendToSubscription(
     subscription: any,
     payload: any,
-  ): Promise<void> {
+  ): Promise<'enviadas' | 'desactivadas' | 'fallidas'> {
     try {
       this.logger.log(`Enviando push real a: ${subscription.endpoint}`);
       await webpush.sendNotification(subscription, JSON.stringify(payload));
+      return 'enviadas';
     } catch (error: any) {
       if (error.statusCode === 410 || error.statusCode === 404) {
         this.logger.warn(
@@ -122,9 +149,10 @@ export class PushService {
           where: { endpoint: subscription.endpoint },
           data: { activa: false },
         });
-      } else {
-        this.logger.error(`Error enviando a ${subscription.endpoint}:`, error);
+        return 'desactivadas';
       }
+      this.logger.error(`Error enviando a ${subscription.endpoint}:`, error);
+      return 'fallidas';
     }
   }
 

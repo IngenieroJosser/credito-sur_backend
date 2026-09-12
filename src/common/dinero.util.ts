@@ -2,11 +2,17 @@
  * El peso colombiano no tiene centavos: esta función es la red que lo asegura.
  *
  * Es una red, no una calculadora. La regla del sistema no es "nunca redondear
- * dinero", sino redondear **una sola vez, donde la fracción nace**, y de ahí
+ * dinero", sino resolver la fracción **una sola vez, donde nace**, y de ahí
  * en adelante trabajar en enteros. La fracción nace en el interés —una tasa
- * del 20% sobre 1.234.567 no da un entero— y ahí se resuelve con `Math.round`,
- * la misma regla que usa el modal de crear créditos. Truncar el interés "por
- * coherencia" haría que el Excel y el modal se separaran por un peso.
+ * del 20% sobre 1.234.567 no da un entero— y ahí se resuelve TRUNCANDO, con la
+ * tasa en centésimas para no perder un peso por coma flotante.
+ *
+ * Esa regla vive en tres lugares que tienen que coincidir: el backend
+ * (`LoansService.calcularInteresPlano` / `calculateInterestAndCuotas`), la
+ * importación (`importaciones/interes-credito.ts`) y el frontend
+ * (`lib/interes.ts`, que usan los modales). Hasta el 2026-09-03 se redondeaba
+ * con `Math.round`; se pasó a truncar para no cobrar nunca más interés del
+ * pactado. Si una de las tres vuelve a redondear, se separan por un peso.
  *
  * Por eso, si a esta función le llega una fracción en un punto donde todo
  * debería ser entero, no es que haya que truncarla: es que algo se calculó mal

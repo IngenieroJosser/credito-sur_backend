@@ -188,6 +188,10 @@ model Cliente {
   nivelRiesgo               NivelRiesgo          @default(VERDE)
   puntaje                   Int                  @default(100)
   ultimaActualizacionRiesgo DateTime?
+  /// Ultimo nivel interno de mora (1-5, ver MoraService) con el que se evaluo
+  /// al cliente. Evita volver a notificar el mismo nivel tras un reinicio.
+  /// NULL = cliente anterior a esta columna: se siembra sin notificar.
+  nivelMoraNotificado       Int?                 @default(1)
   enListaNegra              Boolean              @default(false)
   razonListaNegra           String?
   fechaListaNegra           DateTime?

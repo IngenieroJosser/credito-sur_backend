@@ -215,13 +215,13 @@ export class InventoryService {
         throw new ConflictException('El código de producto ya existe');
       }
 
-      // Handle prices: combine regular prices list with optional precioContado (meses=0)
+      // Precios: combina la lista de precios a crédito con el precio de contado opcional (meses=0)
       const preciosData = createInventoryDto.precios
         ? [...createInventoryDto.precios]
         : [];
 
       if (createInventoryDto.precioContado !== undefined) {
-        // Check if meses 0 already exists in prices array (unlikely but safe to check)
+        // Verificar si meses=0 ya viene en el arreglo de precios (poco probable, pero conviene revisarlo)
         const hasContado = preciosData.some((p) => p.meses === 0);
         if (!hasContado) {
           preciosData.push({
@@ -241,12 +241,11 @@ export class InventoryService {
         if (cat) {
           categoriaNombre = cat.nombre;
         } else {
-          // If ID invalid, maybe reset? Or throw?
-          // Let's assume valid or ignore ID
+          // Si el ID no existe, se ignora y el producto queda sin categoría enlazada
           categoriaId = undefined;
         }
       } else if (createInventoryDto.categoria) {
-        // Try to find category by name to link it if possible?
+        // Buscar la categoría por nombre para enlazarla si existe
         const cat = await (this.prisma as any).categoria.findFirst({
           where: {
             nombre: {
@@ -360,7 +359,7 @@ export class InventoryService {
       throw new NotFoundException('Producto no encontrado');
     }
 
-    // Check code uniqueness only if changed
+    // Validar que el código sea único solo si cambió
     if (
       updateInventoryDto.codigo &&
       updateInventoryDto.codigo !== existingProduct.codigo
@@ -373,14 +372,14 @@ export class InventoryService {
     }
 
     try {
-      // Transaction to handle updates and nested prices
+      // Transacción que actualiza el producto y sus precios anidados
       const updatedProduct = await this.prisma.$transaction(async (tx) => {
-        // Resolve Category
+        // Resolver la categoría
         let catName = updateInventoryDto.categoria;
         let catId: string | null | undefined = updateInventoryDto.categoriaId;
 
         if (catId !== undefined || catName !== undefined) {
-          // If either is changing, we re-evaluate
+          // Si cambia el id o el nombre, se vuelve a resolver
           if (catId) {
             const cat = await tx.categoria.findUnique({
               where: { id: catId },
@@ -404,7 +403,7 @@ export class InventoryService {
           }
         }
 
-        // Update basic fields
+        // Actualizar los campos básicos
         await tx.producto.update({
           where: { id },
           data: {
@@ -422,36 +421,22 @@ export class InventoryService {
           },
         } as any);
 
-        // Handle Prices: simplest approach is delete all and recreate if provided,
-        // OR selectively upsert.
-        // For simplicity and correctness with "full update" semantics of the form:
-        // if prices are provided in DTO, we sync them.
-
-        // However, updateInventoryDto extends Partial(Create), so prices might be undefined.
-        // If prices IS defined (even empty array), we should update.
+        // Precios: el DTO extiende Partial(Create), así que 'precios' puede venir undefined.
+        // Solo se sincronizan cuando el formulario los envía (incluso si llega un arreglo vacío).
         if (
           updateInventoryDto.precios ||
           updateInventoryDto.precioContado !== undefined
         ) {
-          // We need to construct the new full list of prices based on what's provided or existing?
-          // The DTO from frontend usually sends the full list of credit prices.
-          // BUT precioContado is separate.
-
-          // Strategy:
-          // 1. Delete all existing prices for this product.
-          // 2. Recreate from DTO.
-
-          // CAUTION: This deletes history if we tracked price history, but current schema is simple relation.
-
-          // If precios is undefined, we might NOT want to delete them unless we know for sure.
-          // But let's assume if update is called, the form sends everything.
-
-          // If the DTO only sends partial updates, this might be risky.
-          // Let's assume the frontend sends the whole price list if it edits prices.
+          // El frontend envía la lista completa de precios a crédito, y el precio de
+          // contado aparte. Por eso la estrategia es:
+          //   1. Borrar los precios a crédito existentes del producto.
+          //   2. Recrearlos desde el DTO.
+          //   3. Hacer upsert del precio de contado (meses=0).
+          // Si 'precios' viene undefined no se borra nada, para no perder los que ya hay.
 
           if (updateInventoryDto.precios) {
             await tx.precioProducto.deleteMany({
-              where: { productoId: id, meses: { gt: 0 } }, // Delete credit prices
+              where: { productoId: id, meses: { gt: 0 } }, // Borrar precios a crédito
             });
 
             if (updateInventoryDto.precios.length > 0) {
@@ -466,7 +451,7 @@ export class InventoryService {
           }
 
           if (updateInventoryDto.precioContado !== undefined) {
-            // Update or create precioContado (meses=0)
+            // Actualizar o crear el precio de contado (meses=0)
             await tx.precioProducto.upsert({
               where: { productoId_meses: { productoId: id, meses: 0 } },
               update: { precio: updateInventoryDto.precioContado },

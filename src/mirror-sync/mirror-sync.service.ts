@@ -15,7 +15,7 @@ export class MirrorSyncService {
     action: string;
     data: any;
   }) {
-    // Exclude certain non-essential operational tables from remote synchronization
+    // Tablas operativas no esenciales que se excluyen de la sincronizacion remota
     const excludedModels = [
       'SyncConflict',
       'AuditLog',
