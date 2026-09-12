@@ -1292,6 +1292,35 @@ export class LoansService implements OnModuleInit {
     return new Date(`${endKey}T00:00:00-05:00`);
   }
 
+  /**
+   * Calcula el interes total y arma la tabla de cuotas de un credito.
+   *
+   * Es la fuente de verdad de la matematica de creditos: la usan la creacion, la
+   * edicion, la simulacion (`simularCredito`) y la aprobacion. La importacion no
+   * la llama, pero la replica campo por campo en
+   * `importaciones/interes-credito.ts` para que un credito importado quede
+   * identico a uno creado a mano. Cualquier cambio aqui hay que espejarlo alla o
+   * las dos vias empiezan a diferir en pesos.
+   *
+   * ── La tasa es MENSUAL ──────────────────────────────────────────────────────
+   * `tasaInteres` es la tasa por mes, no la del credito completo. De ahi que el
+   * plazo importe:
+   *  - INTERES_PLANO ("Amortizacion" para el negocio): la tasa se aplica UNA sola
+   *    vez sobre el capital, sin importar el plazo.
+   *  - INTERES_SIMPLE: la tasa se aplica por cada mes de plazo.
+   *
+   * El `plazoMeses` que entra puede ser fraccionario (45 cuotas diarias = 1,5
+   * meses) aunque la columna de la base sea entera. Ese valor fraccionario es el
+   * que debe usarse en el calculo; redondearlo antes cambia el interes cobrado.
+   *
+   * ── FRANCESA ────────────────────────────────────────────────────────────────
+   * Sigue soportada por creditos viejos, pero el sistema ya no la ofrece.
+   *
+   * ── Fecha base ──────────────────────────────────────────────────────────────
+   * Las cuotas se fechan desde `fechaPrimerCobro` si viene, y si no desde
+   * `fechaInicio`: un credito puede desembolsarse hoy y empezar a cobrarse
+   * despues.
+   */
   private calculateInterestAndCuotas(
     tipoAmortizacion: TipoAmortizacion,
     monto: number,

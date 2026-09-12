@@ -30,6 +30,17 @@ const ROLES_NOTIFICADOS = [
   RolUsuario.COBRADOR,
 ];
 
+/**
+ * Alertas de "cliente no ubicado".
+ *
+ * Cuando un cobrador no encuentra a un cliente en la direccion registrada, se
+ * levanta una alerta para que oficina la gestione. Solo emiten roles de mando
+ * (ver `ROLES_EMISORES`), pero se notifica tambien al cobrador, que es quien
+ * vuelve a pasar por la direccion.
+ *
+ * La alerta guarda un SNAPSHOT del cliente al momento de reportarlo, no una
+ * referencia viva: ver `buildSnapshot`.
+ */
 @Injectable()
 export class AlertasClientesService {
   private readonly logger = new Logger(AlertasClientesService.name);
@@ -61,6 +72,17 @@ export class AlertasClientesService {
     return Number.isFinite(n) ? n : 0;
   }
 
+  /**
+   * Congela el estado del cliente en el momento del reporte.
+   *
+   * Se guarda una copia y no una referencia a proposito: la alerta es un hecho
+   * historico ("asi estaba este cliente cuando no lo encontramos"). Si se leyera
+   * en vivo, una alerta de hace un mes mostraria la deuda de hoy, y quien la
+   * revisa no podria saber que vio el cobrador ese dia.
+   *
+   * Incluye la ruta asignada, los creditos con su estado y saldo, y los pagos,
+   * que es lo que oficina necesita para decidir sin abrir el perfil.
+   */
   private buildSnapshot(cliente: any) {
     const asignacion = cliente.asignacionesRuta?.[0] || null;
     const creditos = (cliente.prestamos || []).map((prestamo: any) => {
