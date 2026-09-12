@@ -835,7 +835,7 @@ export class DashboardService {
   }
 
   private async getLedgerCobranzaWhere(startDate: Date, endDate: Date) {
-    // First get all regularized pago ids
+    // Primero, los ids de todos los pagos regularizados
     const regularizedPagoIds = await this.prisma.pago
       .findMany({
         where: { origenGestion: 'CIERRE_PENDIENTE' },

@@ -9,7 +9,7 @@ export class LoggerMiddleware implements NestMiddleware {
     const { method, originalUrl, query, body } = request;
     const startTime = Date.now();
 
-    // Log request
+    // Registrar la peticion
     this.logger.log(
       `${method} ${originalUrl} - Query: ${JSON.stringify(query)} - Body: ${JSON.stringify(body)}`,
     );

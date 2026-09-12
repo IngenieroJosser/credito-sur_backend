@@ -478,7 +478,7 @@ export async function generarPDFVencidas(
     { label: 'Ruta', width: 80 },
   ];
 
-  // Total table width = 78+140+62+55+76+76+70+55+80 = 692 (fits landscape ~ 730 margins)
+  // Ancho total de la tabla = 78+140+62+55+76+76+70+55+80 = 692 (cabe en horizontal, ~730 con margenes)
 
   const tableLeft = 30;
   const tableWidth = realCols.reduce((s, c) => s + c.width, 0);

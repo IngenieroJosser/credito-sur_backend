@@ -76,11 +76,19 @@ export class RoutesService {
     private notificacionesService: NotificacionesService,
   ) {}
 
+  /**
+   * Codigo de la caja de una ruta: `CAJA-<codigo de ruta>`.
+   *
+   * La columna `cajas.codigo` es VarChar(20) y unica. Si el codigo de la ruta es
+   * largo se recorta conservando el principio y el final, porque en los codigos
+   * de ruta lo que las distingue suele estar en los extremos (zona al inicio,
+   * consecutivo al final); cortar solo por la derecha haria chocar rutas
+   * distintas contra la restriccion de unicidad.
+   */
   private buildCodigoCajaRuta(codigoRuta: string) {
     const base = `CAJA-${codigoRuta}`;
     if (base.length <= 20) return base;
-    // 20 chars máx: "CAJA-" (4) + 10 + "-" (1) + 4 = 19? realmente 4 + 1? => "CAJA-" son 5
-    // 5 + 10 + 1 + 4 = 20
+    // "CAJA-" (5) + 10 primeros + "-" (1) + 4 ultimos = 20
     const start = codigoRuta.slice(0, 10);
     const end = codigoRuta.slice(-4);
     return `CAJA-${start}-${end}`;
@@ -108,6 +116,15 @@ export class RoutesService {
     );
   }
 
+  /**
+   * Un COBRADOR solo puede tocar la ruta que tiene asignada.
+   *
+   * Para los demas roles no hace nada: su acceso ya lo resuelven los guards de
+   * roles y permisos del controlador. Esta comprobacion existe porque el guard
+   * solo sabe que el usuario es cobrador, no si esa ruta en particular es suya;
+   * sin ella un cobrador podria consultar la cartera de otro cambiando el id en
+   * la URL.
+   */
   private async assertCollectorOwnRoute(rutaId: string, actor?: RouteActor) {
     if (!this.isCollector(actor)) return;
     const ruta = await this.prisma.ruta.findFirst({
@@ -125,6 +142,11 @@ export class RoutesService {
     }
   }
 
+  /**
+   * Normaliza la fecha operativa a clave `YYYY-MM-DD` de Bogota. Misma regla que
+   * `PaymentsService.parseFechaOperativaPagoKey`: una clave ya formada se respeta
+   * tal cual, sin reinterpretarle zona horaria.
+   */
   private parseFechaOperativaBogotaKey(value?: string | null) {
     if (!value) return getBogotaDayKey(new Date());
 
@@ -284,6 +306,25 @@ export class RoutesService {
     };
   }
 
+  /**
+   * Abre la jornada del dia de una ruta.
+   *
+   * La activacion se registra como una transaccion de monto 0 con referencia
+   * ACTIVACION_RUTA en la caja de la ruta. No mueve plata: es la marca de que ese
+   * dia la ruta salio a operar, y de ella cuelga la `RutaJornada` que despues se
+   * cierra y se cuadra.
+   *
+   * Detalles que importan:
+   *  - Domingo no hay jornada operativa, y se bloquea aqui.
+   *  - Se toma un `SELECT ... FOR UPDATE` sobre la caja: si el cobrador toca
+   *    "activar" dos veces seguidas (o reintenta sin red), las dos peticiones no
+   *    pueden crear dos activaciones del mismo dia.
+   *  - Es idempotente: si ya hay activacion hoy se devuelve esa
+   *    (`creadaAhora: false`), y la clave `ACTIVACION_RUTA:<ruta>:<dia>` respalda
+   *    lo mismo a nivel de base.
+   *  - Al activar se pasan a PENDIENTE_CIERRE las jornadas de dias anteriores que
+   *    quedaron ABIERTAS: una ruta no puede tener abierto un dia que ya paso.
+   */
   async activarRutaHoy(rutaId: string, userId?: string) {
     if (!userId) {
       throw new BadRequestException('Usuario inválido');
@@ -3352,7 +3393,7 @@ export class RoutesService {
       if (prestamosOperativos.length === 0 && !tienePagoHoy) continue;
 
       {
-        // Compute cuotaObjetivo for each prestamo
+        // Calcular la cuotaObjetivo de cada prestamo
         const prestamosConCuotaObjetivo = prestamosOperativos.map(
           ({ prestamo, cuotaObjetivoBase }) => {
             const estadoRevision = getEstadoRevisionOperacion(prestamo);
@@ -4064,7 +4105,7 @@ export class RoutesService {
       });
 
       for (const cliente of clientesPagoSintetico) {
-        // For synthetic visits, we need to fetch the cuotas as well
+        // Las visitas sinteticas no traen cuotas: hay que consultarlas aparte
         const clienteFull = await this.prisma.cliente.findUnique({
           where: { id: cliente.id },
           include: {
@@ -4331,6 +4372,18 @@ export class RoutesService {
     };
   }
 
+  /**
+   * Meta del dia de una visita: lo que habia que cobrarle ANTES de cobrar.
+   *
+   * Es `pendiente exigible + lo ya recaudado hoy`, no solo el pendiente. Si se
+   * tomara solo el pendiente, cada abono le iria achicando la meta al cobrador y
+   * su efectividad (recaudo / meta) saldria inflada. Misma regla que
+   * `buildObligacionesOperativas`; las dos tienen que dar la misma cifra.
+   *
+   * El pendiente de cada prestamo se busca en el orden en que es mas confiable:
+   * el valor ya calculado, el calculo desde las cuotas, la cuota objetivo y por
+   * ultimo el monto nominal de la proxima cuota.
+   */
   private computeMetaOperativaVisita(
     visita: any,
     recaudoCliente = 0,
@@ -4378,6 +4431,26 @@ export class RoutesService {
     );
   }
 
+  /**
+   * Elige la cuota que representa al prestamo en una jornada y dice que se puede
+   * hacer con ella.
+   *
+   * Prioridad para elegir:
+   *  1. La cuota impaga mas antigua que ya vencio a esa fecha: es la que se cobra.
+   *  2. Si todas las vencidas estan pagadas, la ultima de ellas ("cuota pagada
+   *     historica"): la jornada tiene que poder mostrar que ese dia se pago.
+   *  3. Si no hay ninguna vencida, la proxima futura, solo para mostrarla.
+   *
+   * `saldoExigibleEnFechaOperativa` es 0 para una cuota futura aunque tenga saldo:
+   * todavia no se le puede exigir. Eso es lo que evita que una jornada pasada
+   * aparezca cobrando cuotas que en ese momento no habian vencido.
+   *
+   * `montoMoraAcumulada` suma TODAS las cuotas vencidas impagas, no solo la
+   * objetivo: es la cartera atrasada que se muestra aparte de la cuota normal.
+   *
+   * Los `motivoBloqueo*` existen para que la pantalla explique por que el boton de
+   * pagar o reprogramar esta deshabilitado, en vez de solo apagarlo.
+   */
   private computeCuotaObjetivo(prestamo: any, fechaKey: string) {
     if (!isPrestamoOperativoRuta(prestamo)) return null;
 
@@ -5109,6 +5182,17 @@ export class RoutesService {
     }
   }
 
+  /**
+   * Cierra desde oficina una jornada pasada que el cobrador no cerro.
+   *
+   * Pasa cuando el cobrador se va sin hacer el cierre: la jornada queda en
+   * PENDIENTE_CIERRE y bloquea la operacion normal. Solo roles de oficina pueden
+   * regularizarla (ver `assertPuedeRegularizarJornada`), porque cerrar implica
+   * aceptar el cuadre del dia en nombre de otro.
+   *
+   * Si quedaron clientes pendientes, ausentes o hubo descuadre se exigen
+   * observaciones: alguien tiene que dejar escrito por que se cerro asi.
+   */
   async cerrarJornadaRegularizada(
     rutaId: string,
     fechaOperativa: string,
@@ -5529,6 +5613,18 @@ export class RoutesService {
     }
   }
 
+  /**
+   * Recalcula el cierre y la deuda del cobrador de una jornada pendiente.
+   *
+   * Se puede llamar muchas veces sobre la misma jornada (cada vez que se consulta
+   * el cierre pendiente) y tiene que dar el mismo resultado. Por eso no crea a
+   * ciegas: busca el CIERRE_RUTA y la DEUDA_COBRADOR de ese dia y los actualiza si
+   * existen. Si ya no hay descuadre y habia una deuda registrada, la elimina: la
+   * deuda refleja el cuadre de hoy, no el de la primera vez que se calculo.
+   *
+   * La DEUDA_COBRADOR es lo que el cobrador queda debiendo a la empresa: saldo
+   * que quedo en su caja al cierre mas los faltantes.
+   */
   private async actualizarDeudasJornadaPendiente(
     rutaId: string,
     jornada: any,
@@ -5707,7 +5803,7 @@ export class RoutesService {
     const hoyKey = getBogotaDayKey(new Date());
     const { startDate: inicioHoy } = getBogotaStartEndOfDayFromKey(hoyKey);
 
-    // Mark old ABIERTA jornadas as PENDIENTE_CIERRE
+    // Las jornadas de dias anteriores que siguen ABIERTAS pasan a PENDIENTE_CIERRE
     await this.prisma.rutaJornada.updateMany({
       where: {
         rutaId,

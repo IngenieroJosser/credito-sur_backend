@@ -359,7 +359,7 @@ export async function generarExcelPagos(
         cell.alignment = { horizontal: 'right', vertical: 'middle' };
       }
 
-      // Wrap en nombre cliente / cobrador / comentario
+      // Ajuste de linea en nombre de cliente / cobrador / comentario
       if ([4, 12, 14].includes(ci + 1)) {
         cell.alignment = { vertical: 'middle', wrapText: true };
       }
