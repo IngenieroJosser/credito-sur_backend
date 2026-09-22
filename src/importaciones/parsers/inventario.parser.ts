@@ -19,12 +19,14 @@ import {
 /**
  * Cuantas opciones de plazo caben en la hoja de articulos.
  *
- * Eran 3, y la exportacion recorta a este tope: un articulo con mas plazos
- * perdia los ultimos al exportarlo, sin avisar. En la base ya habia uno con 4
- * (1, 2, 6 y 12 meses), asi que el 12 desaparecia del archivo y al reimportarlo
- * el articulo se quedaba sin esa opcion.
+ * Tres, por decision del negocio: mantiene la hoja corta y legible.
+ *
+ * La exportacion recorta a este tope, y en la base puede haber articulos con
+ * mas plazos (hay uno con 4: 1, 2, 6 y 12 meses). Antes los sobrantes se
+ * perdian en silencio; ahora la hoja "Inicio" del archivo exportado dice cuales
+ * quedaron por fuera, para que nadie reimporte creyendo que van todos.
  */
-export const MAX_OPCIONES_PLAZO = 6;
+export const MAX_OPCIONES_PLAZO = 3;
 
 /** El precio de contado se guarda como un PrecioProducto con meses = 0. */
 export const MESES_CONTADO = 0;

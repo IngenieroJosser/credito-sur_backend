@@ -217,25 +217,26 @@ describe('Plantilla de inventario', () => {
     expect(wb.worksheets.length).toBeGreaterThan(0);
   }, 60000);
 
-  it('ofrece seis plazos y calcula el precio sugerido por margen sobre venta', async () => {
+  it('ofrece tres plazos y calcula el precio sugerido por margen sobre venta', async () => {
     const { data } = await generarPlantillaInventario();
     const wb = await cargar(data);
     const ws = wb.getWorksheet('Artículos')!;
     const h = encabezados(wb, 'Artículos');
 
-    expect(h).toContain('Meses opción 6');
-    expect(h).toContain('Precio total opción 6');
+    expect(h).toContain('Meses opción 3');
+    expect(h).toContain('Precio total opción 3');
+    expect(h).not.toContain('Meses opción 4');
     // La rentabilidad se escribe (columna F); el precio sugerido es un calculo
-    // y por eso vive con las columnas automaticas del final (AA), no entre las
+    // y por eso vive con las columnas automaticas del final (U), no entre las
     // de captura.
     expect(h[6]).toBe('Rentabilidad deseada');
     expect(h[7]).toBe('Precio contado*');
-    expect(h[27]).toBe('Precio sugerido (automático)');
+    expect(h[21]).toBe('Precio sugerido (automático)');
     expect(ws.getCell('F7').dataValidation).toEqual(
       expect.objectContaining({ type: 'decimal', formulae: [0, 0.99] }),
     );
     expect(
-      (ws.getCell('AA7').value as ExcelJS.CellFormulaValue).formula,
+      (ws.getCell('U7').value as ExcelJS.CellFormulaValue).formula,
     ).toContain('$E7/(1-$F7)');
   }, 60000);
 });
