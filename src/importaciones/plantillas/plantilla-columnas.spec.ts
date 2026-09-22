@@ -225,13 +225,17 @@ describe('Plantilla de inventario', () => {
 
     expect(h).toContain('Meses opción 6');
     expect(h).toContain('Precio total opción 6');
+    // La rentabilidad se escribe (columna F); el precio sugerido es un calculo
+    // y por eso vive con las columnas automaticas del final (AA), no entre las
+    // de captura.
     expect(h[6]).toBe('Rentabilidad deseada');
-    expect(h[7]).toBe('Precio sugerido (automático)');
+    expect(h[7]).toBe('Precio contado*');
+    expect(h[27]).toBe('Precio sugerido (automático)');
     expect(ws.getCell('F7').dataValidation).toEqual(
       expect.objectContaining({ type: 'decimal', formulae: [0, 0.99] }),
     );
     expect(
-      (ws.getCell('G7').value as ExcelJS.CellFormulaValue).formula,
+      (ws.getCell('AA7').value as ExcelJS.CellFormulaValue).formula,
     ).toContain('$E7/(1-$F7)');
   }, 60000);
 });

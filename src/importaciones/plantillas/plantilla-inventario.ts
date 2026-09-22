@@ -37,7 +37,7 @@ const COLUMNAS_CALCULADAS_POR_OPCION = 2;
  * Los precios a crédito van pegados a lo obligatorio: son la razón de ser del
  * artículo en este negocio, y quien llena la fila los tiene a mano.
  */
-const PRIMERA_COLUMNA_OPCION = 9;
+const PRIMERA_COLUMNA_OPCION = 8;
 
 /** Lo opcional arranca donde terminan las opciones de plazo. */
 const PRIMERA_COLUMNA_OPCIONAL =
@@ -51,8 +51,7 @@ const COL = {
   categoria: 4,
   costo: 5,
   rentabilidadObjetivo: 6,
-  precioSugerido: 7,
-  precioContado: 8,
+  precioContado: 7,
   // (aquí van las opciones de plazo)
   // Opcionales, de lo más útil a lo que casi no se usa
   stock: PRIMERA_COLUMNA_OPCIONAL,
@@ -72,7 +71,7 @@ export function columnasDeOpcion(numeroOpcion: number) {
     PRIMERA_COLUMNA_OPCION + (numeroOpcion - 1) * COLUMNAS_POR_OPCION;
   const calculo =
     PRIMERA_COLUMNA_CALCULADA +
-    2 + // las dos columnas de utilidad del precio de contado
+    3 + // precio sugerido + las dos columnas de utilidad de contado
     (numeroOpcion - 1) * COLUMNAS_CALCULADAS_POR_OPCION;
 
   return {
@@ -83,12 +82,18 @@ export function columnasDeOpcion(numeroOpcion: number) {
   };
 }
 
-const COL_UTILIDAD_CONTADO_VALOR = PRIMERA_COLUMNA_CALCULADA;
-const COL_UTILIDAD_CONTADO_PCT = PRIMERA_COLUMNA_CALCULADA + 1;
+/**
+ * El precio sugerido es un calculo, no un dato que se escriba: va con las
+ * columnas grises del final y no atravesado entre las de captura, donde
+ * interrumpia el tabulador al llenar la fila.
+ */
+const COL_PRECIO_SUGERIDO = PRIMERA_COLUMNA_CALCULADA;
+const COL_UTILIDAD_CONTADO_VALOR = PRIMERA_COLUMNA_CALCULADA + 1;
+const COL_UTILIDAD_CONTADO_PCT = PRIMERA_COLUMNA_CALCULADA + 2;
 
 const ULTIMA_COLUMNA =
   PRIMERA_COLUMNA_CALCULADA +
-  2 +
+  3 +
   MAX_OPCIONES_PLAZO * COLUMNAS_CALCULADAS_POR_OPCION -
   1;
 
@@ -110,13 +115,6 @@ function construirColumnas(): ColumnaPlantilla[] {
       key: 'rentabilidad_objetivo',
       width: 17,
       numFmt: FORMATO_PORCENTAJE,
-    },
-    {
-      header: 'Precio sugerido (automático)',
-      key: 'precio_sugerido',
-      width: 19,
-      automatica: true,
-      numFmt: FORMATO_MONEDA,
     },
     {
       header: 'Precio contado*',
@@ -159,6 +157,13 @@ function construirColumnas(): ColumnaPlantilla[] {
 
   // Cálculos, todos juntos al final.
   columnas.push(
+    {
+      header: 'Precio sugerido (automático)',
+      key: 'precio_sugerido',
+      width: 19,
+      automatica: true,
+      numFmt: FORMATO_MONEDA,
+    },
     {
       header: 'Utilidad contado $ (automático)',
       key: 'utilidad_contado_valor',
@@ -203,15 +208,16 @@ const ref = (columna: number) => `$${colLetra(columna)}{f}`;
  * Sugiere el precio de venta a partir del margen deseado sobre la venta.
  *
  * Ejemplo: costo $187.000 y margen 30% => 187.000 / (1 - 30%) = $267.143.
- * La sugerencia no reemplaza el precio de contado: queda visible al lado para
- * que quien diligencia decida si lo usa o lo redondea comercialmente.
+ * La sugerencia no reemplaza el precio de contado: aparece entre las columnas
+ * automáticas del final para que quien diligencia decida si la usa o la
+ * redondea comercialmente.
  */
 function formulaPrecioSugerido(ws: ExcelJS.Worksheet, filas: number) {
   const costo = ref(COL.costo);
   const margen = ref(COL.rentabilidadObjetivo);
   formulaEnColumna(
     ws,
-    COL.precioSugerido,
+    COL_PRECIO_SUGERIDO,
     `IF(OR(${costo}="",${margen}="",${margen}<0,${margen}>=1),"",ROUND(${costo}/(1-${margen}),0))`,
     filas,
   );
@@ -312,7 +318,7 @@ export async function construirHojaArticulos(
   etiquetarGrupo(
     ws,
     COL.rentabilidadObjetivo,
-    COL.precioSugerido,
+    COL.rentabilidadObjetivo,
     'ASISTENTE DE RENTABILIDAD',
   );
   etiquetarGrupo(
@@ -323,6 +329,12 @@ export async function construirHojaArticulos(
   );
   etiquetarGrupo(ws, COL.stock, COL.activo, 'DATOS OPCIONALES');
   etiquetarGrupo(ws, COL.revision, COL.revision, 'VERIFICACIÓN');
+  etiquetarGrupo(
+    ws,
+    COL_PRECIO_SUGERIDO,
+    COL_PRECIO_SUGERIDO,
+    'PRECIO SUGERIDO',
+  );
   etiquetarGrupo(
     ws,
     COL_UTILIDAD_CONTADO_VALOR,
