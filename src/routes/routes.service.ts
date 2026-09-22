@@ -860,6 +860,19 @@ export class RoutesService {
         }
       }
 
+      // Verificar coordinador si se proporciona
+      if (createRouteDto.coordinadorId) {
+        const coordinador = await this.prisma.usuario.findFirst({
+          where: { id: createRouteDto.coordinadorId, rol: 'COORDINADOR' },
+        });
+
+        if (!coordinador) {
+          throw new BadRequestException(
+            'El coordinador especificado no existe o no tiene rol COORDINADOR',
+          );
+        }
+      }
+
       // Crear la ruta + su caja asociada (tipo RUTA) en una transacción
 
       const route = await this.prisma.$transaction(async (tx) => {
@@ -871,6 +884,7 @@ export class RoutesService {
             zona: createRouteDto.zona,
             cobradorId: createRouteDto.cobradorId,
             supervisorId: createRouteDto.supervisorId,
+            coordinadorId: createRouteDto.coordinadorId,
             activa: true,
           },
           include: {
@@ -885,6 +899,16 @@ export class RoutesService {
               },
             },
             supervisor: {
+              select: {
+                id: true,
+                nombres: true,
+                apellidos: true,
+                correo: true,
+                telefono: true,
+                rol: true,
+              },
+            },
+            coordinador: {
               select: {
                 id: true,
                 nombres: true,
@@ -1077,6 +1101,21 @@ export class RoutesService {
             },
 
             supervisor: {
+              select: {
+                id: true,
+
+                nombres: true,
+
+                apellidos: true,
+
+                correo: true,
+
+                telefono: true,
+
+                rol: true,
+              },
+            },
+            coordinador: {
               select: {
                 id: true,
 
@@ -1603,6 +1642,21 @@ export class RoutesService {
           },
 
           supervisor: {
+            select: {
+              id: true,
+
+              nombres: true,
+
+              apellidos: true,
+
+              correo: true,
+
+              telefono: true,
+
+              rol: true,
+            },
+          },
+          coordinador: {
             select: {
               id: true,
 
@@ -2375,6 +2429,19 @@ export class RoutesService {
       }
     }
 
+    // Verificar coordinador si se proporciona
+    if (updateRouteDto.coordinadorId) {
+      const coordinador = await this.prisma.usuario.findFirst({
+        where: { id: updateRouteDto.coordinadorId, rol: 'COORDINADOR' },
+      });
+
+      if (!coordinador) {
+        throw new BadRequestException(
+          'El coordinador especificado no existe o no tiene rol COORDINADOR',
+        );
+      }
+    }
+
     try {
       const updatedRoute = await this.prisma.$transaction(async (tx) => {
         const route = await tx.ruta.update({
@@ -2400,6 +2467,21 @@ export class RoutesService {
             },
 
             supervisor: {
+              select: {
+                id: true,
+
+                nombres: true,
+
+                apellidos: true,
+
+                correo: true,
+
+                telefono: true,
+
+                rol: true,
+              },
+            },
+            coordinador: {
               select: {
                 id: true,
 
@@ -2818,6 +2900,56 @@ export class RoutesService {
       }));
     } catch (error) {
       throw new InternalServerErrorException('Error al obtener supervisores');
+    }
+  }
+
+  /**
+   * Coordinadores activos, para elegir el de la ruta.
+   *
+   * Antes el coordinador solo se deducia por rol (veia TODAS las rutas) y no
+   * quedaba registrado quien responde por cada una.
+   */
+  async getCoordinadores() {
+    try {
+      const coordinadores = await this.prisma.usuario.findMany({
+        where: {
+          rol: 'COORDINADOR',
+
+          estado: 'ACTIVO',
+
+          eliminadoEn: null,
+        },
+
+        select: {
+          id: true,
+
+          nombres: true,
+
+          apellidos: true,
+
+          correo: true,
+
+          telefono: true,
+
+          rol: true,
+        },
+
+        orderBy: { nombres: 'asc' },
+      });
+
+      return coordinadores.map((s) => ({
+        id: s.id,
+
+        nombre: `${s.nombres} ${s.apellidos}`,
+
+        correo: s.correo,
+
+        telefono: s.telefono,
+
+        rol: s.rol,
+      }));
+    } catch (error) {
+      throw new InternalServerErrorException('Error al obtener coordinadores');
     }
   }
 

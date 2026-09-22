@@ -59,6 +59,7 @@ model Usuario {
   registrosAuditoria      RegistroAuditoria[]
   rutasComoCobrador       Ruta[]                     @relation("RutaCobrador")
   rutasComoSupervisor     Ruta[]                     @relation("RutaSupervisor")
+  rutasComoCoordinador    Ruta[]                     @relation("RutaCoordinador")
   arqueosComoResponsable  ArqueoCaja[]               @relation("ArqueoCajaResponsable")
   arqueosCreados          ArqueoCaja[]               @relation("ArqueoCajaCreadoPor")
   arqueosRecibidos        ArqueoCaja[]               @relation("ArqueoCajaRecibidoPor")
@@ -481,6 +482,9 @@ model Ruta {
   activa           Boolean          @default(true)
   cobradorId       String
   supervisorId     String?
+  /// Coordinador que responde por la ruta. Antes solo se deducia por rol
+  /// (un coordinador veia todas), sin quedar registrado quien la lleva.
+  coordinadorId    String?
   eliminadoEn      DateTime?
   creadoEn         DateTime         @default(now())
   actualizadoEn    DateTime         @updatedAt
@@ -494,10 +498,12 @@ model Ruta {
   arqueos          ArqueoCaja[]
   cobrador         Usuario          @relation("RutaCobrador", fields: [cobradorId], references: [id])
   supervisor       Usuario?         @relation("RutaSupervisor", fields: [supervisorId], references: [id])
+  coordinador      Usuario?         @relation("RutaCoordinador", fields: [coordinadorId], references: [id])
 
   @@index([codigo])
   @@index([cobradorId])
   @@index([supervisorId])
+  @@index([coordinadorId])
   @@index([activa])
   @@map("rutas")
 }
