@@ -23,6 +23,57 @@ import {
   TIPO_AMORTIZACION_POR_DEFECTO,
 } from './interes-credito';
 import { pesos } from '../common/dinero.util';
+import { randomUUID } from 'crypto';
+
+type ProductoImportadoSnapshot = {
+  nombre: string;
+  descripcion: string | null;
+  categoria: string;
+  categoriaId: string | null;
+  marca: string | null;
+  modelo: string | null;
+  costo: number;
+  stock: number;
+  stockMinimo: number;
+  activo: boolean;
+  eliminadoEn: string | null;
+  ocultoArchivadosEn: string | null;
+};
+
+type PrecioImportadoSnapshot = {
+  precio: number;
+  activo: boolean;
+};
+
+type RegistroInventarioImportado = {
+  productoId: string;
+  codigo: string;
+  nombre: string;
+  accion: 'CREADO' | 'ACTUALIZADO' | 'EXISTENTE';
+  antes?: ProductoImportadoSnapshot;
+  despues: ProductoImportadoSnapshot;
+  preciosCreados: Array<{
+    id: string;
+    meses: number;
+    despues: PrecioImportadoSnapshot;
+  }>;
+  preciosActualizados: Array<{
+    id: string;
+    meses: number;
+    antes: PrecioImportadoSnapshot;
+    despues: PrecioImportadoSnapshot;
+  }>;
+  asientoReferenceIds: string[];
+};
+
+type CreadoPorImportacion = {
+  clientes?: string[];
+  prestamos?: string[];
+  conMovimientosContables?: boolean;
+  articulos?: number;
+  precios?: number;
+  inventario?: RegistroInventarioImportado[];
+};
 
 /**
  * Clave de comparacion de categorias: sin mayusculas, sin acentos y sin
@@ -76,6 +127,10 @@ export class ImportacionesService {
         this.notificacionesGateway.broadcastRutasActualizadas({
           origen: 'importacion',
         });
+      } else {
+        this.notificacionesGateway.broadcastInventarioActualizado({
+          origen: 'importacion',
+        });
       }
     } catch {
       // Si no se pudo avisar, la pantalla se actualiza al recargar.
@@ -95,14 +150,14 @@ export class ImportacionesService {
   private async asentarInventario(
     tx: Prisma.TransactionClient,
     params: {
-      productoId: string;
       codigo: string;
       unidades: number;
       costoUnitario: number;
       usuarioId: string;
+      referenceId: string;
     },
   ) {
-    const { productoId, codigo, unidades, costoUnitario, usuarioId } = params;
+    const { codigo, unidades, costoUnitario, usuarioId, referenceId } = params;
     // El libro solo admite pesos enteros: se redondea aquí, no allá.
     const valor = Math.round(Math.abs(unidades) * Number(costoUnitario || 0));
     if (valor <= 0 || !usuarioId) return;
@@ -112,7 +167,9 @@ export class ImportacionesService {
     await this.ledgerService.registrarAsiento(
       {
         referenceType: 'AJUSTE',
-        referenceId: productoId,
+        // Una referencia por movimiento permite revertir solo este lote. Usar
+        // productoId mezclaría todos los ajustes históricos del artículo.
+        referenceId,
         description:
           `${entra ? 'Entrada' : 'Salida'} de inventario por importación — ` +
           `${codigo}: ${Math.abs(unidades)} und a $${costoUnitario}`,
@@ -220,15 +277,7 @@ export class ImportacionesService {
     });
 
     return lotes.map((lote) => {
-      const creado = (lote.resumen?.creado ?? {}) as {
-        clientes?: string[];
-        prestamos?: string[];
-        conMovimientosContables?: boolean;
-        // Inventario no se puede deshacer, así que aquí se guardan conteos
-        // (no ids de qué revertir) solo para mostrarlos en el historial.
-        articulos?: number;
-        precios?: number;
-      };
+      const creado = (lote.resumen?.creado ?? {}) as CreadoPorImportacion;
 
       // Si el lote nunca guardó "creado" (lotes de antes de que existiera este
       // registro), no se sabe cuántos clientes/créditos hizo: null, no 0, para
@@ -286,11 +335,11 @@ export class ImportacionesService {
       throw new BadRequestException('La importación indicada no existe.');
     }
 
-    const creado = (lote.resumen?.creado ?? {}) as {
-      clientes?: string[];
-      prestamos?: string[];
-      conMovimientosContables?: boolean;
-    };
+    const creado = (lote.resumen?.creado ?? {}) as CreadoPorImportacion;
+
+    if (lote.tipo === 'INVENTARIO') {
+      return this.detalleLoteInventario(lote, creado);
+    }
     const ids = creado.prestamos ?? [];
 
     const [prestamos, pagos, transacciones] = await Promise.all([
@@ -436,23 +485,219 @@ export class ImportacionesService {
     };
   }
 
+  private snapshotCoincide(
+    producto: any,
+    esperado: ProductoImportadoSnapshot,
+  ): boolean {
+    const actual: ProductoImportadoSnapshot = {
+      nombre: String(producto.nombre ?? ''),
+      descripcion: producto.descripcion ?? null,
+      categoria: String(producto.categoria ?? ''),
+      categoriaId: producto.categoriaId ?? null,
+      marca: producto.marca ?? null,
+      modelo: producto.modelo ?? null,
+      costo: Number(producto.costo ?? 0),
+      stock: Number(producto.stock ?? 0),
+      stockMinimo: Number(producto.stockMinimo ?? 0),
+      activo: Boolean(producto.activo),
+      eliminadoEn: producto.eliminadoEn
+        ? new Date(producto.eliminadoEn).toISOString()
+        : null,
+      ocultoArchivadosEn: producto.ocultoArchivadosEn
+        ? new Date(producto.ocultoArchivadosEn).toISOString()
+        : null,
+    };
+    return JSON.stringify(actual) === JSON.stringify(esperado);
+  }
+
+  /**
+   * Comprueba que nadie haya usado o editado lo importado después.
+   *
+   * Revertir un artículo vendido, una opción de precio usada por un crédito o
+   * un stock que ya cambió borraría operación real. En esos casos se bloquea
+   * el lote completo y se explica exactamente cuál artículo lo impide.
+   */
+  private async revisarReversionInventario(
+    cliente: PrismaService | Prisma.TransactionClient,
+    registros: RegistroInventarioImportado[],
+  ) {
+    const productos: any[] = await (cliente as any).producto.findMany({
+      where: { id: { in: registros.map((r) => r.productoId) } },
+      include: {
+        precios: {
+          include: { _count: { select: { prestamos: true } } },
+        },
+        _count: { select: { prestamos: true, archivos: true } },
+      },
+    });
+    const porId = new Map(productos.map((p) => [p.id, p]));
+
+    return registros.map((registro) => {
+      const producto = porId.get(registro.productoId);
+      const razones: string[] = [];
+
+      if (!producto) {
+        razones.push('El artículo ya no existe.');
+      } else {
+        if (
+          registro.accion !== 'EXISTENTE' &&
+          !this.snapshotCoincide(producto, registro.despues)
+        ) {
+          razones.push(
+            'Sus datos o existencias cambiaron después de la importación.',
+          );
+        }
+
+        if (registro.accion === 'CREADO') {
+          if (producto._count.prestamos > 0) {
+            razones.push('Ya fue usado en uno o más créditos.');
+          }
+          if (producto._count.archivos > 0) {
+            razones.push('Tiene archivos asociados.');
+          }
+          const preciosDelLote = new Set(
+            registro.preciosCreados.map((precio) => precio.id),
+          );
+          if (
+            producto.precios.some((precio) => !preciosDelLote.has(precio.id))
+          ) {
+            razones.push('Tiene precios agregados después de la importación.');
+          }
+        }
+
+        const preciosPorId = new Map<string, any>(
+          producto.precios.map((p: any) => [p.id, p]),
+        );
+        for (const precio of registro.preciosCreados) {
+          const actual = preciosPorId.get(precio.id);
+          if (!actual) {
+            razones.push(`La opción de ${precio.meses} mes(es) ya no existe.`);
+          } else {
+            if (
+              Number(actual.precio) !== precio.despues.precio ||
+              actual.activo !== precio.despues.activo
+            ) {
+              razones.push(
+                `La opción de ${precio.meses} mes(es) fue modificada después.`,
+              );
+            }
+            if (actual._count.prestamos > 0) {
+              razones.push(
+                `La opción de ${precio.meses} mes(es) ya fue usada en un crédito.`,
+              );
+            }
+          }
+        }
+
+        for (const precio of registro.preciosActualizados) {
+          const actual = preciosPorId.get(precio.id);
+          if (!actual) {
+            razones.push(`La opción de ${precio.meses} mes(es) ya no existe.`);
+          } else {
+            if (
+              Number(actual.precio) !== precio.despues.precio ||
+              actual.activo !== precio.despues.activo
+            ) {
+              razones.push(
+                `La opción de ${precio.meses} mes(es) fue modificada después.`,
+              );
+            }
+            if (actual._count.prestamos > 0) {
+              razones.push(
+                `La opción de ${precio.meses} mes(es) ya fue usada en un crédito.`,
+              );
+            }
+          }
+        }
+      }
+
+      return {
+        ...registro,
+        sePuedeDeshacer: razones.length === 0,
+        razonNoSePuedeDeshacer: razones.join(' ') || null,
+        stockActual: producto ? Number(producto.stock) : null,
+      };
+    });
+  }
+
+  private async detalleLoteInventario(lote: any, creado: CreadoPorImportacion) {
+    const registros = creado.inventario ?? [];
+    const articulos = await this.revisarReversionInventario(
+      this.prisma,
+      registros,
+    );
+    const bloqueados = articulos.filter((a) => !a.sePuedeDeshacer);
+
+    return {
+      id: lote.id,
+      tipo: lote.tipo,
+      estado: lote.estado,
+      nombreArchivo: lote.nombreArchivo,
+      creadoEn: lote.creadoEn,
+      confirmadoEn: lote.confirmadoEn,
+      creadoPor: lote.creadoPor
+        ? `${lote.creadoPor.nombres} ${lote.creadoPor.apellidos}`.trim()
+        : null,
+      creditos: [],
+      articulosImportados: articulos.map((articulo) => ({
+        id: articulo.productoId,
+        codigo: articulo.codigo,
+        nombre: articulo.nombre,
+        accion: articulo.accion,
+        stockAntes: articulo.antes?.stock ?? null,
+        stockImportado: articulo.despues.stock,
+        stockActual: articulo.stockActual,
+        preciosCreados: articulo.preciosCreados.length,
+        preciosActualizados: articulo.preciosActualizados.length,
+        sePuedeDeshacer: articulo.sePuedeDeshacer,
+        razonNoSePuedeDeshacer: articulo.razonNoSePuedeDeshacer,
+      })),
+      totales: {
+        creditos: 0,
+        deshacibles: articulos.length - bloqueados.length,
+        bloqueados: bloqueados.length,
+        devolucionACaja: 0,
+        articulosADevolver: 0,
+      },
+      sePuede:
+        lote.estado === 'CONFIRMADO' &&
+        registros.length > 0 &&
+        bloqueados.length === 0,
+      razon:
+        bloqueados.length > 0
+          ? 'Hay artículos usados o modificados después de la importación. Revise los motivos antes de continuar.'
+          : this.evaluarSiSePuedeDeshacer(lote, creado).razon,
+    };
+  }
+
   private evaluarSiSePuedeDeshacer(
     lote: { estado: string; tipo: string },
     creado: {
       clientes?: string[];
       prestamos?: string[];
       conMovimientosContables?: boolean;
+      inventario?: RegistroInventarioImportado[];
     },
   ): { sePuede: boolean; razon: string | null } {
     if (lote.estado !== 'CONFIRMADO') {
       return { sePuede: false, razon: 'El lote no llegó a confirmarse.' };
     }
 
+    if (lote.tipo === 'INVENTARIO') {
+      if (!creado.inventario?.length) {
+        return {
+          sePuede: false,
+          razon:
+            'Este lote de inventario es anterior al registro detallado necesario para deshacerlo con seguridad.',
+        };
+      }
+      return { sePuede: true, razon: null };
+    }
+
     if (lote.tipo !== 'CLIENTES_CREDITOS') {
       return {
         sePuede: false,
-        razon:
-          'Por ahora solo se pueden deshacer importaciones de clientes y créditos.',
+        razon: 'Este tipo de importación no se puede deshacer automáticamente.',
       };
     }
 
@@ -498,6 +743,10 @@ export class ImportacionesService {
     asientosReversados: number;
     transaccionesReversadas: number;
     stockDevuelto: number;
+    articulosEliminados?: number;
+    articulosRestaurados?: number;
+    preciosEliminados?: number;
+    preciosRestaurados?: number;
     mensajes: string[];
   }> {
     const lote = await this.prisma.importacionLote.findUnique({
@@ -508,17 +757,22 @@ export class ImportacionesService {
       throw new BadRequestException('La importación indicada no existe.');
     }
 
-    const creado = (lote.resumen?.creado ?? {}) as {
-      clientes?: string[];
-      prestamos?: string[];
-      conMovimientosContables?: boolean;
-    };
+    const creado = (lote.resumen?.creado ?? {}) as CreadoPorImportacion;
 
     const evaluacion = this.evaluarSiSePuedeDeshacer(lote, creado);
     if (!evaluacion.sePuede) {
       throw new BadRequestException(
         evaluacion.razon || 'Esta importación no se puede deshacer.',
       );
+    }
+
+    if (lote.tipo === 'INVENTARIO') {
+      if (opciones.prestamoIds?.length) {
+        throw new BadRequestException(
+          'Una importación de inventario se deshace completa; no recibe créditos seleccionados.',
+        );
+      }
+      return this.revertirLoteInventario(lote, creado, opciones.usuarioId);
     }
 
     const prestamosDelLote = creado.prestamos ?? [];
@@ -725,6 +979,104 @@ export class ImportacionesService {
     };
   }
 
+  /** Deshace un lote de inventario solo si todo sigue como lo dejó el archivo. */
+  private async revertirLoteInventario(
+    lote: any,
+    creado: CreadoPorImportacion,
+    usuarioId: string,
+  ) {
+    const registros = creado.inventario ?? [];
+    let articulosEliminados = 0;
+    let articulosRestaurados = 0;
+    let preciosEliminados = 0;
+    let preciosRestaurados = 0;
+    let asientosReversados = 0;
+
+    await this.prisma.$transaction(
+      async (tx) => {
+        // Se vuelve a comprobar dentro de la misma transacción: la vista previa
+        // puede llevar abierta varios minutos y el inventario pudo cambiar.
+        const revision = await this.revisarReversionInventario(tx, registros);
+        const bloqueados = revision.filter((r) => !r.sePuedeDeshacer);
+        if (bloqueados.length > 0) {
+          const detalle = bloqueados
+            .slice(0, 3)
+            .map((r) => `${r.codigo}: ${r.razonNoSePuedeDeshacer}`)
+            .join(' ');
+          throw new BadRequestException(
+            `No se puede deshacer esta importación porque el inventario cambió después. ${detalle}`,
+          );
+        }
+
+        const referencias = registros.flatMap((r) => r.asientoReferenceIds);
+        const reversas = await this.ledgerService.reversarAsientos(tx, {
+          referenceIds: referencias,
+          referenceTypes: ['AJUSTE'],
+          createdBy: usuarioId,
+          motivo: `Importación de inventario deshecha (lote ${lote.id})`,
+        });
+        asientosReversados = reversas.length;
+
+        for (const registro of registros) {
+          const idsPreciosCreados = registro.preciosCreados.map((p) => p.id);
+          if (idsPreciosCreados.length > 0) {
+            const eliminados = await tx.precioProducto.deleteMany({
+              where: { id: { in: idsPreciosCreados } },
+            });
+            preciosEliminados += eliminados.count;
+          }
+
+          for (const precio of registro.preciosActualizados) {
+            await tx.precioProducto.update({
+              where: { id: precio.id },
+              data: precio.antes,
+            });
+            preciosRestaurados++;
+          }
+
+          if (registro.accion === 'CREADO') {
+            await tx.producto.delete({ where: { id: registro.productoId } });
+            articulosEliminados++;
+          } else if (registro.accion === 'ACTUALIZADO' && registro.antes) {
+            await tx.producto.update({
+              where: { id: registro.productoId },
+              data: registro.antes,
+            });
+            articulosRestaurados++;
+          }
+        }
+
+        await tx.importacionLote.update({
+          where: { id: lote.id },
+          data: { estado: 'CANCELADO' },
+        });
+      },
+      { maxWait: 60_000, timeout: 600_000 },
+    );
+
+    this.avisarCambioPorImportacion('INVENTARIO');
+
+    return {
+      loteId: lote.id,
+      parcial: false,
+      clientesEliminados: 0,
+      prestamosEliminados: 0,
+      cuotasEliminadas: 0,
+      asientosReversados,
+      transaccionesReversadas: 0,
+      stockDevuelto: 0,
+      articulosEliminados,
+      articulosRestaurados,
+      preciosEliminados,
+      preciosRestaurados,
+      mensajes: [
+        'Importación de inventario deshecha correctamente.',
+        `${articulosEliminados} artículo(s) eliminados, ${articulosRestaurados} restaurados, ` +
+          `${preciosEliminados} precio(s) eliminados y ${preciosRestaurados} restaurados.`,
+      ],
+    };
+  }
+
   // --- Validación ---
 
   async validarClientesCreditos(
@@ -840,9 +1192,30 @@ export class ImportacionesService {
     let preciosOmitidos = 0;
     let preciosContadoCreados = 0;
     const mensajes: string[] = [];
+    const registrosInventario = new Map<string, RegistroInventarioImportado>();
+    let loteId = '';
 
-    // La importación de inventario actual es una carga operativa inicial:
-    // crea catálogo, stock y precios, pero no genera asientos contables.
+    const snapshotProducto = (producto: any): ProductoImportadoSnapshot => ({
+      nombre: String(producto.nombre ?? ''),
+      descripcion: producto.descripcion ?? null,
+      categoria: String(producto.categoria ?? ''),
+      categoriaId: producto.categoriaId ?? null,
+      marca: producto.marca ?? null,
+      modelo: producto.modelo ?? null,
+      costo: Number(producto.costo ?? 0),
+      stock: Number(producto.stock ?? 0),
+      stockMinimo: Number(producto.stockMinimo ?? 0),
+      activo: Boolean(producto.activo),
+      eliminadoEn: producto.eliminadoEn
+        ? new Date(producto.eliminadoEn).toISOString()
+        : null,
+      ocultoArchivadosEn: producto.ocultoArchivadosEn
+        ? new Date(producto.ocultoArchivadosEn).toISOString()
+        : null,
+    });
+
+    // Catálogo, precios, stock, asiento y lote se confirman juntos. Si falla
+    // cualquiera, la transacción deja todo como estaba.
     await this.prisma.$transaction(
       async (tx) => {
         // El archivo trae la categoría escrita a mano. Se resuelve una sola vez
@@ -859,7 +1232,6 @@ export class ImportacionesService {
         for (const art of articulos) {
           const existe = await tx.producto.findUnique({
             where: { codigo: art.codigo },
-            select: { id: true },
           });
 
           if (art.esActualizacion) {
@@ -870,7 +1242,7 @@ export class ImportacionesService {
 
             // Se corrigen los datos del artículo; los precios se actualizan más
             // abajo, junto con los que se agregan por primera vez.
-            await tx.producto.update({
+            const despues = await tx.producto.update({
               where: { id: existe.id },
               data: {
                 nombre: art.nombre,
@@ -888,12 +1260,29 @@ export class ImportacionesService {
 
             // Solo la diferencia: el stock que ya estaba contabilizado no se
             // vuelve a sumar porque el archivo lo repita.
+            const asientoReferenceId = `IMP-INV-${randomUUID()}`;
             await this.asentarInventario(tx, {
-              productoId: existe.id,
               codigo: art.codigo,
               unidades: Number(art.stock ?? 0) - Number(existe.stock ?? 0),
               costoUnitario: Number(art.costo || 0),
               usuarioId: creadoPorId,
+              referenceId: asientoReferenceId,
+            });
+
+            registrosInventario.set(art.codigo, {
+              productoId: existe.id,
+              codigo: art.codigo,
+              nombre: art.nombre,
+              accion: 'ACTUALIZADO',
+              antes: snapshotProducto(existe),
+              despues: snapshotProducto(despues),
+              preciosCreados: [],
+              preciosActualizados: [],
+              asientoReferenceIds:
+                Number(art.stock ?? 0) !== Number(existe.stock ?? 0) &&
+                Number(art.costo || 0) > 0
+                  ? [asientoReferenceId]
+                  : [],
             });
 
             articulosActualizados++;
@@ -904,6 +1293,16 @@ export class ImportacionesService {
             // El artículo ya estaba creado: se respetan sus datos actuales y más
             // abajo solo se le agregan las opciones de precio que aún no tenga.
             articulosOmitidos++;
+            registrosInventario.set(art.codigo, {
+              productoId: existe.id,
+              codigo: art.codigo,
+              nombre: existe.nombre,
+              accion: 'EXISTENTE',
+              despues: snapshotProducto(existe),
+              preciosCreados: [],
+              preciosActualizados: [],
+              asientoReferenceIds: [],
+            });
             continue;
           }
 
@@ -923,12 +1322,27 @@ export class ImportacionesService {
             },
           });
 
+          const asientoReferenceId = `IMP-INV-${randomUUID()}`;
           await this.asentarInventario(tx, {
-            productoId: creado.id,
             codigo: art.codigo,
             unidades: Number(art.stock ?? 0),
             costoUnitario: Number(art.costo || 0),
             usuarioId: creadoPorId,
+            referenceId: asientoReferenceId,
+          });
+
+          registrosInventario.set(art.codigo, {
+            productoId: creado.id,
+            codigo: art.codigo,
+            nombre: art.nombre,
+            accion: 'CREADO',
+            despues: snapshotProducto(creado),
+            preciosCreados: [],
+            preciosActualizados: [],
+            asientoReferenceIds:
+              Number(art.stock ?? 0) > 0 && Number(art.costo || 0) > 0
+                ? [asientoReferenceId]
+                : [],
           });
 
           articulosCreados++;
@@ -948,19 +1362,33 @@ export class ImportacionesService {
 
           const existePrecio = await tx.precioProducto.findFirst({
             where: { productoId: producto.id, meses: precio.meses },
-            select: { id: true },
+            select: { id: true, meses: true, precio: true, activo: true },
           });
 
           if (existePrecio) {
             const seActualiza = articulosPorCodigo.get(precio.codigoProducto);
             if (seActualiza) {
-              await tx.precioProducto.update({
+              const precioActualizado = await tx.precioProducto.update({
                 where: { id: existePrecio.id },
                 data: {
                   precio: precio.precio,
                   activo: precio.activo !== 'NO',
                 },
               });
+              registrosInventario
+                .get(precio.codigoProducto)
+                ?.preciosActualizados.push({
+                  id: existePrecio.id,
+                  meses: existePrecio.meses,
+                  antes: {
+                    precio: Number(existePrecio.precio),
+                    activo: existePrecio.activo,
+                  },
+                  despues: {
+                    precio: Number(precioActualizado.precio),
+                    activo: precioActualizado.activo,
+                  },
+                });
               preciosActualizados++;
             } else {
               preciosOmitidos++;
@@ -968,7 +1396,7 @@ export class ImportacionesService {
             continue;
           }
 
-          await tx.precioProducto.create({
+          const precioCreado = await tx.precioProducto.create({
             data: {
               productoId: producto.id,
               meses: precio.meses,
@@ -976,10 +1404,45 @@ export class ImportacionesService {
               activo: precio.activo !== 'NO',
             },
           });
+          registrosInventario.get(precio.codigoProducto)?.preciosCreados.push({
+            id: precioCreado.id,
+            meses: Number(precioCreado.meses),
+            despues: {
+              precio: Number(precioCreado.precio),
+              activo: precioCreado.activo,
+            },
+          });
           preciosCreados++;
           // El precio de contado se guarda como una opción de 0 meses.
           if (Number(precio.meses) === 0) preciosContadoCreados++;
         }
+
+        const lote = await tx.importacionLote.create({
+          data: {
+            tipo: 'INVENTARIO',
+            estado: 'CONFIRMADO',
+            nombreArchivo: file.originalname,
+            totalFilas: resultado.resumen.totalFilas,
+            filasValidas: resultado.resumen.filasValidas,
+            filasConError: resultado.resumen.filasConError,
+            advertencias: resultado.resumen.advertencias,
+            resumen: {
+              ...resultado.resumen,
+              creado: {
+                articulos: articulosCreados,
+                precios: preciosCreados,
+                inventario: [...registrosInventario.values()].filter(
+                  (registro) =>
+                    registro.accion !== 'EXISTENTE' ||
+                    registro.preciosCreados.length > 0,
+                ),
+              },
+            } as any,
+            creadoPorId,
+            confirmadoEn: new Date(),
+          },
+        });
+        loteId = lote.id;
       },
       { maxWait: 60_000, timeout: 600_000 },
     );
@@ -1005,35 +1468,10 @@ export class ImportacionesService {
       );
     }
 
-    // 4. Registrar lote confirmado
-    const lote = await this.prisma.importacionLote.create({
-      data: {
-        tipo: 'INVENTARIO',
-        estado: 'CONFIRMADO',
-        nombreArchivo: file.originalname,
-        totalFilas: resultado.resumen.totalFilas,
-        filasValidas: resultado.resumen.filasValidas,
-        filasConError: resultado.resumen.filasConError,
-        advertencias: resultado.resumen.advertencias,
-        // Se guarda qué creó este lote para que el historial (listarLotes)
-        // pueda mostrarlo. No lleva ids porque inventario no se puede deshacer
-        // (a diferencia de clientes/créditos): basta con el conteo.
-        resumen: {
-          ...resultado.resumen,
-          creado: {
-            articulos: articulosCreados,
-            precios: preciosCreados,
-          },
-        } as any,
-        creadoPorId,
-        confirmadoEn: new Date(),
-      },
-    });
-
     this.avisarCambioPorImportacion('INVENTARIO');
 
     return {
-      loteId: lote.id,
+      loteId,
       estado: 'CONFIRMADO',
       articulosCreados,
       articulosActualizados,
