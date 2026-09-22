@@ -39,6 +39,7 @@ import {
   TIPO_AMORTIZACION_POR_DEFECTO,
 } from '../interes-credito';
 import { pesos } from '../../common/dinero.util';
+import { normalizarCodigoRuta } from '../../routes/codigo-ruta';
 
 const SHEETS = {
   clientes: ['Clientes'],
@@ -228,7 +229,12 @@ export class ClientesCreditosParser {
       pagosPrestamoIds.map((p) => p.prestamoId),
     );
 
-    const rutasEnBd = new Set(rutasBd.map((r) => r.codigo));
+    // Los códigos se comparan normalizados (RT-NOMBRE), así que en el Excel
+    // sirve escribir "Centro", "ruta centro" o "RT-CENTRO": las tres encuentran
+    // la misma ruta.
+    const rutasEnBd = new Set(
+      rutasBd.map((r) => normalizarCodigoRuta(r.codigo)),
+    );
     const productosEnBd = new Map(
       productosBd.map((p) => [String(p.codigo).trim().toUpperCase(), p.nombre]),
     );
@@ -360,7 +366,7 @@ export class ClientesCreditosParser {
       let codigoImp = leerTexto(celda(row, cliCodigo));
       const cc = leerTexto(celda(row, cliCc));
       const nivelRiesgo = leerTextoNormalizado(celda(row, cliNivelRiesgo));
-      const rutaCodigo = leerTexto(celda(row, cliRutaCodigo));
+      const rutaCodigo = normalizarCodigoRuta(celda(row, cliRutaCodigo));
 
       // Los textos se limpian antes de guardarse: la cartera se ensucia para
       // siempre con lo que entra en la migración.

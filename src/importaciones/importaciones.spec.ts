@@ -922,6 +922,24 @@ describe('Posibles clientes duplicados', () => {
     );
   };
 
+  it('encuentra la ruta aunque se escriba sin el prefijo', async () => {
+    // En el sistema la ruta es RT-CENTRO; en el Excel vale escribir 'Centro'.
+    const resultado = await escribirClientes(
+      [
+        {
+          'Ruta código': 'Centro',
+          'CC cliente': '11111111',
+          Nombres: 'Juan',
+          Apellidos: 'Pérez',
+          Teléfono: '3001111111',
+        },
+      ],
+      { rutas: [{ codigo: 'RT-CENTRO' }] },
+    );
+
+    expect(resultado.errores).toHaveLength(0);
+  });
+
   it('rechaza un cliente sin ruta: sin ruta nadie sale a cobrarle', async () => {
     const resultado = await escribirClientes([
       {

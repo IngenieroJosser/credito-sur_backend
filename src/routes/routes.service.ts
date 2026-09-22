@@ -52,6 +52,7 @@ import {
   RutaCobradorRow,
   RutaCobradorMeta,
 } from '../templates/exports';
+import { normalizarCodigoRuta } from './codigo-ruta';
 
 type RouteActor =
   | {
@@ -805,10 +806,20 @@ export class RoutesService {
 
   async create(createRouteDto: CreateRouteDto) {
     try {
+      // El código se guarda siempre con el mismo formato (RT-NOMBRE): es lo que
+      // se escribe en la columna "Ruta código" de las importaciones, y cuando
+      // cada quien lo escribía a su manera la fila no encontraba la ruta.
+      const codigo = normalizarCodigoRuta(createRouteDto.codigo);
+      if (!codigo) {
+        throw new BadRequestException(
+          'El código de ruta no puede quedar vacío. Escriba un nombre corto (por ejemplo "Centro") y el sistema lo guarda como RT-CENTRO.',
+        );
+      }
+
       // Verificar si el código ya existe
 
       const existingRoute = await this.prisma.ruta.findUnique({
-        where: { codigo: createRouteDto.codigo },
+        where: { codigo },
       });
 
       if (existingRoute) {
@@ -854,7 +865,7 @@ export class RoutesService {
       const route = await this.prisma.$transaction(async (tx) => {
         const createdRoute = await tx.ruta.create({
           data: {
-            codigo: createRouteDto.codigo,
+            codigo,
             nombre: createRouteDto.nombre,
             descripcion: createRouteDto.descripcion,
             zona: createRouteDto.zona,
@@ -2303,6 +2314,17 @@ export class RoutesService {
     }
 
     // Verificar si el código ya existe (si se está actualizando)
+
+    // Mismo formato que al crear (ver `normalizarCodigoRuta`).
+    if (updateRouteDto.codigo) {
+      const codigoNormalizado = normalizarCodigoRuta(updateRouteDto.codigo);
+      if (!codigoNormalizado) {
+        throw new BadRequestException(
+          'El código de ruta no puede quedar vacío. Escriba un nombre corto (por ejemplo "Centro") y el sistema lo guarda como RT-CENTRO.',
+        );
+      }
+      updateRouteDto.codigo = codigoNormalizado;
+    }
 
     if (
       updateRouteDto.codigo &&
