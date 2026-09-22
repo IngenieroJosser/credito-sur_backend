@@ -39,6 +39,7 @@ import {
   TIPO_AMORTIZACION_POR_DEFECTO,
 } from '../interes-credito';
 import { pesos } from '../../common/dinero.util';
+import { normalizarCodigoRuta } from '../../routes/codigo-ruta';
 
 const SHEETS = {
   clientes: ['Clientes'],
@@ -187,6 +188,13 @@ export class ClientesCreditosParser {
             idempotencyKey: true,
             nombres: true,
             apellidos: true,
+            // Para exigir que todo credito quede en una ruta: si el cliente ya
+            // existe pero no tiene ruta activa, su credito tampoco la tendria.
+            asignacionesRuta: {
+              where: { activa: true },
+              select: { rutaId: true },
+              take: 1,
+            },
           },
           where: { eliminadoEn: null },
         }),
@@ -221,7 +229,12 @@ export class ClientesCreditosParser {
       pagosPrestamoIds.map((p) => p.prestamoId),
     );
 
-    const rutasEnBd = new Set(rutasBd.map((r) => r.codigo));
+    // Los códigos se comparan normalizados (RT-NOMBRE), así que en el Excel
+    // sirve escribir "Centro", "ruta centro" o "RT-CENTRO": las tres encuentran
+    // la misma ruta.
+    const rutasEnBd = new Set(
+      rutasBd.map((r) => normalizarCodigoRuta(r.codigo)),
+    );
     const productosEnBd = new Map(
       productosBd.map((p) => [String(p.codigo).trim().toUpperCase(), p.nombre]),
     );
@@ -246,6 +259,14 @@ export class ClientesCreditosParser {
         `${c.nombres} ${c.apellidos}`.trim(),
       ]),
     );
+    // Clientes que ya existen en la base pero sin ruta activa. Un credito
+    // suyo quedaria sin ruta, y sin ruta nadie sale a cobrarlo.
+    const ccsSinRutaBd = new Set(
+      clientesBd
+        .filter((c) => (c.asignacionesRuta ?? []).length === 0)
+        .map((c) => String(c.dni).trim()),
+    );
+
     // Nombres ya registrados: dos personas con el mismo nombre y cédulas
     // distintas suelen ser un error de digitación de la cédula.
     const nombresBd = new Map<string, string[]>();
@@ -345,7 +366,7 @@ export class ClientesCreditosParser {
       let codigoImp = leerTexto(celda(row, cliCodigo));
       const cc = leerTexto(celda(row, cliCc));
       const nivelRiesgo = leerTextoNormalizado(celda(row, cliNivelRiesgo));
-      const rutaCodigo = leerTexto(celda(row, cliRutaCodigo));
+      const rutaCodigo = normalizarCodigoRuta(celda(row, cliRutaCodigo));
 
       // Los textos se limpian antes de guardarse: la cartera se ensucia para
       // siempre con lo que entra en la migración.
@@ -480,7 +501,15 @@ export class ClientesCreditosParser {
         );
       }
 
-      if (rutaCodigo && !rutasEnBd.has(rutaCodigo)) {
+      // La ruta es obligatoria: un cliente sin ruta no entra en ninguna
+      // jornada de cobro, y sus creditos quedan sin ruta tambien.
+      if (!rutaCodigo) {
+        addError(
+          'ruta_codigo',
+          'Es requerida: el cliente debe quedar asignado a una ruta para poder cobrarle',
+          celda(row, cliRutaCodigo),
+        );
+      } else if (!rutasEnBd.has(rutaCodigo)) {
         addError(
           'ruta_codigo',
           'La ruta no existe en la base de datos',
@@ -893,6 +922,12 @@ export class ClientesCreditosParser {
           addError(
             'cc_cliente',
             'El cliente no existe en la hoja Clientes ni en la base de datos',
+            ccCliente,
+          );
+        } else if (!ccsClientes.has(ccCliente) && ccsSinRutaBd.has(ccCliente)) {
+          addError(
+            'cc_cliente',
+            'El cliente existe en la base pero no tiene ruta asignada. Agréguelo a la hoja Clientes con su Ruta código, o asígnele una ruta en el sistema antes de importar.',
             ccCliente,
           );
         }

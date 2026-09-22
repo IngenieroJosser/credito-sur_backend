@@ -134,7 +134,7 @@ const encabezados = (wb: ExcelJS.Workbook, hoja: string): string[] => {
   expect(ws).toBeDefined();
   const out: string[] = [];
   ws!.getRow(6).eachCell({ includeEmpty: true }, (celda, col) => {
-    out[col] = String(celda.value ?? '').trim();
+    out[col] = typeof celda.value === 'string' ? celda.value.trim() : '';
   });
   return out;
 };
@@ -215,5 +215,23 @@ describe('Plantilla de inventario', () => {
     expect(filename).toMatch(/\.xlsx$/);
     const wb = await cargar(data);
     expect(wb.worksheets.length).toBeGreaterThan(0);
+  }, 60000);
+
+  it('ofrece seis plazos y calcula el precio sugerido por margen sobre venta', async () => {
+    const { data } = await generarPlantillaInventario();
+    const wb = await cargar(data);
+    const ws = wb.getWorksheet('Artículos')!;
+    const h = encabezados(wb, 'Artículos');
+
+    expect(h).toContain('Meses opción 6');
+    expect(h).toContain('Precio total opción 6');
+    expect(h[6]).toBe('Rentabilidad deseada');
+    expect(h[7]).toBe('Precio sugerido (automático)');
+    expect(ws.getCell('F7').dataValidation).toEqual(
+      expect.objectContaining({ type: 'decimal', formulae: [0, 0.99] }),
+    );
+    expect(
+      (ws.getCell('G7').value as ExcelJS.CellFormulaValue).formula,
+    ).toContain('$E7/(1-$F7)');
   }, 60000);
 });

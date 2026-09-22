@@ -52,6 +52,7 @@ import {
   RutaCobradorRow,
   RutaCobradorMeta,
 } from '../templates/exports';
+import { normalizarCodigoRuta } from './codigo-ruta';
 
 type RouteActor =
   | {
@@ -805,10 +806,20 @@ export class RoutesService {
 
   async create(createRouteDto: CreateRouteDto) {
     try {
+      // El código se guarda siempre con el mismo formato (RT-NOMBRE): es lo que
+      // se escribe en la columna "Ruta código" de las importaciones, y cuando
+      // cada quien lo escribía a su manera la fila no encontraba la ruta.
+      const codigo = normalizarCodigoRuta(createRouteDto.codigo);
+      if (!codigo) {
+        throw new BadRequestException(
+          'El código de ruta no puede quedar vacío. Escriba un nombre corto (por ejemplo "Centro") y el sistema lo guarda como RT-CENTRO.',
+        );
+      }
+
       // Verificar si el código ya existe
 
       const existingRoute = await this.prisma.ruta.findUnique({
-        where: { codigo: createRouteDto.codigo },
+        where: { codigo },
       });
 
       if (existingRoute) {
@@ -849,17 +860,31 @@ export class RoutesService {
         }
       }
 
+      // Verificar coordinador si se proporciona
+      if (createRouteDto.coordinadorId) {
+        const coordinador = await this.prisma.usuario.findFirst({
+          where: { id: createRouteDto.coordinadorId, rol: 'COORDINADOR' },
+        });
+
+        if (!coordinador) {
+          throw new BadRequestException(
+            'El coordinador especificado no existe o no tiene rol COORDINADOR',
+          );
+        }
+      }
+
       // Crear la ruta + su caja asociada (tipo RUTA) en una transacción
 
       const route = await this.prisma.$transaction(async (tx) => {
         const createdRoute = await tx.ruta.create({
           data: {
-            codigo: createRouteDto.codigo,
+            codigo,
             nombre: createRouteDto.nombre,
             descripcion: createRouteDto.descripcion,
             zona: createRouteDto.zona,
             cobradorId: createRouteDto.cobradorId,
             supervisorId: createRouteDto.supervisorId,
+            coordinadorId: createRouteDto.coordinadorId,
             activa: true,
           },
           include: {
@@ -874,6 +899,16 @@ export class RoutesService {
               },
             },
             supervisor: {
+              select: {
+                id: true,
+                nombres: true,
+                apellidos: true,
+                correo: true,
+                telefono: true,
+                rol: true,
+              },
+            },
+            coordinador: {
               select: {
                 id: true,
                 nombres: true,
@@ -1066,6 +1101,21 @@ export class RoutesService {
             },
 
             supervisor: {
+              select: {
+                id: true,
+
+                nombres: true,
+
+                apellidos: true,
+
+                correo: true,
+
+                telefono: true,
+
+                rol: true,
+              },
+            },
+            coordinador: {
               select: {
                 id: true,
 
@@ -1592,6 +1642,21 @@ export class RoutesService {
           },
 
           supervisor: {
+            select: {
+              id: true,
+
+              nombres: true,
+
+              apellidos: true,
+
+              correo: true,
+
+              telefono: true,
+
+              rol: true,
+            },
+          },
+          coordinador: {
             select: {
               id: true,
 
@@ -2304,6 +2369,17 @@ export class RoutesService {
 
     // Verificar si el código ya existe (si se está actualizando)
 
+    // Mismo formato que al crear (ver `normalizarCodigoRuta`).
+    if (updateRouteDto.codigo) {
+      const codigoNormalizado = normalizarCodigoRuta(updateRouteDto.codigo);
+      if (!codigoNormalizado) {
+        throw new BadRequestException(
+          'El código de ruta no puede quedar vacío. Escriba un nombre corto (por ejemplo "Centro") y el sistema lo guarda como RT-CENTRO.',
+        );
+      }
+      updateRouteDto.codigo = codigoNormalizado;
+    }
+
     if (
       updateRouteDto.codigo &&
       updateRouteDto.codigo !== existingRoute.codigo
@@ -2353,6 +2429,19 @@ export class RoutesService {
       }
     }
 
+    // Verificar coordinador si se proporciona
+    if (updateRouteDto.coordinadorId) {
+      const coordinador = await this.prisma.usuario.findFirst({
+        where: { id: updateRouteDto.coordinadorId, rol: 'COORDINADOR' },
+      });
+
+      if (!coordinador) {
+        throw new BadRequestException(
+          'El coordinador especificado no existe o no tiene rol COORDINADOR',
+        );
+      }
+    }
+
     try {
       const updatedRoute = await this.prisma.$transaction(async (tx) => {
         const route = await tx.ruta.update({
@@ -2378,6 +2467,21 @@ export class RoutesService {
             },
 
             supervisor: {
+              select: {
+                id: true,
+
+                nombres: true,
+
+                apellidos: true,
+
+                correo: true,
+
+                telefono: true,
+
+                rol: true,
+              },
+            },
+            coordinador: {
               select: {
                 id: true,
 
@@ -2796,6 +2900,56 @@ export class RoutesService {
       }));
     } catch (error) {
       throw new InternalServerErrorException('Error al obtener supervisores');
+    }
+  }
+
+  /**
+   * Coordinadores activos, para elegir el de la ruta.
+   *
+   * Antes el coordinador solo se deducia por rol (veia TODAS las rutas) y no
+   * quedaba registrado quien responde por cada una.
+   */
+  async getCoordinadores() {
+    try {
+      const coordinadores = await this.prisma.usuario.findMany({
+        where: {
+          rol: 'COORDINADOR',
+
+          estado: 'ACTIVO',
+
+          eliminadoEn: null,
+        },
+
+        select: {
+          id: true,
+
+          nombres: true,
+
+          apellidos: true,
+
+          correo: true,
+
+          telefono: true,
+
+          rol: true,
+        },
+
+        orderBy: { nombres: 'asc' },
+      });
+
+      return coordinadores.map((s) => ({
+        id: s.id,
+
+        nombre: `${s.nombres} ${s.apellidos}`,
+
+        correo: s.correo,
+
+        telefono: s.telefono,
+
+        rol: s.rol,
+      }));
+    } catch (error) {
+      throw new InternalServerErrorException('Error al obtener coordinadores');
     }
   }
 

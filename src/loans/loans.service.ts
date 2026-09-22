@@ -3622,6 +3622,30 @@ export class LoansService implements OnModuleInit {
         throw new NotFoundException('Usuario creador no encontrado');
       }
 
+      // Un credito se cobra en una ruta: sin ruta no entra a ninguna jornada,
+      // no sale en el listado del cobrador y nadie va a cobrarlo. Antes se
+      // creaba igual, con rutaId en null.
+      //
+      // Vale cualquiera de las tres fuentes que usa la asignacion automatica
+      // mas abajo: la ruta indicada en la peticion, la asignacion activa del
+      // cliente, o que lo cree un cobrador (se asigna a la suya).
+      //
+      // Las ventas de contado quedan fuera a proposito: se pagan en el momento
+      // y no se cobran en ruta.
+      if (!data.esContado) {
+        const rutaIndicada = String((data as any)?.rutaId || '').trim();
+        const clienteTieneRuta = (cliente.asignacionesRuta ?? []).some(
+          (a: any) => a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
+        );
+        const loCreaUnCobrador = creador.rol === RolUsuario.COBRADOR;
+
+        if (!rutaIndicada && !clienteTieneRuta && !loCreaUnCobrador) {
+          throw new BadRequestException(
+            'El credito debe quedar asignado a una ruta. Asigne el cliente a una ruta (o indique la ruta) antes de crear el credito.',
+          );
+        }
+      }
+
       const isArticulo =
         String(data.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
 

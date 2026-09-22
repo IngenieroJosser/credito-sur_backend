@@ -149,6 +149,22 @@ export class RoutesController {
     return this.routesService.getSupervisores();
   }
 
+  @Get('coordinadores')
+  @Roles(
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
+  @ApiOperation({ summary: 'Obtener lista de coordinadores disponibles' })
+  @ApiResponse({
+    status: 200,
+    description: 'Lista de coordinadores obtenida exitosamente',
+  })
+  getCoordinadores() {
+    return this.routesService.getCoordinadores();
+  }
+
   @Get('cobradores/:id/creditos-asignados')
   @Roles(
     RolUsuario.SUPER_ADMINISTRADOR,

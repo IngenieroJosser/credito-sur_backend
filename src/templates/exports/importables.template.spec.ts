@@ -9,7 +9,9 @@ const prismaVacio = () =>
   ({
     cliente: { findMany: jest.fn().mockResolvedValue([]) },
     producto: { findMany: jest.fn().mockResolvedValue([]) },
-    ruta: { findMany: jest.fn().mockResolvedValue([]) },
+    ruta: {
+      findMany: jest.fn().mockResolvedValue([{ codigo: 'R-CENTRO' }]),
+    },
     prestamo: { findMany: jest.fn().mockResolvedValue([]) },
     pago: { findMany: jest.fn().mockResolvedValue([]) },
     // La validación arma la vista previa del movimiento de caja y para
@@ -60,11 +62,55 @@ const clienteBase = {
   telefono: '3000000000',
   correo: 'cliente@example.com',
   nivelRiesgo: 'VERDE',
+  rutaCodigo: 'R-CENTRO',
 };
 
 describe('Plantillas importables de exportacion', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it('no pierde plazos al exportar un articulo con varias opciones', async () => {
+    // Caso medido en la base: un articulo con 4 plazos (1, 2, 6 y 12 meses).
+    // Con el tope anterior de 3 opciones, el de 12 desaparecia del archivo.
+    const archivo = await generarExcelInventarioImportable(
+      [articuloBase],
+      [
+        { codigoProducto: 'CEL-A15', meses: 0, precio: 540000, activo: true },
+        { codigoProducto: 'CEL-A15', meses: 1, precio: 580000, activo: true },
+        { codigoProducto: 'CEL-A15', meses: 2, precio: 620000, activo: true },
+        { codigoProducto: 'CEL-A15', meses: 6, precio: 790000, activo: true },
+        { codigoProducto: 'CEL-A15', meses: 12, precio: 990000, activo: true },
+      ],
+      '2026-07-12',
+    );
+
+    const resultado = await new InventarioParser(
+      prismaVacio(),
+    ).parseAndValidate(archivo.data, archivo.filename);
+
+    expect(resultado.errores).toHaveLength(0);
+    expect((resultado.precios ?? []).map((p: any) => p.meses)).toEqual([
+      0, 1, 2, 6, 12,
+    ]);
+  });
+
+  it('no recorta silenciosamente un artículo que supera la capacidad de la plantilla', async () => {
+    await expect(
+      generarExcelInventarioImportable(
+        [articuloBase],
+        [
+          { codigoProducto: 'CEL-A15', meses: 0, precio: 540000, activo: true },
+          ...[1, 2, 3, 6, 9, 12, 18].map((meses) => ({
+            codigoProducto: 'CEL-A15',
+            meses,
+            precio: 540000 + meses * 10000,
+            activo: true,
+          })),
+        ],
+        '2026-07-12',
+      ),
+    ).rejects.toThrow('tiene 7 plazos');
   });
 
   it('genera inventario exportado que el parser de importacion acepta', async () => {

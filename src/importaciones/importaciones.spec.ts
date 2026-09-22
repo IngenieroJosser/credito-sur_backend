@@ -66,7 +66,11 @@ const prismaMock = (datos?: {
     producto: { findMany: jest.fn().mockResolvedValue(datos?.productos ?? []) },
     prestamo: { findMany: jest.fn().mockResolvedValue(datos?.prestamos ?? []) },
     pago: { findMany: jest.fn().mockResolvedValue(datos?.pagos ?? []) },
-    ruta: { findMany: jest.fn().mockResolvedValue(datos?.rutas ?? []) },
+    ruta: {
+      findMany: jest
+        .fn()
+        .mockResolvedValue(datos?.rutas ?? [{ codigo: 'RT-01' }]),
+    },
     // La vista previa consulta el saldo real para decir si alcanza.
     caja: {
       findFirst: jest.fn().mockResolvedValue(
@@ -92,6 +96,8 @@ const clienteEnBd = {
   idempotencyKey: null,
   nombres: 'Juan',
   apellidos: 'Pérez',
+  // La ruta es obligatoria: un cliente de la base sin ruta hace fallar sus créditos.
+  asignacionesRuta: [{ rutaId: 'ruta-1' }],
 };
 
 /** Abre un libro generado, deja escribir en él y lo devuelve como buffer. */
@@ -344,6 +350,7 @@ describe('Plantilla de clientes y créditos', () => {
 
     const archivo = await editarLibro(plantilla.data, (workbook) => {
       escribirFila(workbook.getWorksheet('Clientes')!, FILA_DATOS, {
+        'Ruta código': 'RT-01',
         'CC cliente': '12345678',
         Nombres: 'Juan',
         Apellidos: 'Pérez',
@@ -371,6 +378,7 @@ describe('Plantilla de clientes y créditos', () => {
 
     const archivo = await editarLibro(plantilla.data, (workbook) => {
       escribirFila(workbook.getWorksheet('Clientes')!, FILA_DATOS, {
+        'Ruta código': 'RT-01',
         'CC cliente': '12345678',
         Nombres: 'Juan',
         Apellidos: 'Pérez',
@@ -845,6 +853,7 @@ describe('Limpieza de datos al importar', () => {
       await generarPlantillaClientesCreditos(datosPlantillaVacios);
     const archivo = await editarLibro(plantilla.data, (workbook) => {
       escribirFila(workbook.getWorksheet('Clientes')!, FILA_DATOS, {
+        'Ruta código': 'RT-01',
         'CC cliente': '12345678',
         Nombres: 'MARIA  DE LOS ANGELES',
         Apellidos: 'PEREZ  GOMEZ',
@@ -872,6 +881,7 @@ describe('Limpieza de datos al importar', () => {
       await generarPlantillaClientesCreditos(datosPlantillaVacios);
     const archivo = await editarLibro(plantilla.data, (workbook) => {
       escribirFila(workbook.getWorksheet('Clientes')!, FILA_DATOS, {
+        'Ruta código': 'RT-01',
         'CC cliente': '12345678',
         Nombres: 'María del Carmen',
         Apellidos: 'McDonald',
@@ -897,13 +907,54 @@ describe('Posibles clientes duplicados', () => {
       await generarPlantillaClientesCreditos(datosPlantillaVacios);
     const archivo = await editarLibro(plantilla.data, (workbook) => {
       const hoja = workbook.getWorksheet('Clientes')!;
-      filas.forEach((fila, i) => escribirFila(hoja, FILA_DATOS + i, fila));
+      // La ruta es obligatoria en la hoja Clientes: se pone por defecto para
+      // que cada prueba siga hablando solo de lo suyo.
+      filas.forEach((fila, i) =>
+        escribirFila(hoja, FILA_DATOS + i, {
+          'Ruta código': 'RT-01',
+          ...fila,
+        }),
+      );
     });
     return new ClientesCreditosParser(prismaMock(datosBd)).parseAndValidate(
       archivo,
       'clientes.xlsx',
     );
   };
+
+  it('encuentra la ruta aunque se escriba sin el prefijo', async () => {
+    // En el sistema la ruta es RT-CENTRO; en el Excel vale escribir 'Centro'.
+    const resultado = await escribirClientes(
+      [
+        {
+          'Ruta código': 'Centro',
+          'CC cliente': '11111111',
+          Nombres: 'Juan',
+          Apellidos: 'Pérez',
+          Teléfono: '3001111111',
+        },
+      ],
+      { rutas: [{ codigo: 'RT-CENTRO' }] },
+    );
+
+    expect(resultado.errores).toHaveLength(0);
+  });
+
+  it('rechaza un cliente sin ruta: sin ruta nadie sale a cobrarle', async () => {
+    const resultado = await escribirClientes([
+      {
+        'Ruta código': '',
+        'CC cliente': '11111111',
+        Nombres: 'Juan',
+        Apellidos: 'Pérez',
+        Teléfono: '3001111111',
+      },
+    ]);
+
+    expect(resultado.errores).toEqual([
+      expect.objectContaining({ hoja: 'Clientes', campo: 'ruta_codigo' }),
+    ]);
+  });
 
   it('avisa cuando dos filas tienen el mismo nombre y cédulas distintas', async () => {
     const resultado = await escribirClientes([
@@ -971,6 +1022,7 @@ describe('Acción ACTUALIZAR', () => {
       await generarPlantillaClientesCreditos(datosPlantillaVacios);
     const archivo = await editarLibro(plantilla.data, (workbook) => {
       escribirFila(workbook.getWorksheet('Clientes')!, FILA_DATOS, {
+        'Ruta código': 'RT-01',
         Acción: 'ACTUALIZAR',
         'CC cliente': '12345678',
         Nombres: 'Juan Carlos',
@@ -997,6 +1049,7 @@ describe('Acción ACTUALIZAR', () => {
       await generarPlantillaClientesCreditos(datosPlantillaVacios);
     const archivo = await editarLibro(plantilla.data, (workbook) => {
       escribirFila(workbook.getWorksheet('Clientes')!, FILA_DATOS, {
+        'Ruta código': 'RT-01',
         Acción: 'ACTUALIZAR',
         'CC cliente': '55555555',
         Nombres: 'Nadie',
@@ -1019,6 +1072,7 @@ describe('Acción ACTUALIZAR', () => {
       await generarPlantillaClientesCreditos(datosPlantillaVacios);
     const archivo = await editarLibro(plantilla.data, (workbook) => {
       escribirFila(workbook.getWorksheet('Clientes')!, FILA_DATOS, {
+        'Ruta código': 'RT-01',
         'CC cliente': '12345678',
         Nombres: 'Juan',
         Apellidos: 'Pérez',
@@ -1220,12 +1274,14 @@ describe('Filas más allá del rango preparado', () => {
     const archivo = await editarLibro(plantilla.data, (workbook) => {
       const hoja = workbook.getWorksheet('Clientes')!;
       escribirFila(hoja, FILA_DATOS, {
+        'Ruta código': 'RT-01',
         'CC cliente': '11111111',
         Nombres: 'Dentro',
         Apellidos: 'Del rango',
         Teléfono: '3001111111',
       });
       escribirFila(hoja, filaFueraDeRango, {
+        'Ruta código': 'RT-01',
         'CC cliente': '22222222',
         Nombres: 'Fuera',
         Apellidos: 'Del rango',

@@ -130,7 +130,19 @@ function buildCreateLoanPrismaMock(rol: RolUsuario, overrides: any = {}) {
         dni: '111111111',
         telefono: '3112394628',
         enListaNegra: false,
-        asignacionesRuta: [],
+        asignacionesRuta: [
+          {
+            activa: true,
+            rutaId: 'ruta-1',
+            cobradorId: 'cobrador-1',
+            ruta: {
+              id: 'ruta-1',
+              activa: true,
+              eliminadoEn: null,
+              cobradorId: 'cobrador-1',
+            },
+          },
+        ],
         ...overrides.cliente,
       }),
     },
@@ -155,6 +167,10 @@ function buildCreateLoanPrismaMock(rol: RolUsuario, overrides: any = {}) {
       }),
     },
     prestamo: {
+      update: jest.fn().mockImplementation(({ data }: any) => ({
+        id: 'prestamo-1',
+        ...data,
+      })),
       findFirst: jest
         .fn()
         .mockResolvedValueOnce(null)
@@ -210,6 +226,68 @@ describe('LoansService accounting impact for approved loans', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('no crea un credito si el cliente no tiene ruta', async () => {
+    const prisma: any = buildCreateLoanPrismaMock(RolUsuario.ADMIN);
+    prisma.cliente.findUnique = jest.fn().mockResolvedValue({
+      id: 'cliente-1',
+      nombres: 'Cliente',
+      apellidos: 'Sin Ruta',
+      dni: '111111111',
+      telefono: '3112394628',
+      enListaNegra: false,
+      asignacionesRuta: [],
+    });
+
+    await expect(
+      makeService(prisma).createLoan({
+        clienteId: 'cliente-1',
+        tipoPrestamo: 'EFECTIVO',
+        monto: 100000,
+        tasaInteres: 10,
+        tasaInteresMora: 2,
+        plazoMeses: 1,
+        cantidadCuotas: 12,
+        frecuenciaPago: 'DIARIO' as any,
+        fechaInicio: '2026-06-12',
+        fechaPrimerCobro: '2026-06-13',
+        creadoPorId: 'admin-1',
+      } as any),
+    ).rejects.toThrow(/ruta/i);
+
+    // Y no se alcanza a crear nada: sin ruta se corta antes de la transaccion.
+    expect(prisma.prestamo.create).not.toHaveBeenCalled();
+  });
+
+  it('crea el credito cuando la ruta viene en la peticion, aunque el cliente no la tenga', async () => {
+    const prisma: any = buildCreateLoanPrismaMock(RolUsuario.ADMIN);
+    prisma.cliente.findUnique = jest.fn().mockResolvedValue({
+      id: 'cliente-1',
+      nombres: 'Cliente',
+      apellidos: 'Sin Ruta',
+      dni: '111111111',
+      telefono: '3112394628',
+      enListaNegra: false,
+      asignacionesRuta: [],
+    });
+
+    await expect(
+      makeService(prisma).createLoan({
+        clienteId: 'cliente-1',
+        rutaId: 'ruta-1',
+        tipoPrestamo: 'EFECTIVO',
+        monto: 100000,
+        tasaInteres: 10,
+        tasaInteresMora: 2,
+        plazoMeses: 1,
+        cantidadCuotas: 12,
+        frecuenciaPago: 'DIARIO' as any,
+        fechaInicio: '2026-05-15',
+        fechaPrimerCobro: '2026-05-16',
+        creadoPorId: 'admin-1',
+      } as any),
+    ).resolves.toEqual(expect.objectContaining({ id: 'prestamo-fecha-1' }));
   });
 
   it('permite a SUPER_ADMINISTRADOR crear crédito con fecha antigua', async () => {
@@ -641,7 +719,16 @@ describe('LoansService accounting impact for approved loans', () => {
 
   it('retorna el préstamo existente al reintentar creación con la misma idempotencyKey', async () => {
     const prisma = {
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
+        create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
+      },
       prestamo: {
+        update: jest.fn().mockImplementation(({ data }: any) => ({
+          id: 'prestamo-1',
+          ...data,
+        })),
         findFirst: jest.fn().mockResolvedValue({
           id: 'prestamo-existente-1',
           numeroPrestamo: 'PRES-EXISTENTE',
@@ -684,6 +771,19 @@ describe('LoansService accounting impact for approved loans', () => {
 
     const fechaInicio = new Date('2026-06-12T05:00:00.000Z');
     const prisma = {
+      // Al quedar el credito en una ruta, la creacion registra la asignacion
+      // del cliente a esa ruta: antes no pasaba porque no habia ruta.
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
+        create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
+      },
+      ruta: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'ruta-1',
+          cobradorId: 'cobrador-1',
+        }),
+      },
       cliente: {
         findUnique: jest.fn().mockResolvedValue({
           id: 'cliente-1',
@@ -692,7 +792,19 @@ describe('LoansService accounting impact for approved loans', () => {
           dni: '111111111',
           telefono: '3112394628',
           enListaNegra: false,
-          asignacionesRuta: [],
+          asignacionesRuta: [
+            {
+              activa: true,
+              rutaId: 'ruta-1',
+              cobradorId: 'cobrador-1',
+              ruta: {
+                id: 'ruta-1',
+                activa: true,
+                eliminadoEn: null,
+                cobradorId: 'cobrador-1',
+              },
+            },
+          ],
         }),
       },
       usuario: {
@@ -719,6 +831,10 @@ describe('LoansService accounting impact for approved loans', () => {
         }),
       },
       prestamo: {
+        update: jest.fn().mockImplementation(({ data }: any) => ({
+          id: 'prestamo-1',
+          ...data,
+        })),
         findFirst: jest
           .fn()
           .mockResolvedValueOnce(null)
@@ -777,6 +893,19 @@ describe('LoansService accounting impact for approved loans', () => {
 
     const fechaInicio = new Date('2026-06-12T05:00:00.000Z');
     const prisma = {
+      // Al quedar el credito en una ruta, la creacion registra la asignacion
+      // del cliente a esa ruta: antes no pasaba porque no habia ruta.
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
+        create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
+      },
+      ruta: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'ruta-1',
+          cobradorId: 'cobrador-1',
+        }),
+      },
       cliente: {
         findUnique: jest.fn().mockResolvedValue({
           id: 'cliente-1',
@@ -785,7 +914,19 @@ describe('LoansService accounting impact for approved loans', () => {
           dni: '111111111',
           telefono: '3112394628',
           enListaNegra: false,
-          asignacionesRuta: [],
+          asignacionesRuta: [
+            {
+              activa: true,
+              rutaId: 'ruta-1',
+              cobradorId: 'cobrador-1',
+              ruta: {
+                id: 'ruta-1',
+                activa: true,
+                eliminadoEn: null,
+                cobradorId: 'cobrador-1',
+              },
+            },
+          ],
         }),
       },
       usuario: {
@@ -806,6 +947,10 @@ describe('LoansService accounting impact for approved loans', () => {
         }),
       },
       prestamo: {
+        update: jest.fn().mockImplementation(({ data }: any) => ({
+          id: 'prestamo-1',
+          ...data,
+        })),
         findFirst: jest
           .fn()
           .mockResolvedValueOnce(null)
@@ -887,6 +1032,11 @@ describe('LoansService accounting impact for approved loans', () => {
 
     const fechaInicio = new Date('2026-06-12T05:00:00.000Z');
     const prisma = {
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
+        create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
+      },
       cliente: {
         findUnique: jest.fn().mockResolvedValue({
           id: 'cliente-1',
@@ -895,7 +1045,19 @@ describe('LoansService accounting impact for approved loans', () => {
           dni: '111111111',
           telefono: '3112394628',
           enListaNegra: false,
-          asignacionesRuta: [],
+          asignacionesRuta: [
+            {
+              activa: true,
+              rutaId: 'ruta-1',
+              cobradorId: 'cobrador-1',
+              ruta: {
+                id: 'ruta-1',
+                activa: true,
+                eliminadoEn: null,
+                cobradorId: 'cobrador-1',
+              },
+            },
+          ],
         }),
       },
       usuario: {
@@ -935,6 +1097,10 @@ describe('LoansService accounting impact for approved loans', () => {
         }),
       },
       prestamo: {
+        update: jest.fn().mockImplementation(({ data }: any) => ({
+          id: 'prestamo-1',
+          ...data,
+        })),
         findFirst: jest
           .fn()
           .mockResolvedValueOnce(null)
@@ -1023,7 +1189,16 @@ describe('LoansService accounting impact for approved loans', () => {
     };
 
     const tx: any = {
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
+        create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
+      },
       prestamo: {
+        update: jest.fn().mockImplementation(({ data }: any) => ({
+          id: 'prestamo-1',
+          ...data,
+        })),
         create: jest.fn().mockResolvedValue(prestamoCreado),
       },
       ruta: {
@@ -1058,6 +1233,11 @@ describe('LoansService accounting impact for approved loans', () => {
     };
 
     const prisma = {
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
+        create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
+      },
       $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
       cliente: {
         findUnique: jest.fn().mockResolvedValue({
@@ -1067,7 +1247,19 @@ describe('LoansService accounting impact for approved loans', () => {
           dni: '111111111',
           telefono: '3112394628',
           enListaNegra: false,
-          asignacionesRuta: [],
+          asignacionesRuta: [
+            {
+              activa: true,
+              rutaId: 'ruta-1',
+              cobradorId: 'cobrador-1',
+              ruta: {
+                id: 'ruta-1',
+                activa: true,
+                eliminadoEn: null,
+                cobradorId: 'cobrador-1',
+              },
+            },
+          ],
         }),
       },
       usuario: {
@@ -1094,6 +1286,10 @@ describe('LoansService accounting impact for approved loans', () => {
         }),
       },
       prestamo: {
+        update: jest.fn().mockImplementation(({ data }: any) => ({
+          id: 'prestamo-1',
+          ...data,
+        })),
         findFirst: jest
           .fn()
           .mockResolvedValueOnce(null)
@@ -1196,6 +1392,11 @@ describe('LoansService accounting impact for approved loans', () => {
     };
 
     const prisma = {
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
+        create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
+      },
       $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
       cliente: {
         findUnique: jest.fn().mockResolvedValue({
@@ -1230,6 +1431,10 @@ describe('LoansService accounting impact for approved loans', () => {
         }),
       },
       prestamo: {
+        update: jest.fn().mockImplementation(({ data }: any) => ({
+          id: 'prestamo-1',
+          ...data,
+        })),
         findFirst: jest
           .fn()
           .mockResolvedValueOnce(null)
@@ -1280,6 +1485,11 @@ describe('LoansService accounting impact for approved loans', () => {
 
     const fechaInicio = new Date('2026-06-12T05:00:00.000Z');
     const prisma = {
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
+        create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
+      },
       cliente: {
         findUnique: jest.fn().mockResolvedValue({
           id: 'cliente-1',
@@ -1288,7 +1498,19 @@ describe('LoansService accounting impact for approved loans', () => {
           dni: '111111111',
           telefono: '3112394628',
           enListaNegra: false,
-          asignacionesRuta: [],
+          asignacionesRuta: [
+            {
+              activa: true,
+              rutaId: 'ruta-1',
+              cobradorId: 'cobrador-1',
+              ruta: {
+                id: 'ruta-1',
+                activa: true,
+                eliminadoEn: null,
+                cobradorId: 'cobrador-1',
+              },
+            },
+          ],
         }),
       },
       usuario: {
@@ -1309,6 +1531,10 @@ describe('LoansService accounting impact for approved loans', () => {
         }),
       },
       prestamo: {
+        update: jest.fn().mockImplementation(({ data }: any) => ({
+          id: 'prestamo-1',
+          ...data,
+        })),
         findFirst: jest
           .fn()
           .mockResolvedValueOnce(null)
@@ -1494,6 +1720,11 @@ describe('LoansService accounting impact for approved loans', () => {
 
   it('rechaza edición de préstamo si la versión enviada está vieja', async () => {
     const prisma = {
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
+        create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
+      },
       prestamo: {
         findUnique: jest.fn().mockResolvedValue({
           id: 'prestamo-1',
@@ -1551,7 +1782,16 @@ describe('LoansService accounting impact for approved loans', () => {
 
   it('genera número de préstamo sin depender de count + 1', async () => {
     const prisma = {
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
+        create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
+      },
       prestamo: {
+        update: jest.fn().mockImplementation(({ data }: any) => ({
+          id: 'prestamo-1',
+          ...data,
+        })),
         findFirst: jest.fn().mockResolvedValue(null),
         count: jest.fn(),
       },
@@ -1671,6 +1911,10 @@ describe('LoansService reprogramacion concurrency controls', () => {
         create: jest.fn().mockResolvedValue({ id: 'aprobacion-1' }),
       },
       prestamo: {
+        update: jest.fn().mockImplementation(({ data }: any) => ({
+          id: 'prestamo-1',
+          ...data,
+        })),
         findUnique: jest.fn().mockResolvedValue({
           id: 'prestamo-1',
           clienteId: 'cliente-1',
@@ -1744,10 +1988,19 @@ describe('LoansService reprogramacion concurrency controls', () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-06-01T12:00:00-05:00'));
 
     const prisma = {
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
+        create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
+      },
       aprobacion: {
         findUnique: jest.fn().mockResolvedValue(null),
       },
       prestamo: {
+        update: jest.fn().mockImplementation(({ data }: any) => ({
+          id: 'prestamo-1',
+          ...data,
+        })),
         findUnique: jest.fn().mockResolvedValue({
           id: 'prestamo-1',
           clienteId: 'cliente-1',
@@ -1792,6 +2045,10 @@ describe('LoansService reprogramacion concurrency controls', () => {
         create: jest.fn().mockResolvedValue({ id: 'aprobacion-1' }),
       },
       prestamo: {
+        update: jest.fn().mockImplementation(({ data }: any) => ({
+          id: 'prestamo-1',
+          ...data,
+        })),
         findUnique: jest.fn().mockResolvedValue({
           id: 'prestamo-1',
           clienteId: 'cliente-1',
@@ -1891,6 +2148,10 @@ describe('LoansService reprogramacion concurrency controls', () => {
         create: jest.fn().mockResolvedValue({ id: 'aprobacion-1' }),
       },
       prestamo: {
+        update: jest.fn().mockImplementation(({ data }: any) => ({
+          id: 'prestamo-1',
+          ...data,
+        })),
         findUnique: jest.fn().mockResolvedValue({
           id: 'prestamo-1',
           clienteId: 'cliente-1',
@@ -1984,7 +2245,16 @@ describe('LoansService role scoping', () => {
 
   it('forces loan list queries from collectors to loans assigned to their routes', async () => {
     const prisma = {
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
+        create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
+      },
       prestamo: {
+        update: jest.fn().mockImplementation(({ data }: any) => ({
+          id: 'prestamo-1',
+          ...data,
+        })),
         findMany: jest.fn().mockResolvedValue([]),
         count: jest.fn().mockResolvedValue(0),
         aggregate: jest
@@ -2038,7 +2308,16 @@ describe('LoansService role scoping', () => {
 
   it('calcula estadísticas de mora por cuotas vencidas aunque el estado siga ACTIVO', async () => {
     const prisma = {
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
+        create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
+      },
       prestamo: {
+        update: jest.fn().mockImplementation(({ data }: any) => ({
+          id: 'prestamo-1',
+          ...data,
+        })),
         findMany: jest.fn().mockResolvedValue([]),
         count: jest.fn().mockResolvedValue(0),
         aggregate: jest
@@ -2099,7 +2378,16 @@ describe('LoansService role scoping', () => {
 
   it('calcula cartera con capital más interés para coincidir con la columna Monto', async () => {
     const prisma = {
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
+        create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
+      },
       prestamo: {
+        update: jest.fn().mockImplementation(({ data }: any) => ({
+          id: 'prestamo-1',
+          ...data,
+        })),
         findMany: jest.fn().mockResolvedValue([]),
         count: jest.fn().mockResolvedValue(0),
         aggregate: jest
@@ -2144,7 +2432,16 @@ describe('LoansService role scoping', () => {
 
   it('does not return loan detail to a collector when the loan is not assigned to them', async () => {
     const prisma = {
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
+        create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
+      },
       prestamo: {
+        update: jest.fn().mockImplementation(({ data }: any) => ({
+          id: 'prestamo-1',
+          ...data,
+        })),
         findFirst: jest.fn().mockResolvedValue(null),
       },
     };
@@ -2178,7 +2475,16 @@ describe('LoansService role scoping', () => {
 
   it('does not return loan cuotas to a collector when the loan is not assigned to them', async () => {
     const prisma = {
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
+        create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
+      },
       prestamo: {
+        update: jest.fn().mockImplementation(({ data }: any) => ({
+          id: 'prestamo-1',
+          ...data,
+        })),
         findFirst: jest.fn().mockResolvedValue(null),
       },
       cuota: {
@@ -2205,6 +2511,11 @@ describe('LoansService archive accounting reversal', () => {
 
   it('revierte caja, cartera, ingreso, costo e inventario cuando se archiva un crédito de artículo', async () => {
     const tx = {
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
+        create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
+      },
       prestamo: {
         update: jest.fn().mockResolvedValue({ id: 'prestamo-art-1' }),
       },
@@ -2266,6 +2577,10 @@ describe('LoansService archive accounting reversal', () => {
 
     const prisma = {
       prestamo: {
+        update: jest.fn().mockImplementation(({ data }: any) => ({
+          id: 'prestamo-1',
+          ...data,
+        })),
         findUnique: jest.fn().mockResolvedValue({
           id: 'prestamo-art-1',
           numeroPrestamo: 'ART-1',
@@ -2381,7 +2696,16 @@ describe('LoansService archive accounting reversal', () => {
       },
     };
     const prisma = {
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
+        create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
+      },
       prestamo: {
+        update: jest.fn().mockImplementation(({ data }: any) => ({
+          id: 'prestamo-1',
+          ...data,
+        })),
         findUnique: jest.fn().mockResolvedValue({
           id: 'prestamo-art-archivado',
           numeroPrestamo: 'ART-ARCH',
@@ -2417,6 +2741,11 @@ describe('LoansService archive accounting reversal', () => {
 
   it('restaura el impacto contable de un crédito de artículo restaurado', async () => {
     const tx = {
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
+        create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
+      },
       prestamo: {
         update: jest.fn().mockResolvedValue({
           id: 'prestamo-art-restaurar',
@@ -2472,7 +2801,16 @@ describe('LoansService archive accounting reversal', () => {
       },
     };
     const prisma = {
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
+        create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
+      },
       prestamo: {
+        update: jest.fn().mockImplementation(({ data }: any) => ({
+          id: 'prestamo-1',
+          ...data,
+        })),
         findUnique: jest.fn().mockResolvedValue({
           id: 'prestamo-art-restaurar',
           numeroPrestamo: 'ART-REST',
@@ -2611,6 +2949,11 @@ describe('El arranque no reescribe deudas por su cuenta', () => {
 
   const conServicio = () => {
     const prisma = {
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
+        create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
+      },
       prestamo: {
         findMany: jest.fn().mockResolvedValue([]),
         update: jest.fn().mockResolvedValue({}),
@@ -2676,6 +3019,10 @@ describe('Reprogramaciones: jurisdicción por rol', () => {
       },
       // el supervisor solo "es dueño" de p-mia
       prestamo: {
+        update: jest.fn().mockImplementation(({ data }: any) => ({
+          id: 'prestamo-1',
+          ...data,
+        })),
         findMany: jest.fn().mockImplementation(({ where }: any) => {
           const ids: string[] = where?.id?.in ?? [];
           // simula el filtro por ruta.supervisorId: solo p-mia pasa

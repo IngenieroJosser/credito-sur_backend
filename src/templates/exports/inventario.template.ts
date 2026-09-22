@@ -12,6 +12,10 @@ import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
 import * as fs from 'fs';
 import * as path from 'path';
+import {
+  formatBogotaFecha,
+  formatBogotaFechaHora,
+} from '../../utils/date-utils';
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
 
@@ -73,7 +77,7 @@ const PDF = {
 function fmtFecha(f: Date | string): string {
   if (!f) return '';
   const d = f instanceof Date ? f : new Date(f);
-  return isNaN(d.getTime()) ? String(f) : d.toLocaleDateString('es-CO');
+  return isNaN(d.getTime()) ? String(f) : formatBogotaFecha(d);
 }
 
 function fmtCOP(v: number): string {
@@ -152,7 +156,7 @@ export async function generarExcelInventario(
 
   // ── Fila 2: Metadatos ───────────────────────────────────────────────────────
   const metaRow = ws.addRow([
-    `Generado: ${new Date().toLocaleString('es-CO')}` +
+    `Generado: ${formatBogotaFechaHora(new Date())}` +
       `  |  Total: ${totales.totalProductos}` +
       `  |  Bajo stock: ${totales.productosBajoStock}` +
       `  |  Valor: ${fmtCOP(totales.totalValorInventario)}`,
@@ -329,7 +333,7 @@ export async function generarPDFInventario(
       .font('Helvetica')
       .fillColor(PDF.GRIS_MED)
       .text(
-        `Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`,
+        `Pág. ${pageNumber}  •  Generado: ${formatBogotaFechaHora(new Date())}`,
         0,
         PH - 25,
         { align: 'right', width: PW - 30 },

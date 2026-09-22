@@ -11,6 +11,10 @@ import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
 import * as fs from 'fs';
 import * as path from 'path';
+import {
+  formatBogotaFecha,
+  formatBogotaFechaHora,
+} from '../../utils/date-utils';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -60,7 +64,7 @@ const C = {
 function fmtFecha(f: Date | string): string {
   if (!f) return '';
   const d = f instanceof Date ? f : new Date(f);
-  return isNaN(d.getTime()) ? String(f) : d.toLocaleDateString('es-CO');
+  return isNaN(d.getTime()) ? String(f) : formatBogotaFecha(d);
 }
 
 function fmtCOP(val: number): string {
@@ -128,7 +132,7 @@ export async function generarExcelGastos(
   // Subtítulo con fecha
   worksheet.mergeCells('A2:I2');
   const subtitleCell = worksheet.getCell('A2');
-  subtitleCell.value = `Reporte generado: ${new Date().toLocaleString('es-CO')}`;
+  subtitleCell.value = `Reporte generado: ${formatBogotaFechaHora(new Date())}`;
   subtitleCell.font = {
     size: 10,
     color: { argb: C.GRIS_MED },
@@ -415,7 +419,7 @@ export async function generarPDFGastos(
     const H = doc.page.height;
     doc.fontSize(7).font('Helvetica').fillColor(GRIS_MED);
     doc.text(
-      `Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`,
+      `Pág. ${pageNumber}  •  Generado: ${formatBogotaFechaHora(new Date())}`,
       0,
       H - 25,
       { align: 'right', width: W - 30 },

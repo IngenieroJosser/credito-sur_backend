@@ -17,11 +17,14 @@ import {
 } from './header-map.util';
 
 /**
- * Opciones de plazo por artículo que ofrece la plantilla.
- * Tres cubren la operación real y mantienen la hoja legible; más columnas solo
- * agregaban ancho que nadie usaba.
+ * Cuantas opciones de plazo caben en la hoja de articulos.
+ *
+ * Eran 3, y la exportacion recorta a este tope: un articulo con mas plazos
+ * perdia los ultimos al exportarlo, sin avisar. En la base ya habia uno con 4
+ * (1, 2, 6 y 12 meses), asi que el 12 desaparecia del archivo y al reimportarlo
+ * el articulo se quedaba sin esa opcion.
  */
-export const MAX_OPCIONES_PLAZO = 3;
+export const MAX_OPCIONES_PLAZO = 6;
 
 /** El precio de contado se guarda como un PrecioProducto con meses = 0. */
 export const MESES_CONTADO = 0;
@@ -158,6 +161,17 @@ export class InventarioParser {
           precio: colPrecioOpcion,
         });
       }
+    }
+
+    if (columnasOpciones.length === 0) {
+      advertencias.push({
+        hoja: SHEET_DISPLAY.articulos,
+        fila: FILA_INICIO_DATOS - 1,
+        campo: 'opciones_plazo',
+        mensaje:
+          'La hoja no tiene columnas de plazos ("Meses opción 1" / "Precio total opción 1"), así que los artículos quedarán solo con precio de contado. Descargue de nuevo la plantilla oficial si necesita venderlos a crédito.',
+        valor: null,
+      });
     }
 
     const columnasEntradaArticulos = [

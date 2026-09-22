@@ -10,6 +10,10 @@ import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
 import * as fs from 'fs';
 import * as path from 'path';
+import {
+  formatBogotaFecha,
+  formatBogotaFechaHora,
+} from '../../utils/date-utils';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -49,7 +53,7 @@ export async function generarExcelFinanciero(
   const totalGastos = distribucionGastos.reduce((s, g) => s + g.monto, 0);
   const periodoStr =
     startDate && endDate
-      ? `${startDate.toLocaleDateString('es-CO')} — ${endDate.toLocaleDateString('es-CO')}`
+      ? `${formatBogotaFecha(startDate)} — ${formatBogotaFecha(endDate)}`
       : 'Período no definido';
 
   // ── Hoja 1: Resumen Financiero ──
@@ -358,7 +362,7 @@ export async function generarPDFFinanciero(
       .fontSize(10)
       .font('Helvetica-Bold')
       .fillColor(AZUL_DARK)
-      .text(new Date().toLocaleDateString('es-CO'), W - 180, 45, {
+      .text(formatBogotaFecha(new Date()), W - 180, 45, {
         width: 140,
         align: 'center',
       });
@@ -412,7 +416,7 @@ export async function generarPDFFinanciero(
     const H = doc.page.height;
     doc.fontSize(7).font('Helvetica').fillColor(GRIS_MED);
     doc.text(
-      `Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`,
+      `Pág. ${pageNumber}  •  Generado: ${formatBogotaFechaHora(new Date())}`,
       0,
       H - 25,
       { align: 'right', width: W - 40 },

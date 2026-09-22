@@ -10,6 +10,10 @@ import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
 import * as fs from 'fs';
 import * as path from 'path';
+import {
+  formatBogotaFecha,
+  formatBogotaFechaHora,
+} from '../../utils/date-utils';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -80,10 +84,10 @@ export async function generarExcelOperativo(
   // Período
   const periodoStr =
     resumen.fechaInicio && resumen.fechaFin
-      ? `Período: ${new Date(resumen.fechaInicio).toLocaleDateString('es-CO')} — ${new Date(resumen.fechaFin).toLocaleDateString('es-CO')}`
+      ? `Período: ${formatBogotaFecha(new Date(resumen.fechaInicio))} — ${formatBogotaFecha(new Date(resumen.fechaFin))}`
       : `Período: ${resumen.periodo?.toUpperCase() || 'N/A'}`;
   const subRow = ws.addRow([
-    `${periodoStr}   |   Generado: ${new Date().toLocaleString('es-CO')}`,
+    `${periodoStr}   |   Generado: ${formatBogotaFechaHora(new Date())}`,
   ]);
   subRow.font = { italic: true, size: 9, color: { argb: 'FF64748B' } };
   ws.mergeCells('A2:H2');
@@ -306,7 +310,7 @@ export async function generarPDFOperativo(
       .text('PERÍODO', W - 180, 28, { width: 148, align: 'center' });
     const pStr =
       resumen.fechaInicio && resumen.fechaFin
-        ? `${new Date(resumen.fechaInicio).toLocaleDateString('es-CO')} - ${new Date(resumen.fechaFin).toLocaleDateString('es-CO')}`
+        ? `${formatBogotaFecha(new Date(resumen.fechaInicio))} - ${formatBogotaFecha(new Date(resumen.fechaFin))}`
         : resumen.periodo?.toUpperCase() || 'N/A';
     doc
       .fontSize(10)
@@ -363,7 +367,7 @@ export async function generarPDFOperativo(
     const H = doc.page.height;
     doc.fontSize(7).font('Helvetica').fillColor(GRIS_MED);
     doc.text(
-      `Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`,
+      `Pág. ${pageNumber}  •  Generado: ${formatBogotaFechaHora(new Date())}`,
       0,
       H - 25,
       { align: 'right', width: W - 30 },

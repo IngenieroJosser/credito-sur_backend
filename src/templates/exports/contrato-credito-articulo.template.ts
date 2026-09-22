@@ -19,6 +19,10 @@
 import * as PDFDocument from 'pdfkit';
 import * as fs from 'fs';
 import * as path from 'path';
+import {
+  formatBogotaFecha,
+  formatBogotaFechaHora,
+} from '../../utils/date-utils';
 
 // ─── Constantes de empresa ────────────────────────────────────────────────────
 
@@ -496,7 +500,7 @@ export async function generarContratoPDF(
   // ── LUGAR Y FECHA DE FIRMA ───────────────────────────────────────────────────
   checkPage(160);
   y += 18;
-  const lugarFechaText = `${CONTRATO_EMPRESA.ciudad}, ${data.fechaContrato || new Date().toLocaleDateString('es-CO')}`;
+  const lugarFechaText = `${CONTRATO_EMPRESA.ciudad}, ${data.fechaContrato || formatBogotaFecha(new Date())}`;
   doc
     .font('Helvetica-Bold')
     .fontSize(10.5)
@@ -552,7 +556,7 @@ export async function generarContratoPDF(
       .fillColor(C.GRIS_MED)
       .text(
         `Créditos del Sur  •  NIT 1077475327-2  •  ${CONTRATO_EMPRESA.ciudad}  •  ` +
-          `Contrato N° ${data.numeroPrestamo}  •  Generado: ${new Date().toLocaleString('es-CO')}`,
+          `Contrato N° ${data.numeroPrestamo}  •  Generado: ${formatBogotaFechaHora(new Date())}`,
         0,
         PH - 28,
         { align: 'center', width: PW },

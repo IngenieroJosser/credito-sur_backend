@@ -16,6 +16,7 @@ import {
   esRiesgoCriticoExport,
   etiquetaNivelRiesgoExport,
 } from './riesgo-labels';
+import { formatBogotaFechaHora } from '../../utils/date-utils';
 
 // ─── Paleta corporativa ────────────────────────────────────────────────────────
 const COLOR = {
@@ -164,7 +165,7 @@ export async function generarExcelMora(
   // Fila 3: Metadatos
   ws.mergeCells('A3:D3');
   ws.getCell('A3').value =
-    `Fecha de Generación: ${new Date().toLocaleString('es-CO')}`;
+    `Fecha de Generación: ${formatBogotaFechaHora(new Date())}`;
   ws.getCell('A3').font = { size: 9, color: { argb: COLOR.grisTexto } };
   ws.mergeCells('E3:H3');
   ws.getCell('E3').value =
@@ -599,7 +600,7 @@ export async function generarPDFMora(
     const H = doc.page.height;
     doc.fontSize(7).font('Helvetica').fillColor(GRIS_MED);
     doc.text(
-      `Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`,
+      `Pág. ${pageNumber}  •  Generado: ${formatBogotaFechaHora(new Date())}`,
       0,
       H - 25,
       { align: 'right', width: W - 30 },

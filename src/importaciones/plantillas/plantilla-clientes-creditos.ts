@@ -158,7 +158,7 @@ const COLUMNAS_CLIENTES: ColumnaPlantilla[] = [
   { header: 'Teléfono*', key: 'telefono', width: 16 },
   // Opcionales, de lo más útil a lo que casi no se usa
   { header: 'Dirección', key: 'direccion', width: 28 },
-  { header: 'Ruta código', key: 'ruta_codigo', width: 14 },
+  { header: 'Ruta código*', key: 'ruta_codigo', width: 14 },
   { header: 'Punto de referencia', key: 'referencia', width: 24 },
   { header: 'Ref1 Nombre', key: 'referencia1_nombre', width: 20 },
   { header: 'Ref1 Teléfono', key: 'referencia1_telefono', width: 16 },
@@ -1253,7 +1253,10 @@ export async function generarPlantillaClientesCreditos(
     ['CC cliente*', '12345678'],
     ['Nombres* / Apellidos*', 'Juan Carlos / Pérez Gómez'],
     ['Teléfono*', '3001234567'],
-    ['Ruta código', 'El código de la ruta, si va a quedar asignado a una'],
+    [
+      'Ruta código*',
+      'El código de la ruta donde se le va a cobrar. Es obligatorio: sin ruta nadie sale a cobrarle.',
+    ],
     ['El resto', 'Opcional: correo, dirección, referencias'],
     ['', ''],
 

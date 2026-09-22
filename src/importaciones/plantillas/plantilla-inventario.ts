@@ -37,7 +37,7 @@ const COLUMNAS_CALCULADAS_POR_OPCION = 2;
  * Los precios a crédito van pegados a lo obligatorio: son la razón de ser del
  * artículo en este negocio, y quien llena la fila los tiene a mano.
  */
-const PRIMERA_COLUMNA_OPCION = 7;
+const PRIMERA_COLUMNA_OPCION = 9;
 
 /** Lo opcional arranca donde terminan las opciones de plazo. */
 const PRIMERA_COLUMNA_OPCIONAL =
@@ -50,7 +50,9 @@ const COL = {
   nombre: 3,
   categoria: 4,
   costo: 5,
-  precioContado: 6,
+  rentabilidadObjetivo: 6,
+  precioSugerido: 7,
+  precioContado: 8,
   // (aquí van las opciones de plazo)
   // Opcionales, de lo más útil a lo que casi no se usa
   stock: PRIMERA_COLUMNA_OPCIONAL,
@@ -101,6 +103,19 @@ function construirColumnas(): ColumnaPlantilla[] {
       header: 'Costo unitario*',
       key: 'costo',
       width: 15,
+      numFmt: FORMATO_MONEDA,
+    },
+    {
+      header: 'Rentabilidad deseada',
+      key: 'rentabilidad_objetivo',
+      width: 17,
+      numFmt: FORMATO_PORCENTAJE,
+    },
+    {
+      header: 'Precio sugerido (automático)',
+      key: 'precio_sugerido',
+      width: 19,
+      automatica: true,
       numFmt: FORMATO_MONEDA,
     },
     {
@@ -183,6 +198,24 @@ function construirColumnas(): ColumnaPlantilla[] {
 }
 
 const ref = (columna: number) => `$${colLetra(columna)}{f}`;
+
+/**
+ * Sugiere el precio de venta a partir del margen deseado sobre la venta.
+ *
+ * Ejemplo: costo $187.000 y margen 30% => 187.000 / (1 - 30%) = $267.143.
+ * La sugerencia no reemplaza el precio de contado: queda visible al lado para
+ * que quien diligencia decida si lo usa o lo redondea comercialmente.
+ */
+function formulaPrecioSugerido(ws: ExcelJS.Worksheet, filas: number) {
+  const costo = ref(COL.costo);
+  const margen = ref(COL.rentabilidadObjetivo);
+  formulaEnColumna(
+    ws,
+    COL.precioSugerido,
+    `IF(OR(${costo}="",${margen}="",${margen}<0,${margen}>=1),"",ROUND(${costo}/(1-${margen}),0))`,
+    filas,
+  );
+}
 
 /** Utilidad de la venta de contado: precio menos costo, en pesos y en porcentaje. */
 function formulasUtilidadContado(ws: ExcelJS.Worksheet, filas: number) {
@@ -275,7 +308,19 @@ export async function construirHojaArticulos(
     colLetra(ULTIMA_COLUMNA),
   );
 
-  etiquetarGrupo(ws, COL.codigo, COL.precioContado, 'DATOS OBLIGATORIOS');
+  etiquetarGrupo(ws, COL.codigo, COL.costo, 'DATOS OBLIGATORIOS');
+  etiquetarGrupo(
+    ws,
+    COL.rentabilidadObjetivo,
+    COL.precioSugerido,
+    'ASISTENTE DE RENTABILIDAD',
+  );
+  etiquetarGrupo(
+    ws,
+    COL.precioContado,
+    COL.precioContado,
+    'PRECIO OBLIGATORIO',
+  );
   etiquetarGrupo(ws, COL.stock, COL.activo, 'DATOS OPCIONALES');
   etiquetarGrupo(ws, COL.revision, COL.revision, 'VERIFICACIÓN');
   etiquetarGrupo(
@@ -285,6 +330,7 @@ export async function construirHojaArticulos(
     'UTILIDAD DE CONTADO',
   );
 
+  formulaPrecioSugerido(ws, filas);
   formulasUtilidadContado(ws, filas);
 
   // La captura de cada opción y su rentabilidad viven en bloques separados:
@@ -329,6 +375,20 @@ export function agregarValoresInventario(
   listaDesplegable(wsArticulos, COL.accion, 'Valores!$A$2:$A$3', true, filas);
   listaDesplegable(wsArticulos, COL.activo, 'Valores!$B$2:$B$3', true, filas);
 
+  const columnaRentabilidad = colLetra(COL.rentabilidadObjetivo);
+  (wsArticulos as any).dataValidations.add(
+    `${columnaRentabilidad}7:${columnaRentabilidad}${filas}`,
+    {
+      type: 'decimal',
+      operator: 'between',
+      allowBlank: true,
+      formulae: [0, 0.99],
+      showErrorMessage: true,
+      errorTitle: 'Rentabilidad no válida',
+      error: 'Escriba un porcentaje entre 0% y 99%.',
+    },
+  );
+
   return ws;
 }
 
@@ -351,6 +411,12 @@ export function escribirFilaArticulo(
     opciones: Array<{ meses: number; precio: number }>;
   },
 ) {
+  if (articulo.opciones.length > MAX_OPCIONES_PLAZO) {
+    throw new Error(
+      `El artículo ${articulo.codigo} tiene ${articulo.opciones.length} plazos y la plantilla admite ${MAX_OPCIONES_PLAZO}. No se generó el archivo para evitar perder precios.`,
+    );
+  }
+
   const fila = ws.getRow(numeroFila);
   fila.getCell(COL.accion).value = 'CREAR';
   fila.getCell(COL.codigo).value = articulo.codigo;
@@ -361,13 +427,17 @@ export function escribirFilaArticulo(
   fila.getCell(COL.modelo).value = articulo.modelo || '';
   fila.getCell(COL.costo).value = articulo.costo;
   if (articulo.precioContado !== null && articulo.precioContado !== undefined) {
+    if (articulo.precioContado > 0) {
+      fila.getCell(COL.rentabilidadObjetivo).value =
+        (articulo.precioContado - articulo.costo) / articulo.precioContado;
+    }
     fila.getCell(COL.precioContado).value = articulo.precioContado;
   }
   fila.getCell(COL.stock).value = articulo.stock;
   fila.getCell(COL.stockMinimo).value = articulo.stockMinimo;
   fila.getCell(COL.activo).value = articulo.activo ? 'SI' : 'NO';
 
-  articulo.opciones.slice(0, MAX_OPCIONES_PLAZO).forEach((opcion, indice) => {
+  articulo.opciones.forEach((opcion, indice) => {
     const columnas = columnasDeOpcion(indice + 1);
     fila.getCell(columnas.meses).value = opcion.meses;
     fila.getCell(columnas.precio).value = opcion.precio;
@@ -392,7 +462,7 @@ export async function generarPlantillaInventario(): Promise<{
     'Escriba los datos desde la fila 7 hacia abajo.',
     '',
     '# Qué es obligatorio',
-    'Las primeras cinco columnas: Código, Nombre del artículo, Categoría, Costo unitario y Precio contado.',
+    'Los campos obligatorios son Código, Nombre del artículo, Categoría, Costo unitario y Precio contado.',
     'Todo artículo debe poder venderse de contado, por eso su precio es obligatorio.',
     '',
     '# Corregir algo que ya está en el sistema',
@@ -405,8 +475,13 @@ export async function generarPlantillaInventario(): Promise<{
     'Activo: se asume SI si se deja vacío.',
     '',
     '# Opciones de crédito',
-    'Cada artículo admite hasta 3 plazos. Escriba los meses y el precio total para ese plazo (por ejemplo: 3 meses / $650.000).',
+    `Cada artículo admite hasta ${MAX_OPCIONES_PLAZO} plazos. Escriba los meses y el precio total para ese plazo (por ejemplo: 3 meses / $650.000).`,
     'Use solo las opciones que necesite; las que deje vacías se ignoran. No repita el mismo número de meses en un artículo.',
+    '',
+    '# Asistente de rentabilidad',
+    'La rentabilidad deseada es opcional. Escríbala como porcentaje (por ejemplo, 30%) y Excel sugerirá el precio que deja ese margen sobre la venta.',
+    'La fórmula es costo / (1 - rentabilidad). Un costo de $187.000 con 30% sugiere $267.143.',
+    'El precio sugerido es una guía: copie o redondee el valor en Precio contado, que sí es obligatorio y es el que se importa.',
     '',
     '# Utilidad automática (columnas grises)',
     'Al final de la hoja Excel calcula, para el contado y para cada plazo, la utilidad en pesos: precio de venta menos costo.',
@@ -422,8 +497,7 @@ export async function generarPlantillaInventario(): Promise<{
   ]);
 
   const ws = await construirHojaArticulos(workbook, {
-    subtitulo:
-      'Una fila por artículo: datos del producto, precio de contado y hasta 3 opciones de plazo.',
+    subtitulo: `Una fila por artículo: datos del producto, precio de contado y hasta ${MAX_OPCIONES_PLAZO} opciones de plazo.`,
     instruccion:
       '📝 Escriba los datos desde la fila 7 hacia abajo. Las columnas grises se calculan solas.',
     filas: FILAS_PREPARADAS,
