@@ -300,7 +300,7 @@ export async function generarExcelClientesCreditosImportable(
     { header: 'Ref1 Teléfono', key: 'referencia1_telefono', width: 20 },
     { header: 'Ref2 Nombre', key: 'referencia2_nombre', width: 25 },
     { header: 'Ref2 Teléfono', key: 'referencia2_telefono', width: 20 },
-    { header: 'Ruta código', key: 'ruta_codigo', width: 15 },
+    { header: 'Ruta código*', key: 'ruta_codigo', width: 15 },
   ];
   setColumnsAtRowSix(wsClientes, columnasClientes);
   formatHeader(

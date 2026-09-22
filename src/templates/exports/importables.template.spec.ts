@@ -9,7 +9,9 @@ const prismaVacio = () =>
   ({
     cliente: { findMany: jest.fn().mockResolvedValue([]) },
     producto: { findMany: jest.fn().mockResolvedValue([]) },
-    ruta: { findMany: jest.fn().mockResolvedValue([]) },
+    ruta: {
+      findMany: jest.fn().mockResolvedValue([{ codigo: 'R-CENTRO' }]),
+    },
     prestamo: { findMany: jest.fn().mockResolvedValue([]) },
     pago: { findMany: jest.fn().mockResolvedValue([]) },
     // La validación arma la vista previa del movimiento de caja y para
@@ -60,6 +62,7 @@ const clienteBase = {
   telefono: '3000000000',
   correo: 'cliente@example.com',
   nivelRiesgo: 'VERDE',
+  rutaCodigo: 'R-CENTRO',
 };
 
 describe('Plantillas importables de exportacion', () => {
