@@ -11,6 +11,10 @@ import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
 import * as fs from 'fs';
 import * as path from 'path';
+import {
+  formatBogotaFecha,
+  formatBogotaFechaHora,
+} from '../../utils/date-utils';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -71,7 +75,7 @@ const C = {
 function fmtFecha(f: Date | string): string {
   if (!f) return '';
   const d = f instanceof Date ? f : new Date(f);
-  return isNaN(d.getTime()) ? String(f) : d.toLocaleDateString('es-CO');
+  return isNaN(d.getTime()) ? String(f) : formatBogotaFecha(d);
 }
 
 function fmtCOP(val: number): string {
@@ -240,7 +244,7 @@ export async function generarExcelPagos(
   ws.getRow(5).height = 18;
   ws.mergeCells('A5:F5');
   const metaL = ws.getCell('A5');
-  metaL.value = `Generado: ${new Date().toLocaleString('es-CO')}  |  Período: ${fecha}`;
+  metaL.value = `Generado: ${formatBogotaFechaHora(new Date())}  |  Período: ${fecha}`;
   metaL.font = { size: 9, color: { argb: C.GRIS_MED }, name: 'Calibri' };
   metaL.alignment = { horizontal: 'left', vertical: 'middle' };
   metaL.fill = solidFill(C.GRIS_FONDO);
@@ -764,7 +768,7 @@ export async function generarPDFPagos(
     const H = doc.page.height;
     doc.fontSize(7).font('Helvetica').fillColor(GRIS_MED);
     doc.text(
-      `Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`,
+      `Pág. ${pageNumber}  •  Generado: ${formatBogotaFechaHora(new Date())}`,
       0,
       H - 25,
       { align: 'right', width: W - 30 },

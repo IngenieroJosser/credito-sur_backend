@@ -111,6 +111,39 @@ export function formatBogotaDateTimeLocalInput(date: Date): string {
   return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
 }
 
+/**
+ * Fecha en formato colombiano (d/m/aaaa) SIEMPRE en hora de Bogota.
+ *
+ * `toLocaleDateString('es-CO')` a secas usa el reloj del proceso, y en el
+ * servidor ese reloj es UTC: todo lo registrado despues de las 7 p. m. de
+ * Bogota ya es el dia siguiente en UTC y salia "corrido" un dia en los
+ * reportes y las exportaciones.
+ */
+export function formatBogotaFecha(value: Date | string | number): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('es-CO', {
+    timeZone: BOGOTA_TZ,
+    day: 'numeric',
+    month: 'numeric',
+    year: 'numeric',
+  }).format(date);
+}
+
+/** Igual que `formatBogotaFecha` pero con la hora, para sellos de "generado el". */
+export function formatBogotaFechaHora(value: Date | string | number): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('es-CO', {
+    timeZone: BOGOTA_TZ,
+    day: 'numeric',
+    month: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
+}
+
 export function getBogotaDayKey(date: Date = new Date()): string {
   const parts = getBogotaPartsIntl(date);
   if (!parts) return '';

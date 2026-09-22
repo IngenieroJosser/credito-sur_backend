@@ -14,6 +14,10 @@ import {
   claveColorRiesgoExport,
   etiquetaNivelRiesgoExport,
 } from './riesgo-labels';
+import {
+  formatBogotaFecha,
+  formatBogotaFechaHora,
+} from '../../utils/date-utils';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -107,7 +111,7 @@ export async function generarExcelClientes(
 
   // Metadata
   const metaRow = ws.addRow([
-    `Generado: ${new Date().toLocaleString('es-CO')}   |   Total clientes: ${filas.length}`,
+    `Generado: ${formatBogotaFechaHora(new Date())}   |   Total clientes: ${filas.length}`,
   ]);
   metaRow.font = { italic: true, size: 9, color: { argb: 'FF64748B' } };
   ws.mergeCells('A3:N3');
@@ -153,9 +157,7 @@ export async function generarExcelClientes(
       montoTotal: fila.montoTotal, // Keep as number for formula
       montoMora: fila.montoMora, // Keep as number for formula
       rutaNombre: fila.rutaNombre || 'Sin ruta',
-      creadoEn: fila.creadoEn
-        ? new Date(fila.creadoEn).toLocaleDateString('es-CO')
-        : '',
+      creadoEn: fila.creadoEn ? formatBogotaFecha(new Date(fila.creadoEn)) : '',
     });
 
     // Dar formato de moneda a las columnas de dinero
@@ -335,7 +337,7 @@ export async function generarPDFClientes(
       .fontSize(10)
       .font('Helvetica-Bold')
       .fillColor(AZUL_DARK)
-      .text(new Date().toLocaleDateString('es-CO'), W - 180, 40, {
+      .text(formatBogotaFecha(new Date()), W - 180, 40, {
         width: 148,
         align: 'center',
       });
@@ -396,7 +398,7 @@ export async function generarPDFClientes(
     const H = doc.page.height;
     doc.fontSize(7).font('Helvetica').fillColor(GRIS_MED);
     doc.text(
-      `Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`,
+      `Pág. ${pageNumber}  •  Generado: ${formatBogotaFechaHora(new Date())}`,
       0,
       H - 25,
       { align: 'right', width: W - 30 },

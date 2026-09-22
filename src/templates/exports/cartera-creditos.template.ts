@@ -19,6 +19,10 @@ import {
   claveColorRiesgoExport,
   etiquetaNivelRiesgoExport,
 } from './riesgo-labels';
+import {
+  formatBogotaFecha,
+  formatBogotaFechaHora,
+} from '../../utils/date-utils';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -92,7 +96,7 @@ function colHdr(cell: ExcelJS.Cell, colNumber?: number): void {
 function fmtF(f: Date | string | undefined): string {
   if (!f) return '';
   const d = f instanceof Date ? f : new Date(f);
-  return isNaN(d.getTime()) ? String(f) : d.toLocaleDateString('es-CO');
+  return isNaN(d.getTime()) ? String(f) : formatBogotaFecha(d);
 }
 
 // ─── Generador Excel ──────────────────────────────────────────────────────────
@@ -203,7 +207,7 @@ export async function generarExcelCartera(
 
   // F3 — Metadata
   ws.mergeCells('A3:G3');
-  ws.getCell('A3').value = `Generado: ${new Date().toLocaleString('es-CO')}`;
+  ws.getCell('A3').value = `Generado: ${formatBogotaFechaHora(new Date())}`;
   ws.getCell('A3').font = { size: 9, color: { argb: 'FF475569' } };
   ws.mergeCells('H3:T3');
   ws.getCell('H3').value =
@@ -755,7 +759,7 @@ export async function generarPDFCartera(
     const H = doc.page.height;
     doc.fontSize(7).font('Helvetica').fillColor(GRIS_MED);
     doc.text(
-      `Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`,
+      `Pág. ${pageNumber}  •  Generado: ${formatBogotaFechaHora(new Date())}`,
       0,
       H - 25,
       { align: 'right', width: W - 30 },

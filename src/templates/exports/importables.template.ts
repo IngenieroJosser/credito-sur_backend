@@ -6,6 +6,7 @@ import {
 } from '../../importaciones/plantillas/plantilla-inventario';
 import { forzarRecalculo } from '../../importaciones/plantillas/plantillas.util';
 import { etiquetaTipoAmortizacion } from '../../importaciones/interes-credito';
+import { getBogotaDayKey } from '../../utils/date-utils';
 
 export interface InventarioImportableArticulo {
   codigo: string;
@@ -88,7 +89,7 @@ function dateKey(value: Date | string | null | undefined): string {
   }
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toISOString().slice(0, 10);
+  return getBogotaDayKey(d);
 }
 
 function _riesgoImportable(nivel?: string | null): string {

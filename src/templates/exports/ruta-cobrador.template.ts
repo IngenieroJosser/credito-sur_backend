@@ -21,6 +21,7 @@ import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
 import * as fs from 'fs';
 import * as path from 'path';
+import { formatBogotaFechaHora } from '../../utils/date-utils';
 
 export interface RutaCobradorRow {
   nro: number;
@@ -321,7 +322,7 @@ export async function generarPDFRutaCobrador(
       .font('Helvetica')
       .fillColor(C.GRIS_MED)
       .text(
-        `Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`,
+        `Pág. ${pageNumber}  •  Generado: ${formatBogotaFechaHora(new Date())}`,
         0,
         PH - 25,
         { align: 'right', width: PW - 30 },

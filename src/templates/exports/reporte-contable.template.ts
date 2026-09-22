@@ -10,6 +10,10 @@ import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
 import * as fs from 'fs';
 import * as path from 'path';
+import {
+  formatBogotaFecha,
+  formatBogotaFechaHora,
+} from '../../utils/date-utils';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -85,7 +89,7 @@ export async function generarExcelContable(
   ws1.mergeCells('A1:K1');
 
   const s1 = ws1.addRow([
-    `Generado: ${new Date().toLocaleString('es-CO')}   |   Total cajas: ${cajas.length}`,
+    `Generado: ${formatBogotaFechaHora(new Date())}   |   Total cajas: ${cajas.length}`,
   ]);
   s1.font = { italic: true, size: 9, color: { argb: 'FF64748B' } };
   ws1.mergeCells('A2:K2');
@@ -233,7 +237,7 @@ export async function generarExcelContable(
 
   transacciones.forEach((t, idx) => {
     const row = ws2.addRow({
-      fecha: t.fecha ? new Date(t.fecha).toLocaleString('es-CO') : '',
+      fecha: t.fecha ? formatBogotaFechaHora(new Date(t.fecha)) : '',
       tipo: t.tipo,
       tipoCaja: t.tipoCaja || '-',
       monto: t.monto,
@@ -372,7 +376,7 @@ export async function generarPDFContable(
       .fontSize(10)
       .font('Helvetica-Bold')
       .fillColor(AZUL_DARK)
-      .text(new Date().toLocaleDateString('es-CO'), W - 180, 40, {
+      .text(formatBogotaFecha(new Date()), W - 180, 40, {
         width: 148,
         align: 'center',
       });
@@ -423,7 +427,7 @@ export async function generarPDFContable(
     const H = doc.page.height;
     doc.fontSize(7).font('Helvetica').fillColor(GRIS_MED);
     doc.text(
-      `Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`,
+      `Pág. ${pageNumber}  •  Generado: ${formatBogotaFechaHora(new Date())}`,
       0,
       H - 25,
       { align: 'right', width: W - 30 },
@@ -587,7 +591,7 @@ export async function generarPDFContable(
   transacciones.forEach((t, i) => {
     let maxRowHeight = 17;
     const vals = [
-      t.fecha ? new Date(t.fecha).toLocaleString('es-CO') : '',
+      t.fecha ? formatBogotaFechaHora(new Date(t.fecha)) : '',
       t.tipo || '',
       fmtCOP(t.monto || 0),
       t.descripcion || '',

@@ -14,6 +14,10 @@ import {
   claveColorRiesgoExport,
   etiquetaNivelRiesgoExport,
 } from './riesgo-labels';
+import {
+  formatBogotaFecha,
+  formatBogotaFechaHora,
+} from '../../utils/date-utils';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -125,7 +129,7 @@ export async function generarExcelVencidas(
 
   // Fila 3: Fecha y metadata
   ws.mergeCells('A3:E3');
-  ws.getCell('A3').value = `Generado: ${new Date().toLocaleString('es-CO')}`;
+  ws.getCell('A3').value = `Generado: ${formatBogotaFechaHora(new Date())}`;
   ws.getCell('A3').font = { size: 9, color: { argb: 'FF475569' } };
   ws.mergeCells('F3:K3');
   ws.getCell('F3').value =
@@ -401,7 +405,7 @@ export async function generarPDFVencidas(
       .fontSize(10)
       .font('Helvetica-Bold')
       .fillColor(PURPLE_DARK)
-      .text(new Date().toLocaleDateString('es-CO'), W - 180, 40, {
+      .text(formatBogotaFecha(new Date()), W - 180, 40, {
         width: 148,
         align: 'center',
       });
@@ -459,7 +463,7 @@ export async function generarPDFVencidas(
     const H = doc.page.height;
     doc.fontSize(7).font('Helvetica').fillColor(GRIS_MED);
     doc.text(
-      `Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`,
+      `Pág. ${pageNumber}  •  Generado: ${formatBogotaFechaHora(new Date())}`,
       0,
       H - 25,
       { align: 'right', width: W - 30 },

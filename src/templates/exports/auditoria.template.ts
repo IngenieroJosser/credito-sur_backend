@@ -10,6 +10,10 @@ import * as ExcelJS from 'exceljs';
 import * as PDFDocument from 'pdfkit';
 import * as fs from 'fs';
 import * as path from 'path';
+import {
+  formatBogotaFecha,
+  formatBogotaFechaHora,
+} from '../../utils/date-utils';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -63,7 +67,7 @@ export async function generarExcelAuditoria(
 
   // Subtítulo
   const subRow = ws.addRow([
-    `Generado: ${new Date().toLocaleString('es-CO')}   |   Total registros: ${filas.length}`,
+    `Generado: ${formatBogotaFechaHora(new Date())}   |   Total registros: ${filas.length}`,
   ]);
   subRow.font = { italic: true, size: 9, color: { argb: 'FF64748B' } };
   ws.mergeCells('A2:G2');
@@ -89,7 +93,7 @@ export async function generarExcelAuditoria(
   // Datos
   filas.forEach((fila, idx) => {
     const row = ws.addRow({
-      fecha: fila.fecha ? new Date(fila.fecha).toLocaleString('es-CO') : '',
+      fecha: fila.fecha ? formatBogotaFechaHora(new Date(fila.fecha)) : '',
       usuario: fila.usuario || '',
       accion: fila.accion?.replace(/_/g, ' ') || '',
       entidad: fila.entidad || '',
@@ -214,7 +218,7 @@ export async function generarPDFAuditoria(
       .fontSize(10)
       .font('Helvetica-Bold')
       .fillColor(SLATE_DARK)
-      .text(new Date().toLocaleDateString('es-CO'), W - 180, 40, {
+      .text(formatBogotaFecha(new Date()), W - 180, 40, {
         width: 148,
         align: 'center',
       });
@@ -262,7 +266,7 @@ export async function generarPDFAuditoria(
     const H = doc.page.height;
     doc.fontSize(7).font('Helvetica').fillColor(GRIS_MED);
     doc.text(
-      `Pág. ${pageNumber}  •  Generado: ${new Date().toLocaleString('es-CO')}`,
+      `Pág. ${pageNumber}  •  Generado: ${formatBogotaFechaHora(new Date())}`,
       0,
       H - 25,
       { align: 'right', width: W - 30 },
@@ -319,7 +323,7 @@ export async function generarPDFAuditoria(
         : '';
 
     const vals = [
-      fila.fecha ? new Date(fila.fecha).toLocaleString('es-CO') : '',
+      fila.fecha ? formatBogotaFechaHora(new Date(fila.fecha)) : '',
       fila.usuario || '',
       fila.accion?.replace(/_/g, ' ') || '',
       fila.entidad || '',
