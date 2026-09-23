@@ -1,5 +1,11 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
-import { EstadoAprobacion, RolUsuario, TipoTransaccion } from '@prisma/client';
+import {
+  EstadoAprobacion,
+  FrecuenciaPago,
+  RolUsuario,
+  TipoAmortizacion,
+  TipoTransaccion,
+} from '@prisma/client';
 import { LoansService } from './loans.service';
 
 const mockNotifications = {
@@ -2236,6 +2242,87 @@ describe('LoansService calcularInteresPlano', () => {
     expect(result.tabla.at(-1)?.monto).toBe(458337);
     expect(result.tabla.at(-1)?.saldoRestante).toBe(0);
   });
+});
+
+/**
+ * Los mismos casos que `__tests__/lib/interes.test.ts` del frontend.
+ *
+ * `lib/interes.ts` del frontend es una copia a mano de esta formula: el
+ * formulario tiene que mostrar el interes mientras se escribe, sin preguntarle
+ * al servidor en cada tecla. El frontend ya fijaba estos catorce valores; aqui
+ * no habia mas que dos aserciones sueltas, asi que se podia cambiar la formula
+ * del servidor y dejar la suite en verde mientras la pantalla seguia mostrando
+ * la cifra vieja.
+ *
+ * Con los mismos valores en los dos lados, tocar uno solo rompe una prueba.
+ * Si la regla cambia de verdad, hay que cambiar las dos a la vez.
+ */
+describe('LoansService interes: mismos valores que el frontend', () => {
+  /** El interes plano no depende del numero de cuotas; se pasa 1 por pasar algo. */
+  const plano = (capital: number, tasa: number) =>
+    (makeService(null) as any).calcularInteresPlano(capital, tasa, 1)
+      .interesTotal;
+
+  /**
+   * Interes simple: se pide al propio servicio, no se recalcula aqui.
+   *
+   * Reimplementar la formula en la prueba la dejaria comprobandose a si misma
+   * y el dia que cambiara el servicio esta seguiria en verde.
+   */
+  const simple = (capital: number, tasa: number, meses: number) =>
+    (makeService(null) as any).calculateInterestAndCuotas(
+      TipoAmortizacion.INTERES_SIMPLE,
+      capital,
+      tasa,
+      1,
+      meses,
+      FrecuenciaPago.MENSUAL,
+      new Date('2026-01-01T00:00:00Z'),
+    ).interesTotal;
+
+  it('aplica la tasa una sola vez en interes plano', () => {
+    expect(plano(100, 29)).toBe(29);
+    expect(plano(1000, 2.3)).toBe(23);
+    expect(plano(500000, 29)).toBe(145000);
+    expect(plano(500000, 10)).toBe(50000);
+  });
+
+  it('trunca, no redondea', () => {
+    expect(plano(300, 33.33)).toBe(99);
+    expect(plano(650000, 33.33)).toBe(216645);
+    expect(plano(1000, 2.35)).toBe(23);
+  });
+
+  it('aplica la tasa por cada mes en interes simple', () => {
+    expect(simple(100, 29, 1)).toBe(29);
+    expect(simple(500000, 10, 2)).toBe(100000);
+  });
+
+  it('cuenta minimo un mes, para que un plazo en cero no anule el interes', () => {
+    expect(simple(500000, 10, 0)).toBe(50000);
+  });
+
+  it('devuelve cero sin capital o sin tasa', () => {
+    expect(plano(0, 29)).toBe(0);
+    expect(plano(500000, 0)).toBe(0);
+    expect(simple(500000, 0, 6)).toBe(0);
+  });
+
+  /**
+   * El frontend tambien comprueba que un capital NEGATIVO de cero, y aqui no:
+   * con -100 al 29% por 3 meses este servicio devuelve -87. La diferencia es
+   * real pero no se alcanza desde la aplicacion, y por eso no se "arregla":
+   *
+   *  - `calcularInteresPlano` si corta en capital <= 0; la rama de interes
+   *    simple no.
+   *  - Los DTO de crear y editar llevan @Min(0), y el credito de articulo pasa
+   *    por Math.max(0, precio - cuota inicial).
+   *  - La unica puerta abierta es POST /loans/simular, que recibe `@Body() body:
+   *    any` sin DTO. Devuelve una proyeccion absurda y no guarda nada.
+   *
+   * El frontend corta en capital <= 0 porque un formulario si tiene valores a
+   * medio escribir mientras se teclea. Por eso ese caso es suyo y no comun.
+   */
 });
 
 describe('LoansService role scoping', () => {
