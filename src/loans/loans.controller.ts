@@ -430,10 +430,6 @@ export class LoansController {
     },
   })
   async createLoan(@Body() createLoanDto: CreateLoanDto, @Request() req) {
-    console.log(
-      '[CONTROLLER DEBUG] createLoan received:',
-      JSON.stringify(createLoanDto),
-    );
     // Obtener usuario del request (JWT)
     const usuarioId = req.user.id;
 
