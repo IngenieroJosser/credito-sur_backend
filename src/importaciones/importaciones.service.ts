@@ -2073,7 +2073,13 @@ export class ImportacionesService {
                   interesPagado: avance.interesPagado,
                   estado: estadoPrestamo,
                   garantia: cred.garantia || null,
-                  notas: cred.notas || null,
+                  // Queda constancia de que este credito vino de una carga
+                // historica. Sus cuotas pagadas no tienen Pago ni recibo
+                // detras, a proposito, y sin esta marca eso parece un dato
+                // perdido. `isHistorica` ya distingue HISTORICA+NO de una
+                // carga operativa, que si desembolsa y si mueve caja.
+                cargaHistoricaEn: isHistorica ? new Date() : null,
+                notas: cred.notas || null,
                   cuotaInicial: cred.cuotaInicial || 0,
                 },
               });
@@ -2143,6 +2149,12 @@ export class ImportacionesService {
                 cuotaInicial: cred.cuotaInicial || 0,
                 estadoSincronizacion: 'PENDIENTE',
                 garantia: cred.garantia || null,
+                // Queda constancia de que este credito vino de una carga
+                // historica. Sus cuotas pagadas no tienen Pago ni recibo
+                // detras, a proposito, y sin esta marca eso parece un dato
+                // perdido. `isHistorica` ya distingue HISTORICA+NO de una
+                // carga operativa, que si desembolsa y si mueve caja.
+                cargaHistoricaEn: isHistorica ? new Date() : null,
                 notas: cred.notas || null,
               },
             });

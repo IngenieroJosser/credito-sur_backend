@@ -320,19 +320,32 @@ model Prestamo {
   cuotaInicial         Decimal              @default(0) @db.Decimal(12, 2)
   notas                String?
   garantia             String?
+
+  /// Cuando se cargo este credito desde el historico, si fue asi.
+  ///
+  /// Un credito de carga HISTORICA es cartera que ya se venia cobrando antes
+  /// de que existiera el sistema. Sus cuotas pagadas se marcan como tales,
+  /// pero NO tienen Pago ni recibo detras, y no movieron caja ni generaron
+  /// asientos: ese dinero se recibio antes, y registrarlo hoy descuadraria la
+  /// contabilidad.
+  ///
+  /// Sin esta marca ese credito es indistinguible de uno normal, y quien vea
+  /// cuotas en PAGADA sin ningun recibo detras pensara que se perdieron datos.
+  /// Null = credito nacido en el sistema.
+  cargaHistoricaEn DateTime?
   // Ruta a la que pertenece ESTE credito. Antes la ruta se deducia del
   // cliente, asi que todos sus creditos caian forzosamente en la misma.
-  rutaId               String?
-  pagos                Pago[]
-  aprobadoPor          Usuario?             @relation("PrestamoAprobadoPor", fields: [aprobadoPorId], references: [id])
-  cliente              Cliente              @relation(fields: [clienteId], references: [id])
-  creadoPor            Usuario              @relation("PrestamoCreadoPor", fields: [creadoPorId], references: [id])
-  precioProducto       PrecioProducto?      @relation("PrecioProductoPrestamos", fields: [precioProductoId], references: [id])
-  producto             Producto?            @relation(fields: [productoId], references: [id])
-  cuotas               Cuota[]
-  extensiones          ExtensionPago[]
-  archivos             Multimedia[]         @relation("MultimediaPrestamo")
-  ruta                 Ruta?                @relation(fields: [rutaId], references: [id])
+  rutaId           String?
+  pagos            Pago[]
+  aprobadoPor      Usuario?        @relation("PrestamoAprobadoPor", fields: [aprobadoPorId], references: [id])
+  cliente          Cliente         @relation(fields: [clienteId], references: [id])
+  creadoPor        Usuario         @relation("PrestamoCreadoPor", fields: [creadoPorId], references: [id])
+  precioProducto   PrecioProducto? @relation("PrecioProductoPrestamos", fields: [precioProductoId], references: [id])
+  producto         Producto?       @relation(fields: [productoId], references: [id])
+  cuotas           Cuota[]
+  extensiones      ExtensionPago[]
+  archivos         Multimedia[]    @relation("MultimediaPrestamo")
+  ruta             Ruta?           @relation(fields: [rutaId], references: [id])
 
   /// Lote de importacion del que salio este registro, si vino de uno.
   /// Permite decir de forma explicita "proviene de la importacion X" y hace
@@ -1314,7 +1327,7 @@ model ImportacionLote {
   creadoEn      DateTime          @default(now())
   confirmadoEn  DateTime?
 
-  creadoPor Usuario   @relation(fields: [creadoPorId], references: [id])
+  creadoPor Usuario    @relation(fields: [creadoPorId], references: [id])
   clientes  Cliente[]
   prestamos Prestamo[]
 
