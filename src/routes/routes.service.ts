@@ -3029,7 +3029,7 @@ export class RoutesService {
           data: { cobradorId: assignmentCobradorId },
         });
 
-        return tx.asignacionRuta.findFirstOrThrow({
+        const creada = await tx.asignacionRuta.findFirst({
           where: { clienteId, rutaId, activa: true },
           include: {
             cliente: {
@@ -3043,6 +3043,23 @@ export class RoutesService {
             },
           },
         });
+
+        // Aqui antes habia un findFirstOrThrow. Cuando el cliente no tiene
+        // ningun credito no se crea asignacion -se derivan de los creditos,
+        // ver sincronizar-asignaciones.ts-, asi que lanzaba el P2025 de Prisma
+        // y el filtro global lo traducia a "El registro que intenta modificar
+        // ya no existe. Puede que alguien lo haya eliminado mientras usted
+        // trabajaba". El cliente SI existe: el coordinador se quedaba buscando
+        // un borrado que nunca ocurrio.
+        if (!creada) {
+          throw new BadRequestException(
+            'Este cliente todavía no tiene ningún crédito, y la ruta se asigna ' +
+              'a través de los créditos. Cree primero el crédito indicando esta ' +
+              'ruta, y el cliente aparecerá en ella.',
+          );
+        }
+
+        return creada;
       });
 
       if (assignmentCobradorId) {

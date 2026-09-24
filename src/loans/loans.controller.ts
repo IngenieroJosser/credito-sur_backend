@@ -186,6 +186,32 @@ export class LoansController {
     res.send(result.data);
   }
 
+  // Esta ruta tiene que declararse ANTES que @Get(':id'): Nest empareja por
+  // orden de declaracion, asi que estando despues era `:id` quien se quedaba
+  // con "reprogramaciones-pendientes" y el endpoint respondia "Prestamo no
+  // encontrado". Estuvo inalcanzable desde que se escribio.
+  @Get('reprogramaciones-pendientes')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+  )
+  @ApiOperation({ summary: 'Listar solicitudes de reprogramación pendientes' })
+  @ApiQuery({
+    name: 'estado',
+    required: false,
+    enum: ['PENDIENTE', 'APROBADO', 'RECHAZADO', 'TODOS'],
+  })
+  async listarReprogramacionesPendientes(
+    @Query('estado') estado: string | undefined,
+    @Request() req: RequestConUsuario,
+  ) {
+    return this.loansService.listarReprogramacionesPendientes(
+      estado,
+      req?.user,
+    );
+  }
   @Get(':id/contrato')
   // @Roles(
   //  RolUsuario.SUPER_ADMINISTRADOR,
@@ -1261,28 +1287,6 @@ export class LoansController {
     });
   }
 
-  @Get('reprogramaciones-pendientes')
-  @Roles(
-    RolUsuario.SUPER_ADMINISTRADOR,
-    RolUsuario.ADMIN,
-    RolUsuario.COORDINADOR,
-    RolUsuario.SUPERVISOR,
-  )
-  @ApiOperation({ summary: 'Listar solicitudes de reprogramación pendientes' })
-  @ApiQuery({
-    name: 'estado',
-    required: false,
-    enum: ['PENDIENTE', 'APROBADO', 'RECHAZADO', 'TODOS'],
-  })
-  async listarReprogramacionesPendientes(
-    @Query('estado') estado: string | undefined,
-    @Request() req: RequestConUsuario,
-  ) {
-    return this.loansService.listarReprogramacionesPendientes(
-      estado,
-      req?.user,
-    );
-  }
 
   @Patch('reprogramaciones/:id/aprobar')
   @Roles(

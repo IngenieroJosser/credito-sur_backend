@@ -2030,9 +2030,16 @@ describe('RoutesService role scoping', () => {
         findMany: jest.fn(async ({ where }: any = {}) =>
           asignaciones.filter((a) => cumple(a, where)).map((a) => ({ ...a })),
         ),
-        findFirst: jest.fn(async ({ where }: any = {}) => {
+        findFirst: jest.fn(async ({ where, include }: any = {}) => {
           const fila = asignaciones.find((a) => cumple(a, where));
-          return fila ? { ...fila } : null;
+          if (!fila) return null;
+          // Prisma resuelve `include` igual en findFirst que en
+          // findFirstOrThrow. Este doble solo lo hacía en el segundo, así que
+          // al cambiar la llamada la relación llegaba vacía y parecía un fallo
+          // del servicio cuando era del falso.
+          return include?.cliente
+            ? { ...fila, cliente: { id: fila.clienteId } }
+            : { ...fila };
         }),
         findFirstOrThrow: jest.fn(async ({ where }: any = {}) => {
           const fila = asignaciones.find((a) => cumple(a, where));
@@ -2264,6 +2271,46 @@ describe('RoutesService role scoping', () => {
     expect((asignacion as any)?.cobradorId).toBe('cobrador-b');
   });
 
+  it('un cliente sin créditos no se puede asignar, y lo dice con la verdad', async () => {
+    // Encontrado simulando una jornada completa: el coordinador crea un
+    // cliente y lo manda a una ruta. Como las asignaciones se derivan de los
+    // créditos (ver sincronizar-asignaciones.ts), un cliente recién creado no
+    // genera ninguna, y el `findFirstOrThrow` que había aquí lanzaba el P2025
+    // de Prisma. El filtro global lo traducía a "El registro que intenta
+    // modificar ya no existe. Puede que alguien lo haya eliminado mientras
+    // usted trabajaba", con el cliente perfectamente vivo en la base: el
+    // coordinador se quedaba buscando un borrado que nunca ocurrió.
+    const falsa = baseFalsa({ prestamos: [] });
+
+    const prisma = {
+      ruta: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'ruta-b',
+          nombre: 'Ruta B',
+          cobradorId: 'cobrador-b',
+        }),
+      },
+      cliente: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'cliente-sin-creditos',
+          nombres: 'Ana',
+          apellidos: 'Perez',
+        }),
+      },
+      $transaction: jest.fn().mockImplementation((cb: any) => cb(falsa.tx)),
+    };
+
+    const intento = makeService(prisma).assignClient(
+      'ruta-b',
+      'cliente-sin-creditos',
+      'cobrador-b',
+    );
+
+    await expect(intento).rejects.toThrow(BadRequestException);
+    // Lo que de verdad importa: que el motivo no invente un borrado.
+    await expect(intento).rejects.toThrow(/no tiene ningún crédito/i);
+    await expect(intento).rejects.not.toThrow(/ya no existe|eliminado/i);
+  });
   it('al mover un cliente solo se llevan los créditos de la ruta de origen', async () => {
     const falsa = baseFalsa({
       prestamos: [
