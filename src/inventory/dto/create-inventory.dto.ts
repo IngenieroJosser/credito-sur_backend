@@ -7,12 +7,20 @@ import {
   IsArray,
   ValidateNested,
   Min,
+  Max,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { MAX_MESES_PLAZO } from '../../common/plazos';
 
 class CreatePrecioDto {
   @IsNumber()
   @Min(1)
+  // El negocio financia hasta tres meses. Sin este tope, el formulario podia
+  // mandar 6, 12 o 24 y quedaban guardados: de ahi salieron los precios a 6 y
+  // 12 meses que hay en la base de desarrollo.
+  @Max(MAX_MESES_PLAZO, {
+    message: `El plazo no puede pasar de ${MAX_MESES_PLAZO} meses`,
+  })
   meses: number;
 
   @IsNumber()
