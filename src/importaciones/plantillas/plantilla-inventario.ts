@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import * as ExcelJS from 'exceljs';
 import { MAX_OPCIONES_PLAZO } from '../parsers/inventario.parser';
 import {
@@ -424,7 +425,12 @@ export function escribirFilaArticulo(
   },
 ) {
   if (articulo.opciones.length > MAX_OPCIONES_PLAZO) {
-    throw new Error(
+    // BadRequestException y no Error a secas: con un Error el filtro global lo
+    // toma por un fallo inesperado, responde 500 y le enseña al usuario
+    // "Ocurrió un error inesperado... reporte el código ERR-XXXX". Entonces
+    // vuelve a pulsar Exportar, que nunca va a funcionar, y reporta un código
+    // cuando el sistema ya sabía exactamente qué pasaba y cómo arreglarlo.
+    throw new BadRequestException(
       `El artículo ${articulo.codigo} tiene ${articulo.opciones.length} plazos y la plantilla admite ${MAX_OPCIONES_PLAZO}. No se generó el archivo para evitar perder precios.`,
     );
   }
