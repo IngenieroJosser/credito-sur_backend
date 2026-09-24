@@ -167,18 +167,19 @@ describe('Las fórmulas dan los precios reales de la empresa', () => {
       expect(formula).not.toContain('/(1-');
     });
 
-    it('cada precio a plazo parte del costo y usa el recargo de SU opción', () => {
+    it('cada precio a plazo parte del costo y busca el recargo de SUS meses', () => {
       // Que no cuelgue de $G (la celda de contado, que se puede redondear a
-      // mano) y que la opción 2 no tome por error el recargo de la 1.
+      // mano) y que cada opción consulte la tabla con sus propios meses.
       for (const numero of [1, 2, 3]) {
         const opcion = columnasDeOpcion(numero);
-        const letraRecargo = ws.getColumn(opcion.recargo).letter;
+        const letraMeses = ws.getColumn(opcion.meses).letter;
         const formula = formulaDe(opcion.precio);
 
         expect({ numero, formula }).toEqual({
           numero,
           formula: expect.stringContaining(
-            `ROUND(ROUND($E7*(1+$F7),0)*(1+$${letraRecargo}7),0)`,
+            `ROUND(ROUND($E7*(1+$F7),0)*(1+VLOOKUP($${letraMeses}7,` +
+              `Valores!$C$2:$D$4,2,FALSE)),0)`,
           ),
         });
         expect({
@@ -188,14 +189,32 @@ describe('Las fórmulas dan los precios reales de la empresa', () => {
       }
     });
 
-    it('el recargo es una casilla que se escribe, no una columna gris', () => {
+    it('un plazo fuera de la tabla deja el precio vacío, no un #N/D', () => {
+      // El desplegable solo ofrece los plazos de la tabla, pero un valor pegado
+      // desde otra parte llegaría igual. Sin el IFERROR, la celda mostraría
+      // #N/D y la fila entera se vería rota.
       for (const numero of [1, 2, 3]) {
-        const celda = ws.getCell(7, columnasDeOpcion(numero).recargo);
-        expect({ numero, bloqueada: celda.protection?.locked }).toEqual({
+        expect(formulaDe(columnasDeOpcion(numero).precio)).toContain(
+          'IFERROR(',
+        );
+      }
+    });
+
+    it('ya no hay columna de recargo: el plazo se elige de una lista', () => {
+      // El operador no tiene por qué escribir tres veces un porcentaje que es el
+      // mismo en todos los artículos. La tabla vive en la hoja oculta "Valores".
+      const encabezados: string[] = [];
+      ws.getRow(6).eachCell({ includeEmpty: true }, (celda) => {
+        encabezados.push(String(celda.value ?? ''));
+      });
+      expect(encabezados.filter((h) => h.startsWith('Recargo'))).toEqual([]);
+
+      for (const numero of [1, 2, 3]) {
+        const celda = ws.getCell(7, columnasDeOpcion(numero).meses);
+        expect({ numero, lista: celda.dataValidation?.formulae }).toEqual({
           numero,
-          bloqueada: false,
+          lista: ['Valores!$C$2:$C$4'],
         });
-        expect(formulaDe(columnasDeOpcion(numero).recargo)).toBe('');
       }
     });
 

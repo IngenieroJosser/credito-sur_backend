@@ -30,17 +30,36 @@ import {
  * que no interrumpan el tabulador mientras se escribe.
  */
 /**
- * Cada opción de plazo aporta tres columnas de captura: meses, recargo y precio.
+ * Los plazos que financia la empresa y cuánto recarga por cada uno.
  *
- * El recargo es lo que se le suma al precio de contado por vender a ese plazo, y
- * es una columna y no una fórmula porque la empresa maneja una TABLA por plazo,
- * no una tasa. Con los precios reales de un artículo —contado 1.078.870 y
- * 1.402.531 / 1.585.939 / 1.726.192 a 3, 5 y 8 meses— los recargos son +30%,
- * +47% y +60%, y las tasas mensuales que eso implica son 10%, 9,4% y 7,5%: tres
- * distintas, y bajando al alargarse el plazo. Ninguna fórmula de interés produce
- * eso.
+ * Es una TABLA y no una tasa, y eso está medido. Con un costo de 619.900 al 30%
+ * la base de contado es 805.870, y los precios reales de ese artículo son
+ * 1.047.631 / 1.184.629 / 1.289.392 a 3, 5 y 8 meses: estos recargos los dan
+ * exactos. Las tasas mensuales que implican serían 10%, 9,4% y 7,5% —tres
+ * distintas, y BAJANDO al alargarse el plazo, lo contrario de lo que hace un
+ * interés— así que ninguna fórmula de interés los produce.
+ *
+ * Si la empresa cambia sus recargos o sus plazos, se cambia aquí: de esta tabla
+ * salen el desplegable de la columna de meses y la fórmula del precio.
  */
-const COLUMNAS_POR_OPCION = 3;
+const PLAZOS: ReadonlyArray<{ meses: number; recargo: number }> = [
+  { meses: 3, recargo: 0.3 },
+  { meses: 5, recargo: 0.47 },
+  { meses: 8, recargo: 0.6 },
+];
+
+/**
+ * Dónde queda la tabla dentro de la hoja oculta "Valores": los meses en la
+ * columna C y el recargo en la D, desde la fila 2 porque la 1 son los títulos.
+ * Se derivan del tamaño de `PLAZOS` para que agregar un plazo no deje la fórmula
+ * apuntando a un rango corto.
+ */
+const FILA_FIN_PLAZOS = 1 + PLAZOS.length;
+const RANGO_PLAZOS = `Valores!$C$2:$D$${FILA_FIN_PLAZOS}`;
+const COLUMNA_MESES_PLAZOS = `Valores!$C$2:$C$${FILA_FIN_PLAZOS}`;
+
+/** Cada opción de plazo aporta dos columnas de captura: meses y precio. */
+const COLUMNAS_POR_OPCION = 2;
 const COLUMNAS_CALCULADAS_POR_OPCION = 2;
 
 /**
@@ -86,8 +105,7 @@ export function columnasDeOpcion(numeroOpcion: number) {
 
   return {
     meses: captura,
-    recargo: captura + 1,
-    precio: captura + 2,
+    precio: captura + 1,
     utilidadValor: calculo,
     utilidadPct: calculo + 1,
   };
@@ -144,16 +162,8 @@ function construirColumnas(): ColumnaPlantilla[] {
     columnas.push(
       { header: `Meses opción ${i}`, key: `meses_${i}`, width: 13 },
       {
-        // Cuánto se le recarga al precio de contado por vender a este plazo. Es
-        // la tabla del negocio: +30% a 3 meses, +47% a 5, +60% a 8. No se
-        // importa; solo sirve para calcular el precio de al lado.
-        header: `Recargo opción ${i}`,
-        key: `recargo_${i}`,
-        width: 15,
-        numFmt: FORMATO_PORCENTAJE,
-      },
-      {
-        // Sale del recargo, y se puede escribir encima igual que el de contado.
+        // Sale de los meses elegidos y la tabla de recargos, y se puede escribir
+        // encima igual que el de contado.
         header: `Precio total opción ${i}`,
         key: `precio_${i}`,
         width: 16,
@@ -275,14 +285,18 @@ function formulaPrecioContado(ws: ExcelJS.Worksheet, filas: number) {
  * que escribirlos. Es preferible a que se muevan solos cuando alguien redondea
  * un precio.
  *
- * El recargo es una columna de captura y no un cálculo porque es una TABLA por
- * plazo, no una tasa: esos mismos precios equivalen a 10%, 9,4% y 7,5% por mes,
- * o sea que el porcentaje mensual BAJA al alargarse el plazo, lo contrario de lo
- * que hace un interés. Ninguna fórmula, simple o compuesta, produce los tres;
- * está medido en precios-empresa.spec.ts.
+ * El recargo no se escribe: sale de la tabla `PLAZOS` según los meses elegidos,
+ * que la hoja lleva dentro y la fórmula consulta con BUSCARV. Antes era una
+ * columna de captura por opción; se quitó porque el operador no tiene por qué
+ * escribir tres veces un porcentaje que es el mismo en todos los artículos.
  *
- * El precio queda abierto: el recargo lo deja resuelto y quien negocie otro
- * número escribe encima y la fórmula de esa celda desaparece.
+ * Si los meses no están en la tabla, el BUSCARV no encuentra nada y el precio
+ * queda vacío para escribirlo a mano, en vez de mostrar #N/D. El desplegable de
+ * la columna de meses solo ofrece los plazos de la tabla, así que eso solo
+ * aparece si se pega un valor desde otra parte.
+ *
+ * El precio queda abierto: la tabla lo deja resuelto y quien negocie otro número
+ * escribe encima y la fórmula de esa celda desaparece.
  */
 function formulasPrecioCredito(ws: ExcelJS.Worksheet, filas: number) {
   const costo = ref(COL.costo);
@@ -295,14 +309,12 @@ function formulasPrecioCredito(ws: ExcelJS.Worksheet, filas: number) {
   for (let i = 1; i <= MAX_OPCIONES_PLAZO; i++) {
     const columnas = columnasDeOpcion(i);
     const meses = ref(columnas.meses);
-    const recargo = ref(columnas.recargo);
-    // Los meses entran en la condición aunque no en la cuenta: sin plazo escrito
-    // la opción no existe, y un precio suelto sin meses el importador lo rechaza.
+    const recargo = `VLOOKUP(${meses},${RANGO_PLAZOS},2,FALSE)`;
     formulaEnColumna(
       ws,
       columnas.precio,
-      `IF(OR(${costo}="",${rentabilidad}="",${meses}="",${recargo}=""),"",` +
-        `ROUND(${base}*(1+${recargo}),0))`,
+      `IF(OR(${costo}="",${rentabilidad}="",${meses}=""),"",` +
+        `IFERROR(ROUND(${base}*(1+${recargo}),0),""))`,
       filas,
     );
   }
@@ -376,7 +388,7 @@ function formulaRevision(ws: ExcelJS.Worksheet, filas: number) {
       `IF(${ref(COL.costo)}="","⚠ Falta el costo",` +
       `IF(${ref(COL.precioContado)}="","⚠ Falta el precio de contado: escriba la rentabilidad deseada y sale solo, o póngalo a mano",` +
       `IF(${ref(COL.precioContado)}<${ref(COL.costo)},"⚠ El precio de contado está por debajo del costo",` +
-      `IF(AND(COUNT(${meses})>0,COUNT(${precios})<COUNT(${meses})),"⚠ Hay plazos con meses pero sin precio: escriba el recargo de ese plazo, o el precio a mano",` +
+      `IF(AND(COUNT(${meses})>0,COUNT(${precios})<COUNT(${meses})),"⚠ Hay plazos con meses pero sin precio: elija el plazo en la lista para que salga solo, o escriba el precio a mano",` +
       `IF(COUNT(${utilidades})=0,"ℹ Sin opciones de crédito: solo venta de contado",` +
       `IF(MIN(${utilidades})<0,"⚠ Hay plazos que dan pérdida","OK")))))))`,
     filas,
@@ -464,10 +476,35 @@ export function agregarValoresInventario(
   ws.getCell('B1').value = 'Activo';
   ws.getCell('B2').value = 'SI';
   ws.getCell('B3').value = 'NO';
+
+  // La tabla de plazos y recargos, de la que sale el precio de cada opción.
+  // Vive aquí y no en una columna de la hoja de artículos porque es la misma en
+  // todos los artículos: no hay por qué escribirla mil veces.
+  ws.getCell('C1').value = 'Meses';
+  ws.getCell('D1').value = 'Recargo';
+  PLAZOS.forEach(({ meses, recargo }, indice) => {
+    const fila = indice + 2;
+    ws.getCell(`C${fila}`).value = meses;
+    ws.getCell(`D${fila}`).value = recargo;
+    ws.getCell(`D${fila}`).numFmt = FORMATO_PORCENTAJE;
+  });
+
   ws.getRow(1).font = { bold: true };
 
   listaDesplegable(wsArticulos, COL.accion, 'Valores!$A$2:$A$3', true, filas);
   listaDesplegable(wsArticulos, COL.activo, 'Valores!$B$2:$B$3', true, filas);
+
+  // Los meses de cada opción, elegidos de la tabla. Además de ahorrar escribir,
+  // evita el plazo con el que el BUSCARV no encontraría recargo.
+  for (let i = 1; i <= MAX_OPCIONES_PLAZO; i++) {
+    listaDesplegable(
+      wsArticulos,
+      columnasDeOpcion(i).meses,
+      COLUMNA_MESES_PLAZOS,
+      true,
+      filas,
+    );
+  }
 
   const columnaRentabilidad = colLetra(COL.rentabilidadObjetivo);
   (wsArticulos as any).dataValidations.add(
@@ -578,10 +615,10 @@ export async function generarPlantillaInventario(): Promise<{
     'La cuenta es costo + ese porcentaje SOBRE EL COSTO: un costo de $619.900 con 30% da $805.870 (619.900 × 1,30).',
     'Es el porcentaje que uno le suma a lo que le costó, no el margen sobre la venta. Con 30% el precio queda un 30% por encima del costo.',
     '',
-    '# Los precios a plazo salen del recargo de cada opción',
-    'Cada opción tiene tres casillas: los meses, el Recargo y el Precio total. Escriba los meses y el recargo, y el precio aparece solo.',
-    'Con un costo de $619.900 al 30% y la tabla que usa la empresa —+30% a 3 meses, +47% a 5 meses, +60% a 8 meses— los precios salen en $1.047.631, $1.184.629 y $1.289.392.',
-    'El recargo va por PLAZO y no es una tasa mensual: esos mismos precios equivalen a 10%, 9,4% y 7,5% por mes, o sea que el porcentaje por mes BAJA cuando el plazo se alarga. Por eso se escribe el recargo de cada plazo y no un interés.',
+    '# Los precios a plazo salen de elegir el plazo',
+    'Cada opción tiene dos casillas: los meses y el Precio total. Elija los meses en el desplegable y el precio aparece solo; no hay que escribir ningún porcentaje.',
+    'La plantilla lleva por dentro el recargo de cada plazo: +30% a 3 meses, +47% a 5 meses y +60% a 8 meses, sobre el precio de contado. Con un costo de $619.900 al 30% los precios salen en $1.047.631, $1.184.629 y $1.289.392.',
+    'Ese recargo va por PLAZO y no es una tasa mensual: esos mismos precios equivalen a 10%, 9,4% y 7,5% por mes, o sea que el porcentaje por mes BAJA cuando el plazo se alarga. Por eso es una tabla por plazo y no un interés.',
     '',
     '# Si redondea el precio de contado, los plazos NO se mueven',
     'Los precios a plazo se calculan desde el costo y la rentabilidad, no desde lo que quede escrito en Precio contado. Así, ese costo de $619.900 al 30% da una base de $805.870, y si usted prefiere mostrar $805.900 y lo escribe encima, los tres precios a plazo siguen siendo $1.047.631, $1.184.629 y $1.289.392. Si salieran del precio redondeado darían entre $39 y $48 de más cada uno.',
@@ -589,7 +626,7 @@ export async function generarPlantillaInventario(): Promise<{
     '',
     '# Los cuatro precios son un punto de partida, no el precio final',
     'Salen en gris pero NO están bloqueados, y ahí está la idea: es más fácil corregir un número que inventarlo desde una celda vacía. Si el precio de ese artículo es otro, escríbalo encima y la fórmula de esa celda se reemplaza por su número.',
-    'Lo que se importa es lo que quede escrito. La rentabilidad y los recargos NO se importan: solo sirven para calcular.',
+    'Lo que se importa es lo que quede escrito. La rentabilidad NO se importa: solo sirve para calcular.',
     '',
     '# Utilidad automática (columnas grises)',
     'Al final de la hoja Excel calcula, para el contado y para cada plazo, la utilidad en pesos: precio de venta menos costo.',
@@ -605,7 +642,7 @@ export async function generarPlantillaInventario(): Promise<{
   ]);
 
   const ws = await construirHojaArticulos(workbook, {
-    subtitulo: `Una fila por artículo: con el costo y la rentabilidad sale el precio de contado, y con el recargo de cada plazo salen los de crédito (hasta ${MAX_OPCIONES_PLAZO} opciones). Todos se pueden cambiar.`,
+    subtitulo: `Una fila por artículo: con el costo y la rentabilidad sale el precio de contado, y eligiendo los meses salen los precios a crédito (hasta ${MAX_OPCIONES_PLAZO} opciones). Todos se pueden cambiar.`,
     instruccion:
       '📝 Escriba los datos desde la fila 7 hacia abajo. Las columnas grises se calculan solas; las de precio se pueden escribir encima.',
     filas: FILAS_PREPARADAS,
@@ -640,12 +677,12 @@ export async function generarPlantillaInventario(): Promise<{
     ],
     ['Stock / Stock mínimo', '10 / 2  (si se dejan vacíos quedan en 0)'],
     ['Activo', 'Se asume SI si se deja vacío'],
-    ['Opción 1', '3 meses · recargo 30%  →  1.047.631 automático'],
-    ['Opción 2', '5 meses · recargo 47%  →  1.184.629 automático'],
-    ['Opción 3', '8 meses · recargo 60%  →  1.289.392 automático'],
+    ['Opción 1', 'Elija 3 meses  →  1.047.631 automático (recargo 30%)'],
+    ['Opción 2', 'Elija 5 meses  →  1.184.629 automático (recargo 47%)'],
+    ['Opción 3', 'Elija 8 meses  →  1.289.392 automático (recargo 60%)'],
     [
       'Por qué el recargo va por plazo',
-      'Porque no es un interés mensual. Esos tres precios equivalen a 10%, 9,4% y 7,5% por mes: el porcentaje por mes BAJA cuando el plazo se alarga, que es lo contrario de lo que hace un interés. Ninguna tasa única da los tres. Son una tabla comercial, un recargo decidido para cada plazo.',
+      'Porque no es un interés mensual. Esos tres precios equivalen a 10%, 9,4% y 7,5% por mes: el porcentaje por mes BAJA cuando el plazo se alarga, que es lo contrario de lo que hace un interés. Ninguna tasa única da los tres. Son una tabla comercial, un recargo decidido para cada plazo, y la plantilla la lleva por dentro.',
     ],
     [
       'Si el precio es otro',

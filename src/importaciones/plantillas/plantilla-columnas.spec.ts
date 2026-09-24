@@ -249,33 +249,29 @@ describe('Plantilla de inventario', () => {
     );
   }, 60000);
 
-  it('cada opción de plazo tiene sus tres casillas en orden', async () => {
-    // Meses, recargo y precio, juntos y en ese orden: quien llena la fila
-    // escribe los tres seguidos con el tabulador. Los recargos son una columna
-    // de captura porque la empresa maneja una TABLA por plazo -+30% a 3 meses,
-    // +47% a 5, +60% a 8- y no una tasa mensual; las cuentas contra los precios
-    // reales están en precios-empresa.spec.ts.
+  it('cada opción de plazo tiene sus dos casillas en orden', async () => {
+    // Meses y precio, juntos y en ese orden. No hay columna de recargo: el
+    // recargo de cada plazo vive en la hoja oculta "Valores" y la fórmula del
+    // precio lo busca ahí, porque es el mismo en todos los artículos. Las
+    // cuentas contra los precios reales están en precios-empresa.spec.ts.
     const h = encabezados(
       await cargar((await generarPlantillaInventario()).data),
       'Artículos',
     );
 
     expect(h).not.toContain('Tasa mensual crédito');
+    expect(h.filter((c) => c && c.startsWith('Recargo'))).toEqual([]);
     for (const [numero, base] of [
       [1, 8],
-      [2, 11],
-      [3, 14],
+      [2, 10],
+      [3, 12],
     ] as Array<[number, number]>) {
       expect({
         numero,
-        columnas: [h[base], h[base + 1], h[base + 2]],
+        columnas: [h[base], h[base + 1]],
       }).toEqual({
         numero,
-        columnas: [
-          `Meses opción ${numero}`,
-          `Recargo opción ${numero}`,
-          `Precio total opción ${numero}`,
-        ],
+        columnas: [`Meses opción ${numero}`, `Precio total opción ${numero}`],
       });
     }
   }, 60000);
@@ -288,32 +284,32 @@ describe('Plantilla de inventario', () => {
     const wb = await cargar(data);
     const ws = wb.getWorksheet('Artículos')!;
 
-    // Contado (G), los tres precios a plazo (J, M, P) y una fila más allá de
+    // Contado (G), los tres precios a plazo (I, K, M) y una fila más allá de
     // las mil preparadas.
-    for (const celda of ['G7', 'J7', 'M7', 'P7', 'G1006']) {
+    for (const celda of ['G7', 'I7', 'K7', 'M7', 'G1006']) {
       expect({
         celda,
         bloqueada: ws.getCell(celda).protection?.locked,
       }).toEqual({ celda, bloqueada: false });
     }
     // Las de utilidad sí van bloqueadas: ahí no hay nada que decidir.
-    expect(ws.getCell('X7').protection?.locked).not.toBe(false);
+    expect(ws.getCell('U7').protection?.locked).not.toBe(false);
   }, 60000);
 
   it('la revisión distingue qué falta cuando una celda queda vacía', async () => {
     // Con las fórmulas puestas, una celda vacía ya no significa una sola cosa.
     // Sin costo o sin rentabilidad el precio de contado devuelve "", y decir
     // solo "falta el precio" manda a escribirlo a mano cuando lo que falta es
-    // el porcentaje. Y con los meses escritos y el recargo vacío, ese precio
-    // queda en "" y la revisión decía "sin opciones de crédito", lo contrario
-    // de lo que quiso hacer quien acababa de escribir los meses.
+    // el porcentaje. Y sin rentabilidad los precios a plazo también quedan en
+    // "" aunque los meses estén elegidos, y la revisión decía "sin opciones de
+    // crédito", lo contrario de lo que quiso hacer quien eligió el plazo.
     const { data } = await generarPlantillaInventario();
     const wb = await cargar(data);
     const ws = wb.getWorksheet('Artículos')!;
     const h = encabezados(wb, 'Artículos');
 
-    expect(h[23]).toContain('Revisión de la fila');
-    const revision = (ws.getCell('W7').value as ExcelJS.CellFormulaValue)
+    expect(h[20]).toContain('Revisión de la fila');
+    const revision = (ws.getCell('T7').value as ExcelJS.CellFormulaValue)
       .formula;
 
     expect(revision).toContain('escriba la rentabilidad deseada');
