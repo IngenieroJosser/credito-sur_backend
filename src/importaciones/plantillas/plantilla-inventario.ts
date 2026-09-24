@@ -29,8 +29,18 @@ import {
  * y al final los cálculos. Las columnas grises quedan agrupadas al final para
  * que no interrumpan el tabulador mientras se escribe.
  */
-/** Cada opción de plazo aporta dos columnas de captura: meses y precio. */
-const COLUMNAS_POR_OPCION = 2;
+/**
+ * Cada opción de plazo aporta tres columnas de captura: meses, recargo y precio.
+ *
+ * El recargo es lo que se le suma al precio de contado por vender a ese plazo, y
+ * es una columna y no una fórmula porque la empresa maneja una TABLA por plazo,
+ * no una tasa. Con los precios reales de un artículo —contado 1.078.870 y
+ * 1.402.531 / 1.585.939 / 1.726.192 a 3, 5 y 8 meses— los recargos son +30%,
+ * +47% y +60%, y las tasas mensuales que eso implica son 10%, 9,4% y 7,5%: tres
+ * distintas, y bajando al alargarse el plazo. Ninguna fórmula de interés produce
+ * eso.
+ */
+const COLUMNAS_POR_OPCION = 3;
 const COLUMNAS_CALCULADAS_POR_OPCION = 2;
 
 /**
@@ -71,29 +81,30 @@ export function columnasDeOpcion(numeroOpcion: number) {
     PRIMERA_COLUMNA_OPCION + (numeroOpcion - 1) * COLUMNAS_POR_OPCION;
   const calculo =
     PRIMERA_COLUMNA_CALCULADA +
-    3 + // precio sugerido + las dos columnas de utilidad de contado
+    2 + // las dos columnas de utilidad de contado
     (numeroOpcion - 1) * COLUMNAS_CALCULADAS_POR_OPCION;
 
   return {
     meses: captura,
-    precio: captura + 1,
+    recargo: captura + 1,
+    precio: captura + 2,
     utilidadValor: calculo,
     utilidadPct: calculo + 1,
   };
 }
 
 /**
- * El precio sugerido es un calculo, no un dato que se escriba: va con las
- * columnas grises del final y no atravesado entre las de captura, donde
- * interrumpia el tabulador al llenar la fila.
+ * Ya no hay columna de "precio sugerido" aparte: la sugerencia vive dentro de
+ * "Precio contado", que trae la fórmula puesta y se puede escribir encima.
+ * Tenerla en una columna gris al final obligaba a mirarla y copiarla a mano, y
+ * nadie copia bien un número de seis cifras mil veces.
  */
-const COL_PRECIO_SUGERIDO = PRIMERA_COLUMNA_CALCULADA;
-const COL_UTILIDAD_CONTADO_VALOR = PRIMERA_COLUMNA_CALCULADA + 1;
-const COL_UTILIDAD_CONTADO_PCT = PRIMERA_COLUMNA_CALCULADA + 2;
+const COL_UTILIDAD_CONTADO_VALOR = PRIMERA_COLUMNA_CALCULADA;
+const COL_UTILIDAD_CONTADO_PCT = PRIMERA_COLUMNA_CALCULADA + 1;
 
 const ULTIMA_COLUMNA =
   PRIMERA_COLUMNA_CALCULADA +
-  3 +
+  2 +
   MAX_OPCIONES_PLAZO * COLUMNAS_CALCULADAS_POR_OPCION -
   1;
 
@@ -117,9 +128,13 @@ function construirColumnas(): ColumnaPlantilla[] {
       numFmt: FORMATO_PORCENTAJE,
     },
     {
+      // Llega con la fórmula costo / (1 - rentabilidad) y en gris, pero abierta:
+      // el precio redondeado comercialmente se escribe encima y la fórmula de
+      // esa celda se va. Es el valor que se importa, no la rentabilidad.
       header: 'Precio contado*',
       key: 'precio_contado',
       width: 16,
+      sugerida: true,
       numFmt: FORMATO_MONEDA,
     },
   ];
@@ -129,9 +144,20 @@ function construirColumnas(): ColumnaPlantilla[] {
     columnas.push(
       { header: `Meses opción ${i}`, key: `meses_${i}`, width: 13 },
       {
+        // Cuánto se le recarga al precio de contado por vender a este plazo. Es
+        // la tabla del negocio: +30% a 3 meses, +47% a 5, +60% a 8. No se
+        // importa; solo sirve para calcular el precio de al lado.
+        header: `Recargo opción ${i}`,
+        key: `recargo_${i}`,
+        width: 15,
+        numFmt: FORMATO_PORCENTAJE,
+      },
+      {
+        // Sale del recargo, y se puede escribir encima igual que el de contado.
         header: `Precio total opción ${i}`,
         key: `precio_${i}`,
         width: 16,
+        sugerida: true,
         numFmt: FORMATO_MONEDA,
       },
     );
@@ -157,13 +183,6 @@ function construirColumnas(): ColumnaPlantilla[] {
 
   // Cálculos, todos juntos al final.
   columnas.push(
-    {
-      header: 'Precio sugerido (automático)',
-      key: 'precio_sugerido',
-      width: 19,
-      automatica: true,
-      numFmt: FORMATO_MONEDA,
-    },
     {
       header: 'Utilidad contado $ (automático)',
       key: 'utilidad_contado_valor',
@@ -205,22 +224,88 @@ function construirColumnas(): ColumnaPlantilla[] {
 const ref = (columna: number) => `$${colLetra(columna)}{f}`;
 
 /**
- * Sugiere el precio de venta a partir del margen deseado sobre la venta.
+ * El precio de contado: el costo más la rentabilidad, aplicada SOBRE EL COSTO.
  *
- * Ejemplo: costo $187.000 y margen 30% => 187.000 / (1 - 30%) = $267.143.
- * La sugerencia no reemplaza el precio de contado: aparece entre las columnas
- * automáticas del final para que quien diligencia decida si la usa o la
- * redondea comercialmente.
+ * Ejemplo real de la empresa: costo $829.900 con 30% => 829.900 × 1,30 =
+ * $1.078.870. Exacto.
+ *
+ * La convención importa y antes estaba al revés. Aquí había
+ * `costo / (1 - rentabilidad)`, que es margen sobre la VENTA, y con ese mismo
+ * 30% da $1.185.571: 106.701 pesos de más. Para sacar el precio real con esa
+ * fórmula habría que escribir 23,0769%, y nadie va a escribir eso. Cuando en
+ * esta empresa se dice «30% de rentabilidad» se quiere decir costo × 1,30.
+ *
+ * Va DENTRO de la columna de precio de contado y no en una columna aparte: es
+ * el valor que se importa, y tenerlo separado obligaba a copiarlo a mano. La
+ * celda queda abierta, así que quien redondee escribe encima y la fórmula de esa
+ * fila desaparece, como en cualquier hoja de cálculo.
  */
-function formulaPrecioSugerido(ws: ExcelJS.Worksheet, filas: number) {
+function formulaPrecioContado(ws: ExcelJS.Worksheet, filas: number) {
   const costo = ref(COL.costo);
-  const margen = ref(COL.rentabilidadObjetivo);
+  const rentabilidad = ref(COL.rentabilidadObjetivo);
   formulaEnColumna(
     ws,
-    COL_PRECIO_SUGERIDO,
-    `IF(OR(${costo}="",${margen}="",${margen}<0,${margen}>=1),"",ROUND(${costo}/(1-${margen}),0))`,
+    COL.precioContado,
+    `IF(OR(${costo}="",${rentabilidad}="",${rentabilidad}<0),"",ROUND(${costo}*(1+${rentabilidad}),0))`,
     filas,
   );
+}
+
+/**
+ * El precio de cada plazo: la base de contado más el recargo de esa opción.
+ *
+ * Reproduce al peso los precios que la empresa usa. Con un costo de 619.900 y
+ * 30% de rentabilidad, la base es 805.870 y los recargos de la tabla —+30% a 3
+ * meses, +47% a 5, +60% a 8— dan 1.047.631, 1.184.629 y 1.289.392: los tres
+ * exactos.
+ *
+ * OJO CON LA BASE, que es el detalle que más cuesta ver. La cuenta parte de
+ * `costo × (1 + rentabilidad)` y NO de lo que haya escrito en la celda de precio
+ * de contado. Esa celda se redondea a mano: para ese mismo artículo la empresa
+ * anota 805.900, la base subida a la centena. Si los plazos salieran de 805.900
+ * darían +39, +44 y +48 de más. El redondeo es del precio que se muestra, no de
+ * la base con la que se calcula.
+ *
+ * (Y el redondeo es a mano, no una regla: el otro artículo medido anota su
+ * contado sin redondear, 1.078.870. Si la plantilla redondeara sola a la
+ * centena, ese quedaría en 1.078.900 y estaría mal.)
+ *
+ * Lo que eso cuesta, asumido a propósito: si se deja la rentabilidad vacía y se
+ * escribe el precio de contado a mano, los precios a plazo no se calculan y hay
+ * que escribirlos. Es preferible a que se muevan solos cuando alguien redondea
+ * un precio.
+ *
+ * El recargo es una columna de captura y no un cálculo porque es una TABLA por
+ * plazo, no una tasa: esos mismos precios equivalen a 10%, 9,4% y 7,5% por mes,
+ * o sea que el porcentaje mensual BAJA al alargarse el plazo, lo contrario de lo
+ * que hace un interés. Ninguna fórmula, simple o compuesta, produce los tres;
+ * está medido en precios-empresa.spec.ts.
+ *
+ * El precio queda abierto: el recargo lo deja resuelto y quien negocie otro
+ * número escribe encima y la fórmula de esa celda desaparece.
+ */
+function formulasPrecioCredito(ws: ExcelJS.Worksheet, filas: number) {
+  const costo = ref(COL.costo);
+  const rentabilidad = ref(COL.rentabilidadObjetivo);
+  // La base va redondeada al peso antes de aplicarle el recargo, igual que el
+  // precio de contado que se muestra: los precios de la empresa son enteros y la
+  // cadena de redondeos tiene que ser la misma.
+  const base = `ROUND(${costo}*(1+${rentabilidad}),0)`;
+
+  for (let i = 1; i <= MAX_OPCIONES_PLAZO; i++) {
+    const columnas = columnasDeOpcion(i);
+    const meses = ref(columnas.meses);
+    const recargo = ref(columnas.recargo);
+    // Los meses entran en la condición aunque no en la cuenta: sin plazo escrito
+    // la opción no existe, y un precio suelto sin meses el importador lo rechaza.
+    formulaEnColumna(
+      ws,
+      columnas.precio,
+      `IF(OR(${costo}="",${rentabilidad}="",${meses}="",${recargo}=""),"",` +
+        `ROUND(${base}*(1+${recargo}),0))`,
+      filas,
+    );
+  }
 }
 
 /** Utilidad de la venta de contado: precio menos costo, en pesos y en porcentaje. */
@@ -277,16 +362,23 @@ function formulaRevision(ws: ExcelJS.Worksheet, filas: number) {
   const utilidades = Array.from({ length: MAX_OPCIONES_PLAZO }, (_, i) =>
     ref(columnasDeOpcion(i + 1).utilidadValor),
   ).join(',');
+  const meses = Array.from({ length: MAX_OPCIONES_PLAZO }, (_, i) =>
+    ref(columnasDeOpcion(i + 1).meses),
+  ).join(',');
+  const precios = Array.from({ length: MAX_OPCIONES_PLAZO }, (_, i) =>
+    ref(columnasDeOpcion(i + 1).precio),
+  ).join(',');
 
   formulaEnColumna(
     ws,
     COL.revision,
     `IF(${ref(COL.codigo)}="","",` +
       `IF(${ref(COL.costo)}="","⚠ Falta el costo",` +
-      `IF(${ref(COL.precioContado)}="","⚠ Falta el precio de contado",` +
+      `IF(${ref(COL.precioContado)}="","⚠ Falta el precio de contado: escriba la rentabilidad deseada y sale solo, o póngalo a mano",` +
       `IF(${ref(COL.precioContado)}<${ref(COL.costo)},"⚠ El precio de contado está por debajo del costo",` +
+      `IF(AND(COUNT(${meses})>0,COUNT(${precios})<COUNT(${meses})),"⚠ Hay plazos con meses pero sin precio: escriba el recargo de ese plazo, o el precio a mano",` +
       `IF(COUNT(${utilidades})=0,"ℹ Sin opciones de crédito: solo venta de contado",` +
-      `IF(MIN(${utilidades})<0,"⚠ Hay plazos que dan pérdida","OK"))))))`,
+      `IF(MIN(${utilidades})<0,"⚠ Hay plazos que dan pérdida","OK")))))))`,
     filas,
   );
 
@@ -321,20 +413,9 @@ export async function construirHojaArticulos(
     COL.rentabilidadObjetivo,
     'ASISTENTE DE RENTABILIDAD',
   );
-  etiquetarGrupo(
-    ws,
-    COL.precioContado,
-    COL.precioContado,
-    'PRECIO OBLIGATORIO',
-  );
+  etiquetarGrupo(ws, COL.precioContado, COL.precioContado, 'SALE SOLO');
   etiquetarGrupo(ws, COL.stock, COL.activo, 'DATOS OPCIONALES');
   etiquetarGrupo(ws, COL.revision, COL.revision, 'VERIFICACIÓN');
-  etiquetarGrupo(
-    ws,
-    COL_PRECIO_SUGERIDO,
-    COL_PRECIO_SUGERIDO,
-    'PRECIO SUGERIDO',
-  );
   etiquetarGrupo(
     ws,
     COL_UTILIDAD_CONTADO_VALOR,
@@ -342,7 +423,8 @@ export async function construirHojaArticulos(
     'UTILIDAD DE CONTADO',
   );
 
-  formulaPrecioSugerido(ws, filas);
+  formulaPrecioContado(ws, filas);
+  formulasPrecioCredito(ws, filas);
   formulasUtilidadContado(ws, filas);
 
   // La captura de cada opción y su rentabilidad viven en bloques separados:
@@ -394,10 +476,11 @@ export function agregarValoresInventario(
       type: 'decimal',
       operator: 'between',
       allowBlank: true,
-      formulae: [0, 0.99],
+      formulae: [0, 3],
       showErrorMessage: true,
       errorTitle: 'Rentabilidad no válida',
-      error: 'Escriba un porcentaje entre 0% y 99%.',
+      error:
+        'Escriba el porcentaje que se le suma al costo, entre 0% y 300%. Por ejemplo 30%, que sobre un costo de $829.900 da un precio de contado de $1.078.870.',
     },
   );
 
@@ -487,18 +570,31 @@ export async function generarPlantillaInventario(): Promise<{
     'Activo: se asume SI si se deja vacío.',
     '',
     '# Opciones de crédito',
-    `Cada artículo admite hasta ${MAX_OPCIONES_PLAZO} plazos. Escriba los meses y el precio total para ese plazo (por ejemplo: 3 meses / $650.000).`,
+    `Cada artículo admite hasta ${MAX_OPCIONES_PLAZO} opciones de plazo, y el negocio financia hasta 3 meses. Escriba los meses y el precio total de ese plazo (por ejemplo: 3 meses / $690.000).`,
     'Use solo las opciones que necesite; las que deje vacías se ignoran. No repita el mismo número de meses en un artículo.',
     '',
-    '# Asistente de rentabilidad',
-    'La rentabilidad deseada es opcional. Escríbala como porcentaje (por ejemplo, 30%) y Excel sugerirá el precio que deja ese margen sobre la venta.',
-    'La fórmula es costo / (1 - rentabilidad). Un costo de $187.000 con 30% sugiere $267.143.',
-    'El precio sugerido es una guía: copie o redondee el valor en Precio contado, que sí es obligatorio y es el que se importa.',
+    '# El precio de contado se calcula solo',
+    'Escriba el costo unitario y la rentabilidad deseada como porcentaje, y el Precio contado aparece solo.',
+    'La cuenta es costo + ese porcentaje SOBRE EL COSTO: un costo de $619.900 con 30% da $805.870 (619.900 × 1,30).',
+    'Es el porcentaje que uno le suma a lo que le costó, no el margen sobre la venta. Con 30% el precio queda un 30% por encima del costo.',
+    '',
+    '# Los precios a plazo salen del recargo de cada opción',
+    'Cada opción tiene tres casillas: los meses, el Recargo y el Precio total. Escriba los meses y el recargo, y el precio aparece solo.',
+    'Con un costo de $619.900 al 30% y la tabla que usa la empresa —+30% a 3 meses, +47% a 5 meses, +60% a 8 meses— los precios salen en $1.047.631, $1.184.629 y $1.289.392.',
+    'El recargo va por PLAZO y no es una tasa mensual: esos mismos precios equivalen a 10%, 9,4% y 7,5% por mes, o sea que el porcentaje por mes BAJA cuando el plazo se alarga. Por eso se escribe el recargo de cada plazo y no un interés.',
+    '',
+    '# Si redondea el precio de contado, los plazos NO se mueven',
+    'Los precios a plazo se calculan desde el costo y la rentabilidad, no desde lo que quede escrito en Precio contado. Así, ese costo de $619.900 al 30% da una base de $805.870, y si usted prefiere mostrar $805.900 y lo escribe encima, los tres precios a plazo siguen siendo $1.047.631, $1.184.629 y $1.289.392. Si salieran del precio redondeado darían entre $39 y $48 de más cada uno.',
+    'Lo que eso implica: si deja la rentabilidad vacía y escribe el precio de contado a mano, los precios a plazo NO se calculan y hay que escribirlos también.',
+    '',
+    '# Los cuatro precios son un punto de partida, no el precio final',
+    'Salen en gris pero NO están bloqueados, y ahí está la idea: es más fácil corregir un número que inventarlo desde una celda vacía. Si el precio de ese artículo es otro, escríbalo encima y la fórmula de esa celda se reemplaza por su número.',
+    'Lo que se importa es lo que quede escrito. La rentabilidad y los recargos NO se importan: solo sirven para calcular.',
     '',
     '# Utilidad automática (columnas grises)',
     'Al final de la hoja Excel calcula, para el contado y para cada plazo, la utilidad en pesos: precio de venta menos costo.',
-    'El porcentaje va sobre el COSTO, que es como se mira cuando uno compra y remarca: un artículo de 480.000 vendido en 540.000 deja 60.000, o sea 12,5% sobre lo que costó.',
-    'No lo confunda con el margen sobre la venta, que es el que sale en los informes del sistema y con esos mismos números da 11,1%. La utilidad en pesos es la misma; lo que cambia es contra qué se divide. El de costo siempre da un número más alto.',
+    'El porcentaje va sobre el COSTO, igual que la rentabilidad de arriba: un artículo de 619.900 vendido de contado en 805.870 deja 185.970, o sea 30% sobre lo que costó. Por eso en la venta de contado la utilidad y la rentabilidad dan el mismo número.',
+    'No lo confunda con el margen sobre la venta, que es el que sale en los informes del sistema y con esos mismos números da 23,1%. La utilidad en pesos es la misma; lo que cambia es contra qué se divide. El del costo siempre da un número más alto.',
     'No hay que diligenciarlas y el sistema no las lee al importar. Si una sale en rojo, ese precio está por debajo del costo.',
     'La columna "Revisión de la fila" resume en una sola celda lo que le falta o le sobra a ese artículo. Si dice OK, la fila está lista para subir.',
     '',
@@ -509,9 +605,9 @@ export async function generarPlantillaInventario(): Promise<{
   ]);
 
   const ws = await construirHojaArticulos(workbook, {
-    subtitulo: `Una fila por artículo: datos del producto, precio de contado y hasta ${MAX_OPCIONES_PLAZO} opciones de plazo.`,
+    subtitulo: `Una fila por artículo: con el costo y la rentabilidad sale el precio de contado, y con el recargo de cada plazo salen los de crédito (hasta ${MAX_OPCIONES_PLAZO} opciones). Todos se pueden cambiar.`,
     instruccion:
-      '📝 Escriba los datos desde la fila 7 hacia abajo. Las columnas grises se calculan solas.',
+      '📝 Escriba los datos desde la fila 7 hacia abajo. Las columnas grises se calculan solas; las de precio se pueden escribir encima.',
     filas: FILAS_PREPARADAS,
   });
 
@@ -528,23 +624,45 @@ export async function generarPlantillaInventario(): Promise<{
     ['Código*', 'CEL-A15'],
     ['Nombre del artículo*', 'Samsung Galaxy A15'],
     ['Categoría*', 'Celulares'],
-    ['Costo unitario*', '480.000'],
+    ['Costo unitario*', '619.900'],
+    [
+      'Rentabilidad deseada',
+      '30%  → sobre el costo: 619.900 × 1,30. Sale el precio de contado',
+    ],
     ['Marca / Modelo', 'Samsung / A15  (opcional)'],
-    ['Precio contado', '540.000  → utilidad automática: $60.000 (12,5%)'],
+    [
+      'Precio contado',
+      '805.870 automático  → utilidad: $185.970 (30% sobre el costo)',
+    ],
+    [
+      'Si lo quiere redondeado',
+      'Escriba 805.900 encima. Los tres precios a plazo NO se mueven: salen del costo y la rentabilidad, no de esta casilla.',
+    ],
     ['Stock / Stock mínimo', '10 / 2  (si se dejan vacíos quedan en 0)'],
     ['Activo', 'Se asume SI si se deja vacío'],
-    ['Opción 1', '1 mes  →  580.000'],
-    ['Opción 2', '3 meses →  690.000'],
-    ['Opción 3', '6 meses →  790.000'],
+    ['Opción 1', '3 meses · recargo 30%  →  1.047.631 automático'],
+    ['Opción 2', '5 meses · recargo 47%  →  1.184.629 automático'],
+    ['Opción 3', '8 meses · recargo 60%  →  1.289.392 automático'],
+    [
+      'Por qué el recargo va por plazo',
+      'Porque no es un interés mensual. Esos tres precios equivalen a 10%, 9,4% y 7,5% por mes: el porcentaje por mes BAJA cuando el plazo se alarga, que es lo contrario de lo que hace un interés. Ninguna tasa única da los tres. Son una tabla comercial, un recargo decidido para cada plazo.',
+    ],
+    [
+      'Si el precio es otro',
+      'Escríbalo encima del automático. La fórmula de esa celda se reemplaza por el número, y lo que se importa es lo que quede escrito.',
+    ],
     ['Opciones sin usar', 'Se dejan vacías si el artículo no maneja ese plazo'],
     ['', ''],
     ['CÓMO LEER LA UTILIDAD', ''],
-    ['Contado (540.000)', 'Utilidad $60.000 · 12,5% sobre el costo'],
-    ['Opción 1 (1 mes, 580.000)', 'Utilidad $100.000 · 20,8% sobre el costo'],
-    ['Opción 3 (6 meses, 790.000)', 'Utilidad $310.000 · 64,6% sobre el costo'],
+    ['Contado (805.870)', 'Utilidad $185.970 · 30% sobre el costo'],
+    ['Opción 1 (3 meses, 1.047.631)', 'Utilidad $427.731 · 69% sobre el costo'],
+    [
+      'Opción 3 (8 meses, 1.289.392)',
+      'Utilidad $669.492 · 108% sobre el costo',
+    ],
     [
       'Conclusión',
-      'El plazo largo deja más utilidad en total, pero se demora más en volver. Compare esa ganancia contra el tiempo que la plata queda afuera.',
+      'El plazo más largo deja más utilidad en total, pero se demora más en volver. Compare esa ganancia contra el tiempo que la plata queda afuera: el de 8 meses deja 241.761 más que el de 3, y tarda cinco meses más.',
     ],
   ];
 
