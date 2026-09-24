@@ -1,5 +1,6 @@
 import * as ExcelJS from 'exceljs';
 import { MAX_OPCIONES_PLAZO } from '../parsers/inventario.parser';
+import { expresionRecargoExcel } from '../precios-articulo';
 import {
   activarFiltro,
   colLetra,
@@ -29,69 +30,6 @@ import {
  * y al final los cálculos. Las columnas grises quedan agrupadas al final para
  * que no interrumpan el tabulador mientras se escribe.
  */
-/**
- * Los plazos que financia la empresa y cuánto recarga por cada uno.
- *
- * Es una TABLA y no una tasa, y eso está medido. Con un costo de 619.900 al 30%
- * la base de contado es 805.870, y los precios reales de ese artículo son
- * 1.047.631 / 1.184.629 / 1.289.392 a 3, 5 y 8 meses: estos recargos los dan
- * exactos. Las tasas mensuales que implican serían 10%, 9,4% y 7,5% —tres
- * distintas, y BAJANDO al alargarse el plazo, lo contrario de lo que hace un
- * interés— así que ninguna fórmula de interés los produce.
- *
- * Si la empresa cambia sus recargos o sus plazos, se cambia aquí y nada más: de
- * esta tabla se genera la fórmula del precio.
- */
-const PLAZOS: ReadonlyArray<{ meses: number; recargo: number }> = [
-  { meses: 3, recargo: 0.3 },
-  { meses: 5, recargo: 0.47 },
-  { meses: 8, recargo: 0.6 },
-];
-
-/**
- * El recargo de un plazo cualquiera, como fórmula de Excel.
- *
- * La tabla solo tiene tres puntos, pero el precio tiene que salir con los meses
- * que sean. Así que se traza una recta entre cada par de puntos, y fuera del
- * rango se sigue con la pendiente del tramo del borde. En los tres plazos de la
- * tabla devuelve exactamente su recargo, así que los precios reales de la empresa
- * siguen saliendo al peso; en los demás da el valor que le corresponde a ese
- * plazo entre los dos que lo rodean.
- *
- * Se comprobó que el precio crece siempre al alargar el plazo, de 1 a 60 meses, y
- * que la tasa mensual que implica baja suave —13% a un mes, 5,4% a veinticuatro—
- * que es el patrón que tienen los precios de la empresa.
- *
- * La expresión se arma desde `PLAZOS` en vez de escribirla a mano para que
- * agregar o mover un plazo no deje la fórmula hablando de otra tabla. Los números
- * se dejan como resta y división a la vista —`(0.47-0.3)/(5-3)`— para que quien
- * abra la celda pueda seguir la cuenta.
- */
-function expresionRecargo(meses: string): string {
-  // Con un solo punto no hay pendiente que trazar y la recta no existe.
-  if (PLAZOS.length < 2) {
-    throw new Error('La tabla de plazos necesita al menos dos puntos.');
-  }
-
-  const tramo = (i: number) => {
-    const desde = PLAZOS[i];
-    const hasta = PLAZOS[i + 1];
-    return (
-      `${desde.recargo}+(${meses}-${desde.meses})*` +
-      `(${hasta.recargo}-${desde.recargo})/(${hasta.meses}-${desde.meses})`
-    );
-  };
-
-  // Se arma de atrás hacia adelante: el último tramo es también el que extrapola
-  // los plazos más largos que el último de la tabla, y el primero extrapola los
-  // más cortos, porque su recta se usa para todo lo que quede por debajo.
-  let expresion = tramo(PLAZOS.length - 2);
-  for (let i = PLAZOS.length - 3; i >= 0; i--) {
-    expresion = `IF(${meses}<=${PLAZOS[i + 1].meses},${tramo(i)},${expresion})`;
-  }
-  return expresion;
-}
-
 /** Cada opción de plazo aporta dos columnas de captura: meses y precio. */
 const COLUMNAS_POR_OPCION = 2;
 const COLUMNAS_CALCULADAS_POR_OPCION = 2;
@@ -343,7 +281,7 @@ function formulasPrecioCredito(ws: ExcelJS.Worksheet, filas: number) {
   for (let i = 1; i <= MAX_OPCIONES_PLAZO; i++) {
     const columnas = columnasDeOpcion(i);
     const meses = ref(columnas.meses);
-    const recargo = expresionRecargo(meses);
+    const recargo = expresionRecargoExcel(meses);
     formulaEnColumna(
       ws,
       columnas.precio,
@@ -636,7 +574,13 @@ export async function generarPlantillaInventario(): Promise<{
     '',
     '# Los cuatro precios son un punto de partida, no el precio final',
     'Vienen calculados pero son casillas normales, como el costo o el nombre: si el precio de ese artículo es otro, escríbalo encima y la fórmula de esa celda se reemplaza por su número. Es más fácil corregir un número que inventarlo desde una celda vacía.',
-    'Lo que se importa es lo que quede escrito. La rentabilidad NO se importa: solo sirve para calcular.',
+    'Lo que se importa es lo que quede escrito.',
+    '',
+    '# Si BORRA un precio, la fórmula de esa fila no vuelve',
+    'Es así en cualquier hoja de cálculo: una celda guarda o una fórmula o un número, y al borrar el contenido se borra también la fórmula. Volver a escribir el costo y la rentabilidad no la trae de vuelta, porque ya no está ahí.',
+    'Para recuperarla, copie la celda de una fila que todavía la tenga y péguela encima. O deshaga con Ctrl+Z si acaba de borrarla.',
+    'De todos modos no es grave: si el archivo se sube con esa casilla vacía y la fila tiene costo y rentabilidad, el sistema calcula el precio con la misma cuenta y avisa de que lo hizo. La fila entra igual.',
+    'Para quitar una opción de crédito hay que borrar SUS DOS casillas, los meses y el precio. Si se borra solo el precio, el sistema lo vuelve a calcular.',
     '',
     '# Utilidad automática (columnas grises)',
     'Al final de la hoja Excel calcula, para el contado y para cada plazo, la utilidad en pesos: precio de venta menos costo.',

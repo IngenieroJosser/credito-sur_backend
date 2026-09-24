@@ -8,6 +8,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { loadWorkbookFromBuffer } from './xlsx-workbook.loader';
 import { leerNumero, leerTexto, leerTextoMayus } from './cell-value.util';
+import { baseDeContado, precioDelPlazo } from '../precios-articulo';
 import {
   avisarFilasFueraDeRango,
   celda,
@@ -137,6 +138,9 @@ export class InventarioParser {
     const colMarca = cols.indice('Marca');
     const colModelo = cols.indice('Modelo');
     const colCosto = cols.indice('Costo unitario', 'Costo');
+    // La rentabilidad no se guarda, pero ahora se lee: con ella se rellena el
+    // precio que llegue vacío porque alguien borró la fórmula de esa celda.
+    const colRentabilidad = cols.indice('Rentabilidad deseada', 'Rentabilidad');
     const colPrecioContado = cols.indice('Precio contado', 'Precio de contado');
     const colStock = cols.indice('Stock actual', 'Stock');
     const colStockMinimo = cols.indice('Stock mínimo');
@@ -218,7 +222,33 @@ export class InventarioParser {
       const costoCelda = leerNumero(celda(row, colCosto));
       const precioContadoCelda = leerNumero(celda(row, colPrecioContado));
       const costo = aPesos(costoCelda);
-      const precioContado = aPesos(precioContadoCelda);
+      const rentabilidad = colRentabilidad
+        ? leerNumero(celda(row, colRentabilidad))
+        : null;
+
+      /**
+       * El costo y la rentabilidad sirven para rehacer un precio borrado.
+       *
+       * En Excel una celda guarda o una fórmula o un valor, así que en cuanto
+       * alguien borra el contenido de una celda de precio la fórmula se va de esa
+       * fila y no vuelve. Antes eso hacía fallar la fila entera con un "el precio
+       * es requerido" aunque el costo y la rentabilidad estuvieran escritos al
+       * lado. Ahora se recalcula con la misma regla que usa la plantilla, y se
+       * avisa para que nadie se lleve una sorpresa.
+       */
+      const puedeCalcularPrecios =
+        costo !== null &&
+        !Number.isNaN(costo) &&
+        costo > 0 &&
+        rentabilidad !== null &&
+        !Number.isNaN(rentabilidad) &&
+        rentabilidad >= 0;
+
+      const precioContado =
+        precioContadoCelda === null && puedeCalcularPrecios
+          ? baseDeContado(costo as number, rentabilidad as number)
+          : aPesos(precioContadoCelda);
+
       const stock = leerNumero(celda(row, colStock));
       const stockMinimo = leerNumero(celda(row, colStockMinimo));
       const activo = leerTextoMayus(celda(row, colActivo));
@@ -259,6 +289,13 @@ export class InventarioParser {
           'precio_contado',
           AVISO_CENTAVOS,
           celda(row, colPrecioContado),
+        );
+      }
+      if (precioContadoCelda === null && precioContado !== null) {
+        addAdver(
+          'precio_contado',
+          `La casilla estaba vacía y el precio se calculó desde el costo y la rentabilidad: ${precioContado}. Pasa cuando se borra el contenido de la celda, porque con él se va la fórmula.`,
+          precioContado,
         );
       }
 
@@ -361,9 +398,30 @@ export class InventarioParser {
         const numeroOpcion = indice + 1;
         const meses = leerNumero(celda(row, opcion.meses));
         const precioCelda = leerNumero(celda(row, opcion.precio));
-        const precio = aPesos(precioCelda);
 
-        if (meses === null && precio === null) return;
+        if (meses === null && precioCelda === null) return;
+
+        // Igual que con el de contado: si la celda del precio quedó vacía pero
+        // los meses están escritos, se rehace con la regla de la plantilla en vez
+        // de rechazar la fila. Para quitar una opción se borran las dos casillas.
+        const rehacer =
+          precioCelda === null &&
+          puedeCalcularPrecios &&
+          meses !== null &&
+          !Number.isNaN(meses) &&
+          Number.isInteger(meses) &&
+          meses > 0;
+        const precio = rehacer
+          ? precioDelPlazo(costo as number, rentabilidad as number, meses)
+          : aPesos(precioCelda);
+
+        if (rehacer && precio !== null) {
+          addAdver(
+            `opcion_${numeroOpcion}_precio`,
+            `La casilla estaba vacía y el precio a ${meses} mes(es) se calculó desde el costo y la rentabilidad: ${precio}. Para quitar la opción hay que borrar también los meses.`,
+            precio,
+          );
+        }
 
         if (tieneCentavos(precioCelda)) {
           addAdver(
