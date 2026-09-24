@@ -341,7 +341,22 @@ function formulasUtilidadCredito(
   resaltarNegativos(ws, opcion.utilidadPct, filas);
 }
 
-/** Semáforo por artículo: resume en una sola celda lo que hay que corregir. */
+/**
+ * Semáforo por artículo: resume en una sola celda lo que hay que corregir.
+ *
+ * Cuando falta un precio, el aviso DA EL NÚMERO que le corresponde en vez de
+ * explicar cómo obtenerlo. Es el único sitio de la hoja que puede hacerlo: su
+ * fórmula está bloqueada, así que sigue ahí aunque se haya borrado la de la
+ * celda de precio, que es precisamente cuando hace falta.
+ *
+ * Antes decía «escriba la rentabilidad deseada y sale solo». Era verdad en una
+ * fila intacta y mentira en la única situación en la que alguien lee el aviso:
+ * si la celda de precio se borró, su fórmula se fue con ella y escribir la
+ * rentabilidad ya no la trae de vuelta. El aviso mandaba a probar justo lo que
+ * no podía funcionar. Tampoco hay lista de plazos desde que los meses se
+ * escriben libres, así que «elija el plazo en la lista» señalaba a algo que ya
+ * no existe.
+ */
 function formulaRevision(ws: ExcelJS.Worksheet, filas: number) {
   const utilidades = Array.from({ length: MAX_OPCIONES_PLAZO }, (_, i) =>
     ref(columnasDeOpcion(i + 1).utilidadValor),
@@ -353,14 +368,28 @@ function formulaRevision(ws: ExcelJS.Worksheet, filas: number) {
     ref(columnasDeOpcion(i + 1).precio),
   ).join(',');
 
+  // Si hay costo y rentabilidad, la fórmula puede decir cuánto tendría que ser
+  // el precio que falta. Se reconstruye la cuenta aquí en vez de leer la celda
+  // de precio de contado, porque en el caso que importa esa celda está vacía.
+  const costo = ref(COL.costo);
+  const rentabilidad = ref(COL.rentabilidadObjetivo);
+  const hayRentabilidad = `AND(${rentabilidad}<>"",${rentabilidad}>=0)`;
+  const base = `TEXT(ROUND(${costo}*(1+${rentabilidad}),0),"#,##0")`;
+
   formulaEnColumna(
     ws,
     COL.revision,
     `IF(${ref(COL.codigo)}="","",` +
-      `IF(${ref(COL.costo)}="","⚠ Falta el costo",` +
-      `IF(${ref(COL.precioContado)}="","⚠ Falta el precio de contado: escriba la rentabilidad deseada y sale solo, o póngalo a mano",` +
-      `IF(${ref(COL.precioContado)}<${ref(COL.costo)},"⚠ El precio de contado está por debajo del costo",` +
-      `IF(AND(COUNT(${meses})>0,COUNT(${precios})<COUNT(${meses})),"⚠ Hay plazos con meses pero sin precio: elija el plazo en la lista para que salga solo, o escriba el precio a mano",` +
+      `IF(${costo}="","⚠ Falta el costo",` +
+      `IF(${ref(COL.precioContado)}="",` +
+      `IF(${hayRentabilidad},` +
+      `"⚠ Falta el precio de contado. Le corresponde "&${base}&": escríbalo en su casilla, o déjelo vacío y el sistema lo calcula al importar",` +
+      `"⚠ Falta el precio de contado: escriba la rentabilidad deseada o el precio a mano"),` +
+      `IF(${ref(COL.precioContado)}<${costo},"⚠ El precio de contado está por debajo del costo",` +
+      `IF(AND(COUNT(${meses})>0,COUNT(${precios})<COUNT(${meses})),` +
+      `IF(${hayRentabilidad},` +
+      `"⚠ Hay plazos con meses pero sin precio: escríbalo, o déjelo vacío y el sistema lo calcula al importar",` +
+      `"⚠ Hay plazos con meses pero sin precio: escriba el precio, o la rentabilidad deseada"),` +
       `IF(COUNT(${utilidades})=0,"ℹ Sin opciones de crédito: solo venta de contado",` +
       `IF(MIN(${utilidades})<0,"⚠ Hay plazos que dan pérdida","OK")))))))`,
     filas,
@@ -578,7 +607,8 @@ export async function generarPlantillaInventario(): Promise<{
     '',
     '# Si BORRA un precio, la fórmula de esa fila no vuelve',
     'Es así en cualquier hoja de cálculo: una celda guarda o una fórmula o un número, y al borrar el contenido se borra también la fórmula. Volver a escribir el costo y la rentabilidad no la trae de vuelta, porque ya no está ahí.',
-    'Para recuperarla, copie la celda de una fila que todavía la tenga y péguela encima. O deshaga con Ctrl+Z si acaba de borrarla.',
+    'La columna "Revisión de la fila", al final, le dice mientras tanto qué precio le corresponde a ese artículo: puede leerlo ahí y escribirlo. Esa columna está bloqueada, así que su fórmula no se borra.',
+    'Para recuperar la fórmula, copie la celda de una fila que todavía la tenga y péguela encima. O deshaga con Ctrl+Z si acaba de borrarla.',
     'De todos modos no es grave: si el archivo se sube con esa casilla vacía y la fila tiene costo y rentabilidad, el sistema calcula el precio con la misma cuenta y avisa de que lo hizo. La fila entra igual.',
     'Para quitar una opción de crédito hay que borrar SUS DOS casillas, los meses y el precio. Si se borra solo el precio, el sistema lo vuelve a calcular.',
     '',

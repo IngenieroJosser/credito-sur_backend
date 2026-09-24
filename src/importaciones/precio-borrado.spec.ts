@@ -158,6 +158,51 @@ describe('Un precio borrado se rehace al importar', () => {
   }, 60000);
 });
 
+describe('El aviso de la hoja dice el número, no cómo obtenerlo', () => {
+  /**
+   * La columna Revisión es el único sitio que puede rescatar el precio dentro de
+   * la hoja: su fórmula está bloqueada, así que sobrevive al borrón de la celda
+   * de precio, que es justo cuando alguien lee el aviso.
+   */
+  const formulaRevision = async (): Promise<string> => {
+    const plantilla = await generarPlantillaInventario();
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(plantilla.data as any);
+    const hoja = wb.getWorksheet('Artículos')!;
+
+    let columna = 0;
+    hoja.getRow(6).eachCell({ includeEmpty: false }, (celda, numero) => {
+      const clave = String(celda.value ?? '')
+        .replace(/\*/g, '')
+        .trim()
+        .toUpperCase();
+      // El encabezado es 'Revisión de la fila (automático)'.
+      if (clave.startsWith('REVISIÓN') && !columna) columna = numero;
+    });
+    expect(columna).toBeGreaterThan(0);
+
+    const valor: any = hoja.getCell(FILA_DATOS, columna).value;
+    return String(valor?.formula ?? valor);
+  };
+
+  it('calcula el precio que falta para poder nombrarlo', async () => {
+    const formula = await formulaRevision();
+    // Rehace la cuenta con el costo y la rentabilidad en vez de leer la celda de
+    // precio, que en este caso está vacía, y la formatea para mostrarla.
+    expect(formula).toContain('TEXT(ROUND(');
+    expect(formula).toContain('Le corresponde ');
+  }, 60000);
+
+  it('ya no manda a hacer lo que no funciona', async () => {
+    const formula = await formulaRevision();
+    // «escriba la rentabilidad deseada y sale solo» era falso en el único caso en
+    // que se lee el aviso: borrada la celda, su fórmula se fue con ella.
+    expect(formula).not.toContain('y sale solo');
+    // El desplegable de meses se quitó: los plazos se escriben libres.
+    expect(formula).not.toContain('elija el plazo en la lista');
+  }, 60000);
+});
+
 describe('La regla de precios es la misma en la plantilla y en el importador', () => {
   it('el recargo pasa exacto por los plazos de la tabla', () => {
     for (const { meses, recargo } of PLAZOS) {
