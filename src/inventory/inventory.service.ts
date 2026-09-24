@@ -235,7 +235,7 @@ export class InventoryService {
       let categoriaId = createInventoryDto.categoriaId;
 
       if (categoriaId) {
-        const cat = await (this.prisma as any).categoria.findUnique({
+        const cat = await (this.prisma).categoria.findUnique({
           where: { id: categoriaId },
         });
         if (cat) {
@@ -246,7 +246,7 @@ export class InventoryService {
         }
       } else if (createInventoryDto.categoria) {
         // Buscar la categoría por nombre para enlazarla si existe
-        const cat = await (this.prisma as any).categoria.findFirst({
+        const cat = await (this.prisma).categoria.findFirst({
           where: {
             nombre: {
               equals: createInventoryDto.categoria,
@@ -282,11 +282,11 @@ export class InventoryService {
                 precio: p.precio,
               })),
             },
-          } as any,
+          },
           include: {
             precios: true,
           },
-        } as any);
+        });
 
         await this.registrarMovimientoInventario(tx, {
           productoId: creado.id,
@@ -419,7 +419,7 @@ export class InventoryService {
             stockMinimo: updateInventoryDto.stockMinimo,
             activo: updateInventoryDto.activo,
           },
-        } as any);
+        });
 
         // Precios: el DTO extiende Partial(Create), así que 'precios' puede venir undefined.
         // Solo se sincronizan cuando el formulario los envía (incluso si llega un arreglo vacío).

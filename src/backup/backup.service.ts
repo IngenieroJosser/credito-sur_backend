@@ -48,7 +48,7 @@ export class BackupService {
   }
 
   async getStatus() {
-    const last = await (this.prisma as any).backupRun.findFirst({
+    const last = await (this.prisma).backupRun.findFirst({
       orderBy: { startedAt: 'desc' },
     });
 
@@ -64,7 +64,7 @@ export class BackupService {
 
   async getHistory(limit = 20) {
     const safeLimit = Math.max(1, Math.min(100, Number(limit) || 20));
-    const items = await (this.prisma as any).backupRun.findMany({
+    const items = await (this.prisma).backupRun.findMany({
       orderBy: { startedAt: 'desc' },
       take: safeLimit,
     });
@@ -72,7 +72,7 @@ export class BackupService {
   }
 
   async getArtifactPath(id: string, type: 'dump' | 'xlsx') {
-    const run = await (this.prisma as any).backupRun.findUnique({
+    const run = await (this.prisma).backupRun.findUnique({
       where: { id },
     });
 
@@ -106,7 +106,7 @@ export class BackupService {
       throw new BadRequestException('DATABASE_URL no está configurada');
     }
 
-    const running = await (this.prisma as any).backupRun.findFirst({
+    const running = await (this.prisma).backupRun.findFirst({
       where: { estado: 'EN_PROCESO' },
       orderBy: { startedAt: 'desc' },
     });
@@ -116,7 +116,7 @@ export class BackupService {
     }
 
     const startedAt = new Date();
-    const run = await (this.prisma as any).backupRun.create({
+    const run = await (this.prisma).backupRun.create({
       data: {
         tipo: 'MANUAL',
         destino: 'LOCAL',
@@ -180,7 +180,7 @@ export class BackupService {
       // El backup es EXITOSO si el Excel se generó. El dump SQL es opcional:
       // si pg_dump no está instalado se registra como advertencia pero no falla.
       const excelOk = !!excel;
-      const updated = await (this.prisma as any).backupRun.update({
+      const updated = await (this.prisma).backupRun.update({
         where: { id: run.id },
         data: {
           estado: excelOk ? 'EXITOSO' : 'FALLIDO',
@@ -238,7 +238,7 @@ export class BackupService {
         `[backup] fallo backup manual: ${hint ? `${hint} ` : ''}${message}`,
       );
 
-      await (this.prisma as any).backupRun.update({
+      await (this.prisma).backupRun.update({
         where: { id: run.id },
         data: {
           estado: 'FALLIDO',

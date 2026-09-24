@@ -993,7 +993,7 @@ export class ReportsService {
         { activa: true },
         actor,
       );
-      const rutas = (rutasListado as any)?.data || [];
+      const rutas = (rutasListado)?.data || [];
 
       const rutasFiltradas = routeId
         ? rutas.filter((r: any) => r.id === routeId)
@@ -1046,7 +1046,7 @@ export class ReportsService {
             nuevosPrestamos,
             nuevosClientes,
             montoNuevosPrestamos,
-          } as any;
+          };
         }),
       );
 
@@ -1221,7 +1221,7 @@ export class ReportsService {
         nuevosPrestamos: newLoans,
         nuevosClientes: newClients,
         montoNuevosPrestamos: newLoansAmount,
-      } as any;
+      };
     });
 
     const routePerformance = await Promise.all(routePerformancePromises);

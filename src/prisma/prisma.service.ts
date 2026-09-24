@@ -86,7 +86,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
                       ? idDelWhere
                       : undefined;
 
-                (basePrisma as any).outboxEvent
+                (basePrisma).outboxEvent
                   ?.create({
                     data: {
                       eventType: `${model}.${operation}`,
@@ -147,16 +147,16 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return new Proxy(this, {
       get: (target, prop) => {
         if (prop in target) return target[prop as string];
-        return (prisma as any)[prop];
+        return (prisma)[prop];
       },
     });
   }
 
   async onModuleInit() {
-    await (this as any).$connect();
+    await (this).$connect();
   }
 
   async onModuleDestroy() {
-    await (this as any).$disconnect();
+    await (this).$disconnect();
   }
 }

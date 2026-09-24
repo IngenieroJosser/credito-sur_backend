@@ -56,7 +56,7 @@ export type PrestamoUpdateInput = Prisma.PrestamoUpdateInput;
 
 /**
  * Tipo del resultado de `prisma.prestamo.findMany()` con includes
- * usados en getAllLoans — evita `prestamo as any`.
+ * usados en getAllLoans — evita `prestamo`.
  */
 export type PrestamoConRelaciones = Prisma.PrestamoGetPayload<{
   include: {

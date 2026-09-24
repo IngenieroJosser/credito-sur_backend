@@ -18,7 +18,7 @@ dotenv.config();
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
-const prisma = new PrismaClient({ adapter }) as any;
+const prisma = new PrismaClient({ adapter });
 
 async function main() {
   // Tomar SOLO categorías que hayan sido usadas en gastos de ruta

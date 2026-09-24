@@ -196,8 +196,8 @@ describe('CajasService', () => {
     }).compile();
 
     service = module.get<CajasService>(CajasService);
-    prisma = module.get<PrismaService>(PrismaService) as any;
-    ledgerService = module.get<LedgerService>(LedgerService) as any;
+    prisma = module.get<PrismaService>(PrismaService);
+    ledgerService = module.get<LedgerService>(LedgerService);
   });
 
   afterEach(() => {

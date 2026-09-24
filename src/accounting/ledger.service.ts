@@ -722,12 +722,12 @@ export class LedgerService {
     saldo: number;
     nature: string;
   }> {
-    const account = await (this.prisma as any).account.findUniqueOrThrow({
+    const account = await (this.prisma).account.findUniqueOrThrow({
       where: { code: accountCode },
       select: { nature: true },
     });
 
-    const result = await (this.prisma as any).journalLine.aggregate({
+    const result = await (this.prisma).journalLine.aggregate({
       where: { accountCode },
       _sum: { debitAmount: true, creditAmount: true },
     });
@@ -754,7 +754,7 @@ export class LedgerService {
     totalCreditos: number;
     diferencia: number;
   }> {
-    const result = await (this.prisma as any).journalLine.aggregate({
+    const result = await (this.prisma).journalLine.aggregate({
       _sum: { debitAmount: true, creditAmount: true },
     });
 
@@ -886,7 +886,7 @@ export class LedgerService {
    */
   async revisarIntegridad() {
     const q = (sql: string): Promise<any[]> =>
-      (this.prisma as any).$queryRawUnsafe(sql);
+      (this.prisma).$queryRawUnsafe(sql);
     const n = (v: any) => Number(v ?? 0);
 
     const [global, cajas, descuadrados, centavos, negativas, inventario] =
@@ -1015,7 +1015,7 @@ export class LedgerService {
     }> = [];
 
     for (const caja of cajas) {
-      const linesSum = await (this.prisma as any).journalLine.aggregate({
+      const linesSum = await (this.prisma).journalLine.aggregate({
         where: { cajaId: caja.id },
         _sum: { debitAmount: true, creditAmount: true, cajaDelta: true },
       });
@@ -1026,10 +1026,10 @@ export class LedgerService {
       // Las líneas guardadas desde que existe `cajaDelta` dicen exactamente
       // cuánto movieron la caja. Antes había que deducirlo como
       // débitos - créditos, que solo es correcto para cuentas de activo.
-      const conDelta = await (this.prisma as any).journalLine.count({
+      const conDelta = await (this.prisma).journalLine.count({
         where: { cajaId: caja.id, cajaDelta: { not: null } },
       });
-      const total = await (this.prisma as any).journalLine.count({
+      const total = await (this.prisma).journalLine.count({
         where: { cajaId: caja.id },
       });
 

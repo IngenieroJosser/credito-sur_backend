@@ -241,7 +241,7 @@ describe('SalesService venta contado', () => {
       creadoPorId: 'vendedor-1',
       metodoPago: 'TRANSFERENCIA',
       notas: 'Transferencia Bancolombia',
-    } as any);
+    });
 
     expect(tx.caja.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -326,7 +326,7 @@ describe('SalesService venta contado', () => {
         cajaId: 'caja-pv-1',
         creadoPorId: 'vendedor-1',
         metodoPago: 'TRANSFERENCIA',
-      } as any),
+      }),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
@@ -359,7 +359,7 @@ describe('SalesService venta contado', () => {
       creadoPorId: 'vendedor-1',
       metodoPago: 'EFECTIVO',
       idempotencyKey: 'venta-abc-123',
-    } as any);
+    });
 
     // No se ejecuta la transacción (no se descuenta stock ni se duplica dinero)
     expect(prisma.$transaction).not.toHaveBeenCalled();
@@ -406,7 +406,7 @@ describe('SalesService venta contado', () => {
         cajaId: '',
         creadoPorId: 'vendedor-1',
         metodoPago: 'EFECTIVO',
-      } as any),
+      }),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 });

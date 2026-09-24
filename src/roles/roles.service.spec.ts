@@ -36,7 +36,7 @@ describe('RolesService', () => {
       });
       const service = new RolesService(prisma as any);
       await expect(
-        service.crear({ nombre: 'ADMIN' } as any),
+        service.crear({ nombre: 'ADMIN' }),
       ).rejects.toBeInstanceOf(ConflictException);
       expect(prisma.rol.create).not.toHaveBeenCalled();
     });
@@ -45,7 +45,7 @@ describe('RolesService', () => {
       const prisma = hacerPrisma();
       const service = new RolesService(prisma as any);
       await expect(
-        service.crear({ nombre: 'AUDITOR' } as any),
+        service.crear({ nombre: 'AUDITOR' }),
       ).resolves.toMatchObject({
         nombre: 'AUDITOR',
       });

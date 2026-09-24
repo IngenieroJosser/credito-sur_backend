@@ -80,8 +80,8 @@ export class ApprovalsService {
 
     const adminUser = await tx.usuario.findFirst({
       where: {
-        rol: { in: ['SUPER_ADMINISTRADOR', 'ADMIN'] as any },
-        estado: 'ACTIVO' as any,
+        rol: { in: ['SUPER_ADMINISTRADOR', 'ADMIN'] },
+        estado: 'ACTIVO',
         eliminadoEn: null,
       },
       orderBy: { creadoEn: 'asc' },
@@ -97,7 +97,7 @@ export class ApprovalsService {
       data: {
         codigo: 'CAJA-BANCO',
         nombre: 'Caja Banco',
-        tipo: 'PRINCIPAL' as any,
+        tipo: 'PRINCIPAL',
         responsableId: adminUser.id,
         saldoActual: 0,
         activa: true,
@@ -175,7 +175,7 @@ export class ApprovalsService {
     }
 
     const cajaRuta = await db.caja.findFirst({
-      where: { rutaId: ruta.id, tipo: 'RUTA' as any, activa: true },
+      where: { rutaId: ruta.id, tipo: 'RUTA', activa: true },
       select: { id: true, nombre: true, rutaId: true, responsableId: true },
     });
 
@@ -431,7 +431,7 @@ export class ApprovalsService {
       this.prisma.multimedia.findMany({
         where: {
           clienteId,
-          estado: 'ACTIVO' as any,
+          estado: 'ACTIVO',
           eliminadoEn: null,
         },
         orderBy: { creadoEn: 'desc' },
@@ -451,7 +451,7 @@ export class ApprovalsService {
           datosSolicitud: {
             path: ['clienteId'],
             equals: clienteId,
-          } as any,
+          },
         },
       }),
       this.prisma.pago.findMany({
@@ -730,7 +730,7 @@ export class ApprovalsService {
     for (const original of journalsOriginales) {
       if (!Array.isArray(original.lines)) continue;
 
-      const reversaReferenceType = 'AJUSTE' as any;
+      const reversaReferenceType = 'AJUSTE';
       const reversaReferenceId = `REVERSA:${original.id}`;
 
       // Validar idempotencia: verificar si ya existe reversa
@@ -1702,7 +1702,7 @@ export class ApprovalsService {
         case TipoAprobacion.BAJA_POR_PERDIDA:
           await this.approveLoanLoss(approval, aprobadoPorId, editedData);
           break;
-        case 'PAGO_TRANSFERENCIA' as any:
+        case 'PAGO_TRANSFERENCIA':
           await this.approveTransferPayment(approval, aprobadoPorId);
           break;
         default:
@@ -1894,7 +1894,7 @@ export class ApprovalsService {
           rutaId: rutaId || undefined,
           fechaOperativaRuta: fechaOperativaRuta || undefined,
           origenGestion: esCierrePendiente ? 'CIERRE_PENDIENTE' : undefined,
-          detalles: { create: detallesPago as any },
+          detalles: { create: detallesPago },
         },
         select: { id: true },
       });
@@ -1952,7 +1952,7 @@ export class ApprovalsService {
             Number(prestamoActual.interesPagado || 0) + interesTotal,
           saldoPendiente: nuevoSaldo,
           estado: nuevoEstadoPrestamo,
-          estadoSincronizacion: 'PENDIENTE' as any,
+          estadoSincronizacion: 'PENDIENTE',
         },
       });
 
@@ -2021,8 +2021,8 @@ export class ApprovalsService {
             prestamoId: prestamo.id,
             clienteId: prestamo.clienteId,
             entidad: 'APROBACION',
-            tipoContenido: 'COMPROBANTE_TRANSFERENCIA' as any,
-            estado: 'ACTIVO' as any,
+            tipoContenido: 'COMPROBANTE_TRANSFERENCIA',
+            estado: 'ACTIVO',
             eliminadoEn: null,
           },
           orderBy: { creadoEn: 'desc' },
@@ -2988,7 +2988,7 @@ export class ApprovalsService {
         const cajaIdDestino = cajaDestino?.id;
         const asientoVentaExistente = await tx.journalEntry.findFirst({
           where: {
-            referenceType: 'VENTA_ARTICULO' as any,
+            referenceType: 'VENTA_ARTICULO',
             referenceId: prestamo.id,
           },
           select: { id: true },
@@ -3427,7 +3427,7 @@ export class ApprovalsService {
               OPERATIVO: 'OPERATIVO',
               TRANSPORTE: 'TRANSPORTE',
               OTRO: 'OTRO',
-            }[data.tipoGasto] || 'OPERATIVO') as any,
+            }[data.tipoGasto] || 'OPERATIVO'),
             monto: data.monto,
             descripcion: data.descripcion,
             categoriaId: data.categoriaId || undefined,

@@ -948,7 +948,7 @@ export class LoansController {
           saldoPendiente: Number(prestamo.saldoPendiente),
           asignadoPor: nombreUsuario,
           rolAsignador: usuario?.rol,
-        } as any,
+        },
       },
     });
 
@@ -1119,7 +1119,7 @@ export class LoansController {
           comentarios: body.comentarios,
           gestionadoPor: nombreUsuario,
           rolGestor: usuario?.rol,
-        } as any,
+        },
       },
     });
 
@@ -1159,14 +1159,14 @@ export class LoansController {
     ];
     if (usuario && rolesAutoAprobacion.includes(usuario.rol)) {
       try {
-        if (tipoAprobacion === ('BAJA_POR_PERDIDA' as any)) {
+        if (tipoAprobacion === ('BAJA_POR_PERDIDA')) {
           await this.prisma.aprobacion.update({
             where: { id: aprobacion.id },
             data: {
               estado: 'APROBADO',
               aprobadoPorId: usuarioId,
               revisadoEn: new Date(),
-            } as any,
+            },
           });
           await this.loansService.archiveLoan(prestamoId, {
             motivo: body.comentarios || 'Baja por pérdida (auto-aprobado)',

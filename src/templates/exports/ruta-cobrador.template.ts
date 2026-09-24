@@ -219,7 +219,7 @@ export async function generarExcelRutaCobrador(
       gestionRuta: fmtEstadoVisita(f.estadoVisita, f.notasVisita),
       cobrado: '',
       notas: '',
-    } as any);
+    });
 
     if (idx % 2 === 1) {
       row.eachCell((cell) => {

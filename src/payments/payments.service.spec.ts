@@ -514,7 +514,7 @@ describe('PaymentsService', () => {
             notas: 'Recibido con nota administrativa',
             idempotencyKey:
               'CIERRE_PENDIENTE:ruta-1:2026-05-27:cliente-1:prestamo-1:cuota-2:1:PAGO:110000',
-          } as any,
+          },
           undefined,
           ACTOR_ADMIN,
         );
@@ -590,7 +590,7 @@ describe('PaymentsService', () => {
             origenGestion: 'CIERRE_PENDIENTE',
             rutaId: 'ruta-1',
             idempotencyKey: longKey,
-          } as any,
+          },
           undefined,
           ACTOR_ADMIN,
         );
@@ -619,7 +619,7 @@ describe('PaymentsService', () => {
           montoTotal: 110000,
           cuotaId: 'cuota-2',
           origenGestion: 'CIERRE_PENDIENTE',
-        } as any),
+        }),
       ).rejects.toThrow(BadRequestException);
 
       expect(prisma.prestamo.findFirst).not.toHaveBeenCalled();
@@ -640,7 +640,7 @@ describe('PaymentsService', () => {
               fechaOperativaRuta: '2026-05-27',
               origenGestion: 'CIERRE_PENDIENTE',
               rutaId: 'ruta-1',
-            } as any,
+            },
             undefined,
             { id: 'contador-1', rol: RolUsuario.CONTADOR },
           ),
@@ -666,7 +666,7 @@ describe('PaymentsService', () => {
             fechaOperativaRuta: '2026-05-27',
             origenGestion: 'CIERRE_PENDIENTE',
             rutaId: 'ruta-1',
-          } as any),
+          }),
         ).rejects.toThrow(
           'No se pueden registrar pagos regularizados en domingo.',
         );
@@ -743,7 +743,7 @@ describe('PaymentsService', () => {
         tipoRegistro: 'PAGO',
         cuotaNumeroEsperada: 10,
         montoCuotaEsperado: 63333,
-      } as any);
+      });
 
       expect(resultado.descomposicion.prestamoQuedaPagado).toBe(false);
       expect(resultado.descomposicion.saldoNuevo).toBe(1);
@@ -793,7 +793,7 @@ describe('PaymentsService', () => {
         tipoRegistro: 'PAGO',
         cuotaNumeroEsperada: 10,
         montoCuotaEsperado: 63334,
-      } as any);
+      });
 
       expect(resultado.descomposicion.prestamoQuedaPagado).toBe(true);
       expect(resultado.descomposicion.saldoNuevo).toBe(0);
@@ -1122,7 +1122,7 @@ describe('PaymentsService', () => {
           prestamoId: 'prestamo-1',
           cobradorId: 'cobrador-1',
           montoTotal: Number.NaN,
-        } as any),
+        }),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
@@ -1134,7 +1134,7 @@ describe('PaymentsService', () => {
           cobradorId: 'cobrador-1',
           montoTotal: 999,
           tipoRegistro: 'ABONO',
-        } as any),
+        }),
       ).rejects.toThrow('El abono mínimo permitido es $1.000.');
 
       expect(prisma.$transaction).not.toHaveBeenCalled();
@@ -1215,7 +1215,7 @@ describe('PaymentsService', () => {
           tipoRegistro: 'PAGO',
           cuotaNumeroEsperada: 1,
           montoCuotaEsperado: 270000,
-        } as any),
+        }),
       ).rejects.toThrow(ConflictException);
 
       expect(prisma._txMock.pago.create).not.toHaveBeenCalled();
@@ -1251,7 +1251,7 @@ describe('PaymentsService', () => {
           tipoRegistro: 'PAGO',
           cuotaNumeroEsperada: 1,
           montoCuotaEsperado: 92000,
-        } as any),
+        }),
       ).resolves.toBeDefined();
 
       expect(prisma._txMock.pago.create).toHaveBeenCalled();

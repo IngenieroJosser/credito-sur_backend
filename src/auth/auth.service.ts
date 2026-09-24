@@ -172,7 +172,7 @@ export class AuthService {
           { correo: { equals: identificador, mode: 'insensitive' } },
           { nombreUsuario: identificador },
         ],
-      } as any,
+      },
     });
 
     const candidatos = usuarioPorIdentificador ? [usuarioPorIdentificador] : [];
@@ -355,7 +355,7 @@ export class AuthService {
       data: {
         resetPasswordToken: codigoHash,
         resetPasswordExpires: expiracion,
-      } as any,
+      },
     });
 
     // Enviar el correo con el código
@@ -414,8 +414,8 @@ export class AuthService {
               resetPasswordIntentos: 0,
               resetPasswordToken: null,
               resetPasswordExpires: null,
-            } as any)
-          : ({ resetPasswordIntentos: intentos } as any),
+            })
+          : ({ resetPasswordIntentos: intentos }),
       });
       throw new BadRequestException(
         agotados
@@ -433,7 +433,7 @@ export class AuthService {
         resetPasswordToken: null,
         resetPasswordExpires: null,
         resetPasswordIntentos: 0,
-      } as any,
+      },
     });
 
     return {

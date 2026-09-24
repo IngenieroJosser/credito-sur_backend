@@ -84,7 +84,7 @@ export class PushService {
       if (data.roleFilter && data.roleFilter.length > 0) {
         const usuarios = await this.prisma.usuario.findMany({
           where: {
-            rol: { in: data.roleFilter as any },
+            rol: { in: data.roleFilter },
             estado: 'ACTIVO',
           },
         });

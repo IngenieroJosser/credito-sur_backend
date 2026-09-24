@@ -436,31 +436,31 @@ export class ClientsService {
           {
             dni: {
               contains: searchTerm,
-              mode: 'insensitive' as any,
+              mode: 'insensitive',
             },
           },
           {
             nombres: {
               contains: searchTerm,
-              mode: 'insensitive' as any,
+              mode: 'insensitive',
             },
           },
           {
             apellidos: {
               contains: searchTerm,
-              mode: 'insensitive' as any,
+              mode: 'insensitive',
             },
           },
           {
             telefono: {
               contains: searchTerm,
-              mode: 'insensitive' as any,
+              mode: 'insensitive',
             },
           },
           {
             codigo: {
               contains: searchTerm,
-              mode: 'insensitive' as any,
+              mode: 'insensitive',
             },
           },
         ];
@@ -1237,7 +1237,7 @@ export class ClientsService {
           // registrado: en silencio nadie se entera de que fallo.
           this.logger.warn(
             'No se pudo notificar el cliente nuevo',
-            error as any,
+            error,
           );
         }
 
@@ -1260,7 +1260,7 @@ export class ClientsService {
           // registrado: en silencio nadie se entera de que fallo.
           this.logger.warn(
             'No se pudo notificar la aprobacion del cliente',
-            error as any,
+            error,
           );
         }
       }
@@ -1813,11 +1813,11 @@ export class ClientsService {
     if (filtros?.search?.trim()) {
       const s = filtros.search.trim();
       where.OR = [
-        { nombres: { contains: s, mode: 'insensitive' as any } },
-        { apellidos: { contains: s, mode: 'insensitive' as any } },
-        { dni: { contains: s, mode: 'insensitive' as any } },
-        { telefono: { contains: s, mode: 'insensitive' as any } },
-        { codigo: { contains: s, mode: 'insensitive' as any } },
+        { nombres: { contains: s, mode: 'insensitive' } },
+        { apellidos: { contains: s, mode: 'insensitive' } },
+        { dni: { contains: s, mode: 'insensitive' } },
+        { telefono: { contains: s, mode: 'insensitive' } },
+        { codigo: { contains: s, mode: 'insensitive' } },
       ];
     }
 

@@ -340,7 +340,7 @@ export class LoansService implements OnModuleInit {
     const tipoPrestamo = String(prestamo.tipoPrestamo || '').toUpperCase();
     const isArticulo = tipoPrestamo === 'ARTICULO';
     const referenceType = isArticulo ? 'VENTA_ARTICULO' : 'DESEMBOLSO';
-    const existingEntry = await (this.prisma as any).journalEntry?.findFirst?.({
+    const existingEntry = await (this.prisma).journalEntry?.findFirst?.({
       where: { referenceType, referenceId: prestamo.id },
       select: { id: true },
     });
@@ -353,10 +353,10 @@ export class LoansService implements OnModuleInit {
           OR: [
             { codigo: 'CAJA-OFICINA' },
             { codigo: 'CAJA-PRINCIPAL' },
-            { tipo: 'PRINCIPAL' as any },
+            { tipo: 'PRINCIPAL' },
           ],
         },
-        orderBy: [{ codigo: 'asc' as any }],
+        orderBy: [{ codigo: 'asc' }],
         select: { id: true, codigo: true, tipo: true },
       });
 
@@ -466,7 +466,7 @@ export class LoansService implements OnModuleInit {
       requiereCajaRuta?: boolean;
     },
   ) {
-    const dataAny = params.data as any;
+    const dataAny = params.data;
     const rolCreador = String(params.creador?.rol || '').toUpperCase();
     const esCobrador = rolCreador === RolUsuario.COBRADOR;
     const esSupervisor = rolCreador === RolUsuario.SUPERVISOR;
@@ -493,9 +493,9 @@ export class LoansService implements OnModuleInit {
       (await tx.caja.findFirst({
         where: {
           activa: true,
-          OR: [{ codigo: 'CAJA-PRINCIPAL' }, { tipo: 'PRINCIPAL' as any }],
+          OR: [{ codigo: 'CAJA-PRINCIPAL' }, { tipo: 'PRINCIPAL' }],
         },
-        orderBy: { creadoEn: 'asc' as any },
+        orderBy: { creadoEn: 'asc' },
         select: {
           id: true,
           codigo: true,
@@ -525,7 +525,7 @@ export class LoansService implements OnModuleInit {
         where: {
           activa: true,
           responsableId: operadorId,
-          tipo: 'RUTA' as any,
+          tipo: 'RUTA',
         },
         select: selectCajaOperacion,
       });
@@ -547,7 +547,7 @@ export class LoansService implements OnModuleInit {
       const cajaRuta = await tx.caja.findFirst({
         where: {
           activa: true,
-          tipo: 'RUTA' as any,
+          tipo: 'RUTA',
           rutaId: ruta.id,
           ...(esSupervisor ? { responsableId: operadorId } : {}),
         },
@@ -621,7 +621,7 @@ export class LoansService implements OnModuleInit {
 
     if (ruta?.id) {
       const cajaRuta = await tx.caja.findFirst({
-        where: { activa: true, tipo: 'RUTA' as any, rutaId: ruta.id },
+        where: { activa: true, tipo: 'RUTA', rutaId: ruta.id },
         select: selectCajaOperacion,
       });
       if (cajaRuta?.id && !esSupervisor) return cajaRuta;
@@ -873,13 +873,13 @@ export class LoansService implements OnModuleInit {
     const frecuencia = (() => {
       switch (prestamo.frecuenciaPago) {
         case 'DIARIO':
-          return 'DIARIO' as any;
+          return 'DIARIO';
         case 'SEMANAL':
-          return 'SEMANAL' as any;
+          return 'SEMANAL';
         case 'QUINCENAL':
-          return 'QUINCENAL' as any;
+          return 'QUINCENAL';
         case 'MENSUAL':
-          return 'MENSUAL' as any;
+          return 'MENSUAL';
         default:
           return undefined;
       }
@@ -2810,7 +2810,7 @@ export class LoansService implements OnModuleInit {
             // registrado: en silencio nadie se entera de que fallo.
             this.logger.warn(
               'No se pudo resolver el nombre del actor',
-              error as any,
+              error,
             );
           }
 
@@ -3066,7 +3066,7 @@ export class LoansService implements OnModuleInit {
           cuotas: {
             create: cuotasData,
           },
-        } as any,
+        },
         include: {
           cliente: true,
           producto: true,
@@ -3118,7 +3118,7 @@ export class LoansService implements OnModuleInit {
             activa: true,
             OR: [{ codigo: 'CAJA-PRINCIPAL' }, { tipo: 'PRINCIPAL' }],
           },
-          orderBy: [{ codigo: 'asc' as any }],
+          orderBy: [{ codigo: 'asc' }],
           select: { id: true, codigo: true },
         });
 
@@ -3567,7 +3567,7 @@ export class LoansService implements OnModuleInit {
         `Creating loan for client ${data.clienteId}, type: ${data.tipoPrestamo}. Data: ${JSON.stringify(data)}`,
       );
       const idempotencyKey =
-        (data as any).idempotencyKey?.toString().trim() || undefined;
+        (data).idempotencyKey?.toString().trim() || undefined;
 
       if (idempotencyKey) {
         const prestamoExistente = await this.prisma.prestamo.findFirst({
@@ -3633,7 +3633,7 @@ export class LoansService implements OnModuleInit {
       // Las ventas de contado quedan fuera a proposito: se pagan en el momento
       // y no se cobran en ruta.
       if (!data.esContado) {
-        const rutaIndicada = String((data as any)?.rutaId || '').trim();
+        const rutaIndicada = String((data)?.rutaId || '').trim();
         const clienteTieneRuta = (cliente.asignacionesRuta ?? []).some(
           (a: any) => a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
         );
@@ -4043,7 +4043,7 @@ export class LoansService implements OnModuleInit {
               cuotas: {
                 create: cuotasDataFinal,
               },
-            } as any,
+            },
             include: {
               cliente: true,
               producto: true,
@@ -4087,7 +4087,7 @@ export class LoansService implements OnModuleInit {
 
             // La ruta que venga en la peticion manda: se ignoraba, y el
             // credito acababa sin ruta aunque quien lo creo dijera cual.
-            const rutaDelPayload = String((data as any)?.rutaId || '').trim();
+            const rutaDelPayload = String((data)?.rutaId || '').trim();
             const rutaPedida = rutaDelPayload
               ? await tx.ruta.findFirst({
                   where: {
@@ -4165,7 +4165,7 @@ export class LoansService implements OnModuleInit {
           if (!data.esContado) {
             const rutaFinal =
               rutaIdDelCredito ||
-              String((data as any)?.rutaId || '').trim() ||
+              String((data)?.rutaId || '').trim() ||
               cliente.asignacionesRuta?.find(
                 (a: any) =>
                   a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
@@ -4234,8 +4234,8 @@ export class LoansService implements OnModuleInit {
                 fechaInicio: prestamoTx.fechaInicio
                   ? formatBogotaOffsetIso(prestamoTx.fechaInicio)
                   : undefined,
-                fechaPrimerCobro: (data as any).fechaPrimerCobro
-                  ? String((data as any).fechaPrimerCobro)
+                fechaPrimerCobro: (data).fechaPrimerCobro
+                  ? String((data).fechaPrimerCobro)
                   : undefined,
                 esContado: !!data.esContado,
                 idempotencyKey: idempotencyKey || null,
@@ -4303,12 +4303,12 @@ export class LoansService implements OnModuleInit {
                       ),
                       usuarioSolicitanteId: data.creadoPorId,
                       rutaId:
-                        (data as any).rutaId ||
+                        (data).rutaId ||
                         cliente.asignacionesRuta?.[0]?.rutaId ||
                         cliente.asignacionesRuta?.[0]?.ruta?.id ||
                         null,
                       cobradorId:
-                        (data as any).cobradorId ||
+                        (data).cobradorId ||
                         cliente.asignacionesRuta?.[0]?.cobradorId ||
                         cliente.asignacionesRuta?.[0]?.ruta?.cobradorId ||
                         null,
@@ -4409,7 +4409,7 @@ export class LoansService implements OnModuleInit {
         } catch (error) {
           // No se corta la operacion principal por esto, pero se deja
           // registrado: en silencio nadie se entera de que fallo.
-          this.logger.warn('No se pudo notificar el credito', error as any);
+          this.logger.warn('No se pudo notificar el credito', error);
         }
 
         try {
@@ -4438,7 +4438,7 @@ export class LoansService implements OnModuleInit {
         } catch (error) {
           // No se corta la operacion principal por esto, pero se deja
           // registrado: en silencio nadie se entera de que fallo.
-          this.logger.warn('No se pudo notificar el credito', error as any);
+          this.logger.warn('No se pudo notificar el credito', error);
         }
       }
 
@@ -5347,7 +5347,7 @@ export class LoansService implements OnModuleInit {
     } catch (error) {
       // No se corta la operacion principal por esto, pero se deja
       // registrado: en silencio nadie se entera de que fallo.
-      this.logger.warn('No se pudo notificar la regularizacion', error as any);
+      this.logger.warn('No se pudo notificar la regularizacion', error);
     }
 
     // ⚡ Tiempo real: notificar a todos los clientes conectados.

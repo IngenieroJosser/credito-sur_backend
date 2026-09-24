@@ -228,7 +228,7 @@ describe('AccountingService financial ledger controls', () => {
       cajaId: 'caja-oficina',
       fechaInicio: '2026-05-09',
       fechaFin: '2026-05-09',
-    })) as any;
+    }));
 
     const where = prisma.journalEntry.findMany.mock.calls[0][0].where;
     expect(where.createdAt.gte.toISOString()).toBe('2026-05-09T05:00:00.000Z');
@@ -281,7 +281,7 @@ describe('AccountingService financial ledger controls', () => {
     const result = (await makeService(prisma).getResumenFinanciero(
       '2026-05-08',
       '2026-05-08',
-    )) as any;
+    ));
 
     expect(prisma.journalLine.aggregate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -751,7 +751,7 @@ describe('AccountingService financial ledger controls', () => {
     const result = (await makeService(prisma).getResumenFinanciero(
       '2026-05-08',
       '2026-05-08',
-    )) as any;
+    ));
 
     expect(prisma.journalLine.aggregate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -808,7 +808,7 @@ describe('AccountingService financial ledger controls', () => {
     const result = (await makeService(prisma).getResumenFinanciero(
       '2026-05-08',
       '2026-05-08',
-    )) as any;
+    ));
 
     expect(prisma.journalLine.aggregate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -881,7 +881,7 @@ describe('AccountingService financial ledger controls', () => {
     const result = (await makeService(prisma).getResumenFinanciero(
       '2026-05-09',
       '2026-05-09',
-    )) as any;
+    ));
 
     expect(prisma.journalLine.aggregate).toHaveBeenNthCalledWith(
       2,
@@ -941,7 +941,7 @@ describe('AccountingService financial ledger controls', () => {
     const result = (await makeService(prisma).getResumenFinanciero(
       '2026-05-08',
       '2026-05-08',
-    )) as any;
+    ));
 
     expect(result.cuotaInicialHoy).toBe(50000);
     expect(result.porcentajeCuotaInicialVsAyer).toBe(100);
@@ -987,7 +987,7 @@ describe('AccountingService financial ledger controls', () => {
     const result = (await makeService(prisma).getResumenFinanciero(
       '2026-05-09',
       '2026-05-09',
-    )) as any;
+    ));
 
     expect(result.cuotaInicialHoy).toBe(0);
   });
@@ -1039,7 +1039,7 @@ describe('AccountingService financial ledger controls', () => {
     const result = (await makeService(prisma).getResumenFinanciero(
       '2026-05-09',
       '2026-05-09',
-    )) as any;
+    ));
 
     expect(result.ingresosArticulosHoy).toBe(0);
     expect(result.costosVentasHoy).toBe(0);
@@ -1064,7 +1064,7 @@ describe('AccountingService financial ledger controls', () => {
   it('clasifica egresos de deuda de cobrador como cuenta por cobrar y no como gasto', async () => {
     const prisma = buildPrismaMock();
     const service = makeService(prisma);
-    (service as any).getSaldoDisponibleRuta = jest.fn().mockResolvedValue({
+    (service).getSaldoDisponibleRuta = jest.fn().mockResolvedValue({
       saldoDisponible: 100000,
       recaudoDelDia: 100000,
       gastosDelDia: 0,
@@ -1375,12 +1375,12 @@ describe('AccountingService financial ledger controls', () => {
       },
     });
 
-    const result = await (makeService(prisma) as any).migrarHistoricoLedger({
+    const result = await (makeService(prisma)).migrarHistoricoLedger({
       dryRun: true,
       userId: 'admin-1',
     });
 
-    expect((prisma.transaccion as any).findMany).toHaveBeenCalledWith(
+    expect((prisma.transaccion).findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           fechaTransaccion: { lt: cutoff },
@@ -1449,7 +1449,7 @@ describe('AccountingService financial ledger controls', () => {
       cajaId: 'caja-1',
     });
 
-    expect((prisma as any).journalEntry.findMany).toHaveBeenCalledWith(
+    expect((prisma).journalEntry.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           lines: { some: { cajaId: 'caja-1' } },
@@ -1515,7 +1515,7 @@ describe('AccountingService financial ledger controls', () => {
       cajaId: 'caja-1',
     });
 
-    expect((prisma as any).pago.findMany).toHaveBeenCalledWith({
+    expect((prisma).pago.findMany).toHaveBeenCalledWith({
       where: {
         id: { in: ['pago-regularizado-1'] },
         origenGestion: 'CIERRE_PENDIENTE',

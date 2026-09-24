@@ -142,7 +142,7 @@ export class MirrorSyncController {
     // Capitalizamos el primer caracter para mapearlo a la instancia interna de Prisma (ej: 'cliente' -> 'cliente')
     // Nota: Aunque los modelos de Prisma son camelCase en el PrismaClient.
     const prismaModelProp = model.charAt(0).toLowerCase() + model.slice(1);
-    const prismaModel = (this.prisma as any)[prismaModelProp];
+    const prismaModel = (this.prisma)[prismaModelProp];
 
     if (!prismaModel) {
       this.logger.warn(

@@ -156,6 +156,6 @@ export class UsersController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body('permisos') permisos: string[],
   ) {
-    return (this.usersService as any).asignarPermisos(id, permisos);
+    return (this.usersService).asignarPermisos(id, permisos);
   }
 }

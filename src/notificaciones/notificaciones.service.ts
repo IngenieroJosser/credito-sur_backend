@@ -375,7 +375,7 @@ export class NotificacionesService {
         metadata: {
           path: ['dedupeKey'],
           equals: dedupeKey,
-        } as any,
+        },
       },
       orderBy: { creadoEn: 'desc' },
     });

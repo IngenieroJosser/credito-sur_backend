@@ -521,7 +521,7 @@ export class ImportacionesService {
     cliente: PrismaService | Prisma.TransactionClient,
     registros: RegistroInventarioImportado[],
   ) {
-    const productos: any[] = await (cliente as any).producto.findMany({
+    const productos: any[] = await (cliente).producto.findMany({
       where: { id: { in: registros.map((r) => r.productoId) } },
       include: {
         precios: {
@@ -1162,8 +1162,8 @@ export class ImportacionesService {
           filasValidas: resultado.resumen.filasValidas,
           filasConError: resultado.resumen.filasConError,
           advertencias: resultado.resumen.advertencias,
-          resumen: resultado.resumen as any,
-          errores: resultado.errores as any,
+          resumen: resultado.resumen,
+          errores: resultado.errores,
           creadoPorId,
         },
       });
@@ -1176,8 +1176,8 @@ export class ImportacionesService {
       });
     }
 
-    const articulos: any[] = (resultado as any).articulos ?? [];
-    const precios: any[] = (resultado as any).precios ?? [];
+    const articulos: any[] = (resultado).articulos ?? [];
+    const precios: any[] = (resultado).precios ?? [];
 
     // 3. Ejecutar dentro de transacción
     let articulosCreados = 0;
@@ -1437,7 +1437,7 @@ export class ImportacionesService {
                     registro.preciosCreados.length > 0,
                 ),
               },
-            } as any,
+            },
             creadoPorId,
             confirmadoEn: new Date(),
           },
@@ -1536,8 +1536,8 @@ export class ImportacionesService {
           filasValidas: resultado.resumen.filasValidas,
           filasConError: resultado.resumen.filasConError,
           advertencias: resultado.resumen.advertencias,
-          resumen: resultado.resumen as any,
-          errores: resultado.errores as any,
+          resumen: resultado.resumen,
+          errores: resultado.errores,
           creadoPorId,
         },
       });
@@ -1550,7 +1550,7 @@ export class ImportacionesService {
       });
     }
 
-    const clientes: any[] = (resultado as any).clientes ?? [];
+    const clientes: any[] = (resultado).clientes ?? [];
 
     // Mapeo de NivelRiesgo (operativo a Prisma)
     const mapNivelRiesgo = (nivel: string): 'VERDE' | 'AMARILLO' | 'ROJO' => {
@@ -1753,7 +1753,7 @@ export class ImportacionesService {
             : 0;
 
           // Procesar créditos
-          const creditos: any[] = (resultado as any).creditos ?? [];
+          const creditos: any[] = (resultado).creditos ?? [];
           const roundMoney = (value: number) => pesos(value);
           const hayCreditoOperativoEfectivo = creditos.some(
             (cred) =>
@@ -2324,7 +2324,7 @@ export class ImportacionesService {
                   prestamosActualizados: idsPrestamosActualizados,
                   conMovimientosContables: creditosOperativosCreados > 0,
                 },
-              } as any,
+              },
               creadoPorId,
               confirmadoEn: new Date(),
             },
@@ -2366,7 +2366,7 @@ export class ImportacionesService {
           filasValidas: resultado.resumen.filasValidas,
           filasConError: resultado.resumen.filasConError,
           advertencias: resultado.resumen.advertencias,
-          resumen: resultado.resumen as any,
+          resumen: resultado.resumen,
           errores: [
             {
               hoja: 'GLOBAL',
@@ -2378,7 +2378,7 @@ export class ImportacionesService {
                   : 'Error inesperado confirmando importación',
               valor: null,
             },
-          ] as any,
+          ],
           creadoPorId,
         },
       });
