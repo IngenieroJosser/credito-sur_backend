@@ -323,10 +323,16 @@ export class InventarioParser {
 
       // ── Precio de contado (opción de 0 meses) ─────────────────────────────
       // Todo artículo debe poder venderse de contado, así que el precio es obligatorio.
+      //
+      // La celda trae una fórmula (costo / (1 - rentabilidad)), así que puede
+      // llegar vacía por dos caminos distintos: porque no se escribió nada, o
+      // porque se escribió el costo y se dejó la rentabilidad en blanco y la
+      // fórmula devolvió "". Decir solo "es requerido" manda a escribir el
+      // precio a mano cuando muchas veces lo que falta es el porcentaje.
       if (precioContado === null) {
         addError(
           'precio_contado',
-          'Es requerido: todo artículo debe poder venderse de contado',
+          'Es requerido: todo artículo debe poder venderse de contado. Escriba la rentabilidad deseada y el precio sale solo, o póngalo a mano',
           celda(row, colPrecioContado),
         );
       } else {

@@ -217,26 +217,99 @@ describe('Plantilla de inventario', () => {
     expect(wb.worksheets.length).toBeGreaterThan(0);
   }, 60000);
 
-  it('ofrece tres plazos y calcula el precio sugerido por margen sobre venta', async () => {
+  it('ofrece tres plazos y no un cuarto', async () => {
+    const h = encabezados(
+      await cargar((await generarPlantillaInventario()).data),
+      'Artículos',
+    );
+
+    expect(h).toContain('Meses opción 3');
+    expect(h).toContain('Precio total opción 3');
+    expect(h).not.toContain('Meses opción 4');
+  }, 60000);
+
+  it('el precio de contado LO TRAE la fórmula, no una columna gris aparte', async () => {
+    // Antes había una columna gris "Precio sugerido" al final: quien llenaba la
+    // hoja tenía que mirarla y copiar el número a mano en "Precio contado".
+    // Ahora la fórmula vive dentro de la columna que de verdad se importa.
     const { data } = await generarPlantillaInventario();
     const wb = await cargar(data);
     const ws = wb.getWorksheet('Artículos')!;
     const h = encabezados(wb, 'Artículos');
 
-    expect(h).toContain('Meses opción 3');
-    expect(h).toContain('Precio total opción 3');
-    expect(h).not.toContain('Meses opción 4');
-    // La rentabilidad se escribe (columna F); el precio sugerido es un calculo
-    // y por eso vive con las columnas automaticas del final (U), no entre las
-    // de captura.
+    expect(h).not.toContain('Precio sugerido (automático)');
+    expect(h[5]).toBe('Costo unitario*');
     expect(h[6]).toBe('Rentabilidad deseada');
     expect(h[7]).toBe('Precio contado*');
-    expect(h[21]).toBe('Precio sugerido (automático)');
+
     expect(ws.getCell('F7').dataValidation).toEqual(
       expect.objectContaining({ type: 'decimal', formulae: [0, 0.99] }),
     );
     expect(
-      (ws.getCell('U7').value as ExcelJS.CellFormulaValue).formula,
+      (ws.getCell('G7').value as ExcelJS.CellFormulaValue).formula,
     ).toContain('$E7/(1-$F7)');
+  }, 60000);
+
+  it('los tres precios a crédito salen del de contado con interés simple', async () => {
+    // Un crédito de artículo se crea con tasaInteres 0: el precio de la opción
+    // es el único sitio donde vive el costo de financiar. Por eso la fórmula
+    // multiplica la tasa por los meses -interés simple-, igual que
+    // `capital * tasa * meses / 100` en el cálculo del sistema. Con interés
+    // compuesto, el precio del artículo y el interés del sistema quedarían en
+    // dos convenciones distintas.
+    const { data } = await generarPlantillaInventario();
+    const wb = await cargar(data);
+    const ws = wb.getWorksheet('Artículos')!;
+    const h = encabezados(wb, 'Artículos');
+
+    expect(h[8]).toBe('Tasa mensual crédito');
+    expect(h[9]).toBe('Meses opción 1');
+    expect(h[10]).toBe('Precio total opción 1');
+
+    // $G = precio de contado, $H = tasa mensual, $I = meses de la opción 1.
+    const opcion1 = (ws.getCell('J7').value as ExcelJS.CellFormulaValue)
+      .formula;
+    expect(opcion1).toContain('ROUND($G7*(1+$H7*$I7),0)');
+
+    // La opción 3 usa sus propios meses ($M) y la misma tasa y contado.
+    const opcion3 = (ws.getCell('N7').value as ExcelJS.CellFormulaValue)
+      .formula;
+    expect(opcion3).toContain('ROUND($G7*(1+$H7*$M7),0)');
+  }, 60000);
+
+  it('los precios vienen resueltos pero SIN candado: son una sugerencia', async () => {
+    // Si quedaran bloqueados como las columnas grises de utilidad, el precio
+    // que de verdad cobra el negocio no se podría escribir, y la plantilla
+    // pasaría de ayudar a estorbar.
+    const { data } = await generarPlantillaInventario();
+    const wb = await cargar(data);
+    const ws = wb.getWorksheet('Artículos')!;
+
+    for (const celda of ['G7', 'J7', 'L7', 'N7', 'G1006']) {
+      expect({
+        celda,
+        bloqueada: ws.getCell(celda).protection?.locked,
+      }).toEqual({ celda, bloqueada: false });
+    }
+    // Las de utilidad sí van bloqueadas: ahí no hay nada que decidir.
+    expect(ws.getCell('V7').protection?.locked).not.toBe(false);
+  }, 60000);
+
+  it('la revisión distingue "falta la rentabilidad" de "falta la tasa"', async () => {
+    // Las dos situaciones dejan celdas vacías que se ven idénticas. Sin este
+    // aviso, quien escriba los meses y olvide la tasa lee "sin opciones de
+    // crédito", que es justo lo contrario de lo que quiso hacer.
+    const { data } = await generarPlantillaInventario();
+    const wb = await cargar(data);
+    const ws = wb.getWorksheet('Artículos')!;
+    const h = encabezados(wb, 'Artículos');
+
+    expect(h[21]).toContain('Revisión de la fila');
+    const revision = (ws.getCell('U7').value as ExcelJS.CellFormulaValue)
+      .formula;
+
+    expect(revision).toContain('escriba la rentabilidad deseada');
+    expect(revision).toContain('falta la tasa mensual');
+    expect(revision).toContain('Hay plazos que dan pérdida');
   }, 60000);
 });
