@@ -56,7 +56,6 @@ const PLAZOS: ReadonlyArray<{ meses: number; recargo: number }> = [
  */
 const FILA_FIN_PLAZOS = 1 + PLAZOS.length;
 const RANGO_PLAZOS = `Valores!$C$2:$D$${FILA_FIN_PLAZOS}`;
-const COLUMNA_MESES_PLAZOS = `Valores!$C$2:$C$${FILA_FIN_PLAZOS}`;
 
 /** Cada opción de plazo aporta dos columnas de captura: meses y precio. */
 const COLUMNAS_POR_OPCION = 2;
@@ -290,10 +289,9 @@ function formulaPrecioContado(ws: ExcelJS.Worksheet, filas: number) {
  * columna de captura por opción; se quitó porque el operador no tiene por qué
  * escribir tres veces un porcentaje que es el mismo en todos los artículos.
  *
- * Si los meses no están en la tabla, el BUSCARV no encuentra nada y el precio
- * queda vacío para escribirlo a mano, en vez de mostrar #N/D. El desplegable de
- * la columna de meses solo ofrece los plazos de la tabla, así que eso solo
- * aparece si se pega un valor desde otra parte.
+ * Los meses se escriben libres, así que puede llegar un plazo que no esté en la
+ * tabla. En ese caso el BUSCARV no encuentra nada y el precio queda vacío para
+ * escribirlo a mano, en vez de mostrar #N/D y dejar la fila con pinta de rota.
  *
  * El precio queda abierto: la tabla lo deja resuelto y quien negocie otro número
  * escribe encima y la fórmula de esa celda desaparece.
@@ -493,18 +491,6 @@ export function agregarValoresInventario(
 
   listaDesplegable(wsArticulos, COL.accion, 'Valores!$A$2:$A$3', true, filas);
   listaDesplegable(wsArticulos, COL.activo, 'Valores!$B$2:$B$3', true, filas);
-
-  // Los meses de cada opción, elegidos de la tabla. Además de ahorrar escribir,
-  // evita el plazo con el que el BUSCARV no encontraría recargo.
-  for (let i = 1; i <= MAX_OPCIONES_PLAZO; i++) {
-    listaDesplegable(
-      wsArticulos,
-      columnasDeOpcion(i).meses,
-      COLUMNA_MESES_PLAZOS,
-      true,
-      filas,
-    );
-  }
 
   const columnaRentabilidad = colLetra(COL.rentabilidadObjetivo);
   (wsArticulos as any).dataValidations.add(

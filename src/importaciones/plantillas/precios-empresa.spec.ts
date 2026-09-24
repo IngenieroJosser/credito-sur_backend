@@ -200,9 +200,11 @@ describe('Las fórmulas dan los precios reales de la empresa', () => {
       }
     });
 
-    it('ya no hay columna de recargo: el plazo se elige de una lista', () => {
+    it('ya no hay columna de recargo, y los meses se escriben libres', () => {
       // El operador no tiene por qué escribir tres veces un porcentaje que es el
-      // mismo en todos los artículos. La tabla vive en la hoja oculta "Valores".
+      // mismo en todos los artículos, así que la tabla vive en la hoja oculta
+      // "Valores". Pero los meses sí se escriben a mano, sin lista que los
+      // limite: se puede poner el plazo que se quiera.
       const encabezados: string[] = [];
       ws.getRow(6).eachCell({ includeEmpty: true }, (celda) => {
         encabezados.push(String(celda.value ?? ''));
@@ -211,9 +213,9 @@ describe('Las fórmulas dan los precios reales de la empresa', () => {
 
       for (const numero of [1, 2, 3]) {
         const celda = ws.getCell(7, columnasDeOpcion(numero).meses);
-        expect({ numero, lista: celda.dataValidation?.formulae }).toEqual({
+        expect({ numero, validacion: celda.dataValidation }).toEqual({
           numero,
-          lista: ['Valores!$C$2:$C$4'],
+          validacion: undefined,
         });
       }
     });
