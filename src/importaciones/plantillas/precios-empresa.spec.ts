@@ -167,19 +167,20 @@ describe('Las fórmulas dan los precios reales de la empresa', () => {
       expect(formula).not.toContain('/(1-');
     });
 
-    it('cada precio a plazo parte del costo y busca el recargo de SUS meses', () => {
+    it('cada precio a plazo parte del costo y calcula el recargo de SUS meses', () => {
       // Que no cuelgue de $G (la celda de contado, que se puede redondear a
-      // mano) y que cada opción consulte la tabla con sus propios meses.
+      // mano) y que cada opción interpole con sus propios meses.
       for (const numero of [1, 2, 3]) {
         const opcion = columnasDeOpcion(numero);
-        const letraMeses = ws.getColumn(opcion.meses).letter;
+        const m = `$${ws.getColumn(opcion.meses).letter}7`;
         const formula = formulaDe(opcion.precio);
 
         expect({ numero, formula }).toEqual({
           numero,
           formula: expect.stringContaining(
-            `ROUND(ROUND($E7*(1+$F7),0)*(1+VLOOKUP($${letraMeses}7,` +
-              `Valores!$C$2:$D$4,2,FALSE)),0)`,
+            `ROUND(ROUND($E7*(1+$F7),0)*(1+IF(${m}<=5,` +
+              `0.3+(${m}-3)*(0.47-0.3)/(5-3),` +
+              `0.47+(${m}-5)*(0.6-0.47)/(8-5))),0)`,
           ),
         });
         expect({
@@ -189,10 +190,43 @@ describe('Las fórmulas dan los precios reales de la empresa', () => {
       }
     });
 
-    it('un plazo fuera de la tabla deja el precio vacío, no un #N/D', () => {
-      // El desplegable solo ofrece los plazos de la tabla, pero un valor pegado
-      // desde otra parte llegaría igual. Sin el IFERROR, la celda mostraría
-      // #N/D y la fila entera se vería rota.
+    it('el precio sale con CUALQUIER plazo, no solo con los tres de la tabla', () => {
+      // Este es el requisito: los meses se escriben libres y el precio tiene que
+      // salir igual. Un intento anterior consultaba la tabla con BUSCARV y dejaba
+      // la celda vacía en todo plazo que no fuera 3, 5 u 8.
+      for (const numero of [1, 2, 3]) {
+        const formula = formulaDe(columnasDeOpcion(numero).precio);
+        expect(formula).not.toContain('VLOOKUP');
+        // La recta por tramos: un IF que parte en el plazo del medio.
+        expect(formula).toContain('<=5');
+      }
+    });
+
+    it('el recargo interpolado da los de la tabla en sus propios plazos', () => {
+      // Espejo de la cuenta que declara la celda. Si alguien cambia la
+      // interpolación y deja de pasar por los puntos de la tabla, los precios
+      // reales de la empresa dejan de salir y esto lo delata.
+      const recargo = (m: number) =>
+        m <= 5
+          ? 0.3 + ((m - 3) * (0.47 - 0.3)) / (5 - 3)
+          : 0.47 + ((m - 5) * (0.6 - 0.47)) / (8 - 5);
+
+      expect(recargo(3)).toBeCloseTo(0.3, 10);
+      expect(recargo(5)).toBeCloseTo(0.47, 10);
+      expect(recargo(8)).toBeCloseTo(0.6, 10);
+
+      // Y entre medias crece, que es lo que hace usable cualquier plazo.
+      const seguidos = [1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 24].map(recargo);
+      for (let i = 1; i < seguidos.length; i++) {
+        expect(seguidos[i]).toBeGreaterThan(seguidos[i - 1]);
+      }
+    });
+
+    it('un texto en la casilla de meses no llena la fila de errores', () => {
+      // Los meses se escriben libres, asi que puede caer una palabra o un guion.
+      // Sin el IFERROR la celda mostraria #VALOR! y la fila se veria rota; con
+      // el, queda vacia y se escribe el precio a mano.
+      // (El plazo fuera de la tabla ya no es el caso: ese se interpola.)
       for (const numero of [1, 2, 3]) {
         expect(formulaDe(columnasDeOpcion(numero).precio)).toContain(
           'IFERROR(',

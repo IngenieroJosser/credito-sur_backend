@@ -39,8 +39,8 @@ import {
  * distintas, y BAJANDO al alargarse el plazo, lo contrario de lo que hace un
  * interés— así que ninguna fórmula de interés los produce.
  *
- * Si la empresa cambia sus recargos o sus plazos, se cambia aquí: de esta tabla
- * salen el desplegable de la columna de meses y la fórmula del precio.
+ * Si la empresa cambia sus recargos o sus plazos, se cambia aquí y nada más: de
+ * esta tabla se genera la fórmula del precio.
  */
 const PLAZOS: ReadonlyArray<{ meses: number; recargo: number }> = [
   { meses: 3, recargo: 0.3 },
@@ -49,13 +49,48 @@ const PLAZOS: ReadonlyArray<{ meses: number; recargo: number }> = [
 ];
 
 /**
- * Dónde queda la tabla dentro de la hoja oculta "Valores": los meses en la
- * columna C y el recargo en la D, desde la fila 2 porque la 1 son los títulos.
- * Se derivan del tamaño de `PLAZOS` para que agregar un plazo no deje la fórmula
- * apuntando a un rango corto.
+ * El recargo de un plazo cualquiera, como fórmula de Excel.
+ *
+ * La tabla solo tiene tres puntos, pero el precio tiene que salir con los meses
+ * que sean. Así que se traza una recta entre cada par de puntos, y fuera del
+ * rango se sigue con la pendiente del tramo del borde. En los tres plazos de la
+ * tabla devuelve exactamente su recargo, así que los precios reales de la empresa
+ * siguen saliendo al peso; en los demás da el valor que le corresponde a ese
+ * plazo entre los dos que lo rodean.
+ *
+ * Se comprobó que el precio crece siempre al alargar el plazo, de 1 a 60 meses, y
+ * que la tasa mensual que implica baja suave —13% a un mes, 5,4% a veinticuatro—
+ * que es el patrón que tienen los precios de la empresa.
+ *
+ * La expresión se arma desde `PLAZOS` en vez de escribirla a mano para que
+ * agregar o mover un plazo no deje la fórmula hablando de otra tabla. Los números
+ * se dejan como resta y división a la vista —`(0.47-0.3)/(5-3)`— para que quien
+ * abra la celda pueda seguir la cuenta.
  */
-const FILA_FIN_PLAZOS = 1 + PLAZOS.length;
-const RANGO_PLAZOS = `Valores!$C$2:$D$${FILA_FIN_PLAZOS}`;
+function expresionRecargo(meses: string): string {
+  // Con un solo punto no hay pendiente que trazar y la recta no existe.
+  if (PLAZOS.length < 2) {
+    throw new Error('La tabla de plazos necesita al menos dos puntos.');
+  }
+
+  const tramo = (i: number) => {
+    const desde = PLAZOS[i];
+    const hasta = PLAZOS[i + 1];
+    return (
+      `${desde.recargo}+(${meses}-${desde.meses})*` +
+      `(${hasta.recargo}-${desde.recargo})/(${hasta.meses}-${desde.meses})`
+    );
+  };
+
+  // Se arma de atrás hacia adelante: el último tramo es también el que extrapola
+  // los plazos más largos que el último de la tabla, y el primero extrapola los
+  // más cortos, porque su recta se usa para todo lo que quede por debajo.
+  let expresion = tramo(PLAZOS.length - 2);
+  for (let i = PLAZOS.length - 3; i >= 0; i--) {
+    expresion = `IF(${meses}<=${PLAZOS[i + 1].meses},${tramo(i)},${expresion})`;
+  }
+  return expresion;
+}
 
 /** Cada opción de plazo aporta dos columnas de captura: meses y precio. */
 const COLUMNAS_POR_OPCION = 2;
@@ -284,14 +319,15 @@ function formulaPrecioContado(ws: ExcelJS.Worksheet, filas: number) {
  * que escribirlos. Es preferible a que se muevan solos cuando alguien redondea
  * un precio.
  *
- * El recargo no se escribe: sale de la tabla `PLAZOS` según los meses elegidos,
- * que la hoja lleva dentro y la fórmula consulta con BUSCARV. Antes era una
- * columna de captura por opción; se quitó porque el operador no tiene por qué
- * escribir tres veces un porcentaje que es el mismo en todos los artículos.
+ * El recargo no se escribe: lo calcula la propia fórmula a partir de los meses,
+ * interpolando la tabla `PLAZOS` (ver `expresionRecargo`). Antes era una columna
+ * de captura por opción; se quitó porque el operador no tiene por qué escribir
+ * tres veces un porcentaje que es el mismo en todos los artículos.
  *
- * Los meses se escriben libres, así que puede llegar un plazo que no esté en la
- * tabla. En ese caso el BUSCARV no encuentra nada y el precio queda vacío para
- * escribirlo a mano, en vez de mostrar #N/D y dejar la fila con pinta de rota.
+ * El precio sale con CUALQUIER número de meses, que es el requisito. Un intento
+ * anterior consultaba la tabla con BUSCARV y dejaba la celda vacía en todo plazo
+ * que no fuera 3, 5 u 8; los meses se escriben libres, así que eso pasaba a
+ * menudo.
  *
  * El precio queda abierto: la tabla lo deja resuelto y quien negocie otro número
  * escribe encima y la fórmula de esa celda desaparece.
@@ -307,7 +343,7 @@ function formulasPrecioCredito(ws: ExcelJS.Worksheet, filas: number) {
   for (let i = 1; i <= MAX_OPCIONES_PLAZO; i++) {
     const columnas = columnasDeOpcion(i);
     const meses = ref(columnas.meses);
-    const recargo = `VLOOKUP(${meses},${RANGO_PLAZOS},2,FALSE)`;
+    const recargo = expresionRecargo(meses);
     formulaEnColumna(
       ws,
       columnas.precio,
@@ -474,18 +510,6 @@ export function agregarValoresInventario(
   ws.getCell('B1').value = 'Activo';
   ws.getCell('B2').value = 'SI';
   ws.getCell('B3').value = 'NO';
-
-  // La tabla de plazos y recargos, de la que sale el precio de cada opción.
-  // Vive aquí y no en una columna de la hoja de artículos porque es la misma en
-  // todos los artículos: no hay por qué escribirla mil veces.
-  ws.getCell('C1').value = 'Meses';
-  ws.getCell('D1').value = 'Recargo';
-  PLAZOS.forEach(({ meses, recargo }, indice) => {
-    const fila = indice + 2;
-    ws.getCell(`C${fila}`).value = meses;
-    ws.getCell(`D${fila}`).value = recargo;
-    ws.getCell(`D${fila}`).numFmt = FORMATO_PORCENTAJE;
-  });
 
   ws.getRow(1).font = { bold: true };
 
