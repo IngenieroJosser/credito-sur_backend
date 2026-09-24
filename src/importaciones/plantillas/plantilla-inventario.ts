@@ -180,13 +180,14 @@ function construirColumnas(): ColumnaPlantilla[] {
       numFmt: FORMATO_PORCENTAJE,
     },
     {
-      // Llega con la fórmula costo / (1 - rentabilidad) y en gris, pero abierta:
-      // el precio redondeado comercialmente se escribe encima y la fórmula de
-      // esa celda se va. Es el valor que se importa, no la rentabilidad.
+      // Llega con la fórmula puesta pero es una columna de captura como las
+      // demás, y por eso va SIN sombrear. Estaba marcada `sugerida`, que la
+      // pintaba gris igual que las automáticas, y el gris se lee como candado:
+      // la hoja dice que las columnas grises se calculan solas. La celda nunca
+      // estuvo bloqueada, pero parecerlo basta para que nadie la toque.
       header: 'Precio contado*',
       key: 'precio_contado',
       width: 16,
-      sugerida: true,
       numFmt: FORMATO_MONEDA,
     },
   ];
@@ -196,12 +197,11 @@ function construirColumnas(): ColumnaPlantilla[] {
     columnas.push(
       { header: `Meses opción ${i}`, key: `meses_${i}`, width: 13 },
       {
-        // Sale de los meses elegidos y la tabla de recargos, y se puede escribir
-        // encima igual que el de contado.
+        // Sale de los meses escritos y la tabla de recargos, y es de captura como
+        // el de contado: sin sombrear, para que no parezca bloqueada.
         header: `Precio total opción ${i}`,
         key: `precio_${i}`,
         width: 16,
-        sugerida: true,
         numFmt: FORMATO_MONEDA,
       },
     );
@@ -635,7 +635,7 @@ export async function generarPlantillaInventario(): Promise<{
     'Lo que eso implica: si deja la rentabilidad vacía y escribe el precio de contado a mano, los precios a plazo NO se calculan y hay que escribirlos también.',
     '',
     '# Los cuatro precios son un punto de partida, no el precio final',
-    'Salen en gris pero NO están bloqueados, y ahí está la idea: es más fácil corregir un número que inventarlo desde una celda vacía. Si el precio de ese artículo es otro, escríbalo encima y la fórmula de esa celda se reemplaza por su número.',
+    'Vienen calculados pero son casillas normales, como el costo o el nombre: si el precio de ese artículo es otro, escríbalo encima y la fórmula de esa celda se reemplaza por su número. Es más fácil corregir un número que inventarlo desde una celda vacía.',
     'Lo que se importa es lo que quede escrito. La rentabilidad NO se importa: solo sirve para calcular.',
     '',
     '# Utilidad automática (columnas grises)',
@@ -654,7 +654,7 @@ export async function generarPlantillaInventario(): Promise<{
   const ws = await construirHojaArticulos(workbook, {
     subtitulo: `Una fila por artículo: con el costo y la rentabilidad sale el precio de contado, y eligiendo los meses salen los precios a crédito (hasta ${MAX_OPCIONES_PLAZO} opciones). Todos se pueden cambiar.`,
     instruccion:
-      '📝 Escriba los datos desde la fila 7 hacia abajo. Las columnas grises se calculan solas; las de precio se pueden escribir encima.',
+      '📝 Escriba los datos desde la fila 7 hacia abajo. Las columnas grises las calcula Excel y están bloqueadas; los precios vienen calculados pero se pueden cambiar.',
     filas: FILAS_PREPARADAS,
   });
 
