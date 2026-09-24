@@ -242,79 +242,78 @@ describe('Plantilla de inventario', () => {
     expect(h[6]).toBe('Rentabilidad deseada');
     expect(h[7]).toBe('Precio contado*');
 
+    // Hasta 300%: el tope de 99% era de la fórmula vieja, donde un 100% hacía
+    // dividir por cero. Multiplicando no hay frontera ahí.
     expect(ws.getCell('F7').dataValidation).toEqual(
-      expect.objectContaining({ type: 'decimal', formulae: [0, 0.99] }),
+      expect.objectContaining({ type: 'decimal', formulae: [0, 3] }),
     );
-    expect(
-      (ws.getCell('G7').value as ExcelJS.CellFormulaValue).formula,
-    ).toContain('$E7/(1-$F7)');
   }, 60000);
 
-  it('los tres precios a plazo salen de la rentabilidad, SIN columna nueva', async () => {
-    // Hubo un intento peor: una columna "Tasa mensual crédito". Era una palabra
-    // traída de los créditos de dinero, donde sí existe; en artículos el crédito
-    // se crea con tasaInteres 0 y esos precios son comerciales. Con los precios
-    // del ejemplo de la hoja -540.000 de contado y 580.000 / 635.000 / 690.000 a
-    // 1, 2 y 3 meses- las tasas implícitas son 7,41%, 8,80% y 9,26%: ningún
-    // porcentaje único produce los tres. Así que no se pide un número más: se
-    // reutiliza la rentabilidad que ya está en la hoja.
-    const { data } = await generarPlantillaInventario();
-    const wb = await cargar(data);
-    const ws = wb.getWorksheet('Artículos')!;
-    const h = encabezados(wb, 'Artículos');
+  it('cada opción de plazo tiene sus tres casillas en orden', async () => {
+    // Meses, recargo y precio, juntos y en ese orden: quien llena la fila
+    // escribe los tres seguidos con el tabulador. Los recargos son una columna
+    // de captura porque la empresa maneja una TABLA por plazo -+30% a 3 meses,
+    // +47% a 5, +60% a 8- y no una tasa mensual; las cuentas contra los precios
+    // reales están en precios-empresa.spec.ts.
+    const h = encabezados(
+      await cargar((await generarPlantillaInventario()).data),
+      'Artículos',
+    );
 
     expect(h).not.toContain('Tasa mensual crédito');
-    expect(h[8]).toBe('Meses opción 1');
-    expect(h[9]).toBe('Precio total opción 1');
-
-    // $G = precio de contado, $F = rentabilidad, $H = meses de la opción 1.
-    // Interés simple -la rentabilidad multiplicada por los meses-, igual que
-    // `capital * tasa * meses / 100`, la única cuenta de interés del sistema.
-    const opcion1 = (ws.getCell('I7').value as ExcelJS.CellFormulaValue)
-      .formula;
-    expect(opcion1).toContain('ROUND($G7*(1+$F7*$H7),0)');
-
-    // La opción 3 usa sus propios meses ($L) y el mismo contado y rentabilidad.
-    const opcion3 = (ws.getCell('M7').value as ExcelJS.CellFormulaValue)
-      .formula;
-    expect(opcion3).toContain('ROUND($G7*(1+$F7*$L7),0)');
+    for (const [numero, base] of [
+      [1, 8],
+      [2, 11],
+      [3, 14],
+    ] as Array<[number, number]>) {
+      expect({
+        numero,
+        columnas: [h[base], h[base + 1], h[base + 2]],
+      }).toEqual({
+        numero,
+        columnas: [
+          `Meses opción ${numero}`,
+          `Recargo opción ${numero}`,
+          `Precio total opción ${numero}`,
+        ],
+      });
+    }
   }, 60000);
 
   it('los cuatro precios vienen resueltos pero SIN candado', async () => {
-    // Son un punto de partida, no un veredicto: la rentabilidad hace dos
-    // trabajos a la vez -cuánto se remarca y cuánto se cobra por esperar- así
-    // que los precios a plazo salen altos y hay que poder corregirlos. Si
-    // quedaran bloqueados como las columnas de utilidad, la plantilla pasaría
-    // de ayudar a estorbar.
+    // Son un punto de partida, no un veredicto: el precio que el negocio cobra
+    // se escribe encima. Si quedaran bloqueados como las columnas de utilidad,
+    // la plantilla pasaría de ayudar a estorbar.
     const { data } = await generarPlantillaInventario();
     const wb = await cargar(data);
     const ws = wb.getWorksheet('Artículos')!;
 
-    // Contado y los tres plazos, y una fila más allá de las mil preparadas.
-    for (const celda of ['G7', 'I7', 'K7', 'M7', 'G1006']) {
+    // Contado (G), los tres precios a plazo (J, M, P) y una fila más allá de
+    // las mil preparadas.
+    for (const celda of ['G7', 'J7', 'M7', 'P7', 'G1006']) {
       expect({
         celda,
         bloqueada: ws.getCell(celda).protection?.locked,
       }).toEqual({ celda, bloqueada: false });
     }
     // Las de utilidad sí van bloqueadas: ahí no hay nada que decidir.
-    expect(ws.getCell('U7').protection?.locked).not.toBe(false);
+    expect(ws.getCell('X7').protection?.locked).not.toBe(false);
   }, 60000);
 
   it('la revisión distingue qué falta cuando una celda queda vacía', async () => {
-    // Con la fórmula puesta, una celda vacía ya no significa una sola cosa. Sin
-    // costo o sin rentabilidad el precio de contado devuelve "", y decir solo
-    // "falta el precio" manda a escribirlo a mano cuando lo que falta es el
-    // porcentaje. Y con los meses escritos y la rentabilidad vacía, los tres
-    // precios quedan en "" y la revisión decía "sin opciones de crédito", lo
-    // contrario de lo que quiso hacer quien acababa de escribir los meses.
+    // Con las fórmulas puestas, una celda vacía ya no significa una sola cosa.
+    // Sin costo o sin rentabilidad el precio de contado devuelve "", y decir
+    // solo "falta el precio" manda a escribirlo a mano cuando lo que falta es
+    // el porcentaje. Y con los meses escritos y el recargo vacío, ese precio
+    // queda en "" y la revisión decía "sin opciones de crédito", lo contrario
+    // de lo que quiso hacer quien acababa de escribir los meses.
     const { data } = await generarPlantillaInventario();
     const wb = await cargar(data);
     const ws = wb.getWorksheet('Artículos')!;
     const h = encabezados(wb, 'Artículos');
 
-    expect(h[20]).toContain('Revisión de la fila');
-    const revision = (ws.getCell('T7').value as ExcelJS.CellFormulaValue)
+    expect(h[23]).toContain('Revisión de la fila');
+    const revision = (ws.getCell('W7').value as ExcelJS.CellFormulaValue)
       .formula;
 
     expect(revision).toContain('escriba la rentabilidad deseada');
