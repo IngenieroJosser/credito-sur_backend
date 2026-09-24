@@ -156,7 +156,7 @@ export class BackupService {
           size: Number(info.size),
           elapsedMs: Date.now() - dumpStartedMs,
         };
-      } catch (err: any) {
+      } catch (err) {
         const message = err?.message
           ? String(err.message)
           : 'Error ejecutando pg_dump';
@@ -222,7 +222,7 @@ export class BackupService {
       });
 
       return updated;
-    } catch (err: any) {
+    } catch (err) {
       const finishedAt = new Date();
       const durationMs = finishedAt.getTime() - startedAt.getTime();
       const message = err?.message

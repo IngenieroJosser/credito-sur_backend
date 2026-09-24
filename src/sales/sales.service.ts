@@ -232,7 +232,7 @@ export class SalesService {
           journalEntry,
         };
       });
-    } catch (error: any) {
+    } catch (error) {
       // Carrera de idempotencia: otro reintento idéntico ganó la creación.
       // Devolvemos la venta ya registrada en vez de duplicar o fallar.
       if (error?.code === 'P2002' && dto.idempotencyKey) {

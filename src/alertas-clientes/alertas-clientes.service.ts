@@ -321,7 +321,7 @@ export class AlertasClientesService {
         ? dto.evidenciaIds
         : Array.isArray(snapshotCliente.evidencias)
           ? snapshotCliente.evidencias
-              .map((evidencia: any) => evidencia.id)
+              .map((evidencia) => evidencia.id)
               .filter(Boolean)
           : [];
     const usuariosNotificar = await (this.prisma).usuario.findMany({

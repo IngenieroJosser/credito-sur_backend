@@ -1190,7 +1190,7 @@ describe('RoutesService role scoping', () => {
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
         findMany: jest.fn().mockResolvedValue([]),
       },
-      $transaction: jest.fn().mockImplementation((input: any) => {
+      $transaction: jest.fn().mockImplementation((input) => {
         if (typeof input === 'function') {
           return input(tx);
         }
@@ -1283,7 +1283,7 @@ describe('RoutesService role scoping', () => {
       },
       $transaction: jest
         .fn()
-        .mockImplementation((callback: any) => callback(tx)),
+        .mockImplementation((callback) => callback(tx)),
     };
 
     await makeService(prisma).activarRutaHoy('ruta-1', 'admin-1');
@@ -1423,7 +1423,7 @@ describe('RoutesService role scoping', () => {
       },
       $transaction: jest
         .fn()
-        .mockImplementation((callback: any) => callback(tx)),
+        .mockImplementation((callback) => callback(tx)),
     };
     const service = makeService(prisma);
     jest.spyOn(service as any, 'getDailyVisits').mockResolvedValue({
@@ -1534,7 +1534,7 @@ describe('RoutesService role scoping', () => {
             correo: 'admin@test.com',
           }),
         },
-        $transaction: jest.fn().mockImplementation((callback: any) => {
+        $transaction: jest.fn().mockImplementation((callback) => {
           const tx = {
             rutaJornada: {
               findUnique: jest.fn().mockResolvedValue({
@@ -1592,7 +1592,7 @@ describe('RoutesService role scoping', () => {
             .fn()
             .mockResolvedValue({ id: 'ruta-1', nombre: 'Ruta 1' }),
         },
-        $transaction: jest.fn().mockImplementation((callback: any) => {
+        $transaction: jest.fn().mockImplementation((callback) => {
           const tx = {
             rutaJornada: {
               findUnique: jest.fn().mockResolvedValue({
@@ -1631,7 +1631,7 @@ describe('RoutesService role scoping', () => {
             .fn()
             .mockResolvedValue({ id: 'ruta-1', nombre: 'Ruta 1' }),
         },
-        $transaction: jest.fn().mockImplementation((callback: any) => {
+        $transaction: jest.fn().mockImplementation((callback) => {
           const tx = {
             rutaJornada: {
               findUnique: jest.fn().mockResolvedValue({
@@ -1670,7 +1670,7 @@ describe('RoutesService role scoping', () => {
             .fn()
             .mockResolvedValue({ id: 'ruta-1', nombre: 'Ruta 1' }),
         },
-        $transaction: jest.fn().mockImplementation((callback: any) => {
+        $transaction: jest.fn().mockImplementation((callback) => {
           const tx = {
             rutaJornada: {
               findUnique: jest.fn().mockResolvedValue({
@@ -1724,7 +1724,7 @@ describe('RoutesService role scoping', () => {
             correo: 'admin@test.com',
           }),
         },
-        $transaction: jest.fn().mockImplementation((callback: any) => {
+        $transaction: jest.fn().mockImplementation((callback) => {
           const tx = {
             rutaJornada: {
               findUnique: jest.fn().mockResolvedValue({
@@ -1794,7 +1794,7 @@ describe('RoutesService role scoping', () => {
             correo: 'admin@test.com',
           }),
         },
-        $transaction: jest.fn().mockImplementation((callback: any) => {
+        $transaction: jest.fn().mockImplementation((callback) => {
           const tx = {
             rutaJornada: {
               findUnique: jest.fn().mockResolvedValue({
@@ -1864,7 +1864,7 @@ describe('RoutesService role scoping', () => {
             correo: 'admin@test.com',
           }),
         },
-        $transaction: jest.fn().mockImplementation((callback: any) => {
+        $transaction: jest.fn().mockImplementation((callback) => {
           const tx = {
             rutaJornada: {
               findUnique: jest.fn().mockResolvedValue({
@@ -2124,7 +2124,7 @@ describe('RoutesService role scoping', () => {
           .fn()
           .mockResolvedValue({ nombres: 'Ana', apellidos: 'Perez' }),
       },
-      $transaction: jest.fn().mockImplementation((cb: any) => cb(falsa.tx)),
+      $transaction: jest.fn().mockImplementation((cb) => cb(falsa.tx)),
     };
 
     await makeService(prisma).moveLoan('prestamo-2', 'ruta-b');
@@ -2177,7 +2177,7 @@ describe('RoutesService role scoping', () => {
           .fn()
           .mockResolvedValue({ nombres: 'Ana', apellidos: 'Perez' }),
       },
-      $transaction: jest.fn().mockImplementation((cb: any) => cb(falsa.tx)),
+      $transaction: jest.fn().mockImplementation((cb) => cb(falsa.tx)),
     };
 
     await makeService(prisma).moveLoan('prestamo-1', 'ruta-b');
@@ -2222,7 +2222,7 @@ describe('RoutesService role scoping', () => {
           apellidos: 'Perez',
         }),
       },
-      $transaction: jest.fn().mockImplementation((cb: any) => cb(falsa.tx)),
+      $transaction: jest.fn().mockImplementation((cb) => cb(falsa.tx)),
     };
 
     await makeService(prisma).assignClient(
@@ -2255,7 +2255,7 @@ describe('RoutesService role scoping', () => {
           apellidos: 'Perez',
         }),
       },
-      $transaction: jest.fn().mockImplementation((cb: any) => cb(falsa.tx)),
+      $transaction: jest.fn().mockImplementation((cb) => cb(falsa.tx)),
     };
 
     await makeService(prisma).assignClient(
@@ -2297,7 +2297,7 @@ describe('RoutesService role scoping', () => {
           apellidos: 'Perez',
         }),
       },
-      $transaction: jest.fn().mockImplementation((cb: any) => cb(falsa.tx)),
+      $transaction: jest.fn().mockImplementation((cb) => cb(falsa.tx)),
     };
 
     const intento = makeService(prisma).assignClient(
@@ -2356,7 +2356,7 @@ describe('RoutesService role scoping', () => {
           .fn()
           .mockResolvedValue({ nombres: 'Ana', apellidos: 'Perez' }),
       },
-      $transaction: jest.fn().mockImplementation((cb: any) => cb(falsa.tx)),
+      $transaction: jest.fn().mockImplementation((cb) => cb(falsa.tx)),
       asignacionRutaReorder: jest.fn(),
     };
 
@@ -2410,7 +2410,7 @@ describe('RoutesService role scoping', () => {
       usuario: {
         findUnique: jest.fn().mockResolvedValue({ id: 'cobrador-nuevo' }),
       },
-      $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
+      $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
     };
 
     await makeService(prisma).update('ruta-1', {

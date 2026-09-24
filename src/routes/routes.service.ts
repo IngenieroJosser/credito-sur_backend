@@ -490,7 +490,7 @@ export class RoutesService {
           creadaAhora: true,
         };
       });
-    } catch (error: any) {
+    } catch (error) {
       if (error?.code === 'P2002') {
         const activacionExistente =
           (await this.prisma.transaccion.findFirst({
@@ -2095,7 +2095,7 @@ export class RoutesService {
       const asignaciones: any[] = ruta.asignaciones;
       const prestamosIdsRuta = [
         ...new Set(
-          asignaciones.flatMap((asig: any) =>
+          asignaciones.flatMap((asig) =>
             (asig?.cliente?.prestamos || [])
               .map((p: any) => p?.id)
               .filter(Boolean),
@@ -2203,7 +2203,7 @@ export class RoutesService {
               : (c?.fechaVencimiento ?? null);
           };
 
-          const cuotasSorted = [...cuotasList].sort((a: any, b: any) => {
+          const cuotasSorted = [...cuotasList].sort((a, b: any) => {
             const ak = getBogotaDayKey(
               new Date(getFechaEfectiva(a) || a?.fechaVencimiento),
             );
@@ -2268,7 +2268,7 @@ export class RoutesService {
                 : 0;
 
           const visitasOperativas = new Map(
-            (detalleOperativoHoy?.visitas || []).map((visita: any) => [
+            (detalleOperativoHoy?.visitas || []).map((visita) => [
               String(visita?.cliente?.id || visita?.clienteId || ''),
               visita,
             ]),
@@ -3700,7 +3700,7 @@ export class RoutesService {
     const _clientesVisitaIds = [
       ...new Set(
         visitasDelDia
-          .map((v: any) => v?.cliente?.id || v?.clienteId)
+          .map((v) => v?.cliente?.id || v?.clienteId)
           .filter(Boolean),
       ),
     ];
@@ -3794,7 +3794,7 @@ export class RoutesService {
     });
 
     const clientesEnVisitasIniciales = new Set(
-      visitasDelDia.map((v: any) => v?.cliente?.id || v?.clienteId),
+      visitasDelDia.map((v) => v?.cliente?.id || v?.clienteId),
     );
     for (const [
       prestamoId,
@@ -3810,7 +3810,7 @@ export class RoutesService {
       const clienteId = String(datosReprogramacion?.clienteId || '');
       if (!clienteId || !prestamoId) continue;
 
-      const visitaInicial = visitasDelDia.find((v: any) => {
+      const visitaInicial = visitasDelDia.find((v) => {
         if (String(v?.cliente?.id || v?.clienteId || '') !== clienteId)
           return false;
         return (v?.prestamos || []).some(
@@ -3945,9 +3945,9 @@ export class RoutesService {
     const buildCuotaObjetivoDesdePago = (pago: any) => {
       const detalle = Array.isArray(pago?.detalles)
         ? [...pago.detalles]
-            .filter((d: any) => d?.cuota)
+            .filter((d) => d?.cuota)
             .sort(
-              (a: any, b: any) =>
+              (a, b: any) =>
                 Number(a?.cuota?.numeroCuota || 0) -
                 Number(b?.cuota?.numeroCuota || 0),
             )[0]
@@ -4056,7 +4056,7 @@ export class RoutesService {
       'TRANSFERENCIA',
     );
 
-    visitasDelDia.forEach((v: any) => {
+    visitasDelDia.forEach((v) => {
       const _cid = String(v?.cliente?.id || v?.clienteId || '');
       let reprogramacionObjetivo: any = null;
       let cuotaReprogramadaObjetivo: any = null;
@@ -4460,7 +4460,7 @@ export class RoutesService {
       this.buildObligacionesOperativas(visitasDelDiaFinales);
 
     const totalEsperadoFinal = obligacionesOperativas.reduce(
-      (sum: number, item: any) => sum + Number(item.metaPendiente || 0),
+      (sum: number, item) => sum + Number(item.metaPendiente || 0),
       0,
     );
 
@@ -4471,7 +4471,7 @@ export class RoutesService {
           ? 100
           : 0;
 
-    const gestionados = obligacionesOperativas.filter((item: any) => {
+    const gestionados = obligacionesOperativas.filter((item) => {
       return item.estadoGestion !== 'PENDIENTE';
     }).length;
 
@@ -4505,13 +4505,13 @@ export class RoutesService {
         clientesOperativosHoy: new Set(
           obligacionesOperativas
             .map(
-              (item: any) => item.visita?.cliente?.id || item.visita?.clienteId,
+              (item) => item.visita?.cliente?.id || item.visita?.clienteId,
             )
             .filter(Boolean),
         ).size,
       },
       visitas: visitasDelDiaFinales,
-      obligaciones: obligacionesOperativas.map((item: any) => ({
+      obligaciones: obligacionesOperativas.map((item) => ({
         asignacionId: item.visita.asignacionId,
         ordenVisita: item.visita.ordenVisita,
         cliente: item.visita.cliente,
@@ -4679,7 +4679,7 @@ export class RoutesService {
       return getCuotaFechaEfectivaKeyRuta(cuota) <= fechaKey;
     });
     const montoMoraAcumulada = cuotasVencidasPendientes.reduce(
-      (sum: number, cuota: any) =>
+      (sum: number, cuota) =>
         sum +
         Math.max(
           0,
@@ -5399,35 +5399,35 @@ export class RoutesService {
     const visitas = Array.isArray(detalleDia.visitas) ? detalleDia.visitas : [];
     const obligaciones = this.buildObligacionesOperativas(visitas);
 
-    const obligacionesPendientes = obligaciones.filter((o: any) => {
+    const obligacionesPendientes = obligaciones.filter((o) => {
       return o.estadoGestion === 'PENDIENTE';
     });
 
-    const obligacionesAusentes = obligaciones.filter((o: any) => {
+    const obligacionesAusentes = obligaciones.filter((o) => {
       return o.estadoGestion === 'AUSENTE';
     });
 
-    const obligacionesPagaron = obligaciones.filter((o: any) => {
+    const obligacionesPagaron = obligaciones.filter((o) => {
       return o.estadoGestion === 'PAGO_REGISTRADO';
     });
 
-    const obligacionesGestionadas = obligaciones.filter((o: any) => {
+    const obligacionesGestionadas = obligaciones.filter((o) => {
       return o.estadoGestion !== 'PENDIENTE';
     });
 
-    const clientesPendientes = visitas.filter((v: any) => {
+    const clientesPendientes = visitas.filter((v) => {
       return this.resolveEstadoGestionCierrePendiente(v) === 'PENDIENTE';
     });
 
-    const clientesAusentes = visitas.filter((v: any) => {
+    const clientesAusentes = visitas.filter((v) => {
       return this.resolveEstadoGestionCierrePendiente(v) === 'AUSENTE';
     });
 
-    const clientesPagaron = visitas.filter((v: any) => {
+    const clientesPagaron = visitas.filter((v) => {
       return this.resolveEstadoGestionCierrePendiente(v) === 'PAGO_REGISTRADO';
     });
 
-    const clientesGestionados = visitas.filter((v: any) => {
+    const clientesGestionados = visitas.filter((v) => {
       return this.resolveEstadoGestionCierrePendiente(v) !== 'PENDIENTE';
     });
 
@@ -5564,7 +5564,7 @@ export class RoutesService {
       `${v.cliente?.nombres || ''} ${v.cliente?.apellidos || ''}`.trim() ||
       'Cliente sin nombre';
 
-    visitas.forEach((cliente: any) => {
+    visitas.forEach((cliente) => {
       const estadoGestion = this.resolveEstadoGestionCierrePendiente(cliente);
       const tienePagoReal = Number(cliente.recaudadoDelDia || 0) > 0;
 
@@ -6276,7 +6276,7 @@ export class RoutesService {
   }
 
   private buildObligacionesOperativas(visitas: any[]) {
-    return visitas.flatMap((visita: any) => {
+    return visitas.flatMap((visita) => {
       return (visita.prestamos || [])
         .filter((prestamo: any) => isPrestamoOperativoRuta(prestamo))
         .map((prestamo: any) => {
@@ -6368,14 +6368,14 @@ export class RoutesService {
         const obligaciones = this.buildObligacionesOperativas(visitas);
 
         const metaOperativaJornada = obligaciones.reduce(
-          (sum: number, o: any) => {
+          (sum: number, o) => {
             return sum + Number(o.metaPendiente || 0);
           },
           0,
         );
 
         const recaudoOperativoJornada = obligaciones.reduce(
-          (sum: number, o: any) => {
+          (sum: number, o) => {
             return sum + Number(o.recaudado || 0);
           },
           0,
@@ -6402,37 +6402,37 @@ export class RoutesService {
               ? 100
               : 0;
 
-        const obligacionesGestionadas = obligaciones.filter((o: any) => {
+        const obligacionesGestionadas = obligaciones.filter((o) => {
           return o.estadoGestion !== 'PENDIENTE';
         });
 
-        const obligacionesPagaron = obligaciones.filter((o: any) => {
+        const obligacionesPagaron = obligaciones.filter((o) => {
           return o.estadoGestion === 'PAGO_REGISTRADO';
         });
 
-        const obligacionesAusentes = obligaciones.filter((o: any) => {
+        const obligacionesAusentes = obligaciones.filter((o) => {
           return o.estadoGestion === 'AUSENTE';
         });
 
-        const obligacionesPendientes = obligaciones.filter((o: any) => {
+        const obligacionesPendientes = obligaciones.filter((o) => {
           return o.estadoGestion === 'PENDIENTE';
         });
 
-        const clientesGestionados = visitas.filter((v: any) => {
+        const clientesGestionados = visitas.filter((v) => {
           return this.resolveEstadoGestionCierrePendiente(v) !== 'PENDIENTE';
         });
 
-        const clientesPagaron = visitas.filter((v: any) => {
+        const clientesPagaron = visitas.filter((v) => {
           return (
             this.resolveEstadoGestionCierrePendiente(v) === 'PAGO_REGISTRADO'
           );
         });
 
-        const clientesAusentes = visitas.filter((v: any) => {
+        const clientesAusentes = visitas.filter((v) => {
           return this.resolveEstadoGestionCierrePendiente(v) === 'AUSENTE';
         });
 
-        const clientesPendientes = visitas.filter((v: any) => {
+        const clientesPendientes = visitas.filter((v) => {
           return this.resolveEstadoGestionCierrePendiente(v) === 'PENDIENTE';
         });
 
@@ -6498,7 +6498,7 @@ export class RoutesService {
             obligacionesAusentes: obligacionesAusentes.length,
             obligacionesPendientes: obligacionesPendientes.length,
           },
-          clientes: visitas.map((v: any) => ({
+          clientes: visitas.map((v) => ({
             asignacionId: v.asignacionId,
             ordenVisita: v.ordenVisita,
             clienteId: v.cliente?.id,
@@ -6525,7 +6525,7 @@ export class RoutesService {
             cuotaObjetivoPrestamoId: v.cuotaObjetivoPrestamoId || null,
             prestamos: v.prestamos || [],
           })),
-          obligaciones: obligaciones.map((item: any) => ({
+          obligaciones: obligaciones.map((item) => ({
             asignacionId: item.visita.asignacionId,
             ordenVisita: item.visita.ordenVisita,
             cliente: item.visita.cliente,

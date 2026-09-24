@@ -75,7 +75,7 @@ export class MirrorSyncProcessor extends WorkerHost {
       this.logger.log(
         `Sincronización ultra-rápida exitosa contra el espejo: Modelo ${model}`,
       );
-    } catch (error: any) {
+    } catch (error) {
       this.logger.warn(
         `Desconexión o fallo al insertar en el VPS para modelo ${model}: ${error.message} - El sistema reintentará con Backoff Exponencial en background.`,
       );

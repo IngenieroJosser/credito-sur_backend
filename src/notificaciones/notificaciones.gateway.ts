@@ -195,7 +195,7 @@ export class NotificacionesGateway
                 data.rutaId,
                 actorCierre,
               );
-            } catch (error: any) {
+            } catch (error) {
               this.logger.warn(
                 `Bloqueo de cierre por jornada pendiente: rutaId=${data.rutaId}`,
                 error.message,
@@ -251,12 +251,12 @@ export class NotificacionesGateway
               metaBackend > 0
                 ? Math.round((recaudoBackend / metaBackend) * 1000) / 10
                 : Number(resumen.efectividad || 0);
-            const clientesAusentesBackend = visitas.filter((v: any) =>
+            const clientesAusentesBackend = visitas.filter((v) =>
               String(v.estadoGestion || '')
                 .toUpperCase()
                 .includes('AUSENTE'),
             ).length;
-            const clientesFaltantesBackend = visitas.filter((v: any) => {
+            const clientesFaltantesBackend = visitas.filter((v) => {
               const estado = String(v.estadoGestion || '').toUpperCase();
               const recaudoVisita = Number(v.recaudadoDelDia || 0);
               return (
@@ -378,7 +378,7 @@ export class NotificacionesGateway
         success: true,
         message: 'Ruta cerrada correctamente.',
       };
-    } catch (error: any) {
+    } catch (error) {
       this.logger.error('Error en handleRutaCompletadaEmit:', error);
       return {
         success: false,

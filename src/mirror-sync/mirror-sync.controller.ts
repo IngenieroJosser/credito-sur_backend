@@ -203,7 +203,7 @@ export class MirrorSyncController {
       }
 
       return { status: 'success', synced: true };
-    } catch (e: any) {
+    } catch (e) {
       this.logger.error(
         `Error crítico procesando réplica en VPS Espejo -> ${e.message}`,
         e.stack,

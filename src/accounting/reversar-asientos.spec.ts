@@ -33,7 +33,7 @@ function servicio(originales: any[]) {
   };
 
   const prisma = {
-    $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
+    $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
   };
 
   return { service: new LedgerService(prisma as any), tx };

@@ -74,7 +74,7 @@ function buildPrismaMock(overrides: Record<string, any> = {}) {
   };
 
   return {
-    $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
+    $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
     _tx: tx,
     journalLine: {
       aggregate: jest.fn().mockResolvedValue({

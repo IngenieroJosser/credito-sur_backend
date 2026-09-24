@@ -175,7 +175,7 @@ function buildMockPrisma(overrides: Record<string, unknown> = {}) {
     rutaJornada: {
       findFirst: jest.fn().mockResolvedValue(RUTA_JORNADA_ABIERTA),
     },
-    $transaction: jest.fn().mockImplementation((cb: any) => cb(txMock)),
+    $transaction: jest.fn().mockImplementation((cb) => cb(txMock)),
     _tx: txMock,
     ...overrides,
   };

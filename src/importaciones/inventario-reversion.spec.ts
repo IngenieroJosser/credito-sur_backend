@@ -70,7 +70,7 @@ function preparar(stockActual = 4) {
   };
   const prisma = {
     importacionLote: { findUnique: jest.fn().mockResolvedValue(lote) },
-    $transaction: jest.fn((callback: any) => callback(tx)),
+    $transaction: jest.fn((callback) => callback(tx)),
   };
   const ledger = {
     reversarAsientos: jest.fn().mockResolvedValue(['reversa-1']),

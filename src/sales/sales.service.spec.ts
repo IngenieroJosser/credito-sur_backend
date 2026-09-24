@@ -62,7 +62,7 @@ describe('SalesService venta contado', () => {
       },
       $transaction: jest
         .fn()
-        .mockImplementation((callback: any) => callback(tx)),
+        .mockImplementation((callback) => callback(tx)),
     };
     const ledger = {
       registrarVentaArticulo: jest.fn().mockResolvedValue({
@@ -224,7 +224,7 @@ describe('SalesService venta contado', () => {
       },
       $transaction: jest
         .fn()
-        .mockImplementation((callback: any) => callback(tx)),
+        .mockImplementation((callback) => callback(tx)),
     };
 
     const ledger = {
@@ -315,7 +315,7 @@ describe('SalesService venta contado', () => {
       },
       $transaction: jest
         .fn()
-        .mockImplementation((callback: any) => callback(tx)),
+        .mockImplementation((callback) => callback(tx)),
     };
 
     await expect(
@@ -395,7 +395,7 @@ describe('SalesService venta contado', () => {
       },
       $transaction: jest
         .fn()
-        .mockImplementation((callback: any) => callback(tx)),
+        .mockImplementation((callback) => callback(tx)),
     };
 
     await expect(

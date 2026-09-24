@@ -242,7 +242,7 @@ export class LoansController {
         `attachment; filename="${result.filename}"`,
       );
       res.send(result.data);
-    } catch (e: any) {
+    } catch (e) {
       console.error('PDF GENERATION ERROR: ' + e.message, e.stack);
       throw e;
     }

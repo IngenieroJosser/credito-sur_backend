@@ -193,7 +193,7 @@ function buildPrismaMock() {
     },
     usuario: { findUnique: jest.fn().mockResolvedValue(null) },
     notificacion: { create: jest.fn().mockResolvedValue({}) },
-    $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
+    $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
     _tx: tx,
   };
 }

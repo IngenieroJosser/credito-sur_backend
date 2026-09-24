@@ -140,7 +140,7 @@ export class PushService {
       this.logger.log(`Enviando push real a: ${subscription.endpoint}`);
       await webpush.sendNotification(subscription, JSON.stringify(payload));
       return 'enviadas';
-    } catch (error: any) {
+    } catch (error) {
       if (error.statusCode === 410 || error.statusCode === 404) {
         this.logger.warn(
           `Suscripción expirada o inválida, eliminando: ${subscription.endpoint}`,

@@ -32,8 +32,10 @@ async function main() {
   });
 
   const categoriaIds = usadosEnRuta
-    .map((r: any) => r.categoriaId)
-    .filter(Boolean);
+    .map((r) => r.categoriaId)
+    // Predicado de tipo y no `filter(Boolean)`: hace exactamente lo mismo en
+    // ejecucion, pero ademas le dice al compilador que ya no quedan nulos.
+    .filter((id): id is string => Boolean(id));
 
   console.log(
     `\nCategorías referenciadas por gastos de ruta: ${categoriaIds.length}`,
@@ -70,7 +72,7 @@ async function main() {
   // Migrar solo las categorías usadas en ruta
   const resultado = await prisma.categoria.updateMany({
     where: {
-      id: { in: antes.map((c: any) => c.id) },
+      id: { in: antes.map((c) => c.id) },
       tipo: 'GASTO',
       eliminadoEn: null,
     },

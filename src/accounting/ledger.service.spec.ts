@@ -20,7 +20,7 @@ function makeService() {
   };
 
   const prisma = {
-    $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
+    $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
     _tx: tx,
   };
 

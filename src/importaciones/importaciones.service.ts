@@ -1186,7 +1186,7 @@ export class ImportacionesService {
     let preciosActualizados = 0;
     // Códigos marcados como ACTUALIZAR: sus precios se corrigen, no se omiten.
     const articulosPorCodigo = new Map<string, boolean>(
-      articulos.map((art: any) => [art.codigo, Boolean(art.esActualizacion)]),
+      articulos.map((art) => [art.codigo, Boolean(art.esActualizacion)]),
     );
     let preciosCreados = 0;
     let preciosOmitidos = 0;
@@ -1223,7 +1223,7 @@ export class ImportacionesService {
         // igual que uno creado a mano, y no solo con el nombre suelto.
         const categoriasPorNombre = await this.resolverCategoriasArticulo(
           tx,
-          articulos.map((art: any) => art.categoria),
+          articulos.map((art) => art.categoria),
         );
         const idCategoria = (nombre: unknown) =>
           categoriasPorNombre.get(normalizarNombreCategoria(nombre)) ?? null;

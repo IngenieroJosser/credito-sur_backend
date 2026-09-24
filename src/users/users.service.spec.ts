@@ -55,7 +55,7 @@ describe('UsersService operational detail', () => {
       registroAuditoria: {
         findMany: jest.fn(),
       },
-      $transaction: jest.fn(async (callback: any) =>
+      $transaction: jest.fn(async (callback) =>
         callback({
           usuario: {
             count: jest.fn().mockResolvedValue(1),
@@ -125,7 +125,7 @@ describe('UsersService operational detail', () => {
         creadoEn: new Date('2026-06-26T00:00:00.000Z'),
       });
       const { service, prisma } = buildService({
-        $transaction: jest.fn(async (callback: any) =>
+        $transaction: jest.fn(async (callback) =>
           callback({
             usuario: {
               count: jest.fn().mockResolvedValue(1),

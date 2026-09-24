@@ -240,7 +240,7 @@ export class ClientsService {
       }
 
       // Crear nuevos archivos
-      const nuevosArchivos = archivos.map((archivo: any) => {
+      const nuevosArchivos = archivos.map((archivo) => {
         // Asegurar que la URL sea correcta
         const url = archivo.url || archivo.path || archivo.ruta;
         const urlFinal =
@@ -704,7 +704,7 @@ export class ClientsService {
       const todosLosClientes = [
         ...aprobacionesTransformadas,
         ...clientesTransformados,
-      ].sort((a: any, b: any) => {
+      ].sort((a, b: any) => {
         const dateA = new Date(a.creadoEn || 0).getTime();
         const dateB = new Date(b.creadoEn || 0).getTime();
         return dateB - dateA;
@@ -971,7 +971,7 @@ export class ClientsService {
             });
 
             await this.prisma.multimedia.createMany({
-              data: data.archivos.map((archivo: any) => ({
+              data: data.archivos.map((archivo) => ({
                 clienteId: clienteRestaurado.id,
                 tipoContenido: archivo.tipoContenido,
                 tipoArchivo: archivo.tipoArchivo,
@@ -1145,7 +1145,7 @@ export class ClientsService {
         data.archivos.length > 0
       ) {
         await this.prisma.multimedia.createMany({
-          data: data.archivos.map((archivo: any) => ({
+          data: data.archivos.map((archivo) => ({
             clienteId: cliente.id,
             tipoContenido: archivo.tipoContenido,
             tipoArchivo: archivo.tipoArchivo,
@@ -1583,7 +1583,7 @@ export class ClientsService {
         // 2. Crear los archivos nuevos
         if (archivos.length > 0) {
           await this.prisma.multimedia.createMany({
-            data: archivos.map((archivo: any) => ({
+            data: archivos.map((archivo) => ({
               clienteId: id,
               tipoContenido: archivo.tipoContenido,
               tipoArchivo: archivo.tipoArchivo || 'image/jpeg',

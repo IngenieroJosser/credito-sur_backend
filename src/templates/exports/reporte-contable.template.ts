@@ -100,9 +100,15 @@ export async function generarExcelContable(
   ws1.getRow(2).height = 22;
 
   const h1 = ws1.getRow(4);
-  ws1.columns.forEach((col: any, i: number) => {
+  ws1.columns.forEach((col, i: number) => {
     const cell = h1.getCell(i + 1);
-    cell.value = col.header;
+    // `header` en ExcelJS es `string | string[]`: admite encabezados de
+    // varias filas. Aqui siempre son cadenas, pero se trata el array de
+    // forma explicita para no escribir "[object Object]" el dia que alguien
+    // use esa forma. Antes el callback iba con `col: any` y no se veia.
+    cell.value = Array.isArray(col.header)
+      ? col.header.join(' ')
+      : (col.header ?? '');
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     cell.fill = {
       type: 'pattern',
@@ -221,9 +227,15 @@ export async function generarExcelContable(
   ws2.addRow([]);
 
   const h2 = ws2.getRow(3);
-  ws2.columns.forEach((col: any, i: number) => {
+  ws2.columns.forEach((col, i: number) => {
     const cell = h2.getCell(i + 1);
-    cell.value = col.header;
+    // `header` en ExcelJS es `string | string[]`: admite encabezados de
+    // varias filas. Aqui siempre son cadenas, pero se trata el array de
+    // forma explicita para no escribir "[object Object]" el dia que alguien
+    // use esa forma. Antes el callback iba con `col: any` y no se veia.
+    cell.value = Array.isArray(col.header)
+      ? col.header.join(' ')
+      : (col.header ?? '');
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     cell.fill = {
       type: 'pattern',

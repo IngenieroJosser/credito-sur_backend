@@ -49,6 +49,24 @@ export class CreateMultimediaDto {
   @IsNumber()
   @IsOptional()
   tamanoBytes?: number;
+
+  /**
+   * Extension del archivo. Es columna del modelo (schema.prisma:822) y el
+   * servicio la usa; faltaba declararla aqui.
+   */
+  formato?: string;
+
+  /**
+   * Quien subio el archivo. Columna del modelo (schema.prisma:836).
+   */
+  subidoPorId?: string;
+
+  /**
+   * El nombre que le pone Multer al fichero recien subido. NO es columna del
+   * modelo -la de verdad es `ruta`- pero llega cuando el archivo viene del
+   * formulario en vez de la base. Se lee en cadena: `url || path || ruta`.
+   */
+  path?: string;
 }
 
 export class CreateClientDto {

@@ -168,7 +168,7 @@ export class SyncConflictsService {
         }
 
         success = true;
-      } catch (err: any) {
+      } catch (err) {
         extraError = err.message || 'Fallo automatizado';
       }
     } else {

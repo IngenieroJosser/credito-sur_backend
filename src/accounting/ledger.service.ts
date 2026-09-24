@@ -831,7 +831,7 @@ export class LedgerService {
       }
 
       const lineas = original.lines
-        .map((line: any) => {
+        .map((line) => {
           const debito = Number(line.debitAmount || 0);
           const credito = Number(line.creditAmount || 0);
 
@@ -848,7 +848,7 @@ export class LedgerService {
           };
         })
         .filter(
-          (l: any) =>
+          (l) =>
             Number(l.debitAmount || 0) > 0 || Number(l.creditAmount || 0) > 0,
         );
 

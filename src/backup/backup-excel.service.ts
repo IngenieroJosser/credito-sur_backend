@@ -235,7 +235,7 @@ export class BackupExcelService {
         VERDE: 'FFDCFCE7',
         LISTA_NEGRA: 'FFFFE4E6',
       };
-      data.forEach((c: any, i: number) => {
+      data.forEach((c, i: number) => {
         const row = ws.addRow([
           c.codigo,
           c.nombres,
@@ -356,7 +356,7 @@ export class BackupExcelService {
       let sm = 0,
         ss = 0,
         sp = 0;
-      data.forEach((p: any, i: number) => {
+      data.forEach((p, i: number) => {
         const m = n2(p.monto),
           s = n2(p.saldoPendiente),
           tp = n2(p.totalPagado);
@@ -488,7 +488,7 @@ export class BackupExcelService {
         VENCIDA: 'FFFECACA',
         PRORROGADA: 'FFE0E7FF',
       };
-      data.forEach((q: any, i: number) => {
+      data.forEach((q, i: number) => {
         const cli =
           `${q.prestamo?.cliente?.nombres || ''} ${q.prestamo?.cliente?.apellidos || ''}`.trim();
         const row = ws.addRow([
@@ -566,7 +566,7 @@ export class BackupExcelService {
         LC,
       );
       let total = 0;
-      data.forEach((p: any, i: number) => {
+      data.forEach((p, i: number) => {
         const row = ws.addRow([
           p.numeroPago,
           p.prestamo?.numeroPrestamo || '',
@@ -644,7 +644,7 @@ export class BackupExcelService {
       let sK = 0,
         sI = 0,
         sM = 0;
-      data.forEach((d: any, i: number) => {
+      data.forEach((d, i: number) => {
         const k = n2(d.montoCapital),
           it = n2(d.montoInteres),
           mo = n2(d.montoInteresMora);
@@ -715,7 +715,7 @@ export class BackupExcelService {
         ],
         LC,
       );
-      data.forEach((r: any, i: number) => {
+      data.forEach((r, i: number) => {
         const row = ws.addRow([
           r.codigo,
           r.nombre,
@@ -794,7 +794,7 @@ export class BackupExcelService {
         ],
         LC,
       );
-      data.forEach((a: any, i: number) => {
+      data.forEach((a, i: number) => {
         const ruta = `${a.ruta?.codigo || ''} - ${a.ruta?.nombre || ''}`;
         const row = ws.addRow([
           ruta,
@@ -861,7 +861,7 @@ export class BackupExcelService {
         LC,
       );
       let total = 0;
-      data.forEach((c: any, i: number) => {
+      data.forEach((c, i: number) => {
         const s = n2(c.saldoActual);
         const ruta = c.ruta
           ? `${c.ruta.codigo} - ${c.ruta.nombre}`
@@ -945,7 +945,7 @@ export class BackupExcelService {
         EGRESO: 'FFFECACA',
         TRANSFERENCIA: 'FFE0E7FF',
       };
-      data.forEach((t: any, i: number) => {
+      data.forEach((t, i: number) => {
         const caja = `${t.caja?.codigo || ''} - ${t.caja?.nombre || ''}`;
         const row = ws.addRow([
           t.numeroTransaccion,
@@ -1027,7 +1027,7 @@ export class BackupExcelService {
         RECHAZADO: 'FFFECACA',
       };
       let total = 0;
-      data.forEach((g: any, i: number) => {
+      data.forEach((g, i: number) => {
         const ruta = g.ruta ? `${g.ruta.codigo} - ${g.ruta.nombre}` : '';
         const caja = g.caja ? `${g.caja.codigo} - ${g.caja.nombre}` : '';
         const row = ws.addRow([
@@ -1118,7 +1118,7 @@ export class BackupExcelService {
         ],
         LC,
       );
-      data.forEach((p: any, i: number) => {
+      data.forEach((p, i: number) => {
         const row = ws.addRow([
           p.codigo,
           p.nombre,
@@ -1174,7 +1174,7 @@ export class BackupExcelService {
         ],
         LC,
       );
-      data.forEach((p: any, i: number) => {
+      data.forEach((p, i: number) => {
         const row = ws.addRow([
           p.producto?.nombre || '',
           p.producto?.codigo || '',
@@ -1239,7 +1239,7 @@ export class BackupExcelService {
         RECHAZADO: 'FFFECACA',
         CANCELADO: 'FFF1F5F9',
       };
-      data.forEach((a: any, i: number) => {
+      data.forEach((a, i: number) => {
         const row = ws.addRow([
           fmtE(a.tipoAprobacion),
           a.tablaReferencia || '',
@@ -1313,7 +1313,7 @@ export class BackupExcelService {
         ],
         'H',
       );
-      data.forEach((e: any, i: number) => {
+      data.forEach((e, i: number) => {
         const row = ws.addRow([
           e.prestamo?.numeroPrestamo || '',
           nom(e.prestamo?.cliente),
@@ -1390,7 +1390,7 @@ export class BackupExcelService {
         INACTIVO: 'FFFECACA',
         SUSPENDIDO: 'FFFEF9C3',
       };
-      data.forEach((u: any, i: number) => {
+      data.forEach((u, i: number) => {
         const row = ws.addRow([
           u.nombres || '',
           u.apellidos || '',
@@ -1464,7 +1464,7 @@ export class BackupExcelService {
         ],
         LC,
       );
-      data.forEach((a: any, i: number) => {
+      data.forEach((a, i: number) => {
         const row = ws.addRow([
           nom(a.usuario) || 'Sistema',
           fmtE(a.rolUsuario || ''),

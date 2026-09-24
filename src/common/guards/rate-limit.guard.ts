@@ -89,7 +89,7 @@ export class RateLimitGuard implements CanActivate {
       this.redis.on('end', () => {
         this.redisSano = false;
       });
-    } catch (e: any) {
+    } catch (e) {
       this.logger.warn(
         `No se pudo crear el cliente Redis del rate-limit: ${e?.message}`,
       );
@@ -118,7 +118,7 @@ export class RateLimitGuard implements CanActivate {
         count: Number(count),
         resetAt: Date.now() + Math.max(0, Number(ttl)),
       };
-    } catch (e: any) {
+    } catch (e) {
       // Un fallo de Redis nunca debe tumbar la petición: se cae a memoria.
       this.redisSano = false;
       this.logger.warn(

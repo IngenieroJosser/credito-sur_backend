@@ -163,7 +163,7 @@ export class AccountingService {
         },
         include: incluir,
       });
-    } catch (error: any) {
+    } catch (error) {
       // Otra petición la creó entre la búsqueda y el create.
       if (error?.code !== 'P2002') throw error;
 
@@ -3582,7 +3582,7 @@ export class AccountingService {
     }
     // Filtro opcional: solo cajas de rutas (cobradores)
     if (filtros?.soloRutas) {
-      mapped = mapped.filter((m: any) => m.cajaTipo === 'RUTA');
+      mapped = mapped.filter((m) => m.cajaTipo === 'RUTA');
     }
     return mapped;
   }
@@ -4512,7 +4512,7 @@ export class AccountingService {
 
         return transaccion;
       });
-    } catch (error: any) {
+    } catch (error) {
       // Carrera de idempotencia: otro reintento idéntico ganó. La restricción
       // única del idempotencyKey hizo rollback de todo; devolvemos el existente.
       if (error?.code === 'P2002' && idempotencyKey) {

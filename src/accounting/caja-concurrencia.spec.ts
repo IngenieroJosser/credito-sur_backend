@@ -35,7 +35,7 @@ function servicio(saldos: number[]) {
   };
 
   const prisma = {
-    $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
+    $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
     _tx: tx,
   };
 
@@ -189,7 +189,7 @@ describe('Los movimientos de caja de un asiento se suman y se ordenan', () => {
       ],
     });
 
-    const orden = tx.caja.update.mock.calls.map((c: any) => c[0].where.id);
+    const orden = tx.caja.update.mock.calls.map((c) => c[0].where.id);
     expect(orden).toEqual(['caja-a', 'caja-z']);
   });
 });

@@ -53,7 +53,7 @@ function makeService(prisma: any) {
     if (!prisma.$transaction) {
       prisma.$transaction = jest
         .fn()
-        .mockImplementation((cb: any) => cb(prisma));
+        .mockImplementation((cb) => cb(prisma));
     }
     if (!prisma.cuota) {
       prisma.cuota = {
@@ -1244,7 +1244,7 @@ describe('LoansService accounting impact for approved loans', () => {
         aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
         create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
       },
-      $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
+      $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
       cliente: {
         findUnique: jest.fn().mockResolvedValue({
           id: 'cliente-1',
@@ -1403,7 +1403,7 @@ describe('LoansService accounting impact for approved loans', () => {
         aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
         create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
       },
-      $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
+      $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
       cliente: {
         findUnique: jest.fn().mockResolvedValue({
           id: 'cliente-1',
@@ -1838,7 +1838,7 @@ describe('LoansService reprogramacion concurrency controls', () => {
     cuota: {
       update: jest.fn().mockResolvedValue({}),
     },
-    $transaction: jest.fn().mockImplementation((cb: any) =>
+    $transaction: jest.fn().mockImplementation((cb) =>
       cb({
         aprobacion: {
           updateMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -2443,14 +2443,14 @@ describe('LoansService role scoping', () => {
       return estados.includes('VENCIDA') && miraLaFecha;
     };
 
-    const whereMora = wheres.find((w: any) => Array.isArray(w?.OR));
+    const whereMora = wheres.find((w) => Array.isArray(w?.OR));
     expect(whereMora).toBeDefined();
     expect(whereMora.OR).toContainEqual({ estado: 'EN_MORA' });
     expect(whereMora.OR.some(porVencidas)).toBe(true);
     // Sin saldo no hay mora, por mucho que la cuota esté vencida.
     expect(whereMora.saldoPendiente).toEqual({ gt: 0 });
 
-    const whereActivos = wheres.find((w: any) => w?.estado === 'ACTIVO');
+    const whereActivos = wheres.find((w) => w?.estado === 'ACTIVO');
     expect(whereActivos).toBeDefined();
     expect(porVencidas(whereActivos.NOT)).toBe(true);
 
@@ -2682,7 +2682,7 @@ describe('LoansService archive accounting reversal', () => {
           cliente: { nombres: 'Adrian', apellidos: 'Murillo' },
         }),
       },
-      $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
+      $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
       asignacionRuta: {
         findFirst: jest.fn().mockResolvedValue(null),
       },
@@ -2805,7 +2805,7 @@ describe('LoansService archive accounting reversal', () => {
           cliente: { nombres: 'Adrian', apellidos: 'Murillo' },
         }),
       },
-      $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
+      $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
     };
 
     const result = await makeService(prisma).archiveLoan(
@@ -2906,7 +2906,7 @@ describe('LoansService archive accounting reversal', () => {
           eliminadoEn: new Date('2026-05-09T12:00:00-05:00'),
         }),
       },
-      $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
+      $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
     };
 
     await makeService(prisma).restoreLoan('prestamo-art-restaurar', 'admin-1');

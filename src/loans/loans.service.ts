@@ -2334,31 +2334,31 @@ export class LoansService implements OnModuleInit {
     if (asientoReverso?.id) return;
 
     const linesOriginales = asientoVenta.lines || [];
-    const cajaLine = linesOriginales.find((line: any) => line.cajaId);
+    const cajaLine = linesOriginales.find((line) => line.cajaId);
     const cuotaInicial = linesOriginales
-      .filter((line: any) => line.cajaId)
-      .reduce((sum: number, line: any) => {
+      .filter((line) => line.cajaId)
+      .reduce((sum: number, line) => {
         return (
           sum + Number(line.debitAmount || 0) - Number(line.creditAmount || 0)
         );
       }, 0);
     const precioVenta = linesOriginales
-      .filter((line: any) => String(line.accountCode || '').startsWith('3.'))
-      .reduce((sum: number, line: any) => {
+      .filter((line) => String(line.accountCode || '').startsWith('3.'))
+      .reduce((sum: number, line) => {
         return (
           sum + Number(line.creditAmount || 0) - Number(line.debitAmount || 0)
         );
       }, 0);
     const montoFinanciado = linesOriginales
-      .filter((line: any) => String(line.accountCode || '') === '1.3.1')
-      .reduce((sum: number, line: any) => {
+      .filter((line) => String(line.accountCode || '') === '1.3.1')
+      .reduce((sum: number, line) => {
         return (
           sum + Number(line.debitAmount || 0) - Number(line.creditAmount || 0)
         );
       }, 0);
     const costoArticulo = linesOriginales
-      .filter((line: any) => String(line.accountCode || '') === '5.1')
-      .reduce((sum: number, line: any) => {
+      .filter((line) => String(line.accountCode || '') === '5.1')
+      .reduce((sum: number, line) => {
         return (
           sum + Number(line.debitAmount || 0) - Number(line.creditAmount || 0)
         );
@@ -2457,7 +2457,7 @@ export class LoansService implements OnModuleInit {
     if (asientoRestauracion?.id) return;
 
     const cajaLine = (asientoArchivo.lines || []).find(
-      (line: any) => line.cajaId,
+      (line) => line.cajaId,
     );
     const cuotaInicial = cajaLine
       ? Math.abs(
@@ -2493,7 +2493,7 @@ export class LoansService implements OnModuleInit {
     }
 
     const lines = (asientoArchivo.lines || [])
-      .map((line: any) => {
+      .map((line) => {
         const debitAmount = Number(line.debitAmount || 0);
         const creditAmount = Number(line.creditAmount || 0);
         const restoredLine: any = {
@@ -2510,7 +2510,7 @@ export class LoansService implements OnModuleInit {
         return restoredLine;
       })
       .filter(
-        (line: any) =>
+        (line) =>
           Number(line.debitAmount || 0) > 0 ||
           Number(line.creditAmount || 0) > 0,
       );
@@ -2735,7 +2735,7 @@ export class LoansService implements OnModuleInit {
         if (Array.isArray(archivos) && archivos.length > 0) {
           const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
 
-          const nuevosArchivos = archivos.map((archivo: any) => {
+          const nuevosArchivos = archivos.map((archivo) => {
             const url = archivo.url || archivo.path || archivo.ruta;
             const urlFinal =
               typeof url === 'string' && url.startsWith('http')
@@ -3951,7 +3951,7 @@ export class LoansService implements OnModuleInit {
         );
 
       const cuotasDataFinal = data.esContado
-        ? cuotasData.map((c: any) => ({
+        ? cuotasData.map((c) => ({
             ...c,
             fechaPago: fechaInicio,
           }))
@@ -4146,7 +4146,7 @@ export class LoansService implements OnModuleInit {
                   asignacionRutaTxId = asignacionCreada?.id || null;
                   asignacionRutaCreadaId = asignacionRutaTxId;
                   rutaIdAsignadaBroadcast = rutaIdAsignar;
-                } catch (error: any) {
+                } catch (error) {
                   if (error?.code === 'P2002') {
                     this.logger.warn(
                       `[CREATE LOAN] Asignación de ruta omitida por duplicado rutaId=${rutaIdAsignar}, clienteId=${cliente.id}`,
