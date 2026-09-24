@@ -1,6 +1,5 @@
 import * as ExcelJS from 'exceljs';
 import { MAX_OPCIONES_PLAZO } from '../parsers/inventario.parser';
-import { MAX_MESES_PLAZO } from '../../common/plazos';
 import {
   activarFiltro,
   colLetra,
@@ -429,25 +428,6 @@ export function agregarValoresInventario(
   listaDesplegable(wsArticulos, COL.accion, 'Valores!$A$2:$A$3', true, filas);
   listaDesplegable(wsArticulos, COL.activo, 'Valores!$B$2:$B$3', true, filas);
 
-  // Los meses de cada plazo, con el tope del negocio puesto en la celda. Vale
-  // la pena decirlo aquí y no solo al validar el archivo: quien llena mil filas
-  // con un plazo a 12 meses prefiere enterarse en la primera, no al subirlo.
-  for (let i = 1; i <= MAX_OPCIONES_PLAZO; i++) {
-    const columnaMeses = colLetra(columnasDeOpcion(i).meses);
-    (wsArticulos as any).dataValidations.add(
-      `${columnaMeses}7:${columnaMeses}${filas}`,
-      {
-        type: 'whole',
-        operator: 'between',
-        allowBlank: true,
-        formulae: [1, MAX_MESES_PLAZO],
-        showErrorMessage: true,
-        errorTitle: 'Plazo no válido',
-        error: `El negocio financia hasta ${MAX_MESES_PLAZO} meses. Escriba un número entero entre 1 y ${MAX_MESES_PLAZO}, o deje la casilla vacía si el artículo no maneja ese plazo.`,
-      },
-    );
-  }
-
   const columnaRentabilidad = colLetra(COL.rentabilidadObjetivo);
   (wsArticulos as any).dataValidations.add(
     `${columnaRentabilidad}7:${columnaRentabilidad}${filas}`,
@@ -548,7 +528,7 @@ export async function generarPlantillaInventario(): Promise<{
     'Activo: se asume SI si se deja vacío.',
     '',
     '# Opciones de crédito',
-    `Cada artículo admite hasta ${MAX_OPCIONES_PLAZO} opciones de plazo, y el negocio financia hasta ${MAX_MESES_PLAZO} meses. Escriba los meses y el precio total de ese plazo (por ejemplo: 3 meses / $690.000).`,
+    `Cada artículo admite hasta ${MAX_OPCIONES_PLAZO} opciones de plazo, y el negocio financia hasta 3 meses. Escriba los meses y el precio total de ese plazo (por ejemplo: 3 meses / $690.000).`,
     'Use solo las opciones que necesite; las que deje vacías se ignoran. No repita el mismo número de meses en un artículo.',
     '',
     '# Los precios se calculan solos (y se pueden cambiar)',

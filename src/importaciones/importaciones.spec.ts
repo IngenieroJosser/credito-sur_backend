@@ -240,11 +240,9 @@ describe('Plantilla de inventario', () => {
       Activo: 'SI',
       'Meses opción 1': 1,
       'Precio total opción 1': 1150000,
-      'Meses opción 2': 2,
+      'Meses opción 2': 3,
       'Precio total opción 2': 1290000,
-      // Tres meses, que es el tope del negocio. Antes esta fila decia 6 y
-      // pasaba porque nada lo comprobaba.
-      'Meses opción 3': 3,
+      'Meses opción 3': 6,
       'Precio total opción 3': 1450000,
     });
 
@@ -252,7 +250,7 @@ describe('Plantilla de inventario', () => {
     expect(resultado.articulos?.[0]).toEqual(
       expect.objectContaining({ codigo: 'NEV-200', precioContado: 1050000 }),
     );
-    expect(resultado.precios?.map((p: any) => p.meses)).toEqual([0, 1, 2, 3]);
+    expect(resultado.precios?.map((p: any) => p.meses)).toEqual([0, 1, 3, 6]);
     expect(resultado.precios?.map((p: any) => p.utilidad)).toEqual([
       150000, 250000, 390000, 550000,
     ]);

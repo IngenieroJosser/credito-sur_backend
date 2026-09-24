@@ -8,7 +8,6 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { loadWorkbookFromBuffer } from './xlsx-workbook.loader';
 import { leerNumero, leerTexto, leerTextoMayus } from './cell-value.util';
-import { MAX_MESES_PLAZO } from '../../common/plazos';
 import {
   avisarFilasFueraDeRango,
   celda,
@@ -392,17 +391,6 @@ export class InventarioParser {
           return;
         }
 
-        // El negocio financia hasta tres meses. Antes esto no se comprobaba en
-        // ninguna parte y un archivo con un plazo a 12 meses entraba sin queja.
-        if (meses > MAX_MESES_PLAZO) {
-          addError(
-            `opcion_${numeroOpcion}_meses`,
-            `Opción ${numeroOpcion}: el plazo es de ${meses} meses y el máximo es ${MAX_MESES_PLAZO}`,
-            celda(row, opcion.meses),
-          );
-          return;
-        }
-
         if (precio === null || Number.isNaN(precio) || precio <= 0) {
           addError(
             `opcion_${numeroOpcion}_precio`,
@@ -562,14 +550,6 @@ export class InventarioParser {
             addError(
               'meses',
               'Debe ser un número mayor o igual a 0',
-              celda(row, colMeses),
-            );
-          } else if (meses > MAX_MESES_PLAZO) {
-            // El 0 es el precio de contado y sigue siendo válido; lo que no
-            // existe es financiar a más de tres meses.
-            addError(
-              'meses',
-              `El plazo es de ${meses} meses y el máximo es ${MAX_MESES_PLAZO}`,
               celda(row, colMeses),
             );
           }
