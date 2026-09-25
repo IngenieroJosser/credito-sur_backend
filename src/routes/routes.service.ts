@@ -3559,7 +3559,9 @@ export class RoutesService {
             cuotaObjetivoBase,
           };
         })
-        .filter(Boolean) as Array<{ prestamo: any; cuotaObjetivoBase: any }>;
+        .filter((entrada): entrada is NonNullable<typeof entrada> =>
+          Boolean(entrada),
+        );
 
       // Step 3: If no operational prestamos AND no payment today, don't add to visitas
       if (prestamosOperativos.length === 0 && !tienePagoHoy) continue;
@@ -4312,7 +4314,9 @@ export class RoutesService {
               return null;
             return { prestamo: p, cuotaObjetivoBase };
           })
-          .filter(Boolean) as Array<{ prestamo: any; cuotaObjetivoBase: any }>;
+          .filter((entrada): entrada is NonNullable<typeof entrada> =>
+            Boolean(entrada),
+          );
 
         if (prestamosOperativos.length === 0) continue;
 
@@ -4386,15 +4390,23 @@ export class RoutesService {
           },
         );
 
-        // Elegir el mejor préstamo con cuotaObjetivo (priorizando pagable/reprogramable)
+        // Elegir el préstamo con cuotaObjetivo.
+        //
+        // OJO: aquí NO se prioriza por pagable/reprogramable, y antes parecía que
+        // sí. Había un primer `find` que buscaba
+        // `p.cuotaObjetivo?.puedePagar || p.cuotaObjetivo?.puedeReprogramar`,
+        // pero el `cuotaObjetivo` que se arma en ESTE bloque no lleva esos dos
+        // campos —los pone el otro constructor, el de más arriba—, así que las dos
+        // lecturas daban siempre undefined y ese `find` nunca acertaba: el
+        // resultado salía siempre del segundo. Se quita porque era código muerto,
+        // y quitarlo no cambia qué préstamo se elige.
+        //
+        // El bloque gemelo de unas 750 líneas más arriba sí prioriza, porque allí
+        // el objetivo viene del constructor que sí pone las banderas. Que este
+        // deba hacerlo también es una decisión de negocio, no de tipos: cambiaría
+        // qué préstamo se elige para el registro sintético de CIERRE_PENDIENTE.
         const prestamoObjetivo =
-          prestamosConCuotaObjetivo.find((p) => {
-            return (
-              p.cuotaObjetivo?.puedePagar || p.cuotaObjetivo?.puedeReprogramar
-            );
-          }) ||
-          prestamosConCuotaObjetivo.find((p) => p.cuotaObjetivo) ||
-          null;
+          prestamosConCuotaObjetivo.find((p) => p.cuotaObjetivo) || null;
 
         const clienteCuotaObjetivo = prestamoObjetivo?.cuotaObjetivo || null;
         const prestamoObjetivoId = prestamoObjetivo?.id || null;
