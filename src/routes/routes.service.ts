@@ -37,6 +37,7 @@ import {
   resolveCuotaObjetivoOperativa,
   isObligacionOperativaRuta,
   normalizeUpper,
+  type CuotaOperativa,
 } from './ruta-operational-rules';
 
 import {
@@ -3506,7 +3507,7 @@ export class RoutesService {
 
       // Step 1: Get prestamos that are operationally valid OR are paid but have a payment today
       let prestamosConPrestamoOperativo = (cliente.prestamos || []).filter(
-        (prestamo: any) => isPrestamoOperativoRuta(prestamo),
+        (prestamo) => isPrestamoOperativoRuta(prestamo),
       );
 
       // Si el cliente pagó hoy, incluir también sus préstamos ya pagados
@@ -3524,8 +3525,14 @@ export class RoutesService {
 
       // Step 2: For each prestamo, resolve cuota objetivo and validate obligacion operativa
       const prestamosOperativos = prestamosConPrestamoOperativo
-        .map((prestamo: any) => {
-          const cuotaObjetivoBase =
+        .map((prestamo) => {
+          // Se declara el tipo para que las dos ramas del `||` no formen una
+          // union: la de la izquierda ya es `CuotaOperativa` y la de la derecha es
+          // la cuota tal como la trae Prisma. Sin esto, leer abajo los campos que
+          // estas reglas manejan (`montoCuota`, `montoNominal`,
+          // `saldoExigibleEnFechaOperativa`) no compilaba, y era lo que tapaba el
+          // `as any` de mas abajo.
+          const cuotaObjetivoBase: CuotaOperativa | null | undefined =
             resolveCuotaObjetivoOperativa(prestamo, fechaKey) ||
             (prestamo.cuotas.length > 0
               ? [...prestamo.cuotas]
@@ -3538,7 +3545,9 @@ export class RoutesService {
                     (c) =>
                       getCuotaFechaEfectivaKeyRuta(c) <= fechaKey &&
                       !['ANULADO', 'ANULADA'].includes(
-                        normalizeUpper(c.estado || c.estadoActual),
+                        // `estadoActual` no existe en la cuota de Prisma, asi
+                        // que el `|| c.estadoActual` que habia aqui nunca entraba.
+                        normalizeUpper(c.estado),
                       ),
                   )
               : null);
@@ -3637,15 +3646,18 @@ export class RoutesService {
             };
           },
         );
-        // Elegir el mejor préstamo con cuotaObjetivo (priorizando pagable/reprogramable)
+        // Elegir el préstamo con cuotaObjetivo.
+        //
+        // Aquí tampoco se prioriza por pagable/reprogramable, igual que en el
+        // bloque de más abajo: el `cuotaObjetivo` que se arma justo arriba no
+        // lleva `puedePagar` ni `puedeReprogramar` —sus claves están a la vista en
+        // el objeto—, así que el `find` que los buscaba no acertaba nunca y el
+        // resultado salía siempre del segundo. Se quita por muerto, y quitarlo no
+        // cambia qué préstamo se elige.
+        //
+        // Que deba priorizar es una decisión de negocio, no de tipos.
         const prestamoObjetivo =
-          prestamosConCuotaObjetivo.find((p) => {
-            return (
-              p.cuotaObjetivo?.puedePagar || p.cuotaObjetivo?.puedeReprogramar
-            );
-          }) ||
-          prestamosConCuotaObjetivo.find((p) => p.cuotaObjetivo) ||
-          null;
+          prestamosConCuotaObjetivo.find((p) => p.cuotaObjetivo) || null;
 
         const clienteCuotaObjetivo = prestamoObjetivo?.cuotaObjetivo || null;
         const prestamoObjetivoId = prestamoObjetivo?.id || null;
@@ -6297,7 +6309,7 @@ export class RoutesService {
     return visitas.flatMap((visita) => {
       return (visita.prestamos || [])
         .filter((prestamo: any) => isPrestamoOperativoRuta(prestamo))
-        .map((prestamo: any) => {
+        .map((prestamo) => {
           const estadoGestion = this.resolveEstadoGestionPrestamo(
             visita,
             prestamo,
