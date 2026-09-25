@@ -1026,7 +1026,7 @@ export class ClientsService {
             try {
               await this.notificacionesService.notifyApprovers({
                 titulo: 'Nuevo cliente requiere aprobación',
-                mensaje: `Se reenvi f3 la solicitud del cliente (${data.nombres} ${data.apellidos}). Requiere revisi f3n.`,
+                mensaje: `Se reenvió la solicitud del cliente (${data.nombres} ${data.apellidos}). Requiere revisión.`,
                 tipo: 'CLIENTE',
                 entidad: 'Aprobacion',
                 entidadId: aprobacion.id,
@@ -1049,7 +1049,7 @@ export class ClientsService {
                 usuarioId: solicitadoPorId as string,
                 titulo: 'Solicitud reenviada',
                 mensaje:
-                  'Tu solicitud fue reenviada con  e9xito y qued f3 pendiente de aprobaci f3n.',
+                  'Tu solicitud fue reenviada con éxito y quedó pendiente de aprobación.',
                 tipo: 'INFORMATIVO',
                 entidad: 'Aprobacion',
                 entidadId: aprobacion.id,
@@ -1071,8 +1071,8 @@ export class ClientsService {
 
           return {
             mensaje: autoAprobar
-              ? 'Cliente restaurado y aprobado autom e1ticamente.'
-              : 'Cliente restaurado y solicitud reenviada. Pendiente de aprobaci f3n.',
+              ? 'Cliente restaurado y aprobado automáticamente.'
+              : 'Cliente restaurado y solicitud reenviada. Pendiente de aprobación.',
             aprobacionId: aprobacion.id,
             clienteId: clienteRestaurado.id,
             clienteCodigo: clienteRestaurado.codigo,
