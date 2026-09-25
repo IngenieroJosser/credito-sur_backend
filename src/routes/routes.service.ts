@@ -64,6 +64,104 @@ type RouteActor =
   | null
   | undefined;
 
+/**
+ * Un credito dentro de una visita del dia.
+ *
+ * No es el credito de Prisma: los tres bloques que arman las visitas parten del
+ * credito y le agregan dos campos calculados (`estadoGestion` y
+ * `montoMetaOperativaPendiente`) mas la cuota objetivo ya resuelta. Se declaran
+ * solo los campos que alguien lee —contados: once—, no el credito entero, porque
+ * el resto llega por el spread y nadie lo consulta aqui.
+ */
+interface PrestamoDeVisita {
+  id: string;
+  numeroPrestamo: string;
+  estado: string;
+  monto: Prisma.Decimal | number;
+  saldoPendiente: Prisma.Decimal | number;
+  cantidadCuotas: number;
+  frecuenciaPago: string;
+  cuotas?: Array<{ monto: Prisma.Decimal | number }>;
+  estadoGestion?: string | null;
+  montoMetaOperativaPendiente?: number;
+  cuotaObjetivo?: CuotaOperativa | null;
+  // Lo que agregan las pasadas posteriores y lee `buildObligacionesOperativas`:
+  // el estado de aprobacion y de efecto provisional, la etiqueta de revision, y
+  // la gestion y el recaudo por credito.
+  estadoAprobacion?: string | null;
+  estadoEfectoProvisional?: string | null;
+  esProvisional?: boolean;
+  esRevertido?: boolean;
+  etiquetaRevision?: string | null;
+  estadoVisita?: string | null;
+  notasVisita?: string | null;
+  recaudadoDelDia?: number;
+  recaudadoHoy?: number;
+  proximaCuota?: CuotaOperativa | null;
+}
+
+/**
+ * Una visita del dia, tal como la arma `getDailyVisits`.
+ *
+ * Antes esto era `any[]` y no habia en ningun sitio una descripcion de lo que la
+ * ruta devuelve, aunque lo arman tres `push` distintos y luego dos pasadas lo
+ * mutan. Las ocho primeras claves las ponen los tres; las cinco marcadas como
+ * opcionales solo las ponen los dos bloques sinteticos (el de reprogramaciones y
+ * el de cierre pendiente) y la pasada que reparte lo recaudado.
+ *
+ * La cuota objetivo va como `CuotaOperativa` y no con una forma propia: es el tipo
+ * que las reglas de ruta ya declararon para estas cuotas, que llegan con formas
+ * distintas segun la pantalla.
+ */
+interface VisitaDelDia {
+  asignacionId: string | null;
+  ordenVisita: number;
+  cliente: {
+    id: string;
+    codigo: string | null;
+    dni: string;
+    nombres: string;
+    apellidos: string;
+    telefono: string | null;
+    direccion: string | null;
+    nivelRiesgo: string;
+    prestamosActivos: number;
+  };
+  prestamos: PrestamoDeVisita[];
+  cuotaObjetivo: CuotaOperativa | null;
+  prestamoObjetivoId: string | null;
+  cuotaObjetivoId: string | null;
+  /** Deprecado: se mantiene por compatibilidad temporal. */
+  cuotaObjetivoPrestamoId: string | null;
+  registroSintetico?: boolean;
+  origenGestion?: string;
+  recaudadoDelDia?: number;
+  estadoVisita?: string | null;
+  notasVisita?: string | null;
+  /**
+   * OJO, ESTO ES UN DEFECTO, no una descripcion: NADIE escribe este campo en la
+   * visita. `estadoGestion` se pone en los CREDITOS de dentro de la visita, no en
+   * la visita misma, y `getDailyVisits` devuelve `visitas: visitasDelDiaFinales`,
+   * o sea estos objetos tal cual.
+   *
+   * Lo lee `notificaciones.gateway`, que con el calcula los clientes ausentes y
+   * los faltantes que transmite a los tableros: `String(v.estadoGestion || '')`
+   * da siempre '', asi que el conteo de AUSENTES sale siempre en 0 y en el de
+   * faltantes las dos condiciones de estado son constantes.
+   *
+   * Se declara para que el compilador no lo esconda. Cual deberia ser —
+   * `estadoVisita`, que si se escribe, o algo derivado de los creditos— es una
+   * decision de producto, y arreglarlo cambiaria las cifras del tablero.
+   */
+  estadoGestion?: string | null;
+  /**
+   * Nadie lo escribe. Los consumidores lo leen como respaldo de `cliente.id`
+   * (`v.cliente?.id || v.clienteId`), y ese respaldo no entra nunca. Se declara
+   * para que el tipo lo diga en vez de esconderlo.
+   */
+  clienteId?: string;
+}
+
 @Injectable()
 export class RoutesService {
   private readonly logger = new Logger(RoutesService.name);
@@ -3492,7 +3590,7 @@ export class RoutesService {
       orderBy: { ordenVisita: 'asc' },
     });
 
-    const visitasDelDia: any[] = [];
+    const visitasDelDia: VisitaDelDia[] = [];
 
     const clientesProcesados = new Set<string>();
 
@@ -4164,7 +4262,7 @@ export class RoutesService {
 
     // Enriquecer visitas con su recaudo individual del día y su estado de visita (ausente)
     visitasDelDia.forEach((v) => {
-      const cid = v.cliente?.id || v.clienteId;
+      const cid = v.cliente?.id || v.clienteId || '';
       v.recaudadoDelDia = pagosPorCliente[cid] || 0;
 
       if (Number(v.recaudadoDelDia || 0) > 0) {
@@ -4309,9 +4407,9 @@ export class RoutesService {
         });
         const prestamosConPrestamoOperativo = (
           clienteFull?.prestamos || []
-        ).filter((p: any) => isPrestamoOperativoRuta(p));
+        ).filter((p) => isPrestamoOperativoRuta(p));
         const prestamosOperativos = prestamosConPrestamoOperativo
-          .map((p: any) => {
+          .map((p) => {
             const cuotaObjetivoBase = resolveCuotaObjetivoOperativa(
               p,
               fechaKey,
@@ -6305,7 +6403,7 @@ export class RoutesService {
     return 'PENDIENTE';
   }
 
-  private buildObligacionesOperativas(visitas: any[]) {
+  private buildObligacionesOperativas(visitas: VisitaDelDia[]) {
     return visitas.flatMap((visita) => {
       return (visita.prestamos || [])
         .filter((prestamo: any) => isPrestamoOperativoRuta(prestamo))

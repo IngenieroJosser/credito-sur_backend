@@ -25,7 +25,8 @@
     "strictFunctionTypes": true,
     "strictBindCallApply": true,
     "noImplicitThis": true,
-    "useUnknownInCatchVariables": true
+    "useUnknownInCatchVariables": true,
+    "noImplicitAny": true
   },
 
   "include": ["src/**/*.ts"],

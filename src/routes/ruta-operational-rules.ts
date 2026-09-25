@@ -9,7 +9,7 @@
  */
 export interface CuotaOperativa {
   id?: string;
-  numeroCuota?: number;
+  numeroCuota?: number | null;
   estado?: string | null;
   estadoActual?: string | null;
   fechaVencimiento?: Date | string | null;
