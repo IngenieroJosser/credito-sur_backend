@@ -10,7 +10,7 @@ export class CategoriasService {
   constructor(private prisma: PrismaService) {}
 
   async create(data: CreateCategoriaDto) {
-    return (this.prisma).categoria.create({
+    return this.prisma.categoria.create({
       data: {
         ...data,
       },
@@ -18,7 +18,7 @@ export class CategoriasService {
   }
 
   async findAll(tipo?: string) {
-    return (this.prisma).categoria.findMany({
+    return this.prisma.categoria.findMany({
       where: {
         tipo: tipo || undefined,
         activa: true,
@@ -29,13 +29,13 @@ export class CategoriasService {
   }
 
   async findOne(id: string) {
-    return (this.prisma).categoria.findUnique({
+    return this.prisma.categoria.findUnique({
       where: { id },
     });
   }
 
   async update(id: string, data: Partial<UpdateCategoriaDto>) {
-    return (this.prisma).categoria.update({
+    return this.prisma.categoria.update({
       where: { id },
       data: {
         ...data,
@@ -44,7 +44,7 @@ export class CategoriasService {
   }
 
   async remove(id: string) {
-    return (this.prisma).categoria.update({
+    return this.prisma.categoria.update({
       where: { id },
       data: {
         activa: false,

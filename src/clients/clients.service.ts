@@ -719,7 +719,7 @@ export class ClientsService {
         const fecha = (registro: unknown) => {
           const valor =
             registro && typeof registro === 'object' && 'creadoEn' in registro
-              ? (registro as { creadoEn: unknown }).creadoEn
+              ? registro.creadoEn
               : undefined;
           if (valor instanceof Date) return valor.getTime();
           if (typeof valor === 'string' || typeof valor === 'number') {
@@ -1067,7 +1067,7 @@ export class ClientsService {
 
             try {
               await this.notificacionesService.create({
-                usuarioId: solicitadoPorId as string,
+                usuarioId: solicitadoPorId,
                 titulo: 'Solicitud reenviada',
                 mensaje:
                   'Tu solicitud fue reenviada con éxito y quedó pendiente de aprobación.',
@@ -1262,7 +1262,7 @@ export class ClientsService {
 
         try {
           await this.notificacionesService.create({
-            usuarioId: solicitadoPorId as string,
+            usuarioId: solicitadoPorId,
             titulo: 'Solicitud enviada',
             mensaje:
               'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',

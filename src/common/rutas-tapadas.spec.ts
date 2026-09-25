@@ -21,7 +21,8 @@ import * as path from 'path';
 
 const RAIZ = path.join(__dirname, '..');
 
-const DECORADOR = /@(Get|Post|Patch|Put|Delete)\(\s*(?:'([^']*)'|"([^"]*)")?\s*\)/g;
+const DECORADOR =
+  /@(Get|Post|Patch|Put|Delete)\(\s*(?:'([^']*)'|"([^"]*)")?\s*\)/g;
 
 /** Los comentarios se borran: un decorador nombrado en una explicación no declara nada. */
 function sinComentarios(fuente: string): string {
@@ -51,7 +52,11 @@ describe('ninguna ruta queda tapada por otra con parámetro', () => {
       const rel = path.relative(RAIZ, archivo).split(path.sep).join('/');
       const fuente = sinComentarios(fs.readFileSync(archivo, 'utf8'));
 
-      const declaradas: Array<{ linea: number; metodo: string; camino: string }> = [];
+      const declaradas: Array<{
+        linea: number;
+        metodo: string;
+        camino: string;
+      }> = [];
       for (const m of fuente.matchAll(DECORADOR)) {
         declaradas.push({
           linea: fuente.slice(0, m.index).split('\n').length,

@@ -232,7 +232,7 @@ export class UploadController {
             : null;
       if (scope) {
         const cliente = await this.prisma.cliente.findFirst({
-          where: { id: media.clienteId, ...(scope) },
+          where: { id: media.clienteId, ...scope },
           select: { id: true },
         });
         permitido = !!cliente;

@@ -993,7 +993,7 @@ export class ReportsService {
         { activa: true },
         actor,
       );
-      const rutas = (rutasListado)?.data || [];
+      const rutas = rutasListado?.data || [];
 
       const rutasFiltradas = routeId
         ? rutas.filter((r) => r.id === routeId)

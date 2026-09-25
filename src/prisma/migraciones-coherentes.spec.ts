@@ -46,7 +46,10 @@ function migraciones(): Array<{ nombre: string; sql: string }> {
       archivo: path.join(MIGRACIONES, e.name, 'migration.sql'),
     }))
     .filter((m) => fs.existsSync(m.archivo))
-    .map((m) => ({ nombre: m.nombre, sql: fs.readFileSync(m.archivo, 'utf8') }));
+    .map((m) => ({
+      nombre: m.nombre,
+      sql: fs.readFileSync(m.archivo, 'utf8'),
+    }));
 }
 
 describe('las migraciones cuadran con el esquema', () => {

@@ -20,7 +20,7 @@ describe('El gateway sin servidor de websockets', () => {
     const gateway = construir();
     // Sin `afterInit`, `server` no existe: es el caso de un script o una
     // migración corriendo sin HTTP.
-    expect((gateway).server).toBeUndefined();
+    expect(gateway.server).toBeUndefined();
 
     expect(() =>
       gateway.broadcastAprobacionesActualizadas({ accion: 'RECHAZAR' }),

@@ -254,7 +254,7 @@ async function main() {
   console.log('🌱 Iniciando seed del catálogo contable...');
 
   for (const acc of accounts) {
-    await (prisma).account.upsert({
+    await prisma.account.upsert({
       where: { code: acc.code },
       update: {
         name: acc.name,

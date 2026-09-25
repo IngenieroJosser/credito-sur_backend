@@ -51,9 +51,7 @@ function makeService(prisma: any) {
       }
     }
     if (!prisma.$transaction) {
-      prisma.$transaction = jest
-        .fn()
-        .mockImplementation((cb) => cb(prisma));
+      prisma.$transaction = jest.fn().mockImplementation((cb) => cb(prisma));
     }
     if (!prisma.cuota) {
       prisma.cuota = {

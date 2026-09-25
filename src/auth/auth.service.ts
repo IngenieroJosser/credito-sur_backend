@@ -414,12 +414,12 @@ export class AuthService {
       await this.prisma.usuario.update({
         where: { id: usuario.id },
         data: agotados
-          ? ({
+          ? {
               resetPasswordIntentos: 0,
               resetPasswordToken: null,
               resetPasswordExpires: null,
-            })
-          : ({ resetPasswordIntentos: intentos }),
+            }
+          : { resetPasswordIntentos: intentos },
       });
       throw new BadRequestException(
         agotados

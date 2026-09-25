@@ -35,20 +35,20 @@ describe('RolesService', () => {
         rol: { findUnique: jest.fn().mockResolvedValue({ id: 'x' }) },
       });
       const service = new RolesService(prisma as any);
-      await expect(
-        service.crear({ nombre: 'ADMIN' }),
-      ).rejects.toBeInstanceOf(ConflictException);
+      await expect(service.crear({ nombre: 'ADMIN' })).rejects.toBeInstanceOf(
+        ConflictException,
+      );
       expect(prisma.rol.create).not.toHaveBeenCalled();
     });
 
     it('crea el rol cuando el nombre está libre', async () => {
       const prisma = hacerPrisma();
       const service = new RolesService(prisma as any);
-      await expect(
-        service.crear({ nombre: 'AUDITOR' }),
-      ).resolves.toMatchObject({
-        nombre: 'AUDITOR',
-      });
+      await expect(service.crear({ nombre: 'AUDITOR' })).resolves.toMatchObject(
+        {
+          nombre: 'AUDITOR',
+        },
+      );
     });
   });
 
