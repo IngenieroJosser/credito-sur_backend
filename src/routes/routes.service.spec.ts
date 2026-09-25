@@ -1281,9 +1281,7 @@ describe('RoutesService role scoping', () => {
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
         findMany: jest.fn().mockResolvedValue([]),
       },
-      $transaction: jest
-        .fn()
-        .mockImplementation((callback) => callback(tx)),
+      $transaction: jest.fn().mockImplementation((callback) => callback(tx)),
     };
 
     await makeService(prisma).activarRutaHoy('ruta-1', 'admin-1');
@@ -1421,9 +1419,7 @@ describe('RoutesService role scoping', () => {
           rol: RolUsuario.ADMIN,
         }),
       },
-      $transaction: jest
-        .fn()
-        .mockImplementation((callback) => callback(tx)),
+      $transaction: jest.fn().mockImplementation((callback) => callback(tx)),
     };
     const service = makeService(prisma);
     jest.spyOn(service as any, 'getDailyVisits').mockResolvedValue({
@@ -2426,5 +2422,112 @@ describe('RoutesService role scoping', () => {
       where: { rutaId: 'ruta-1', tipo: 'RUTA', activa: true },
       data: { responsableId: 'cobrador-nuevo' },
     });
+  });
+});
+
+describe('El credito objetivo de una visita', () => {
+  /**
+   * Un cliente con dos creditos donde el PRIMERO ya quedo cubierto por el pago
+   * del dia: su cuota sigue siendo operativa (PARCIAL, vencida hoy) pero con
+   * saldo exigible 0, porque lo pagado iguala el monto. El segundo si debe.
+   *
+   * De `prestamoObjetivoId` y `cuotaObjetivoId` cuelga lo que el cobrador paga o
+   * reprograma desde la pantalla de ruta, asi que elegir el cubierto y no el que
+   * debe no es un detalle.
+   */
+  const prismaConDosCreditos = () => ({
+    asignacionRuta: {
+      findMany: jest.fn().mockResolvedValue([
+        {
+          id: 'asig-1',
+          ordenVisita: 1,
+          cliente: {
+            id: 'cliente-1',
+            codigo: 'C-1',
+            dni: '111',
+            nombres: 'Ana',
+            apellidos: 'Rojas',
+            telefono: '300',
+            direccion: 'Calle 1',
+            nivelRiesgo: 'MINIMO',
+            prestamos: [
+              {
+                id: 'prestamo-cubierto',
+                numeroPrestamo: 'CUB-1',
+                monto: 300_000,
+                saldoPendiente: 200_000,
+                frecuenciaPago: 'DIARIO',
+                cantidadCuotas: 3,
+                estado: 'ACTIVO',
+                estadoAprobacion: 'APROBADO',
+                cuotas: [
+                  {
+                    id: 'cuota-cubierta',
+                    numeroCuota: 1,
+                    fechaVencimiento: new Date('2026-06-12T12:00:00.000Z'),
+                    fechaVencimientoProrroga: null,
+                    fechaPago: null,
+                    monto: 100_000,
+                    // Lo pagado iguala el monto: saldo exigible 0.
+                    montoPagado: 100_000,
+                    estado: 'PARCIAL',
+                  },
+                ],
+              },
+              {
+                id: 'prestamo-debe',
+                numeroPrestamo: 'DEB-1',
+                monto: 150_000,
+                saldoPendiente: 150_000,
+                frecuenciaPago: 'DIARIO',
+                cantidadCuotas: 3,
+                estado: 'ACTIVO',
+                estadoAprobacion: 'APROBADO',
+                cuotas: [
+                  {
+                    id: 'cuota-debe',
+                    numeroCuota: 1,
+                    fechaVencimiento: new Date('2026-06-12T12:00:00.000Z'),
+                    fechaVencimientoProrroga: null,
+                    fechaPago: null,
+                    monto: 50_000,
+                    montoPagado: 0,
+                    estado: 'PENDIENTE',
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ]),
+    },
+    registroVisita: { findMany: jest.fn().mockResolvedValue([]) },
+    pago: { findMany: jest.fn().mockResolvedValue([]) },
+    cliente: { findMany: jest.fn().mockResolvedValue([]) },
+    gasto: { aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 0 } }) },
+  });
+
+  it('los dos creditos entran como candidatos', async () => {
+    // Si esto falla, el caso no esta llegando al codigo que elige y la prueba de
+    // abajo no probaria nada.
+    const resultado = await makeService(prismaConDosCreditos()).getDailyVisits(
+      'ruta-1',
+      '2026-06-12',
+    );
+
+    expect(resultado.visitas).toHaveLength(1);
+    expect(
+      resultado.visitas[0].prestamos.map((p: { id: string }) => p.id),
+    ).toEqual(['prestamo-cubierto', 'prestamo-debe']);
+  });
+
+  it('se elige el credito que todavia debe, no el ya cubierto', async () => {
+    const resultado = await makeService(prismaConDosCreditos()).getDailyVisits(
+      'ruta-1',
+      '2026-06-12',
+    );
+
+    expect(resultado.visitas[0].prestamoObjetivoId).toBe('prestamo-debe');
+    expect(resultado.visitas[0].cuotaObjetivoId).toBe('cuota-debe');
   });
 });

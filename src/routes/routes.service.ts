@@ -3742,16 +3742,19 @@ export class RoutesService {
             };
           },
         );
-        // Elegir el préstamo con cuotaObjetivo.
+        // Una primera elección: el primer préstamo con cuotaObjetivo.
         //
-        // Aquí tampoco se prioriza por pagable/reprogramable, igual que en el
-        // bloque de más abajo: el `cuotaObjetivo` que se arma justo arriba no
-        // lleva `puedePagar` ni `puedeReprogramar` —sus claves están a la vista en
-        // el objeto—, así que el `find` que los buscaba no acertaba nunca y el
-        // resultado salía siempre del segundo. Se quita por muerto, y quitarlo no
-        // cambia qué préstamo se elige.
+        // Aquí no se prioriza por pagable/reprogramable, y no hace falta: la
+        // priorización SÍ ocurre, más abajo. La pasada que reasigna el objetivo
+        // busca `montoMetaOperativaPendiente > 0`, que se rellena desde
+        // `cuotaObjetivo.saldoExigibleEnFechaOperativa`, y eso es exactamente
+        // `puedePagar || puedeReprogramar`: las dos banderas exigen ese mismo
+        // saldo mayor que cero. Si lo encuentra, sobrescribe `prestamoObjetivoId`.
         //
-        // Que deba priorizar es una decisión de negocio, no de tipos.
+        // Antes había aquí un `find` que buscaba `puedePagar || puedeReprogramar`
+        // en este objeto, que no lleva esas dos claves, así que no acertaba nunca
+        // y el resultado salía siempre del segundo `find`. Era redundante además
+        // de muerto. Lo fija la prueba "se elige el credito que todavia debe".
         const prestamoObjetivo =
           prestamosConCuotaObjetivo.find((p) => p.cuotaObjetivo) || null;
 
@@ -4498,21 +4501,11 @@ export class RoutesService {
           },
         );
 
-        // Elegir el préstamo con cuotaObjetivo.
-        //
-        // OJO: aquí NO se prioriza por pagable/reprogramable, y antes parecía que
-        // sí. Había un primer `find` que buscaba
-        // `p.cuotaObjetivo?.puedePagar || p.cuotaObjetivo?.puedeReprogramar`,
-        // pero el `cuotaObjetivo` que se arma en ESTE bloque no lleva esos dos
-        // campos —los pone el otro constructor, el de más arriba—, así que las dos
-        // lecturas daban siempre undefined y ese `find` nunca acertaba: el
-        // resultado salía siempre del segundo. Se quita porque era código muerto,
-        // y quitarlo no cambia qué préstamo se elige.
-        //
-        // El bloque gemelo de unas 750 líneas más arriba sí prioriza, porque allí
-        // el objetivo viene del constructor que sí pone las banderas. Que este
-        // deba hacerlo también es una decisión de negocio, no de tipos: cambiaría
-        // qué préstamo se elige para el registro sintético de CIERRE_PENDIENTE.
+        // Igual que en el bloque gemelo de más arriba: esta es una primera
+        // elección, y la priorización por saldo exigible ocurre después, en la
+        // pasada que busca `montoMetaOperativaPendiente > 0`. Aquí había un `find`
+        // por `puedePagar || puedeReprogramar` que no acertaba nunca, porque este
+        // objeto no lleva esas dos claves.
         const prestamoObjetivo =
           prestamosConCuotaObjetivo.find((p) => p.cuotaObjetivo) || null;
 
