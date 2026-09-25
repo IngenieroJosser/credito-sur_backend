@@ -19,8 +19,12 @@
     "incremental": true,
 
     "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+
     "strictNullChecks": true,
-    "forceConsistentCasingInFileNames": true
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "noImplicitThis": true
   },
 
   "include": ["src/**/*.ts"],
