@@ -763,44 +763,6 @@ export class LoansController {
     });
   }
 
-  @Patch(':id/cuotas/:numeroCuota/reprogramar')
-  @Roles(
-    RolUsuario.SUPER_ADMINISTRADOR,
-    RolUsuario.ADMIN,
-    RolUsuario.COORDINADOR,
-    RolUsuario.SUPERVISOR,
-  )
-  @ApiOperation({ summary: 'Reprogramar fecha de vencimiento de una cuota' })
-  @ApiParam({ name: 'id', description: 'ID del préstamo' })
-  @ApiParam({
-    name: 'numeroCuota',
-    description: 'Número de la cuota a reprogramar',
-  })
-  @ApiBody({ type: ReprogramarCuotaDto })
-  @ApiResponse({
-    status: HttpStatus.OK,
-    description: 'Cuota reprogramada exitosamente',
-  })
-  @ApiResponse({
-    status: HttpStatus.NOT_FOUND,
-    description: 'Préstamo o cuota no encontrada',
-  })
-  @ApiResponse({
-    status: HttpStatus.BAD_REQUEST,
-    description: 'Datos inválidos',
-  })
-  async reprogramarCuota(
-    @Param('id') id: string,
-    @Param('numeroCuota', ParseIntPipe) numeroCuota: number,
-    @Body() reprogramarDto: ReprogramarCuotaDto,
-    @Request() req: RequestConUsuario,
-  ) {
-    return this.loansService.reprogramarCuota(id, numeroCuota, {
-      ...reprogramarDto,
-      reprogramadoPorId: req.user.id,
-    });
-  }
-
   @Post('fix-interest-calculations')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR)
   @ApiOperation({
