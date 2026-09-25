@@ -134,7 +134,7 @@ export class LoansController {
     @Query('tipo', new DefaultValuePipe('todos')) tipo: string,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(8), ParseIntPipe) limit: number,
-    @Request() req,
+    @Request() req: RequestConUsuario,
   ) {
     // Validar límite máximo
     const safeLimit = Math.min(limit, 100); // Máximo 100 por página
@@ -291,7 +291,10 @@ export class LoansController {
     description: 'ID del préstamo',
     example: 'cl67qg5e80001c8ibw3d2q7p8',
   })
-  async getLoanById(@Param('id') id: string, @Request() req) {
+  async getLoanById(
+    @Param('id') id: string,
+    @Request() req: RequestConUsuario,
+  ) {
     return this.loansService.getLoanById(id, req.user);
   }
 
@@ -350,7 +353,10 @@ export class LoansController {
     description: 'ID del préstamo',
     example: 'cl67qg5e80001c8ibw3d2q7p8',
   })
-  async getLoanCuotas(@Param('id') id: string, @Request() req) {
+  async getLoanCuotas(
+    @Param('id') id: string,
+    @Request() req: RequestConUsuario,
+  ) {
     return this.loansService.getLoanCuotas(id, req.user);
   }
 
@@ -459,7 +465,10 @@ export class LoansController {
       },
     },
   })
-  async createLoan(@Body() createLoanDto: CreateLoanDto, @Request() req) {
+  async createLoan(
+    @Body() createLoanDto: CreateLoanDto,
+    @Request() req: RequestConUsuario,
+  ) {
     // Obtener usuario del request (JWT)
     const usuarioId = req.user.id;
 
@@ -524,7 +533,10 @@ export class LoansController {
       },
     },
   })
-  async approveLoan(@Param('id') id: string, @Request() req) {
+  async approveLoan(
+    @Param('id') id: string,
+    @Request() req: RequestConUsuario,
+  ) {
     // Obtener usuario del request (JWT)
     const aprobadoPorId = req.user.id;
 
@@ -582,7 +594,7 @@ export class LoansController {
   async rejectLoan(
     @Param('id') id: string,
     @Body() body: { motivo?: string },
-    @Request() req,
+    @Request() req: RequestConUsuario,
   ) {
     // Obtener usuario del request (JWT)
     const rechazadoPorId = req.user.id;
@@ -619,7 +631,7 @@ export class LoansController {
     description: 'ID del préstamo a eliminar',
     example: 'cl67qg5e80001c8ibw3d2q7p8',
   })
-  async deleteLoan(@Param('id') id: string, @Request() req) {
+  async deleteLoan(@Param('id') id: string, @Request() req: RequestConUsuario) {
     // Obtener usuario del request (JWT)
     const userId = req.user.id;
 
@@ -658,7 +670,7 @@ export class LoansController {
   async updateLoan(
     @Param('id') id: string,
     @Body() updateData: any,
-    @Request() req,
+    @Request() req: RequestConUsuario,
   ) {
     const userId = req.user.id;
     return this.loansService.updateLoan(id, updateData, userId);
@@ -696,7 +708,10 @@ export class LoansController {
     description: 'ID del préstamo a restaurar',
     example: 'cl67qg5e80001c8ibw3d2q7p8',
   })
-  async restoreLoan(@Param('id') id: string, @Request() req) {
+  async restoreLoan(
+    @Param('id') id: string,
+    @Request() req: RequestConUsuario,
+  ) {
     // Obtener usuario del request (JWT)
     const userId = req.user.id;
 
@@ -739,7 +754,7 @@ export class LoansController {
   async archiveLoan(
     @Param('id') id: string,
     @Body() body: { motivo: string; notas?: string },
-    @Request() req,
+    @Request() req: RequestConUsuario,
   ) {
     return this.loansService.archiveLoan(id, {
       motivo: body.motivo,
@@ -778,7 +793,7 @@ export class LoansController {
     @Param('id') id: string,
     @Param('numeroCuota', ParseIntPipe) numeroCuota: number,
     @Body() reprogramarDto: ReprogramarCuotaDto,
-    @Request() req,
+    @Request() req: RequestConUsuario,
   ) {
     return this.loansService.reprogramarCuota(id, numeroCuota, {
       ...reprogramarDto,

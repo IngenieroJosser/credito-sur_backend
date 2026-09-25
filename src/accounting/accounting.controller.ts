@@ -92,7 +92,7 @@ export class AccountingController {
     RolUsuario.COORDINADOR,
   )
   createCaja(
-    @Request() req,
+    @Request() req: RequestConUsuario,
     @Body()
     body: {
       nombre: string;
@@ -168,7 +168,7 @@ export class AccountingController {
   )
   consolidarCaja(
     @Param('id') id: string,
-    @Request() req,
+    @Request() req: RequestConUsuario,
     @Body() body?: { monto?: number; idempotencyKey?: string },
   ) {
     return this.accountingService.consolidarCaja(
@@ -202,7 +202,7 @@ export class AccountingController {
   )
   registrarArqueo(
     @Param('id') id: string,
-    @Request() req,
+    @Request() req: RequestConUsuario,
     @Body()
     body: {
       efectivoReal: number;
@@ -289,7 +289,7 @@ export class AccountingController {
   @Post('transacciones')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   createTransaccion(
-    @Request() req,
+    @Request() req: RequestConUsuario,
     @Body()
     body: {
       cajaId: string;
@@ -431,7 +431,7 @@ export class AccountingController {
     RolUsuario.SUPER_ADMINISTRADOR,
   )
   async registrarGasto(
-    @Request() req,
+    @Request() req: RequestConUsuario,
     @Body()
     body: {
       descripcion: string;
@@ -500,7 +500,7 @@ export class AccountingController {
     RolUsuario.SUPER_ADMINISTRADOR,
   )
   async solicitarBase(
-    @Request() req,
+    @Request() req: RequestConUsuario,
     @Body()
     body: {
       descripcion: string;
@@ -620,7 +620,7 @@ export class AccountingController {
       cajaIdDestino?: string;
       idempotencyKey?: string;
     },
-    @Request() req,
+    @Request() req: RequestConUsuario,
   ) {
     if (!req.user || !req.user.id)
       throw new UnauthorizedException('Usuario no autenticado');
@@ -650,7 +650,7 @@ export class AccountingController {
   @Post('migration-ledger/dry-run')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   @HttpCode(HttpStatus.OK)
-  migracionLedgerDryRun(@Request() req) {
+  migracionLedgerDryRun(@Request() req: RequestConUsuario) {
     if (!req.user || !req.user.id) throw new UnauthorizedException();
     return this.accountingService.migrarHistoricoLedger({
       dryRun: true,
@@ -661,7 +661,7 @@ export class AccountingController {
   @Post('migration-ledger/apply')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
   @HttpCode(HttpStatus.OK)
-  migracionLedgerApply(@Request() req) {
+  migracionLedgerApply(@Request() req: RequestConUsuario) {
     if (!req.user || !req.user.id) throw new UnauthorizedException();
     return this.accountingService.migrarHistoricoLedger({
       dryRun: false,
@@ -675,7 +675,10 @@ export class AccountingController {
    */
   @Post('regularizar-inventario')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
-  regularizarInventario(@Request() req, @Body() body: { aplicar?: boolean }) {
+  regularizarInventario(
+    @Request() req: RequestConUsuario,
+    @Body() body: { aplicar?: boolean },
+  ) {
     if (!req.user || !req.user.id) throw new UnauthorizedException();
     return this.accountingService.regularizarInventario(
       req.user.id,
@@ -689,7 +692,10 @@ export class AccountingController {
    */
   @Post('regularizar-centavos')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
-  regularizarCentavos(@Request() req, @Body() body: { aplicar?: boolean }) {
+  regularizarCentavos(
+    @Request() req: RequestConUsuario,
+    @Body() body: { aplicar?: boolean },
+  ) {
     if (!req.user || !req.user.id) throw new UnauthorizedException();
     return this.accountingService.regularizarCentavos(
       req.user.id,
@@ -703,7 +709,10 @@ export class AccountingController {
    */
   @Post('reparar-saldos-caja')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR)
-  repararSaldosCaja(@Request() req, @Body() body: { aplicar?: boolean }) {
+  repararSaldosCaja(
+    @Request() req: RequestConUsuario,
+    @Body() body: { aplicar?: boolean },
+  ) {
     if (!req.user || !req.user.id) throw new UnauthorizedException();
     return this.accountingService.repararSaldosCaja(
       req.user.id,
@@ -713,7 +722,7 @@ export class AccountingController {
 
   @Post('apertura-day-zero')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
-  ejecutarAperturaContable(@Request() req) {
+  ejecutarAperturaContable(@Request() req: RequestConUsuario) {
     if (!req.user || !req.user.id) throw new UnauthorizedException();
     return this.accountingService.ejecutarAperturaContable(req.user.id);
   }
