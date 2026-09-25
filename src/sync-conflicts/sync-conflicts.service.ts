@@ -8,6 +8,7 @@ import { UpdateSyncConflictDto } from './dto/update-sync-conflict.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
+import { mensajeDeError } from '../common/error.util';
 
 @Injectable()
 export class SyncConflictsService {
@@ -106,7 +107,11 @@ export class SyncConflictsService {
       throw new BadRequestException('El conflicto ya fue resuelto');
 
     let success = false;
-    let extraError = null;
+    // Tipado a mano: `= null` solo lo infiere como `null`, y hasta ahora se le
+    // asignaba el mensaje del error porque venia de un `any`. Solo se rellena
+    // en el catch de mas abajo, y la unica salida anticipada antes de ese try
+    // es un throw, asi que cuando `success` es falso esto ya es texto.
+    let extraError: string | null = null;
 
     if (accion === 'RESOLVER') {
       // Intentar reprocesar CON LA IDENTIDAD DEL CREADOR del conflicto, no la
@@ -169,7 +174,7 @@ export class SyncConflictsService {
 
         success = true;
       } catch (err) {
-        extraError = err.message || 'Fallo automatizado';
+        extraError = mensajeDeError(err, 'Fallo automatizado');
       }
     } else {
       success = true; // Descartado siempre es éxito en la operación lógica

@@ -11,6 +11,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { createHmac, timingSafeEqual } from 'crypto';
+import { mensajeDeError, pilaDeError } from '../common/error.util';
 
 @Controller('mirror-sync')
 export class MirrorSyncController {
@@ -142,7 +143,7 @@ export class MirrorSyncController {
     // Capitalizamos el primer caracter para mapearlo a la instancia interna de Prisma (ej: 'cliente' -> 'cliente')
     // Nota: Aunque los modelos de Prisma son camelCase en el PrismaClient.
     const prismaModelProp = model.charAt(0).toLowerCase() + model.slice(1);
-    const prismaModel = (this.prisma)[prismaModelProp];
+    const prismaModel = this.prisma[prismaModelProp];
 
     if (!prismaModel) {
       this.logger.warn(
@@ -205,8 +206,8 @@ export class MirrorSyncController {
       return { status: 'success', synced: true };
     } catch (e) {
       this.logger.error(
-        `Error crítico procesando réplica en VPS Espejo -> ${e.message}`,
-        e.stack,
+        `Error crítico procesando réplica en VPS Espejo -> ${mensajeDeError(e)}`,
+        pilaDeError(e),
       );
       throw new InternalServerErrorException('Fallo de persistencia en el VPS');
     }

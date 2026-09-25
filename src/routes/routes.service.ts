@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 
 import { PrismaService } from '../prisma/prisma.service';
+import { codigoDeError } from '../common/error.util';
 import { sincronizarAsignacionesCliente } from './sincronizar-asignaciones';
 
 import { AuditService } from '../audit/audit.service';
@@ -491,7 +492,7 @@ export class RoutesService {
         };
       });
     } catch (error) {
-      if (error?.code === 'P2002') {
+      if (codigoDeError(error) === 'P2002') {
         const activacionExistente =
           (await this.prisma.transaccion.findFirst({
             where: { idempotencyKey: activacionIdempotencyKey },
@@ -4504,9 +4505,7 @@ export class RoutesService {
         total: totalObligaciones,
         clientesOperativosHoy: new Set(
           obligacionesOperativas
-            .map(
-              (item) => item.visita?.cliente?.id || item.visita?.clienteId,
-            )
+            .map((item) => item.visita?.cliente?.id || item.visita?.clienteId)
             .filter(Boolean),
         ).size,
       },
@@ -6367,12 +6366,9 @@ export class RoutesService {
 
         const obligaciones = this.buildObligacionesOperativas(visitas);
 
-        const metaOperativaJornada = obligaciones.reduce(
-          (sum: number, o) => {
-            return sum + Number(o.metaPendiente || 0);
-          },
-          0,
-        );
+        const metaOperativaJornada = obligaciones.reduce((sum: number, o) => {
+          return sum + Number(o.metaPendiente || 0);
+        }, 0);
 
         const recaudoOperativoJornada = obligaciones.reduce(
           (sum: number, o) => {

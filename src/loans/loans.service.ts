@@ -8,6 +8,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { codigoDeError } from '../common/error.util';
 import {
   EstadoPrestamo,
   EstadoCuota,
@@ -340,7 +341,7 @@ export class LoansService implements OnModuleInit {
     const tipoPrestamo = String(prestamo.tipoPrestamo || '').toUpperCase();
     const isArticulo = tipoPrestamo === 'ARTICULO';
     const referenceType = isArticulo ? 'VENTA_ARTICULO' : 'DESEMBOLSO';
-    const existingEntry = await (this.prisma).journalEntry?.findFirst?.({
+    const existingEntry = await this.prisma.journalEntry?.findFirst?.({
       where: { referenceType, referenceId: prestamo.id },
       select: { id: true },
     });
@@ -2456,9 +2457,7 @@ export class LoansService implements OnModuleInit {
 
     if (asientoRestauracion?.id) return;
 
-    const cajaLine = (asientoArchivo.lines || []).find(
-      (line) => line.cajaId,
-    );
+    const cajaLine = (asientoArchivo.lines || []).find((line) => line.cajaId);
     const cuotaInicial = cajaLine
       ? Math.abs(
           Number(cajaLine.creditAmount || 0) -
@@ -2808,10 +2807,7 @@ export class LoansService implements OnModuleInit {
           } catch (error) {
             // No se corta la operacion principal por esto, pero se deja
             // registrado: en silencio nadie se entera de que fallo.
-            this.logger.warn(
-              'No se pudo resolver el nombre del actor',
-              error,
-            );
+            this.logger.warn('No se pudo resolver el nombre del actor', error);
           }
 
           const metadataBase = {
@@ -3567,7 +3563,7 @@ export class LoansService implements OnModuleInit {
         `Creating loan for client ${data.clienteId}, type: ${data.tipoPrestamo}. Data: ${JSON.stringify(data)}`,
       );
       const idempotencyKey =
-        (data).idempotencyKey?.toString().trim() || undefined;
+        data.idempotencyKey?.toString().trim() || undefined;
 
       if (idempotencyKey) {
         const prestamoExistente = await this.prisma.prestamo.findFirst({
@@ -3633,7 +3629,7 @@ export class LoansService implements OnModuleInit {
       // Las ventas de contado quedan fuera a proposito: se pagan en el momento
       // y no se cobran en ruta.
       if (!data.esContado) {
-        const rutaIndicada = String((data)?.rutaId || '').trim();
+        const rutaIndicada = String(data?.rutaId || '').trim();
         const clienteTieneRuta = (cliente.asignacionesRuta ?? []).some(
           (a: any) => a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
         );
@@ -4087,7 +4083,7 @@ export class LoansService implements OnModuleInit {
 
             // La ruta que venga en la peticion manda: se ignoraba, y el
             // credito acababa sin ruta aunque quien lo creo dijera cual.
-            const rutaDelPayload = String((data)?.rutaId || '').trim();
+            const rutaDelPayload = String(data?.rutaId || '').trim();
             const rutaPedida = rutaDelPayload
               ? await tx.ruta.findFirst({
                   where: {
@@ -4147,7 +4143,7 @@ export class LoansService implements OnModuleInit {
                   asignacionRutaCreadaId = asignacionRutaTxId;
                   rutaIdAsignadaBroadcast = rutaIdAsignar;
                 } catch (error) {
-                  if (error?.code === 'P2002') {
+                  if (codigoDeError(error) === 'P2002') {
                     this.logger.warn(
                       `[CREATE LOAN] Asignación de ruta omitida por duplicado rutaId=${rutaIdAsignar}, clienteId=${cliente.id}`,
                     );
@@ -4165,7 +4161,7 @@ export class LoansService implements OnModuleInit {
           if (!data.esContado) {
             const rutaFinal =
               rutaIdDelCredito ||
-              String((data)?.rutaId || '').trim() ||
+              String(data?.rutaId || '').trim() ||
               cliente.asignacionesRuta?.find(
                 (a: any) =>
                   a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
@@ -4234,8 +4230,8 @@ export class LoansService implements OnModuleInit {
                 fechaInicio: prestamoTx.fechaInicio
                   ? formatBogotaOffsetIso(prestamoTx.fechaInicio)
                   : undefined,
-                fechaPrimerCobro: (data).fechaPrimerCobro
-                  ? String((data).fechaPrimerCobro)
+                fechaPrimerCobro: data.fechaPrimerCobro
+                  ? String(data.fechaPrimerCobro)
                   : undefined,
                 esContado: !!data.esContado,
                 idempotencyKey: idempotencyKey || null,
@@ -4303,12 +4299,12 @@ export class LoansService implements OnModuleInit {
                       ),
                       usuarioSolicitanteId: data.creadoPorId,
                       rutaId:
-                        (data).rutaId ||
+                        data.rutaId ||
                         cliente.asignacionesRuta?.[0]?.rutaId ||
                         cliente.asignacionesRuta?.[0]?.ruta?.id ||
                         null,
                       cobradorId:
-                        (data).cobradorId ||
+                        data.cobradorId ||
                         cliente.asignacionesRuta?.[0]?.cobradorId ||
                         cliente.asignacionesRuta?.[0]?.ruta?.cobradorId ||
                         null,

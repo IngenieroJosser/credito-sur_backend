@@ -30,6 +30,7 @@ import {
   ApiParam,
 } from '@nestjs/swagger';
 import { LoansService } from './loans.service';
+import { mensajeDeError, pilaDeError } from '../common/error.util';
 import { MoraService } from './mora.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -243,7 +244,10 @@ export class LoansController {
       );
       res.send(result.data);
     } catch (e) {
-      console.error('PDF GENERATION ERROR: ' + e.message, e.stack);
+      console.error(
+        'PDF GENERATION ERROR: ' + mensajeDeError(e),
+        pilaDeError(e),
+      );
       throw e;
     }
   }
@@ -1159,7 +1163,7 @@ export class LoansController {
     ];
     if (usuario && rolesAutoAprobacion.includes(usuario.rol)) {
       try {
-        if (tipoAprobacion === ('BAJA_POR_PERDIDA')) {
+        if (tipoAprobacion === 'BAJA_POR_PERDIDA') {
           await this.prisma.aprobacion.update({
             where: { id: aprobacion.id },
             data: {
@@ -1286,7 +1290,6 @@ export class LoansController {
       solicitadoPorId: usuarioId,
     });
   }
-
 
   @Patch('reprogramaciones/:id/aprobar')
   @Roles(

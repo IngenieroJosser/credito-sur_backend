@@ -24,14 +24,11 @@
     "strictNullChecks": true,
     "strictFunctionTypes": true,
     "strictBindCallApply": true,
-    "noImplicitThis": true
+    "noImplicitThis": true,
+    "useUnknownInCatchVariables": true
   },
 
   "include": ["src/**/*.ts"],
 
-  "exclude": [
-    "node_modules",
-    "dist",
-    "test"
-  ]
+  "exclude": ["node_modules", "dist", "test"]
 }

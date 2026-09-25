@@ -16,6 +16,7 @@ import { RolUsuario } from '@prisma/client';
 import { OnEvent } from '@nestjs/event-emitter';
 import { NotificacionesService } from './notificaciones.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { codigoDeError, mensajeDeError } from '../common/error.util';
 import { getBogotaDayKey, getBogotaStartEndOfDay } from '../utils/date-utils';
 import { RoutesService } from '../routes/routes.service';
 
@@ -198,19 +199,16 @@ export class NotificacionesGateway
             } catch (error) {
               this.logger.warn(
                 `Bloqueo de cierre por jornada pendiente: rutaId=${data.rutaId}`,
-                error.message,
+                mensajeDeError(error),
               );
               // Retornar error al frontend
               return {
                 success: false,
-                code:
-                  error?.response?.code ||
-                  error?.code ||
-                  'RUTA_ANTERIOR_PENDIENTE_CIERRE',
-                message:
-                  error?.response?.message ||
-                  error?.message ||
+                code: codigoDeError(error) ?? 'RUTA_ANTERIOR_PENDIENTE_CIERRE',
+                message: mensajeDeError(
+                  error,
                   'Existe una jornada anterior pendiente de cierre.',
+                ),
               };
             }
 
@@ -382,11 +380,8 @@ export class NotificacionesGateway
       this.logger.error('Error en handleRutaCompletadaEmit:', error);
       return {
         success: false,
-        code: error?.response?.code || error?.code || 'ERROR_CIERRE_RUTA',
-        message:
-          error?.response?.message ||
-          error?.message ||
-          'No se pudo cerrar la ruta.',
+        code: codigoDeError(error) ?? 'ERROR_CIERRE_RUTA',
+        message: mensajeDeError(error, 'No se pudo cerrar la ruta.'),
       };
     }
   }

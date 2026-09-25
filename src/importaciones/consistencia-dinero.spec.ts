@@ -11,6 +11,7 @@ import {
   aplicarAvanceHistorico,
 } from './avance-historico';
 import { pesos } from '../common/dinero.util';
+import { mensajeDeError } from '../common/error.util';
 import { LedgerService } from '../accounting/ledger.service';
 
 /**
@@ -447,7 +448,7 @@ describe('El crédito de artículo cierra contra el precio', () => {
             });
           } catch (error) {
             fallos.push(
-              `${donde} — el asiento fue rechazado: ${error.message}`,
+              `${donde} — el asiento fue rechazado: ${mensajeDeError(error)}`,
             );
             continue;
           }

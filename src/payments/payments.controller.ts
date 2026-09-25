@@ -27,6 +27,12 @@ import { RolUsuario } from '@prisma/client';
 import { Response } from 'express';
 
 import { RequestConUsuario } from '../common/types';
+import {
+  codigoDeError,
+  mensajeDeError,
+  metaDeError,
+  pilaDeError,
+} from '../common/error.util';
 
 @Controller('payments')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -113,11 +119,11 @@ export class PaymentsController {
       return await this.paymentsService.create(dto, comprobante, req.user);
     } catch (error) {
       this.logger.error(
-        `[PaymentsController.create] Error registrando pago: ${error?.message}`,
+        `[PaymentsController.create] Error registrando pago: ${mensajeDeError(error)}`,
         JSON.stringify({
-          code: error?.code,
-          meta: error?.meta,
-          stack: error?.stack,
+          code: codigoDeError(error),
+          meta: metaDeError(error),
+          stack: pilaDeError(error),
           dto: {
             clienteId: dto?.clienteId,
             prestamoId: dto?.prestamoId,

@@ -8,6 +8,11 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  codigoDeError,
+  mensajeDeError,
+  pilaDeError,
+} from '../common/error.util';
+import {
   EstadoCuota,
   EstadoPrestamo,
   EstadoAprobacion,
@@ -165,7 +170,7 @@ export class AccountingService {
       });
     } catch (error) {
       // Otra petición la creó entre la búsqueda y el create.
-      if (error?.code !== 'P2002') throw error;
+      if (codigoDeError(error) !== 'P2002') throw error;
 
       const ganadora = await buscarYReactivar();
       if (!ganadora) throw error;
@@ -398,7 +403,9 @@ export class AccountingService {
         }
       }
     } catch (err) {
-      this.logger.error(`Error al verificar cajas por defecto: ${err.message}`);
+      this.logger.error(
+        `Error al verificar cajas por defecto: ${mensajeDeError(err)}`,
+      );
     }
   }
 
@@ -1236,7 +1243,10 @@ export class AccountingService {
         return nuevaCaja;
       });
     } catch (error) {
-      this.logger.error(`Error creando caja: ${error.message}`, error.stack);
+      this.logger.error(
+        `Error creando caja: ${mensajeDeError(error)}`,
+        pilaDeError(error),
+      );
       if (
         error instanceof BadRequestException ||
         error instanceof ForbiddenException ||
@@ -1245,14 +1255,17 @@ export class AccountingService {
         throw error;
       }
       // Si es un error de base de datos específico (ej: input syntax for uuid), devolvemos BadRequest
-      if (error.code === 'P2023' || error.message.includes('uuid')) {
+      if (
+        codigoDeError(error) === 'P2023' ||
+        (error instanceof Error && error.message.includes('uuid'))
+      ) {
         throw new BadRequestException(
           'Formato de ID inválido (UUID requerido). Verifique responsableId o rutaId.',
         );
       }
 
       throw new BadRequestException(
-        `No se pudo crear la caja: ${error.message || 'Error desconocido'}`,
+        `No se pudo crear la caja: ${mensajeDeError(error)}`,
       );
     }
   }
@@ -1683,8 +1696,8 @@ export class AccountingService {
       };
     } catch (error) {
       this.logger.error(
-        `Error fetching transacciones: ${error.message}`,
-        error.stack,
+        `Error fetching transacciones: ${mensajeDeError(error)}`,
+        pilaDeError(error),
       );
       throw error;
     }
@@ -1713,8 +1726,8 @@ export class AccountingService {
       return this.mapTransaccionRow(t);
     } catch (error) {
       this.logger.error(
-        `Error fetching transaccion by id: ${error.message}`,
-        error.stack,
+        `Error fetching transaccion by id: ${mensajeDeError(error)}`,
+        pilaDeError(error),
       );
       throw error;
     }
@@ -4515,7 +4528,7 @@ export class AccountingService {
     } catch (error) {
       // Carrera de idempotencia: otro reintento idéntico ganó. La restricción
       // única del idempotencyKey hizo rollback de todo; devolvemos el existente.
-      if (error?.code === 'P2002' && idempotencyKey) {
+      if (codigoDeError(error) === 'P2002' && idempotencyKey) {
         const existente = await this.prisma.transaccion.findUnique({
           where: { idempotencyKey },
         });

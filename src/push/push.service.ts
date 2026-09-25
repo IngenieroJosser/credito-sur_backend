@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as webpush from 'web-push';
+import { estadoDeError } from '../common/error.util';
 import { formatBogotaOffsetIso } from '../utils/date-utils';
 
 export interface SendPushNotificationDto {
@@ -141,7 +142,8 @@ export class PushService {
       await webpush.sendNotification(subscription, JSON.stringify(payload));
       return 'enviadas';
     } catch (error) {
-      if (error.statusCode === 410 || error.statusCode === 404) {
+      const estado = estadoDeError(error);
+      if (estado === 410 || estado === 404) {
         this.logger.warn(
           `Suscripción expirada o inválida, eliminando: ${subscription.endpoint}`,
         );
