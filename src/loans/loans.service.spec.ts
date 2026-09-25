@@ -3245,3 +3245,115 @@ describe('El tope de dias al reprogramar una cuota', () => {
     );
   });
 });
+
+/**
+ * La reprogramacion del modal sigue entera despues de borrar el metodo viejo.
+ *
+ * Lo que tiene que seguir cumpliendose, y es lo que hace que un rechazo del dia
+ * siguiente se pueda deshacer: la cuota se mueve YA, se crea la Aprobacion en
+ * PENDIENTE, y se crea el efecto provisional con el `rollbackData` que guarda la
+ * fecha ORIGINAL. Sin ese rollback el rechazo no tendria con que revertir.
+ */
+describe('La reprogramacion del modal deja el rastro para revertir', () => {
+  const FECHA_ORIGINAL = new Date('2026-09-20T12:00:00.000-05:00');
+
+  const diaBogotaMas = (dias: number) => {
+    const hoyKey = new Date().toLocaleDateString('en-CA', {
+      timeZone: 'America/Bogota',
+    });
+    const d = new Date(`${hoyKey}T00:00:00.000-05:00`);
+    d.setUTCDate(d.getUTCDate() + dias);
+    return d.toISOString().slice(0, 10);
+  };
+
+  const hacerPrisma = () => {
+    const tx = {
+      asignacionRuta: {
+        findFirst: jest.fn().mockResolvedValue({ rutaId: 'ruta-1' }),
+      },
+      registroVisita: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        findFirst: jest.fn().mockResolvedValue(null),
+        upsert: jest.fn().mockResolvedValue({}),
+        update: jest.fn().mockResolvedValue({}),
+        create: jest.fn().mockResolvedValue({}),
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      cuota: {
+        update: jest.fn().mockResolvedValue({
+          id: 'cuota-1',
+          fechaVencimiento: new Date(),
+        }),
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'cuota-1',
+          fechaVencimiento: FECHA_ORIGINAL,
+          estado: 'PENDIENTE',
+        }),
+      },
+      aprobacion: {
+        create: jest.fn().mockResolvedValue({ id: 'aprobacion-1' }),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      efectoProvisional: {
+        create: jest.fn().mockResolvedValue({ id: 'efecto-1' }),
+      },
+      prestamo: { update: jest.fn().mockResolvedValue({}) },
+      notificacion: { create: jest.fn().mockResolvedValue({}) },
+    };
+
+    return {
+      tx,
+      prisma: {
+        aprobacion: { findUnique: jest.fn().mockResolvedValue(null) },
+        prestamo: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'prestamo-1',
+            clienteId: 'cliente-1',
+            frecuenciaPago: 'SEMANAL',
+            cliente: { id: 'cliente-1', nombres: 'Ana', apellidos: 'Rojas' },
+            cuotas: [
+              {
+                id: 'cuota-1',
+                numeroCuota: 3,
+                estado: 'PENDIENTE',
+                fechaVencimiento: FECHA_ORIGINAL,
+              },
+            ],
+          }),
+        },
+        usuario: {
+          findUnique: jest.fn().mockResolvedValue({ rol: 'COBRADOR' }),
+        },
+        $transaction: jest.fn(async (cb: (t: unknown) => unknown) => cb(tx)),
+      },
+    };
+  };
+
+  it('mueve la cuota, crea la aprobacion y guarda la fecha original para el rollback', async () => {
+    const { tx, prisma } = hacerPrisma();
+
+    // El mismo cuerpo que manda `reprogramarPrestamo` del frontend.
+    await makeService(prisma as any).solicitarReprogramacion({
+      prestamoId: 'prestamo-1',
+      cuotaId: 'cuota-1',
+      nuevaFecha: diaBogotaMas(3),
+      motivo: 'El cliente no puede hoy',
+      solicitadoPorId: 'cobrador-1',
+    });
+
+    // 1. Se aplica ya: la cuota se mueve.
+    expect(tx.cuota.update).toHaveBeenCalled();
+
+    // 2. Queda pendiente de revision.
+    expect(tx.aprobacion.create).toHaveBeenCalled();
+
+    // 3. Y queda con que deshacerlo: la fecha ORIGINAL, no la nueva.
+    expect(tx.efectoProvisional.create).toHaveBeenCalled();
+    const datos = tx.efectoProvisional.create.mock.calls[0][0]?.data;
+    expect(datos?.estado).toBe('PENDIENTE_REVISION');
+    expect(datos?.rollbackData?.fechaVencimientoOriginal).toBe(
+      FECHA_ORIGINAL.toISOString(),
+    );
+    expect(datos?.rollbackData?.cuotaId).toBe('cuota-1');
+  });
+});

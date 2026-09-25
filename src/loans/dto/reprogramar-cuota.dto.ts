@@ -64,13 +64,4 @@ export class ReprogramarCuotaDto {
   @IsOptional()
   @Transform(({ value }) => value?.toString().trim())
   idempotencyKey?: string;
-
-  @ApiProperty({
-    description: 'ID del usuario que realiza la reprogramación',
-    example: 'user-uuid',
-    required: false,
-  })
-  @IsString()
-  @IsOptional()
-  reprogramadoPorId?: string;
 }
