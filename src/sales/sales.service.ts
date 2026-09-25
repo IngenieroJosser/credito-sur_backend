@@ -6,7 +6,7 @@ import {
 import { randomUUID } from 'crypto';
 import { Prisma, MetodoPago, TipoTransaccion } from '@prisma/client';
 import { LedgerService } from '../accounting/ledger.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
 import { codigoDeError } from '../common/error.util';
 import { CreateCashSaleDto } from './dto/create-cash-sale.dto';
 
@@ -57,7 +57,7 @@ export class SalesService {
   }
 
   private async resolveCajaVenta(
-    tx: Prisma.TransactionClient,
+    tx: TransaccionPrisma,
     metodoPago: MetodoPago,
   ) {
     const metodo = String(metodoPago || '').toUpperCase();

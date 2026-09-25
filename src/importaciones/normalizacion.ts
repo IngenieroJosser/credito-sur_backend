@@ -8,10 +8,15 @@
 
 /** Quita espacios sobrantes y caracteres de control. */
 export function limpiarTexto(valor: string): string {
-  return String(valor ?? '')
-    .replace(/[\x00-\x1f\x7f]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return (
+    String(valor ?? '')
+      // Los caracteres de control son el objetivo de esta limpieza, no un
+      // descuido: el regex esta aqui para quitarlos del texto importado.
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\x00-\x1f\x7f]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  );
 }
 
 /** Palabras que se mantienen en minúscula dentro de un nombre compuesto. */

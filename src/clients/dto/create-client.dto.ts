@@ -14,17 +14,30 @@ import {
   Length,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { NivelRiesgo } from '@prisma/client';
+import { NivelRiesgo, TipoContenidoMultimedia } from '@prisma/client';
+
+/**
+ * Los tipos de archivo que se aceptan al crear un cliente.
+ *
+ * La lista estaba solo dentro del `@IsEnum`, y el campo se tipaba como `string`:
+ * la validacion rechazaba lo que no fuera uno de estos cuatro, pero el tipo no lo
+ * decia, asi que el valor llegaba a Prisma como texto cualquiera. El `satisfies`
+ * comprueba ademas que los cuatro existan de verdad en el enum del esquema, que
+ * antes no lo comprobaba nadie.
+ */
+export const TIPOS_CONTENIDO_CLIENTE = [
+  'FOTO_PERFIL',
+  'DOCUMENTO_IDENTIDAD_FRENTE',
+  'DOCUMENTO_IDENTIDAD_REVERSO',
+  'COMPROBANTE_DOMICILIO',
+] as const satisfies readonly TipoContenidoMultimedia[];
+
+export type TipoContenidoCliente = (typeof TIPOS_CONTENIDO_CLIENTE)[number];
 
 export class CreateMultimediaDto {
-  @IsEnum([
-    'FOTO_PERFIL',
-    'DOCUMENTO_IDENTIDAD_FRENTE',
-    'DOCUMENTO_IDENTIDAD_REVERSO',
-    'COMPROBANTE_DOMICILIO',
-  ])
+  @IsEnum(TIPOS_CONTENIDO_CLIENTE)
   @IsNotEmpty()
-  tipoContenido: string;
+  tipoContenido: TipoContenidoCliente;
 
   @IsString()
   @IsNotEmpty()

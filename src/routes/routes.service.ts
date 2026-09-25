@@ -10,7 +10,7 @@ import {
   Logger,
 } from '@nestjs/common';
 
-import { PrismaService } from '../prisma/prisma.service';
+import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
 import { codigoDeError } from '../common/error.util';
 import { sincronizarAsignacionesCliente } from './sincronizar-asignaciones';
 
@@ -2975,7 +2975,7 @@ export class RoutesService {
   }
 
   private sincronizarAsignacionesCliente(
-    tx: Prisma.TransactionClient,
+    tx: TransaccionPrisma,
     clienteId: string,
   ) {
     return sincronizarAsignacionesCliente(tx, clienteId);
@@ -4882,6 +4882,13 @@ export class RoutesService {
           include: {
             cliente: {
               select: {
+                // `id` hace falta: mas abajo se busca la visita del dia con
+                // `visitasMap.get(c.id)`. Sin el, la busqueda se hacia con
+                // undefined y NUNCA encontraba nada, asi que la ruta exportada
+                // salia siempre sin estado de visita y sin las notas del
+                // cobrador. Compilaba porque el cliente de Prisma era `any`.
+                id: true,
+
                 nombres: true,
 
                 apellidos: true,

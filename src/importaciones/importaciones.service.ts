@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
+import { objetoDeJson } from '../common/json.util';
 import { sincronizarAsignacionesCliente } from '../routes/sincronizar-asignaciones';
 import { ClientesCreditosParser } from './parsers/clientes-creditos.parser';
 import { InventarioParser } from './parsers/inventario.parser';
@@ -148,7 +149,7 @@ export class ImportacionesService {
    * propietario como contrapartida.
    */
   private async asentarInventario(
-    tx: Prisma.TransactionClient,
+    tx: TransaccionPrisma,
     params: {
       codigo: string;
       unidades: number;
@@ -277,12 +278,15 @@ export class ImportacionesService {
     });
 
     return lotes.map((lote) => {
-      const creado = (lote.resumen?.creado ?? {}) as CreadoPorImportacion;
+      const creado = (objetoDeJson(lote.resumen).creado ??
+        {}) as CreadoPorImportacion;
 
       // Si el lote nunca guardó "creado" (lotes de antes de que existiera este
       // registro), no se sabe cuántos clientes/créditos hizo: null, no 0, para
       // no mostrar "0 cliente(s) · 0 crédito(s)" en un CONFIRMADO que sí creó.
-      const tieneRegistroDeCreacion = Boolean(lote.resumen?.creado);
+      const tieneRegistroDeCreacion = Boolean(
+        objetoDeJson(lote.resumen).creado,
+      );
       const clientes = tieneRegistroDeCreacion
         ? (creado.clientes?.length ?? 0)
         : null;
@@ -335,7 +339,8 @@ export class ImportacionesService {
       throw new BadRequestException('La importación indicada no existe.');
     }
 
-    const creado = (lote.resumen?.creado ?? {}) as CreadoPorImportacion;
+    const creado = (objetoDeJson(lote.resumen).creado ??
+      {}) as CreadoPorImportacion;
 
     if (lote.tipo === 'INVENTARIO') {
       return this.detalleLoteInventario(lote, creado);
@@ -518,10 +523,10 @@ export class ImportacionesService {
    * el lote completo y se explica exactamente cuál artículo lo impide.
    */
   private async revisarReversionInventario(
-    cliente: PrismaService | Prisma.TransactionClient,
+    cliente: PrismaService | TransaccionPrisma,
     registros: RegistroInventarioImportado[],
   ) {
-    const productos: any[] = await (cliente).producto.findMany({
+    const productos: any[] = await cliente.producto.findMany({
       where: { id: { in: registros.map((r) => r.productoId) } },
       include: {
         precios: {
@@ -757,7 +762,8 @@ export class ImportacionesService {
       throw new BadRequestException('La importación indicada no existe.');
     }
 
-    const creado = (lote.resumen?.creado ?? {}) as CreadoPorImportacion;
+    const creado = (objetoDeJson(lote.resumen).creado ??
+      {}) as CreadoPorImportacion;
 
     const evaluacion = this.evaluarSiSePuedeDeshacer(lote, creado);
     if (!evaluacion.sePuede) {
@@ -937,7 +943,7 @@ export class ImportacionesService {
           data: {
             estado: parcial ? 'CONFIRMADO' : 'CANCELADO',
             resumen: {
-              ...(lote.resumen ?? {}),
+              ...objetoDeJson(lote.resumen),
               creado: {
                 ...creado,
                 prestamos: quedanVivos,
@@ -1176,8 +1182,8 @@ export class ImportacionesService {
       });
     }
 
-    const articulos: any[] = (resultado).articulos ?? [];
-    const precios: any[] = (resultado).precios ?? [];
+    const articulos: any[] = resultado.articulos ?? [];
+    const precios: any[] = resultado.precios ?? [];
 
     // 3. Ejecutar dentro de transacción
     let articulosCreados = 0;
@@ -1550,7 +1556,7 @@ export class ImportacionesService {
       });
     }
 
-    const clientes: any[] = (resultado).clientes ?? [];
+    const clientes: any[] = resultado.clientes ?? [];
 
     // Mapeo de NivelRiesgo (operativo a Prisma)
     const mapNivelRiesgo = (nivel: string): 'VERDE' | 'AMARILLO' | 'ROJO' => {
@@ -1753,7 +1759,7 @@ export class ImportacionesService {
             : 0;
 
           // Procesar créditos
-          const creditos: any[] = (resultado).creditos ?? [];
+          const creditos: any[] = resultado.creditos ?? [];
           const roundMoney = (value: number) => pesos(value);
           const hayCreditoOperativoEfectivo = creditos.some(
             (cred) =>
@@ -2074,12 +2080,12 @@ export class ImportacionesService {
                   estado: estadoPrestamo,
                   garantia: cred.garantia || null,
                   // Queda constancia de que este credito vino de una carga
-                // historica. Sus cuotas pagadas no tienen Pago ni recibo
-                // detras, a proposito, y sin esta marca eso parece un dato
-                // perdido. `isHistorica` ya distingue HISTORICA+NO de una
-                // carga operativa, que si desembolsa y si mueve caja.
-                cargaHistoricaEn: isHistorica ? new Date() : null,
-                notas: cred.notas || null,
+                  // historica. Sus cuotas pagadas no tienen Pago ni recibo
+                  // detras, a proposito, y sin esta marca eso parece un dato
+                  // perdido. `isHistorica` ya distingue HISTORICA+NO de una
+                  // carga operativa, que si desembolsa y si mueve caja.
+                  cargaHistoricaEn: isHistorica ? new Date() : null,
+                  notas: cred.notas || null,
                   cuotaInicial: cred.cuotaInicial || 0,
                 },
               });
@@ -2440,7 +2446,7 @@ export class ImportacionesService {
    */
   private async resolverCategoriasArticulo(
     // Mismo tipado que el resto de ayudantes transaccionales del servicio.
-    tx: Prisma.TransactionClient,
+    tx: TransaccionPrisma,
     nombres: unknown[],
   ): Promise<Map<string, string>> {
     const porClave = new Map<string, string>();

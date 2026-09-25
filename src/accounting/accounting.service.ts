@@ -1289,7 +1289,9 @@ export class AccountingService {
     }
 
     // Las cajas por defecto NO pueden desactivarse ni renombrarse, solo cambiar responsable
-    if (AccountingService.CODIGOS_DEFAULT.includes(caja.codigo)) {
+    if (
+      AccountingService.CODIGOS_DEFAULT.some((codigo) => codigo === caja.codigo)
+    ) {
       if (data.activa === false) {
         throw new ForbiddenException(
           `La caja "${caja.nombre}" es una caja del sistema y no puede desactivarse.`,
@@ -1319,7 +1321,9 @@ export class AccountingService {
     const caja = await this.prisma.caja.findUnique({ where: { id } });
     if (!caja) throw new NotFoundException('Caja no encontrada');
 
-    if (AccountingService.CODIGOS_DEFAULT.includes(caja.codigo)) {
+    if (
+      AccountingService.CODIGOS_DEFAULT.some((codigo) => codigo === caja.codigo)
+    ) {
       throw new ForbiddenException(
         `La caja "${caja.nombre}" es una caja del sistema y no puede eliminarse. Solo puede reasignarse su responsable.`,
       );
@@ -2805,7 +2809,10 @@ export class AccountingService {
       .then((pagos) => pagos.map((p) => p.id));
 
     // Helper for non-regularized cobranza
-    const ledgerCobranzaNoRegularizadaWhere = (start: Date, end: Date) => ({
+    const ledgerCobranzaNoRegularizadaWhere = (
+      start: Date,
+      end: Date,
+    ): Prisma.JournalLineWhereInput => ({
       OR: [
         { accountCode: { startsWith: '1.1' } },
         { accountCode: { startsWith: '1.2' } },
@@ -2825,18 +2832,24 @@ export class AccountingService {
       },
     });
 
+    // El retorno se anota a proposito: sin la anotacion el literal se infiere
+    // solo (`in: string[]`, por ejemplo) y Prisma no comprueba que los valores
+    // existan en el enum ni que los campos sean del modelo.
     const ledgerPeriodWhere = (
       start: Date,
       end: Date,
       accountPrefix: string,
-    ) => ({
+    ): Prisma.JournalLineWhereInput => ({
       accountCode: { startsWith: accountPrefix },
       journalEntry: {
         isOpening: false,
         createdAt: { gte: start, lte: end },
       },
     });
-    const ledgerIncomeOperativoWhere = (start: Date, end: Date) => ({
+    const ledgerIncomeOperativoWhere = (
+      start: Date,
+      end: Date,
+    ): Prisma.JournalLineWhereInput => ({
       accountCode: { startsWith: '3.' },
       NOT: [
         { accountCode: { startsWith: '3.3' } },
@@ -2847,7 +2860,10 @@ export class AccountingService {
         createdAt: { gte: start, lte: end },
       },
     });
-    const ledgerCashIncomeWhere = (start: Date, end: Date) => ({
+    const ledgerCashIncomeWhere = (
+      start: Date,
+      end: Date,
+    ): Prisma.JournalLineWhereInput => ({
       OR: [
         { accountCode: { startsWith: '1.1' } },
         { accountCode: { startsWith: '1.2' } },
@@ -2859,7 +2875,10 @@ export class AccountingService {
         createdAt: { gte: start, lte: end },
       },
     });
-    const cuotaInicialIngresoWhere = (start: Date, end: Date) => ({
+    const cuotaInicialIngresoWhere = (
+      start: Date,
+      end: Date,
+    ): Prisma.TransaccionWhereInput => ({
       fechaTransaccion: { gte: start, lte: end },
       tipo: TipoTransaccion.INGRESO,
       tipoReferencia: { in: ['CUOTA_INICIAL', 'RESTAURACION_CUOTA_INICIAL'] },
@@ -3919,12 +3938,22 @@ export class AccountingService {
     ]);
 
     const usuariosMap = new Map(
-      usuarios.map((u: any) => [u.id, `${u.nombres} ${u.apellidos}`]),
+      usuarios.map((u): [string, string] => [
+        u.id,
+        `${u.nombres} ${u.apellidos}`,
+      ]),
     );
     const cajasMap = new Map<
       string,
       { id: string; nombre: string; tipo: TipoCaja }
-    >(cajasMovimientos.map((c: any) => [c.id, c]));
+    >(
+      cajasMovimientos.map(
+        (c): [string, { id: string; nombre: string; tipo: TipoCaja }] => [
+          c.id,
+          c,
+        ],
+      ),
+    );
 
     const fecha = getBogotaDayKey(new Date());
 
@@ -4361,7 +4390,8 @@ export class AccountingService {
         monto: Math.abs(delta),
         fecha: trx.fechaTransaccion,
         cajaId: trx.cajaId || '',
-        referenciaId: trx.referenciaId,
+        // La columna es nullable y el campo del tipo es opcional.
+        referenciaId: trx.referenciaId ?? undefined,
         descripcion: trx.descripcion || '',
       });
       eventosMap.set(cobradorId, arr);
@@ -5193,7 +5223,15 @@ export class AccountingService {
         );
       }
 
-      const lines = [
+      // La forma se anota en el array y no en `lines`: las lineas no traen todas
+      // las dos columnas de importe, y el `filter` de abajo las lee las dos.
+      const lineasAsiento: Array<{
+        accountCode: string;
+        debitAmount?: number;
+        creditAmount?: number;
+        cajaId?: string;
+        cajaDelta?: number;
+      }> = [
         ...lineasCajas,
         lineaCartera,
         lineaDeuda,
@@ -5201,7 +5239,11 @@ export class AccountingService {
           accountCode: '2.1', // Capital Social / Patrimonio
           creditAmount: totalDebitos,
         },
-      ].filter((l) => (l.debitAmount || 0) > 0 || (l.creditAmount || 0) > 0);
+      ];
+
+      const lines = lineasAsiento.filter(
+        (l) => (l.debitAmount || 0) > 0 || (l.creditAmount || 0) > 0,
+      );
 
       // 5. Registrar Asiento
       return this.ledgerService.registrarAsiento(

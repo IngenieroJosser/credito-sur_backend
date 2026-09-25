@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { TransaccionPrisma } from '../prisma/prisma.service';
 
 /**
  * La ruta la lleva el crédito (`Prestamo.rutaId`). `AsignacionRuta` se queda
@@ -13,7 +14,7 @@ import { Prisma } from '@prisma/client';
  * y el cobrador de aquella dejaba de verlo aunque le siguiera debiendo.
  */
 export async function sincronizarAsignacionesCliente(
-  tx: Prisma.TransactionClient,
+  tx: TransaccionPrisma,
   clienteId: string,
 ): Promise<void> {
   const creditos = await tx.prestamo.findMany({

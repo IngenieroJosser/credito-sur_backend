@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
+import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
 import { mensajeDeError } from '../common/error.util';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
@@ -139,7 +139,7 @@ export interface ResultadoProcesarMora {
   procesadoEn: string;
 }
 
-type MoraDbClient = PrismaService | Prisma.TransactionClient;
+type MoraDbClient = PrismaService | TransaccionPrisma;
 
 @Injectable()
 export class MoraService implements OnModuleInit {

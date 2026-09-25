@@ -348,14 +348,13 @@ describe('ClientsService', () => {
           activa: true,
         }),
       });
-      expect(mockPrismaService.prestamo.updateMany).toHaveBeenCalledWith({
-        where: {
-          clienteId: 'cliente-1',
-          estado: { in: ['ACTIVO', 'EN_MORA'] },
-          eliminadoEn: null,
-        },
-        data: { cobradorId: 'cobrador-destino' },
-      });
+      // Antes esto exigia un `prestamo.updateMany({ data: { cobradorId } })`.
+      // `Prestamo` NO tiene la columna `cobradorId`, asi que Prisma rechazaba el
+      // argumento y, dentro de la transaccion, tumbaba la asignacion entera: la
+      // llamada no podia funcionar contra una base de datos real y la prueba
+      // pasaba solo porque el mock no valida los argumentos. Se fija lo
+      // contrario, que es lo cierto, para que no vuelva a colarse.
+      expect(mockPrismaService.prestamo.updateMany).not.toHaveBeenCalled();
     });
   });
 

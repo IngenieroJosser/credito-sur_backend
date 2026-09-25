@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { objetoDeJson } from '../common/json.util';
 import { codigoDeError, mensajeDeError } from '../common/error.util';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -82,7 +83,11 @@ export class BackupService {
     }
 
     const baseDir = this.getBackupDir();
-    const artifacts = run?.metadata?.artifacts;
+    // `metadata` es una columna Json: puede no ser un objeto.
+    const artifacts = objetoDeJson(objetoDeJson(run?.metadata).artifacts) as {
+      dump?: { path?: string };
+      xlsx?: { path?: string };
+    };
 
     const dumpPath = artifacts?.dump?.path || run?.filePath;
     const xlsxPath = artifacts?.xlsx?.path;

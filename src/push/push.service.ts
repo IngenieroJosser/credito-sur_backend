@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as webpush from 'web-push';
+import { RolUsuario } from '@prisma/client';
 import { estadoDeError } from '../common/error.util';
 import { formatBogotaOffsetIso } from '../utils/date-utils';
 
@@ -12,7 +13,7 @@ export interface SendPushNotificationDto {
   tag?: string;
   data?: any;
   userId?: string;
-  roleFilter?: string[];
+  roleFilter?: RolUsuario[];
 }
 
 /** Resultado de un envío, para poder comprobar desde la app si llegó. */

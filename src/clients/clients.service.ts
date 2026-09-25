@@ -269,8 +269,11 @@ export class ClientsService {
           nombreOriginal: archivo.nombreOriginal,
           nombreAlmacenamiento:
             archivo.nombreAlmacenamiento || archivo.nombreOriginal,
-          ruta: archivo.ruta || archivo.path,
-          url: urlFinal || urlDerivada,
+          // Prisma exige texto: si las dos fuentes venian vacias se mandaba
+          // undefined y la insercion fallaba. Los otros dos sitios que crean
+          // multimedia ya ponian '' por defecto.
+          ruta: archivo.ruta || archivo.path || '',
+          url: urlFinal || urlDerivada || '',
           tamanoBytes: archivo.tamanoBytes || 0,
           subidoPorId: archivo.subidoPorId || clienteActualizado.creadoPorId,
           estado: 'ACTIVO' as const,
@@ -704,10 +707,27 @@ export class ClientsService {
       const todosLosClientes = [
         ...aprobacionesTransformadas,
         ...clientesTransformados,
-      ].sort((a, b: any) => {
-        const dateA = new Date(a.creadoEn || 0).getTime();
-        const dateB = new Date(b.creadoEn || 0).getTime();
-        return dateB - dateA;
+      ].sort((a, b) => {
+        // Se lee por una funcion con el campo opcional en vez de `a.creadoEn`
+        // suelto: las dos listas que se combinan no tienen exactamente la misma
+        // forma, y antes esto compilaba porque venian del cliente de Prisma
+        // tipado como `any`. El `|| 0` se mantiene: una fecha ausente o vacia
+        // queda al final, como hasta ahora.
+        // El parametro va como `unknown` y el campo se comprueba con `in`: las
+        // tres formas que se combinan aqui no coinciden, y pedir un parametro con
+        // `creadoEn` no valia para todas.
+        const fecha = (registro: unknown) => {
+          const valor =
+            registro && typeof registro === 'object' && 'creadoEn' in registro
+              ? (registro as { creadoEn: unknown }).creadoEn
+              : undefined;
+          if (valor instanceof Date) return valor.getTime();
+          if (typeof valor === 'string' || typeof valor === 'number') {
+            return new Date(valor).getTime();
+          }
+          return 0; // `new Date(0).getTime()` es 0: lo mismo que `|| 0`.
+        };
+        return fecha(b) - fecha(a);
       });
 
       return {
@@ -977,7 +997,8 @@ export class ClientsService {
                 tipoArchivo: archivo.tipoArchivo,
                 formato: archivo.nombreOriginal?.split('.').pop() || 'bin',
                 nombreOriginal: archivo.nombreOriginal,
-                nombreAlmacenamiento: archivo.nombreAlmacenamiento,
+                nombreAlmacenamiento:
+                  archivo.nombreAlmacenamiento || archivo.nombreOriginal,
                 ruta: archivo.ruta || archivo.path || '',
                 url:
                   archivo.url ||
@@ -1151,7 +1172,8 @@ export class ClientsService {
             tipoArchivo: archivo.tipoArchivo,
             formato: archivo.nombreOriginal?.split('.').pop() || 'bin',
             nombreOriginal: archivo.nombreOriginal,
-            nombreAlmacenamiento: archivo.nombreAlmacenamiento,
+            nombreAlmacenamiento:
+              archivo.nombreAlmacenamiento || archivo.nombreOriginal,
             ruta: archivo.ruta || archivo.path || '',
             url:
               archivo.url ||
@@ -1235,10 +1257,7 @@ export class ClientsService {
         } catch (error) {
           // No se corta la operacion principal por esto, pero se deja
           // registrado: en silencio nadie se entera de que fallo.
-          this.logger.warn(
-            'No se pudo notificar el cliente nuevo',
-            error,
-          );
+          this.logger.warn('No se pudo notificar el cliente nuevo', error);
         }
 
         try {
@@ -1744,14 +1763,17 @@ export class ClientsService {
             },
           });
 
-          await tx.prestamo.updateMany({
-            where: {
-              clienteId,
-              estado: { in: ['ACTIVO', 'EN_MORA'] },
-              eliminadoEn: null,
-            },
-            data: { cobradorId: assignmentCobradorId },
-          });
+          // Aquí había un `tx.prestamo.updateMany({ data: { cobradorId } })`.
+          // `Prestamo` NO tiene la columna `cobradorId` (está en Ruta,
+          // AsignacionRuta, Gasto y RegistroVisita, no en el crédito), asi que
+          // Prisma rechazaba el argumento y, al estar dentro de la transaccion,
+          // tumbaba la asignacion entera. No podia haber funcionado nunca;
+          // compilaba porque el cliente de Prisma estaba tipado como `any`.
+          //
+          // No se sustituye por otra escritura porque no esta claro que se
+          // pretendia: en este modelo la ruta la lleva el credito
+          // (`Prestamo.rutaId`) y el cobrador sale de la ruta, asi que puede que
+          // sobre. Queda pendiente de decidir.
 
           return asignacion;
         }
@@ -1777,14 +1799,7 @@ export class ClientsService {
           },
         });
 
-        await tx.prestamo.updateMany({
-          where: {
-            clienteId,
-            estado: { in: ['ACTIVO', 'EN_MORA'] },
-            eliminadoEn: null,
-          },
-          data: { cobradorId: assignmentCobradorId },
-        });
+        // Misma escritura invalida que en la rama de arriba: ver el comentario.
 
         return asignacion;
       });

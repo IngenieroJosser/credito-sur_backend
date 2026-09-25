@@ -8,7 +8,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { CreatePaymentDto } from './dto/create-payment.dto';
-import { PrismaService } from '../prisma/prisma.service';
+import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
 import {
   EstadoPrestamo,
   EstadoCuota,
@@ -139,7 +139,7 @@ export class PaymentsService {
    * como un descuadre que nadie sabe de donde salio.
    */
   private async resolveCajaIngresoPago(
-    tx: Prisma.TransactionClient,
+    tx: TransaccionPrisma,
     params: {
       actor: PaymentActor;
       rutaId: string;
@@ -303,7 +303,7 @@ export class PaymentsService {
     throw error;
   }
 
-  private async ensureCajaBanco(tx: Prisma.TransactionClient) {
+  private async ensureCajaBanco(tx: TransaccionPrisma) {
     const existing = await tx.caja.findUnique({
       where: { codigo: 'CAJA-BANCO' },
       select: { id: true, nombre: true, saldoActual: true },

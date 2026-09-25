@@ -6,6 +6,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { objetoDeJson } from '../common/json.util';
 import {
   Prisma,
   EstadoAprobacion,
@@ -60,6 +61,16 @@ import { pesos } from '../common/dinero.util';
  * El `rollbackData` guardado en el efecto es lo que permite revertir: lleva el
  * estado previo del credito y los ids de lo que se creo al aplicarlo.
  */
+/**
+ * Los estados en que un credito sigue cobrandose.
+ *
+ * Se saca a una constante porque la comprobacion se hacia dos veces con un
+ * `[...].includes(...)`, y `includes` sobre una lista de literales exige
+ * justamente uno de esos dos literales, no el enum entero. Con `some` se compara
+ * sin pedir casting.
+ */
+const ESTADOS_COBRABLES = [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA];
+
 @Injectable()
 export class ApprovalsService {
   private readonly logger = new Logger(ApprovalsService.name);
@@ -1798,9 +1809,7 @@ export class ApprovalsService {
     });
 
     if (!prestamo) throw new NotFoundException('Préstamo no encontrado');
-    if (
-      ![EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA].includes(prestamo.estado)
-    ) {
+    if (!ESTADOS_COBRABLES.some((estado) => estado === prestamo.estado)) {
       throw new BadRequestException(
         `No se puede aplicar pago: préstamo en estado ${prestamo.estado}`,
       );
@@ -1833,9 +1842,7 @@ export class ApprovalsService {
       if (!prestamoActual)
         throw new NotFoundException('Préstamo no encontrado');
       if (
-        ![EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA].includes(
-          prestamoActual.estado,
-        )
+        !ESTADOS_COBRABLES.some((estado) => estado === prestamoActual.estado)
       ) {
         throw new BadRequestException(
           `No se puede aplicar pago: préstamo en estado ${prestamoActual.estado}`,
@@ -2778,7 +2785,8 @@ export class ApprovalsService {
         metadata: {
           estadoAprobacion: 'RECHAZADO',
           revisadoPor: nombreRevisor,
-          descSolicitud: datos.descripcion || datos.motivo,
+          descSolicitud:
+            objetoDeJson(datos).descripcion || objetoDeJson(datos).motivo,
         },
       });
     } catch {
@@ -3422,12 +3430,13 @@ export class ApprovalsService {
             rutaId: routeCash.rutaId,
             cobradorId: routeCash.cobradorId,
             cajaId: routeCash.cajaId,
-            tipoGasto: ({
-              GASTO_OPERATIVO: 'OPERATIVO',
-              OPERATIVO: 'OPERATIVO',
-              TRANSPORTE: 'TRANSPORTE',
-              OTRO: 'OTRO',
-            }[data.tipoGasto] || 'OPERATIVO'),
+            tipoGasto:
+              {
+                GASTO_OPERATIVO: 'OPERATIVO',
+                OPERATIVO: 'OPERATIVO',
+                TRANSPORTE: 'TRANSPORTE',
+                OTRO: 'OTRO',
+              }[data.tipoGasto] || 'OPERATIVO',
             monto: data.monto,
             descripcion: data.descripcion,
             categoriaId: data.categoriaId || undefined,
