@@ -3141,3 +3141,107 @@ describe('Reprogramaciones: jurisdicción por rol', () => {
     expect(prisma.prestamo.findMany).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * El tope de dias al reprogramar una cuota.
+ *
+ * La regla viene del documento de la propuesta: si el cliente no puede dar la
+ * cuota, se le reprograma "pero que no pase del dia antes de la quincena", con el
+ * ejemplo de que a una semana se reprograma un dia antes de la semana. O sea: la
+ * cuota movida no debe pasar del periodo en curso. De ahi 6 para semanal y 14 para
+ * quincenal.
+ *
+ * Estaba implementado y sin una sola prueba, y encima con un dia de desfase: la
+ * fecha nueva se construye a las 12:00 y "hoy" a las 00:00, asi que la resta daba
+ * N + 0,5 y `Math.round` la subia a N + 1. Con el tope semanal en 6 se permitian 5
+ * dias. Ahora los dias se cuentan entre inicios de dia y el limite es el escrito.
+ */
+describe('El tope de dias al reprogramar una cuota', () => {
+  /**
+   * Fechas relativas a hoy en Bogota. Una fecha fija haria que estas pruebas
+   * empezaran a fallar solas al pasar el tiempo.
+   */
+  const diaBogotaMas = (dias: number) => {
+    const hoyKey = new Date().toLocaleDateString('en-CA', {
+      timeZone: 'America/Bogota',
+    });
+    const d = new Date(`${hoyKey}T00:00:00.000-05:00`);
+    d.setUTCDate(d.getUTCDate() + dias);
+    return d.toISOString().slice(0, 10);
+  };
+
+  /**
+   * El mock minimo para llegar a la validacion. `$transaction` lanza un centinela:
+   * asi se ve si la fecha PASO el tope sin tener que simular las quince escrituras
+   * que vienen despues.
+   */
+  const prismaPara = (frecuenciaPago: string) => ({
+    aprobacion: { findUnique: jest.fn().mockResolvedValue(null) },
+    prestamo: {
+      findUnique: jest.fn().mockResolvedValue({
+        id: 'prestamo-1',
+        clienteId: 'cliente-1',
+        frecuenciaPago,
+        cliente: { id: 'cliente-1', nombres: 'Ana', apellidos: 'Rojas' },
+        cuotas: [
+          {
+            id: 'cuota-1',
+            numeroCuota: 1,
+            estado: 'PENDIENTE',
+            fechaVencimiento: new Date(),
+          },
+        ],
+      }),
+    },
+    $transaction: jest.fn(() => {
+      throw new Error('PASO_EL_TOPE');
+    }),
+  });
+
+  const solicitar = (frecuencia: string, nuevaFecha: string) =>
+    makeService(prismaPara(frecuencia) as any).solicitarReprogramacion({
+      prestamoId: 'prestamo-1',
+      cuotaId: 'cuota-1',
+      nuevaFecha,
+      motivo: 'El cliente no puede hoy',
+      solicitadoPorId: 'cobrador-1',
+    });
+
+  it.each([
+    ['SEMANAL', 6],
+    ['QUINCENAL', 14],
+    ['MENSUAL', 30],
+    ['DIARIO', 8],
+  ])('%s admite %d dias y rechaza uno mas', async (frecuencia, limite) => {
+    // Justo en el limite: pasa la validacion.
+    await expect(solicitar(frecuencia, diaBogotaMas(limite))).rejects.toThrow(
+      'PASO_EL_TOPE',
+    );
+
+    // Un dia mas alla: lo rechaza, y lo dice.
+    await expect(
+      solicitar(frecuencia, diaBogotaMas(limite + 1)),
+    ).rejects.toThrow(/no puede exceder/);
+  });
+
+  it('admite reprogramar para hoy mismo', async () => {
+    await expect(solicitar('SEMANAL', diaBogotaMas(0))).rejects.toThrow(
+      'PASO_EL_TOPE',
+    );
+  });
+
+  it('rechaza una fecha anterior a hoy', async () => {
+    await expect(solicitar('SEMANAL', diaBogotaMas(-1))).rejects.toThrow(
+      /no puede ser anterior/,
+    );
+  });
+
+  it('una frecuencia desconocida cae al tope de 30 dias', async () => {
+    await expect(solicitar('ANUAL', diaBogotaMas(30))).rejects.toThrow(
+      'PASO_EL_TOPE',
+    );
+    await expect(solicitar('ANUAL', diaBogotaMas(31))).rejects.toThrow(
+      /no puede exceder/,
+    );
+  });
+});

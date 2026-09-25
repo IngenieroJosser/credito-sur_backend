@@ -5180,10 +5180,24 @@ export class LoansService implements OnModuleInit {
       );
     }
 
+    // Los días se cuentan entre INICIOS de día, no entre la fecha nueva al
+    // mediodía y el inicio de hoy.
+    //
+    // `nuevaFechaObj` se construye a las 12:00 porque es la hora que se guarda en
+    // la cuota, y restarle el inicio de hoy daba N + 0,5 días para una fecha N
+    // días adelante. `Math.round` lo subía a N + 1, así que TODOS los límites de
+    // abajo quedaban un día más estrictos de lo escrito: con SEMANAL en 6 se
+    // permitían 5 días, y la regla del contrato dice «un día antes de la semana»,
+    // o sea 6. Medido: pedir +6 días daba `diasDesdeHoy = 7`.
+    const { startDate: inicioNuevaFecha } =
+      getBogotaStartEndOfDayFromKey(nuevaFechaStr);
     const diasDesdeHoy = Math.round(
-      (nuevaFechaObj.getTime() - hoyLocal.getTime()) / 86_400_000,
+      (inicioNuevaFecha.getTime() - hoyLocal.getTime()) / 86_400_000,
     );
 
+    // Cuántos días adelante se puede mover una cuota, por frecuencia. La regla es
+    // que la cuota reprogramada NO pase del período en curso: un día antes de que
+    // toque la siguiente. De ahí 6 para semanal y 14 para quincenal.
     const limiteDias: Record<string, number> = {
       SEMANAL: 6,
       QUINCENAL: 14,
