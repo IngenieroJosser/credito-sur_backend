@@ -55,8 +55,14 @@ describe('ClientsService', () => {
       findFirst: jest.fn(),
       findUnique: jest.fn(),
     },
-    $transaction: jest.fn((cb: any) => cb(mockPrismaService)),
+    $transaction: jest.fn(),
   };
+
+  // La implementacion va aparte: dentro del literal, `mockPrismaService` se
+  // referenciaba a si mismo y TypeScript no podia inferir su tipo.
+  mockPrismaService.$transaction.mockImplementation(
+    (cb: (tx: typeof mockPrismaService) => unknown) => cb(mockPrismaService),
+  );
 
   const mockNotificacionesGateway = {
     broadcastClientesActualizados: jest.fn(),
@@ -171,7 +177,7 @@ describe('ClientsService', () => {
         idempotencyKey: 'offline-cliente-1',
         eliminadoEn: null,
       });
-      (mockPrismaService.aprobacion.findFirst as jest.Mock).mockResolvedValue({
+      mockPrismaService.aprobacion.findFirst.mockResolvedValue({
         id: 'approval-existente',
         referenciaId: 'cliente-existente',
       });
@@ -287,11 +293,11 @@ describe('ClientsService', () => {
       (prismaService.asignacionRuta.aggregate as jest.Mock).mockResolvedValue({
         _max: { ordenVisita: 0 },
       });
-      (mockPrismaService.ruta.findUnique as jest.Mock).mockResolvedValue({
+      mockPrismaService.ruta.findUnique.mockResolvedValue({
         id: 'ruta-1',
         cobradorId: 'cobrador-ruta',
       });
-      (mockPrismaService.asignacionRuta.create as jest.Mock).mockResolvedValue({
+      mockPrismaService.asignacionRuta.create.mockResolvedValue({
         id: 'asignacion-1',
         cobradorId: 'cobrador-ruta',
       });
@@ -308,24 +314,18 @@ describe('ClientsService', () => {
     });
 
     it('desactiva todas las asignaciones activas previas antes de asignar a otra ruta', async () => {
-      (mockPrismaService.ruta.findUnique as jest.Mock).mockResolvedValue({
+      mockPrismaService.ruta.findUnique.mockResolvedValue({
         id: 'ruta-destino',
         cobradorId: 'cobrador-destino',
       });
-      (
-        mockPrismaService.asignacionRuta.findFirst as jest.Mock
-      ).mockResolvedValue(null);
-      (
-        mockPrismaService.asignacionRuta.updateMany as jest.Mock
-      ).mockResolvedValue({
+      mockPrismaService.asignacionRuta.findFirst.mockResolvedValue(null);
+      mockPrismaService.asignacionRuta.updateMany.mockResolvedValue({
         count: 2,
       });
-      (
-        mockPrismaService.asignacionRuta.aggregate as jest.Mock
-      ).mockResolvedValue({
+      mockPrismaService.asignacionRuta.aggregate.mockResolvedValue({
         _max: { ordenVisita: 4 },
       });
-      (mockPrismaService.asignacionRuta.create as jest.Mock).mockResolvedValue({
+      mockPrismaService.asignacionRuta.create.mockResolvedValue({
         id: 'asignacion-destino',
       });
 
@@ -360,7 +360,7 @@ describe('ClientsService', () => {
 
   describe('getEstadoCuentaCliente', () => {
     it('estado de cuenta muestra venta contado sin sumarla a cartera', async () => {
-      (mockPrismaService.cliente.findFirst as jest.Mock).mockResolvedValue({
+      mockPrismaService.cliente.findFirst.mockResolvedValue({
         id: 'cliente-1',
         codigo: 'C-0001',
         dni: '123',
@@ -371,9 +371,9 @@ describe('ClientsService', () => {
         direccion: 'Calle 1',
       });
 
-      (mockPrismaService.prestamo.findMany as jest.Mock).mockResolvedValue([]);
-      (mockPrismaService.pago.findMany as jest.Mock).mockResolvedValue([]);
-      (mockPrismaService.transaccion.findMany as jest.Mock).mockResolvedValue([
+      mockPrismaService.prestamo.findMany.mockResolvedValue([]);
+      mockPrismaService.pago.findMany.mockResolvedValue([]);
+      mockPrismaService.transaccion.findMany.mockResolvedValue([
         {
           id: 'trx-venta-1',
           monto: 800000,
@@ -404,7 +404,7 @@ describe('ClientsService', () => {
     });
 
     it('estado de cuenta calcula totalPagado desde Pago y no duplica con Transaccion', async () => {
-      (mockPrismaService.cliente.findFirst as jest.Mock).mockResolvedValue({
+      mockPrismaService.cliente.findFirst.mockResolvedValue({
         id: 'cliente-1',
         codigo: 'C-0001',
         dni: '123',
@@ -415,7 +415,7 @@ describe('ClientsService', () => {
         direccion: 'Calle 1',
       });
 
-      (mockPrismaService.prestamo.findMany as jest.Mock).mockResolvedValue([
+      mockPrismaService.prestamo.findMany.mockResolvedValue([
         {
           id: 'prestamo-1',
           numeroPrestamo: 'P-001',
@@ -434,7 +434,7 @@ describe('ClientsService', () => {
         },
       ]);
 
-      (mockPrismaService.pago.findMany as jest.Mock).mockResolvedValue([
+      mockPrismaService.pago.findMany.mockResolvedValue([
         {
           id: 'pago-1',
           numeroPago: 'PG-001',
@@ -451,7 +451,7 @@ describe('ClientsService', () => {
         },
       ]);
 
-      (mockPrismaService.transaccion.findMany as jest.Mock).mockResolvedValue([
+      mockPrismaService.transaccion.findMany.mockResolvedValue([
         {
           id: 'trx-pago-1',
           tipoReferencia: 'PAGO',
@@ -465,7 +465,7 @@ describe('ClientsService', () => {
     });
 
     it('estado de cuenta muestra cuota inicial como movimiento comercial separado', async () => {
-      (mockPrismaService.cliente.findFirst as jest.Mock).mockResolvedValue({
+      mockPrismaService.cliente.findFirst.mockResolvedValue({
         id: 'cliente-1',
         codigo: 'C-0001',
         dni: '123',
@@ -476,7 +476,7 @@ describe('ClientsService', () => {
         direccion: 'Calle 1',
       });
 
-      (mockPrismaService.prestamo.findMany as jest.Mock).mockResolvedValue([
+      mockPrismaService.prestamo.findMany.mockResolvedValue([
         {
           id: 'prestamo-art-1',
           numeroPrestamo: 'P-ART-001',
@@ -496,10 +496,8 @@ describe('ClientsService', () => {
         },
       ]);
 
-      (mockPrismaService.pago.findMany as jest.Mock).mockResolvedValue([]);
-      (mockPrismaService.transaccion.findMany as jest.Mock).mockResolvedValue(
-        [],
-      );
+      mockPrismaService.pago.findMany.mockResolvedValue([]);
+      mockPrismaService.transaccion.findMany.mockResolvedValue([]);
 
       const result = await service.getEstadoCuentaCliente('cliente-1');
 

@@ -526,7 +526,7 @@ export class ImportacionesService {
     cliente: PrismaService | TransaccionPrisma,
     registros: RegistroInventarioImportado[],
   ) {
-    const productos: any[] = await cliente.producto.findMany({
+    const productos = await cliente.producto.findMany({
       where: { id: { in: registros.map((r) => r.productoId) } },
       include: {
         precios: {

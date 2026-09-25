@@ -18,6 +18,7 @@ import {
   FrecuenciaPago,
   TipoAmortizacion,
   RolUsuario,
+  TipoGasto,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
@@ -3430,13 +3431,18 @@ export class ApprovalsService {
             rutaId: routeCash.rutaId,
             cobradorId: routeCash.cobradorId,
             cajaId: routeCash.cajaId,
+            // La tabla se indexa con lo que traiga la solicitud, que es texto
+            // libre, asi que se declara como tal y lo desconocido cae en el
+            // respaldo de siempre.
             tipoGasto:
-              {
-                GASTO_OPERATIVO: 'OPERATIVO',
-                OPERATIVO: 'OPERATIVO',
-                TRANSPORTE: 'TRANSPORTE',
-                OTRO: 'OTRO',
-              }[data.tipoGasto] || 'OPERATIVO',
+              (
+                {
+                  GASTO_OPERATIVO: 'OPERATIVO',
+                  OPERATIVO: 'OPERATIVO',
+                  TRANSPORTE: 'TRANSPORTE',
+                  OTRO: 'OTRO',
+                } as Record<string, TipoGasto>
+              )[data.tipoGasto] || 'OPERATIVO',
             monto: data.monto,
             descripcion: data.descripcion,
             categoriaId: data.categoriaId || undefined,
