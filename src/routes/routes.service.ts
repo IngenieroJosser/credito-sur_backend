@@ -139,19 +139,17 @@ interface VisitaDelDia {
   estadoVisita?: string | null;
   notasVisita?: string | null;
   /**
-   * OJO, ESTO ES UN DEFECTO, no una descripcion: NADIE escribe este campo en la
-   * visita. `estadoGestion` se pone en los CREDITOS de dentro de la visita, no en
-   * la visita misma, y `getDailyVisits` devuelve `visitas: visitasDelDiaFinales`,
-   * o sea estos objetos tal cual.
+   * NADIE escribe este campo en la visita: `estadoGestion` se pone en los
+   * CREDITOS de dentro, y `getDailyVisits` devuelve las visitas tal cual. El
+   * estado de la visita esta en `estadoVisita`, que si se rellena.
    *
-   * Lo lee `notificaciones.gateway`, que con el calcula los clientes ausentes y
-   * los faltantes que transmite a los tableros: `String(v.estadoGestion || '')`
-   * da siempre '', asi que el conteo de AUSENTES sale siempre en 0 y en el de
-   * faltantes las dos condiciones de estado son constantes.
+   * Se conserva declarado porque queda una lectura, en
+   * `resolveEstadoGestionPrestamo`, escrita como
+   * `visita?.estadoVisita || visita?.estadoGestion`: el respaldo no entra nunca,
+   * pero el orden ya era el correcto.
    *
-   * Se declara para que el compilador no lo esconda. Cual deberia ser —
-   * `estadoVisita`, que si se escribe, o algo derivado de los creditos— es una
-   * decision de producto, y arreglarlo cambiaria las cifras del tablero.
+   * `notificaciones.gateway` leia solo este campo para contar ausentes y
+   * faltantes, y por eso los ausentes salian siempre en 0. Ya lee `estadoVisita`.
    */
   estadoGestion?: string | null;
   /**

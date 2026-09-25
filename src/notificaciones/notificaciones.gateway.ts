@@ -249,13 +249,27 @@ export class NotificacionesGateway
               metaBackend > 0
                 ? Math.round((recaudoBackend / metaBackend) * 1000) / 10
                 : Number(resumen.efectividad || 0);
+            // Se lee `estadoVisita`, no `estadoGestion`.
+            //
+            // `estadoGestion` NO existe en una visita: se escribe en los creditos
+            // de dentro, y `getDailyVisits` devuelve las visitas tal cual. Con el
+            // nombre viejo, `String(undefined || '')` daba siempre '', asi que el
+            // conteo de AUSENTES salia siempre en 0 y el de faltantes contaba
+            // tambien a los ausentes, los reprogramados y los que ya habian
+            // pagado, porque sus tres condiciones de estado eran constantes.
+            //
+            // `estadoVisita` es el campo que si se rellena, desde el
+            // RegistroVisita del dia, y sus valores —'ausente', 'reprogramado',
+            // 'pagado'— encajan uno a uno con los tres `includes` de aqui abajo.
+            // Es el mismo campo que usa `shouldExcludeVisitaFromOperationalMeta`
+            // en el frontend para lo mismo.
             const clientesAusentesBackend = visitas.filter((v) =>
-              String(v.estadoGestion || '')
+              String(v.estadoVisita || '')
                 .toUpperCase()
                 .includes('AUSENTE'),
             ).length;
             const clientesFaltantesBackend = visitas.filter((v) => {
-              const estado = String(v.estadoGestion || '').toUpperCase();
+              const estado = String(v.estadoVisita || '').toUpperCase();
               const recaudoVisita = Number(v.recaudadoDelDia || 0);
               return (
                 recaudoVisita <= 0 &&
