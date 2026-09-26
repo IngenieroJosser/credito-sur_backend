@@ -157,7 +157,7 @@ export class PaymentsService {
       const cajaOficina = await tx.caja.findFirst({
         where: {
           codigo: 'CAJA-OFICINA',
-          tipo: 'PRINCIPAL' as any,
+          tipo: 'PRINCIPAL',
           activa: true,
         },
         select: {
@@ -198,7 +198,7 @@ export class PaymentsService {
 
       const cajaSupervisor = await tx.caja.findFirst({
         where: {
-          tipo: 'RUTA' as any,
+          tipo: 'RUTA',
           activa: true,
           responsableId: actorId,
           rutaId: null,
@@ -225,7 +225,7 @@ export class PaymentsService {
     const cajaRuta = await tx.caja.findFirst({
       where: {
         rutaId: params.rutaId,
-        tipo: 'RUTA' as any,
+        tipo: 'RUTA',
         activa: true,
       },
       select: {
@@ -299,7 +299,7 @@ export class PaymentsService {
       }
     }
 
-    this.logger.error('Error inesperado registrando pago', error as any);
+    this.logger.error('Error inesperado registrando pago', error);
     throw error;
   }
 
@@ -312,8 +312,8 @@ export class PaymentsService {
 
     const adminUser = await tx.usuario.findFirst({
       where: {
-        rol: { in: ['SUPER_ADMINISTRADOR', 'ADMIN'] as any },
-        estado: 'ACTIVO' as any,
+        rol: { in: ['SUPER_ADMINISTRADOR', 'ADMIN'] },
+        estado: 'ACTIVO',
         eliminadoEn: null,
       },
       orderBy: { creadoEn: 'asc' },
@@ -329,7 +329,7 @@ export class PaymentsService {
       data: {
         codigo: 'CAJA-BANCO',
         nombre: 'Caja Banco',
-        tipo: 'PRINCIPAL' as any,
+        tipo: 'PRINCIPAL',
         responsableId: adminUser.id,
         saldoActual: 0,
         activa: true,
@@ -830,7 +830,10 @@ export class PaymentsService {
 
     let montoRestante = montoTotal;
 
-    let capitalTotal = 0;
+    // Se acumula y no se lee: el capital que va al Ledger se deriva de
+    // `montoTotal - interes - mora` (ver `_capitalTotalFinal` mas abajo). Lleva
+    // guion bajo por la convencion que ya usa este archivo para lo no usado.
+    let _capitalTotal = 0;
     let interesTotal = 0;
     let moraTotal = 0;
 
@@ -890,7 +893,7 @@ export class PaymentsService {
       const aplicarCapital = Math.min(montoRestante, faltaCapital);
       pagoAplicadoCapital = aplicarCapital;
       montoRestante -= aplicarCapital;
-      capitalTotal += aplicarCapital;
+      _capitalTotal += aplicarCapital;
 
       const totalAplicadoCuota =
         pagoAplicadoMora + pagoAplicadoInteres + pagoAplicadoCapital;
@@ -1048,7 +1051,7 @@ export class PaymentsService {
 
       const approval = await this.prisma.aprobacion.create({
         data: {
-          tipoAprobacion: 'PAGO_TRANSFERENCIA' as any,
+          tipoAprobacion: 'PAGO_TRANSFERENCIA',
           idempotencyKey,
           referenciaId: prestamoIdVal,
           tablaReferencia: 'prestamos',
@@ -1104,7 +1107,7 @@ export class PaymentsService {
             prestamoId: prestamoIdVal,
             clienteId: prestamo.clienteId,
             entidad: 'APROBACION',
-            tipoContenido: 'COMPROBANTE_TRANSFERENCIA' as any,
+            tipoContenido: 'COMPROBANTE_TRANSFERENCIA',
             tipoArchivo: comprobante!.mimetype,
             formato: cloudResult.formato,
             nombreOriginal: comprobante!.originalname,
@@ -1149,7 +1152,7 @@ export class PaymentsService {
       this.notificacionesGateway.broadcastAprobacionesActualizadas({
         accion: 'CREAR',
         aprobacionId: approval.id,
-        tipoAprobacion: 'PAGO_TRANSFERENCIA' as any,
+        tipoAprobacion: 'PAGO_TRANSFERENCIA',
       });
 
       return {
@@ -2050,7 +2053,7 @@ export class PaymentsService {
       const gestion = visitasMap.get(`${p.clienteId}|${fechaPagoKey}`);
 
       // Determinar origenCaja desde la transacción asociada al pago
-      const transaccion = transaccionPorNumeroPago.get(p.numeroPago) as any;
+      const transaccion = transaccionPorNumeroPago.get(p.numeroPago);
       const caja = transaccion?.caja;
 
       let origenCaja = 'Ruta';
@@ -2128,12 +2131,10 @@ export class PaymentsService {
     if (filters.from || filters.to) {
       where.fechaPago = {};
       if (filters.from) {
-        (where.fechaPago as any).gte = new Date(
-          `${filters.from}T00:00:00-05:00`,
-        );
+        where.fechaPago.gte = new Date(`${filters.from}T00:00:00-05:00`);
       }
       if (filters.to) {
-        (where.fechaPago as any).lte = new Date(`${filters.to}T23:59:59-05:00`);
+        where.fechaPago.lte = new Date(`${filters.to}T23:59:59-05:00`);
       }
     }
 

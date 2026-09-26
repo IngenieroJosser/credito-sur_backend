@@ -74,10 +74,18 @@ export class UsersService {
     private readonly notificacionesGateway: NotificacionesGateway,
   ) {}
 
+  /**
+   * Normaliza el nombre de usuario.
+   *
+   * Solo se aceptan cadenas y numeros. Antes era `String(valor ?? '')` sobre un
+   * `unknown`: si llegaba un objeto en el cuerpo de la peticion se convertia en el
+   * literal "[object Object]" y eso era lo que se guardaba o se buscaba. Mismo
+   * arreglo que en `AuthService.normalizarIdentificadorLogin`.
+   */
   private normalizarNombreUsuario(valor: unknown) {
-    return String(valor ?? '')
-      .trim()
-      .toLowerCase();
+    if (typeof valor !== 'string' && typeof valor !== 'number') return '';
+
+    return String(valor).trim().toLowerCase();
   }
 
   private validarYNormalizarNombreUsuario(valor: unknown) {
@@ -117,7 +125,7 @@ export class UsersService {
     }
 
     const usuarioConNombre = await this.prisma.usuario.findFirst({
-      where: { nombreUsuario } as any,
+      where: { nombreUsuario },
     });
 
     if (usuarioConNombre) {
@@ -296,7 +304,7 @@ export class UsersService {
             permiso: true,
           },
         },
-      } as any,
+      },
       // Prisma no soporta select + include anidados con tipos estáticos; cast necesario
     })) as unknown as any[];
 
@@ -569,7 +577,7 @@ export class UsersService {
         where: {
           nombreUsuario,
           NOT: { id },
-        } as any,
+        },
       });
 
       if (usuarioConNombre) {
@@ -593,7 +601,7 @@ export class UsersService {
         }),
         ...(nombreUsuario !== undefined && { nombreUsuario }),
         ...(hashContrasena && { hashContrasena }),
-      } as any,
+      },
       select: {
         id: true,
         nombres: true,
@@ -667,7 +675,7 @@ export class UsersService {
         eliminadoEn: new Date(),
         estado: EstadoUsuario.ARCHIVADO,
       },
-      select: USUARIO_PUBLIC_SELECT as any,
+      select: USUARIO_PUBLIC_SELECT,
     });
 
     if (usuarioEliminadorId) {
@@ -716,7 +724,7 @@ export class UsersService {
         estado: EstadoUsuario.ARCHIVADO,
         eliminadoEn: null,
       },
-      select: USUARIO_PUBLIC_SELECT as any,
+      select: USUARIO_PUBLIC_SELECT,
     });
 
     if (usuarioArchivadorId) {
@@ -759,7 +767,7 @@ export class UsersService {
         eliminadoEn: null,
         estado: EstadoUsuario.ACTIVO,
       },
-      select: USUARIO_PUBLIC_SELECT as any,
+      select: USUARIO_PUBLIC_SELECT,
     });
 
     if (usuarioRestauradorId) {
@@ -1087,10 +1095,10 @@ export class UsersService {
     endDate: Date,
   ): Prisma.CuotaWhereInput {
     return {
-      estado: { in: ['PENDIENTE', 'PARCIAL', 'VENCIDA'] as any },
+      estado: { in: ['PENDIENTE', 'PARCIAL', 'VENCIDA'] },
       fechaVencimiento: { lte: endDate },
       prestamo: {
-        estado: { in: ['ACTIVO', 'EN_MORA'] as any },
+        estado: { in: ['ACTIVO', 'EN_MORA'] },
         eliminadoEn: null,
         cliente: {
           asignacionesRuta: {

@@ -244,8 +244,8 @@ describe('Las alertas por rol salen también por push', () => {
         {
           provide: NotificacionesGateway,
           useValue: {
-            enviarNotificacionAUsuario: jest.fn() as any,
-            notificarActualizacion: jest.fn() as any,
+            enviarNotificacionAUsuario: jest.fn(),
+            notificarActualizacion: jest.fn(),
           },
         },
         {

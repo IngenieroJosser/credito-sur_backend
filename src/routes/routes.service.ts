@@ -2255,7 +2255,7 @@ export class RoutesService {
       }
 
       for (const asig of asignaciones) {
-        const reg = visitasMap.get(asig.clienteId) as any;
+        const reg = visitasMap.get(asig.clienteId);
         const recaudoClienteHoy = Number(
           recaudoHoyPorCliente.get(String(asig.clienteId)) || 0,
         );
@@ -5565,9 +5565,7 @@ export class RoutesService {
     const meta = Number(detalleDia.resumen?.meta || 0);
 
     const recaudoOperativo = Number(
-      (detalleDia.resumen as any)?.recaudoOperativo ||
-        detalleDia.resumen?.recaudo ||
-        0,
+      detalleDia.resumen?.recaudoOperativo || detalleDia.resumen?.recaudo || 0,
     );
 
     // La observación administrativa se exige por lo que quedó sin gestionar:
@@ -5965,10 +5963,10 @@ export class RoutesService {
       rutaId,
       jornada.fechaOperativa,
     );
-    const resumen = detalleDia?.resumen || ({} as any);
+    const resumen = detalleDia?.resumen || {};
     const visitas = detalleDia?.visitas || [];
-    const obligaciones = Array.isArray((detalleDia as any)?.obligaciones)
-      ? (detalleDia as any).obligaciones
+    const obligaciones = Array.isArray(detalleDia?.obligaciones)
+      ? detalleDia.obligaciones
       : this.buildObligacionesOperativas(visitas);
 
     const clientesFaltantes = obligaciones.filter((o: any) => {
