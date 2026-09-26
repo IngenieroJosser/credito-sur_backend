@@ -724,10 +724,7 @@ export class AccountingService {
       } catch (error) {
         // No se corta la operacion principal por esto, pero se deja
         // registrado: en silencio nadie se entera de que fallo.
-        this.logger.warn(
-          'No se pudo notificar la solicitud de gasto',
-          error as any,
-        );
+        this.logger.warn('No se pudo notificar la solicitud de gasto', error);
       }
 
       this.notificacionesGateway.broadcastDashboardsActualizados({
@@ -1076,7 +1073,7 @@ export class AccountingService {
     } catch (error) {
       // No se corta la operacion principal por esto, pero se deja
       // registrado: en silencio nadie se entera de que fallo.
-      this.logger.warn('No se pudo notificar la solicitud', error as any);
+      this.logger.warn('No se pudo notificar la solicitud', error);
     }
 
     this.notificacionesGateway.broadcastDashboardsActualizados({
@@ -3626,7 +3623,7 @@ export class AccountingService {
     const usuarioIds = [caja?.responsableId].filter(Boolean);
     const pendingSyncCount = await this.prisma.colaSincronizacion.count({
       where: {
-        estado: { in: ['PENDIENTE', 'ERROR', 'CONFLICTO'] as any },
+        estado: { in: ['PENDIENTE', 'ERROR', 'CONFLICTO'] },
         creadoEn: { lte: cierreTimestamp },
         ...(usuarioIds.length ? { usuarioCreadorId: { in: usuarioIds } } : {}),
       },
@@ -3660,9 +3657,9 @@ export class AccountingService {
     const cuotas = await this.prisma.cuota.findMany({
       where: {
         fechaVencimiento: { gte: inicioAyer, lte: finHoy },
-        estado: { in: ['PENDIENTE', 'VENCIDA', 'PARCIAL'] as any },
+        estado: { in: ['PENDIENTE', 'VENCIDA', 'PARCIAL'] },
         prestamo: {
-          estado: { in: ['ACTIVO', 'EN_MORA'] as any },
+          estado: { in: ['ACTIVO', 'EN_MORA'] },
           eliminadoEn: null,
           rutaId: caja.rutaId,
         },
@@ -4501,7 +4498,7 @@ export class AccountingService {
     }
 
     // 1. Resolver caja destino (por defecto Caja Principal)
-    let cajaDestino = null as any;
+    let cajaDestino = null;
     if (cajaIdDestino) {
       cajaDestino = await this.prisma.caja.findUnique({
         where: { id: cajaIdDestino },
@@ -5113,7 +5110,7 @@ export class AccountingService {
       0,
     );
 
-    const lineas = await (this.prisma as any).journalLine.aggregate({
+    const lineas = await this.prisma.journalLine.aggregate({
       where: { accountCode: { startsWith: '1.5' } },
       _sum: { debitAmount: true, creditAmount: true },
     });

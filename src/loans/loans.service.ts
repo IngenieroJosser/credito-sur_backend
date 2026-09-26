@@ -482,15 +482,12 @@ export class LoansService implements OnModuleInit {
       where: { id: prestamo.creadoPorId },
       select: { rol: true },
     });
-    const cajaOrigen = await this.resolveCajaOperacionPrestamo(
-      this.prisma as any,
-      {
-        data: {} as any,
-        creador: { id: prestamo.creadoPorId, rol: creador?.rol },
-        cliente: { asignacionesRuta: [] },
-        requiereCajaRuta: this.isOperatorWithBase(creador),
-      },
-    );
+    const cajaOrigen = await this.resolveCajaOperacionPrestamo(this.prisma, {
+      data: {} as any,
+      creador: { id: prestamo.creadoPorId, rol: creador?.rol },
+      cliente: { asignacionesRuta: [] },
+      requiereCajaRuta: this.isOperatorWithBase(creador),
+    });
 
     if (!cajaOrigen?.id) {
       throw new BadRequestException(
@@ -3736,7 +3733,7 @@ export class LoansService implements OnModuleInit {
       if (!isArticulo) {
         const montoDesembolso = Number(data.monto || 0);
         const cajaOperacion = this.isOperatorWithBase(creador)
-          ? await this.resolveCajaOperacionPrestamo(this.prisma as any, {
+          ? await this.resolveCajaOperacionPrestamo(this.prisma, {
               data,
               creador,
               cliente,
