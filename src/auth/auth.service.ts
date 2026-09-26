@@ -19,6 +19,7 @@ import {
 } from './dto/forgot-password.dto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { textoRecortado } from '../common/texto.util';
 
 @Injectable()
 export class AuthService {
@@ -55,9 +56,7 @@ export class AuthService {
    * corta el login en la linea siguiente.
    */
   private normalizarIdentificadorLogin(valor: unknown) {
-    if (typeof valor !== 'string' && typeof valor !== 'number') return '';
-
-    return String(valor).trim().toLowerCase();
+    return textoRecortado(valor).toLowerCase();
   }
 
   private nombreCompletoCoincide(

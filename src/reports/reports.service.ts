@@ -766,7 +766,7 @@ export class ReportsService {
           nivelRiesgo: prestamo.cliente.nivelRiesgo,
           estado: prestamo.estado,
           interesesMora,
-        } as CuentaVencidaDto;
+        };
       }),
     );
 

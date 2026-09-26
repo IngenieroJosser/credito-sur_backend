@@ -754,9 +754,7 @@ export class LedgerService {
 
     const totalDebitos = result._sum.debitAmount ?? new Prisma.Decimal(0);
     const totalCreditos = result._sum.creditAmount ?? new Prisma.Decimal(0);
-    const diferencia = (totalDebitos as Prisma.Decimal).sub(
-      totalCreditos as Prisma.Decimal,
-    );
+    const diferencia = totalDebitos.sub(totalCreditos);
 
     if (!diferencia.isZero()) {
       this.logger.error(

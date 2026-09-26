@@ -12,6 +12,7 @@ import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway'
 import { PushService } from '../push/push.service';
 import { CrearAlertaClienteDto } from './dto/crear-alerta-cliente.dto';
 import { ResolverAlertaClienteDto } from './dto/resolver-alerta-cliente.dto';
+import { textoRecortado } from '../common/texto.util';
 
 type ActorAlerta = { id?: string; rol?: RolUsuario };
 
@@ -62,7 +63,7 @@ export class AlertasClientesService {
   }
 
   private validateText(value: unknown, field: string) {
-    if (!String(value || '').trim()) {
+    if (!textoRecortado(value)) {
       throw new BadRequestException(`${field} es obligatorio.`);
     }
   }

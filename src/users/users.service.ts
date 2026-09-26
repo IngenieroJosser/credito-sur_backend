@@ -21,6 +21,7 @@ import { UnauthorizedException } from '@nestjs/common';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { getBogotaStartEndOfDay } from '../utils/date-utils';
+import { textoRecortado } from '../common/texto.util';
 
 type UsuarioDetalleMetricas = {
   dineroCaja: number;
@@ -83,9 +84,7 @@ export class UsersService {
    * arreglo que en `AuthService.normalizarIdentificadorLogin`.
    */
   private normalizarNombreUsuario(valor: unknown) {
-    if (typeof valor !== 'string' && typeof valor !== 'number') return '';
-
-    return String(valor).trim().toLowerCase();
+    return textoRecortado(valor).toLowerCase();
   }
 
   private validarYNormalizarNombreUsuario(valor: unknown) {

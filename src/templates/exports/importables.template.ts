@@ -7,6 +7,7 @@ import {
 import { forzarRecalculo } from '../../importaciones/plantillas/plantillas.util';
 import { etiquetaTipoAmortizacion } from '../../importaciones/interes-credito';
 import { getBogotaDayKey } from '../../utils/date-utils';
+import { textoRecortado } from '../../common/texto.util';
 
 export interface InventarioImportableArticulo {
   codigo: string;
@@ -74,7 +75,7 @@ export interface CreditoImportableRow {
 const DATA_START_ROW = 7;
 
 function text(value: unknown): string {
-  return String(value ?? '').trim();
+  return textoRecortado(value);
 }
 
 function money(value: unknown): number {

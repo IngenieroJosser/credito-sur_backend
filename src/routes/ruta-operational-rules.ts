@@ -1,3 +1,4 @@
+import { textoRecortado } from '../common/texto.util';
 /**
  * Forma minima que estas reglas necesitan de una cuota y un prestamo.
  *
@@ -38,9 +39,7 @@ export interface PrestamoOperativo {
 
 /** Normaliza a mayusculas sin espacios, tolerando null/undefined. */
 export const normalizeUpper = (value: unknown): string =>
-  String(value ?? '')
-    .trim()
-    .toUpperCase();
+  textoRecortado(value).toUpperCase();
 
 /**
  * Estados de cuota que todavia se pueden cobrar en ruta.
