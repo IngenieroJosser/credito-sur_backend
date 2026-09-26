@@ -17,6 +17,27 @@ import {
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
+/**
+ * El tipo de caja, el estado de aprobacion y el metodo de pago de una fila.
+ *
+ * Antes estaban escritos como `'COBRADOR' | 'EMPRESA' | 'PRINCIPAL' | string`. Ese
+ * `| string` se come los literales: la union entera equivale a `string`, asi que no
+ * se comprobaba nada y valia cualquier texto. Eran documentacion, no un tipo.
+ *
+ * Al estrecharlos, tsc destapo dos cosas que ese `| string` estaba tapando:
+ *
+ *  1. Hay CUATRO tipos de caja, no tres: `AccountingService` distingue tambien
+ *     SUPERVISOR (una caja de tipo RUTA sin `rutaId`). La plantilla nunca lo
+ *     documento.
+ *  2. Las filas de transaccion mandan cadena vacia en `tipoCaja` y en `metodoPago`
+ *     cuando el dato no aplica a esa fila.
+ */
+export type TipoDeCaja = 'COBRADOR' | 'SUPERVISOR' | 'EMPRESA' | 'PRINCIPAL';
+export type EstadoDeAprobacionFila = 'PENDIENTE' | 'APROBADO' | 'RECHAZADO';
+export type MetodoDePagoFila = 'EFECTIVO' | 'TRANSFERENCIA';
+/** Cadena vacia = el dato no aplica a esa fila. */
+export type SinDato = '';
+
 export interface CajaRow {
   nombre: string;
   codigo: string;
@@ -25,7 +46,7 @@ export interface CajaRow {
   ruta: string;
   saldo: number;
   // Separación por origen de caja (§4.5, §108 propuesta)
-  tipoCaja: 'COBRADOR' | 'EMPRESA' | 'PRINCIPAL' | string;
+  tipoCaja: TipoDeCaja;
   ingresosPeriodo?: number; // Ingresos recibidos en el período
   egresosPeriodo?: number; // Egresos aprobados en el período
   egresosPendientes?: number; // Gastos del cobrador pendientes de aprobación (§111)
@@ -40,10 +61,10 @@ export interface TransaccionRow {
   caja: string;
   usuario: string;
   // Campos adicionales de flujo
-  tipoCaja?: 'COBRADOR' | 'EMPRESA' | 'PRINCIPAL' | string;
-  estadoAprobacion?: 'PENDIENTE' | 'APROBADO' | 'RECHAZADO' | string; // §111 propuesta
+  tipoCaja?: TipoDeCaja | SinDato;
+  estadoAprobacion?: EstadoDeAprobacionFila | SinDato; // §111 propuesta
   aprobadoPor?: string; // Supervisor o coordinador que aprobó
-  metodoPago?: 'EFECTIVO' | 'TRANSFERENCIA' | string; // §116 propuesta
+  metodoPago?: MetodoDePagoFila | SinDato; // §116 propuesta
 }
 
 // ─── Generador Excel ──────────────────────────────────────────────────────────

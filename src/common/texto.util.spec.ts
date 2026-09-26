@@ -33,7 +33,9 @@ describe('textoDeValor', () => {
 
   describe('lo que arregla', () => {
     it('un objeto NO se convierte en "[object Object]"', () => {
-      // Asi se veia el error: esto es lo que hacia el codigo de antes.
+      // Asi se veia el error: esto es lo que hacia el codigo de antes. El
+      // `no-base-to-string` de aqui es justamente lo que se esta demostrando.
+      // eslint-disable-next-line @typescript-eslint/no-base-to-string
       expect(String({ correo: 'admin' })).toBe('[object Object]');
       expect(textoDeValor({ correo: 'admin' })).toBe('');
     });
