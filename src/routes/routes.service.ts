@@ -1269,6 +1269,12 @@ export class RoutesService {
         rutaIds,
         actor?.id,
       );
+      // Activacion del dia. Va en un campo aparte y NO en `estado`: `estado` dice
+      // si la ruta esta habilitada, y hay pantallas que cuentan
+      // `estado === 'ACTIVA'` como KPI. Meterle un tercer valor bajaria ese
+      // contador y sacaria las rutas de la pestaña "Habilitadas".
+      const { activadas: rutasActivadasHoy, diaNoLaboral } =
+        await this.getActivacionHoyRutasMap(rutaIds);
 
       const rutasConEstadisticas = await Promise.all(
         rutas.map(async (ruta) => {
@@ -1313,6 +1319,9 @@ export class RoutesService {
               avanceDiario,
               cobrador: `${ruta.cobrador.nombres} ${ruta.cobrador.apellidos}`,
               estado: ruta.activa ? 'ACTIVA' : 'INACTIVA',
+              /** Si la ruta abrio jornada hoy. `estado` sigue diciendo solo si esta habilitada. */
+              activadaHoy: rutasActivadasHoy.has(ruta.id),
+              diaNoLaboral,
               frecuenciaVisita: 'DIARIO',
               cierrePendienteAnterior: cierreInfo.cierrePendienteAnterior,
               cierresPendientes: cierreInfo.cierresPendientes,
@@ -1676,6 +1685,9 @@ export class RoutesService {
             cobrador: `${ruta.cobrador.nombres} ${ruta.cobrador.apellidos}`,
 
             estado: ruta.activa ? 'ACTIVA' : 'INACTIVA',
+            /** Si la ruta abrio jornada hoy. `estado` sigue diciendo solo si esta habilitada. */
+            activadaHoy: rutasActivadasHoy.has(ruta.id),
+            diaNoLaboral,
 
             frecuenciaVisita: 'DIARIO',
 
@@ -6248,6 +6260,65 @@ export class RoutesService {
   private async getCierrePendienteRuta(rutaId: string, creadoPorId?: string) {
     const pendientes = await this.getCierresPendientesRuta(rutaId, creadoPorId);
     return pendientes[0] || null;
+  }
+
+  /**
+   * Que rutas ya se activaron hoy, en una sola consulta.
+   *
+   * La activacion de una ruta se registra como una transaccion de monto 0 con
+   * `tipoReferencia: 'ACTIVACION_RUTA'` en la caja de la ruta (ver
+   * `activarRutaHoy`), y de ella cuelga la `RutaJornada`. Buscar esas
+   * transacciones del dia cubre de una vez las dos formas que mira
+   * `getRutaActivadaHoy`: la que lleva la clave
+   * `ACTIVACION_RUTA:<ruta>:<dia>` y las mas viejas que no la tienen, porque
+   * todas son transacciones con esa referencia en esa caja ese dia.
+   *
+   * Domingo no hay jornada operativa, asi que no se pregunta: ese dia ninguna
+   * ruta esta pendiente de activar.
+   */
+  private async getActivacionHoyRutasMap(
+    rutaIds: string[],
+  ): Promise<{ activadas: Set<string>; diaNoLaboral: boolean }> {
+    if (!rutaIds.length || this.isDomingoBogota()) {
+      return {
+        activadas: new Set<string>(),
+        diaNoLaboral: this.isDomingoBogota(),
+      };
+    }
+
+    const cajas = await this.prisma.caja.findMany({
+      where: { rutaId: { in: rutaIds }, tipo: 'RUTA', activa: true },
+      select: { id: true, rutaId: true },
+    });
+
+    if (!cajas.length) {
+      return { activadas: new Set<string>(), diaNoLaboral: false };
+    }
+
+    const rutaPorCaja = new Map<string, string>();
+    for (const caja of cajas) {
+      if (caja.rutaId) rutaPorCaja.set(caja.id, caja.rutaId);
+    }
+
+    const { inicio, fin } = this.getInicioFinHoy();
+    const activaciones = await this.prisma.transaccion.findMany({
+      where: {
+        cajaId: { in: Array.from(rutaPorCaja.keys()) },
+        tipoReferencia: 'ACTIVACION_RUTA',
+        fechaTransaccion: { gte: inicio, lt: fin },
+      },
+      select: { cajaId: true },
+    });
+
+    const activadas = new Set<string>();
+    for (const activacion of activaciones) {
+      const rutaId = activacion.cajaId
+        ? rutaPorCaja.get(activacion.cajaId)
+        : undefined;
+      if (rutaId) activadas.add(rutaId);
+    }
+
+    return { activadas, diaNoLaboral: false };
   }
 
   private async getCierresPendientesRutasMap(

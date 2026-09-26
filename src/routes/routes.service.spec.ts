@@ -300,6 +300,14 @@ describe('RoutesService role scoping', () => {
       prestamo: {
         findMany: jest.fn().mockResolvedValue([]),
       },
+      // El listado consulta la activacion del dia de todas las rutas de una vez:
+      // las cajas de ruta y las transacciones ACTIVACION_RUTA de hoy.
+      caja: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      transaccion: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
     };
     const service = makeService(prisma);
     jest
@@ -2529,5 +2537,112 @@ describe('El credito objetivo de una visita', () => {
 
     expect(resultado.visitas[0].prestamoObjetivoId).toBe('prestamo-debe');
     expect(resultado.visitas[0].cuotaObjetivoId).toBe('cuota-debe');
+  });
+});
+
+/**
+ * Que rutas estan pendientes de activar hoy.
+ *
+ * El listado de rutas tenia una pestaña "Pendientes" que filtraba por
+ * `estado === 'PENDIENTE_ACTIVACION'`, un estado que NO existe: `estado` lo deriva
+ * el backend de `activa`, asi que solo vale ACTIVA o INACTIVA. La pestaña nunca
+ * podia coincidir con nada.
+ *
+ * La activacion del dia si existe, pero solo se consultaba ruta por ruta
+ * (`GET /routes/:id/activacion-hoy`). Ahora el listado la trae para todas de una
+ * vez, en un campo aparte: `estado` sigue diciendo solo si la ruta esta
+ * habilitada, porque hay pantallas que cuentan `estado === 'ACTIVA'` como KPI.
+ */
+describe('activacion del dia en el listado de rutas', () => {
+  const HOY_UTC = new Date('2026-06-11T15:00:00Z'); // jueves en Bogota
+  const DOMINGO_UTC = new Date('2026-06-14T15:00:00Z');
+
+  const prismaConCajas = (transacciones: Array<{ cajaId: string }>) => ({
+    caja: {
+      findMany: jest.fn().mockResolvedValue([
+        { id: 'caja-1', rutaId: 'ruta-1' },
+        { id: 'caja-2', rutaId: 'ruta-2' },
+      ]),
+    },
+    transaccion: {
+      findMany: jest.fn().mockResolvedValue(transacciones),
+    },
+  });
+
+  it('marca activada solo la ruta que tiene la transaccion de activacion de hoy', async () => {
+    jest.useFakeTimers().setSystemTime(HOY_UTC);
+    const prisma = prismaConCajas([{ cajaId: 'caja-1' }]);
+    const service = makeService(prisma) as any;
+
+    const { activadas, diaNoLaboral } = await service.getActivacionHoyRutasMap([
+      'ruta-1',
+      'ruta-2',
+    ]);
+
+    expect(activadas.has('ruta-1')).toBe(true);
+    expect(activadas.has('ruta-2')).toBe(false);
+    expect(diaNoLaboral).toBe(false);
+    jest.useRealTimers();
+  });
+
+  it('busca las activaciones por referencia y dentro del dia, en una sola consulta', async () => {
+    jest.useFakeTimers().setSystemTime(HOY_UTC);
+    const prisma = prismaConCajas([]);
+    const service = makeService(prisma) as any;
+
+    await service.getActivacionHoyRutasMap(['ruta-1', 'ruta-2']);
+
+    expect(prisma.transaccion.findMany).toHaveBeenCalledTimes(1);
+    const where = prisma.transaccion.findMany.mock.calls[0][0].where;
+    expect(where.tipoReferencia).toBe('ACTIVACION_RUTA');
+    expect(where.cajaId).toEqual({ in: ['caja-1', 'caja-2'] });
+    expect(where.fechaTransaccion.gte).toBeInstanceOf(Date);
+    expect(where.fechaTransaccion.lt).toBeInstanceOf(Date);
+    jest.useRealTimers();
+  });
+
+  it('en domingo no pregunta a la base: no hay jornada operativa', async () => {
+    jest.useFakeTimers().setSystemTime(DOMINGO_UTC);
+    const prisma = prismaConCajas([{ cajaId: 'caja-1' }]);
+    const service = makeService(prisma) as any;
+
+    const { activadas, diaNoLaboral } = await service.getActivacionHoyRutasMap([
+      'ruta-1',
+    ]);
+
+    expect(diaNoLaboral).toBe(true);
+    expect(activadas.size).toBe(0);
+    expect(prisma.caja.findMany).not.toHaveBeenCalled();
+    expect(prisma.transaccion.findMany).not.toHaveBeenCalled();
+    jest.useRealTimers();
+  });
+
+  it('sin rutas no consulta nada', async () => {
+    jest.useFakeTimers().setSystemTime(HOY_UTC);
+    const prisma = prismaConCajas([]);
+    const service = makeService(prisma) as any;
+
+    const { activadas } = await service.getActivacionHoyRutasMap([]);
+
+    expect(activadas.size).toBe(0);
+    expect(prisma.caja.findMany).not.toHaveBeenCalled();
+    jest.useRealTimers();
+  });
+
+  it('una ruta sin caja de ruta no queda marcada como activada', async () => {
+    // Sin caja no se puede activar: `activarRutaHoy` lanza NotFound. Aqui solo
+    // importa que no se invente una activacion.
+    jest.useFakeTimers().setSystemTime(HOY_UTC);
+    const prisma = {
+      caja: { findMany: jest.fn().mockResolvedValue([]) },
+      transaccion: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const service = makeService(prisma) as any;
+
+    const { activadas } = await service.getActivacionHoyRutasMap(['ruta-1']);
+
+    expect(activadas.size).toBe(0);
+    expect(prisma.transaccion.findMany).not.toHaveBeenCalled();
+    jest.useRealTimers();
   });
 });
