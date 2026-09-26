@@ -566,7 +566,7 @@ describe('LoansService accounting impact for approved loans', () => {
       },
     };
 
-    await (makeService(prisma) as any).registrarImpactoContablePrestamoAprobado(
+    await (makeService(prisma)).registrarImpactoContablePrestamoAprobado(
       {
         id: 'prestamo-cash-1',
         numeroPrestamo: 'PRES-1',
@@ -622,7 +622,7 @@ describe('LoansService accounting impact for approved loans', () => {
       },
     };
 
-    await (makeService(prisma) as any).registrarImpactoContablePrestamoAprobado(
+    await (makeService(prisma)).registrarImpactoContablePrestamoAprobado(
       {
         id: 'prestamo-cash-ruta-1',
         numeroPrestamo: 'PRES-RUTA-1',
@@ -683,7 +683,7 @@ describe('LoansService accounting impact for approved loans', () => {
       },
     };
 
-    await (makeService(prisma) as any).registrarImpactoContablePrestamoAprobado(
+    await (makeService(prisma)).registrarImpactoContablePrestamoAprobado(
       {
         id: 'prestamo-art-1',
         numeroPrestamo: 'ART-1',
@@ -1761,7 +1761,7 @@ describe('LoansService accounting impact for approved loans', () => {
       },
     };
 
-    await (makeService(prisma) as any).descontarStockSiDisponible('producto-1');
+    await (makeService(prisma)).descontarStockSiDisponible('producto-1');
 
     expect(prisma.producto.updateMany).toHaveBeenCalledWith({
       where: {
@@ -1780,7 +1780,7 @@ describe('LoansService accounting impact for approved loans', () => {
     };
 
     await expect(
-      (makeService(prisma) as any).descontarStockSiDisponible('producto-1'),
+      (makeService(prisma)).descontarStockSiDisponible('producto-1'),
     ).rejects.toThrow('Producto sin stock disponible');
   });
 
@@ -1800,7 +1800,7 @@ describe('LoansService accounting impact for approved loans', () => {
         count: jest.fn(),
       },
     };
-    const service = makeService(prisma) as any;
+    const service = makeService(prisma);
 
     await expect(service.generarNumeroPrestamo('ARTICULO')).resolves.toBe(
       'ART-000001',
@@ -1886,7 +1886,7 @@ describe('LoansService reprogramacion concurrency controls', () => {
       },
     };
 
-    const result = await makeService(prisma as any).solicitarReprogramacion({
+    const result = await makeService(prisma).solicitarReprogramacion({
       prestamoId: 'prestamo-1',
       cuotaId: 'cuota-1',
       nuevaFecha: '2026-05-20',
@@ -1969,7 +1969,7 @@ describe('LoansService reprogramacion concurrency controls', () => {
     ].join(':');
 
     try {
-      await makeService(prisma as any).solicitarReprogramacion({
+      await makeService(prisma).solicitarReprogramacion({
         prestamoId: 'prestamo-1',
         cuotaId: 'cuota-1',
         nuevaFecha: '2026-06-11',
@@ -2025,7 +2025,7 @@ describe('LoansService reprogramacion concurrency controls', () => {
     };
 
     await expect(
-      makeService(prisma as any).solicitarReprogramacion({
+      makeService(prisma).solicitarReprogramacion({
         prestamoId: 'prestamo-1',
         cuotaId: 'cuota-1',
         nuevaFecha: '2026-06-02',
@@ -2093,7 +2093,7 @@ describe('LoansService reprogramacion concurrency controls', () => {
     };
 
     try {
-      await makeService(prisma as any).solicitarReprogramacion({
+      await makeService(prisma).solicitarReprogramacion({
         prestamoId: 'prestamo-1',
         cuotaId: 'cuota-1',
         nuevaFecha: '2026-06-02',
@@ -2197,7 +2197,7 @@ describe('LoansService reprogramacion concurrency controls', () => {
 
     let result: any;
     try {
-      result = await makeService(prisma as any).solicitarReprogramacion({
+      result = await makeService(prisma).solicitarReprogramacion({
         prestamoId: 'prestamo-1',
         cuotaId: 'cuota-1',
         nuevaFecha: '2026-06-11',
@@ -2536,7 +2536,7 @@ describe('LoansService role scoping', () => {
       service.getLoanById('prestamo-ajeno', {
         id: 'cobrador-propio',
         rol: RolUsuario.COBRADOR,
-      } as any),
+      }),
     ).rejects.toThrow('Préstamo no encontrado');
 
     expect(prisma.prestamo.findFirst).toHaveBeenCalledWith(
@@ -2582,7 +2582,7 @@ describe('LoansService role scoping', () => {
       service.getLoanCuotas('prestamo-ajeno', {
         id: 'cobrador-propio',
         rol: RolUsuario.COBRADOR,
-      } as any),
+      }),
     ).rejects.toThrow('Préstamo no encontrado');
 
     expect(prisma.cuota.findMany).not.toHaveBeenCalled();
@@ -2994,7 +2994,7 @@ describe('La corrección de intereses del arranque', () => {
     const prisma = conPrestamo(prestamoDiario(360_000));
     const service = makeService(prisma);
 
-    const resultado = await (service as any).fixInterestCalculations();
+    const resultado = await (service).fixInterestCalculations();
 
     expect(resultado.corrected).toBe(0);
     expect(prisma.prestamo.update).not.toHaveBeenCalled();
@@ -3006,7 +3006,7 @@ describe('La corrección de intereses del arranque', () => {
     const prisma = conPrestamo(prestamoDiario(300_000));
     const service = makeService(prisma);
 
-    const resultado = await (service as any).fixInterestCalculations();
+    const resultado = await (service).fixInterestCalculations();
 
     expect(resultado.corrected).toBe(1);
     expect(prisma.prestamo.update).toHaveBeenCalledWith(
@@ -3054,7 +3054,7 @@ describe('El arranque no reescribe deudas por su cuenta', () => {
     delete process.env.AUTOFIX_INTERESES;
     const { prisma, service } = conServicio();
 
-    await (service as any).onModuleInit();
+    await (service).onModuleInit();
 
     expect(prisma.prestamo.findMany).not.toHaveBeenCalled();
   });
@@ -3063,7 +3063,7 @@ describe('El arranque no reescribe deudas por su cuenta', () => {
     process.env.AUTOFIX_INTERESES = '1';
     const { prisma, service } = conServicio();
 
-    await (service as any).onModuleInit();
+    await (service).onModuleInit();
 
     expect(prisma.prestamo.findMany).toHaveBeenCalled();
   });
@@ -3074,7 +3074,7 @@ describe('El arranque no reescribe deudas por su cuenta', () => {
     delete process.env.AUTOFIX_INTERESES;
     const { prisma, service } = conServicio();
 
-    const resultado = await (service as any).fixInterestCalculations();
+    const resultado = await (service).fixInterestCalculations();
 
     expect(prisma.prestamo.findMany).toHaveBeenCalled();
     expect(resultado.processed).toBe(0);
@@ -3199,7 +3199,7 @@ describe('El tope de dias al reprogramar una cuota', () => {
   });
 
   const solicitar = (frecuencia: string, nuevaFecha: string) =>
-    makeService(prismaPara(frecuencia) as any).solicitarReprogramacion({
+    makeService(prismaPara(frecuencia)).solicitarReprogramacion({
       prestamoId: 'prestamo-1',
       cuotaId: 'cuota-1',
       nuevaFecha,
@@ -3333,7 +3333,7 @@ describe('La reprogramacion del modal deja el rastro para revertir', () => {
     const { tx, prisma } = hacerPrisma();
 
     // El mismo cuerpo que manda `reprogramarPrestamo` del frontend.
-    await makeService(prisma as any).solicitarReprogramacion({
+    await makeService(prisma).solicitarReprogramacion({
       prestamoId: 'prestamo-1',
       cuotaId: 'cuota-1',
       nuevaFecha: diaBogotaMas(3),

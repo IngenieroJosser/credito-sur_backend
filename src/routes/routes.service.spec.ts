@@ -152,7 +152,7 @@ describe('RoutesService role scoping', () => {
       service.listarCreditosAsignadosACobrador('cobrador-ajeno', {
         id: 'cobrador-propio',
         rol: RolUsuario.COBRADOR,
-      } as any),
+      }),
     ).rejects.toBeInstanceOf(ForbiddenException);
 
     expect(prisma.asignacionRuta.findMany).not.toHaveBeenCalled();
@@ -170,7 +170,7 @@ describe('RoutesService role scoping', () => {
       service.listarCreditosAsignadosACobrador('cobrador-1', {
         id: 'supervisor-1',
         rol: RolUsuario.SUPERVISOR,
-      } as any),
+      }),
     ).resolves.toEqual({ cobradorId: 'cobrador-1', total: 0, data: [] });
 
     expect(prisma.asignacionRuta.findMany).toHaveBeenCalled();
@@ -341,7 +341,7 @@ describe('RoutesService role scoping', () => {
       service.findOne('ruta-ajena', {
         id: 'supervisor-propio',
         rol: RolUsuario.SUPERVISOR,
-      } as any),
+      }),
     ).rejects.toBeInstanceOf(NotFoundException);
 
     expect(prisma.ruta.findFirst).toHaveBeenCalledWith(
@@ -370,7 +370,7 @@ describe('RoutesService role scoping', () => {
       service.getDailyVisits('ruta-ajena', undefined, {
         id: 'cobrador-propio',
         rol: RolUsuario.COBRADOR,
-      } as any),
+      }),
     ).rejects.toBeInstanceOf(ForbiddenException);
 
     expect(prisma.ruta.findFirst).toHaveBeenCalledWith({
@@ -1133,7 +1133,7 @@ describe('RoutesService role scoping', () => {
       service.getRutaActivadaHoy('ruta-ajena', {
         id: 'cobrador-propio',
         rol: RolUsuario.COBRADOR,
-      } as any),
+      }),
     ).rejects.toBeInstanceOf(ForbiddenException);
 
     expect(prisma.ruta.findFirst).toHaveBeenCalledWith({
@@ -1453,7 +1453,7 @@ describe('RoutesService role scoping', () => {
         'ruta-1',
         '2026-06-03',
         'Jornada regularizada',
-        { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+        { id: 'admin-1', rol: RolUsuario.ADMIN },
       ),
     ).resolves.toEqual(
       expect.objectContaining({
@@ -1580,7 +1580,7 @@ describe('RoutesService role scoping', () => {
           'ruta-1',
           '2026-06-13',
           'Jornada regularizada',
-          { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+          { id: 'admin-1', rol: RolUsuario.ADMIN },
         ),
       ).resolves.toEqual(
         expect.objectContaining({
@@ -1623,7 +1623,7 @@ describe('RoutesService role scoping', () => {
           'ruta-1',
           '2026-06-13',
           'Jornada regularizada',
-          { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+          { id: 'admin-1', rol: RolUsuario.ADMIN },
         ),
       ).rejects.toThrow(BadRequestException);
     });
@@ -1662,7 +1662,7 @@ describe('RoutesService role scoping', () => {
           'ruta-1',
           '2026-06-13',
           'Jornada regularizada',
-          { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+          { id: 'admin-1', rol: RolUsuario.ADMIN },
         ),
       ).rejects.toThrow(ConflictException);
     });
@@ -1701,7 +1701,7 @@ describe('RoutesService role scoping', () => {
           'ruta-1',
           '2026-06-13',
           undefined, // Sin observación
-          { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+          { id: 'admin-1', rol: RolUsuario.ADMIN },
         ),
       ).rejects.toThrow(BadRequestException);
     });
@@ -1764,7 +1764,7 @@ describe('RoutesService role scoping', () => {
           'ruta-1',
           '2026-06-13',
           undefined, // Sin observación, pero jornada está limpia
-          { id: 'admin-1', rol: RolUsuario.ADMIN } as any,
+          { id: 'admin-1', rol: RolUsuario.ADMIN },
         ),
       ).resolves.toEqual(
         expect.objectContaining({
@@ -2022,7 +2022,7 @@ describe('RoutesService role scoping', () => {
         update: jest.fn(async ({ where, data }: any) => {
           const fila = prestamos.find((p) => p.id === where.id);
           Object.assign(fila as any, data);
-          return { ...(fila as any) };
+          return { ...(fila) };
         }),
         updateMany: jest.fn(async ({ where, data }: any) => {
           const filas = prestamos.filter((p) => cumple(p, where));
@@ -2053,7 +2053,7 @@ describe('RoutesService role scoping', () => {
         update: jest.fn(async ({ where, data }: any) => {
           const fila = asignaciones.find((a) => a.id === where.id);
           Object.assign(fila as any, data);
-          return { ...(fila as any) };
+          return { ...(fila) };
         }),
         updateMany: jest.fn(async ({ where, data }: any) => {
           const filas = asignaciones.filter((a) => cumple(a, where));
@@ -2272,7 +2272,7 @@ describe('RoutesService role scoping', () => {
       (a) => a.clienteId === 'cliente-1' && a.activa,
     );
     expect(asignacion?.rutaId).toBe('ruta-b');
-    expect((asignacion as any)?.cobradorId).toBe('cobrador-b');
+    expect((asignacion)?.cobradorId).toBe('cobrador-b');
   });
 
   it('un cliente sin créditos no se puede asignar, y lo dice con la verdad', async () => {
@@ -2365,7 +2365,7 @@ describe('RoutesService role scoping', () => {
     };
 
     const servicio = makeService(prisma);
-    (servicio as any).reorderAssignments = jest.fn();
+    (servicio).reorderAssignments = jest.fn();
 
     await servicio.moveClient('cliente-1', 'ruta-a', 'ruta-b');
 
