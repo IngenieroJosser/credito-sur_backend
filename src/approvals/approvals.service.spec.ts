@@ -1125,7 +1125,7 @@ describe('ApprovalsService financial ledger controls', () => {
 
   it('bloquea regenerar cuotas de un crédito activo editado si ya tiene pagos', async () => {
     const prisma = buildPrismaMock();
-    (prisma._tx.prestamo).findUnique = jest.fn().mockResolvedValue({
+    prisma._tx.prestamo.findUnique = jest.fn().mockResolvedValue({
       estado: EstadoPrestamo.ACTIVO,
       monto: 500000,
     });
@@ -1372,7 +1372,7 @@ describe('ApprovalsService financial ledger controls', () => {
 
   it('registra venta de artículo separando ingreso, costo, inventario y cuota inicial', async () => {
     const prisma = buildPrismaMock();
-    (prisma._tx.prestamo).findUnique = jest.fn().mockResolvedValue({
+    prisma._tx.prestamo.findUnique = jest.fn().mockResolvedValue({
       estado: EstadoPrestamo.BORRADOR,
       monto: 90000,
     });
@@ -1397,9 +1397,7 @@ describe('ApprovalsService financial ledger controls', () => {
         nombre: 'Caja Ruta',
         saldoActual: 100000,
       });
-    (prisma._tx.transaccion).findFirst = jest
-      .fn()
-      .mockResolvedValue(null);
+    prisma._tx.transaccion.findFirst = jest.fn().mockResolvedValue(null);
 
     await (makeService(prisma) as any).approveNewLoan(
       {
@@ -1445,7 +1443,7 @@ describe('ApprovalsService financial ledger controls', () => {
 
   it('desembolsa préstamo en efectivo desde caja de oficina al aprobar revisión', async () => {
     const prisma = buildPrismaMock();
-    (prisma._tx.prestamo).findUnique = jest.fn().mockResolvedValue({
+    prisma._tx.prestamo.findUnique = jest.fn().mockResolvedValue({
       estado: EstadoPrestamo.BORRADOR,
       monto: 120000,
     });
@@ -1510,7 +1508,7 @@ describe('ApprovalsService financial ledger controls', () => {
 
   it('desembolsa préstamo en efectivo desde caja de ruta cuando la solicitud es de un cobrador', async () => {
     const prisma = buildPrismaMock();
-    (prisma._tx.prestamo).findUnique = jest.fn().mockResolvedValue({
+    prisma._tx.prestamo.findUnique = jest.fn().mockResolvedValue({
       estado: EstadoPrestamo.BORRADOR,
       monto: 120000,
     });
@@ -1584,7 +1582,7 @@ describe('ApprovalsService financial ledger controls', () => {
 
   it('propaga errores de ledger al registrar venta de artículo', async () => {
     const prisma = buildPrismaMock();
-    (prisma._tx.prestamo).findUnique = jest.fn().mockResolvedValue({
+    prisma._tx.prestamo.findUnique = jest.fn().mockResolvedValue({
       estado: EstadoPrestamo.BORRADOR,
       monto: 90000,
     });
@@ -1604,9 +1602,7 @@ describe('ApprovalsService financial ledger controls', () => {
     prisma._tx.caja.findFirst
       .mockResolvedValueOnce({ id: 'caja-ruta-1', codigo: 'CAJA-RUTA' })
       .mockResolvedValueOnce({ id: 'caja-oficina', codigo: 'CAJA-OFICINA' });
-    (prisma._tx.transaccion).findFirst = jest
-      .fn()
-      .mockResolvedValue(null);
+    prisma._tx.transaccion.findFirst = jest.fn().mockResolvedValue(null);
     mockLedger.registrarVentaArticulo.mockRejectedValueOnce(
       new Error('ledger failed'),
     );

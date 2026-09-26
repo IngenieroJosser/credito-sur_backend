@@ -566,16 +566,14 @@ describe('LoansService accounting impact for approved loans', () => {
       },
     };
 
-    await (makeService(prisma)).registrarImpactoContablePrestamoAprobado(
-      {
-        id: 'prestamo-cash-1',
-        numeroPrestamo: 'PRES-1',
-        clienteId: 'cliente-1',
-        tipoPrestamo: 'EFECTIVO',
-        monto: 120000,
-        creadoPorId: 'admin-1',
-      },
-    );
+    await makeService(prisma).registrarImpactoContablePrestamoAprobado({
+      id: 'prestamo-cash-1',
+      numeroPrestamo: 'PRES-1',
+      clienteId: 'cliente-1',
+      tipoPrestamo: 'EFECTIVO',
+      monto: 120000,
+      creadoPorId: 'admin-1',
+    });
 
     expect(prisma.transaccion.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -622,16 +620,14 @@ describe('LoansService accounting impact for approved loans', () => {
       },
     };
 
-    await (makeService(prisma)).registrarImpactoContablePrestamoAprobado(
-      {
-        id: 'prestamo-cash-ruta-1',
-        numeroPrestamo: 'PRES-RUTA-1',
-        clienteId: 'cliente-1',
-        tipoPrestamo: 'EFECTIVO',
-        monto: 120000,
-        creadoPorId: 'cobrador-1',
-      },
-    );
+    await makeService(prisma).registrarImpactoContablePrestamoAprobado({
+      id: 'prestamo-cash-ruta-1',
+      numeroPrestamo: 'PRES-RUTA-1',
+      clienteId: 'cliente-1',
+      tipoPrestamo: 'EFECTIVO',
+      monto: 120000,
+      creadoPorId: 'cobrador-1',
+    });
 
     expect(prisma.caja.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -683,19 +679,17 @@ describe('LoansService accounting impact for approved loans', () => {
       },
     };
 
-    await (makeService(prisma)).registrarImpactoContablePrestamoAprobado(
-      {
-        id: 'prestamo-art-1',
-        numeroPrestamo: 'ART-1',
-        clienteId: 'cliente-1',
-        tipoPrestamo: 'ARTICULO',
-        monto: 80000,
-        cuotaInicial: 20000,
-        precioVentaArticulo: 100000,
-        costoArticulo: 65000,
-        creadoPorId: 'admin-1',
-      },
-    );
+    await makeService(prisma).registrarImpactoContablePrestamoAprobado({
+      id: 'prestamo-art-1',
+      numeroPrestamo: 'ART-1',
+      clienteId: 'cliente-1',
+      tipoPrestamo: 'ARTICULO',
+      monto: 80000,
+      cuotaInicial: 20000,
+      precioVentaArticulo: 100000,
+      costoArticulo: 65000,
+      creadoPorId: 'admin-1',
+    });
 
     expect(prisma.transaccion.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1761,7 +1755,7 @@ describe('LoansService accounting impact for approved loans', () => {
       },
     };
 
-    await (makeService(prisma)).descontarStockSiDisponible('producto-1');
+    await makeService(prisma).descontarStockSiDisponible('producto-1');
 
     expect(prisma.producto.updateMany).toHaveBeenCalledWith({
       where: {
@@ -1780,7 +1774,7 @@ describe('LoansService accounting impact for approved loans', () => {
     };
 
     await expect(
-      (makeService(prisma)).descontarStockSiDisponible('producto-1'),
+      makeService(prisma).descontarStockSiDisponible('producto-1'),
     ).rejects.toThrow('Producto sin stock disponible');
   });
 
@@ -2994,7 +2988,7 @@ describe('La corrección de intereses del arranque', () => {
     const prisma = conPrestamo(prestamoDiario(360_000));
     const service = makeService(prisma);
 
-    const resultado = await (service).fixInterestCalculations();
+    const resultado = await service.fixInterestCalculations();
 
     expect(resultado.corrected).toBe(0);
     expect(prisma.prestamo.update).not.toHaveBeenCalled();
@@ -3006,7 +3000,7 @@ describe('La corrección de intereses del arranque', () => {
     const prisma = conPrestamo(prestamoDiario(300_000));
     const service = makeService(prisma);
 
-    const resultado = await (service).fixInterestCalculations();
+    const resultado = await service.fixInterestCalculations();
 
     expect(resultado.corrected).toBe(1);
     expect(prisma.prestamo.update).toHaveBeenCalledWith(
@@ -3054,7 +3048,7 @@ describe('El arranque no reescribe deudas por su cuenta', () => {
     delete process.env.AUTOFIX_INTERESES;
     const { prisma, service } = conServicio();
 
-    await (service).onModuleInit();
+    await service.onModuleInit();
 
     expect(prisma.prestamo.findMany).not.toHaveBeenCalled();
   });
@@ -3063,7 +3057,7 @@ describe('El arranque no reescribe deudas por su cuenta', () => {
     process.env.AUTOFIX_INTERESES = '1';
     const { prisma, service } = conServicio();
 
-    await (service).onModuleInit();
+    await service.onModuleInit();
 
     expect(prisma.prestamo.findMany).toHaveBeenCalled();
   });
@@ -3074,7 +3068,7 @@ describe('El arranque no reescribe deudas por su cuenta', () => {
     delete process.env.AUTOFIX_INTERESES;
     const { prisma, service } = conServicio();
 
-    const resultado = await (service).fixInterestCalculations();
+    const resultado = await service.fixInterestCalculations();
 
     expect(prisma.prestamo.findMany).toHaveBeenCalled();
     expect(resultado.processed).toBe(0);

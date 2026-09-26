@@ -2022,7 +2022,7 @@ describe('RoutesService role scoping', () => {
         update: jest.fn(async ({ where, data }: any) => {
           const fila = prestamos.find((p) => p.id === where.id);
           Object.assign(fila as any, data);
-          return { ...(fila) };
+          return { ...fila };
         }),
         updateMany: jest.fn(async ({ where, data }: any) => {
           const filas = prestamos.filter((p) => cumple(p, where));
@@ -2053,7 +2053,7 @@ describe('RoutesService role scoping', () => {
         update: jest.fn(async ({ where, data }: any) => {
           const fila = asignaciones.find((a) => a.id === where.id);
           Object.assign(fila as any, data);
-          return { ...(fila) };
+          return { ...fila };
         }),
         updateMany: jest.fn(async ({ where, data }: any) => {
           const filas = asignaciones.filter((a) => cumple(a, where));
@@ -2272,7 +2272,7 @@ describe('RoutesService role scoping', () => {
       (a) => a.clienteId === 'cliente-1' && a.activa,
     );
     expect(asignacion?.rutaId).toBe('ruta-b');
-    expect((asignacion)?.cobradorId).toBe('cobrador-b');
+    expect(asignacion?.cobradorId).toBe('cobrador-b');
   });
 
   it('un cliente sin créditos no se puede asignar, y lo dice con la verdad', async () => {
@@ -2365,7 +2365,7 @@ describe('RoutesService role scoping', () => {
     };
 
     const servicio = makeService(prisma);
-    (servicio).reorderAssignments = jest.fn();
+    servicio.reorderAssignments = jest.fn();
 
     await servicio.moveClient('cliente-1', 'ruta-a', 'ruta-b');
 
