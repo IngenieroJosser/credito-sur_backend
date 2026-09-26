@@ -32,6 +32,36 @@ import {
   RolUsuario,
 } from '@prisma/client';
 
+/**
+ * Exige que `create` haya devuelto un pago REGISTRADO antes de leerlo.
+ *
+ * `create` devuelve varias formas segun el camino: el pago registrado, el que ya
+ * estaba registrado (reintento idempotente) y el que queda en revision sin pago
+ * todavia. Estas pruebas comprueban el primero, y leian el desglose directamente:
+ * compilaba porque el cliente de Prisma estaba tipado como `any` y con el todo el
+ * retorno del metodo.
+ *
+ * Asi, si el servicio devolviera otra forma, la prueba dice cual llego en vez de
+ * comparar contra `undefined` y fallar con un mensaje que no explica nada.
+ */
+const pagoRegistrado = <T>(resultado: T) => {
+  if (
+    !resultado ||
+    typeof resultado !== 'object' ||
+    !('descomposicion' in resultado)
+  ) {
+    throw new Error(
+      `Se esperaba un pago registrado y llego: ${JSON.stringify(resultado)}`,
+    );
+  }
+  // Se exige tambien `idempotentReplay`: hay dos formas con desglose y solo
+  // una lo trae, y es la que estas pruebas comprueban.
+  return resultado as Extract<
+    T,
+    { pago: unknown; descomposicion: unknown; idempotentReplay: unknown }
+  >;
+};
+
 // ─────────────────────────────────────────────
 // Mocks de los servicios de soporte (no críticos para estos tests)
 // ─────────────────────────────────────────────
@@ -277,8 +307,12 @@ describe('PaymentsService', () => {
 
       // capital = 110000 * 100 / 110 = 100000
       // interes = 110000 * 10  / 110 = 10000
-      expect(resultado.descomposicion.capitalRecuperado).toBeCloseTo(100000, 0);
-      expect(resultado.descomposicion.interesRecuperado).toBeCloseTo(10000, 0);
+      expect(
+        pagoRegistrado(resultado).descomposicion.capitalRecuperado,
+      ).toBeCloseTo(100000, 0);
+      expect(
+        pagoRegistrado(resultado).descomposicion.interesRecuperado,
+      ).toBeCloseTo(10000, 0);
     });
 
     it('con tasa 0%: todo el monto es capital, interés = 0', async () => {
@@ -302,8 +336,12 @@ describe('PaymentsService', () => {
       };
 
       const resultado = await service.create(dto);
-      expect(resultado.descomposicion.capitalRecuperado).toBe(110000);
-      expect(resultado.descomposicion.interesRecuperado).toBe(0);
+      expect(pagoRegistrado(resultado).descomposicion.capitalRecuperado).toBe(
+        110000,
+      );
+      expect(pagoRegistrado(resultado).descomposicion.interesRecuperado).toBe(
+        0,
+      );
     });
   });
 
@@ -321,8 +359,10 @@ describe('PaymentsService', () => {
 
       expect(resultado).toHaveProperty('pago');
       expect(resultado).toHaveProperty('descomposicion');
-      expect(resultado.descomposicion.montoTotal).toBe(110000);
-      expect(resultado.descomposicion.saldoAnterior).toBe(600000);
+      expect(pagoRegistrado(resultado).descomposicion.montoTotal).toBe(110000);
+      expect(pagoRegistrado(resultado).descomposicion.saldoAnterior).toBe(
+        600000,
+      );
     });
 
     it('genera el número de pago sin depender de count + 1', async () => {
@@ -514,7 +554,7 @@ describe('PaymentsService', () => {
             notas: 'Recibido con nota administrativa',
             idempotencyKey:
               'CIERRE_PENDIENTE:ruta-1:2026-05-27:cliente-1:prestamo-1:cuota-2:1:PAGO:110000',
-          } as any,
+          },
           undefined,
           ACTOR_ADMIN,
         );
@@ -590,7 +630,7 @@ describe('PaymentsService', () => {
             origenGestion: 'CIERRE_PENDIENTE',
             rutaId: 'ruta-1',
             idempotencyKey: longKey,
-          } as any,
+          },
           undefined,
           ACTOR_ADMIN,
         );
@@ -619,7 +659,7 @@ describe('PaymentsService', () => {
           montoTotal: 110000,
           cuotaId: 'cuota-2',
           origenGestion: 'CIERRE_PENDIENTE',
-        } as any),
+        }),
       ).rejects.toThrow(BadRequestException);
 
       expect(prisma.prestamo.findFirst).not.toHaveBeenCalled();
@@ -640,7 +680,7 @@ describe('PaymentsService', () => {
               fechaOperativaRuta: '2026-05-27',
               origenGestion: 'CIERRE_PENDIENTE',
               rutaId: 'ruta-1',
-            } as any,
+            },
             undefined,
             { id: 'contador-1', rol: RolUsuario.CONTADOR },
           ),
@@ -666,7 +706,7 @@ describe('PaymentsService', () => {
             fechaOperativaRuta: '2026-05-27',
             origenGestion: 'CIERRE_PENDIENTE',
             rutaId: 'ruta-1',
-          } as any),
+          }),
         ).rejects.toThrow(
           'No se pueden registrar pagos regularizados en domingo.',
         );
@@ -705,7 +745,9 @@ describe('PaymentsService', () => {
 
       const resultado = await service.create(dto);
 
-      expect(resultado.descomposicion.prestamoQuedaPagado).toBe(true);
+      expect(pagoRegistrado(resultado).descomposicion.prestamoQuedaPagado).toBe(
+        true,
+      );
       expect(prisma._txMock.prestamo.update).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ estado: EstadoPrestamo.PAGADO }),
@@ -743,10 +785,12 @@ describe('PaymentsService', () => {
         tipoRegistro: 'PAGO',
         cuotaNumeroEsperada: 10,
         montoCuotaEsperado: 63333,
-      } as any);
+      });
 
-      expect(resultado.descomposicion.prestamoQuedaPagado).toBe(false);
-      expect(resultado.descomposicion.saldoNuevo).toBe(1);
+      expect(pagoRegistrado(resultado).descomposicion.prestamoQuedaPagado).toBe(
+        false,
+      );
+      expect(pagoRegistrado(resultado).descomposicion.saldoNuevo).toBe(1);
 
       expect(prisma._txMock.prestamo.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -793,10 +837,12 @@ describe('PaymentsService', () => {
         tipoRegistro: 'PAGO',
         cuotaNumeroEsperada: 10,
         montoCuotaEsperado: 63334,
-      } as any);
+      });
 
-      expect(resultado.descomposicion.prestamoQuedaPagado).toBe(true);
-      expect(resultado.descomposicion.saldoNuevo).toBe(0);
+      expect(pagoRegistrado(resultado).descomposicion.prestamoQuedaPagado).toBe(
+        true,
+      );
+      expect(pagoRegistrado(resultado).descomposicion.saldoNuevo).toBe(0);
 
       expect(prisma._txMock.prestamo.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -911,7 +957,9 @@ describe('PaymentsService', () => {
       });
 
       expect(prisma._txMock.$queryRaw).toHaveBeenCalled();
-      expect(resultado.descomposicion.saldoAnterior).toBe(490000);
+      expect(pagoRegistrado(resultado).descomposicion.saldoAnterior).toBe(
+        490000,
+      );
       expect(prisma._txMock.prestamo.update).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
@@ -1055,8 +1103,8 @@ describe('PaymentsService', () => {
         idempotencyKey: 'offline-op-1',
       });
 
-      expect(resultado.pago.id).toBe('pago-existente-1');
-      expect(resultado.idempotentReplay).toBe(true);
+      expect(pagoRegistrado(resultado).pago.id).toBe('pago-existente-1');
+      expect(pagoRegistrado(resultado).idempotentReplay).toBe(true);
       expect(prisma.$transaction).not.toHaveBeenCalled();
       expect(prisma._txMock.pago.create).not.toHaveBeenCalled();
       expect(mockAuditService.create).not.toHaveBeenCalled();
@@ -1122,7 +1170,7 @@ describe('PaymentsService', () => {
           prestamoId: 'prestamo-1',
           cobradorId: 'cobrador-1',
           montoTotal: Number.NaN,
-        } as any),
+        }),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
@@ -1134,7 +1182,7 @@ describe('PaymentsService', () => {
           cobradorId: 'cobrador-1',
           montoTotal: 999,
           tipoRegistro: 'ABONO',
-        } as any),
+        }),
       ).rejects.toThrow('El abono mínimo permitido es $1.000.');
 
       expect(prisma.$transaction).not.toHaveBeenCalled();
@@ -1215,7 +1263,7 @@ describe('PaymentsService', () => {
           tipoRegistro: 'PAGO',
           cuotaNumeroEsperada: 1,
           montoCuotaEsperado: 270000,
-        } as any),
+        }),
       ).rejects.toThrow(ConflictException);
 
       expect(prisma._txMock.pago.create).not.toHaveBeenCalled();
@@ -1251,7 +1299,7 @@ describe('PaymentsService', () => {
           tipoRegistro: 'PAGO',
           cuotaNumeroEsperada: 1,
           montoCuotaEsperado: 92000,
-        } as any),
+        }),
       ).resolves.toBeDefined();
 
       expect(prisma._txMock.pago.create).toHaveBeenCalled();

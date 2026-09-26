@@ -3,6 +3,7 @@ import {
   UnauthorizedException,
   BadRequestException,
   NotFoundException,
+  ConflictException,
 } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
 import { JwtService } from '@nestjs/jwt';
@@ -172,7 +173,7 @@ export class AuthService {
           { correo: { equals: identificador, mode: 'insensitive' } },
           { nombreUsuario: identificador },
         ],
-      } as any,
+      },
     });
 
     const candidatos = usuarioPorIdentificador ? [usuarioPorIdentificador] : [];
@@ -268,7 +269,10 @@ export class AuthService {
     });
 
     if (superAdminExistente) {
-      throw new Error(
+      // ConflictException y no Error a secas: con un Error el filtro global
+      // responde 500 y "Ocurrió un error inesperado, reporte el código...",
+      // que no dice nada. Este mensaje esta escrito para que alguien lo lea.
+      throw new ConflictException(
         'Ya existe un superadministrador. Use el endpoint /auth/register con un token válido.',
       );
     }
@@ -355,7 +359,7 @@ export class AuthService {
       data: {
         resetPasswordToken: codigoHash,
         resetPasswordExpires: expiracion,
-      } as any,
+      },
     });
 
     // Enviar el correo con el código
@@ -410,12 +414,12 @@ export class AuthService {
       await this.prisma.usuario.update({
         where: { id: usuario.id },
         data: agotados
-          ? ({
+          ? {
               resetPasswordIntentos: 0,
               resetPasswordToken: null,
               resetPasswordExpires: null,
-            } as any)
-          : ({ resetPasswordIntentos: intentos } as any),
+            }
+          : { resetPasswordIntentos: intentos },
       });
       throw new BadRequestException(
         agotados
@@ -433,7 +437,7 @@ export class AuthService {
         resetPasswordToken: null,
         resetPasswordExpires: null,
         resetPasswordIntentos: 0,
-      } as any,
+      },
     });
 
     return {

@@ -9,6 +9,21 @@ import {
 } from '@prisma/client';
 import { ApprovalsService } from './approvals.service';
 
+/**
+ * Exige que la relacion venga cargada antes de leerla.
+ *
+ * `cliente` y `creditoSolicitud` son relaciones opcionales en el esquema, asi que
+ * Prisma las tipa como nullable. La prueba las leia directo y compilaba porque el
+ * cliente de Prisma estaba tipado como `any`. Si el servicio dejara de cargarlas,
+ * asi la prueba dice cual falta en vez de reventar leyendo `.id` de null.
+ */
+const exigir = <T>(valor: T | null | undefined, que: string): T => {
+  if (valor === null || valor === undefined) {
+    throw new Error(`Se esperaba ${que} en el resultado`);
+  }
+  return valor;
+};
+
 const mockNotifications = {
   create: jest.fn().mockResolvedValue(undefined),
   notifyCoordinator: jest.fn().mockResolvedValue(undefined),
@@ -193,7 +208,7 @@ function buildPrismaMock() {
     },
     usuario: { findUnique: jest.fn().mockResolvedValue(null) },
     notificacion: { create: jest.fn().mockResolvedValue({}) },
-    $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
+    $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
     _tx: tx,
   };
 }
@@ -393,8 +408,10 @@ describe('ApprovalsService pending loan reconciliation', () => {
     expect(result.approval.datosSolicitud.prestamoId).toBe(
       'prestamo-solicitud',
     );
-    expect(result.cliente.id).toBe('cliente-1');
-    expect(result.creditoSolicitud.id).toBe('prestamo-solicitud');
+    expect(exigir(result.cliente, 'el cliente').id).toBe('cliente-1');
+    expect(
+      exigir(result.creditoSolicitud, 'el crédito de la solicitud').id,
+    ).toBe('prestamo-solicitud');
     expect(result.creditosCliente).toHaveLength(2);
     expect(result.referencias).toEqual(
       expect.arrayContaining([
@@ -508,8 +525,10 @@ describe('ApprovalsService pending loan reconciliation', () => {
         }),
       }),
     );
-    expect(result.cliente.id).toBe('cliente-desde-cuota');
-    expect(result.creditoSolicitud.id).toBe('prestamo-desde-cuota');
+    expect(exigir(result.cliente, 'el cliente').id).toBe('cliente-desde-cuota');
+    expect(
+      exigir(result.creditoSolicitud, 'el crédito de la solicitud').id,
+    ).toBe('prestamo-desde-cuota');
     expect(result.approval.solicitante).toBe('Supervisor Operativo');
     expect(result.approval.rolSolicitante).toBe(RolUsuario.SUPERVISOR);
   });

@@ -1,7 +1,8 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
+import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
+import { mensajeDeError } from '../common/error.util';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { PushService } from '../push/push.service';
@@ -138,7 +139,7 @@ export interface ResultadoProcesarMora {
   procesadoEn: string;
 }
 
-type MoraDbClient = PrismaService | Prisma.TransactionClient;
+type MoraDbClient = PrismaService | TransaccionPrisma;
 
 @Injectable()
 export class MoraService implements OnModuleInit {
@@ -256,7 +257,7 @@ export class MoraService implements OnModuleInit {
           `${result.notificacionesEnviadas} notificaciones enviadas`,
       );
     } catch (err) {
-      this.logger.error(`❌ [MORA] Error al arranque: ${err.message}`);
+      this.logger.error(`❌ [MORA] Error al arranque: ${mensajeDeError(err)}`);
     }
   }
 
@@ -279,7 +280,9 @@ export class MoraService implements OnModuleInit {
           `${result.notificacionesEnviadas} notificaciones enviadas`,
       );
     } catch (err) {
-      this.logger.error(`[MORA] Error en la corrida diaria: ${err.message}`);
+      this.logger.error(
+        `[MORA] Error en la corrida diaria: ${mensajeDeError(err)}`,
+      );
     }
   }
 
@@ -327,8 +330,8 @@ export class MoraService implements OnModuleInit {
       resultado.cuotasVencidas = cuotasUpdate.count;
       this.logger.log(`[MORA] Paso 1: ${cuotasUpdate.count} cuotas → VENCIDA`);
     } catch (err) {
-      resultado.errores.push(`Paso 1: ${err.message}`);
-      this.logger.error('[MORA] Error en Paso 1:', err.message);
+      resultado.errores.push(`Paso 1: ${mensajeDeError(err)}`);
+      this.logger.error('[MORA] Error en Paso 1:', mensajeDeError(err));
     }
 
     // ─── PASO 2: Préstamos ACTIVOS con cuotas vencidas → EN_MORA ─────────────
@@ -356,7 +359,7 @@ export class MoraService implements OnModuleInit {
           resultado.prestamosEnMoraActualizados++;
         } catch (err) {
           resultado.errores.push(
-            `Préstamo ${prest.numeroPrestamo} → EN_MORA: ${err.message}`,
+            `Préstamo ${prest.numeroPrestamo} → EN_MORA: ${mensajeDeError(err)}`,
           );
         }
       }
@@ -364,8 +367,8 @@ export class MoraService implements OnModuleInit {
         `[MORA] Paso 2: ${resultado.prestamosEnMoraActualizados} préstamos → EN_MORA`,
       );
     } catch (err) {
-      resultado.errores.push(`Paso 2: ${err.message}`);
-      this.logger.error('[MORA] Error en Paso 2:', err.message);
+      resultado.errores.push(`Paso 2: ${mensajeDeError(err)}`);
+      this.logger.error('[MORA] Error en Paso 2:', mensajeDeError(err));
     }
 
     // ─── PASO 3: Préstamos EN_MORA sin cuotas VENCIDAS → ACTIVO ──────────────
@@ -389,7 +392,7 @@ export class MoraService implements OnModuleInit {
           resultado.prestamosActivosRecuperados++;
         } catch (err) {
           resultado.errores.push(
-            `Préstamo ${prest.numeroPrestamo} → ACTIVO: ${err.message}`,
+            `Préstamo ${prest.numeroPrestamo} → ACTIVO: ${mensajeDeError(err)}`,
           );
         }
       }
@@ -397,8 +400,8 @@ export class MoraService implements OnModuleInit {
         `[MORA] Paso 3: ${resultado.prestamosActivosRecuperados} préstamos recuperados → ACTIVO`,
       );
     } catch (err) {
-      resultado.errores.push(`Paso 3: ${err.message}`);
-      this.logger.error('[MORA] Error en Paso 3:', err.message);
+      resultado.errores.push(`Paso 3: ${mensajeDeError(err)}`);
+      this.logger.error('[MORA] Error en Paso 3:', mensajeDeError(err));
     }
 
     // ─── PASO 4: Actualizar nivelRiesgo + notificaciones ─────────────────────
@@ -566,7 +569,7 @@ export class MoraService implements OnModuleInit {
               resultado.notificacionesEnviadas++;
             } catch (err) {
               this.logger.warn(
-                `[MORA] Error notif interna cliente ${cliente.id}: ${err.message}`,
+                `[MORA] Error notif interna cliente ${cliente.id}: ${mensajeDeError(err)}`,
               );
             }
 
@@ -587,7 +590,7 @@ export class MoraService implements OnModuleInit {
                 resultado.notificacionesEnviadas++;
               } catch (err) {
                 this.logger.warn(
-                  `[MORA] Error notif cobrador ${cobrador.id}: ${err.message}`,
+                  `[MORA] Error notif cobrador ${cobrador.id}: ${mensajeDeError(err)}`,
                 );
               }
             }
@@ -613,7 +616,9 @@ export class MoraService implements OnModuleInit {
               });
               resultado.notificacionesEnviadas++;
             } catch (err) {
-              this.logger.warn(`[MORA] Error push admins: ${err.message}`);
+              this.logger.warn(
+                `[MORA] Error push admins: ${mensajeDeError(err)}`,
+              );
             }
 
             // 4. Push notification al cobrador asignado
@@ -635,7 +640,7 @@ export class MoraService implements OnModuleInit {
                 resultado.notificacionesEnviadas++;
               } catch (err) {
                 this.logger.warn(
-                  `[MORA] Error push cobrador ${cobrador.id}: ${err.message}`,
+                  `[MORA] Error push cobrador ${cobrador.id}: ${mensajeDeError(err)}`,
                 );
               }
             }
@@ -646,7 +651,9 @@ export class MoraService implements OnModuleInit {
             );
           }
         } catch (err) {
-          resultado.errores.push(`Cliente ${cliente.id}: ${err.message}`);
+          resultado.errores.push(
+            `Cliente ${cliente.id}: ${mensajeDeError(err)}`,
+          );
         }
       }
 
@@ -689,8 +696,8 @@ export class MoraService implements OnModuleInit {
           `${resultado.notificacionesEnviadas} notificaciones enviadas`,
       );
     } catch (err) {
-      resultado.errores.push(`Paso 4: ${err.message}`);
-      this.logger.error('[MORA] Error en Paso 4:', err.message);
+      resultado.errores.push(`Paso 4: ${mensajeDeError(err)}`);
+      this.logger.error('[MORA] Error en Paso 4:', mensajeDeError(err));
     }
 
     // ─── PASO 5: Broadcast WebSocket ─────────────────────────────────────────
@@ -702,7 +709,7 @@ export class MoraService implements OnModuleInit {
         origen: 'MORA',
       });
     } catch (err) {
-      this.logger.warn('[MORA] Error broadcast WS:', err.message);
+      this.logger.warn('[MORA] Error broadcast WS:', mensajeDeError(err));
     }
 
     return resultado;

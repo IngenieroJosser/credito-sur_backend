@@ -218,7 +218,7 @@ describe('AuthService', () => {
         service.login({
           identificador: 'usuario.inexistente',
           contrasena: 'correcta',
-        } as any),
+        }),
       ).rejects.toThrow(UnauthorizedException);
     });
   });

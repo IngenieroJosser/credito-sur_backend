@@ -8,6 +8,11 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  codigoDeError,
+  mensajeDeError,
+  pilaDeError,
+} from '../common/error.util';
+import {
   EstadoCuota,
   EstadoPrestamo,
   EstadoAprobacion,
@@ -163,9 +168,9 @@ export class AccountingService {
         },
         include: incluir,
       });
-    } catch (error: any) {
+    } catch (error) {
       // Otra petición la creó entre la búsqueda y el create.
-      if (error?.code !== 'P2002') throw error;
+      if (codigoDeError(error) !== 'P2002') throw error;
 
       const ganadora = await buscarYReactivar();
       if (!ganadora) throw error;
@@ -398,7 +403,9 @@ export class AccountingService {
         }
       }
     } catch (err) {
-      this.logger.error(`Error al verificar cajas por defecto: ${err.message}`);
+      this.logger.error(
+        `Error al verificar cajas por defecto: ${mensajeDeError(err)}`,
+      );
     }
   }
 
@@ -1236,7 +1243,10 @@ export class AccountingService {
         return nuevaCaja;
       });
     } catch (error) {
-      this.logger.error(`Error creando caja: ${error.message}`, error.stack);
+      this.logger.error(
+        `Error creando caja: ${mensajeDeError(error)}`,
+        pilaDeError(error),
+      );
       if (
         error instanceof BadRequestException ||
         error instanceof ForbiddenException ||
@@ -1245,14 +1255,17 @@ export class AccountingService {
         throw error;
       }
       // Si es un error de base de datos específico (ej: input syntax for uuid), devolvemos BadRequest
-      if (error.code === 'P2023' || error.message.includes('uuid')) {
+      if (
+        codigoDeError(error) === 'P2023' ||
+        (error instanceof Error && error.message.includes('uuid'))
+      ) {
         throw new BadRequestException(
           'Formato de ID inválido (UUID requerido). Verifique responsableId o rutaId.',
         );
       }
 
       throw new BadRequestException(
-        `No se pudo crear la caja: ${error.message || 'Error desconocido'}`,
+        `No se pudo crear la caja: ${mensajeDeError(error)}`,
       );
     }
   }
@@ -1276,7 +1289,9 @@ export class AccountingService {
     }
 
     // Las cajas por defecto NO pueden desactivarse ni renombrarse, solo cambiar responsable
-    if (AccountingService.CODIGOS_DEFAULT.includes(caja.codigo)) {
+    if (
+      AccountingService.CODIGOS_DEFAULT.some((codigo) => codigo === caja.codigo)
+    ) {
       if (data.activa === false) {
         throw new ForbiddenException(
           `La caja "${caja.nombre}" es una caja del sistema y no puede desactivarse.`,
@@ -1306,7 +1321,9 @@ export class AccountingService {
     const caja = await this.prisma.caja.findUnique({ where: { id } });
     if (!caja) throw new NotFoundException('Caja no encontrada');
 
-    if (AccountingService.CODIGOS_DEFAULT.includes(caja.codigo)) {
+    if (
+      AccountingService.CODIGOS_DEFAULT.some((codigo) => codigo === caja.codigo)
+    ) {
       throw new ForbiddenException(
         `La caja "${caja.nombre}" es una caja del sistema y no puede eliminarse. Solo puede reasignarse su responsable.`,
       );
@@ -1683,8 +1700,8 @@ export class AccountingService {
       };
     } catch (error) {
       this.logger.error(
-        `Error fetching transacciones: ${error.message}`,
-        error.stack,
+        `Error fetching transacciones: ${mensajeDeError(error)}`,
+        pilaDeError(error),
       );
       throw error;
     }
@@ -1713,8 +1730,8 @@ export class AccountingService {
       return this.mapTransaccionRow(t);
     } catch (error) {
       this.logger.error(
-        `Error fetching transaccion by id: ${error.message}`,
-        error.stack,
+        `Error fetching transaccion by id: ${mensajeDeError(error)}`,
+        pilaDeError(error),
       );
       throw error;
     }
@@ -2792,7 +2809,10 @@ export class AccountingService {
       .then((pagos) => pagos.map((p) => p.id));
 
     // Helper for non-regularized cobranza
-    const ledgerCobranzaNoRegularizadaWhere = (start: Date, end: Date) => ({
+    const ledgerCobranzaNoRegularizadaWhere = (
+      start: Date,
+      end: Date,
+    ): Prisma.JournalLineWhereInput => ({
       OR: [
         { accountCode: { startsWith: '1.1' } },
         { accountCode: { startsWith: '1.2' } },
@@ -2812,18 +2832,24 @@ export class AccountingService {
       },
     });
 
+    // El retorno se anota a proposito: sin la anotacion el literal se infiere
+    // solo (`in: string[]`, por ejemplo) y Prisma no comprueba que los valores
+    // existan en el enum ni que los campos sean del modelo.
     const ledgerPeriodWhere = (
       start: Date,
       end: Date,
       accountPrefix: string,
-    ) => ({
+    ): Prisma.JournalLineWhereInput => ({
       accountCode: { startsWith: accountPrefix },
       journalEntry: {
         isOpening: false,
         createdAt: { gte: start, lte: end },
       },
     });
-    const ledgerIncomeOperativoWhere = (start: Date, end: Date) => ({
+    const ledgerIncomeOperativoWhere = (
+      start: Date,
+      end: Date,
+    ): Prisma.JournalLineWhereInput => ({
       accountCode: { startsWith: '3.' },
       NOT: [
         { accountCode: { startsWith: '3.3' } },
@@ -2834,7 +2860,10 @@ export class AccountingService {
         createdAt: { gte: start, lte: end },
       },
     });
-    const ledgerCashIncomeWhere = (start: Date, end: Date) => ({
+    const ledgerCashIncomeWhere = (
+      start: Date,
+      end: Date,
+    ): Prisma.JournalLineWhereInput => ({
       OR: [
         { accountCode: { startsWith: '1.1' } },
         { accountCode: { startsWith: '1.2' } },
@@ -2846,7 +2875,10 @@ export class AccountingService {
         createdAt: { gte: start, lte: end },
       },
     });
-    const cuotaInicialIngresoWhere = (start: Date, end: Date) => ({
+    const cuotaInicialIngresoWhere = (
+      start: Date,
+      end: Date,
+    ): Prisma.TransaccionWhereInput => ({
       fechaTransaccion: { gte: start, lte: end },
       tipo: TipoTransaccion.INGRESO,
       tipoReferencia: { in: ['CUOTA_INICIAL', 'RESTAURACION_CUOTA_INICIAL'] },
@@ -3582,7 +3614,7 @@ export class AccountingService {
     }
     // Filtro opcional: solo cajas de rutas (cobradores)
     if (filtros?.soloRutas) {
-      mapped = mapped.filter((m: any) => m.cajaTipo === 'RUTA');
+      mapped = mapped.filter((m) => m.cajaTipo === 'RUTA');
     }
     return mapped;
   }
@@ -3906,12 +3938,22 @@ export class AccountingService {
     ]);
 
     const usuariosMap = new Map(
-      usuarios.map((u: any) => [u.id, `${u.nombres} ${u.apellidos}`]),
+      usuarios.map((u): [string, string] => [
+        u.id,
+        `${u.nombres} ${u.apellidos}`,
+      ]),
     );
     const cajasMap = new Map<
       string,
       { id: string; nombre: string; tipo: TipoCaja }
-    >(cajasMovimientos.map((c: any) => [c.id, c]));
+    >(
+      cajasMovimientos.map(
+        (c): [string, { id: string; nombre: string; tipo: TipoCaja }] => [
+          c.id,
+          c,
+        ],
+      ),
+    );
 
     const fecha = getBogotaDayKey(new Date());
 
@@ -4348,7 +4390,8 @@ export class AccountingService {
         monto: Math.abs(delta),
         fecha: trx.fechaTransaccion,
         cajaId: trx.cajaId || '',
-        referenciaId: trx.referenciaId,
+        // La columna es nullable y el campo del tipo es opcional.
+        referenciaId: trx.referenciaId ?? undefined,
         descripcion: trx.descripcion || '',
       });
       eventosMap.set(cobradorId, arr);
@@ -4512,10 +4555,10 @@ export class AccountingService {
 
         return transaccion;
       });
-    } catch (error: any) {
+    } catch (error) {
       // Carrera de idempotencia: otro reintento idéntico ganó. La restricción
       // única del idempotencyKey hizo rollback de todo; devolvemos el existente.
-      if (error?.code === 'P2002' && idempotencyKey) {
+      if (codigoDeError(error) === 'P2002' && idempotencyKey) {
         const existente = await this.prisma.transaccion.findUnique({
           where: { idempotencyKey },
         });
@@ -5180,7 +5223,15 @@ export class AccountingService {
         );
       }
 
-      const lines = [
+      // La forma se anota en el array y no en `lines`: las lineas no traen todas
+      // las dos columnas de importe, y el `filter` de abajo las lee las dos.
+      const lineasAsiento: Array<{
+        accountCode: string;
+        debitAmount?: number;
+        creditAmount?: number;
+        cajaId?: string;
+        cajaDelta?: number;
+      }> = [
         ...lineasCajas,
         lineaCartera,
         lineaDeuda,
@@ -5188,7 +5239,11 @@ export class AccountingService {
           accountCode: '2.1', // Capital Social / Patrimonio
           creditAmount: totalDebitos,
         },
-      ].filter((l) => (l.debitAmount || 0) > 0 || (l.creditAmount || 0) > 0);
+      ];
+
+      const lines = lineasAsiento.filter(
+        (l) => (l.debitAmount || 0) > 0 || (l.creditAmount || 0) > 0,
+      );
 
       // 5. Registrar Asiento
       return this.ledgerService.registrarAsiento(

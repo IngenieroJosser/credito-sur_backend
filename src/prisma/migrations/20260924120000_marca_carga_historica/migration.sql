@@ -1,0 +1,19 @@
+-- Marca de carga historica en el credito.
+--
+-- Un credito importado con tipo_carga = HISTORICA es cartera que ya se venia
+-- cobrando ANTES de que existiera el sistema. Al importarlo, sus cuotas ya
+-- abonadas quedan en PAGADA o PARCIAL, pero deliberadamente NO se crean pagos,
+-- ni recibos, ni movimientos de caja, ni asientos contables: ese dinero se
+-- recibio antes, y registrarlo hoy descuadraria la contabilidad y ensuciaria el
+-- recaudo de dias pasados.
+--
+-- El problema es que, hecho eso, el credito queda INDISTINGUIBLE de uno nacido
+-- en el sistema. Quien vea cuotas en PAGADA sin un solo recibo detras va a
+-- pensar que se perdieron datos, o que alguien borro pagos.
+--
+-- Esta columna es lo que lo explica. Guarda CUANDO se importo, no solo que se
+-- importo: asi tambien sirve de rastro de la migracion.
+--
+-- NULL = credito nacido en el sistema. Los que ya existen quedan en NULL, que
+-- es lo correcto: ninguno de ellos vino de una carga historica.
+ALTER TABLE "Prestamo" ADD COLUMN "cargaHistoricaEn" TIMESTAMP(3);

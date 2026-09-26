@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { Prisma } from '@prisma/client';
 import { differenceInDays } from 'date-fns';
 import {
   EstadoAprobacion,
@@ -834,7 +835,13 @@ export class DashboardService {
     return [];
   }
 
-  private async getLedgerCobranzaWhere(startDate: Date, endDate: Date) {
+  // El retorno se anota a proposito: sin la anotacion el literal se infiere
+  // solo y Prisma no comprueba los campos ni los valores de enum, y encima el
+  // resultado del aggregate que lo usa se degradaba a `{}`.
+  private async getLedgerCobranzaWhere(
+    startDate: Date,
+    endDate: Date,
+  ): Promise<Prisma.JournalLineWhereInput> {
     // Primero, los ids de todos los pagos regularizados
     const regularizedPagoIds = await this.prisma.pago
       .findMany({

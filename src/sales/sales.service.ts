@@ -6,7 +6,8 @@ import {
 import { randomUUID } from 'crypto';
 import { Prisma, MetodoPago, TipoTransaccion } from '@prisma/client';
 import { LedgerService } from '../accounting/ledger.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
+import { codigoDeError } from '../common/error.util';
 import { CreateCashSaleDto } from './dto/create-cash-sale.dto';
 
 /**
@@ -56,7 +57,7 @@ export class SalesService {
   }
 
   private async resolveCajaVenta(
-    tx: Prisma.TransactionClient,
+    tx: TransaccionPrisma,
     metodoPago: MetodoPago,
   ) {
     const metodo = String(metodoPago || '').toUpperCase();
@@ -232,10 +233,10 @@ export class SalesService {
           journalEntry,
         };
       });
-    } catch (error: any) {
+    } catch (error) {
       // Carrera de idempotencia: otro reintento idéntico ganó la creación.
       // Devolvemos la venta ya registrada en vez de duplicar o fallar.
-      if (error?.code === 'P2002' && dto.idempotencyKey) {
+      if (codigoDeError(error) === 'P2002' && dto.idempotencyKey) {
         const existente = await this.prisma.transaccion.findUnique({
           where: { idempotencyKey: dto.idempotencyKey },
           select: {

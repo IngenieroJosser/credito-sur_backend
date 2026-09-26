@@ -250,8 +250,8 @@ describe('Plantilla de inventario', () => {
     expect(resultado.articulos?.[0]).toEqual(
       expect.objectContaining({ codigo: 'NEV-200', precioContado: 1050000 }),
     );
-    expect(resultado.precios?.map((p: any) => p.meses)).toEqual([0, 1, 3, 6]);
-    expect(resultado.precios?.map((p: any) => p.utilidad)).toEqual([
+    expect(resultado.precios?.map((p) => p.meses)).toEqual([0, 1, 3, 6]);
+    expect(resultado.precios?.map((p) => p.utilidad)).toEqual([
       150000, 250000, 390000, 550000,
     ]);
   });

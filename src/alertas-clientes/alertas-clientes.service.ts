@@ -227,7 +227,7 @@ export class AlertasClientesService {
   }
 
   private async getClienteParaSnapshot(clienteId: string) {
-    const cliente = await (this.prisma as any).cliente.findUnique({
+    const cliente = await this.prisma.cliente.findUnique({
       where: { id: clienteId },
       include: {
         asignacionesRuta: {
@@ -292,9 +292,7 @@ export class AlertasClientesService {
     this.validateText(dto.descripcion, 'descripcion');
     this.validateText(dto.observacionesReportante, 'observacionesReportante');
 
-    const alertaActivaExistente = await (
-      this.prisma as any
-    ).alertaCliente.findFirst({
+    const alertaActivaExistente = await this.prisma.alertaCliente.findFirst({
       where: {
         clienteId: dto.clienteId,
         estado: 'ACTIVA',
@@ -321,10 +319,10 @@ export class AlertasClientesService {
         ? dto.evidenciaIds
         : Array.isArray(snapshotCliente.evidencias)
           ? snapshotCliente.evidencias
-              .map((evidencia: any) => evidencia.id)
+              .map((evidencia) => evidencia.id)
               .filter(Boolean)
           : [];
-    const usuariosNotificar = await (this.prisma as any).usuario.findMany({
+    const usuariosNotificar = await this.prisma.usuario.findMany({
       where: {
         rol: { in: ROLES_NOTIFICADOS },
         estado: 'ACTIVO',
@@ -338,7 +336,7 @@ export class AlertasClientesService {
       ? `${asignacion.ruta.cobrador.nombres || ''} ${asignacion.ruta.cobrador.apellidos || ''}`.trim()
       : null;
 
-    const alerta = await (this.prisma as any).$transaction(async (tx: any) => {
+    const alerta = await this.prisma.$transaction(async (tx: any) => {
       const creada = await tx.alertaCliente.create({
         data: {
           clienteId: dto.clienteId,
@@ -445,7 +443,7 @@ export class AlertasClientesService {
       ];
     }
 
-    return (this.prisma as any).alertaCliente.findMany({
+    return this.prisma.alertaCliente.findMany({
       where,
       orderBy: { creadoEn: 'desc' },
       include: {
@@ -463,7 +461,7 @@ export class AlertasClientesService {
   }
 
   async obtenerDetalleAlerta(id: string) {
-    const alerta = await (this.prisma as any).alertaCliente.findUnique({
+    const alerta = await this.prisma.alertaCliente.findUnique({
       where: { id },
       include: {
         cliente: {
@@ -514,7 +512,7 @@ export class AlertasClientesService {
     this.assertPuedeEmitir(actor);
     this.validateText(dto.motivoResolucion, 'motivoResolucion');
 
-    const alerta = await (this.prisma as any).alertaCliente.findUnique({
+    const alerta = await this.prisma.alertaCliente.findUnique({
       where: { id },
     });
     if (!alerta) throw new NotFoundException('Alerta no encontrada');
@@ -522,17 +520,16 @@ export class AlertasClientesService {
       throw new BadRequestException('La alerta ya fue resuelta.');
     }
 
-    const actualizada = await (this.prisma as any).$transaction(
-      async (tx: any) =>
-        tx.alertaCliente.update({
-          where: { id },
-          data: {
-            estado: 'RESUELTA',
-            resueltoPorId: actor.id,
-            resueltoEn: new Date(),
-            motivoResolucion: dto.motivoResolucion.trim(),
-          },
-        }),
+    const actualizada = await this.prisma.$transaction(async (tx: any) =>
+      tx.alertaCliente.update({
+        where: { id },
+        data: {
+          estado: 'RESUELTA',
+          resueltoPorId: actor.id,
+          resueltoEn: new Date(),
+          motivoResolucion: dto.motivoResolucion.trim(),
+        },
+      }),
     );
 
     this.emitirCambios(id, alerta.clienteId);

@@ -240,7 +240,7 @@ export class ClientsService {
       }
 
       // Crear nuevos archivos
-      const nuevosArchivos = archivos.map((archivo: any) => {
+      const nuevosArchivos = archivos.map((archivo) => {
         // Asegurar que la URL sea correcta
         const url = archivo.url || archivo.path || archivo.ruta;
         const urlFinal =
@@ -269,8 +269,11 @@ export class ClientsService {
           nombreOriginal: archivo.nombreOriginal,
           nombreAlmacenamiento:
             archivo.nombreAlmacenamiento || archivo.nombreOriginal,
-          ruta: archivo.ruta || archivo.path,
-          url: urlFinal || urlDerivada,
+          // Prisma exige texto: si las dos fuentes venian vacias se mandaba
+          // undefined y la insercion fallaba. Los otros dos sitios que crean
+          // multimedia ya ponian '' por defecto.
+          ruta: archivo.ruta || archivo.path || '',
+          url: urlFinal || urlDerivada || '',
           tamanoBytes: archivo.tamanoBytes || 0,
           subidoPorId: archivo.subidoPorId || clienteActualizado.creadoPorId,
           estado: 'ACTIVO' as const,
@@ -436,31 +439,31 @@ export class ClientsService {
           {
             dni: {
               contains: searchTerm,
-              mode: 'insensitive' as any,
+              mode: 'insensitive',
             },
           },
           {
             nombres: {
               contains: searchTerm,
-              mode: 'insensitive' as any,
+              mode: 'insensitive',
             },
           },
           {
             apellidos: {
               contains: searchTerm,
-              mode: 'insensitive' as any,
+              mode: 'insensitive',
             },
           },
           {
             telefono: {
               contains: searchTerm,
-              mode: 'insensitive' as any,
+              mode: 'insensitive',
             },
           },
           {
             codigo: {
               contains: searchTerm,
-              mode: 'insensitive' as any,
+              mode: 'insensitive',
             },
           },
         ];
@@ -704,10 +707,27 @@ export class ClientsService {
       const todosLosClientes = [
         ...aprobacionesTransformadas,
         ...clientesTransformados,
-      ].sort((a: any, b: any) => {
-        const dateA = new Date(a.creadoEn || 0).getTime();
-        const dateB = new Date(b.creadoEn || 0).getTime();
-        return dateB - dateA;
+      ].sort((a, b) => {
+        // Se lee por una funcion con el campo opcional en vez de `a.creadoEn`
+        // suelto: las dos listas que se combinan no tienen exactamente la misma
+        // forma, y antes esto compilaba porque venian del cliente de Prisma
+        // tipado como `any`. El `|| 0` se mantiene: una fecha ausente o vacia
+        // queda al final, como hasta ahora.
+        // El parametro va como `unknown` y el campo se comprueba con `in`: las
+        // tres formas que se combinan aqui no coinciden, y pedir un parametro con
+        // `creadoEn` no valia para todas.
+        const fecha = (registro: unknown) => {
+          const valor =
+            registro && typeof registro === 'object' && 'creadoEn' in registro
+              ? registro.creadoEn
+              : undefined;
+          if (valor instanceof Date) return valor.getTime();
+          if (typeof valor === 'string' || typeof valor === 'number') {
+            return new Date(valor).getTime();
+          }
+          return 0; // `new Date(0).getTime()` es 0: lo mismo que `|| 0`.
+        };
+        return fecha(b) - fecha(a);
       });
 
       return {
@@ -971,13 +991,14 @@ export class ClientsService {
             });
 
             await this.prisma.multimedia.createMany({
-              data: data.archivos.map((archivo: any) => ({
+              data: data.archivos.map((archivo) => ({
                 clienteId: clienteRestaurado.id,
                 tipoContenido: archivo.tipoContenido,
                 tipoArchivo: archivo.tipoArchivo,
                 formato: archivo.nombreOriginal?.split('.').pop() || 'bin',
                 nombreOriginal: archivo.nombreOriginal,
-                nombreAlmacenamiento: archivo.nombreAlmacenamiento,
+                nombreAlmacenamiento:
+                  archivo.nombreAlmacenamiento || archivo.nombreOriginal,
                 ruta: archivo.ruta || archivo.path || '',
                 url:
                   archivo.url ||
@@ -1026,7 +1047,7 @@ export class ClientsService {
             try {
               await this.notificacionesService.notifyApprovers({
                 titulo: 'Nuevo cliente requiere aprobación',
-                mensaje: `Se reenvi f3 la solicitud del cliente (${data.nombres} ${data.apellidos}). Requiere revisi f3n.`,
+                mensaje: `Se reenvió la solicitud del cliente (${data.nombres} ${data.apellidos}). Requiere revisión.`,
                 tipo: 'CLIENTE',
                 entidad: 'Aprobacion',
                 entidadId: aprobacion.id,
@@ -1046,10 +1067,10 @@ export class ClientsService {
 
             try {
               await this.notificacionesService.create({
-                usuarioId: solicitadoPorId as string,
+                usuarioId: solicitadoPorId,
                 titulo: 'Solicitud reenviada',
                 mensaje:
-                  'Tu solicitud fue reenviada con  e9xito y qued f3 pendiente de aprobaci f3n.',
+                  'Tu solicitud fue reenviada con éxito y quedó pendiente de aprobación.',
                 tipo: 'INFORMATIVO',
                 entidad: 'Aprobacion',
                 entidadId: aprobacion.id,
@@ -1071,8 +1092,8 @@ export class ClientsService {
 
           return {
             mensaje: autoAprobar
-              ? 'Cliente restaurado y aprobado autom e1ticamente.'
-              : 'Cliente restaurado y solicitud reenviada. Pendiente de aprobaci f3n.',
+              ? 'Cliente restaurado y aprobado automáticamente.'
+              : 'Cliente restaurado y solicitud reenviada. Pendiente de aprobación.',
             aprobacionId: aprobacion.id,
             clienteId: clienteRestaurado.id,
             clienteCodigo: clienteRestaurado.codigo,
@@ -1145,13 +1166,14 @@ export class ClientsService {
         data.archivos.length > 0
       ) {
         await this.prisma.multimedia.createMany({
-          data: data.archivos.map((archivo: any) => ({
+          data: data.archivos.map((archivo) => ({
             clienteId: cliente.id,
             tipoContenido: archivo.tipoContenido,
             tipoArchivo: archivo.tipoArchivo,
             formato: archivo.nombreOriginal?.split('.').pop() || 'bin',
             nombreOriginal: archivo.nombreOriginal,
-            nombreAlmacenamiento: archivo.nombreAlmacenamiento,
+            nombreAlmacenamiento:
+              archivo.nombreAlmacenamiento || archivo.nombreOriginal,
             ruta: archivo.ruta || archivo.path || '',
             url:
               archivo.url ||
@@ -1235,15 +1257,12 @@ export class ClientsService {
         } catch (error) {
           // No se corta la operacion principal por esto, pero se deja
           // registrado: en silencio nadie se entera de que fallo.
-          this.logger.warn(
-            'No se pudo notificar el cliente nuevo',
-            error as any,
-          );
+          this.logger.warn('No se pudo notificar el cliente nuevo', error);
         }
 
         try {
           await this.notificacionesService.create({
-            usuarioId: solicitadoPorId as string,
+            usuarioId: solicitadoPorId,
             titulo: 'Solicitud enviada',
             mensaje:
               'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
@@ -1260,7 +1279,7 @@ export class ClientsService {
           // registrado: en silencio nadie se entera de que fallo.
           this.logger.warn(
             'No se pudo notificar la aprobacion del cliente',
-            error as any,
+            error,
           );
         }
       }
@@ -1583,7 +1602,7 @@ export class ClientsService {
         // 2. Crear los archivos nuevos
         if (archivos.length > 0) {
           await this.prisma.multimedia.createMany({
-            data: archivos.map((archivo: any) => ({
+            data: archivos.map((archivo) => ({
               clienteId: id,
               tipoContenido: archivo.tipoContenido,
               tipoArchivo: archivo.tipoArchivo || 'image/jpeg',
@@ -1702,98 +1721,6 @@ export class ClientsService {
     }
   }
 
-  async assignToRoute(
-    clienteId: string,
-    rutaId: string,
-    cobradorId: string,
-    diaSemana?: number,
-  ) {
-    try {
-      const ruta = await this.prisma.ruta.findUnique({
-        where: { id: rutaId },
-        select: { id: true, cobradorId: true },
-      });
-
-      if (!ruta?.id) {
-        throw new NotFoundException('Ruta no encontrada');
-      }
-
-      const assignmentCobradorId = ruta.cobradorId || cobradorId;
-
-      return await this.prisma.$transaction(async (tx) => {
-        const asignacionDestino = await tx.asignacionRuta.findFirst({
-          where: { clienteId, rutaId, activa: true },
-        });
-
-        if (asignacionDestino) {
-          await tx.asignacionRuta.updateMany({
-            where: {
-              clienteId,
-              activa: true,
-              id: { not: asignacionDestino.id },
-            },
-            data: { activa: false },
-          });
-
-          const asignacion = await tx.asignacionRuta.update({
-            where: { id: asignacionDestino.id },
-            data: {
-              cobradorId: assignmentCobradorId,
-              diaSemana,
-              activa: true,
-            },
-          });
-
-          await tx.prestamo.updateMany({
-            where: {
-              clienteId,
-              estado: { in: ['ACTIVO', 'EN_MORA'] },
-              eliminadoEn: null,
-            },
-            data: { cobradorId: assignmentCobradorId },
-          });
-
-          return asignacion;
-        }
-
-        await tx.asignacionRuta.updateMany({
-          where: { clienteId, activa: true },
-          data: { activa: false },
-        });
-
-        const maxOrden = await tx.asignacionRuta.aggregate({
-          where: { rutaId, activa: true },
-          _max: { ordenVisita: true },
-        });
-
-        const asignacion = await tx.asignacionRuta.create({
-          data: {
-            rutaId,
-            clienteId,
-            cobradorId: assignmentCobradorId,
-            diaSemana,
-            ordenVisita: (maxOrden._max.ordenVisita || 0) + 1,
-            activa: true,
-          },
-        });
-
-        await tx.prestamo.updateMany({
-          where: {
-            clienteId,
-            estado: { in: ['ACTIVO', 'EN_MORA'] },
-            eliminadoEn: null,
-          },
-          data: { cobradorId: assignmentCobradorId },
-        });
-
-        return asignacion;
-      });
-    } catch (error) {
-      this.logger.error(`Error assigning client ${clienteId} to route:`, error);
-      throw error;
-    }
-  }
-
   /**
    * Exportar listado de clientes en Excel o PDF.
    * Reutiliza la misma consulta de getAllClients pero sin transformaciones de score.
@@ -1813,11 +1740,11 @@ export class ClientsService {
     if (filtros?.search?.trim()) {
       const s = filtros.search.trim();
       where.OR = [
-        { nombres: { contains: s, mode: 'insensitive' as any } },
-        { apellidos: { contains: s, mode: 'insensitive' as any } },
-        { dni: { contains: s, mode: 'insensitive' as any } },
-        { telefono: { contains: s, mode: 'insensitive' as any } },
-        { codigo: { contains: s, mode: 'insensitive' as any } },
+        { nombres: { contains: s, mode: 'insensitive' } },
+        { apellidos: { contains: s, mode: 'insensitive' } },
+        { dni: { contains: s, mode: 'insensitive' } },
+        { telefono: { contains: s, mode: 'insensitive' } },
+        { codigo: { contains: s, mode: 'insensitive' } },
       ];
     }
 

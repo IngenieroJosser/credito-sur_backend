@@ -87,9 +87,15 @@ export async function generarExcelFinanciero(
 
   const h1 = ws1.getRow(4);
   ws1.autoFilter = { from: 'A4', to: 'C4' };
-  ws1.columns.forEach((col: any, i: number) => {
+  ws1.columns.forEach((col, i: number) => {
     const cell = h1.getCell(i + 1);
-    cell.value = col.header;
+    // `header` en ExcelJS es `string | string[]`: admite encabezados de
+    // varias filas. Aqui siempre son cadenas, pero se trata el array de
+    // forma explicita para no escribir "[object Object]" el dia que alguien
+    // use esa forma. Antes el callback iba con `col: any` y no se veia.
+    cell.value = Array.isArray(col.header)
+      ? col.header.join(' ')
+      : (col.header ?? '');
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     cell.fill = {
       type: 'pattern',
@@ -177,9 +183,15 @@ export async function generarExcelFinanciero(
 
   const h2 = ws2.getRow(3);
   ws2.autoFilter = { from: 'A3', to: 'D3' };
-  ws2.columns.forEach((col: any, i: number) => {
+  ws2.columns.forEach((col, i: number) => {
     const cell = h2.getCell(i + 1);
-    cell.value = col.header;
+    // `header` en ExcelJS es `string | string[]`: admite encabezados de
+    // varias filas. Aqui siempre son cadenas, pero se trata el array de
+    // forma explicita para no escribir "[object Object]" el dia que alguien
+    // use esa forma. Antes el callback iba con `col: any` y no se veia.
+    cell.value = Array.isArray(col.header)
+      ? col.header.join(' ')
+      : (col.header ?? '');
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     cell.fill = {
       type: 'pattern',
@@ -207,7 +219,7 @@ export async function generarExcelFinanciero(
       });
     }
     ['ingresos', 'egresos', 'utilidad'].forEach((key) => {
-      const colIdx = ws2.columns.findIndex((c: any) => c.key === key) + 1;
+      const colIdx = ws2.columns.findIndex((c) => c.key === key) + 1;
       if (colIdx > 0) row.getCell(colIdx).numFmt = '#,##0';
     });
   });
@@ -238,9 +250,15 @@ export async function generarExcelFinanciero(
 
   const h3 = ws3.getRow(3);
   ws3.autoFilter = { from: 'A3', to: 'C3' };
-  ws3.columns.forEach((col: any, i: number) => {
+  ws3.columns.forEach((col, i: number) => {
     const cell = h3.getCell(i + 1);
-    cell.value = col.header;
+    // `header` en ExcelJS es `string | string[]`: admite encabezados de
+    // varias filas. Aqui siempre son cadenas, pero se trata el array de
+    // forma explicita para no escribir "[object Object]" el dia que alguien
+    // use esa forma. Antes el callback iba con `col: any` y no se veia.
+    cell.value = Array.isArray(col.header)
+      ? col.header.join(' ')
+      : (col.header ?? '');
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     cell.fill = {
       type: 'pattern',

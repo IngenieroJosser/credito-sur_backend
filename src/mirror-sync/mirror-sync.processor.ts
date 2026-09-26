@@ -3,6 +3,7 @@ import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac, randomUUID } from 'crypto';
+import { mensajeDeError } from '../common/error.util';
 
 @Processor('mirror-sync-queue', {
   // Reduce polling agresivo cuando la cola está vacía (Upstash rate-limit).
@@ -75,12 +76,14 @@ export class MirrorSyncProcessor extends WorkerHost {
       this.logger.log(
         `Sincronización ultra-rápida exitosa contra el espejo: Modelo ${model}`,
       );
-    } catch (error: any) {
+    } catch (error) {
       this.logger.warn(
-        `Desconexión o fallo al insertar en el VPS para modelo ${model}: ${error.message} - El sistema reintentará con Backoff Exponencial en background.`,
+        `Desconexión o fallo al insertar en el VPS para modelo ${model}: ${mensajeDeError(error)} - El sistema reintentará con Backoff Exponencial en background.`,
       );
       // Relanza la excepción: Causa que BullMQ capture la falla, marque el Job rojo, y programe el retry automático en horas según la ecuación de tiempo.
-      throw new Error(`Fallo transmisión Mirror Sync: ${error.message}`);
+      throw new Error(
+        `Fallo transmisión Mirror Sync: ${mensajeDeError(error)}`,
+      );
     }
   }
 }

@@ -60,9 +60,7 @@ describe('SalesService venta contado', () => {
       pago: {
         create: jest.fn(),
       },
-      $transaction: jest
-        .fn()
-        .mockImplementation((callback: any) => callback(tx)),
+      $transaction: jest.fn().mockImplementation((callback) => callback(tx)),
     };
     const ledger = {
       registrarVentaArticulo: jest.fn().mockResolvedValue({
@@ -222,9 +220,7 @@ describe('SalesService venta contado', () => {
       pago: {
         create: jest.fn(),
       },
-      $transaction: jest
-        .fn()
-        .mockImplementation((callback: any) => callback(tx)),
+      $transaction: jest.fn().mockImplementation((callback) => callback(tx)),
     };
 
     const ledger = {
@@ -241,7 +237,7 @@ describe('SalesService venta contado', () => {
       creadoPorId: 'vendedor-1',
       metodoPago: 'TRANSFERENCIA',
       notas: 'Transferencia Bancolombia',
-    } as any);
+    });
 
     expect(tx.caja.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -313,9 +309,7 @@ describe('SalesService venta contado', () => {
           stock: 3,
         }),
       },
-      $transaction: jest
-        .fn()
-        .mockImplementation((callback: any) => callback(tx)),
+      $transaction: jest.fn().mockImplementation((callback) => callback(tx)),
     };
 
     await expect(
@@ -326,7 +320,7 @@ describe('SalesService venta contado', () => {
         cajaId: 'caja-pv-1',
         creadoPorId: 'vendedor-1',
         metodoPago: 'TRANSFERENCIA',
-      } as any),
+      }),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
@@ -359,7 +353,7 @@ describe('SalesService venta contado', () => {
       creadoPorId: 'vendedor-1',
       metodoPago: 'EFECTIVO',
       idempotencyKey: 'venta-abc-123',
-    } as any);
+    });
 
     // No se ejecuta la transacción (no se descuenta stock ni se duplica dinero)
     expect(prisma.$transaction).not.toHaveBeenCalled();
@@ -393,9 +387,7 @@ describe('SalesService venta contado', () => {
           stock: 3,
         }),
       },
-      $transaction: jest
-        .fn()
-        .mockImplementation((callback: any) => callback(tx)),
+      $transaction: jest.fn().mockImplementation((callback) => callback(tx)),
     };
 
     await expect(
@@ -406,7 +398,7 @@ describe('SalesService venta contado', () => {
         cajaId: '',
         creadoPorId: 'vendedor-1',
         metodoPago: 'EFECTIVO',
-      } as any),
+      }),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 });

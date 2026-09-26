@@ -294,10 +294,9 @@ export class CajasService {
       });
       if (
         !jornada ||
-        ![
-          RutaJornadaEstado.ABIERTA,
-          RutaJornadaEstado.PENDIENTE_CIERRE,
-        ].includes(jornada.estado)
+        ![RutaJornadaEstado.ABIERTA, RutaJornadaEstado.PENDIENTE_CIERRE].some(
+          (estado) => estado === jornada.estado,
+        )
       ) {
         throw new BadRequestException(
           'La jornada no está abierta o pendiente de cierre',

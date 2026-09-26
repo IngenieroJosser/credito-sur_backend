@@ -184,7 +184,13 @@ export async function generarExcelRutaCobrador(
   const headerRow = ws.getRow(4);
   (ws.columns as any[]).forEach((col, i) => {
     const cell = headerRow.getCell(i + 1);
-    cell.value = col.header;
+    // `header` en ExcelJS es `string | string[]`: admite encabezados de
+    // varias filas. Aqui siempre son cadenas, pero se trata el array de
+    // forma explicita para no escribir "[object Object]" el dia que alguien
+    // use esa forma. Antes el callback iba con `col: any` y no se veia.
+    cell.value = Array.isArray(col.header)
+      ? col.header.join(' ')
+      : (col.header ?? '');
     cell.font = { bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
     cell.fill = {
       type: 'pattern',
@@ -219,7 +225,7 @@ export async function generarExcelRutaCobrador(
       gestionRuta: fmtEstadoVisita(f.estadoVisita, f.notasVisita),
       cobrado: '',
       notas: '',
-    } as any);
+    });
 
     if (idx % 2 === 1) {
       row.eachCell((cell) => {

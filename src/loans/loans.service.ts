@@ -7,7 +7,8 @@ import {
   ConflictException,
   OnModuleInit,
 } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
+import { codigoDeError } from '../common/error.util';
 import {
   EstadoPrestamo,
   EstadoCuota,
@@ -52,6 +53,81 @@ const CUOTAS_POR_MES_LOANS: Record<string, number> = {
   QUINCENAL: 2,
   MENSUAL: 1,
 };
+
+/**
+ * Lo que se guarda para poder DESHACER una reprogramación de cuota si la
+ * solicitud se rechaza.
+ *
+ * `rollbackData` es una columna `Json` de Prisma, así que llega como `JsonValue`.
+ * Leer `rollbackData.cuotaId` directamente compilaba solo porque el cliente de
+ * Prisma estaba tipado como `any`. Y la MISMA columna guarda otra forma distinta
+ * para deshacer la creación de un crédito, así que no se puede tipar la columna:
+ * hay que tipar cada lectura.
+ */
+interface VisitaParaRestaurar {
+  id: string;
+  estadoVisita: string;
+  notas: string | null;
+  prestamoId: string | null;
+  cobradorId: string;
+}
+
+interface RollbackReprogramacion {
+  cuotaId: string;
+  clienteId: string;
+  prestamoId: string;
+  rutaIdOriginal: string | null;
+  fechaVencimientoOriginal: string;
+  fechaVencimientoNueva: string;
+  fechaOperativaOriginal: string | null;
+  origenGestion: string | null;
+  registroVisitaAnterior: VisitaParaRestaurar | null;
+}
+
+/**
+ * Lee ese rollback exigiendo lo imprescindible.
+ *
+ * Si la columna llegara vacía, antes `rollbackData.fechaVencimientoOriginal`
+ * lanzaba un TypeError dentro del método y el usuario veía "ocurrió un error
+ * inesperado". Ahora dice qué falta, que es lo mismo que hacen las demás
+ * validaciones de este método.
+ */
+/**
+ * El préstamo al que se refiere una solicitud, leído de su columna `Json`.
+ *
+ * Devuelve `undefined` cuando no hay un id legible, que es lo que ya hacía el
+ * `.filter()` de quien llama: una solicitud sin préstamo identificable no se
+ * puede atribuir a ninguna ruta, así que no se muestra.
+ */
+function prestamoIdDeSolicitud(
+  valor: Prisma.JsonValue | null,
+): string | undefined {
+  if (!valor || typeof valor !== 'object' || Array.isArray(valor))
+    return undefined;
+  const id = (valor as Record<string, unknown>).prestamoId;
+  return typeof id === 'string' ? id : undefined;
+}
+
+function leerRollbackReprogramacion(
+  valor: Prisma.JsonValue | null,
+): RollbackReprogramacion {
+  const datos =
+    valor && typeof valor === 'object' && !Array.isArray(valor)
+      ? (valor as Record<string, unknown>)
+      : {};
+
+  if (
+    typeof datos.cuotaId !== 'string' ||
+    typeof datos.clienteId !== 'string' ||
+    typeof datos.fechaVencimientoOriginal !== 'string'
+  ) {
+    throw new BadRequestException(
+      'El efecto provisional no guardó los datos necesarios para deshacer la reprogramación.',
+    );
+  }
+
+  return datos as unknown as RollbackReprogramacion;
+}
 
 @Injectable()
 export class LoansService implements OnModuleInit {
@@ -340,7 +416,7 @@ export class LoansService implements OnModuleInit {
     const tipoPrestamo = String(prestamo.tipoPrestamo || '').toUpperCase();
     const isArticulo = tipoPrestamo === 'ARTICULO';
     const referenceType = isArticulo ? 'VENTA_ARTICULO' : 'DESEMBOLSO';
-    const existingEntry = await (this.prisma as any).journalEntry?.findFirst?.({
+    const existingEntry = await this.prisma.journalEntry?.findFirst?.({
       where: { referenceType, referenceId: prestamo.id },
       select: { id: true },
     });
@@ -353,10 +429,10 @@ export class LoansService implements OnModuleInit {
           OR: [
             { codigo: 'CAJA-OFICINA' },
             { codigo: 'CAJA-PRINCIPAL' },
-            { tipo: 'PRINCIPAL' as any },
+            { tipo: 'PRINCIPAL' },
           ],
         },
-        orderBy: [{ codigo: 'asc' as any }],
+        orderBy: [{ codigo: 'asc' }],
         select: { id: true, codigo: true, tipo: true },
       });
 
@@ -458,7 +534,7 @@ export class LoansService implements OnModuleInit {
   }
 
   private async resolveCajaOperacionPrestamo(
-    tx: Prisma.TransactionClient,
+    tx: TransaccionPrisma,
     params: {
       data: CreateLoanDto;
       creador: any;
@@ -466,7 +542,7 @@ export class LoansService implements OnModuleInit {
       requiereCajaRuta?: boolean;
     },
   ) {
-    const dataAny = params.data as any;
+    const dataAny = params.data;
     const rolCreador = String(params.creador?.rol || '').toUpperCase();
     const esCobrador = rolCreador === RolUsuario.COBRADOR;
     const esSupervisor = rolCreador === RolUsuario.SUPERVISOR;
@@ -493,9 +569,9 @@ export class LoansService implements OnModuleInit {
       (await tx.caja.findFirst({
         where: {
           activa: true,
-          OR: [{ codigo: 'CAJA-PRINCIPAL' }, { tipo: 'PRINCIPAL' as any }],
+          OR: [{ codigo: 'CAJA-PRINCIPAL' }, { tipo: 'PRINCIPAL' }],
         },
-        orderBy: { creadoEn: 'asc' as any },
+        orderBy: { creadoEn: 'asc' },
         select: {
           id: true,
           codigo: true,
@@ -525,7 +601,7 @@ export class LoansService implements OnModuleInit {
         where: {
           activa: true,
           responsableId: operadorId,
-          tipo: 'RUTA' as any,
+          tipo: 'RUTA',
         },
         select: selectCajaOperacion,
       });
@@ -547,7 +623,7 @@ export class LoansService implements OnModuleInit {
       const cajaRuta = await tx.caja.findFirst({
         where: {
           activa: true,
-          tipo: 'RUTA' as any,
+          tipo: 'RUTA',
           rutaId: ruta.id,
           ...(esSupervisor ? { responsableId: operadorId } : {}),
         },
@@ -621,7 +697,7 @@ export class LoansService implements OnModuleInit {
 
     if (ruta?.id) {
       const cajaRuta = await tx.caja.findFirst({
-        where: { activa: true, tipo: 'RUTA' as any, rutaId: ruta.id },
+        where: { activa: true, tipo: 'RUTA', rutaId: ruta.id },
         select: selectCajaOperacion,
       });
       if (cajaRuta?.id && !esSupervisor) return cajaRuta;
@@ -641,7 +717,7 @@ export class LoansService implements OnModuleInit {
   }
 
   private async aplicarImpactoProvisionalPrestamo(
-    tx: Prisma.TransactionClient,
+    tx: TransaccionPrisma,
     params: {
       prestamo: any;
       data: CreateLoanDto;
@@ -873,13 +949,13 @@ export class LoansService implements OnModuleInit {
     const frecuencia = (() => {
       switch (prestamo.frecuenciaPago) {
         case 'DIARIO':
-          return 'DIARIO' as any;
+          return 'DIARIO';
         case 'SEMANAL':
-          return 'SEMANAL' as any;
+          return 'SEMANAL';
         case 'QUINCENAL':
-          return 'QUINCENAL' as any;
+          return 'QUINCENAL';
         case 'MENSUAL':
-          return 'MENSUAL' as any;
+          return 'MENSUAL';
         default:
           return undefined;
       }
@@ -2087,7 +2163,7 @@ export class LoansService implements OnModuleInit {
               const fechaGestion = resolveFechaGestionCuota(cuota);
               return fechaGestion ? getBogotaDayKey(fechaGestion) : null;
             })
-            .filter(Boolean),
+            .filter((fecha): fecha is string => Boolean(fecha)),
         ),
       );
 
@@ -2139,7 +2215,12 @@ export class LoansService implements OnModuleInit {
           : [];
 
       const visitasMap = new Map(
-        registrosVisitas.map((r: VisitaConRelaciones) => [r.fechaVisita, r]),
+        registrosVisitas.map(
+          (r): [string, (typeof registrosVisitas)[number]] => [
+            r.fechaVisita,
+            r,
+          ],
+        ),
       );
 
       // Agregar estadoVisita a cada cuota
@@ -2306,7 +2387,7 @@ export class LoansService implements OnModuleInit {
   }
 
   private async reversarImpactoContableArticuloArchivado(
-    tx: Prisma.TransactionClient,
+    tx: TransaccionPrisma,
     prestamo: any,
     userId: string,
   ) {
@@ -2334,31 +2415,31 @@ export class LoansService implements OnModuleInit {
     if (asientoReverso?.id) return;
 
     const linesOriginales = asientoVenta.lines || [];
-    const cajaLine = linesOriginales.find((line: any) => line.cajaId);
+    const cajaLine = linesOriginales.find((line) => line.cajaId);
     const cuotaInicial = linesOriginales
-      .filter((line: any) => line.cajaId)
-      .reduce((sum: number, line: any) => {
+      .filter((line) => line.cajaId)
+      .reduce((sum: number, line) => {
         return (
           sum + Number(line.debitAmount || 0) - Number(line.creditAmount || 0)
         );
       }, 0);
     const precioVenta = linesOriginales
-      .filter((line: any) => String(line.accountCode || '').startsWith('3.'))
-      .reduce((sum: number, line: any) => {
+      .filter((line) => String(line.accountCode || '').startsWith('3.'))
+      .reduce((sum: number, line) => {
         return (
           sum + Number(line.creditAmount || 0) - Number(line.debitAmount || 0)
         );
       }, 0);
     const montoFinanciado = linesOriginales
-      .filter((line: any) => String(line.accountCode || '') === '1.3.1')
-      .reduce((sum: number, line: any) => {
+      .filter((line) => String(line.accountCode || '') === '1.3.1')
+      .reduce((sum: number, line) => {
         return (
           sum + Number(line.debitAmount || 0) - Number(line.creditAmount || 0)
         );
       }, 0);
     const costoArticulo = linesOriginales
-      .filter((line: any) => String(line.accountCode || '') === '5.1')
-      .reduce((sum: number, line: any) => {
+      .filter((line) => String(line.accountCode || '') === '5.1')
+      .reduce((sum: number, line) => {
         return (
           sum + Number(line.debitAmount || 0) - Number(line.creditAmount || 0)
         );
@@ -2429,7 +2510,7 @@ export class LoansService implements OnModuleInit {
   }
 
   private async restaurarImpactoContableArticuloArchivado(
-    tx: Prisma.TransactionClient,
+    tx: TransaccionPrisma,
     prestamo: any,
     userId: string,
   ) {
@@ -2456,9 +2537,7 @@ export class LoansService implements OnModuleInit {
 
     if (asientoRestauracion?.id) return;
 
-    const cajaLine = (asientoArchivo.lines || []).find(
-      (line: any) => line.cajaId,
-    );
+    const cajaLine = (asientoArchivo.lines || []).find((line) => line.cajaId);
     const cuotaInicial = cajaLine
       ? Math.abs(
           Number(cajaLine.creditAmount || 0) -
@@ -2493,7 +2572,7 @@ export class LoansService implements OnModuleInit {
     }
 
     const lines = (asientoArchivo.lines || [])
-      .map((line: any) => {
+      .map((line) => {
         const debitAmount = Number(line.debitAmount || 0);
         const creditAmount = Number(line.creditAmount || 0);
         const restoredLine: any = {
@@ -2510,7 +2589,7 @@ export class LoansService implements OnModuleInit {
         return restoredLine;
       })
       .filter(
-        (line: any) =>
+        (line) =>
           Number(line.debitAmount || 0) > 0 ||
           Number(line.creditAmount || 0) > 0,
       );
@@ -2652,7 +2731,9 @@ export class LoansService implements OnModuleInit {
             newPlazo,
             frecuenciaPago,
             newFechaInicio,
-            prestamo.fechaPrimerCobro,
+            // La columna es nullable y el parámetro opcional. Dentro solo se
+            // comprueba por verdad, asi que null y undefined dan lo mismo.
+            prestamo.fechaPrimerCobro ?? undefined,
             false, // esContado
           );
 
@@ -2735,7 +2816,7 @@ export class LoansService implements OnModuleInit {
         if (Array.isArray(archivos) && archivos.length > 0) {
           const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
 
-          const nuevosArchivos = archivos.map((archivo: any) => {
+          const nuevosArchivos = archivos.map((archivo) => {
             const url = archivo.url || archivo.path || archivo.ruta;
             const urlFinal =
               typeof url === 'string' && url.startsWith('http')
@@ -2808,10 +2889,7 @@ export class LoansService implements OnModuleInit {
           } catch (error) {
             // No se corta la operacion principal por esto, pero se deja
             // registrado: en silencio nadie se entera de que fallo.
-            this.logger.warn(
-              'No se pudo resolver el nombre del actor',
-              error as any,
-            );
+            this.logger.warn('No se pudo resolver el nombre del actor', error);
           }
 
           const metadataBase = {
@@ -3066,7 +3144,7 @@ export class LoansService implements OnModuleInit {
           cuotas: {
             create: cuotasData,
           },
-        } as any,
+        },
         include: {
           cliente: true,
           producto: true,
@@ -3101,7 +3179,12 @@ export class LoansService implements OnModuleInit {
         const cajaRuta = rutaCliente?.rutaId
           ? await this.prisma.caja.findFirst({
               where: { rutaId: rutaCliente.rutaId, tipo: 'RUTA', activa: true },
-              select: { id: true },
+              // `codigo` hace falta: mas abajo se compara con 'CAJA-BANCO' para
+              // elegir la cuenta del asiento. Las otras dos cajas candidatas si
+              // lo traian, asi que al caer en esta la comparacion se evaluaba
+              // contra undefined. Daba la cuenta correcta de casualidad (una caja
+              // de ruta es efectivo, no banco), pero no se estaba comprobando.
+              select: { id: true, codigo: true },
             })
           : null;
 
@@ -3118,7 +3201,7 @@ export class LoansService implements OnModuleInit {
             activa: true,
             OR: [{ codigo: 'CAJA-PRINCIPAL' }, { tipo: 'PRINCIPAL' }],
           },
-          orderBy: [{ codigo: 'asc' as any }],
+          orderBy: [{ codigo: 'asc' }],
           select: { id: true, codigo: true },
         });
 
@@ -3567,7 +3650,7 @@ export class LoansService implements OnModuleInit {
         `Creating loan for client ${data.clienteId}, type: ${data.tipoPrestamo}. Data: ${JSON.stringify(data)}`,
       );
       const idempotencyKey =
-        (data as any).idempotencyKey?.toString().trim() || undefined;
+        data.idempotencyKey?.toString().trim() || undefined;
 
       if (idempotencyKey) {
         const prestamoExistente = await this.prisma.prestamo.findFirst({
@@ -3633,7 +3716,7 @@ export class LoansService implements OnModuleInit {
       // Las ventas de contado quedan fuera a proposito: se pagan en el momento
       // y no se cobran en ruta.
       if (!data.esContado) {
-        const rutaIndicada = String((data as any)?.rutaId || '').trim();
+        const rutaIndicada = String(data?.rutaId || '').trim();
         const clienteTieneRuta = (cliente.asignacionesRuta ?? []).some(
           (a: any) => a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
         );
@@ -3951,7 +4034,7 @@ export class LoansService implements OnModuleInit {
         );
 
       const cuotasDataFinal = data.esContado
-        ? cuotasData.map((c: any) => ({
+        ? cuotasData.map((c) => ({
             ...c,
             fechaPago: fechaInicio,
           }))
@@ -4043,7 +4126,7 @@ export class LoansService implements OnModuleInit {
               cuotas: {
                 create: cuotasDataFinal,
               },
-            } as any,
+            },
             include: {
               cliente: true,
               producto: true,
@@ -4087,7 +4170,7 @@ export class LoansService implements OnModuleInit {
 
             // La ruta que venga en la peticion manda: se ignoraba, y el
             // credito acababa sin ruta aunque quien lo creo dijera cual.
-            const rutaDelPayload = String((data as any)?.rutaId || '').trim();
+            const rutaDelPayload = String(data?.rutaId || '').trim();
             const rutaPedida = rutaDelPayload
               ? await tx.ruta.findFirst({
                   where: {
@@ -4146,8 +4229,8 @@ export class LoansService implements OnModuleInit {
                   asignacionRutaTxId = asignacionCreada?.id || null;
                   asignacionRutaCreadaId = asignacionRutaTxId;
                   rutaIdAsignadaBroadcast = rutaIdAsignar;
-                } catch (error: any) {
-                  if (error?.code === 'P2002') {
+                } catch (error) {
+                  if (codigoDeError(error) === 'P2002') {
                     this.logger.warn(
                       `[CREATE LOAN] Asignación de ruta omitida por duplicado rutaId=${rutaIdAsignar}, clienteId=${cliente.id}`,
                     );
@@ -4165,7 +4248,7 @@ export class LoansService implements OnModuleInit {
           if (!data.esContado) {
             const rutaFinal =
               rutaIdDelCredito ||
-              String((data as any)?.rutaId || '').trim() ||
+              String(data?.rutaId || '').trim() ||
               cliente.asignacionesRuta?.find(
                 (a: any) =>
                   a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
@@ -4234,8 +4317,8 @@ export class LoansService implements OnModuleInit {
                 fechaInicio: prestamoTx.fechaInicio
                   ? formatBogotaOffsetIso(prestamoTx.fechaInicio)
                   : undefined,
-                fechaPrimerCobro: (data as any).fechaPrimerCobro
-                  ? String((data as any).fechaPrimerCobro)
+                fechaPrimerCobro: data.fechaPrimerCobro
+                  ? String(data.fechaPrimerCobro)
                   : undefined,
                 esContado: !!data.esContado,
                 idempotencyKey: idempotencyKey || null,
@@ -4261,7 +4344,9 @@ export class LoansService implements OnModuleInit {
                     tipoEntidad: 'Prestamo',
                     entidadId: prestamoTx.id,
                     estado: 'PENDIENTE_REVISION',
-                    snapshotAntes: null,
+                    // Columna `Json?`: para dejarla en NULL Prisma pide DbNull.
+                    // `null` compilaba solo porque el cliente era `any`.
+                    snapshotAntes: Prisma.DbNull,
                     snapshotDespues: {
                       prestamo: {
                         id: prestamoTx.id,
@@ -4303,12 +4388,12 @@ export class LoansService implements OnModuleInit {
                       ),
                       usuarioSolicitanteId: data.creadoPorId,
                       rutaId:
-                        (data as any).rutaId ||
+                        data.rutaId ||
                         cliente.asignacionesRuta?.[0]?.rutaId ||
                         cliente.asignacionesRuta?.[0]?.ruta?.id ||
                         null,
                       cobradorId:
-                        (data as any).cobradorId ||
+                        data.cobradorId ||
                         cliente.asignacionesRuta?.[0]?.cobradorId ||
                         cliente.asignacionesRuta?.[0]?.ruta?.cobradorId ||
                         null,
@@ -4363,21 +4448,37 @@ export class LoansService implements OnModuleInit {
       if (data.esContado && prestamo.cuotas && prestamo.cuotas.length > 0) {
         await this.prisma.pago.create({
           data: {
+            // Este bloque estaba escrito contra columnas que `Pago` no tiene:
+            // `registradoPorId` (es `cobradorId`), `montoPagado` (es `montoTotal`)
+            // y `referenciaTx` (es `numeroReferencia`), y encima le faltaban dos
+            // obligatorias, `numeroPago` y `clienteId`. Prisma lo rechazaba, asi
+            // que el pago automatico de una venta de contado NUNCA se creo.
+            // Compilaba porque el cliente de Prisma estaba tipado como `any`.
+            numeroPago: this.generarNumeroTransaccion('PAG'),
+            clienteId: prestamo.clienteId,
             prestamoId: prestamo.id,
-            registradoPorId: data.creadoPorId,
-            montoPagado: montoTotal,
+            cobradorId: data.creadoPorId,
+            montoTotal: montoTotal,
             fechaPago: new Date(),
             metodoPago: 'EFECTIVO',
-            referenciaTx: 'VENTA_CONTADO',
+            numeroReferencia: 'VENTA_CONTADO',
             notas: 'Pago íntegro automático por venta de contado',
             estadoSincronizacion: 'PENDIENTE',
             detalles: {
-              create: prestamo.cuotas.map((c: any) => ({
+              // Los nombres de estas cuatro columnas estaban inventados:
+              // `montoAsignado`, `montoCapitalAsignado`, `montoInteresAsignado` y
+              // `moraAsignada` no existen en `DetallePago`, que tiene `monto`,
+              // `montoCapital`, `montoInteres` y `montoInteresMora`. Prisma
+              // rechazaba los argumentos, asi que el pago automatico de una venta
+              // de contado no podia crearse. Compilaba porque el cliente de
+              // Prisma estaba tipado como `any`, y `montoAsignado` no aparecia en
+              // ningun otro sitio del proyecto.
+              create: prestamo.cuotas.map((c) => ({
                 cuotaId: c.id,
-                montoAsignado: Number(c.monto),
-                montoCapitalAsignado: Number(c.montoCapital),
-                montoInteresAsignado: Number(c.montoInteres),
-                moraAsignada: 0,
+                monto: Number(c.monto),
+                montoCapital: Number(c.montoCapital),
+                montoInteres: Number(c.montoInteres),
+                montoInteresMora: 0,
               })),
             },
           },
@@ -4409,7 +4510,7 @@ export class LoansService implements OnModuleInit {
         } catch (error) {
           // No se corta la operacion principal por esto, pero se deja
           // registrado: en silencio nadie se entera de que fallo.
-          this.logger.warn('No se pudo notificar el credito', error as any);
+          this.logger.warn('No se pudo notificar el credito', error);
         }
 
         try {
@@ -4438,7 +4539,7 @@ export class LoansService implements OnModuleInit {
         } catch (error) {
           // No se corta la operacion principal por esto, pero se deja
           // registrado: en silencio nadie se entera de que fallo.
-          this.logger.warn('No se pudo notificar el credito', error as any);
+          this.logger.warn('No se pudo notificar el credito', error);
         }
       }
 
@@ -4785,84 +4886,6 @@ export class LoansService implements OnModuleInit {
     };
   }
 
-  async reprogramarCuota(
-    prestamoId: string,
-    numeroCuota: number,
-    data: {
-      motivo: string;
-      nuevaFecha: string;
-      montoParcial?: number;
-      reprogramadoPorId: string;
-    },
-  ) {
-    // Validar que el préstamo exista
-    const prestamo = await this.prisma.prestamo.findUnique({
-      where: { id: prestamoId },
-      include: { cuotas: true },
-    });
-
-    if (!prestamo) {
-      throw new NotFoundException('Préstamo no encontrado');
-    }
-
-    // Buscar la cuota específica
-    const cuota = prestamo.cuotas.find((c) => c.numeroCuota === numeroCuota);
-    if (!cuota) {
-      throw new NotFoundException(`Cuota #${numeroCuota} no encontrada`);
-    }
-
-    // Validar que la cuota esté pendiente
-    if (cuota.estado !== 'PENDIENTE') {
-      throw new BadRequestException(
-        'Solo se pueden reprogramar cuotas pendientes',
-      );
-    }
-
-    // Validar la nueva fecha
-    const nuevaFecha = new Date(data.nuevaFecha);
-    if (isNaN(nuevaFecha.getTime())) {
-      throw new BadRequestException('Fecha inválida');
-    }
-
-    // Actualizar la cuota
-    const cuotaActualizada = await this.prisma.cuota.update({
-      where: { id: cuota.id },
-      data: {
-        fechaVencimiento: nuevaFecha,
-        ...(data.montoParcial && { monto: data.montoParcial }),
-        actualizadoEn: new Date(),
-      },
-    });
-
-    // Registrar auditoría
-    await this.auditService.create({
-      usuarioId: data.reprogramadoPorId,
-      accion: 'REPROGRAMAR_CUOTA',
-      entidad: 'Cuota',
-      entidadId: cuota.id,
-      datosNuevos: {
-        prestamoId,
-        numeroCuota,
-        fechaAnterior: cuota.fechaVencimiento,
-        fechaNueva: data.nuevaFecha,
-        motivo: data.motivo,
-        montoParcial: data.montoParcial,
-      },
-    });
-
-    // Notificar al cliente (opcional)
-    // TODO: Implementar notificación al cliente sobre reprogramación
-
-    this.logger.log(
-      `Cuota #${numeroCuota} del préstamo ${prestamoId} reprogramada a ${data.nuevaFecha}`,
-    );
-
-    return {
-      mensaje: 'Cuota reprogramada exitosamente',
-      cuota: cuotaActualizada,
-    };
-  }
-
   /**
    * ADMIN: Corrige cálculos de intereses en préstamos existentes.
    * Recalcula el interés total basándose en Interés Simple Correcto (Capital * Tasa * PlazoMeses / 100).
@@ -5079,10 +5102,24 @@ export class LoansService implements OnModuleInit {
       );
     }
 
+    // Los días se cuentan entre INICIOS de día, no entre la fecha nueva al
+    // mediodía y el inicio de hoy.
+    //
+    // `nuevaFechaObj` se construye a las 12:00 porque es la hora que se guarda en
+    // la cuota, y restarle el inicio de hoy daba N + 0,5 días para una fecha N
+    // días adelante. `Math.round` lo subía a N + 1, así que TODOS los límites de
+    // abajo quedaban un día más estrictos de lo escrito: con SEMANAL en 6 se
+    // permitían 5 días, y la regla del contrato dice «un día antes de la semana»,
+    // o sea 6. Medido: pedir +6 días daba `diasDesdeHoy = 7`.
+    const { startDate: inicioNuevaFecha } =
+      getBogotaStartEndOfDayFromKey(nuevaFechaStr);
     const diasDesdeHoy = Math.round(
-      (nuevaFechaObj.getTime() - hoyLocal.getTime()) / 86_400_000,
+      (inicioNuevaFecha.getTime() - hoyLocal.getTime()) / 86_400_000,
     );
 
+    // Cuántos días adelante se puede mover una cuota, por frecuencia. La regla es
+    // que la cuota reprogramada NO pase del período en curso: un día antes de que
+    // toque la siguiente. De ahí 6 para semanal y 14 para quincenal.
     const limiteDias: Record<string, number> = {
       SEMANAL: 6,
       QUINCENAL: 14,
@@ -5347,7 +5384,7 @@ export class LoansService implements OnModuleInit {
     } catch (error) {
       // No se corta la operacion principal por esto, pero se deja
       // registrado: en silencio nadie se entera de que fallo.
-      this.logger.warn('No se pudo notificar la regularizacion', error as any);
+      this.logger.warn('No se pudo notificar la regularizacion', error);
     }
 
     // ⚡ Tiempo real: notificar a todos los clientes conectados.
@@ -5445,16 +5482,17 @@ export class LoansService implements OnModuleInit {
 
     // El supervisor/cobrador solo debe ver las reprogramaciones de sus rutas.
     const idsPrestamo = solicitudes
-      .map((s) => s.datosSolicitud?.prestamoId)
+      .map((s) => prestamoIdDeSolicitud(s.datosSolicitud))
       .filter((id): id is string => typeof id === 'string');
     const permitidos = await this.prestamosBajoJurisdiccion(idsPrestamo, actor);
 
     const visibles =
       permitidos === null
         ? solicitudes
-        : solicitudes.filter((s) =>
-            permitidos.has(s.datosSolicitud?.prestamoId),
-          );
+        : solicitudes.filter((s) => {
+            const prestamoId = prestamoIdDeSolicitud(s.datosSolicitud);
+            return prestamoId !== undefined && permitidos.has(prestamoId);
+          });
 
     return visibles.map((s) => ({
       ...s,
@@ -5593,7 +5631,9 @@ export class LoansService implements OnModuleInit {
       throw new BadRequestException('El efecto provisional ya fue procesado');
     }
 
-    const rollbackData = efectoProvisional.rollbackData;
+    const rollbackData = leerRollbackReprogramacion(
+      efectoProvisional.rollbackData,
+    );
     const fechaVencimientoOriginal = new Date(
       rollbackData.fechaVencimientoOriginal,
     );
@@ -5810,9 +5850,12 @@ export class LoansService implements OnModuleInit {
       }
 
       const creditos = prestamos.map((prestamo) => ({
-        codigo: this.normalizeIdempotencyKey(
-          prestamo.idempotencyKey || prestamo.numeroPrestamo || prestamo.id,
-        ),
+        // `normalizeIdempotencyKey` puede devolver undefined y la fila de la
+        // exportacion exige texto; el numero de prestamo es el respaldo natural.
+        codigo:
+          this.normalizeIdempotencyKey(
+            prestamo.idempotencyKey || prestamo.numeroPrestamo || prestamo.id,
+          ) || prestamo.numeroPrestamo,
         numeroPrestamo: prestamo.numeroPrestamo,
         ccCliente: prestamo.cliente?.dni || '',
         tipoPrestamo: prestamo.tipoPrestamo,

@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { PrismaService } from '../prisma/prisma.service';
+import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import * as argon2 from 'argon2';
 import {
@@ -379,7 +379,7 @@ export class UsersService {
     }
 
     return this.prisma
-      .$transaction(async (tx: Prisma.TransactionClient) => {
+      .$transaction(async (tx: TransaccionPrisma) => {
         // 3. Limpiar permisos personalizados existentes
         await tx.asignacionPermisoUsuario.deleteMany({
           where: { usuarioId },
@@ -544,7 +544,7 @@ export class UsersService {
       });
 
       if (nuevoRol) {
-        await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        await this.prisma.$transaction(async (tx: TransaccionPrisma) => {
           // Eliminar asignación anterior
           await tx.asignacionRolUsuario.deleteMany({
             where: { usuarioId: id },

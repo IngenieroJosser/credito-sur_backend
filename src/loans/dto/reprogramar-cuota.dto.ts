@@ -4,10 +4,8 @@ import {
   IsString,
   IsNotEmpty,
   IsOptional,
-  IsNumber,
-  Min,
 } from 'class-validator';
-import { Transform, Type } from 'class-transformer';
+import { Transform } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class ReprogramarCuotaDto {
@@ -66,23 +64,4 @@ export class ReprogramarCuotaDto {
   @IsOptional()
   @Transform(({ value }) => value?.toString().trim())
   idempotencyKey?: string;
-
-  @ApiProperty({
-    description: 'Monto parcial a pagar (opcional)',
-    example: 200000,
-  })
-  @IsNumber()
-  @IsOptional()
-  @Min(0)
-  @Type(() => Number)
-  montoParcial?: number;
-
-  @ApiProperty({
-    description: 'ID del usuario que realiza la reprogramación',
-    example: 'user-uuid',
-    required: false,
-  })
-  @IsString()
-  @IsOptional()
-  reprogramadoPorId?: string;
 }

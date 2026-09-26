@@ -6,6 +6,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { objetoDeJson } from '../common/json.util';
 import {
   Prisma,
   EstadoAprobacion,
@@ -17,6 +18,7 @@ import {
   FrecuenciaPago,
   TipoAmortizacion,
   RolUsuario,
+  TipoGasto,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
@@ -60,6 +62,16 @@ import { pesos } from '../common/dinero.util';
  * El `rollbackData` guardado en el efecto es lo que permite revertir: lleva el
  * estado previo del credito y los ids de lo que se creo al aplicarlo.
  */
+/**
+ * Los estados en que un credito sigue cobrandose.
+ *
+ * Se saca a una constante porque la comprobacion se hacia dos veces con un
+ * `[...].includes(...)`, y `includes` sobre una lista de literales exige
+ * justamente uno de esos dos literales, no el enum entero. Con `some` se compara
+ * sin pedir casting.
+ */
+const ESTADOS_COBRABLES = [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA];
+
 @Injectable()
 export class ApprovalsService {
   private readonly logger = new Logger(ApprovalsService.name);
@@ -80,8 +92,8 @@ export class ApprovalsService {
 
     const adminUser = await tx.usuario.findFirst({
       where: {
-        rol: { in: ['SUPER_ADMINISTRADOR', 'ADMIN'] as any },
-        estado: 'ACTIVO' as any,
+        rol: { in: ['SUPER_ADMINISTRADOR', 'ADMIN'] },
+        estado: 'ACTIVO',
         eliminadoEn: null,
       },
       orderBy: { creadoEn: 'asc' },
@@ -97,7 +109,7 @@ export class ApprovalsService {
       data: {
         codigo: 'CAJA-BANCO',
         nombre: 'Caja Banco',
-        tipo: 'PRINCIPAL' as any,
+        tipo: 'PRINCIPAL',
         responsableId: adminUser.id,
         saldoActual: 0,
         activa: true,
@@ -175,7 +187,7 @@ export class ApprovalsService {
     }
 
     const cajaRuta = await db.caja.findFirst({
-      where: { rutaId: ruta.id, tipo: 'RUTA' as any, activa: true },
+      where: { rutaId: ruta.id, tipo: 'RUTA', activa: true },
       select: { id: true, nombre: true, rutaId: true, responsableId: true },
     });
 
@@ -431,7 +443,7 @@ export class ApprovalsService {
       this.prisma.multimedia.findMany({
         where: {
           clienteId,
-          estado: 'ACTIVO' as any,
+          estado: 'ACTIVO',
           eliminadoEn: null,
         },
         orderBy: { creadoEn: 'desc' },
@@ -451,7 +463,7 @@ export class ApprovalsService {
           datosSolicitud: {
             path: ['clienteId'],
             equals: clienteId,
-          } as any,
+          },
         },
       }),
       this.prisma.pago.findMany({
@@ -730,7 +742,7 @@ export class ApprovalsService {
     for (const original of journalsOriginales) {
       if (!Array.isArray(original.lines)) continue;
 
-      const reversaReferenceType = 'AJUSTE' as any;
+      const reversaReferenceType = 'AJUSTE';
       const reversaReferenceId = `REVERSA:${original.id}`;
 
       // Validar idempotencia: verificar si ya existe reversa
@@ -1702,7 +1714,7 @@ export class ApprovalsService {
         case TipoAprobacion.BAJA_POR_PERDIDA:
           await this.approveLoanLoss(approval, aprobadoPorId, editedData);
           break;
-        case 'PAGO_TRANSFERENCIA' as any:
+        case 'PAGO_TRANSFERENCIA':
           await this.approveTransferPayment(approval, aprobadoPorId);
           break;
         default:
@@ -1798,9 +1810,7 @@ export class ApprovalsService {
     });
 
     if (!prestamo) throw new NotFoundException('Préstamo no encontrado');
-    if (
-      ![EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA].includes(prestamo.estado)
-    ) {
+    if (!ESTADOS_COBRABLES.some((estado) => estado === prestamo.estado)) {
       throw new BadRequestException(
         `No se puede aplicar pago: préstamo en estado ${prestamo.estado}`,
       );
@@ -1833,9 +1843,7 @@ export class ApprovalsService {
       if (!prestamoActual)
         throw new NotFoundException('Préstamo no encontrado');
       if (
-        ![EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA].includes(
-          prestamoActual.estado,
-        )
+        !ESTADOS_COBRABLES.some((estado) => estado === prestamoActual.estado)
       ) {
         throw new BadRequestException(
           `No se puede aplicar pago: préstamo en estado ${prestamoActual.estado}`,
@@ -1894,7 +1902,7 @@ export class ApprovalsService {
           rutaId: rutaId || undefined,
           fechaOperativaRuta: fechaOperativaRuta || undefined,
           origenGestion: esCierrePendiente ? 'CIERRE_PENDIENTE' : undefined,
-          detalles: { create: detallesPago as any },
+          detalles: { create: detallesPago },
         },
         select: { id: true },
       });
@@ -1952,7 +1960,7 @@ export class ApprovalsService {
             Number(prestamoActual.interesPagado || 0) + interesTotal,
           saldoPendiente: nuevoSaldo,
           estado: nuevoEstadoPrestamo,
-          estadoSincronizacion: 'PENDIENTE' as any,
+          estadoSincronizacion: 'PENDIENTE',
         },
       });
 
@@ -2021,8 +2029,8 @@ export class ApprovalsService {
             prestamoId: prestamo.id,
             clienteId: prestamo.clienteId,
             entidad: 'APROBACION',
-            tipoContenido: 'COMPROBANTE_TRANSFERENCIA' as any,
-            estado: 'ACTIVO' as any,
+            tipoContenido: 'COMPROBANTE_TRANSFERENCIA',
+            estado: 'ACTIVO',
             eliminadoEn: null,
           },
           orderBy: { creadoEn: 'desc' },
@@ -2778,7 +2786,8 @@ export class ApprovalsService {
         metadata: {
           estadoAprobacion: 'RECHAZADO',
           revisadoPor: nombreRevisor,
-          descSolicitud: datos.descripcion || datos.motivo,
+          descSolicitud:
+            objetoDeJson(datos).descripcion || objetoDeJson(datos).motivo,
         },
       });
     } catch {
@@ -2988,7 +2997,7 @@ export class ApprovalsService {
         const cajaIdDestino = cajaDestino?.id;
         const asientoVentaExistente = await tx.journalEntry.findFirst({
           where: {
-            referenceType: 'VENTA_ARTICULO' as any,
+            referenceType: 'VENTA_ARTICULO',
             referenceId: prestamo.id,
           },
           select: { id: true },
@@ -3422,12 +3431,18 @@ export class ApprovalsService {
             rutaId: routeCash.rutaId,
             cobradorId: routeCash.cobradorId,
             cajaId: routeCash.cajaId,
-            tipoGasto: ({
-              GASTO_OPERATIVO: 'OPERATIVO',
-              OPERATIVO: 'OPERATIVO',
-              TRANSPORTE: 'TRANSPORTE',
-              OTRO: 'OTRO',
-            }[data.tipoGasto] || 'OPERATIVO') as any,
+            // La tabla se indexa con lo que traiga la solicitud, que es texto
+            // libre, asi que se declara como tal y lo desconocido cae en el
+            // respaldo de siempre.
+            tipoGasto:
+              (
+                {
+                  GASTO_OPERATIVO: 'OPERATIVO',
+                  OPERATIVO: 'OPERATIVO',
+                  TRANSPORTE: 'TRANSPORTE',
+                  OTRO: 'OTRO',
+                } as Record<string, TipoGasto>
+              )[data.tipoGasto] || 'OPERATIVO',
             monto: data.monto,
             descripcion: data.descripcion,
             categoriaId: data.categoriaId || undefined,

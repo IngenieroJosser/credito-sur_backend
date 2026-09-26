@@ -27,6 +27,12 @@ import { RolUsuario } from '@prisma/client';
 import { Response } from 'express';
 
 import { RequestConUsuario } from '../common/types';
+import {
+  codigoDeError,
+  mensajeDeError,
+  metaDeError,
+  pilaDeError,
+} from '../common/error.util';
 
 @Controller('payments')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -46,7 +52,7 @@ export class PaymentsController {
   @UseInterceptors(
     FileInterceptor('comprobante', {
       storage: require('multer').memoryStorage(),
-      fileFilter: (_req: any, file: Express.Multer.File, cb: any) => {
+      fileFilter: (_req, file: Express.Multer.File, cb) => {
         // Soporte para más formatos de imagen comunes en móviles (webp, heic, heif)
         if (!file.originalname.match(/\.(jpg|jpeg|png|gif|webp|heic|heif)$/i)) {
           return cb(
@@ -111,13 +117,13 @@ export class PaymentsController {
 
     try {
       return await this.paymentsService.create(dto, comprobante, req.user);
-    } catch (error: any) {
+    } catch (error) {
       this.logger.error(
-        `[PaymentsController.create] Error registrando pago: ${error?.message}`,
+        `[PaymentsController.create] Error registrando pago: ${mensajeDeError(error)}`,
         JSON.stringify({
-          code: error?.code,
-          meta: error?.meta,
-          stack: error?.stack,
+          code: codigoDeError(error),
+          meta: metaDeError(error),
+          stack: pilaDeError(error),
           dto: {
             clienteId: dto?.clienteId,
             prestamoId: dto?.prestamoId,

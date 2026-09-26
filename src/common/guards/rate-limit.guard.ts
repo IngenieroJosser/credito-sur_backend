@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import Redis from 'ioredis';
+import { mensajeDeError } from '../error.util';
 
 type RateLimitBucket = {
   count: number;
@@ -89,9 +90,9 @@ export class RateLimitGuard implements CanActivate {
       this.redis.on('end', () => {
         this.redisSano = false;
       });
-    } catch (e: any) {
+    } catch (e) {
       this.logger.warn(
-        `No se pudo crear el cliente Redis del rate-limit: ${e?.message}`,
+        `No se pudo crear el cliente Redis del rate-limit: ${mensajeDeError(e)}`,
       );
       this.redis = null;
     }
@@ -118,11 +119,11 @@ export class RateLimitGuard implements CanActivate {
         count: Number(count),
         resetAt: Date.now() + Math.max(0, Number(ttl)),
       };
-    } catch (e: any) {
+    } catch (e) {
       // Un fallo de Redis nunca debe tumbar la petición: se cae a memoria.
       this.redisSano = false;
       this.logger.warn(
-        `Fallo al contar en Redis, se usa memoria: ${e?.message}`,
+        `Fallo al contar en Redis, se usa memoria: ${mensajeDeError(e)}`,
       );
       return null;
     }

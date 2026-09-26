@@ -9,7 +9,7 @@
  */
 export interface CuotaOperativa {
   id?: string;
-  numeroCuota?: number;
+  numeroCuota?: number | null;
   estado?: string | null;
   estadoActual?: string | null;
   fechaVencimiento?: Date | string | null;
@@ -279,7 +279,13 @@ export const isCuotaOperativaParaFechaRuta = (
 export const resolveCuotaObjetivoOperativa = (
   prestamo: PrestamoOperativo | null | undefined,
   fechaOperativaKey: string,
-) => {
+  // El retorno se declara a proposito. Sin declararlo, TypeScript inferia la
+  // union de las dos formas por las que puede salir —la cuota tal como la trae
+  // `prestamo.cuotas`, ya tipada por Prisma, y `null`— y en el consumidor esa
+  // union impedia leer los campos de `CuotaOperativa`, que es justamente lo que
+  // este modulo dice que son estas cuotas. Quien llame recibe la forma laxa, que
+  // es la que estas reglas manejan.
+): CuotaOperativa | null => {
   const fechaOperativa = normalizeFechaOperativaKey(fechaOperativaKey);
 
   if (!isPrestamoOperativoRuta(prestamo) || !fechaOperativa) return null;

@@ -16,6 +16,7 @@ import { RolUsuario } from '@prisma/client';
 import { OnEvent } from '@nestjs/event-emitter';
 import { NotificacionesService } from './notificaciones.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { codigoDeError, mensajeDeError } from '../common/error.util';
 import { getBogotaDayKey, getBogotaStartEndOfDay } from '../utils/date-utils';
 import { RoutesService } from '../routes/routes.service';
 
@@ -195,22 +196,19 @@ export class NotificacionesGateway
                 data.rutaId,
                 actorCierre,
               );
-            } catch (error: any) {
+            } catch (error) {
               this.logger.warn(
                 `Bloqueo de cierre por jornada pendiente: rutaId=${data.rutaId}`,
-                error.message,
+                mensajeDeError(error),
               );
               // Retornar error al frontend
               return {
                 success: false,
-                code:
-                  error?.response?.code ||
-                  error?.code ||
-                  'RUTA_ANTERIOR_PENDIENTE_CIERRE',
-                message:
-                  error?.response?.message ||
-                  error?.message ||
+                code: codigoDeError(error) ?? 'RUTA_ANTERIOR_PENDIENTE_CIERRE',
+                message: mensajeDeError(
+                  error,
                   'Existe una jornada anterior pendiente de cierre.',
+                ),
               };
             }
 
@@ -251,13 +249,27 @@ export class NotificacionesGateway
               metaBackend > 0
                 ? Math.round((recaudoBackend / metaBackend) * 1000) / 10
                 : Number(resumen.efectividad || 0);
-            const clientesAusentesBackend = visitas.filter((v: any) =>
-              String(v.estadoGestion || '')
+            // Se lee `estadoVisita`, no `estadoGestion`.
+            //
+            // `estadoGestion` NO existe en una visita: se escribe en los creditos
+            // de dentro, y `getDailyVisits` devuelve las visitas tal cual. Con el
+            // nombre viejo, `String(undefined || '')` daba siempre '', asi que el
+            // conteo de AUSENTES salia siempre en 0 y el de faltantes contaba
+            // tambien a los ausentes, los reprogramados y los que ya habian
+            // pagado, porque sus tres condiciones de estado eran constantes.
+            //
+            // `estadoVisita` es el campo que si se rellena, desde el
+            // RegistroVisita del dia, y sus valores —'ausente', 'reprogramado',
+            // 'pagado'— encajan uno a uno con los tres `includes` de aqui abajo.
+            // Es el mismo campo que usa `shouldExcludeVisitaFromOperationalMeta`
+            // en el frontend para lo mismo.
+            const clientesAusentesBackend = visitas.filter((v) =>
+              String(v.estadoVisita || '')
                 .toUpperCase()
                 .includes('AUSENTE'),
             ).length;
-            const clientesFaltantesBackend = visitas.filter((v: any) => {
-              const estado = String(v.estadoGestion || '').toUpperCase();
+            const clientesFaltantesBackend = visitas.filter((v) => {
+              const estado = String(v.estadoVisita || '').toUpperCase();
               const recaudoVisita = Number(v.recaudadoDelDia || 0);
               return (
                 recaudoVisita <= 0 &&
@@ -378,15 +390,12 @@ export class NotificacionesGateway
         success: true,
         message: 'Ruta cerrada correctamente.',
       };
-    } catch (error: any) {
+    } catch (error) {
       this.logger.error('Error en handleRutaCompletadaEmit:', error);
       return {
         success: false,
-        code: error?.response?.code || error?.code || 'ERROR_CIERRE_RUTA',
-        message:
-          error?.response?.message ||
-          error?.message ||
-          'No se pudo cerrar la ruta.',
+        code: codigoDeError(error) ?? 'ERROR_CIERRE_RUTA',
+        message: mensajeDeError(error, 'No se pudo cerrar la ruta.'),
       };
     }
   }

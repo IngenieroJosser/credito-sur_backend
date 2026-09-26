@@ -146,13 +146,9 @@ describe('Plantillas importables de exportacion', () => {
     expect(resultado.articulos?.[0]).toEqual(
       expect.objectContaining({ codigo: 'CEL-A15', precioContado: 540000 }),
     );
-    expect(resultado.precios?.map((p: any) => p.meses).sort()).toEqual([
-      0, 1, 2, 3,
-    ]);
+    expect(resultado.precios?.map((p) => p.meses).sort()).toEqual([0, 1, 2, 3]);
     // La utilidad se calcula sobre el costo para poder revisarla antes de importar.
-    expect(resultado.precios?.find((p: any) => p.meses === 0)?.utilidad).toBe(
-      60000,
-    );
+    expect(resultado.precios?.find((p) => p.meses === 0)?.utilidad).toBe(60000);
   });
 
   it('genera clientes y creditos exportados que el parser de importacion acepta', async () => {

@@ -290,18 +290,4 @@ export class ClientsController {
   async removeFromBlacklist(@Param('id') id: string) {
     return this.clientsService.removeFromBlacklist(id);
   }
-
-  @Post(':id/assign-route')
-  @Roles(RolUsuario.COORDINADOR)
-  async assignToRoute(
-    @Param('id') clienteId: string,
-    @Body() body: { rutaId: string; cobradorId: string; diaSemana?: number },
-  ) {
-    return this.clientsService.assignToRoute(
-      clienteId,
-      body.rutaId,
-      body.cobradorId,
-      body.diaSemana,
-    );
-  }
 }

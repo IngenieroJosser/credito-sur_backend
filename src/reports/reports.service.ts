@@ -579,7 +579,7 @@ export class ReportsService {
     const fecha = getBogotaDayKey(new Date());
 
     // 2. Mapeo al tipo del template
-    const filas: MoraRow[] = prestamos.map((p: any) => ({
+    const filas: MoraRow[] = prestamos.map((p) => ({
       numeroPrestamo: p.numeroPrestamo || '',
       cliente: p.cliente?.nombre || '',
       documento: p.cliente?.documento || '',
@@ -766,7 +766,7 @@ export class ReportsService {
           nivelRiesgo: prestamo.cliente.nivelRiesgo,
           estado: prestamo.estado,
           interesesMora,
-        } as CuentaVencidaDto & { interesesMora: number };
+        } as CuentaVencidaDto;
       }),
     );
 
@@ -784,11 +784,11 @@ export class ReportsService {
             )
           : 0,
       totalInteresesMora: cuentasVencidas.reduce(
-        (s, c: any) => s + (c.interesesMora || 0),
+        (s, c) => s + (c.interesesMora || 0),
         0,
       ),
       totalMontoOriginal: cuentasVencidas.reduce(
-        (s, c: any) => s + (c.montoOriginal || 0),
+        (s, c) => s + (c.montoOriginal || 0),
         0,
       ),
     };
@@ -922,7 +922,7 @@ export class ReportsService {
     const cuentas = data.cuentas;
     const fecha = getBogotaDayKey(new Date());
 
-    const filas: VencidasRow[] = cuentas.map((c: any) => ({
+    const filas: VencidasRow[] = cuentas.map((c) => ({
       numeroPrestamo: c.numeroPrestamo || '',
       cliente:
         typeof c.cliente === 'string' ? c.cliente : c.cliente?.nombre || '',
@@ -993,17 +993,17 @@ export class ReportsService {
         { activa: true },
         actor,
       );
-      const rutas = (rutasListado as any)?.data || [];
+      const rutas = rutasListado?.data || [];
 
       const rutasFiltradas = routeId
-        ? rutas.filter((r: any) => r.id === routeId)
+        ? rutas.filter((r) => r.id === routeId)
         : rutas;
       const { startDate: hoyInicio, endDate: hoyFin } = getBogotaStartEndOfDay(
         new Date(),
       );
 
       const rendimientoRutas: RoutePerformanceDetail[] = await Promise.all(
-        rutasFiltradas.map(async (r: any) => {
+        rutasFiltradas.map(async (r) => {
           const nuevosPrestamosAgg = await this.prisma.prestamo.aggregate({
             where: {
               creadoEn: { gte: hoyInicio, lte: hoyFin },
@@ -1046,38 +1046,38 @@ export class ReportsService {
             nuevosPrestamos,
             nuevosClientes,
             montoNuevosPrestamos,
-          } as any;
+          };
         }),
       );
 
       const totalRecaudo = rendimientoRutas.reduce(
-        (sum, rr: any) => sum + Number(rr.recaudado || 0),
+        (sum, rr) => sum + Number(rr.recaudado || 0),
         0,
       );
       const totalMeta = rendimientoRutas.reduce(
-        (sum, rr: any) => sum + Number(rr.meta || 0),
+        (sum, rr) => sum + Number(rr.meta || 0),
         0,
       );
       const porcentajeGlobal =
         totalMeta > 0 ? Math.round((totalRecaudo / totalMeta) * 100) : 0;
 
       const totalPrestamosNuevos = rendimientoRutas.reduce(
-        (sum, rr: any) => sum + Number(rr.nuevosPrestamos || 0),
+        (sum, rr) => sum + Number(rr.nuevosPrestamos || 0),
         0,
       );
       const totalAfiliaciones = rendimientoRutas.reduce(
-        (sum, rr: any) => sum + Number(rr.nuevosClientes || 0),
+        (sum, rr) => sum + Number(rr.nuevosClientes || 0),
         0,
       );
       const totalMontoPrestamosNuevos = rendimientoRutas.reduce(
-        (sum, rr: any) => sum + Number(rr.montoNuevosPrestamos || 0),
+        (sum, rr) => sum + Number(rr.montoNuevosPrestamos || 0),
         0,
       );
       const efectividadPromedio =
         rendimientoRutas.length > 0
           ? Math.round(
               rendimientoRutas.reduce(
-                (sum, rr: any) => sum + Number(rr.eficiencia || 0),
+                (sum, rr) => sum + Number(rr.eficiencia || 0),
                 0,
               ) / rendimientoRutas.length,
             )
@@ -1221,7 +1221,7 @@ export class ReportsService {
         nuevosPrestamos: newLoans,
         nuevosClientes: newClients,
         montoNuevosPrestamos: newLoansAmount,
-      } as any;
+      };
     });
 
     const routePerformance = await Promise.all(routePerformancePromises);
@@ -1502,7 +1502,7 @@ export class ReportsService {
     const fecha = getBogotaDayKey(new Date());
 
     const filas: OperativoRow[] = (reportData.rendimientoRutas || []).map(
-      (r: any) => ({
+      (r) => ({
         ruta: r.ruta || '',
         cobrador: r.cobrador || '',
         meta: Number(r.meta || 0),
