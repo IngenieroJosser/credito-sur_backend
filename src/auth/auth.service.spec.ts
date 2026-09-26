@@ -232,6 +232,30 @@ describe('AuthService', () => {
       expect(result).toBeNull();
     });
 
+    it('un identificador que no es texto no llega a la base', async () => {
+      // El DTO tipa `string`, pero el cuerpo lo manda el cliente. Antes esto se
+      // convertia en el literal "[object Object]" y se buscaba asi en la base;
+      // ahora se trata como identificador vacio y el login corta antes.
+      prisma.usuario.findFirst.mockClear();
+      prisma.usuario.findMany.mockClear();
+
+      const result = await service.validarUsuario(
+        { correo: 'admin' } as unknown as string,
+        'pass',
+      );
+
+      expect(result).toBeNull();
+      expect(prisma.usuario.findFirst).not.toHaveBeenCalled();
+      expect(prisma.usuario.findMany).not.toHaveBeenCalled();
+    });
+
+    it('un identificador vacio o solo espacios tampoco llega a la base', async () => {
+      prisma.usuario.findFirst.mockClear();
+
+      expect(await service.validarUsuario('   ', 'pass')).toBeNull();
+      expect(prisma.usuario.findFirst).not.toHaveBeenCalled();
+    });
+
     it('retorna null si argon2.verify lanza error inesperado', async () => {
       (argon2.verify as jest.Mock).mockRejectedValue(new Error('crypto error'));
       const result = await service.validarUsuario('Admin', 'pass');

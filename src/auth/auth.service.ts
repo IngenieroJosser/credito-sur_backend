@@ -43,10 +43,21 @@ export class AuthService {
       .toLowerCase();
   }
 
+  /**
+   * Normaliza el identificador con el que alguien intenta entrar.
+   *
+   * Solo se aceptan cadenas y numeros. Antes era `String(valor ?? '')` sobre un
+   * `unknown`: si llegaba un objeto en el cuerpo de la peticion —el DTO tipa
+   * `string`, pero el cuerpo lo manda el cliente— se convertia en el literal
+   * "[object Object]" y eso era lo que se buscaba en la base. No abria ninguna
+   * puerta (nunca coincide con un identificador real), pero tampoco es lo que el
+   * codigo dice que hace: lo correcto es tratarlo como identificador vacio, que ya
+   * corta el login en la linea siguiente.
+   */
   private normalizarIdentificadorLogin(valor: unknown) {
-    return String(valor ?? '')
-      .trim()
-      .toLowerCase();
+    if (typeof valor !== 'string' && typeof valor !== 'number') return '';
+
+    return String(valor).trim().toLowerCase();
   }
 
   private nombreCompletoCoincide(
