@@ -159,6 +159,22 @@ export class ClientsService {
         archivos: {
           where: { estado: 'ACTIVO' },
         },
+        /**
+         * La ruta asignada. El listado (`getAllClients`) ya la incluia y de ahi
+         * componia `rutaNombre`, pero el detalle no, y el portal del cliente la lee
+         * del DETALLE: `asignacionesRuta?.[0]?.ruta?.nombre` salia `undefined` y la
+         * pantalla mostraba "Sin Ruta" en todos los clientes.
+         *
+         * Se usa la misma forma que el listado para que las dos respuestas digan lo
+         * mismo: solo la asignacion activa, y de la ruta solo lo que se muestra.
+         */
+        asignacionesRuta: {
+          where: { activa: true },
+          include: {
+            ruta: { select: { id: true, nombre: true, codigo: true } },
+          },
+          take: 1,
+        },
       },
     });
   }

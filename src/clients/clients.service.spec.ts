@@ -438,4 +438,49 @@ describe('ClientsService', () => {
       );
     });
   });
+  describe('findOne: el detalle trae la ruta asignada', () => {
+    /**
+     * El portal del cliente lee la ruta del DETALLE
+     * (`asignacionesRuta[0].ruta.nombre`). El listado ya la incluia y el detalle no,
+     * asi que esa pantalla mostraba "Sin Ruta" en todos los clientes.
+     */
+    it('incluye asignacionesRuta con la ruta, solo la activa', async () => {
+      mockPrismaService.cliente.findUnique.mockResolvedValue({
+        id: 'cliente-1',
+      });
+
+      await service.findOne('cliente-1');
+
+      expect(mockPrismaService.cliente.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'cliente-1' },
+          include: expect.objectContaining({
+            asignacionesRuta: {
+              where: { activa: true },
+              include: {
+                ruta: { select: { id: true, nombre: true, codigo: true } },
+              },
+              take: 1,
+            },
+          }),
+        }),
+      );
+    });
+
+    it('sigue trayendo prestamos, pagos y los archivos activos', async () => {
+      mockPrismaService.cliente.findUnique.mockResolvedValue({
+        id: 'cliente-1',
+      });
+
+      await service.findOne('cliente-1');
+
+      const [argumento] =
+        mockPrismaService.cliente.findUnique.mock.calls.at(-1);
+      expect(argumento.include.prestamos).toBe(true);
+      expect(argumento.include.pagos).toBe(true);
+      expect(argumento.include.archivos).toEqual({
+        where: { estado: 'ACTIVO' },
+      });
+    });
+  });
 });
