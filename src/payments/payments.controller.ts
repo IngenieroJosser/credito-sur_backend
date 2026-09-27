@@ -23,11 +23,12 @@ import { CreatePaymentDto } from './dto/create-payment.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { RolUsuario } from '@prisma/client';
+import { MetodoPago, RolUsuario } from '@prisma/client';
 import { Response } from 'express';
 
 import { RequestConUsuario } from '../common/types';
 import { memoryStorage } from 'multer';
+import { unoDeLosPermitidos } from '../common/texto.util';
 import {
   codigoDeError,
   mensajeDeError,
@@ -81,14 +82,27 @@ export class PaymentsController {
         createPaymentDto.cobradorId?.toString().trim() ||
         (req.user?.rol === RolUsuario.COBRADOR ? req.user?.id : undefined),
       montoTotal: Number(createPaymentDto.montoTotal),
-      metodoPago: createPaymentDto.metodoPago?.toString().toUpperCase() as any,
+      // Estos tres se normalizan con `unoDeLosPermitidos`, que ademas de subir a
+      // mayusculas COMPRUEBA contra la lista y devuelve el tipo bueno. Antes era
+      // `?.toString().toUpperCase() as any`, y ese cast tapaba que el resultado es
+      // `string`, no el enum.
+      //
+      // El DTO ya hace la misma normalizacion con `@Transform` y luego valida
+      // (`create-payment.dto.ts:38-42`, `61-64`, `81-84`), asi que en produccion llega
+      // limpio; esto se conserva porque el controlador tambien se llama directo en las
+      // pruebas, sin pipe.
+      metodoPago: unoDeLosPermitidos(
+        createPaymentDto.metodoPago,
+        Object.values(MetodoPago),
+      ),
       numeroReferencia: createPaymentDto.numeroReferencia?.toString().trim(),
       notas: createPaymentDto.notas?.toString(),
       fechaPago: createPaymentDto.fechaPago?.toString().trim(),
       idempotencyKey: createPaymentDto.idempotencyKey?.toString().trim(),
-      tipoRegistro: createPaymentDto.tipoRegistro
-        ?.toString()
-        .toUpperCase() as any,
+      tipoRegistro: unoDeLosPermitidos(createPaymentDto.tipoRegistro, [
+        'PAGO',
+        'ABONO',
+      ] as const),
       cuotaNumeroEsperada:
         createPaymentDto.cuotaNumeroEsperada != null
           ? Number(createPaymentDto.cuotaNumeroEsperada)
@@ -102,10 +116,9 @@ export class PaymentsController {
       fechaOperativaRuta: createPaymentDto.fechaOperativaRuta
         ?.toString()
         .trim(),
-      origenGestion: createPaymentDto.origenGestion
-        ?.toString()
-        .trim()
-        .toUpperCase() as any,
+      origenGestion: unoDeLosPermitidos(createPaymentDto.origenGestion, [
+        'CIERRE_PENDIENTE',
+      ] as const),
     };
 
     if (

@@ -1963,6 +1963,22 @@ export class PaymentsService {
         cliente: { select: { nombres: true, apellidos: true, dni: true } },
         prestamo: { select: { numeroPrestamo: true } },
         cobrador: { select: { nombres: true, apellidos: true, rol: true } },
+        /**
+         * El desglose del pago vive aqui, no en `Pago`.
+         *
+         * Las columnas de capital, interes y mora de este export se leian como
+         * `p.capitalPagado`, `p.interesPagado` y `p.moraPagada`, y ninguna de las tres
+         * es columna de `model Pago`: las dos primeras son de `model Prestamo` y la
+         * tercera no existe en ningun sitio. O sea que el archivo exportado las traia
+         * SIEMPRE en 0. Lo real es la suma de los detalles, una fila por cuota cubierta.
+         */
+        detalles: {
+          select: {
+            montoCapital: true,
+            montoInteres: true,
+            montoInteresMora: true,
+          },
+        },
       },
       orderBy: { fechaPago: 'desc' },
       take: 10000,
@@ -2048,6 +2064,13 @@ export class PaymentsService {
     );
 
     // 2. Mapeo al tipo del template
+    /** Suma un campo del desglose de un pago. */
+    const sumaDetalles = (
+      detalles: PagoConRelacionesExport['detalles'],
+      campo: 'montoCapital' | 'montoInteres' | 'montoInteresMora',
+    ): number =>
+      (detalles || []).reduce((total, d) => total + Number(d[campo] || 0), 0);
+
     const filas: PagoRow[] = pagos.map((p: PagoConRelacionesExport) => {
       const fechaPagoKey = getBogotaDayKey(p.fechaPago);
       const gestion = visitasMap.get(`${p.clienteId}|${fechaPagoKey}`);
@@ -2085,11 +2108,17 @@ export class PaymentsService {
         cobrador: p.cobrador
           ? `${p.cobrador.nombres} ${p.cobrador.apellidos}`
           : 'Admin',
-        esAbono: (p as any).esAbono ?? false,
-        capitalPagado: Number((p as any).capitalPagado || 0),
-        interesPagado: Number((p as any).interesPagado || 0),
-        moraPagada: Number((p as any).moraPagada || 0),
-        comentario: (p as any).notas || '',
+        /**
+         * `esAbono` no se puede saber: no hay columna `esAbono` ni `tipoRegistro` en
+         * `model Pago` (el `tipoRegistro` del DTO no se guarda). Se deja en `false`
+         * explicito, que es lo que el export ya traia, en vez de leer un campo que no
+         * existe y que parecia que algun dia llegaria.
+         */
+        esAbono: false,
+        capitalPagado: sumaDetalles(p.detalles, 'montoCapital'),
+        interesPagado: sumaDetalles(p.detalles, 'montoInteres'),
+        moraPagada: sumaDetalles(p.detalles, 'montoInteresMora'),
+        comentario: p.notas || '',
         origenCaja,
         estadoVisita: gestion?.estadoVisita || null,
         notasVisita: gestion?.notas || null,
@@ -2387,7 +2416,7 @@ export class PaymentsService {
             description: `Reverso administrativo de pago ${pago.numeroPago}`,
             createdBy: params.actor?.id || pago.cobradorId,
             lines: {
-              create: originalEntry.lines.map((line: any) => ({
+              create: originalEntry.lines.map((line) => ({
                 accountCode: line.accountCode,
                 debitAmount: line.creditAmount || null,
                 creditAmount: line.debitAmount || null,
@@ -2397,7 +2426,9 @@ export class PaymentsService {
           },
         });
 
-        for (const line of originalEntry.lines as any[]) {
+        // `include: { lines: true }` ya tipa esto; el cast y la anotacion `line: any`
+        // de arriba solo apagaban la comprobacion.
+        for (const line of originalEntry.lines) {
           if (!line.cajaId) continue;
           const originalDelta =
             Number(line.debitAmount || 0) - Number(line.creditAmount || 0);

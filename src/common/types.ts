@@ -105,6 +105,18 @@ export type PagoConRelacionesExport = Prisma.PagoGetPayload<{
     cliente: { select: { nombres: true; apellidos: true; dni: true } };
     prestamo: { select: { numeroPrestamo: true } };
     cobrador: { select: { nombres: true; apellidos: true; rol: true } };
+    /**
+     * El desglose del pago: una fila por cuota cubierta. `model Pago` NO tiene
+     * capital, interes ni mora; el export los leia de ahi con `as any` y por eso
+     * salian siempre en 0.
+     */
+    detalles: {
+      select: {
+        montoCapital: true;
+        montoInteres: true;
+        montoInteresMora: true;
+      };
+    };
   };
 }>;
 

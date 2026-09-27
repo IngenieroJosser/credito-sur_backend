@@ -46,3 +46,25 @@ export function textoComparable(valor: unknown): string {
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '');
 }
+
+/**
+ * Normaliza un valor a uno de los permitidos, o `undefined`.
+ *
+ * Existe porque tres campos del cuerpo de un pago se normalizaban con
+ * `valor?.toString().toUpperCase() as any`: el `toUpperCase()` devuelve `string`, que no
+ * es asignable al enum ni a la union de literales, y el cast tapaba eso.
+ *
+ * Ojo: el DTO YA hace la misma normalizacion con `@Transform` y luego valida, asi que en
+ * produccion el valor llega limpio. Esto se conserva de todos modos porque el
+ * controlador tambien se llama directo en las pruebas, sin pipe, y porque asi la
+ * garantia no depende de que el pipe este bien configurado. La diferencia es que ahora
+ * el resultado esta TIPADO: si el valor no es uno de los permitidos, sale `undefined` en
+ * vez de colarse como texto cualquiera.
+ */
+export function unoDeLosPermitidos<T extends string>(
+  valor: unknown,
+  permitidos: readonly T[],
+): T | undefined {
+  const texto = textoComparable(valor);
+  return permitidos.find((permitido) => permitido === texto);
+}
