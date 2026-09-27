@@ -22,7 +22,10 @@ import {
 } from './dto/cuentas-vencidas.dto';
 import { CuentasVencidasResponseDto } from './dto/responses-cuentas-vencidas.dto';
 import { TipoAprobacion, EstadoPrestamo } from '@prisma/client';
-import { GetOperationalReportDto } from './dto/get-operational-report.dto';
+import {
+  ReportPeriod,
+  GetOperationalReportDto,
+} from './dto/get-operational-report.dto';
 import {
   OperationalReportResponse,
   RoutePerformanceDetail,
@@ -987,7 +990,9 @@ export class ReportsService {
     // Para el reporte diario, el objetivo debe ser la meta REAL del día por ruta,
     // igual a la vista del listado de rutas (metaDelDia/cobranzaDelDia/avanceDiario).
     // Esto evita discrepancias y hace que el objetivo tenga sentido operativo.
-    if (period === 'today') {
+    // Se compara contra el miembro del enum y no contra el literal: asi un valor
+    // mal escrito lo atrapa el compilador.
+    if (period === ReportPeriod.TODAY) {
       // El actor filtra las rutas: el supervisor/cobrador solo ve las suyas.
       const rutasListado = await this.routesService.findAll(
         { activa: true },

@@ -9,6 +9,7 @@ import { LedgerService } from '../accounting/ledger.service';
 import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
 import { codigoDeError } from '../common/error.util';
 import { CreateCashSaleDto } from './dto/create-cash-sale.dto';
+import { textoRecortado } from '../common/texto.util';
 
 /**
  * Ventas de contado de artículos.
@@ -48,8 +49,10 @@ export class SalesService {
    * transferencia y 1.1.1 (caja) para lo demás. Hoy solo decide el método; el
    * parámetro `caja` no se usa.
    */
-  private getAccountCodeCaja(caja: any, metodoPago?: MetodoPago | string) {
-    const metodo = String(metodoPago || '').toUpperCase();
+  private getAccountCodeCaja(caja: any, metodoPago?: MetodoPago) {
+    // El `| string` que habia en el parametro se comia el enum: la union entera
+    // equivalia a `string` y no se comprobaba nada.
+    const metodo = textoRecortado(metodoPago).toUpperCase();
 
     if (metodo === MetodoPago.TRANSFERENCIA) return '1.1.2';
 

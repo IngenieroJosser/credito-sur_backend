@@ -27,6 +27,7 @@ import { RolUsuario } from '@prisma/client';
 import { Response } from 'express';
 
 import { RequestConUsuario } from '../common/types';
+import { memoryStorage } from 'multer';
 import {
   codigoDeError,
   mensajeDeError,
@@ -51,7 +52,7 @@ export class PaymentsController {
   @ApiConsumes('multipart/form-data')
   @UseInterceptors(
     FileInterceptor('comprobante', {
-      storage: require('multer').memoryStorage(),
+      storage: memoryStorage(),
       fileFilter: (_req, file: Express.Multer.File, cb) => {
         // Soporte para más formatos de imagen comunes en móviles (webp, heic, heif)
         if (!file.originalname.match(/\.(jpg|jpeg|png|gif|webp|heic|heif)$/i)) {
