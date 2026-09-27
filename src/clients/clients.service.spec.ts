@@ -467,7 +467,7 @@ describe('ClientsService', () => {
       );
     });
 
-    it('sigue trayendo prestamos, pagos y los archivos activos', async () => {
+    it('sigue trayendo los archivos activos', async () => {
       mockPrismaService.cliente.findUnique.mockResolvedValue({
         id: 'cliente-1',
       });
@@ -476,10 +476,50 @@ describe('ClientsService', () => {
 
       const [argumento] =
         mockPrismaService.cliente.findUnique.mock.calls.at(-1);
-      expect(argumento.include.prestamos).toBe(true);
-      expect(argumento.include.pagos).toBe(true);
       expect(argumento.include.archivos).toEqual({
         where: { estado: 'ACTIVO' },
+      });
+    });
+
+    /**
+     * El portal del cliente contaba las cuotas pagadas y vencidas sobre `p.cuotas`, y
+     * `prestamos: true` NO trae esa relacion: llegaba vacia y el portal mostraba 0
+     * cuotas pagadas en todos los creditos.
+     */
+    it('los prestamos traen sus cuotas, con los campos que el portal usa', async () => {
+      mockPrismaService.cliente.findUnique.mockResolvedValue({
+        id: 'cliente-1',
+      });
+
+      await service.findOne('cliente-1');
+
+      const [argumento] =
+        mockPrismaService.cliente.findUnique.mock.calls.at(-1);
+      expect(argumento.include.prestamos.include.cuotas.select).toEqual({
+        numeroCuota: true,
+        estado: true,
+        fechaVencimiento: true,
+        fechaVencimientoProrroga: true,
+        montoInteresMora: true,
+      });
+    });
+
+    /**
+     * El vinculo pago->cuota vive en `DetallePago` (`model Pago` no tiene columna
+     * `cuotaId`), y `pagos: true` no traia `detalles`: el historial del portal mostraba
+     * "cuota 1" en TODOS los pagos.
+     */
+    it('los pagos traen el numero de cuota de cada detalle', async () => {
+      mockPrismaService.cliente.findUnique.mockResolvedValue({
+        id: 'cliente-1',
+      });
+
+      await service.findOne('cliente-1');
+
+      const [argumento] =
+        mockPrismaService.cliente.findUnique.mock.calls.at(-1);
+      expect(argumento.include.pagos.include.detalles.select).toEqual({
+        cuota: { select: { numeroCuota: true } },
       });
     });
   });

@@ -154,8 +154,46 @@ export class ClientsService {
     return this.prisma.cliente.findUnique({
       where: { id },
       include: {
-        prestamos: true,
-        pagos: true,
+        /**
+         * `prestamos: true` trae las columnas del credito pero NO sus cuotas, y el
+         * portal del cliente las necesita: contaba las pagadas y las vencidas sobre
+         * `p.cuotas`, que llegaba vacio, asi que mostraba 0 cuotas pagadas en todos
+         * los creditos.
+         *
+         * Se piden con `select` acotado a los tres campos que ese calculo usa
+         * (`isCuotaNoPagada` mira `estado`, y `resolveFechaEfectivaCuota` mira la
+         * fecha y la prorroga). Es un cliente, no una lista: son sus dos o tres
+         * creditos, no toda la cartera.
+         */
+        prestamos: {
+          include: {
+            cuotas: {
+              select: {
+                numeroCuota: true,
+                estado: true,
+                fechaVencimiento: true,
+                fechaVencimientoProrroga: true,
+                // La suma de mora acumulada del portal sale de aqui.
+                montoInteresMora: true,
+              },
+              orderBy: { numeroCuota: 'asc' },
+            },
+          },
+        },
+        /**
+         * Lo mismo con los pagos: `pagos: true` no trae `detalles`, y el vinculo
+         * pago->cuota vive ahi (`model Pago` no tiene columna `cuotaId`). Sin esto el
+         * historial del portal mostraba "cuota 1" en TODOS los pagos.
+         */
+        pagos: {
+          include: {
+            detalles: {
+              select: {
+                cuota: { select: { numeroCuota: true } },
+              },
+            },
+          },
+        },
         archivos: {
           where: { estado: 'ACTIVO' },
         },
