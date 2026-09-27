@@ -1296,6 +1296,13 @@ export class RoutesService {
             metaDelDia: 0,
 
             clientesNuevos: 0,
+
+            // Estos dos los asigna el codigo de mas abajo y se devuelven en la
+            // respuesta; declararlos aqui evita el `as any` en cada asignacion y en
+            // cada lectura, y deja escrito que forman parte de la forma.
+            recaudoRegularizadoHoy: 0,
+
+            recaudoContableHoy: 0,
           };
 
           let nivelRiesgo = 'PELIGRO_MINIMO';
@@ -1430,55 +1437,58 @@ export class RoutesService {
             const _dFinUTC = dFinBogota;
 
             if (pIds.length > 0) {
-              const resAgregados = await Promise.all([
-                this.prisma.pago.findMany({
-                  where: {
-                    prestamo: {
-                      cliente: {
-                        asignacionesRuta: {
-                          some: { rutaId: ruta.id, activa: true },
+              // Desestructurado a proposito: `Promise.all` sobre un arreglo literal da
+              // una TUPLA, asi que cada nombre queda con su tipo. Leyendolo por indice
+              // (`resAgregados[0]`) el tipo es la union de los tres y habia que castear.
+              const [pagosRutaRaw, cuotasCriterio, cuotasInicialesHoy] =
+                await Promise.all([
+                  this.prisma.pago.findMany({
+                    where: {
+                      prestamo: {
+                        cliente: {
+                          asignacionesRuta: {
+                            some: { rutaId: ruta.id, activa: true },
+                          },
                         },
                       },
+                      fechaPago: { gte: dInicioBogota, lte: dFinBogota },
                     },
-                    fechaPago: { gte: dInicioBogota, lte: dFinBogota },
-                  },
-                  select: { montoTotal: true, origenGestion: true },
-                }),
+                    select: { montoTotal: true, origenGestion: true },
+                  }),
 
-                this.prisma.cuota.findMany({
-                  where: {
-                    prestamoId: { in: pIdsParaMeta },
-                  },
-                  select: {
-                    prestamoId: true,
-                    fechaVencimiento: true,
-                    fechaPago: true,
-                    estado: true,
-                    monto: true,
-                    montoPagado: true,
-                  },
-                  orderBy: [{ prestamoId: 'asc' }, { fechaVencimiento: 'asc' }],
-                }),
+                  this.prisma.cuota.findMany({
+                    where: {
+                      prestamoId: { in: pIdsParaMeta },
+                    },
+                    select: {
+                      prestamoId: true,
+                      fechaVencimiento: true,
+                      fechaPago: true,
+                      estado: true,
+                      monto: true,
+                      montoPagado: true,
+                    },
+                    orderBy: [
+                      { prestamoId: 'asc' },
+                      { fechaVencimiento: 'asc' },
+                    ],
+                  }),
 
-                // NUEVO: Considerar ingresos por cuota inicial en la meta del día
-                this.prisma.transaccion.aggregate({
-                  where: {
-                    caja: { rutaId: ruta.id, activa: true },
-                    tipoReferencia: 'CUOTA_INICIAL',
-                    tipo: 'INGRESO',
-                    fechaTransaccion: { gte: dInicioBogota, lte: dFinBogota },
-                  },
-                  _sum: { monto: true },
-                }),
-              ]);
+                  // NUEVO: Considerar ingresos por cuota inicial en la meta del día
+                  this.prisma.transaccion.aggregate({
+                    where: {
+                      caja: { rutaId: ruta.id, activa: true },
+                      tipoReferencia: 'CUOTA_INICIAL',
+                      tipo: 'INGRESO',
+                      fechaTransaccion: { gte: dInicioBogota, lte: dFinBogota },
+                    },
+                    _sum: { monto: true },
+                  }),
+                ]);
 
-              const cuotasInicialesHoy = resAgregados[2];
               const montoMetaInicial = Number(
                 cuotasInicialesHoy?._sum?.monto || 0,
               );
-
-              const pagosRutaRaw = resAgregados[0] as any[];
-              const cuotasCriterio = resAgregados[1] as any[];
 
               const pagosOperativosHoy = pagosRutaRaw.filter(
                 (p) =>
@@ -1500,9 +1510,8 @@ export class RoutesService {
                 0,
               );
               estadisticas.cobranzaDelDia = cobranzaReal + montoMetaInicial;
-              (estadisticas as any).recaudoRegularizadoHoy =
-                recaudoRegularizadoHoy;
-              (estadisticas as any).recaudoContableHoy =
+              estadisticas.recaudoRegularizadoHoy = recaudoRegularizadoHoy;
+              estadisticas.recaudoContableHoy =
                 cobranzaReal + recaudoRegularizadoHoy + montoMetaInicial;
 
               // Calcular meta nominal consistente con getDailyVisits + computeRutaHoyUiStatsFromVisitas:
@@ -1668,11 +1677,9 @@ export class RoutesService {
             clientesNuevos: estadisticas.clientesNuevos,
 
             cobranzaDelDia: estadisticas.cobranzaDelDia,
-            recaudoRegularizadoHoy:
-              (estadisticas as any).recaudoRegularizadoHoy || 0,
+            recaudoRegularizadoHoy: estadisticas.recaudoRegularizadoHoy || 0,
             recaudoContableHoy:
-              (estadisticas as any).recaudoContableHoy ||
-              estadisticas.cobranzaDelDia,
+              estadisticas.recaudoContableHoy || estadisticas.cobranzaDelDia,
 
             metaDelDia: estadisticas.metaDelDia,
 
@@ -1916,6 +1923,11 @@ export class RoutesService {
         totalDeuda: 0,
 
         prestamosActivos: 0,
+
+        // Ver la nota del mismo objeto en `findAll`: los asigna el codigo de abajo.
+        recaudoRegularizadoHoy: 0,
+
+        recaudoContableHoy: 0,
       };
 
       let nivelRiesgo = 'PELIGRO_MINIMO';
@@ -1988,50 +2000,50 @@ export class RoutesService {
         const dFinUTC = dFinBogota;
 
         if (pIds.length > 0) {
-          const resAgregados = await Promise.all([
-            this.prisma.pago.findMany({
-              where: {
-                prestamo: {
-                  cliente: {
-                    asignacionesRuta: { some: { rutaId: id, activa: true } },
+          // Ver la nota del mismo patron en `findAll`.
+          const [pagosRutaRaw, cuotasCriterioQuery, cuotasInicialesHoy] =
+            await Promise.all([
+              this.prisma.pago.findMany({
+                where: {
+                  prestamo: {
+                    cliente: {
+                      asignacionesRuta: { some: { rutaId: id, activa: true } },
+                    },
                   },
+                  fechaPago: { gte: dInicioBogota, lte: dFinBogota },
                 },
-                fechaPago: { gte: dInicioBogota, lte: dFinBogota },
-              },
-              select: { montoTotal: true, origenGestion: true },
-            }),
-            this.prisma.cuota.findMany({
-              where: {
-                prestamoId: { in: pIds },
-                estado: {
-                  in: ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'],
+                select: { montoTotal: true, origenGestion: true },
+              }),
+              this.prisma.cuota.findMany({
+                where: {
+                  prestamoId: { in: pIds },
+                  estado: {
+                    in: ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'],
+                  },
+                  fechaVencimiento: { lte: dFinUTC },
                 },
-                fechaVencimiento: { lte: dFinUTC },
-              },
-              select: {
-                prestamoId: true,
-                fechaVencimiento: true,
-                fechaPago: true,
-                estado: true,
-                monto: true,
-                montoPagado: true,
-              },
-              orderBy: [{ prestamoId: 'asc' }, { fechaVencimiento: 'asc' }],
-            }),
-            this.prisma.transaccion.aggregate({
-              where: {
-                caja: { rutaId: id, activa: true },
-                tipoReferencia: 'CUOTA_INICIAL',
-                tipo: 'INGRESO',
-                fechaTransaccion: { gte: dInicioBogota, lte: dFinBogota },
-              },
-              _sum: { monto: true },
-            }),
-          ]);
+                select: {
+                  prestamoId: true,
+                  fechaVencimiento: true,
+                  fechaPago: true,
+                  estado: true,
+                  monto: true,
+                  montoPagado: true,
+                },
+                orderBy: [{ prestamoId: 'asc' }, { fechaVencimiento: 'asc' }],
+              }),
+              this.prisma.transaccion.aggregate({
+                where: {
+                  caja: { rutaId: id, activa: true },
+                  tipoReferencia: 'CUOTA_INICIAL',
+                  tipo: 'INGRESO',
+                  fechaTransaccion: { gte: dInicioBogota, lte: dFinBogota },
+                },
+                _sum: { monto: true },
+              }),
+            ]);
 
-          const montoMetaInicial = Number(resAgregados[2]?._sum?.monto || 0);
-          const pagosRutaRaw = resAgregados[0] as any[];
-          const cuotasCriterioQuery = resAgregados[1] as any[];
+          const montoMetaInicial = Number(cuotasInicialesHoy?._sum?.monto || 0);
 
           const pagosOperativosHoy = pagosRutaRaw.filter(
             (p) =>
@@ -2053,8 +2065,8 @@ export class RoutesService {
               (sum, p) => sum + Number(p.montoTotal || 0),
               0,
             ) + montoMetaInicial;
-          (estadisticas as any).recaudoRegularizadoHoy = recaudoRegularizadoHoy;
-          (estadisticas as any).recaudoContableHoy =
+          estadisticas.recaudoRegularizadoHoy = recaudoRegularizadoHoy;
+          estadisticas.recaudoContableHoy =
             estadisticas.cobranzaDelDia + recaudoRegularizadoHoy;
 
           let metaNominal = 0;
@@ -3876,7 +3888,7 @@ export class RoutesService {
       ).trim();
       if (!cuotaId) return null;
 
-      for (const asignacion of asignaciones as any[]) {
+      for (const asignacion of asignaciones) {
         const prestamos = asignacion?.cliente?.prestamos || [];
 
         for (const prestamo of prestamos) {

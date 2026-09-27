@@ -790,7 +790,6 @@ export class LoansService implements OnModuleInit {
           prestamoId: prestamo.id,
           precioVenta: Number(
             prestamo.precioVentaArticulo ||
-              (data as any).valorArticulo ||
               Number(prestamo.monto || 0) + cuotaInicial,
           ),
           costoArticulo: Number(prestamo.costoArticulo || 0),
@@ -3912,17 +3911,18 @@ export class LoansService implements OnModuleInit {
         return isNaN(n) || n <= 0 ? null : n;
       };
 
+      // Los campos que se leian aqui con `as any` NO pueden llegar: el pipe global usa
+      // `whitelist: true`, el cuerpo de crear credito se valida contra `CreateLoanDto`
+      // (`loans.controller.ts:469`) y ese DTO no los declara, asi que se descartan antes
+      // de que este metodo los vea. Eran respaldos de nombres alternativos
+      // (`numCuotas`, `totalCuotas`, `plazo`, `numPlazo`) y el campo bueno va primero.
       const numCantidadCuotas =
         getVal(data.cantidadCuotas) ||
         getVal(data.cuotas) ||
         getVal(data.cuotasTotales) ||
-        getVal((data as any).numCuotas) ||
-        getVal((data as any).totalCuotas) ||
         0;
 
-      let numPlazoMeses = Number(
-        data.plazoMeses || (data as any).plazo || (data as any).numPlazo || 0,
-      );
+      let numPlazoMeses = Number(data.plazoMeses || 0);
 
       // Si no hay plazo pero hay cuotas, derivamos el plazo (0.4 para 12 días, etc.)
       if (numPlazoMeses === 0 && numCantidadCuotas > 0) {
@@ -4064,8 +4064,9 @@ export class LoansService implements OnModuleInit {
         `[CREATE LOAN] Usuario: ${creador.nombres}, Rol: ${creador.rol}, Auto-aprobado por configuración global: ${esAutoAprobado}`,
       );
 
-      const articuloNombre =
-        (data as any).productoNombre || producto?.nombre || 'Artículo';
+      // `productoNombre` tampoco lo declara el DTO: se descarta. El nombre sale del
+      // producto que se cargo por `productoId`.
+      const articuloNombre = producto?.nombre || 'Artículo';
       const totalCuotasPrometidas = cantidadCuotas;
       const isFinanciamientoArticulo =
         data.tipoPrestamo === TipoPrestamoDto.ARTICULO;
@@ -4119,19 +4120,9 @@ export class LoansService implements OnModuleInit {
               interesTotal,
               saldoPendiente: data.esContado ? 0 : montoTotal,
               totalPagado: data.esContado ? montoTotal : 0,
-              notas:
-                data.notas ||
-                (data as any).observaciones ||
-                (data as any).comentarios ||
-                (data as any).detalle ||
-                undefined
-                  ? String(
-                      data.notas ||
-                        (data as any).observaciones ||
-                        (data as any).comentarios ||
-                        (data as any).detalle,
-                    )
-                  : undefined,
+              // `observaciones`, `comentarios` y `detalle` no los declara el DTO: se
+              // descartan antes de llegar aqui. Sin ellos la cadena es solo `data.notas`.
+              notas: data.notas ? String(data.notas) : undefined,
               garantia: data.garantia ? String(data.garantia) : undefined,
               cuotas: {
                 create: cuotasDataFinal,
@@ -4299,9 +4290,7 @@ export class LoansService implements OnModuleInit {
                   .replace(/&lt;/gi, '<')
                   .replace(/&gt;/gi, '>'),
                 valorArticulo: isFinanciamientoArticulo
-                  ? safeNumber(
-                      (data as any).valorArticulo || precioArticuloTotal,
-                    )
+                  ? safeNumber(precioArticuloTotal)
                   : safeNumber(prestamoTx.monto),
                 cuotas: safeNumber(totalCuotasPrometidas),
                 plazoMeses: numPlazoMeses,
@@ -4310,19 +4299,8 @@ export class LoansService implements OnModuleInit {
                 ),
                 frecuenciaPago: String(data.frecuenciaPago),
                 cuotaInicial: safeNumber(data.cuotaInicial),
-                notas:
-                  data.notas ||
-                  (data as any).observaciones ||
-                  (data as any).comentarios ||
-                  (data as any).detalle ||
-                  undefined
-                    ? String(
-                        data.notas ||
-                          (data as any).observaciones ||
-                          (data as any).comentarios ||
-                          (data as any).detalle,
-                      )
-                    : undefined,
+                // Ver la nota de arriba: los tres alias se descartan por whitelist.
+                notas: data.notas ? String(data.notas) : undefined,
                 garantia: data.garantia ? String(data.garantia) : undefined,
                 fechaInicio: prestamoTx.fechaInicio
                   ? formatBogotaOffsetIso(prestamoTx.fechaInicio)
