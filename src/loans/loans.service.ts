@@ -25,7 +25,7 @@ import { NotificacionesService } from '../notificaciones/notificaciones.service'
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { AuditService } from '../audit/audit.service';
 import { PushService } from '../push/push.service';
-import { CreateLoanDto } from './dto/create-loan.dto';
+import { CreateLoanDto, TipoPrestamoDto } from './dto/create-loan.dto';
 import { ConfiguracionService } from '../configuracion/configuracion.service';
 import { UpdateLoanData } from '../common/types';
 import { LedgerService } from '../accounting/ledger.service';
@@ -252,7 +252,10 @@ export class LoansService implements OnModuleInit {
 
   private async runCreateLoanSideEffect(
     label: string,
-    action: () => Promise<unknown> | unknown,
+    // `unknown` cubre tanto una funcion sincrona como una que devuelve promesa: el
+    // `await action()` de abajo funciona con las dos. Antes era
+    // `Promise<unknown> | unknown`, y en esa union el `unknown` se come al otro lado.
+    action: () => unknown,
   ) {
     try {
       await action();
@@ -1307,9 +1310,15 @@ export class LoansService implements OnModuleInit {
    * valor fraccionario. Si no coincide, el plazo se puso a mano y se respeta.
    */
   private recuperarPlazoExacto(prestamo: {
-    plazoMeses: number | any;
+    /**
+     * Llega como Decimal de Prisma o como number segun de donde venga la fila, asi
+     * que `unknown` es lo honesto: abajo pasa por `Number(...)`. Antes decia
+     * `number | any`, y en esa union el `any` se come al otro lado: era `any`.
+     */
+    plazoMeses: unknown;
     cantidadCuotas?: number | null;
-    frecuenciaPago?: FrecuenciaPago | string | null;
+    /** Un valor de `FrecuenciaPago`, pero llega como texto de la base. */
+    frecuenciaPago?: string | null;
   }): number {
     const guardado = Number(prestamo.plazoMeses);
     const cuotas = Number(prestamo.cantidadCuotas || 0);
@@ -1519,12 +1528,14 @@ export class LoansService implements OnModuleInit {
    * (interés, cuota y fechas). Cualquier cambio de fórmula queda en un solo sitio.
    */
   simularCredito(params: {
-    tipoAmortizacion?: TipoAmortizacion | string;
+    /** Un valor de `TipoAmortizacion`; se normaliza desde texto mas abajo. */
+    tipoAmortizacion?: string;
     monto: number;
     tasaInteres: number;
     cantidadCuotas: number;
     plazoMeses: number;
-    frecuenciaPago?: FrecuenciaPago | string;
+    /** Un valor de `FrecuenciaPago`; se normaliza desde texto mas abajo. */
+    frecuenciaPago?: string;
     fechaInicio?: string;
     tipoPrestamo?: string;
     cuotaInicial?: number;
@@ -3816,7 +3827,7 @@ export class LoansService implements OnModuleInit {
       let margenArticulo: number | null = null;
 
       // Para crédito por artículo
-      if (data.tipoPrestamo === 'ARTICULO') {
+      if (data.tipoPrestamo === TipoPrestamoDto.ARTICULO) {
         if (!data.productoId) {
           throw new BadRequestException(
             'Para crédito por artículo se requiere productoId',
@@ -4055,7 +4066,8 @@ export class LoansService implements OnModuleInit {
       const articuloNombre =
         (data as any).productoNombre || producto?.nombre || 'Artículo';
       const totalCuotasPrometidas = cantidadCuotas;
-      const isFinanciamientoArticulo = data.tipoPrestamo === 'ARTICULO';
+      const isFinanciamientoArticulo =
+        data.tipoPrestamo === TipoPrestamoDto.ARTICULO;
       const safeNumber = (val: any) => {
         const n = Number(val);
         return isNaN(n) ? 0 : n;
@@ -4486,7 +4498,7 @@ export class LoansService implements OnModuleInit {
         try {
           await this.notificacionesService.notifyApprovers({
             titulo: 'Nuevo crédito requiere aprobación',
-            mensaje: `${creador.nombres} ${creador.apellidos} solicitó un ${data.tipoPrestamo === 'EFECTIVO' ? 'préstamo' : 'crédito por un artículo'} para ${cliente.nombres} ${cliente.apellidos} por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}.`,
+            mensaje: `${creador.nombres} ${creador.apellidos} solicitó un ${data.tipoPrestamo === TipoPrestamoDto.EFECTIVO ? 'préstamo' : 'crédito por un artículo'} para ${cliente.nombres} ${cliente.apellidos} por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}.`,
             tipo: 'PRESTAMO',
             entidad: 'Aprobacion',
             entidadId: aprobacion.id,
@@ -4648,7 +4660,7 @@ export class LoansService implements OnModuleInit {
         // Notificar a coordinadores, admins y superadmins para aprobación
         await this.notificacionesService.notifyApprovers({
           titulo: 'Nuevo Préstamo Requiere Aprobación',
-          mensaje: `El usuario ${creador.nombres} ${creador.apellidos} ha solicitado un ${data.tipoPrestamo === 'EFECTIVO' ? 'préstamo en efectivo' : 'crédito por un artículo'} para ${cliente.nombres} ${cliente.apellidos} por valor de ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
+          mensaje: `El usuario ${creador.nombres} ${creador.apellidos} ha solicitado un ${data.tipoPrestamo === TipoPrestamoDto.EFECTIVO ? 'préstamo en efectivo' : 'crédito por un artículo'} para ${cliente.nombres} ${cliente.apellidos} por valor de ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
           tipo: 'APROBACION',
           entidad: 'Aprobacion',
           entidadId: aprobacion.id,
@@ -4662,7 +4674,7 @@ export class LoansService implements OnModuleInit {
         await this.runCreateLoanSideEffect('push aprobadores aprobación', () =>
           this.pushService.sendPushNotification({
             title: 'Nuevo Préstamo Requiere Aprobación',
-            body: `${creador.nombres} ${creador.apellidos} ha solicitado un ${data.tipoPrestamo === 'EFECTIVO' ? 'préstamo' : 'crédito de artículo'} por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
+            body: `${creador.nombres} ${creador.apellidos} ha solicitado un ${data.tipoPrestamo === TipoPrestamoDto.EFECTIVO ? 'préstamo' : 'crédito de artículo'} por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
             roleFilter: ['COORDINADOR', 'ADMIN', 'SUPER_ADMINISTRADOR'],
             data: {
               type: 'PRESTAMO_PENDIENTE',
