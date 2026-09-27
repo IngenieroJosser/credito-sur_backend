@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { Prisma } from '@prisma/client';
+import {} from '@prisma/client';
 import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
 import { mensajeDeError } from '../common/error.util';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';

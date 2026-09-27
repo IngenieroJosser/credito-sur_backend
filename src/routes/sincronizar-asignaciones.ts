@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import {} from '@prisma/client';
 import { TransaccionPrisma } from '../prisma/prisma.service';
 
 /**

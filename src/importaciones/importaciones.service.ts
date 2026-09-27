@@ -90,7 +90,7 @@ export function normalizarNombreCategoria(valor: unknown): string {
     .toLowerCase();
 }
 
-import { Prisma } from '@prisma/client';
+import {} from '@prisma/client';
 
 @Injectable()
 export class ImportacionesService {

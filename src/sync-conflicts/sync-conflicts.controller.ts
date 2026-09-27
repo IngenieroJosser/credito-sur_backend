@@ -11,7 +11,7 @@ import {
 } from '@nestjs/common';
 import { SyncConflictsService } from './sync-conflicts.service';
 import { CreateSyncConflictDto } from './dto/create-sync-conflict.dto';
-import { UpdateSyncConflictDto } from './dto/update-sync-conflict.dto';
+import {} from './dto/update-sync-conflict.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';

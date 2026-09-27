@@ -8,7 +8,6 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { objetoDeJson } from '../common/json.util';
 import {
-  Prisma,
   EstadoAprobacion,
   EstadoPrestamo,
   EstadoCuota,

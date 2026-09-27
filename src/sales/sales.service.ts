@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { Prisma, MetodoPago, TipoTransaccion } from '@prisma/client';
+import { MetodoPago, TipoTransaccion } from '@prisma/client';
 import { LedgerService } from '../accounting/ledger.service';
 import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
 import { codigoDeError } from '../common/error.util';

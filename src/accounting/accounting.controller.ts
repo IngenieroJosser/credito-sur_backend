@@ -11,7 +11,6 @@ import {
   Request,
   ParseUUIDPipe,
   UnauthorizedException,
-  DefaultValuePipe,
   HttpCode,
   HttpStatus,
   Res,

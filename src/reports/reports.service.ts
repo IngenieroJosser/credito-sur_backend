@@ -18,7 +18,6 @@ import {
   TotalesVencidasDto,
   DecisionCastigoDto,
   CuentasVencidasFiltrosDto,
-  CuentaVencidaDto,
 } from './dto/cuentas-vencidas.dto';
 import { CuentasVencidasResponseDto } from './dto/responses-cuentas-vencidas.dto';
 import { TipoAprobacion, EstadoPrestamo } from '@prisma/client';

@@ -4,7 +4,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { CreateSyncConflictDto } from './dto/create-sync-conflict.dto';
-import { UpdateSyncConflictDto } from './dto/update-sync-conflict.dto';
+import {} from './dto/update-sync-conflict.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';

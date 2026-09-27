@@ -3651,7 +3651,8 @@ export class LoansService implements OnModuleInit {
     let efectoProvisionalCreado: any = null;
     let asignacionRutaCreadaId: string | null = null;
     let esAutoAprobadoFinal = false;
-    let impactoProvisionalPrestamo: any = null;
+    // Se asigna y no se lee; queda como registro de lo que produjo la transaccion.
+    let _impactoProvisionalPrestamo: unknown = null;
 
     try {
       this.logger.log(
@@ -4435,7 +4436,7 @@ export class LoansService implements OnModuleInit {
       prestamoCreado = prestamo;
       aprobacionCreada = aprobacion;
       efectoProvisionalCreado = efectoProvisional;
-      impactoProvisionalPrestamo = impactoProvisional;
+      _impactoProvisionalPrestamo = impactoProvisional;
 
       if (asignacionRutaCreadaId && rutaIdAsignadaBroadcast) {
         await this.runCreateLoanSideEffect(

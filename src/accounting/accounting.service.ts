@@ -1812,8 +1812,12 @@ export class AccountingService {
     });
 
     // 2. Clasificar y sumar transacciones
-    let cobranzaTrx = 0;
-    let baseEfectivo = 0;
+    // Estos dos se acumulan y NO se leen: el `baseEfectivo` que se reporta sale del
+    // saldo de la caja, no de esta suma. Llevan guion bajo por la convencion del
+    // repo para lo deliberadamente no usado, para que nadie los tome por la cifra
+    // del reporte.
+    let _cobranzaTrx = 0;
+    let _baseEfectivo = 0;
     let gastosOperativos = 0;
     let desembolsos = 0;
     let otrosIngresos = 0;
@@ -1825,7 +1829,7 @@ export class AccountingService {
       const descripcion = String(t.descripcion || '').toLowerCase();
       if (t.tipo === 'INGRESO') {
         if (t.tipoReferencia === 'PAGO') {
-          cobranzaTrx += monto;
+          _cobranzaTrx += monto;
           if (t.referenciaId) {
             recaudosPorReferencia[t.referenciaId] =
               (recaudosPorReferencia[t.referenciaId] || 0) + monto;
@@ -1837,7 +1841,7 @@ export class AccountingService {
           descripcion.includes('apertura de caja') ||
           descripcion.includes('base de efectivo')
         ) {
-          baseEfectivo += monto;
+          _baseEfectivo += monto;
         } else {
           otrosIngresos += monto;
         }
@@ -2060,7 +2064,8 @@ export class AccountingService {
 
     // Clasificar y sumar transacciones
     let cobranzaTrx = 0;
-    let baseEfectivo = 0;
+    // Se acumula y no se lee: el reportado sale del saldo de la caja.
+    let _baseEfectivo = 0;
     let gastosOperativos = 0;
     let desembolsos = 0;
     let otrosIngresos = 0;
@@ -2079,7 +2084,7 @@ export class AccountingService {
           descripcion.includes('apertura de caja') ||
           descripcion.includes('base de efectivo')
         ) {
-          baseEfectivo += monto;
+          _baseEfectivo += monto;
         } else {
           otrosIngresos += monto;
         }
