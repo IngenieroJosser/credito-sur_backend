@@ -143,7 +143,7 @@ export class UsersController {
     @Param('id', ParseUUIDPipe) id: string,
     @Request() req: RequestConUsuario,
   ) {
-    return (this.usersService as any).resetearContrasena(
+    return this.usersService.resetearContrasena(
       id,
       req.user?.rol,
       req.user?.id,

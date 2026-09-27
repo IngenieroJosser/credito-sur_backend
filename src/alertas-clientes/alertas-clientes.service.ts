@@ -544,13 +544,9 @@ export class AlertasClientesService {
         alertaId,
         clienteId,
       });
-      (this.notificacionesGateway as any).broadcastNotificacionesActualizadas?.(
-        {
-          accion: 'ALERTA_CLIENTE_NO_UBICADO',
-          alertaId,
-          clienteId,
-        },
-      );
+      // Aqui habia una segunda llamada, a `broadcastNotificacionesActualizadas`, que el
+      // gateway NO tiene. Iba con `?.()`, asi que no lanzaba: simplemente no hacia nada.
+      // El broadcast que si funciona es el de arriba.
     } catch (error) {
       this.logger.warn(
         `No se pudo emitir actualización realtime de alerta ${alertaId}: ${(error as Error)?.message || error}`,

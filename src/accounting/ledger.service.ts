@@ -799,7 +799,7 @@ export class LedgerService {
     const originales = await tx.journalEntry.findMany({
       where: {
         referenceId: { in: referenceIds },
-        referenceType: { in: referenceTypes as any[] },
+        referenceType: { in: referenceTypes },
       },
       include: { lines: true },
     });

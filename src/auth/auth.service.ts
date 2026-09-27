@@ -129,7 +129,7 @@ export class AuthService {
       if (!p.esNavegable) continue;
       const grupo = modulosMap.get(p.modulo) || {
         nombre: p.modulo,
-        permisos: [] as any[],
+        permisos: [],
       };
       grupo.permisos.push(p);
       modulosMap.set(p.modulo, grupo);

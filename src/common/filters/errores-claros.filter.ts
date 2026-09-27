@@ -211,7 +211,11 @@ export class ErroresClarosFilter implements ExceptionFilter {
     }
 
     // Errores de Postgres que llegan sin envolver.
-    const codigo = (exception as any)?.code;
+    // Se comprueba antes de leer, en vez de castear un `unknown`.
+    const codigo =
+      exception && typeof exception === 'object' && 'code' in exception
+        ? (exception as { code?: unknown }).code
+        : undefined;
     if (typeof codigo === 'string' && /^[0-9A-Z]{5}$/.test(codigo)) {
       if (codigo === '40P01') {
         return {
@@ -243,7 +247,7 @@ export class ErroresClarosFilter implements ExceptionFilter {
     if (typeof cuerpo === 'string') return cuerpo.trim();
 
     if (cuerpo && typeof cuerpo === 'object') {
-      const mensaje = (cuerpo as any).message;
+      const mensaje = (cuerpo as { message?: unknown }).message;
       if (typeof mensaje === 'string') return mensaje.trim();
       if (Array.isArray(mensaje)) {
         const limpios = mensaje
@@ -251,7 +255,7 @@ export class ErroresClarosFilter implements ExceptionFilter {
           .filter(Boolean);
         if (limpios.length > 0) return limpios.join('. ');
       }
-      const error = (cuerpo as any).error;
+      const error = (cuerpo as { error?: unknown }).error;
       if (typeof error === 'string') return error.trim();
     }
 

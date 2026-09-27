@@ -486,7 +486,7 @@ export class LoansService implements OnModuleInit {
       select: { rol: true },
     });
     const cajaOrigen = await this.resolveCajaOperacionPrestamo(this.prisma, {
-      data: {} as any,
+      data: {},
       creador: { id: prestamo.creadoPorId, rol: creador?.rol },
       cliente: { asignacionesRuta: [] },
       requiereCajaRuta: this.isOperatorWithBase(creador),
@@ -536,13 +536,19 @@ export class LoansService implements OnModuleInit {
   private async resolveCajaOperacionPrestamo(
     tx: TransaccionPrisma,
     params: {
-      data: CreateLoanDto;
+      /**
+       * Solo se usan tres campos, asi que se piden esos tres y no el DTO entero.
+       *
+       * Un llamador le pasa `{}` a proposito (el recalculo de caja de un prestamo que ya
+       * existe, donde no hay DTO), y con `CreateLoanDto` eso obligaba a `{} as any`.
+       */
+      data: Pick<CreateLoanDto, 'cajaId' | 'cobradorId' | 'rutaId'>;
       creador: any;
       cliente: any;
       requiereCajaRuta?: boolean;
     },
   ) {
-    const dataAny = params.data;
+    const datosDeCaja = params.data;
     const rolCreador = String(params.creador?.rol || '').toUpperCase();
     const esCobrador = rolCreador === RolUsuario.COBRADOR;
     const esSupervisor = rolCreador === RolUsuario.SUPERVISOR;
@@ -644,7 +650,7 @@ export class LoansService implements OnModuleInit {
       return findCajaOficina();
     }
 
-    const cajaId = String(dataAny.cajaId || '').trim();
+    const cajaId = String(datosDeCaja.cajaId || '').trim();
     if (cajaId) {
       const caja = await tx.caja.findFirst({
         where: { id: cajaId, activa: true },
@@ -668,8 +674,8 @@ export class LoansService implements OnModuleInit {
     const cajaBaseOperador = await findCajaBaseOperador();
     if (cajaBaseOperador?.id) return cajaBaseOperador;
 
-    const rutaIdPayload = String(dataAny.rutaId || '').trim();
-    const cobradorIdPayload = String(dataAny.cobradorId || '').trim();
+    const rutaIdPayload = String(datosDeCaja.rutaId || '').trim();
+    const cobradorIdPayload = String(datosDeCaja.cobradorId || '').trim();
     const rutaPreferida =
       rutaIdPayload ||
       params.cliente?.asignacionesRuta?.[0]?.rutaId ||
@@ -2626,8 +2632,8 @@ export class LoansService implements OnModuleInit {
       }
 
       if (
-        (updateData as any)?.version != null &&
-        Number((updateData as any).version) !== Number(prestamo.version || 1)
+        updateData?.version != null &&
+        Number(updateData.version) !== Number(prestamo.version || 1)
       ) {
         throw new ConflictException(
           'El préstamo fue actualizado por otro usuario. Recarga la información antes de guardar.',

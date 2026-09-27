@@ -4199,7 +4199,7 @@ export class AccountingService {
         arqueoTransacciones.map((t: any) => [t.id, t]),
       );
 
-      for (const line of debtLines as any[]) {
+      for (const line of debtLines) {
         const entry = line.journalEntry;
         if (!entry) continue;
 
@@ -4751,7 +4751,7 @@ export class AccountingService {
     let omitidosSinReferencia = 0;
     let omitidosNoSoportados = 0;
 
-    for (const t of transacciones as any[]) {
+    for (const t of transacciones) {
       const referenceType = mapReferenceType(t.tipoReferencia, t.tipo);
       const referenceId = t.referenciaId || t.id;
       if (!referenceId) {
@@ -4785,7 +4785,7 @@ export class AccountingService {
     if (!params.dryRun) {
       await this.prisma.$transaction(async (tx) => {
         for (const c of candidatos) {
-          const transaccion = (transacciones as any[]).find(
+          const transaccion = transacciones.find(
             (t) => t.id === c.transaccionId,
           );
           if (!transaccion) continue;

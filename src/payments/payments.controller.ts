@@ -84,7 +84,7 @@ export class PaymentsController {
       montoTotal: Number(createPaymentDto.montoTotal),
       // Estos tres se normalizan con `unoDeLosPermitidos`, que ademas de subir a
       // mayusculas COMPRUEBA contra la lista y devuelve el tipo bueno. Antes era
-      // `?.toString().toUpperCase() as any`, y ese cast tapaba que el resultado es
+      // `?.toString().toUpperCase()`, y ese cast tapaba que el resultado es
       // `string`, no el enum.
       //
       // El DTO ya hace la misma normalizacion con `@Transform` y luego valida

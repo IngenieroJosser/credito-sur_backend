@@ -51,7 +51,7 @@ export function textoComparable(valor: unknown): string {
  * Normaliza un valor a uno de los permitidos, o `undefined`.
  *
  * Existe porque tres campos del cuerpo de un pago se normalizaban con
- * `valor?.toString().toUpperCase() as any`: el `toUpperCase()` devuelve `string`, que no
+ * `valor?.toString().toUpperCase()`: el `toUpperCase()` devuelve `string`, que no
  * es asignable al enum ni a la union de literales, y el cast tapaba eso.
  *
  * Ojo: el DTO YA hace la misma normalizacion con `@Transform` y luego valida, asi que en

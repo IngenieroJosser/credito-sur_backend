@@ -389,7 +389,14 @@ export function agregarValoresInventario(
   listaDesplegable(wsArticulos, COL.activo, 'Valores!$B$2:$B$3', true, filas);
 
   const columnaRentabilidad = colLetra(COL.rentabilidadObjetivo);
-  (wsArticulos as any).dataValidations.add(
+  // `dataValidations` existe en ExcelJS en ejecucion pero no esta en sus tipos (por eso
+  // el resto del archivo la usa a traves del helper `listaDesplegable`). El cast es de la
+  // definicion de la libreria, no del dato, y va acotado a esta propiedad.
+  (
+    wsArticulos as ExcelJS.Worksheet & {
+      dataValidations: { add: (rango: string, regla: unknown) => void };
+    }
+  ).dataValidations.add(
     `${columnaRentabilidad}7:${columnaRentabilidad}${filas}`,
     {
       type: 'decimal',

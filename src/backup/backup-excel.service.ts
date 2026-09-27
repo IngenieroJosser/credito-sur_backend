@@ -101,13 +101,22 @@ function addHdr(ws: ExcelJS.Worksheet, headers: string[], LC: string): void {
   ws.autoFilter = { from: 'A5', to: `${LC}5` };
 }
 
+/**
+ * El color de fondo de una celda, si tiene relleno de patron.
+ *
+ * `Fill` de ExcelJS es una union (patron, degradado...) y `fgColor` solo existe en
+ * `FillPattern`. Leerlo directo obligaba a castear; aqui se comprueba el tipo primero.
+ */
+function colorDeFondo(fill: ExcelJS.Fill | undefined): string | undefined {
+  if (!fill || fill.type !== 'pattern') return undefined;
+  return fill.fgColor?.argb;
+}
+
 function rowStyle(row: ExcelJS.Row, idx: number): void {
   if (idx % 2 === 1) {
     row.eachCell({ includeEmpty: false }, (c) => {
-      if (
-        !(c.fill as any)?.fgColor?.argb ||
-        (c.fill as any)?.fgColor?.argb === BLANCO
-      )
+      const fondo = colorDeFondo(c.fill);
+      if (!fondo || fondo === BLANCO)
         c.fill = {
           type: 'pattern',
           pattern: 'solid',

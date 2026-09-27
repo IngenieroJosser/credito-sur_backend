@@ -182,7 +182,7 @@ export async function generarExcelRutaCobrador(
   ws.addRow([]);
 
   const headerRow = ws.getRow(4);
-  (ws.columns as any[]).forEach((col, i) => {
+  ws.columns.forEach((col, i) => {
     const cell = headerRow.getCell(i + 1);
     // `header` en ExcelJS es `string | string[]`: admite encabezados de
     // varias filas. Aqui siempre son cadenas, pero se trata el array de

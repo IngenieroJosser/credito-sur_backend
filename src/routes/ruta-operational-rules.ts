@@ -103,7 +103,18 @@ const toBogotaDayKey = (value: unknown): string => {
     }
   }
 
-  const date = new Date(value as any);
+  // `new Date()` solo acepta texto, numero o Date; con otra cosa daba "Invalid Date" y
+  // se caia al centinela de abajo igual, asi que descartarlo aqui no cambia nada y evita
+  // castear el `unknown`.
+  if (
+    typeof value !== 'string' &&
+    typeof value !== 'number' &&
+    !(value instanceof Date)
+  ) {
+    return '9999-12-31';
+  }
+
+  const date = new Date(value);
 
   if (Number.isNaN(date.getTime())) {
     return '9999-12-31';

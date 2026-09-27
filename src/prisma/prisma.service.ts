@@ -9,6 +9,36 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 
+/**
+ * Lectores del `args` y del `result` del hook de Prisma.
+ *
+ * `$allOperations` recibe el `args` de CUALQUIER operacion de CUALQUIER modelo, o sea la
+ * union de cientos de tipos; lo mismo el `result`. Ni `data` ni `where.id` existen en
+ * todos, y por eso el codigo los leia con `as any`, que apagaba la comprobacion entera.
+ *
+ * Estos tres comprueban de verdad antes de leer: si el campo no esta, devuelven
+ * `undefined` en vez de fingir que si.
+ */
+const leerData = (args: unknown): Record<string, unknown> | undefined => {
+  if (!args || typeof args !== 'object' || !('data' in args)) return undefined;
+  const data = (args as { data?: unknown }).data;
+  return data && typeof data === 'object'
+    ? (data as Record<string, unknown>)
+    : undefined;
+};
+
+const leerIdDeWhere = (args: unknown): unknown => {
+  if (!args || typeof args !== 'object' || !('where' in args)) return undefined;
+  const where = (args as { where?: unknown }).where;
+  if (!where || typeof where !== 'object' || !('id' in where)) return undefined;
+  return (where as { id?: unknown }).id;
+};
+
+const leerId = (valor: unknown): unknown => {
+  if (!valor || typeof valor !== 'object' || !('id' in valor)) return undefined;
+  return (valor as { id?: unknown }).id;
+};
+
 function crearClienteExtendido(eventEmitter: EventEmitter2) {
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
@@ -22,17 +52,18 @@ function crearClienteExtendido(eventEmitter: EventEmitter2) {
     query: {
       $allModels: {
         async $allOperations({ operation, model, args, query }) {
+          const datosDeLaEscritura = leerData(args);
           const isCajaBalanceMutation =
             model === 'Caja' &&
             ['update', 'updateMany', 'upsert'].includes(operation) &&
-            (args as any)?.data &&
+            !!datosDeLaEscritura &&
             Object.prototype.hasOwnProperty.call(
-              (args as any).data,
+              datosDeLaEscritura,
               'saldoActual',
             );
 
           if (isCajaBalanceMutation) {
-            const saldoActual = (args as any).data.saldoActual;
+            const saldoActual = datosDeLaEscritura?.saldoActual;
             const esDeltaLedger =
               saldoActual &&
               typeof saldoActual === 'object' &&
@@ -64,10 +95,10 @@ function crearClienteExtendido(eventEmitter: EventEmitter2) {
               // y Prisma rechazaba el create entero: cada borrado masivo
               // dejaba un "[OUTBOX] Error creando evento" en el registro
               // y se perdia el evento.
-              const idDelResultado = (result as any)?.id;
+              const idDelResultado = leerId(result);
               const idDelWhere = Array.isArray(result)
                 ? undefined
-                : (args as any)?.where?.id;
+                : leerIdDeWhere(args);
 
               const aggregateId =
                 typeof idDelResultado === 'string'

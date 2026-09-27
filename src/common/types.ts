@@ -30,6 +30,15 @@ export type PrestamoWhereInput = Prisma.PrestamoWhereInput;
  * Reemplaza `updateData: any` y `data: any` en LoansService.updateLoan.
  */
 export interface UpdateLoanData {
+  /**
+   * Version para el bloqueo optimista. Es columna de `model Prestamo` y el chequeo de
+   * conflicto de `updateLoan` la compara, pero este tipo no la declaraba y por eso se
+   * leia con `as any`.
+   *
+   * Llega de verdad: el endpoint de actualizar recibe `@Body() updateData: any`, sin
+   * DTO, asi que el ValidationPipe no whitelistea nada de ese cuerpo.
+   */
+  version?: number;
   monto?: number;
   tasaInteres?: number;
   tasaInteresMora?: number;
