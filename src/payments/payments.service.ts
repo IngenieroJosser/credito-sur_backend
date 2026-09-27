@@ -17,6 +17,7 @@ import {
   EstadoAprobacion,
   Prisma,
   RolUsuario,
+  TipoRegistroPago,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { AuditService } from '../audit/audit.service';
@@ -1292,6 +1293,12 @@ export class PaymentsService {
             fechaPago: fechaPagoBogota,
             montoTotal,
             metodoPago: paymentDto.metodoPago || MetodoPago.EFECTIVO,
+            // Se guarda: hasta ahora `tipoRegistro` solo decidia comportamiento (el
+            // minimo del abono, el estado de la visita, la nota de gestion) y se perdia.
+            // Por eso el export de pagos tenia una columna `esAbono` que salia siempre en
+            // false. Va sin valor por omision: si el cliente no lo manda, queda null
+            // ("no se sabe") en vez de fingir que fue un pago.
+            tipoRegistro: paymentDto.tipoRegistro,
             numeroReferencia: paymentDto.numeroReferencia,
             notas: paymentDto.notas,
             fechaOperativaRuta: paymentDto.fechaOperativaRuta,
@@ -2109,12 +2116,13 @@ export class PaymentsService {
           ? `${p.cobrador.nombres} ${p.cobrador.apellidos}`
           : 'Admin',
         /**
-         * `esAbono` no se puede saber: no hay columna `esAbono` ni `tipoRegistro` en
-         * `model Pago` (el `tipoRegistro` del DTO no se guarda). Se deja en `false`
-         * explicito, que es lo que el export ya traia, en vez de leer un campo que no
-         * existe y que parecia que algun dia llegaria.
+         * Ya se puede saber: `tipoRegistro` es columna de `Pago` desde la migracion
+         * `20260927120000_tipo_registro_pago`. Antes esta celda salia SIEMPRE en false.
+         *
+         * Los pagos anteriores a esa columna tienen `null` —no se sabe cual fueron— y
+         * caen en `false`, que es lo que el export ya mostraba para todos.
          */
-        esAbono: false,
+        esAbono: p.tipoRegistro === TipoRegistroPago.ABONO,
         capitalPagado: sumaDetalles(p.detalles, 'montoCapital'),
         interesPagado: sumaDetalles(p.detalles, 'montoInteres'),
         moraPagada: sumaDetalles(p.detalles, 'montoInteresMora'),

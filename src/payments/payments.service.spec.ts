@@ -1175,6 +1175,39 @@ describe('PaymentsService', () => {
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
+    /**
+     * `tipoRegistro` se recibia desde siempre y se USABA (el minimo del abono, el estado
+     * que queda en la visita, la nota de gestion) pero NO se guardaba. Por eso el export
+     * de pagos tenia una columna `esAbono` que salia SIEMPRE en false: no habia de donde
+     * sacarla. Ahora es columna.
+     */
+    it('guarda tipoRegistro en el pago', async () => {
+      await service.create({
+        prestamoId: 'prestamo-1',
+        cobradorId: 'cobrador-1',
+        montoTotal: 10_000,
+        tipoRegistro: 'ABONO',
+      });
+
+      expect(prisma._txMock.pago.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ tipoRegistro: 'ABONO' }),
+        }),
+      );
+    });
+
+    it('si no lo mandan queda sin valor, no como PAGO', async () => {
+      // Poner PAGO por omision etiquetaria como pago lo que en realidad no se sabe.
+      await service.create({
+        prestamoId: 'prestamo-1',
+        cobradorId: 'cobrador-1',
+        montoTotal: 10_000,
+      });
+
+      const [argumento] = prisma._txMock.pago.create.mock.calls.at(-1);
+      expect(argumento.data.tipoRegistro).toBeUndefined();
+    });
+
     it('rechaza abonos menores a 1000 pesos', async () => {
       await expect(
         service.create({

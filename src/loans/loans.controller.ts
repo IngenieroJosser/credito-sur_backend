@@ -48,6 +48,7 @@ import { ApprovalsService } from '../approvals/approvals.service';
 import { formatBogotaOffsetIso } from '../utils/date-utils';
 
 import { RequestConUsuario } from '../common/types';
+import { UpdateLoanDto } from './dto/update-loan.dto';
 
 @ApiTags('loans')
 @ApiBearerAuth(SWAGGER_JWT_AUTH)
@@ -669,7 +670,10 @@ export class LoansController {
   })
   async updateLoan(
     @Param('id') id: string,
-    @Body() updateData: any,
+    // Antes esto era `updateData: any`, y sin un DTO el ValidationPipe global no tiene
+    // contra que validar: este endpoint aceptaba cualquier cuerpo y lo pasaba al servicio
+    // tal cual. `UpdateLoanDto` existia desde antes y NO tenia un solo consumidor.
+    @Body() updateData: UpdateLoanDto,
     @Request() req: RequestConUsuario,
   ) {
     const userId = req.user.id;

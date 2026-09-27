@@ -423,6 +423,8 @@ model Pago {
   fechaPago            DateTime             @default(now())
   montoTotal           Decimal              @db.Decimal(10, 2)
   metodoPago           MetodoPago
+  /// Nullable: los pagos anteriores a esta columna no se sabe cual fueron.
+  tipoRegistro         TipoRegistroPago?
   numeroReferencia     String?              @db.VarChar(100)
   notas                String?
   fechaOperativaRuta   String?              @db.VarChar(10)
@@ -963,6 +965,20 @@ enum TipoAmortizacion {
   INTERES_SIMPLE
   FRANCESA
   INTERES_PLANO
+}
+
+/// Si un pago se registro como PAGO (cubre la cuota) o como ABONO (parcial).
+///
+/// Era un campo que el DTO recibia, usaba para decidir comportamiento y NO guardaba: el
+/// export de pagos tenia una columna `esAbono` que salia SIEMPRE en false porque no habia
+/// de donde sacarla. El unico rastro que quedaba era la prosa de las notas de la visita
+/// ("...por registro de abono"), que no es un dato.
+///
+/// Va nullable a proposito: los pagos anteriores a esta columna no se sabe cual fueron, y
+/// poner un valor por omision los etiquetaria a todos como PAGO, incluidos los abonos.
+enum TipoRegistroPago {
+  PAGO
+  ABONO
 }
 
 enum MetodoPago {

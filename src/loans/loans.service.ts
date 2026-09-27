@@ -1723,6 +1723,10 @@ export class LoansService implements OnModuleInit {
                 apellidos: true,
                 dni: true,
                 telefono: true,
+                // La direccion no se mandaba, y la fila ya manda el documento y el
+                // telefono. El detalle de prestamo sin conexion la dejaba en blanco
+                // porque la copia local no la tenia de donde sacar.
+                direccion: true,
                 nivelRiesgo: true,
                 // Incluir asignaciones de ruta dentro del mismo select del cliente
                 asignacionesRuta: {
@@ -1970,6 +1974,7 @@ export class LoansService implements OnModuleInit {
               `${prestamo.cliente?.nombres || ''} ${prestamo.cliente?.apellidos || ''}`.trim(),
             clienteDni: prestamo.cliente.dni || '',
             clienteTelefono: prestamo.cliente.telefono || '',
+            clienteDireccion: prestamo.cliente.direccion || '',
             producto: prestamo.producto?.nombre || 'Préstamo en efectivo',
             tipoProducto,
             tipoPrestamo: prestamo.tipoPrestamo,
