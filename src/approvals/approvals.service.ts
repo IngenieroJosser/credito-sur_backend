@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { objetoDeJson } from '../common/json.util';
+import { textoDeValor } from '../common/texto.util';
 import {
   EstadoAprobacion,
   EstadoPrestamo,
@@ -2785,8 +2786,9 @@ export class ApprovalsService {
         metadata: {
           estadoAprobacion: 'RECHAZADO',
           revisadoPor: nombreRevisor,
-          descSolicitud:
+          descSolicitud: textoDeValor(
             objetoDeJson(datos).descripcion || objetoDeJson(datos).motivo,
+          ),
         },
       });
     } catch {
