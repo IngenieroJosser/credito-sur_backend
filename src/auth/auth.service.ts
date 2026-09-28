@@ -334,6 +334,19 @@ export class AuthService {
   // RECUPERACION DE CONTRASENA — Flujo por correo electronico
   // ============================================================
 
+  /**
+   * Primer paso de la recuperacion por uno mismo: pedir un codigo al correo.
+   *
+   * LA POLITICA: este flujo es SOLO para el superadmin. Los demas usuarios recuperan su
+   * contrasena pidiendosela a un superadmin o a un administrador, que la resetea con
+   * `UsersService.resetearContrasena` (`POST /usuarios/:id/reset-password`). Ahi la regla
+   * complementaria es que un ADMIN puede resetear a un usuario normal, pero solo un
+   * SUPER_ADMINISTRADOR puede resetear a otro superadmin o al usuario principal.
+   *
+   * Las respuestas negativas son todas IGUALES a proposito —correo inexistente, cuenta
+   * inactiva, usuario que no es superadmin— para que este endpoint no sirva de paso para
+   * averiguar quien esta registrado. Hay pruebas que lo fijan.
+   */
   async solicitarRecuperacion(dto: ForgotPasswordDto) {
     // Buscar el usuario por correo
     const usuario = await this.prisma.usuario.findFirst({

@@ -1304,6 +1304,10 @@ export class UsersService {
    * `{ contrasenaTemporal }` (`usuarios-service.ts:261`), asi que ese boton lanzaba un
    * TypeError en el servidor.
    *
+   * LA POLITICA, confirmada: este es el camino de TODOS los usuarios menos el superadmin.
+   * La recuperacion por uno mismo (`/auth/forgot-password`) esta reservada al superadmin;
+   * el resto se la pide a un superadmin o a un administrador, y ese la resetea aqui.
+   *
    * Las guardas son las mismas que ya usa el resto del servicio:
    *
    *  - 404 si el usuario no existe o esta borrado.
