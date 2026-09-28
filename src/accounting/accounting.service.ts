@@ -46,6 +46,65 @@ import {
 import { LedgerService, ReferenceTypeContable } from './ledger.service';
 import { randomUUID } from 'crypto';
 
+/**
+ * Una fila del historial de cierres (`GET /accounting/cierres`).
+ *
+ * Es un tipo con casi todo opcional a proposito: la lista UNE cuatro formas distintas y
+ * el consumidor las distingue por `tipo`.
+ *
+ *  - `ARQUEO` salido de `Transaccion` (referenciaId codificado `SS:..|ER:..|DF:..`).
+ *    Es el unico que NO trae `cajaTipo`, asi que el filtro `soloRutas` lo descarta.
+ *  - `CIERRE_RUTA`, con la meta en `saldoSistema` y el recaudo en `saldoReal`.
+ *  - `CONSOLIDACION`.
+ *  - `ARQUEO` salido de la tabla `Arqueo`, que es el mas rico: trae `cajaOrigen` y
+ *    `cajaDestino` para el modal de detalle y la impresion.
+ *
+ * Antes era `any[]`, y por eso los tres filtros de abajo (`m.estado`, `m.cajaTipo`) no
+ * estaban comprobados contra nada.
+ */
+export type CierreHistorialItem = {
+  id: string;
+  fecha: string;
+  caja: string;
+  responsable: string | null;
+  diferencia: number;
+  estado: string;
+  descripcion: string | null;
+  tipo: 'ARQUEO' | 'CIERRE_RUTA' | 'CONSOLIDACION';
+  cajaId: string;
+  cajaTipo?: TipoCaja;
+  saldoSistema?: number;
+  saldoReal?: number;
+  referenciaId?: string | null;
+  /** Solo `CIERRE_RUTA`. */
+  deudaFisica?: number;
+  efectividad?: number;
+  clientesFaltantes?: number;
+  /** Solo el `ARQUEO` de la tabla `Arqueo`. */
+  fechaOperativa?: string;
+  creadoPor?: string | null;
+  recibidoPor?: string | null;
+  saldoEsperado?: number;
+  efectivoContado?: number;
+  montoTransferido?: number;
+  tipoDiferencia?: string | null;
+  numeroComprobanteTraslado?: string | null;
+  journalEntryId?: string | null;
+  rutaId?: string | null;
+  cajaOrigen?: {
+    id: string;
+    nombre: string;
+    saldoAnterior: number;
+    salida: number;
+    saldoNuevo: number;
+  };
+  cajaDestino?: {
+    nombre: string;
+    ingreso: number;
+    saldoNuevo: number | null;
+  };
+};
+
 @Injectable()
 export class AccountingService {
   private readonly logger = new Logger(AccountingService.name);
@@ -3446,7 +3505,7 @@ export class AccountingService {
         : [],
     ]);
 
-    let mapped: any[] = [];
+    let mapped: CierreHistorialItem[] = [];
 
     // Mapear las transacciones
     mapped = transacciones.map((t) => {
@@ -3547,7 +3606,7 @@ export class AccountingService {
     });
 
     // Mapear los arqueos
-    const mappedArqueos = arqueos.map((a) => {
+    const mappedArqueos: CierreHistorialItem[] = arqueos.map((a) => {
       return {
         id: a.id,
         fecha: formatBogotaOffsetIso(a.creadoEn),
