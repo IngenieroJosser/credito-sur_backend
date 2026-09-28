@@ -17,6 +17,7 @@ import { AuditService } from '../audit/audit.service';
 import { Prisma } from '@prisma/client';
 import { generarPDFClientes } from '../templates/exports/clientes.template';
 import { generarExcelClientesCreditosImportable } from '../templates/exports/importables.template';
+import { unoDeLosPermitidos } from '../common/texto.util';
 
 @Injectable()
 export class ClientsService {
@@ -460,16 +461,21 @@ export class ClientsService {
           ? this.creditCreationClientScope(actor)
           : this.collectorClientScope(actor);
 
-      const where: any = {
+      const where: Prisma.ClienteWhereInput = {
         eliminadoEn: null, // Solo clientes no eliminados
         ...clientScope,
       };
 
       // Filtro por nivel de riesgo
       if (nivelRiesgo !== 'all') {
-        const nivelesValidos = Object.values(NivelRiesgo);
-        if (nivelesValidos.includes(nivelRiesgo as NivelRiesgo)) {
-          where.nivelRiesgo = nivelRiesgo;
+        // `unoDeLosPermitidos` comprueba Y estrecha. El `includes(x as NivelRiesgo)` de
+        // antes validaba pero no estrechaba nada, asi que al asignar seguia siendo texto.
+        const nivel = unoDeLosPermitidos(
+          nivelRiesgo,
+          Object.values(NivelRiesgo),
+        );
+        if (nivel) {
+          where.nivelRiesgo = nivel;
         } else {
           this.logger.warn(`Nivel de riesgo inválido recibido: ${nivelRiesgo}`);
         }
@@ -889,7 +895,7 @@ export class ClientsService {
         this.logger.log(
           `[DEBUG] Cliente ${id} - Archivos ACTIVOS devueltos: ${cliente.archivos.length}`,
         );
-        cliente.archivos.forEach((a: any, i: number) => {
+        cliente.archivos.forEach((a, i: number) => {
           this.logger.log(
             `  [${i}] ${a.tipoContenido} - ${a.tipoArchivo} - Estado: ${a.estado} - URL: ${a.url}`,
           );
@@ -1783,10 +1789,23 @@ export class ClientsService {
     formato: 'excel' | 'pdf',
     filtros?: { nivelRiesgo?: string; ruta?: string; search?: string },
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
-    const where: any = { eliminadoEn: null };
+    const where: Prisma.ClienteWhereInput = { eliminadoEn: null };
 
     if (filtros?.nivelRiesgo && filtros.nivelRiesgo !== 'all') {
-      where.nivelRiesgo = filtros.nivelRiesgo;
+      // Aqui NO habia ninguna validacion: el texto del filtro entraba directo al `where`.
+      // Un valor que no sea del enum hace que Prisma lance, o sea un 500 en vez de una
+      // respuesta limpia. Ahora se comprueba, igual que en el otro listado.
+      const nivel = unoDeLosPermitidos(
+        filtros.nivelRiesgo,
+        Object.values(NivelRiesgo),
+      );
+      if (nivel) {
+        where.nivelRiesgo = nivel;
+      } else {
+        this.logger.warn(
+          `Nivel de riesgo invalido en el filtro: ${filtros.nivelRiesgo}`,
+        );
+      }
     }
     if (filtros?.ruta) {
       where.asignacionesRuta = { some: { rutaId: filtros.ruta, activa: true } };
@@ -1907,7 +1926,7 @@ export class ClientsService {
       throw new NotFoundException('Cliente no encontrado');
     }
 
-    const prestamosWhere: any = {
+    const prestamosWhere: Prisma.PrestamoWhereInput = {
       clienteId,
       eliminadoEn: null,
       estadoAprobacion: {
@@ -1989,50 +2008,49 @@ export class ClientsService {
       }),
     ]);
 
-    const cuotas = prestamos.flatMap((p: any) => p.cuotas || []);
+    const cuotas = prestamos.flatMap((p) => p.cuotas || []);
 
     const resumen = {
       totalPrestado: prestamos.reduce(
-        (sum: number, p: any) => sum + Number(p.monto || 0),
+        (sum: number, p) => sum + Number(p.monto || 0),
         0,
       ),
       saldoPendiente: prestamos.reduce(
-        (sum: number, p: any) => sum + Number(p.saldoPendiente || 0),
+        (sum: number, p) => sum + Number(p.saldoPendiente || 0),
         0,
       ),
       totalPagado: pagos.reduce(
-        (sum: number, p: any) => sum + Number(p.montoTotal || 0),
+        (sum: number, p) => sum + Number(p.montoTotal || 0),
         0,
       ),
       totalMora: cuotas.reduce(
-        (sum: number, c: any) => sum + Number(c.montoInteresMora || 0),
+        (sum: number, c) => sum + Number(c.montoInteresMora || 0),
         0,
       ),
-      cuotasPendientes: cuotas.filter((c: any) =>
+      cuotasPendientes: cuotas.filter((c) =>
         ['PENDIENTE', 'PARCIAL', 'VENCIDA', 'PRORROGADA'].includes(
           String(c.estado),
         ),
       ).length,
-      cuotasVencidas: cuotas.filter((c: any) => String(c.estado) === 'VENCIDA')
+      cuotasVencidas: cuotas.filter((c) => String(c.estado) === 'VENCIDA')
         .length,
-      prestamosActivos: prestamos.filter((p: any) =>
+      prestamosActivos: prestamos.filter((p) =>
         ['ACTIVO', 'EN_MORA', 'INCUMPLIDO'].includes(String(p.estado)),
       ).length,
-      prestamosPagados: prestamos.filter(
-        (p: any) => String(p.estado) === 'PAGADO',
-      ).length,
+      prestamosPagados: prestamos.filter((p) => String(p.estado) === 'PAGADO')
+        .length,
       totalVentasContado: ventasContado.reduce(
-        (sum: number, v: any) => sum + Number(v.monto || 0),
+        (sum: number, v) => sum + Number(v.monto || 0),
         0,
       ),
       totalCuotaInicial: prestamos.reduce(
-        (sum: number, p: any) => sum + Number(p.cuotaInicial || 0),
+        (sum: number, p) => sum + Number(p.cuotaInicial || 0),
         0,
       ),
     };
 
     const movimientosComerciales = [
-      ...ventasContado.map((v: any) => ({
+      ...ventasContado.map((v) => ({
         id: v.id,
         tipo: 'VENTA_CONTADO',
         monto: Number(v.monto || 0),
@@ -2045,8 +2063,8 @@ export class ClientsService {
       })),
 
       ...prestamos
-        .filter((p: any) => Number(p.cuotaInicial || 0) > 0)
-        .map((p: any) => ({
+        .filter((p) => Number(p.cuotaInicial || 0) > 0)
+        .map((p) => ({
           id: `CUOTA_INICIAL:${p.id}`,
           tipo: 'CUOTA_INICIAL',
           monto: Number(p.cuotaInicial || 0),
@@ -2070,7 +2088,7 @@ export class ClientsService {
 
       resumen,
 
-      prestamos: prestamos.map((p: any) => ({
+      prestamos: prestamos.map((p) => ({
         id: p.id,
         numeroPrestamo: p.numeroPrestamo,
         tipoPrestamo: p.tipoPrestamo,
@@ -2084,7 +2102,7 @@ export class ClientsService {
         interesTotal: Number(p.interesTotal || 0),
         fechaInicio: p.fechaInicio,
         fechaFin: p.fechaFin,
-        cuotas: (p.cuotas || []).map((c: any) => ({
+        cuotas: (p.cuotas || []).map((c) => ({
           id: c.id,
           numeroCuota: c.numeroCuota,
           monto: Number(c.monto || 0),
@@ -2105,7 +2123,7 @@ export class ClientsService {
         })),
       })),
 
-      pagos: pagos.map((p: any) => ({
+      pagos: pagos.map((p) => ({
         id: p.id,
         numeroPago: p.numeroPago,
         prestamoId: p.prestamoId,
@@ -2114,7 +2132,7 @@ export class ClientsService {
         metodoPago: p.metodoPago,
         fechaPago: p.fechaPago,
         notas: p.notas,
-        detalles: (p.detalles || []).map((d: any) => ({
+        detalles: (p.detalles || []).map((d) => ({
           id: d.id,
           cuotaId: d.cuotaId,
           numeroCuota: d.cuota?.numeroCuota || null,
