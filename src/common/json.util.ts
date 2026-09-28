@@ -16,3 +16,35 @@ export function objetoDeJson(valor: unknown): Record<string, unknown> {
     ? (valor as Record<string, unknown>)
     : {};
 }
+
+/**
+ * Leer una LISTA DE IDs de una columna `Json`.
+ *
+ * Mismo problema que arriba pero con listas: el codigo hacia
+ * `for (const id of rollbackData.transaccionIds || [])`, que compilaba solo porque el valor
+ * era `any`. Si la columna llegara con un objeto o un numero, ese `for` revienta en
+ * ejecucion ("is not iterable"), no falla en silencio.
+ *
+ * Devuelve solo los elementos que son texto: un id que no lo sea no serviria para buscar
+ * nada, y colarlo haria fallar la consulta mas adelante en vez de aqui.
+ */
+export function textosDeJson(valor: unknown): string[] {
+  if (!Array.isArray(valor)) return [];
+  return valor.filter((item): item is string => typeof item === 'string');
+}
+
+/**
+ * Leer un TEXTO de una columna `Json`.
+ *
+ * El atajo obvio, `String(valor)`, es una trampa: si la columna trae un objeto donde se
+ * esperaba un id, `String` no falla, devuelve `"[object Object]"` y ESO acaba escrito en la
+ * base o buscado como id. La regla `no-base-to-string` avisa justo de eso.
+ *
+ * Aqui, si no es un texto, no hay texto: se devuelve `undefined` y quien llama decide. Los
+ * numeros si se convierten, porque un id numerico en Json es normal.
+ */
+export function textoDeJson(valor: unknown): string | undefined {
+  if (typeof valor === 'string') return valor;
+  if (typeof valor === 'number' && Number.isFinite(valor)) return String(valor);
+  return undefined;
+}

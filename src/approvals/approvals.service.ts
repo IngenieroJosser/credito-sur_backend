@@ -5,8 +5,8 @@ import {
   NotFoundException,
   ForbiddenException,
 } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { objetoDeJson } from '../common/json.util';
+import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
+import { objetoDeJson, textosDeJson, textoDeJson } from '../common/json.util';
 import { textoDeValor } from '../common/texto.util';
 import {
   EstadoAprobacion,
@@ -78,6 +78,22 @@ const ESTADOS_COBRABLES = [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA];
 
 @Injectable()
 export class ApprovalsService {
+  /**
+   * El `select` de las transacciones que se rehacen al revertir. Se extrae a una constante
+   * porque las DOS consultas que llenan `transaccionesOriginales` usaban los mismos ocho
+   * campos escritos dos veces, y asi el tipo se DERIVA de la consulta en vez de repetirse.
+   */
+  private static readonly SELECCION_TRANSACCION_ROLLBACK = {
+    id: true,
+    cajaId: true,
+    tipo: true,
+    monto: true,
+    descripcion: true,
+    creadoPorId: true,
+    tipoReferencia: true,
+    referenciaId: true,
+  } as const;
+
   private readonly logger = new Logger(ApprovalsService.name);
 
   constructor(
@@ -87,7 +103,7 @@ export class ApprovalsService {
     private readonly ledgerService: LedgerService,
   ) {}
 
-  private async ensureCajaBanco(tx: any) {
+  private async ensureCajaBanco(tx: TransaccionPrisma) {
     const existing = await tx.caja.findUnique({
       where: { codigo: 'CAJA-BANCO' },
       select: { id: true, nombre: true, saldoActual: true },
@@ -623,7 +639,7 @@ export class ApprovalsService {
     return efecto || null;
   }
 
-  private async confirmarEfectoProvisional(tx: any, efecto: any) {
+  private async confirmarEfectoProvisional(tx: TransaccionPrisma, efecto: any) {
     if (!efecto?.id) return;
 
     await tx.efectoProvisional.update({
@@ -636,7 +652,7 @@ export class ApprovalsService {
   }
 
   private async confirmarPrestamoProvisional(
-    tx: any,
+    tx: TransaccionPrisma,
     approval: any,
     aprobadoPorId?: string,
   ) {
@@ -679,7 +695,7 @@ export class ApprovalsService {
    * reintento desde la app en campo no duplica el movimiento.
    */
   private async crearReversasPrestamoProvisionalRobusto(
-    tx: any,
+    tx: TransaccionPrisma,
     rollbackData: any,
     transaccionesOriginales: any[],
     journalsOriginales: any[],
@@ -843,7 +859,7 @@ export class ApprovalsService {
   }
 
   private async reaplicarPrestamoProvisionalRevertido(
-    tx: any,
+    tx: TransaccionPrisma,
     approval: any,
     userId: string,
     notas?: string,
@@ -857,7 +873,7 @@ export class ApprovalsService {
       return null;
     }
 
-    const rollbackData = efectoAnterior.rollbackData || {};
+    const rollbackData = objetoDeJson(efectoAnterior.rollbackData);
     const prestamoId = String(
       rollbackData.prestamoId || approval.referenciaId || '',
     );
@@ -886,14 +902,14 @@ export class ApprovalsService {
 
     if (rollbackData.asignacionRutaId) {
       await tx.asignacionRuta.updateMany({
-        where: { id: String(rollbackData.asignacionRutaId) },
+        where: { id: textoDeJson(rollbackData.asignacionRutaId) },
         data: { activa: true },
       });
     }
 
     if (rollbackData.stockDescontado && rollbackData.productoId) {
       await tx.producto.update({
-        where: { id: rollbackData.productoId },
+        where: { id: textoDeJson(rollbackData.productoId) },
         data: { stock: { decrement: 1 } },
       });
     }
@@ -901,7 +917,7 @@ export class ApprovalsService {
     const transaccionIds: string[] = [];
     const journalEntryIds: string[] = [];
 
-    for (const transaccionId of rollbackData.transaccionIds || []) {
+    for (const transaccionId of textosDeJson(rollbackData.transaccionIds)) {
       const original = await tx.transaccion.findUnique?.({
         where: { id: transaccionId },
       });
@@ -923,8 +939,10 @@ export class ApprovalsService {
       transaccionIds.push(nueva.id);
     }
 
-    const originalJournalIds =
-      rollbackData.journalEntryIds || rollbackData.journalReferenceIds || [];
+    const originalJournalIds = [
+      ...textosDeJson(rollbackData.journalEntryIds),
+      ...textosDeJson(rollbackData.journalReferenceIds),
+    ];
     for (const journalEntryId of originalJournalIds) {
       const original = await tx.journalEntry.findUnique?.({
         where: { id: journalEntryId },
@@ -992,7 +1010,7 @@ export class ApprovalsService {
   }
 
   private async rejectLoanDirecto(
-    tx: any,
+    tx: TransaccionPrisma,
     approval: any,
     rechazadoPorId?: string,
     _motivoRechazo?: string,
@@ -1036,7 +1054,7 @@ export class ApprovalsService {
   }
 
   private async revertirPrestamoProvisional(
-    tx: any,
+    tx: TransaccionPrisma,
     approval: any,
     efecto: any,
     rechazadoPorId?: string,
@@ -1070,25 +1088,16 @@ export class ApprovalsService {
     }
 
     // Resolver transacciones originales con fallback
-    const transaccionIds = Array.isArray(rollbackData.transaccionIds)
-      ? rollbackData.transaccionIds.filter(Boolean)
-      : [];
+    const transaccionIds = textosDeJson(rollbackData.transaccionIds);
 
-    let transaccionesOriginales = [];
+    let transaccionesOriginales: Prisma.TransaccionGetPayload<{
+      select: typeof ApprovalsService.SELECCION_TRANSACCION_ROLLBACK;
+    }>[] = [];
 
     if (transaccionIds.length > 0) {
       transaccionesOriginales = await tx.transaccion.findMany({
         where: { id: { in: transaccionIds } },
-        select: {
-          id: true,
-          cajaId: true,
-          tipo: true,
-          monto: true,
-          descripcion: true,
-          creadoPorId: true,
-          tipoReferencia: true,
-          referenciaId: true,
-        },
+        select: ApprovalsService.SELECCION_TRANSACCION_ROLLBACK,
       });
     }
 
@@ -1099,27 +1108,19 @@ export class ApprovalsService {
           referenciaId: prestamoId,
           tipo: TipoTransaccion.EGRESO,
         },
-        select: {
-          id: true,
-          cajaId: true,
-          tipo: true,
-          monto: true,
-          descripcion: true,
-          creadoPorId: true,
-          tipoReferencia: true,
-          referenciaId: true,
-        },
+        select: ApprovalsService.SELECCION_TRANSACCION_ROLLBACK,
       });
     }
 
     // Resolver journals originales con fallback
-    const journalEntryIds = Array.isArray(rollbackData.journalEntryIds)
-      ? rollbackData.journalEntryIds.filter(Boolean)
-      : Array.isArray(rollbackData.journalReferenceIds)
-        ? rollbackData.journalReferenceIds.filter(Boolean)
-        : [];
+    const journalEntryIds = [
+      ...textosDeJson(rollbackData.journalEntryIds),
+      ...textosDeJson(rollbackData.journalReferenceIds),
+    ];
 
-    let journalsOriginales = [];
+    let journalsOriginales: Prisma.JournalEntryGetPayload<{
+      include: { lines: true };
+    }>[] = [];
 
     if (journalEntryIds.length > 0) {
       journalsOriginales = await tx.journalEntry.findMany({
@@ -1185,7 +1186,7 @@ export class ApprovalsService {
 
     if (rollbackData.asignacionRutaId) {
       await tx.asignacionRuta.updateMany({
-        where: { id: String(rollbackData.asignacionRutaId) },
+        where: { id: textoDeJson(rollbackData.asignacionRutaId) },
         data: { activa: false },
       });
     }
@@ -1227,7 +1228,7 @@ export class ApprovalsService {
       throw new BadRequestException('El efecto provisional ya fue procesado');
     }
 
-    const rollbackData = efectoProvisional.rollbackData || {};
+    const rollbackData = objetoDeJson(efectoProvisional.rollbackData);
 
     const cuotaId = String(rollbackData.cuotaId || approval.referenciaId || '');
 
@@ -1237,8 +1238,13 @@ export class ApprovalsService {
       );
     }
 
-    const fechaVencimientoOriginal = rollbackData.fechaVencimientoOriginal
-      ? new Date(rollbackData.fechaVencimientoOriginal)
+    // Se captura el texto antes: la comprobacion de verdad es "es un texto", no "es
+    // truthy", y `new Date(undefined)` no existe como sobrecarga.
+    const textoFechaOriginal = textoDeJson(
+      rollbackData.fechaVencimientoOriginal,
+    );
+    const fechaVencimientoOriginal = textoFechaOriginal
+      ? new Date(textoFechaOriginal)
       : null;
 
     if (
@@ -1255,7 +1261,9 @@ export class ApprovalsService {
         ? rollbackData.fechaOperativaOriginal
         : null;
 
-    const registroVisitaAnterior = rollbackData.registroVisitaAnterior;
+    const registroVisitaAnterior = objetoDeJson(
+      rollbackData.registroVisitaAnterior,
+    );
     const debeRevertirRegistroVisita =
       rollbackData.origenGestion === 'CIERRE_PENDIENTE' &&
       fechaOperativaOriginal;
@@ -1281,8 +1289,9 @@ export class ApprovalsService {
         );
       }
 
-      const fechaNuevaEsperada = rollbackData.fechaVencimientoNueva
-        ? new Date(rollbackData.fechaVencimientoNueva)
+      const textoFechaNueva = textoDeJson(rollbackData.fechaVencimientoNueva);
+      const fechaNuevaEsperada = textoFechaNueva
+        ? new Date(textoFechaNueva)
         : null;
 
       if (fechaNuevaEsperada && !Number.isNaN(fechaNuevaEsperada.getTime())) {
@@ -1323,16 +1332,25 @@ export class ApprovalsService {
       });
 
       if (debeRevertirRegistroVisita && rollbackData.rutaIdOriginal) {
-        const rutaIdOriginal = String(rollbackData.rutaIdOriginal);
+        const rutaIdOriginal = textoDeJson(rollbackData.rutaIdOriginal);
 
         if (registroVisitaAnterior?.id) {
           await tx.registroVisita.update({
-            where: { id: String(registroVisitaAnterior.id) },
+            where: { id: textoDeJson(registroVisitaAnterior.id) },
             data: {
-              estadoVisita: registroVisitaAnterior.estadoVisita,
-              notas: registroVisitaAnterior.notas,
-              prestamoId: registroVisitaAnterior.prestamoId,
-              cobradorId: registroVisitaAnterior.cobradorId,
+              // Salen de una columna Json, asi que llegan como `unknown`. Los dos anulables
+              // conservan el null en vez de convertirse en el texto "null".
+              estadoVisita:
+                textoDeJson(registroVisitaAnterior.estadoVisita) ?? '',
+              notas:
+                registroVisitaAnterior.notas == null
+                  ? null
+                  : textoDeJson(registroVisitaAnterior.notas),
+              prestamoId:
+                registroVisitaAnterior.prestamoId == null
+                  ? null
+                  : textoDeJson(registroVisitaAnterior.prestamoId),
+              cobradorId: textoDeJson(registroVisitaAnterior.cobradorId) ?? '',
             },
           });
         } else {
@@ -1600,7 +1618,7 @@ export class ApprovalsService {
         await this.confirmarEfectoProvisional(tx, efectoProvisional);
       });
 
-      const rollbackData = efectoProvisional.rollbackData || {};
+      const rollbackData = objetoDeJson(efectoProvisional.rollbackData);
 
       this.notificacionesGateway.broadcastAprobacionesActualizadas({
         accion: 'APROBAR',
