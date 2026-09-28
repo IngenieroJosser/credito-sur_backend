@@ -2172,7 +2172,9 @@ export class ApprovalsService {
   async getPendingApprovals(tipo?: TipoAprobacion) {
     await this.reconcilePendingLoansWithoutApproval();
 
-    const where: Prisma.AprobacionWhereInput = { estado: EstadoAprobacion.PENDIENTE };
+    const where: Prisma.AprobacionWhereInput = {
+      estado: EstadoAprobacion.PENDIENTE,
+    };
     if (tipo) where.tipoAprobacion = tipo;
 
     const pendientes = await this.prisma.aprobacion.findMany({
