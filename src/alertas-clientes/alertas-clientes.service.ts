@@ -146,7 +146,7 @@ export type SnapshotClienteAlerta = {
     tipo: string;
     nombre: string | null;
     telefono: string | null;
-  } | null>;
+  }>;
   ruta: {
     id: string;
     nombre: string;
@@ -360,7 +360,11 @@ export class AlertasClientesService {
               telefono: cliente.referencia2Telefono,
             }
           : null,
-      ].filter(Boolean),
+      ]
+        // `.filter(Boolean)` NO estrecha el tipo: dejaba `Array<Ref | null>` y el frontend
+        // acababa con cuatro `'ref' is possibly null` sobre referencias que aqui ya no
+        // pueden ser nulas. Con la guarda, el tipo dice lo que el filtro hace.
+        .filter((ref): ref is NonNullable<typeof ref> => ref !== null),
       ruta: asignacion?.ruta
         ? {
             id: asignacion.ruta.id,
