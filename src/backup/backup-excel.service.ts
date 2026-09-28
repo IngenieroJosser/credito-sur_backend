@@ -205,7 +205,7 @@ export class BackupExcelService {
         'RESPALDO DE CLIENTES',
         'DIRECTORIO COMPLETO DE CLIENTES CON REFERENCIAS',
       );
-      const data: any[] = await this.prisma.cliente.findMany({
+      const data = await this.prisma.cliente.findMany({
         where: { eliminadoEn: null },
         orderBy: { creadoEn: 'asc' },
         include: {
@@ -315,7 +315,7 @@ export class BackupExcelService {
         'RESPALDO DE CRÉDITOS',
         'CARTERA COMPLETA DE CRÉDITOS OTORGADOS',
       );
-      const data: any[] = await this.prisma.prestamo.findMany({
+      const data = await this.prisma.prestamo.findMany({
         where: { eliminadoEn: null },
         orderBy: { creadoEn: 'asc' },
         include: {
@@ -460,7 +460,7 @@ export class BackupExcelService {
         'RESPALDO DE CUOTAS',
         'PLAN DE PAGOS COMPLETO POR CRÉDITO',
       );
-      const data: any[] = await this.prisma.cuota.findMany({
+      const data = await this.prisma.cuota.findMany({
         where: { prestamo: { eliminadoEn: null } },
         orderBy: [{ prestamoId: 'asc' }, { numeroCuota: 'asc' }],
         include: {
@@ -549,7 +549,7 @@ export class BackupExcelService {
         'RESPALDO DE PAGOS',
         'HISTORIAL COMPLETO DE COBROS RECIBIDOS',
       );
-      const data: any[] = await this.prisma.pago.findMany({
+      const data = await this.prisma.pago.findMany({
         orderBy: { fechaPago: 'asc' },
         include: {
           cliente: { select: { nombres: true, apellidos: true } },
@@ -622,7 +622,7 @@ export class BackupExcelService {
         'DETALLE DE PAGOS',
         'DESGLOSE CAPITAL · INTERÉS · MORA POR CUOTA COBRADA',
       );
-      const data: any[] = await this.prisma.detallePago.findMany({
+      const data = await this.prisma.detallePago.findMany({
         orderBy: { pagoId: 'asc' },
         include: {
           pago: {
@@ -702,7 +702,7 @@ export class BackupExcelService {
         'RESPALDO DE RUTAS',
         'RUTAS DE COBRO Y PERSONAL ASIGNADO',
       );
-      const data: any[] = await this.prisma.ruta.findMany({
+      const data = await this.prisma.ruta.findMany({
         where: { eliminadoEn: null },
         orderBy: { creadoEn: 'asc' },
         include: {
@@ -772,7 +772,7 @@ export class BackupExcelService {
         'CLIENTES POR RUTA',
         'ASIGNACIÓN Y ORDEN DE VISITA POR RUTA DE COBRO',
       );
-      const data: any[] = await this.prisma.asignacionRuta.findMany({
+      const data = await this.prisma.asignacionRuta.findMany({
         orderBy: [{ rutaId: 'asc' }, { ordenVisita: 'asc' }],
         include: {
           ruta: { select: { codigo: true, nombre: true, zona: true } },
@@ -845,7 +845,7 @@ export class BackupExcelService {
         'RESPALDO DE CAJAS',
         'CAJAS Y FONDOS — SALDOS ACTUALES',
       );
-      const data: any[] = await this.prisma.caja.findMany({
+      const data = await this.prisma.caja.findMany({
         orderBy: { creadoEn: 'asc' },
         include: {
           responsable: { select: { nombres: true, apellidos: true } },
@@ -924,7 +924,7 @@ export class BackupExcelService {
         'RESPALDO DE TRANSACCIONES',
         'TODOS LOS MOVIMIENTOS DE CAJA',
       );
-      const data: any[] = await this.prisma.transaccion.findMany({
+      const data = await this.prisma.transaccion.findMany({
         orderBy: { fechaTransaccion: 'asc' },
         include: {
           caja: { select: { codigo: true, nombre: true } },
@@ -1004,7 +1004,7 @@ export class BackupExcelService {
         'RESPALDO DE GASTOS',
         'HISTORIAL COMPLETO DE EGRESOS Y GASTOS OPERATIVOS',
       );
-      const data: any[] = await this.prisma.gasto.findMany({
+      const data = await this.prisma.gasto.findMany({
         orderBy: { fechaGasto: 'asc' },
         include: {
           ruta: { select: { codigo: true, nombre: true } },
@@ -1094,7 +1094,7 @@ export class BackupExcelService {
         'RESPALDO DE INVENTARIO',
         'CATÁLOGO COMPLETO DE ARTÍCULOS',
       );
-      const data: any[] = await this.prisma.producto.findMany({
+      const data = await this.prisma.producto.findMany({
         where: { eliminadoEn: null },
         orderBy: { creadoEn: 'asc' },
         select: {
@@ -1167,7 +1167,7 @@ export class BackupExcelService {
         'PRECIOS DE ARTÍCULOS',
         'TARIFAS POR PLAZO DE FINANCIAMIENTO',
       );
-      const data: any[] = await this.prisma.precioProducto.findMany({
+      const data = await this.prisma.precioProducto.findMany({
         orderBy: [{ productoId: 'asc' }, { meses: 'asc' }],
         include: { producto: { select: { nombre: true, codigo: true } } },
       });
@@ -1219,7 +1219,7 @@ export class BackupExcelService {
         'RESPALDO DE APROBACIONES',
         'SOLICITUDES Y DECISIONES DEL SISTEMA',
       );
-      const data: any[] = await this.prisma.aprobacion.findMany({
+      const data = await this.prisma.aprobacion.findMany({
         orderBy: { creadoEn: 'asc' },
         include: {
           solicitadoPor: { select: { nombres: true, apellidos: true } },
@@ -1294,7 +1294,7 @@ export class BackupExcelService {
         'EXTENSIONES DE PAGO',
         'PRÓRROGAS Y CAMBIOS DE FECHA EN CUOTAS',
       );
-      const data: any[] = await this.prisma.extensionPago.findMany({
+      const data = await this.prisma.extensionPago.findMany({
         orderBy: { creadoEn: 'asc' },
         include: {
           prestamo: {
@@ -1361,7 +1361,7 @@ export class BackupExcelService {
         'RESPALDO DE USUARIOS',
         'EQUIPO Y PERSONAL — ACCESOS AL SISTEMA',
       );
-      const data: any[] = await this.prisma.usuario.findMany({
+      const data = await this.prisma.usuario.findMany({
         where: { eliminadoEn: null },
         orderBy: { creadoEn: 'asc' },
         select: {
@@ -1452,7 +1452,7 @@ export class BackupExcelService {
         'REGISTRO DE AUDITORÍA',
         'HISTORIAL COMPLETO DE ACTIVIDAD EN EL SISTEMA',
       );
-      const data: any[] = await this.prisma.registroAuditoria.findMany({
+      const data = await this.prisma.registroAuditoria.findMany({
         orderBy: { creadoEn: 'desc' },
         take: 50000,
         include: { usuario: { select: { nombres: true, apellidos: true } } },
