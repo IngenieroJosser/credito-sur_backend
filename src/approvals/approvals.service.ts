@@ -26,7 +26,10 @@ import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway'
 import { formatBogotaOffsetIso } from '../utils/date-utils';
 import { LedgerService } from '../accounting/ledger.service';
 import { randomUUID } from 'crypto';
-import { calcularAmortizacionFrancesa } from '../loans/utils/amortizacion.utils';
+import {
+  calcularAmortizacionFrancesa,
+  FilaAmortizacion,
+} from '../loans/utils/amortizacion.utils';
 import { pesos } from '../common/dinero.util';
 
 /**
@@ -3131,7 +3134,11 @@ export class ApprovalsService {
         const fechaInicio = new Date(prestamo.fechaInicio);
 
         let interesTotal = 0;
-        let cuotasData: any[] = [];
+        // Las dos ramas de abajo (francesa e interes simple) coinciden en cuatro campos, y
+        // son los cuatro que el `createMany` lee. Se deriva de `FilaAmortizacion` en vez de
+        // repetirlos, para que no puedan divergir; la francesa trae ademas `saldoRestante`,
+        // que aqui no se usa.
+        let cuotasData: Omit<FilaAmortizacion, 'saldoRestante'>[] = [];
 
         if (tipoAmort === TipoAmortizacion.FRANCESA) {
           const amortizacion = calcularAmortizacionFrancesa(

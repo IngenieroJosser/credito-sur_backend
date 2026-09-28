@@ -4,17 +4,13 @@ import * as webpush from 'web-push';
 import { RolUsuario } from '@prisma/client';
 import { estadoDeError } from '../common/error.util';
 import { formatBogotaOffsetIso } from '../utils/date-utils';
+import { SendPushNotificationDto } from './dto/send-push-notification.dto';
 
-export interface SendPushNotificationDto {
-  title: string;
-  body: string;
-  icon?: string;
-  badge?: string;
-  tag?: string;
-  data?: any;
-  userId?: string;
-  roleFilter?: RolUsuario[];
-}
+// La forma de este cuerpo vive ahora en `dto/send-push-notification.dto.ts`, como CLASE
+// con decoradores. Antes estaba aqui como interfaz, y una interfaz no existe en tiempo de
+// ejecucion: el ValidationPipe no puede validar contra ella, asi que el controlador recibia
+// el cuerpo crudo. Se reexporta para no romper a quien la importaba de aqui.
+export { SendPushNotificationDto };
 
 /** Resultado de un envío, para poder comprobar desde la app si llegó. */
 export interface ResultadoEnvioPush {

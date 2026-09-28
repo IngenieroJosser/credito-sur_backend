@@ -567,7 +567,12 @@ export class AccountingService {
         }
 
         // Si es caja de supervisor (rutaId null), obtener rutas supervisadas
-        let rutasSupervisadas: any[] = [];
+        // La forma del `select` de abajo: tres campos, no el modelo entero.
+        let rutasSupervisadas: {
+          id: string;
+          nombre: string;
+          codigo: string;
+        }[] = [];
         if (caja.tipo === 'RUTA' && !caja.rutaId && caja.responsableId) {
           rutasSupervisadas = await this.prisma.ruta.findMany({
             where: {

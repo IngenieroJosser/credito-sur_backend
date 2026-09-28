@@ -49,6 +49,7 @@ import { formatBogotaOffsetIso } from '../utils/date-utils';
 
 import { RequestConUsuario } from '../common/types';
 import { UpdateLoanDto } from './dto/update-loan.dto';
+import { SimularCreditoDto } from './dto/simular-credito.dto';
 
 @ApiTags('loans')
 @ApiBearerAuth(SWAGGER_JWT_AUTH)
@@ -376,7 +377,7 @@ export class LoansController {
     description:
       'Proyecta interés, total y cuotas con la misma fórmula que la creación real. Solo lectura: no persiste nada.',
   })
-  async simularPlan(@Body() body: any) {
+  async simularPlan(@Body() body: SimularCreditoDto) {
     return this.loansService.simularCredito({
       tipoAmortizacion: body?.tipoAmortizacion,
       monto: Number(body?.monto) || 0,
