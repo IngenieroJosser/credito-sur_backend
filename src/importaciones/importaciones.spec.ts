@@ -519,6 +519,8 @@ describe('Plantilla de clientes y créditos', () => {
 
     expect(resultado.errores).toHaveLength(0);
     const credito = resultado.creditos?.[0];
+    expect(credito).toBeDefined();
+    if (!credito) return;
     // 600.000 + 10% x 1 mes = 660.000 · cuota 22.000
     expect(credito.totalCredito).toBe(660000);
     expect(credito.totalAbonado).toBe(274000);

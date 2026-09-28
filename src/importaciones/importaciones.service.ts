@@ -90,7 +90,12 @@ export function normalizarNombreCategoria(valor: unknown): string {
     .toLowerCase();
 }
 
-import {} from '@prisma/client';
+import { FrecuenciaPago } from '@prisma/client';
+/** Narrowing de la frecuencia que viene del Excel. El parser ya la valida contra este
+ * mismo enum (`clientes-creditos.parser.ts:1080`); esto solo se lo dice a TypeScript. */
+function esFrecuenciaPago(valor: string): valor is FrecuenciaPago {
+  return (Object.values(FrecuenciaPago) as string[]).includes(valor);
+}
 
 @Injectable()
 export class ImportacionesService {
@@ -1137,7 +1142,7 @@ export class ImportacionesService {
     preciosOmitidos: number;
     preciosContadoCreados: number;
     mensajes: string[];
-    resumen: any;
+    resumen: ResultadoValidacion['resumen'];
   }> {
     if (!file || !file.buffer) {
       throw new BadRequestException('Archivo no proporcionado');
@@ -1182,8 +1187,8 @@ export class ImportacionesService {
       });
     }
 
-    const articulos: any[] = resultado.articulos ?? [];
-    const precios: any[] = resultado.precios ?? [];
+    const articulos = resultado.articulos ?? [];
+    const precios = resultado.precios ?? [];
 
     // 3. Ejecutar dentro de transacción
     let articulosCreados = 0;
@@ -1236,6 +1241,12 @@ export class ImportacionesService {
 
         // Crear o verificar artículos (idempotencia por código)
         for (const art of articulos) {
+          // Esta guarda no se cumple nunca: el parser rechaza la fila cuando falta
+          // (`inventario.parser.ts:293` para el costo, `388` y `550` para el precio) y
+          // este metodo se niega a confirmar si `resultado.errores` trae algo. Esta aqui
+          // porque el tipo ahora dice la verdad —el valor puede ser null— y sin ella
+          // habria que castear al escribir en la base.
+          if (art.costo === null) continue;
           const existe = await tx.producto.findUnique({
             where: { codigo: art.codigo },
           });
@@ -1356,6 +1367,8 @@ export class ImportacionesService {
 
         // Crear precios (idempotencia por código + meses)
         for (const precio of precios) {
+          // Ver la nota del bucle de articulos: el parser ya rechazo la fila si faltan.
+          if (precio.meses === null || precio.precio === null) continue;
           const producto = await tx.producto.findUnique({
             where: { codigo: precio.codigoProducto },
             select: { id: true },
@@ -1512,7 +1525,7 @@ export class ImportacionesService {
     asientosCreados: number;
     cuotasCreadas: number;
     mensajes: string[];
-    resumen: any;
+    resumen: ResultadoValidacion['resumen'];
   }> {
     if (!file || !file.buffer) {
       throw new BadRequestException('Archivo no proporcionado');
@@ -1556,7 +1569,7 @@ export class ImportacionesService {
       });
     }
 
-    const clientes: any[] = resultado.clientes ?? [];
+    const clientes = resultado.clientes ?? [];
 
     // Mapeo de NivelRiesgo (operativo a Prisma)
     const mapNivelRiesgo = (nivel: string): 'VERDE' | 'AMARILLO' | 'ROJO' => {
@@ -1759,7 +1772,7 @@ export class ImportacionesService {
             : 0;
 
           // Procesar créditos
-          const creditos: any[] = resultado.creditos ?? [];
+          const creditos = resultado.creditos ?? [];
           const roundMoney = (value: number) => pesos(value);
           const hayCreditoOperativoEfectivo = creditos.some(
             (cred) =>
@@ -1798,6 +1811,16 @@ export class ImportacionesService {
           // OPERATIVA + NO (credito ya operando que no debe mover caja) todavia
           // no esta implementado: esas filas se saltan y se avisan abajo.
           for (const cred of creditos) {
+            // Igual que en los bucles de inventario: el parser ya rechazo la fila si la
+            // fecha del credito falta o la frecuencia no es una de las cuatro, y este
+            // metodo se niega a confirmar cuando `resultado.errores` trae algo. La guarda
+            // no se cumple nunca; esta para que el tipo diga la verdad sin castear.
+            if (!cred.fechaCredito) continue;
+            if (!esFrecuenciaPago(cred.frecuenciaPago)) continue;
+            const fechaCredito = cred.fechaCredito;
+            const frecuenciaPago = cred.frecuenciaPago;
+            // La cuota inicial es opcional de verdad: sin ella es cero.
+            const cuotaInicial = cred.cuotaInicial ?? 0;
             const isHistorica =
               cred.tipoCarga === 'HISTORICA' && cred.descontarCaja === 'NO';
             const isOperativaEfectivo =
@@ -1823,7 +1846,7 @@ export class ImportacionesService {
               continue;
             }
 
-            if (isOperativaEfectivo && cred.cuotaInicial > 0) {
+            if (isOperativaEfectivo && cuotaInicial > 0) {
               creditosNoSoportados++;
               mensajes.push(
                 `Fila ${cred.fila}: La cuota inicial en créditos operativos de efectivo aún no está soportada.`,
@@ -1976,7 +1999,7 @@ export class ImportacionesService {
             // Pre-calcular fechas de cuotas
             const fechasCuotas: Date[] = [];
             const fechaVencimiento = new Date(
-              cred.fechaPrimerCobro || cred.fechaCredito,
+              cred.fechaPrimerCobro || fechaCredito,
             );
 
             for (let i = 1; i <= cantidadCuotas; i++) {
@@ -2134,10 +2157,10 @@ export class ImportacionesService {
                 tasaInteres,
                 tasaInteresMora: cred.tasaInteresMora || 0,
                 plazoMeses: plazoMesesGuardado,
-                frecuenciaPago: cred.frecuenciaPago,
+                frecuenciaPago,
                 cantidadCuotas,
-                fechaInicio: cred.fechaCredito,
-                fechaPrimerCobro: cred.fechaPrimerCobro || cred.fechaCredito,
+                fechaInicio: fechaCredito,
+                fechaPrimerCobro: cred.fechaPrimerCobro || fechaCredito,
                 fechaFin,
                 estado: estadoPrestamo,
                 creadoPorId,
