@@ -1135,7 +1135,7 @@ export class RoutesService {
     const { skip, take, search, activa, supervisorId } = options || {};
     const rolActor = String(actor?.rol || '').toUpperCase();
 
-    const where: any = {
+    const where: Prisma.RutaWhereInput = {
       eliminadoEn: null,
     };
 

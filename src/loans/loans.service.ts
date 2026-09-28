@@ -5457,7 +5457,7 @@ export class LoansService implements OnModuleInit {
     estado?: string,
     actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
-    const where: any = {
+    const where: Prisma.AprobacionWhereInput = {
       tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
     };
     if (estado && estado !== 'TODOS') {

@@ -5,23 +5,23 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
-import { Prisma } from '@prisma/client';
+import { Prisma, ReferenceTypeContable } from '@prisma/client';
 
 // Definición local del enum para desacoplar del re-export del cliente generado
-export type ReferenceTypeContable =
-  | 'PAGO'
-  | 'DESEMBOLSO'
-  | 'GASTO'
-  | 'VENTA_ARTICULO'
-  | 'BASE'
-  | 'CONSOLIDACION'
-  | 'ARQUEO'
-  | 'ABONO_DEUDA'
-  | 'APERTURA'
-  | 'AJUSTE'
-  | 'INGRESO'
-  | 'EGRESO'
-  | 'CASTIGO_CARTERA';
+/**
+ * Los tipos de referencia contable. Se REEXPORTA el enum de Prisma en vez de mantener la
+ * lista a mano.
+ *
+ * Antes era una union de trece literales escrita aqui, con el mismo nombre que el enum del
+ * esquema. Las migraciones cuentan la historia: `VENTA_ARTICULO`, `CASTIGO_CARTERA`,
+ * `INGRESO` y `EGRESO` se agregaron en cuatro migraciones distintas, y cada vez habia que
+ * acordarse de actualizar tambien esta copia. Se comprobo que hoy coinciden los trece.
+ *
+ * Reexportarlo tiene otra ventaja concreta: un enum existe en tiempo de ejecucion, asi que
+ * se puede validar un filtro con `Object.values(...)`. Con la union de literales no se
+ * podia, y por eso el filtro de `GET /accounting/ledger` pasaba el texto crudo a Prisma.
+ */
+export { ReferenceTypeContable };
 
 export interface JournalLineDto {
   accountCode: string;

@@ -6,6 +6,7 @@ import {
 } from '../templates/exports/auditoria.template';
 import { PrismaService } from '../prisma/prisma.service';
 import { getBogotaDayKey } from '../utils/date-utils';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class AuditService {
@@ -88,7 +89,7 @@ export class AuditService {
     endDate?: Date,
   ) {
     const skip = page > 1 ? (page - 1) * take : 0;
-    const where: any = { usuarioId };
+    const where: Prisma.RegistroAuditoriaWhereInput = { usuarioId };
     if (startDate || endDate) {
       where.creadoEn = {};
       if (startDate) where.creadoEn.gte = startDate;
@@ -124,7 +125,7 @@ export class AuditService {
     filters: { startDate?: string; endDate?: string },
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
     // 1. Solo consulta de BD
-    const where: any = {};
+    const where: Prisma.RegistroAuditoriaWhereInput = {};
     if (filters.startDate || filters.endDate) {
       where.creadoEn = {};
       if (filters.startDate) where.creadoEn.gte = new Date(filters.startDate);

@@ -45,6 +45,7 @@ import {
 } from '../templates/exports/gastos-export.template';
 import { LedgerService, ReferenceTypeContable } from './ledger.service';
 import { randomUUID } from 'crypto';
+import { unoDeLosPermitidos } from '../common/texto.util';
 
 /**
  * Una fila del historial de cierres (`GET /accounting/cierres`).
@@ -1428,11 +1429,19 @@ export class AccountingService {
       limit = 50,
     } = filtros;
     const skip = (page - 1) * limit;
-    const where: any = {};
+    const where: Prisma.JournalEntryWhereInput = {};
     const lineFilters: any[] = [];
 
     if (tipo && tipo !== 'TODOS') {
-      where.referenceType = tipo;
+      // `tipo` entra como texto desde la query. Antes iba directo a Prisma, que lanza si
+      // no es un miembro del enum: un valor inventado daba 500 en vez de una respuesta
+      // limpia. Ahora se comprueba contra el enum y lo que no encaja se ignora, igual que
+      // el filtro de nivel de riesgo en clients.service.
+      const referencia = unoDeLosPermitidos(
+        tipo,
+        Object.values(ReferenceTypeContable),
+      );
+      if (referencia) where.referenceType = referencia;
     }
     if (fechaInicio || fechaFin) {
       where.createdAt = {};
@@ -1650,7 +1659,7 @@ export class AccountingService {
       } = filtros;
       const skip = (page - 1) * limit;
 
-      const where: any = {};
+      const where: Prisma.TransaccionWhereInput = {};
 
       // Se eliminó el filtro que excluía consolidaciones para mostrarlas en movimientos recientes
 
@@ -3446,8 +3455,8 @@ export class AccountingService {
     fechaInicio?: string;
     fechaFin?: string;
   }) {
-    const whereTransaccion: any = {};
-    const whereArqueo: any = {};
+    const whereTransaccion: Prisma.TransaccionWhereInput = {};
+    const whereArqueo: Prisma.ArqueoCajaWhereInput = {};
     const orTransaccion: any[] = [];
     const tipo = filtros?.tipo;
     if (!tipo || tipo === undefined) {
@@ -3885,9 +3894,16 @@ export class AccountingService {
     } = filtros;
     const skip = (page - 1) * limit;
 
-    const where: any = {};
+    const where: Prisma.GastoWhereInput = {};
     if (rutaId) where.rutaId = rutaId;
-    if (estado) where.estadoAprobacion = estado;
+    if (estado) {
+      // Mismo caso: texto de la query hacia un enum de Prisma.
+      const estadoValido = unoDeLosPermitidos(
+        estado,
+        Object.values(EstadoAprobacion),
+      );
+      if (estadoValido) where.estadoAprobacion = estadoValido;
+    }
     if (esProvisional !== undefined) where.esProvisional = esProvisional;
     if (fechaInicio || fechaFin) {
       where.fechaGasto = {};
@@ -4073,7 +4089,7 @@ export class AccountingService {
     format: 'excel' | 'pdf',
     filters: { rutaId?: string; fechaInicio?: string; fechaFin?: string },
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
-    const where: any = {};
+    const where: Prisma.GastoWhereInput = {};
     if (filters.rutaId) where.rutaId = filters.rutaId;
     if (filters.fechaInicio || filters.fechaFin) {
       where.fechaGasto = {};
@@ -4753,7 +4769,7 @@ export class AccountingService {
     });
 
     const fechaCorte = firstEntry?.createdAt ?? null;
-    const where: any = {};
+    const where: Prisma.TransaccionWhereInput = {};
     if (fechaCorte) {
       where.fechaTransaccion = { lt: fechaCorte };
     }

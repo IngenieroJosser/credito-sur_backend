@@ -1,4 +1,3 @@
-import {} from '@prisma/client';
 import { TransaccionPrisma } from '../prisma/prisma.service';
 
 /**

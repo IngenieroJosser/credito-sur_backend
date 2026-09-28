@@ -5,7 +5,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { EstadoAprobacion, RolUsuario } from '@prisma/client';
+import { EstadoAprobacion, RolUsuario, Prisma } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import {
   PrestamosMoraFiltrosDto,
@@ -261,7 +261,7 @@ export class ReportsService {
       return `${y}-${m}-${day}`;
     };
 
-    const whereConditions: any = {
+    const whereConditions: Prisma.PrestamoWhereInput = {
       estado: { in: ['EN_MORA', 'ACTIVO'] },
       // El supervisor/cobrador solo ve la mora de sus rutas.
       ...this.filtroRutaScopePrestamo(actor),
@@ -323,10 +323,14 @@ export class ReportsService {
     }
 
     if (filtros.nivelRiesgo) {
-      whereConditions.cliente = {
+      // Se anota el objeto: `cliente` es un `XOR` de Prisma (filtro de relacion o filtro de
+      // campos), y sin la anotacion tsc elige la rama del filtro de relacion, donde
+      // `nivelRiesgo` no existe.
+      const filtroCliente: Prisma.ClienteWhereInput = {
         ...whereConditions.cliente,
         nivelRiesgo: filtros.nivelRiesgo,
       };
+      whereConditions.cliente = filtroCliente;
     }
 
     if (filtros.rutaId) {
@@ -681,7 +685,7 @@ export class ReportsService {
     const skip = (pagina - 1) * limite;
     const hoy = new Date();
 
-    const whereConditions: any = {
+    const whereConditions: Prisma.PrestamoWhereInput = {
       fechaFin: { lt: hoy },
       estado: { in: ['EN_MORA', 'INCUMPLIDO', 'PERDIDA'] },
       saldoPendiente: { gt: 0 },
@@ -709,10 +713,14 @@ export class ReportsService {
     }
 
     if (filtros.nivelRiesgo) {
-      whereConditions.cliente = {
+      // Se anota el objeto: `cliente` es un `XOR` de Prisma (filtro de relacion o filtro de
+      // campos), y sin la anotacion tsc elige la rama del filtro de relacion, donde
+      // `nivelRiesgo` no existe.
+      const filtroCliente: Prisma.ClienteWhereInput = {
         ...whereConditions.cliente,
         nivelRiesgo: filtros.nivelRiesgo,
       };
+      whereConditions.cliente = filtroCliente;
     }
 
     if (filtros.rutaId) {

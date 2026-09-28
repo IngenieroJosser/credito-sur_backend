@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import {} from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
 import { mensajeDeError } from '../common/error.util';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
@@ -747,7 +747,7 @@ export class MoraService implements OnModuleInit {
 
     // Se considera "falso vencido": cuota marcada VENCIDA el mismo día calendario (Bogotá)
     // con montoPagado=0 (no hay abonos) → típicamente por corte de fecha.
-    const whereCuotas: any = {
+    const whereCuotas: Prisma.CuotaWhereInput = {
       estado: 'VENCIDA',
       montoPagado: 0,
       fechaVencimiento: {
