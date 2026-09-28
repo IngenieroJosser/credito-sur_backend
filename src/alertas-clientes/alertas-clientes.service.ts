@@ -102,6 +102,101 @@ const clienteParaAlerta = Prisma.validator<Prisma.ClienteDefaultArgs>()({
 
 type ClienteParaAlerta = Prisma.ClienteGetPayload<typeof clienteParaAlerta>;
 
+/**
+ * Las metricas agregadas del snapshot. Estan aparte porque salen de un `reduce` y su
+ * acumulador tenia que declararse: con `(acc: any, credito: any)` el tipo del snapshot
+ * entero habria sido una afirmacion sin comprobar, ya que `any` se asigna a todo.
+ */
+export type MetricasAlertaCliente = {
+  saldoPendienteTotal: number;
+  saldoPendienteCarteraActiva: number;
+  saldoPendientePendienteRevision: number;
+  cuotasVencidas: number;
+  saldoVencidoTotal: number;
+  creditosActivos: number;
+  creditosPendientesRevision: number;
+  totalObligaciones: number;
+};
+
+/**
+ * La foto del cliente que se guarda en `AlertaCliente.snapshotCliente` (columna `Json`).
+ *
+ * Se guarda una FOTO y no una relacion a proposito: la alerta documenta como estaba el
+ * cliente cuando el cobrador no lo encontro, y eso no debe cambiar despues.
+ *
+ * El frontend tiene el espejo de este tipo en `services/alertas-clientes-service.ts`,
+ * donde antes era `snapshotCliente?: any`, y de ahi salian las quince lecturas sin tipo
+ * de `AlertaClienteDetalleModal`. Las claves son las mismas en los dos productores: este
+ * y el `fallbackAlerta` que arma `NotificacionDetalleModal` con la metadata de la
+ * notificacion cuando la alerta aun no ha cargado.
+ */
+export type SnapshotClienteAlerta = {
+  cliente: {
+    id: string;
+    codigo: string;
+    dni: string;
+    nombres: string;
+    apellidos: string;
+    telefono: string;
+    direccion: string | null;
+    nivelRiesgo: string;
+    enListaNegra: boolean;
+  };
+  referencias: Array<{
+    tipo: string;
+    nombre: string | null;
+    telefono: string | null;
+  } | null>;
+  ruta: {
+    id: string;
+    nombre: string;
+    codigo: string;
+    cobrador: { id: string; nombres: string; apellidos: string };
+  } | null;
+  creditos: Array<{
+    id: string;
+    numeroPrestamo: string;
+    estado: string;
+    estadoAprobacion: string;
+    esCarteraActiva: boolean;
+    saldoPendiente: number;
+    monto: number;
+    tipoPrestamo: string;
+    frecuenciaPago: string;
+    cuotasVencidas: number;
+    saldoVencido: number;
+    cuotas: Array<{
+      id: string;
+      numeroCuota: number;
+      estado: string;
+      monto: number;
+      montoPagado: number;
+      fechaVencimiento: Date;
+    }>;
+    pagosRecientes: Array<{
+      id: string;
+      montoTotal: number;
+      fechaPago: Date;
+      metodoPago: string;
+    }>;
+  }>;
+  metricas: MetricasAlertaCliente;
+  historialVisitas: Array<{
+    id: string;
+    fechaVisita: string;
+    estadoVisita: string;
+    notas: string | null;
+    ruta: { id: string; nombre: string };
+    cobrador: { id: string; nombres: string; apellidos: string };
+  }>;
+  evidencias: Array<{
+    id: string;
+    tipoContenido: string;
+    url: string | null;
+    descripcion: string | null;
+  }>;
+};
+
 @Injectable()
 export class AlertasClientesService {
   private readonly logger = new Logger(AlertasClientesService.name);
@@ -152,7 +247,7 @@ export class AlertasClientesService {
    * Incluye la ruta asignada, los creditos con su estado y saldo, y los pagos,
    * que es lo que oficina necesita para decidir sin abrir el perfil.
    */
-  private buildSnapshot(cliente: ClienteParaAlerta) {
+  private buildSnapshot(cliente: ClienteParaAlerta): SnapshotClienteAlerta {
     const asignacion = cliente.asignacionesRuta?.[0] || null;
     const creditos = (cliente.prestamos || []).map((prestamo) => {
       const cuotas = Array.isArray(prestamo.cuotas) ? prestamo.cuotas : [];
@@ -206,7 +301,7 @@ export class AlertasClientesService {
     });
 
     const metricas = creditos.reduce(
-      (acc: any, credito: any) => {
+      (acc: MetricasAlertaCliente, credito: (typeof creditos)[number]) => {
         if (!credito.esCarteraActiva) {
           return {
             ...acc,
