@@ -202,9 +202,9 @@ export class DashboardService {
       });
 
       const delinquentAccountsList = delinquentAccountsListRaw
-        .map((loan) => {
+        .map((loan: any) => {
           const cuotas = Array.isArray(loan?.cuotas) ? loan.cuotas : [];
-          const cuotasVencidasReal = cuotas.filter((c) => {
+          const cuotasVencidasReal = cuotas.filter((c: any) => {
             if (!c) return false;
             const st = String(c?.estado || '').toUpperCase();
             if (
@@ -278,9 +278,9 @@ export class DashboardService {
       });
 
       const delinquentAccounts = delinquentAccountsCountRaw.reduce(
-        (acc: number, loan) => {
+        (acc: number, loan: any) => {
           const cuotas = Array.isArray(loan?.cuotas) ? loan.cuotas : [];
-          const tieneVencidaReal = cuotas.some((c) => {
+          const tieneVencidaReal = cuotas.some((c: any) => {
             if (!c) return false;
             const st = String(c?.estado || '').toUpperCase();
             if (

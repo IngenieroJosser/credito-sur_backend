@@ -825,7 +825,9 @@ export class AccountingService {
               select: { code: true },
             });
 
-            const existentes = new Set(cuentasExistentes.map((c) => c.code));
+            const existentes = new Set(
+              cuentasExistentes.map((c: any) => c.code),
+            );
             const faltantes = cuentasRequeridas.filter(
               (code) => !existentes.has(code),
             );
@@ -1428,9 +1430,10 @@ export class AccountingService {
 
     const pagoIds = entries
       .filter(
-        (entry) => String(entry.referenceType || '').toUpperCase() === 'PAGO',
+        (entry: any) =>
+          String(entry.referenceType || '').toUpperCase() === 'PAGO',
       )
-      .map((entry) => String(entry.referenceId || '').trim())
+      .map((entry: any) => String(entry.referenceId || '').trim())
       .filter(Boolean);
     const pagosRegularizados = pagoIds.length
       ? await this.prisma.pago.findMany({
@@ -1452,32 +1455,32 @@ export class AccountingService {
         origenGestion: string | null;
         fechaOperativaRuta: string | null;
       }
-    >(pagosRegularizados.map((p) => [p.id, p]));
+    >(pagosRegularizados.map((p: any) => [p.id, p]));
 
-    const data = entries.map((entry) => {
+    const data = entries.map((entry: any) => {
       const pagoRegularizado = pagoRegularizadoPorId.get(entry.referenceId);
       const totalDebito = entry.lines.reduce(
-        (sum: number, line) => sum + Number(line.debitAmount || 0),
+        (sum: number, line: any) => sum + Number(line.debitAmount || 0),
         0,
       );
       const totalCredito = entry.lines.reduce(
-        (sum: number, line) => sum + Number(line.creditAmount || 0),
+        (sum: number, line: any) => sum + Number(line.creditAmount || 0),
         0,
       );
       const lineasCaja = cajaId
-        ? entry.lines.filter((line) => line.cajaId === cajaId)
-        : entry.lines.filter((line) => line.cajaId);
+        ? entry.lines.filter((line: any) => line.cajaId === cajaId)
+        : entry.lines.filter((line: any) => line.cajaId);
       const debitoCaja = lineasCaja.reduce(
-        (sum: number, line) => sum + Number(line.debitAmount || 0),
+        (sum: number, line: any) => sum + Number(line.debitAmount || 0),
         0,
       );
       const creditoCaja = lineasCaja.reduce(
-        (sum: number, line) => sum + Number(line.creditAmount || 0),
+        (sum: number, line: any) => sum + Number(line.creditAmount || 0),
         0,
       );
       const impactoCaja = debitoCaja - creditoCaja;
       const resultadoIngresos = entry.lines.reduce(
-        (sum: number, line) =>
+        (sum: number, line: any) =>
           String(line.accountCode || '').startsWith('3.')
             ? sum +
               Number(line.creditAmount || 0) -
@@ -1486,7 +1489,7 @@ export class AccountingService {
         0,
       );
       const resultadoEgresosCostos = entry.lines.reduce(
-        (sum: number, line) =>
+        (sum: number, line: any) =>
           String(line.accountCode || '').startsWith('4.') ||
           String(line.accountCode || '').startsWith('5.')
             ? sum +
@@ -1500,16 +1503,16 @@ export class AccountingService {
         (entry.referenceType === 'AJUSTE' && impactoCaja !== 0
           ? lineasCaja[0]
           : null) ||
-        entry.lines.find((line) =>
+        entry.lines.find((line: any) =>
           String(line.accountCode || '').startsWith('3.'),
         ) ||
-        entry.lines.find((line) =>
+        entry.lines.find((line: any) =>
           String(line.accountCode || '').startsWith('4.'),
         ) ||
-        entry.lines.find((line) =>
+        entry.lines.find((line: any) =>
           String(line.accountCode || '').startsWith('5.'),
         ) ||
-        entry.lines.find((line) => line.cajaId) ||
+        entry.lines.find((line: any) => line.cajaId) ||
         entry.lines[0];
 
       return {
@@ -1541,7 +1544,7 @@ export class AccountingService {
         caja: lineasCaja[0]?.caja?.nombre || null,
         cajaId: lineasCaja[0]?.cajaId || null,
         cuadrado: Math.abs(totalDebito - totalCredito) < 0.01,
-        lineas: entry.lines.map((line) => ({
+        lineas: entry.lines.map((line: any) => ({
           id: line.id,
           accountCode: line.accountCode,
           accountName: line.account?.name || line.accountCode,
@@ -3687,13 +3690,13 @@ export class AccountingService {
     });
 
     return cuotas
-      .filter((cuota) => {
+      .filter((cuota: any) => {
         const ultimoPago = cuota?.prestamo?.pagos?.[0]?.fechaPago;
         return (
           !ultimoPago || new Date(ultimoPago).getTime() < inicioHoy.getTime()
         );
       })
-      .map((cuota) => ({
+      .map((cuota: any) => ({
         cuotaId: cuota.id,
         numeroCuota: cuota.numeroCuota,
         fechaVencimiento: formatBogotaOffsetIso(cuota.fechaVencimiento),
@@ -3909,15 +3912,15 @@ export class AccountingService {
 
     const usuarioIds = [
       ...new Set(
-        journalEntries.map((entry) => entry.createdBy).filter(Boolean),
+        journalEntries.map((entry: any) => entry.createdBy).filter(Boolean),
       ),
     ];
     const cajaIds = [
       ...new Set(
         journalEntries
-          .flatMap((entry) => entry.lines || [])
-          .map((line) => line.cajaId)
-          .filter((cajaId): cajaId is string => Boolean(cajaId)),
+          .flatMap((entry: any) => entry.lines || [])
+          .map((line: any) => line.cajaId)
+          .filter(Boolean),
       ),
     ];
 
@@ -3956,7 +3959,7 @@ export class AccountingService {
 
     const fecha = getBogotaDayKey(new Date());
 
-    const filasCjas: CajaRow[] = cajas.map((c) => ({
+    const filasCjas: CajaRow[] = cajas.map((c: any) => ({
       nombre: c.nombre,
       codigo: c.codigo,
       tipo: c.tipo,
@@ -3975,30 +3978,36 @@ export class AccountingService {
               : 'EMPRESA',
     }));
 
-    const filasTransacciones: TransaccionRow[] = journalEntries.map((entry) => {
-      const totalDebito = (entry.lines || []).reduce(
-        (sum: number, line) => sum + Number(line.debitAmount || 0),
-        0,
-      );
-      const cajasEntry = (entry.lines || [])
-        .map((line) => (line.cajaId ? cajasMap.get(line.cajaId)?.nombre : null))
-        .filter(Boolean);
-      const cuentas = (entry.lines || [])
-        .map((line) => `${line.accountCode} ${line.account?.name || ''}`.trim())
-        .join(' / ');
+    const filasTransacciones: TransaccionRow[] = journalEntries.map(
+      (entry: any) => {
+        const totalDebito = (entry.lines || []).reduce(
+          (sum: number, line: any) => sum + Number(line.debitAmount || 0),
+          0,
+        );
+        const cajasEntry = (entry.lines || [])
+          .map((line: any) =>
+            line.cajaId ? cajasMap.get(line.cajaId)?.nombre : null,
+          )
+          .filter(Boolean);
+        const cuentas = (entry.lines || [])
+          .map((line: any) =>
+            `${line.accountCode} ${line.account?.name || ''}`.trim(),
+          )
+          .join(' / ');
 
-      return {
-        fecha: entry.createdAt,
-        tipo: entry.referenceType,
-        monto: totalDebito,
-        descripcion: entry.description || cuentas,
-        caja: [...new Set(cajasEntry)].join(', '),
-        usuario: usuariosMap.get(entry.createdBy) || entry.createdBy || '',
-        tipoCaja: '',
-        estadoAprobacion: 'APROBADO',
-        metodoPago: '',
-      };
-    });
+        return {
+          fecha: entry.createdAt,
+          tipo: entry.referenceType,
+          monto: totalDebito,
+          descripcion: entry.description || cuentas,
+          caja: [...new Set(cajasEntry)].join(', '),
+          usuario: usuariosMap.get(entry.createdBy) || entry.createdBy || '',
+          tipoCaja: '',
+          estadoAprobacion: 'APROBADO',
+          metodoPago: '',
+        };
+      },
+    );
 
     if (format === 'excel')
       return generarExcelContable(filasCjas, filasTransacciones, fecha);
@@ -4160,8 +4169,10 @@ export class AccountingService {
       const arqueoReferenceIds = [
         ...new Set(
           debtLines
-            .filter((line) => line.journalEntry?.referenceType === 'ARQUEO')
-            .map((line) => line.journalEntry?.referenceId)
+            .filter(
+              (line: any) => line.journalEntry?.referenceType === 'ARQUEO',
+            )
+            .map((line: any) => line.journalEntry?.referenceId)
             .filter(Boolean),
         ),
       ];
@@ -4184,7 +4195,9 @@ export class AccountingService {
           })
         : [];
 
-      const transaccionMap = new Map(arqueoTransacciones.map((t) => [t.id, t]));
+      const transaccionMap = new Map(
+        arqueoTransacciones.map((t: any) => [t.id, t]),
+      );
 
       for (const line of debtLines) {
         const entry = line.journalEntry;
@@ -4240,7 +4253,7 @@ export class AccountingService {
             line.journalEntry?.referenceType === 'DEUDA_COBRADOR' ||
             line.journalEntry?.referenceType === 'ABONO_DEUDA',
         )
-        .map((line) => line.journalEntry?.referenceId)
+        .map((line: any) => line.journalEntry?.referenceId)
         .filter(Boolean),
     );
 
@@ -4248,10 +4261,10 @@ export class AccountingService {
     const cierreIdsConDeuda = new Set(
       deudaTransacciones
         .filter(
-          (t) =>
+          (t: any) =>
             String(t.tipoReferencia) === 'DEUDA_COBRADOR' && t.referenciaId,
         )
-        .map((t) => {
+        .map((t: any) => {
           // Extraer el referenciaId del cierre del campo DD del DEUDA_COBRADOR
           const match = String(t.referenciaId || '').match(
             /DD:\d+\|SD:\d+\|FD:\d+\|(.+)/,
@@ -4412,7 +4425,7 @@ export class AccountingService {
       where: { id: { in: finalCobradorIds } },
       select: { id: true, nombres: true, apellidos: true, rol: true },
     });
-    const cobradorMap = new Map(cobradores.map((c) => [c.id, c]));
+    const cobradorMap = new Map(cobradores.map((c: any) => [c.id, c]));
 
     return Array.from(deudaMap.entries())
       .map(([cobradorId, deuda]) => {
@@ -4712,7 +4725,7 @@ export class AccountingService {
       select: { referenceType: true, referenceId: true },
     });
     const existingKeys = new Set(
-      existingEntries.map((e) => `${e.referenceType}:${e.referenceId}`),
+      existingEntries.map((e: any) => `${e.referenceType}:${e.referenceId}`),
     );
 
     const mapReferenceType = (

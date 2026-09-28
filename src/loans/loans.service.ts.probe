@@ -1922,7 +1922,8 @@ export class LoansService implements OnModuleInit {
 
           // Calcular mora acumulada de forma segura
           const moraAcumulada = cuotasVencidasReal.reduce(
-            (sum: number, cuota) => sum + (Number(cuota.montoInteresMora) || 0),
+            (sum: number, cuota: any) =>
+              sum + (Number(cuota.montoInteresMora) || 0),
             0,
           );
 
@@ -2176,7 +2177,7 @@ export class LoansService implements OnModuleInit {
       const fechasCuotas = Array.from(
         new Set(
           (prestamo.cuotas || [])
-            .map((cuota) => {
+            .map((cuota: any) => {
               const fechaGestion = resolveFechaGestionCuota(cuota);
               return fechaGestion ? getBogotaDayKey(fechaGestion) : null;
             })
@@ -2241,7 +2242,7 @@ export class LoansService implements OnModuleInit {
       );
 
       // Agregar estadoVisita a cada cuota
-      prestamo.cuotas = prestamo.cuotas.map((cuota) => {
+      prestamo.cuotas = prestamo.cuotas.map((cuota: any) => {
         const fechaGestion = resolveFechaGestionCuota(cuota);
         const fechaKey = fechaGestion ? getBogotaDayKey(fechaGestion) : null;
         const gestion = fechaKey
@@ -3736,7 +3737,7 @@ export class LoansService implements OnModuleInit {
       if (!data.esContado) {
         const rutaIndicada = String(data?.rutaId || '').trim();
         const clienteTieneRuta = (cliente.asignacionesRuta ?? []).some(
-          (a) => a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
+          (a: any) => a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
         );
         const loCreaUnCobrador = creador.rol === RolUsuario.COBRADOR;
 
@@ -4164,7 +4165,7 @@ export class LoansService implements OnModuleInit {
           let rutaIdDelCredito: string | null = null;
           if (!data.esContado && startDate.getTime() === today.getTime()) {
             const rutaPreferida = cliente.asignacionesRuta?.find(
-              (a) => a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
+              (a: any) => a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
             );
 
             const rutaCobrador =
@@ -4261,7 +4262,8 @@ export class LoansService implements OnModuleInit {
               rutaIdDelCredito ||
               String(data?.rutaId || '').trim() ||
               cliente.asignacionesRuta?.find(
-                (a) => a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
+                (a: any) =>
+                  a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
               )?.rutaId ||
               null;
 
@@ -4351,7 +4353,7 @@ export class LoansService implements OnModuleInit {
                         estadoAprobacion: prestamoTx.estadoAprobacion,
                         saldoPendiente: prestamoTx.saldoPendiente,
                       },
-                      cuotas: (prestamoTx.cuotas || []).map((cuota) => ({
+                      cuotas: (prestamoTx.cuotas || []).map((cuota: any) => ({
                         id: cuota.id,
                         estado: cuota.estado,
                         monto: cuota.monto,
@@ -4361,7 +4363,7 @@ export class LoansService implements OnModuleInit {
                     rollbackData: {
                       prestamoId: prestamoTx.id,
                       cuotaIds: (prestamoTx.cuotas || []).map(
-                        (cuota) => cuota.id,
+                        (cuota: any) => cuota.id,
                       ),
                       productoId: prestamoTx.productoId || null,
                       stockDescontado: !!impactoTx?.stockDescontado,
@@ -4376,7 +4378,7 @@ export class LoansService implements OnModuleInit {
                       estadoAprobacionInicial: prestamoTx.estadoAprobacion,
                       estadoInicialPrestamo: prestamoTx.estado,
                       estadoInicialCuotas: (prestamoTx.cuotas || []).map(
-                        (cuota) => ({
+                        (cuota: any) => ({
                           id: cuota.id,
                           estado: cuota.estado,
                           montoPagado: cuota.montoPagado || 0,
@@ -4402,7 +4404,7 @@ export class LoansService implements OnModuleInit {
                     entidadesAfectadas: {
                       prestamoId: prestamoTx.id,
                       cuotaIds: (prestamoTx.cuotas || []).map(
-                        (cuota) => cuota.id,
+                        (cuota: any) => cuota.id,
                       ),
                       aprobacionId: aprobacionTx.id,
                       asignacionRutaId: asignacionRutaTxId,

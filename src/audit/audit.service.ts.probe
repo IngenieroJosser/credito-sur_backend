@@ -143,7 +143,7 @@ export class AuditService {
     const fecha = getBogotaDayKey(new Date());
 
     // 2. Mapeo de datos al tipo del template
-    const filas: AuditoriaRow[] = logs.map((l) => ({
+    const filas: AuditoriaRow[] = logs.map((l: any) => ({
       fecha: l.creadoEn,
       usuario: l.usuario ? `${l.usuario.nombres} ${l.usuario.apellidos}` : '',
       accion: l.accion || '',

@@ -243,7 +243,7 @@ export class ClientesCreditosParser {
     const preciosPorPlazo = new Map<string, number>();
     productosBd.forEach((p) => {
       const codigo = String(p.codigo).trim().toUpperCase();
-      (p.precios ?? []).forEach((precio) => {
+      (p.precios ?? []).forEach((precio: any) => {
         preciosPorPlazo.set(
           `${codigo}|${Number(precio.meses)}`,
           Number(precio.precio) || 0,

@@ -47,7 +47,7 @@ const ROLES_NOTIFICADOS = [
  *
  * Esta aparte y no escrito a mano dos veces: `Prisma.validator` deja que la consulta y el
  * tipo salgan de la MISMA definicion, asi que no pueden separarse. Antes `buildSnapshot`
- * recibia `cliente: any`, y de ahi colgaban otros ocho `any` (cada `.map((x) => ...)`
+ * recibia `cliente: any`, y de ahi colgaban otros ocho `any` (cada `.map((x: any) => ...)`
  * sobre prestamos, cuotas, pagos, archivos y visitas): 197 hallazgos de lectura insegura.
  */
 const clienteParaAlerta = Prisma.validator<Prisma.ClienteDefaultArgs>()({
@@ -180,7 +180,7 @@ export class AlertasClientesService {
         frecuenciaPago: prestamo.frecuenciaPago,
         cuotasVencidas: cuotasVencidas.length,
         saldoVencido: cuotasVencidas.reduce(
-          (sum: number, cuota) =>
+          (sum: number, cuota: any) =>
             sum +
             Math.max(
               0,
@@ -378,7 +378,7 @@ export class AlertasClientesService {
 
       if (usuariosNotificar.length > 0) {
         await tx.notificacion.createMany({
-          data: usuariosNotificar.map((usuario) => ({
+          data: usuariosNotificar.map((usuario: any) => ({
             usuarioId: usuario.id,
             titulo: 'Alerta: cliente no ubicado',
             mensaje: `${cliente.nombres} ${cliente.apellidos} · Doc. ${cliente.dni || 'S/N'} · Ruta ${asignacion?.ruta?.nombre || 'S/R'}`,

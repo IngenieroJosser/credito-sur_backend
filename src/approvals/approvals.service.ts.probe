@@ -486,10 +486,10 @@ export class ApprovalsService {
     ]);
 
     const ahora = new Date();
-    const cuotas = creditosCliente.flatMap((credito) =>
+    const cuotas = creditosCliente.flatMap((credito: any) =>
       Array.isArray(credito.cuotas) ? credito.cuotas : [],
     );
-    const cuotasVencidas = cuotas.filter((cuota) => {
+    const cuotasVencidas = cuotas.filter((cuota: any) => {
       if (cuota.estado === EstadoCuota.VENCIDA) return true;
       if (
         cuota.estado === EstadoCuota.PAGADA ||
@@ -501,17 +501,17 @@ export class ApprovalsService {
       return fecha ? new Date(fecha).getTime() < ahora.getTime() : false;
     }).length;
     const cuotasPagadas = cuotas.filter(
-      (cuota) => cuota.estado === EstadoCuota.PAGADA,
+      (cuota: any) => cuota.estado === EstadoCuota.PAGADA,
     ).length;
     const saldoTotalPendiente = creditosCliente.reduce(
-      (sum: number, credito) => sum + Number(credito.saldoPendiente || 0),
+      (sum: number, credito: any) => sum + Number(credito.saldoPendiente || 0),
       0,
     );
     const creditosActivos = creditosCliente.filter((credito: any) =>
       [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA].includes(credito.estado),
     ).length;
     const montoPagadoUltimos30Dias = pagosUltimos30Dias.reduce(
-      (sum: number, pago) => sum + Number(pago.montoTotal || 0),
+      (sum: number, pago: any) => sum + Number(pago.montoTotal || 0),
       0,
     );
 
@@ -551,7 +551,8 @@ export class ApprovalsService {
       approval: this.enrichApprovalContext(approval, datosSolicitud),
       cliente,
       creditoSolicitud:
-        creditosCliente.find((credito) => credito.id === prestamoId) || null,
+        creditosCliente.find((credito: any) => credito.id === prestamoId) ||
+        null,
       creditosCliente,
       referencias: this.buildReferenciasCliente(cliente),
       multimedia,

@@ -426,7 +426,7 @@ export class ReportsService {
         });
 
         const cuotas = prestamo?.cuotas || [];
-        const cuotasVencidas = cuotas.filter((c) => {
+        const cuotasVencidas = cuotas.filter((c: any) => {
           const eff = c?.fechaVencimientoProrroga
             ? new Date(c.fechaVencimientoProrroga)
             : new Date(c.fechaVencimiento);

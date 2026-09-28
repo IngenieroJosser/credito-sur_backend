@@ -2211,7 +2211,7 @@ export class PaymentsService {
     });
 
     return {
-      candidatos: pagos.map((p) => ({
+      candidatos: pagos.map((p: any) => ({
         id: p.id,
         numeroPago: p.numeroPago,
         fechaPago: p.fechaPago,
@@ -2222,7 +2222,7 @@ export class PaymentsService {
         prestamoId: p.prestamoId,
         numeroPrestamo: p.prestamo?.numeroPrestamo,
         saldoPrestamo: Number(p.prestamo?.saldoPendiente || 0),
-        cuotas: (p.detalles || []).map((d) => ({
+        cuotas: (p.detalles || []).map((d: any) => ({
           cuotaId: d.cuotaId,
           numeroCuota: d.cuota?.numeroCuota,
           montoAplicado: Number(d.monto || 0),
@@ -2317,15 +2317,15 @@ export class PaymentsService {
 
       const montoTotal = Number(pago.montoTotal || 0);
       const capitalTotal = detalles.reduce(
-        (s: number, d) => s + Number(d.montoCapital || 0),
+        (s: number, d: any) => s + Number(d.montoCapital || 0),
         0,
       );
       const interesTotal = detalles.reduce(
-        (s: number, d) => s + Number(d.montoInteres || 0),
+        (s: number, d: any) => s + Number(d.montoInteres || 0),
         0,
       );
       const moraTotal = detalles.reduce(
-        (s: number, d) => s + Number(d.montoInteresMora || 0),
+        (s: number, d: any) => s + Number(d.montoInteresMora || 0),
         0,
       );
 

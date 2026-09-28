@@ -3633,7 +3633,7 @@ export class RoutesService {
       // Si el cliente pagó hoy, incluir también sus préstamos ya pagados
       if (tienePagoHoy) {
         const prestamosPagados = (cliente.prestamos || []).filter(
-          (prestamo) =>
+          (prestamo: any) =>
             normalizeUpper(prestamo?.estado) === 'PAGADO' &&
             !prestamosConPrestamoOperativo.some((p) => p.id === prestamo.id),
         );
@@ -3821,7 +3821,7 @@ export class RoutesService {
     });
     const visitasMap = new Map(registrosVisitas.map((r) => [r.clienteId, r]));
     const visitasMapPorPrestamo = new Map<string, any>();
-    registrosVisitas.forEach((registro) => {
+    registrosVisitas.forEach((registro: any) => {
       const clienteId = String(registro?.clienteId || '');
       const prestamoId = String(registro?.prestamoId || '');
       if (clienteId && prestamoId) {
@@ -3830,7 +3830,9 @@ export class RoutesService {
     });
     const clientesRutaIds = [
       ...new Set(
-        asignaciones.map((a) => a?.cliente?.id || a?.clienteId).filter(Boolean),
+        asignaciones
+          .map((a: any) => a?.cliente?.id || a?.clienteId)
+          .filter(Boolean),
       ),
     ];
     const _clientesVisitaIds = [
@@ -3893,7 +3895,7 @@ export class RoutesService {
           const cuotas = prestamo?.cuotas || [];
 
           const pertenece = cuotas.some(
-            (cuota) => String(cuota?.id || '') === cuotaId,
+            (cuota: any) => String(cuota?.id || '') === cuotaId,
           );
 
           if (pertenece) {
@@ -3950,14 +3952,14 @@ export class RoutesService {
         if (String(v?.cliente?.id || v?.clienteId || '') !== clienteId)
           return false;
         return (v?.prestamos || []).some(
-          (p) => String(p?.id || '') === prestamoId,
+          (p: any) => String(p?.id || '') === prestamoId,
         );
       });
 
       if (visitaInicial) continue;
 
       const asignacion = asignaciones.find(
-        (a) => String(a?.cliente?.id || a?.clienteId || '') === clienteId,
+        (a: any) => String(a?.cliente?.id || a?.clienteId || '') === clienteId,
       );
       const cliente = asignacion?.cliente;
       if (!cliente) continue;
@@ -3966,13 +3968,13 @@ export class RoutesService {
       const prestamosOperativosReprogramacion = (
         cliente.prestamos || []
       ).filter(
-        (prestamo) =>
+        (prestamo: any) =>
           isPrestamoOperativoRuta(prestamo) ||
           (clienteTienePagoHoy &&
             normalizeUpper(prestamo?.estado) === 'PAGADO'),
       );
       const prestamosConCuotaObjetivoReprogramacion =
-        prestamosOperativosReprogramacion.map((p) => {
+        prestamosOperativosReprogramacion.map((p: any) => {
           const estadoRevision = getEstadoRevisionOperacion(p);
           const isObjetivo = String(p?.id || '') === prestamoId;
           return {
@@ -4156,7 +4158,7 @@ export class RoutesService {
 
     const cuotaPagadaPorPrestamo = new Map<string, any>();
     const cuotaPagadaPorCliente = new Map<string, any>();
-    pagosOperativos.forEach((p) => {
+    pagosOperativos.forEach((p: any) => {
       const cuotaObjetivoPago = buildCuotaObjetivoDesdePago(p);
       if (!cuotaObjetivoPago) return;
 
@@ -4198,7 +4200,7 @@ export class RoutesService {
       let cuotaReprogramadaObjetivo: any = null;
 
       if (Array.isArray(v.prestamos)) {
-        v.prestamos = v.prestamos.map((prestamo) => {
+        v.prestamos = v.prestamos.map((prestamo: any) => {
           const prestamoId = String(prestamo?.id || '');
           const reprogramacion = prestamoId
             ? reprogramacionPorPrestamo.get(prestamoId)
@@ -4242,7 +4244,7 @@ export class RoutesService {
       }
 
       const prestamoOperativo = Array.isArray(v.prestamos)
-        ? v.prestamos.find((prestamo) => {
+        ? v.prestamos.find((prestamo: any) => {
             if (reprogramacionPorPrestamo.has(String(prestamo?.id || ''))) {
               return false;
             }
@@ -4252,7 +4254,7 @@ export class RoutesService {
               meta > 0 && (objetivo?.puedePagar || objetivo?.puedeReprogramar)
             );
           }) ||
-          v.prestamos.find((prestamo) => {
+          v.prestamos.find((prestamo: any) => {
             if (reprogramacionPorPrestamo.has(String(prestamo?.id || ''))) {
               return false;
             }
@@ -4300,7 +4302,7 @@ export class RoutesService {
           v.cuotaObjetivoPrestamoId = cuotaPagada.id;
 
           if (Array.isArray(v.prestamos)) {
-            v.prestamos = v.prestamos.map((prestamo) => {
+            v.prestamos = v.prestamos.map((prestamo: any) => {
               if (
                 prestamo?.id === prestamoId ||
                 cuotaPagadaPorPrestamo.get(String(prestamo?.id || ''))?.id ===
@@ -4348,7 +4350,7 @@ export class RoutesService {
               cuotaReprogramada.prestamoId || v.prestamoObjetivoId || null;
 
             if (Array.isArray(v.prestamos)) {
-              v.prestamos = v.prestamos.map((prestamo) => {
+              v.prestamos = v.prestamos.map((prestamo: any) => {
                 if (prestamo?.id === cuotaReprogramada.prestamoId) {
                   return { ...prestamo, cuotaObjetivo: cuotaReprogramada };
                 }
@@ -6476,7 +6478,7 @@ export class RoutesService {
   private buildObligacionesOperativas(visitas: VisitaDelDia[]) {
     return visitas.flatMap((visita) => {
       return (visita.prestamos || [])
-        .filter((prestamo) => isPrestamoOperativoRuta(prestamo))
+        .filter((prestamo: any) => isPrestamoOperativoRuta(prestamo))
         .map((prestamo) => {
           const estadoGestion = this.resolveEstadoGestionPrestamo(
             visita,
@@ -6524,7 +6526,7 @@ export class RoutesService {
             recaudado,
           };
         })
-        .filter((item) => {
+        .filter((item: any) => {
           return (
             item.metaPendiente > 0 ||
             item.recaudado > 0 ||

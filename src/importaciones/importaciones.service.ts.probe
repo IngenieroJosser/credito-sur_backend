@@ -576,7 +576,7 @@ export class ImportacionesService {
         }
 
         const preciosPorId = new Map<string, any>(
-          producto.precios.map((p) => [p.id, p]),
+          producto.precios.map((p: any) => [p.id, p]),
         );
         for (const precio of registro.preciosCreados) {
           const actual = preciosPorId.get(precio.id);
