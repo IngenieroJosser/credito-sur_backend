@@ -36,12 +36,12 @@ import {
 } from '../templates/exports/cartera-creditos.template';
 import { generarExcelClientesCreditosImportable } from '../templates/exports/importables.template';
 import { etiquetaTipoAmortizacion } from '../importaciones/interes-credito';
+import { calcularFechaVencimiento } from './utils/amortizacion.utils';
 import { createHash, randomUUID } from 'crypto';
 import { ContratoData, generarContratoPDF } from '../templates/exports';
 import {
   formatBogotaOffsetIso,
   getBogotaDayKey,
-  getBogotaWeekday,
   getBogotaStartEndOfDay,
   getBogotaStartEndOfDayFromKey,
 } from '../utils/date-utils';
@@ -1179,118 +1179,6 @@ export class LoansService implements OnModuleInit {
     };
   }
 
-  /**
-   * Avanza la fecha al siguiente día hábil si cae en domingo.
-   * Para pagos DIARIO: si cae en domingo, se mueve al lunes siguiente.
-   * Para SEMANAL/QUINCENAL: si cae en domingo, se mueve al sábado anterior.
-   * Para MENSUAL: si cae en domingo, se mueve al lunes siguiente.
-   */
-  private saltarDomingo(fecha: Date, frecuencia: FrecuenciaPago): Date {
-    // 0 = Domingo (en Bogotá)
-    if (getBogotaWeekday(fecha) !== 0) return fecha;
-
-    const key = getBogotaDayKey(fecha);
-    if (!key) return fecha;
-
-    const shiftDays = (days: number) =>
-      new Date(`${key}T12:00:00-05:00`).getTime() + days * 86_400_000;
-
-    // Para diario/mensual: mover al lunes (siguiente día hábil)
-    if (
-      frecuencia === FrecuenciaPago.DIARIO ||
-      frecuencia === FrecuenciaPago.MENSUAL
-    ) {
-      return new Date(shiftDays(1));
-    }
-
-    // Para semanal/quincenal: mover al sábado (día hábil anterior)
-    return new Date(shiftDays(-1));
-  }
-
-  private calcularFechaVencimiento(
-    fechaBase: Date,
-    numeroCuota: number,
-    frecuencia: FrecuenciaPago,
-  ): Date {
-    const baseKey = getBogotaDayKey(fechaBase);
-    if (!baseKey) return fechaBase;
-
-    const offset = Math.max(0, numeroCuota - 1);
-
-    const toNoonBogota = (key: string) => new Date(`${key}T12:00:00-05:00`);
-
-    const addDaysSkippingSunday = (
-      startKey: string,
-      daysToAdd: number,
-    ): string => {
-      let key = startKey;
-      let added = 0;
-      while (added < daysToAdd) {
-        const next = new Date(toNoonBogota(key).getTime() + 86_400_000);
-        const nextKey = getBogotaDayKey(next);
-        if (!nextKey) break;
-        key = nextKey;
-        if (getBogotaWeekday(next) !== 0) added++;
-      }
-      return key;
-    };
-
-    const addDaysPlain = (startKey: string, daysToAdd: number): string => {
-      const next = new Date(
-        toNoonBogota(startKey).getTime() + daysToAdd * 86_400_000,
-      );
-      return getBogotaDayKey(next);
-    };
-
-    const addMonths = (startKey: string, monthsToAdd: number): string => {
-      const [yStr, mStr, dStr] = startKey.split('-');
-      const y = Number(yStr);
-      const m = Number(mStr);
-      const d = Number(dStr);
-      if (!y || !m || !d) return startKey;
-
-      const totalMonths = m - 1 + monthsToAdd;
-      const newY = y + Math.floor(totalMonths / 12);
-      const newM0 = ((totalMonths % 12) + 12) % 12;
-      const newM = newM0 + 1;
-
-      // Clamp del día al último del mes
-      const firstNextMonth =
-        newM === 12
-          ? new Date(`${newY + 1}-01-01T12:00:00-05:00`)
-          : new Date(`${newY}-${padStart2(newM + 1)}-01T12:00:00-05:00`);
-      const lastDay = new Date(firstNextMonth.getTime() - 86_400_000);
-      const lastKey = getBogotaDayKey(lastDay);
-      const lastDayNum = Number(lastKey.split('-')[2] || '0');
-      const safeDay = Math.min(d, lastDayNum || d);
-      return `${newY}-${padStart2(newM)}-${padStart2(safeDay)}`;
-    };
-
-    const padStart2 = (n: number) => String(n).padStart(2, '0');
-
-    let targetKey = baseKey;
-
-    switch (frecuencia) {
-      case FrecuenciaPago.DIARIO:
-        targetKey = addDaysSkippingSunday(baseKey, offset);
-        break;
-      case FrecuenciaPago.SEMANAL:
-        targetKey = addDaysPlain(baseKey, offset * 7);
-        break;
-      case FrecuenciaPago.QUINCENAL:
-        targetKey = addDaysPlain(baseKey, offset * 15);
-        break;
-      case FrecuenciaPago.MENSUAL:
-        targetKey = addMonths(baseKey, offset);
-        break;
-      default:
-        targetKey = baseKey;
-    }
-
-    // devolver un instante al mediodía Bogotá; el consumidor compara por día con helpers Bogotá
-    return this.saltarDomingo(toNoonBogota(targetKey), frecuencia);
-  }
-
   private parseBogotaDayKey(dateStr: string): Date {
     const raw = String(dateStr || '').trim();
     if (raw.includes('T')) {
@@ -1442,7 +1330,7 @@ export class LoansService implements OnModuleInit {
         interesTotal = amortizacion.interesTotal;
         cuotas = amortizacion.tabla.map((cuota) => ({
           numeroCuota: cuota.numeroCuota,
-          fechaVencimiento: this.calcularFechaVencimiento(
+          fechaVencimiento: calcularFechaVencimiento(
             fechaBase,
             fechaPrimerCobro ? cuota.numeroCuota : cuota.numeroCuota + 1,
             frecuenciaPago,
@@ -1466,7 +1354,7 @@ export class LoansService implements OnModuleInit {
         interesTotal = amortizacion.interesTotal;
         cuotas = amortizacion.tabla.map((cuota) => ({
           numeroCuota: cuota.numeroCuota,
-          fechaVencimiento: this.calcularFechaVencimiento(
+          fechaVencimiento: calcularFechaVencimiento(
             fechaBase,
             fechaPrimerCobro ? cuota.numeroCuota : cuota.numeroCuota + 1,
             frecuenciaPago,
@@ -1507,7 +1395,7 @@ export class LoansService implements OnModuleInit {
 
           return {
             numeroCuota: i + 1,
-            fechaVencimiento: this.calcularFechaVencimiento(
+            fechaVencimiento: calcularFechaVencimiento(
               fechaBase,
               fechaPrimerCobro ? i + 1 : i + 2,
               frecuenciaPago,
@@ -3089,7 +2977,7 @@ export class LoansService implements OnModuleInit {
           const frecuencia = prestamoConCuotas.frecuenciaPago;
 
           for (let i = 0; i < cuotasPendientes.length; i++) {
-            const nuevaFechaVenc = this.calcularFechaVencimiento(
+            const nuevaFechaVenc = calcularFechaVencimiento(
               nuevaFechaBase,
               i + 1,
               frecuencia,
@@ -3104,7 +2992,7 @@ export class LoansService implements OnModuleInit {
           }
 
           // Actualizar fechaInicio y fechaFin del préstamo
-          const nuevaFechaFin = this.calcularFechaVencimiento(
+          const nuevaFechaFin = calcularFechaVencimiento(
             nuevaFechaBase,
             cuotasPendientes.length,
             frecuencia,

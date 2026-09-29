@@ -28,6 +28,7 @@ import { LedgerService } from '../accounting/ledger.service';
 import { randomUUID } from 'crypto';
 import {
   calcularAmortizacionFrancesa,
+  calcularFechaVencimiento,
   FilaAmortizacion,
 } from '../loans/utils/amortizacion.utils';
 import { pesos } from '../common/dinero.util';
@@ -3210,22 +3211,17 @@ export class ApprovalsService {
         // Eliminar cuotas viejas y crear nuevas para que coincidan con la edición
         await tx.cuota.deleteMany({ where: { prestamoId: prestamo.id } });
 
-        // Función auxiliar para calcular fechas (duplicada brevemente aquí para el tx)
-        const calcularFecha = (
-          base: Date,
-          num: number,
-          freq: FrecuenciaPago,
-        ) => {
-          const d = new Date(base);
-          if (freq === FrecuenciaPago.DIARIO) d.setDate(d.getDate() + num);
-          else if (freq === FrecuenciaPago.SEMANAL)
-            d.setDate(d.getDate() + num * 7);
-          else if (freq === FrecuenciaPago.QUINCENAL)
-            d.setDate(d.getDate() + num * 15);
-          else if (freq === FrecuenciaPago.MENSUAL)
-            d.setMonth(d.getMonth() + num);
-          return d;
-        };
+        // Las fechas se calculan con `calcularFechaVencimiento`, la misma que usa la
+        // creacion del prestamo. Antes habia aqui una copia local que no saltaba
+        // domingos, no manejaba la zona de Bogota y no miraba `fechaPrimerCobro`:
+        // aprobar con cambios un credito diario le ponia cuotas en domingo y, si
+        // tenia primer cobro aplazado, le movia todas las fechas.
+        const fechaBaseCuotas = prestamo.fechaPrimerCobro
+          ? new Date(prestamo.fechaPrimerCobro)
+          : fechaInicio;
+        // Sin `fechaPrimerCobro` la primera cuota vence un periodo despues del
+        // inicio; con el, vence ese mismo dia. Es la convencion de la creacion.
+        const desplazamiento = prestamo.fechaPrimerCobro ? 0 : 1;
 
         await tx.cuota.createMany({
           data: cuotasData.map((c) => ({
@@ -3234,9 +3230,9 @@ export class ApprovalsService {
             monto: c.monto,
             montoCapital: c.montoCapital,
             montoInteres: c.montoInteres,
-            fechaVencimiento: calcularFecha(
-              fechaInicio,
-              c.numeroCuota,
+            fechaVencimiento: calcularFechaVencimiento(
+              fechaBaseCuotas,
+              c.numeroCuota + desplazamiento,
               frecuencia,
             ),
             estado: EstadoCuota.PENDIENTE,
