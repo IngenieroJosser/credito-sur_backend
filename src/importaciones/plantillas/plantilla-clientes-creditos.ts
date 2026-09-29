@@ -132,17 +132,20 @@ const ART = {
   notas: 13,
   // Automáticas / calculadas, al final (ver nota en DIN sobre el número).
   cliente: 14,
-  articulo: 15,
-  revision: 16,
-  precioPlazo: 17,
-  cantidadCuotasAuto: 18,
-  totalPagar: 19,
-  valorCuota: 20,
-  cuotasPagadasAuto: 21,
-  saldoPendiente: 22,
-  movimiento: 23,
-  debeCuotaAuto: 24,
-  numeroCredito: 25,
+  // Aqui iba "Articulo encontrado". Era un VLOOKUP contra 'BD Artículos', que se
+  // llena desde la base de datos al descargar la plantilla: mientras el
+  // inventario no este importado decia "no existe" en todas las filas. El dato
+  // que si hace falta, el precio del plazo, ya avisa por su cuenta.
+  revision: 15,
+  precioPlazo: 16,
+  cantidadCuotasAuto: 17,
+  totalPagar: 18,
+  valorCuota: 19,
+  cuotasPagadasAuto: 20,
+  saldoPendiente: 21,
+  movimiento: 22,
+  debeCuotaAuto: 23,
+  numeroCredito: 24,
 };
 
 const COLUMNAS_CLIENTES: ColumnaPlantilla[] = [
@@ -340,12 +343,6 @@ const COLUMNAS_CREDITOS_ARTICULO: ColumnaPlantilla[] = [
   {
     header: 'Cliente encontrado (automático)',
     key: 'cliente_auto',
-    width: 28,
-    automatica: true,
-  },
-  {
-    header: 'Artículo encontrado (automático)',
-    key: 'articulo_auto',
     width: 28,
     automatica: true,
   },
@@ -1069,13 +1066,6 @@ export async function generarPlantillaClientesCreditos(
   formulaEnColumna(wsArticulo, ART.cliente, formulaCliente(ART.cc));
   formulaEnColumna(
     wsArticulo,
-    ART.articulo,
-    `IF(${ref(ART.productoCodigo)}="","",` +
-      `IFERROR(VLOOKUP(${ref(ART.productoCodigo)},'BD Artículos'!$B:$C,2,FALSE),"⚠ Artículo no existe"))`,
-  );
-
-  formulaEnColumna(
-    wsArticulo,
     ART.precioPlazo,
     `IF(OR(${ref(ART.productoCodigo)}="",${ref(ART.plazoMeses)}=""),"",` +
       `IFERROR(VLOOKUP(${ref(ART.productoCodigo)}&"|"&${ref(ART.plazoMeses)},'BD Artículos'!$A:$E,5,FALSE),` +
@@ -1154,6 +1144,13 @@ export async function generarPlantillaClientesCreditos(
     cadenaRevision(
       [
         { condicion: `${ref(ART.cc)}=""`, mensaje: '""' },
+        // De aqui salio una sola comprobacion, la del precio del plazo: ese mismo
+        // aviso ya lo escribe la celda `Precio del plazo`, asi que repetirlo
+        // llenaba la columna mientras el inventario no estuviera importado sin
+        // decir nada nuevo. Las que consultan el catalogo y se quedan no hacen
+        // ruido: la de la inicial esta guardada por ISNUMBER(precioPlazo), asi
+        // que sin precio no evalua, y la del stock dice la verdad, porque sin
+        // inventario la importacion de esa fila si se detendria.
         {
           condicion: `${ref(ART.productoCodigo)}=""`,
           mensaje: '"⚠ Falta el código del artículo"',
@@ -1161,10 +1158,6 @@ export async function generarPlantillaClientesCreditos(
         {
           condicion: `${ref(ART.plazoMeses)}=""`,
           mensaje: '"⚠ Falta el plazo en meses"',
-        },
-        {
-          condicion: `NOT(ISNUMBER(${ref(ART.precioPlazo)}))`,
-          mensaje: '"⚠ El artículo no tiene precio para ese plazo"',
         },
         // En un crédito de artículo el cliente siempre entrega algo al
         // llevarse la mercancía, así que la inicial no puede quedar en blanco.
@@ -1174,7 +1167,8 @@ export async function generarPlantillaClientesCreditos(
           mensaje: '"⚠ Falta la cuota inicial"',
         },
         // Si la inicial cubre el precio no queda nada que financiar, y un
-        // crédito sin monto no es un crédito.
+        // crédito sin monto no es un crédito. Va guardada por ISNUMBER: sin
+        // precio en el catalogo no evalua, asi que no ensucia la columna.
         {
           condicion:
             `AND(ISNUMBER(${ref(ART.precioPlazo)}),` +

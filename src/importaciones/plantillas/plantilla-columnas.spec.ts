@@ -174,8 +174,15 @@ describe('Plantilla de clientes y créditos: estructura con varias combinaciones
     expect(articulo[9]).toBe('Total abonado');
     expect(articulo[10]).toBe('Fecha último pago');
     expect(articulo[14]).toContain('Cliente encontrado');
-    expect(articulo[24]).toContain('Debe de la cuota');
-    expect(articulo[25]).toBe('Número de crédito');
+    // La hoja ya no trae "Artículo encontrado": de ahí en adelante todo corre
+    // una columna a la izquierda.
+    expect(articulo).not.toContain(
+      expect.stringContaining('Artículo encontrado'),
+    );
+    expect(articulo[15]).toContain('Revisión de la fila');
+    expect(articulo[16]).toContain('Precio del plazo');
+    expect(articulo[23]).toContain('Debe de la cuota');
+    expect(articulo[24]).toBe('Número de crédito');
   }, 60000);
 
   it('no quedan huecos: ningún encabezado vacío dentro del rango usado', async () => {
