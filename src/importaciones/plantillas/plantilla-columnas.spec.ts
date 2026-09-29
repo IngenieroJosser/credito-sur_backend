@@ -185,6 +185,30 @@ describe('Plantilla de clientes y créditos: estructura con varias combinaciones
     expect(articulo[24]).toBe('Número de crédito');
   }, 60000);
 
+  it('el precio del plazo se calla con el catálogo vacío pero sigue avisando con catálogo', async () => {
+    const { data } = await generarPlantillaClientesCreditos(base);
+    const wb = await cargar(data);
+    const hoja = wb.getWorksheet('Créditos de artículo')!;
+
+    const cabeceras = encabezados(wb, 'Créditos de artículo');
+    const columna = cabeceras.findIndex((h) =>
+      String(h ?? '').startsWith('Precio del plazo'),
+    );
+    expect(columna).toBeGreaterThan(0);
+
+    const formula = String(
+      (hoja.getCell(7, columna).value as { formula?: string })?.formula || '',
+    );
+
+    // Sin inventario importado 'BD Artículos' trae solo su encabezado: la celda
+    // queda vacía en vez de marcar las 1.000 filas con un aviso que ninguna
+    // puede evitar.
+    expect(formula).toContain("COUNTA('BD Artículos'!$B:$B)<=1");
+    // Pero el aviso NO se elimina: con catálogo cargado sigue diciendo que ese
+    // artículo no tiene precio para ese plazo.
+    expect(formula).toContain('Sin precio para ese plazo');
+  }, 60000);
+
   it('no quedan huecos: ningún encabezado vacío dentro del rango usado', async () => {
     const { data } = await generarPlantillaClientesCreditos(base);
     const wb = await cargar(data);

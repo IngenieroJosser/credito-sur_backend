@@ -1064,12 +1064,24 @@ export async function generarPlantillaClientesCreditos(
   wsArticulo.getColumn(ART.cc).numFmt = '@';
 
   formulaEnColumna(wsArticulo, ART.cliente, formulaCliente(ART.cc));
+  // El precio del plan, que es de donde sale el monto a financiar.
+  //
+  // Con el catalogo vacio esta columna no tiene nada que decir, asi que se queda
+  // en blanco en vez de poner un aviso por fila. 'BD Artículos' se llena desde la
+  // base de datos al generar el archivo: si el inventario todavia no se importo,
+  // la hoja trae solo su encabezado y COUNTA da 1. Marcar 1.000 filas con "sin
+  // precio" cuando NINGUNA puede tenerlo no informa de nada, y en ese caso el
+  // monto se escribe a mano en su columna.
+  //
+  // Cuando el catalogo SI trae articulos el aviso se mantiene, porque ahi si
+  // dice algo: ese articulo en concreto no tiene precio para ese plazo.
   formulaEnColumna(
     wsArticulo,
     ART.precioPlazo,
     `IF(OR(${ref(ART.productoCodigo)}="",${ref(ART.plazoMeses)}=""),"",` +
+      `IF(COUNTA('BD Artículos'!$B:$B)<=1,"",` +
       `IFERROR(VLOOKUP(${ref(ART.productoCodigo)}&"|"&${ref(ART.plazoMeses)},'BD Artículos'!$A:$E,5,FALSE),` +
-      `"⚠ Sin precio para ese plazo"))`,
+      `"⚠ Sin precio para ese plazo")))`,
   );
 
   // En artículo manda el plan: el plazo define cuántas cuotas salen.
