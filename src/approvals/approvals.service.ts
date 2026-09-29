@@ -139,7 +139,7 @@ export class ApprovalsService {
   }
 
   private async resolvePaymentCobradorForClient(
-    db: any,
+    db: TransaccionPrisma,
     clienteId: string,
     requestedCobradorId?: string,
   ) {
@@ -177,7 +177,7 @@ export class ApprovalsService {
   }
 
   private async resolveActiveRouteCashContext(
-    db: any,
+    db: TransaccionPrisma,
     params: { rutaId?: string; cajaId?: string },
   ) {
     let rutaId = params.rutaId || '';
@@ -261,7 +261,7 @@ export class ApprovalsService {
     }
   }
 
-  private parseJsonObject(value: any): Record<string, any> {
+  private parseJsonObject(value: unknown): Record<string, unknown> {
     if (!value) return {};
     if (typeof value === 'string') {
       try {
@@ -271,7 +271,9 @@ export class ApprovalsService {
         return {};
       }
     }
-    return typeof value === 'object' ? value : {};
+    return typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
   }
 
   private buildReferenciasCliente(cliente: any) {
@@ -326,22 +328,22 @@ export class ApprovalsService {
     }
 
     const datosSolicitud = this.parseJsonObject(approval.datosSolicitud);
-    let prestamoId = String(
-      datosSolicitud.prestamoId ||
-        (approval.tablaReferencia === 'Prestamo'
-          ? approval.referenciaId
-          : '') ||
-        '',
+    // `textoDeJson` en vez de `String(...)`: si la columna Json trae un objeto donde se
+    // esperaba un id, `String` devuelve "[object Object]" y eso se busca como id.
+    let prestamoId = (
+      textoDeJson(datosSolicitud.prestamoId) ??
+      (approval.tablaReferencia === 'Prestamo'
+        ? String(approval.referenciaId ?? '')
+        : '')
     ).trim();
     const tablaReferencia = String(approval.tablaReferencia || '');
-    const cuotaId = String(
-      datosSolicitud.cuotaId ||
-        (['Cuota', 'cuotas'].includes(tablaReferencia)
-          ? approval.referenciaId
-          : '') ||
-        '',
+    const cuotaId = (
+      textoDeJson(datosSolicitud.cuotaId) ??
+      (['Cuota', 'cuotas'].includes(tablaReferencia)
+        ? String(approval.referenciaId ?? '')
+        : '')
     ).trim();
-    let clienteId = String(datosSolicitud.clienteId || '').trim();
+    let clienteId = (textoDeJson(datosSolicitud.clienteId) ?? '').trim();
 
     if ((!clienteId || !prestamoId) && cuotaId) {
       const cuotaBase = await this.prisma.cuota.findUnique({
@@ -527,8 +529,10 @@ export class ApprovalsService {
       (sum: number, credito) => sum + Number(credito.saldoPendiente || 0),
       0,
     );
-    const creditosActivos = creditosCliente.filter((credito: any) =>
-      [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA].includes(credito.estado),
+    const creditosActivos = creditosCliente.filter((credito) =>
+      (
+        [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA] as EstadoPrestamo[]
+      ).includes(credito.estado),
     ).length;
     const montoPagadoUltimos30Dias = pagosUltimos30Dias.reduce(
       (sum: number, pago) => sum + Number(pago.montoTotal || 0),
@@ -624,7 +628,7 @@ export class ApprovalsService {
    * nacen de algo que ya surtio efecto.
    */
   private async cargarEfectoProvisionalPendiente(
-    db: any,
+    db: TransaccionPrisma,
     aprobacionId: string,
   ) {
     const efecto = await db.efectoProvisional?.findFirst?.({
@@ -696,9 +700,13 @@ export class ApprovalsService {
    */
   private async crearReversasPrestamoProvisionalRobusto(
     tx: TransaccionPrisma,
-    rollbackData: any,
-    transaccionesOriginales: any[],
-    journalsOriginales: any[],
+    rollbackData: Record<string, unknown>,
+    transaccionesOriginales: Prisma.TransaccionGetPayload<{
+      select: typeof ApprovalsService.SELECCION_TRANSACCION_ROLLBACK;
+    }>[],
+    journalsOriginales: Prisma.JournalEntryGetPayload<{
+      include: { lines: true };
+    }>[],
     reversadoPorId?: string,
     motivoRechazo?: string,
   ) {
@@ -783,7 +791,7 @@ export class ApprovalsService {
 
       try {
         const reversalLines = original.lines
-          .map((line: any) => {
+          .map((line) => {
             const debit = Number(line.debitAmount || 0);
             const credit = Number(line.creditAmount || 0);
             const cajaDelta =
@@ -957,7 +965,7 @@ export class ApprovalsService {
           description: `Reapertura provisional de ${original.referenceType || ''} ${original.referenceId || ''}${notas ? ` — ${notas}` : ''}`,
           createdBy: userId,
           lines: original.lines
-            .map((line: any) => {
+            .map((line) => {
               const debit = Number(line.debitAmount || 0);
               const credit = Number(line.creditAmount || 0);
               return {
@@ -1456,7 +1464,9 @@ export class ApprovalsService {
       if (!cuotaIdObjetivo) return cuotasBase;
 
       if (!aplicarDesdeCuotaObjetivo) {
-        return cuotasBase.filter((cuota: any) => cuota.id === cuotaIdObjetivo);
+        return cuotasBase.filter(
+          (cuota: { id: string }) => cuota.id === cuotaIdObjetivo,
+        );
       }
 
       const cuotaIndex = cuotasBase.findIndex(
