@@ -591,13 +591,12 @@ export class ClientsService {
         }),
       ]);
 
-      // Ya no necesitamos incluir aprobacionesPendientes por separado porque ahora
-      // todos los clientes se crean en la tabla principal con estado PENDIENTE.
-      const aprobacionesPendientes: any[] = [];
-
-      this.logger.log(
-        `Found ${clientesRaw.length} active clients and ${aprobacionesPendientes.length} pending approvals`,
-      );
+      // Ya no se incluyen las aprobaciones pendientes por separado: todos los
+      // clientes se crean en la tabla principal con estado PENDIENTE. Antes quedaba
+      // aqui un `const aprobacionesPendientes: any[] = []` y treinta lineas que lo
+      // recorrian, codigo que no podia ejecutarse nunca porque el arreglo siempre
+      // estaba vacio. Se borro.
+      this.logger.log(`Found ${clientesRaw.length} active clients`);
 
       // Transformar clientes reales
       const clientesTransformados = clientesRaw.map((cliente) => {
@@ -730,44 +729,8 @@ export class ClientsService {
         }
       });
 
-      // Transformar aprobaciones pendientes
-      const aprobacionesTransformadas = aprobacionesPendientes.map((aprob) => {
-        const datos = JSON.parse(aprob.datosSolicitud as string);
-        return {
-          id: aprob.id,
-          codigo: aprob.referenciaId || 'PENDIENTE',
-          dni: datos.dni || '',
-          nombres: datos.nombres || 'Pendiente',
-          apellidos: datos.apellidos || '',
-          telefono: datos.telefono || '',
-          correo: datos.correo || '',
-          direccion: datos.direccion || '',
-          referencia: datos.referencia || '',
-          referencia1Nombre: datos.referencia1Nombre || '',
-          referencia1Telefono: datos.referencia1Telefono || '',
-          referencia2Nombre: datos.referencia2Nombre || '',
-          referencia2Telefono: datos.referencia2Telefono || '',
-          nivelRiesgo: 'VERDE',
-          puntaje: 100,
-          enListaNegra: false,
-          estadoAprobacion: aprob.estado,
-          score: 100,
-          tendencia: 'ESTABLE',
-          ultimaVisita: 'Pendiente',
-          rutaId: '',
-          rutaNombre: 'Sin ruta',
-          montoTotal: 0,
-          montoMora: 0,
-          prestamosActivos: 0,
-          creadoEn: aprob.creadoEn,
-        };
-      });
-
-      // Combinar y ordenar por fecha de creación descendente
-      const todosLosClientes = [
-        ...aprobacionesTransformadas,
-        ...clientesTransformados,
-      ].sort((a, b) => {
+      // Ordenar por fecha de creación descendente
+      const todosLosClientes = [...clientesTransformados].sort((a, b) => {
         // Se lee por una funcion con el campo opcional en vez de `a.creadoEn`
         // suelto: las dos listas que se combinan no tienen exactamente la misma
         // forma, y antes esto compilaba porque venian del cliente de Prisma
