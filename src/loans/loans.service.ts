@@ -199,7 +199,7 @@ export class LoansService implements OnModuleInit {
     return Math.trunc(n * 100) / 100;
   }
 
-  async descontarStockSiDisponible(productoId: string, tx?: any) {
+  async descontarStockSiDisponible(productoId: string, tx?: TransaccionPrisma) {
     const prisma = tx || this.prisma;
     const result = await prisma.producto.updateMany({
       where: {
@@ -1887,14 +1887,15 @@ export class LoansService implements OnModuleInit {
           ).length;
           const cuotasTotales = cuotas.length;
 
-          const cuotasVencidasReal = cuotas.filter((c: any) => {
-            if (
-              ![
-                EstadoCuota.PENDIENTE,
-                EstadoCuota.PARCIAL,
-                EstadoCuota.VENCIDA,
-              ].includes(c.estado)
-            ) {
+          const cuotasVencidasReal = cuotas.filter((c) => {
+            // El arreglo se anota `EstadoCuota[]`: un literal de tres miembros infiere solo
+            // esos tres, y entonces `.includes` rechaza cualquier otro estado del enum.
+            const ESTADOS_QUE_CUENTAN: EstadoCuota[] = [
+              EstadoCuota.PENDIENTE,
+              EstadoCuota.PARCIAL,
+              EstadoCuota.VENCIDA,
+            ];
+            if (!ESTADOS_QUE_CUENTAN.includes(c.estado)) {
               return false;
             }
             const eff = c?.fechaVencimientoProrroga
