@@ -55,6 +55,7 @@ import {
   RutaCobradorMeta,
 } from '../templates/exports';
 import { normalizarCodigoRuta } from './codigo-ruta';
+import { objetoDeJson, textoDeJson } from '../common/json.util';
 
 type RouteActor =
   | {
@@ -2214,13 +2215,29 @@ export class RoutesService {
       });
       const visitasMap = new Map(registrosVisitas.map((r) => [r.clienteId, r]));
 
-      const asignaciones: any[] = ruta.asignaciones;
+      // Las pasadas de abajo MUTAN estas filas: le agregan a la asignacion el estado de
+      // visita, las notas y lo recaudado, y a cada credito su recaudo del dia. El tipo dice
+      // eso —la fila de Prisma MAS lo que se le agrega— en vez de `any[]`, que lo tiraba todo.
+      type AsignacionEnriquecida = (typeof ruta.asignaciones)[number] & {
+        estadoVisita?: string | null;
+        notasVisita?: string | null;
+        recaudadoDelDia?: number;
+        cliente?: {
+          prestamos?: Array<
+            NonNullable<
+              (typeof ruta.asignaciones)[number]['cliente']
+            >['prestamos'][number] &
+              Partial<PrestamoDeVisita> & {
+                fechaEfectiva?: string | Date | null;
+              }
+          >;
+        } | null;
+      };
+      const asignaciones = ruta.asignaciones as AsignacionEnriquecida[];
       const prestamosIdsRuta = [
         ...new Set(
           asignaciones.flatMap((asig) =>
-            (asig?.cliente?.prestamos || [])
-              .map((p: any) => p?.id)
-              .filter(Boolean),
+            (asig?.cliente?.prestamos || []).map((p) => p?.id).filter(Boolean),
           ),
         ),
       ];
@@ -2325,7 +2342,7 @@ export class RoutesService {
               : (c?.fechaVencimiento ?? null);
           };
 
-          const cuotasSorted = [...cuotasList].sort((a, b: any) => {
+          const cuotasSorted = [...cuotasList].sort((a, b) => {
             const ak = getBogotaDayKey(
               new Date(getFechaEfectiva(a) || a?.fechaVencimiento),
             );
@@ -3876,9 +3893,9 @@ export class RoutesService {
     const resolvePrestamoIdFromReprogramacion = (
       aprobacion: any,
     ): string | null => {
-      const datos = aprobacion?.datosSolicitud || {};
+      const datos = objetoDeJson(aprobacion?.datosSolicitud);
 
-      const prestamoIdDirecto = String(datos?.prestamoId || '').trim();
+      const prestamoIdDirecto = (textoDeJson(datos.prestamoId) ?? '').trim();
       if (prestamoIdDirecto) return prestamoIdDirecto;
 
       const cuotaId = String(
@@ -3907,12 +3924,13 @@ export class RoutesService {
 
     const reprogramacionPorPrestamo = new Map<string, any>();
 
-    reprogramacionesJornada.forEach((aprobacion: any) => {
-      const datos = aprobacion?.datosSolicitud || {};
-      const clienteId = String(datos?.clienteId || '');
-      const fechaGestion = String(
-        datos?.fechaOperativaRuta || datos?.fechaGestionOriginal || '',
-      );
+    reprogramacionesJornada.forEach((aprobacion) => {
+      const datos = objetoDeJson(aprobacion?.datosSolicitud);
+      const clienteId = textoDeJson(datos.clienteId) ?? '';
+      const fechaGestion =
+        textoDeJson(datos.fechaOperativaRuta) ??
+        textoDeJson(datos.fechaGestionOriginal) ??
+        '';
 
       if (
         !clienteId ||
@@ -5975,11 +5993,18 @@ export class RoutesService {
     );
     const resumen = detalleDia?.resumen || {};
     const visitas = detalleDia?.visitas || [];
-    const obligaciones = Array.isArray(detalleDia?.obligaciones)
+    // Dos origenes con formas distintas: el detalle del dia (que trae
+    // `recaudadoDelDia`) y el respaldo calculado (que trae `recaudado`). El tipo
+    // declara los tres campos que el filtro lee, que es lo unico que hace falta.
+    const obligaciones: Array<{
+      estadoGestion?: string | null;
+      recaudadoDelDia?: number;
+      recaudado?: number;
+    }> = Array.isArray(detalleDia?.obligaciones)
       ? detalleDia.obligaciones
       : this.buildObligacionesOperativas(visitas);
 
-    const clientesFaltantes = obligaciones.filter((o: any) => {
+    const clientesFaltantes = obligaciones.filter((o) => {
       const estado = String(o.estadoGestion || '').toUpperCase();
       const recaudoVisita = Number(o.recaudadoDelDia || o.recaudado || 0);
       return (
@@ -6632,19 +6657,22 @@ export class RoutesService {
         });
 
         const getSaldoOperativoJornada = (v: any) => {
-          return (v?.prestamos || []).reduce((sum: number, prestamo: any) => {
-            if (prestamo?.montoMetaOperativaPendiente != null) {
-              return sum + Number(prestamo.montoMetaOperativaPendiente || 0);
-            }
-            return (
-              sum +
-              Number(
-                prestamo?.cuotaObjetivo?.saldoExigibleEnFechaOperativa ||
-                  prestamo?.proximaCuota?.montoNominal ||
-                  0,
-              )
-            );
-          }, 0);
+          return (v?.prestamos || []).reduce(
+            (sum: number, prestamo: PrestamoDeVisita) => {
+              if (prestamo?.montoMetaOperativaPendiente != null) {
+                return sum + Number(prestamo.montoMetaOperativaPendiente || 0);
+              }
+              return (
+                sum +
+                Number(
+                  prestamo?.cuotaObjetivo?.saldoExigibleEnFechaOperativa ||
+                    prestamo?.proximaCuota?.montoNominal ||
+                    0,
+                )
+              );
+            },
+            0,
+          );
         };
 
         return {
