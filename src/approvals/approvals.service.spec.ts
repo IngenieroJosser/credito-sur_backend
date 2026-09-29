@@ -1626,3 +1626,298 @@ describe('ApprovalsService financial ledger controls', () => {
     ).rejects.toThrow('ledger failed');
   });
 });
+
+/**
+ * Los dos fallos que tenia aprobar un credito CON cambios.
+ *
+ * Los dos vivian en el mismo bloque y solo se disparaban cuando el revisor editaba
+ * algo antes de aprobar: sin `editedData` ese bloque no corre.
+ */
+describe('Aprobar un credito con cambios', () => {
+  const HOY = new Date('2026-03-12T10:00:00-05:00');
+
+  /** Un tx que deja ver con que se llamo a cada escritura. */
+  function txEspia(prestamo: Record<string, unknown>) {
+    const cuotasCreadas: Array<Record<string, unknown>> = [];
+    const prestamoActualizado: Array<Record<string, unknown>> = [];
+    const cuotasActualizadas: Array<Record<string, unknown>> = [];
+
+    const tx: Record<string, unknown> = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      prestamo: {
+        findUnique: jest.fn().mockResolvedValue({
+          estado: EstadoPrestamo.PENDIENTE_APROBACION,
+          monto: prestamo.monto,
+        }),
+        update: jest.fn().mockImplementation(({ data }) => {
+          prestamoActualizado.push(data);
+          // Prisma IGNORA las claves con `undefined`: significan "no lo cambies".
+          // El servicio manda muchas asi (`tipoAmortizacion: x || undefined`), y
+          // un `{...prestamo, ...data}` a secas las pisaria con undefined. Con eso
+          // el plazo salia 1 y las dos ramas de interes daban el mismo numero: la
+          // prueba pasaba sin distinguir nada, que es peor que fallar.
+          const soloDefinidos = Object.fromEntries(
+            Object.entries(data).filter(([, valor]) => valor !== undefined),
+          );
+          return Promise.resolve({
+            ...prestamo,
+            ...soloDefinidos,
+            cliente: { asignacionesRuta: [] },
+          });
+        }),
+      },
+      cuota: {
+        count: jest.fn().mockResolvedValue(0),
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        createMany: jest.fn().mockImplementation(({ data }) => {
+          cuotasCreadas.push(...data);
+          return Promise.resolve({ count: data.length });
+        }),
+        findMany: jest.fn().mockResolvedValue([]),
+        update: jest.fn().mockImplementation((args) => {
+          cuotasActualizadas.push(args);
+          return Promise.resolve({});
+        }),
+      },
+      caja: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'caja-1',
+          codigo: 'CAJA-OFICINA',
+          nombre: 'Caja oficina',
+          saldoActual: 50_000_000,
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      usuario: {
+        findFirst: jest.fn().mockResolvedValue({ rol: RolUsuario.ADMIN }),
+      },
+      aprobacion: {
+        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      movimientoCaja: { create: jest.fn().mockResolvedValue({}) },
+      notificacion: {
+        create: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+    };
+
+    // El servicio toca muchas tablas por el camino (transaccion, movimiento de
+    // caja, asiento contable...). Lo que esta prueba mira es el interes y las
+    // fechas, asi que en vez de declarar cada modelo se responde a cualquiera con
+    // un doble permisivo. Si manana el servicio toca una tabla nueva, la prueba
+    // sigue midiendo lo suyo en vez de romperse por algo que no le importa.
+    const modeloVacio = () =>
+      new Proxy(
+        {},
+        {
+          get: () => jest.fn().mockResolvedValue({}),
+        },
+      );
+    const txPermisivo = new Proxy(tx, {
+      get: (destino, clave: string) =>
+        clave in destino ? destino[clave] : modeloVacio(),
+    });
+
+    const prisma = {
+      $transaction: jest.fn(async (fn: (t: unknown) => Promise<unknown>) =>
+        fn(txPermisivo),
+      ),
+    };
+
+    return {
+      prisma,
+      tx,
+      cuotasCreadas,
+      prestamoActualizado,
+      cuotasActualizadas,
+    };
+  }
+
+  const aprobacionDe = (
+    prestamoId: string,
+    datos: Record<string, unknown>,
+  ) => ({
+    id: 'aprobacion-1',
+    referenciaId: prestamoId,
+    solicitadoPorId: 'cobrador-1',
+    tipo: TipoAprobacion.NUEVO_PRESTAMO,
+    datosSolicitud: datos,
+  });
+
+  it('INTERES_PLANO aplica la tasa una vez, no una por mes de plazo', async () => {
+    // El caso: 1.000.000 al 10% mensual a 3 meses. En plano el interes son
+    // 100.000. La rama que habia aqui trataba como interes simple TODO lo que no
+    // fuera FRANCESA, y el enum tiene tres valores: se comia INTERES_PLANO, que
+    // es el tipo por defecto de `createLoan`. Salian 300.000, y ese interes entra
+    // en el saldo, asi que era deuda real del cliente. En el modal el aprobador
+    // veia 100.000, porque la pantalla si distingue los dos tipos.
+    const prestamo = {
+      id: 'prestamo-1',
+      monto: 1_000_000,
+      tasaInteres: 10,
+      cantidadCuotas: 3,
+      plazoMeses: 3,
+      frecuenciaPago: 'MENSUAL',
+      tipoAmortizacion: 'INTERES_PLANO',
+      tipoPrestamo: 'EFECTIVO',
+      fechaInicio: HOY,
+      fechaPrimerCobro: null,
+    };
+    const { prisma, cuotasCreadas, prestamoActualizado } = txEspia(prestamo);
+
+    await (makeService(prisma) as any).approveNewLoan(
+      aprobacionDe('prestamo-1', { monto: 1_000_000, porcentaje: 10 }),
+      'admin-1',
+      // Editar cualquier cosa es lo que dispara la regeneracion.
+      { monto: 1_000_000, porcentaje: 10, cantidadCuotas: 3 },
+    );
+
+    const conInteres = prestamoActualizado.find(
+      (d) => d.interesTotal !== undefined,
+    );
+    expect(conInteres?.interesTotal).toBe(100_000);
+    expect(conInteres?.interesTotal).not.toBe(300_000);
+
+    // Y el reparto queda en pesos enteros: antes dividia sin truncar y guardaba
+    // cuotas con centavos.
+    expect(cuotasCreadas).toHaveLength(3);
+    for (const cuota of cuotasCreadas) {
+      for (const campo of ['monto', 'montoCapital', 'montoInteres'] as const) {
+        expect(Number.isInteger(Number(cuota[campo]))).toBe(true);
+      }
+    }
+    const sumado = cuotasCreadas.reduce((t, c) => t + Number(c.monto), 0);
+    expect(sumado).toBe(1_100_000);
+  });
+
+  it('INTERES_SIMPLE sigue aplicando la tasa por cada mes', async () => {
+    // El contraste: con el mismo credito, en simple si son 300.000. Si esta
+    // expectativa y la de arriba dieran lo mismo, el arreglo no distingue nada.
+    const prestamo = {
+      id: 'prestamo-2',
+      monto: 1_000_000,
+      tasaInteres: 10,
+      cantidadCuotas: 3,
+      plazoMeses: 3,
+      frecuenciaPago: 'MENSUAL',
+      tipoAmortizacion: 'INTERES_SIMPLE',
+      tipoPrestamo: 'EFECTIVO',
+      fechaInicio: HOY,
+      fechaPrimerCobro: null,
+    };
+    const { prisma, prestamoActualizado } = txEspia(prestamo);
+
+    await (makeService(prisma) as any).approveNewLoan(
+      aprobacionDe('prestamo-2', { monto: 1_000_000, porcentaje: 10 }),
+      'admin-1',
+      { monto: 1_000_000, porcentaje: 10, cantidadCuotas: 3 },
+    );
+
+    const conInteres = prestamoActualizado.find(
+      (d) => d.interesTotal !== undefined,
+    );
+    expect(conInteres?.interesTotal).toBe(300_000);
+  });
+  it('reagenda las cuotas que se vencieron esperando la aprobacion', async () => {
+    // El credito se creo el 9 de marzo y se aprueba el 12: tres dias esperando.
+    // Sus cuotas diarias ya estan fechadas desde el 10, asi que sin reagendar, esa
+    // misma noche el cron de las 00:10 las marca VENCIDA y voltea el prestamo a
+    // EN_MORA, sin que el cliente haya dejado de pagar nada.
+    jest.useFakeTimers().setSystemTime(HOY);
+    try {
+      const prestamo = {
+        id: 'prestamo-3',
+        monto: 300_000,
+        tasaInteres: 10,
+        cantidadCuotas: 3,
+        plazoMeses: 1,
+        frecuenciaPago: 'DIARIO',
+        tipoAmortizacion: 'INTERES_PLANO',
+        tipoPrestamo: 'EFECTIVO',
+        fechaInicio: new Date('2026-03-09T10:00:00-05:00'),
+        fechaPrimerCobro: null,
+      };
+      const { prisma, tx, cuotasActualizadas, prestamoActualizado } =
+        txEspia(prestamo);
+      (tx.cuota as { findMany: jest.Mock }).findMany.mockResolvedValue([
+        { id: 'cuota-1' },
+        { id: 'cuota-2' },
+        { id: 'cuota-3' },
+      ]);
+
+      await (makeService(prisma) as any).approveNewLoan(
+        aprobacionDe('prestamo-3', { monto: 300_000, porcentaje: 10 }),
+        'admin-1',
+      );
+
+      // Las tres se mueven, y ninguna queda fechada antes del dia de aprobacion.
+      expect(cuotasActualizadas).toHaveLength(3);
+      const claveBogota = (d: Date) =>
+        new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'America/Bogota',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        }).format(d);
+
+      for (const llamada of cuotasActualizadas) {
+        const datos = (
+          llamada as { data: { fechaVencimiento: Date; estado: string } }
+        ).data;
+        expect(claveBogota(datos.fechaVencimiento) > '2026-03-12').toBe(true);
+        // Y vuelven a PENDIENTE: si alguna ya se habia marcado VENCIDA, deja de estarlo.
+        expect(datos.estado).toBe(EstadoCuota.PENDIENTE);
+      }
+
+      // La primera reagendada vence al dia siguiente de aprobar, no el mismo dia:
+      // aprobar hoy no convierte hoy en dia de cobro.
+      const primera = (
+        cuotasActualizadas[0] as { data: { fechaVencimiento: Date } }
+      ).data;
+      expect(claveBogota(primera.fechaVencimiento)).toBe('2026-03-13');
+
+      // Y la fecha de inicio del prestamo se mueve con ellas.
+      const conFecha = prestamoActualizado.find(
+        (d) => d.fechaInicio !== undefined,
+      );
+      expect(conFecha).toBeDefined();
+      expect(claveBogota(conFecha!.fechaInicio as Date)).toBe('2026-03-12');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('no toca las fechas si el credito se aprueba el mismo dia que se creo', async () => {
+    // El caso normal: sin espera no hay nada que reagendar, y mover fechas aqui
+    // seria cambiar el cronograma que el cliente acepto.
+    jest.useFakeTimers().setSystemTime(HOY);
+    try {
+      const prestamo = {
+        id: 'prestamo-4',
+        monto: 300_000,
+        tasaInteres: 10,
+        cantidadCuotas: 3,
+        plazoMeses: 1,
+        frecuenciaPago: 'DIARIO',
+        tipoAmortizacion: 'INTERES_PLANO',
+        tipoPrestamo: 'EFECTIVO',
+        fechaInicio: HOY,
+        fechaPrimerCobro: null,
+      };
+      const { prisma, tx, cuotasActualizadas } = txEspia(prestamo);
+      (tx.cuota as { findMany: jest.Mock }).findMany.mockResolvedValue([
+        { id: 'cuota-1' },
+      ]);
+
+      await (makeService(prisma) as any).approveNewLoan(
+        aprobacionDe('prestamo-4', { monto: 300_000, porcentaje: 10 }),
+        'admin-1',
+      );
+
+      expect(cuotasActualizadas).toHaveLength(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});

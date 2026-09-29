@@ -23,7 +23,11 @@ import {
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
-import { formatBogotaOffsetIso } from '../utils/date-utils';
+import {
+  formatBogotaOffsetIso,
+  getBogotaDayKey,
+  getBogotaStartEndOfDay,
+} from '../utils/date-utils';
 import { LedgerService } from '../accounting/ledger.service';
 import { randomUUID } from 'crypto';
 import {
@@ -32,6 +36,11 @@ import {
   FilaAmortizacion,
 } from '../loans/utils/amortizacion.utils';
 import { pesos } from '../common/dinero.util';
+import {
+  calcularInteresTotal,
+  construirTablaCuotas,
+  TipoAmortizacionImportacion,
+} from '../importaciones/interes-credito';
 
 /**
  * Aprobaciones y "efecto provisional".
@@ -3180,23 +3189,43 @@ export class ApprovalsService {
           interesTotal = amortizacion.interesTotal;
           cuotasData = amortizacion.tabla;
         } else {
-          // INTERES SIMPLE
-          const mesesInteres = Math.max(1, realPlazoMeses);
-          interesTotal = (montoFinanciar * tasaInteres * mesesInteres) / 100;
-          const montoTotalSimple = montoFinanciar + interesTotal;
-          const montoCuota =
-            cantidadCuotas > 0 ? montoTotalSimple / cantidadCuotas : 0;
-          const montoCapitalCuota =
-            cantidadCuotas > 0 ? montoFinanciar / cantidadCuotas : 0;
-          const montoInteresCuota =
-            cantidadCuotas > 0 ? interesTotal / cantidadCuotas : 0;
+          // INTERES_PLANO o INTERES_SIMPLE, con la cuenta de la creacion.
+          //
+          // Aqui habia una sola rama que aplicaba interes simple a TODO lo que no
+          // fuera FRANCESA, y el enum tiene tres valores: se comia tambien
+          // INTERES_PLANO, que es el tipo por defecto de `createLoan` y por tanto
+          // el de casi todos los creditos. En plano la tasa se aplica UNA vez
+          // sobre el capital; en simple, una por cada mes de plazo. Tratar plano
+          // como simple multiplica el interes por el plazo: un credito de
+          // 1.000.000 al 10% mensual a 3 meses pasaba de 100.000 a 300.000, y ese
+          // interes entra en el saldo, asi que era deuda real del cliente. El
+          // aprobador veia los 100.000 en el modal, porque la pantalla si
+          // distingue los dos tipos.
+          //
+          // Solo se disparaba al aprobar CON cambios: sin editar nada este bloque
+          // no corre.
+          //
+          // Se usan los helpers de `interes-credito`, que su propia documentacion
+          // declara replica exacta de `LoansService.calculateInterestAndCuotas`,
+          // en vez de una cuarta copia de la cuenta. De paso arregla el reparto:
+          // el codigo anterior dividia sin truncar y guardaba cuotas con centavos.
+          const tipo: TipoAmortizacionImportacion =
+            tipoAmort === TipoAmortizacion.INTERES_PLANO
+              ? 'INTERES_PLANO'
+              : 'INTERES_SIMPLE';
 
-          cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => ({
-            numeroCuota: i + 1,
-            monto: montoCuota,
-            montoCapital: montoCapitalCuota,
-            montoInteres: montoInteresCuota,
-          }));
+          interesTotal = calcularInteresTotal(
+            tipo,
+            montoFinanciar,
+            tasaInteres,
+            realPlazoMeses,
+          );
+          cuotasData = construirTablaCuotas(
+            tipo,
+            montoFinanciar,
+            interesTotal,
+            cantidadCuotas,
+          );
         }
 
         // Actualizar el préstamo con el nuevo interés calculado y saldo
@@ -3238,6 +3267,81 @@ export class ApprovalsService {
             estado: EstadoCuota.PENDIENTE,
           })),
         });
+      }
+
+      // ── Reagendar lo que se venció esperando la aprobación ─────────────────
+      //
+      // Las cuotas se crean junto con el préstamo, fechadas desde ese día, y el
+      // préstamo queda en PENDIENTE_APROBACION. Mientras espera no pasa nada: el
+      // cron que marca vencidos exige estado ACTIVO o EN_MORA. Pero en cuanto se
+      // aprueba, esa misma noche a las 00:10 marca VENCIDA toda cuota con fecha
+      // pasada y voltea el préstamo a EN_MORA. Un crédito diario creado el lunes
+      // y aprobado el jueves amanecía el viernes en mora con tres cuotas
+      // atrasadas, sin que el cliente hubiera dejado de pagar nada.
+      //
+      // Esta lógica ya existía escrita, con este mismo razonamiento, dentro de
+      // `LoansService.approveLoan`: un endpoint que el frontend nunca llamó. Era
+      // el único sitio del backend que reagendaba al aprobar, y estaba en el
+      // camino muerto. Aquí corre en el vivo, y dentro de la transacción.
+      //
+      // Va después de la regeneración por `editedData` a propósito: si el revisor
+      // editó las condiciones, se reagendan las cuotas nuevas, no las viejas.
+      const { startDate: inicioAprobacion } = getBogotaStartEndOfDay(
+        new Date(),
+      );
+      const claveAprobacion = getBogotaDayKey(inicioAprobacion);
+      const inicioPrestamo = prestamo.fechaPrimerCobro ?? prestamo.fechaInicio;
+      const claveInicio = inicioPrestamo
+        ? getBogotaDayKey(new Date(inicioPrestamo))
+        : null;
+
+      if (claveInicio && claveAprobacion && claveInicio < claveAprobacion) {
+        const cuotasPorVencer = await tx.cuota.findMany({
+          where: {
+            prestamoId: prestamo.id,
+            estado: { in: [EstadoCuota.PENDIENTE, EstadoCuota.VENCIDA] },
+          },
+          orderBy: { numeroCuota: 'asc' },
+          select: { id: true },
+        });
+
+        if (cuotasPorVencer.length > 0) {
+          const frecuenciaPrestamo = prestamo.frecuenciaPago;
+          const nuevaBase = new Date(inicioAprobacion);
+
+          // La primera cuota reagendada vence un periodo después de hoy, igual
+          // que un crédito nuevo sin fecha de primer cobro: aprobar hoy no
+          // convierte hoy mismo en día de cobro.
+          for (let i = 0; i < cuotasPorVencer.length; i++) {
+            await tx.cuota.update({
+              where: { id: cuotasPorVencer[i].id },
+              data: {
+                fechaVencimiento: calcularFechaVencimiento(
+                  nuevaBase,
+                  i + 2,
+                  frecuenciaPrestamo,
+                ),
+                estado: EstadoCuota.PENDIENTE,
+              },
+            });
+          }
+
+          await tx.prestamo.update({
+            where: { id: prestamo.id },
+            data: {
+              fechaInicio: nuevaBase,
+              fechaFin: calcularFechaVencimiento(
+                nuevaBase,
+                cuotasPorVencer.length + 1,
+                frecuenciaPrestamo,
+              ),
+            },
+          });
+
+          this.logger.log(
+            `Prestamo ${prestamo.id}: ${cuotasPorVencer.length} cuotas reagendadas desde ${claveAprobacion}; venia fechado desde ${claveInicio}.`,
+          );
+        }
       }
 
       const montoDesembolso = Number(prestamo.monto || 0);
