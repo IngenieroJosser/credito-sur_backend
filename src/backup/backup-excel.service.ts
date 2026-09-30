@@ -20,23 +20,35 @@ type ExportResult = {
   fileSize: number;
   sheets: Record<string, number>;
 };
+/**
+ * Lo que puede llegar en una celda de fecha del respaldo.
+ *
+ * Se probo con `unknown` y eslint protesto con razon: `String(unknown)` sobre un
+ * objeto da "[object Object]". Un valor de fecha es una de estas tres cosas —Prisma
+ * manda Date, el JSON manda texto y alguna columna manda el epoch—, asi que
+ * declararlas es mas honesto que `unknown` y que `any`.
+ */
+type ValorDeFecha = Date | string | number | null | undefined;
+
 const pad = (n: number) => String(n).padStart(2, '0');
-const nom = (u: any) =>
-  u ? `${u.nombres || ''} ${u.apellidos || ''}`.trim() : '';
-const fmtDT = (v: any): string => {
+const nom = (
+  u?: { nombres?: string | null; apellidos?: string | null } | null,
+) => (u ? `${u.nombres || ''} ${u.apellidos || ''}`.trim() : '');
+const fmtDT = (v: ValorDeFecha): string => {
   if (!v) return '';
-  const d = v instanceof Date ? v : new Date(v);
+  const d = v instanceof Date ? v : new Date(String(v));
   if (isNaN(d.getTime())) return String(v);
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 };
-const fmtD = (v: any): string => {
+const fmtD = (v: ValorDeFecha): string => {
   if (!v) return '';
-  const d = v instanceof Date ? v : new Date(v);
+  const d = v instanceof Date ? v : new Date(String(v));
   if (isNaN(d.getTime())) return String(v);
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
 };
-const fmtE = (v: any) => (v ? String(v).replace(/_/g, ' ') : '');
-const n2 = (v: any): number => {
+/** Formatea un valor de enum: cambia los guiones bajos por espacios. */
+const fmtE = (v: string | null | undefined) => (v ? v.replace(/_/g, ' ') : '');
+const n2 = (v: unknown): number => {
   const x = Number(v);
   return isNaN(x) ? 0 : x;
 };
@@ -53,7 +65,10 @@ function mkSheet(
   wb: ExcelJS.Workbook,
   name: string,
   tab: string,
-  cols: any[],
+  // Va directo a `ws.columns`, asi que el tipo es el de la propia libreria y no hace
+  // falta inventar ninguno: si alguien pasa una clave que ExcelJS no conoce, lo dice
+  // aqui en vez de generar una hoja con columnas vacias.
+  cols: Partial<ExcelJS.Column>[],
   LC: string,
   title: string,
   sub: string,
@@ -141,7 +156,8 @@ function numCol(row: ExcelJS.Row, ...cols: number[]): void {
 function addTotals(
   ws: ExcelJS.Worksheet,
   label: string,
-  values: any[],
+  // Lo que ExcelJS admite en una celda, declarado con su propio tipo.
+  values: ExcelJS.CellValue[],
   numCols: number[],
 ): void {
   ws.addRow([]);
