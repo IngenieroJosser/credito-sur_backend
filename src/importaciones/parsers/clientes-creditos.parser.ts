@@ -14,6 +14,8 @@ import {
   leerTexto,
   leerTextoMayus,
   leerTextoNormalizado,
+  leerValorCelda,
+  type ValorDeCelda,
 } from './cell-value.util';
 import {
   avisarFilasFueraDeRango,
@@ -392,7 +394,11 @@ export class ClientesCreditosParser {
         leerTexto(celda(row, cliObservaciones)),
       );
 
-      const addError = (campo: string, mensaje: string, valor: any) => {
+      const addError = (
+        campo: string,
+        mensaje: string,
+        valor: ValorDeCelda,
+      ) => {
         errores.push({
           hoja: SHEET_DISPLAY.clientes,
           fila: rowNumber,
@@ -497,7 +503,7 @@ export class ClientesCreditosParser {
         addError(
           'nivel_riesgo',
           'Debe ser Mínimo, Leve, Precaución, Moderado o Crítico',
-          celda(row, cliNivelRiesgo),
+          leerValorCelda(celda(row, cliNivelRiesgo)),
         );
       }
 
@@ -507,7 +513,7 @@ export class ClientesCreditosParser {
         addError(
           'ruta_codigo',
           'Es requerida: el cliente debe quedar asignado a una ruta para poder cobrarle',
-          celda(row, cliRutaCodigo),
+          leerValorCelda(celda(row, cliRutaCodigo)),
         );
       } else if (!rutasEnBd.has(rutaCodigo)) {
         addError(
@@ -722,7 +728,9 @@ export class ClientesCreditosParser {
         const frecuenciaPago = leerTextoMayus(celda(row, creFrecuencia));
         const cantidadCuotasCelda = leerNumero(celda(row, creCantidadCuotas));
         const plazoMeses = leerNumero(celda(row, crePlazoMeses));
-        const tipoAmortizacionRaw = celda(row, creTipoAmortizacion);
+        const tipoAmortizacionRaw = leerValorCelda(
+          celda(row, creTipoAmortizacion),
+        );
         const fechaCredito = leerFecha(celda(row, creFechaCredito));
         const fechaPrimerCobro = leerFecha(celda(row, creFechaPrimerCobro));
         const tipoCarga = leerTextoMayus(celda(row, creTipoCarga));
@@ -773,7 +781,11 @@ export class ClientesCreditosParser {
         const abonoAdicional = aPesos(abonoAdicionalCelda);
         const totalAbonadoEscrito = aPesos(totalAbonadoCelda);
 
-        const addError = (campo: string, mensaje: string, valor: any) => {
+        const addError = (
+          campo: string,
+          mensaje: string,
+          valor: ValorDeCelda,
+        ) => {
           errores.push({
             hoja: nombre,
             fila: rowNumber,
@@ -784,7 +796,11 @@ export class ClientesCreditosParser {
           tieneError = true;
         };
 
-        const addAdver = (campo: string, mensaje: string, valor: any) => {
+        const addAdver = (
+          campo: string,
+          mensaje: string,
+          valor: ValorDeCelda,
+        ) => {
           advertencias.push({
             hoja: nombre,
             fila: rowNumber,
@@ -806,21 +822,21 @@ export class ClientesCreditosParser {
           addAdver(
             'monto',
             'El sistema maneja pesos enteros: los centavos se descartaron.',
-            celda(row, creMonto),
+            leerValorCelda(celda(row, creMonto)),
           );
         }
         if (cuotaInicialConCentavos) {
           addAdver(
             'cuota_inicial',
             'El sistema maneja pesos enteros: los centavos se descartaron.',
-            celda(row, creCuotaInicial),
+            leerValorCelda(celda(row, creCuotaInicial)),
           );
         }
         if (abonoConCentavos) {
           addAdver(
             'abono_adicional',
             'El sistema maneja pesos enteros: los centavos se descartaron.',
-            celda(row, creAbonoAdicional),
+            leerValorCelda(celda(row, creAbonoAdicional)),
           );
         }
 
@@ -983,7 +999,7 @@ export class ClientesCreditosParser {
                 inicial > precioPlazo
                   ? `La cuota inicial (${inicial}) es mayor que el precio del artículo a ${plazoMeses} meses (${precioPlazo}). Revise la inicial o el plazo.`
                   : `La cuota inicial (${inicial}) cubre todo el precio del artículo, así que no queda nada que financiar. Si el cliente pagó completo, es una venta de contado, no un crédito.`,
-                celda(row, creCuotaInicial),
+                leerValorCelda(celda(row, creCuotaInicial)),
               );
             }
 
@@ -1001,7 +1017,7 @@ export class ClientesCreditosParser {
             addError(
               'monto',
               'El artículo no tiene precio para ese plazo. Escriba el monto a mano o agregue el precio en el inventario.',
-              celda(row, creMonto),
+              leerValorCelda(celda(row, creMonto)),
             );
           }
         }
@@ -1015,7 +1031,7 @@ export class ClientesCreditosParser {
           addError(
             'monto',
             'Escriba el monto del crédito: debe ser mayor a 0',
-            celda(row, creMonto),
+            leerValorCelda(celda(row, creMonto)),
           );
         }
         if (
@@ -1025,7 +1041,7 @@ export class ClientesCreditosParser {
           addError(
             'cuota_inicial',
             'Debe ser un número mayor o igual a 0',
-            celda(row, creCuotaInicial),
+            leerValorCelda(celda(row, creCuotaInicial)),
           );
         }
         // En un crédito de artículo la inicial es obligatoria: el cliente
@@ -1036,7 +1052,7 @@ export class ClientesCreditosParser {
           addError(
             'cuota_inicial',
             'Es obligatoria en un crédito de artículo: escriba cuánto entregó el cliente al llevarse el artículo.',
-            celda(row, creCuotaInicial),
+            leerValorCelda(celda(row, creCuotaInicial)),
           );
         }
         if (esArticulo) {
@@ -1061,7 +1077,7 @@ export class ClientesCreditosParser {
           addError(
             'tasa_interes',
             'Debe ser un número mayor o igual a 0',
-            celda(row, creTasaInteres),
+            leerValorCelda(celda(row, creTasaInteres)),
           );
         }
         if (
@@ -1071,7 +1087,7 @@ export class ClientesCreditosParser {
           addError(
             'tasa_interes_mora',
             'Debe ser un número mayor o igual a 0',
-            celda(row, creTasaMora),
+            leerValorCelda(celda(row, creTasaMora)),
           );
         }
 
@@ -1139,7 +1155,7 @@ export class ClientesCreditosParser {
             esArticulo
               ? 'Es requerido en créditos de artículo: es el plazo del plan que se le vendió al cliente'
               : 'No se pudo calcular: indique la cantidad de cuotas y la frecuencia, o escriba el plazo en meses',
-            celda(row, crePlazoMeses),
+            leerValorCelda(celda(row, crePlazoMeses)),
           );
         }
 
@@ -1151,7 +1167,7 @@ export class ClientesCreditosParser {
           addError(
             'cantidad_cuotas',
             'Debe ser un número mayor a 0',
-            celda(row, creCantidadCuotas),
+            leerValorCelda(celda(row, creCantidadCuotas)),
           );
         } else if (!Number.isInteger(cantidadCuotas)) {
           addError(
@@ -1179,7 +1195,7 @@ export class ClientesCreditosParser {
           addError(
             'fecha_credito',
             'Requerido y formato válido YYYY-MM-DD',
-            celda(row, creFechaCredito),
+            leerValorCelda(celda(row, creFechaCredito)),
           );
         }
 
@@ -1197,7 +1213,7 @@ export class ClientesCreditosParser {
           addError(
             campo,
             'Fecha no válida. Escríbela como AAAA-MM-DD (o DD/MM/AAAA)',
-            celda(row, columna),
+            leerValorCelda(celda(row, columna)),
           );
         };
 
@@ -1220,7 +1236,7 @@ export class ClientesCreditosParser {
           addError(
             'fecha_primer_cobro',
             'No puede ser anterior a la fecha de crédito',
-            celda(row, creFechaPrimerCobro),
+            leerValorCelda(celda(row, creFechaPrimerCobro)),
           );
         }
 
@@ -1249,7 +1265,7 @@ export class ClientesCreditosParser {
           addError(
             'cuotas_pagadas',
             'Debe ser un número entero mayor o igual a 0',
-            celda(row, creCuotasPagadas),
+            leerValorCelda(celda(row, creCuotasPagadas)),
           );
         } else if (
           cuotasPagadasNum < 0 ||
@@ -1258,7 +1274,7 @@ export class ClientesCreditosParser {
           addError(
             'cuotas_pagadas',
             'Debe ser un número entero mayor o igual a 0',
-            celda(row, creCuotasPagadas),
+            leerValorCelda(celda(row, creCuotasPagadas)),
           );
         } else if (
           cantidadCuotas !== null &&
@@ -1279,7 +1295,7 @@ export class ClientesCreditosParser {
           addError(
             'abono_adicional',
             'Debe ser un número mayor o igual a 0',
-            celda(row, creAbonoAdicional),
+            leerValorCelda(celda(row, creAbonoAdicional)),
           );
         }
 
@@ -1290,7 +1306,7 @@ export class ClientesCreditosParser {
           addError(
             'total_abonado',
             'Escriba cuánto lleva pagado el cliente: un número mayor o igual a 0',
-            celda(row, creTotalAbonado),
+            leerValorCelda(celda(row, creTotalAbonado)),
           );
         }
 
@@ -1335,14 +1351,14 @@ export class ClientesCreditosParser {
           addError(
             'fecha_ultimo_pago',
             'No puede ser anterior a la fecha de crédito',
-            celda(row, creFechaUltimoPago),
+            leerValorCelda(celda(row, creFechaUltimoPago)),
           );
         }
         if (fechaUltimoPago && !tieneAvance) {
           addAdver(
             'fecha_ultimo_pago',
             'Se informó una fecha de último pago pero el crédito no tiene cuotas pagadas ni abonos: el dato se ignorará.',
-            celda(row, creFechaUltimoPago),
+            leerValorCelda(celda(row, creFechaUltimoPago)),
           );
         }
 

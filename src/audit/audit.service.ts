@@ -17,9 +17,24 @@ export class AuditService {
     accion: string;
     entidad: string;
     entidadId: string;
-    datosAnteriores?: any;
-    datosNuevos?: any;
-    metadata?: any;
+    // Las tres son columnas `Json` de `registroAuditoria`: el tipo que Prisma acepta
+    // para escribirlas es `InputJsonValue`, no `any`.
+    // Las dos son columnas `Json`. `Record<string, unknown>` en la union porque varios
+    // llamadores pasan objetos armados a mano, no un `InputJsonValue` estricto.
+    datosAnteriores?: Prisma.InputJsonValue | Record<string, unknown>;
+    datosNuevos?: Prisma.InputJsonValue | Record<string, unknown>;
+    // HALLAZGO, y por eso el `& Record<string, unknown>`: de `metadata` este servicio
+    // guarda SOLO tres campos —`ip`, `userAgent` y `endpoint`, que van a `direccionIP`,
+    // `agenteUsuario` y `endpoint`—. Cualquier otra clave se descarta en silencio, y hay
+    // dos llamadores que mandan una: `metadata: { notas }` en loans.service.ts:4322 y
+    // `metadata: { motivo }` en payments.service.ts:2505. Esos dos datos NO quedan en el
+    // registro de auditoria. Se deja la firma abierta para no cambiar el comportamiento
+    // aqui; guardarlos es una decision de producto, no de tipos.
+    metadata?: {
+      ip?: string;
+      userAgent?: string;
+      endpoint?: string;
+    } & Record<string, unknown>;
   }) {
     // Si no hay datos, intentar inferir cambios
     // Declarado, no inferido: `let cambios = null` sin anotacion es un `any` EVOLUTIVO

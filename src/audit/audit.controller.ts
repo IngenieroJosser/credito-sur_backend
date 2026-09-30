@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import {
   Controller,
   Get,
@@ -41,9 +42,13 @@ export class AuditController {
       accion: string;
       entidad: string;
       entidadId: string;
-      datosAnteriores?: any;
-      datosNuevos?: any;
-      metadata?: any;
+      datosAnteriores?: Prisma.InputJsonValue | Record<string, unknown>;
+      datosNuevos?: Prisma.InputJsonValue | Record<string, unknown>;
+      metadata?: {
+        ip?: string;
+        userAgent?: string;
+        endpoint?: string;
+      } & Record<string, unknown>;
     },
   ) {
     return this.auditService.create(data);
