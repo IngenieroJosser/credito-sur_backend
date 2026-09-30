@@ -13,6 +13,7 @@ import {
   pilaDeError,
 } from '../common/error.util';
 import {
+  Caja,
   EstadoCuota,
   EstadoPrestamo,
   EstadoAprobacion,
@@ -106,6 +107,36 @@ export type CierreHistorialItem = {
   };
 };
 
+/**
+ * Una transaccion del listado, con su caja y quien la creo.
+ *
+ * `mapTransaccionRow` decia `t: any` y lee `t.caja.nombre`, `t.caja.codigo` y el
+ * nombre de `creadoPor`: si la consulta dejara de pedir esas relaciones, la tabla de
+ * movimientos saldria con la caja en blanco y nadie se enteraria al compilar.
+ *
+ * Con `Prisma.validator` el include y el tipo son el mismo objeto.
+ */
+const transaccionDelListado = Prisma.validator<Prisma.TransaccionDefaultArgs>()(
+  {
+    include: {
+      caja: {
+        select: {
+          nombre: true,
+          codigo: true,
+          tipo: true,
+          rutaId: true,
+          saldoActual: true,
+        },
+      },
+      creadoPor: { select: { nombres: true, apellidos: true } },
+    },
+  },
+);
+
+type TransaccionDelListado = Prisma.TransaccionGetPayload<
+  typeof transaccionDelListado
+>;
+
 @Injectable()
 export class AccountingService {
   private readonly logger = new Logger(AccountingService.name);
@@ -145,7 +176,7 @@ export class AccountingService {
    * Mapea una fila de Prisma (Transaccion + includes) al DTO de respuesta.
    * Centraliza la lógica duplicada entre getTransacciones y getTransaccionById.
    */
-  private mapTransaccionRow(t: any) {
+  private mapTransaccionRow(t: TransaccionDelListado) {
     return {
       id: t.id,
       numero: t.numeroTransaccion,
@@ -155,7 +186,13 @@ export class AccountingService {
       descripcion: t.descripcion,
       caja: t.caja.nombre,
       cajaId: t.cajaId,
-      cajaOrigenId: t.cajaOrigenId ?? undefined,
+      // Aqui iba `cajaOrigenId: t.cajaOrigenId ?? undefined`, y ese campo NO existe
+      // en el modelo Transaccion, ni en ninguna tabla: la respuesta salia siempre con
+      // la clave en undefined. Una transferencia se registra como DOS transacciones,
+      // una por caja, y la del origen ya trae su `cajaId`: no hace falta un campo
+      // aparte. El frontend tiene un filtro que lo compara
+      // (app/admin/contable/page.tsx:1049) y esa mitad del `||` nunca se cumple, pero
+      // es redundante: la otra mitad, por `cajaId`, ya lo cubre.
       tipoReferencia: t.tipoReferencia ?? undefined,
       referenciaId: t.referenciaId ?? undefined,
       responsable: `${t.creadoPor.nombres} ${t.creadoPor.apellidos}`,
@@ -1435,7 +1472,9 @@ export class AccountingService {
     } = filtros;
     const skip = (page - 1) * limit;
     const where: Prisma.JournalEntryWhereInput = {};
-    const lineFilters: any[] = [];
+    // Son condiciones de Prisma sobre `lines`: el tipo lo da la propia libreria, y asi
+    // un campo mal escrito se ve aqui en vez de producir un filtro que no filtra.
+    const lineFilters: Prisma.JournalLineWhereInput[] = [];
 
     if (tipo && tipo !== 'TODOS') {
       // `tipo` entra como texto desde la query. Antes iba directo a Prisma, que lanza si
@@ -1739,18 +1778,7 @@ export class AccountingService {
           where,
           skip,
           take: limit,
-          include: {
-            caja: {
-              select: {
-                nombre: true,
-                codigo: true,
-                tipo: true,
-                rutaId: true,
-                saldoActual: true,
-              },
-            },
-            creadoPor: { select: { nombres: true, apellidos: true } },
-          },
+          ...transaccionDelListado,
           orderBy: { fechaTransaccion: 'desc' },
         }),
         this.prisma.transaccion.count({ where }),
@@ -1778,18 +1806,7 @@ export class AccountingService {
     try {
       const t = await this.prisma.transaccion.findUnique({
         where: { id },
-        include: {
-          caja: {
-            select: {
-              nombre: true,
-              codigo: true,
-              tipo: true,
-              rutaId: true,
-              saldoActual: true,
-            },
-          },
-          creadoPor: { select: { nombres: true, apellidos: true } },
-        },
+        ...transaccionDelListado,
       });
 
       if (!t) throw new NotFoundException('Transacción no encontrada');
@@ -3462,7 +3479,8 @@ export class AccountingService {
   }) {
     const whereTransaccion: Prisma.TransaccionWhereInput = {};
     const whereArqueo: Prisma.ArqueoCajaWhereInput = {};
-    const orTransaccion: any[] = [];
+    // Igual: condiciones de Prisma sobre Transaccion, para un OR.
+    const orTransaccion: Prisma.TransaccionWhereInput[] = [];
     const tipo = filtros?.tipo;
     if (!tipo || tipo === undefined) {
       orTransaccion.push({
@@ -3692,10 +3710,17 @@ export class AccountingService {
   }
 
   private async assertNoOfflinePendienteAntesArqueo(
-    caja: any,
+    // Solo se lee `responsableId`: se declara ese y nada mas. Pedir la Caja completa
+    // obligaria a los llamadores a traerla entera para nada.
+    caja: { responsableId?: string | null } | null | undefined,
     cierreTimestamp: Date,
   ) {
-    const usuarioIds = [caja?.responsableId].filter(Boolean);
+    // Guarda de tipo y no `.filter(Boolean)`: ese no estrecha, y el arreglo seguia
+    // siendo `(string | null | undefined)[]` donde Prisma pide `string[]`. Es la tercera
+    // vez que aparece este mismo patron en el repo.
+    const usuarioIds = [caja?.responsableId].filter(
+      (id): id is string => typeof id === 'string' && id.length > 0,
+    );
     const pendingSyncCount = await this.prisma.colaSincronizacion.count({
       where: {
         estado: { in: ['PENDIENTE', 'ERROR', 'CONFLICTO'] },
@@ -3719,7 +3744,7 @@ export class AccountingService {
     }
   }
 
-  private async getCandidatosSobranteRuta(caja: any, cierreTimestamp: Date) {
+  private async getCandidatosSobranteRuta(caja: Caja, cierreTimestamp: Date) {
     if (!caja?.rutaId) {
       return [];
     }
@@ -4277,7 +4302,7 @@ export class AccountingService {
         if (entry.referenceType === 'ABONO_DEUDA') {
           cobradorId = String(entry.referenceId || '').split('|')[0] || null;
         } else if (entry.referenceType === 'ARQUEO') {
-          const trx: any = transaccionMap.get(entry.referenceId);
+          const trx = transaccionMap.get(entry.referenceId);
           cobradorId =
             trx?.caja?.ruta?.cobradorId ||
             (trx?.caja?.responsable?.rol === 'SUPERVISOR'
@@ -4313,13 +4338,23 @@ export class AccountingService {
 
     // 2. Procesar transacciones directas de DEUDA_COBRADOR / ABONO_DEUDA / CIERRE_RUTA
     // Solo contar las que NO tienen entrada correspondiente en el ledger (evitar doble conteo)
+    // Aqui habia una comparacion IMPOSIBLE, y la destapo el compilador al quitar el
+    // `(line: any)`: `referenceType === 'DEUDA_COBRADOR'`. Ese valor no existe en el enum
+    // `ReferenceTypeContable` (PAGO, DESEMBOLSO, GASTO, VENTA_ARTICULO, BASE,
+    // CONSOLIDACION, ARQUEO, ABONO_DEUDA, APERTURA, AJUSTE, CASTIGO_CARTERA, INGRESO,
+    // EGRESO). Donde si existe es en `Transaccion.tipoReferencia`, que es texto libre: son
+    // DOS campos con nombres parecidos y la comparacion se escribio contra el que no era.
+    // Solo la segunda mitad podia cumplirse.
+    //
+    // OJO, queda una pregunta que no se resuelve leyendo: `debtLines` trae TODAS las
+    // lineas de cuentas 1.4, con cualquier referenceType. Si la CREACION de una deuda
+    // tambien se asienta en el ledger —con AJUSTE, EGRESO o el que sea—, su referenciaId
+    // no entra en este Set y la transaccion directa equivalente se cuenta por segunda vez.
+    // Hay que confirmar con que tipo se asienta una deuda para saber si hay doble conteo o
+    // si esta mitad solo sobraba.
     const ledgerRefIds = new Set(
       debtLines
-        .filter(
-          (line: any) =>
-            line.journalEntry?.referenceType === 'DEUDA_COBRADOR' ||
-            line.journalEntry?.referenceType === 'ABONO_DEUDA',
-        )
+        .filter((line) => line.journalEntry?.referenceType === 'ABONO_DEUDA')
         .map((line) => line.journalEntry?.referenceId)
         .filter(Boolean),
     );
@@ -4496,7 +4531,7 @@ export class AccountingService {
 
     return Array.from(deudaMap.entries())
       .map(([cobradorId, deuda]) => {
-        const cobrador: any = cobradorMap.get(cobradorId);
+        const cobrador = cobradorMap.get(cobradorId);
         const saldoCajaActual = saldosCajasMap.get(cobradorId) || 0;
 
         // Deuda real solo viene de ledger 1.4.x y eventos DEUDA_COBRADOR/ABONO_DEUDA/CIERRE_RUTA
@@ -4813,7 +4848,20 @@ export class AccountingService {
       return 'AJUSTE';
     };
 
-    const candidatos: any[] = [];
+    // La forma se declara en vez de dejarla en `any[]`: es lo que el bucle de abajo
+    // mete, y `transaccionId` es la llave con la que se vuelve a buscar la transaccion
+    // mas adelante.
+    const candidatos: Array<{
+      transaccionId: string;
+      referenceType: ReferenceTypeContable;
+      referenceId: string;
+      tipo: TipoTransaccion;
+      tipoReferencia: string | null;
+      cajaId: string;
+      caja?: string;
+      monto: number;
+      fechaTransaccion: Date;
+    }> = [];
     let omitidosPorAsientoExistente = 0;
     let omitidosSinReferencia = 0;
     let omitidosNoSoportados = 0;
@@ -4974,11 +5022,15 @@ export class AccountingService {
    * Sin `aplicar` solo informa de lo que haría.
    */
   async regularizarCentavos(usuarioId: string, dryRun = true) {
-    const q = (sql: string, ...args: any[]) =>
-      this.prisma.$queryRawUnsafe(sql, ...args) as Promise<any[]>;
+    // Los parametros de una consulta cruda son valores sueltos y las filas que vuelven
+    // tienen una forma que Prisma no puede conocer. Con un generico, cada llamada
+    // declara lo que su SELECT devuelve —las dos de aqui traen solo `id`— en vez de
+    // heredar `any` y que nadie compruebe nada.
+    const q = <T>(sql: string, ...args: unknown[]) =>
+      this.prisma.$queryRawUnsafe(sql, ...args) as Promise<T[]>;
 
     // ── Cuotas ────────────────────────────────────────────────────────────
-    const prestamos = await q(`
+    const prestamos = await q<{ id: string }>(`
       SELECT DISTINCT c."prestamoId" AS id
       FROM cuotas c
       WHERE c.monto % 1 <> 0
@@ -5065,7 +5117,7 @@ export class AccountingService {
     }
 
     // ── Líneas de asiento ─────────────────────────────────────────────────
-    const asientos = await q(`
+    const asientos = await q<{ id: string }>(`
       SELECT e.id
       FROM asientos_contables e
       JOIN asientos_lineas l ON l."journalEntryId" = e.id
