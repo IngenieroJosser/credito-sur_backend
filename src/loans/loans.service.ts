@@ -28,7 +28,8 @@ import { PushService } from '../push/push.service';
 import { CreateLoanDto, TipoPrestamoDto } from './dto/create-loan.dto';
 import { ConfiguracionService } from '../configuracion/configuracion.service';
 import { UpdateLoanData } from '../common/types';
-import { LedgerService } from '../accounting/ledger.service';
+import { JournalLineDto, LedgerService } from '../accounting/ledger.service';
+import { objetoDeJson } from '../common/json.util';
 import {
   generarPDFCartera,
   CarteraRow,
@@ -128,6 +129,30 @@ function leerRollbackReprogramacion(
 
   return datos as unknown as RollbackReprogramacion;
 }
+
+/**
+ * El prestamo recien creado, con lo que el impacto contable provisional necesita.
+ *
+ * El tipo se DERIVA de la consulta y la consulta usa este mismo objeto, asi que no
+ * pueden separarse: si manana se quita `producto` del `include`, el `prestamo.producto`
+ * de `aplicarImpactoProvisionalPrestamo` deja de compilar. Antes el parametro era `any`,
+ * y una sonda `never` mostro que de ahi se leen nueve propiedades sin comprobar ninguna.
+ */
+const INCLUDE_PRESTAMO_CON_IMPACTO =
+  Prisma.validator<Prisma.PrestamoDefaultArgs>()({
+    include: {
+      cliente: true,
+      producto: true,
+      cuotas: true,
+      creadoPor: {
+        select: { id: true, nombres: true, apellidos: true, rol: true },
+      },
+    },
+  });
+
+type PrestamoConImpactoProvisional = Prisma.PrestamoGetPayload<
+  typeof INCLUDE_PRESTAMO_CON_IMPACTO
+>;
 
 @Injectable()
 export class LoansService implements OnModuleInit {
@@ -330,11 +355,16 @@ export class LoansService implements OnModuleInit {
     prestamo: {
       id: string;
       numeroPrestamo: string;
-      monto: any;
+      // `Prisma.Decimal | number` y no `any`: es la columna de dinero, que llega como
+      // `Decimal` desde la base y como numero cuando la arma el propio servicio. Aqui
+      // entra por `safeNumber(...)`, asi que las dos formas valen. Es el mismo tipo que
+      // ya usan notificaciones.service.ts:28 y routes.service.ts:81.
+      monto: Prisma.Decimal | number;
       fechaInicio?: Date | null;
     };
     data: {
-      frecuenciaPago: any;
+      // Se lee con `String(data.frecuenciaPago)`, y lo que llega es el valor del enum.
+      frecuenciaPago: FrecuenciaPago;
       cuotaInicial?: number;
       notas?: string;
       esContado?: boolean;
@@ -410,10 +440,12 @@ export class LoansService implements OnModuleInit {
     numeroPrestamo: string;
     clienteId: string;
     tipoPrestamo: string;
-    monto: any;
-    cuotaInicial?: any;
-    precioVentaArticulo?: any;
-    costoArticulo?: any;
+    // Los cuatro son columnas de dinero: `Decimal` desde la base, numero cuando las arma
+    // el servicio. Todas entran por `Number(...)` mas abajo.
+    monto: Prisma.Decimal | number;
+    cuotaInicial?: Prisma.Decimal | number | null;
+    precioVentaArticulo?: Prisma.Decimal | number | null;
+    costoArticulo?: Prisma.Decimal | number | null;
     creadoPorId: string;
   }) {
     const tipoPrestamo = String(prestamo.tipoPrestamo || '').toUpperCase();
@@ -543,8 +575,21 @@ export class LoansService implements OnModuleInit {
        * existe, donde no hay DTO), y con `CreateLoanDto` eso obligaba a `{} as any`.
        */
       data: Pick<CreateLoanDto, 'cajaId' | 'cobradorId' | 'rutaId'>;
-      creador: any;
-      cliente: any;
+      // Mismo criterio que con `data`: se piden los campos que se leen, no la entidad
+      // entera. De `creador` se lee el rol (para decidir si opera con base) y el id; de
+      // `cliente`, el id y la ruta asignada.
+      creador: { id?: string; rol?: RolUsuario } | null;
+      cliente: {
+        id?: string;
+        // Las cuatro lecturas de la cascada: el id de la ruta y el del cobrador pueden
+        // venir en la asignacion o dentro de la ruta anidada, segun el endpoint. Los
+        // nombro el compilador al declarar esto; con `any` no se veia que fueran cuatro.
+        asignacionesRuta?: Array<{
+          rutaId?: string | null;
+          cobradorId?: string | null;
+          ruta?: { id?: string | null; cobradorId?: string | null } | null;
+        }>;
+      } | null;
       requiereCajaRuta?: boolean;
     },
   ) {
@@ -716,7 +761,12 @@ export class LoansService implements OnModuleInit {
     return findCajaOficina();
   }
 
-  private getAccountCodeCaja(caja: any) {
+  private getAccountCodeCaja(
+    caja: {
+      codigo?: string | null;
+      tipo?: string | null;
+    } | null,
+  ) {
     if (caja?.codigo === 'CAJA-BANCO') return '1.1.2';
     if (String(caja?.tipo || '').toUpperCase() === 'RUTA') return '1.2.1';
     return '1.1.1';
@@ -725,10 +775,14 @@ export class LoansService implements OnModuleInit {
   private async aplicarImpactoProvisionalPrestamo(
     tx: TransaccionPrisma,
     params: {
-      prestamo: any;
+      prestamo: PrestamoConImpactoProvisional;
       data: CreateLoanDto;
-      creador: any;
-      cliente: any;
+      // `creador` y `cliente` no se LEEN aqui: solo se reenvian a
+      // `resolveCajaOrigenPrestamo` y a `isOperatorWithBase`. Se declara lo que esos dos
+      // piden y nada mas; lo comprobo la sonda `never`, que no saco ni una propiedad de
+      // ellos y si las nueve de `prestamo`.
+      creador: { id?: string; rol?: RolUsuario } | null;
+      cliente: { id?: string } | null;
     },
   ) {
     const { prestamo, data, creador, cliente } = params;
@@ -2053,7 +2107,13 @@ export class LoansService implements OnModuleInit {
       }
 
       // Obtener registros de visita del cliente para mostrar estado de ausencia en plan de pagos
-      const resolveFechaGestionCuota = (cuota: any) => {
+      // Las tres fechas que la cuota puede traer, y en ese orden. No es la `Cuota` de
+      // Prisma: `fecha` no es columna suya, la trae el historial de visitas.
+      const resolveFechaGestionCuota = (cuota: {
+        fechaVencimientoProrroga?: Date | null;
+        fechaVencimiento?: Date | null;
+        fecha?: Date | null;
+      }) => {
         return (
           cuota.fechaVencimientoProrroga ||
           cuota.fechaVencimiento ||
@@ -2294,7 +2354,9 @@ export class LoansService implements OnModuleInit {
 
   private async reversarImpactoContableArticuloArchivado(
     tx: TransaccionPrisma,
-    prestamo: any,
+    // Tres campos, no la entidad: lo dijo una sonda `never`, que saco exactamente
+    // `id`, `numeroPrestamo` y `tipoPrestamo` de este parametro.
+    prestamo: { id: string; numeroPrestamo: string; tipoPrestamo: string },
     userId: string,
   ) {
     if (String(prestamo.tipoPrestamo || '').toUpperCase() !== 'ARTICULO')
@@ -2379,7 +2441,9 @@ export class LoansService implements OnModuleInit {
       });
     }
 
-    const lines: any[] = [];
+    // `JournalLineDto` ya existe en ledger.service.ts y es justo lo que
+    // `registrarAsiento` recibe: se reutiliza en vez de declarar un tipo nuevo.
+    const lines: JournalLineDto[] = [];
     if (precioVenta > 0) {
       lines.push({ accountCode: '3.4', debitAmount: precioVenta });
     }
@@ -2417,7 +2481,9 @@ export class LoansService implements OnModuleInit {
 
   private async restaurarImpactoContableArticuloArchivado(
     tx: TransaccionPrisma,
-    prestamo: any,
+    // Tres campos, no la entidad: lo dijo una sonda `never`, que saco exactamente
+    // `id`, `numeroPrestamo` y `tipoPrestamo` de este parametro.
+    prestamo: { id: string; numeroPrestamo: string; tipoPrestamo: string },
     userId: string,
   ) {
     if (String(prestamo.tipoPrestamo || '').toUpperCase() !== 'ARTICULO')
@@ -2481,7 +2547,7 @@ export class LoansService implements OnModuleInit {
       .map((line) => {
         const debitAmount = Number(line.debitAmount || 0);
         const creditAmount = Number(line.creditAmount || 0);
-        const restoredLine: any = {
+        const restoredLine: JournalLineDto = {
           accountCode: line.accountCode,
         };
 
@@ -3702,19 +3768,7 @@ export class LoansService implements OnModuleInit {
                 create: cuotasDataFinal,
               },
             },
-            include: {
-              cliente: true,
-              producto: true,
-              cuotas: true,
-              creadoPor: {
-                select: {
-                  id: true,
-                  nombres: true,
-                  apellidos: true,
-                  rol: true,
-                },
-              },
-            },
+            ...INCLUDE_PRESTAMO_CON_IMPACTO,
           });
 
           const impactoTx = await this.aplicarImpactoProvisionalPrestamo(tx, {
@@ -5057,7 +5111,7 @@ export class LoansService implements OnModuleInit {
 
     return visibles.map((s) => ({
       ...s,
-      datosSolicitud: s.datosSolicitud as Record<string, any>,
+      datosSolicitud: objetoDeJson(s.datosSolicitud),
     }));
   }
 
@@ -5070,10 +5124,13 @@ export class LoansService implements OnModuleInit {
    * aprobar o rechazar una de otra ruta, se rechaza con 403.
    */
   private async exigirJurisdiccionReprogramacion(
-    aprobacion: { datosSolicitud: any },
+    // `Prisma.JsonValue`, que es lo que devuelve la columna, y la lectura pasa por
+    // `objetoDeJson` (common/json.util.ts). El helper ya existia: se reutiliza en vez de
+    // declarar otro.
+    aprobacion: { datosSolicitud: Prisma.JsonValue },
     actor?: { id?: string; rol?: RolUsuario } | null,
   ): Promise<void> {
-    const prestamoId = aprobacion.datosSolicitud?.prestamoId;
+    const prestamoId = objetoDeJson(aprobacion.datosSolicitud).prestamoId;
     if (typeof prestamoId !== 'string') return;
     const permitidos = await this.prestamosBajoJurisdiccion(
       [prestamoId],
@@ -5143,7 +5200,7 @@ export class LoansService implements OnModuleInit {
       });
     });
 
-    const datos = aprobacion.datosSolicitud as Record<string, any>;
+    const datos = objetoDeJson(aprobacion.datosSolicitud);
     // Notificar al cobrador que solicitó
     await this.notificacionesService.create({
       usuarioId: aprobacion.solicitadoPorId,
@@ -5300,7 +5357,7 @@ export class LoansService implements OnModuleInit {
       });
     });
 
-    const datos = aprobacion.datosSolicitud as Record<string, any>;
+    const datos = objetoDeJson(aprobacion.datosSolicitud);
     // Notificar al cobrador
     await this.notificacionesService.create({
       usuarioId: aprobacion.solicitadoPorId,

@@ -1,3 +1,5 @@
+import { Prisma } from '@prisma/client';
+
 import { textoRecortado } from '../common/texto.util';
 /**
  * Forma minima que estas reglas necesitan de una cuota y un prestamo.
@@ -16,9 +18,31 @@ export interface CuotaOperativa {
   fechaVencimiento?: Date | string | null;
   fechaEfectiva?: Date | string | null;
   fechaVencimientoProrroga?: Date | string | null;
-  // Los campos no listados siguen sin tipar: aqui llegan objetos con
-  // muchisimos campos mas y tiparlos todos no aporta nada a estas reglas.
-  [extra: string]: any;
+
+  // ── Los diez que faltaban ────────────────────────────────────────────────────
+  //
+  // Aqui habia un `[extra: string]: any`, y ese solo `any` apagaba la comprobacion
+  // de TODA lectura de una cuota en la zona de rutas: `cuota.mnotoCuota` compilaba
+  // igual de bien que `cuota.montoCuota`. Se quito, y el compilador nombro los diez
+  // campos que de verdad se leen —46 lecturas en total— que son estos.
+  //
+  // El dinero va como `Prisma.Decimal | number` porque llega de las dos formas: como
+  // `Decimal` cuando la fila viene de la base y como numero cuando la calcula el
+  // servicio. Todas las lecturas pasan por `Number(...)`.
+  monto?: Prisma.Decimal | number | null;
+  montoCuota?: Prisma.Decimal | number | null;
+  montoNominal?: Prisma.Decimal | number | null;
+  montoPagado?: Prisma.Decimal | number | null;
+  montoMoraAcumulada?: Prisma.Decimal | number | null;
+  saldoVencidoAcumulado?: Prisma.Decimal | number | null;
+  saldoExigibleEnFechaOperativa?: Prisma.Decimal | number | null;
+  /** Contador, no dinero: llega como entero. */
+  cuotasVencidas?: number | null;
+  /** La marca el propio servicio al armar la cuota objetivo. */
+  enProrroga?: boolean;
+  /** Los calcula `getAccionesCuotaRuta` para que la pantalla explique el boton. */
+  puedePagar?: boolean;
+  puedeReprogramar?: boolean;
 }
 
 export interface PrestamoOperativo {
@@ -32,9 +56,14 @@ export interface PrestamoOperativo {
   tipo?: string | null;
   esContado?: boolean | null;
   cuotas?: CuotaOperativa[] | null;
-  // Los campos no listados siguen sin tipar: aqui llegan objetos con
-  // muchisimos campos mas y tiparlos todos no aporta nada a estas reglas.
-  [extra: string]: any;
+  // Mismo caso que en `CuotaOperativa`: habia un `[extra: string]: any` y estos son los
+  // campos que el compilador pidio al quitarlo. Los tres ultimos los agrega el servicio
+  // al armar la jornada, no vienen de la base.
+  montoMetaOperativaPendiente?: Prisma.Decimal | number | null;
+  cuotaObjetivo?: CuotaOperativa | null;
+  proximaCuota?: CuotaOperativa | null;
+  esProvisional?: boolean | null;
+  esRevertido?: boolean | null;
 }
 
 /** Normaliza a mayusculas sin espacios, tolerando null/undefined. */

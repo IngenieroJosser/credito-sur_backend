@@ -38,6 +38,7 @@ import {
   isObligacionOperativaRuta,
   normalizeUpper,
   type CuotaOperativa,
+  type PrestamoOperativo,
 } from './ruta-operational-rules';
 
 import {
@@ -830,8 +831,9 @@ export class RoutesService {
             0,
             Number(
               cuotaObjetivoBase.saldoExigibleEnFechaOperativa ??
-                (cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0) -
-                  (cuotaObjetivoBase.montoPagado ?? 0),
+                Number(
+                  cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0,
+                ) - Number(cuotaObjetivoBase.montoPagado ?? 0),
             ),
           ),
           fechaEfectiva: getCuotaFechaEfectivaKeyRuta(cuotaObjetivoBase),
@@ -3746,9 +3748,11 @@ export class RoutesService {
                 0,
                 Number(
                   cuotaObjetivoBase.saldoExigibleEnFechaOperativa ??
-                    (cuotaObjetivoBase.montoCuota ??
-                      cuotaObjetivoBase.monto ??
-                      0) - (cuotaObjetivoBase.montoPagado ?? 0),
+                    Number(
+                      cuotaObjetivoBase.montoCuota ??
+                        cuotaObjetivoBase.monto ??
+                        0,
+                    ) - Number(cuotaObjetivoBase.montoPagado ?? 0),
                 ),
               ),
               fechaEfectiva: getCuotaFechaEfectivaKeyRuta(cuotaObjetivoBase),
@@ -4504,9 +4508,11 @@ export class RoutesService {
                 0,
                 Number(
                   cuotaObjetivoBase.saldoExigibleEnFechaOperativa ??
-                    (cuotaObjetivoBase.montoCuota ??
-                      cuotaObjetivoBase.monto ??
-                      0) - (cuotaObjetivoBase.montoPagado ?? 0),
+                    Number(
+                      cuotaObjetivoBase.montoCuota ??
+                        cuotaObjetivoBase.monto ??
+                        0,
+                    ) - Number(cuotaObjetivoBase.montoPagado ?? 0),
                 ),
               ),
               fechaEfectiva: getCuotaFechaEfectivaKeyRuta(cuotaObjetivoBase),
@@ -4722,12 +4728,18 @@ export class RoutesService {
    * ultimo el monto nominal de la proxima cuota.
    */
   private computeMetaOperativaVisita(
-    visita: any,
+    // `PrestamoOperativo` y `CuotaOperativa` ya existian en ruta-operational-rules.ts y
+    // son justo lo que estos tres helpers reciben: se reutilizan en vez de declarar otro
+    // tipo. La visita se pide por lo unico que se le lee aqui, sus creditos.
+    visita: {
+      prestamos?: PrestamoOperativo[] | null;
+      recaudadoDelDia?: number | null;
+    } | null,
     recaudoCliente = 0,
     fechaKey?: string,
   ): number {
     const pendienteExigible = (visita?.prestamos || []).reduce(
-      (sum: number, prestamo: any) => {
+      (sum: number, prestamo: PrestamoOperativo) => {
         if (!isPrestamoOperativoRuta(prestamo)) return sum;
 
         if (prestamo?.montoMetaOperativaPendiente != null) {
@@ -4755,7 +4767,7 @@ export class RoutesService {
   }
 
   private computePendienteOperativoPrestamo(
-    prestamo: any,
+    prestamo: PrestamoOperativo,
     fechaKey: string,
   ): number {
     if (!isPrestamoOperativoRuta(prestamo)) return 0;
@@ -4788,7 +4800,7 @@ export class RoutesService {
    * Los `motivoBloqueo*` existen para que la pantalla explique por que el boton de
    * pagar o reprogramar esta deshabilitado, en vez de solo apagarlo.
    */
-  private computeCuotaObjetivo(prestamo: any, fechaKey: string) {
+  private computeCuotaObjetivo(prestamo: PrestamoOperativo, fechaKey: string) {
     if (!isPrestamoOperativoRuta(prestamo)) return null;
 
     if (!prestamo.cuotas || prestamo.cuotas.length === 0) return null;
