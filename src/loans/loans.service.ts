@@ -352,7 +352,7 @@ export class LoansService implements OnModuleInit {
     articuloNombre: string;
     isFinanciamientoArticulo: boolean;
     precioArticuloTotal: number;
-    safeNumber: (v: any) => number;
+    safeNumber: (v: unknown) => number;
     interesTotal?: number;
     tasaInteres?: number;
   }) {
@@ -3216,9 +3216,9 @@ export class LoansService implements OnModuleInit {
   }
 
   async createLoan(data: CreateLoanDto) {
-    let prestamoCreado: any = null;
-    let aprobacionCreada: any = null;
-    let efectoProvisionalCreado: any = null;
+    let prestamoCreado = null;
+    let aprobacionCreada = null;
+    let efectoProvisionalCreado = null;
     let asignacionRutaCreadaId: string | null = null;
     let esAutoAprobadoFinal = false;
     // Se asigna y no se lee; queda como registro de lo que produjo la transaccion.
@@ -3388,8 +3388,8 @@ export class LoansService implements OnModuleInit {
         ? EstadoAprobacion.PENDIENTE
         : EstadoAprobacion.APROBADO;
 
-      let producto: any = null;
-      let precioProducto: any = null;
+      let producto = null;
+      let precioProducto = null;
       let montoFinanciar = data.monto;
       let precioArticuloTotal = data.monto; // Precio total del artículo (sin descontar cuota inicial)
 
@@ -3477,7 +3477,10 @@ export class LoansService implements OnModuleInit {
 
       // Para el cálculo de cuotas y fechas, usamos el plazo real
       // EXTRAER DE FORMA INFALIBLE: recorremos todos los campos posibles en orden
-      const getVal = (v: any) => {
+      // `unknown` y no `any`: lo unico que se hace con el valor es pasarlo por
+      // `Number(...)`, y asi el compilador impide que alguien le haga otra cosa sin
+      // comprobarlo primero.
+      const getVal = (v: unknown) => {
         const n = Number(v);
         return isNaN(n) || n <= 0 ? null : n;
       };
@@ -3641,7 +3644,7 @@ export class LoansService implements OnModuleInit {
       const totalCuotasPrometidas = cantidadCuotas;
       const isFinanciamientoArticulo =
         data.tipoPrestamo === TipoPrestamoDto.ARTICULO;
-      const safeNumber = (val: any) => {
+      const safeNumber = (val: unknown) => {
         const n = Number(val);
         return isNaN(n) ? 0 : n;
       };
@@ -4726,7 +4729,7 @@ export class LoansService implements OnModuleInit {
       const rutaIdOriginal = asignacionActiva?.rutaId;
 
       // 2. Obtener estado anterior de RegistroVisita si existe
-      let registroVisitaAnterior: any = null;
+      let registroVisitaAnterior = null;
       if (
         fechaOperativaRuta &&
         rutaIdOriginal &&
