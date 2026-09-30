@@ -211,7 +211,11 @@ export class ErroresClarosFilter implements ExceptionFilter {
     }
 
     // Errores de Postgres que llegan sin envolver.
-    const codigo = (exception as any)?.code;
+    // Se comprueba antes de leer, en vez de castear un `unknown`.
+    const codigo =
+      exception && typeof exception === 'object' && 'code' in exception
+        ? (exception as { code?: unknown }).code
+        : undefined;
     if (typeof codigo === 'string' && /^[0-9A-Z]{5}$/.test(codigo)) {
       if (codigo === '40P01') {
         return {
@@ -243,7 +247,7 @@ export class ErroresClarosFilter implements ExceptionFilter {
     if (typeof cuerpo === 'string') return cuerpo.trim();
 
     if (cuerpo && typeof cuerpo === 'object') {
-      const mensaje = (cuerpo as any).message;
+      const mensaje = (cuerpo as { message?: unknown }).message;
       if (typeof mensaje === 'string') return mensaje.trim();
       if (Array.isArray(mensaje)) {
         const limpios = mensaje
@@ -251,7 +255,7 @@ export class ErroresClarosFilter implements ExceptionFilter {
           .filter(Boolean);
         if (limpios.length > 0) return limpios.join('. ');
       }
-      const error = (cuerpo as any).error;
+      const error = (cuerpo as { error?: unknown }).error;
       if (typeof error === 'string') return error.trim();
     }
 
@@ -262,7 +266,14 @@ export class ErroresClarosFilter implements ExceptionFilter {
    * Un mensaje que sirva cuando la excepción vino sin texto. Un error mudo es
    * peor que uno feo: quien está en caja no sabe si la operación se hizo.
    */
-  private porStatus(status: number): string {
+  // El parametro se tipa como `HttpStatus` y no como `number`: los `case` de abajo
+  // son miembros del enum, y comparar un number suelto contra ellos no es seguro (un
+  // numero mal escrito no lo atraparia nadie). TypeScript acepta pasar un `number`
+  // aqui, asi que `getStatus()` sigue encajando sin castear en quien llama.
+  //
+  // Nota: poner el cast dentro, en el `switch (status as HttpStatus)`, NO funciona:
+  // `eslint --fix` lo borra por la regla `no-unnecessary-type-assertion`.
+  private porStatus(status: HttpStatus): string {
     switch (status) {
       case HttpStatus.BAD_REQUEST:
         return 'Los datos enviados no son válidos. Revise el formulario y vuelva a intentarlo.';
@@ -281,7 +292,9 @@ export class ErroresClarosFilter implements ExceptionFilter {
       case HttpStatus.TOO_MANY_REQUESTS:
         return 'Demasiados intentos seguidos. Espere un momento y vuelva a intentarlo.';
       default:
-        return status >= 500
+        // Aqui si hace falta tratarlo como numero: no se compara con un miembro del
+        // enum sino con el umbral de los errores de servidor.
+        return Number(status) >= 500
           ? 'Ocurrió un error en el servidor y la operación no se realizó. Vuelva a intentarlo.'
           : 'No se pudo completar la operación.';
     }

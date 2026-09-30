@@ -30,6 +30,7 @@ import {
   ApiParam,
 } from '@nestjs/swagger';
 import { LoansService } from './loans.service';
+import { mensajeDeError, pilaDeError } from '../common/error.util';
 import { MoraService } from './mora.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -47,6 +48,8 @@ import { ApprovalsService } from '../approvals/approvals.service';
 import { formatBogotaOffsetIso } from '../utils/date-utils';
 
 import { RequestConUsuario } from '../common/types';
+import { UpdateLoanDto } from './dto/update-loan.dto';
+import { SimularCreditoDto } from './dto/simular-credito.dto';
 
 @ApiTags('loans')
 @ApiBearerAuth(SWAGGER_JWT_AUTH)
@@ -133,7 +136,7 @@ export class LoansController {
     @Query('tipo', new DefaultValuePipe('todos')) tipo: string,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(8), ParseIntPipe) limit: number,
-    @Request() req,
+    @Request() req: RequestConUsuario,
   ) {
     // Validar límite máximo
     const safeLimit = Math.min(limit, 100); // Máximo 100 por página
@@ -186,6 +189,32 @@ export class LoansController {
     res.send(result.data);
   }
 
+  // Esta ruta tiene que declararse ANTES que @Get(':id'): Nest empareja por
+  // orden de declaracion, asi que estando despues era `:id` quien se quedaba
+  // con "reprogramaciones-pendientes" y el endpoint respondia "Prestamo no
+  // encontrado". Estuvo inalcanzable desde que se escribio.
+  @Get('reprogramaciones-pendientes')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+  )
+  @ApiOperation({ summary: 'Listar solicitudes de reprogramación pendientes' })
+  @ApiQuery({
+    name: 'estado',
+    required: false,
+    enum: ['PENDIENTE', 'APROBADO', 'RECHAZADO', 'TODOS'],
+  })
+  async listarReprogramacionesPendientes(
+    @Query('estado') estado: string | undefined,
+    @Request() req: RequestConUsuario,
+  ) {
+    return this.loansService.listarReprogramacionesPendientes(
+      estado,
+      req?.user,
+    );
+  }
   @Get(':id/contrato')
   // @Roles(
   //  RolUsuario.SUPER_ADMINISTRADOR,
@@ -216,8 +245,11 @@ export class LoansController {
         `attachment; filename="${result.filename}"`,
       );
       res.send(result.data);
-    } catch (e: any) {
-      console.error('PDF GENERATION ERROR: ' + e.message, e.stack);
+    } catch (e) {
+      console.error(
+        'PDF GENERATION ERROR: ' + mensajeDeError(e),
+        pilaDeError(e),
+      );
       throw e;
     }
   }
@@ -261,7 +293,10 @@ export class LoansController {
     description: 'ID del préstamo',
     example: 'cl67qg5e80001c8ibw3d2q7p8',
   })
-  async getLoanById(@Param('id') id: string, @Request() req) {
+  async getLoanById(
+    @Param('id') id: string,
+    @Request() req: RequestConUsuario,
+  ) {
     return this.loansService.getLoanById(id, req.user);
   }
 
@@ -320,7 +355,10 @@ export class LoansController {
     description: 'ID del préstamo',
     example: 'cl67qg5e80001c8ibw3d2q7p8',
   })
-  async getLoanCuotas(@Param('id') id: string, @Request() req) {
+  async getLoanCuotas(
+    @Param('id') id: string,
+    @Request() req: RequestConUsuario,
+  ) {
     return this.loansService.getLoanCuotas(id, req.user);
   }
 
@@ -339,7 +377,7 @@ export class LoansController {
     description:
       'Proyecta interés, total y cuotas con la misma fórmula que la creación real. Solo lectura: no persiste nada.',
   })
-  async simularPlan(@Body() body: any) {
+  async simularPlan(@Body() body: SimularCreditoDto) {
     return this.loansService.simularCredito({
       tipoAmortizacion: body?.tipoAmortizacion,
       monto: Number(body?.monto) || 0,
@@ -429,11 +467,10 @@ export class LoansController {
       },
     },
   })
-  async createLoan(@Body() createLoanDto: CreateLoanDto, @Request() req) {
-    console.log(
-      '[CONTROLLER DEBUG] createLoan received:',
-      JSON.stringify(createLoanDto),
-    );
+  async createLoan(
+    @Body() createLoanDto: CreateLoanDto,
+    @Request() req: RequestConUsuario,
+  ) {
     // Obtener usuario del request (JWT)
     const usuarioId = req.user.id;
 
@@ -498,7 +535,10 @@ export class LoansController {
       },
     },
   })
-  async approveLoan(@Param('id') id: string, @Request() req) {
+  async approveLoan(
+    @Param('id') id: string,
+    @Request() req: RequestConUsuario,
+  ) {
     // Obtener usuario del request (JWT)
     const aprobadoPorId = req.user.id;
 
@@ -556,7 +596,7 @@ export class LoansController {
   async rejectLoan(
     @Param('id') id: string,
     @Body() body: { motivo?: string },
-    @Request() req,
+    @Request() req: RequestConUsuario,
   ) {
     // Obtener usuario del request (JWT)
     const rechazadoPorId = req.user.id;
@@ -593,7 +633,7 @@ export class LoansController {
     description: 'ID del préstamo a eliminar',
     example: 'cl67qg5e80001c8ibw3d2q7p8',
   })
-  async deleteLoan(@Param('id') id: string, @Request() req) {
+  async deleteLoan(@Param('id') id: string, @Request() req: RequestConUsuario) {
     // Obtener usuario del request (JWT)
     const userId = req.user.id;
 
@@ -631,8 +671,11 @@ export class LoansController {
   })
   async updateLoan(
     @Param('id') id: string,
-    @Body() updateData: any,
-    @Request() req,
+    // Antes esto era `updateData: any`, y sin un DTO el ValidationPipe global no tiene
+    // contra que validar: este endpoint aceptaba cualquier cuerpo y lo pasaba al servicio
+    // tal cual. `UpdateLoanDto` existia desde antes y NO tenia un solo consumidor.
+    @Body() updateData: UpdateLoanDto,
+    @Request() req: RequestConUsuario,
   ) {
     const userId = req.user.id;
     return this.loansService.updateLoan(id, updateData, userId);
@@ -670,7 +713,10 @@ export class LoansController {
     description: 'ID del préstamo a restaurar',
     example: 'cl67qg5e80001c8ibw3d2q7p8',
   })
-  async restoreLoan(@Param('id') id: string, @Request() req) {
+  async restoreLoan(
+    @Param('id') id: string,
+    @Request() req: RequestConUsuario,
+  ) {
     // Obtener usuario del request (JWT)
     const userId = req.user.id;
 
@@ -713,50 +759,12 @@ export class LoansController {
   async archiveLoan(
     @Param('id') id: string,
     @Body() body: { motivo: string; notas?: string },
-    @Request() req,
+    @Request() req: RequestConUsuario,
   ) {
     return this.loansService.archiveLoan(id, {
       motivo: body.motivo,
       notas: body.notas,
       archivarPorId: req.user.id,
-    });
-  }
-
-  @Patch(':id/cuotas/:numeroCuota/reprogramar')
-  @Roles(
-    RolUsuario.SUPER_ADMINISTRADOR,
-    RolUsuario.ADMIN,
-    RolUsuario.COORDINADOR,
-    RolUsuario.SUPERVISOR,
-  )
-  @ApiOperation({ summary: 'Reprogramar fecha de vencimiento de una cuota' })
-  @ApiParam({ name: 'id', description: 'ID del préstamo' })
-  @ApiParam({
-    name: 'numeroCuota',
-    description: 'Número de la cuota a reprogramar',
-  })
-  @ApiBody({ type: ReprogramarCuotaDto })
-  @ApiResponse({
-    status: HttpStatus.OK,
-    description: 'Cuota reprogramada exitosamente',
-  })
-  @ApiResponse({
-    status: HttpStatus.NOT_FOUND,
-    description: 'Préstamo o cuota no encontrada',
-  })
-  @ApiResponse({
-    status: HttpStatus.BAD_REQUEST,
-    description: 'Datos inválidos',
-  })
-  async reprogramarCuota(
-    @Param('id') id: string,
-    @Param('numeroCuota', ParseIntPipe) numeroCuota: number,
-    @Body() reprogramarDto: ReprogramarCuotaDto,
-    @Request() req,
-  ) {
-    return this.loansService.reprogramarCuota(id, numeroCuota, {
-      ...reprogramarDto,
-      reprogramadoPorId: req.user.id,
     });
   }
 
@@ -926,7 +934,7 @@ export class LoansController {
           saldoPendiente: Number(prestamo.saldoPendiente),
           asignadoPor: nombreUsuario,
           rolAsignador: usuario?.rol,
-        } as any,
+        },
       },
     });
 
@@ -1097,7 +1105,7 @@ export class LoansController {
           comentarios: body.comentarios,
           gestionadoPor: nombreUsuario,
           rolGestor: usuario?.rol,
-        } as any,
+        },
       },
     });
 
@@ -1137,14 +1145,14 @@ export class LoansController {
     ];
     if (usuario && rolesAutoAprobacion.includes(usuario.rol)) {
       try {
-        if (tipoAprobacion === ('BAJA_POR_PERDIDA' as any)) {
+        if (tipoAprobacion === 'BAJA_POR_PERDIDA') {
           await this.prisma.aprobacion.update({
             where: { id: aprobacion.id },
             data: {
               estado: 'APROBADO',
               aprobadoPorId: usuarioId,
               revisadoEn: new Date(),
-            } as any,
+            },
           });
           await this.loansService.archiveLoan(prestamoId, {
             motivo: body.comentarios || 'Baja por pérdida (auto-aprobado)',
@@ -1263,29 +1271,6 @@ export class LoansController {
       idempotencyKey: body.idempotencyKey,
       solicitadoPorId: usuarioId,
     });
-  }
-
-  @Get('reprogramaciones-pendientes')
-  @Roles(
-    RolUsuario.SUPER_ADMINISTRADOR,
-    RolUsuario.ADMIN,
-    RolUsuario.COORDINADOR,
-    RolUsuario.SUPERVISOR,
-  )
-  @ApiOperation({ summary: 'Listar solicitudes de reprogramación pendientes' })
-  @ApiQuery({
-    name: 'estado',
-    required: false,
-    enum: ['PENDIENTE', 'APROBADO', 'RECHAZADO', 'TODOS'],
-  })
-  async listarReprogramacionesPendientes(
-    @Query('estado') estado: string | undefined,
-    @Request() req: RequestConUsuario,
-  ) {
-    return this.loansService.listarReprogramacionesPendientes(
-      estado,
-      req?.user,
-    );
   }
 
   @Patch('reprogramaciones/:id/aprobar')

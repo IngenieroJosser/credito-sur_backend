@@ -43,6 +43,16 @@ export class CuentaVencidaDto {
   @IsNumber()
   montoOriginal: number;
 
+  /**
+   * Intereses de mora acumulados. El servicio los calcula y los devuelve
+   * (reports.service, obtenerCuentasVencidas), y la plantilla del export los
+   * exige. Faltaban aqui, asi que el servicio los colaba con un
+   * `as CuentaVencidaDto & { interesesMora: number }`.
+   */
+  @ApiProperty()
+  @IsNumber()
+  interesesMora: number;
+
   @ApiProperty()
   @IsString()
   ruta: string;

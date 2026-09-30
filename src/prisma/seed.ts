@@ -341,7 +341,7 @@ async function crearCatalogoContable() {
   ] as const;
 
   for (const acc of accounts) {
-    await (prisma as any).account.upsert({
+    await prisma.account.upsert({
       where: { code: acc.code },
       update: {
         name: acc.name,

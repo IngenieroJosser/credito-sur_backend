@@ -3,6 +3,7 @@
  * Extraídas de loans.service.ts como funciones puras reutilizables.
  */
 import { FrecuenciaPago } from '@prisma/client';
+import { getBogotaDayKey, getBogotaWeekday } from '../../utils/date-utils';
 
 // ── Tipos ──────────────────────────────────────────────────────────────────────
 
@@ -155,27 +156,122 @@ export function calcularInteresSimple(
 }
 
 // ── Fecha de vencimiento por cuota ─────────────────────────────────────────────
+//
+// Estas dos funciones vivian como metodos privados de LoansService, y este
+// archivo tenia ademas una tercera version que no saltaba domingos ni manejaba la
+// zona de Bogota, que nadie importaba. approvals.service.ts tenia una cuarta,
+// declarada "duplicada brevemente aqui para el tx". Con cuatro copias, un credito
+// recibia fechas distintas segun por donde pasara. Ahora hay una sola y las dos
+// rutas (crear el prestamo y aprobarlo con cambios) llaman a esta.
+
+/**
+ * Avanza la fecha al siguiente día hábil si cae en domingo.
+ * Para pagos DIARIO: si cae en domingo, se mueve al lunes siguiente.
+ * Para SEMANAL/QUINCENAL: si cae en domingo, se mueve al sábado anterior.
+ * Para MENSUAL: si cae en domingo, se mueve al lunes siguiente.
+ */
+export function saltarDomingo(fecha: Date, frecuencia: FrecuenciaPago): Date {
+  // 0 = Domingo (en Bogotá)
+  if (getBogotaWeekday(fecha) !== 0) return fecha;
+
+  const key = getBogotaDayKey(fecha);
+  if (!key) return fecha;
+
+  const shiftDays = (days: number) =>
+    new Date(`${key}T12:00:00-05:00`).getTime() + days * 86_400_000;
+
+  // Para diario/mensual: mover al lunes (siguiente día hábil)
+  if (
+    frecuencia === FrecuenciaPago.DIARIO ||
+    frecuencia === FrecuenciaPago.MENSUAL
+  ) {
+    return new Date(shiftDays(1));
+  }
+
+  // Para semanal/quincenal: mover al sábado (día hábil anterior)
+  return new Date(shiftDays(-1));
+}
 
 export function calcularFechaVencimiento(
   fechaBase: Date,
   numeroCuota: number,
   frecuencia: FrecuenciaPago,
 ): Date {
-  const fecha = new Date(fechaBase);
+  const baseKey = getBogotaDayKey(fechaBase);
+  if (!baseKey) return fechaBase;
+
   const offset = Math.max(0, numeroCuota - 1);
+
+  const toNoonBogota = (key: string) => new Date(`${key}T12:00:00-05:00`);
+
+  const addDaysSkippingSunday = (
+    startKey: string,
+    daysToAdd: number,
+  ): string => {
+    let key = startKey;
+    let added = 0;
+    while (added < daysToAdd) {
+      const next = new Date(toNoonBogota(key).getTime() + 86_400_000);
+      const nextKey = getBogotaDayKey(next);
+      if (!nextKey) break;
+      key = nextKey;
+      if (getBogotaWeekday(next) !== 0) added++;
+    }
+    return key;
+  };
+
+  const addDaysPlain = (startKey: string, daysToAdd: number): string => {
+    const next = new Date(
+      toNoonBogota(startKey).getTime() + daysToAdd * 86_400_000,
+    );
+    return getBogotaDayKey(next);
+  };
+
+  const addMonths = (startKey: string, monthsToAdd: number): string => {
+    const [yStr, mStr, dStr] = startKey.split('-');
+    const y = Number(yStr);
+    const m = Number(mStr);
+    const d = Number(dStr);
+    if (!y || !m || !d) return startKey;
+
+    const totalMonths = m - 1 + monthsToAdd;
+    const newY = y + Math.floor(totalMonths / 12);
+    const newM0 = ((totalMonths % 12) + 12) % 12;
+    const newM = newM0 + 1;
+
+    // Clamp del día al último del mes
+    const firstNextMonth =
+      newM === 12
+        ? new Date(`${newY + 1}-01-01T12:00:00-05:00`)
+        : new Date(`${newY}-${padStart2(newM + 1)}-01T12:00:00-05:00`);
+    const lastDay = new Date(firstNextMonth.getTime() - 86_400_000);
+    const lastKey = getBogotaDayKey(lastDay);
+    const lastDayNum = Number(lastKey.split('-')[2] || '0');
+    const safeDay = Math.min(d, lastDayNum || d);
+    return `${newY}-${padStart2(newM)}-${padStart2(safeDay)}`;
+  };
+
+  const padStart2 = (n: number) => String(n).padStart(2, '0');
+
+  let targetKey = baseKey;
+
   switch (frecuencia) {
     case FrecuenciaPago.DIARIO:
-      fecha.setDate(fecha.getDate() + offset);
+      targetKey = addDaysSkippingSunday(baseKey, offset);
       break;
     case FrecuenciaPago.SEMANAL:
-      fecha.setDate(fecha.getDate() + offset * 7);
+      targetKey = addDaysPlain(baseKey, offset * 7);
       break;
     case FrecuenciaPago.QUINCENAL:
-      fecha.setDate(fecha.getDate() + offset * 15);
+      targetKey = addDaysPlain(baseKey, offset * 15);
       break;
     case FrecuenciaPago.MENSUAL:
-      fecha.setMonth(fecha.getMonth() + offset);
+      targetKey = addMonths(baseKey, offset);
       break;
+    default:
+      targetKey = baseKey;
   }
-  return fecha;
+
+  // devolver un instante al mediodía Bogotá; el consumidor compara por día con helpers Bogotá
+  return saltarDomingo(toNoonBogota(targetKey), frecuencia);
 }

@@ -196,7 +196,10 @@ export class UploadController {
 
     const actor = req.user || {};
     const rol = String(actor.rol || '').toUpperCase();
-    const rolesAmplios = [
+    // `readonly string[]` a proposito: `rol` es un `string` (viene de
+    // `String(actor.rol).toUpperCase()`) y un arreglo de enum no acepta buscar un string
+    // en `includes`. Eso era lo que se casteaba.
+    const rolesAmplios: readonly string[] = [
       RolUsuario.SUPER_ADMINISTRADOR,
       RolUsuario.ADMIN,
       RolUsuario.COORDINADOR,
@@ -206,7 +209,7 @@ export class UploadController {
 
     let permitido =
       media.esPublico ||
-      rolesAmplios.includes(rol as any) ||
+      rolesAmplios.includes(rol) ||
       (media.usuarioId && media.usuarioId === actor.id);
 
     if (!permitido && media.clienteId) {
@@ -232,7 +235,7 @@ export class UploadController {
             : null;
       if (scope) {
         const cliente = await this.prisma.cliente.findFirst({
-          where: { id: media.clienteId, ...(scope as any) },
+          where: { id: media.clienteId, ...scope },
           select: { id: true },
         });
         permitido = !!cliente;

@@ -12,7 +12,7 @@ describe('UploadController.serveFile: quién puede ver un archivo', () => {
   const hacerRes = () => {
     const res: any = {
       code: 0,
-      body: null as any,
+      body: null,
       enviado: null as string | null,
       status(c: number) {
         this.code = c;

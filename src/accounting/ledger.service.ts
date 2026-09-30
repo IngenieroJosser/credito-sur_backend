@@ -4,24 +4,24 @@ import {
   NotFoundException,
   Logger,
 } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { Prisma } from '@prisma/client';
+import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
+import { Prisma, ReferenceTypeContable } from '@prisma/client';
 
 // Definición local del enum para desacoplar del re-export del cliente generado
-export type ReferenceTypeContable =
-  | 'PAGO'
-  | 'DESEMBOLSO'
-  | 'GASTO'
-  | 'VENTA_ARTICULO'
-  | 'BASE'
-  | 'CONSOLIDACION'
-  | 'ARQUEO'
-  | 'ABONO_DEUDA'
-  | 'APERTURA'
-  | 'AJUSTE'
-  | 'INGRESO'
-  | 'EGRESO'
-  | 'CASTIGO_CARTERA';
+/**
+ * Los tipos de referencia contable. Se REEXPORTA el enum de Prisma en vez de mantener la
+ * lista a mano.
+ *
+ * Antes era una union de trece literales escrita aqui, con el mismo nombre que el enum del
+ * esquema. Las migraciones cuentan la historia: `VENTA_ARTICULO`, `CASTIGO_CARTERA`,
+ * `INGRESO` y `EGRESO` se agregaron en cuatro migraciones distintas, y cada vez habia que
+ * acordarse de actualizar tambien esta copia. Se comprobo que hoy coinciden los trece.
+ *
+ * Reexportarlo tiene otra ventaja concreta: un enum existe en tiempo de ejecucion, asi que
+ * se puede validar un filtro con `Object.values(...)`. Con la union de literales no se
+ * podia, y por eso el filtro de `GET /accounting/ledger` pasaba el texto crudo a Prisma.
+ */
+export { ReferenceTypeContable };
 
 export interface JournalLineDto {
   accountCode: string;
@@ -150,7 +150,7 @@ export class LedgerService {
    * Para operaciones que SUMAN saldo (pagos, ingresos), el delta positivo no requiere validación.
    */
   private async applyCajaDeltaSafely(
-    tx: Prisma.TransactionClient,
+    tx: TransaccionPrisma,
     cajaId: string,
     delta: number,
   ) {
@@ -226,7 +226,7 @@ export class LedgerService {
    * Usado por servicios externos que necesitan actualizar caja con validación de saldo.
    */
   async aplicarDeltaCajaSeguro(
-    tx: Prisma.TransactionClient,
+    tx: TransaccionPrisma,
     cajaId: string,
     delta: number,
   ) {
@@ -244,7 +244,7 @@ export class LedgerService {
    */
   async registrarAsiento(
     dto: RegistrarAsientoDto,
-    externalTx?: Prisma.TransactionClient,
+    externalTx?: TransaccionPrisma,
   ) {
     const {
       referenceType,
@@ -327,7 +327,7 @@ export class LedgerService {
 
     // 3. Función de escritura (tipada como any para compatibilidad con el
     //    PrismaClient extendido que usa PrismaService internamente)
-    const execute = async (tx: Prisma.TransactionClient) => {
+    const execute = async (tx: TransaccionPrisma) => {
       // a. Crear el encabezado del asiento con sus líneas
       const journalEntry = await tx.journalEntry.create({
         data: {
@@ -406,10 +406,7 @@ export class LedgerService {
    *          3.1   Ingresos por Intereses
    *          3.2   Ingresos por Mora
    */
-  async registrarPago(
-    params: RegistrarPagoParams,
-    tx?: Prisma.TransactionClient,
-  ) {
+  async registrarPago(params: RegistrarPagoParams, tx?: TransaccionPrisma) {
     const montoTotal =
       params.montoCapital + params.montoInteres + params.montoMora;
     const accountCodeCaja =
@@ -458,7 +455,7 @@ export class LedgerService {
    */
   async registrarDesembolso(
     params: RegistrarDesembolsoParams,
-    tx?: Prisma.TransactionClient,
+    tx?: TransaccionPrisma,
   ) {
     return this.registrarAsiento(
       {
@@ -489,10 +486,7 @@ export class LedgerService {
    * Débito:  4.x.x Cuenta de Gasto (consume patrimonio)
    * Crédito: 1.2.1 Caja Ruta       (sale el efectivo)
    */
-  async registrarGasto(
-    params: RegistrarGastoParams,
-    tx?: Prisma.TransactionClient,
-  ) {
+  async registrarGasto(params: RegistrarGastoParams, tx?: TransaccionPrisma) {
     return this.registrarAsiento(
       {
         referenceType: 'GASTO',
@@ -528,7 +522,7 @@ export class LedgerService {
    */
   async registrarVentaArticulo(
     params: RegistrarVentaArticuloParams,
-    tx?: Prisma.TransactionClient,
+    tx?: TransaccionPrisma,
   ) {
     const precioVenta = Number(params.precioVenta || 0);
     const costoArticulo = Number(params.costoArticulo || 0);
@@ -601,7 +595,7 @@ export class LedgerService {
    */
   async registrarConsolidacion(
     params: RegistrarConsolidacionParams,
-    tx?: Prisma.TransactionClient,
+    tx?: TransaccionPrisma,
   ) {
     const cuentaDestino = params.accountCodeDestino ?? '1.1.1';
     return this.registrarAsiento(
@@ -636,7 +630,7 @@ export class LedgerService {
    */
   async registrarArqueoDescuadre(
     params: RegistrarArqueoDescuadreParams,
-    tx?: Prisma.TransactionClient,
+    tx?: TransaccionPrisma,
   ) {
     const { diferencia } = params;
     const abs = Math.abs(diferencia);
@@ -683,7 +677,7 @@ export class LedgerService {
    */
   async registrarAbonoDeuda(
     params: RegistrarAbonoDeudaParams,
-    tx?: Prisma.TransactionClient,
+    tx?: TransaccionPrisma,
   ) {
     return this.registrarAsiento(
       {
@@ -722,12 +716,12 @@ export class LedgerService {
     saldo: number;
     nature: string;
   }> {
-    const account = await (this.prisma as any).account.findUniqueOrThrow({
+    const account = await this.prisma.account.findUniqueOrThrow({
       where: { code: accountCode },
       select: { nature: true },
     });
 
-    const result = await (this.prisma as any).journalLine.aggregate({
+    const result = await this.prisma.journalLine.aggregate({
       where: { accountCode },
       _sum: { debitAmount: true, creditAmount: true },
     });
@@ -754,15 +748,13 @@ export class LedgerService {
     totalCreditos: number;
     diferencia: number;
   }> {
-    const result = await (this.prisma as any).journalLine.aggregate({
+    const result = await this.prisma.journalLine.aggregate({
       _sum: { debitAmount: true, creditAmount: true },
     });
 
     const totalDebitos = result._sum.debitAmount ?? new Prisma.Decimal(0);
     const totalCreditos = result._sum.creditAmount ?? new Prisma.Decimal(0);
-    const diferencia = (totalDebitos as Prisma.Decimal).sub(
-      totalCreditos as Prisma.Decimal,
-    );
+    const diferencia = totalDebitos.sub(totalCreditos);
 
     if (!diferencia.isZero()) {
       this.logger.error(
@@ -793,7 +785,7 @@ export class LedgerService {
    * Devuelve los ids de las reversas que escribió.
    */
   async reversarAsientos(
-    tx: Prisma.TransactionClient,
+    tx: TransaccionPrisma,
     params: {
       referenceIds: string[];
       referenceTypes: ReferenceTypeContable[];
@@ -807,7 +799,7 @@ export class LedgerService {
     const originales = await tx.journalEntry.findMany({
       where: {
         referenceId: { in: referenceIds },
-        referenceType: { in: referenceTypes as any[] },
+        referenceType: { in: referenceTypes },
       },
       include: { lines: true },
     });
@@ -831,7 +823,7 @@ export class LedgerService {
       }
 
       const lineas = original.lines
-        .map((line: any) => {
+        .map((line) => {
           const debito = Number(line.debitAmount || 0);
           const credito = Number(line.creditAmount || 0);
 
@@ -848,7 +840,7 @@ export class LedgerService {
           };
         })
         .filter(
-          (l: any) =>
+          (l) =>
             Number(l.debitAmount || 0) > 0 || Number(l.creditAmount || 0) > 0,
         );
 
@@ -885,8 +877,7 @@ export class LedgerService {
    * Solo lee. No escribe ni corrige nada.
    */
   async revisarIntegridad() {
-    const q = (sql: string): Promise<any[]> =>
-      (this.prisma as any).$queryRawUnsafe(sql);
+    const q = (sql: string): Promise<any[]> => this.prisma.$queryRawUnsafe(sql);
     const n = (v: any) => Number(v ?? 0);
 
     const [global, cajas, descuadrados, centavos, negativas, inventario] =
@@ -1015,7 +1006,7 @@ export class LedgerService {
     }> = [];
 
     for (const caja of cajas) {
-      const linesSum = await (this.prisma as any).journalLine.aggregate({
+      const linesSum = await this.prisma.journalLine.aggregate({
         where: { cajaId: caja.id },
         _sum: { debitAmount: true, creditAmount: true, cajaDelta: true },
       });
@@ -1026,10 +1017,10 @@ export class LedgerService {
       // Las líneas guardadas desde que existe `cajaDelta` dicen exactamente
       // cuánto movieron la caja. Antes había que deducirlo como
       // débitos - créditos, que solo es correcto para cuentas de activo.
-      const conDelta = await (this.prisma as any).journalLine.count({
+      const conDelta = await this.prisma.journalLine.count({
         where: { cajaId: caja.id, cajaDelta: { not: null } },
       });
-      const total = await (this.prisma as any).journalLine.count({
+      const total = await this.prisma.journalLine.count({
         where: { cajaId: caja.id },
       });
 
@@ -1068,7 +1059,7 @@ export class LedgerService {
    */
   async registrarBajaCartera(
     params: RegistrarBajaCarteraParams,
-    tx?: Prisma.TransactionClient,
+    tx?: TransaccionPrisma,
   ) {
     return this.registrarAsiento(
       {
@@ -1098,7 +1089,7 @@ export class LedgerService {
    */
   async registrarAjusteCartera(
     params: RegistrarAjusteCarteraParams,
-    tx?: Prisma.TransactionClient,
+    tx?: TransaccionPrisma,
   ) {
     const esIncremento = params.montoDiferencia > 0;
     const montoAbs = Math.abs(params.montoDiferencia);

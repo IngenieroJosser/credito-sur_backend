@@ -76,9 +76,15 @@ export async function generarExcelAuditoria(
 
   // Encabezados
   const headerRow = ws.getRow(4);
-  ws.columns.forEach((col: any, i: number) => {
+  ws.columns.forEach((col, i: number) => {
     const cell = headerRow.getCell(i + 1);
-    cell.value = col.header;
+    // `header` en ExcelJS es `string | string[]`: admite encabezados de
+    // varias filas. Aqui siempre son cadenas, pero se trata el array de
+    // forma explicita para no escribir "[object Object]" el dia que alguien
+    // use esa forma. Antes el callback iba con `col: any` y no se veia.
+    cell.value = Array.isArray(col.header)
+      ? col.header.join(' ')
+      : (col.header ?? '');
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     cell.fill = {
       type: 'pattern',

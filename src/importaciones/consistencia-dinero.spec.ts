@@ -11,6 +11,7 @@ import {
   aplicarAvanceHistorico,
 } from './avance-historico';
 import { pesos } from '../common/dinero.util';
+import { mensajeDeError } from '../common/error.util';
 import { LedgerService } from '../accounting/ledger.service';
 
 /**
@@ -416,7 +417,7 @@ describe('El crédito de artículo cierra contra el precio', () => {
           const creado: any[] = [];
           const tx = {
             journalEntry: {
-              create: jest.fn().mockImplementation((argumento: any) => {
+              create: jest.fn().mockImplementation((argumento) => {
                 creado.push(argumento);
                 return { id: 'journal-1', lines: [] };
               }),
@@ -429,7 +430,7 @@ describe('El crédito de artículo cierra contra el precio', () => {
             },
           };
           const prisma = {
-            $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
+            $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
           };
           const ledger = new LedgerService(prisma as any);
 
@@ -445,9 +446,9 @@ describe('El crédito de artículo cierra contra el precio', () => {
               accountCodeCaja: inicial > 0 ? '1.1.1' : undefined,
               createdBy: 'admin-1',
             });
-          } catch (error: any) {
+          } catch (error) {
             fallos.push(
-              `${donde} — el asiento fue rechazado: ${error.message}`,
+              `${donde} — el asiento fue rechazado: ${mensajeDeError(error)}`,
             );
             continue;
           }

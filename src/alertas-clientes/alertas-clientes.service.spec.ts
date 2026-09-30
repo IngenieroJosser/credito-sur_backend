@@ -148,7 +148,7 @@ const makePrisma = () => {
         estado: 'ACTIVA',
       }),
     },
-    $transaction: jest.fn().mockImplementation((callback: any) => callback(tx)),
+    $transaction: jest.fn().mockImplementation((callback) => callback(tx)),
     _tx: tx,
   };
 };

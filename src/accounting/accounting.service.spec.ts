@@ -6,6 +6,27 @@ import {
 } from '@prisma/client';
 import { AccountingService } from './accounting.service';
 
+/**
+ * Exige que el cierre haya devuelto la alerta de sobrante antes de leerla.
+ *
+ * El metodo devuelve varias formas segun lo que encuentre, y solo una trae
+ * `alertaSobrante`. La prueba la leia directo y compilaba porque el cliente de
+ * Prisma estaba tipado como `any` y con el todo el retorno.
+ */
+const alertaSobranteDe = (resultado: unknown) => {
+  const alerta =
+    resultado && typeof resultado === 'object' && 'alertaSobrante' in resultado
+      ? (resultado as { alertaSobrante?: { candidatos: unknown[] } })
+          .alertaSobrante
+      : undefined;
+  if (!alerta) {
+    throw new Error(
+      `Se esperaba una alerta de sobrante y llego: ${JSON.stringify(resultado)}`,
+    );
+  }
+  return alerta;
+};
+
 const mockNotifications = {
   notifyApprovers: jest.fn().mockResolvedValue(undefined),
   notifyCoordinator: jest.fn().mockResolvedValue(undefined),
@@ -74,7 +95,7 @@ function buildPrismaMock(overrides: Record<string, any> = {}) {
   };
 
   return {
-    $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
+    $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
     _tx: tx,
     journalLine: {
       aggregate: jest.fn().mockResolvedValue({
@@ -224,11 +245,11 @@ describe('AccountingService financial ledger controls', () => {
       },
     });
 
-    const result = (await makeService(prisma).getMovimientosLedger({
+    const result = await makeService(prisma).getMovimientosLedger({
       cajaId: 'caja-oficina',
       fechaInicio: '2026-05-09',
       fechaFin: '2026-05-09',
-    })) as any;
+    });
 
     const where = prisma.journalEntry.findMany.mock.calls[0][0].where;
     expect(where.createdAt.gte.toISOString()).toBe('2026-05-09T05:00:00.000Z');
@@ -278,10 +299,10 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { saldoPendiente: 650000 } }) // cartera activa real
       .mockResolvedValue({ _sum: { saldoPendiente: 0 } }); // provisiones
 
-    const result = (await makeService(prisma).getResumenFinanciero(
+    const result = await makeService(prisma).getResumenFinanciero(
       '2026-05-08',
       '2026-05-08',
-    )) as any;
+    );
 
     expect(prisma.journalLine.aggregate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -748,10 +769,10 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { saldoPendiente: 650000 } }) // cartera activa real
       .mockResolvedValue({ _sum: { saldoPendiente: 0 } }); // provisiones
 
-    const result = (await makeService(prisma).getResumenFinanciero(
+    const result = await makeService(prisma).getResumenFinanciero(
       '2026-05-08',
       '2026-05-08',
-    )) as any;
+    );
 
     expect(prisma.journalLine.aggregate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -805,10 +826,10 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { saldoPendiente: 650000 } }) // cartera activa real
       .mockResolvedValue({ _sum: { saldoPendiente: 0 } }); // provisiones
 
-    const result = (await makeService(prisma).getResumenFinanciero(
+    const result = await makeService(prisma).getResumenFinanciero(
       '2026-05-08',
       '2026-05-08',
-    )) as any;
+    );
 
     expect(prisma.journalLine.aggregate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -878,10 +899,10 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { saldoPendiente: 650000 } }) // cartera activa real
       .mockResolvedValue({ _sum: { saldoPendiente: 0 } }); // provisiones
 
-    const result = (await makeService(prisma).getResumenFinanciero(
+    const result = await makeService(prisma).getResumenFinanciero(
       '2026-05-09',
       '2026-05-09',
-    )) as any;
+    );
 
     expect(prisma.journalLine.aggregate).toHaveBeenNthCalledWith(
       2,
@@ -938,10 +959,10 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { saldoPendiente: 650000 } }) // cartera activa real
       .mockResolvedValue({ _sum: { saldoPendiente: 0 } }); // provisiones
 
-    const result = (await makeService(prisma).getResumenFinanciero(
+    const result = await makeService(prisma).getResumenFinanciero(
       '2026-05-08',
       '2026-05-08',
-    )) as any;
+    );
 
     expect(result.cuotaInicialHoy).toBe(50000);
     expect(result.porcentajeCuotaInicialVsAyer).toBe(100);
@@ -984,10 +1005,10 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { saldoPendiente: 650000 } }) // cartera activa real
       .mockResolvedValue({ _sum: { saldoPendiente: 0 } }); // provisiones
 
-    const result = (await makeService(prisma).getResumenFinanciero(
+    const result = await makeService(prisma).getResumenFinanciero(
       '2026-05-09',
       '2026-05-09',
-    )) as any;
+    );
 
     expect(result.cuotaInicialHoy).toBe(0);
   });
@@ -1036,10 +1057,10 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { saldoPendiente: 650000 } }) // cartera activa real
       .mockResolvedValue({ _sum: { saldoPendiente: 0 } }); // provisiones
 
-    const result = (await makeService(prisma).getResumenFinanciero(
+    const result = await makeService(prisma).getResumenFinanciero(
       '2026-05-09',
       '2026-05-09',
-    )) as any;
+    );
 
     expect(result.ingresosArticulosHoy).toBe(0);
     expect(result.costosVentasHoy).toBe(0);
@@ -1064,7 +1085,7 @@ describe('AccountingService financial ledger controls', () => {
   it('clasifica egresos de deuda de cobrador como cuenta por cobrar y no como gasto', async () => {
     const prisma = buildPrismaMock();
     const service = makeService(prisma);
-    (service as any).getSaldoDisponibleRuta = jest.fn().mockResolvedValue({
+    service.getSaldoDisponibleRuta = jest.fn().mockResolvedValue({
       saldoDisponible: 100000,
       recaudoDelDia: 100000,
       gastosDelDia: 0,
@@ -1334,8 +1355,8 @@ describe('AccountingService financial ledger controls', () => {
       'admin-1',
     );
 
-    expect(result.alertaSobrante.candidatos).toHaveLength(1);
-    expect(result.alertaSobrante.candidatos[0]).toMatchObject({
+    expect(alertaSobranteDe(result).candidatos).toHaveLength(1);
+    expect(alertaSobranteDe(result).candidatos[0]).toMatchObject({
       clienteId: 'cliente-1',
       cliente: 'Ana Rojas',
       prestamoId: 'prestamo-1',
@@ -1375,12 +1396,12 @@ describe('AccountingService financial ledger controls', () => {
       },
     });
 
-    const result = await (makeService(prisma) as any).migrarHistoricoLedger({
+    const result = await makeService(prisma).migrarHistoricoLedger({
       dryRun: true,
       userId: 'admin-1',
     });
 
-    expect((prisma.transaccion as any).findMany).toHaveBeenCalledWith(
+    expect(prisma.transaccion.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           fechaTransaccion: { lt: cutoff },
@@ -1449,7 +1470,7 @@ describe('AccountingService financial ledger controls', () => {
       cajaId: 'caja-1',
     });
 
-    expect((prisma as any).journalEntry.findMany).toHaveBeenCalledWith(
+    expect(prisma.journalEntry.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           lines: { some: { cajaId: 'caja-1' } },
@@ -1515,7 +1536,7 @@ describe('AccountingService financial ledger controls', () => {
       cajaId: 'caja-1',
     });
 
-    expect((prisma as any).pago.findMany).toHaveBeenCalledWith({
+    expect(prisma.pago.findMany).toHaveBeenCalledWith({
       where: {
         id: { in: ['pago-regularizado-1'] },
         origenGestion: 'CIERRE_PENDIENTE',

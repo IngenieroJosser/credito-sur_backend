@@ -17,6 +17,7 @@ import { AuditService } from '../audit/audit.service';
 import { Prisma } from '@prisma/client';
 import { generarPDFClientes } from '../templates/exports/clientes.template';
 import { generarExcelClientesCreditosImportable } from '../templates/exports/importables.template';
+import { unoDeLosPermitidos } from '../common/texto.util';
 
 @Injectable()
 export class ClientsService {
@@ -154,10 +155,64 @@ export class ClientsService {
     return this.prisma.cliente.findUnique({
       where: { id },
       include: {
-        prestamos: true,
-        pagos: true,
+        /**
+         * `prestamos: true` trae las columnas del credito pero NO sus cuotas, y el
+         * portal del cliente las necesita: contaba las pagadas y las vencidas sobre
+         * `p.cuotas`, que llegaba vacio, asi que mostraba 0 cuotas pagadas en todos
+         * los creditos.
+         *
+         * Se piden con `select` acotado a los tres campos que ese calculo usa
+         * (`isCuotaNoPagada` mira `estado`, y `resolveFechaEfectivaCuota` mira la
+         * fecha y la prorroga). Es un cliente, no una lista: son sus dos o tres
+         * creditos, no toda la cartera.
+         */
+        prestamos: {
+          include: {
+            cuotas: {
+              select: {
+                numeroCuota: true,
+                estado: true,
+                fechaVencimiento: true,
+                fechaVencimientoProrroga: true,
+                // La suma de mora acumulada del portal sale de aqui.
+                montoInteresMora: true,
+              },
+              orderBy: { numeroCuota: 'asc' },
+            },
+          },
+        },
+        /**
+         * Lo mismo con los pagos: `pagos: true` no trae `detalles`, y el vinculo
+         * pago->cuota vive ahi (`model Pago` no tiene columna `cuotaId`). Sin esto el
+         * historial del portal mostraba "cuota 1" en TODOS los pagos.
+         */
+        pagos: {
+          include: {
+            detalles: {
+              select: {
+                cuota: { select: { numeroCuota: true } },
+              },
+            },
+          },
+        },
         archivos: {
           where: { estado: 'ACTIVO' },
+        },
+        /**
+         * La ruta asignada. El listado (`getAllClients`) ya la incluia y de ahi
+         * componia `rutaNombre`, pero el detalle no, y el portal del cliente la lee
+         * del DETALLE: `asignacionesRuta?.[0]?.ruta?.nombre` salia `undefined` y la
+         * pantalla mostraba "Sin Ruta" en todos los clientes.
+         *
+         * Se usa la misma forma que el listado para que las dos respuestas digan lo
+         * mismo: solo la asignacion activa, y de la ruta solo lo que se muestra.
+         */
+        asignacionesRuta: {
+          where: { activa: true },
+          include: {
+            ruta: { select: { id: true, nombre: true, codigo: true } },
+          },
+          take: 1,
         },
       },
     });
@@ -240,7 +295,7 @@ export class ClientsService {
       }
 
       // Crear nuevos archivos
-      const nuevosArchivos = archivos.map((archivo: any) => {
+      const nuevosArchivos = archivos.map((archivo) => {
         // Asegurar que la URL sea correcta
         const url = archivo.url || archivo.path || archivo.ruta;
         const urlFinal =
@@ -269,8 +324,11 @@ export class ClientsService {
           nombreOriginal: archivo.nombreOriginal,
           nombreAlmacenamiento:
             archivo.nombreAlmacenamiento || archivo.nombreOriginal,
-          ruta: archivo.ruta || archivo.path,
-          url: urlFinal || urlDerivada,
+          // Prisma exige texto: si las dos fuentes venian vacias se mandaba
+          // undefined y la insercion fallaba. Los otros dos sitios que crean
+          // multimedia ya ponian '' por defecto.
+          ruta: archivo.ruta || archivo.path || '',
+          url: urlFinal || urlDerivada || '',
           tamanoBytes: archivo.tamanoBytes || 0,
           subidoPorId: archivo.subidoPorId || clienteActualizado.creadoPorId,
           estado: 'ACTIVO' as const,
@@ -403,16 +461,21 @@ export class ClientsService {
           ? this.creditCreationClientScope(actor)
           : this.collectorClientScope(actor);
 
-      const where: any = {
+      const where: Prisma.ClienteWhereInput = {
         eliminadoEn: null, // Solo clientes no eliminados
         ...clientScope,
       };
 
       // Filtro por nivel de riesgo
       if (nivelRiesgo !== 'all') {
-        const nivelesValidos = Object.values(NivelRiesgo);
-        if (nivelesValidos.includes(nivelRiesgo as NivelRiesgo)) {
-          where.nivelRiesgo = nivelRiesgo;
+        // `unoDeLosPermitidos` comprueba Y estrecha. El `includes(x as NivelRiesgo)` de
+        // antes validaba pero no estrechaba nada, asi que al asignar seguia siendo texto.
+        const nivel = unoDeLosPermitidos(
+          nivelRiesgo,
+          Object.values(NivelRiesgo),
+        );
+        if (nivel) {
+          where.nivelRiesgo = nivel;
         } else {
           this.logger.warn(`Nivel de riesgo inválido recibido: ${nivelRiesgo}`);
         }
@@ -436,31 +499,31 @@ export class ClientsService {
           {
             dni: {
               contains: searchTerm,
-              mode: 'insensitive' as any,
+              mode: 'insensitive',
             },
           },
           {
             nombres: {
               contains: searchTerm,
-              mode: 'insensitive' as any,
+              mode: 'insensitive',
             },
           },
           {
             apellidos: {
               contains: searchTerm,
-              mode: 'insensitive' as any,
+              mode: 'insensitive',
             },
           },
           {
             telefono: {
               contains: searchTerm,
-              mode: 'insensitive' as any,
+              mode: 'insensitive',
             },
           },
           {
             codigo: {
               contains: searchTerm,
-              mode: 'insensitive' as any,
+              mode: 'insensitive',
             },
           },
         ];
@@ -528,13 +591,12 @@ export class ClientsService {
         }),
       ]);
 
-      // Ya no necesitamos incluir aprobacionesPendientes por separado porque ahora
-      // todos los clientes se crean en la tabla principal con estado PENDIENTE.
-      const aprobacionesPendientes: any[] = [];
-
-      this.logger.log(
-        `Found ${clientesRaw.length} active clients and ${aprobacionesPendientes.length} pending approvals`,
-      );
+      // Ya no se incluyen las aprobaciones pendientes por separado: todos los
+      // clientes se crean en la tabla principal con estado PENDIENTE. Antes quedaba
+      // aqui un `const aprobacionesPendientes: unknown[] = []` y treinta lineas que lo
+      // recorrian, codigo que no podia ejecutarse nunca porque el arreglo siempre
+      // estaba vacio. Se borro.
+      this.logger.log(`Found ${clientesRaw.length} active clients`);
 
       // Transformar clientes reales
       const clientesTransformados = clientesRaw.map((cliente) => {
@@ -667,47 +729,28 @@ export class ClientsService {
         }
       });
 
-      // Transformar aprobaciones pendientes
-      const aprobacionesTransformadas = aprobacionesPendientes.map((aprob) => {
-        const datos = JSON.parse(aprob.datosSolicitud as string);
-        return {
-          id: aprob.id,
-          codigo: aprob.referenciaId || 'PENDIENTE',
-          dni: datos.dni || '',
-          nombres: datos.nombres || 'Pendiente',
-          apellidos: datos.apellidos || '',
-          telefono: datos.telefono || '',
-          correo: datos.correo || '',
-          direccion: datos.direccion || '',
-          referencia: datos.referencia || '',
-          referencia1Nombre: datos.referencia1Nombre || '',
-          referencia1Telefono: datos.referencia1Telefono || '',
-          referencia2Nombre: datos.referencia2Nombre || '',
-          referencia2Telefono: datos.referencia2Telefono || '',
-          nivelRiesgo: 'VERDE',
-          puntaje: 100,
-          enListaNegra: false,
-          estadoAprobacion: aprob.estado,
-          score: 100,
-          tendencia: 'ESTABLE',
-          ultimaVisita: 'Pendiente',
-          rutaId: '',
-          rutaNombre: 'Sin ruta',
-          montoTotal: 0,
-          montoMora: 0,
-          prestamosActivos: 0,
-          creadoEn: aprob.creadoEn,
+      // Ordenar por fecha de creación descendente
+      const todosLosClientes = [...clientesTransformados].sort((a, b) => {
+        // Se lee por una funcion con el campo opcional en vez de `a.creadoEn`
+        // suelto: las dos listas que se combinan no tienen exactamente la misma
+        // forma, y antes esto compilaba porque venian del cliente de Prisma
+        // tipado como `any`. El `|| 0` se mantiene: una fecha ausente o vacia
+        // queda al final, como hasta ahora.
+        // El parametro va como `unknown` y el campo se comprueba con `in`: las
+        // tres formas que se combinan aqui no coinciden, y pedir un parametro con
+        // `creadoEn` no valia para todas.
+        const fecha = (registro: unknown) => {
+          const valor =
+            registro && typeof registro === 'object' && 'creadoEn' in registro
+              ? registro.creadoEn
+              : undefined;
+          if (valor instanceof Date) return valor.getTime();
+          if (typeof valor === 'string' || typeof valor === 'number') {
+            return new Date(valor).getTime();
+          }
+          return 0; // `new Date(0).getTime()` es 0: lo mismo que `|| 0`.
         };
-      });
-
-      // Combinar y ordenar por fecha de creación descendente
-      const todosLosClientes = [
-        ...aprobacionesTransformadas,
-        ...clientesTransformados,
-      ].sort((a: any, b: any) => {
-        const dateA = new Date(a.creadoEn || 0).getTime();
-        const dateB = new Date(b.creadoEn || 0).getTime();
-        return dateB - dateA;
+        return fecha(b) - fecha(a);
       });
 
       return {
@@ -815,7 +858,7 @@ export class ClientsService {
         this.logger.log(
           `[DEBUG] Cliente ${id} - Archivos ACTIVOS devueltos: ${cliente.archivos.length}`,
         );
-        cliente.archivos.forEach((a: any, i: number) => {
+        cliente.archivos.forEach((a, i: number) => {
           this.logger.log(
             `  [${i}] ${a.tipoContenido} - ${a.tipoArchivo} - Estado: ${a.estado} - URL: ${a.url}`,
           );
@@ -971,13 +1014,14 @@ export class ClientsService {
             });
 
             await this.prisma.multimedia.createMany({
-              data: data.archivos.map((archivo: any) => ({
+              data: data.archivos.map((archivo) => ({
                 clienteId: clienteRestaurado.id,
                 tipoContenido: archivo.tipoContenido,
                 tipoArchivo: archivo.tipoArchivo,
                 formato: archivo.nombreOriginal?.split('.').pop() || 'bin',
                 nombreOriginal: archivo.nombreOriginal,
-                nombreAlmacenamiento: archivo.nombreAlmacenamiento,
+                nombreAlmacenamiento:
+                  archivo.nombreAlmacenamiento || archivo.nombreOriginal,
                 ruta: archivo.ruta || archivo.path || '',
                 url:
                   archivo.url ||
@@ -1026,7 +1070,7 @@ export class ClientsService {
             try {
               await this.notificacionesService.notifyApprovers({
                 titulo: 'Nuevo cliente requiere aprobación',
-                mensaje: `Se reenvi f3 la solicitud del cliente (${data.nombres} ${data.apellidos}). Requiere revisi f3n.`,
+                mensaje: `Se reenvió la solicitud del cliente (${data.nombres} ${data.apellidos}). Requiere revisión.`,
                 tipo: 'CLIENTE',
                 entidad: 'Aprobacion',
                 entidadId: aprobacion.id,
@@ -1046,10 +1090,10 @@ export class ClientsService {
 
             try {
               await this.notificacionesService.create({
-                usuarioId: solicitadoPorId as string,
+                usuarioId: solicitadoPorId,
                 titulo: 'Solicitud reenviada',
                 mensaje:
-                  'Tu solicitud fue reenviada con  e9xito y qued f3 pendiente de aprobaci f3n.',
+                  'Tu solicitud fue reenviada con éxito y quedó pendiente de aprobación.',
                 tipo: 'INFORMATIVO',
                 entidad: 'Aprobacion',
                 entidadId: aprobacion.id,
@@ -1071,8 +1115,8 @@ export class ClientsService {
 
           return {
             mensaje: autoAprobar
-              ? 'Cliente restaurado y aprobado autom e1ticamente.'
-              : 'Cliente restaurado y solicitud reenviada. Pendiente de aprobaci f3n.',
+              ? 'Cliente restaurado y aprobado automáticamente.'
+              : 'Cliente restaurado y solicitud reenviada. Pendiente de aprobación.',
             aprobacionId: aprobacion.id,
             clienteId: clienteRestaurado.id,
             clienteCodigo: clienteRestaurado.codigo,
@@ -1145,13 +1189,14 @@ export class ClientsService {
         data.archivos.length > 0
       ) {
         await this.prisma.multimedia.createMany({
-          data: data.archivos.map((archivo: any) => ({
+          data: data.archivos.map((archivo) => ({
             clienteId: cliente.id,
             tipoContenido: archivo.tipoContenido,
             tipoArchivo: archivo.tipoArchivo,
             formato: archivo.nombreOriginal?.split('.').pop() || 'bin',
             nombreOriginal: archivo.nombreOriginal,
-            nombreAlmacenamiento: archivo.nombreAlmacenamiento,
+            nombreAlmacenamiento:
+              archivo.nombreAlmacenamiento || archivo.nombreOriginal,
             ruta: archivo.ruta || archivo.path || '',
             url:
               archivo.url ||
@@ -1235,15 +1280,12 @@ export class ClientsService {
         } catch (error) {
           // No se corta la operacion principal por esto, pero se deja
           // registrado: en silencio nadie se entera de que fallo.
-          this.logger.warn(
-            'No se pudo notificar el cliente nuevo',
-            error as any,
-          );
+          this.logger.warn('No se pudo notificar el cliente nuevo', error);
         }
 
         try {
           await this.notificacionesService.create({
-            usuarioId: solicitadoPorId as string,
+            usuarioId: solicitadoPorId,
             titulo: 'Solicitud enviada',
             mensaje:
               'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
@@ -1260,7 +1302,7 @@ export class ClientsService {
           // registrado: en silencio nadie se entera de que fallo.
           this.logger.warn(
             'No se pudo notificar la aprobacion del cliente',
-            error as any,
+            error,
           );
         }
       }
@@ -1583,7 +1625,7 @@ export class ClientsService {
         // 2. Crear los archivos nuevos
         if (archivos.length > 0) {
           await this.prisma.multimedia.createMany({
-            data: archivos.map((archivo: any) => ({
+            data: archivos.map((archivo) => ({
               clienteId: id,
               tipoContenido: archivo.tipoContenido,
               tipoArchivo: archivo.tipoArchivo || 'image/jpeg',
@@ -1702,98 +1744,6 @@ export class ClientsService {
     }
   }
 
-  async assignToRoute(
-    clienteId: string,
-    rutaId: string,
-    cobradorId: string,
-    diaSemana?: number,
-  ) {
-    try {
-      const ruta = await this.prisma.ruta.findUnique({
-        where: { id: rutaId },
-        select: { id: true, cobradorId: true },
-      });
-
-      if (!ruta?.id) {
-        throw new NotFoundException('Ruta no encontrada');
-      }
-
-      const assignmentCobradorId = ruta.cobradorId || cobradorId;
-
-      return await this.prisma.$transaction(async (tx) => {
-        const asignacionDestino = await tx.asignacionRuta.findFirst({
-          where: { clienteId, rutaId, activa: true },
-        });
-
-        if (asignacionDestino) {
-          await tx.asignacionRuta.updateMany({
-            where: {
-              clienteId,
-              activa: true,
-              id: { not: asignacionDestino.id },
-            },
-            data: { activa: false },
-          });
-
-          const asignacion = await tx.asignacionRuta.update({
-            where: { id: asignacionDestino.id },
-            data: {
-              cobradorId: assignmentCobradorId,
-              diaSemana,
-              activa: true,
-            },
-          });
-
-          await tx.prestamo.updateMany({
-            where: {
-              clienteId,
-              estado: { in: ['ACTIVO', 'EN_MORA'] },
-              eliminadoEn: null,
-            },
-            data: { cobradorId: assignmentCobradorId },
-          });
-
-          return asignacion;
-        }
-
-        await tx.asignacionRuta.updateMany({
-          where: { clienteId, activa: true },
-          data: { activa: false },
-        });
-
-        const maxOrden = await tx.asignacionRuta.aggregate({
-          where: { rutaId, activa: true },
-          _max: { ordenVisita: true },
-        });
-
-        const asignacion = await tx.asignacionRuta.create({
-          data: {
-            rutaId,
-            clienteId,
-            cobradorId: assignmentCobradorId,
-            diaSemana,
-            ordenVisita: (maxOrden._max.ordenVisita || 0) + 1,
-            activa: true,
-          },
-        });
-
-        await tx.prestamo.updateMany({
-          where: {
-            clienteId,
-            estado: { in: ['ACTIVO', 'EN_MORA'] },
-            eliminadoEn: null,
-          },
-          data: { cobradorId: assignmentCobradorId },
-        });
-
-        return asignacion;
-      });
-    } catch (error) {
-      this.logger.error(`Error assigning client ${clienteId} to route:`, error);
-      throw error;
-    }
-  }
-
   /**
    * Exportar listado de clientes en Excel o PDF.
    * Reutiliza la misma consulta de getAllClients pero sin transformaciones de score.
@@ -1802,10 +1752,23 @@ export class ClientsService {
     formato: 'excel' | 'pdf',
     filtros?: { nivelRiesgo?: string; ruta?: string; search?: string },
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
-    const where: any = { eliminadoEn: null };
+    const where: Prisma.ClienteWhereInput = { eliminadoEn: null };
 
     if (filtros?.nivelRiesgo && filtros.nivelRiesgo !== 'all') {
-      where.nivelRiesgo = filtros.nivelRiesgo;
+      // Aqui NO habia ninguna validacion: el texto del filtro entraba directo al `where`.
+      // Un valor que no sea del enum hace que Prisma lance, o sea un 500 en vez de una
+      // respuesta limpia. Ahora se comprueba, igual que en el otro listado.
+      const nivel = unoDeLosPermitidos(
+        filtros.nivelRiesgo,
+        Object.values(NivelRiesgo),
+      );
+      if (nivel) {
+        where.nivelRiesgo = nivel;
+      } else {
+        this.logger.warn(
+          `Nivel de riesgo invalido en el filtro: ${filtros.nivelRiesgo}`,
+        );
+      }
     }
     if (filtros?.ruta) {
       where.asignacionesRuta = { some: { rutaId: filtros.ruta, activa: true } };
@@ -1813,11 +1776,11 @@ export class ClientsService {
     if (filtros?.search?.trim()) {
       const s = filtros.search.trim();
       where.OR = [
-        { nombres: { contains: s, mode: 'insensitive' as any } },
-        { apellidos: { contains: s, mode: 'insensitive' as any } },
-        { dni: { contains: s, mode: 'insensitive' as any } },
-        { telefono: { contains: s, mode: 'insensitive' as any } },
-        { codigo: { contains: s, mode: 'insensitive' as any } },
+        { nombres: { contains: s, mode: 'insensitive' } },
+        { apellidos: { contains: s, mode: 'insensitive' } },
+        { dni: { contains: s, mode: 'insensitive' } },
+        { telefono: { contains: s, mode: 'insensitive' } },
+        { codigo: { contains: s, mode: 'insensitive' } },
       ];
     }
 
@@ -1926,7 +1889,7 @@ export class ClientsService {
       throw new NotFoundException('Cliente no encontrado');
     }
 
-    const prestamosWhere: any = {
+    const prestamosWhere: Prisma.PrestamoWhereInput = {
       clienteId,
       eliminadoEn: null,
       estadoAprobacion: {
@@ -2008,50 +1971,49 @@ export class ClientsService {
       }),
     ]);
 
-    const cuotas = prestamos.flatMap((p: any) => p.cuotas || []);
+    const cuotas = prestamos.flatMap((p) => p.cuotas || []);
 
     const resumen = {
       totalPrestado: prestamos.reduce(
-        (sum: number, p: any) => sum + Number(p.monto || 0),
+        (sum: number, p) => sum + Number(p.monto || 0),
         0,
       ),
       saldoPendiente: prestamos.reduce(
-        (sum: number, p: any) => sum + Number(p.saldoPendiente || 0),
+        (sum: number, p) => sum + Number(p.saldoPendiente || 0),
         0,
       ),
       totalPagado: pagos.reduce(
-        (sum: number, p: any) => sum + Number(p.montoTotal || 0),
+        (sum: number, p) => sum + Number(p.montoTotal || 0),
         0,
       ),
       totalMora: cuotas.reduce(
-        (sum: number, c: any) => sum + Number(c.montoInteresMora || 0),
+        (sum: number, c) => sum + Number(c.montoInteresMora || 0),
         0,
       ),
-      cuotasPendientes: cuotas.filter((c: any) =>
+      cuotasPendientes: cuotas.filter((c) =>
         ['PENDIENTE', 'PARCIAL', 'VENCIDA', 'PRORROGADA'].includes(
           String(c.estado),
         ),
       ).length,
-      cuotasVencidas: cuotas.filter((c: any) => String(c.estado) === 'VENCIDA')
+      cuotasVencidas: cuotas.filter((c) => String(c.estado) === 'VENCIDA')
         .length,
-      prestamosActivos: prestamos.filter((p: any) =>
+      prestamosActivos: prestamos.filter((p) =>
         ['ACTIVO', 'EN_MORA', 'INCUMPLIDO'].includes(String(p.estado)),
       ).length,
-      prestamosPagados: prestamos.filter(
-        (p: any) => String(p.estado) === 'PAGADO',
-      ).length,
+      prestamosPagados: prestamos.filter((p) => String(p.estado) === 'PAGADO')
+        .length,
       totalVentasContado: ventasContado.reduce(
-        (sum: number, v: any) => sum + Number(v.monto || 0),
+        (sum: number, v) => sum + Number(v.monto || 0),
         0,
       ),
       totalCuotaInicial: prestamos.reduce(
-        (sum: number, p: any) => sum + Number(p.cuotaInicial || 0),
+        (sum: number, p) => sum + Number(p.cuotaInicial || 0),
         0,
       ),
     };
 
     const movimientosComerciales = [
-      ...ventasContado.map((v: any) => ({
+      ...ventasContado.map((v) => ({
         id: v.id,
         tipo: 'VENTA_CONTADO',
         monto: Number(v.monto || 0),
@@ -2064,8 +2026,8 @@ export class ClientsService {
       })),
 
       ...prestamos
-        .filter((p: any) => Number(p.cuotaInicial || 0) > 0)
-        .map((p: any) => ({
+        .filter((p) => Number(p.cuotaInicial || 0) > 0)
+        .map((p) => ({
           id: `CUOTA_INICIAL:${p.id}`,
           tipo: 'CUOTA_INICIAL',
           monto: Number(p.cuotaInicial || 0),
@@ -2089,7 +2051,7 @@ export class ClientsService {
 
       resumen,
 
-      prestamos: prestamos.map((p: any) => ({
+      prestamos: prestamos.map((p) => ({
         id: p.id,
         numeroPrestamo: p.numeroPrestamo,
         tipoPrestamo: p.tipoPrestamo,
@@ -2103,7 +2065,7 @@ export class ClientsService {
         interesTotal: Number(p.interesTotal || 0),
         fechaInicio: p.fechaInicio,
         fechaFin: p.fechaFin,
-        cuotas: (p.cuotas || []).map((c: any) => ({
+        cuotas: (p.cuotas || []).map((c) => ({
           id: c.id,
           numeroCuota: c.numeroCuota,
           monto: Number(c.monto || 0),
@@ -2124,7 +2086,7 @@ export class ClientsService {
         })),
       })),
 
-      pagos: pagos.map((p: any) => ({
+      pagos: pagos.map((p) => ({
         id: p.id,
         numeroPago: p.numeroPago,
         prestamoId: p.prestamoId,
@@ -2133,7 +2095,7 @@ export class ClientsService {
         metodoPago: p.metodoPago,
         fechaPago: p.fechaPago,
         notas: p.notas,
-        detalles: (p.detalles || []).map((d: any) => ({
+        detalles: (p.detalles || []).map((d) => ({
           id: d.id,
           cuotaId: d.cuotaId,
           numeroCuota: d.cuota?.numeroCuota || null,

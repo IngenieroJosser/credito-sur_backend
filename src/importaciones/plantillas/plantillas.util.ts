@@ -288,7 +288,7 @@ export function resaltarSiContiene(
             bgColor: { argb: 'FFFFC7CE' },
           },
         },
-      } as any,
+      },
     ],
   });
 }
@@ -316,7 +316,7 @@ export function resaltarNegativos(
             bgColor: { argb: 'FFFFC7CE' },
           },
         },
-      } as any,
+      },
     ],
   });
 }

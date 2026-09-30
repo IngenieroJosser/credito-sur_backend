@@ -5,9 +5,12 @@ import {
   NotFoundException,
   ForbiddenException,
 } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
+import { objetoDeJson, textosDeJson, textoDeJson } from '../common/json.util';
+import { textoDeValor } from '../common/texto.util';
 import {
-  Prisma,
+  Aprobacion,
+  EfectoProvisional,
   EstadoAprobacion,
   EstadoPrestamo,
   EstadoCuota,
@@ -17,14 +20,29 @@ import {
   FrecuenciaPago,
   TipoAmortizacion,
   RolUsuario,
+  TipoGasto,
+  Prisma,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
-import { formatBogotaOffsetIso } from '../utils/date-utils';
+import {
+  formatBogotaOffsetIso,
+  getBogotaDayKey,
+  getBogotaStartEndOfDay,
+} from '../utils/date-utils';
 import { LedgerService } from '../accounting/ledger.service';
 import { randomUUID } from 'crypto';
-import { calcularAmortizacionFrancesa } from '../loans/utils/amortizacion.utils';
+import {
+  calcularAmortizacionFrancesa,
+  calcularFechaVencimiento,
+  FilaAmortizacion,
+} from '../loans/utils/amortizacion.utils';
 import { pesos } from '../common/dinero.util';
+import {
+  calcularInteresTotal,
+  construirTablaCuotas,
+  TipoAmortizacionImportacion,
+} from '../importaciones/interes-credito';
 
 /**
  * Aprobaciones y "efecto provisional".
@@ -60,8 +78,58 @@ import { pesos } from '../common/dinero.util';
  * El `rollbackData` guardado en el efecto es lo que permite revertir: lleva el
  * estado previo del credito y los ids de lo que se creo al aplicarlo.
  */
+/**
+ * Los estados en que un credito sigue cobrandose.
+ *
+ * Se saca a una constante porque la comprobacion se hacia dos veces con un
+ * `[...].includes(...)`, y `includes` sobre una lista de literales exige
+ * justamente uno de esos dos literales, no el enum entero. Con `some` se compara
+ * sin pedir casting.
+ */
+const ESTADOS_COBRABLES = [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA];
+
+/**
+ * La aprobacion CON sus dos relaciones de usuario cargadas.
+ *
+ * Va con `Prisma.validator` y no escrita a mano: el `include` de la consulta y el
+ * tipo salen del mismo sitio, asi que no pueden separarse. `enrichApprovalContext`
+ * lee `approval.solicitadoPor`, que el modelo plano no trae; con `approval: any`
+ * eso compilaba y nadie comprobaba que la consulta lo cargara.
+ */
+const aprobacionConSolicitante =
+  Prisma.validator<Prisma.AprobacionDefaultArgs>()({
+    include: {
+      solicitadoPor: {
+        select: { id: true, nombres: true, apellidos: true, rol: true },
+      },
+      aprobadoPor: {
+        select: { id: true, nombres: true, apellidos: true, rol: true },
+      },
+    },
+  });
+
+type AprobacionConSolicitante = Prisma.AprobacionGetPayload<
+  typeof aprobacionConSolicitante
+>;
+
 @Injectable()
 export class ApprovalsService {
+  /**
+   * El `select` de las transacciones que se rehacen al revertir. Se extrae a una constante
+   * porque las DOS consultas que llenan `transaccionesOriginales` usaban los mismos ocho
+   * campos escritos dos veces, y asi el tipo se DERIVA de la consulta en vez de repetirse.
+   */
+  private static readonly SELECCION_TRANSACCION_ROLLBACK = {
+    id: true,
+    cajaId: true,
+    tipo: true,
+    monto: true,
+    descripcion: true,
+    creadoPorId: true,
+    tipoReferencia: true,
+    referenciaId: true,
+  } as const;
+
   private readonly logger = new Logger(ApprovalsService.name);
 
   constructor(
@@ -71,7 +139,7 @@ export class ApprovalsService {
     private readonly ledgerService: LedgerService,
   ) {}
 
-  private async ensureCajaBanco(tx: any) {
+  private async ensureCajaBanco(tx: TransaccionPrisma) {
     const existing = await tx.caja.findUnique({
       where: { codigo: 'CAJA-BANCO' },
       select: { id: true, nombre: true, saldoActual: true },
@@ -80,8 +148,8 @@ export class ApprovalsService {
 
     const adminUser = await tx.usuario.findFirst({
       where: {
-        rol: { in: ['SUPER_ADMINISTRADOR', 'ADMIN'] as any },
-        estado: 'ACTIVO' as any,
+        rol: { in: ['SUPER_ADMINISTRADOR', 'ADMIN'] },
+        estado: 'ACTIVO',
         eliminadoEn: null,
       },
       orderBy: { creadoEn: 'asc' },
@@ -97,7 +165,7 @@ export class ApprovalsService {
       data: {
         codigo: 'CAJA-BANCO',
         nombre: 'Caja Banco',
-        tipo: 'PRINCIPAL' as any,
+        tipo: 'PRINCIPAL',
         responsableId: adminUser.id,
         saldoActual: 0,
         activa: true,
@@ -107,7 +175,7 @@ export class ApprovalsService {
   }
 
   private async resolvePaymentCobradorForClient(
-    db: any,
+    db: TransaccionPrisma,
     clienteId: string,
     requestedCobradorId?: string,
   ) {
@@ -145,7 +213,7 @@ export class ApprovalsService {
   }
 
   private async resolveActiveRouteCashContext(
-    db: any,
+    db: TransaccionPrisma,
     params: { rutaId?: string; cajaId?: string },
   ) {
     let rutaId = params.rutaId || '';
@@ -175,7 +243,7 @@ export class ApprovalsService {
     }
 
     const cajaRuta = await db.caja.findFirst({
-      where: { rutaId: ruta.id, tipo: 'RUTA' as any, activa: true },
+      where: { rutaId: ruta.id, tipo: 'RUTA', activa: true },
       select: { id: true, nombre: true, rutaId: true, responsableId: true },
     });
 
@@ -229,7 +297,7 @@ export class ApprovalsService {
     }
   }
 
-  private parseJsonObject(value: any): Record<string, any> {
+  private parseJsonObject(value: unknown): Record<string, unknown> {
     if (!value) return {};
     if (typeof value === 'string') {
       try {
@@ -239,7 +307,9 @@ export class ApprovalsService {
         return {};
       }
     }
-    return typeof value === 'object' ? value : {};
+    return typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
   }
 
   private buildReferenciasCliente(cliente: any) {
@@ -263,7 +333,7 @@ export class ApprovalsService {
   }
 
   private enrichApprovalContext(
-    approval: any,
+    approval: AprobacionConSolicitante,
     datosSolicitud: Record<string, any>,
   ) {
     return {
@@ -279,14 +349,7 @@ export class ApprovalsService {
   async getApprovalContext(aprobacionId: string) {
     const approval = await this.prisma.aprobacion.findUnique({
       where: { id: aprobacionId },
-      include: {
-        solicitadoPor: {
-          select: { id: true, nombres: true, apellidos: true, rol: true },
-        },
-        aprobadoPor: {
-          select: { id: true, nombres: true, apellidos: true, rol: true },
-        },
-      },
+      ...aprobacionConSolicitante,
     });
 
     if (!approval) {
@@ -294,22 +357,22 @@ export class ApprovalsService {
     }
 
     const datosSolicitud = this.parseJsonObject(approval.datosSolicitud);
-    let prestamoId = String(
-      datosSolicitud.prestamoId ||
-        (approval.tablaReferencia === 'Prestamo'
-          ? approval.referenciaId
-          : '') ||
-        '',
+    // `textoDeJson` en vez de `String(...)`: si la columna Json trae un objeto donde se
+    // esperaba un id, `String` devuelve "[object Object]" y eso se busca como id.
+    let prestamoId = (
+      textoDeJson(datosSolicitud.prestamoId) ??
+      (approval.tablaReferencia === 'Prestamo'
+        ? String(approval.referenciaId ?? '')
+        : '')
     ).trim();
     const tablaReferencia = String(approval.tablaReferencia || '');
-    const cuotaId = String(
-      datosSolicitud.cuotaId ||
-        (['Cuota', 'cuotas'].includes(tablaReferencia)
-          ? approval.referenciaId
-          : '') ||
-        '',
+    const cuotaId = (
+      textoDeJson(datosSolicitud.cuotaId) ??
+      (['Cuota', 'cuotas'].includes(tablaReferencia)
+        ? String(approval.referenciaId ?? '')
+        : '')
     ).trim();
-    let clienteId = String(datosSolicitud.clienteId || '').trim();
+    let clienteId = (textoDeJson(datosSolicitud.clienteId) ?? '').trim();
 
     if ((!clienteId || !prestamoId) && cuotaId) {
       const cuotaBase = await this.prisma.cuota.findUnique({
@@ -431,7 +494,7 @@ export class ApprovalsService {
       this.prisma.multimedia.findMany({
         where: {
           clienteId,
-          estado: 'ACTIVO' as any,
+          estado: 'ACTIVO',
           eliminadoEn: null,
         },
         orderBy: { creadoEn: 'desc' },
@@ -451,7 +514,7 @@ export class ApprovalsService {
           datosSolicitud: {
             path: ['clienteId'],
             equals: clienteId,
-          } as any,
+          },
         },
       }),
       this.prisma.pago.findMany({
@@ -474,10 +537,10 @@ export class ApprovalsService {
     ]);
 
     const ahora = new Date();
-    const cuotas = creditosCliente.flatMap((credito: any) =>
+    const cuotas = creditosCliente.flatMap((credito) =>
       Array.isArray(credito.cuotas) ? credito.cuotas : [],
     );
-    const cuotasVencidas = cuotas.filter((cuota: any) => {
+    const cuotasVencidas = cuotas.filter((cuota) => {
       if (cuota.estado === EstadoCuota.VENCIDA) return true;
       if (
         cuota.estado === EstadoCuota.PAGADA ||
@@ -489,17 +552,19 @@ export class ApprovalsService {
       return fecha ? new Date(fecha).getTime() < ahora.getTime() : false;
     }).length;
     const cuotasPagadas = cuotas.filter(
-      (cuota: any) => cuota.estado === EstadoCuota.PAGADA,
+      (cuota) => cuota.estado === EstadoCuota.PAGADA,
     ).length;
     const saldoTotalPendiente = creditosCliente.reduce(
-      (sum: number, credito: any) => sum + Number(credito.saldoPendiente || 0),
+      (sum: number, credito) => sum + Number(credito.saldoPendiente || 0),
       0,
     );
-    const creditosActivos = creditosCliente.filter((credito: any) =>
-      [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA].includes(credito.estado),
+    const creditosActivos = creditosCliente.filter((credito) =>
+      (
+        [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA] as EstadoPrestamo[]
+      ).includes(credito.estado),
     ).length;
     const montoPagadoUltimos30Dias = pagosUltimos30Dias.reduce(
-      (sum: number, pago: any) => sum + Number(pago.montoTotal || 0),
+      (sum: number, pago) => sum + Number(pago.montoTotal || 0),
       0,
     );
 
@@ -539,8 +604,7 @@ export class ApprovalsService {
       approval: this.enrichApprovalContext(approval, datosSolicitud),
       cliente,
       creditoSolicitud:
-        creditosCliente.find((credito: any) => credito.id === prestamoId) ||
-        null,
+        creditosCliente.find((credito) => credito.id === prestamoId) || null,
       creditosCliente,
       referencias: this.buildReferenciasCliente(cliente),
       multimedia,
@@ -593,7 +657,7 @@ export class ApprovalsService {
    * nacen de algo que ya surtio efecto.
    */
   private async cargarEfectoProvisionalPendiente(
-    db: any,
+    db: TransaccionPrisma,
     aprobacionId: string,
   ) {
     const efecto = await db.efectoProvisional?.findFirst?.({
@@ -608,7 +672,10 @@ export class ApprovalsService {
     return efecto || null;
   }
 
-  private async confirmarEfectoProvisional(tx: any, efecto: any) {
+  private async confirmarEfectoProvisional(
+    tx: TransaccionPrisma,
+    efecto: EfectoProvisional,
+  ) {
     if (!efecto?.id) return;
 
     await tx.efectoProvisional.update({
@@ -621,8 +688,8 @@ export class ApprovalsService {
   }
 
   private async confirmarPrestamoProvisional(
-    tx: any,
-    approval: any,
+    tx: TransaccionPrisma,
+    approval: Aprobacion,
     aprobadoPorId?: string,
   ) {
     if (!approval.referenciaId) {
@@ -664,10 +731,14 @@ export class ApprovalsService {
    * reintento desde la app en campo no duplica el movimiento.
    */
   private async crearReversasPrestamoProvisionalRobusto(
-    tx: any,
-    rollbackData: any,
-    transaccionesOriginales: any[],
-    journalsOriginales: any[],
+    tx: TransaccionPrisma,
+    rollbackData: Record<string, unknown>,
+    transaccionesOriginales: Prisma.TransaccionGetPayload<{
+      select: typeof ApprovalsService.SELECCION_TRANSACCION_ROLLBACK;
+    }>[],
+    journalsOriginales: Prisma.JournalEntryGetPayload<{
+      include: { lines: true };
+    }>[],
     reversadoPorId?: string,
     motivoRechazo?: string,
   ) {
@@ -730,7 +801,7 @@ export class ApprovalsService {
     for (const original of journalsOriginales) {
       if (!Array.isArray(original.lines)) continue;
 
-      const reversaReferenceType = 'AJUSTE' as any;
+      const reversaReferenceType = 'AJUSTE';
       const reversaReferenceId = `REVERSA:${original.id}`;
 
       // Validar idempotencia: verificar si ya existe reversa
@@ -752,7 +823,7 @@ export class ApprovalsService {
 
       try {
         const reversalLines = original.lines
-          .map((line: any) => {
+          .map((line) => {
             const debit = Number(line.debitAmount || 0);
             const credit = Number(line.creditAmount || 0);
             const cajaDelta =
@@ -769,7 +840,7 @@ export class ApprovalsService {
             };
           })
           .filter(
-            (line: any) =>
+            (line) =>
               Number(line.debitAmount || 0) > 0 ||
               Number(line.creditAmount || 0) > 0,
           );
@@ -828,8 +899,8 @@ export class ApprovalsService {
   }
 
   private async reaplicarPrestamoProvisionalRevertido(
-    tx: any,
-    approval: any,
+    tx: TransaccionPrisma,
+    approval: Aprobacion,
     userId: string,
     notas?: string,
   ) {
@@ -842,10 +913,18 @@ export class ApprovalsService {
       return null;
     }
 
-    const rollbackData = efectoAnterior.rollbackData || {};
-    const prestamoId = String(
-      rollbackData.prestamoId || approval.referenciaId || '',
-    );
+    const rollbackData = objetoDeJson(efectoAnterior.rollbackData);
+    // `rollbackData` viene de un campo Json, asi que su TIPO admite objetos, y
+    // `String(objeto)` daria "[object Object]", que es truthy: el guard de abajo lo
+    // dejaria pasar y se seguiria con un id inventado.
+    //
+    // Hoy eso no puede pasar: se rastrearon los escritores y los dos que llenan
+    // `prestamoId` y `cuotaId` guardan `prestamo.id` y `cuota.id`, que son texto.
+    // Asi que esto no arregla un fallo, cierra la puerta: `textoDeJson` devuelve
+    // undefined cuando el valor no es texto ni numero, y entonces el guard salta
+    // en vez de dejar pasar basura. Es lo que pide la regla no-base-to-string.
+    const prestamoId =
+      textoDeJson(rollbackData.prestamoId) || approval.referenciaId || '';
     if (!prestamoId) {
       throw new BadRequestException('La aprobación no tiene préstamo asociado');
     }
@@ -871,14 +950,14 @@ export class ApprovalsService {
 
     if (rollbackData.asignacionRutaId) {
       await tx.asignacionRuta.updateMany({
-        where: { id: String(rollbackData.asignacionRutaId) },
+        where: { id: textoDeJson(rollbackData.asignacionRutaId) },
         data: { activa: true },
       });
     }
 
     if (rollbackData.stockDescontado && rollbackData.productoId) {
       await tx.producto.update({
-        where: { id: rollbackData.productoId },
+        where: { id: textoDeJson(rollbackData.productoId) },
         data: { stock: { decrement: 1 } },
       });
     }
@@ -886,7 +965,7 @@ export class ApprovalsService {
     const transaccionIds: string[] = [];
     const journalEntryIds: string[] = [];
 
-    for (const transaccionId of rollbackData.transaccionIds || []) {
+    for (const transaccionId of textosDeJson(rollbackData.transaccionIds)) {
       const original = await tx.transaccion.findUnique?.({
         where: { id: transaccionId },
       });
@@ -908,8 +987,10 @@ export class ApprovalsService {
       transaccionIds.push(nueva.id);
     }
 
-    const originalJournalIds =
-      rollbackData.journalEntryIds || rollbackData.journalReferenceIds || [];
+    const originalJournalIds = [
+      ...textosDeJson(rollbackData.journalEntryIds),
+      ...textosDeJson(rollbackData.journalReferenceIds),
+    ];
     for (const journalEntryId of originalJournalIds) {
       const original = await tx.journalEntry.findUnique?.({
         where: { id: journalEntryId },
@@ -924,7 +1005,7 @@ export class ApprovalsService {
           description: `Reapertura provisional de ${original.referenceType || ''} ${original.referenceId || ''}${notas ? ` — ${notas}` : ''}`,
           createdBy: userId,
           lines: original.lines
-            .map((line: any) => {
+            .map((line) => {
               const debit = Number(line.debitAmount || 0);
               const credit = Number(line.creditAmount || 0);
               return {
@@ -939,7 +1020,7 @@ export class ApprovalsService {
               };
             })
             .filter(
-              (line: any) =>
+              (line) =>
                 Number(line.debitAmount || 0) > 0 ||
                 Number(line.creditAmount || 0) > 0,
             ),
@@ -977,8 +1058,8 @@ export class ApprovalsService {
   }
 
   private async rejectLoanDirecto(
-    tx: any,
-    approval: any,
+    tx: TransaccionPrisma,
+    approval: Aprobacion,
     rechazadoPorId?: string,
     _motivoRechazo?: string,
   ) {
@@ -1021,9 +1102,9 @@ export class ApprovalsService {
   }
 
   private async revertirPrestamoProvisional(
-    tx: any,
-    approval: any,
-    efecto: any,
+    tx: TransaccionPrisma,
+    approval: Aprobacion,
+    efecto: EfectoProvisional,
     rechazadoPorId?: string,
     motivoRechazo?: string,
   ) {
@@ -1035,10 +1116,17 @@ export class ApprovalsService {
       return;
     }
 
-    const rollbackData = efecto?.rollbackData || {};
-    const prestamoId = String(
-      rollbackData.prestamoId || approval.referenciaId || '',
-    );
+    // `objetoDeJson` y no `|| {}`: al declarar `efecto: EfectoProvisional`, Prisma tipa
+    // `rollbackData` como JsonValue, que puede ser texto o numero, y leerle campos deja
+    // de compilar. El helper que ya existe en el repo devuelve un objeto de valores Json
+    // y es lo que usan los otros dos sitios que leen este mismo campo.
+    const rollbackData = objetoDeJson(efecto?.rollbackData);
+    // `textoDeJson` y no `String(...)`: el valor sale de un campo Json y su tipo admite
+    // objetos, sobre los que `String` daria "[object Object]" —truthy— y el guard de
+    // abajo lo dejaria pasar. Es la misma regla que ya se aplico en los otros dos sitios
+    // que leen rollbackData.
+    const prestamoId =
+      textoDeJson(rollbackData.prestamoId) || approval.referenciaId || '';
 
     if (!prestamoId) {
       throw new BadRequestException('La aprobación no tiene préstamo asociado');
@@ -1055,25 +1143,16 @@ export class ApprovalsService {
     }
 
     // Resolver transacciones originales con fallback
-    const transaccionIds = Array.isArray(rollbackData.transaccionIds)
-      ? rollbackData.transaccionIds.filter(Boolean)
-      : [];
+    const transaccionIds = textosDeJson(rollbackData.transaccionIds);
 
-    let transaccionesOriginales = [];
+    let transaccionesOriginales: Prisma.TransaccionGetPayload<{
+      select: typeof ApprovalsService.SELECCION_TRANSACCION_ROLLBACK;
+    }>[] = [];
 
     if (transaccionIds.length > 0) {
       transaccionesOriginales = await tx.transaccion.findMany({
         where: { id: { in: transaccionIds } },
-        select: {
-          id: true,
-          cajaId: true,
-          tipo: true,
-          monto: true,
-          descripcion: true,
-          creadoPorId: true,
-          tipoReferencia: true,
-          referenciaId: true,
-        },
+        select: ApprovalsService.SELECCION_TRANSACCION_ROLLBACK,
       });
     }
 
@@ -1084,27 +1163,19 @@ export class ApprovalsService {
           referenciaId: prestamoId,
           tipo: TipoTransaccion.EGRESO,
         },
-        select: {
-          id: true,
-          cajaId: true,
-          tipo: true,
-          monto: true,
-          descripcion: true,
-          creadoPorId: true,
-          tipoReferencia: true,
-          referenciaId: true,
-        },
+        select: ApprovalsService.SELECCION_TRANSACCION_ROLLBACK,
       });
     }
 
     // Resolver journals originales con fallback
-    const journalEntryIds = Array.isArray(rollbackData.journalEntryIds)
-      ? rollbackData.journalEntryIds.filter(Boolean)
-      : Array.isArray(rollbackData.journalReferenceIds)
-        ? rollbackData.journalReferenceIds.filter(Boolean)
-        : [];
+    const journalEntryIds = [
+      ...textosDeJson(rollbackData.journalEntryIds),
+      ...textosDeJson(rollbackData.journalReferenceIds),
+    ];
 
-    let journalsOriginales = [];
+    let journalsOriginales: Prisma.JournalEntryGetPayload<{
+      include: { lines: true };
+    }>[] = [];
 
     if (journalEntryIds.length > 0) {
       journalsOriginales = await tx.journalEntry.findMany({
@@ -1170,7 +1241,7 @@ export class ApprovalsService {
 
     if (rollbackData.asignacionRutaId) {
       await tx.asignacionRuta.updateMany({
-        where: { id: String(rollbackData.asignacionRutaId) },
+        where: { id: textoDeJson(rollbackData.asignacionRutaId) },
         data: { activa: false },
       });
     }
@@ -1197,8 +1268,11 @@ export class ApprovalsService {
   }
 
   private async rejectReprogramacionCuota(
-    approval: any,
-    efectoProvisional: any,
+    approval: Aprobacion,
+    // Admite null a proposito: `cargarEfectoProvisionalPendiente` puede no encontrarlo, y
+    // la primera linea del cuerpo ya lo comprueba y lanza. Declararlo sin null obligaria
+    // a mover ese guarda al llamador y perderia el mensaje que explica que falto.
+    efectoProvisional: EfectoProvisional | null,
     rechazadoPorId?: string,
     motivoRechazo?: string,
   ) {
@@ -1212,9 +1286,12 @@ export class ApprovalsService {
       throw new BadRequestException('El efecto provisional ya fue procesado');
     }
 
-    const rollbackData = efectoProvisional.rollbackData || {};
+    const rollbackData = objetoDeJson(efectoProvisional.rollbackData);
 
-    const cuotaId = String(rollbackData.cuotaId || approval.referenciaId || '');
+    // Igual que en `confirmarEfectoProvisional`: el tipo admite un objeto que
+    // pasaria el guard como "[object Object]". Ningun escritor actual lo hace.
+    const cuotaId =
+      textoDeJson(rollbackData.cuotaId) || approval.referenciaId || '';
 
     if (!cuotaId) {
       throw new BadRequestException(
@@ -1222,8 +1299,13 @@ export class ApprovalsService {
       );
     }
 
-    const fechaVencimientoOriginal = rollbackData.fechaVencimientoOriginal
-      ? new Date(rollbackData.fechaVencimientoOriginal)
+    // Se captura el texto antes: la comprobacion de verdad es "es un texto", no "es
+    // truthy", y `new Date(undefined)` no existe como sobrecarga.
+    const textoFechaOriginal = textoDeJson(
+      rollbackData.fechaVencimientoOriginal,
+    );
+    const fechaVencimientoOriginal = textoFechaOriginal
+      ? new Date(textoFechaOriginal)
       : null;
 
     if (
@@ -1240,7 +1322,9 @@ export class ApprovalsService {
         ? rollbackData.fechaOperativaOriginal
         : null;
 
-    const registroVisitaAnterior = rollbackData.registroVisitaAnterior;
+    const registroVisitaAnterior = objetoDeJson(
+      rollbackData.registroVisitaAnterior,
+    );
     const debeRevertirRegistroVisita =
       rollbackData.origenGestion === 'CIERRE_PENDIENTE' &&
       fechaOperativaOriginal;
@@ -1266,8 +1350,9 @@ export class ApprovalsService {
         );
       }
 
-      const fechaNuevaEsperada = rollbackData.fechaVencimientoNueva
-        ? new Date(rollbackData.fechaVencimientoNueva)
+      const textoFechaNueva = textoDeJson(rollbackData.fechaVencimientoNueva);
+      const fechaNuevaEsperada = textoFechaNueva
+        ? new Date(textoFechaNueva)
         : null;
 
       if (fechaNuevaEsperada && !Number.isNaN(fechaNuevaEsperada.getTime())) {
@@ -1308,16 +1393,25 @@ export class ApprovalsService {
       });
 
       if (debeRevertirRegistroVisita && rollbackData.rutaIdOriginal) {
-        const rutaIdOriginal = String(rollbackData.rutaIdOriginal);
+        const rutaIdOriginal = textoDeJson(rollbackData.rutaIdOriginal);
 
         if (registroVisitaAnterior?.id) {
           await tx.registroVisita.update({
-            where: { id: String(registroVisitaAnterior.id) },
+            where: { id: textoDeJson(registroVisitaAnterior.id) },
             data: {
-              estadoVisita: registroVisitaAnterior.estadoVisita,
-              notas: registroVisitaAnterior.notas,
-              prestamoId: registroVisitaAnterior.prestamoId,
-              cobradorId: registroVisitaAnterior.cobradorId,
+              // Salen de una columna Json, asi que llegan como `unknown`. Los dos anulables
+              // conservan el null en vez de convertirse en el texto "null".
+              estadoVisita:
+                textoDeJson(registroVisitaAnterior.estadoVisita) ?? '',
+              notas:
+                registroVisitaAnterior.notas == null
+                  ? null
+                  : textoDeJson(registroVisitaAnterior.notas),
+              prestamoId:
+                registroVisitaAnterior.prestamoId == null
+                  ? null
+                  : textoDeJson(registroVisitaAnterior.prestamoId),
+              cobradorId: textoDeJson(registroVisitaAnterior.cobradorId) ?? '',
             },
           });
         } else {
@@ -1415,15 +1509,20 @@ export class ApprovalsService {
     let capitalTotal = 0;
     let interesTotal = 0;
     let moraTotal = 0;
-    const cuotasActualizar: { id: string; montoPagado: number; estado: any }[] =
-      [];
+    const cuotasActualizar: {
+      id: string;
+      montoPagado: number;
+      estado: EstadoCuota;
+    }[] = [];
 
     const cuotasBase = prestamo.cuotas || [];
     const cuotasAplicables = (() => {
       if (!cuotaIdObjetivo) return cuotasBase;
 
       if (!aplicarDesdeCuotaObjetivo) {
-        return cuotasBase.filter((cuota: any) => cuota.id === cuotaIdObjetivo);
+        return cuotasBase.filter(
+          (cuota: { id: string }) => cuota.id === cuotaIdObjetivo,
+        );
       }
 
       const cuotaIndex = cuotasBase.findIndex(
@@ -1585,7 +1684,7 @@ export class ApprovalsService {
         await this.confirmarEfectoProvisional(tx, efectoProvisional);
       });
 
-      const rollbackData = efectoProvisional.rollbackData || {};
+      const rollbackData = objetoDeJson(efectoProvisional.rollbackData);
 
       this.notificacionesGateway.broadcastAprobacionesActualizadas({
         accion: 'APROBAR',
@@ -1702,7 +1801,7 @@ export class ApprovalsService {
         case TipoAprobacion.BAJA_POR_PERDIDA:
           await this.approveLoanLoss(approval, aprobadoPorId, editedData);
           break;
-        case 'PAGO_TRANSFERENCIA' as any:
+        case 'PAGO_TRANSFERENCIA':
           await this.approveTransferPayment(approval, aprobadoPorId);
           break;
         default:
@@ -1737,7 +1836,10 @@ export class ApprovalsService {
     return { success: true, message: 'Aprobación procesada exitosamente' };
   }
 
-  private async approveTransferPayment(approval: any, aprobadoPorId?: string) {
+  private async approveTransferPayment(
+    approval: Aprobacion,
+    aprobadoPorId?: string,
+  ) {
     const data =
       typeof approval.datosSolicitud === 'string'
         ? JSON.parse(approval.datosSolicitud)
@@ -1798,9 +1900,7 @@ export class ApprovalsService {
     });
 
     if (!prestamo) throw new NotFoundException('Préstamo no encontrado');
-    if (
-      ![EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA].includes(prestamo.estado)
-    ) {
+    if (!ESTADOS_COBRABLES.some((estado) => estado === prestamo.estado)) {
       throw new BadRequestException(
         `No se puede aplicar pago: préstamo en estado ${prestamo.estado}`,
       );
@@ -1833,9 +1933,7 @@ export class ApprovalsService {
       if (!prestamoActual)
         throw new NotFoundException('Préstamo no encontrado');
       if (
-        ![EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA].includes(
-          prestamoActual.estado,
-        )
+        !ESTADOS_COBRABLES.some((estado) => estado === prestamoActual.estado)
       ) {
         throw new BadRequestException(
           `No se puede aplicar pago: préstamo en estado ${prestamoActual.estado}`,
@@ -1894,7 +1992,7 @@ export class ApprovalsService {
           rutaId: rutaId || undefined,
           fechaOperativaRuta: fechaOperativaRuta || undefined,
           origenGestion: esCierrePendiente ? 'CIERRE_PENDIENTE' : undefined,
-          detalles: { create: detallesPago as any },
+          detalles: { create: detallesPago },
         },
         select: { id: true },
       });
@@ -1932,7 +2030,7 @@ export class ApprovalsService {
         Number(prestamoActual.saldoPendiente || 0) - montoTotal,
       );
       const prestamoQuedaPagado = nuevoSaldo <= 0;
-      let nuevoEstadoPrestamo: any = prestamoActual.estado;
+      let nuevoEstadoPrestamo: EstadoPrestamo = prestamoActual.estado;
       if (prestamoQuedaPagado) nuevoEstadoPrestamo = EstadoPrestamo.PAGADO;
       else if (prestamoActual.estado === EstadoPrestamo.EN_MORA) {
         const vencidasRestantes = await tx.cuota.count({
@@ -1952,7 +2050,7 @@ export class ApprovalsService {
             Number(prestamoActual.interesPagado || 0) + interesTotal,
           saldoPendiente: nuevoSaldo,
           estado: nuevoEstadoPrestamo,
-          estadoSincronizacion: 'PENDIENTE' as any,
+          estadoSincronizacion: 'PENDIENTE',
         },
       });
 
@@ -2021,8 +2119,8 @@ export class ApprovalsService {
             prestamoId: prestamo.id,
             clienteId: prestamo.clienteId,
             entidad: 'APROBACION',
-            tipoContenido: 'COMPROBANTE_TRANSFERENCIA' as any,
-            estado: 'ACTIVO' as any,
+            tipoContenido: 'COMPROBANTE_TRANSFERENCIA',
+            estado: 'ACTIVO',
             eliminadoEn: null,
           },
           orderBy: { creadoEn: 'desc' },
@@ -2164,7 +2262,9 @@ export class ApprovalsService {
   async getPendingApprovals(tipo?: TipoAprobacion) {
     await this.reconcilePendingLoansWithoutApproval();
 
-    const where: any = { estado: EstadoAprobacion.PENDIENTE };
+    const where: Prisma.AprobacionWhereInput = {
+      estado: EstadoAprobacion.PENDIENTE,
+    };
     if (tipo) where.tipoAprobacion = tipo;
 
     const pendientes = await this.prisma.aprobacion.findMany({
@@ -2778,7 +2878,9 @@ export class ApprovalsService {
         metadata: {
           estadoAprobacion: 'RECHAZADO',
           revisadoPor: nombreRevisor,
-          descSolicitud: datos.descripcion || datos.motivo,
+          descSolicitud: textoDeValor(
+            objetoDeJson(datos).descripcion || objetoDeJson(datos).motivo,
+          ),
         },
       });
     } catch {
@@ -2792,7 +2894,7 @@ export class ApprovalsService {
     return { success: true, message: 'Aprobación rechazada' };
   }
 
-  private async approveNewClient(approval: any) {
+  private async approveNewClient(approval: Aprobacion) {
     const data =
       typeof approval.datosSolicitud === 'string'
         ? JSON.parse(approval.datosSolicitud)
@@ -2825,7 +2927,7 @@ export class ApprovalsService {
   }
 
   private async approveNewLoan(
-    approval: any,
+    approval: Aprobacion,
     aprobadoPorId?: string,
     editedData?: any,
   ) {
@@ -2988,7 +3090,7 @@ export class ApprovalsService {
         const cajaIdDestino = cajaDestino?.id;
         const asientoVentaExistente = await tx.journalEntry.findFirst({
           where: {
-            referenceType: 'VENTA_ARTICULO' as any,
+            referenceType: 'VENTA_ARTICULO',
             referenceId: prestamo.id,
           },
           select: { id: true },
@@ -3119,7 +3221,11 @@ export class ApprovalsService {
         const fechaInicio = new Date(prestamo.fechaInicio);
 
         let interesTotal = 0;
-        let cuotasData: any[] = [];
+        // Las dos ramas de abajo (francesa e interes simple) coinciden en cuatro campos, y
+        // son los cuatro que el `createMany` lee. Se deriva de `FilaAmortizacion` en vez de
+        // repetirlos, para que no puedan divergir; la francesa trae ademas `saldoRestante`,
+        // que aqui no se usa.
+        let cuotasData: Omit<FilaAmortizacion, 'saldoRestante'>[] = [];
 
         if (tipoAmort === TipoAmortizacion.FRANCESA) {
           const amortizacion = calcularAmortizacionFrancesa(
@@ -3132,23 +3238,43 @@ export class ApprovalsService {
           interesTotal = amortizacion.interesTotal;
           cuotasData = amortizacion.tabla;
         } else {
-          // INTERES SIMPLE
-          const mesesInteres = Math.max(1, realPlazoMeses);
-          interesTotal = (montoFinanciar * tasaInteres * mesesInteres) / 100;
-          const montoTotalSimple = montoFinanciar + interesTotal;
-          const montoCuota =
-            cantidadCuotas > 0 ? montoTotalSimple / cantidadCuotas : 0;
-          const montoCapitalCuota =
-            cantidadCuotas > 0 ? montoFinanciar / cantidadCuotas : 0;
-          const montoInteresCuota =
-            cantidadCuotas > 0 ? interesTotal / cantidadCuotas : 0;
+          // INTERES_PLANO o INTERES_SIMPLE, con la cuenta de la creacion.
+          //
+          // Aqui habia una sola rama que aplicaba interes simple a TODO lo que no
+          // fuera FRANCESA, y el enum tiene tres valores: se comia tambien
+          // INTERES_PLANO, que es el tipo por defecto de `createLoan` y por tanto
+          // el de casi todos los creditos. En plano la tasa se aplica UNA vez
+          // sobre el capital; en simple, una por cada mes de plazo. Tratar plano
+          // como simple multiplica el interes por el plazo: un credito de
+          // 1.000.000 al 10% mensual a 3 meses pasaba de 100.000 a 300.000, y ese
+          // interes entra en el saldo, asi que era deuda real del cliente. El
+          // aprobador veia los 100.000 en el modal, porque la pantalla si
+          // distingue los dos tipos.
+          //
+          // Solo se disparaba al aprobar CON cambios: sin editar nada este bloque
+          // no corre.
+          //
+          // Se usan los helpers de `interes-credito`, que su propia documentacion
+          // declara replica exacta de `LoansService.calculateInterestAndCuotas`,
+          // en vez de una cuarta copia de la cuenta. De paso arregla el reparto:
+          // el codigo anterior dividia sin truncar y guardaba cuotas con centavos.
+          const tipo: TipoAmortizacionImportacion =
+            tipoAmort === TipoAmortizacion.INTERES_PLANO
+              ? 'INTERES_PLANO'
+              : 'INTERES_SIMPLE';
 
-          cuotasData = Array.from({ length: cantidadCuotas }, (_, i) => ({
-            numeroCuota: i + 1,
-            monto: montoCuota,
-            montoCapital: montoCapitalCuota,
-            montoInteres: montoInteresCuota,
-          }));
+          interesTotal = calcularInteresTotal(
+            tipo,
+            montoFinanciar,
+            tasaInteres,
+            realPlazoMeses,
+          );
+          cuotasData = construirTablaCuotas(
+            tipo,
+            montoFinanciar,
+            interesTotal,
+            cantidadCuotas,
+          );
         }
 
         // Actualizar el préstamo con el nuevo interés calculado y saldo
@@ -3163,22 +3289,17 @@ export class ApprovalsService {
         // Eliminar cuotas viejas y crear nuevas para que coincidan con la edición
         await tx.cuota.deleteMany({ where: { prestamoId: prestamo.id } });
 
-        // Función auxiliar para calcular fechas (duplicada brevemente aquí para el tx)
-        const calcularFecha = (
-          base: Date,
-          num: number,
-          freq: FrecuenciaPago,
-        ) => {
-          const d = new Date(base);
-          if (freq === FrecuenciaPago.DIARIO) d.setDate(d.getDate() + num);
-          else if (freq === FrecuenciaPago.SEMANAL)
-            d.setDate(d.getDate() + num * 7);
-          else if (freq === FrecuenciaPago.QUINCENAL)
-            d.setDate(d.getDate() + num * 15);
-          else if (freq === FrecuenciaPago.MENSUAL)
-            d.setMonth(d.getMonth() + num);
-          return d;
-        };
+        // Las fechas se calculan con `calcularFechaVencimiento`, la misma que usa la
+        // creacion del prestamo. Antes habia aqui una copia local que no saltaba
+        // domingos, no manejaba la zona de Bogota y no miraba `fechaPrimerCobro`:
+        // aprobar con cambios un credito diario le ponia cuotas en domingo y, si
+        // tenia primer cobro aplazado, le movia todas las fechas.
+        const fechaBaseCuotas = prestamo.fechaPrimerCobro
+          ? new Date(prestamo.fechaPrimerCobro)
+          : fechaInicio;
+        // Sin `fechaPrimerCobro` la primera cuota vence un periodo despues del
+        // inicio; con el, vence ese mismo dia. Es la convencion de la creacion.
+        const desplazamiento = prestamo.fechaPrimerCobro ? 0 : 1;
 
         await tx.cuota.createMany({
           data: cuotasData.map((c) => ({
@@ -3187,14 +3308,89 @@ export class ApprovalsService {
             monto: c.monto,
             montoCapital: c.montoCapital,
             montoInteres: c.montoInteres,
-            fechaVencimiento: calcularFecha(
-              fechaInicio,
-              c.numeroCuota,
+            fechaVencimiento: calcularFechaVencimiento(
+              fechaBaseCuotas,
+              c.numeroCuota + desplazamiento,
               frecuencia,
             ),
             estado: EstadoCuota.PENDIENTE,
           })),
         });
+      }
+
+      // ── Reagendar lo que se venció esperando la aprobación ─────────────────
+      //
+      // Las cuotas se crean junto con el préstamo, fechadas desde ese día, y el
+      // préstamo queda en PENDIENTE_APROBACION. Mientras espera no pasa nada: el
+      // cron que marca vencidos exige estado ACTIVO o EN_MORA. Pero en cuanto se
+      // aprueba, esa misma noche a las 00:10 marca VENCIDA toda cuota con fecha
+      // pasada y voltea el préstamo a EN_MORA. Un crédito diario creado el lunes
+      // y aprobado el jueves amanecía el viernes en mora con tres cuotas
+      // atrasadas, sin que el cliente hubiera dejado de pagar nada.
+      //
+      // Esta lógica ya existía escrita, con este mismo razonamiento, dentro de
+      // `LoansService.approveLoan`: un endpoint que el frontend nunca llamó. Era
+      // el único sitio del backend que reagendaba al aprobar, y estaba en el
+      // camino muerto. Aquí corre en el vivo, y dentro de la transacción.
+      //
+      // Va después de la regeneración por `editedData` a propósito: si el revisor
+      // editó las condiciones, se reagendan las cuotas nuevas, no las viejas.
+      const { startDate: inicioAprobacion } = getBogotaStartEndOfDay(
+        new Date(),
+      );
+      const claveAprobacion = getBogotaDayKey(inicioAprobacion);
+      const inicioPrestamo = prestamo.fechaPrimerCobro ?? prestamo.fechaInicio;
+      const claveInicio = inicioPrestamo
+        ? getBogotaDayKey(new Date(inicioPrestamo))
+        : null;
+
+      if (claveInicio && claveAprobacion && claveInicio < claveAprobacion) {
+        const cuotasPorVencer = await tx.cuota.findMany({
+          where: {
+            prestamoId: prestamo.id,
+            estado: { in: [EstadoCuota.PENDIENTE, EstadoCuota.VENCIDA] },
+          },
+          orderBy: { numeroCuota: 'asc' },
+          select: { id: true },
+        });
+
+        if (cuotasPorVencer.length > 0) {
+          const frecuenciaPrestamo = prestamo.frecuenciaPago;
+          const nuevaBase = new Date(inicioAprobacion);
+
+          // La primera cuota reagendada vence un periodo después de hoy, igual
+          // que un crédito nuevo sin fecha de primer cobro: aprobar hoy no
+          // convierte hoy mismo en día de cobro.
+          for (let i = 0; i < cuotasPorVencer.length; i++) {
+            await tx.cuota.update({
+              where: { id: cuotasPorVencer[i].id },
+              data: {
+                fechaVencimiento: calcularFechaVencimiento(
+                  nuevaBase,
+                  i + 2,
+                  frecuenciaPrestamo,
+                ),
+                estado: EstadoCuota.PENDIENTE,
+              },
+            });
+          }
+
+          await tx.prestamo.update({
+            where: { id: prestamo.id },
+            data: {
+              fechaInicio: nuevaBase,
+              fechaFin: calcularFechaVencimiento(
+                nuevaBase,
+                cuotasPorVencer.length + 1,
+                frecuenciaPrestamo,
+              ),
+            },
+          });
+
+          this.logger.log(
+            `Prestamo ${prestamo.id}: ${cuotasPorVencer.length} cuotas reagendadas desde ${claveAprobacion}; venia fechado desde ${claveInicio}.`,
+          );
+        }
       }
 
       const montoDesembolso = Number(prestamo.monto || 0);
@@ -3331,7 +3527,7 @@ export class ApprovalsService {
     this.notificacionesGateway.broadcastDashboardsActualizados({});
   }
 
-  private async approveExpense(approval: any, aprobadoPorId?: string) {
+  private async approveExpense(approval: Aprobacion, aprobadoPorId?: string) {
     const data =
       typeof approval.datosSolicitud === 'string'
         ? JSON.parse(approval.datosSolicitud)
@@ -3422,12 +3618,18 @@ export class ApprovalsService {
             rutaId: routeCash.rutaId,
             cobradorId: routeCash.cobradorId,
             cajaId: routeCash.cajaId,
-            tipoGasto: ({
-              GASTO_OPERATIVO: 'OPERATIVO',
-              OPERATIVO: 'OPERATIVO',
-              TRANSPORTE: 'TRANSPORTE',
-              OTRO: 'OTRO',
-            }[data.tipoGasto] || 'OPERATIVO') as any,
+            // La tabla se indexa con lo que traiga la solicitud, que es texto
+            // libre, asi que se declara como tal y lo desconocido cae en el
+            // respaldo de siempre.
+            tipoGasto:
+              (
+                {
+                  GASTO_OPERATIVO: 'OPERATIVO',
+                  OPERATIVO: 'OPERATIVO',
+                  TRANSPORTE: 'TRANSPORTE',
+                  OTRO: 'OTRO',
+                } as Record<string, TipoGasto>
+              )[data.tipoGasto] || 'OPERATIVO',
             monto: data.monto,
             descripcion: data.descripcion,
             categoriaId: data.categoriaId || undefined,
@@ -3521,7 +3723,7 @@ export class ApprovalsService {
     });
   }
 
-  private async approveCashBase(approval: any, aprobadoPorId?: string) {
+  private async approveCashBase(approval: Aprobacion, aprobadoPorId?: string) {
     const data =
       typeof approval.datosSolicitud === 'string'
         ? JSON.parse(approval.datosSolicitud)
@@ -3679,7 +3881,10 @@ export class ApprovalsService {
     });
   }
 
-  private async approvePaymentExtension(approval: any, aprobadoPorId?: string) {
+  private async approvePaymentExtension(
+    approval: Aprobacion,
+    aprobadoPorId?: string,
+  ) {
     const data =
       typeof approval.datosSolicitud === 'string'
         ? JSON.parse(approval.datosSolicitud)
@@ -3777,7 +3982,7 @@ export class ApprovalsService {
   }
 
   private async approveLoanLoss(
-    approval: any,
+    approval: Aprobacion,
     aprobadoPorId?: string,
     _editedData?: any,
   ) {

@@ -1,18 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as webpush from 'web-push';
+import { RolUsuario } from '@prisma/client';
+import { estadoDeError } from '../common/error.util';
 import { formatBogotaOffsetIso } from '../utils/date-utils';
+import { SendPushNotificationDto } from './dto/send-push-notification.dto';
 
-export interface SendPushNotificationDto {
-  title: string;
-  body: string;
-  icon?: string;
-  badge?: string;
-  tag?: string;
-  data?: any;
-  userId?: string;
-  roleFilter?: string[];
-}
+// La forma de este cuerpo vive ahora en `dto/send-push-notification.dto.ts`, como CLASE
+// con decoradores. Antes estaba aqui como interfaz, y una interfaz no existe en tiempo de
+// ejecucion: el ValidationPipe no puede validar contra ella, asi que el controlador recibia
+// el cuerpo crudo. Se reexporta para no romper a quien la importaba de aqui.
+export { SendPushNotificationDto };
 
 /** Resultado de un envío, para poder comprobar desde la app si llegó. */
 export interface ResultadoEnvioPush {
@@ -84,7 +82,7 @@ export class PushService {
       if (data.roleFilter && data.roleFilter.length > 0) {
         const usuarios = await this.prisma.usuario.findMany({
           where: {
-            rol: { in: data.roleFilter as any },
+            rol: { in: data.roleFilter },
             estado: 'ACTIVO',
           },
         });
@@ -140,8 +138,9 @@ export class PushService {
       this.logger.log(`Enviando push real a: ${subscription.endpoint}`);
       await webpush.sendNotification(subscription, JSON.stringify(payload));
       return 'enviadas';
-    } catch (error: any) {
-      if (error.statusCode === 410 || error.statusCode === 404) {
+    } catch (error) {
+      const estado = estadoDeError(error);
+      if (estado === 410 || estado === 404) {
         this.logger.warn(
           `Suscripción expirada o inválida, eliminando: ${subscription.endpoint}`,
         );

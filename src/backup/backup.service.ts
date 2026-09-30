@@ -7,6 +7,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { objetoDeJson } from '../common/json.util';
+import { codigoDeError, mensajeDeError } from '../common/error.util';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, stat } from 'node:fs/promises';
@@ -48,7 +50,7 @@ export class BackupService {
   }
 
   async getStatus() {
-    const last = await (this.prisma as any).backupRun.findFirst({
+    const last = await this.prisma.backupRun.findFirst({
       orderBy: { startedAt: 'desc' },
     });
 
@@ -64,7 +66,7 @@ export class BackupService {
 
   async getHistory(limit = 20) {
     const safeLimit = Math.max(1, Math.min(100, Number(limit) || 20));
-    const items = await (this.prisma as any).backupRun.findMany({
+    const items = await this.prisma.backupRun.findMany({
       orderBy: { startedAt: 'desc' },
       take: safeLimit,
     });
@@ -72,7 +74,7 @@ export class BackupService {
   }
 
   async getArtifactPath(id: string, type: 'dump' | 'xlsx') {
-    const run = await (this.prisma as any).backupRun.findUnique({
+    const run = await this.prisma.backupRun.findUnique({
       where: { id },
     });
 
@@ -81,7 +83,11 @@ export class BackupService {
     }
 
     const baseDir = this.getBackupDir();
-    const artifacts = run?.metadata?.artifacts;
+    // `metadata` es una columna Json: puede no ser un objeto.
+    const artifacts = objetoDeJson(objetoDeJson(run?.metadata).artifacts) as {
+      dump?: { path?: string };
+      xlsx?: { path?: string };
+    };
 
     const dumpPath = artifacts?.dump?.path || run?.filePath;
     const xlsxPath = artifacts?.xlsx?.path;
@@ -106,7 +112,7 @@ export class BackupService {
       throw new BadRequestException('DATABASE_URL no está configurada');
     }
 
-    const running = await (this.prisma as any).backupRun.findFirst({
+    const running = await this.prisma.backupRun.findFirst({
       where: { estado: 'EN_PROCESO' },
       orderBy: { startedAt: 'desc' },
     });
@@ -116,7 +122,7 @@ export class BackupService {
     }
 
     const startedAt = new Date();
-    const run = await (this.prisma as any).backupRun.create({
+    const run = await this.prisma.backupRun.create({
       data: {
         tipo: 'MANUAL',
         destino: 'LOCAL',
@@ -156,11 +162,9 @@ export class BackupService {
           size: Number(info.size),
           elapsedMs: Date.now() - dumpStartedMs,
         };
-      } catch (err: any) {
-        const message = err?.message
-          ? String(err.message)
-          : 'Error ejecutando pg_dump';
-        const isPgDumpNotFound = err?.code === 'ENOENT';
+      } catch (err) {
+        const message = mensajeDeError(err, 'Error ejecutando pg_dump');
+        const isPgDumpNotFound = codigoDeError(err) === 'ENOENT';
         const hint = isPgDumpNotFound
           ? `No se encontró pg_dump. Instala PostgreSQL client tools o configura PG_DUMP_PATH (actual: ${this.getPgDumpPath()}).`
           : undefined;
@@ -180,7 +184,7 @@ export class BackupService {
       // El backup es EXITOSO si el Excel se generó. El dump SQL es opcional:
       // si pg_dump no está instalado se registra como advertencia pero no falla.
       const excelOk = !!excel;
-      const updated = await (this.prisma as any).backupRun.update({
+      const updated = await this.prisma.backupRun.update({
         where: { id: run.id },
         data: {
           estado: excelOk ? 'EXITOSO' : 'FALLIDO',
@@ -222,14 +226,12 @@ export class BackupService {
       });
 
       return updated;
-    } catch (err: any) {
+    } catch (err) {
       const finishedAt = new Date();
       const durationMs = finishedAt.getTime() - startedAt.getTime();
-      const message = err?.message
-        ? String(err.message)
-        : 'Error ejecutando pg_dump';
+      const message = mensajeDeError(err, 'Error ejecutando pg_dump');
 
-      const isPgDumpNotFound = err?.code === 'ENOENT';
+      const isPgDumpNotFound = codigoDeError(err) === 'ENOENT';
       const hint = isPgDumpNotFound
         ? `No se encontró pg_dump. Instala PostgreSQL client tools o configura PG_DUMP_PATH (actual: ${this.getPgDumpPath()}).`
         : undefined;
@@ -238,7 +240,7 @@ export class BackupService {
         `[backup] fallo backup manual: ${hint ? `${hint} ` : ''}${message}`,
       );
 
-      await (this.prisma as any).backupRun.update({
+      await this.prisma.backupRun.update({
         where: { id: run.id },
         data: {
           estado: 'FALLIDO',

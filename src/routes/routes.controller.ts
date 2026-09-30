@@ -30,6 +30,7 @@ import {
   ApiBearerAuth,
   ApiQuery,
 } from '@nestjs/swagger';
+import { RequestConUsuario } from '../common/types';
 
 @ApiTags('routes')
 @ApiBearerAuth(SWAGGER_JWT_AUTH)
@@ -81,7 +82,7 @@ export class RoutesController {
     @Query('activa') activa?: string,
     @Query('cobradorId') cobradorId?: string,
     @Query('supervisorId') supervisorId?: string,
-    @Request() req?,
+    @Request() req?: RequestConUsuario,
   ) {
     const skip =
       page && limit ? (parseInt(page) - 1) * parseInt(limit) : undefined;
@@ -97,7 +98,7 @@ export class RoutesController {
         cobradorId,
         supervisorId,
       },
-      req.user,
+      req?.user,
     );
   }
 
@@ -179,7 +180,7 @@ export class RoutesController {
   @ApiResponse({ status: 200, description: 'Listado de créditos asignados' })
   listarCreditosAsignadosACobrador(
     @Param('id', ParseUUIDPipe) id: string,
-    @Request() req,
+    @Request() req: RequestConUsuario,
   ) {
     return this.routesService.listarCreditosAsignadosACobrador(id, req.user);
   }
@@ -195,7 +196,10 @@ export class RoutesController {
   @ApiOperation({ summary: 'Obtener una ruta por ID' })
   @ApiResponse({ status: 200, description: 'Ruta obtenida exitosamente' })
   @ApiResponse({ status: 404, description: 'Ruta no encontrada' })
-  findOne(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
+  findOne(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Request() req: RequestConUsuario,
+  ) {
     return this.routesService.findOne(id, req.user);
   }
 
@@ -262,7 +266,10 @@ export class RoutesController {
   )
   @ApiOperation({ summary: 'Consultar si la ruta está activada hoy' })
   @ApiResponse({ status: 200, description: 'Estado de activación diaria' })
-  getActivacionHoy(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
+  getActivacionHoy(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Request() req: RequestConUsuario,
+  ) {
     return this.routesService.getRutaActivadaHoy(id, req.user);
   }
 
@@ -276,7 +283,10 @@ export class RoutesController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Activar la ruta para el día de hoy (manual)' })
   @ApiResponse({ status: 200, description: 'Ruta activada hoy' })
-  activarHoy(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
+  activarHoy(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Request() req: RequestConUsuario,
+  ) {
     return this.routesService.activarRutaHoy(id, req.user?.id);
   }
 
@@ -293,7 +303,10 @@ export class RoutesController {
       'Consultar si la ruta tiene una jornada anterior pendiente de cierre',
   })
   @ApiResponse({ status: 200, description: 'Estado de cierre pendiente' })
-  getCierrePendiente(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
+  getCierrePendiente(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Request() req: RequestConUsuario,
+  ) {
     return this.routesService.getCierrePendienteRutaPublic(id, req.user);
   }
 
@@ -311,7 +324,7 @@ export class RoutesController {
   @ApiResponse({ status: 200, description: 'Detalle de cierre pendiente' })
   getCierrePendienteDetalle(
     @Param('id', ParseUUIDPipe) id: string,
-    @Request() req,
+    @Request() req: RequestConUsuario,
   ) {
     return this.routesService.getCierrePendienteDetalle(id, req.user);
   }
@@ -417,9 +430,9 @@ export class RoutesController {
   getDailyVisits(
     @Param('id', ParseUUIDPipe) id: string,
     @Query('fecha') fecha?: string,
-    @Request() req?,
+    @Request() req?: RequestConUsuario,
   ) {
-    return this.routesService.getDailyVisits(id, fecha, req.user);
+    return this.routesService.getDailyVisits(id, fecha, req?.user);
   }
 
   @Patch(':id/reorder')
@@ -438,7 +451,7 @@ export class RoutesController {
   updateClientOrder(
     @Param('id', ParseUUIDPipe) id: string,
     @Body('orden') orden: Array<{ clienteId: string; orden: number }>,
-    @Request() req,
+    @Request() req: RequestConUsuario,
   ) {
     return this.routesService.updateClientOrder(id, orden, req.user);
   }
@@ -459,7 +472,7 @@ export class RoutesController {
   async exportarRutaExcel(
     @Param('id', ParseUUIDPipe) id: string,
     @Res() res: Response,
-    @Request() req,
+    @Request() req: RequestConUsuario,
   ) {
     const buffer = await this.routesService.exportarRuta(id, 'excel', req.user);
     res.setHeader(
@@ -487,7 +500,7 @@ export class RoutesController {
   async exportarRutaPdf(
     @Param('id', ParseUUIDPipe) id: string,
     @Res() res: Response,
-    @Request() req,
+    @Request() req: RequestConUsuario,
   ) {
     const buffer = await this.routesService.exportarRuta(id, 'pdf', req.user);
     res.setHeader('Content-Type', 'application/pdf');
@@ -529,7 +542,7 @@ export class RoutesController {
     @Param('clienteId', ParseUUIDPipe) clienteId: string,
     @Query('estadoVisita') estadoVisita: string | undefined,
     @Query('limit') limit: string | undefined,
-    @Request() req,
+    @Request() req: RequestConUsuario,
   ) {
     return this.routesService.getHistorialVisitasCliente(
       clienteId,
@@ -558,7 +571,7 @@ export class RoutesController {
     @Body('notas') notas: string,
     @Body('fechaOperativa') fechaOperativa: string | undefined,
     @Body('origenGestion') origenGestion: string | undefined,
-    @Request() req,
+    @Request() req: RequestConUsuario,
   ) {
     return this.routesService.registrarVisita(
       id,
@@ -589,7 +602,7 @@ export class RoutesController {
   cerrarJornadaRegularizada(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('fechaOperativa') fechaOperativa: string,
-    @Request() req,
+    @Request() req: RequestConUsuario,
     @Body('observaciones') observaciones?: string,
   ) {
     return this.routesService.cerrarJornadaRegularizada(

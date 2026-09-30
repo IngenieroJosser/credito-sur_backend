@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import * as ExcelJS from 'exceljs';
 import { MAX_OPCIONES_PLAZO } from '../parsers/inventario.parser';
 import { expresionRecargoExcel } from '../precios-articulo';
@@ -455,7 +456,14 @@ export function agregarValoresInventario(
   listaDesplegable(wsArticulos, COL.activo, 'Valores!$B$2:$B$3', true, filas);
 
   const columnaRentabilidad = colLetra(COL.rentabilidadObjetivo);
-  (wsArticulos as any).dataValidations.add(
+  // `dataValidations` existe en ExcelJS en ejecucion pero no esta en sus tipos (por eso
+  // el resto del archivo la usa a traves del helper `listaDesplegable`). El cast es de la
+  // definicion de la libreria, no del dato, y va acotado a esta propiedad.
+  (
+    wsArticulos as ExcelJS.Worksheet & {
+      dataValidations: { add: (rango: string, regla: unknown) => void };
+    }
+  ).dataValidations.add(
     `${columnaRentabilidad}7:${columnaRentabilidad}${filas}`,
     {
       type: 'decimal',
@@ -492,7 +500,12 @@ export function escribirFilaArticulo(
   },
 ) {
   if (articulo.opciones.length > MAX_OPCIONES_PLAZO) {
-    throw new Error(
+    // BadRequestException y no Error a secas: con un Error el filtro global lo
+    // toma por un fallo inesperado, responde 500 y le enseña al usuario
+    // "Ocurrió un error inesperado... reporte el código ERR-XXXX". Entonces
+    // vuelve a pulsar Exportar, que nunca va a funcionar, y reporta un código
+    // cuando el sistema ya sabía exactamente qué pasaba y cómo arreglarlo.
+    throw new BadRequestException(
       `El artículo ${articulo.codigo} tiene ${articulo.opciones.length} plazos y la plantilla admite ${MAX_OPCIONES_PLAZO}. No se generó el archivo para evitar perder precios.`,
     );
   }

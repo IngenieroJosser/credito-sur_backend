@@ -17,7 +17,7 @@ export class NotificacionesController {
   constructor(private readonly notificacionesService: NotificacionesService) {}
 
   @Get()
-  findAll(@Request() req) {
+  findAll(@Request() req: RequestConUsuario) {
     if (!req.user || !req.user.id) return [];
     return this.notificacionesService.findAll(req.user.id);
   }

@@ -8,6 +8,12 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  codigoDeError,
+  mensajeDeError,
+  pilaDeError,
+} from '../common/error.util';
+import {
+  Caja,
   EstadoCuota,
   EstadoPrestamo,
   EstadoAprobacion,
@@ -40,6 +46,96 @@ import {
 } from '../templates/exports/gastos-export.template';
 import { LedgerService, ReferenceTypeContable } from './ledger.service';
 import { randomUUID } from 'crypto';
+import { unoDeLosPermitidos } from '../common/texto.util';
+
+/**
+ * Una fila del historial de cierres (`GET /accounting/cierres`).
+ *
+ * Es un tipo con casi todo opcional a proposito: la lista UNE cuatro formas distintas y
+ * el consumidor las distingue por `tipo`.
+ *
+ *  - `ARQUEO` salido de `Transaccion` (referenciaId codificado `SS:..|ER:..|DF:..`).
+ *    Es el unico que NO trae `cajaTipo`, asi que el filtro `soloRutas` lo descarta.
+ *  - `CIERRE_RUTA`, con la meta en `saldoSistema` y el recaudo en `saldoReal`.
+ *  - `CONSOLIDACION`.
+ *  - `ARQUEO` salido de la tabla `Arqueo`, que es el mas rico: trae `cajaOrigen` y
+ *    `cajaDestino` para el modal de detalle y la impresion.
+ *
+ * Antes era `any[]`, y por eso los tres filtros de abajo (`m.estado`, `m.cajaTipo`) no
+ * estaban comprobados contra nada.
+ */
+export type CierreHistorialItem = {
+  id: string;
+  fecha: string;
+  caja: string;
+  responsable: string | null;
+  diferencia: number;
+  estado: string;
+  descripcion: string | null;
+  tipo: 'ARQUEO' | 'CIERRE_RUTA' | 'CONSOLIDACION';
+  cajaId: string;
+  cajaTipo?: TipoCaja;
+  saldoSistema?: number;
+  saldoReal?: number;
+  referenciaId?: string | null;
+  /** Solo `CIERRE_RUTA`. */
+  deudaFisica?: number;
+  efectividad?: number;
+  clientesFaltantes?: number;
+  /** Solo el `ARQUEO` de la tabla `Arqueo`. */
+  fechaOperativa?: string;
+  creadoPor?: string | null;
+  recibidoPor?: string | null;
+  saldoEsperado?: number;
+  efectivoContado?: number;
+  montoTransferido?: number;
+  tipoDiferencia?: string | null;
+  numeroComprobanteTraslado?: string | null;
+  journalEntryId?: string | null;
+  rutaId?: string | null;
+  cajaOrigen?: {
+    id: string;
+    nombre: string;
+    saldoAnterior: number;
+    salida: number;
+    saldoNuevo: number;
+  };
+  cajaDestino?: {
+    nombre: string;
+    ingreso: number;
+    saldoNuevo: number | null;
+  };
+};
+
+/**
+ * Una transaccion del listado, con su caja y quien la creo.
+ *
+ * `mapTransaccionRow` decia `t: any` y lee `t.caja.nombre`, `t.caja.codigo` y el
+ * nombre de `creadoPor`: si la consulta dejara de pedir esas relaciones, la tabla de
+ * movimientos saldria con la caja en blanco y nadie se enteraria al compilar.
+ *
+ * Con `Prisma.validator` el include y el tipo son el mismo objeto.
+ */
+const transaccionDelListado = Prisma.validator<Prisma.TransaccionDefaultArgs>()(
+  {
+    include: {
+      caja: {
+        select: {
+          nombre: true,
+          codigo: true,
+          tipo: true,
+          rutaId: true,
+          saldoActual: true,
+        },
+      },
+      creadoPor: { select: { nombres: true, apellidos: true } },
+    },
+  },
+);
+
+type TransaccionDelListado = Prisma.TransaccionGetPayload<
+  typeof transaccionDelListado
+>;
 
 @Injectable()
 export class AccountingService {
@@ -80,7 +176,7 @@ export class AccountingService {
    * Mapea una fila de Prisma (Transaccion + includes) al DTO de respuesta.
    * Centraliza la lógica duplicada entre getTransacciones y getTransaccionById.
    */
-  private mapTransaccionRow(t: any) {
+  private mapTransaccionRow(t: TransaccionDelListado) {
     return {
       id: t.id,
       numero: t.numeroTransaccion,
@@ -90,7 +186,13 @@ export class AccountingService {
       descripcion: t.descripcion,
       caja: t.caja.nombre,
       cajaId: t.cajaId,
-      cajaOrigenId: t.cajaOrigenId ?? undefined,
+      // Aqui iba `cajaOrigenId: t.cajaOrigenId ?? undefined`, y ese campo NO existe
+      // en el modelo Transaccion, ni en ninguna tabla: la respuesta salia siempre con
+      // la clave en undefined. Una transferencia se registra como DOS transacciones,
+      // una por caja, y la del origen ya trae su `cajaId`: no hace falta un campo
+      // aparte. El frontend tiene un filtro que lo compara
+      // (app/admin/contable/page.tsx:1049) y esa mitad del `||` nunca se cumple, pero
+      // es redundante: la otra mitad, por `cajaId`, ya lo cubre.
       tipoReferencia: t.tipoReferencia ?? undefined,
       referenciaId: t.referenciaId ?? undefined,
       responsable: `${t.creadoPor.nombres} ${t.creadoPor.apellidos}`,
@@ -163,9 +265,9 @@ export class AccountingService {
         },
         include: incluir,
       });
-    } catch (error: any) {
+    } catch (error) {
       // Otra petición la creó entre la búsqueda y el create.
-      if (error?.code !== 'P2002') throw error;
+      if (codigoDeError(error) !== 'P2002') throw error;
 
       const ganadora = await buscarYReactivar();
       if (!ganadora) throw error;
@@ -398,7 +500,9 @@ export class AccountingService {
         }
       }
     } catch (err) {
-      this.logger.error(`Error al verificar cajas por defecto: ${err.message}`);
+      this.logger.error(
+        `Error al verificar cajas por defecto: ${mensajeDeError(err)}`,
+      );
     }
   }
 
@@ -500,7 +604,12 @@ export class AccountingService {
         }
 
         // Si es caja de supervisor (rutaId null), obtener rutas supervisadas
-        let rutasSupervisadas: any[] = [];
+        // La forma del `select` de abajo: tres campos, no el modelo entero.
+        let rutasSupervisadas: {
+          id: string;
+          nombre: string;
+          codigo: string;
+        }[] = [];
         if (caja.tipo === 'RUTA' && !caja.rutaId && caja.responsableId) {
           rutasSupervisadas = await this.prisma.ruta.findMany({
             where: {
@@ -717,10 +826,7 @@ export class AccountingService {
       } catch (error) {
         // No se corta la operacion principal por esto, pero se deja
         // registrado: en silencio nadie se entera de que fallo.
-        this.logger.warn(
-          'No se pudo notificar la solicitud de gasto',
-          error as any,
-        );
+        this.logger.warn('No se pudo notificar la solicitud de gasto', error);
       }
 
       this.notificacionesGateway.broadcastDashboardsActualizados({
@@ -821,9 +927,7 @@ export class AccountingService {
               select: { code: true },
             });
 
-            const existentes = new Set(
-              cuentasExistentes.map((c: any) => c.code),
-            );
+            const existentes = new Set(cuentasExistentes.map((c) => c.code));
             const faltantes = cuentasRequeridas.filter(
               (code) => !existentes.has(code),
             );
@@ -1069,7 +1173,7 @@ export class AccountingService {
     } catch (error) {
       // No se corta la operacion principal por esto, pero se deja
       // registrado: en silencio nadie se entera de que fallo.
-      this.logger.warn('No se pudo notificar la solicitud', error as any);
+      this.logger.warn('No se pudo notificar la solicitud', error);
     }
 
     this.notificacionesGateway.broadcastDashboardsActualizados({
@@ -1236,7 +1340,10 @@ export class AccountingService {
         return nuevaCaja;
       });
     } catch (error) {
-      this.logger.error(`Error creando caja: ${error.message}`, error.stack);
+      this.logger.error(
+        `Error creando caja: ${mensajeDeError(error)}`,
+        pilaDeError(error),
+      );
       if (
         error instanceof BadRequestException ||
         error instanceof ForbiddenException ||
@@ -1245,14 +1352,17 @@ export class AccountingService {
         throw error;
       }
       // Si es un error de base de datos específico (ej: input syntax for uuid), devolvemos BadRequest
-      if (error.code === 'P2023' || error.message.includes('uuid')) {
+      if (
+        codigoDeError(error) === 'P2023' ||
+        (error instanceof Error && error.message.includes('uuid'))
+      ) {
         throw new BadRequestException(
           'Formato de ID inválido (UUID requerido). Verifique responsableId o rutaId.',
         );
       }
 
       throw new BadRequestException(
-        `No se pudo crear la caja: ${error.message || 'Error desconocido'}`,
+        `No se pudo crear la caja: ${mensajeDeError(error)}`,
       );
     }
   }
@@ -1276,7 +1386,9 @@ export class AccountingService {
     }
 
     // Las cajas por defecto NO pueden desactivarse ni renombrarse, solo cambiar responsable
-    if (AccountingService.CODIGOS_DEFAULT.includes(caja.codigo)) {
+    if (
+      AccountingService.CODIGOS_DEFAULT.some((codigo) => codigo === caja.codigo)
+    ) {
       if (data.activa === false) {
         throw new ForbiddenException(
           `La caja "${caja.nombre}" es una caja del sistema y no puede desactivarse.`,
@@ -1306,7 +1418,9 @@ export class AccountingService {
     const caja = await this.prisma.caja.findUnique({ where: { id } });
     if (!caja) throw new NotFoundException('Caja no encontrada');
 
-    if (AccountingService.CODIGOS_DEFAULT.includes(caja.codigo)) {
+    if (
+      AccountingService.CODIGOS_DEFAULT.some((codigo) => codigo === caja.codigo)
+    ) {
       throw new ForbiddenException(
         `La caja "${caja.nombre}" es una caja del sistema y no puede eliminarse. Solo puede reasignarse su responsable.`,
       );
@@ -1357,11 +1471,21 @@ export class AccountingService {
       limit = 50,
     } = filtros;
     const skip = (page - 1) * limit;
-    const where: any = {};
-    const lineFilters: any[] = [];
+    const where: Prisma.JournalEntryWhereInput = {};
+    // Son condiciones de Prisma sobre `lines`: el tipo lo da la propia libreria, y asi
+    // un campo mal escrito se ve aqui en vez de producir un filtro que no filtra.
+    const lineFilters: Prisma.JournalLineWhereInput[] = [];
 
     if (tipo && tipo !== 'TODOS') {
-      where.referenceType = tipo;
+      // `tipo` entra como texto desde la query. Antes iba directo a Prisma, que lanza si
+      // no es un miembro del enum: un valor inventado daba 500 en vez de una respuesta
+      // limpia. Ahora se comprueba contra el enum y lo que no encaja se ignora, igual que
+      // el filtro de nivel de riesgo en clients.service.
+      const referencia = unoDeLosPermitidos(
+        tipo,
+        Object.values(ReferenceTypeContable),
+      );
+      if (referencia) where.referenceType = referencia;
     }
     if (fechaInicio || fechaFin) {
       where.createdAt = {};
@@ -1416,10 +1540,9 @@ export class AccountingService {
 
     const pagoIds = entries
       .filter(
-        (entry: any) =>
-          String(entry.referenceType || '').toUpperCase() === 'PAGO',
+        (entry) => String(entry.referenceType || '').toUpperCase() === 'PAGO',
       )
-      .map((entry: any) => String(entry.referenceId || '').trim())
+      .map((entry) => String(entry.referenceId || '').trim())
       .filter(Boolean);
     const pagosRegularizados = pagoIds.length
       ? await this.prisma.pago.findMany({
@@ -1441,32 +1564,32 @@ export class AccountingService {
         origenGestion: string | null;
         fechaOperativaRuta: string | null;
       }
-    >(pagosRegularizados.map((p: any) => [p.id, p]));
+    >(pagosRegularizados.map((p) => [p.id, p]));
 
-    const data = entries.map((entry: any) => {
+    const data = entries.map((entry) => {
       const pagoRegularizado = pagoRegularizadoPorId.get(entry.referenceId);
       const totalDebito = entry.lines.reduce(
-        (sum: number, line: any) => sum + Number(line.debitAmount || 0),
+        (sum: number, line) => sum + Number(line.debitAmount || 0),
         0,
       );
       const totalCredito = entry.lines.reduce(
-        (sum: number, line: any) => sum + Number(line.creditAmount || 0),
+        (sum: number, line) => sum + Number(line.creditAmount || 0),
         0,
       );
       const lineasCaja = cajaId
-        ? entry.lines.filter((line: any) => line.cajaId === cajaId)
-        : entry.lines.filter((line: any) => line.cajaId);
+        ? entry.lines.filter((line) => line.cajaId === cajaId)
+        : entry.lines.filter((line) => line.cajaId);
       const debitoCaja = lineasCaja.reduce(
-        (sum: number, line: any) => sum + Number(line.debitAmount || 0),
+        (sum: number, line) => sum + Number(line.debitAmount || 0),
         0,
       );
       const creditoCaja = lineasCaja.reduce(
-        (sum: number, line: any) => sum + Number(line.creditAmount || 0),
+        (sum: number, line) => sum + Number(line.creditAmount || 0),
         0,
       );
       const impactoCaja = debitoCaja - creditoCaja;
       const resultadoIngresos = entry.lines.reduce(
-        (sum: number, line: any) =>
+        (sum: number, line) =>
           String(line.accountCode || '').startsWith('3.')
             ? sum +
               Number(line.creditAmount || 0) -
@@ -1475,7 +1598,7 @@ export class AccountingService {
         0,
       );
       const resultadoEgresosCostos = entry.lines.reduce(
-        (sum: number, line: any) =>
+        (sum: number, line) =>
           String(line.accountCode || '').startsWith('4.') ||
           String(line.accountCode || '').startsWith('5.')
             ? sum +
@@ -1489,16 +1612,16 @@ export class AccountingService {
         (entry.referenceType === 'AJUSTE' && impactoCaja !== 0
           ? lineasCaja[0]
           : null) ||
-        entry.lines.find((line: any) =>
+        entry.lines.find((line) =>
           String(line.accountCode || '').startsWith('3.'),
         ) ||
-        entry.lines.find((line: any) =>
+        entry.lines.find((line) =>
           String(line.accountCode || '').startsWith('4.'),
         ) ||
-        entry.lines.find((line: any) =>
+        entry.lines.find((line) =>
           String(line.accountCode || '').startsWith('5.'),
         ) ||
-        entry.lines.find((line: any) => line.cajaId) ||
+        entry.lines.find((line) => line.cajaId) ||
         entry.lines[0];
 
       return {
@@ -1530,7 +1653,7 @@ export class AccountingService {
         caja: lineasCaja[0]?.caja?.nombre || null,
         cajaId: lineasCaja[0]?.cajaId || null,
         cuadrado: Math.abs(totalDebito - totalCredito) < 0.01,
-        lineas: entry.lines.map((line: any) => ({
+        lineas: entry.lines.map((line) => ({
           id: line.id,
           accountCode: line.accountCode,
           accountName: line.account?.name || line.accountCode,
@@ -1580,7 +1703,7 @@ export class AccountingService {
       } = filtros;
       const skip = (page - 1) * limit;
 
-      const where: any = {};
+      const where: Prisma.TransaccionWhereInput = {};
 
       // Se eliminó el filtro que excluía consolidaciones para mostrarlas en movimientos recientes
 
@@ -1655,18 +1778,7 @@ export class AccountingService {
           where,
           skip,
           take: limit,
-          include: {
-            caja: {
-              select: {
-                nombre: true,
-                codigo: true,
-                tipo: true,
-                rutaId: true,
-                saldoActual: true,
-              },
-            },
-            creadoPor: { select: { nombres: true, apellidos: true } },
-          },
+          ...transaccionDelListado,
           orderBy: { fechaTransaccion: 'desc' },
         }),
         this.prisma.transaccion.count({ where }),
@@ -1683,8 +1795,8 @@ export class AccountingService {
       };
     } catch (error) {
       this.logger.error(
-        `Error fetching transacciones: ${error.message}`,
-        error.stack,
+        `Error fetching transacciones: ${mensajeDeError(error)}`,
+        pilaDeError(error),
       );
       throw error;
     }
@@ -1694,18 +1806,7 @@ export class AccountingService {
     try {
       const t = await this.prisma.transaccion.findUnique({
         where: { id },
-        include: {
-          caja: {
-            select: {
-              nombre: true,
-              codigo: true,
-              tipo: true,
-              rutaId: true,
-              saldoActual: true,
-            },
-          },
-          creadoPor: { select: { nombres: true, apellidos: true } },
-        },
+        ...transaccionDelListado,
       });
 
       if (!t) throw new NotFoundException('Transacción no encontrada');
@@ -1713,8 +1814,8 @@ export class AccountingService {
       return this.mapTransaccionRow(t);
     } catch (error) {
       this.logger.error(
-        `Error fetching transaccion by id: ${error.message}`,
-        error.stack,
+        `Error fetching transaccion by id: ${mensajeDeError(error)}`,
+        pilaDeError(error),
       );
       throw error;
     }
@@ -1798,8 +1899,12 @@ export class AccountingService {
     });
 
     // 2. Clasificar y sumar transacciones
-    let cobranzaTrx = 0;
-    let baseEfectivo = 0;
+    // Estos dos se acumulan y NO se leen: el `baseEfectivo` que se reporta sale del
+    // saldo de la caja, no de esta suma. Llevan guion bajo por la convencion del
+    // repo para lo deliberadamente no usado, para que nadie los tome por la cifra
+    // del reporte.
+    let _cobranzaTrx = 0;
+    let _baseEfectivo = 0;
     let gastosOperativos = 0;
     let desembolsos = 0;
     let otrosIngresos = 0;
@@ -1811,7 +1916,7 @@ export class AccountingService {
       const descripcion = String(t.descripcion || '').toLowerCase();
       if (t.tipo === 'INGRESO') {
         if (t.tipoReferencia === 'PAGO') {
-          cobranzaTrx += monto;
+          _cobranzaTrx += monto;
           if (t.referenciaId) {
             recaudosPorReferencia[t.referenciaId] =
               (recaudosPorReferencia[t.referenciaId] || 0) + monto;
@@ -1823,7 +1928,7 @@ export class AccountingService {
           descripcion.includes('apertura de caja') ||
           descripcion.includes('base de efectivo')
         ) {
-          baseEfectivo += monto;
+          _baseEfectivo += monto;
         } else {
           otrosIngresos += monto;
         }
@@ -2046,7 +2151,8 @@ export class AccountingService {
 
     // Clasificar y sumar transacciones
     let cobranzaTrx = 0;
-    let baseEfectivo = 0;
+    // Se acumula y no se lee: el reportado sale del saldo de la caja.
+    let _baseEfectivo = 0;
     let gastosOperativos = 0;
     let desembolsos = 0;
     let otrosIngresos = 0;
@@ -2065,7 +2171,7 @@ export class AccountingService {
           descripcion.includes('apertura de caja') ||
           descripcion.includes('base de efectivo')
         ) {
-          baseEfectivo += monto;
+          _baseEfectivo += monto;
         } else {
           otrosIngresos += monto;
         }
@@ -2792,7 +2898,10 @@ export class AccountingService {
       .then((pagos) => pagos.map((p) => p.id));
 
     // Helper for non-regularized cobranza
-    const ledgerCobranzaNoRegularizadaWhere = (start: Date, end: Date) => ({
+    const ledgerCobranzaNoRegularizadaWhere = (
+      start: Date,
+      end: Date,
+    ): Prisma.JournalLineWhereInput => ({
       OR: [
         { accountCode: { startsWith: '1.1' } },
         { accountCode: { startsWith: '1.2' } },
@@ -2812,18 +2921,24 @@ export class AccountingService {
       },
     });
 
+    // El retorno se anota a proposito: sin la anotacion el literal se infiere
+    // solo (`in: string[]`, por ejemplo) y Prisma no comprueba que los valores
+    // existan en el enum ni que los campos sean del modelo.
     const ledgerPeriodWhere = (
       start: Date,
       end: Date,
       accountPrefix: string,
-    ) => ({
+    ): Prisma.JournalLineWhereInput => ({
       accountCode: { startsWith: accountPrefix },
       journalEntry: {
         isOpening: false,
         createdAt: { gte: start, lte: end },
       },
     });
-    const ledgerIncomeOperativoWhere = (start: Date, end: Date) => ({
+    const ledgerIncomeOperativoWhere = (
+      start: Date,
+      end: Date,
+    ): Prisma.JournalLineWhereInput => ({
       accountCode: { startsWith: '3.' },
       NOT: [
         { accountCode: { startsWith: '3.3' } },
@@ -2834,7 +2949,10 @@ export class AccountingService {
         createdAt: { gte: start, lte: end },
       },
     });
-    const ledgerCashIncomeWhere = (start: Date, end: Date) => ({
+    const ledgerCashIncomeWhere = (
+      start: Date,
+      end: Date,
+    ): Prisma.JournalLineWhereInput => ({
       OR: [
         { accountCode: { startsWith: '1.1' } },
         { accountCode: { startsWith: '1.2' } },
@@ -2846,7 +2964,10 @@ export class AccountingService {
         createdAt: { gte: start, lte: end },
       },
     });
-    const cuotaInicialIngresoWhere = (start: Date, end: Date) => ({
+    const cuotaInicialIngresoWhere = (
+      start: Date,
+      end: Date,
+    ): Prisma.TransaccionWhereInput => ({
       fechaTransaccion: { gte: start, lte: end },
       tipo: TipoTransaccion.INGRESO,
       tipoReferencia: { in: ['CUOTA_INICIAL', 'RESTAURACION_CUOTA_INICIAL'] },
@@ -3356,9 +3477,10 @@ export class AccountingService {
     fechaInicio?: string;
     fechaFin?: string;
   }) {
-    const whereTransaccion: any = {};
-    const whereArqueo: any = {};
-    const orTransaccion: any[] = [];
+    const whereTransaccion: Prisma.TransaccionWhereInput = {};
+    const whereArqueo: Prisma.ArqueoCajaWhereInput = {};
+    // Igual: condiciones de Prisma sobre Transaccion, para un OR.
+    const orTransaccion: Prisma.TransaccionWhereInput[] = [];
     const tipo = filtros?.tipo;
     if (!tipo || tipo === undefined) {
       orTransaccion.push({
@@ -3415,7 +3537,7 @@ export class AccountingService {
         : [],
     ]);
 
-    let mapped: any[] = [];
+    let mapped: CierreHistorialItem[] = [];
 
     // Mapear las transacciones
     mapped = transacciones.map((t) => {
@@ -3516,7 +3638,7 @@ export class AccountingService {
     });
 
     // Mapear los arqueos
-    const mappedArqueos = arqueos.map((a) => {
+    const mappedArqueos: CierreHistorialItem[] = arqueos.map((a) => {
       return {
         id: a.id,
         fecha: formatBogotaOffsetIso(a.creadoEn),
@@ -3582,19 +3704,26 @@ export class AccountingService {
     }
     // Filtro opcional: solo cajas de rutas (cobradores)
     if (filtros?.soloRutas) {
-      mapped = mapped.filter((m: any) => m.cajaTipo === 'RUTA');
+      mapped = mapped.filter((m) => m.cajaTipo === 'RUTA');
     }
     return mapped;
   }
 
   private async assertNoOfflinePendienteAntesArqueo(
-    caja: any,
+    // Solo se lee `responsableId`: se declara ese y nada mas. Pedir la Caja completa
+    // obligaria a los llamadores a traerla entera para nada.
+    caja: { responsableId?: string | null } | null | undefined,
     cierreTimestamp: Date,
   ) {
-    const usuarioIds = [caja?.responsableId].filter(Boolean);
+    // Guarda de tipo y no `.filter(Boolean)`: ese no estrecha, y el arreglo seguia
+    // siendo `(string | null | undefined)[]` donde Prisma pide `string[]`. Es la tercera
+    // vez que aparece este mismo patron en el repo.
+    const usuarioIds = [caja?.responsableId].filter(
+      (id): id is string => typeof id === 'string' && id.length > 0,
+    );
     const pendingSyncCount = await this.prisma.colaSincronizacion.count({
       where: {
-        estado: { in: ['PENDIENTE', 'ERROR', 'CONFLICTO'] as any },
+        estado: { in: ['PENDIENTE', 'ERROR', 'CONFLICTO'] },
         creadoEn: { lte: cierreTimestamp },
         ...(usuarioIds.length ? { usuarioCreadorId: { in: usuarioIds } } : {}),
       },
@@ -3615,7 +3744,7 @@ export class AccountingService {
     }
   }
 
-  private async getCandidatosSobranteRuta(caja: any, cierreTimestamp: Date) {
+  private async getCandidatosSobranteRuta(caja: Caja, cierreTimestamp: Date) {
     if (!caja?.rutaId) {
       return [];
     }
@@ -3628,9 +3757,9 @@ export class AccountingService {
     const cuotas = await this.prisma.cuota.findMany({
       where: {
         fechaVencimiento: { gte: inicioAyer, lte: finHoy },
-        estado: { in: ['PENDIENTE', 'VENCIDA', 'PARCIAL'] as any },
+        estado: { in: ['PENDIENTE', 'VENCIDA', 'PARCIAL'] },
         prestamo: {
-          estado: { in: ['ACTIVO', 'EN_MORA'] as any },
+          estado: { in: ['ACTIVO', 'EN_MORA'] },
           eliminadoEn: null,
           rutaId: caja.rutaId,
         },
@@ -3656,13 +3785,13 @@ export class AccountingService {
     });
 
     return cuotas
-      .filter((cuota: any) => {
+      .filter((cuota) => {
         const ultimoPago = cuota?.prestamo?.pagos?.[0]?.fechaPago;
         return (
           !ultimoPago || new Date(ultimoPago).getTime() < inicioHoy.getTime()
         );
       })
-      .map((cuota: any) => ({
+      .map((cuota) => ({
         cuotaId: cuota.id,
         numeroCuota: cuota.numeroCuota,
         fechaVencimiento: formatBogotaOffsetIso(cuota.fechaVencimiento),
@@ -3795,9 +3924,16 @@ export class AccountingService {
     } = filtros;
     const skip = (page - 1) * limit;
 
-    const where: any = {};
+    const where: Prisma.GastoWhereInput = {};
     if (rutaId) where.rutaId = rutaId;
-    if (estado) where.estadoAprobacion = estado;
+    if (estado) {
+      // Mismo caso: texto de la query hacia un enum de Prisma.
+      const estadoValido = unoDeLosPermitidos(
+        estado,
+        Object.values(EstadoAprobacion),
+      );
+      if (estadoValido) where.estadoAprobacion = estadoValido;
+    }
     if (esProvisional !== undefined) where.esProvisional = esProvisional;
     if (fechaInicio || fechaFin) {
       where.fechaGasto = {};
@@ -3878,15 +4014,15 @@ export class AccountingService {
 
     const usuarioIds = [
       ...new Set(
-        journalEntries.map((entry: any) => entry.createdBy).filter(Boolean),
+        journalEntries.map((entry) => entry.createdBy).filter(Boolean),
       ),
     ];
     const cajaIds = [
       ...new Set(
         journalEntries
-          .flatMap((entry: any) => entry.lines || [])
-          .map((line: any) => line.cajaId)
-          .filter(Boolean),
+          .flatMap((entry) => entry.lines || [])
+          .map((line) => line.cajaId)
+          .filter((cajaId): cajaId is string => Boolean(cajaId)),
       ),
     ];
 
@@ -3906,16 +4042,26 @@ export class AccountingService {
     ]);
 
     const usuariosMap = new Map(
-      usuarios.map((u: any) => [u.id, `${u.nombres} ${u.apellidos}`]),
+      usuarios.map((u): [string, string] => [
+        u.id,
+        `${u.nombres} ${u.apellidos}`,
+      ]),
     );
     const cajasMap = new Map<
       string,
       { id: string; nombre: string; tipo: TipoCaja }
-    >(cajasMovimientos.map((c: any) => [c.id, c]));
+    >(
+      cajasMovimientos.map(
+        (c): [string, { id: string; nombre: string; tipo: TipoCaja }] => [
+          c.id,
+          c,
+        ],
+      ),
+    );
 
     const fecha = getBogotaDayKey(new Date());
 
-    const filasCjas: CajaRow[] = cajas.map((c: any) => ({
+    const filasCjas: CajaRow[] = cajas.map((c) => ({
       nombre: c.nombre,
       codigo: c.codigo,
       tipo: c.tipo,
@@ -3934,36 +4080,30 @@ export class AccountingService {
               : 'EMPRESA',
     }));
 
-    const filasTransacciones: TransaccionRow[] = journalEntries.map(
-      (entry: any) => {
-        const totalDebito = (entry.lines || []).reduce(
-          (sum: number, line: any) => sum + Number(line.debitAmount || 0),
-          0,
-        );
-        const cajasEntry = (entry.lines || [])
-          .map((line: any) =>
-            line.cajaId ? cajasMap.get(line.cajaId)?.nombre : null,
-          )
-          .filter(Boolean);
-        const cuentas = (entry.lines || [])
-          .map((line: any) =>
-            `${line.accountCode} ${line.account?.name || ''}`.trim(),
-          )
-          .join(' / ');
+    const filasTransacciones: TransaccionRow[] = journalEntries.map((entry) => {
+      const totalDebito = (entry.lines || []).reduce(
+        (sum: number, line) => sum + Number(line.debitAmount || 0),
+        0,
+      );
+      const cajasEntry = (entry.lines || [])
+        .map((line) => (line.cajaId ? cajasMap.get(line.cajaId)?.nombre : null))
+        .filter(Boolean);
+      const cuentas = (entry.lines || [])
+        .map((line) => `${line.accountCode} ${line.account?.name || ''}`.trim())
+        .join(' / ');
 
-        return {
-          fecha: entry.createdAt,
-          tipo: entry.referenceType,
-          monto: totalDebito,
-          descripcion: entry.description || cuentas,
-          caja: [...new Set(cajasEntry)].join(', '),
-          usuario: usuariosMap.get(entry.createdBy) || entry.createdBy || '',
-          tipoCaja: '',
-          estadoAprobacion: 'APROBADO',
-          metodoPago: '',
-        };
-      },
-    );
+      return {
+        fecha: entry.createdAt,
+        tipo: entry.referenceType,
+        monto: totalDebito,
+        descripcion: entry.description || cuentas,
+        caja: [...new Set(cajasEntry)].join(', '),
+        usuario: usuariosMap.get(entry.createdBy) || entry.createdBy || '',
+        tipoCaja: '',
+        estadoAprobacion: 'APROBADO',
+        metodoPago: '',
+      };
+    });
 
     if (format === 'excel')
       return generarExcelContable(filasCjas, filasTransacciones, fecha);
@@ -3979,7 +4119,7 @@ export class AccountingService {
     format: 'excel' | 'pdf',
     filters: { rutaId?: string; fechaInicio?: string; fechaFin?: string },
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
-    const where: any = {};
+    const where: Prisma.GastoWhereInput = {};
     if (filters.rutaId) where.rutaId = filters.rutaId;
     if (filters.fechaInicio || filters.fechaFin) {
       where.fechaGasto = {};
@@ -4125,10 +4265,8 @@ export class AccountingService {
       const arqueoReferenceIds = [
         ...new Set(
           debtLines
-            .filter(
-              (line: any) => line.journalEntry?.referenceType === 'ARQUEO',
-            )
-            .map((line: any) => line.journalEntry?.referenceId)
+            .filter((line) => line.journalEntry?.referenceType === 'ARQUEO')
+            .map((line) => line.journalEntry?.referenceId)
             .filter(Boolean),
         ),
       ];
@@ -4151,11 +4289,9 @@ export class AccountingService {
           })
         : [];
 
-      const transaccionMap = new Map(
-        arqueoTransacciones.map((t: any) => [t.id, t]),
-      );
+      const transaccionMap = new Map(arqueoTransacciones.map((t) => [t.id, t]));
 
-      for (const line of debtLines as any[]) {
+      for (const line of debtLines) {
         const entry = line.journalEntry;
         if (!entry) continue;
 
@@ -4166,7 +4302,7 @@ export class AccountingService {
         if (entry.referenceType === 'ABONO_DEUDA') {
           cobradorId = String(entry.referenceId || '').split('|')[0] || null;
         } else if (entry.referenceType === 'ARQUEO') {
-          const trx: any = transaccionMap.get(entry.referenceId);
+          const trx = transaccionMap.get(entry.referenceId);
           cobradorId =
             trx?.caja?.ruta?.cobradorId ||
             (trx?.caja?.responsable?.rol === 'SUPERVISOR'
@@ -4202,14 +4338,24 @@ export class AccountingService {
 
     // 2. Procesar transacciones directas de DEUDA_COBRADOR / ABONO_DEUDA / CIERRE_RUTA
     // Solo contar las que NO tienen entrada correspondiente en el ledger (evitar doble conteo)
+    // Aqui habia una comparacion IMPOSIBLE, y la destapo el compilador al quitar el
+    // `(line: any)`: `referenceType === 'DEUDA_COBRADOR'`. Ese valor no existe en el enum
+    // `ReferenceTypeContable` (PAGO, DESEMBOLSO, GASTO, VENTA_ARTICULO, BASE,
+    // CONSOLIDACION, ARQUEO, ABONO_DEUDA, APERTURA, AJUSTE, CASTIGO_CARTERA, INGRESO,
+    // EGRESO). Donde si existe es en `Transaccion.tipoReferencia`, que es texto libre: son
+    // DOS campos con nombres parecidos y la comparacion se escribio contra el que no era.
+    // Solo la segunda mitad podia cumplirse.
+    //
+    // OJO, queda una pregunta que no se resuelve leyendo: `debtLines` trae TODAS las
+    // lineas de cuentas 1.4, con cualquier referenceType. Si la CREACION de una deuda
+    // tambien se asienta en el ledger —con AJUSTE, EGRESO o el que sea—, su referenciaId
+    // no entra en este Set y la transaccion directa equivalente se cuenta por segunda vez.
+    // Hay que confirmar con que tipo se asienta una deuda para saber si hay doble conteo o
+    // si esta mitad solo sobraba.
     const ledgerRefIds = new Set(
       debtLines
-        .filter(
-          (line: any) =>
-            line.journalEntry?.referenceType === 'DEUDA_COBRADOR' ||
-            line.journalEntry?.referenceType === 'ABONO_DEUDA',
-        )
-        .map((line: any) => line.journalEntry?.referenceId)
+        .filter((line) => line.journalEntry?.referenceType === 'ABONO_DEUDA')
+        .map((line) => line.journalEntry?.referenceId)
         .filter(Boolean),
     );
 
@@ -4217,10 +4363,10 @@ export class AccountingService {
     const cierreIdsConDeuda = new Set(
       deudaTransacciones
         .filter(
-          (t: any) =>
+          (t) =>
             String(t.tipoReferencia) === 'DEUDA_COBRADOR' && t.referenciaId,
         )
-        .map((t: any) => {
+        .map((t) => {
           // Extraer el referenciaId del cierre del campo DD del DEUDA_COBRADOR
           const match = String(t.referenciaId || '').match(
             /DD:\d+\|SD:\d+\|FD:\d+\|(.+)/,
@@ -4348,7 +4494,8 @@ export class AccountingService {
         monto: Math.abs(delta),
         fecha: trx.fechaTransaccion,
         cajaId: trx.cajaId || '',
-        referenciaId: trx.referenciaId,
+        // La columna es nullable y el campo del tipo es opcional.
+        referenciaId: trx.referenciaId ?? undefined,
         descripcion: trx.descripcion || '',
       });
       eventosMap.set(cobradorId, arr);
@@ -4380,11 +4527,11 @@ export class AccountingService {
       where: { id: { in: finalCobradorIds } },
       select: { id: true, nombres: true, apellidos: true, rol: true },
     });
-    const cobradorMap = new Map(cobradores.map((c: any) => [c.id, c]));
+    const cobradorMap = new Map(cobradores.map((c) => [c.id, c]));
 
     return Array.from(deudaMap.entries())
       .map(([cobradorId, deuda]) => {
-        const cobrador: any = cobradorMap.get(cobradorId);
+        const cobrador = cobradorMap.get(cobradorId);
         const saldoCajaActual = saldosCajasMap.get(cobradorId) || 0;
 
         // Deuda real solo viene de ledger 1.4.x y eventos DEUDA_COBRADOR/ABONO_DEUDA/CIERRE_RUTA
@@ -4458,7 +4605,7 @@ export class AccountingService {
     }
 
     // 1. Resolver caja destino (por defecto Caja Principal)
-    let cajaDestino = null as any;
+    let cajaDestino = null;
     if (cajaIdDestino) {
       cajaDestino = await this.prisma.caja.findUnique({
         where: { id: cajaIdDestino },
@@ -4512,10 +4659,10 @@ export class AccountingService {
 
         return transaccion;
       });
-    } catch (error: any) {
+    } catch (error) {
       // Carrera de idempotencia: otro reintento idéntico ganó. La restricción
       // única del idempotencyKey hizo rollback de todo; devolvemos el existente.
-      if (error?.code === 'P2002' && idempotencyKey) {
+      if (codigoDeError(error) === 'P2002' && idempotencyKey) {
         const existente = await this.prisma.transaccion.findUnique({
           where: { idempotencyKey },
         });
@@ -4662,7 +4809,7 @@ export class AccountingService {
     });
 
     const fechaCorte = firstEntry?.createdAt ?? null;
-    const where: any = {};
+    const where: Prisma.TransaccionWhereInput = {};
     if (fechaCorte) {
       where.fechaTransaccion = { lt: fechaCorte };
     }
@@ -4680,7 +4827,7 @@ export class AccountingService {
       select: { referenceType: true, referenceId: true },
     });
     const existingKeys = new Set(
-      existingEntries.map((e: any) => `${e.referenceType}:${e.referenceId}`),
+      existingEntries.map((e) => `${e.referenceType}:${e.referenceId}`),
     );
 
     const mapReferenceType = (
@@ -4701,12 +4848,25 @@ export class AccountingService {
       return 'AJUSTE';
     };
 
-    const candidatos: any[] = [];
+    // La forma se declara en vez de dejarla en `any[]`: es lo que el bucle de abajo
+    // mete, y `transaccionId` es la llave con la que se vuelve a buscar la transaccion
+    // mas adelante.
+    const candidatos: Array<{
+      transaccionId: string;
+      referenceType: ReferenceTypeContable;
+      referenceId: string;
+      tipo: TipoTransaccion;
+      tipoReferencia: string | null;
+      cajaId: string;
+      caja?: string;
+      monto: number;
+      fechaTransaccion: Date;
+    }> = [];
     let omitidosPorAsientoExistente = 0;
     let omitidosSinReferencia = 0;
     let omitidosNoSoportados = 0;
 
-    for (const t of transacciones as any[]) {
+    for (const t of transacciones) {
       const referenceType = mapReferenceType(t.tipoReferencia, t.tipo);
       const referenceId = t.referenciaId || t.id;
       if (!referenceId) {
@@ -4740,7 +4900,7 @@ export class AccountingService {
     if (!params.dryRun) {
       await this.prisma.$transaction(async (tx) => {
         for (const c of candidatos) {
-          const transaccion = (transacciones as any[]).find(
+          const transaccion = transacciones.find(
             (t) => t.id === c.transaccionId,
           );
           if (!transaccion) continue;
@@ -4862,11 +5022,15 @@ export class AccountingService {
    * Sin `aplicar` solo informa de lo que haría.
    */
   async regularizarCentavos(usuarioId: string, dryRun = true) {
-    const q = (sql: string, ...args: any[]) =>
-      this.prisma.$queryRawUnsafe(sql, ...args) as Promise<any[]>;
+    // Los parametros de una consulta cruda son valores sueltos y las filas que vuelven
+    // tienen una forma que Prisma no puede conocer. Con un generico, cada llamada
+    // declara lo que su SELECT devuelve —las dos de aqui traen solo `id`— en vez de
+    // heredar `any` y que nadie compruebe nada.
+    const q = <T>(sql: string, ...args: unknown[]) =>
+      this.prisma.$queryRawUnsafe(sql, ...args) as Promise<T[]>;
 
     // ── Cuotas ────────────────────────────────────────────────────────────
-    const prestamos = await q(`
+    const prestamos = await q<{ id: string }>(`
       SELECT DISTINCT c."prestamoId" AS id
       FROM cuotas c
       WHERE c.monto % 1 <> 0
@@ -4953,7 +5117,7 @@ export class AccountingService {
     }
 
     // ── Líneas de asiento ─────────────────────────────────────────────────
-    const asientos = await q(`
+    const asientos = await q<{ id: string }>(`
       SELECT e.id
       FROM asientos_contables e
       JOIN asientos_lineas l ON l."journalEntryId" = e.id
@@ -5070,7 +5234,7 @@ export class AccountingService {
       0,
     );
 
-    const lineas = await (this.prisma as any).journalLine.aggregate({
+    const lineas = await this.prisma.journalLine.aggregate({
       where: { accountCode: { startsWith: '1.5' } },
       _sum: { debitAmount: true, creditAmount: true },
     });
@@ -5180,7 +5344,15 @@ export class AccountingService {
         );
       }
 
-      const lines = [
+      // La forma se anota en el array y no en `lines`: las lineas no traen todas
+      // las dos columnas de importe, y el `filter` de abajo las lee las dos.
+      const lineasAsiento: Array<{
+        accountCode: string;
+        debitAmount?: number;
+        creditAmount?: number;
+        cajaId?: string;
+        cajaDelta?: number;
+      }> = [
         ...lineasCajas,
         lineaCartera,
         lineaDeuda,
@@ -5188,7 +5360,11 @@ export class AccountingService {
           accountCode: '2.1', // Capital Social / Patrimonio
           creditAmount: totalDebitos,
         },
-      ].filter((l) => (l.debitAmount || 0) > 0 || (l.creditAmount || 0) > 0);
+      ];
+
+      const lines = lineasAsiento.filter(
+        (l) => (l.debitAmount || 0) > 0 || (l.creditAmount || 0) > 0,
+      );
 
       // 5. Registrar Asiento
       return this.ledgerService.registrarAsiento(

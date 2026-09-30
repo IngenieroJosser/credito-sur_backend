@@ -20,23 +20,35 @@ type ExportResult = {
   fileSize: number;
   sheets: Record<string, number>;
 };
+/**
+ * Lo que puede llegar en una celda de fecha del respaldo.
+ *
+ * Se probo con `unknown` y eslint protesto con razon: `String(unknown)` sobre un
+ * objeto da "[object Object]". Un valor de fecha es una de estas tres cosas —Prisma
+ * manda Date, el JSON manda texto y alguna columna manda el epoch—, asi que
+ * declararlas es mas honesto que `unknown` y que `any`.
+ */
+type ValorDeFecha = Date | string | number | null | undefined;
+
 const pad = (n: number) => String(n).padStart(2, '0');
-const nom = (u: any) =>
-  u ? `${u.nombres || ''} ${u.apellidos || ''}`.trim() : '';
-const fmtDT = (v: any): string => {
+const nom = (
+  u?: { nombres?: string | null; apellidos?: string | null } | null,
+) => (u ? `${u.nombres || ''} ${u.apellidos || ''}`.trim() : '');
+const fmtDT = (v: ValorDeFecha): string => {
   if (!v) return '';
-  const d = v instanceof Date ? v : new Date(v);
+  const d = v instanceof Date ? v : new Date(String(v));
   if (isNaN(d.getTime())) return String(v);
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 };
-const fmtD = (v: any): string => {
+const fmtD = (v: ValorDeFecha): string => {
   if (!v) return '';
-  const d = v instanceof Date ? v : new Date(v);
+  const d = v instanceof Date ? v : new Date(String(v));
   if (isNaN(d.getTime())) return String(v);
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
 };
-const fmtE = (v: any) => (v ? String(v).replace(/_/g, ' ') : '');
-const n2 = (v: any): number => {
+/** Formatea un valor de enum: cambia los guiones bajos por espacios. */
+const fmtE = (v: string | null | undefined) => (v ? v.replace(/_/g, ' ') : '');
+const n2 = (v: unknown): number => {
   const x = Number(v);
   return isNaN(x) ? 0 : x;
 };
@@ -53,7 +65,10 @@ function mkSheet(
   wb: ExcelJS.Workbook,
   name: string,
   tab: string,
-  cols: any[],
+  // Va directo a `ws.columns`, asi que el tipo es el de la propia libreria y no hace
+  // falta inventar ninguno: si alguien pasa una clave que ExcelJS no conoce, lo dice
+  // aqui en vez de generar una hoja con columnas vacias.
+  cols: Partial<ExcelJS.Column>[],
   LC: string,
   title: string,
   sub: string,
@@ -101,13 +116,22 @@ function addHdr(ws: ExcelJS.Worksheet, headers: string[], LC: string): void {
   ws.autoFilter = { from: 'A5', to: `${LC}5` };
 }
 
+/**
+ * El color de fondo de una celda, si tiene relleno de patron.
+ *
+ * `Fill` de ExcelJS es una union (patron, degradado...) y `fgColor` solo existe en
+ * `FillPattern`. Leerlo directo obligaba a castear; aqui se comprueba el tipo primero.
+ */
+function colorDeFondo(fill: ExcelJS.Fill | undefined): string | undefined {
+  if (!fill || fill.type !== 'pattern') return undefined;
+  return fill.fgColor?.argb;
+}
+
 function rowStyle(row: ExcelJS.Row, idx: number): void {
   if (idx % 2 === 1) {
     row.eachCell({ includeEmpty: false }, (c) => {
-      if (
-        !(c.fill as any)?.fgColor?.argb ||
-        (c.fill as any)?.fgColor?.argb === BLANCO
-      )
+      const fondo = colorDeFondo(c.fill);
+      if (!fondo || fondo === BLANCO)
         c.fill = {
           type: 'pattern',
           pattern: 'solid',
@@ -132,7 +156,8 @@ function numCol(row: ExcelJS.Row, ...cols: number[]): void {
 function addTotals(
   ws: ExcelJS.Worksheet,
   label: string,
-  values: any[],
+  // Lo que ExcelJS admite en una celda, declarado con su propio tipo.
+  values: ExcelJS.CellValue[],
   numCols: number[],
 ): void {
   ws.addRow([]);
@@ -191,12 +216,12 @@ export class BackupExcelService {
           { key: 'puntaje', width: 10 },
           { key: 'categoria', width: 16 },
           { key: 'creadoEn', width: 22 },
-        ] as any,
+        ],
         LC,
         'RESPALDO DE CLIENTES',
         'DIRECTORIO COMPLETO DE CLIENTES CON REFERENCIAS',
       );
-      const data: any[] = await (this.prisma as any).cliente.findMany({
+      const data = await this.prisma.cliente.findMany({
         where: { eliminadoEn: null },
         orderBy: { creadoEn: 'asc' },
         include: {
@@ -235,7 +260,7 @@ export class BackupExcelService {
         VERDE: 'FFDCFCE7',
         LISTA_NEGRA: 'FFFFE4E6',
       };
-      data.forEach((c: any, i: number) => {
+      data.forEach((c, i: number) => {
         const row = ws.addRow([
           c.codigo,
           c.nombres,
@@ -301,12 +326,12 @@ export class BackupExcelService {
           { key: 'aprobadoPor', width: 24 },
           { key: 'notas', width: 28 },
           { key: 'creadoEn', width: 22 },
-        ] as any,
+        ],
         LC,
         'RESPALDO DE CRÉDITOS',
         'CARTERA COMPLETA DE CRÉDITOS OTORGADOS',
       );
-      const data: any[] = await (this.prisma as any).prestamo.findMany({
+      const data = await this.prisma.prestamo.findMany({
         where: { eliminadoEn: null },
         orderBy: { creadoEn: 'asc' },
         include: {
@@ -356,7 +381,7 @@ export class BackupExcelService {
       let sm = 0,
         ss = 0,
         sp = 0;
-      data.forEach((p: any, i: number) => {
+      data.forEach((p, i: number) => {
         const m = n2(p.monto),
           s = n2(p.saldoPendiente),
           tp = n2(p.totalPagado);
@@ -446,12 +471,12 @@ export class BackupExcelService {
           { key: 'pagado', width: 14 },
           { key: 'vence', width: 14 },
           { key: 'fechaPago', width: 22 },
-        ] as any,
+        ],
         LC,
         'RESPALDO DE CUOTAS',
         'PLAN DE PAGOS COMPLETO POR CRÉDITO',
       );
-      const data: any[] = await (this.prisma as any).cuota.findMany({
+      const data = await this.prisma.cuota.findMany({
         where: { prestamo: { eliminadoEn: null } },
         orderBy: [{ prestamoId: 'asc' }, { numeroCuota: 'asc' }],
         include: {
@@ -488,7 +513,7 @@ export class BackupExcelService {
         VENCIDA: 'FFFECACA',
         PRORROGADA: 'FFE0E7FF',
       };
-      data.forEach((q: any, i: number) => {
+      data.forEach((q, i: number) => {
         const cli =
           `${q.prestamo?.cliente?.nombres || ''} ${q.prestamo?.cliente?.apellidos || ''}`.trim();
         const row = ws.addRow([
@@ -535,12 +560,12 @@ export class BackupExcelService {
           { key: 'notas', width: 28 },
           { key: 'fechaPago', width: 22 },
           { key: 'creadoEn', width: 22 },
-        ] as any,
+        ],
         LC,
         'RESPALDO DE PAGOS',
         'HISTORIAL COMPLETO DE COBROS RECIBIDOS',
       );
-      const data: any[] = await (this.prisma as any).pago.findMany({
+      const data = await this.prisma.pago.findMany({
         orderBy: { fechaPago: 'asc' },
         include: {
           cliente: { select: { nombres: true, apellidos: true } },
@@ -566,7 +591,7 @@ export class BackupExcelService {
         LC,
       );
       let total = 0;
-      data.forEach((p: any, i: number) => {
+      data.forEach((p, i: number) => {
         const row = ws.addRow([
           p.numeroPago,
           p.prestamo?.numeroPrestamo || '',
@@ -608,12 +633,12 @@ export class BackupExcelService {
           { key: 'mora', width: 16 },
           { key: 'total', width: 16 },
           { key: 'fechaPago', width: 22 },
-        ] as any,
+        ],
         LC,
         'DETALLE DE PAGOS',
         'DESGLOSE CAPITAL · INTERÉS · MORA POR CUOTA COBRADA',
       );
-      const data: any[] = await (this.prisma as any).detallePago.findMany({
+      const data = await this.prisma.detallePago.findMany({
         orderBy: { pagoId: 'asc' },
         include: {
           pago: {
@@ -644,7 +669,7 @@ export class BackupExcelService {
       let sK = 0,
         sI = 0,
         sM = 0;
-      data.forEach((d: any, i: number) => {
+      data.forEach((d, i: number) => {
         const k = n2(d.montoCapital),
           it = n2(d.montoInteres),
           mo = n2(d.montoInteresMora);
@@ -688,12 +713,12 @@ export class BackupExcelService {
           { key: 'supervisor', width: 26 },
           { key: 'activa', width: 10 },
           { key: 'creadoEn', width: 22 },
-        ] as any,
+        ],
         LC,
         'RESPALDO DE RUTAS',
         'RUTAS DE COBRO Y PERSONAL ASIGNADO',
       );
-      const data: any[] = await (this.prisma as any).ruta.findMany({
+      const data = await this.prisma.ruta.findMany({
         where: { eliminadoEn: null },
         orderBy: { creadoEn: 'asc' },
         include: {
@@ -715,7 +740,7 @@ export class BackupExcelService {
         ],
         LC,
       );
-      data.forEach((r: any, i: number) => {
+      data.forEach((r, i: number) => {
         const row = ws.addRow([
           r.codigo,
           r.nombre,
@@ -758,12 +783,12 @@ export class BackupExcelService {
           { key: 'dia', width: 14 },
           { key: 'orden', width: 10 },
           { key: 'activa', width: 10 },
-        ] as any,
+        ],
         LC,
         'CLIENTES POR RUTA',
         'ASIGNACIÓN Y ORDEN DE VISITA POR RUTA DE COBRO',
       );
-      const data: any[] = await (this.prisma as any).asignacionRuta.findMany({
+      const data = await this.prisma.asignacionRuta.findMany({
         orderBy: [{ rutaId: 'asc' }, { ordenVisita: 'asc' }],
         include: {
           ruta: { select: { codigo: true, nombre: true, zona: true } },
@@ -794,7 +819,7 @@ export class BackupExcelService {
         ],
         LC,
       );
-      data.forEach((a: any, i: number) => {
+      data.forEach((a, i: number) => {
         const ruta = `${a.ruta?.codigo || ''} - ${a.ruta?.nombre || ''}`;
         const row = ws.addRow([
           ruta,
@@ -831,12 +856,12 @@ export class BackupExcelService {
           { key: 'saldoMinimo', width: 16 },
           { key: 'saldoMaximo', width: 16 },
           { key: 'creadoEn', width: 22 },
-        ] as any,
+        ],
         LC,
         'RESPALDO DE CAJAS',
         'CAJAS Y FONDOS — SALDOS ACTUALES',
       );
-      const data: any[] = await (this.prisma as any).caja.findMany({
+      const data = await this.prisma.caja.findMany({
         orderBy: { creadoEn: 'asc' },
         include: {
           responsable: { select: { nombres: true, apellidos: true } },
@@ -861,7 +886,7 @@ export class BackupExcelService {
         LC,
       );
       let total = 0;
-      data.forEach((c: any, i: number) => {
+      data.forEach((c, i: number) => {
         const s = n2(c.saldoActual);
         const ruta = c.ruta
           ? `${c.ruta.codigo} - ${c.ruta.nombre}`
@@ -910,12 +935,12 @@ export class BackupExcelService {
           { key: 'aprobadoPor', width: 26 },
           { key: 'fechaTx', width: 22 },
           { key: 'creadoEn', width: 22 },
-        ] as any,
+        ],
         LC,
         'RESPALDO DE TRANSACCIONES',
         'TODOS LOS MOVIMIENTOS DE CAJA',
       );
-      const data: any[] = await (this.prisma as any).transaccion.findMany({
+      const data = await this.prisma.transaccion.findMany({
         orderBy: { fechaTransaccion: 'asc' },
         include: {
           caja: { select: { codigo: true, nombre: true } },
@@ -945,7 +970,7 @@ export class BackupExcelService {
         EGRESO: 'FFFECACA',
         TRANSFERENCIA: 'FFE0E7FF',
       };
-      data.forEach((t: any, i: number) => {
+      data.forEach((t, i: number) => {
         const caja = `${t.caja?.codigo || ''} - ${t.caja?.nombre || ''}`;
         const row = ws.addRow([
           t.numeroTransaccion,
@@ -990,12 +1015,12 @@ export class BackupExcelService {
           { key: 'estadoAprob', width: 18 },
           { key: 'aprobadoPor', width: 26 },
           { key: 'fechaGasto', width: 22 },
-        ] as any,
+        ],
         LC,
         'RESPALDO DE GASTOS',
         'HISTORIAL COMPLETO DE EGRESOS Y GASTOS OPERATIVOS',
       );
-      const data: any[] = await (this.prisma as any).gasto.findMany({
+      const data = await this.prisma.gasto.findMany({
         orderBy: { fechaGasto: 'asc' },
         include: {
           ruta: { select: { codigo: true, nombre: true } },
@@ -1027,7 +1052,7 @@ export class BackupExcelService {
         RECHAZADO: 'FFFECACA',
       };
       let total = 0;
-      data.forEach((g: any, i: number) => {
+      data.forEach((g, i: number) => {
         const ruta = g.ruta ? `${g.ruta.codigo} - ${g.ruta.nombre}` : '';
         const caja = g.caja ? `${g.caja.codigo} - ${g.caja.nombre}` : '';
         const row = ws.addRow([
@@ -1080,12 +1105,12 @@ export class BackupExcelService {
           { key: 'stockMin', width: 12 },
           { key: 'activo', width: 10 },
           { key: 'creadoEn', width: 22 },
-        ] as any,
+        ],
         LC,
         'RESPALDO DE INVENTARIO',
         'CATÁLOGO COMPLETO DE ARTÍCULOS',
       );
-      const data: any[] = await (this.prisma as any).producto.findMany({
+      const data = await this.prisma.producto.findMany({
         where: { eliminadoEn: null },
         orderBy: { creadoEn: 'asc' },
         select: {
@@ -1118,7 +1143,7 @@ export class BackupExcelService {
         ],
         LC,
       );
-      data.forEach((p: any, i: number) => {
+      data.forEach((p, i: number) => {
         const row = ws.addRow([
           p.codigo,
           p.nombre,
@@ -1153,12 +1178,12 @@ export class BackupExcelService {
           { key: 'meses', width: 14 },
           { key: 'precio', width: 16 },
           { key: 'activo', width: 10 },
-        ] as any,
+        ],
         LC,
         'PRECIOS DE ARTÍCULOS',
         'TARIFAS POR PLAZO DE FINANCIAMIENTO',
       );
-      const data: any[] = await (this.prisma as any).precioProducto.findMany({
+      const data = await this.prisma.precioProducto.findMany({
         orderBy: [{ productoId: 'asc' }, { meses: 'asc' }],
         include: { producto: { select: { nombre: true, codigo: true } } },
       });
@@ -1174,7 +1199,7 @@ export class BackupExcelService {
         ],
         LC,
       );
-      data.forEach((p: any, i: number) => {
+      data.forEach((p, i: number) => {
         const row = ws.addRow([
           p.producto?.nombre || '',
           p.producto?.codigo || '',
@@ -1205,12 +1230,12 @@ export class BackupExcelService {
           { key: 'comentarios', width: 34 },
           { key: 'creadoEn', width: 22 },
           { key: 'revisadoEn', width: 22 },
-        ] as any,
+        ],
         LC,
         'RESPALDO DE APROBACIONES',
         'SOLICITUDES Y DECISIONES DEL SISTEMA',
       );
-      const data: any[] = await (this.prisma as any).aprobacion.findMany({
+      const data = await this.prisma.aprobacion.findMany({
         orderBy: { creadoEn: 'asc' },
         include: {
           solicitadoPor: { select: { nombres: true, apellidos: true } },
@@ -1239,7 +1264,7 @@ export class BackupExcelService {
         RECHAZADO: 'FFFECACA',
         CANCELADO: 'FFF1F5F9',
       };
-      data.forEach((a: any, i: number) => {
+      data.forEach((a, i: number) => {
         const row = ws.addRow([
           fmtE(a.tipoAprobacion),
           a.tablaReferencia || '',
@@ -1280,12 +1305,12 @@ export class BackupExcelService {
           { key: 'razon', width: 36 },
           { key: 'aprobadoPor', width: 26 },
           { key: 'creadoEn', width: 22 },
-        ] as any,
+        ],
         'H',
         'EXTENSIONES DE PAGO',
         'PRÓRROGAS Y CAMBIOS DE FECHA EN CUOTAS',
       );
-      const data: any[] = await (this.prisma as any).extensionPago.findMany({
+      const data = await this.prisma.extensionPago.findMany({
         orderBy: { creadoEn: 'asc' },
         include: {
           prestamo: {
@@ -1313,7 +1338,7 @@ export class BackupExcelService {
         ],
         'H',
       );
-      data.forEach((e: any, i: number) => {
+      data.forEach((e, i: number) => {
         const row = ws.addRow([
           e.prestamo?.numeroPrestamo || '',
           nom(e.prestamo?.cliente),
@@ -1347,12 +1372,12 @@ export class BackupExcelService {
           { key: 'ultimoIngreso', width: 22 },
           { key: 'creadoPor', width: 26 },
           { key: 'creadoEn', width: 22 },
-        ] as any,
+        ],
         LC,
         'RESPALDO DE USUARIOS',
         'EQUIPO Y PERSONAL — ACCESOS AL SISTEMA',
       );
-      const data: any[] = await (this.prisma as any).usuario.findMany({
+      const data = await this.prisma.usuario.findMany({
         where: { eliminadoEn: null },
         orderBy: { creadoEn: 'asc' },
         select: {
@@ -1390,7 +1415,7 @@ export class BackupExcelService {
         INACTIVO: 'FFFECACA',
         SUSPENDIDO: 'FFFEF9C3',
       };
-      data.forEach((u: any, i: number) => {
+      data.forEach((u, i: number) => {
         const row = ws.addRow([
           u.nombres || '',
           u.apellidos || '',
@@ -1438,18 +1463,16 @@ export class BackupExcelService {
           { key: 'ip', width: 16 },
           { key: 'endpoint', width: 38 },
           { key: 'creadoEn', width: 22 },
-        ] as any,
+        ],
         LC,
         'REGISTRO DE AUDITORÍA',
         'HISTORIAL COMPLETO DE ACTIVIDAD EN EL SISTEMA',
       );
-      const data: any[] = await (this.prisma as any).registroAuditoria.findMany(
-        {
-          orderBy: { creadoEn: 'desc' },
-          take: 50000,
-          include: { usuario: { select: { nombres: true, apellidos: true } } },
-        },
-      );
+      const data = await this.prisma.registroAuditoria.findMany({
+        orderBy: { creadoEn: 'desc' },
+        take: 50000,
+        include: { usuario: { select: { nombres: true, apellidos: true } } },
+      });
       addMeta(ws, data.length, LC);
       addHdr(
         ws,
@@ -1464,7 +1487,7 @@ export class BackupExcelService {
         ],
         LC,
       );
-      data.forEach((a: any, i: number) => {
+      data.forEach((a, i: number) => {
         const row = ws.addRow([
           nom(a.usuario) || 'Sistema',
           fmtE(a.rolUsuario || ''),

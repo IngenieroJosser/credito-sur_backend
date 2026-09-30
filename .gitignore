@@ -64,3 +64,8 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 # Nunca versionar salida compilada dentro de src/ (puede sombrear imports .ts)
 src/**/*.js
 src/**/*.js.map
+
+# Copias temporales de sondeo de tipos (la sonda `never[]`). Se commitearon 14 por
+# error con `git add -A` y pesaban 1,2 MB de codigo de servicios duplicado.
+*.probe
+*.bak

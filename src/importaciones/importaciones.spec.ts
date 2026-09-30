@@ -1,6 +1,6 @@
 import * as ExcelJS from 'exceljs';
 import * as JSZip from 'jszip';
-import { FrecuenciaPago } from '@prisma/client';
+import { FrecuenciaPago, TipoAmortizacion } from '@prisma/client';
 import { LoansService } from '../loans/loans.service';
 import { generarPlantillaInventario } from './plantillas/plantilla-inventario';
 import { generarPlantillaClientesCreditos } from './plantillas/plantilla-clientes-creditos';
@@ -100,13 +100,101 @@ const clienteEnBd = {
   asignacionesRuta: [{ rutaId: 'ruta-1' }],
 };
 
+/**
+ * El buffer de Node, como el `Buffer` que pide exceljs.
+ *
+ * `xlsx.load` no pide el Buffer de Node: exceljs declara su propio
+ * `interface Buffer extends ArrayBuffer` (su index.d.ts, linea 1) y los dos tipos no se
+ * hablan, de ahi los siete `as any` que habia repartidos por las llamadas. Se pasa el
+ * `ArrayBuffer` real que envuelve al buffer, que satisface esa interfaz sin castear y es
+ * el mismo dato en ejecucion.
+ */
+const comoLibroDeExcel = (data: Buffer): ArrayBuffer => {
+  // Se copia en vez de reusar `data.buffer` porque ese es `ArrayBufferLike`, o sea
+  // `ArrayBuffer | SharedArrayBuffer`, y la interfaz de exceljs solo acepta el primero.
+  const destino = new ArrayBuffer(data.byteLength);
+  new Uint8Array(destino).set(data);
+  return destino;
+};
+
+/**
+ * Un `LoansService` con dependencias vacias, para probar solo sus calculos puros.
+ *
+ * Antes eran siete `{} as any` escritos a mano en dos sitios. La tupla se DERIVA del
+ * propio constructor: si manana entra una dependencia mas, esto deja de compilar y hay
+ * que venir a mirarlo, que es justo lo que los `as any` evitaban.
+ */
+const dependenciasVacias = () =>
+  Array.from({ length: 7 }, () => ({})) as unknown as ConstructorParameters<
+    typeof LoansService
+  >;
+
+/**
+ * `calculateInterestAndCuotas` es `private`: se llega a el por una vista con la firma
+ * DECLARADA, no por `as any`. La diferencia es que los nueve argumentos y el resultado
+ * se siguen comprobando en las tres llamadas; con `as any` se podian intercambiar el
+ * monto y la tasa sin que nadie dijera nada.
+ */
+type CalculosInternosDePrestamos = {
+  calculateInterestAndCuotas: (
+    tipoAmortizacion: TipoAmortizacion,
+    monto: number,
+    tasaInteres: number,
+    cantidadCuotas: number,
+    plazoMeses: number,
+    frecuenciaPago: FrecuenciaPago,
+    fechaInicio: Date,
+    fechaPrimerCobro?: Date,
+    esContado?: boolean,
+  ) => {
+    interesTotal: number;
+    cuotas: Array<{
+      numeroCuota: number;
+      fechaVencimiento: Date;
+      monto: number;
+      montoCapital: number;
+      montoInteres: number;
+      montoPagado: number;
+    }>;
+  };
+};
+
+const calculosInternos = (servicio: LoansService) =>
+  servicio as unknown as CalculosInternosDePrestamos;
+
+/**
+ * La formula de una celda, o cadena vacia si no tiene.
+ *
+ * `cell.value` es la union `CellValue` de exceljs y solo dos de sus diez miembros
+ * llevan `formula`. Habia cuatro `as any` repartidos para saltarse esa comprobacion;
+ * aqui se comprueba de verdad, y si la celda trae un numero o un error en vez de una
+ * formula la prueba lo ve como cadena vacia en vez de reventar.
+ */
+const formulaDeCelda = (celda: ExcelJS.Cell): string => {
+  const valor = celda.value;
+  return valor && typeof valor === 'object' && 'formula' in valor
+    ? String(valor.formula ?? '')
+    : '';
+};
+
+/**
+ * Los valores de una fila, como arreglo.
+ *
+ * `row.values` es `CellValue[] | { [key: string]: CellValue }` en exceljs, y de ahi
+ * salian tres `as any[]`. Se devuelve el arreglo tal cual, CON el hueco del indice 0 que
+ * exceljs deja para que la columna 1 sea el indice 1: una de las pruebas busca la columna
+ * con `indexOf` y depende de esa numeracion.
+ */
+const valoresDeFila = (fila: ExcelJS.Row): ExcelJS.CellValue[] =>
+  Array.isArray(fila.values) ? fila.values : [];
+
 /** Abre un libro generado, deja escribir en él y lo devuelve como buffer. */
 async function editarLibro(
   data: Buffer,
   editar: (workbook: ExcelJS.Workbook) => void,
 ): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(data as any);
+  await workbook.xlsx.load(comoLibroDeExcel(data));
   editar(workbook);
   const buffer = await workbook.xlsx.writeBuffer();
   return Buffer.from(buffer);
@@ -250,8 +338,8 @@ describe('Plantilla de inventario', () => {
     expect(resultado.articulos?.[0]).toEqual(
       expect.objectContaining({ codigo: 'NEV-200', precioContado: 1050000 }),
     );
-    expect(resultado.precios?.map((p: any) => p.meses)).toEqual([0, 1, 3, 6]);
-    expect(resultado.precios?.map((p: any) => p.utilidad)).toEqual([
+    expect(resultado.precios?.map((p) => p.meses)).toEqual([0, 1, 3, 6]);
+    expect(resultado.precios?.map((p) => p.utilidad)).toEqual([
       150000, 250000, 390000, 550000,
     ]);
   });
@@ -519,6 +607,8 @@ describe('Plantilla de clientes y créditos', () => {
 
     expect(resultado.errores).toHaveLength(0);
     const credito = resultado.creditos?.[0];
+    expect(credito).toBeDefined();
+    if (!credito) return;
     // 600.000 + 10% x 1 mes = 660.000 · cuota 22.000
     expect(credito.totalCredito).toBe(660000);
     expect(credito.totalAbonado).toBe(274000);
@@ -660,15 +750,7 @@ describe('Equivalencia con la creación de créditos del sistema', () => {
    * así que se puede instanciar el servicio con dependencias vacías y comparar
    * su resultado contra el que produce la importación.
    */
-  const servicioPrestamos = new LoansService(
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-  );
+  const servicioPrestamos = new LoansService(...dependenciasVacias());
 
   const calcularConElSistema = (
     tipo: 'INTERES_SIMPLE' | 'INTERES_PLANO',
@@ -678,7 +760,7 @@ describe('Equivalencia con la creación de créditos del sistema', () => {
     plazoMeses: number,
     frecuencia: FrecuenciaPago = FrecuenciaPago.DIARIO,
   ) =>
-    (servicioPrestamos as any).calculateInterestAndCuotas(
+    calculosInternos(servicioPrestamos).calculateInterestAndCuotas(
       tipo,
       monto,
       tasa,
@@ -819,7 +901,8 @@ describe('Equivalencia con la creación de créditos del sistema', () => {
   // exactamente lo mismo que la creación real, o volvería la divergencia en pesos.
   it('simularCredito proyecta lo mismo que la creación real, sin guardar', () => {
     const plazoMeses = derivarPlazoMeses(13, FrecuenciaPago.QUINCENAL);
-    const sim = (servicioPrestamos as any).simularCredito({
+    // `simularCredito` es publico: no hacia falta ninguna vista.
+    const sim = servicioPrestamos.simularCredito({
       tipoAmortizacion: 'INTERES_SIMPLE',
       monto: 777777,
       tasaInteres: 7.5,
@@ -1212,9 +1295,9 @@ describe('Diferencias entre crédito de artículo y préstamo en efectivo', () =
     const plantilla =
       await generarPlantillaClientesCreditos(datosPlantillaVacios);
     const wb = new ExcelJS.Workbook();
-    await wb.xlsx.load(plantilla.data as any);
-    const encabezados = (
-      wb.getWorksheet('Créditos de artículo')!.getRow(6).values as any[]
+    await wb.xlsx.load(comoLibroDeExcel(plantilla.data));
+    const encabezados = valoresDeFila(
+      wb.getWorksheet('Créditos de artículo')!.getRow(6),
     )
       .slice(1)
       .filter(Boolean)
@@ -1370,15 +1453,7 @@ describe('Cuota inicial en créditos de artículo', () => {
 });
 
 describe('Las fórmulas del Excel dan lo mismo que el sistema', () => {
-  const servicioPrestamos = new LoansService(
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-  );
+  const servicioPrestamos = new LoansService(...dependenciasVacias());
 
   /**
    * Transcripción de las fórmulas que la plantilla escribe en las columnas
@@ -1451,7 +1526,9 @@ describe('Las fórmulas del Excel dan lo mismo que el sistema', () => {
     ({ monto, tasa, cuotas, frecuencia }) => {
       const plazoMeses = derivarPlazoMeses(cuotas, frecuencia);
 
-      const delSistema = (servicioPrestamos as any).calculateInterestAndCuotas(
+      const delSistema = calculosInternos(
+        servicioPrestamos,
+      ).calculateInterestAndCuotas(
         'INTERES_SIMPLE',
         monto,
         tasa,
@@ -1480,7 +1557,9 @@ describe('Las fórmulas del Excel dan lo mismo que el sistema', () => {
     // =ROUND(monto*(tasa/100),0), sin multiplicar por el plazo
     const excelInteres = Math.round(monto * (tasa / 100));
 
-    const delSistema = (servicioPrestamos as any).calculateInterestAndCuotas(
+    const delSistema = calculosInternos(
+      servicioPrestamos,
+    ).calculateInterestAndCuotas(
       'INTERES_PLANO',
       monto,
       tasa,
@@ -1497,13 +1576,15 @@ describe('Las fórmulas del Excel dan lo mismo que el sistema', () => {
   it('la plantilla sigue usando exactamente esas fórmulas', async () => {
     const plantilla = await plantillaClientesCacheada();
     const wb = new ExcelJS.Workbook();
-    await wb.xlsx.load(plantilla.data as any);
+    await wb.xlsx.load(comoLibroDeExcel(plantilla.data));
     const hoja = wb.getWorksheet('Créditos de dinero')!;
-    const encabezados = (hoja.getRow(6).values as any[]).slice(1) as string[];
+    const encabezados = valoresDeFila(hoja.getRow(6))
+      .slice(1)
+      .map((valor) => String(valor ?? ''));
 
     const formulaDe = (nombre: string) => {
       const i = encabezados.findIndex((h) => h && h.startsWith(nombre));
-      return String((hoja.getCell(7, i + 1).value as any)?.formula || '');
+      return formulaDeCelda(hoja.getCell(7, i + 1));
     };
 
     // Si alguien cambia el orden de operaciones o el redondeo, esta prueba lo
@@ -1813,7 +1894,7 @@ describe('Las columnas automáticas no se pueden escribir', () => {
 
   const hojasDeDatos = async (data: Buffer) => {
     const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(data as any);
+    await workbook.xlsx.load(comoLibroDeExcel(data));
     const hojas: ExcelJS.Worksheet[] = [];
     workbook.eachSheet((hoja) => {
       if (normalizarEncabezado(hoja.getRow(6).getCell(1).value) === 'ACCION') {
@@ -1846,7 +1927,7 @@ describe('Las columnas automáticas no se pueden escribir', () => {
 describe('Avisos de la columna Revisión', () => {
   const hojaDe = async (data: Buffer, nombre: string) => {
     const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(data as any);
+    await workbook.xlsx.load(comoLibroDeExcel(data));
     return workbook.getWorksheet(nombre)!;
   };
 
@@ -1858,7 +1939,7 @@ describe('Avisos de la columna Revisión', () => {
       }
     });
     expect(columna).toBeGreaterThan(0);
-    return String((hoja.getCell(7, columna).value as any)?.formula || '');
+    return formulaDeCelda(hoja.getCell(7, columna));
   };
 
   it('avisa si el artículo se va a entregar y no queda stock', async () => {
@@ -1890,7 +1971,7 @@ describe('Avisos de la columna Revisión', () => {
       codigosArticulo: ['SIN-STOCK'],
     });
     const hoja = await hojaDe(data, 'BD Artículos');
-    const encabezados = hoja.getRow(1).values as any[];
+    const encabezados = valoresDeFila(hoja.getRow(1));
     const columnaStock = encabezados.indexOf('Stock');
     expect(columnaStock).toBeGreaterThan(0);
     expect(hoja.getCell(2, columnaStock).value).toBe(0);
@@ -2109,7 +2190,7 @@ describe('La cuota inicial baja lo que se financia', () => {
     const { data } =
       await generarPlantillaClientesCreditos(datosPlantillaVacios);
     const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(data as any);
+    await workbook.xlsx.load(comoLibroDeExcel(data));
     const hoja = workbook.getWorksheet('Créditos de artículo')!;
 
     let columnaTotal = 0;
@@ -2122,9 +2203,7 @@ describe('La cuota inicial baja lo que se financia', () => {
     expect(columnaTotal).toBeGreaterThan(0);
     expect(columnaInicial).toBeGreaterThan(0);
 
-    const formula = String(
-      (hoja.getCell(7, columnaTotal).value as any)?.formula || '',
-    );
+    const formula = formulaDeCelda(hoja.getCell(7, columnaTotal));
     // La columna de la cuota inicial tiene que aparecer restando.
     const letraInicial = hoja.getColumn(columnaInicial).letter;
     expect(formula).toContain(`-IF($${letraInicial}7=""`);
@@ -2192,7 +2271,7 @@ describe('La cuota inicial no puede comerse el precio', () => {
     const { data } =
       await generarPlantillaClientesCreditos(datosPlantillaVacios);
     const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(data as any);
+    await workbook.xlsx.load(comoLibroDeExcel(data));
     const hoja = workbook.getWorksheet('Créditos de artículo')!;
 
     let columna = 0;
@@ -2201,9 +2280,7 @@ describe('La cuota inicial no puede comerse el precio', () => {
         columna = n;
       }
     });
-    const formula = String(
-      (hoja.getCell(7, columna).value as any)?.formula || '',
-    );
+    const formula = formulaDeCelda(hoja.getCell(7, columna));
 
     expect(formula).toContain('La cuota inicial cubre el precio');
   });

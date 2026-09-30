@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { Prisma } from '@prisma/client';
 import { differenceInDays } from 'date-fns';
 import {
   EstadoAprobacion,
@@ -14,6 +15,86 @@ import {
   getBogotaStartEndOfDay,
   TimeFilterPeriod as BogotaPeriod,
 } from '../utils/date-utils';
+
+/**
+ * Una aprobacion con el nombre de quien la solicito.
+ *
+ * Las dos consultas del tablero —pendientes y actividad reciente— pedian el mismo
+ * `include` escrito dos veces, y cinco metodos privados reciben esas filas. Las
+ * cinco firmas decian `approval: any`, asi que nada garantizaba que la consulta
+ * cargara `solicitadoPor`, que es justo lo que esos metodos leen para armar el
+ * nombre de quien solicito.
+ *
+ * Con `Prisma.validator` el `include` y el tipo salen del mismo objeto, y las
+ * consultas lo usan con `...aprobacionDelTablero`: ya no pueden separarse.
+ */
+const aprobacionDelTablero = Prisma.validator<Prisma.AprobacionDefaultArgs>()({
+  include: {
+    solicitadoPor: {
+      select: {
+        nombres: true,
+        apellidos: true,
+      },
+    },
+  },
+});
+
+type AprobacionDelTablero = Prisma.AprobacionGetPayload<
+  typeof aprobacionDelTablero
+>;
+
+/**
+ * Un punto de la grafica de tendencia del tablero.
+ *
+ * `value` es lo cobrado y `target` la meta de ese periodo; el frontend dibuja la
+ * barra contra la linea con esos dos. Antes las firmas que lo manejan decian
+ * `any[]`, asi que nada impedia que una rama empujara un campo con otro nombre y
+ * la grafica saliera vacia sin que nadie se enterara.
+ */
+type PuntoTendencia = {
+  label: string;
+  value: number;
+  target: number;
+};
+
+/**
+ * Un prestamo del listado de mora, con el cliente, su ruta y sus cuotas abiertas.
+ *
+ * El `include` se saca de la consulta para que `mapDelinquentAccount` pueda
+ * declarar lo que recibe. Antes decia `loan: any`, y ese metodo lee la ruta y el
+ * cobrador a traves de `cliente.asignacionesRuta[0]`: si la consulta dejara de
+ * cargar esa relacion, el nombre del cobrador saldria en blanco y nadie se
+ * enteraria hasta verlo en pantalla.
+ */
+const prestamoEnMora = Prisma.validator<Prisma.PrestamoDefaultArgs>()({
+  include: {
+    cliente: {
+      select: {
+        nombres: true,
+        apellidos: true,
+        asignacionesRuta: {
+          where: { activa: true },
+          include: {
+            ruta: { select: { nombre: true } },
+            cobrador: { select: { nombres: true, apellidos: true } },
+          },
+          take: 1,
+        },
+      },
+    },
+    cuotas: {
+      where: {
+        estado: {
+          in: [EstadoCuota.PENDIENTE, EstadoCuota.PARCIAL, EstadoCuota.VENCIDA],
+        },
+      },
+      orderBy: { fechaVencimiento: 'asc' },
+      take: 50,
+    },
+  },
+});
+
+type PrestamoEnMora = Prisma.PrestamoGetPayload<typeof prestamoEnMora>;
 
 @Injectable()
 export class DashboardService {
@@ -128,14 +209,7 @@ export class DashboardService {
           estado: EstadoAprobacion.PENDIENTE,
           creadoEn: { gte: startDate, lte: endDate },
         },
-        include: {
-          solicitadoPor: {
-            select: {
-              nombres: true,
-              apellidos: true,
-            },
-          },
-        },
+        ...aprobacionDelTablero,
         orderBy: { creadoEn: 'desc' },
         take: 5,
       });
@@ -168,42 +242,14 @@ export class DashboardService {
             },
           ],
         },
-        include: {
-          cliente: {
-            select: {
-              nombres: true,
-              apellidos: true,
-              asignacionesRuta: {
-                where: { activa: true },
-                include: {
-                  ruta: { select: { nombre: true } },
-                  cobrador: { select: { nombres: true, apellidos: true } },
-                },
-                take: 1,
-              },
-            },
-          },
-          cuotas: {
-            where: {
-              estado: {
-                in: [
-                  EstadoCuota.PENDIENTE,
-                  EstadoCuota.PARCIAL,
-                  EstadoCuota.VENCIDA,
-                ],
-              },
-            },
-            orderBy: { fechaVencimiento: 'asc' },
-            take: 50,
-          },
-        },
+        ...prestamoEnMora,
         take: 50,
       });
 
       const delinquentAccountsList = delinquentAccountsListRaw
-        .map((loan: any) => {
+        .map((loan) => {
           const cuotas = Array.isArray(loan?.cuotas) ? loan.cuotas : [];
-          const cuotasVencidasReal = cuotas.filter((c: any) => {
+          const cuotasVencidasReal = cuotas.filter((c) => {
             if (!c) return false;
             const st = String(c?.estado || '').toUpperCase();
             if (
@@ -226,7 +272,12 @@ export class DashboardService {
           if (cuotasVencidasReal.length === 0) return null;
           return { ...loan, cuotas: cuotasVencidasReal };
         })
-        .filter(Boolean)
+        // `.filter(Boolean)` NO estrecha el tipo: para TypeScript el arreglo seguia
+        // siendo `PrestamoEnMora | null` y ese null llegaba a
+        // `mapDelinquentAccount`. En ejecucion nunca llega, porque el filtro si lo
+        // quita; lo que faltaba era decirselo al compilador, y con `loan: any` no
+        // habia forma de verlo.
+        .filter((loan): loan is PrestamoEnMora => loan !== null)
         .slice(0, 10);
 
       // Conteo total de cuentas en mora: usar una consulta amplia + validación en memoria.
@@ -277,9 +328,9 @@ export class DashboardService {
       });
 
       const delinquentAccounts = delinquentAccountsCountRaw.reduce(
-        (acc: number, loan: any) => {
+        (acc: number, loan) => {
           const cuotas = Array.isArray(loan?.cuotas) ? loan.cuotas : [];
-          const tieneVencidaReal = cuotas.some((c: any) => {
+          const tieneVencidaReal = cuotas.some((c) => {
             if (!c) return false;
             const st = String(c?.estado || '').toUpperCase();
             if (
@@ -309,14 +360,7 @@ export class DashboardService {
           },
           actualizadoEn: { gte: startDate, lte: endDate },
         },
-        include: {
-          solicitadoPor: {
-            select: {
-              nombres: true,
-              apellidos: true,
-            },
-          },
-        },
+        ...aprobacionDelTablero,
         orderBy: { actualizadoEn: 'desc' },
         take: 5,
       });
@@ -342,7 +386,16 @@ export class DashboardService {
       });
 
       // Enriquecer con datos de usuario y filtrar
-      const topCollectorsList: any[] = [];
+      // La forma se declara, no se deja implicita: un `const x = []` a secas queda
+      // como `any[]` implicito, que es lo mismo que habia antes con otro nombre.
+      // Esto es lo que mete el bucle de abajo, y `trend` es una de dos palabras
+      // porque el frontend las usa para elegir la flecha.
+      const topCollectorsList: Array<{
+        name: string;
+        collected: number;
+        efficiency: number;
+        trend: 'up' | 'down';
+      }> = [];
       for (const item of topCollectorsRaw) {
         if (!item.cobradorId) continue;
         const user = await this.prisma.usuario.findUnique({
@@ -503,7 +556,7 @@ export class DashboardService {
     };
   }
 
-  private calculateRequestedBase(approvals: any[]): number {
+  private calculateRequestedBase(approvals: AprobacionDelTablero[]): number {
     let total = 0;
     approvals.forEach((approval) => {
       if (
@@ -524,7 +577,7 @@ export class DashboardService {
     return total;
   }
 
-  async getTrendData(timeFilter: string): Promise<any[]> {
+  async getTrendData(timeFilter: string): Promise<PuntoTendencia[]> {
     try {
       // Usar el mismo cálculo de fechas que getDashboardData para consistencia
       const { startDate, endDate } =
@@ -566,8 +619,8 @@ export class DashboardService {
     startDate: Date,
     endDate: Date,
     groupBy: 'day' | 'week' | 'month',
-  ): Promise<any[]> {
-    const result: any[] = [];
+  ) {
+    const result: PuntoTendencia[] = [];
 
     // Nota: el valor de cobros debe salir del ledger contable.
     // Para mantener consistencia con RoutesService (metaDelDia), el objetivo toma:
@@ -829,12 +882,18 @@ export class DashboardService {
     return result;
   }
 
-  private getSampleTrendData(): any[] {
+  private getSampleTrendData(): PuntoTendencia[] {
     // Devolvemos array vacío para evitar datos ficticios en producción
     return [];
   }
 
-  private async getLedgerCobranzaWhere(startDate: Date, endDate: Date) {
+  // El retorno se anota a proposito: sin la anotacion el literal se infiere
+  // solo y Prisma no comprueba los campos ni los valores de enum, y encima el
+  // resultado del aggregate que lo usa se degradaba a `{}`.
+  private async getLedgerCobranzaWhere(
+    startDate: Date,
+    endDate: Date,
+  ): Promise<Prisma.JournalLineWhereInput> {
     // Primero, los ids de todos los pagos regularizados
     const regularizedPagoIds = await this.prisma.pago
       .findMany({
@@ -872,7 +931,7 @@ export class DashboardService {
     return Number(res._sum.debitAmount || 0);
   }
 
-  private mapApproval(approval: any) {
+  private mapApproval(approval: AprobacionDelTablero) {
     return {
       id: approval.id,
       type: this.mapApprovalType(approval.tipoAprobacion),
@@ -911,7 +970,7 @@ export class DashboardService {
     return map[tipo] || 'Aprobación pendiente';
   }
 
-  private getApprovalDetails(approval: any): string {
+  private getApprovalDetails(approval: AprobacionDelTablero): string {
     try {
       const data =
         typeof approval.datosSolicitud === 'string'
@@ -946,7 +1005,9 @@ export class DashboardService {
     return 'low';
   }
 
-  private extractAmountFromApproval(approval: any): number | undefined {
+  private extractAmountFromApproval(
+    approval: AprobacionDelTablero,
+  ): number | undefined {
     try {
       const data =
         typeof approval.datosSolicitud === 'string'
@@ -960,7 +1021,7 @@ export class DashboardService {
     }
   }
 
-  private mapDelinquentAccount(loan: any, hoyInicioBogota: Date) {
+  private mapDelinquentAccount(loan: PrestamoEnMora, hoyInicioBogota: Date) {
     const cuotaVencida = loan.cuotas[0];
     const eff = cuotaVencida
       ? cuotaVencida?.fechaVencimientoProrroga
@@ -996,7 +1057,7 @@ export class DashboardService {
     return 'mild';
   }
 
-  private mapRecentActivity(approval: any) {
+  private mapRecentActivity(approval: AprobacionDelTablero) {
     return {
       id: approval.id,
       client: `${approval.solicitadoPor.nombres} ${approval.solicitadoPor.apellidos}`,
@@ -1032,7 +1093,7 @@ export class DashboardService {
       : `${baseAction} rechazada`;
   }
 
-  private getRecentActivityAmount(approval: any): string {
+  private getRecentActivityAmount(approval: AprobacionDelTablero): string {
     try {
       const data =
         typeof approval.datosSolicitud === 'string'

@@ -8,9 +8,10 @@ import {
 } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { PrismaService } from '../prisma/prisma.service';
+import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import * as argon2 from 'argon2';
+import { randomBytes } from 'node:crypto';
 import {
   EstadoAprobacion,
   EstadoUsuario,
@@ -21,6 +22,7 @@ import { UnauthorizedException } from '@nestjs/common';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { getBogotaStartEndOfDay } from '../utils/date-utils';
+import { textoRecortado } from '../common/texto.util';
 
 type UsuarioDetalleMetricas = {
   dineroCaja: number;
@@ -74,10 +76,16 @@ export class UsersService {
     private readonly notificacionesGateway: NotificacionesGateway,
   ) {}
 
+  /**
+   * Normaliza el nombre de usuario.
+   *
+   * Solo se aceptan cadenas y numeros. Antes era `String(valor ?? '')` sobre un
+   * `unknown`: si llegaba un objeto en el cuerpo de la peticion se convertia en el
+   * literal "[object Object]" y eso era lo que se guardaba o se buscaba. Mismo
+   * arreglo que en `AuthService.normalizarIdentificadorLogin`.
+   */
   private normalizarNombreUsuario(valor: unknown) {
-    return String(valor ?? '')
-      .trim()
-      .toLowerCase();
+    return textoRecortado(valor).toLowerCase();
   }
 
   private validarYNormalizarNombreUsuario(valor: unknown) {
@@ -117,7 +125,7 @@ export class UsersService {
     }
 
     const usuarioConNombre = await this.prisma.usuario.findFirst({
-      where: { nombreUsuario } as any,
+      where: { nombreUsuario },
     });
 
     if (usuarioConNombre) {
@@ -259,7 +267,7 @@ export class UsersService {
       'COORDINADOR',
       'SUPERVISOR',
     ].includes(rolActor);
-    const usuarios = (await this.prisma.usuario.findMany({
+    const usuarios = await this.prisma.usuario.findMany({
       where: {
         eliminadoEn: null,
         ...(includeArchived
@@ -296,9 +304,8 @@ export class UsersService {
             permiso: true,
           },
         },
-      } as any,
-      // Prisma no soporta select + include anidados con tipos estáticos; cast necesario
-    })) as unknown as any[];
+      },
+    });
 
     return usuarios.map((usuario) => {
       // 1. Permisos del Rol (default)
@@ -323,8 +330,20 @@ export class UsersService {
       // hacer. La matriz debe reflejar lo mismo que gobierna el acceso.
       const permisosFinales = [...permisosRol, ...permisosCustom];
 
-      const { _asignacionesRoles, _permisosPersonalizados, ...userData } =
-        usuario;
+      // Los dos nombres llevaban guion bajo (`_asignacionesRoles`,
+      // `_permisosPersonalizados`) y asi NO coinciden con los campos del select: la
+      // desestructuracion no quitaba nada y `userData` seguia llevandose las dos
+      // relaciones completas de permisos, que se esparcen en la respuesta de abajo. O sea
+      // que el directorio de usuarios devolvia, por cada usuario, todos los permisos de su
+      // rol y todos sus personalizados como objetos. No es una fuga de credenciales (el
+      // `select` no incluye `hashContrasena`), pero si un monton de datos que nadie pidio.
+      //
+      // Se renombran con `:` para que sigan marcados como no usados sin dejar de coincidir.
+      const {
+        asignacionesRoles: _asignacionesRoles,
+        permisosPersonalizados: _permisosPersonalizados,
+        ...userData
+      } = usuario;
 
       if (!puedeVerDirectorioCompleto) {
         // Solo lo necesario para pintar nombres/estado.
@@ -379,7 +398,7 @@ export class UsersService {
     }
 
     return this.prisma
-      .$transaction(async (tx: Prisma.TransactionClient) => {
+      .$transaction(async (tx: TransaccionPrisma) => {
         // 3. Limpiar permisos personalizados existentes
         await tx.asignacionPermisoUsuario.deleteMany({
           where: { usuarioId },
@@ -544,7 +563,7 @@ export class UsersService {
       });
 
       if (nuevoRol) {
-        await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        await this.prisma.$transaction(async (tx: TransaccionPrisma) => {
           // Eliminar asignación anterior
           await tx.asignacionRolUsuario.deleteMany({
             where: { usuarioId: id },
@@ -569,7 +588,7 @@ export class UsersService {
         where: {
           nombreUsuario,
           NOT: { id },
-        } as any,
+        },
       });
 
       if (usuarioConNombre) {
@@ -593,7 +612,7 @@ export class UsersService {
         }),
         ...(nombreUsuario !== undefined && { nombreUsuario }),
         ...(hashContrasena && { hashContrasena }),
-      } as any,
+      },
       select: {
         id: true,
         nombres: true,
@@ -667,7 +686,7 @@ export class UsersService {
         eliminadoEn: new Date(),
         estado: EstadoUsuario.ARCHIVADO,
       },
-      select: USUARIO_PUBLIC_SELECT as any,
+      select: USUARIO_PUBLIC_SELECT,
     });
 
     if (usuarioEliminadorId) {
@@ -716,7 +735,7 @@ export class UsersService {
         estado: EstadoUsuario.ARCHIVADO,
         eliminadoEn: null,
       },
-      select: USUARIO_PUBLIC_SELECT as any,
+      select: USUARIO_PUBLIC_SELECT,
     });
 
     if (usuarioArchivadorId) {
@@ -759,7 +778,7 @@ export class UsersService {
         eliminadoEn: null,
         estado: EstadoUsuario.ACTIVO,
       },
-      select: USUARIO_PUBLIC_SELECT as any,
+      select: USUARIO_PUBLIC_SELECT,
     });
 
     if (usuarioRestauradorId) {
@@ -1087,10 +1106,10 @@ export class UsersService {
     endDate: Date,
   ): Prisma.CuotaWhereInput {
     return {
-      estado: { in: ['PENDIENTE', 'PARCIAL', 'VENCIDA'] as any },
+      estado: { in: ['PENDIENTE', 'PARCIAL', 'VENCIDA'] },
       fechaVencimiento: { lte: endDate },
       prestamo: {
-        estado: { in: ['ACTIVO', 'EN_MORA'] as any },
+        estado: { in: ['ACTIVO', 'EN_MORA'] },
         eliminadoEn: null,
         cliente: {
           asignacionesRuta: {
@@ -1274,6 +1293,95 @@ export class UsersService {
     });
 
     return usuarioActualizado;
+  }
+
+  /**
+   * Resetea la contrasena de un usuario y devuelve una temporal.
+   *
+   * ESTE METODO NO EXISTIA. El controlador ya exponia
+   * `POST /usuarios/:id/reset-password` y llamaba a `(this.usersService).resetearContrasena(...)`
+   * con un cast; sin el cast tsc lo habria dicho. El frontend tiene el boton y espera
+   * `{ contrasenaTemporal }` (`usuarios-service.ts:261`), asi que ese boton lanzaba un
+   * TypeError en el servidor.
+   *
+   * LA POLITICA, confirmada: este es el camino de TODOS los usuarios menos el superadmin.
+   * La recuperacion por uno mismo (`/auth/forgot-password`) esta reservada al superadmin;
+   * el resto se la pide a un superadmin o a un administrador, y ese la resetea aqui.
+   *
+   * Las guardas son las mismas que ya usa el resto del servicio:
+   *
+   *  - 404 si el usuario no existe o esta borrado.
+   *  - Solo un SUPER_ADMINISTRADOR puede resetearle la contrasena a otro
+   *    SUPER_ADMINISTRADOR o al usuario principal. Sin esto un ADMIN podria resetear la
+   *    clave del superadmin y entrar con ella: la misma escalada vertical que
+   *    `actualizar()` ya bloquea para el cambio de rol.
+   *
+   * La temporal se devuelve UNA vez, en la respuesta, y no se guarda en claro. Queda
+   * `debeCambiarContrasena: true`, que es la columna que ya existe para obligar el cambio
+   * en el siguiente ingreso.
+   */
+  async resetearContrasena(
+    id: string,
+    rolActor?: RolUsuario,
+    idActor?: string,
+  ) {
+    const usuario = await this.prisma.usuario.findFirst({
+      where: { id, eliminadoEn: null },
+      select: {
+        id: true,
+        rol: true,
+        nombres: true,
+        apellidos: true,
+        nombreUsuario: true,
+        esPrincipal: true,
+      },
+    });
+
+    if (!usuario) {
+      throw new NotFoundException(`Usuario con ID ${id} no encontrado`);
+    }
+
+    const esObjetivoProtegido =
+      usuario.rol === RolUsuario.SUPER_ADMINISTRADOR || usuario.esPrincipal;
+    if (esObjetivoProtegido && rolActor !== RolUsuario.SUPER_ADMINISTRADOR) {
+      throw new ForbiddenException(
+        'Solo un Superadministrador puede resetear la contrasena de un Superadministrador o del usuario principal.',
+      );
+    }
+
+    // Legible al dictarla y suficientemente larga. Sin caracteres que se confunden
+    // (0/O, 1/l/I), porque esto se le lee al usuario por telefono.
+    const ALFABETO = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const contrasenaTemporal = Array.from(
+      randomBytes(12),
+      (byte) => ALFABETO[byte % ALFABETO.length],
+    ).join('');
+
+    await this.prisma.usuario.update({
+      where: { id },
+      data: {
+        hashContrasena: await argon2.hash(contrasenaTemporal),
+        debeCambiarContrasena: true,
+      },
+    });
+
+    // Envuelto en el `if` como los demas registros de este servicio: el DTO de
+    // auditoria pide el id de quien hizo la accion.
+    if (idActor) {
+      await this.auditService.create({
+        usuarioId: idActor,
+        accion: 'RESETEAR_CONTRASENA',
+        entidad: 'Usuario',
+        entidadId: usuario.id,
+        // La contrasena NO va en la auditoria.
+        datosNuevos: {
+          nombreUsuario: usuario.nombreUsuario,
+          debeCambiarContrasena: true,
+        },
+      });
+    }
+
+    return { contrasenaTemporal };
   }
 
   async changePassword(id: string, changePasswordDto: ChangePasswordDto) {

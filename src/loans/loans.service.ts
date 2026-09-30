@@ -7,7 +7,8 @@ import {
   ConflictException,
   OnModuleInit,
 } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
+import { codigoDeError } from '../common/error.util';
 import {
   EstadoPrestamo,
   EstadoCuota,
@@ -24,10 +25,11 @@ import { NotificacionesService } from '../notificaciones/notificaciones.service'
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { AuditService } from '../audit/audit.service';
 import { PushService } from '../push/push.service';
-import { CreateLoanDto } from './dto/create-loan.dto';
+import { CreateLoanDto, TipoPrestamoDto } from './dto/create-loan.dto';
 import { ConfiguracionService } from '../configuracion/configuracion.service';
 import { UpdateLoanData } from '../common/types';
-import { LedgerService } from '../accounting/ledger.service';
+import { JournalLineDto, LedgerService } from '../accounting/ledger.service';
+import { objetoDeJson } from '../common/json.util';
 import {
   generarPDFCartera,
   CarteraRow,
@@ -35,12 +37,12 @@ import {
 } from '../templates/exports/cartera-creditos.template';
 import { generarExcelClientesCreditosImportable } from '../templates/exports/importables.template';
 import { etiquetaTipoAmortizacion } from '../importaciones/interes-credito';
+import { calcularFechaVencimiento } from './utils/amortizacion.utils';
 import { createHash, randomUUID } from 'crypto';
 import { ContratoData, generarContratoPDF } from '../templates/exports';
 import {
   formatBogotaOffsetIso,
   getBogotaDayKey,
-  getBogotaWeekday,
   getBogotaStartEndOfDay,
   getBogotaStartEndOfDayFromKey,
 } from '../utils/date-utils';
@@ -52,6 +54,105 @@ const CUOTAS_POR_MES_LOANS: Record<string, number> = {
   QUINCENAL: 2,
   MENSUAL: 1,
 };
+
+/**
+ * Lo que se guarda para poder DESHACER una reprogramación de cuota si la
+ * solicitud se rechaza.
+ *
+ * `rollbackData` es una columna `Json` de Prisma, así que llega como `JsonValue`.
+ * Leer `rollbackData.cuotaId` directamente compilaba solo porque el cliente de
+ * Prisma estaba tipado como `any`. Y la MISMA columna guarda otra forma distinta
+ * para deshacer la creación de un crédito, así que no se puede tipar la columna:
+ * hay que tipar cada lectura.
+ */
+interface VisitaParaRestaurar {
+  id: string;
+  estadoVisita: string;
+  notas: string | null;
+  prestamoId: string | null;
+  cobradorId: string;
+}
+
+interface RollbackReprogramacion {
+  cuotaId: string;
+  clienteId: string;
+  prestamoId: string;
+  rutaIdOriginal: string | null;
+  fechaVencimientoOriginal: string;
+  fechaVencimientoNueva: string;
+  fechaOperativaOriginal: string | null;
+  origenGestion: string | null;
+  registroVisitaAnterior: VisitaParaRestaurar | null;
+}
+
+/**
+ * Lee ese rollback exigiendo lo imprescindible.
+ *
+ * Si la columna llegara vacía, antes `rollbackData.fechaVencimientoOriginal`
+ * lanzaba un TypeError dentro del método y el usuario veía "ocurrió un error
+ * inesperado". Ahora dice qué falta, que es lo mismo que hacen las demás
+ * validaciones de este método.
+ */
+/**
+ * El préstamo al que se refiere una solicitud, leído de su columna `Json`.
+ *
+ * Devuelve `undefined` cuando no hay un id legible, que es lo que ya hacía el
+ * `.filter()` de quien llama: una solicitud sin préstamo identificable no se
+ * puede atribuir a ninguna ruta, así que no se muestra.
+ */
+function prestamoIdDeSolicitud(
+  valor: Prisma.JsonValue | null,
+): string | undefined {
+  if (!valor || typeof valor !== 'object' || Array.isArray(valor))
+    return undefined;
+  const id = (valor as Record<string, unknown>).prestamoId;
+  return typeof id === 'string' ? id : undefined;
+}
+
+function leerRollbackReprogramacion(
+  valor: Prisma.JsonValue | null,
+): RollbackReprogramacion {
+  const datos =
+    valor && typeof valor === 'object' && !Array.isArray(valor)
+      ? (valor as Record<string, unknown>)
+      : {};
+
+  if (
+    typeof datos.cuotaId !== 'string' ||
+    typeof datos.clienteId !== 'string' ||
+    typeof datos.fechaVencimientoOriginal !== 'string'
+  ) {
+    throw new BadRequestException(
+      'El efecto provisional no guardó los datos necesarios para deshacer la reprogramación.',
+    );
+  }
+
+  return datos as unknown as RollbackReprogramacion;
+}
+
+/**
+ * El prestamo recien creado, con lo que el impacto contable provisional necesita.
+ *
+ * El tipo se DERIVA de la consulta y la consulta usa este mismo objeto, asi que no
+ * pueden separarse: si manana se quita `producto` del `include`, el `prestamo.producto`
+ * de `aplicarImpactoProvisionalPrestamo` deja de compilar. Antes el parametro era `any`,
+ * y una sonda `never` mostro que de ahi se leen nueve propiedades sin comprobar ninguna.
+ */
+const INCLUDE_PRESTAMO_CON_IMPACTO =
+  Prisma.validator<Prisma.PrestamoDefaultArgs>()({
+    include: {
+      cliente: true,
+      producto: true,
+      cuotas: true,
+      creadoPor: {
+        select: { id: true, nombres: true, apellidos: true, rol: true },
+      },
+    },
+  });
+
+type PrestamoConImpactoProvisional = Prisma.PrestamoGetPayload<
+  typeof INCLUDE_PRESTAMO_CON_IMPACTO
+>;
 
 @Injectable()
 export class LoansService implements OnModuleInit {
@@ -123,7 +224,7 @@ export class LoansService implements OnModuleInit {
     return Math.trunc(n * 100) / 100;
   }
 
-  async descontarStockSiDisponible(productoId: string, tx?: any) {
+  async descontarStockSiDisponible(productoId: string, tx?: TransaccionPrisma) {
     const prisma = tx || this.prisma;
     const result = await prisma.producto.updateMany({
       where: {
@@ -176,7 +277,10 @@ export class LoansService implements OnModuleInit {
 
   private async runCreateLoanSideEffect(
     label: string,
-    action: () => Promise<unknown> | unknown,
+    // `unknown` cubre tanto una funcion sincrona como una que devuelve promesa: el
+    // `await action()` de abajo funciona con las dos. Antes era
+    // `Promise<unknown> | unknown`, y en esa union el `unknown` se come al otro lado.
+    action: () => unknown,
   ) {
     try {
       await action();
@@ -251,11 +355,16 @@ export class LoansService implements OnModuleInit {
     prestamo: {
       id: string;
       numeroPrestamo: string;
-      monto: any;
+      // `Prisma.Decimal | number` y no `any`: es la columna de dinero, que llega como
+      // `Decimal` desde la base y como numero cuando la arma el propio servicio. Aqui
+      // entra por `safeNumber(...)`, asi que las dos formas valen. Es el mismo tipo que
+      // ya usan notificaciones.service.ts:28 y routes.service.ts:81.
+      monto: Prisma.Decimal | number;
       fechaInicio?: Date | null;
     };
     data: {
-      frecuenciaPago: any;
+      // Se lee con `String(data.frecuenciaPago)`, y lo que llega es el valor del enum.
+      frecuenciaPago: FrecuenciaPago;
       cuotaInicial?: number;
       notas?: string;
       esContado?: boolean;
@@ -273,7 +382,7 @@ export class LoansService implements OnModuleInit {
     articuloNombre: string;
     isFinanciamientoArticulo: boolean;
     precioArticuloTotal: number;
-    safeNumber: (v: any) => number;
+    safeNumber: (v: unknown) => number;
     interesTotal?: number;
     tasaInteres?: number;
   }) {
@@ -331,16 +440,18 @@ export class LoansService implements OnModuleInit {
     numeroPrestamo: string;
     clienteId: string;
     tipoPrestamo: string;
-    monto: any;
-    cuotaInicial?: any;
-    precioVentaArticulo?: any;
-    costoArticulo?: any;
+    // Los cuatro son columnas de dinero: `Decimal` desde la base, numero cuando las arma
+    // el servicio. Todas entran por `Number(...)` mas abajo.
+    monto: Prisma.Decimal | number;
+    cuotaInicial?: Prisma.Decimal | number | null;
+    precioVentaArticulo?: Prisma.Decimal | number | null;
+    costoArticulo?: Prisma.Decimal | number | null;
     creadoPorId: string;
   }) {
     const tipoPrestamo = String(prestamo.tipoPrestamo || '').toUpperCase();
     const isArticulo = tipoPrestamo === 'ARTICULO';
     const referenceType = isArticulo ? 'VENTA_ARTICULO' : 'DESEMBOLSO';
-    const existingEntry = await (this.prisma as any).journalEntry?.findFirst?.({
+    const existingEntry = await this.prisma.journalEntry?.findFirst?.({
       where: { referenceType, referenceId: prestamo.id },
       select: { id: true },
     });
@@ -353,10 +464,10 @@ export class LoansService implements OnModuleInit {
           OR: [
             { codigo: 'CAJA-OFICINA' },
             { codigo: 'CAJA-PRINCIPAL' },
-            { tipo: 'PRINCIPAL' as any },
+            { tipo: 'PRINCIPAL' },
           ],
         },
-        orderBy: [{ codigo: 'asc' as any }],
+        orderBy: [{ codigo: 'asc' }],
         select: { id: true, codigo: true, tipo: true },
       });
 
@@ -406,15 +517,12 @@ export class LoansService implements OnModuleInit {
       where: { id: prestamo.creadoPorId },
       select: { rol: true },
     });
-    const cajaOrigen = await this.resolveCajaOperacionPrestamo(
-      this.prisma as any,
-      {
-        data: {} as any,
-        creador: { id: prestamo.creadoPorId, rol: creador?.rol },
-        cliente: { asignacionesRuta: [] },
-        requiereCajaRuta: this.isOperatorWithBase(creador),
-      },
-    );
+    const cajaOrigen = await this.resolveCajaOperacionPrestamo(this.prisma, {
+      data: {},
+      creador: { id: prestamo.creadoPorId, rol: creador?.rol },
+      cliente: { asignacionesRuta: [] },
+      requiereCajaRuta: this.isOperatorWithBase(creador),
+    });
 
     if (!cajaOrigen?.id) {
       throw new BadRequestException(
@@ -458,15 +566,34 @@ export class LoansService implements OnModuleInit {
   }
 
   private async resolveCajaOperacionPrestamo(
-    tx: Prisma.TransactionClient,
+    tx: TransaccionPrisma,
     params: {
-      data: CreateLoanDto;
-      creador: any;
-      cliente: any;
+      /**
+       * Solo se usan tres campos, asi que se piden esos tres y no el DTO entero.
+       *
+       * Un llamador le pasa `{}` a proposito (el recalculo de caja de un prestamo que ya
+       * existe, donde no hay DTO), y con `CreateLoanDto` eso obligaba a `{} as any`.
+       */
+      data: Pick<CreateLoanDto, 'cajaId' | 'cobradorId' | 'rutaId'>;
+      // Mismo criterio que con `data`: se piden los campos que se leen, no la entidad
+      // entera. De `creador` se lee el rol (para decidir si opera con base) y el id; de
+      // `cliente`, el id y la ruta asignada.
+      creador: { id?: string; rol?: RolUsuario } | null;
+      cliente: {
+        id?: string;
+        // Las cuatro lecturas de la cascada: el id de la ruta y el del cobrador pueden
+        // venir en la asignacion o dentro de la ruta anidada, segun el endpoint. Los
+        // nombro el compilador al declarar esto; con `any` no se veia que fueran cuatro.
+        asignacionesRuta?: Array<{
+          rutaId?: string | null;
+          cobradorId?: string | null;
+          ruta?: { id?: string | null; cobradorId?: string | null } | null;
+        }>;
+      } | null;
       requiereCajaRuta?: boolean;
     },
   ) {
-    const dataAny = params.data as any;
+    const datosDeCaja = params.data;
     const rolCreador = String(params.creador?.rol || '').toUpperCase();
     const esCobrador = rolCreador === RolUsuario.COBRADOR;
     const esSupervisor = rolCreador === RolUsuario.SUPERVISOR;
@@ -493,9 +620,9 @@ export class LoansService implements OnModuleInit {
       (await tx.caja.findFirst({
         where: {
           activa: true,
-          OR: [{ codigo: 'CAJA-PRINCIPAL' }, { tipo: 'PRINCIPAL' as any }],
+          OR: [{ codigo: 'CAJA-PRINCIPAL' }, { tipo: 'PRINCIPAL' }],
         },
-        orderBy: { creadoEn: 'asc' as any },
+        orderBy: { creadoEn: 'asc' },
         select: {
           id: true,
           codigo: true,
@@ -525,7 +652,7 @@ export class LoansService implements OnModuleInit {
         where: {
           activa: true,
           responsableId: operadorId,
-          tipo: 'RUTA' as any,
+          tipo: 'RUTA',
         },
         select: selectCajaOperacion,
       });
@@ -547,7 +674,7 @@ export class LoansService implements OnModuleInit {
       const cajaRuta = await tx.caja.findFirst({
         where: {
           activa: true,
-          tipo: 'RUTA' as any,
+          tipo: 'RUTA',
           rutaId: ruta.id,
           ...(esSupervisor ? { responsableId: operadorId } : {}),
         },
@@ -568,7 +695,7 @@ export class LoansService implements OnModuleInit {
       return findCajaOficina();
     }
 
-    const cajaId = String(dataAny.cajaId || '').trim();
+    const cajaId = String(datosDeCaja.cajaId || '').trim();
     if (cajaId) {
       const caja = await tx.caja.findFirst({
         where: { id: cajaId, activa: true },
@@ -592,8 +719,8 @@ export class LoansService implements OnModuleInit {
     const cajaBaseOperador = await findCajaBaseOperador();
     if (cajaBaseOperador?.id) return cajaBaseOperador;
 
-    const rutaIdPayload = String(dataAny.rutaId || '').trim();
-    const cobradorIdPayload = String(dataAny.cobradorId || '').trim();
+    const rutaIdPayload = String(datosDeCaja.rutaId || '').trim();
+    const cobradorIdPayload = String(datosDeCaja.cobradorId || '').trim();
     const rutaPreferida =
       rutaIdPayload ||
       params.cliente?.asignacionesRuta?.[0]?.rutaId ||
@@ -621,7 +748,7 @@ export class LoansService implements OnModuleInit {
 
     if (ruta?.id) {
       const cajaRuta = await tx.caja.findFirst({
-        where: { activa: true, tipo: 'RUTA' as any, rutaId: ruta.id },
+        where: { activa: true, tipo: 'RUTA', rutaId: ruta.id },
         select: selectCajaOperacion,
       });
       if (cajaRuta?.id && !esSupervisor) return cajaRuta;
@@ -634,19 +761,28 @@ export class LoansService implements OnModuleInit {
     return findCajaOficina();
   }
 
-  private getAccountCodeCaja(caja: any) {
+  private getAccountCodeCaja(
+    caja: {
+      codigo?: string | null;
+      tipo?: string | null;
+    } | null,
+  ) {
     if (caja?.codigo === 'CAJA-BANCO') return '1.1.2';
     if (String(caja?.tipo || '').toUpperCase() === 'RUTA') return '1.2.1';
     return '1.1.1';
   }
 
   private async aplicarImpactoProvisionalPrestamo(
-    tx: Prisma.TransactionClient,
+    tx: TransaccionPrisma,
     params: {
-      prestamo: any;
+      prestamo: PrestamoConImpactoProvisional;
       data: CreateLoanDto;
-      creador: any;
-      cliente: any;
+      // `creador` y `cliente` no se LEEN aqui: solo se reenvian a
+      // `resolveCajaOrigenPrestamo` y a `isOperatorWithBase`. Se declara lo que esos dos
+      // piden y nada mas; lo comprobo la sonda `never`, que no saco ni una propiedad de
+      // ellos y si las nueve de `prestamo`.
+      creador: { id?: string; rol?: RolUsuario } | null;
+      cliente: { id?: string } | null;
     },
   ) {
     const { prestamo, data, creador, cliente } = params;
@@ -714,7 +850,6 @@ export class LoansService implements OnModuleInit {
           prestamoId: prestamo.id,
           precioVenta: Number(
             prestamo.precioVentaArticulo ||
-              (data as any).valorArticulo ||
               Number(prestamo.monto || 0) + cuotaInicial,
           ),
           costoArticulo: Number(prestamo.costoArticulo || 0),
@@ -873,13 +1008,13 @@ export class LoansService implements OnModuleInit {
     const frecuencia = (() => {
       switch (prestamo.frecuenciaPago) {
         case 'DIARIO':
-          return 'DIARIO' as any;
+          return 'DIARIO';
         case 'SEMANAL':
-          return 'SEMANAL' as any;
+          return 'SEMANAL';
         case 'QUINCENAL':
-          return 'QUINCENAL' as any;
+          return 'QUINCENAL';
         case 'MENSUAL':
-          return 'MENSUAL' as any;
+          return 'MENSUAL';
         default:
           return undefined;
       }
@@ -1098,118 +1233,6 @@ export class LoansService implements OnModuleInit {
     };
   }
 
-  /**
-   * Avanza la fecha al siguiente día hábil si cae en domingo.
-   * Para pagos DIARIO: si cae en domingo, se mueve al lunes siguiente.
-   * Para SEMANAL/QUINCENAL: si cae en domingo, se mueve al sábado anterior.
-   * Para MENSUAL: si cae en domingo, se mueve al lunes siguiente.
-   */
-  private saltarDomingo(fecha: Date, frecuencia: FrecuenciaPago): Date {
-    // 0 = Domingo (en Bogotá)
-    if (getBogotaWeekday(fecha) !== 0) return fecha;
-
-    const key = getBogotaDayKey(fecha);
-    if (!key) return fecha;
-
-    const shiftDays = (days: number) =>
-      new Date(`${key}T12:00:00-05:00`).getTime() + days * 86_400_000;
-
-    // Para diario/mensual: mover al lunes (siguiente día hábil)
-    if (
-      frecuencia === FrecuenciaPago.DIARIO ||
-      frecuencia === FrecuenciaPago.MENSUAL
-    ) {
-      return new Date(shiftDays(1));
-    }
-
-    // Para semanal/quincenal: mover al sábado (día hábil anterior)
-    return new Date(shiftDays(-1));
-  }
-
-  private calcularFechaVencimiento(
-    fechaBase: Date,
-    numeroCuota: number,
-    frecuencia: FrecuenciaPago,
-  ): Date {
-    const baseKey = getBogotaDayKey(fechaBase);
-    if (!baseKey) return fechaBase;
-
-    const offset = Math.max(0, numeroCuota - 1);
-
-    const toNoonBogota = (key: string) => new Date(`${key}T12:00:00-05:00`);
-
-    const addDaysSkippingSunday = (
-      startKey: string,
-      daysToAdd: number,
-    ): string => {
-      let key = startKey;
-      let added = 0;
-      while (added < daysToAdd) {
-        const next = new Date(toNoonBogota(key).getTime() + 86_400_000);
-        const nextKey = getBogotaDayKey(next);
-        if (!nextKey) break;
-        key = nextKey;
-        if (getBogotaWeekday(next) !== 0) added++;
-      }
-      return key;
-    };
-
-    const addDaysPlain = (startKey: string, daysToAdd: number): string => {
-      const next = new Date(
-        toNoonBogota(startKey).getTime() + daysToAdd * 86_400_000,
-      );
-      return getBogotaDayKey(next);
-    };
-
-    const addMonths = (startKey: string, monthsToAdd: number): string => {
-      const [yStr, mStr, dStr] = startKey.split('-');
-      const y = Number(yStr);
-      const m = Number(mStr);
-      const d = Number(dStr);
-      if (!y || !m || !d) return startKey;
-
-      const totalMonths = m - 1 + monthsToAdd;
-      const newY = y + Math.floor(totalMonths / 12);
-      const newM0 = ((totalMonths % 12) + 12) % 12;
-      const newM = newM0 + 1;
-
-      // Clamp del día al último del mes
-      const firstNextMonth =
-        newM === 12
-          ? new Date(`${newY + 1}-01-01T12:00:00-05:00`)
-          : new Date(`${newY}-${padStart2(newM + 1)}-01T12:00:00-05:00`);
-      const lastDay = new Date(firstNextMonth.getTime() - 86_400_000);
-      const lastKey = getBogotaDayKey(lastDay);
-      const lastDayNum = Number(lastKey.split('-')[2] || '0');
-      const safeDay = Math.min(d, lastDayNum || d);
-      return `${newY}-${padStart2(newM)}-${padStart2(safeDay)}`;
-    };
-
-    const padStart2 = (n: number) => String(n).padStart(2, '0');
-
-    let targetKey = baseKey;
-
-    switch (frecuencia) {
-      case FrecuenciaPago.DIARIO:
-        targetKey = addDaysSkippingSunday(baseKey, offset);
-        break;
-      case FrecuenciaPago.SEMANAL:
-        targetKey = addDaysPlain(baseKey, offset * 7);
-        break;
-      case FrecuenciaPago.QUINCENAL:
-        targetKey = addDaysPlain(baseKey, offset * 15);
-        break;
-      case FrecuenciaPago.MENSUAL:
-        targetKey = addMonths(baseKey, offset);
-        break;
-      default:
-        targetKey = baseKey;
-    }
-
-    // devolver un instante al mediodía Bogotá; el consumidor compara por día con helpers Bogotá
-    return this.saltarDomingo(toNoonBogota(targetKey), frecuencia);
-  }
-
   private parseBogotaDayKey(dateStr: string): Date {
     const raw = String(dateStr || '').trim();
     if (raw.includes('T')) {
@@ -1234,9 +1257,15 @@ export class LoansService implements OnModuleInit {
    * valor fraccionario. Si no coincide, el plazo se puso a mano y se respeta.
    */
   private recuperarPlazoExacto(prestamo: {
-    plazoMeses: number | any;
+    /**
+     * Llega como Decimal de Prisma o como number segun de donde venga la fila, asi
+     * que `unknown` es lo honesto: abajo pasa por `Number(...)`. Antes decia
+     * `number | any`, y en esa union el `any` se come al otro lado: era `any`.
+     */
+    plazoMeses: unknown;
     cantidadCuotas?: number | null;
-    frecuenciaPago?: FrecuenciaPago | string | null;
+    /** Un valor de `FrecuenciaPago`, pero llega como texto de la base. */
+    frecuenciaPago?: string | null;
   }): number {
     const guardado = Number(prestamo.plazoMeses);
     const cuotas = Number(prestamo.cantidadCuotas || 0);
@@ -1355,7 +1384,7 @@ export class LoansService implements OnModuleInit {
         interesTotal = amortizacion.interesTotal;
         cuotas = amortizacion.tabla.map((cuota) => ({
           numeroCuota: cuota.numeroCuota,
-          fechaVencimiento: this.calcularFechaVencimiento(
+          fechaVencimiento: calcularFechaVencimiento(
             fechaBase,
             fechaPrimerCobro ? cuota.numeroCuota : cuota.numeroCuota + 1,
             frecuenciaPago,
@@ -1379,7 +1408,7 @@ export class LoansService implements OnModuleInit {
         interesTotal = amortizacion.interesTotal;
         cuotas = amortizacion.tabla.map((cuota) => ({
           numeroCuota: cuota.numeroCuota,
-          fechaVencimiento: this.calcularFechaVencimiento(
+          fechaVencimiento: calcularFechaVencimiento(
             fechaBase,
             fechaPrimerCobro ? cuota.numeroCuota : cuota.numeroCuota + 1,
             frecuenciaPago,
@@ -1420,7 +1449,7 @@ export class LoansService implements OnModuleInit {
 
           return {
             numeroCuota: i + 1,
-            fechaVencimiento: this.calcularFechaVencimiento(
+            fechaVencimiento: calcularFechaVencimiento(
               fechaBase,
               fechaPrimerCobro ? i + 1 : i + 2,
               frecuenciaPago,
@@ -1446,12 +1475,14 @@ export class LoansService implements OnModuleInit {
    * (interés, cuota y fechas). Cualquier cambio de fórmula queda en un solo sitio.
    */
   simularCredito(params: {
-    tipoAmortizacion?: TipoAmortizacion | string;
+    /** Un valor de `TipoAmortizacion`; se normaliza desde texto mas abajo. */
+    tipoAmortizacion?: string;
     monto: number;
     tasaInteres: number;
     cantidadCuotas: number;
     plazoMeses: number;
-    frecuenciaPago?: FrecuenciaPago | string;
+    /** Un valor de `FrecuenciaPago`; se normaliza desde texto mas abajo. */
+    frecuenciaPago?: string;
     fechaInicio?: string;
     tipoPrestamo?: string;
     cuotaInicial?: number;
@@ -1634,6 +1665,10 @@ export class LoansService implements OnModuleInit {
                 apellidos: true,
                 dni: true,
                 telefono: true,
+                // La direccion no se mandaba, y la fila ya manda el documento y el
+                // telefono. El detalle de prestamo sin conexion la dejaba en blanco
+                // porque la copia local no la tenia de donde sacar.
+                direccion: true,
                 nivelRiesgo: true,
                 // Incluir asignaciones de ruta dentro del mismo select del cliente
                 asignacionesRuta: {
@@ -1794,14 +1829,15 @@ export class LoansService implements OnModuleInit {
           ).length;
           const cuotasTotales = cuotas.length;
 
-          const cuotasVencidasReal = cuotas.filter((c: any) => {
-            if (
-              ![
-                EstadoCuota.PENDIENTE,
-                EstadoCuota.PARCIAL,
-                EstadoCuota.VENCIDA,
-              ].includes(c.estado)
-            ) {
+          const cuotasVencidasReal = cuotas.filter((c) => {
+            // El arreglo se anota `EstadoCuota[]`: un literal de tres miembros infiere solo
+            // esos tres, y entonces `.includes` rechaza cualquier otro estado del enum.
+            const ESTADOS_QUE_CUENTAN: EstadoCuota[] = [
+              EstadoCuota.PENDIENTE,
+              EstadoCuota.PARCIAL,
+              EstadoCuota.VENCIDA,
+            ];
+            if (!ESTADOS_QUE_CUENTAN.includes(c.estado)) {
               return false;
             }
             const eff = c?.fechaVencimientoProrroga
@@ -1829,8 +1865,7 @@ export class LoansService implements OnModuleInit {
 
           // Calcular mora acumulada de forma segura
           const moraAcumulada = cuotasVencidasReal.reduce(
-            (sum: number, cuota: any) =>
-              sum + (Number(cuota.montoInteresMora) || 0),
+            (sum: number, cuota) => sum + (Number(cuota.montoInteresMora) || 0),
             0,
           );
 
@@ -1881,6 +1916,7 @@ export class LoansService implements OnModuleInit {
               `${prestamo.cliente?.nombres || ''} ${prestamo.cliente?.apellidos || ''}`.trim(),
             clienteDni: prestamo.cliente.dni || '',
             clienteTelefono: prestamo.cliente.telefono || '',
+            clienteDireccion: prestamo.cliente.direccion || '',
             producto: prestamo.producto?.nombre || 'Préstamo en efectivo',
             tipoProducto,
             tipoPrestamo: prestamo.tipoPrestamo,
@@ -2071,7 +2107,13 @@ export class LoansService implements OnModuleInit {
       }
 
       // Obtener registros de visita del cliente para mostrar estado de ausencia en plan de pagos
-      const resolveFechaGestionCuota = (cuota: any) => {
+      // Las tres fechas que la cuota puede traer, y en ese orden. No es la `Cuota` de
+      // Prisma: `fecha` no es columna suya, la trae el historial de visitas.
+      const resolveFechaGestionCuota = (cuota: {
+        fechaVencimientoProrroga?: Date | null;
+        fechaVencimiento?: Date | null;
+        fecha?: Date | null;
+      }) => {
         return (
           cuota.fechaVencimientoProrroga ||
           cuota.fechaVencimiento ||
@@ -2083,11 +2125,11 @@ export class LoansService implements OnModuleInit {
       const fechasCuotas = Array.from(
         new Set(
           (prestamo.cuotas || [])
-            .map((cuota: any) => {
+            .map((cuota) => {
               const fechaGestion = resolveFechaGestionCuota(cuota);
               return fechaGestion ? getBogotaDayKey(fechaGestion) : null;
             })
-            .filter(Boolean),
+            .filter((fecha): fecha is string => Boolean(fecha)),
         ),
       );
 
@@ -2139,11 +2181,16 @@ export class LoansService implements OnModuleInit {
           : [];
 
       const visitasMap = new Map(
-        registrosVisitas.map((r: VisitaConRelaciones) => [r.fechaVisita, r]),
+        registrosVisitas.map(
+          (r): [string, (typeof registrosVisitas)[number]] => [
+            r.fechaVisita,
+            r,
+          ],
+        ),
       );
 
       // Agregar estadoVisita a cada cuota
-      prestamo.cuotas = prestamo.cuotas.map((cuota: any) => {
+      prestamo.cuotas = prestamo.cuotas.map((cuota) => {
         const fechaGestion = resolveFechaGestionCuota(cuota);
         const fechaKey = fechaGestion ? getBogotaDayKey(fechaGestion) : null;
         const gestion = fechaKey
@@ -2306,8 +2353,10 @@ export class LoansService implements OnModuleInit {
   }
 
   private async reversarImpactoContableArticuloArchivado(
-    tx: Prisma.TransactionClient,
-    prestamo: any,
+    tx: TransaccionPrisma,
+    // Tres campos, no la entidad: lo dijo una sonda `never`, que saco exactamente
+    // `id`, `numeroPrestamo` y `tipoPrestamo` de este parametro.
+    prestamo: { id: string; numeroPrestamo: string; tipoPrestamo: string },
     userId: string,
   ) {
     if (String(prestamo.tipoPrestamo || '').toUpperCase() !== 'ARTICULO')
@@ -2334,31 +2383,31 @@ export class LoansService implements OnModuleInit {
     if (asientoReverso?.id) return;
 
     const linesOriginales = asientoVenta.lines || [];
-    const cajaLine = linesOriginales.find((line: any) => line.cajaId);
+    const cajaLine = linesOriginales.find((line) => line.cajaId);
     const cuotaInicial = linesOriginales
-      .filter((line: any) => line.cajaId)
-      .reduce((sum: number, line: any) => {
+      .filter((line) => line.cajaId)
+      .reduce((sum: number, line) => {
         return (
           sum + Number(line.debitAmount || 0) - Number(line.creditAmount || 0)
         );
       }, 0);
     const precioVenta = linesOriginales
-      .filter((line: any) => String(line.accountCode || '').startsWith('3.'))
-      .reduce((sum: number, line: any) => {
+      .filter((line) => String(line.accountCode || '').startsWith('3.'))
+      .reduce((sum: number, line) => {
         return (
           sum + Number(line.creditAmount || 0) - Number(line.debitAmount || 0)
         );
       }, 0);
     const montoFinanciado = linesOriginales
-      .filter((line: any) => String(line.accountCode || '') === '1.3.1')
-      .reduce((sum: number, line: any) => {
+      .filter((line) => String(line.accountCode || '') === '1.3.1')
+      .reduce((sum: number, line) => {
         return (
           sum + Number(line.debitAmount || 0) - Number(line.creditAmount || 0)
         );
       }, 0);
     const costoArticulo = linesOriginales
-      .filter((line: any) => String(line.accountCode || '') === '5.1')
-      .reduce((sum: number, line: any) => {
+      .filter((line) => String(line.accountCode || '') === '5.1')
+      .reduce((sum: number, line) => {
         return (
           sum + Number(line.debitAmount || 0) - Number(line.creditAmount || 0)
         );
@@ -2392,7 +2441,9 @@ export class LoansService implements OnModuleInit {
       });
     }
 
-    const lines: any[] = [];
+    // `JournalLineDto` ya existe en ledger.service.ts y es justo lo que
+    // `registrarAsiento` recibe: se reutiliza en vez de declarar un tipo nuevo.
+    const lines: JournalLineDto[] = [];
     if (precioVenta > 0) {
       lines.push({ accountCode: '3.4', debitAmount: precioVenta });
     }
@@ -2429,8 +2480,10 @@ export class LoansService implements OnModuleInit {
   }
 
   private async restaurarImpactoContableArticuloArchivado(
-    tx: Prisma.TransactionClient,
-    prestamo: any,
+    tx: TransaccionPrisma,
+    // Tres campos, no la entidad: lo dijo una sonda `never`, que saco exactamente
+    // `id`, `numeroPrestamo` y `tipoPrestamo` de este parametro.
+    prestamo: { id: string; numeroPrestamo: string; tipoPrestamo: string },
     userId: string,
   ) {
     if (String(prestamo.tipoPrestamo || '').toUpperCase() !== 'ARTICULO')
@@ -2456,9 +2509,7 @@ export class LoansService implements OnModuleInit {
 
     if (asientoRestauracion?.id) return;
 
-    const cajaLine = (asientoArchivo.lines || []).find(
-      (line: any) => line.cajaId,
-    );
+    const cajaLine = (asientoArchivo.lines || []).find((line) => line.cajaId);
     const cuotaInicial = cajaLine
       ? Math.abs(
           Number(cajaLine.creditAmount || 0) -
@@ -2493,10 +2544,10 @@ export class LoansService implements OnModuleInit {
     }
 
     const lines = (asientoArchivo.lines || [])
-      .map((line: any) => {
+      .map((line) => {
         const debitAmount = Number(line.debitAmount || 0);
         const creditAmount = Number(line.creditAmount || 0);
-        const restoredLine: any = {
+        const restoredLine: JournalLineDto = {
           accountCode: line.accountCode,
         };
 
@@ -2510,7 +2561,7 @@ export class LoansService implements OnModuleInit {
         return restoredLine;
       })
       .filter(
-        (line: any) =>
+        (line) =>
           Number(line.debitAmount || 0) > 0 ||
           Number(line.creditAmount || 0) > 0,
       );
@@ -2540,8 +2591,8 @@ export class LoansService implements OnModuleInit {
       }
 
       if (
-        (updateData as any)?.version != null &&
-        Number((updateData as any).version) !== Number(prestamo.version || 1)
+        updateData?.version != null &&
+        Number(updateData.version) !== Number(prestamo.version || 1)
       ) {
         throw new ConflictException(
           'El préstamo fue actualizado por otro usuario. Recarga la información antes de guardar.',
@@ -2652,7 +2703,9 @@ export class LoansService implements OnModuleInit {
             newPlazo,
             frecuenciaPago,
             newFechaInicio,
-            prestamo.fechaPrimerCobro,
+            // La columna es nullable y el parámetro opcional. Dentro solo se
+            // comprueba por verdad, asi que null y undefined dan lo mismo.
+            prestamo.fechaPrimerCobro ?? undefined,
             false, // esContado
           );
 
@@ -2735,7 +2788,7 @@ export class LoansService implements OnModuleInit {
         if (Array.isArray(archivos) && archivos.length > 0) {
           const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
 
-          const nuevosArchivos = archivos.map((archivo: any) => {
+          const nuevosArchivos = archivos.map((archivo) => {
             const url = archivo.url || archivo.path || archivo.ruta;
             const urlFinal =
               typeof url === 'string' && url.startsWith('http')
@@ -2808,10 +2861,7 @@ export class LoansService implements OnModuleInit {
           } catch (error) {
             // No se corta la operacion principal por esto, pero se deja
             // registrado: en silencio nadie se entera de que fallo.
-            this.logger.warn(
-              'No se pudo resolver el nombre del actor',
-              error as any,
-            );
+            this.logger.warn('No se pudo resolver el nombre del actor', error);
           }
 
           const metadataBase = {
@@ -2939,329 +2989,6 @@ export class LoansService implements OnModuleInit {
     }
   }
 
-  async createLoan_(createLoanDto: CreateLoanDto) {
-    try {
-      this.logger.log(`Creating loan for client ${createLoanDto.clienteId}`);
-
-      // Verificar que el cliente existe
-      const cliente = await this.prisma.cliente.findUnique({
-        where: { id: createLoanDto.clienteId },
-      });
-
-      if (!cliente) {
-        throw new NotFoundException('Cliente no encontrado');
-      }
-
-      // Generar numero de prestamo
-      const numeroPrestamo = await this.generarNumeroPrestamo(
-        createLoanDto.tipoPrestamo,
-      );
-
-      // Calcular fecha fin
-      const fechaInicio = this.parseBogotaDayKey(createLoanDto.fechaInicio);
-      const fechaFin = new Date(fechaInicio);
-      fechaFin.setMonth(fechaFin.getMonth() + createLoanDto.plazoMeses);
-
-      const fechaPrimerCobroParsed = createLoanDto.fechaPrimerCobro
-        ? this.parseBogotaDayKey(createLoanDto.fechaPrimerCobro)
-        : undefined;
-      if (fechaPrimerCobroParsed) {
-        const hoyKey = getBogotaDayKey(new Date());
-        const { startDate: hoyStart } = getBogotaStartEndOfDayFromKey(hoyKey);
-        if (fechaPrimerCobroParsed.getTime() < hoyStart.getTime()) {
-          throw new BadRequestException(
-            'La fecha de primer cobro no puede ser un día pasado.',
-          );
-        }
-        const key = getBogotaDayKey(fechaPrimerCobroParsed);
-        const { startDate } = getBogotaStartEndOfDayFromKey(key);
-        fechaPrimerCobroParsed.setTime(startDate.getTime());
-      }
-
-      // Calcular cantidad de cuotas segun frecuencia
-      let cantidadCuotas = 0;
-      switch (createLoanDto.frecuenciaPago) {
-        case FrecuenciaPago.DIARIO:
-          cantidadCuotas = createLoanDto.plazoMeses * 30;
-          break;
-        case FrecuenciaPago.SEMANAL:
-          cantidadCuotas = createLoanDto.plazoMeses * 4;
-          break;
-        case FrecuenciaPago.QUINCENAL:
-          cantidadCuotas = createLoanDto.plazoMeses * 2;
-          break;
-        case FrecuenciaPago.MENSUAL:
-          cantidadCuotas = createLoanDto.plazoMeses;
-          break;
-      }
-
-      // Determinar tipo de amortización
-      this.logger.log(
-        `[createLoan] DTO recibido: tipoAmortizacion=${createLoanDto.tipoAmortizacion}, monto=${createLoanDto.monto}, cuotas=${cantidadCuotas}`,
-      );
-      const tipoAmort =
-        createLoanDto.tipoAmortizacion || TipoAmortizacion.INTERES_PLANO;
-      const tasaInteres = createLoanDto.tasaInteres || 0;
-      this.logger.log(`[createLoan] tipoAmort resuelto: ${tipoAmort}`);
-
-      const calculation = this.calculateInterestAndCuotas(
-        tipoAmort,
-        createLoanDto.monto,
-        tasaInteres,
-        cantidadCuotas,
-        createLoanDto.plazoMeses,
-        createLoanDto.frecuenciaPago,
-        fechaInicio,
-        fechaPrimerCobroParsed,
-        false,
-      );
-      const interesTotal = calculation.interesTotal;
-      const cuotasData = calculation.cuotas.map((cuota) => ({
-        numeroCuota: cuota.numeroCuota,
-        fechaVencimiento: cuota.fechaVencimiento,
-        monto: cuota.monto,
-        montoCapital: cuota.montoCapital,
-        montoInteres: cuota.montoInteres,
-        estado: EstadoCuota.PENDIENTE,
-      }));
-
-      // Homogeneizar vencimiento del préstamo con el cronograma real
-      const fechaFinReal =
-        cuotasData.length > 0
-          ? new Date(cuotasData[cuotasData.length - 1].fechaVencimiento)
-          : fechaFin;
-
-      // Crear prestamo con cuotas
-      const prestamo = await this.prisma.prestamo.create({
-        data: {
-          numeroPrestamo,
-          clienteId: createLoanDto.clienteId,
-          productoId: createLoanDto.productoId,
-          precioProductoId: createLoanDto.precioProductoId,
-          tipoPrestamo: createLoanDto.tipoPrestamo,
-          tipoAmortizacion: tipoAmort,
-          monto: createLoanDto.monto,
-          cuotaInicial: createLoanDto.cuotaInicial || 0,
-          tasaInteres: tasaInteres,
-          tasaInteresMora: createLoanDto.tasaInteresMora || 2,
-          plazoMeses: createLoanDto.plazoMeses,
-          frecuenciaPago: createLoanDto.frecuenciaPago,
-          cantidadCuotas,
-          fechaInicio,
-          fechaPrimerCobro: fechaPrimerCobroParsed,
-          fechaFin: fechaFinReal,
-          estado: EstadoPrestamo.PENDIENTE_APROBACION,
-          estadoAprobacion: EstadoAprobacion.PENDIENTE,
-          creadoPorId: createLoanDto.creadoPorId,
-          interesTotal: Math.round(interesTotal),
-          saldoPendiente: Math.round(
-            createLoanDto.monto +
-              interesTotal -
-              (createLoanDto.cuotaInicial || 0),
-          ),
-          notas: createLoanDto.notas ? String(createLoanDto.notas) : undefined,
-          garantia: createLoanDto.garantia
-            ? String(createLoanDto.garantia)
-            : undefined,
-          cuotas: {
-            create: cuotasData,
-          },
-        } as any,
-        include: {
-          cliente: true,
-          producto: true,
-          cuotas: true,
-          creadoPor: {
-            select: {
-              id: true,
-              nombres: true,
-              apellidos: true,
-              rol: true,
-            },
-          },
-        },
-      });
-
-      // Registrar CUOTA INICIAL como abono a capital (no utilidad) cuando es crédito por ARTICULO.
-      // Se registra como transacción de INGRESO y reduce la cartera por cobrar.
-      const isArticulo =
-        String(createLoanDto.tipoPrestamo || '').toUpperCase() === 'ARTICULO';
-      const cuotaInicial = Number(createLoanDto.cuotaInicial || 0);
-      if (isArticulo && cuotaInicial > 0) {
-        // Determinar caja destino: preferimos caja de la ruta del cliente; si no existe, Caja Principal.
-        const rutaCliente = await this.prisma.asignacionRuta.findFirst({
-          where: {
-            clienteId: createLoanDto.clienteId,
-            activa: true,
-            ruta: { activa: true, eliminadoEn: null },
-          },
-          select: { rutaId: true },
-        });
-
-        const cajaRuta = rutaCliente?.rutaId
-          ? await this.prisma.caja.findFirst({
-              where: { rutaId: rutaCliente.rutaId, tipo: 'RUTA', activa: true },
-              select: { id: true },
-            })
-          : null;
-
-        const cajaOficina = await this.prisma.caja.findFirst({
-          where: {
-            activa: true,
-            codigo: 'CAJA-OFICINA',
-          },
-          select: { id: true, codigo: true },
-        });
-
-        const cajaPrincipal = await this.prisma.caja.findFirst({
-          where: {
-            activa: true,
-            OR: [{ codigo: 'CAJA-PRINCIPAL' }, { tipo: 'PRINCIPAL' }],
-          },
-          orderBy: [{ codigo: 'asc' as any }],
-          select: { id: true, codigo: true },
-        });
-
-        // Determinar caja destino: Cuota Inicial debe registrarse en Caja Oficina.
-        // Si no existe, usar Caja Principal; si no existe, la caja de ruta.
-        const cajaDestino = cajaOficina || cajaPrincipal || cajaRuta;
-        const cajaIdDestino = cajaDestino?.id;
-
-        if (cajaIdDestino) {
-          const yaExiste = await this.prisma.transaccion.findFirst({
-            where: {
-              cajaId: cajaIdDestino,
-              tipo: 'INGRESO',
-              tipoReferencia: 'CUOTA_INICIAL',
-              referenciaId: prestamo.id,
-            },
-            select: { id: true },
-          });
-
-          if (!yaExiste?.id) {
-            const numeroTransaccion = this.generarNumeroTransaccion();
-            await this.prisma.$transaction(async (tx) => {
-              await tx.transaccion.create({
-                data: {
-                  numeroTransaccion,
-                  cajaId: cajaIdDestino,
-                  tipo: 'INGRESO',
-                  monto: cuotaInicial,
-                  descripcion: `Cuota inicial crédito artículo #${prestamo.numeroPrestamo}`,
-                  creadoPorId: createLoanDto.creadoPorId,
-                  tipoReferencia: 'CUOTA_INICIAL',
-                  referenciaId: prestamo.id,
-                },
-              });
-
-              await this.ledgerService.registrarAsiento(
-                {
-                  referenceType: 'PAGO',
-                  referenceId: prestamo.id,
-                  description: `Cuota inicial crédito artículo #${prestamo.numeroPrestamo}`,
-                  createdBy: createLoanDto.creadoPorId,
-                  lines: [
-                    {
-                      accountCode:
-                        cajaDestino?.codigo === 'CAJA-BANCO'
-                          ? '1.1.2'
-                          : '1.1.1',
-                      debitAmount: cuotaInicial,
-                      cajaId: cajaIdDestino,
-                      cajaDelta: +cuotaInicial,
-                    },
-                    {
-                      accountCode: '1.3.1',
-                      creditAmount: cuotaInicial,
-                    },
-                  ],
-                },
-                tx,
-              );
-            });
-          }
-        }
-      }
-
-      this.logger.log(
-        `Loan created successfully: ${prestamo.id} (${tipoAmort})`,
-      );
-
-      // Crear solicitud de aprobación automáticamente
-      const _aprobacion = await this.prisma.aprobacion.create({
-        data: {
-          tipoAprobacion: TipoAprobacion.NUEVO_PRESTAMO,
-          referenciaId: prestamo.id,
-          tablaReferencia: 'Prestamo',
-          solicitadoPorId: createLoanDto.creadoPorId,
-          datosSolicitud: {
-            prestamoId: prestamo.id,
-            clienteId: prestamo.clienteId,
-            monto: prestamo.monto,
-            tipoPrestamo: prestamo.tipoPrestamo,
-            tipoAmortizacion: prestamo.tipoAmortizacion,
-            saldoPendiente: prestamo.saldoPendiente,
-            valorArticulo:
-              Number(prestamo.saldoPendiente || 0) +
-              Number(prestamo.cuotaInicial || 0),
-            cuotaInicial: prestamo.cuotaInicial,
-            plazoMeses: prestamo.plazoMeses,
-            cantidadCuotas: prestamo.cantidadCuotas,
-            cuotas: prestamo.cantidadCuotas,
-            tasaInteres: prestamo.tasaInteres,
-            porcentaje: prestamo.tasaInteres,
-            frecuenciaPago: prestamo.frecuenciaPago,
-            fechaInicio: prestamo.fechaInicio,
-            fechaFin: prestamo.fechaFin,
-            interesTotal: prestamo.interesTotal,
-            montoTotal:
-              Number(prestamo.monto) + Number(prestamo.interesTotal || 0),
-          },
-          montoSolicitud: Number(prestamo.monto),
-        },
-      });
-
-      /*
-      // Notificar a coordinadores, admins y superadmins sobre nuevo préstamo pendiente de aprobación
-      await this.notificacionesService.notifyApprovers({
-        titulo: 'Nuevo Préstamo Requiere Aprobación',
-        mensaje: `El usuario ha creado un préstamo para el cliente ${cliente.nombres} ${cliente.apellidos} por valor de ${createLoanDto.monto}`,
-        tipo: 'APROBACION',
-        entidad: 'Aprobacion',
-        entidadId: aprobacion.id,
-        metadata: {
-           // ...
-        },
-      });
-      */
-
-      // Registrar Auditoría
-      await this.auditService.create({
-        usuarioId: createLoanDto.creadoPorId,
-        accion: 'CREAR_PRESTAMO',
-        entidad: 'Prestamo',
-        entidadId: prestamo.id,
-        datosNuevos: {
-          id: prestamo.id,
-          monto: Number(prestamo.monto),
-          clienteId: prestamo.clienteId,
-        },
-        metadata: { clienteId: createLoanDto.clienteId },
-      });
-
-      this.notificacionesGateway.broadcastPrestamosActualizados({
-        accion: 'CREAR',
-        prestamoId: prestamo.id,
-      });
-      this.notificacionesGateway.broadcastDashboardsActualizados({});
-
-      return prestamo;
-    } catch (error) {
-      this.logger.error('Error creating loan:', error);
-      throw error;
-    }
-  }
-
   async approveLoan(id: string, aprobadoPorId: string) {
     try {
       const prestamo = await this.prisma.prestamo.findUnique({
@@ -3316,7 +3043,7 @@ export class LoansService implements OnModuleInit {
           const frecuencia = prestamoConCuotas.frecuenciaPago;
 
           for (let i = 0; i < cuotasPendientes.length; i++) {
-            const nuevaFechaVenc = this.calcularFechaVencimiento(
+            const nuevaFechaVenc = calcularFechaVencimiento(
               nuevaFechaBase,
               i + 1,
               frecuencia,
@@ -3331,7 +3058,7 @@ export class LoansService implements OnModuleInit {
           }
 
           // Actualizar fechaInicio y fechaFin del préstamo
-          const nuevaFechaFin = this.calcularFechaVencimiento(
+          const nuevaFechaFin = calcularFechaVencimiento(
             nuevaFechaBase,
             cuotasPendientes.length,
             frecuencia,
@@ -3555,19 +3282,20 @@ export class LoansService implements OnModuleInit {
   }
 
   async createLoan(data: CreateLoanDto) {
-    let prestamoCreado: any = null;
-    let aprobacionCreada: any = null;
-    let efectoProvisionalCreado: any = null;
+    let prestamoCreado = null;
+    let aprobacionCreada = null;
+    let efectoProvisionalCreado = null;
     let asignacionRutaCreadaId: string | null = null;
     let esAutoAprobadoFinal = false;
-    let impactoProvisionalPrestamo: any = null;
+    // Se asigna y no se lee; queda como registro de lo que produjo la transaccion.
+    let _impactoProvisionalPrestamo: unknown = null;
 
     try {
       this.logger.log(
         `Creating loan for client ${data.clienteId}, type: ${data.tipoPrestamo}. Data: ${JSON.stringify(data)}`,
       );
       const idempotencyKey =
-        (data as any).idempotencyKey?.toString().trim() || undefined;
+        data.idempotencyKey?.toString().trim() || undefined;
 
       if (idempotencyKey) {
         const prestamoExistente = await this.prisma.prestamo.findFirst({
@@ -3633,9 +3361,9 @@ export class LoansService implements OnModuleInit {
       // Las ventas de contado quedan fuera a proposito: se pagan en el momento
       // y no se cobran en ruta.
       if (!data.esContado) {
-        const rutaIndicada = String((data as any)?.rutaId || '').trim();
+        const rutaIndicada = String(data?.rutaId || '').trim();
         const clienteTieneRuta = (cliente.asignacionesRuta ?? []).some(
-          (a: any) => a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
+          (a) => a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
         );
         const loCreaUnCobrador = creador.rol === RolUsuario.COBRADOR;
 
@@ -3653,7 +3381,7 @@ export class LoansService implements OnModuleInit {
       if (!isArticulo) {
         const montoDesembolso = Number(data.monto || 0);
         const cajaOperacion = this.isOperatorWithBase(creador)
-          ? await this.resolveCajaOperacionPrestamo(this.prisma as any, {
+          ? await this.resolveCajaOperacionPrestamo(this.prisma, {
               data,
               creador,
               cliente,
@@ -3726,8 +3454,8 @@ export class LoansService implements OnModuleInit {
         ? EstadoAprobacion.PENDIENTE
         : EstadoAprobacion.APROBADO;
 
-      let producto: any = null;
-      let precioProducto: any = null;
+      let producto = null;
+      let precioProducto = null;
       let montoFinanciar = data.monto;
       let precioArticuloTotal = data.monto; // Precio total del artículo (sin descontar cuota inicial)
 
@@ -3736,7 +3464,7 @@ export class LoansService implements OnModuleInit {
       let margenArticulo: number | null = null;
 
       // Para crédito por artículo
-      if (data.tipoPrestamo === 'ARTICULO') {
+      if (data.tipoPrestamo === TipoPrestamoDto.ARTICULO) {
         if (!data.productoId) {
           throw new BadRequestException(
             'Para crédito por artículo se requiere productoId',
@@ -3815,22 +3543,26 @@ export class LoansService implements OnModuleInit {
 
       // Para el cálculo de cuotas y fechas, usamos el plazo real
       // EXTRAER DE FORMA INFALIBLE: recorremos todos los campos posibles en orden
-      const getVal = (v: any) => {
+      // `unknown` y no `any`: lo unico que se hace con el valor es pasarlo por
+      // `Number(...)`, y asi el compilador impide que alguien le haga otra cosa sin
+      // comprobarlo primero.
+      const getVal = (v: unknown) => {
         const n = Number(v);
         return isNaN(n) || n <= 0 ? null : n;
       };
 
+      // Los campos que se leian aqui con `as any` NO pueden llegar: el pipe global usa
+      // `whitelist: true`, el cuerpo de crear credito se valida contra `CreateLoanDto`
+      // (`loans.controller.ts:469`) y ese DTO no los declara, asi que se descartan antes
+      // de que este metodo los vea. Eran respaldos de nombres alternativos
+      // (`numCuotas`, `totalCuotas`, `plazo`, `numPlazo`) y el campo bueno va primero.
       const numCantidadCuotas =
         getVal(data.cantidadCuotas) ||
         getVal(data.cuotas) ||
         getVal(data.cuotasTotales) ||
-        getVal((data as any).numCuotas) ||
-        getVal((data as any).totalCuotas) ||
         0;
 
-      let numPlazoMeses = Number(
-        data.plazoMeses || (data as any).plazo || (data as any).numPlazo || 0,
-      );
+      let numPlazoMeses = Number(data.plazoMeses || 0);
 
       // Si no hay plazo pero hay cuotas, derivamos el plazo (0.4 para 12 días, etc.)
       if (numPlazoMeses === 0 && numCantidadCuotas > 0) {
@@ -3951,7 +3683,7 @@ export class LoansService implements OnModuleInit {
         );
 
       const cuotasDataFinal = data.esContado
-        ? cuotasData.map((c: any) => ({
+        ? cuotasData.map((c) => ({
             ...c,
             fechaPago: fechaInicio,
           }))
@@ -3972,11 +3704,13 @@ export class LoansService implements OnModuleInit {
         `[CREATE LOAN] Usuario: ${creador.nombres}, Rol: ${creador.rol}, Auto-aprobado por configuración global: ${esAutoAprobado}`,
       );
 
-      const articuloNombre =
-        (data as any).productoNombre || producto?.nombre || 'Artículo';
+      // `productoNombre` tampoco lo declara el DTO: se descarta. El nombre sale del
+      // producto que se cargo por `productoId`.
+      const articuloNombre = producto?.nombre || 'Artículo';
       const totalCuotasPrometidas = cantidadCuotas;
-      const isFinanciamientoArticulo = data.tipoPrestamo === 'ARTICULO';
-      const safeNumber = (val: any) => {
+      const isFinanciamientoArticulo =
+        data.tipoPrestamo === TipoPrestamoDto.ARTICULO;
+      const safeNumber = (val: unknown) => {
         const n = Number(val);
         return isNaN(n) ? 0 : n;
       };
@@ -4026,37 +3760,15 @@ export class LoansService implements OnModuleInit {
               interesTotal,
               saldoPendiente: data.esContado ? 0 : montoTotal,
               totalPagado: data.esContado ? montoTotal : 0,
-              notas:
-                data.notas ||
-                (data as any).observaciones ||
-                (data as any).comentarios ||
-                (data as any).detalle ||
-                undefined
-                  ? String(
-                      data.notas ||
-                        (data as any).observaciones ||
-                        (data as any).comentarios ||
-                        (data as any).detalle,
-                    )
-                  : undefined,
+              // `observaciones`, `comentarios` y `detalle` no los declara el DTO: se
+              // descartan antes de llegar aqui. Sin ellos la cadena es solo `data.notas`.
+              notas: data.notas ? String(data.notas) : undefined,
               garantia: data.garantia ? String(data.garantia) : undefined,
               cuotas: {
                 create: cuotasDataFinal,
               },
-            } as any,
-            include: {
-              cliente: true,
-              producto: true,
-              cuotas: true,
-              creadoPor: {
-                select: {
-                  id: true,
-                  nombres: true,
-                  apellidos: true,
-                  rol: true,
-                },
-              },
             },
+            ...INCLUDE_PRESTAMO_CON_IMPACTO,
           });
 
           const impactoTx = await this.aplicarImpactoProvisionalPrestamo(tx, {
@@ -4070,7 +3782,7 @@ export class LoansService implements OnModuleInit {
           let rutaIdDelCredito: string | null = null;
           if (!data.esContado && startDate.getTime() === today.getTime()) {
             const rutaPreferida = cliente.asignacionesRuta?.find(
-              (a: any) => a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
+              (a) => a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
             );
 
             const rutaCobrador =
@@ -4087,7 +3799,7 @@ export class LoansService implements OnModuleInit {
 
             // La ruta que venga en la peticion manda: se ignoraba, y el
             // credito acababa sin ruta aunque quien lo creo dijera cual.
-            const rutaDelPayload = String((data as any)?.rutaId || '').trim();
+            const rutaDelPayload = String(data?.rutaId || '').trim();
             const rutaPedida = rutaDelPayload
               ? await tx.ruta.findFirst({
                   where: {
@@ -4146,8 +3858,8 @@ export class LoansService implements OnModuleInit {
                   asignacionRutaTxId = asignacionCreada?.id || null;
                   asignacionRutaCreadaId = asignacionRutaTxId;
                   rutaIdAsignadaBroadcast = rutaIdAsignar;
-                } catch (error: any) {
-                  if (error?.code === 'P2002') {
+                } catch (error) {
+                  if (codigoDeError(error) === 'P2002') {
                     this.logger.warn(
                       `[CREATE LOAN] Asignación de ruta omitida por duplicado rutaId=${rutaIdAsignar}, clienteId=${cliente.id}`,
                     );
@@ -4165,10 +3877,9 @@ export class LoansService implements OnModuleInit {
           if (!data.esContado) {
             const rutaFinal =
               rutaIdDelCredito ||
-              String((data as any)?.rutaId || '').trim() ||
+              String(data?.rutaId || '').trim() ||
               cliente.asignacionesRuta?.find(
-                (a: any) =>
-                  a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
+                (a) => a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
               )?.rutaId ||
               null;
 
@@ -4206,9 +3917,7 @@ export class LoansService implements OnModuleInit {
                   .replace(/&lt;/gi, '<')
                   .replace(/&gt;/gi, '>'),
                 valorArticulo: isFinanciamientoArticulo
-                  ? safeNumber(
-                      (data as any).valorArticulo || precioArticuloTotal,
-                    )
+                  ? safeNumber(precioArticuloTotal)
                   : safeNumber(prestamoTx.monto),
                 cuotas: safeNumber(totalCuotasPrometidas),
                 plazoMeses: numPlazoMeses,
@@ -4217,25 +3926,14 @@ export class LoansService implements OnModuleInit {
                 ),
                 frecuenciaPago: String(data.frecuenciaPago),
                 cuotaInicial: safeNumber(data.cuotaInicial),
-                notas:
-                  data.notas ||
-                  (data as any).observaciones ||
-                  (data as any).comentarios ||
-                  (data as any).detalle ||
-                  undefined
-                    ? String(
-                        data.notas ||
-                          (data as any).observaciones ||
-                          (data as any).comentarios ||
-                          (data as any).detalle,
-                      )
-                    : undefined,
+                // Ver la nota de arriba: los tres alias se descartan por whitelist.
+                notas: data.notas ? String(data.notas) : undefined,
                 garantia: data.garantia ? String(data.garantia) : undefined,
                 fechaInicio: prestamoTx.fechaInicio
                   ? formatBogotaOffsetIso(prestamoTx.fechaInicio)
                   : undefined,
-                fechaPrimerCobro: (data as any).fechaPrimerCobro
-                  ? String((data as any).fechaPrimerCobro)
+                fechaPrimerCobro: data.fechaPrimerCobro
+                  ? String(data.fechaPrimerCobro)
                   : undefined,
                 esContado: !!data.esContado,
                 idempotencyKey: idempotencyKey || null,
@@ -4261,7 +3959,9 @@ export class LoansService implements OnModuleInit {
                     tipoEntidad: 'Prestamo',
                     entidadId: prestamoTx.id,
                     estado: 'PENDIENTE_REVISION',
-                    snapshotAntes: null,
+                    // Columna `Json?`: para dejarla en NULL Prisma pide DbNull.
+                    // `null` compilaba solo porque el cliente era `any`.
+                    snapshotAntes: Prisma.DbNull,
                     snapshotDespues: {
                       prestamo: {
                         id: prestamoTx.id,
@@ -4269,7 +3969,7 @@ export class LoansService implements OnModuleInit {
                         estadoAprobacion: prestamoTx.estadoAprobacion,
                         saldoPendiente: prestamoTx.saldoPendiente,
                       },
-                      cuotas: (prestamoTx.cuotas || []).map((cuota: any) => ({
+                      cuotas: (prestamoTx.cuotas || []).map((cuota) => ({
                         id: cuota.id,
                         estado: cuota.estado,
                         monto: cuota.monto,
@@ -4279,7 +3979,7 @@ export class LoansService implements OnModuleInit {
                     rollbackData: {
                       prestamoId: prestamoTx.id,
                       cuotaIds: (prestamoTx.cuotas || []).map(
-                        (cuota: any) => cuota.id,
+                        (cuota) => cuota.id,
                       ),
                       productoId: prestamoTx.productoId || null,
                       stockDescontado: !!impactoTx?.stockDescontado,
@@ -4294,7 +3994,7 @@ export class LoansService implements OnModuleInit {
                       estadoAprobacionInicial: prestamoTx.estadoAprobacion,
                       estadoInicialPrestamo: prestamoTx.estado,
                       estadoInicialCuotas: (prestamoTx.cuotas || []).map(
-                        (cuota: any) => ({
+                        (cuota) => ({
                           id: cuota.id,
                           estado: cuota.estado,
                           montoPagado: cuota.montoPagado || 0,
@@ -4303,12 +4003,12 @@ export class LoansService implements OnModuleInit {
                       ),
                       usuarioSolicitanteId: data.creadoPorId,
                       rutaId:
-                        (data as any).rutaId ||
+                        data.rutaId ||
                         cliente.asignacionesRuta?.[0]?.rutaId ||
                         cliente.asignacionesRuta?.[0]?.ruta?.id ||
                         null,
                       cobradorId:
-                        (data as any).cobradorId ||
+                        data.cobradorId ||
                         cliente.asignacionesRuta?.[0]?.cobradorId ||
                         cliente.asignacionesRuta?.[0]?.ruta?.cobradorId ||
                         null,
@@ -4320,7 +4020,7 @@ export class LoansService implements OnModuleInit {
                     entidadesAfectadas: {
                       prestamoId: prestamoTx.id,
                       cuotaIds: (prestamoTx.cuotas || []).map(
-                        (cuota: any) => cuota.id,
+                        (cuota) => cuota.id,
                       ),
                       aprobacionId: aprobacionTx.id,
                       asignacionRutaId: asignacionRutaTxId,
@@ -4341,7 +4041,7 @@ export class LoansService implements OnModuleInit {
       prestamoCreado = prestamo;
       aprobacionCreada = aprobacion;
       efectoProvisionalCreado = efectoProvisional;
-      impactoProvisionalPrestamo = impactoProvisional;
+      _impactoProvisionalPrestamo = impactoProvisional;
 
       if (asignacionRutaCreadaId && rutaIdAsignadaBroadcast) {
         await this.runCreateLoanSideEffect(
@@ -4363,21 +4063,37 @@ export class LoansService implements OnModuleInit {
       if (data.esContado && prestamo.cuotas && prestamo.cuotas.length > 0) {
         await this.prisma.pago.create({
           data: {
+            // Este bloque estaba escrito contra columnas que `Pago` no tiene:
+            // `registradoPorId` (es `cobradorId`), `montoPagado` (es `montoTotal`)
+            // y `referenciaTx` (es `numeroReferencia`), y encima le faltaban dos
+            // obligatorias, `numeroPago` y `clienteId`. Prisma lo rechazaba, asi
+            // que el pago automatico de una venta de contado NUNCA se creo.
+            // Compilaba porque el cliente de Prisma estaba tipado como `any`.
+            numeroPago: this.generarNumeroTransaccion('PAG'),
+            clienteId: prestamo.clienteId,
             prestamoId: prestamo.id,
-            registradoPorId: data.creadoPorId,
-            montoPagado: montoTotal,
+            cobradorId: data.creadoPorId,
+            montoTotal: montoTotal,
             fechaPago: new Date(),
             metodoPago: 'EFECTIVO',
-            referenciaTx: 'VENTA_CONTADO',
+            numeroReferencia: 'VENTA_CONTADO',
             notas: 'Pago íntegro automático por venta de contado',
             estadoSincronizacion: 'PENDIENTE',
             detalles: {
-              create: prestamo.cuotas.map((c: any) => ({
+              // Los nombres de estas cuatro columnas estaban inventados:
+              // `montoAsignado`, `montoCapitalAsignado`, `montoInteresAsignado` y
+              // `moraAsignada` no existen en `DetallePago`, que tiene `monto`,
+              // `montoCapital`, `montoInteres` y `montoInteresMora`. Prisma
+              // rechazaba los argumentos, asi que el pago automatico de una venta
+              // de contado no podia crearse. Compilaba porque el cliente de
+              // Prisma estaba tipado como `any`, y `montoAsignado` no aparecia en
+              // ningun otro sitio del proyecto.
+              create: prestamo.cuotas.map((c) => ({
                 cuotaId: c.id,
-                montoAsignado: Number(c.monto),
-                montoCapitalAsignado: Number(c.montoCapital),
-                montoInteresAsignado: Number(c.montoInteres),
-                moraAsignada: 0,
+                monto: Number(c.monto),
+                montoCapital: Number(c.montoCapital),
+                montoInteres: Number(c.montoInteres),
+                montoInteresMora: 0,
               })),
             },
           },
@@ -4388,7 +4104,7 @@ export class LoansService implements OnModuleInit {
         try {
           await this.notificacionesService.notifyApprovers({
             titulo: 'Nuevo crédito requiere aprobación',
-            mensaje: `${creador.nombres} ${creador.apellidos} solicitó un ${data.tipoPrestamo === 'EFECTIVO' ? 'préstamo' : 'crédito por un artículo'} para ${cliente.nombres} ${cliente.apellidos} por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}.`,
+            mensaje: `${creador.nombres} ${creador.apellidos} solicitó un ${data.tipoPrestamo === TipoPrestamoDto.EFECTIVO ? 'préstamo' : 'crédito por un artículo'} para ${cliente.nombres} ${cliente.apellidos} por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}.`,
             tipo: 'PRESTAMO',
             entidad: 'Aprobacion',
             entidadId: aprobacion.id,
@@ -4409,7 +4125,7 @@ export class LoansService implements OnModuleInit {
         } catch (error) {
           // No se corta la operacion principal por esto, pero se deja
           // registrado: en silencio nadie se entera de que fallo.
-          this.logger.warn('No se pudo notificar el credito', error as any);
+          this.logger.warn('No se pudo notificar el credito', error);
         }
 
         try {
@@ -4438,7 +4154,7 @@ export class LoansService implements OnModuleInit {
         } catch (error) {
           // No se corta la operacion principal por esto, pero se deja
           // registrado: en silencio nadie se entera de que fallo.
-          this.logger.warn('No se pudo notificar el credito', error as any);
+          this.logger.warn('No se pudo notificar el credito', error);
         }
       }
 
@@ -4550,7 +4266,7 @@ export class LoansService implements OnModuleInit {
         // Notificar a coordinadores, admins y superadmins para aprobación
         await this.notificacionesService.notifyApprovers({
           titulo: 'Nuevo Préstamo Requiere Aprobación',
-          mensaje: `El usuario ${creador.nombres} ${creador.apellidos} ha solicitado un ${data.tipoPrestamo === 'EFECTIVO' ? 'préstamo en efectivo' : 'crédito por un artículo'} para ${cliente.nombres} ${cliente.apellidos} por valor de ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
+          mensaje: `El usuario ${creador.nombres} ${creador.apellidos} ha solicitado un ${data.tipoPrestamo === TipoPrestamoDto.EFECTIVO ? 'préstamo en efectivo' : 'crédito por un artículo'} para ${cliente.nombres} ${cliente.apellidos} por valor de ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
           tipo: 'APROBACION',
           entidad: 'Aprobacion',
           entidadId: aprobacion.id,
@@ -4564,7 +4280,7 @@ export class LoansService implements OnModuleInit {
         await this.runCreateLoanSideEffect('push aprobadores aprobación', () =>
           this.pushService.sendPushNotification({
             title: 'Nuevo Préstamo Requiere Aprobación',
-            body: `${creador.nombres} ${creador.apellidos} ha solicitado un ${data.tipoPrestamo === 'EFECTIVO' ? 'préstamo' : 'crédito de artículo'} por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
+            body: `${creador.nombres} ${creador.apellidos} ha solicitado un ${data.tipoPrestamo === TipoPrestamoDto.EFECTIVO ? 'préstamo' : 'crédito de artículo'} por ${montoFinanciar.toLocaleString('es-CO', { style: 'currency', currency: 'COP' })}`,
             roleFilter: ['COORDINADOR', 'ADMIN', 'SUPER_ADMINISTRADOR'],
             data: {
               type: 'PRESTAMO_PENDIENTE',
@@ -4785,84 +4501,6 @@ export class LoansService implements OnModuleInit {
     };
   }
 
-  async reprogramarCuota(
-    prestamoId: string,
-    numeroCuota: number,
-    data: {
-      motivo: string;
-      nuevaFecha: string;
-      montoParcial?: number;
-      reprogramadoPorId: string;
-    },
-  ) {
-    // Validar que el préstamo exista
-    const prestamo = await this.prisma.prestamo.findUnique({
-      where: { id: prestamoId },
-      include: { cuotas: true },
-    });
-
-    if (!prestamo) {
-      throw new NotFoundException('Préstamo no encontrado');
-    }
-
-    // Buscar la cuota específica
-    const cuota = prestamo.cuotas.find((c) => c.numeroCuota === numeroCuota);
-    if (!cuota) {
-      throw new NotFoundException(`Cuota #${numeroCuota} no encontrada`);
-    }
-
-    // Validar que la cuota esté pendiente
-    if (cuota.estado !== 'PENDIENTE') {
-      throw new BadRequestException(
-        'Solo se pueden reprogramar cuotas pendientes',
-      );
-    }
-
-    // Validar la nueva fecha
-    const nuevaFecha = new Date(data.nuevaFecha);
-    if (isNaN(nuevaFecha.getTime())) {
-      throw new BadRequestException('Fecha inválida');
-    }
-
-    // Actualizar la cuota
-    const cuotaActualizada = await this.prisma.cuota.update({
-      where: { id: cuota.id },
-      data: {
-        fechaVencimiento: nuevaFecha,
-        ...(data.montoParcial && { monto: data.montoParcial }),
-        actualizadoEn: new Date(),
-      },
-    });
-
-    // Registrar auditoría
-    await this.auditService.create({
-      usuarioId: data.reprogramadoPorId,
-      accion: 'REPROGRAMAR_CUOTA',
-      entidad: 'Cuota',
-      entidadId: cuota.id,
-      datosNuevos: {
-        prestamoId,
-        numeroCuota,
-        fechaAnterior: cuota.fechaVencimiento,
-        fechaNueva: data.nuevaFecha,
-        motivo: data.motivo,
-        montoParcial: data.montoParcial,
-      },
-    });
-
-    // Notificar al cliente (opcional)
-    // TODO: Implementar notificación al cliente sobre reprogramación
-
-    this.logger.log(
-      `Cuota #${numeroCuota} del préstamo ${prestamoId} reprogramada a ${data.nuevaFecha}`,
-    );
-
-    return {
-      mensaje: 'Cuota reprogramada exitosamente',
-      cuota: cuotaActualizada,
-    };
-  }
-
   /**
    * ADMIN: Corrige cálculos de intereses en préstamos existentes.
    * Recalcula el interés total basándose en Interés Simple Correcto (Capital * Tasa * PlazoMeses / 100).
@@ -5079,10 +4717,24 @@ export class LoansService implements OnModuleInit {
       );
     }
 
+    // Los días se cuentan entre INICIOS de día, no entre la fecha nueva al
+    // mediodía y el inicio de hoy.
+    //
+    // `nuevaFechaObj` se construye a las 12:00 porque es la hora que se guarda en
+    // la cuota, y restarle el inicio de hoy daba N + 0,5 días para una fecha N
+    // días adelante. `Math.round` lo subía a N + 1, así que TODOS los límites de
+    // abajo quedaban un día más estrictos de lo escrito: con SEMANAL en 6 se
+    // permitían 5 días, y la regla del contrato dice «un día antes de la semana»,
+    // o sea 6. Medido: pedir +6 días daba `diasDesdeHoy = 7`.
+    const { startDate: inicioNuevaFecha } =
+      getBogotaStartEndOfDayFromKey(nuevaFechaStr);
     const diasDesdeHoy = Math.round(
-      (nuevaFechaObj.getTime() - hoyLocal.getTime()) / 86_400_000,
+      (inicioNuevaFecha.getTime() - hoyLocal.getTime()) / 86_400_000,
     );
 
+    // Cuántos días adelante se puede mover una cuota, por frecuencia. La regla es
+    // que la cuota reprogramada NO pase del período en curso: un día antes de que
+    // toque la siguiente. De ahí 6 para semanal y 14 para quincenal.
     const limiteDias: Record<string, number> = {
       SEMANAL: 6,
       QUINCENAL: 14,
@@ -5131,7 +4783,7 @@ export class LoansService implements OnModuleInit {
       const rutaIdOriginal = asignacionActiva?.rutaId;
 
       // 2. Obtener estado anterior de RegistroVisita si existe
-      let registroVisitaAnterior: any = null;
+      let registroVisitaAnterior = null;
       if (
         fechaOperativaRuta &&
         rutaIdOriginal &&
@@ -5347,7 +4999,7 @@ export class LoansService implements OnModuleInit {
     } catch (error) {
       // No se corta la operacion principal por esto, pero se deja
       // registrado: en silencio nadie se entera de que fallo.
-      this.logger.warn('No se pudo notificar la regularizacion', error as any);
+      this.logger.warn('No se pudo notificar la regularizacion', error);
     }
 
     // ⚡ Tiempo real: notificar a todos los clientes conectados.
@@ -5423,7 +5075,7 @@ export class LoansService implements OnModuleInit {
     estado?: string,
     actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
-    const where: any = {
+    const where: Prisma.AprobacionWhereInput = {
       tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
     };
     if (estado && estado !== 'TODOS') {
@@ -5445,20 +5097,21 @@ export class LoansService implements OnModuleInit {
 
     // El supervisor/cobrador solo debe ver las reprogramaciones de sus rutas.
     const idsPrestamo = solicitudes
-      .map((s) => s.datosSolicitud?.prestamoId)
+      .map((s) => prestamoIdDeSolicitud(s.datosSolicitud))
       .filter((id): id is string => typeof id === 'string');
     const permitidos = await this.prestamosBajoJurisdiccion(idsPrestamo, actor);
 
     const visibles =
       permitidos === null
         ? solicitudes
-        : solicitudes.filter((s) =>
-            permitidos.has(s.datosSolicitud?.prestamoId),
-          );
+        : solicitudes.filter((s) => {
+            const prestamoId = prestamoIdDeSolicitud(s.datosSolicitud);
+            return prestamoId !== undefined && permitidos.has(prestamoId);
+          });
 
     return visibles.map((s) => ({
       ...s,
-      datosSolicitud: s.datosSolicitud as Record<string, any>,
+      datosSolicitud: objetoDeJson(s.datosSolicitud),
     }));
   }
 
@@ -5471,10 +5124,13 @@ export class LoansService implements OnModuleInit {
    * aprobar o rechazar una de otra ruta, se rechaza con 403.
    */
   private async exigirJurisdiccionReprogramacion(
-    aprobacion: { datosSolicitud: any },
+    // `Prisma.JsonValue`, que es lo que devuelve la columna, y la lectura pasa por
+    // `objetoDeJson` (common/json.util.ts). El helper ya existia: se reutiliza en vez de
+    // declarar otro.
+    aprobacion: { datosSolicitud: Prisma.JsonValue },
     actor?: { id?: string; rol?: RolUsuario } | null,
   ): Promise<void> {
-    const prestamoId = aprobacion.datosSolicitud?.prestamoId;
+    const prestamoId = objetoDeJson(aprobacion.datosSolicitud).prestamoId;
     if (typeof prestamoId !== 'string') return;
     const permitidos = await this.prestamosBajoJurisdiccion(
       [prestamoId],
@@ -5544,7 +5200,7 @@ export class LoansService implements OnModuleInit {
       });
     });
 
-    const datos = aprobacion.datosSolicitud as Record<string, any>;
+    const datos = objetoDeJson(aprobacion.datosSolicitud);
     // Notificar al cobrador que solicitó
     await this.notificacionesService.create({
       usuarioId: aprobacion.solicitadoPorId,
@@ -5593,7 +5249,9 @@ export class LoansService implements OnModuleInit {
       throw new BadRequestException('El efecto provisional ya fue procesado');
     }
 
-    const rollbackData = efectoProvisional.rollbackData;
+    const rollbackData = leerRollbackReprogramacion(
+      efectoProvisional.rollbackData,
+    );
     const fechaVencimientoOriginal = new Date(
       rollbackData.fechaVencimientoOriginal,
     );
@@ -5699,7 +5357,7 @@ export class LoansService implements OnModuleInit {
       });
     });
 
-    const datos = aprobacion.datosSolicitud as Record<string, any>;
+    const datos = objetoDeJson(aprobacion.datosSolicitud);
     // Notificar al cobrador
     await this.notificacionesService.create({
       usuarioId: aprobacion.solicitadoPorId,
@@ -5810,9 +5468,12 @@ export class LoansService implements OnModuleInit {
       }
 
       const creditos = prestamos.map((prestamo) => ({
-        codigo: this.normalizeIdempotencyKey(
-          prestamo.idempotencyKey || prestamo.numeroPrestamo || prestamo.id,
-        ),
+        // `normalizeIdempotencyKey` puede devolver undefined y la fila de la
+        // exportacion exige texto; el numero de prestamo es el respaldo natural.
+        codigo:
+          this.normalizeIdempotencyKey(
+            prestamo.idempotencyKey || prestamo.numeroPrestamo || prestamo.id,
+          ) || prestamo.numeroPrestamo,
         numeroPrestamo: prestamo.numeroPrestamo,
         ccCliente: prestamo.cliente?.dni || '',
         tipoPrestamo: prestamo.tipoPrestamo,

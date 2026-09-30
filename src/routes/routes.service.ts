@@ -10,7 +10,8 @@ import {
   Logger,
 } from '@nestjs/common';
 
-import { PrismaService } from '../prisma/prisma.service';
+import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
+import { codigoDeError } from '../common/error.util';
 import { sincronizarAsignacionesCliente } from './sincronizar-asignaciones';
 
 import { AuditService } from '../audit/audit.service';
@@ -36,6 +37,8 @@ import {
   resolveCuotaObjetivoOperativa,
   isObligacionOperativaRuta,
   normalizeUpper,
+  type CuotaOperativa,
+  type PrestamoOperativo,
 } from './ruta-operational-rules';
 
 import {
@@ -53,6 +56,7 @@ import {
   RutaCobradorMeta,
 } from '../templates/exports';
 import { normalizarCodigoRuta } from './codigo-ruta';
+import { objetoDeJson, textoDeJson } from '../common/json.util';
 
 type RouteActor =
   | {
@@ -61,6 +65,102 @@ type RouteActor =
     }
   | null
   | undefined;
+
+/**
+ * Un credito dentro de una visita del dia.
+ *
+ * No es el credito de Prisma: los tres bloques que arman las visitas parten del
+ * credito y le agregan dos campos calculados (`estadoGestion` y
+ * `montoMetaOperativaPendiente`) mas la cuota objetivo ya resuelta. Se declaran
+ * solo los campos que alguien lee —contados: once—, no el credito entero, porque
+ * el resto llega por el spread y nadie lo consulta aqui.
+ */
+interface PrestamoDeVisita {
+  id: string;
+  numeroPrestamo: string;
+  estado: string;
+  monto: Prisma.Decimal | number;
+  saldoPendiente: Prisma.Decimal | number;
+  cantidadCuotas: number;
+  frecuenciaPago: string;
+  cuotas?: Array<{ monto: Prisma.Decimal | number }>;
+  estadoGestion?: string | null;
+  montoMetaOperativaPendiente?: number;
+  cuotaObjetivo?: CuotaOperativa | null;
+  // Lo que agregan las pasadas posteriores y lee `buildObligacionesOperativas`:
+  // el estado de aprobacion y de efecto provisional, la etiqueta de revision, y
+  // la gestion y el recaudo por credito.
+  estadoAprobacion?: string | null;
+  estadoEfectoProvisional?: string | null;
+  esProvisional?: boolean;
+  esRevertido?: boolean;
+  etiquetaRevision?: string | null;
+  estadoVisita?: string | null;
+  notasVisita?: string | null;
+  recaudadoDelDia?: number;
+  recaudadoHoy?: number;
+  proximaCuota?: CuotaOperativa | null;
+}
+
+/**
+ * Una visita del dia, tal como la arma `getDailyVisits`.
+ *
+ * Antes esto era `any[]` y no habia en ningun sitio una descripcion de lo que la
+ * ruta devuelve, aunque lo arman tres `push` distintos y luego dos pasadas lo
+ * mutan. Las ocho primeras claves las ponen los tres; las cinco marcadas como
+ * opcionales solo las ponen los dos bloques sinteticos (el de reprogramaciones y
+ * el de cierre pendiente) y la pasada que reparte lo recaudado.
+ *
+ * La cuota objetivo va como `CuotaOperativa` y no con una forma propia: es el tipo
+ * que las reglas de ruta ya declararon para estas cuotas, que llegan con formas
+ * distintas segun la pantalla.
+ */
+interface VisitaDelDia {
+  asignacionId: string | null;
+  ordenVisita: number;
+  cliente: {
+    id: string;
+    codigo: string | null;
+    dni: string;
+    nombres: string;
+    apellidos: string;
+    telefono: string | null;
+    direccion: string | null;
+    nivelRiesgo: string;
+    prestamosActivos: number;
+  };
+  prestamos: PrestamoDeVisita[];
+  cuotaObjetivo: CuotaOperativa | null;
+  prestamoObjetivoId: string | null;
+  cuotaObjetivoId: string | null;
+  /** Deprecado: se mantiene por compatibilidad temporal. */
+  cuotaObjetivoPrestamoId: string | null;
+  registroSintetico?: boolean;
+  origenGestion?: string;
+  recaudadoDelDia?: number;
+  estadoVisita?: string | null;
+  notasVisita?: string | null;
+  /**
+   * NADIE escribe este campo en la visita: `estadoGestion` se pone en los
+   * CREDITOS de dentro, y `getDailyVisits` devuelve las visitas tal cual. El
+   * estado de la visita esta en `estadoVisita`, que si se rellena.
+   *
+   * Se conserva declarado porque queda una lectura, en
+   * `resolveEstadoGestionPrestamo`, escrita como
+   * `visita?.estadoVisita || visita?.estadoGestion`: el respaldo no entra nunca,
+   * pero el orden ya era el correcto.
+   *
+   * `notificaciones.gateway` leia solo este campo para contar ausentes y
+   * faltantes, y por eso los ausentes salian siempre en 0. Ya lee `estadoVisita`.
+   */
+  estadoGestion?: string | null;
+  /**
+   * Nadie lo escribe. Los consumidores lo leen como respaldo de `cliente.id`
+   * (`v.cliente?.id || v.clienteId`), y ese respaldo no entra nunca. Se declara
+   * para que el tipo lo diga en vez de esconderlo.
+   */
+  clienteId?: string;
+}
 
 @Injectable()
 export class RoutesService {
@@ -490,8 +590,8 @@ export class RoutesService {
           creadaAhora: true,
         };
       });
-    } catch (error: any) {
-      if (error?.code === 'P2002') {
+    } catch (error) {
+      if (codigoDeError(error) === 'P2002') {
         const activacionExistente =
           (await this.prisma.transaccion.findFirst({
             where: { idempotencyKey: activacionIdempotencyKey },
@@ -683,7 +783,7 @@ export class RoutesService {
       },
     });
 
-    const filas: any[] = [];
+    const filas: unknown[] = [];
 
     for (const asig of asignaciones) {
       const cliente = asig.cliente;
@@ -731,8 +831,9 @@ export class RoutesService {
             0,
             Number(
               cuotaObjetivoBase.saldoExigibleEnFechaOperativa ??
-                (cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0) -
-                  (cuotaObjetivoBase.montoPagado ?? 0),
+                Number(
+                  cuotaObjetivoBase.montoCuota ?? cuotaObjetivoBase.monto ?? 0,
+                ) - Number(cuotaObjetivoBase.montoPagado ?? 0),
             ),
           ),
           fechaEfectiva: getCuotaFechaEfectivaKeyRuta(cuotaObjetivoBase),
@@ -1037,7 +1138,7 @@ export class RoutesService {
     const { skip, take, search, activa, supervisorId } = options || {};
     const rolActor = String(actor?.rol || '').toUpperCase();
 
-    const where: any = {
+    const where: Prisma.RutaWhereInput = {
       eliminadoEn: null,
     };
 
@@ -1171,6 +1272,12 @@ export class RoutesService {
         rutaIds,
         actor?.id,
       );
+      // Activacion del dia. Va en un campo aparte y NO en `estado`: `estado` dice
+      // si la ruta esta habilitada, y hay pantallas que cuentan
+      // `estado === 'ACTIVA'` como KPI. Meterle un tercer valor bajaria ese
+      // contador y sacaria las rutas de la pestaña "Habilitadas".
+      const { activadas: rutasActivadasHoy, diaNoLaboral } =
+        await this.getActivacionHoyRutasMap(rutaIds);
 
       const rutasConEstadisticas = await Promise.all(
         rutas.map(async (ruta) => {
@@ -1192,6 +1299,13 @@ export class RoutesService {
             metaDelDia: 0,
 
             clientesNuevos: 0,
+
+            // Estos dos los asigna el codigo de mas abajo y se devuelven en la
+            // respuesta; declararlos aqui evita el `as any` en cada asignacion y en
+            // cada lectura, y deja escrito que forman parte de la forma.
+            recaudoRegularizadoHoy: 0,
+
+            recaudoContableHoy: 0,
           };
 
           let nivelRiesgo = 'PELIGRO_MINIMO';
@@ -1215,6 +1329,9 @@ export class RoutesService {
               avanceDiario,
               cobrador: `${ruta.cobrador.nombres} ${ruta.cobrador.apellidos}`,
               estado: ruta.activa ? 'ACTIVA' : 'INACTIVA',
+              /** Si la ruta abrio jornada hoy. `estado` sigue diciendo solo si esta habilitada. */
+              activadaHoy: rutasActivadasHoy.has(ruta.id),
+              diaNoLaboral,
               frecuenciaVisita: 'DIARIO',
               cierrePendienteAnterior: cierreInfo.cierrePendienteAnterior,
               cierresPendientes: cierreInfo.cierresPendientes,
@@ -1323,55 +1440,58 @@ export class RoutesService {
             const _dFinUTC = dFinBogota;
 
             if (pIds.length > 0) {
-              const resAgregados = await Promise.all([
-                this.prisma.pago.findMany({
-                  where: {
-                    prestamo: {
-                      cliente: {
-                        asignacionesRuta: {
-                          some: { rutaId: ruta.id, activa: true },
+              // Desestructurado a proposito: `Promise.all` sobre un arreglo literal da
+              // una TUPLA, asi que cada nombre queda con su tipo. Leyendolo por indice
+              // (`resAgregados[0]`) el tipo es la union de los tres y habia que castear.
+              const [pagosRutaRaw, cuotasCriterio, cuotasInicialesHoy] =
+                await Promise.all([
+                  this.prisma.pago.findMany({
+                    where: {
+                      prestamo: {
+                        cliente: {
+                          asignacionesRuta: {
+                            some: { rutaId: ruta.id, activa: true },
+                          },
                         },
                       },
+                      fechaPago: { gte: dInicioBogota, lte: dFinBogota },
                     },
-                    fechaPago: { gte: dInicioBogota, lte: dFinBogota },
-                  },
-                  select: { montoTotal: true, origenGestion: true },
-                }),
+                    select: { montoTotal: true, origenGestion: true },
+                  }),
 
-                this.prisma.cuota.findMany({
-                  where: {
-                    prestamoId: { in: pIdsParaMeta },
-                  },
-                  select: {
-                    prestamoId: true,
-                    fechaVencimiento: true,
-                    fechaPago: true,
-                    estado: true,
-                    monto: true,
-                    montoPagado: true,
-                  },
-                  orderBy: [{ prestamoId: 'asc' }, { fechaVencimiento: 'asc' }],
-                }),
+                  this.prisma.cuota.findMany({
+                    where: {
+                      prestamoId: { in: pIdsParaMeta },
+                    },
+                    select: {
+                      prestamoId: true,
+                      fechaVencimiento: true,
+                      fechaPago: true,
+                      estado: true,
+                      monto: true,
+                      montoPagado: true,
+                    },
+                    orderBy: [
+                      { prestamoId: 'asc' },
+                      { fechaVencimiento: 'asc' },
+                    ],
+                  }),
 
-                // NUEVO: Considerar ingresos por cuota inicial en la meta del día
-                this.prisma.transaccion.aggregate({
-                  where: {
-                    caja: { rutaId: ruta.id, activa: true },
-                    tipoReferencia: 'CUOTA_INICIAL',
-                    tipo: 'INGRESO',
-                    fechaTransaccion: { gte: dInicioBogota, lte: dFinBogota },
-                  },
-                  _sum: { monto: true },
-                }),
-              ]);
+                  // NUEVO: Considerar ingresos por cuota inicial en la meta del día
+                  this.prisma.transaccion.aggregate({
+                    where: {
+                      caja: { rutaId: ruta.id, activa: true },
+                      tipoReferencia: 'CUOTA_INICIAL',
+                      tipo: 'INGRESO',
+                      fechaTransaccion: { gte: dInicioBogota, lte: dFinBogota },
+                    },
+                    _sum: { monto: true },
+                  }),
+                ]);
 
-              const cuotasInicialesHoy = resAgregados[2];
               const montoMetaInicial = Number(
                 cuotasInicialesHoy?._sum?.monto || 0,
               );
-
-              const pagosRutaRaw = resAgregados[0] as any[];
-              const cuotasCriterio = resAgregados[1] as any[];
 
               const pagosOperativosHoy = pagosRutaRaw.filter(
                 (p) =>
@@ -1393,9 +1513,8 @@ export class RoutesService {
                 0,
               );
               estadisticas.cobranzaDelDia = cobranzaReal + montoMetaInicial;
-              (estadisticas as any).recaudoRegularizadoHoy =
-                recaudoRegularizadoHoy;
-              (estadisticas as any).recaudoContableHoy =
+              estadisticas.recaudoRegularizadoHoy = recaudoRegularizadoHoy;
+              estadisticas.recaudoContableHoy =
                 cobranzaReal + recaudoRegularizadoHoy + montoMetaInicial;
 
               // Calcular meta nominal consistente con getDailyVisits + computeRutaHoyUiStatsFromVisitas:
@@ -1561,11 +1680,9 @@ export class RoutesService {
             clientesNuevos: estadisticas.clientesNuevos,
 
             cobranzaDelDia: estadisticas.cobranzaDelDia,
-            recaudoRegularizadoHoy:
-              (estadisticas as any).recaudoRegularizadoHoy || 0,
+            recaudoRegularizadoHoy: estadisticas.recaudoRegularizadoHoy || 0,
             recaudoContableHoy:
-              (estadisticas as any).recaudoContableHoy ||
-              estadisticas.cobranzaDelDia,
+              estadisticas.recaudoContableHoy || estadisticas.cobranzaDelDia,
 
             metaDelDia: estadisticas.metaDelDia,
 
@@ -1578,6 +1695,9 @@ export class RoutesService {
             cobrador: `${ruta.cobrador.nombres} ${ruta.cobrador.apellidos}`,
 
             estado: ruta.activa ? 'ACTIVA' : 'INACTIVA',
+            /** Si la ruta abrio jornada hoy. `estado` sigue diciendo solo si esta habilitada. */
+            activadaHoy: rutasActivadasHoy.has(ruta.id),
+            diaNoLaboral,
 
             frecuenciaVisita: 'DIARIO',
 
@@ -1806,6 +1926,11 @@ export class RoutesService {
         totalDeuda: 0,
 
         prestamosActivos: 0,
+
+        // Ver la nota del mismo objeto en `findAll`: los asigna el codigo de abajo.
+        recaudoRegularizadoHoy: 0,
+
+        recaudoContableHoy: 0,
       };
 
       let nivelRiesgo = 'PELIGRO_MINIMO';
@@ -1878,50 +2003,50 @@ export class RoutesService {
         const dFinUTC = dFinBogota;
 
         if (pIds.length > 0) {
-          const resAgregados = await Promise.all([
-            this.prisma.pago.findMany({
-              where: {
-                prestamo: {
-                  cliente: {
-                    asignacionesRuta: { some: { rutaId: id, activa: true } },
+          // Ver la nota del mismo patron en `findAll`.
+          const [pagosRutaRaw, cuotasCriterioQuery, cuotasInicialesHoy] =
+            await Promise.all([
+              this.prisma.pago.findMany({
+                where: {
+                  prestamo: {
+                    cliente: {
+                      asignacionesRuta: { some: { rutaId: id, activa: true } },
+                    },
                   },
+                  fechaPago: { gte: dInicioBogota, lte: dFinBogota },
                 },
-                fechaPago: { gte: dInicioBogota, lte: dFinBogota },
-              },
-              select: { montoTotal: true, origenGestion: true },
-            }),
-            this.prisma.cuota.findMany({
-              where: {
-                prestamoId: { in: pIds },
-                estado: {
-                  in: ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'],
+                select: { montoTotal: true, origenGestion: true },
+              }),
+              this.prisma.cuota.findMany({
+                where: {
+                  prestamoId: { in: pIds },
+                  estado: {
+                    in: ['PENDIENTE', 'VENCIDA', 'PARCIAL', 'PRORROGADA'],
+                  },
+                  fechaVencimiento: { lte: dFinUTC },
                 },
-                fechaVencimiento: { lte: dFinUTC },
-              },
-              select: {
-                prestamoId: true,
-                fechaVencimiento: true,
-                fechaPago: true,
-                estado: true,
-                monto: true,
-                montoPagado: true,
-              },
-              orderBy: [{ prestamoId: 'asc' }, { fechaVencimiento: 'asc' }],
-            }),
-            this.prisma.transaccion.aggregate({
-              where: {
-                caja: { rutaId: id, activa: true },
-                tipoReferencia: 'CUOTA_INICIAL',
-                tipo: 'INGRESO',
-                fechaTransaccion: { gte: dInicioBogota, lte: dFinBogota },
-              },
-              _sum: { monto: true },
-            }),
-          ]);
+                select: {
+                  prestamoId: true,
+                  fechaVencimiento: true,
+                  fechaPago: true,
+                  estado: true,
+                  monto: true,
+                  montoPagado: true,
+                },
+                orderBy: [{ prestamoId: 'asc' }, { fechaVencimiento: 'asc' }],
+              }),
+              this.prisma.transaccion.aggregate({
+                where: {
+                  caja: { rutaId: id, activa: true },
+                  tipoReferencia: 'CUOTA_INICIAL',
+                  tipo: 'INGRESO',
+                  fechaTransaccion: { gte: dInicioBogota, lte: dFinBogota },
+                },
+                _sum: { monto: true },
+              }),
+            ]);
 
-          const montoMetaInicial = Number(resAgregados[2]?._sum?.monto || 0);
-          const pagosRutaRaw = resAgregados[0] as any[];
-          const cuotasCriterioQuery = resAgregados[1] as any[];
+          const montoMetaInicial = Number(cuotasInicialesHoy?._sum?.monto || 0);
 
           const pagosOperativosHoy = pagosRutaRaw.filter(
             (p) =>
@@ -1943,8 +2068,8 @@ export class RoutesService {
               (sum, p) => sum + Number(p.montoTotal || 0),
               0,
             ) + montoMetaInicial;
-          (estadisticas as any).recaudoRegularizadoHoy = recaudoRegularizadoHoy;
-          (estadisticas as any).recaudoContableHoy =
+          estadisticas.recaudoRegularizadoHoy = recaudoRegularizadoHoy;
+          estadisticas.recaudoContableHoy =
             estadisticas.cobranzaDelDia + recaudoRegularizadoHoy;
 
           let metaNominal = 0;
@@ -2003,7 +2128,7 @@ export class RoutesService {
         const cuotasCriterio = prestamosActivos.flatMap((p) => p?.cuotas || []);
 
         const deudaTotal = prestamosActivos.reduce(
-          (acc, p: any) => acc + Number(p?.saldoPendiente || 0),
+          (acc, p) => acc + Number(p?.saldoPendiente || 0),
           0,
         );
 
@@ -2092,13 +2217,29 @@ export class RoutesService {
       });
       const visitasMap = new Map(registrosVisitas.map((r) => [r.clienteId, r]));
 
-      const asignaciones: any[] = ruta.asignaciones;
+      // Las pasadas de abajo MUTAN estas filas: le agregan a la asignacion el estado de
+      // visita, las notas y lo recaudado, y a cada credito su recaudo del dia. El tipo dice
+      // eso —la fila de Prisma MAS lo que se le agrega— en vez de `any[]`, que lo tiraba todo.
+      type AsignacionEnriquecida = (typeof ruta.asignaciones)[number] & {
+        estadoVisita?: string | null;
+        notasVisita?: string | null;
+        recaudadoDelDia?: number;
+        cliente?: {
+          prestamos?: Array<
+            NonNullable<
+              (typeof ruta.asignaciones)[number]['cliente']
+            >['prestamos'][number] &
+              Partial<PrestamoDeVisita> & {
+                fechaEfectiva?: string | Date | null;
+              }
+          >;
+        } | null;
+      };
+      const asignaciones = ruta.asignaciones as AsignacionEnriquecida[];
       const prestamosIdsRuta = [
         ...new Set(
-          asignaciones.flatMap((asig: any) =>
-            (asig?.cliente?.prestamos || [])
-              .map((p: any) => p?.id)
-              .filter(Boolean),
+          asignaciones.flatMap((asig) =>
+            (asig?.cliente?.prestamos || []).map((p) => p?.id).filter(Boolean),
           ),
         ),
       ];
@@ -2145,7 +2286,7 @@ export class RoutesService {
       }
 
       for (const asig of asignaciones) {
-        const reg = visitasMap.get(asig.clienteId) as any;
+        const reg = visitasMap.get(asig.clienteId);
         const recaudoClienteHoy = Number(
           recaudoHoyPorCliente.get(String(asig.clienteId)) || 0,
         );
@@ -2186,7 +2327,11 @@ export class RoutesService {
           // Enriquecer proximaCuota/fechaEfectiva en la respuesta (fuente autoritativa para frontend)
           const cuotasList = Array.isArray(p?.cuotas) ? p.cuotas : [];
           const extension = p?.extensiones?.[0] || null;
-          const isNoPagada = (c: any) => {
+          // El tipo se deriva del propio arreglo en vez de escribirse a mano: asi no
+          // puede quedarse atras si la consulta cambia lo que trae.
+          type CuotaDeLaFila = (typeof cuotasList)[number];
+
+          const isNoPagada = (c: CuotaDeLaFila) => {
             const s = String(c?.estado || '').toUpperCase();
             return (
               s !== 'PAGADA' &&
@@ -2195,7 +2340,12 @@ export class RoutesService {
               s !== 'ANULADO'
             );
           };
-          const getFechaEfectiva = (c: any): string | null => {
+          // Devuelve una fecha, no texto. Decia `string | null` y con `c: any` eso
+          // compilaba: nadie comprobaba que `fechaVencimientoProrroga` y
+          // `fechaVencimiento` son Date en la base. Sus dos consumidores la pasan a
+          // `new Date(...)`, que traga las dos cosas, asi que no fallaba; pero quien
+          // leyera la firma y le hiciera un `.slice` tendria un error en ejecucion.
+          const getFechaEfectiva = (c: CuotaDeLaFila): Date | null => {
             if (!c) return null;
             const s = String(c?.estado || '').toUpperCase();
             return s === 'PRORROGADA' && c?.fechaVencimientoProrroga
@@ -2203,7 +2353,7 @@ export class RoutesService {
               : (c?.fechaVencimiento ?? null);
           };
 
-          const cuotasSorted = [...cuotasList].sort((a: any, b: any) => {
+          const cuotasSorted = [...cuotasList].sort((a, b) => {
             const ak = getBogotaDayKey(
               new Date(getFechaEfectiva(a) || a?.fechaVencimiento),
             );
@@ -2268,14 +2418,15 @@ export class RoutesService {
                 : 0;
 
           const visitasOperativas = new Map(
-            (detalleOperativoHoy?.visitas || []).map((visita: any) => [
+            (detalleOperativoHoy?.visitas || []).map((visita) => [
               String(visita?.cliente?.id || visita?.clienteId || ''),
               visita,
             ]),
           );
 
           for (const asig of asignaciones) {
-            const visitaOperativa: any = visitasOperativas.get(
+            // Sin anotacion: el `Map` ya sabe que guarda, y el `any` solo tapaba eso.
+            const visitaOperativa = visitasOperativas.get(
               String(asig.clienteId || ''),
             );
 
@@ -2287,11 +2438,19 @@ export class RoutesService {
             );
 
             if (asig.cliente) {
-              if (!visitaOperativa) {
-                asig.cliente.prestamos = [];
-              } else {
-                asig.cliente.prestamos = visitaOperativa.prestamos || [];
-              }
+              // HALLAZGO, no un arreglo: aqui se sobreescribe el arreglo de creditos del
+              // DETALLE (forma de Prisma, con `cuotas` y `extensiones`) con el de la
+              // JORNADA (`PrestamoDeVisita`, que es otra forma). Parece intencional —la
+              // pantalla quiere ver los creditos de la jornada— pero las dos formas no
+              // coinciden y el `any` de `visitaOperativa` lo tapaba por completo.
+              //
+              // No se cambia el comportamiento: se deja escrito que el destino guarda una
+              // de las dos formas, que es lo que de verdad pasa. Unificarlas es otro
+              // trabajo y toca el contrato de la respuesta, asi que no va aqui.
+              const clienteDelDetalle = asig.cliente as {
+                prestamos?: unknown[];
+              };
+              clienteDelDetalle.prestamos = visitaOperativa?.prestamos || [];
             }
           }
         } catch {
@@ -2974,7 +3133,7 @@ export class RoutesService {
   }
 
   private sincronizarAsignacionesCliente(
-    tx: Prisma.TransactionClient,
+    tx: TransaccionPrisma,
     clienteId: string,
   ) {
     return sincronizarAsignacionesCliente(tx, clienteId);
@@ -3029,7 +3188,7 @@ export class RoutesService {
           data: { cobradorId: assignmentCobradorId },
         });
 
-        return tx.asignacionRuta.findFirstOrThrow({
+        const creada = await tx.asignacionRuta.findFirst({
           where: { clienteId, rutaId, activa: true },
           include: {
             cliente: {
@@ -3043,6 +3202,23 @@ export class RoutesService {
             },
           },
         });
+
+        // Aqui antes habia un findFirstOrThrow. Cuando el cliente no tiene
+        // ningun credito no se crea asignacion -se derivan de los creditos,
+        // ver sincronizar-asignaciones.ts-, asi que lanzaba el P2025 de Prisma
+        // y el filtro global lo traducia a "El registro que intenta modificar
+        // ya no existe. Puede que alguien lo haya eliminado mientras usted
+        // trabajaba". El cliente SI existe: el coordinador se quedaba buscando
+        // un borrado que nunca ocurrio.
+        if (!creada) {
+          throw new BadRequestException(
+            'Este cliente todavía no tiene ningún crédito, y la ruta se asigna ' +
+              'a través de los créditos. Cree primero el crédito indicando esta ' +
+              'ruta, y el cliente aparecerá en ella.',
+          );
+        }
+
+        return creada;
       });
 
       if (assignmentCobradorId) {
@@ -3473,7 +3649,7 @@ export class RoutesService {
       orderBy: { ordenVisita: 'asc' },
     });
 
-    const visitasDelDia: any[] = [];
+    const visitasDelDia: VisitaDelDia[] = [];
 
     const clientesProcesados = new Set<string>();
 
@@ -3488,13 +3664,13 @@ export class RoutesService {
 
       // Step 1: Get prestamos that are operationally valid OR are paid but have a payment today
       let prestamosConPrestamoOperativo = (cliente.prestamos || []).filter(
-        (prestamo: any) => isPrestamoOperativoRuta(prestamo),
+        (prestamo) => isPrestamoOperativoRuta(prestamo),
       );
 
       // Si el cliente pagó hoy, incluir también sus préstamos ya pagados
       if (tienePagoHoy) {
         const prestamosPagados = (cliente.prestamos || []).filter(
-          (prestamo: any) =>
+          (prestamo) =>
             normalizeUpper(prestamo?.estado) === 'PAGADO' &&
             !prestamosConPrestamoOperativo.some((p) => p.id === prestamo.id),
         );
@@ -3506,8 +3682,14 @@ export class RoutesService {
 
       // Step 2: For each prestamo, resolve cuota objetivo and validate obligacion operativa
       const prestamosOperativos = prestamosConPrestamoOperativo
-        .map((prestamo: any) => {
-          const cuotaObjetivoBase =
+        .map((prestamo) => {
+          // Se declara el tipo para que las dos ramas del `||` no formen una
+          // union: la de la izquierda ya es `CuotaOperativa` y la de la derecha es
+          // la cuota tal como la trae Prisma. Sin esto, leer abajo los campos que
+          // estas reglas manejan (`montoCuota`, `montoNominal`,
+          // `saldoExigibleEnFechaOperativa`) no compilaba, y era lo que tapaba el
+          // `as any` de mas abajo.
+          const cuotaObjetivoBase: CuotaOperativa | null | undefined =
             resolveCuotaObjetivoOperativa(prestamo, fechaKey) ||
             (prestamo.cuotas.length > 0
               ? [...prestamo.cuotas]
@@ -3520,7 +3702,9 @@ export class RoutesService {
                     (c) =>
                       getCuotaFechaEfectivaKeyRuta(c) <= fechaKey &&
                       !['ANULADO', 'ANULADA'].includes(
-                        normalizeUpper(c.estado || c.estadoActual),
+                        // `estadoActual` no existe en la cuota de Prisma, asi
+                        // que el `|| c.estadoActual` que habia aqui nunca entraba.
+                        normalizeUpper(c.estado),
                       ),
                   )
               : null);
@@ -3541,7 +3725,9 @@ export class RoutesService {
             cuotaObjetivoBase,
           };
         })
-        .filter(Boolean) as Array<{ prestamo: any; cuotaObjetivoBase: any }>;
+        .filter((entrada): entrada is NonNullable<typeof entrada> =>
+          Boolean(entrada),
+        );
 
       // Step 3: If no operational prestamos AND no payment today, don't add to visitas
       if (prestamosOperativos.length === 0 && !tienePagoHoy) continue;
@@ -3571,9 +3757,11 @@ export class RoutesService {
                 0,
                 Number(
                   cuotaObjetivoBase.saldoExigibleEnFechaOperativa ??
-                    (cuotaObjetivoBase.montoCuota ??
-                      cuotaObjetivoBase.monto ??
-                      0) - (cuotaObjetivoBase.montoPagado ?? 0),
+                    Number(
+                      cuotaObjetivoBase.montoCuota ??
+                        cuotaObjetivoBase.monto ??
+                        0,
+                    ) - Number(cuotaObjetivoBase.montoPagado ?? 0),
                 ),
               ),
               fechaEfectiva: getCuotaFechaEfectivaKeyRuta(cuotaObjetivoBase),
@@ -3617,15 +3805,21 @@ export class RoutesService {
             };
           },
         );
-        // Elegir el mejor préstamo con cuotaObjetivo (priorizando pagable/reprogramable)
+        // Una primera elección: el primer préstamo con cuotaObjetivo.
+        //
+        // Aquí no se prioriza por pagable/reprogramable, y no hace falta: la
+        // priorización SÍ ocurre, más abajo. La pasada que reasigna el objetivo
+        // busca `montoMetaOperativaPendiente > 0`, que se rellena desde
+        // `cuotaObjetivo.saldoExigibleEnFechaOperativa`, y eso es exactamente
+        // `puedePagar || puedeReprogramar`: las dos banderas exigen ese mismo
+        // saldo mayor que cero. Si lo encuentra, sobrescribe `prestamoObjetivoId`.
+        //
+        // Antes había aquí un `find` que buscaba `puedePagar || puedeReprogramar`
+        // en este objeto, que no lleva esas dos claves, así que no acertaba nunca
+        // y el resultado salía siempre del segundo `find`. Era redundante además
+        // de muerto. Lo fija la prueba "se elige el credito que todavia debe".
         const prestamoObjetivo =
-          prestamosConCuotaObjetivo.find((p) => {
-            return (
-              p.cuotaObjetivo?.puedePagar || p.cuotaObjetivo?.puedeReprogramar
-            );
-          }) ||
-          prestamosConCuotaObjetivo.find((p) => p.cuotaObjetivo) ||
-          null;
+          prestamosConCuotaObjetivo.find((p) => p.cuotaObjetivo) || null;
 
         const clienteCuotaObjetivo = prestamoObjetivo?.cuotaObjetivo || null;
         const prestamoObjetivoId = prestamoObjetivo?.id || null;
@@ -3666,7 +3860,7 @@ export class RoutesService {
     });
     const visitasMap = new Map(registrosVisitas.map((r) => [r.clienteId, r]));
     const visitasMapPorPrestamo = new Map<string, any>();
-    registrosVisitas.forEach((registro: any) => {
+    registrosVisitas.forEach((registro) => {
       const clienteId = String(registro?.clienteId || '');
       const prestamoId = String(registro?.prestamoId || '');
       if (clienteId && prestamoId) {
@@ -3675,15 +3869,13 @@ export class RoutesService {
     });
     const clientesRutaIds = [
       ...new Set(
-        asignaciones
-          .map((a: any) => a?.cliente?.id || a?.clienteId)
-          .filter(Boolean),
+        asignaciones.map((a) => a?.cliente?.id || a?.clienteId).filter(Boolean),
       ),
     ];
     const _clientesVisitaIds = [
       ...new Set(
         visitasDelDia
-          .map((v: any) => v?.cliente?.id || v?.clienteId)
+          .map((v) => v?.cliente?.id || v?.clienteId)
           .filter(Boolean),
       ),
     ];
@@ -3721,26 +3913,31 @@ export class RoutesService {
           })
         : [];
     const resolvePrestamoIdFromReprogramacion = (
-      aprobacion: any,
+      aprobacion: {
+        datosSolicitud?: Prisma.JsonValue;
+        referenciaId?: string | null;
+      } | null,
     ): string | null => {
-      const datos = aprobacion?.datosSolicitud || {};
+      const datos = objetoDeJson(aprobacion?.datosSolicitud);
 
-      const prestamoIdDirecto = String(datos?.prestamoId || '').trim();
+      const prestamoIdDirecto = (textoDeJson(datos.prestamoId) ?? '').trim();
       if (prestamoIdDirecto) return prestamoIdDirecto;
 
-      const cuotaId = String(
-        datos?.cuotaId || aprobacion?.referenciaId || '',
+      const cuotaId = (
+        textoDeJson(datos.cuotaId) ||
+        aprobacion?.referenciaId ||
+        ''
       ).trim();
       if (!cuotaId) return null;
 
-      for (const asignacion of asignaciones as any[]) {
+      for (const asignacion of asignaciones) {
         const prestamos = asignacion?.cliente?.prestamos || [];
 
         for (const prestamo of prestamos) {
           const cuotas = prestamo?.cuotas || [];
 
           const pertenece = cuotas.some(
-            (cuota: any) => String(cuota?.id || '') === cuotaId,
+            (cuota) => String(cuota?.id || '') === cuotaId,
           );
 
           if (pertenece) {
@@ -3752,14 +3949,22 @@ export class RoutesService {
       return null;
     };
 
-    const reprogramacionPorPrestamo = new Map<string, any>();
+    // El tipo del valor se DERIVA de la consulta que lo llena, con
+    // `(typeof reprogramacionesJornada)[number]`. Era `Map<string, any>`, y de ahi salia
+    // el `any` de las dos variables del objetivo mas abajo.
+    type ReprogramacionDeJornada = (typeof reprogramacionesJornada)[number];
+    const reprogramacionPorPrestamo = new Map<
+      string,
+      ReprogramacionDeJornada
+    >();
 
-    reprogramacionesJornada.forEach((aprobacion: any) => {
-      const datos = aprobacion?.datosSolicitud || {};
-      const clienteId = String(datos?.clienteId || '');
-      const fechaGestion = String(
-        datos?.fechaOperativaRuta || datos?.fechaGestionOriginal || '',
-      );
+    reprogramacionesJornada.forEach((aprobacion) => {
+      const datos = objetoDeJson(aprobacion?.datosSolicitud);
+      const clienteId = textoDeJson(datos.clienteId) ?? '';
+      const fechaGestion =
+        textoDeJson(datos.fechaOperativaRuta) ??
+        textoDeJson(datos.fechaGestionOriginal) ??
+        '';
 
       if (
         !clienteId ||
@@ -3777,7 +3982,7 @@ export class RoutesService {
     });
 
     const clientesEnVisitasIniciales = new Set(
-      visitasDelDia.map((v: any) => v?.cliente?.id || v?.clienteId),
+      visitasDelDia.map((v) => v?.cliente?.id || v?.clienteId),
     );
     for (const [
       prestamoId,
@@ -3789,22 +3994,22 @@ export class RoutesService {
       );
       if (!cuotaReprogramada) continue;
 
-      const datosReprogramacion = reprogramacion?.datosSolicitud || {};
-      const clienteId = String(datosReprogramacion?.clienteId || '');
+      const datosReprogramacion = objetoDeJson(reprogramacion?.datosSolicitud);
+      const clienteId = textoDeJson(datosReprogramacion.clienteId) ?? '';
       if (!clienteId || !prestamoId) continue;
 
-      const visitaInicial = visitasDelDia.find((v: any) => {
+      const visitaInicial = visitasDelDia.find((v) => {
         if (String(v?.cliente?.id || v?.clienteId || '') !== clienteId)
           return false;
         return (v?.prestamos || []).some(
-          (p: any) => String(p?.id || '') === prestamoId,
+          (p) => String(p?.id || '') === prestamoId,
         );
       });
 
       if (visitaInicial) continue;
 
       const asignacion = asignaciones.find(
-        (a: any) => String(a?.cliente?.id || a?.clienteId || '') === clienteId,
+        (a) => String(a?.cliente?.id || a?.clienteId || '') === clienteId,
       );
       const cliente = asignacion?.cliente;
       if (!cliente) continue;
@@ -3813,13 +4018,13 @@ export class RoutesService {
       const prestamosOperativosReprogramacion = (
         cliente.prestamos || []
       ).filter(
-        (prestamo: any) =>
+        (prestamo) =>
           isPrestamoOperativoRuta(prestamo) ||
           (clienteTienePagoHoy &&
             normalizeUpper(prestamo?.estado) === 'PAGADO'),
       );
       const prestamosConCuotaObjetivoReprogramacion =
-        prestamosOperativosReprogramacion.map((p: any) => {
+        prestamosOperativosReprogramacion.map((p) => {
           const estadoRevision = getEstadoRevisionOperacion(p);
           const isObjetivo = String(p?.id || '') === prestamoId;
           return {
@@ -3875,19 +4080,25 @@ export class RoutesService {
         recaudadoDelDia: pagosPorCliente[cliente.id] || 0,
         estadoVisita: 'reprogramado',
         notasVisita: `Reprogramación aprobada: ${
-          reprogramacion?.datosSolicitud?.motivo || 'Sin motivo'
+          textoDeJson(objetoDeJson(reprogramacion?.datosSolicitud).motivo) ||
+          'Sin motivo'
         }`,
       });
       clientesEnVisitasIniciales.add(clienteId);
     }
 
     // Separar recaudo: contable (pagos reales del día) vs regularizado (pagos de jornadas viejas)
-    const isFechaPagoEnRango = (p: any) => {
+    //
+    // El tipo se deriva del arreglo que los alimenta en vez de escribirse a mano:
+    // si la consulta deja de traer un campo, el compilador lo dice aqui.
+    type PagoDeLaJornada = (typeof pagosDeHoy)[number];
+
+    const isFechaPagoEnRango = (p: PagoDeLaJornada) => {
       const fechaPago = new Date(p.fechaPago);
       return fechaPago >= fInicio && fechaPago <= fFin;
     };
 
-    const isRegularizadoParaJornada = (p: any) => {
+    const isRegularizadoParaJornada = (p: PagoDeLaJornada) => {
       return (
         p.fechaOperativaRuta === fechaKey &&
         p.origenGestion === 'CIERRE_PENDIENTE'
@@ -3907,7 +4118,7 @@ export class RoutesService {
       .reduce((sum, p) => sum + Number(p.montoTotal || 0), 0);
 
     const sumPagosByMetodo = (
-      pagos: any[],
+      pagos: PagoDeLaJornada[],
       metodo: 'EFECTIVO' | 'TRANSFERENCIA',
     ) => {
       return pagos.reduce((sum, p) => {
@@ -3925,12 +4136,12 @@ export class RoutesService {
       (p) => isRegularizadoParaJornada(p) && !isFechaPagoEnRango(p),
     );
 
-    const buildCuotaObjetivoDesdePago = (pago: any) => {
+    const buildCuotaObjetivoDesdePago = (pago: PagoDeLaJornada) => {
       const detalle = Array.isArray(pago?.detalles)
         ? [...pago.detalles]
-            .filter((d: any) => d?.cuota)
+            .filter((d) => d?.cuota)
             .sort(
-              (a: any, b: any) =>
+              (a, b) =>
                 Number(a?.cuota?.numeroCuota || 0) -
                 Number(b?.cuota?.numeroCuota || 0),
             )[0]
@@ -4003,7 +4214,7 @@ export class RoutesService {
 
     const cuotaPagadaPorPrestamo = new Map<string, any>();
     const cuotaPagadaPorCliente = new Map<string, any>();
-    pagosOperativos.forEach((p: any) => {
+    pagosOperativos.forEach((p) => {
       const cuotaObjetivoPago = buildCuotaObjetivoDesdePago(p);
       if (!cuotaObjetivoPago) return;
 
@@ -4039,16 +4250,32 @@ export class RoutesService {
       'TRANSFERENCIA',
     );
 
-    visitasDelDia.forEach((v: any) => {
+    visitasDelDia.forEach((v) => {
       const _cid = String(v?.cliente?.id || v?.clienteId || '');
-      let reprogramacionObjetivo: any = null;
-      let cuotaReprogramadaObjetivo: any = null;
+      // Van en un objeto y no como dos `let`, por dos razones.
+      //
+      // Una: `let x = null` sin anotacion es un `any` EVOLUTIVO para TypeScript y
+      // `noImplicitAny` no lo marca, asi que quitar el `: any` a secas lo habria
+      // escondido en vez de arreglarlo.
+      //
+      // Dos: con `let x: T | null = null` el compilador los estrecha a `null` en el sitio
+      // donde se leen, porque la asignacion ocurre dentro de un callback que no puede
+      // seguir. Una propiedad de objeto conserva su tipo declarado. Es el mismo dato, sin
+      // un solo cast.
+      const objetivo: {
+        reprogramacion: ReprogramacionDeJornada | null;
+        cuota: ReturnType<
+          RoutesService['buildCuotaObjetivoDesdeReprogramacion']
+        >;
+      } = { reprogramacion: null, cuota: null };
 
       if (Array.isArray(v.prestamos)) {
-        v.prestamos = v.prestamos.map((prestamo: any) => {
+        v.prestamos = v.prestamos.map((prestamo) => {
           const prestamoId = String(prestamo?.id || '');
+          // `?? null` porque `Map.get` devuelve `undefined` cuando no esta, y luego se
+          // compara contra `null`. Con `any` las dos cosas eran iguales; declarado, no.
           const reprogramacion = prestamoId
-            ? reprogramacionPorPrestamo.get(prestamoId)
+            ? (reprogramacionPorPrestamo.get(prestamoId) ?? null)
             : null;
           const cuotaReprogramada = this.buildCuotaObjetivoDesdeReprogramacion(
             reprogramacion,
@@ -4062,8 +4289,8 @@ export class RoutesService {
           }
 
           if (prestamoId === String(v?.prestamoObjetivoId || '')) {
-            reprogramacionObjetivo = reprogramacion;
-            cuotaReprogramadaObjetivo = cuotaReprogramada;
+            objetivo.reprogramacion = reprogramacion;
+            objetivo.cuota = cuotaReprogramada;
           }
 
           return {
@@ -4071,7 +4298,9 @@ export class RoutesService {
             estadoGestion: 'REPROGRAMADO',
             estadoVisita: 'reprogramado',
             notasVisita: `Reprogramación aprobada: ${
-              reprogramacion?.datosSolicitud?.motivo || 'Sin motivo'
+              textoDeJson(
+                objetoDeJson(reprogramacion?.datosSolicitud).motivo,
+              ) || 'Sin motivo'
             }`,
             montoMetaOperativaPendiente: 0,
             cuotaObjetivo: cuotaReprogramada,
@@ -4089,7 +4318,7 @@ export class RoutesService {
       }
 
       const prestamoOperativo = Array.isArray(v.prestamos)
-        ? v.prestamos.find((prestamo: any) => {
+        ? v.prestamos.find((prestamo) => {
             if (reprogramacionPorPrestamo.has(String(prestamo?.id || ''))) {
               return false;
             }
@@ -4099,7 +4328,7 @@ export class RoutesService {
               meta > 0 && (objetivo?.puedePagar || objetivo?.puedeReprogramar)
             );
           }) ||
-          v.prestamos.find((prestamo: any) => {
+          v.prestamos.find((prestamo) => {
             if (reprogramacionPorPrestamo.has(String(prestamo?.id || ''))) {
               return false;
             }
@@ -4117,22 +4346,24 @@ export class RoutesService {
         return;
       }
 
-      if (cuotaReprogramadaObjetivo) {
+      if (objetivo.cuota) {
         v.estadoVisita = 'reprogramado';
         v.notasVisita = `Reprogramación aprobada: ${
-          reprogramacionObjetivo?.datosSolicitud?.motivo || 'Sin motivo'
+          textoDeJson(
+            objetoDeJson(objetivo.reprogramacion?.datosSolicitud).motivo,
+          ) || 'Sin motivo'
         }`;
-        v.cuotaObjetivo = cuotaReprogramadaObjetivo;
-        v.cuotaObjetivoId = cuotaReprogramadaObjetivo.id;
-        v.cuotaObjetivoPrestamoId = cuotaReprogramadaObjetivo.id;
+        v.cuotaObjetivo = objetivo.cuota;
+        v.cuotaObjetivoId = objetivo.cuota.id;
+        v.cuotaObjetivoPrestamoId = objetivo.cuota.id;
         v.prestamoObjetivoId =
-          cuotaReprogramadaObjetivo.prestamoId || v.prestamoObjetivoId || null;
+          objetivo.cuota.prestamoId || v.prestamoObjetivoId || null;
       }
     });
 
     // Enriquecer visitas con su recaudo individual del día y su estado de visita (ausente)
     visitasDelDia.forEach((v) => {
-      const cid = v.cliente?.id || v.clienteId;
+      const cid = v.cliente?.id || v.clienteId || '';
       v.recaudadoDelDia = pagosPorCliente[cid] || 0;
 
       if (Number(v.recaudadoDelDia || 0) > 0) {
@@ -4147,7 +4378,7 @@ export class RoutesService {
           v.cuotaObjetivoPrestamoId = cuotaPagada.id;
 
           if (Array.isArray(v.prestamos)) {
-            v.prestamos = v.prestamos.map((prestamo: any) => {
+            v.prestamos = v.prestamos.map((prestamo) => {
               if (
                 prestamo?.id === prestamoId ||
                 cuotaPagadaPorPrestamo.get(String(prestamo?.id || ''))?.id ===
@@ -4161,7 +4392,7 @@ export class RoutesService {
         }
       }
 
-      const registro: any = visitasMap.get(cid);
+      const registro = visitasMap.get(cid);
       if (registro) {
         const prestamoId = String(v.prestamoObjetivoId || '');
         const registroPorPrestamo = prestamoId
@@ -4180,8 +4411,10 @@ export class RoutesService {
           String(registroAplicable.estadoVisita || '').toLowerCase() ===
           'reprogramado'
         ) {
+          // `?? null` porque `Map.get` devuelve `undefined` cuando no esta, y luego se
+          // compara contra `null`. Con `any` las dos cosas eran iguales; declarado, no.
           const reprogramacion = prestamoId
-            ? reprogramacionPorPrestamo.get(prestamoId)
+            ? (reprogramacionPorPrestamo.get(prestamoId) ?? null)
             : null;
           const cuotaReprogramada = this.buildCuotaObjetivoDesdeReprogramacion(
             reprogramacion,
@@ -4195,7 +4428,7 @@ export class RoutesService {
               cuotaReprogramada.prestamoId || v.prestamoObjetivoId || null;
 
             if (Array.isArray(v.prestamos)) {
-              v.prestamos = v.prestamos.map((prestamo: any) => {
+              v.prestamos = v.prestamos.map((prestamo) => {
                 if (prestamo?.id === cuotaReprogramada.prestamoId) {
                   return { ...prestamo, cuotaObjetivo: cuotaReprogramada };
                 }
@@ -4277,9 +4510,9 @@ export class RoutesService {
         });
         const prestamosConPrestamoOperativo = (
           clienteFull?.prestamos || []
-        ).filter((p: any) => isPrestamoOperativoRuta(p));
+        ).filter((p) => isPrestamoOperativoRuta(p));
         const prestamosOperativos = prestamosConPrestamoOperativo
-          .map((p: any) => {
+          .map((p) => {
             const cuotaObjetivoBase = resolveCuotaObjetivoOperativa(
               p,
               fechaKey,
@@ -4294,7 +4527,9 @@ export class RoutesService {
               return null;
             return { prestamo: p, cuotaObjetivoBase };
           })
-          .filter(Boolean) as Array<{ prestamo: any; cuotaObjetivoBase: any }>;
+          .filter((entrada): entrada is NonNullable<typeof entrada> =>
+            Boolean(entrada),
+          );
 
         if (prestamosOperativos.length === 0) continue;
 
@@ -4317,9 +4552,11 @@ export class RoutesService {
                 0,
                 Number(
                   cuotaObjetivoBase.saldoExigibleEnFechaOperativa ??
-                    (cuotaObjetivoBase.montoCuota ??
-                      cuotaObjetivoBase.monto ??
-                      0) - (cuotaObjetivoBase.montoPagado ?? 0),
+                    Number(
+                      cuotaObjetivoBase.montoCuota ??
+                        cuotaObjetivoBase.monto ??
+                        0,
+                    ) - Number(cuotaObjetivoBase.montoPagado ?? 0),
                 ),
               ),
               fechaEfectiva: getCuotaFechaEfectivaKeyRuta(cuotaObjetivoBase),
@@ -4368,15 +4605,13 @@ export class RoutesService {
           },
         );
 
-        // Elegir el mejor préstamo con cuotaObjetivo (priorizando pagable/reprogramable)
+        // Igual que en el bloque gemelo de más arriba: esta es una primera
+        // elección, y la priorización por saldo exigible ocurre después, en la
+        // pasada que busca `montoMetaOperativaPendiente > 0`. Aquí había un `find`
+        // por `puedePagar || puedeReprogramar` que no acertaba nunca, porque este
+        // objeto no lleva esas dos claves.
         const prestamoObjetivo =
-          prestamosConCuotaObjetivo.find((p) => {
-            return (
-              p.cuotaObjetivo?.puedePagar || p.cuotaObjetivo?.puedeReprogramar
-            );
-          }) ||
-          prestamosConCuotaObjetivo.find((p) => p.cuotaObjetivo) ||
-          null;
+          prestamosConCuotaObjetivo.find((p) => p.cuotaObjetivo) || null;
 
         const clienteCuotaObjetivo = prestamoObjetivo?.cuotaObjetivo || null;
         const prestamoObjetivoId = prestamoObjetivo?.id || null;
@@ -4443,7 +4678,7 @@ export class RoutesService {
       this.buildObligacionesOperativas(visitasDelDiaFinales);
 
     const totalEsperadoFinal = obligacionesOperativas.reduce(
-      (sum: number, item: any) => sum + Number(item.metaPendiente || 0),
+      (sum: number, item) => sum + Number(item.metaPendiente || 0),
       0,
     );
 
@@ -4454,7 +4689,7 @@ export class RoutesService {
           ? 100
           : 0;
 
-    const gestionados = obligacionesOperativas.filter((item: any) => {
+    const gestionados = obligacionesOperativas.filter((item) => {
       return item.estadoGestion !== 'PENDIENTE';
     }).length;
 
@@ -4487,14 +4722,12 @@ export class RoutesService {
         total: totalObligaciones,
         clientesOperativosHoy: new Set(
           obligacionesOperativas
-            .map(
-              (item: any) => item.visita?.cliente?.id || item.visita?.clienteId,
-            )
+            .map((item) => item.visita?.cliente?.id || item.visita?.clienteId)
             .filter(Boolean),
         ).size,
       },
       visitas: visitasDelDiaFinales,
-      obligaciones: obligacionesOperativas.map((item: any) => ({
+      obligaciones: obligacionesOperativas.map((item) => ({
         asignacionId: item.visita.asignacionId,
         ordenVisita: item.visita.ordenVisita,
         cliente: item.visita.cliente,
@@ -4539,12 +4772,18 @@ export class RoutesService {
    * ultimo el monto nominal de la proxima cuota.
    */
   private computeMetaOperativaVisita(
-    visita: any,
+    // `PrestamoOperativo` y `CuotaOperativa` ya existian en ruta-operational-rules.ts y
+    // son justo lo que estos tres helpers reciben: se reutilizan en vez de declarar otro
+    // tipo. La visita se pide por lo unico que se le lee aqui, sus creditos.
+    visita: {
+      prestamos?: PrestamoOperativo[] | null;
+      recaudadoDelDia?: number | null;
+    } | null,
     recaudoCliente = 0,
     fechaKey?: string,
   ): number {
     const pendienteExigible = (visita?.prestamos || []).reduce(
-      (sum: number, prestamo: any) => {
+      (sum: number, prestamo: PrestamoOperativo) => {
         if (!isPrestamoOperativoRuta(prestamo)) return sum;
 
         if (prestamo?.montoMetaOperativaPendiente != null) {
@@ -4572,7 +4811,7 @@ export class RoutesService {
   }
 
   private computePendienteOperativoPrestamo(
-    prestamo: any,
+    prestamo: PrestamoOperativo,
     fechaKey: string,
   ): number {
     if (!isPrestamoOperativoRuta(prestamo)) return 0;
@@ -4605,7 +4844,7 @@ export class RoutesService {
    * Los `motivoBloqueo*` existen para que la pantalla explique por que el boton de
    * pagar o reprogramar esta deshabilitado, en vez de solo apagarlo.
    */
-  private computeCuotaObjetivo(prestamo: any, fechaKey: string) {
+  private computeCuotaObjetivo(prestamo: PrestamoOperativo, fechaKey: string) {
     if (!isPrestamoOperativoRuta(prestamo)) return null;
 
     if (!prestamo.cuotas || prestamo.cuotas.length === 0) return null;
@@ -4662,7 +4901,7 @@ export class RoutesService {
       return getCuotaFechaEfectivaKeyRuta(cuota) <= fechaKey;
     });
     const montoMoraAcumulada = cuotasVencidasPendientes.reduce(
-      (sum: number, cuota: any) =>
+      (sum: number, cuota) =>
         sum +
         Math.max(
           0,
@@ -4724,33 +4963,49 @@ export class RoutesService {
   }
 
   private buildCuotaObjetivoDesdeReprogramacion(
-    aprobacion: any,
+    aprobacion: {
+      id?: string;
+      estado?: string | null;
+      datosSolicitud?: Prisma.JsonValue;
+      referenciaId?: string | null;
+    } | null,
     prestamoIdFallback?: string | null,
   ) {
-    const datos = aprobacion?.datosSolicitud || {};
-    const cuotaId = String(datos?.cuotaId || aprobacion?.referenciaId || '');
+    // `objetoDeJson` y no `|| {}`: con la columna declarada `Prisma.JsonValue`, el `||`
+    // dejaba pasar un texto o un numero como si fuera el objeto.
+    const datos = objetoDeJson(aprobacion?.datosSolicitud);
+    const cuotaId = String(
+      textoDeJson(datos.cuotaId) || aprobacion?.referenciaId || '',
+    );
     if (!cuotaId) return null;
 
+    // Las tres fechas pasan por `textoDeJson`: vienen de una columna `Json` y solo sirven
+    // si son texto. Antes eran `any`, y un objeto ahi hacia `new Date({})` = Invalid Date,
+    // que se guardaba como fecha de la cuota sin una queja.
     const fechaOriginal =
-      datos?.fechaVencimientoOriginal || datos?.fechaVencimiento || null;
+      textoDeJson(datos.fechaVencimientoOriginal) ??
+      textoDeJson(datos.fechaVencimiento) ??
+      null;
     const fechaOriginalKey = fechaOriginal
       ? getBogotaDayKey(new Date(fechaOriginal))
       : null;
-    const nuevaFecha = datos?.nuevaFecha || null;
+    const nuevaFecha = textoDeJson(datos.nuevaFecha) ?? null;
 
     return {
       id: cuotaId,
       prestamoId:
-        String(datos?.prestamoId || prestamoIdFallback || '').trim() || null,
-      numeroCuota: Number(datos?.numeroCuota || 0) || null,
+        String(
+          textoDeJson(datos.prestamoId) || prestamoIdFallback || '',
+        ).trim() || null,
+      numeroCuota: Number(datos.numeroCuota || 0) || null,
       estadoActual: 'REPROGRAMADA',
       fechaVencimiento: fechaOriginal,
       fechaVencimientoProrroga: nuevaFecha,
       fechaEfectiva: fechaOriginalKey,
       nuevaFechaReprogramada: nuevaFecha,
-      montoCuota: Number(datos?.montoCuota || 0),
+      montoCuota: Number(datos.montoCuota || 0),
       montoPagado: 0,
-      saldoCuota: Number(datos?.montoCuota || 0),
+      saldoCuota: Number(datos.montoCuota || 0),
       saldoExigibleEnFechaOperativa: 0,
       enMoraEnFechaOperativa: false,
       puedePagar: false,
@@ -4866,6 +5121,13 @@ export class RoutesService {
           include: {
             cliente: {
               select: {
+                // `id` hace falta: mas abajo se busca la visita del dia con
+                // `visitasMap.get(c.id)`. Sin el, la busqueda se hacia con
+                // undefined y NUNCA encontraba nada, asi que la ruta exportada
+                // salia siempre sin estado de visita y sin las notas del
+                // cobrador. Compilaba porque el cliente de Prisma era `any`.
+                id: true,
+
                 nombres: true,
 
                 apellidos: true,
@@ -5382,44 +5644,42 @@ export class RoutesService {
     const visitas = Array.isArray(detalleDia.visitas) ? detalleDia.visitas : [];
     const obligaciones = this.buildObligacionesOperativas(visitas);
 
-    const obligacionesPendientes = obligaciones.filter((o: any) => {
+    const obligacionesPendientes = obligaciones.filter((o) => {
       return o.estadoGestion === 'PENDIENTE';
     });
 
-    const obligacionesAusentes = obligaciones.filter((o: any) => {
+    const obligacionesAusentes = obligaciones.filter((o) => {
       return o.estadoGestion === 'AUSENTE';
     });
 
-    const obligacionesPagaron = obligaciones.filter((o: any) => {
+    const obligacionesPagaron = obligaciones.filter((o) => {
       return o.estadoGestion === 'PAGO_REGISTRADO';
     });
 
-    const obligacionesGestionadas = obligaciones.filter((o: any) => {
+    const obligacionesGestionadas = obligaciones.filter((o) => {
       return o.estadoGestion !== 'PENDIENTE';
     });
 
-    const clientesPendientes = visitas.filter((v: any) => {
+    const clientesPendientes = visitas.filter((v) => {
       return this.resolveEstadoGestionCierrePendiente(v) === 'PENDIENTE';
     });
 
-    const clientesAusentes = visitas.filter((v: any) => {
+    const clientesAusentes = visitas.filter((v) => {
       return this.resolveEstadoGestionCierrePendiente(v) === 'AUSENTE';
     });
 
-    const clientesPagaron = visitas.filter((v: any) => {
+    const clientesPagaron = visitas.filter((v) => {
       return this.resolveEstadoGestionCierrePendiente(v) === 'PAGO_REGISTRADO';
     });
 
-    const clientesGestionados = visitas.filter((v: any) => {
+    const clientesGestionados = visitas.filter((v) => {
       return this.resolveEstadoGestionCierrePendiente(v) !== 'PENDIENTE';
     });
 
     const meta = Number(detalleDia.resumen?.meta || 0);
 
     const recaudoOperativo = Number(
-      (detalleDia.resumen as any)?.recaudoOperativo ||
-        detalleDia.resumen?.recaudo ||
-        0,
+      detalleDia.resumen?.recaudoOperativo || detalleDia.resumen?.recaudo || 0,
     );
 
     // La observación administrativa se exige por lo que quedó sin gestionar:
@@ -5542,12 +5802,15 @@ export class RoutesService {
     const advertencias: string[] = [];
     const cierrePendiente = await this.getCierrePendienteRuta(rutaId);
 
-    const getNombreClienteVisita = (v: any) =>
-      v.nombreCliente ||
+    // Aqui empezaba con `v.nombreCliente ||`, y esa alternativa no entra nunca:
+    // `nombreCliente` no se escribe en ninguna visita, solo en los objetos de
+    // SALIDA que este mismo metodo construye. Con `v: any` no habia forma de
+    // verlo; al declarar el tipo, el compilador dijo que el campo no existe.
+    const getNombreClienteVisita = (v: VisitaDelDia) =>
       `${v.cliente?.nombres || ''} ${v.cliente?.apellidos || ''}`.trim() ||
       'Cliente sin nombre';
 
-    visitas.forEach((cliente: any) => {
+    visitas.forEach((cliente) => {
       const estadoGestion = this.resolveEstadoGestionCierrePendiente(cliente);
       const tienePagoReal = Number(cliente.recaudadoDelDia || 0) > 0;
 
@@ -5627,7 +5890,7 @@ export class RoutesService {
     );
     const cumplimiento =
       meta > 0 ? Math.round((recaudoOperativo / meta) * 100 * 10) / 10 : 0;
-    const resumirClienteGestionado = (visita: any) => {
+    const resumirClienteGestionado = (visita: VisitaDelDia) => {
       const cliente = visita?.cliente || {};
       const nombreCliente =
         getNombreClienteVisita(visita) ||
@@ -5637,7 +5900,10 @@ export class RoutesService {
       return {
         clienteId: cliente.id || visita?.clienteId || null,
         nombreCliente,
-        documento: cliente.cedula || cliente.dni || visita?.cedula || null,
+        // El campo se llama `dni`, no `cedula`: ni el cliente ni la visita tienen
+        // `cedula`, asi que las dos alternativas que rodeaban a `dni` eran
+        // siempre undefined. Otra vez lo destapo el tipo.
+        documento: cliente.dni || null,
         estadoGestion: this.resolveEstadoGestionCierrePendiente(visita),
         ordenVisita: visita?.ordenVisita ?? null,
         cuotaObjetivoId: visita?.cuotaObjetivoId ?? null,
@@ -5781,8 +6047,25 @@ export class RoutesService {
    */
   private async actualizarDeudasJornadaPendiente(
     rutaId: string,
-    jornada: any,
-    cajaRuta: any,
+    // Lo que se lee de cada uno, nombrado por una sonda `never`: seis propiedades en
+    // total, no las dos entidades enteras.
+    jornada: {
+      id: string;
+      fechaOperativa: string;
+      cierreTransaccionId?: string | null;
+      ruta?: {
+        cobradorId?: string | null;
+        cobrador?: {
+          nombres?: string | null;
+          apellidos?: string | null;
+        } | null;
+      } | null;
+    },
+    cajaRuta: {
+      id: string;
+      saldoActual: Prisma.Decimal | number;
+      responsableId?: string | null;
+    },
     creadoPorId?: string,
     esUltimaJornada: boolean = true,
   ) {
@@ -5817,13 +6100,20 @@ export class RoutesService {
       rutaId,
       jornada.fechaOperativa,
     );
-    const resumen = detalleDia?.resumen || ({} as any);
+    const resumen = detalleDia?.resumen || {};
     const visitas = detalleDia?.visitas || [];
-    const obligaciones = Array.isArray((detalleDia as any)?.obligaciones)
-      ? (detalleDia as any).obligaciones
+    // Dos origenes con formas distintas: el detalle del dia (que trae
+    // `recaudadoDelDia`) y el respaldo calculado (que trae `recaudado`). El tipo
+    // declara los tres campos que el filtro lee, que es lo unico que hace falta.
+    const obligaciones: Array<{
+      estadoGestion?: string | null;
+      recaudadoDelDia?: number;
+      recaudado?: number;
+    }> = Array.isArray(detalleDia?.obligaciones)
+      ? detalleDia.obligaciones
       : this.buildObligacionesOperativas(visitas);
 
-    const clientesFaltantes = obligaciones.filter((o: any) => {
+    const clientesFaltantes = obligaciones.filter((o) => {
       const estado = String(o.estadoGestion || '').toUpperCase();
       const recaudoVisita = Number(o.recaudadoDelDia || o.recaudado || 0);
       return (
@@ -6114,6 +6404,65 @@ export class RoutesService {
     return pendientes[0] || null;
   }
 
+  /**
+   * Que rutas ya se activaron hoy, en una sola consulta.
+   *
+   * La activacion de una ruta se registra como una transaccion de monto 0 con
+   * `tipoReferencia: 'ACTIVACION_RUTA'` en la caja de la ruta (ver
+   * `activarRutaHoy`), y de ella cuelga la `RutaJornada`. Buscar esas
+   * transacciones del dia cubre de una vez las dos formas que mira
+   * `getRutaActivadaHoy`: la que lleva la clave
+   * `ACTIVACION_RUTA:<ruta>:<dia>` y las mas viejas que no la tienen, porque
+   * todas son transacciones con esa referencia en esa caja ese dia.
+   *
+   * Domingo no hay jornada operativa, asi que no se pregunta: ese dia ninguna
+   * ruta esta pendiente de activar.
+   */
+  private async getActivacionHoyRutasMap(
+    rutaIds: string[],
+  ): Promise<{ activadas: Set<string>; diaNoLaboral: boolean }> {
+    if (!rutaIds.length || this.isDomingoBogota()) {
+      return {
+        activadas: new Set<string>(),
+        diaNoLaboral: this.isDomingoBogota(),
+      };
+    }
+
+    const cajas = await this.prisma.caja.findMany({
+      where: { rutaId: { in: rutaIds }, tipo: 'RUTA', activa: true },
+      select: { id: true, rutaId: true },
+    });
+
+    if (!cajas.length) {
+      return { activadas: new Set<string>(), diaNoLaboral: false };
+    }
+
+    const rutaPorCaja = new Map<string, string>();
+    for (const caja of cajas) {
+      if (caja.rutaId) rutaPorCaja.set(caja.id, caja.rutaId);
+    }
+
+    const { inicio, fin } = this.getInicioFinHoy();
+    const activaciones = await this.prisma.transaccion.findMany({
+      where: {
+        cajaId: { in: Array.from(rutaPorCaja.keys()) },
+        tipoReferencia: 'ACTIVACION_RUTA',
+        fechaTransaccion: { gte: inicio, lt: fin },
+      },
+      select: { cajaId: true },
+    });
+
+    const activadas = new Set<string>();
+    for (const activacion of activaciones) {
+      const rutaId = activacion.cajaId
+        ? rutaPorCaja.get(activacion.cajaId)
+        : undefined;
+      if (rutaId) activadas.add(rutaId);
+    }
+
+    return { activadas, diaNoLaboral: false };
+  }
+
   private async getCierresPendientesRutasMap(
     rutaIds: string[],
     creadoPorId?: string,
@@ -6147,7 +6496,10 @@ export class RoutesService {
   }
 
   private resolveEstadoGestionCierrePendiente(
-    v: any,
+    v: {
+      estadoVisita?: string | null;
+      recaudadoDelDia?: Prisma.Decimal | number | null;
+    } | null,
   ): 'PAGO_REGISTRADO' | 'AUSENTE' | 'REPROGRAMADO' | 'PENDIENTE' {
     const estadoVisita = String(v?.estadoVisita || '').toLowerCase();
     const recaudado = Number(v?.recaudadoDelDia || 0);
@@ -6179,7 +6531,10 @@ export class RoutesService {
     return 'PENDIENTE';
   }
 
-  private normalizeGestionValue(value: any) {
+  // `string | null | undefined` y no `unknown`: los dos llamadores le pasan campos de
+  // texto. Con `unknown`, eslint avisa con razon de que un `String(objeto)` daria
+  // "[object Object]" y se guardaria como estado de gestion.
+  private normalizeGestionValue(value: string | null | undefined) {
     return String(value || '')
       .trim()
       .toLowerCase()
@@ -6188,8 +6543,22 @@ export class RoutesService {
   }
 
   private resolveEstadoGestionPrestamo(
-    visita: any,
-    prestamo: any,
+    visita: {
+      estadoVisita?: string | null;
+      estadoGestion?: string | null;
+      prestamos?: unknown[] | null;
+      prestamoObjetivoId?: string | null;
+      cuotaObjetivoPrestamoId?: string | null;
+      recaudadoDelDia?: Prisma.Decimal | number | null;
+    } | null,
+    prestamo: {
+      id?: string;
+      estadoGestion?: string | null;
+      estadoVisita?: string | null;
+      proximaCuota?: CuotaOperativa | null;
+      recaudadoDelDia?: Prisma.Decimal | number | null;
+      recaudadoHoy?: Prisma.Decimal | number | null;
+    } | null,
   ): 'PAGO_REGISTRADO' | 'AUSENTE' | 'REPROGRAMADO' | 'PENDIENTE' {
     const estadoPrestamo = this.normalizeGestionValue(
       prestamo?.estadoGestion ||
@@ -6258,11 +6627,11 @@ export class RoutesService {
     return 'PENDIENTE';
   }
 
-  private buildObligacionesOperativas(visitas: any[]) {
-    return visitas.flatMap((visita: any) => {
+  private buildObligacionesOperativas(visitas: VisitaDelDia[]) {
+    return visitas.flatMap((visita) => {
       return (visita.prestamos || [])
-        .filter((prestamo: any) => isPrestamoOperativoRuta(prestamo))
-        .map((prestamo: any) => {
+        .filter((prestamo) => isPrestamoOperativoRuta(prestamo))
+        .map((prestamo) => {
           const estadoGestion = this.resolveEstadoGestionPrestamo(
             visita,
             prestamo,
@@ -6309,7 +6678,7 @@ export class RoutesService {
             recaudado,
           };
         })
-        .filter((item: any) => {
+        .filter((item) => {
           return (
             item.metaPendiente > 0 ||
             item.recaudado > 0 ||
@@ -6350,15 +6719,12 @@ export class RoutesService {
 
         const obligaciones = this.buildObligacionesOperativas(visitas);
 
-        const metaOperativaJornada = obligaciones.reduce(
-          (sum: number, o: any) => {
-            return sum + Number(o.metaPendiente || 0);
-          },
-          0,
-        );
+        const metaOperativaJornada = obligaciones.reduce((sum: number, o) => {
+          return sum + Number(o.metaPendiente || 0);
+        }, 0);
 
         const recaudoOperativoJornada = obligaciones.reduce(
-          (sum: number, o: any) => {
+          (sum: number, o) => {
             return sum + Number(o.recaudado || 0);
           },
           0,
@@ -6385,54 +6751,57 @@ export class RoutesService {
               ? 100
               : 0;
 
-        const obligacionesGestionadas = obligaciones.filter((o: any) => {
+        const obligacionesGestionadas = obligaciones.filter((o) => {
           return o.estadoGestion !== 'PENDIENTE';
         });
 
-        const obligacionesPagaron = obligaciones.filter((o: any) => {
+        const obligacionesPagaron = obligaciones.filter((o) => {
           return o.estadoGestion === 'PAGO_REGISTRADO';
         });
 
-        const obligacionesAusentes = obligaciones.filter((o: any) => {
+        const obligacionesAusentes = obligaciones.filter((o) => {
           return o.estadoGestion === 'AUSENTE';
         });
 
-        const obligacionesPendientes = obligaciones.filter((o: any) => {
+        const obligacionesPendientes = obligaciones.filter((o) => {
           return o.estadoGestion === 'PENDIENTE';
         });
 
-        const clientesGestionados = visitas.filter((v: any) => {
+        const clientesGestionados = visitas.filter((v) => {
           return this.resolveEstadoGestionCierrePendiente(v) !== 'PENDIENTE';
         });
 
-        const clientesPagaron = visitas.filter((v: any) => {
+        const clientesPagaron = visitas.filter((v) => {
           return (
             this.resolveEstadoGestionCierrePendiente(v) === 'PAGO_REGISTRADO'
           );
         });
 
-        const clientesAusentes = visitas.filter((v: any) => {
+        const clientesAusentes = visitas.filter((v) => {
           return this.resolveEstadoGestionCierrePendiente(v) === 'AUSENTE';
         });
 
-        const clientesPendientes = visitas.filter((v: any) => {
+        const clientesPendientes = visitas.filter((v) => {
           return this.resolveEstadoGestionCierrePendiente(v) === 'PENDIENTE';
         });
 
-        const getSaldoOperativoJornada = (v: any) => {
-          return (v?.prestamos || []).reduce((sum: number, prestamo: any) => {
-            if (prestamo?.montoMetaOperativaPendiente != null) {
-              return sum + Number(prestamo.montoMetaOperativaPendiente || 0);
-            }
-            return (
-              sum +
-              Number(
-                prestamo?.cuotaObjetivo?.saldoExigibleEnFechaOperativa ||
-                  prestamo?.proximaCuota?.montoNominal ||
-                  0,
-              )
-            );
-          }, 0);
+        const getSaldoOperativoJornada = (v: VisitaDelDia) => {
+          return (v?.prestamos || []).reduce(
+            (sum: number, prestamo: PrestamoDeVisita) => {
+              if (prestamo?.montoMetaOperativaPendiente != null) {
+                return sum + Number(prestamo.montoMetaOperativaPendiente || 0);
+              }
+              return (
+                sum +
+                Number(
+                  prestamo?.cuotaObjetivo?.saldoExigibleEnFechaOperativa ||
+                    prestamo?.proximaCuota?.montoNominal ||
+                    0,
+                )
+              );
+            },
+            0,
+          );
         };
 
         return {
@@ -6481,7 +6850,7 @@ export class RoutesService {
             obligacionesAusentes: obligacionesAusentes.length,
             obligacionesPendientes: obligacionesPendientes.length,
           },
-          clientes: visitas.map((v: any) => ({
+          clientes: visitas.map((v) => ({
             asignacionId: v.asignacionId,
             ordenVisita: v.ordenVisita,
             clienteId: v.cliente?.id,
@@ -6508,7 +6877,7 @@ export class RoutesService {
             cuotaObjetivoPrestamoId: v.cuotaObjetivoPrestamoId || null,
             prestamos: v.prestamos || [],
           })),
-          obligaciones: obligaciones.map((item: any) => ({
+          obligaciones: obligaciones.map((item) => ({
             asignacionId: item.visita.asignacionId,
             ordenVisita: item.visita.ordenVisita,
             cliente: item.visita.cliente,

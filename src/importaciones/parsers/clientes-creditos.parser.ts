@@ -243,7 +243,7 @@ export class ClientesCreditosParser {
     const preciosPorPlazo = new Map<string, number>();
     productosBd.forEach((p) => {
       const codigo = String(p.codigo).trim().toUpperCase();
-      (p.precios ?? []).forEach((precio: any) => {
+      (p.precios ?? []).forEach((precio) => {
         preciosPorPlazo.set(
           `${codigo}|${Number(precio.meses)}`,
           Number(precio.precio) || 0,
@@ -1075,7 +1075,11 @@ export class ClientesCreditosParser {
           );
         }
 
-        if (!Object.values(FrecuenciaPago).includes(frecuenciaPago as any)) {
+        // `frecuenciaPago` es un `string` normalizado de la celda; `Object.values` de un
+        // enum de Prisma da su union, que no acepta buscar un string suelto.
+        if (
+          !(Object.values(FrecuenciaPago) as string[]).includes(frecuenciaPago)
+        ) {
           addError(
             'frecuencia_pago',
             'Debe ser DIARIO, SEMANAL, QUINCENAL o MENSUAL',
@@ -1369,8 +1373,14 @@ export class ClientesCreditosParser {
           return;
         }
 
+        // Esta guarda no se cumple nunca: unas lineas arriba, `if (!tipoAmortizacion)`
+        // llama a `addError`, que activa `tieneError`, y el `return` de arriba ya salio.
+        // Esta aqui porque TypeScript no puede seguir ese efecto y de otro modo hay que
+        // castear el `| null` en las dos llamadas de abajo.
+        if (!tipoAmortizacion) return;
+
         const interesTotal = calcularInteresTotal(
-          tipoAmortizacion as any,
+          tipoAmortizacion,
           montoEfectivo as number,
           tasaInteres as number,
           plazoMesesEfectivo as number,
@@ -1384,7 +1394,7 @@ export class ClientesCreditosParser {
         // la última cuota. La vista previa mostraba un saldo que después no
         // coincidía con el guardado, por unos pesos.
         const tablaCuotas = construirTablaCuotas(
-          tipoAmortizacion as any,
+          tipoAmortizacion,
           montoEfectivo as number,
           interesTotal,
           cantidadCuotas as number,

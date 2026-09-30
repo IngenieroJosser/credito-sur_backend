@@ -33,7 +33,7 @@ describe('PushController', () => {
     };
     const controller = new PushController(pushService as any);
 
-    await (controller as any).unsubscribe(
+    await controller.unsubscribe(
       encodeURIComponent('https://push.example/sub'),
       { user: { id: 'authenticated-user' } },
     );
@@ -50,7 +50,7 @@ describe('PushController', () => {
     };
     const controller = new PushController(pushService as any);
 
-    await (controller as any).getUserSubscriptions({
+    await controller.getUserSubscriptions({
       user: { id: 'authenticated-user' },
     });
 

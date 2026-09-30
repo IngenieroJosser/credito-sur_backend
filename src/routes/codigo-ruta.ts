@@ -1,3 +1,4 @@
+import { textoComparable } from '../common/texto.util';
 /**
  * Formato unico del codigo de ruta.
  *
@@ -24,12 +25,9 @@ export const PREFIJO_CODIGO_RUTA = 'RT';
 export const LARGO_MAXIMO_CODIGO_RUTA = 20;
 
 export function normalizarCodigoRuta(valor: unknown): string {
-  const crudo = String(valor ?? '')
-    .trim()
-    .toUpperCase()
-    .normalize('NFD')
-    // Quitar tildes: 'BOGOTÁ' y 'BOGOTA' deben dar el mismo codigo.
-    .replace(/[̀-ͯ]/g, '');
+  // `textoComparable` recorta, pone en mayusculas y quita tildes: 'BOGOTÁ' y
+  // 'BOGOTA' deben dar el mismo codigo.
+  const crudo = textoComparable(valor);
 
   if (!crudo) return '';
 

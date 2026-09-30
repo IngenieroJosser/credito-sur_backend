@@ -175,7 +175,7 @@ function buildMockPrisma(overrides: Record<string, unknown> = {}) {
     rutaJornada: {
       findFirst: jest.fn().mockResolvedValue(RUTA_JORNADA_ABIERTA),
     },
-    $transaction: jest.fn().mockImplementation((cb: any) => cb(txMock)),
+    $transaction: jest.fn().mockImplementation((cb) => cb(txMock)),
     _tx: txMock,
     ...overrides,
   };
@@ -196,8 +196,8 @@ describe('CajasService', () => {
     }).compile();
 
     service = module.get<CajasService>(CajasService);
-    prisma = module.get<PrismaService>(PrismaService) as any;
-    ledgerService = module.get<LedgerService>(LedgerService) as any;
+    prisma = module.get<PrismaService>(PrismaService);
+    ledgerService = module.get<LedgerService>(LedgerService);
   });
 
   afterEach(() => {

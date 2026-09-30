@@ -8,15 +8,17 @@ import {
   Logger,
 } from '@nestjs/common';
 import { CreatePaymentDto } from './dto/create-payment.dto';
-import { PrismaService } from '../prisma/prisma.service';
+import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
 import {
   EstadoPrestamo,
+  Cuota,
   EstadoCuota,
   MetodoPago,
   TipoTransaccion,
   EstadoAprobacion,
   Prisma,
   RolUsuario,
+  TipoRegistroPago,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { AuditService } from '../audit/audit.service';
@@ -55,6 +57,62 @@ type PaymentActor =
     }
   | null
   | undefined;
+
+/**
+ * El pago que se devuelve cuando alguien repite una peticion con la misma llave de
+ * idempotencia.
+ *
+ * El `include` se saca de la consulta para que `buildIdempotentPaymentReplay`
+ * declare lo que recibe. Decia `pago: any`, y ese metodo suma los detalles y lee el
+ * cliente y el saldo del prestamo: si la consulta dejara de cargar `detalles`, la
+ * respuesta del reintento diria que se abono cero a capital y a interes sin que
+ * nada fallara.
+ */
+const pagoParaReplay = Prisma.validator<Prisma.PagoDefaultArgs>()({
+  include: {
+    detalles: true,
+    cliente: {
+      select: { id: true, nombres: true, apellidos: true },
+    },
+    prestamo: {
+      select: { id: true, saldoPendiente: true },
+    },
+  },
+});
+
+type PagoParaReplay = Prisma.PagoGetPayload<typeof pagoParaReplay>;
+
+/**
+ * El prestamo sobre el que se aplica un pago, con sus cuotas abiertas en orden y
+ * los datos del cliente que van al recibo.
+ *
+ * El `include` estaba escrito DOS veces en este archivo, y las dos firmas que
+ * reciben esas filas decian `prestamo: any` y `prestamoActual: any`. Son los
+ * metodos que reparten el dinero entre las cuotas: si una de las dos consultas
+ * dejara de pedir `cuotas`, el reparto no tendria donde aplicar y el pago quedaria
+ * sin imputar, sin que nada fallara al compilar.
+ *
+ * El `orderBy` es parte del contrato, no un detalle: la cascada aplica el dinero
+ * cuota por cuota en ese orden, y recibirlas desordenadas cambia a que cuota entra
+ * cada peso.
+ */
+const prestamoParaCobrar = Prisma.validator<Prisma.PrestamoDefaultArgs>()({
+  include: {
+    cuotas: {
+      where: {
+        estado: {
+          in: [EstadoCuota.PENDIENTE, EstadoCuota.PARCIAL, EstadoCuota.VENCIDA],
+        },
+      },
+      orderBy: { numeroCuota: 'asc' },
+    },
+    cliente: {
+      select: { id: true, dni: true, nombres: true, apellidos: true },
+    },
+  },
+});
+
+type PrestamoParaCobrar = Prisma.PrestamoGetPayload<typeof prestamoParaCobrar>;
 
 @Injectable()
 export class PaymentsService {
@@ -139,7 +197,7 @@ export class PaymentsService {
    * como un descuadre que nadie sabe de donde salio.
    */
   private async resolveCajaIngresoPago(
-    tx: Prisma.TransactionClient,
+    tx: TransaccionPrisma,
     params: {
       actor: PaymentActor;
       rutaId: string;
@@ -157,7 +215,7 @@ export class PaymentsService {
       const cajaOficina = await tx.caja.findFirst({
         where: {
           codigo: 'CAJA-OFICINA',
-          tipo: 'PRINCIPAL' as any,
+          tipo: 'PRINCIPAL',
           activa: true,
         },
         select: {
@@ -198,7 +256,7 @@ export class PaymentsService {
 
       const cajaSupervisor = await tx.caja.findFirst({
         where: {
-          tipo: 'RUTA' as any,
+          tipo: 'RUTA',
           activa: true,
           responsableId: actorId,
           rutaId: null,
@@ -225,7 +283,7 @@ export class PaymentsService {
     const cajaRuta = await tx.caja.findFirst({
       where: {
         rutaId: params.rutaId,
-        tipo: 'RUTA' as any,
+        tipo: 'RUTA',
         activa: true,
       },
       select: {
@@ -299,11 +357,11 @@ export class PaymentsService {
       }
     }
 
-    this.logger.error('Error inesperado registrando pago', error as any);
+    this.logger.error('Error inesperado registrando pago', error);
     throw error;
   }
 
-  private async ensureCajaBanco(tx: Prisma.TransactionClient) {
+  private async ensureCajaBanco(tx: TransaccionPrisma) {
     const existing = await tx.caja.findUnique({
       where: { codigo: 'CAJA-BANCO' },
       select: { id: true, nombre: true, saldoActual: true },
@@ -312,8 +370,8 @@ export class PaymentsService {
 
     const adminUser = await tx.usuario.findFirst({
       where: {
-        rol: { in: ['SUPER_ADMINISTRADOR', 'ADMIN'] as any },
-        estado: 'ACTIVO' as any,
+        rol: { in: ['SUPER_ADMINISTRADOR', 'ADMIN'] },
+        estado: 'ACTIVO',
         eliminadoEn: null,
       },
       orderBy: { creadoEn: 'asc' },
@@ -329,7 +387,7 @@ export class PaymentsService {
       data: {
         codigo: 'CAJA-BANCO',
         nombre: 'Caja Banco',
-        tipo: 'PRINCIPAL' as any,
+        tipo: 'PRINCIPAL',
         responsableId: adminUser.id,
         saldoActual: 0,
         activa: true,
@@ -389,14 +447,14 @@ export class PaymentsService {
     return `sha256:${createHash('sha256').update(key).digest('hex')}`;
   }
 
-  private buildIdempotentPaymentReplay(pago: any) {
+  private buildIdempotentPaymentReplay(pago: PagoParaReplay) {
     const montoTotal = Number(pago?.montoTotal || 0);
     const capitalRecuperado = (pago?.detalles || []).reduce(
-      (sum: number, detalle: any) => sum + Number(detalle?.montoCapital || 0),
+      (sum: number, detalle) => sum + Number(detalle?.montoCapital || 0),
       0,
     );
     const interesRecuperado = (pago?.detalles || []).reduce(
-      (sum: number, detalle: any) => sum + Number(detalle?.montoInteres || 0),
+      (sum: number, detalle) => sum + Number(detalle?.montoInteres || 0),
       0,
     );
     const saldoNuevo = Number(pago?.prestamo?.saldoPendiente || 0);
@@ -420,15 +478,7 @@ export class PaymentsService {
     if (!idempotencyKey) return null;
     return this.prisma.pago.findFirst({
       where: { idempotencyKey },
-      include: {
-        detalles: true,
-        cliente: {
-          select: { id: true, nombres: true, apellidos: true },
-        },
-        prestamo: {
-          select: { id: true, saldoPendiente: true },
-        },
-      },
+      ...pagoParaReplay,
     });
   }
 
@@ -468,7 +518,7 @@ export class PaymentsService {
    * que quien llama lo aplique dentro de su propia transaccion.
    */
   private calcularAplicacionPago(
-    prestamo: any,
+    prestamo: PrestamoParaCobrar,
     montoTotal: number,
     cuotaIdObjetivo?: string,
     aplicarDesdeCuotaObjetivo = false,
@@ -497,11 +547,11 @@ export class PaymentsService {
       if (!cuotaIdObjetivo) return cuotasBase;
 
       if (!aplicarDesdeCuotaObjetivo) {
-        return cuotasBase.filter((cuota: any) => cuota.id === cuotaIdObjetivo);
+        return cuotasBase.filter((cuota) => cuota.id === cuotaIdObjetivo);
       }
 
       const cuotaIndex = cuotasBase.findIndex(
-        (cuota: any) => cuota.id === cuotaIdObjetivo,
+        (cuota) => cuota.id === cuotaIdObjetivo,
       );
 
       return cuotaIndex >= 0 ? cuotasBase.slice(cuotaIndex) : [];
@@ -616,7 +666,7 @@ export class PaymentsService {
    */
   private validatePagoIntentAgainstCurrentCuota(
     paymentDto: CreatePaymentDto,
-    prestamoActual: any,
+    prestamoActual: PrestamoParaCobrar,
   ) {
     if (paymentDto.tipoRegistro !== 'PAGO') return;
     if (paymentDto.cuotaId) return;
@@ -719,23 +769,7 @@ export class PaymentsService {
     // Obtener préstamo con cuotas pendientes
     const prestamo = await this.prisma.prestamo.findFirst({
       where: { id: prestamoIdVal, eliminadoEn: null },
-      include: {
-        cuotas: {
-          where: {
-            estado: {
-              in: [
-                EstadoCuota.PENDIENTE,
-                EstadoCuota.PARCIAL,
-                EstadoCuota.VENCIDA,
-              ],
-            },
-          },
-          orderBy: { numeroCuota: 'asc' },
-        },
-        cliente: {
-          select: { id: true, dni: true, nombres: true, apellidos: true },
-        },
-      },
+      ...prestamoParaCobrar,
     });
 
     if (!prestamo) {
@@ -830,7 +864,10 @@ export class PaymentsService {
 
     let montoRestante = montoTotal;
 
-    let capitalTotal = 0;
+    // Se acumula y no se lee: el capital que va al Ledger se deriva de
+    // `montoTotal - interes - mora` (ver `_capitalTotalFinal` mas abajo). Lleva
+    // guion bajo por la convencion que ya usa este archivo para lo no usado.
+    let _capitalTotal = 0;
     let interesTotal = 0;
     let moraTotal = 0;
 
@@ -890,7 +927,7 @@ export class PaymentsService {
       const aplicarCapital = Math.min(montoRestante, faltaCapital);
       pagoAplicadoCapital = aplicarCapital;
       montoRestante -= aplicarCapital;
-      capitalTotal += aplicarCapital;
+      _capitalTotal += aplicarCapital;
 
       const totalAplicadoCuota =
         pagoAplicadoMora + pagoAplicadoInteres + pagoAplicadoCapital;
@@ -1048,7 +1085,7 @@ export class PaymentsService {
 
       const approval = await this.prisma.aprobacion.create({
         data: {
-          tipoAprobacion: 'PAGO_TRANSFERENCIA' as any,
+          tipoAprobacion: 'PAGO_TRANSFERENCIA',
           idempotencyKey,
           referenciaId: prestamoIdVal,
           tablaReferencia: 'prestamos',
@@ -1104,7 +1141,7 @@ export class PaymentsService {
             prestamoId: prestamoIdVal,
             clienteId: prestamo.clienteId,
             entidad: 'APROBACION',
-            tipoContenido: 'COMPROBANTE_TRANSFERENCIA' as any,
+            tipoContenido: 'COMPROBANTE_TRANSFERENCIA',
             tipoArchivo: comprobante!.mimetype,
             formato: cloudResult.formato,
             nombreOriginal: comprobante!.originalname,
@@ -1149,7 +1186,7 @@ export class PaymentsService {
       this.notificacionesGateway.broadcastAprobacionesActualizadas({
         accion: 'CREAR',
         aprobacionId: approval.id,
-        tipoAprobacion: 'PAGO_TRANSFERENCIA' as any,
+        tipoAprobacion: 'PAGO_TRANSFERENCIA',
       });
 
       return {
@@ -1167,23 +1204,7 @@ export class PaymentsService {
 
         const prestamoActual = await tx.prestamo.findFirst({
           where: { id: prestamoIdVal, eliminadoEn: null },
-          include: {
-            cuotas: {
-              where: {
-                estado: {
-                  in: [
-                    EstadoCuota.PENDIENTE,
-                    EstadoCuota.PARCIAL,
-                    EstadoCuota.VENCIDA,
-                  ],
-                },
-              },
-              orderBy: { numeroCuota: 'asc' },
-            },
-            cliente: {
-              select: { id: true, dni: true, nombres: true, apellidos: true },
-            },
-          },
+          ...prestamoParaCobrar,
         });
 
         if (!prestamoActual) {
@@ -1289,6 +1310,12 @@ export class PaymentsService {
             fechaPago: fechaPagoBogota,
             montoTotal,
             metodoPago: paymentDto.metodoPago || MetodoPago.EFECTIVO,
+            // Se guarda: hasta ahora `tipoRegistro` solo decidia comportamiento (el
+            // minimo del abono, el estado de la visita, la nota de gestion) y se perdia.
+            // Por eso el export de pagos tenia una columna `esAbono` que salia siempre en
+            // false. Va sin valor por omision: si el cliente no lo manda, queda null
+            // ("no se sabe") en vez de fingir que fue un pago.
+            tipoRegistro: paymentDto.tipoRegistro,
             numeroReferencia: paymentDto.numeroReferencia,
             notas: paymentDto.notas,
             fechaOperativaRuta: paymentDto.fechaOperativaRuta,
@@ -1960,6 +1987,22 @@ export class PaymentsService {
         cliente: { select: { nombres: true, apellidos: true, dni: true } },
         prestamo: { select: { numeroPrestamo: true } },
         cobrador: { select: { nombres: true, apellidos: true, rol: true } },
+        /**
+         * El desglose del pago vive aqui, no en `Pago`.
+         *
+         * Las columnas de capital, interes y mora de este export se leian como
+         * `p.capitalPagado`, `p.interesPagado` y `p.moraPagada`, y ninguna de las tres
+         * es columna de `model Pago`: las dos primeras son de `model Prestamo` y la
+         * tercera no existe en ningun sitio. O sea que el archivo exportado las traia
+         * SIEMPRE en 0. Lo real es la suma de los detalles, una fila por cuota cubierta.
+         */
+        detalles: {
+          select: {
+            montoCapital: true,
+            montoInteres: true,
+            montoInteresMora: true,
+          },
+        },
       },
       orderBy: { fechaPago: 'desc' },
       take: 10000,
@@ -2045,12 +2088,19 @@ export class PaymentsService {
     );
 
     // 2. Mapeo al tipo del template
+    /** Suma un campo del desglose de un pago. */
+    const sumaDetalles = (
+      detalles: PagoConRelacionesExport['detalles'],
+      campo: 'montoCapital' | 'montoInteres' | 'montoInteresMora',
+    ): number =>
+      (detalles || []).reduce((total, d) => total + Number(d[campo] || 0), 0);
+
     const filas: PagoRow[] = pagos.map((p: PagoConRelacionesExport) => {
       const fechaPagoKey = getBogotaDayKey(p.fechaPago);
       const gestion = visitasMap.get(`${p.clienteId}|${fechaPagoKey}`);
 
       // Determinar origenCaja desde la transacción asociada al pago
-      const transaccion = transaccionPorNumeroPago.get(p.numeroPago) as any;
+      const transaccion = transaccionPorNumeroPago.get(p.numeroPago);
       const caja = transaccion?.caja;
 
       let origenCaja = 'Ruta';
@@ -2082,11 +2132,18 @@ export class PaymentsService {
         cobrador: p.cobrador
           ? `${p.cobrador.nombres} ${p.cobrador.apellidos}`
           : 'Admin',
-        esAbono: (p as any).esAbono ?? false,
-        capitalPagado: Number((p as any).capitalPagado || 0),
-        interesPagado: Number((p as any).interesPagado || 0),
-        moraPagada: Number((p as any).moraPagada || 0),
-        comentario: (p as any).notas || '',
+        /**
+         * Ya se puede saber: `tipoRegistro` es columna de `Pago` desde la migracion
+         * `20260927120000_tipo_registro_pago`. Antes esta celda salia SIEMPRE en false.
+         *
+         * Los pagos anteriores a esa columna tienen `null` —no se sabe cual fueron— y
+         * caen en `false`, que es lo que el export ya mostraba para todos.
+         */
+        esAbono: p.tipoRegistro === TipoRegistroPago.ABONO,
+        capitalPagado: sumaDetalles(p.detalles, 'montoCapital'),
+        interesPagado: sumaDetalles(p.detalles, 'montoInteres'),
+        moraPagada: sumaDetalles(p.detalles, 'montoInteresMora'),
+        comentario: p.notas || '',
         origenCaja,
         estadoVisita: gestion?.estadoVisita || null,
         notasVisita: gestion?.notas || null,
@@ -2128,12 +2185,10 @@ export class PaymentsService {
     if (filters.from || filters.to) {
       where.fechaPago = {};
       if (filters.from) {
-        (where.fechaPago as any).gte = new Date(
-          `${filters.from}T00:00:00-05:00`,
-        );
+        where.fechaPago.gte = new Date(`${filters.from}T00:00:00-05:00`);
       }
       if (filters.to) {
-        (where.fechaPago as any).lte = new Date(`${filters.to}T23:59:59-05:00`);
+        where.fechaPago.lte = new Date(`${filters.to}T23:59:59-05:00`);
       }
     }
 
@@ -2173,7 +2228,7 @@ export class PaymentsService {
     });
 
     return {
-      candidatos: pagos.map((p: any) => ({
+      candidatos: pagos.map((p) => ({
         id: p.id,
         numeroPago: p.numeroPago,
         fechaPago: p.fechaPago,
@@ -2184,7 +2239,7 @@ export class PaymentsService {
         prestamoId: p.prestamoId,
         numeroPrestamo: p.prestamo?.numeroPrestamo,
         saldoPrestamo: Number(p.prestamo?.saldoPendiente || 0),
-        cuotas: (p.detalles || []).map((d: any) => ({
+        cuotas: (p.detalles || []).map((d) => ({
           cuotaId: d.cuotaId,
           numeroCuota: d.cuota?.numeroCuota,
           montoAplicado: Number(d.monto || 0),
@@ -2208,7 +2263,7 @@ export class PaymentsService {
    * La `fechaPago` solo se conserva si la cuota sigue completa; en cualquier otro
    * caso se limpia, porque ya no esta saldada.
    */
-  private getCuotaStateAfterRevert(cuota: any, nextPaid: number) {
+  private getCuotaStateAfterRevert(cuota: Cuota, nextPaid: number) {
     const amount = Number(cuota?.monto || 0);
     if (nextPaid >= amount) {
       return {
@@ -2279,15 +2334,15 @@ export class PaymentsService {
 
       const montoTotal = Number(pago.montoTotal || 0);
       const capitalTotal = detalles.reduce(
-        (s: number, d: any) => s + Number(d.montoCapital || 0),
+        (s: number, d) => s + Number(d.montoCapital || 0),
         0,
       );
       const interesTotal = detalles.reduce(
-        (s: number, d: any) => s + Number(d.montoInteres || 0),
+        (s: number, d) => s + Number(d.montoInteres || 0),
         0,
       );
       const moraTotal = detalles.reduce(
-        (s: number, d: any) => s + Number(d.montoInteresMora || 0),
+        (s: number, d) => s + Number(d.montoInteresMora || 0),
         0,
       );
 
@@ -2386,7 +2441,7 @@ export class PaymentsService {
             description: `Reverso administrativo de pago ${pago.numeroPago}`,
             createdBy: params.actor?.id || pago.cobradorId,
             lines: {
-              create: originalEntry.lines.map((line: any) => ({
+              create: originalEntry.lines.map((line) => ({
                 accountCode: line.accountCode,
                 debitAmount: line.creditAmount || null,
                 creditAmount: line.debitAmount || null,
@@ -2396,7 +2451,9 @@ export class PaymentsService {
           },
         });
 
-        for (const line of originalEntry.lines as any[]) {
+        // `include: { lines: true }` ya tipa esto; el cast y la anotacion `line: any`
+        // de arriba solo apagaban la comprobacion.
+        for (const line of originalEntry.lines) {
           if (!line.cajaId) continue;
           const originalDelta =
             Number(line.debitAmount || 0) - Number(line.creditAmount || 0);
