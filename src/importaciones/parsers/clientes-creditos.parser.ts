@@ -458,7 +458,29 @@ export class ClientesCreditosParser {
       }
 
       if (!cc) {
-        addError('cc', 'Escriba la cédula del cliente', cc);
+        // La cédula NO se puede omitir, y no es una decisión de esta validación: la columna
+        // `dni` de `Cliente` es `String @unique` NOT NULL en el esquema (schema.prisma:178),
+        // así que un cliente sin ella no se puede insertar. Aceptarla vacía aquí solo movería
+        // el fallo al momento de guardar, y con el archivo a medio importar.
+        //
+        // Pasa de verdad y no es un descuido del que llena la plantilla: de los clientes que
+        // solo tuvieron crédito de DINERO, la empresa no tiene la cédula. Para esos, meter una
+        // inventada es peor que no meterlos, porque `dni` es la llave con la que el sistema
+        // reconoce a una persona: dos filas sin cédula real acabarían siendo dos clientes
+        // distintos para la misma persona, o peor, chocando con la cédula de otro.
+        //
+        // Resolverlo de verdad pide declarar `dni` opcional en el esquema, y eso es una
+        // migración sobre una llave única con 196 lecturas entre los dos repos: tiene que ir
+        // en su propio cambio y con una decisión tomada sobre qué hacer con los duplicados.
+        // Mientras eso no exista, el mensaje al menos dice qué hacer en vez de repetir la
+        // orden que el usuario no puede cumplir.
+        addError(
+          'cc',
+          'Falta la cédula. Si no la tiene, deje la fila fuera del archivo por ahora y ' +
+            'repórtelo: un cliente sin cédula no se puede registrar, porque es el dato con ' +
+            'el que el sistema distingue a una persona de otra.',
+          cc,
+        );
       } else if (!/^\d{6,10}$/.test(cc)) {
         addError(
           'cc',
