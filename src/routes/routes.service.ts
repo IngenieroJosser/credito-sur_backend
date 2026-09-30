@@ -2425,7 +2425,8 @@ export class RoutesService {
           );
 
           for (const asig of asignaciones) {
-            const visitaOperativa: any = visitasOperativas.get(
+            // Sin anotacion: el `Map` ya sabe que guarda, y el `any` solo tapaba eso.
+            const visitaOperativa = visitasOperativas.get(
               String(asig.clienteId || ''),
             );
 
@@ -2437,11 +2438,19 @@ export class RoutesService {
             );
 
             if (asig.cliente) {
-              if (!visitaOperativa) {
-                asig.cliente.prestamos = [];
-              } else {
-                asig.cliente.prestamos = visitaOperativa.prestamos || [];
-              }
+              // HALLAZGO, no un arreglo: aqui se sobreescribe el arreglo de creditos del
+              // DETALLE (forma de Prisma, con `cuotas` y `extensiones`) con el de la
+              // JORNADA (`PrestamoDeVisita`, que es otra forma). Parece intencional —la
+              // pantalla quiere ver los creditos de la jornada— pero las dos formas no
+              // coinciden y el `any` de `visitaOperativa` lo tapaba por completo.
+              //
+              // No se cambia el comportamiento: se deja escrito que el destino guarda una
+              // de las dos formas, que es lo que de verdad pasa. Unificarlas es otro
+              // trabajo y toca el contrato de la respuesta, asi que no va aqui.
+              const clienteDelDetalle = asig.cliente as {
+                prestamos?: unknown[];
+              };
+              clienteDelDetalle.prestamos = visitaOperativa?.prestamos || [];
             }
           }
         } catch {
@@ -3904,15 +3913,20 @@ export class RoutesService {
           })
         : [];
     const resolvePrestamoIdFromReprogramacion = (
-      aprobacion: any,
+      aprobacion: {
+        datosSolicitud?: Prisma.JsonValue;
+        referenciaId?: string | null;
+      } | null,
     ): string | null => {
       const datos = objetoDeJson(aprobacion?.datosSolicitud);
 
       const prestamoIdDirecto = (textoDeJson(datos.prestamoId) ?? '').trim();
       if (prestamoIdDirecto) return prestamoIdDirecto;
 
-      const cuotaId = String(
-        datos?.cuotaId || aprobacion?.referenciaId || '',
+      const cuotaId = (
+        textoDeJson(datos.cuotaId) ||
+        aprobacion?.referenciaId ||
+        ''
       ).trim();
       if (!cuotaId) return null;
 
@@ -3935,7 +3949,14 @@ export class RoutesService {
       return null;
     };
 
-    const reprogramacionPorPrestamo = new Map<string, any>();
+    // El tipo del valor se DERIVA de la consulta que lo llena, con
+    // `(typeof reprogramacionesJornada)[number]`. Era `Map<string, any>`, y de ahi salia
+    // el `any` de las dos variables del objetivo mas abajo.
+    type ReprogramacionDeJornada = (typeof reprogramacionesJornada)[number];
+    const reprogramacionPorPrestamo = new Map<
+      string,
+      ReprogramacionDeJornada
+    >();
 
     reprogramacionesJornada.forEach((aprobacion) => {
       const datos = objetoDeJson(aprobacion?.datosSolicitud);
@@ -3973,8 +3994,8 @@ export class RoutesService {
       );
       if (!cuotaReprogramada) continue;
 
-      const datosReprogramacion = reprogramacion?.datosSolicitud || {};
-      const clienteId = String(datosReprogramacion?.clienteId || '');
+      const datosReprogramacion = objetoDeJson(reprogramacion?.datosSolicitud);
+      const clienteId = textoDeJson(datosReprogramacion.clienteId) ?? '';
       if (!clienteId || !prestamoId) continue;
 
       const visitaInicial = visitasDelDia.find((v) => {
@@ -4059,7 +4080,8 @@ export class RoutesService {
         recaudadoDelDia: pagosPorCliente[cliente.id] || 0,
         estadoVisita: 'reprogramado',
         notasVisita: `Reprogramación aprobada: ${
-          reprogramacion?.datosSolicitud?.motivo || 'Sin motivo'
+          textoDeJson(objetoDeJson(reprogramacion?.datosSolicitud).motivo) ||
+          'Sin motivo'
         }`,
       });
       clientesEnVisitasIniciales.add(clienteId);
@@ -4230,14 +4252,30 @@ export class RoutesService {
 
     visitasDelDia.forEach((v) => {
       const _cid = String(v?.cliente?.id || v?.clienteId || '');
-      let reprogramacionObjetivo: any = null;
-      let cuotaReprogramadaObjetivo: any = null;
+      // Van en un objeto y no como dos `let`, por dos razones.
+      //
+      // Una: `let x = null` sin anotacion es un `any` EVOLUTIVO para TypeScript y
+      // `noImplicitAny` no lo marca, asi que quitar el `: any` a secas lo habria
+      // escondido en vez de arreglarlo.
+      //
+      // Dos: con `let x: T | null = null` el compilador los estrecha a `null` en el sitio
+      // donde se leen, porque la asignacion ocurre dentro de un callback que no puede
+      // seguir. Una propiedad de objeto conserva su tipo declarado. Es el mismo dato, sin
+      // un solo cast.
+      const objetivo: {
+        reprogramacion: ReprogramacionDeJornada | null;
+        cuota: ReturnType<
+          RoutesService['buildCuotaObjetivoDesdeReprogramacion']
+        >;
+      } = { reprogramacion: null, cuota: null };
 
       if (Array.isArray(v.prestamos)) {
         v.prestamos = v.prestamos.map((prestamo) => {
           const prestamoId = String(prestamo?.id || '');
+          // `?? null` porque `Map.get` devuelve `undefined` cuando no esta, y luego se
+          // compara contra `null`. Con `any` las dos cosas eran iguales; declarado, no.
           const reprogramacion = prestamoId
-            ? reprogramacionPorPrestamo.get(prestamoId)
+            ? (reprogramacionPorPrestamo.get(prestamoId) ?? null)
             : null;
           const cuotaReprogramada = this.buildCuotaObjetivoDesdeReprogramacion(
             reprogramacion,
@@ -4251,8 +4289,8 @@ export class RoutesService {
           }
 
           if (prestamoId === String(v?.prestamoObjetivoId || '')) {
-            reprogramacionObjetivo = reprogramacion;
-            cuotaReprogramadaObjetivo = cuotaReprogramada;
+            objetivo.reprogramacion = reprogramacion;
+            objetivo.cuota = cuotaReprogramada;
           }
 
           return {
@@ -4260,7 +4298,9 @@ export class RoutesService {
             estadoGestion: 'REPROGRAMADO',
             estadoVisita: 'reprogramado',
             notasVisita: `Reprogramación aprobada: ${
-              reprogramacion?.datosSolicitud?.motivo || 'Sin motivo'
+              textoDeJson(
+                objetoDeJson(reprogramacion?.datosSolicitud).motivo,
+              ) || 'Sin motivo'
             }`,
             montoMetaOperativaPendiente: 0,
             cuotaObjetivo: cuotaReprogramada,
@@ -4306,16 +4346,18 @@ export class RoutesService {
         return;
       }
 
-      if (cuotaReprogramadaObjetivo) {
+      if (objetivo.cuota) {
         v.estadoVisita = 'reprogramado';
         v.notasVisita = `Reprogramación aprobada: ${
-          reprogramacionObjetivo?.datosSolicitud?.motivo || 'Sin motivo'
+          textoDeJson(
+            objetoDeJson(objetivo.reprogramacion?.datosSolicitud).motivo,
+          ) || 'Sin motivo'
         }`;
-        v.cuotaObjetivo = cuotaReprogramadaObjetivo;
-        v.cuotaObjetivoId = cuotaReprogramadaObjetivo.id;
-        v.cuotaObjetivoPrestamoId = cuotaReprogramadaObjetivo.id;
+        v.cuotaObjetivo = objetivo.cuota;
+        v.cuotaObjetivoId = objetivo.cuota.id;
+        v.cuotaObjetivoPrestamoId = objetivo.cuota.id;
         v.prestamoObjetivoId =
-          cuotaReprogramadaObjetivo.prestamoId || v.prestamoObjetivoId || null;
+          objetivo.cuota.prestamoId || v.prestamoObjetivoId || null;
       }
     });
 
@@ -4350,7 +4392,7 @@ export class RoutesService {
         }
       }
 
-      const registro: any = visitasMap.get(cid);
+      const registro = visitasMap.get(cid);
       if (registro) {
         const prestamoId = String(v.prestamoObjetivoId || '');
         const registroPorPrestamo = prestamoId
@@ -4369,8 +4411,10 @@ export class RoutesService {
           String(registroAplicable.estadoVisita || '').toLowerCase() ===
           'reprogramado'
         ) {
+          // `?? null` porque `Map.get` devuelve `undefined` cuando no esta, y luego se
+          // compara contra `null`. Con `any` las dos cosas eran iguales; declarado, no.
           const reprogramacion = prestamoId
-            ? reprogramacionPorPrestamo.get(prestamoId)
+            ? (reprogramacionPorPrestamo.get(prestamoId) ?? null)
             : null;
           const cuotaReprogramada = this.buildCuotaObjetivoDesdeReprogramacion(
             reprogramacion,
@@ -4919,33 +4963,49 @@ export class RoutesService {
   }
 
   private buildCuotaObjetivoDesdeReprogramacion(
-    aprobacion: any,
+    aprobacion: {
+      id?: string;
+      estado?: string | null;
+      datosSolicitud?: Prisma.JsonValue;
+      referenciaId?: string | null;
+    } | null,
     prestamoIdFallback?: string | null,
   ) {
-    const datos = aprobacion?.datosSolicitud || {};
-    const cuotaId = String(datos?.cuotaId || aprobacion?.referenciaId || '');
+    // `objetoDeJson` y no `|| {}`: con la columna declarada `Prisma.JsonValue`, el `||`
+    // dejaba pasar un texto o un numero como si fuera el objeto.
+    const datos = objetoDeJson(aprobacion?.datosSolicitud);
+    const cuotaId = String(
+      textoDeJson(datos.cuotaId) || aprobacion?.referenciaId || '',
+    );
     if (!cuotaId) return null;
 
+    // Las tres fechas pasan por `textoDeJson`: vienen de una columna `Json` y solo sirven
+    // si son texto. Antes eran `any`, y un objeto ahi hacia `new Date({})` = Invalid Date,
+    // que se guardaba como fecha de la cuota sin una queja.
     const fechaOriginal =
-      datos?.fechaVencimientoOriginal || datos?.fechaVencimiento || null;
+      textoDeJson(datos.fechaVencimientoOriginal) ??
+      textoDeJson(datos.fechaVencimiento) ??
+      null;
     const fechaOriginalKey = fechaOriginal
       ? getBogotaDayKey(new Date(fechaOriginal))
       : null;
-    const nuevaFecha = datos?.nuevaFecha || null;
+    const nuevaFecha = textoDeJson(datos.nuevaFecha) ?? null;
 
     return {
       id: cuotaId,
       prestamoId:
-        String(datos?.prestamoId || prestamoIdFallback || '').trim() || null,
-      numeroCuota: Number(datos?.numeroCuota || 0) || null,
+        String(
+          textoDeJson(datos.prestamoId) || prestamoIdFallback || '',
+        ).trim() || null,
+      numeroCuota: Number(datos.numeroCuota || 0) || null,
       estadoActual: 'REPROGRAMADA',
       fechaVencimiento: fechaOriginal,
       fechaVencimientoProrroga: nuevaFecha,
       fechaEfectiva: fechaOriginalKey,
       nuevaFechaReprogramada: nuevaFecha,
-      montoCuota: Number(datos?.montoCuota || 0),
+      montoCuota: Number(datos.montoCuota || 0),
       montoPagado: 0,
-      saldoCuota: Number(datos?.montoCuota || 0),
+      saldoCuota: Number(datos.montoCuota || 0),
       saldoExigibleEnFechaOperativa: 0,
       enMoraEnFechaOperativa: false,
       puedePagar: false,
@@ -5987,8 +6047,25 @@ export class RoutesService {
    */
   private async actualizarDeudasJornadaPendiente(
     rutaId: string,
-    jornada: any,
-    cajaRuta: any,
+    // Lo que se lee de cada uno, nombrado por una sonda `never`: seis propiedades en
+    // total, no las dos entidades enteras.
+    jornada: {
+      id: string;
+      fechaOperativa: string;
+      cierreTransaccionId?: string | null;
+      ruta?: {
+        cobradorId?: string | null;
+        cobrador?: {
+          nombres?: string | null;
+          apellidos?: string | null;
+        } | null;
+      } | null;
+    },
+    cajaRuta: {
+      id: string;
+      saldoActual: Prisma.Decimal | number;
+      responsableId?: string | null;
+    },
     creadoPorId?: string,
     esUltimaJornada: boolean = true,
   ) {
@@ -6419,7 +6496,10 @@ export class RoutesService {
   }
 
   private resolveEstadoGestionCierrePendiente(
-    v: any,
+    v: {
+      estadoVisita?: string | null;
+      recaudadoDelDia?: Prisma.Decimal | number | null;
+    } | null,
   ): 'PAGO_REGISTRADO' | 'AUSENTE' | 'REPROGRAMADO' | 'PENDIENTE' {
     const estadoVisita = String(v?.estadoVisita || '').toLowerCase();
     const recaudado = Number(v?.recaudadoDelDia || 0);
@@ -6451,7 +6531,10 @@ export class RoutesService {
     return 'PENDIENTE';
   }
 
-  private normalizeGestionValue(value: any) {
+  // `string | null | undefined` y no `unknown`: los dos llamadores le pasan campos de
+  // texto. Con `unknown`, eslint avisa con razon de que un `String(objeto)` daria
+  // "[object Object]" y se guardaria como estado de gestion.
+  private normalizeGestionValue(value: string | null | undefined) {
     return String(value || '')
       .trim()
       .toLowerCase()
@@ -6460,8 +6543,22 @@ export class RoutesService {
   }
 
   private resolveEstadoGestionPrestamo(
-    visita: any,
-    prestamo: any,
+    visita: {
+      estadoVisita?: string | null;
+      estadoGestion?: string | null;
+      prestamos?: unknown[] | null;
+      prestamoObjetivoId?: string | null;
+      cuotaObjetivoPrestamoId?: string | null;
+      recaudadoDelDia?: Prisma.Decimal | number | null;
+    } | null,
+    prestamo: {
+      id?: string;
+      estadoGestion?: string | null;
+      estadoVisita?: string | null;
+      proximaCuota?: CuotaOperativa | null;
+      recaudadoDelDia?: Prisma.Decimal | number | null;
+      recaudadoHoy?: Prisma.Decimal | number | null;
+    } | null,
   ): 'PAGO_REGISTRADO' | 'AUSENTE' | 'REPROGRAMADO' | 'PENDIENTE' {
     const estadoPrestamo = this.normalizeGestionValue(
       prestamo?.estadoGestion ||
