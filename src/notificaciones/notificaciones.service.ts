@@ -78,6 +78,31 @@ interface NotificacionParaUi {
   entidad?: string | null;
 }
 
+/**
+ * La aprobacion que se adjunta a una notificacion, derivada de su propia consulta.
+ *
+ * El `select` va en este objeto y la consulta lo usa con spread, asi que el tipo y la
+ * consulta no pueden separarse: quitar un campo del `select` rompe el codigo que lo lee.
+ * Antes el destino era `let aprobacionReal: any = null`.
+ */
+const SELECT_APROBACION_NOTIFICACION =
+  Prisma.validator<Prisma.AprobacionDefaultArgs>()({
+    select: {
+      estado: true,
+      tipoAprobacion: true,
+      datosSolicitud: true,
+      comentarios: true,
+      referenciaId: true,
+      tablaReferencia: true,
+      solicitadoPor: { select: { nombres: true, apellidos: true } },
+      aprobadoPor: { select: { nombres: true, apellidos: true } },
+    },
+  });
+
+type AprobacionParaNotificacion = Prisma.AprobacionGetPayload<
+  typeof SELECT_APROBACION_NOTIFICACION
+>;
+
 @Injectable()
 export class NotificacionesService {
   private readonly logger = new Logger(NotificacionesService.name);
@@ -175,7 +200,9 @@ export class NotificacionesService {
     const meta =
       typeof rawMeta === 'string' ? JSON.parse(rawMeta) : rawMeta || {};
 
-    let enrichedNotif: any = {
+    // El tipo se DERIVA de lo que se le asigna, en vez de `any`: es la notificacion mas
+    // los campos que este metodo agrega al enriquecerla.
+    let enrichedNotif: NotificacionParaUi & Record<string, unknown> = {
       ...notif,
       titulo: this.cleanNotificationText(notif.titulo),
       mensaje: this.cleanNotificationText(notif.mensaje),
@@ -183,22 +210,16 @@ export class NotificacionesService {
 
     try {
       let datosExtra = {};
-      let aprobacionReal: any = null;
+      // Declarado, no inferido: `let x = null` sin anotacion es un `any` EVOLUTIVO que
+      // `noImplicitAny` no marca. El tipo se DERIVA del `select` de la consulta de abajo
+      // —que usa este mismo objeto— asi que los dos no pueden separarse.
+      let aprobacionReal: AprobacionParaNotificacion | null = null;
 
       // 1. Intentar buscar como Aprobación (solo si tiene entidadId)
       if (notif.entidadId) {
         const aprobacion = await this.prisma.aprobacion.findUnique({
           where: { id: notif.entidadId },
-          select: {
-            estado: true,
-            tipoAprobacion: true,
-            datosSolicitud: true,
-            comentarios: true,
-            referenciaId: true,
-            tablaReferencia: true,
-            solicitadoPor: { select: { nombres: true, apellidos: true } },
-            aprobadoPor: { select: { nombres: true, apellidos: true } },
-          },
+          ...SELECT_APROBACION_NOTIFICACION,
         });
 
         if (aprobacion) {

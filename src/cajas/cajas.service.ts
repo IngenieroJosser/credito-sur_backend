@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import {
   Injectable,
   NotFoundException,
@@ -248,7 +249,9 @@ export class CajasService {
     efectivoContado: number,
     userId: string,
     recibidoPorId?: string,
-    denominaciones?: any,
+    // `denominaciones Json?` en el esquema (:1307): el tipo para escribirla es
+    // `InputJsonValue`, no `any`.
+    denominaciones?: Prisma.InputJsonValue,
     observaciones?: string,
     actor?: { id?: string; rol?: RolUsuario } | null,
   ) {

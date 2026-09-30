@@ -68,7 +68,7 @@ export class MirrorSyncController {
     @Headers('x-mirror-sync-timestamp') timestampHeader: string,
     @Headers('x-mirror-sync-nonce') nonceHeader: string,
     @Headers('x-mirror-sync-signature') signatureHeader: string,
-    @Body() body: { payload: any },
+    @Body() body: { payload: Record<string, unknown> },
   ) {
     // 1. Verificación Estricta de Seguridad (Búnker con expiración)
     const expectedToken = this.configService.get<string>('MIRROR_SYNC_TOKEN');
@@ -173,7 +173,9 @@ export class MirrorSyncController {
       }
 
       if (action === 'create' || action === 'update' || action === 'upsert') {
-        const id = payload.id;
+        // El id de una fila espejada es texto (uuid). Se comprueba en vez de pasarlo a
+        // `where` a ciegas, que es lo que permitia el `any` del payload.
+        const id = typeof payload.id === 'string' ? payload.id : undefined;
 
         if (id) {
           // Si el registro ya existe (por ejemplo si hubo un reconexionado o caída extraña), actualizamos
@@ -202,12 +204,13 @@ export class MirrorSyncController {
           this.logger.debug(`[Mirror VPS] Row anónimo replicado en: ${model}`);
         }
       } else if (action === 'delete') {
-        if (payload.id) {
+        const idABorrar = typeof payload.id === 'string' ? payload.id : '';
+        if (idABorrar) {
           await prismaModel
-            .delete({ where: { id: payload.id } })
+            .delete({ where: { id: idABorrar } })
             .catch(() => null); // Silencioso si ya no existía
           this.logger.debug(
-            `[Mirror VPS] Row eliminado de la réplica: ${model} - ${payload.id}`,
+            `[Mirror VPS] Row eliminado de la réplica: ${model} - ${idABorrar}`,
           );
         }
       } else if (action === 'deleteMany' || action === 'updateMany') {

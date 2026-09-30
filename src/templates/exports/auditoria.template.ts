@@ -23,8 +23,11 @@ export interface AuditoriaRow {
   accion: string;
   entidad: string;
   entidadId: string;
-  datosAnteriores?: any;
-  datosNuevos?: any;
+  // Solo se les hace `JSON.stringify(...).substring(0, 150)` para la columna del Excel
+  // (linea 107): `unknown` es exactamente lo que hace falta y lo que la columna es, un
+  // Json que nadie interpreta aqui.
+  datosAnteriores?: unknown;
+  datosNuevos?: unknown;
 }
 
 // ─── Generador Excel ──────────────────────────────────────────────────────────

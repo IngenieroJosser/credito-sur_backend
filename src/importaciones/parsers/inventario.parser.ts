@@ -4,6 +4,8 @@ import {
   ErrorValidacion,
   AdvertenciaValidacion,
   ResumenHoja,
+  ArticuloImportado,
+  PrecioImportado,
 } from '../dto/validacion-resultado.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { loadWorkbookFromBuffer } from './xlsx-workbook.loader';
@@ -84,8 +86,12 @@ export class InventarioParser {
 
     const errores: ErrorValidacion[] = [];
     const advertencias: AdvertenciaValidacion[] = [];
-    const articulosValidar: any[] = [];
-    const preciosValidar: any[] = [];
+    // `ArticuloImportado` y `PrecioImportado` ya existen en el DTO y son exactamente lo
+    // que estos dos arreglos terminan siendo (`ResultadoValidacion.articulos` y
+    // `.precios`). Se usan aqui en vez de `any[]`, que era el hueco por el que el tipo
+    // declarado alla no comprobaba nada de lo que se mete aca.
+    const articulosValidar: ArticuloImportado[] = [];
+    const preciosValidar: PrecioImportado[] = [];
     const porHoja: Record<string, ResumenHoja> = {};
 
     let totalFilas = 0;

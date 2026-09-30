@@ -19,6 +19,34 @@ import { generarPDFClientes } from '../templates/exports/clientes.template';
 import { generarExcelClientesCreditosImportable } from '../templates/exports/importables.template';
 import { unoDeLosPermitidos } from '../common/texto.util';
 
+/**
+ * Un archivo que la pantalla manda al guardar un cliente.
+ *
+ * Los once campos son los que `updateClient` lee para crear la fila de `multimedia`
+ * (clients.service.ts:298-334). Todo opcional porque la pantalla no manda siempre lo
+ * mismo: la url llega en `url`, en `path` o en `ruta` segun de donde venga el archivo,
+ * y esa cascada es justo lo que `any[]` dejaba sin comprobar.
+ */
+export type ArchivoDeCliente = {
+  // Los tres primeros van OBLIGATORIOS, y lo dice el esquema: `tipoContenido`,
+  // `tipoArchivo` y `nombreOriginal` son columnas NO nulables de `Multimedia`
+  // (schema.prisma:835-838), asi que un archivo sin ellos hace fallar el `createMany`.
+  // Con `any[]` eso no se veia en ningun sitio, y este endpoint no tiene DTO, o sea que
+  // nada valida el cuerpo en ejecucion: el fallo sale al insertar.
+  tipoContenido: TipoContenidoMultimedia;
+  tipoArchivo: string;
+  nombreOriginal: string;
+  formato?: string;
+  nombreAlmacenamiento?: string;
+  ruta?: string;
+  path?: string;
+  url?: string;
+  tamanoBytes?: number;
+  subidoPorId?: string;
+};
+
+import { TipoContenidoMultimedia } from '@prisma/client';
+
 @Injectable()
 export class ClientsService {
   private readonly logger = new Logger(ClientsService.name);
@@ -1380,7 +1408,21 @@ export class ClientsService {
     }
   }
 
-  async approveClient(id: string, aprobadoPorId: string, datosAprobados?: any) {
+  // Los cinco campos que el revisor puede corregir al aprobar, y nada mas: son los que
+  // se leen abajo con `datosAprobados?.campo || datosSolicitud.campo`.
+  async approveClient(
+    id: string,
+    aprobadoPorId: string,
+    datosAprobados?: {
+      dni?: string;
+      nombres?: string;
+      apellidos?: string;
+      telefono?: string;
+      correo?: string;
+      direccion?: string;
+      referencia?: string;
+    },
+  ) {
     try {
       // Primero encontrar la aprobación
       const aprobacion = await this.prisma.aprobacion.findUnique({
@@ -1560,7 +1602,7 @@ export class ClientsService {
       referencia2Telefono?: string;
       nivelRiesgo?: NivelRiesgo;
       puntaje?: number;
-      archivos?: any[];
+      archivos?: ArchivoDeCliente[];
       version?: number;
     },
   ) {

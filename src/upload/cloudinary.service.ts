@@ -10,7 +10,7 @@
  */
 
 import { Injectable, BadRequestException } from '@nestjs/common';
-import { v2 as cloudinary } from 'cloudinary';
+import { v2 as cloudinary, type UploadApiResponse } from 'cloudinary';
 
 export interface CloudinaryUploadOptions {
   /** Subcarpeta dentro del root de Cloudinary (ej: 'pagos/comprobantes') */
@@ -71,21 +71,36 @@ export class CloudinaryService {
 
     const resourceType = file.mimetype.startsWith('video/') ? 'video' : 'auto';
 
-    const uploadResult: any = await new Promise((resolve, reject) => {
-      const stream = cloudinary.uploader.upload_stream(
-        { folder, resource_type: resourceType },
-        (error, result) => {
-          if (error)
-            return reject(
-              new BadRequestException(
-                `Error al subir archivo a Cloudinary: ${error.message}`,
-              ),
-            );
-          resolve(result);
-        },
-      );
-      stream.end(file.buffer);
-    });
+    // `UploadApiResponse` es el tipo que cloudinary declara para esta respuesta: de ella
+    // se leen `public_id`, `secure_url`, `format` y `bytes`, y con `any` un nombre mal
+    // escrito habria guardado `undefined` como url del archivo.
+    const uploadResult: UploadApiResponse = await new Promise(
+      (resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          { folder, resource_type: resourceType },
+          (error, result) => {
+            if (error)
+              return reject(
+                new BadRequestException(
+                  `Error al subir archivo a Cloudinary: ${error.message}`,
+                ),
+              );
+            // El tipo de cloudinary dice que `result` puede venir vacio aunque no haya
+            // error. Antes, con `any`, eso resolvia la promesa con `undefined` y el fallo
+            // aparecia mas abajo al leer `public_id` de nada.
+            if (!result) {
+              return reject(
+                new BadRequestException(
+                  'Cloudinary no devolvió el archivo subido. Vuelva a intentarlo.',
+                ),
+              );
+            }
+            resolve(result);
+          },
+        );
+        stream.end(file.buffer);
+      },
+    );
 
     return {
       publicId: uploadResult.public_id,

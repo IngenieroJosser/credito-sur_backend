@@ -28,6 +28,22 @@ import type { Request, Response } from 'express';
  * por teléfono y se encuentre en el log. El detalle técnico se registra del
  * lado del servidor y no viaja al navegador.
  */
+/**
+ * El `target` de un error P2002 de Prisma, como lista de texto.
+ *
+ * Prisma lo manda a veces como un campo y a veces como varios, y su tipo es `unknown`.
+ * Antes se resolvia con `[].concat(meta.target)`, que compilaba solo porque `meta` era
+ * `any`: si llegara un objeto, ese `join` habria puesto "[object Object]" en el mensaje
+ * que lee el usuario.
+ */
+const listaDeTexto = (valor: unknown): string[] =>
+  (Array.isArray(valor) ? valor : [valor])
+    .filter(
+      (v): v is string | number =>
+        typeof v === 'string' || typeof v === 'number',
+    )
+    .map(String);
+
 @Catch()
 export class ErroresClarosFilter implements ExceptionFilter {
   private readonly logger = new Logger('Errores');
@@ -116,7 +132,9 @@ export class ErroresClarosFilter implements ExceptionFilter {
     const peticionMala = HttpStatus.BAD_REQUEST;
 
     if (exception instanceof Prisma.PrismaClientKnownRequestError) {
-      const meta: any = exception.meta ?? {};
+      // `meta` de Prisma es `Record<string, unknown>`: aqui solo se leen `target` y
+      // `field_name`, y los dos pasan por `[].concat(...)` o `String(...)`.
+      const meta: Record<string, unknown> = exception.meta ?? {};
 
       switch (exception.code) {
         case 'P2002':
@@ -124,7 +142,9 @@ export class ErroresClarosFilter implements ExceptionFilter {
             status: conflicto,
             mensaje:
               'Ya existe un registro con ese dato' +
-              (meta.target ? ` (${[].concat(meta.target).join(', ')})` : '') +
+              (meta.target
+                ? ` (${listaDeTexto(meta.target).join(', ')})`
+                : '') +
               '. Revise si lo está creando dos veces.',
           };
 
@@ -162,7 +182,10 @@ export class ErroresClarosFilter implements ExceptionFilter {
 
         case 'P2010': {
           // Consulta cruda fallida: el detalle trae el código de Postgres.
-          const texto = String(meta.message ?? exception.message ?? '');
+          // `listaDeTexto` tambien aqui: `meta.message` es `unknown` y un objeto en un
+          // `String(...)` daria "[object Object]" en el mensaje que lee el usuario.
+          const texto =
+            listaDeTexto(meta.message).join(' ') || exception.message || '';
           if (/deadlock|40P01/i.test(texto)) {
             return {
               status: conflicto,

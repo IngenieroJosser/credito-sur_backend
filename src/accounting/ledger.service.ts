@@ -180,8 +180,11 @@ export class LedgerService {
       // ninguno. `FOR NO KEY UPDATE` es compatible con `KEY SHARE` —no toca la
       // llave— y sigue siendo excluyente entre quienes mueven el saldo, que es
       // justo lo que hace falta.
+      // `Prisma.Decimal` y no `any`: la columna es `Decimal` y un `$queryRaw` la
+      // devuelve como tal, no como numero. Escrito `any`, un `saldoActual + monto` de
+      // mas abajo habria pasado sin queja concatenando en vez de sumando.
       const filas = await tx.$queryRaw<
-        Array<{ saldoActual: any; nombre: string }>
+        Array<{ saldoActual: Prisma.Decimal; nombre: string }>
       >`
         SELECT "saldoActual", nombre FROM cajas WHERE id = ${cajaId} FOR NO KEY UPDATE
       `;
@@ -877,8 +880,12 @@ export class LedgerService {
    * Solo lee. No escribe ni corrige nada.
    */
   async revisarIntegridad() {
-    const q = (sql: string): Promise<any[]> => this.prisma.$queryRawUnsafe(sql);
-    const n = (v: any) => Number(v ?? 0);
+    // Las consultas de esta revision devuelven filas con columnas calculadas (`count`,
+    // `sum`), que no corresponden a ningun modelo: el tipo honesto es una fila de valores
+    // sin tipar, y `n()` es justo el conversor que las pasa a numero.
+    const q = (sql: string): Promise<Array<Record<string, unknown>>> =>
+      this.prisma.$queryRawUnsafe(sql);
+    const n = (v: unknown) => Number(v ?? 0);
 
     const [global, cajas, descuadrados, centavos, negativas, inventario] =
       await Promise.all([

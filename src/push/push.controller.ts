@@ -28,7 +28,10 @@ export class PushController {
   async subscribe(
     @Body()
     body: {
-      subscription: { endpoint: string; keys: { p256dh: string; auth: string } };
+      subscription: {
+        endpoint: string;
+        keys: { p256dh: string; auth: string };
+      };
     },
     @Request() req: { user?: { id?: string } },
   ) {

@@ -26,7 +26,10 @@ export class SyncConflictsService {
     });
   }
 
-  async findAll(user: any) {
+  // Solo se le leen el rol y el id, que es lo que decide el alcance de la consulta.
+  // Con `any` un `user.rool` mal escrito habria dejado el `whereClause` vacio, o sea
+  // habria mostrado los conflictos de todos.
+  async findAll(user: { id?: string; rol?: string }) {
     let whereClause = {};
 
     if (user.rol === 'COORDINADOR') {
@@ -58,7 +61,7 @@ export class SyncConflictsService {
     });
   }
 
-  async findOne(id: string, user: any) {
+  async findOne(id: string, user: { id?: string; rol?: string }) {
     const conflict = await this.prisma.syncConflict.findUnique({
       where: { id },
       include: {

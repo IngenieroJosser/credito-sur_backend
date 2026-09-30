@@ -5,6 +5,7 @@ import {
   NotFoundException,
   ConflictException,
 } from '@nestjs/common';
+import { RolUsuario } from '@prisma/client';
 import { UsersService } from '../users/users.service';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
@@ -79,7 +80,7 @@ export class AuthService {
     apellidos?: string | null;
     correo?: string | null;
     nombreUsuario?: string | null;
-    rol: any;
+    rol: RolUsuario;
   }) {
     // Obtener permisos dinámicos del usuario
     const asignaciones = await this.prisma.asignacionRolUsuario.findMany({
@@ -124,7 +125,13 @@ export class AuthService {
       (p, i, arr) => arr.findIndex((x) => x.id === p.id) === i,
     );
 
-    const modulosMap = new Map<string, { nombre: string; permisos: any[] }>();
+    // El tipo de los permisos se DERIVA del arreglo que los llena, con
+    // `(typeof permisosUnicos)[number]`, en vez de `any[]`: el `sidebar` de mas abajo lee
+    // `esNavegable`, `modulo` y `orden` de estos objetos.
+    const modulosMap = new Map<
+      string,
+      { nombre: string; permisos: (typeof permisosUnicos)[number][] }
+    >();
     for (const p of permisosUnicos) {
       if (!p.esNavegable) continue;
       const grupo = modulosMap.get(p.modulo) || {

@@ -4,6 +4,8 @@ import {
   ErrorValidacion,
   AdvertenciaValidacion,
   ResumenHoja,
+  ClienteImportado,
+  CreditoImportado,
 } from '../dto/validacion-resultado.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FrecuenciaPago } from '@prisma/client';
@@ -95,8 +97,11 @@ export class ClientesCreditosParser {
 
     const errores: ErrorValidacion[] = [];
     const advertencias: AdvertenciaValidacion[] = [];
-    const clientesValidar: any[] = [];
-    const creditosValidar: any[] = [];
+    // `ClienteImportado` y `CreditoImportado` ya existen en el DTO y son lo que estos dos
+    // arreglos terminan siendo. Con `any[]` aqui, el tipo declarado en
+    // `ResultadoValidacion` no comprobaba nada de lo que se mete en ellos.
+    const clientesValidar: ClienteImportado[] = [];
+    const creditosValidar: CreditoImportado[] = [];
     const porHoja: Record<string, ResumenHoja> = {};
 
     let totalFilas = 0;
@@ -1527,7 +1532,9 @@ export class ClientesCreditosParser {
    * se consulta al validar y no se guarda en la plantilla: cambia a cada rato,
    * y una cifra vieja dentro del archivo engañaría más de lo que ayuda.
    */
-  private async calcularImpactoCaja(creditos: any[]) {
+  // `CreditoImportado` es lo que este metodo recibe de verdad: son los mismos creditos
+  // que se metieron en `creditosValidar`. Se reutiliza el tipo del DTO.
+  private async calcularImpactoCaja(creditos: CreditoImportado[]) {
     const operativos = creditos.filter((c) => c.tipoCarga === 'OPERATIVA');
 
     const movimientos = operativos.map((credito) => {

@@ -359,7 +359,14 @@ export const resolveCuotaObjetivoOperativa = (
  * solo al final el calculo, para no contradecir a quien ya eligio la cuota.
  */
 export const isObligacionOperativaRuta = (
-  obligacion: { prestamo?: any; cuota?: any; cuotaObjetivo?: any },
+  // Los tres tipos ya existen en este archivo: se reutilizan en vez de `any`. La
+  // obligacion puede venir envuelta (con el prestamo dentro) o ser el prestamo mismo, y
+  // de ahi el `?? obligacion` de la linea siguiente.
+  obligacion: PrestamoOperativo & {
+    prestamo?: PrestamoOperativo | null;
+    cuota?: CuotaOperativa | null;
+    cuotaObjetivo?: CuotaOperativa | null;
+  },
   fechaOperativaKey: string,
 ): boolean => {
   const fechaOperativa = normalizeFechaOperativaKey(fechaOperativaKey);

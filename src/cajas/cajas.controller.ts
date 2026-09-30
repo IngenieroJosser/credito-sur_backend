@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import {
   Controller,
   Get,
@@ -74,7 +75,7 @@ export class CajasController {
       fechaOperativa: string;
       efectivoContado: number;
       recibidoPorId?: string;
-      denominaciones?: any;
+      denominaciones?: Prisma.InputJsonValue;
       observaciones?: string;
     },
     @Request() req: RequestConUsuario,

@@ -4,6 +4,7 @@ import { FrecuenciaPago, TipoAmortizacion } from '@prisma/client';
 import { LoansService } from '../loans/loans.service';
 import { generarPlantillaInventario } from './plantillas/plantilla-inventario';
 import { generarPlantillaClientesCreditos } from './plantillas/plantilla-clientes-creditos';
+import { leerValorCelda } from './parsers/cell-value.util';
 import { InventarioParser } from './parsers/inventario.parser';
 import { ClientesCreditosParser } from './parsers/clientes-creditos.parser';
 import {
@@ -1580,7 +1581,9 @@ describe('Las fórmulas del Excel dan lo mismo que el sistema', () => {
     const hoja = wb.getWorksheet('Créditos de dinero')!;
     const encabezados = valoresDeFila(hoja.getRow(6))
       .slice(1)
-      .map((valor) => String(valor ?? ''));
+      // `leerValorCelda` antes del `String`: una celda puede ser `{formula, result}` y
+      // ahi un `String(...)` daria "[object Object]" como encabezado.
+      .map((valor) => String(leerValorCelda(valor) ?? ''));
 
     const formulaDe = (nombre: string) => {
       const i = encabezados.findIndex((h) => h && h.startsWith(nombre));

@@ -6480,9 +6480,9 @@ export class RoutesService {
     // El resumen de cierres pendientes de una ruta, escrito una vez y usado en los tres
     // sitios de esta funcion, que antes eran tres `any` distintos.
     type ResumenDeCierres = {
-      cierrePendienteAnterior: Awaited<
-        ReturnType<RoutesService['getCierresPendientesRuta']>
-      >[number] | null;
+      cierrePendienteAnterior:
+        | Awaited<ReturnType<RoutesService['getCierresPendientesRuta']>>[number]
+        | null;
       cierresPendientes: Awaited<
         ReturnType<RoutesService['getCierresPendientesRuta']>
       >;
