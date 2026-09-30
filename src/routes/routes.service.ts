@@ -2126,7 +2126,7 @@ export class RoutesService {
         const cuotasCriterio = prestamosActivos.flatMap((p) => p?.cuotas || []);
 
         const deudaTotal = prestamosActivos.reduce(
-          (acc, p: any) => acc + Number(p?.saldoPendiente || 0),
+          (acc, p) => acc + Number(p?.saldoPendiente || 0),
           0,
         );
 
@@ -2325,7 +2325,11 @@ export class RoutesService {
           // Enriquecer proximaCuota/fechaEfectiva en la respuesta (fuente autoritativa para frontend)
           const cuotasList = Array.isArray(p?.cuotas) ? p.cuotas : [];
           const extension = p?.extensiones?.[0] || null;
-          const isNoPagada = (c: any) => {
+          // El tipo se deriva del propio arreglo en vez de escribirse a mano: asi no
+          // puede quedarse atras si la consulta cambia lo que trae.
+          type CuotaDeLaFila = (typeof cuotasList)[number];
+
+          const isNoPagada = (c: CuotaDeLaFila) => {
             const s = String(c?.estado || '').toUpperCase();
             return (
               s !== 'PAGADA' &&
@@ -2334,7 +2338,12 @@ export class RoutesService {
               s !== 'ANULADO'
             );
           };
-          const getFechaEfectiva = (c: any): string | null => {
+          // Devuelve una fecha, no texto. Decia `string | null` y con `c: any` eso
+          // compilaba: nadie comprobaba que `fechaVencimientoProrroga` y
+          // `fechaVencimiento` son Date en la base. Sus dos consumidores la pasan a
+          // `new Date(...)`, que traga las dos cosas, asi que no fallaba; pero quien
+          // leyera la firma y le hiciera un `.slice` tendria un error en ejecucion.
+          const getFechaEfectiva = (c: CuotaDeLaFila): Date | null => {
             if (!c) return null;
             const s = String(c?.estado || '').toUpperCase();
             return s === 'PRORROGADA' && c?.fechaVencimientoProrroga
@@ -4053,12 +4062,17 @@ export class RoutesService {
     }
 
     // Separar recaudo: contable (pagos reales del día) vs regularizado (pagos de jornadas viejas)
-    const isFechaPagoEnRango = (p: any) => {
+    //
+    // El tipo se deriva del arreglo que los alimenta en vez de escribirse a mano:
+    // si la consulta deja de traer un campo, el compilador lo dice aqui.
+    type PagoDeLaJornada = (typeof pagosDeHoy)[number];
+
+    const isFechaPagoEnRango = (p: PagoDeLaJornada) => {
       const fechaPago = new Date(p.fechaPago);
       return fechaPago >= fInicio && fechaPago <= fFin;
     };
 
-    const isRegularizadoParaJornada = (p: any) => {
+    const isRegularizadoParaJornada = (p: PagoDeLaJornada) => {
       return (
         p.fechaOperativaRuta === fechaKey &&
         p.origenGestion === 'CIERRE_PENDIENTE'
@@ -4078,7 +4092,7 @@ export class RoutesService {
       .reduce((sum, p) => sum + Number(p.montoTotal || 0), 0);
 
     const sumPagosByMetodo = (
-      pagos: any[],
+      pagos: PagoDeLaJornada[],
       metodo: 'EFECTIVO' | 'TRANSFERENCIA',
     ) => {
       return pagos.reduce((sum, p) => {
@@ -4096,12 +4110,12 @@ export class RoutesService {
       (p) => isRegularizadoParaJornada(p) && !isFechaPagoEnRango(p),
     );
 
-    const buildCuotaObjetivoDesdePago = (pago: any) => {
+    const buildCuotaObjetivoDesdePago = (pago: PagoDeLaJornada) => {
       const detalle = Array.isArray(pago?.detalles)
         ? [...pago.detalles]
             .filter((d) => d?.cuota)
             .sort(
-              (a, b: any) =>
+              (a, b) =>
                 Number(a?.cuota?.numeroCuota || 0) -
                 Number(b?.cuota?.numeroCuota || 0),
             )[0]
@@ -5716,8 +5730,11 @@ export class RoutesService {
     const advertencias: string[] = [];
     const cierrePendiente = await this.getCierrePendienteRuta(rutaId);
 
-    const getNombreClienteVisita = (v: any) =>
-      v.nombreCliente ||
+    // Aqui empezaba con `v.nombreCliente ||`, y esa alternativa no entra nunca:
+    // `nombreCliente` no se escribe en ninguna visita, solo en los objetos de
+    // SALIDA que este mismo metodo construye. Con `v: any` no habia forma de
+    // verlo; al declarar el tipo, el compilador dijo que el campo no existe.
+    const getNombreClienteVisita = (v: VisitaDelDia) =>
       `${v.cliente?.nombres || ''} ${v.cliente?.apellidos || ''}`.trim() ||
       'Cliente sin nombre';
 
@@ -5801,7 +5818,7 @@ export class RoutesService {
     );
     const cumplimiento =
       meta > 0 ? Math.round((recaudoOperativo / meta) * 100 * 10) / 10 : 0;
-    const resumirClienteGestionado = (visita: any) => {
+    const resumirClienteGestionado = (visita: VisitaDelDia) => {
       const cliente = visita?.cliente || {};
       const nombreCliente =
         getNombreClienteVisita(visita) ||
@@ -5811,7 +5828,10 @@ export class RoutesService {
       return {
         clienteId: cliente.id || visita?.clienteId || null,
         nombreCliente,
-        documento: cliente.cedula || cliente.dni || visita?.cedula || null,
+        // El campo se llama `dni`, no `cedula`: ni el cliente ni la visita tienen
+        // `cedula`, asi que las dos alternativas que rodeaban a `dni` eran
+        // siempre undefined. Otra vez lo destapo el tipo.
+        documento: cliente.dni || null,
         estadoGestion: this.resolveEstadoGestionCierrePendiente(visita),
         ordenVisita: visita?.ordenVisita ?? null,
         cuotaObjetivoId: visita?.cuotaObjetivoId ?? null,
@@ -6656,7 +6676,7 @@ export class RoutesService {
           return this.resolveEstadoGestionCierrePendiente(v) === 'PENDIENTE';
         });
 
-        const getSaldoOperativoJornada = (v: any) => {
+        const getSaldoOperativoJornada = (v: VisitaDelDia) => {
           return (v?.prestamos || []).reduce(
             (sum: number, prestamo: PrestamoDeVisita) => {
               if (prestamo?.montoMetaOperativaPendiente != null) {
