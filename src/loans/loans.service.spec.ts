@@ -6,7 +6,24 @@ import {
   TipoAmortizacion,
   TipoTransaccion,
 } from '@prisma/client';
+import { TipoPrestamoDto } from './dto/create-loan.dto';
 import { LoansService } from './loans.service';
+
+/**
+ * Lo que los mocks de Prisma leen de la llamada que reciben.
+ *
+ * No hace falta `Prisma.XUpdateArgs` entero: estos mocks solo miran `where` para decidir
+ * que devolver y reenvian `data` en la respuesta. Declarar lo que se lee, y no `any`, es
+ * lo que hace que un `where` mal escrito en una prueba lo marque el compilador en vez de
+ * devolver `undefined` en silencio y dejar pasar la asercion.
+ */
+type ArgsDePrismaEnMock = {
+  // `id` se nombra aparte porque una prueba filtra con el operador de Prisma
+  // (`where: { id: { in: [...] } }`), no con un id suelto. La firma dice las dos formas
+  // y el sitio que lee `in` tiene que distinguirlas, que es justo lo que `any` tapaba.
+  where?: { id?: string | { in?: string[] } } & Record<string, unknown>;
+  data?: Record<string, unknown>;
+};
 
 const mockNotifications = {
   create: jest.fn().mockResolvedValue(undefined),
@@ -55,12 +72,14 @@ function makeService(prisma: any) {
     }
     if (!prisma.cuota) {
       prisma.cuota = {
-        update: jest.fn().mockImplementation(({ where, data }: any) =>
-          Promise.resolve({
-            id: where?.id || 'cuota-1',
-            fechaVencimiento: data?.fechaVencimiento || new Date(),
-          }),
-        ),
+        update: jest
+          .fn()
+          .mockImplementation(({ where, data }: ArgsDePrismaEnMock) =>
+            Promise.resolve({
+              id: where?.id || 'cuota-1',
+              fechaVencimiento: data?.fechaVencimiento || new Date(),
+            }),
+          ),
       };
     }
     if (!prisma.transaccion) {
@@ -171,7 +190,7 @@ function buildCreateLoanPrismaMock(rol: RolUsuario, overrides: any = {}) {
       }),
     },
     prestamo: {
-      update: jest.fn().mockImplementation(({ data }: any) => ({
+      update: jest.fn().mockImplementation(({ data }: ArgsDePrismaEnMock) => ({
         id: 'prestamo-1',
         ...data,
       })),
@@ -215,17 +234,17 @@ describe('LoansService accounting impact for approved loans', () => {
       await expect(
         makeService(prisma).createLoan({
           clienteId: 'cliente-1',
-          tipoPrestamo: 'EFECTIVO',
+          tipoPrestamo: TipoPrestamoDto.EFECTIVO,
           monto: 100000,
           tasaInteres: 10,
           tasaInteresMora: 2,
           plazoMeses: 1,
           cantidadCuotas: 12,
-          frecuenciaPago: 'DIARIO' as any,
+          frecuenciaPago: FrecuenciaPago.DIARIO,
           fechaInicio: '2026-05-15',
           fechaPrimerCobro: '2026-05-16',
           creadoPorId: 'admin-1',
-        } as any),
+        }),
       ).resolves.toEqual(expect.objectContaining({ id: 'prestamo-fecha-1' }));
     } finally {
       jest.useRealTimers();
@@ -247,17 +266,17 @@ describe('LoansService accounting impact for approved loans', () => {
     await expect(
       makeService(prisma).createLoan({
         clienteId: 'cliente-1',
-        tipoPrestamo: 'EFECTIVO',
+        tipoPrestamo: TipoPrestamoDto.EFECTIVO,
         monto: 100000,
         tasaInteres: 10,
         tasaInteresMora: 2,
         plazoMeses: 1,
         cantidadCuotas: 12,
-        frecuenciaPago: 'DIARIO' as any,
+        frecuenciaPago: FrecuenciaPago.DIARIO,
         fechaInicio: '2026-06-12',
         fechaPrimerCobro: '2026-06-13',
         creadoPorId: 'admin-1',
-      } as any),
+      }),
     ).rejects.toThrow(/ruta/i);
 
     // Y no se alcanza a crear nada: sin ruta se corta antes de la transaccion.
@@ -280,17 +299,17 @@ describe('LoansService accounting impact for approved loans', () => {
       makeService(prisma).createLoan({
         clienteId: 'cliente-1',
         rutaId: 'ruta-1',
-        tipoPrestamo: 'EFECTIVO',
+        tipoPrestamo: TipoPrestamoDto.EFECTIVO,
         monto: 100000,
         tasaInteres: 10,
         tasaInteresMora: 2,
         plazoMeses: 1,
         cantidadCuotas: 12,
-        frecuenciaPago: 'DIARIO' as any,
+        frecuenciaPago: FrecuenciaPago.DIARIO,
         fechaInicio: '2026-05-15',
         fechaPrimerCobro: '2026-05-16',
         creadoPorId: 'admin-1',
-      } as any),
+      }),
     ).resolves.toEqual(expect.objectContaining({ id: 'prestamo-fecha-1' }));
   });
 
@@ -302,17 +321,17 @@ describe('LoansService accounting impact for approved loans', () => {
       await expect(
         makeService(prisma).createLoan({
           clienteId: 'cliente-1',
-          tipoPrestamo: 'EFECTIVO',
+          tipoPrestamo: TipoPrestamoDto.EFECTIVO,
           monto: 100000,
           tasaInteres: 10,
           tasaInteresMora: 2,
           plazoMeses: 1,
           cantidadCuotas: 12,
-          frecuenciaPago: 'DIARIO' as any,
+          frecuenciaPago: FrecuenciaPago.DIARIO,
           fechaInicio: '2026-05-15',
           fechaPrimerCobro: '2026-05-16',
           creadoPorId: 'superadmin-1',
-        } as any),
+        }),
       ).resolves.toEqual(expect.objectContaining({ id: 'prestamo-fecha-1' }));
     } finally {
       jest.useRealTimers();
@@ -336,17 +355,17 @@ describe('LoansService accounting impact for approved loans', () => {
       await expect(
         makeService(prisma).createLoan({
           clienteId: 'cliente-1',
-          tipoPrestamo: 'EFECTIVO',
+          tipoPrestamo: TipoPrestamoDto.EFECTIVO,
           monto: 100000,
           tasaInteres: 10,
           tasaInteresMora: 2,
           plazoMeses: 1,
           cantidadCuotas: 12,
-          frecuenciaPago: 'DIARIO' as any,
+          frecuenciaPago: FrecuenciaPago.DIARIO,
           fechaInicio: '2026-05-15',
           fechaPrimerCobro: '2026-06-21',
           creadoPorId: 'supervisor-1',
-        } as any),
+        }),
       ).rejects.toThrow(
         'No tienes permiso para crear créditos con fecha antigua.',
       );
@@ -363,17 +382,17 @@ describe('LoansService accounting impact for approved loans', () => {
       await expect(
         makeService(prisma).createLoan({
           clienteId: 'cliente-1',
-          tipoPrestamo: 'EFECTIVO',
+          tipoPrestamo: TipoPrestamoDto.EFECTIVO,
           monto: 100000,
           tasaInteres: 10,
           tasaInteresMora: 2,
           plazoMeses: 1,
           cantidadCuotas: 12,
-          frecuenciaPago: 'DIARIO' as any,
+          frecuenciaPago: FrecuenciaPago.DIARIO,
           fechaInicio: '2026-06-20',
           fechaPrimerCobro: '2026-06-19',
           creadoPorId: 'admin-1',
-        } as any),
+        }),
       ).rejects.toThrow(
         'La fecha del primer cobro no puede ser anterior a la fecha del crédito.',
       );
@@ -391,35 +410,37 @@ describe('LoansService accounting impact for approved loans', () => {
         }),
       },
       caja: {
-        findFirst: jest.fn().mockImplementation(({ where }: any) => {
-          if (where?.tipo === 'RUTA') {
-            return Promise.resolve({
-              id: 'caja-ruta-1',
-              codigo: 'CAJA-RUTA-1',
-              tipo: 'RUTA',
-              nombre: 'Caja Ruta Centro - Norte',
-              saldoActual: 500000,
-              rutaId: 'ruta-1',
-              responsableId: 'cobrador-1',
-            });
-          }
-          if (where?.codigo === 'CAJA-OFICINA') {
-            return Promise.resolve({
-              id: 'caja-oficina',
-              codigo: 'CAJA-OFICINA',
-              tipo: 'PRINCIPAL',
-              nombre: 'Caja de Oficina',
-              saldoActual: 1000000,
-              rutaId: null,
-              responsableId: null,
-            });
-          }
-          return Promise.resolve(null);
-        }),
+        findFirst: jest
+          .fn()
+          .mockImplementation(({ where }: ArgsDePrismaEnMock) => {
+            if (where?.tipo === 'RUTA') {
+              return Promise.resolve({
+                id: 'caja-ruta-1',
+                codigo: 'CAJA-RUTA-1',
+                tipo: 'RUTA',
+                nombre: 'Caja Ruta Centro - Norte',
+                saldoActual: 500000,
+                rutaId: 'ruta-1',
+                responsableId: 'cobrador-1',
+              });
+            }
+            if (where?.codigo === 'CAJA-OFICINA') {
+              return Promise.resolve({
+                id: 'caja-oficina',
+                codigo: 'CAJA-OFICINA',
+                tipo: 'PRINCIPAL',
+                nombre: 'Caja de Oficina',
+                saldoActual: 1000000,
+                rutaId: null,
+                responsableId: null,
+              });
+            }
+            return Promise.resolve(null);
+          }),
       },
     };
 
-    const service = makeService({} as any) as any;
+    const service = makeService({}) as any;
     const caja = await service.resolveCajaOperacionPrestamo(tx, {
       data: { rutaId: 'ruta-1' },
       creador: { id: 'admin-1', rol: RolUsuario.ADMIN },
@@ -459,47 +480,49 @@ describe('LoansService accounting impact for approved loans', () => {
         }),
       },
       caja: {
-        findFirst: jest.fn().mockImplementation(({ where }: any) => {
-          if (where?.responsableId === 'supervisor-1') {
-            return Promise.resolve({
-              id: 'caja-supervisor-1',
-              codigo: 'BASE-SUP-001',
-              tipo: 'RUTA',
-              nombre: 'Base Supervisor',
-              saldoActual: 900000,
-              rutaId: null,
-              responsableId: 'supervisor-1',
-            });
-          }
-          if (
-            where?.tipo === 'RUTA' &&
-            where?.rutaId === 'ruta-supervisada-1'
-          ) {
-            return Promise.resolve({
-              id: 'caja-ruta-cobrador-1',
-              codigo: 'CAJA-RUTA-001',
-              tipo: 'RUTA',
-              nombre: 'Caja Cobrador',
-              saldoActual: 500000,
-              rutaId: 'ruta-supervisada-1',
-              responsableId: 'cobrador-1',
-            });
-          }
-          if (where?.codigo === 'CAJA-OFICINA') {
-            return Promise.resolve({
-              id: 'caja-oficina',
-              codigo: 'CAJA-OFICINA',
-              tipo: 'PRINCIPAL',
-              nombre: 'Caja de Oficina',
-              saldoActual: 1000000,
-            });
-          }
-          return Promise.resolve(null);
-        }),
+        findFirst: jest
+          .fn()
+          .mockImplementation(({ where }: ArgsDePrismaEnMock) => {
+            if (where?.responsableId === 'supervisor-1') {
+              return Promise.resolve({
+                id: 'caja-supervisor-1',
+                codigo: 'BASE-SUP-001',
+                tipo: 'RUTA',
+                nombre: 'Base Supervisor',
+                saldoActual: 900000,
+                rutaId: null,
+                responsableId: 'supervisor-1',
+              });
+            }
+            if (
+              where?.tipo === 'RUTA' &&
+              where?.rutaId === 'ruta-supervisada-1'
+            ) {
+              return Promise.resolve({
+                id: 'caja-ruta-cobrador-1',
+                codigo: 'CAJA-RUTA-001',
+                tipo: 'RUTA',
+                nombre: 'Caja Cobrador',
+                saldoActual: 500000,
+                rutaId: 'ruta-supervisada-1',
+                responsableId: 'cobrador-1',
+              });
+            }
+            if (where?.codigo === 'CAJA-OFICINA') {
+              return Promise.resolve({
+                id: 'caja-oficina',
+                codigo: 'CAJA-OFICINA',
+                tipo: 'PRINCIPAL',
+                nombre: 'Caja de Oficina',
+                saldoActual: 1000000,
+              });
+            }
+            return Promise.resolve(null);
+          }),
       },
     };
 
-    const service = makeService({} as any) as any;
+    const service = makeService({}) as any;
     const caja = await service.resolveCajaOperacionPrestamo(tx, {
       data: {},
       creador: { id: 'supervisor-1', rol: RolUsuario.SUPERVISOR },
@@ -723,10 +746,12 @@ describe('LoansService accounting impact for approved loans', () => {
         create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
       },
       prestamo: {
-        update: jest.fn().mockImplementation(({ data }: any) => ({
-          id: 'prestamo-1',
-          ...data,
-        })),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }: ArgsDePrismaEnMock) => ({
+            id: 'prestamo-1',
+            ...data,
+          })),
         findFirst: jest.fn().mockResolvedValue({
           id: 'prestamo-existente-1',
           numeroPrestamo: 'PRES-EXISTENTE',
@@ -743,16 +768,16 @@ describe('LoansService accounting impact for approved loans', () => {
 
     const result = await makeService(prisma).createLoan({
       clienteId: 'cliente-1',
-      tipoPrestamo: 'EFECTIVO',
+      tipoPrestamo: TipoPrestamoDto.EFECTIVO,
       monto: 100000,
       tasaInteres: 10,
       tasaInteresMora: 2,
       plazoMeses: 1,
-      frecuenciaPago: 'MENSUAL' as any,
+      frecuenciaPago: FrecuenciaPago.MENSUAL,
       fechaInicio: '2026-05-15',
       creadoPorId: 'admin-1',
       idempotencyKey: 'offline-loan-1',
-    } as any);
+    });
 
     expect(result).toMatchObject({
       prestamoId: 'prestamo-existente-1',
@@ -814,25 +839,29 @@ describe('LoansService accounting impact for approved loans', () => {
         }),
       },
       caja: {
-        findFirst: jest.fn().mockImplementation(({ where }: any) => {
-          if (where?.responsableId === 'supervisor-1') {
-            return Promise.resolve({
-              id: 'caja-supervisor-1',
-              codigo: 'BASE-SUP-001',
-              tipo: 'RUTA',
-              nombre: 'Base Supervisor',
-              saldoActual: 10000000,
-              responsableId: 'supervisor-1',
-            });
-          }
-          return Promise.resolve(null);
-        }),
+        findFirst: jest
+          .fn()
+          .mockImplementation(({ where }: ArgsDePrismaEnMock) => {
+            if (where?.responsableId === 'supervisor-1') {
+              return Promise.resolve({
+                id: 'caja-supervisor-1',
+                codigo: 'BASE-SUP-001',
+                tipo: 'RUTA',
+                nombre: 'Base Supervisor',
+                saldoActual: 10000000,
+                responsableId: 'supervisor-1',
+              });
+            }
+            return Promise.resolve(null);
+          }),
       },
       prestamo: {
-        update: jest.fn().mockImplementation(({ data }: any) => ({
-          id: 'prestamo-1',
-          ...data,
-        })),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }: ArgsDePrismaEnMock) => ({
+            id: 'prestamo-1',
+            ...data,
+          })),
         findFirst: jest
           .fn()
           .mockResolvedValueOnce(null)
@@ -867,16 +896,16 @@ describe('LoansService accounting impact for approved loans', () => {
 
     const result = await makeService(prisma).createLoan({
       clienteId: 'cliente-1',
-      tipoPrestamo: 'EFECTIVO',
+      tipoPrestamo: TipoPrestamoDto.EFECTIVO,
       monto: 5000000,
       tasaInteres: 10,
       tasaInteresMora: 2,
       plazoMeses: 1,
       cantidadCuotas: 12,
-      frecuenciaPago: 'DIARIO' as any,
+      frecuenciaPago: FrecuenciaPago.DIARIO,
       fechaInicio: '2026-06-12',
       creadoPorId: 'supervisor-1',
-    } as any);
+    });
 
     expect(prisma.aprobacion.create).toHaveBeenCalled();
     expect(result).toMatchObject({
@@ -945,10 +974,12 @@ describe('LoansService accounting impact for approved loans', () => {
         }),
       },
       prestamo: {
-        update: jest.fn().mockImplementation(({ data }: any) => ({
-          id: 'prestamo-1',
-          ...data,
-        })),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }: ArgsDePrismaEnMock) => ({
+            id: 'prestamo-1',
+            ...data,
+          })),
         findFirst: jest
           .fn()
           .mockResolvedValueOnce(null)
@@ -987,16 +1018,16 @@ describe('LoansService accounting impact for approved loans', () => {
 
     const result = await makeService(prisma).createLoan({
       clienteId: 'cliente-1',
-      tipoPrestamo: 'EFECTIVO',
+      tipoPrestamo: TipoPrestamoDto.EFECTIVO,
       monto: 5000000,
       tasaInteres: 10,
       tasaInteresMora: 2,
       plazoMeses: 1,
       cantidadCuotas: 12,
-      frecuenciaPago: 'DIARIO' as any,
+      frecuenciaPago: FrecuenciaPago.DIARIO,
       fechaInicio: '2026-06-12',
       creadoPorId: 'supervisor-1',
-    } as any);
+    });
 
     expect(result).toMatchObject({
       id: 'prestamo-1',
@@ -1070,35 +1101,39 @@ describe('LoansService accounting impact for approved loans', () => {
         findFirst: jest.fn().mockResolvedValue(null),
       },
       caja: {
-        findFirst: jest.fn().mockImplementation(({ where }: any) => {
-          if (where?.codigo === 'CAJA-OFICINA') {
-            return Promise.resolve({
-              id: 'caja-oficina',
-              codigo: 'CAJA-OFICINA',
-              tipo: 'PRINCIPAL',
-              nombre: 'Caja Oficina',
-              saldoActual: 0,
-              responsableId: 'admin-1',
-            });
-          }
-          if (where?.responsableId === 'supervisor-1') {
-            return Promise.resolve({
-              id: 'caja-supervisor-1',
-              codigo: 'BASE-SUP-001',
-              tipo: 'RUTA',
-              nombre: 'Base Supervisor',
-              saldoActual: 10000000,
-              responsableId: 'supervisor-1',
-            });
-          }
-          return Promise.resolve(null);
-        }),
+        findFirst: jest
+          .fn()
+          .mockImplementation(({ where }: ArgsDePrismaEnMock) => {
+            if (where?.codigo === 'CAJA-OFICINA') {
+              return Promise.resolve({
+                id: 'caja-oficina',
+                codigo: 'CAJA-OFICINA',
+                tipo: 'PRINCIPAL',
+                nombre: 'Caja Oficina',
+                saldoActual: 0,
+                responsableId: 'admin-1',
+              });
+            }
+            if (where?.responsableId === 'supervisor-1') {
+              return Promise.resolve({
+                id: 'caja-supervisor-1',
+                codigo: 'BASE-SUP-001',
+                tipo: 'RUTA',
+                nombre: 'Base Supervisor',
+                saldoActual: 10000000,
+                responsableId: 'supervisor-1',
+              });
+            }
+            return Promise.resolve(null);
+          }),
       },
       prestamo: {
-        update: jest.fn().mockImplementation(({ data }: any) => ({
-          id: 'prestamo-1',
-          ...data,
-        })),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }: ArgsDePrismaEnMock) => ({
+            id: 'prestamo-1',
+            ...data,
+          })),
         findFirst: jest
           .fn()
           .mockResolvedValueOnce(null)
@@ -1137,16 +1172,16 @@ describe('LoansService accounting impact for approved loans', () => {
 
     const result = await makeService(prisma).createLoan({
       clienteId: 'cliente-1',
-      tipoPrestamo: 'EFECTIVO',
+      tipoPrestamo: TipoPrestamoDto.EFECTIVO,
       monto: 500000,
       tasaInteres: 10,
       tasaInteresMora: 2,
       plazoMeses: 1,
       cantidadCuotas: 12,
-      frecuenciaPago: 'DIARIO' as any,
+      frecuenciaPago: FrecuenciaPago.DIARIO,
       fechaInicio: '2026-06-12',
       creadoPorId: 'supervisor-1',
-    } as any);
+    });
 
     expect(result).toMatchObject({
       id: 'prestamo-1',
@@ -1193,10 +1228,12 @@ describe('LoansService accounting impact for approved loans', () => {
         create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
       },
       prestamo: {
-        update: jest.fn().mockImplementation(({ data }: any) => ({
-          id: 'prestamo-1',
-          ...data,
-        })),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }: ArgsDePrismaEnMock) => ({
+            id: 'prestamo-1',
+            ...data,
+          })),
         create: jest.fn().mockResolvedValue(prestamoCreado),
       },
       ruta: {
@@ -1269,25 +1306,29 @@ describe('LoansService accounting impact for approved loans', () => {
         }),
       },
       caja: {
-        findFirst: jest.fn().mockImplementation(({ where }: any) => {
-          if (where?.responsableId === 'supervisor-1') {
-            return Promise.resolve({
-              id: 'caja-supervisor-1',
-              codigo: 'BASE-SUP-001',
-              tipo: 'RUTA',
-              nombre: 'Base Supervisor',
-              saldoActual: 10000000,
-              responsableId: 'supervisor-1',
-            });
-          }
-          return Promise.resolve(null);
-        }),
+        findFirst: jest
+          .fn()
+          .mockImplementation(({ where }: ArgsDePrismaEnMock) => {
+            if (where?.responsableId === 'supervisor-1') {
+              return Promise.resolve({
+                id: 'caja-supervisor-1',
+                codigo: 'BASE-SUP-001',
+                tipo: 'RUTA',
+                nombre: 'Base Supervisor',
+                saldoActual: 10000000,
+                responsableId: 'supervisor-1',
+              });
+            }
+            return Promise.resolve(null);
+          }),
       },
       prestamo: {
-        update: jest.fn().mockImplementation(({ data }: any) => ({
-          id: 'prestamo-1',
-          ...data,
-        })),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }: ArgsDePrismaEnMock) => ({
+            id: 'prestamo-1',
+            ...data,
+          })),
         findFirst: jest
           .fn()
           .mockResolvedValueOnce(null)
@@ -1301,16 +1342,16 @@ describe('LoansService accounting impact for approved loans', () => {
     await expect(
       makeService(prisma).createLoan({
         clienteId: 'cliente-1',
-        tipoPrestamo: 'EFECTIVO',
+        tipoPrestamo: TipoPrestamoDto.EFECTIVO,
         monto: 5000000,
         tasaInteres: 10,
         tasaInteresMora: 2,
         plazoMeses: 1,
         cantidadCuotas: 12,
-        frecuenciaPago: 'DIARIO' as any,
+        frecuenciaPago: FrecuenciaPago.DIARIO,
         fechaInicio: '2026-06-12',
         creadoPorId: 'supervisor-1',
-      } as any),
+      }),
     ).rejects.toThrow('fallo efecto provisional');
 
     expect(prisma.prestamo.create).not.toHaveBeenCalled();
@@ -1429,10 +1470,12 @@ describe('LoansService accounting impact for approved loans', () => {
         }),
       },
       prestamo: {
-        update: jest.fn().mockImplementation(({ data }: any) => ({
-          id: 'prestamo-1',
-          ...data,
-        })),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }: ArgsDePrismaEnMock) => ({
+            id: 'prestamo-1',
+            ...data,
+          })),
         findFirst: jest
           .fn()
           .mockResolvedValueOnce(null)
@@ -1443,16 +1486,16 @@ describe('LoansService accounting impact for approved loans', () => {
     try {
       await makeService(prisma).createLoan({
         clienteId: 'cliente-1',
-        tipoPrestamo: 'EFECTIVO',
+        tipoPrestamo: TipoPrestamoDto.EFECTIVO,
         monto: 100000,
         tasaInteres: 10,
         tasaInteresMora: 2,
         plazoMeses: 1,
         cantidadCuotas: 12,
-        frecuenciaPago: 'DIARIO' as any,
+        frecuenciaPago: FrecuenciaPago.DIARIO,
         fechaInicio: '2026-06-12',
         creadoPorId: 'cobrador-1',
-      } as any);
+      });
     } finally {
       jest.useRealTimers();
     }
@@ -1529,10 +1572,12 @@ describe('LoansService accounting impact for approved loans', () => {
         }),
       },
       prestamo: {
-        update: jest.fn().mockImplementation(({ data }: any) => ({
-          id: 'prestamo-1',
-          ...data,
-        })),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }: ArgsDePrismaEnMock) => ({
+            id: 'prestamo-1',
+            ...data,
+          })),
         findFirst: jest
           .fn()
           .mockResolvedValueOnce(null)
@@ -1582,10 +1627,10 @@ describe('LoansService accounting impact for approved loans', () => {
       tasaInteresMora: 2,
       plazoMeses: 1,
       cantidadCuotas: 12,
-      frecuenciaPago: 'DIARIO' as any,
+      frecuenciaPago: FrecuenciaPago.DIARIO,
       fechaInicio: '2026-06-12',
       creadoPorId: 'supervisor-1',
-    } as any);
+    });
 
     expect(prisma.aprobacion.create).toHaveBeenCalled();
     expect(result).toMatchObject({
@@ -1686,16 +1731,16 @@ describe('LoansService accounting impact for approved loans', () => {
     try {
       result = await makeService(prisma).createLoan({
         clienteId: 'cliente-1',
-        tipoPrestamo: 'EFECTIVO',
+        tipoPrestamo: TipoPrestamoDto.EFECTIVO,
         monto: 5000000,
         tasaInteres: 10,
         tasaInteresMora: 2,
         plazoMeses: 1,
         cantidadCuotas: 12,
-        frecuenciaPago: 'DIARIO' as any,
+        frecuenciaPago: FrecuenciaPago.DIARIO,
         fechaInicio: '2026-06-12',
         creadoPorId: 'supervisor-1',
-      } as any);
+      });
     } finally {
       jest.useRealTimers();
     }
@@ -1786,10 +1831,12 @@ describe('LoansService accounting impact for approved loans', () => {
         create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
       },
       prestamo: {
-        update: jest.fn().mockImplementation(({ data }: any) => ({
-          id: 'prestamo-1',
-          ...data,
-        })),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }: ArgsDePrismaEnMock) => ({
+            id: 'prestamo-1',
+            ...data,
+          })),
         findFirst: jest.fn().mockResolvedValue(null),
         count: jest.fn(),
       },
@@ -1909,10 +1956,12 @@ describe('LoansService reprogramacion concurrency controls', () => {
         create: jest.fn().mockResolvedValue({ id: 'aprobacion-1' }),
       },
       prestamo: {
-        update: jest.fn().mockImplementation(({ data }: any) => ({
-          id: 'prestamo-1',
-          ...data,
-        })),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }: ArgsDePrismaEnMock) => ({
+            id: 'prestamo-1',
+            ...data,
+          })),
         findUnique: jest.fn().mockResolvedValue({
           id: 'prestamo-1',
           clienteId: 'cliente-1',
@@ -1995,10 +2044,12 @@ describe('LoansService reprogramacion concurrency controls', () => {
         findUnique: jest.fn().mockResolvedValue(null),
       },
       prestamo: {
-        update: jest.fn().mockImplementation(({ data }: any) => ({
-          id: 'prestamo-1',
-          ...data,
-        })),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }: ArgsDePrismaEnMock) => ({
+            id: 'prestamo-1',
+            ...data,
+          })),
         findUnique: jest.fn().mockResolvedValue({
           id: 'prestamo-1',
           clienteId: 'cliente-1',
@@ -2043,10 +2094,12 @@ describe('LoansService reprogramacion concurrency controls', () => {
         create: jest.fn().mockResolvedValue({ id: 'aprobacion-1' }),
       },
       prestamo: {
-        update: jest.fn().mockImplementation(({ data }: any) => ({
-          id: 'prestamo-1',
-          ...data,
-        })),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }: ArgsDePrismaEnMock) => ({
+            id: 'prestamo-1',
+            ...data,
+          })),
         findUnique: jest.fn().mockResolvedValue({
           id: 'prestamo-1',
           clienteId: 'cliente-1',
@@ -2146,10 +2199,12 @@ describe('LoansService reprogramacion concurrency controls', () => {
         create: jest.fn().mockResolvedValue({ id: 'aprobacion-1' }),
       },
       prestamo: {
-        update: jest.fn().mockImplementation(({ data }: any) => ({
-          id: 'prestamo-1',
-          ...data,
-        })),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }: ArgsDePrismaEnMock) => ({
+            id: 'prestamo-1',
+            ...data,
+          })),
         findUnique: jest.fn().mockResolvedValue({
           id: 'prestamo-1',
           clienteId: 'cliente-1',
@@ -2330,10 +2385,12 @@ describe('LoansService role scoping', () => {
         create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
       },
       prestamo: {
-        update: jest.fn().mockImplementation(({ data }: any) => ({
-          id: 'prestamo-1',
-          ...data,
-        })),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }: ArgsDePrismaEnMock) => ({
+            id: 'prestamo-1',
+            ...data,
+          })),
         findMany: jest.fn().mockResolvedValue([]),
         count: jest.fn().mockResolvedValue(0),
         aggregate: jest
@@ -2393,10 +2450,12 @@ describe('LoansService role scoping', () => {
         create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
       },
       prestamo: {
-        update: jest.fn().mockImplementation(({ data }: any) => ({
-          id: 'prestamo-1',
-          ...data,
-        })),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }: ArgsDePrismaEnMock) => ({
+            id: 'prestamo-1',
+            ...data,
+          })),
         findMany: jest.fn().mockResolvedValue([]),
         count: jest.fn().mockResolvedValue(0),
         aggregate: jest
@@ -2463,10 +2522,12 @@ describe('LoansService role scoping', () => {
         create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
       },
       prestamo: {
-        update: jest.fn().mockImplementation(({ data }: any) => ({
-          id: 'prestamo-1',
-          ...data,
-        })),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }: ArgsDePrismaEnMock) => ({
+            id: 'prestamo-1',
+            ...data,
+          })),
         findMany: jest.fn().mockResolvedValue([]),
         count: jest.fn().mockResolvedValue(0),
         aggregate: jest
@@ -2517,10 +2578,12 @@ describe('LoansService role scoping', () => {
         create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
       },
       prestamo: {
-        update: jest.fn().mockImplementation(({ data }: any) => ({
-          id: 'prestamo-1',
-          ...data,
-        })),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }: ArgsDePrismaEnMock) => ({
+            id: 'prestamo-1',
+            ...data,
+          })),
         findFirst: jest.fn().mockResolvedValue(null),
       },
     };
@@ -2560,10 +2623,12 @@ describe('LoansService role scoping', () => {
         create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
       },
       prestamo: {
-        update: jest.fn().mockImplementation(({ data }: any) => ({
-          id: 'prestamo-1',
-          ...data,
-        })),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }: ArgsDePrismaEnMock) => ({
+            id: 'prestamo-1',
+            ...data,
+          })),
         findFirst: jest.fn().mockResolvedValue(null),
       },
       cuota: {
@@ -2656,10 +2721,12 @@ describe('LoansService archive accounting reversal', () => {
 
     const prisma = {
       prestamo: {
-        update: jest.fn().mockImplementation(({ data }: any) => ({
-          id: 'prestamo-1',
-          ...data,
-        })),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }: ArgsDePrismaEnMock) => ({
+            id: 'prestamo-1',
+            ...data,
+          })),
         findUnique: jest.fn().mockResolvedValue({
           id: 'prestamo-art-1',
           numeroPrestamo: 'ART-1',
@@ -2781,10 +2848,12 @@ describe('LoansService archive accounting reversal', () => {
         create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
       },
       prestamo: {
-        update: jest.fn().mockImplementation(({ data }: any) => ({
-          id: 'prestamo-1',
-          ...data,
-        })),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }: ArgsDePrismaEnMock) => ({
+            id: 'prestamo-1',
+            ...data,
+          })),
         findUnique: jest.fn().mockResolvedValue({
           id: 'prestamo-art-archivado',
           numeroPrestamo: 'ART-ARCH',
@@ -2886,10 +2955,12 @@ describe('LoansService archive accounting reversal', () => {
         create: jest.fn().mockResolvedValue({ id: 'asignacion-auto' }),
       },
       prestamo: {
-        update: jest.fn().mockImplementation(({ data }: any) => ({
-          id: 'prestamo-1',
-          ...data,
-        })),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }: ArgsDePrismaEnMock) => ({
+            id: 'prestamo-1',
+            ...data,
+          })),
         findUnique: jest.fn().mockResolvedValue({
           id: 'prestamo-art-restaurar',
           numeroPrestamo: 'ART-REST',
@@ -3098,17 +3169,23 @@ describe('Reprogramaciones: jurisdicción por rol', () => {
       },
       // el supervisor solo "es dueño" de p-mia
       prestamo: {
-        update: jest.fn().mockImplementation(({ data }: any) => ({
-          id: 'prestamo-1',
-          ...data,
-        })),
-        findMany: jest.fn().mockImplementation(({ where }: any) => {
-          const ids: string[] = where?.id?.in ?? [];
-          // simula el filtro por ruta.supervisorId: solo p-mia pasa
-          return Promise.resolve(
-            ids.filter((id) => id === 'p-mia').map((id) => ({ id })),
-          );
-        }),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }: ArgsDePrismaEnMock) => ({
+            id: 'prestamo-1',
+            ...data,
+          })),
+        findMany: jest
+          .fn()
+          .mockImplementation(({ where }: ArgsDePrismaEnMock) => {
+            const filtro = where?.id;
+            const ids: string[] =
+              typeof filtro === 'object' && filtro ? (filtro.in ?? []) : [];
+            // simula el filtro por ruta.supervisorId: solo p-mia pasa
+            return Promise.resolve(
+              ids.filter((id) => id === 'p-mia').map((id) => ({ id })),
+            );
+          }),
       },
     };
   }

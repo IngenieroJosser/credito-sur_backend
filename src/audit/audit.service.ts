@@ -22,7 +22,10 @@ export class AuditService {
     metadata?: any;
   }) {
     // Si no hay datos, intentar inferir cambios
-    let cambios: any = null;
+    // Declarado, no inferido: `let cambios = null` sin anotacion es un `any` EVOLUTIVO
+    // para TypeScript, y `noImplicitAny` no lo marca. O sea que quitar el `: any` de
+    // aqui no quitaba nada, solo lo escondia.
+    let cambios: { diff: string } | null = null;
     if (data.datosAnteriores && data.datosNuevos) {
       // Aquí podrías implementar una lógica para calcular diferencias
       cambios = { diff: 'calculated' };
