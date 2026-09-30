@@ -9,6 +9,7 @@ import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
 import { objetoDeJson, textosDeJson, textoDeJson } from '../common/json.util';
 import { textoDeValor } from '../common/texto.util';
 import {
+  Aprobacion,
   EstadoAprobacion,
   EstadoPrestamo,
   EstadoCuota,
@@ -85,6 +86,30 @@ import {
  * sin pedir casting.
  */
 const ESTADOS_COBRABLES = [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA];
+
+/**
+ * La aprobacion CON sus dos relaciones de usuario cargadas.
+ *
+ * Va con `Prisma.validator` y no escrita a mano: el `include` de la consulta y el
+ * tipo salen del mismo sitio, asi que no pueden separarse. `enrichApprovalContext`
+ * lee `approval.solicitadoPor`, que el modelo plano no trae; con `approval: any`
+ * eso compilaba y nadie comprobaba que la consulta lo cargara.
+ */
+const aprobacionConSolicitante =
+  Prisma.validator<Prisma.AprobacionDefaultArgs>()({
+    include: {
+      solicitadoPor: {
+        select: { id: true, nombres: true, apellidos: true, rol: true },
+      },
+      aprobadoPor: {
+        select: { id: true, nombres: true, apellidos: true, rol: true },
+      },
+    },
+  });
+
+type AprobacionConSolicitante = Prisma.AprobacionGetPayload<
+  typeof aprobacionConSolicitante
+>;
 
 @Injectable()
 export class ApprovalsService {
@@ -307,7 +332,7 @@ export class ApprovalsService {
   }
 
   private enrichApprovalContext(
-    approval: any,
+    approval: AprobacionConSolicitante,
     datosSolicitud: Record<string, any>,
   ) {
     return {
@@ -323,14 +348,7 @@ export class ApprovalsService {
   async getApprovalContext(aprobacionId: string) {
     const approval = await this.prisma.aprobacion.findUnique({
       where: { id: aprobacionId },
-      include: {
-        solicitadoPor: {
-          select: { id: true, nombres: true, apellidos: true, rol: true },
-        },
-        aprobadoPor: {
-          select: { id: true, nombres: true, apellidos: true, rol: true },
-        },
-      },
+      ...aprobacionConSolicitante,
     });
 
     if (!approval) {
@@ -667,7 +685,7 @@ export class ApprovalsService {
 
   private async confirmarPrestamoProvisional(
     tx: TransaccionPrisma,
-    approval: any,
+    approval: Aprobacion,
     aprobadoPorId?: string,
   ) {
     if (!approval.referenciaId) {
@@ -878,7 +896,7 @@ export class ApprovalsService {
 
   private async reaplicarPrestamoProvisionalRevertido(
     tx: TransaccionPrisma,
-    approval: any,
+    approval: Aprobacion,
     userId: string,
     notas?: string,
   ) {
@@ -892,9 +910,13 @@ export class ApprovalsService {
     }
 
     const rollbackData = objetoDeJson(efectoAnterior.rollbackData);
-    const prestamoId = String(
-      rollbackData.prestamoId || approval.referenciaId || '',
-    );
+    // `rollbackData` viene de un campo Json, asi que sus valores pueden ser
+    // objetos. Con `String(...)` un objeto se convertia en "[object Object]", que
+    // es TRUTHY: el guard de abajo lo dejaba pasar y se seguia con un id
+    // inventado. `textoDeJson` devuelve undefined si no es texto ni numero, y
+    // entonces el guard si salta.
+    const prestamoId =
+      textoDeJson(rollbackData.prestamoId) || approval.referenciaId || '';
     if (!prestamoId) {
       throw new BadRequestException('La aprobación no tiene préstamo asociado');
     }
@@ -1029,7 +1051,7 @@ export class ApprovalsService {
 
   private async rejectLoanDirecto(
     tx: TransaccionPrisma,
-    approval: any,
+    approval: Aprobacion,
     rechazadoPorId?: string,
     _motivoRechazo?: string,
   ) {
@@ -1073,7 +1095,7 @@ export class ApprovalsService {
 
   private async revertirPrestamoProvisional(
     tx: TransaccionPrisma,
-    approval: any,
+    approval: Aprobacion,
     efecto: any,
     rechazadoPorId?: string,
     motivoRechazo?: string,
@@ -1231,7 +1253,7 @@ export class ApprovalsService {
   }
 
   private async rejectReprogramacionCuota(
-    approval: any,
+    approval: Aprobacion,
     efectoProvisional: any,
     rechazadoPorId?: string,
     motivoRechazo?: string,
@@ -1248,7 +1270,10 @@ export class ApprovalsService {
 
     const rollbackData = objetoDeJson(efectoProvisional.rollbackData);
 
-    const cuotaId = String(rollbackData.cuotaId || approval.referenciaId || '');
+    // Igual que en `confirmarEfectoProvisional`: un objeto en el Json se volvia
+    // "[object Object]" y pasaba el guard.
+    const cuotaId =
+      textoDeJson(rollbackData.cuotaId) || approval.referenciaId || '';
 
     if (!cuotaId) {
       throw new BadRequestException(
@@ -1790,7 +1815,10 @@ export class ApprovalsService {
     return { success: true, message: 'Aprobación procesada exitosamente' };
   }
 
-  private async approveTransferPayment(approval: any, aprobadoPorId?: string) {
+  private async approveTransferPayment(
+    approval: Aprobacion,
+    aprobadoPorId?: string,
+  ) {
     const data =
       typeof approval.datosSolicitud === 'string'
         ? JSON.parse(approval.datosSolicitud)
@@ -2845,7 +2873,7 @@ export class ApprovalsService {
     return { success: true, message: 'Aprobación rechazada' };
   }
 
-  private async approveNewClient(approval: any) {
+  private async approveNewClient(approval: Aprobacion) {
     const data =
       typeof approval.datosSolicitud === 'string'
         ? JSON.parse(approval.datosSolicitud)
@@ -2878,7 +2906,7 @@ export class ApprovalsService {
   }
 
   private async approveNewLoan(
-    approval: any,
+    approval: Aprobacion,
     aprobadoPorId?: string,
     editedData?: any,
   ) {
@@ -3478,7 +3506,7 @@ export class ApprovalsService {
     this.notificacionesGateway.broadcastDashboardsActualizados({});
   }
 
-  private async approveExpense(approval: any, aprobadoPorId?: string) {
+  private async approveExpense(approval: Aprobacion, aprobadoPorId?: string) {
     const data =
       typeof approval.datosSolicitud === 'string'
         ? JSON.parse(approval.datosSolicitud)
@@ -3674,7 +3702,7 @@ export class ApprovalsService {
     });
   }
 
-  private async approveCashBase(approval: any, aprobadoPorId?: string) {
+  private async approveCashBase(approval: Aprobacion, aprobadoPorId?: string) {
     const data =
       typeof approval.datosSolicitud === 'string'
         ? JSON.parse(approval.datosSolicitud)
@@ -3832,7 +3860,10 @@ export class ApprovalsService {
     });
   }
 
-  private async approvePaymentExtension(approval: any, aprobadoPorId?: string) {
+  private async approvePaymentExtension(
+    approval: Aprobacion,
+    aprobadoPorId?: string,
+  ) {
     const data =
       typeof approval.datosSolicitud === 'string'
         ? JSON.parse(approval.datosSolicitud)
@@ -3930,7 +3961,7 @@ export class ApprovalsService {
   }
 
   private async approveLoanLoss(
-    approval: any,
+    approval: Aprobacion,
     aprobadoPorId?: string,
     _editedData?: any,
   ) {
