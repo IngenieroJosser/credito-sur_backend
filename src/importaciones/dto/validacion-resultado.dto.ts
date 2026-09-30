@@ -1,11 +1,19 @@
 import type { TipoAmortizacionImportacion } from '../interes-credito';
+import type { ValorDeCelda } from '../parsers/cell-value.util';
 
 export interface ErrorValidacion {
   hoja: string;
   fila: number;
   campo: string;
   mensaje: string;
-  valor: any;
+  /**
+   * El valor de la celda que provoco el error, para que el usuario lo vea.
+   *
+   * `ValorDeCelda` y no `any`: es lo que devuelven los lectores de
+   * `cell-value.util.ts`, que es de donde sale siempre. Era la RAIZ de cinco `any` mas
+   * en los parsers, porque cada `addError` copiaba el tipo de este campo.
+   */
+  valor: ValorDeCelda;
 }
 
 export interface AdvertenciaValidacion {
@@ -13,7 +21,7 @@ export interface AdvertenciaValidacion {
   fila: number;
   campo: string;
   mensaje: string;
-  valor: any;
+  valor: ValorDeCelda;
 }
 
 export interface ResumenHoja {
