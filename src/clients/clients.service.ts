@@ -593,7 +593,7 @@ export class ClientsService {
 
       // Ya no se incluyen las aprobaciones pendientes por separado: todos los
       // clientes se crean en la tabla principal con estado PENDIENTE. Antes quedaba
-      // aqui un `const aprobacionesPendientes: any[] = []` y treinta lineas que lo
+      // aqui un `const aprobacionesPendientes: unknown[] = []` y treinta lineas que lo
       // recorrian, codigo que no podia ejecutarse nunca porque el arreglo siempre
       // estaba vacio. Se borro.
       this.logger.log(`Found ${clientesRaw.length} active clients`);

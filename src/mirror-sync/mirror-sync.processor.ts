@@ -19,7 +19,7 @@ export class MirrorSyncProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<any, any, string>): Promise<any> {
+  async process(job: Job<any, any, string>): Promise<unknown> {
     const { model, action, data } = job.data;
 
     // El servidor maestro enviará una petición al Espejo (VPS)

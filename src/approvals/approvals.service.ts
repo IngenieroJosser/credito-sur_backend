@@ -840,7 +840,7 @@ export class ApprovalsService {
             };
           })
           .filter(
-            (line: any) =>
+            (line) =>
               Number(line.debitAmount || 0) > 0 ||
               Number(line.creditAmount || 0) > 0,
           );
@@ -1020,7 +1020,7 @@ export class ApprovalsService {
               };
             })
             .filter(
-              (line: any) =>
+              (line) =>
                 Number(line.debitAmount || 0) > 0 ||
                 Number(line.creditAmount || 0) > 0,
             ),

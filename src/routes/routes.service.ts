@@ -782,7 +782,7 @@ export class RoutesService {
       },
     });
 
-    const filas: any[] = [];
+    const filas: unknown[] = [];
 
     for (const asig of asignaciones) {
       const cliente = asig.cliente;

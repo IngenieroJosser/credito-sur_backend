@@ -440,7 +440,7 @@ export class ReportsService {
         });
 
         const cuotaMasAntigua = cuotasVencidas.reduce(
-          (acc: any, c: any) => {
+          (acc, c: any) => {
             const eff = c?.fechaVencimientoProrroga
               ? new Date(c.fechaVencimientoProrroga)
               : new Date(c.fechaVencimiento);
@@ -1509,7 +1509,7 @@ export class ReportsService {
   async exportOperationalReport(
     filters: GetOperationalReportDto,
     format: 'excel' | 'pdf',
-  ): Promise<any> {
+  ): Promise<{ data: Buffer; contentType: string; filename: string }> {
     const reportData = await this.getOperationalReport(filters);
     const fecha = getBogotaDayKey(new Date());
 
