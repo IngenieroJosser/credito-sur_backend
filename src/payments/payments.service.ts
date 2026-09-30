@@ -11,6 +11,7 @@ import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
 import {
   EstadoPrestamo,
+  Cuota,
   EstadoCuota,
   MetodoPago,
   TipoTransaccion,
@@ -56,6 +57,62 @@ type PaymentActor =
     }
   | null
   | undefined;
+
+/**
+ * El pago que se devuelve cuando alguien repite una peticion con la misma llave de
+ * idempotencia.
+ *
+ * El `include` se saca de la consulta para que `buildIdempotentPaymentReplay`
+ * declare lo que recibe. Decia `pago: any`, y ese metodo suma los detalles y lee el
+ * cliente y el saldo del prestamo: si la consulta dejara de cargar `detalles`, la
+ * respuesta del reintento diria que se abono cero a capital y a interes sin que
+ * nada fallara.
+ */
+const pagoParaReplay = Prisma.validator<Prisma.PagoDefaultArgs>()({
+  include: {
+    detalles: true,
+    cliente: {
+      select: { id: true, nombres: true, apellidos: true },
+    },
+    prestamo: {
+      select: { id: true, saldoPendiente: true },
+    },
+  },
+});
+
+type PagoParaReplay = Prisma.PagoGetPayload<typeof pagoParaReplay>;
+
+/**
+ * El prestamo sobre el que se aplica un pago, con sus cuotas abiertas en orden y
+ * los datos del cliente que van al recibo.
+ *
+ * El `include` estaba escrito DOS veces en este archivo, y las dos firmas que
+ * reciben esas filas decian `prestamo: any` y `prestamoActual: any`. Son los
+ * metodos que reparten el dinero entre las cuotas: si una de las dos consultas
+ * dejara de pedir `cuotas`, el reparto no tendria donde aplicar y el pago quedaria
+ * sin imputar, sin que nada fallara al compilar.
+ *
+ * El `orderBy` es parte del contrato, no un detalle: la cascada aplica el dinero
+ * cuota por cuota en ese orden, y recibirlas desordenadas cambia a que cuota entra
+ * cada peso.
+ */
+const prestamoParaCobrar = Prisma.validator<Prisma.PrestamoDefaultArgs>()({
+  include: {
+    cuotas: {
+      where: {
+        estado: {
+          in: [EstadoCuota.PENDIENTE, EstadoCuota.PARCIAL, EstadoCuota.VENCIDA],
+        },
+      },
+      orderBy: { numeroCuota: 'asc' },
+    },
+    cliente: {
+      select: { id: true, dni: true, nombres: true, apellidos: true },
+    },
+  },
+});
+
+type PrestamoParaCobrar = Prisma.PrestamoGetPayload<typeof prestamoParaCobrar>;
 
 @Injectable()
 export class PaymentsService {
@@ -390,14 +447,14 @@ export class PaymentsService {
     return `sha256:${createHash('sha256').update(key).digest('hex')}`;
   }
 
-  private buildIdempotentPaymentReplay(pago: any) {
+  private buildIdempotentPaymentReplay(pago: PagoParaReplay) {
     const montoTotal = Number(pago?.montoTotal || 0);
     const capitalRecuperado = (pago?.detalles || []).reduce(
-      (sum: number, detalle: any) => sum + Number(detalle?.montoCapital || 0),
+      (sum: number, detalle) => sum + Number(detalle?.montoCapital || 0),
       0,
     );
     const interesRecuperado = (pago?.detalles || []).reduce(
-      (sum: number, detalle: any) => sum + Number(detalle?.montoInteres || 0),
+      (sum: number, detalle) => sum + Number(detalle?.montoInteres || 0),
       0,
     );
     const saldoNuevo = Number(pago?.prestamo?.saldoPendiente || 0);
@@ -421,15 +478,7 @@ export class PaymentsService {
     if (!idempotencyKey) return null;
     return this.prisma.pago.findFirst({
       where: { idempotencyKey },
-      include: {
-        detalles: true,
-        cliente: {
-          select: { id: true, nombres: true, apellidos: true },
-        },
-        prestamo: {
-          select: { id: true, saldoPendiente: true },
-        },
-      },
+      ...pagoParaReplay,
     });
   }
 
@@ -469,7 +518,7 @@ export class PaymentsService {
    * que quien llama lo aplique dentro de su propia transaccion.
    */
   private calcularAplicacionPago(
-    prestamo: any,
+    prestamo: PrestamoParaCobrar,
     montoTotal: number,
     cuotaIdObjetivo?: string,
     aplicarDesdeCuotaObjetivo = false,
@@ -498,11 +547,11 @@ export class PaymentsService {
       if (!cuotaIdObjetivo) return cuotasBase;
 
       if (!aplicarDesdeCuotaObjetivo) {
-        return cuotasBase.filter((cuota: any) => cuota.id === cuotaIdObjetivo);
+        return cuotasBase.filter((cuota) => cuota.id === cuotaIdObjetivo);
       }
 
       const cuotaIndex = cuotasBase.findIndex(
-        (cuota: any) => cuota.id === cuotaIdObjetivo,
+        (cuota) => cuota.id === cuotaIdObjetivo,
       );
 
       return cuotaIndex >= 0 ? cuotasBase.slice(cuotaIndex) : [];
@@ -617,7 +666,7 @@ export class PaymentsService {
    */
   private validatePagoIntentAgainstCurrentCuota(
     paymentDto: CreatePaymentDto,
-    prestamoActual: any,
+    prestamoActual: PrestamoParaCobrar,
   ) {
     if (paymentDto.tipoRegistro !== 'PAGO') return;
     if (paymentDto.cuotaId) return;
@@ -720,23 +769,7 @@ export class PaymentsService {
     // Obtener préstamo con cuotas pendientes
     const prestamo = await this.prisma.prestamo.findFirst({
       where: { id: prestamoIdVal, eliminadoEn: null },
-      include: {
-        cuotas: {
-          where: {
-            estado: {
-              in: [
-                EstadoCuota.PENDIENTE,
-                EstadoCuota.PARCIAL,
-                EstadoCuota.VENCIDA,
-              ],
-            },
-          },
-          orderBy: { numeroCuota: 'asc' },
-        },
-        cliente: {
-          select: { id: true, dni: true, nombres: true, apellidos: true },
-        },
-      },
+      ...prestamoParaCobrar,
     });
 
     if (!prestamo) {
@@ -1171,23 +1204,7 @@ export class PaymentsService {
 
         const prestamoActual = await tx.prestamo.findFirst({
           where: { id: prestamoIdVal, eliminadoEn: null },
-          include: {
-            cuotas: {
-              where: {
-                estado: {
-                  in: [
-                    EstadoCuota.PENDIENTE,
-                    EstadoCuota.PARCIAL,
-                    EstadoCuota.VENCIDA,
-                  ],
-                },
-              },
-              orderBy: { numeroCuota: 'asc' },
-            },
-            cliente: {
-              select: { id: true, dni: true, nombres: true, apellidos: true },
-            },
-          },
+          ...prestamoParaCobrar,
         });
 
         if (!prestamoActual) {
@@ -2246,7 +2263,7 @@ export class PaymentsService {
    * La `fechaPago` solo se conserva si la cuota sigue completa; en cualquier otro
    * caso se limpia, porque ya no esta saldada.
    */
-  private getCuotaStateAfterRevert(cuota: any, nextPaid: number) {
+  private getCuotaStateAfterRevert(cuota: Cuota, nextPaid: number) {
     const amount = Number(cuota?.monto || 0);
     if (nextPaid >= amount) {
       return {
