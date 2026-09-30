@@ -83,7 +83,12 @@ export class ApprovalsController {
   )
   async approveItem(
     @Param('id') id: string,
-    @Body() body: { type: TipoAprobacion; notas?: string; editedData?: any },
+    @Body()
+    body: {
+      type: TipoAprobacion;
+      notas?: string;
+      editedData?: Record<string, unknown>;
+    },
     @Request() req: RequestConUsuario,
   ) {
     const aprobadoPorId = req.user?.id;

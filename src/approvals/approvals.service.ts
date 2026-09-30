@@ -14,6 +14,7 @@ import {
   EstadoAprobacion,
   EstadoPrestamo,
   EstadoCuota,
+  type Cuota,
   TipoAprobacion,
   TipoTransaccion,
   MetodoPago,
@@ -263,7 +264,8 @@ export class ApprovalsService {
     titulo: string;
     mensaje: string;
     tipo?: string;
-    metadata?: any;
+    /** Se le hace spread mas abajo, asi que es un objeto, no cualquier Json. */
+    metadata?: Record<string, Prisma.InputJsonValue | undefined>;
   }) {
     try {
       const asignacion = await this.prisma.asignacionRuta.findFirst({
@@ -312,7 +314,18 @@ export class ApprovalsService {
       : {};
   }
 
-  private buildReferenciasCliente(cliente: any) {
+  // Las cinco columnas de referencias del cliente, y nada mas. Eran `any`, asi que
+  // `cliente.referencia1Nonbre` mal escrito habria devuelto `undefined` y la referencia
+  // se habria caido del filtro de abajo sin una queja.
+  private buildReferenciasCliente(
+    cliente: {
+      referencia1Nombre?: string | null;
+      referencia1Telefono?: string | null;
+      referencia2Nombre?: string | null;
+      referencia2Telefono?: string | null;
+      referencia?: string | null;
+    } | null,
+  ) {
     return [
       {
         tipo: 'REFERENCIA_1',
@@ -334,7 +347,7 @@ export class ApprovalsService {
 
   private enrichApprovalContext(
     approval: AprobacionConSolicitante,
-    datosSolicitud: Record<string, any>,
+    datosSolicitud: Record<string, unknown>,
   ) {
     return {
       ...approval,
@@ -1493,7 +1506,9 @@ export class ApprovalsService {
   }
 
   private calcularAplicacionPago(
-    prestamo: any,
+    // De todo el prestamo solo se leen las cuotas: lo dijo una sonda `never`. Y la cuota
+    // es la de Prisma tal cual, con sus montos `Decimal`, porque asi llega del caller.
+    prestamo: { cuotas: Cuota[] },
     montoTotal: number,
     cuotaIdObjetivo?: string,
     aplicarDesdeCuotaObjetivo = false,
@@ -1526,7 +1541,7 @@ export class ApprovalsService {
       }
 
       const cuotaIndex = cuotasBase.findIndex(
-        (cuota: any) => cuota.id === cuotaIdObjetivo,
+        (cuota) => cuota.id === cuotaIdObjetivo,
       );
 
       return cuotaIndex >= 0 ? cuotasBase.slice(cuotaIndex) : [];
@@ -1617,7 +1632,7 @@ export class ApprovalsService {
     _type: TipoAprobacion,
     aprobadoPorId?: string,
     notas?: string,
-    editedData?: any,
+    editedData?: Record<string, unknown>,
   ) {
     const approval = await this.prisma.aprobacion.findUnique({
       where: { id },
@@ -2280,7 +2295,7 @@ export class ApprovalsService {
       orderBy: { creadoEn: 'desc' },
     });
 
-    const grouped: Record<string, any[]> = {};
+    const grouped: Record<string, unknown[]> = {};
     const conteo: Record<string, number> = {};
 
     for (const item of pendientes) {
@@ -2929,20 +2944,27 @@ export class ApprovalsService {
   private async approveNewLoan(
     approval: Aprobacion,
     aprobadoPorId?: string,
-    editedData?: any,
+    editedData?: Record<string, unknown>,
   ) {
-    const data =
+    // `objetoDeJson` alrededor del parse: sin el, `data` es `any` (lo que devuelve
+    // `JSON.parse`) y por la union `editedData || data` el `finalData` volvia a ser `any`,
+    // asi que declarar `editedData` no comprobaba NADA de lo que se lee abajo.
+    const data = objetoDeJson(
       typeof approval.datosSolicitud === 'string'
         ? JSON.parse(approval.datosSolicitud)
-        : approval.datosSolicitud;
+        : approval.datosSolicitud,
+    );
 
     // Usar datos editados si existen, de lo contrario los originales
     const finalData = editedData || data;
 
     // Ejecutar en una transacción
     await this.prisma.$transaction(async (tx) => {
+      // Los tres `textoDeJson` de este bloque son por lo mismo: estos valores salen de
+      // una columna `Json`, y un `String(objeto)` da "[object Object]", que aqui habria
+      // decidido el tipo de credito, la amortizacion y el nombre en la notificacion.
       const isArticulo =
-        String(finalData?.tipo || '').toUpperCase() === 'ARTICULO';
+        (textoDeJson(finalData?.tipo) ?? '').toUpperCase() === 'ARTICULO';
       const cuotaInicial =
         finalData.cuotaInicial !== undefined
           ? Number(finalData.cuotaInicial)
@@ -2961,8 +2983,12 @@ export class ApprovalsService {
               finalData.plazoMeses || finalData.plazo || finalData.plajeMeses,
             )
           : undefined;
-      const tipoAmortizacionNormalizado = finalData.tipoAmortizacion
-        ? (String(finalData.tipoAmortizacion).toUpperCase() as TipoAmortizacion)
+      const tipoAmortizacionNormalizado = textoDeJson(
+        finalData.tipoAmortizacion,
+      )
+        ? ((
+            textoDeJson(finalData.tipoAmortizacion) ?? ''
+          ).toUpperCase() as TipoAmortizacion)
         : undefined;
 
       const montoNormalizado = (() => {
@@ -3042,10 +3068,13 @@ export class ApprovalsService {
             ? Number(finalData.costoArticulo || finalData.costo || 0) ||
               undefined
             : undefined,
-          fechaInicio: finalData.fechaInicio
-            ? new Date(finalData.fechaInicio)
+          // `textoDeJson` y no la lectura directa: esto viene de una columna `Json`, y
+          // `new Date(objeto)` da Invalid Date, que se guardaba como fecha de inicio del
+          // credito sin una sola queja. Con `any` no habia forma de verlo.
+          fechaInicio: textoDeJson(finalData.fechaInicio)
+            ? new Date(String(finalData.fechaInicio))
             : undefined,
-          notas: finalData.notas || undefined,
+          notas: textoDeJson(finalData.notas) || undefined,
         },
         include: {
           cliente: {
@@ -3507,14 +3536,14 @@ export class ApprovalsService {
       await this.notificacionesService.create({
         usuarioId: approval.solicitadoPorId,
         titulo: 'Solicitud Aprobada',
-        mensaje: `Tu solicitud de ${label} para ${data.cliente || 'el cliente'} ha sido aprobada.`,
+        mensaje: `Tu solicitud de ${label} para ${textoDeJson(data.cliente) || 'el cliente'} ha sido aprobada.`,
         tipo: 'EXITO',
         entidad: 'Prestamo',
         entidadId: approval.referenciaId,
         metadata: {
           estadoAprobacion: 'APROBADO',
-          monto: data.monto,
-          articulo: data.articulo,
+          monto: Number(data.monto || 0),
+          articulo: textoDeJson(data.articulo) ?? null,
         },
       });
     } catch (e) {
@@ -3984,7 +4013,7 @@ export class ApprovalsService {
   private async approveLoanLoss(
     approval: Aprobacion,
     aprobadoPorId?: string,
-    _editedData?: any,
+    _editedData?: Record<string, unknown>,
   ) {
     const prestamoId = approval.referenciaId;
 
