@@ -26,7 +26,10 @@ export class PushController {
   @Post('subscribe')
   @ApiOperation({ summary: 'Suscribir usuario a notificaciones push' })
   async subscribe(
-    @Body() body: { subscription: any },
+    @Body()
+    body: {
+      subscription: { endpoint: string; keys: { p256dh: string; auth: string } };
+    },
     @Request() req: { user?: { id?: string } },
   ) {
     return this.pushService.subscribeUser(

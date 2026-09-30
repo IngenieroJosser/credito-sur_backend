@@ -132,7 +132,8 @@ export class UsersController {
   cambiarContrasena(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ChangePasswordDto,
-    @Request() _req: any,
+    // No se usa (el guard ya valido), pero el decorador lo exige.
+    @Request() _req: unknown,
   ) {
     return this.usersService.changePassword(id, dto);
   }

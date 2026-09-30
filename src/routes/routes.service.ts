@@ -3859,7 +3859,12 @@ export class RoutesService {
       },
     });
     const visitasMap = new Map(registrosVisitas.map((r) => [r.clienteId, r]));
-    const visitasMapPorPrestamo = new Map<string, any>();
+    // El tipo del valor se DERIVA de la consulta que lo llena, igual que `visitasMap`
+    // de la linea de arriba, que ya lo inferia por construirse con datos.
+    const visitasMapPorPrestamo = new Map<
+      string,
+      (typeof registrosVisitas)[number]
+    >();
     registrosVisitas.forEach((registro) => {
       const clienteId = String(registro?.clienteId || '');
       const prestamoId = String(registro?.prestamoId || '');
@@ -4212,8 +4217,13 @@ export class RoutesService {
       };
     };
 
-    const cuotaPagadaPorPrestamo = new Map<string, any>();
-    const cuotaPagadaPorCliente = new Map<string, any>();
+    // Los dos guardan lo que devuelve `buildCuotaObjetivoDesdePago`: el tipo se saca de
+    // ahi con `NonNullable<ReturnType<...>>`, no se vuelve a escribir.
+    type CuotaObjetivoDePago = NonNullable<
+      ReturnType<typeof buildCuotaObjetivoDesdePago>
+    >;
+    const cuotaPagadaPorPrestamo = new Map<string, CuotaObjetivoDePago>();
+    const cuotaPagadaPorCliente = new Map<string, CuotaObjetivoDePago>();
     pagosOperativos.forEach((p) => {
       const cuotaObjetivoPago = buildCuotaObjetivoDesdePago(p);
       if (!cuotaObjetivoPago) return;
@@ -6467,7 +6477,20 @@ export class RoutesService {
     rutaIds: string[],
     creadoPorId?: string,
   ) {
-    if (!rutaIds.length) return new Map<string, any>();
+    // El resumen de cierres pendientes de una ruta, escrito una vez y usado en los tres
+    // sitios de esta funcion, que antes eran tres `any` distintos.
+    type ResumenDeCierres = {
+      cierrePendienteAnterior: Awaited<
+        ReturnType<RoutesService['getCierresPendientesRuta']>
+      >[number] | null;
+      cierresPendientes: Awaited<
+        ReturnType<RoutesService['getCierresPendientesRuta']>
+      >;
+      totalCierresPendientes: number;
+      tieneCierrePendiente: boolean;
+    };
+
+    if (!rutaIds.length) return new Map<string, ResumenDeCierres>();
 
     const cierresPendientes = await Promise.all(
       rutaIds.map(async (rutaId) => {
@@ -6483,11 +6506,11 @@ export class RoutesService {
             totalCierresPendientes: pendientes.length,
             tieneCierrePendiente: pendientes.length > 0,
           },
-        ] as [string, any];
+        ] as [string, ResumenDeCierres];
       }),
     );
 
-    const result = new Map<string, any>();
+    const result = new Map<string, ResumenDeCierres>();
     for (const item of cierresPendientes) {
       result.set(item[0], item[1]);
     }

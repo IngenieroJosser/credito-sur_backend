@@ -144,7 +144,10 @@ export class InventoryController {
     );
   }
 
-  private actor(req: any): string {
+  // `RequestConUsuario` ya existe en common/types y es el tipo que usan los demas
+  // controladores: se reutiliza. `any` aqui era peor que en otros sitios, porque de este
+  // valor sale el id que queda escrito en cada movimiento de inventario.
+  private actor(req: RequestConUsuario): string {
     if (!req?.user?.id) {
       throw new UnauthorizedException(
         'Usuario no autenticado o token invalido',

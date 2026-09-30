@@ -35,7 +35,10 @@ import {
   CarteraRow,
   CarteraTotales,
 } from '../templates/exports/cartera-creditos.template';
-import { generarExcelClientesCreditosImportable } from '../templates/exports/importables.template';
+import {
+  generarExcelClientesCreditosImportable,
+  type ClienteImportableRow,
+} from '../templates/exports/importables.template';
 import { etiquetaTipoAmortizacion } from '../importaciones/interes-credito';
 import { calcularFechaVencimiento } from './utils/amortizacion.utils';
 import { createHash, randomUUID } from 'crypto';
@@ -5442,7 +5445,10 @@ export class LoansService implements OnModuleInit {
         orderBy: { creadoEn: 'desc' },
       });
 
-      const clientesMap = new Map<string, any>();
+      // `ClienteImportableRow` ya existe y es justo lo que el consumidor de este mapa
+      // recibe: se reutiliza en vez de escribir un tipo nuevo. Lo dijo el compilador al
+      // quitar el `any`, que de paso mostro que faltaba `codigo` en mi primer intento.
+      const clientesMap = new Map<string, ClienteImportableRow>();
 
       for (const prestamo of prestamos) {
         const cliente = prestamo.cliente;

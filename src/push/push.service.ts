@@ -131,8 +131,10 @@ export class PushService {
   }
 
   private async sendToSubscription(
-    subscription: any,
-    payload: any,
+    // `webpush.PushSubscription` es lo que `sendNotification` pide de verdad
+    // (@types/web-push:19). El payload es un objeto que se serializa con JSON.stringify.
+    subscription: webpush.PushSubscription,
+    payload: Record<string, unknown>,
   ): Promise<'enviadas' | 'desactivadas' | 'fallidas'> {
     try {
       this.logger.log(`Enviando push real a: ${subscription.endpoint}`);
@@ -155,7 +157,13 @@ export class PushService {
     }
   }
 
-  async subscribeUser(userId: string, subscription: any) {
+  // La suscripcion que manda el navegador: endpoint mas las dos claves. Se leen esos
+  // tres campos y nada mas, y con `any` un `subscription.keys.p256dh` ausente reventaba
+  // en ejecucion en vez de avisar aqui.
+  async subscribeUser(
+    userId: string,
+    subscription: { endpoint: string; keys: { p256dh: string; auth: string } },
+  ) {
     try {
       const saved = await this.prisma.pushSubscription.upsert({
         where: { endpoint: subscription.endpoint },

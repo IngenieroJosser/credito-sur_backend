@@ -49,7 +49,10 @@ export class SalesService {
    * transferencia y 1.1.1 (caja) para lo demás. Hoy solo decide el método; el
    * parámetro `caja` no se usa.
    */
-  private getAccountCodeCaja(caja: any, metodoPago?: MetodoPago) {
+  private getAccountCodeCaja(
+    caja: { codigo?: string | null; tipo?: string | null } | null,
+    metodoPago?: MetodoPago,
+  ) {
     // El `| string` que habia en el parametro se comia el enum: la union entera
     // equivalia a `string` y no se comprobaba nada.
     const metodo = textoRecortado(metodoPago).toUpperCase();

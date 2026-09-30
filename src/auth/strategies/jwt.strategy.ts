@@ -24,7 +24,9 @@ interface JwtPayload {
 
 // Lee el token de la cookie httpOnly 'token' parseando la cabecera Cookie a
 // mano (sin depender de cookie-parser). Devuelve null si no está.
-function cookieExtractor(req: any): string | null {
+function cookieExtractor(req: {
+  headers?: { cookie?: unknown };
+}): string | null {
   const raw = req?.headers?.cookie;
   if (!raw || typeof raw !== 'string') return null;
   const parte = raw
