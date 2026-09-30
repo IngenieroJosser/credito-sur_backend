@@ -7,23 +7,8 @@ import {
   TipoTransaccion,
 } from '@prisma/client';
 import { TipoPrestamoDto } from './dto/create-loan.dto';
+import { ArgsDePrismaEnMock } from '../common/testing/prisma-mock.types';
 import { LoansService } from './loans.service';
-
-/**
- * Lo que los mocks de Prisma leen de la llamada que reciben.
- *
- * No hace falta `Prisma.XUpdateArgs` entero: estos mocks solo miran `where` para decidir
- * que devolver y reenvian `data` en la respuesta. Declarar lo que se lee, y no `any`, es
- * lo que hace que un `where` mal escrito en una prueba lo marque el compilador en vez de
- * devolver `undefined` en silencio y dejar pasar la asercion.
- */
-type ArgsDePrismaEnMock = {
-  // `id` se nombra aparte porque una prueba filtra con el operador de Prisma
-  // (`where: { id: { in: [...] } }`), no con un id suelto. La firma dice las dos formas
-  // y el sitio que lee `in` tiene que distinguirlas, que es justo lo que `any` tapaba.
-  where?: { id?: string | { in?: string[] } } & Record<string, unknown>;
-  data?: Record<string, unknown>;
-};
 
 const mockNotifications = {
   create: jest.fn().mockResolvedValue(undefined),

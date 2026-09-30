@@ -5,7 +5,29 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { RolUsuario } from '@prisma/client';
+import {
+  ArgsDePrismaEnMock,
+  esFiltroDePrisma,
+} from '../common/testing/prisma-mock.types';
 import { RoutesService } from './routes.service';
+
+/**
+ * Vista del servicio con los metodos PRIVADOS que estas pruebas espian.
+ *
+ * `jest.spyOn` exige que la propiedad exista en el TIPO, y estos tres son `private`: de
+ * ahi salian los diecisiete `service as any`. Nombrarlos aqui no comprueba que sigan
+ * existiendo en el servicio, pero si que una prueba no escriba mal el nombre y termine
+ * espiando una propiedad inventada, que con `any` pasaba sin una sola queja.
+ */
+type MetodosPrivadosEspiados = {
+  getDailyVisits: (...args: unknown[]) => Promise<unknown>;
+  getCierresPendientesRuta: (...args: unknown[]) => Promise<unknown>;
+  getCierresPendientesRutasMap: (...args: unknown[]) => Promise<unknown>;
+  notificacionesService: { notifyRolesDeduped: jest.Mock };
+};
+
+const conPrivados = (servicio: RoutesService) =>
+  servicio as unknown as MetodosPrivadosEspiados;
 
 const makeService = (prisma: any) => {
   if (prisma) {
@@ -311,7 +333,7 @@ describe('RoutesService role scoping', () => {
     };
     const service = makeService(prisma);
     jest
-      .spyOn(service as any, 'getCierresPendientesRutasMap')
+      .spyOn(conPrivados(service), 'getCierresPendientesRutasMap')
       .mockResolvedValue(new Map());
     jest.spyOn(service, 'getDailyVisits').mockResolvedValue({
       resumen: {
@@ -1430,7 +1452,7 @@ describe('RoutesService role scoping', () => {
       $transaction: jest.fn().mockImplementation((callback) => callback(tx)),
     };
     const service = makeService(prisma);
-    jest.spyOn(service as any, 'getDailyVisits').mockResolvedValue({
+    jest.spyOn(conPrivados(service), 'getDailyVisits').mockResolvedValue({
       resumen: {
         meta: 100000,
         recaudo: 100000,
@@ -1484,7 +1506,7 @@ describe('RoutesService role scoping', () => {
       }),
     });
     expect(
-      (service as any).notificacionesService.notifyRolesDeduped,
+      conPrivados(service).notificacionesService.notifyRolesDeduped,
     ).toHaveBeenCalledWith(
       expect.objectContaining({
         metadata: expect.objectContaining({
@@ -1567,12 +1589,12 @@ describe('RoutesService role scoping', () => {
       };
 
       const service = makeService(prisma);
-      jest.spyOn(service as any, 'getDailyVisits').mockResolvedValue({
+      jest.spyOn(conPrivados(service), 'getDailyVisits').mockResolvedValue({
         resumen: { meta: 100000, recaudo: 100000, recaudoOperativo: 100000 },
         visitas: [],
       });
       jest
-        .spyOn(service as any, 'getCierresPendientesRuta')
+        .spyOn(conPrivados(service), 'getCierresPendientesRuta')
         .mockResolvedValue([]);
 
       await expect(
@@ -1610,12 +1632,12 @@ describe('RoutesService role scoping', () => {
       };
 
       const service = makeService(prisma);
-      jest.spyOn(service as any, 'getDailyVisits').mockResolvedValue({
+      jest.spyOn(conPrivados(service), 'getDailyVisits').mockResolvedValue({
         resumen: { meta: 100000, recaudo: 100000 },
         visitas: [],
       });
       jest
-        .spyOn(service as any, 'getCierresPendientesRuta')
+        .spyOn(conPrivados(service), 'getCierresPendientesRuta')
         .mockResolvedValue([]);
 
       await expect(
@@ -1649,12 +1671,12 @@ describe('RoutesService role scoping', () => {
       };
 
       const service = makeService(prisma);
-      jest.spyOn(service as any, 'getDailyVisits').mockResolvedValue({
+      jest.spyOn(conPrivados(service), 'getDailyVisits').mockResolvedValue({
         resumen: { meta: 100000, recaudo: 100000 },
         visitas: [],
       });
       jest
-        .spyOn(service as any, 'getCierresPendientesRuta')
+        .spyOn(conPrivados(service), 'getCierresPendientesRuta')
         .mockResolvedValue([]);
 
       await expect(
@@ -1688,12 +1710,12 @@ describe('RoutesService role scoping', () => {
       };
 
       const service = makeService(prisma);
-      jest.spyOn(service as any, 'getDailyVisits').mockResolvedValue({
+      jest.spyOn(conPrivados(service), 'getDailyVisits').mockResolvedValue({
         resumen: { meta: 100000, recaudo: 50000, recaudoOperativo: 50000 }, // Descuadre
         visitas: [{ estadoGestion: 'PENDIENTE' }],
       });
       jest
-        .spyOn(service as any, 'getCierresPendientesRuta')
+        .spyOn(conPrivados(service), 'getCierresPendientesRuta')
         .mockResolvedValue([]);
 
       await expect(
@@ -1751,12 +1773,12 @@ describe('RoutesService role scoping', () => {
       };
 
       const service = makeService(prisma);
-      jest.spyOn(service as any, 'getDailyVisits').mockResolvedValue({
+      jest.spyOn(conPrivados(service), 'getDailyVisits').mockResolvedValue({
         resumen: { meta: 100000, recaudo: 100000, recaudoOperativo: 100000 },
         visitas: [],
       });
       jest
-        .spyOn(service as any, 'getCierresPendientesRuta')
+        .spyOn(conPrivados(service), 'getCierresPendientesRuta')
         .mockResolvedValue([]);
 
       await expect(
@@ -1824,12 +1846,12 @@ describe('RoutesService role scoping', () => {
       };
 
       const service = makeService(prisma);
-      jest.spyOn(service as any, 'getDailyVisits').mockResolvedValue({
+      jest.spyOn(conPrivados(service), 'getDailyVisits').mockResolvedValue({
         resumen: { meta: 100000, recaudo: 100000 },
         visitas: [],
       });
       jest
-        .spyOn(service as any, 'getCierresPendientesRuta')
+        .spyOn(conPrivados(service), 'getCierresPendientesRuta')
         .mockResolvedValue([]);
 
       await service.cerrarJornadaRegularizada(
@@ -1894,12 +1916,12 @@ describe('RoutesService role scoping', () => {
       };
 
       const service = makeService(prisma);
-      jest.spyOn(service as any, 'getDailyVisits').mockResolvedValue({
+      jest.spyOn(conPrivados(service), 'getDailyVisits').mockResolvedValue({
         resumen: { meta: 100000, recaudo: 100000 },
         visitas: [],
       });
       jest
-        .spyOn(service as any, 'getCierresPendientesRuta')
+        .spyOn(conPrivados(service), 'getCierresPendientesRuta')
         .mockResolvedValue([]);
 
       await service.cerrarJornadaRegularizada(
@@ -1983,24 +2005,45 @@ describe('RoutesService role scoping', () => {
     rutas?: Array<{ id: string; cobradorId: string }>;
   }) => {
     const prestamos = opciones.prestamos.map((p) => ({ ...p }));
-    const asignaciones = (opciones.asignaciones || []).map((a) => ({
-      ...a,
-      cobradorId: 'cobrador-x',
-      ordenVisita: 1,
-      creadoEn: new Date(),
-    }));
+    // El tipo se declara porque el doble de `create` mete una fila armada con el `data`
+    // que le pasa el servicio, y eso no cabe en el tipo que TypeScript infiere de las
+    // filas sembradas. `Record<string, unknown>` dice lo que de verdad es un doble: una
+    // fila con los campos conocidos mas lo que Prisma le manden.
+    type AsignacionFalsa = {
+      id?: string;
+      rutaId?: string;
+      clienteId?: string;
+      cobradorId?: string;
+      ordenVisita?: number;
+      activa?: boolean;
+      creadoEn?: Date;
+    } & Record<string, unknown>;
+
+    const asignaciones: AsignacionFalsa[] = (opciones.asignaciones || []).map(
+      (a) => ({
+        ...a,
+        cobradorId: 'cobrador-x',
+        ordenVisita: 1,
+        creadoEn: new Date(),
+      }),
+    );
     const rutas = opciones.rutas || [
       { id: 'ruta-a', cobradorId: 'cobrador-a' },
       { id: 'ruta-b', cobradorId: 'cobrador-b' },
     ];
 
-    const cumple = (fila: any, where: any = {}): boolean =>
-      Object.entries(where).every(([campo, valor]: [string, any]) => {
+    const cumple = (
+      fila: Record<string, unknown>,
+      where: Record<string, unknown> = {},
+    ): boolean =>
+      Object.entries(where).every(([campo, valor]) => {
         // Un campo ausente en el falso equivale a null, como en la base.
         const actual = fila[campo] ?? null;
-        if (valor && typeof valor === 'object') {
+        // `esFiltroDePrisma` separa el operador del dato. Con `any` esa diferencia no se
+        // comprobaba en ningun sitio: un `{ in: 'x' }` sin arreglo reventaba en ejecucion.
+        if (esFiltroDePrisma(valor)) {
           if ('not' in valor) return actual !== (valor.not ?? null);
-          if ('in' in valor) return valor.in.includes(actual);
+          if ('in' in valor) return (valor.in ?? []).includes(actual);
         }
         return actual === (valor ?? null);
       });
@@ -2009,7 +2052,7 @@ describe('RoutesService role scoping', () => {
 
     const tx: any = {
       prestamo: {
-        findMany: jest.fn(async ({ where, distinct }: any) => {
+        findMany: jest.fn(async ({ where, distinct }: ArgsDePrismaEnMock) => {
           let filas = prestamos.filter((p) => cumple(p, where));
           if (distinct?.includes('rutaId')) {
             const vistos = new Set();
@@ -2019,50 +2062,56 @@ describe('RoutesService role scoping', () => {
           }
           return filas.map((p) => ({ ...p }));
         }),
-        update: jest.fn(async ({ where, data }: any) => {
-          const fila = prestamos.find((p) => p.id === where.id);
-          Object.assign(fila as any, data);
+        update: jest.fn(async ({ where, data }: ArgsDePrismaEnMock) => {
+          // La guarda es nueva: `fila as any` dejaba pasar un `Object.assign(undefined)`,
+          // que revienta en ejecucion si una prueba pide actualizar un id que no sembro.
+          const fila = prestamos.find((p) => p.id === where?.id);
+          if (fila) Object.assign(fila, data);
           return { ...fila };
         }),
-        updateMany: jest.fn(async ({ where, data }: any) => {
+        updateMany: jest.fn(async ({ where, data }: ArgsDePrismaEnMock) => {
           const filas = prestamos.filter((p) => cumple(p, where));
           filas.forEach((p) => Object.assign(p, data));
           return { count: filas.length };
         }),
       },
       asignacionRuta: {
-        findMany: jest.fn(async ({ where }: any = {}) =>
+        findMany: jest.fn(async ({ where }: ArgsDePrismaEnMock = {}) =>
           asignaciones.filter((a) => cumple(a, where)).map((a) => ({ ...a })),
         ),
-        findFirst: jest.fn(async ({ where, include }: any = {}) => {
-          const fila = asignaciones.find((a) => cumple(a, where));
-          if (!fila) return null;
-          // Prisma resuelve `include` igual en findFirst que en
-          // findFirstOrThrow. Este doble solo lo hacía en el segundo, así que
-          // al cambiar la llamada la relación llegaba vacía y parecía un fallo
-          // del servicio cuando era del falso.
-          return include?.cliente
-            ? { ...fila, cliente: { id: fila.clienteId } }
-            : { ...fila };
-        }),
-        findFirstOrThrow: jest.fn(async ({ where }: any = {}) => {
-          const fila = asignaciones.find((a) => cumple(a, where));
-          if (!fila) throw new Error('no encontrada');
-          return { ...fila, cliente: { id: fila.clienteId } };
-        }),
-        update: jest.fn(async ({ where, data }: any) => {
-          const fila = asignaciones.find((a) => a.id === where.id);
-          Object.assign(fila as any, data);
+        findFirst: jest.fn(
+          async ({ where, include }: ArgsDePrismaEnMock = {}) => {
+            const fila = asignaciones.find((a) => cumple(a, where));
+            if (!fila) return null;
+            // Prisma resuelve `include` igual en findFirst que en
+            // findFirstOrThrow. Este doble solo lo hacía en el segundo, así que
+            // al cambiar la llamada la relación llegaba vacía y parecía un fallo
+            // del servicio cuando era del falso.
+            return include?.cliente
+              ? { ...fila, cliente: { id: fila.clienteId } }
+              : { ...fila };
+          },
+        ),
+        findFirstOrThrow: jest.fn(
+          async ({ where }: ArgsDePrismaEnMock = {}) => {
+            const fila = asignaciones.find((a) => cumple(a, where));
+            if (!fila) throw new Error('no encontrada');
+            return { ...fila, cliente: { id: fila.clienteId } };
+          },
+        ),
+        update: jest.fn(async ({ where, data }: ArgsDePrismaEnMock) => {
+          const fila = asignaciones.find((a) => a.id === where?.id);
+          if (fila) Object.assign(fila, data);
           return { ...fila };
         }),
-        updateMany: jest.fn(async ({ where, data }: any) => {
+        updateMany: jest.fn(async ({ where, data }: ArgsDePrismaEnMock) => {
           const filas = asignaciones.filter((a) => cumple(a, where));
           filas.forEach((a) => Object.assign(a, data));
           return { count: filas.length };
         }),
         aggregate: jest.fn(async () => ({ _max: { ordenVisita: 1 } })),
-        create: jest.fn(async ({ data }: any) => {
-          const fila = {
+        create: jest.fn(async ({ data }: ArgsDePrismaEnMock) => {
+          const fila: AsignacionFalsa = {
             id: `asignacion-${siguienteId++}`,
             creadoEn: new Date(),
             ...data,
@@ -2072,8 +2121,8 @@ describe('RoutesService role scoping', () => {
         }),
       },
       ruta: {
-        findUnique: jest.fn(async ({ where }: any) => {
-          const fila = rutas.find((r) => r.id === where.id);
+        findUnique: jest.fn(async ({ where }: ArgsDePrismaEnMock) => {
+          const fila = rutas.find((r) => r.id === where?.id);
           return fila ? { ...fila } : null;
         }),
       },
@@ -2344,13 +2393,15 @@ describe('RoutesService role scoping', () => {
 
     const prisma = {
       ruta: {
-        findFirst: jest.fn().mockImplementation(({ where }: any) =>
-          Promise.resolve({
-            id: where.id,
-            nombre: `Ruta ${where.id}`,
-            cobradorId: where.id === 'ruta-b' ? 'cobrador-b' : 'cobrador-a',
-          }),
-        ),
+        findFirst: jest
+          .fn()
+          .mockImplementation(({ where }: ArgsDePrismaEnMock) =>
+            Promise.resolve({
+              id: where?.id,
+              nombre: `Ruta ${typeof where?.id === 'string' ? where.id : ''}`,
+              cobradorId: where?.id === 'ruta-b' ? 'cobrador-b' : 'cobrador-a',
+            }),
+          ),
       },
       asignacionRuta: {
         findFirst: jest.fn().mockResolvedValue({ id: 'asignacion-a' }),
