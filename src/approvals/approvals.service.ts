@@ -10,6 +10,7 @@ import { objetoDeJson, textosDeJson, textoDeJson } from '../common/json.util';
 import { textoDeValor } from '../common/texto.util';
 import {
   Aprobacion,
+  EfectoProvisional,
   EstadoAprobacion,
   EstadoPrestamo,
   EstadoCuota,
@@ -671,7 +672,10 @@ export class ApprovalsService {
     return efecto || null;
   }
 
-  private async confirmarEfectoProvisional(tx: TransaccionPrisma, efecto: any) {
+  private async confirmarEfectoProvisional(
+    tx: TransaccionPrisma,
+    efecto: EfectoProvisional,
+  ) {
     if (!efecto?.id) return;
 
     await tx.efectoProvisional.update({
@@ -1100,7 +1104,7 @@ export class ApprovalsService {
   private async revertirPrestamoProvisional(
     tx: TransaccionPrisma,
     approval: Aprobacion,
-    efecto: any,
+    efecto: EfectoProvisional,
     rechazadoPorId?: string,
     motivoRechazo?: string,
   ) {
@@ -1112,10 +1116,17 @@ export class ApprovalsService {
       return;
     }
 
-    const rollbackData = efecto?.rollbackData || {};
-    const prestamoId = String(
-      rollbackData.prestamoId || approval.referenciaId || '',
-    );
+    // `objetoDeJson` y no `|| {}`: al declarar `efecto: EfectoProvisional`, Prisma tipa
+    // `rollbackData` como JsonValue, que puede ser texto o numero, y leerle campos deja
+    // de compilar. El helper que ya existe en el repo devuelve un objeto de valores Json
+    // y es lo que usan los otros dos sitios que leen este mismo campo.
+    const rollbackData = objetoDeJson(efecto?.rollbackData);
+    // `textoDeJson` y no `String(...)`: el valor sale de un campo Json y su tipo admite
+    // objetos, sobre los que `String` daria "[object Object]" —truthy— y el guard de
+    // abajo lo dejaria pasar. Es la misma regla que ya se aplico en los otros dos sitios
+    // que leen rollbackData.
+    const prestamoId =
+      textoDeJson(rollbackData.prestamoId) || approval.referenciaId || '';
 
     if (!prestamoId) {
       throw new BadRequestException('La aprobación no tiene préstamo asociado');
@@ -1258,7 +1269,10 @@ export class ApprovalsService {
 
   private async rejectReprogramacionCuota(
     approval: Aprobacion,
-    efectoProvisional: any,
+    // Admite null a proposito: `cargarEfectoProvisionalPendiente` puede no encontrarlo, y
+    // la primera linea del cuerpo ya lo comprueba y lanza. Declararlo sin null obligaria
+    // a mover ese guarda al llamador y perderia el mensaje que explica que falto.
+    efectoProvisional: EfectoProvisional | null,
     rechazadoPorId?: string,
     motivoRechazo?: string,
   ) {
@@ -1495,8 +1509,11 @@ export class ApprovalsService {
     let capitalTotal = 0;
     let interesTotal = 0;
     let moraTotal = 0;
-    const cuotasActualizar: { id: string; montoPagado: number; estado: any }[] =
-      [];
+    const cuotasActualizar: {
+      id: string;
+      montoPagado: number;
+      estado: EstadoCuota;
+    }[] = [];
 
     const cuotasBase = prestamo.cuotas || [];
     const cuotasAplicables = (() => {
@@ -2013,7 +2030,7 @@ export class ApprovalsService {
         Number(prestamoActual.saldoPendiente || 0) - montoTotal,
       );
       const prestamoQuedaPagado = nuevoSaldo <= 0;
-      let nuevoEstadoPrestamo: any = prestamoActual.estado;
+      let nuevoEstadoPrestamo: EstadoPrestamo = prestamoActual.estado;
       if (prestamoQuedaPagado) nuevoEstadoPrestamo = EstadoPrestamo.PAGADO;
       else if (prestamoActual.estado === EstadoPrestamo.EN_MORA) {
         const vencidasRestantes = await tx.cuota.count({
