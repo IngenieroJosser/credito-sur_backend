@@ -197,7 +197,7 @@ export class ReportsService {
    */
   private filtroRutaScopePrestamo(
     actor?: { id?: string; rol?: RolUsuario } | null,
-  ): Record<string, any> {
+  ): Prisma.PrestamoWhereInput {
     const rol = String(actor?.rol || '').toUpperCase();
     if (!actor?.id) return {};
     if (rol === RolUsuario.SUPERVISOR) {
@@ -439,15 +439,18 @@ export class ReportsService {
           return !!key && key < hoyKeyBogota;
         });
 
+        // El tipo del acumulador se DERIVA del arreglo, con
+        // `(typeof cuotasVencidas)[number]`, en vez de repetirlo como `any` dos veces.
+        type CuotaVencida = (typeof cuotasVencidas)[number];
         const cuotaMasAntigua = cuotasVencidas.reduce(
-          (acc, c: any) => {
+          (acc, c) => {
             const eff = c?.fechaVencimientoProrroga
               ? new Date(c.fechaVencimientoProrroga)
               : new Date(c.fechaVencimiento);
             if (!acc) return { cuota: c, eff };
             return eff < acc.eff ? { cuota: c, eff } : acc;
           },
-          null as null | { cuota: any; eff: Date },
+          null as null | { cuota: CuotaVencida; eff: Date },
         );
 
         const cuotaMasAntiguaKey = cuotaMasAntigua?.eff
@@ -973,7 +976,7 @@ export class ReportsService {
    */
   private filtroRutaDirectoPorActor(
     actor?: { id?: string; rol?: RolUsuario } | null,
-  ): Record<string, any> {
+  ): Prisma.RutaWhereInput {
     const rol = String(actor?.rol || '').toUpperCase();
     if (!actor?.id) return {};
     if (rol === RolUsuario.SUPERVISOR) return { supervisorId: actor.id };
@@ -1342,7 +1345,9 @@ export class ReportsService {
 
   async getRouteDetail(
     routeId: string,
-    filters: any,
+    // Lo que manda el controlador desde el query string, ni mas ni menos
+    // (reports.controller.ts:321). `period` se castea a `TimeFilterPeriod` mas abajo.
+    filters: { period?: string; startDate?: string; endDate?: string },
     actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     const route = await this.prisma.ruta.findUnique({

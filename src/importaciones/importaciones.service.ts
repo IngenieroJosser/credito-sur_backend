@@ -1,4 +1,5 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
 import { objetoDeJson } from '../common/json.util';
 import { sincronizarAsignacionesCliente } from '../routes/sincronizar-asignaciones';
@@ -25,6 +26,46 @@ import {
 } from './interes-credito';
 import { pesos } from '../common/dinero.util';
 import { randomUUID } from 'crypto';
+
+/**
+ * El producto que las dos funciones de snapshot leen.
+ *
+ * Los doce campos los nombro una sonda `never` puesta en los dos parametros, que eran
+ * `any`. Son las mismas doce columnas que describe `ProductoImportadoSnapshot`, y es
+ * logico: una toma la foto y la otra la compara.
+ */
+type ProductoParaSnapshot = {
+  nombre?: string | null;
+  descripcion?: string | null;
+  categoria?: string | null;
+  categoriaId?: string | null;
+  marca?: string | null;
+  modelo?: string | null;
+  costo?: Prisma.Decimal | number | null;
+  stock?: number | null;
+  stockMinimo?: number | null;
+  activo?: boolean | null;
+  eliminadoEn?: Date | null;
+  ocultoArchivadosEn?: Date | null;
+};
+
+/**
+ * El lote de importacion, con lo que el detalle lee de el.
+ *
+ * Siete propiedades, nombradas por la misma sonda. `creadoPor` llega anidado porque la
+ * consulta lo incluye.
+ */
+type LoteParaDetalle = {
+  id: string;
+  // `tipo` y `estado` van obligatorios porque `evaluarSiSePuedeDeshacer` los exige asi,
+  // y son columnas no nulables del lote.
+  tipo: string;
+  estado: string;
+  nombreArchivo?: string | null;
+  creadoEn?: Date | null;
+  confirmadoEn?: Date | null;
+  creadoPor?: { nombres?: string | null; apellidos?: string | null } | null;
+};
 
 type ProductoImportadoSnapshot = {
   nombre: string;
@@ -195,7 +236,12 @@ export class ImportacionesService {
     );
   }
 
-  private getAccountCodeCaja(caja: any) {
+  private getAccountCodeCaja(
+    caja: {
+      codigo?: string | null;
+      tipo?: string | null;
+    } | null,
+  ) {
     if (caja?.codigo === 'CAJA-BANCO') return '1.1.2';
     if (String(caja?.tipo || '').toUpperCase() === 'RUTA') return '1.2.1';
     return '1.1.1';
@@ -496,7 +542,7 @@ export class ImportacionesService {
   }
 
   private snapshotCoincide(
-    producto: any,
+    producto: ProductoParaSnapshot,
     esperado: ProductoImportadoSnapshot,
   ): boolean {
     const actual: ProductoImportadoSnapshot = {
@@ -575,9 +621,8 @@ export class ImportacionesService {
           }
         }
 
-        const preciosPorId = new Map<string, any>(
-          producto.precios.map((p) => [p.id, p]),
-        );
+        // Sin anotacion: el tipo del valor sale de `producto.precios`, que Prisma ya tipa.
+        const preciosPorId = new Map(producto.precios.map((p) => [p.id, p]));
         for (const precio of registro.preciosCreados) {
           const actual = preciosPorId.get(precio.id);
           if (!actual) {
@@ -630,7 +675,10 @@ export class ImportacionesService {
     });
   }
 
-  private async detalleLoteInventario(lote: any, creado: CreadoPorImportacion) {
+  private async detalleLoteInventario(
+    lote: LoteParaDetalle,
+    creado: CreadoPorImportacion,
+  ) {
     const registros = creado.inventario ?? [];
     const articulos = await this.revisarReversionInventario(
       this.prisma,
@@ -992,7 +1040,8 @@ export class ImportacionesService {
 
   /** Deshace un lote de inventario solo si todo sigue como lo dejó el archivo. */
   private async revertirLoteInventario(
-    lote: any,
+    // Solo se le lee el id: lo dijo la sonda.
+    lote: { id: string },
     creado: CreadoPorImportacion,
     usuarioId: string,
   ) {
@@ -1206,7 +1255,9 @@ export class ImportacionesService {
     const registrosInventario = new Map<string, RegistroInventarioImportado>();
     let loteId = '';
 
-    const snapshotProducto = (producto: any): ProductoImportadoSnapshot => ({
+    const snapshotProducto = (
+      producto: ProductoParaSnapshot,
+    ): ProductoImportadoSnapshot => ({
       nombre: String(producto.nombre ?? ''),
       descripcion: producto.descripcion ?? null,
       categoria: String(producto.categoria ?? ''),
