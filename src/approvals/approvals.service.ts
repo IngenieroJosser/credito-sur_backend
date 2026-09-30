@@ -910,11 +910,15 @@ export class ApprovalsService {
     }
 
     const rollbackData = objetoDeJson(efectoAnterior.rollbackData);
-    // `rollbackData` viene de un campo Json, asi que sus valores pueden ser
-    // objetos. Con `String(...)` un objeto se convertia en "[object Object]", que
-    // es TRUTHY: el guard de abajo lo dejaba pasar y se seguia con un id
-    // inventado. `textoDeJson` devuelve undefined si no es texto ni numero, y
-    // entonces el guard si salta.
+    // `rollbackData` viene de un campo Json, asi que su TIPO admite objetos, y
+    // `String(objeto)` daria "[object Object]", que es truthy: el guard de abajo lo
+    // dejaria pasar y se seguiria con un id inventado.
+    //
+    // Hoy eso no puede pasar: se rastrearon los escritores y los dos que llenan
+    // `prestamoId` y `cuotaId` guardan `prestamo.id` y `cuota.id`, que son texto.
+    // Asi que esto no arregla un fallo, cierra la puerta: `textoDeJson` devuelve
+    // undefined cuando el valor no es texto ni numero, y entonces el guard salta
+    // en vez de dejar pasar basura. Es lo que pide la regla no-base-to-string.
     const prestamoId =
       textoDeJson(rollbackData.prestamoId) || approval.referenciaId || '';
     if (!prestamoId) {
@@ -1270,8 +1274,8 @@ export class ApprovalsService {
 
     const rollbackData = objetoDeJson(efectoProvisional.rollbackData);
 
-    // Igual que en `confirmarEfectoProvisional`: un objeto en el Json se volvia
-    // "[object Object]" y pasaba el guard.
+    // Igual que en `confirmarEfectoProvisional`: el tipo admite un objeto que
+    // pasaria el guard como "[object Object]". Ningun escritor actual lo hace.
     const cuotaId =
       textoDeJson(rollbackData.cuotaId) || approval.referenciaId || '';
 
