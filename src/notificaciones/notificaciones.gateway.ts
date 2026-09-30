@@ -91,7 +91,7 @@ export class NotificacionesGateway
     this.logger.log('WebSocket Gateway Inicializado');
   }
 
-  handleConnection(client: Socket, ..._args: any[]) {
+  handleConnection(client: Socket, ..._args: unknown[]) {
     // Al principio, no sabemos quién es. Esperamos a que el cliente lo diga.
     this.logger.log(`Cliente conectado: ${client.id}`);
   }
@@ -237,7 +237,7 @@ export class NotificacionesGateway
               fechaOperativa,
               actorCierre,
             );
-            const resumen: any = detalleDia?.resumen || {};
+            const resumen = detalleDia?.resumen || {};
             const visitas = Array.isArray(detalleDia?.visitas)
               ? detalleDia.visitas
               : [];
@@ -412,7 +412,7 @@ export class NotificacionesGateway
    * Avisar es un efecto secundario. Si falla, se anota y se sigue: nunca puede
    * tumbar la operación que ya movió dinero.
    */
-  private emitir(evento: string, payload: any) {
+  private emitir(evento: string, payload: unknown) {
     try {
       if (!this.server) {
         this.logger.warn(`Sin servidor de websockets: no se emitió ${evento}`);
@@ -425,7 +425,7 @@ export class NotificacionesGateway
   }
 
   /** Igual que `emitir`, pero a la sala de un usuario. */
-  private emitirA(sala: string, evento: string, payload: any) {
+  private emitirA(sala: string, evento: string, payload: unknown) {
     try {
       if (!this.server) {
         this.logger.warn(`Sin servidor de websockets: no se emitió ${evento}`);
@@ -440,7 +440,16 @@ export class NotificacionesGateway
   /**
    * Enviar notificación a un usuario específico
    */
-  enviarNotificacionAUsuario(userId: string, notificacion: any) {
+  /**
+   * El tipo declara SOLO lo que este metodo lee. El resto del objeto viaja al
+   * cliente sin que el gateway tenga que saber que trae, y por eso no se declara:
+   * escribir aqui la forma completa de la notificacion seria una segunda copia de
+   * algo que vive en el servicio y que se quedaria atras.
+   */
+  enviarNotificacionAUsuario(
+    userId: string,
+    notificacion: { titulo?: string | null },
+  ) {
     this.logger.log(
       `Emitiendo notificación a user_${userId}: ${notificacion.titulo}`,
     );
@@ -460,11 +469,11 @@ export class NotificacionesGateway
   /**
    * Enviar a todos los usuarios
    */
-  enviarNotificacionATodos(notificacion: any) {
+  enviarNotificacionATodos(notificacion: unknown) {
     this.emitir('nueva_notificacion_global', notificacion);
   }
 
-  broadcastUsuariosActualizados(payload?: any) {
+  broadcastUsuariosActualizados(payload?: unknown) {
     this.logger.log('Emitiendo evento usuarios_actualizados');
     this.emitir('usuarios_actualizados', {
       timestamp: new Date(),
@@ -472,7 +481,7 @@ export class NotificacionesGateway
     });
   }
 
-  broadcastClientesActualizados(payload?: any) {
+  broadcastClientesActualizados(payload?: unknown) {
     this.logger.log('Emitiendo evento clientes_actualizados');
     this.emitir('clientes_actualizados', {
       timestamp: new Date(),
@@ -480,7 +489,7 @@ export class NotificacionesGateway
     });
   }
 
-  broadcastAprobacionesActualizadas(payload?: any) {
+  broadcastAprobacionesActualizadas(payload?: unknown) {
     this.logger.log('Emitiendo evento aprobaciones_actualizadas');
     this.emitir('aprobaciones_actualizadas', {
       timestamp: new Date(),
@@ -488,7 +497,7 @@ export class NotificacionesGateway
     });
   }
 
-  broadcastPrestamosActualizados(payload?: any) {
+  broadcastPrestamosActualizados(payload?: unknown) {
     this.logger.log('Emitiendo evento prestamos_actualizados');
     this.emitir('prestamos_actualizados', {
       timestamp: new Date(),
@@ -496,7 +505,7 @@ export class NotificacionesGateway
     });
   }
 
-  broadcastPagosActualizados(payload?: any) {
+  broadcastPagosActualizados(payload?: unknown) {
     this.logger.log('Emitiendo evento pagos_actualizados');
     this.emitir('pagos_actualizados', {
       timestamp: new Date(),
@@ -504,7 +513,7 @@ export class NotificacionesGateway
     });
   }
 
-  broadcastRutasActualizadas(payload?: any) {
+  broadcastRutasActualizadas(payload?: unknown) {
     this.logger.log('Emitiendo evento rutas_actualizadas');
     this.emitir('rutas_actualizadas', {
       timestamp: new Date(),
@@ -512,7 +521,7 @@ export class NotificacionesGateway
     });
   }
 
-  broadcastJornadasActualizadas(payload?: any) {
+  broadcastJornadasActualizadas(payload?: unknown) {
     this.logger.log('Emitiendo evento jornadas_actualizadas');
     this.emitir('jornadas_actualizadas', {
       timestamp: new Date(),
@@ -520,7 +529,7 @@ export class NotificacionesGateway
     });
   }
 
-  broadcastDashboardsActualizados(payload?: any) {
+  broadcastDashboardsActualizados(payload?: unknown) {
     this.logger.log('Emitiendo evento dashboards_actualizados');
     this.emitir('dashboards_actualizados', {
       timestamp: new Date(),
@@ -528,7 +537,7 @@ export class NotificacionesGateway
     });
   }
 
-  broadcastInventarioActualizado(payload?: any) {
+  broadcastInventarioActualizado(payload?: unknown) {
     this.logger.log('Emitiendo evento inventario_actualizado');
     this.emitir('inventario_actualizado', {
       timestamp: new Date(),
@@ -544,7 +553,7 @@ export class NotificacionesGateway
    */
   @OnEvent('aprobacion.created')
   @OnEvent('aprobacion.updated')
-  handleAprobacionChanged(payload: any) {
+  handleAprobacionChanged(payload?: { data?: unknown }) {
     this.logger.log(
       'Aprobacion creada/actualizada → broadcastAprobacionesActualizadas (via EventEmitter)',
     );
@@ -552,7 +561,16 @@ export class NotificacionesGateway
   }
 
   @OnEvent('database.write.success')
-  handleArchivedDatabaseWrite(payload: any) {
+  handleArchivedDatabaseWrite(payload?: {
+    /**
+     * El nombre del modelo de Prisma que cambio. Es texto: quien emite el evento
+     * lo arma con `payload?.model || event.aggregateType`, y `aggregateType` es
+     * string. Declararlo `unknown` obligaba a un String() que eslint marca con
+     * razon, porque sobre un objeto daria "[object Object]".
+     */
+    model?: string;
+    data?: unknown;
+  }) {
     const model = String(payload?.model || '');
     if (model !== 'RegistroAuditoria' && model !== 'ArchivadoOculto') return;
 
