@@ -469,10 +469,27 @@ export class ClientesCreditosParser {
         // reconoce a una persona: dos filas sin cédula real acabarían siendo dos clientes
         // distintos para la misma persona, o peor, chocando con la cédula de otro.
         //
-        // Resolverlo de verdad pide declarar `dni` opcional en el esquema, y eso es una
-        // migración sobre una llave única con 196 lecturas entre los dos repos: tiene que ir
-        // en su propio cambio y con una decisión tomada sobre qué hacer con los duplicados.
-        // Mientras eso no exista, el mensaje al menos dice qué hacer en vez de repetir la
+        // Resolverlo de verdad pide declarar `dni` opcional en el esquema. Eso sigue siendo
+        // una decisión de producto, pero el costo técnico está MEDIDO y es menor de lo que
+        // decía antes aquí ("196 lecturas", que contaba menciones, no lecturas que rompan):
+        //
+        //  - En Postgres una columna `@unique` nulable admite tantos NULL como haga falta,
+        //    así que la migración es `DROP NOT NULL`: no reescribe datos y se revierte.
+        //  - De las 135 lecturas de `dni` entre los dos repos, solo 19 (todas del backend)
+        //    no se defienden, y las 19 son interpolaciones en mensajes de log/error y una
+        //    celda de Excel: imprimirían "null", no se caen.
+        //  - Los `where: { dni }` (3 sitios) no cambian: buscar por un valor sigue igual.
+        //  - El frontend ya lo declara opcional en sus tipos, incluido `types/domain.Cliente`
+        //    (`dni?: string | null`).
+        //
+        // Lo que falta decidir, y por eso no se hace aquí: si un cliente sin cédula puede
+        // crearse solo por importación (dejando `CreateClientDto.dni` obligatorio para el
+        // formulario) o también a mano, y cómo se reconoce luego a esa persona. El
+        // importador ya tiene una segunda llave de identidad para eso: busca por `dni`,
+        // `codigo` e `idempotencyKey`, y los dos últimos salen del código de importación del
+        // archivo (importaciones.service.ts:1667-1675).
+        //
+        // Mientras eso no se decida, el mensaje al menos dice qué hacer en vez de repetir la
         // orden que el usuario no puede cumplir.
         addError(
           'cc',

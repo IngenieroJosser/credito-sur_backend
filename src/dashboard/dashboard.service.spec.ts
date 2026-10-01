@@ -1,4 +1,5 @@
 import { DashboardService } from './dashboard.service';
+import { comoPrisma } from '../common/testing/dobles';
 
 function buildPrismaMock(overrides: Record<string, any> = {}) {
   return {
@@ -41,9 +42,9 @@ describe('DashboardService accounting-backed collections', () => {
   it('usa ledger PAGO como fuente del recaudo del dashboard', async () => {
     const prisma = buildPrismaMock();
 
-    const result = await new DashboardService(prisma as any).getDashboardData(
-      'today',
-    );
+    const result = await new DashboardService(
+      comoPrisma(prisma),
+    ).getDashboardData('today');
 
     expect(prisma.journalLine.aggregate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -71,10 +72,9 @@ describe('DashboardService accounting-backed collections', () => {
       },
     });
 
-    const result = await new DashboardService(prisma as any).getDashboardData(
-      'today',
-      { id: 'supervisor-1', rol: 'SUPERVISOR' },
-    );
+    const result = await new DashboardService(
+      comoPrisma(prisma),
+    ).getDashboardData('today', { id: 'supervisor-1', rol: 'SUPERVISOR' });
 
     expect(prisma.prestamo.count).toHaveBeenNthCalledWith(
       1,
@@ -139,9 +139,9 @@ describe('DashboardService accounting-backed collections', () => {
       },
     });
 
-    const result = await new DashboardService(prisma as any).getDashboardData(
-      'today',
-    );
+    const result = await new DashboardService(
+      comoPrisma(prisma),
+    ).getDashboardData('today');
 
     expect(result.topCollectors[0]).toMatchObject({
       name: 'Ana Ruta',

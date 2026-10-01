@@ -5,6 +5,7 @@ jest.mock('web-push', () => ({
 
 import * as webpush from 'web-push';
 import { PushService } from './push.service';
+import { comoPrisma } from '../common/testing/dobles';
 
 const enviar = webpush.sendNotification as jest.Mock;
 
@@ -42,7 +43,7 @@ describe('PushService', () => {
   it('no fija un tag por defecto: con uno fijo cada aviso reemplaza al anterior', async () => {
     enviar.mockResolvedValue({});
     const service = new PushService(
-      crearPrisma([suscripcion('https://push/a', 'u1')]) as any,
+      comoPrisma(crearPrisma([suscripcion('https://push/a', 'u1')])),
     );
 
     await service.sendPushNotification({
@@ -66,9 +67,9 @@ describe('PushService', () => {
       suscripcion('https://push/c', 'u1'),
     ]);
 
-    const resultado = await new PushService(prisma as any).sendPushNotification(
-      { title: 't', body: 'b' },
-    );
+    const resultado = await new PushService(
+      comoPrisma(prisma),
+    ).sendPushNotification({ title: 't', body: 'b' });
 
     expect(resultado).toEqual({
       configurado: true,
@@ -90,9 +91,9 @@ describe('PushService', () => {
       suscripcion('https://push/b', 'u2'),
     ]);
 
-    const resultado = await new PushService(prisma as any).sendPushNotification(
-      { title: 't', body: 'b', userId: 'u2' },
-    );
+    const resultado = await new PushService(
+      comoPrisma(prisma),
+    ).sendPushNotification({ title: 't', body: 'b', userId: 'u2' });
 
     expect(resultado.suscripciones).toBe(1);
     expect(enviar).toHaveBeenCalledTimes(1);
@@ -103,9 +104,9 @@ describe('PushService', () => {
     delete process.env.VAPID_PUBLIC_KEY;
     const prisma = crearPrisma([suscripcion('https://push/a', 'u1')]);
 
-    const resultado = await new PushService(prisma as any).sendPushNotification(
-      { title: 't', body: 'b' },
-    );
+    const resultado = await new PushService(
+      comoPrisma(prisma),
+    ).sendPushNotification({ title: 't', body: 'b' });
 
     expect(resultado.configurado).toBe(false);
     expect(enviar).not.toHaveBeenCalled();

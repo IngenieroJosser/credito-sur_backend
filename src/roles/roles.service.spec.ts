@@ -1,21 +1,37 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { RolesService } from './roles.service';
+import {
+  comoPrisma,
+  type DobleDePrisma,
+  type MetodosDeModelo,
+} from '../common/testing/dobles';
+import type { ArgsDePrismaEnMock } from '../common/testing/prisma-mock.types';
 
 /**
  * Los roles deciden qué permisos hereda cada usuario, así que un fallo aquí se
  * propaga a todo el control de acceso. Se fijan las reglas de frontera.
  */
 describe('RolesService', () => {
-  const hacerPrisma = (over: any = {}) => ({
+  /** Los tres modelos que estas pruebas imitan. Obligatorios: las aserciones los leen. */
+  type PrismaDeRoles = {
+    rol: MetodosDeModelo;
+    permiso: MetodosDeModelo;
+    rolPermiso: MetodosDeModelo;
+  };
+
+  const hacerPrisma = (over: DobleDePrisma = {}): PrismaDeRoles => ({
     rol: {
       findUnique: jest.fn().mockResolvedValue(null),
-      create: jest
-        .fn()
-        .mockImplementation(({ data }: any) => ({ id: 'r1', ...data })),
-      update: jest.fn().mockImplementation(({ where, data }: any) => ({
-        id: where.id,
+      create: jest.fn().mockImplementation(({ data }: ArgsDePrismaEnMock) => ({
+        id: 'r1',
         ...data,
       })),
+      update: jest
+        .fn()
+        .mockImplementation(({ where, data }: ArgsDePrismaEnMock) => ({
+          id: where?.id,
+          ...data,
+        })),
       ...(over.rol || {}),
     },
     permiso: {
@@ -34,7 +50,7 @@ describe('RolesService', () => {
       const prisma = hacerPrisma({
         rol: { findUnique: jest.fn().mockResolvedValue({ id: 'x' }) },
       });
-      const service = new RolesService(prisma as any);
+      const service = new RolesService(comoPrisma(prisma));
       await expect(service.crear({ nombre: 'ADMIN' })).rejects.toBeInstanceOf(
         ConflictException,
       );
@@ -43,7 +59,7 @@ describe('RolesService', () => {
 
     it('crea el rol cuando el nombre está libre', async () => {
       const prisma = hacerPrisma();
-      const service = new RolesService(prisma as any);
+      const service = new RolesService(comoPrisma(prisma));
       await expect(service.crear({ nombre: 'AUDITOR' })).resolves.toMatchObject(
         {
           nombre: 'AUDITOR',
@@ -54,7 +70,7 @@ describe('RolesService', () => {
 
   describe('eliminar', () => {
     it('falla si el rol no existe', async () => {
-      const service = new RolesService(hacerPrisma() as any);
+      const service = new RolesService(comoPrisma(hacerPrisma()));
       await expect(service.eliminar('nope')).rejects.toBeInstanceOf(
         NotFoundException,
       );
@@ -62,19 +78,25 @@ describe('RolesService', () => {
 
     it('es un borrado LÓGICO: marca eliminadoEn, no borra la fila', async () => {
       const prisma = hacerPrisma({
-        rol: { findUnique: jest.fn().mockResolvedValue({ id: 'r1' }) },
+        rol: {
+          findUnique: jest.fn().mockResolvedValue({ id: 'r1' }),
+          // Se imita a proposito para poder afirmar que NO se llama. Antes la prueba
+          // hacia `expect(prisma.rol.delete).toBeUndefined()`, que comprobaba el DOBLE y
+          // no el servicio: pasaba igual hiciera lo que hiciera `eliminar`.
+          delete: jest.fn(),
+        },
       });
-      const service = new RolesService(prisma as any);
+      const service = new RolesService(comoPrisma(prisma));
       await service.eliminar('r1');
-      const args = prisma.rol.update.mock.calls[0][0];
-      expect(args.data.eliminadoEn).toBeInstanceOf(Date);
-      expect(prisma.rol.delete).toBeUndefined();
+      const args = prisma.rol.update.mock.calls[0][0] as ArgsDePrismaEnMock;
+      expect(args.data?.eliminadoEn).toBeInstanceOf(Date);
+      expect(prisma.rol.delete).not.toHaveBeenCalled();
     });
   });
 
   describe('asignarPermisos', () => {
     it('falla si el rol no existe', async () => {
-      const service = new RolesService(hacerPrisma() as any);
+      const service = new RolesService(comoPrisma(hacerPrisma()));
       await expect(
         service.asignarPermisos('nope', ['p1']),
       ).rejects.toBeInstanceOf(NotFoundException);
@@ -86,7 +108,7 @@ describe('RolesService', () => {
         // se piden 2 permisos pero solo existe 1
         permiso: { findMany: jest.fn().mockResolvedValue([{ id: 'p1' }]) },
       });
-      const service = new RolesService(prisma as any);
+      const service = new RolesService(comoPrisma(prisma));
       await expect(
         service.asignarPermisos('r1', ['p1', 'inventado']),
       ).rejects.toBeInstanceOf(NotFoundException);
@@ -102,7 +124,7 @@ describe('RolesService', () => {
           findMany: jest.fn().mockResolvedValue([{ id: 'p1' }, { id: 'p2' }]),
         },
       });
-      const service = new RolesService(prisma as any);
+      const service = new RolesService(comoPrisma(prisma));
       await service.asignarPermisos('r1', ['p1', 'p2']);
       expect(prisma.rolPermiso.deleteMany).toHaveBeenCalledWith({
         where: { rolId: 'r1' },
