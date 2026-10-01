@@ -413,7 +413,10 @@ export class ReportsService {
 
     // Enriquecer datos con información de ruta y cobrador
     const prestamosEnriquecidosRaw = await Promise.all(
-      prestamos.map(async (prestamo) => {
+      // El tipo de retorno se DECLARA, no se castea al final: asi un campo que el DTO no
+      // tenga -o que el DTO pida y no se mande- deja de compilar. El `as PrestamoMoraDto`
+      // que habia abajo dejaba pasar tres campos de prorroga sin declarar.
+      prestamos.map(async (prestamo): Promise<PrestamoMoraDto | null> => {
         // Obtener asignación de ruta activa del cliente
         const asignacion = await this.prisma.asignacionRuta.findFirst({
           where: {
@@ -540,13 +543,16 @@ export class ReportsService {
           fechaProrroga,
           diasProrroga,
           tieneProrroga: !!extension,
-        } as PrestamoMoraDto;
+        };
       }),
     );
 
+    // El `filter(Boolean)` no le quita el `null` al tipo: hace falta el guarda. Antes
+    // habia un `as PrestamoMoraDto[]`, que ademas tapaba que al objeto de arriba le
+    // faltaban tres campos por declarar en el DTO (los de prorroga).
     const prestamosEnriquecidos = prestamosEnriquecidosRaw.filter(
-      Boolean,
-    ) as PrestamoMoraDto[];
+      (p): p is NonNullable<typeof p> => p !== null,
+    );
     const total = prestamosEnriquecidos.length;
 
     // Calcular totales
