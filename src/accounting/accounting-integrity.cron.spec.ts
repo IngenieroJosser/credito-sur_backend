@@ -1,5 +1,7 @@
 import { RolUsuario } from '@prisma/client';
 import { AccountingIntegrityCron } from './accounting-integrity.cron';
+import type { LedgerService } from '../accounting/ledger.service';
+import { comoDependencia } from '../common/testing/dobles';
 
 function armar(opciones: { balanceado: boolean; cajasDescuadradas?: number }) {
   const ledger = {
@@ -20,7 +22,10 @@ function armar(opciones: { balanceado: boolean; cajasDescuadradas?: number }) {
     notifyCoordinator: jest.fn().mockResolvedValue(undefined),
   };
   return {
-    cron: new AccountingIntegrityCron(ledger as any, notificaciones as any),
+    cron: new AccountingIntegrityCron(
+      comoDependencia<LedgerService>(ledger),
+      notificaciones as any,
+    ),
     notificaciones,
   };
 }

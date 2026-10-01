@@ -1,6 +1,7 @@
 import * as ExcelJS from 'exceljs';
 import { generarPlantillaClientesCreditos } from './plantilla-clientes-creditos';
 import { evaluarFormula, ValorCelda } from '../evaluador-formulas';
+import { bufferDeExcel } from '../../common/testing/dobles';
 
 /**
  * La columna "Al confirmar" escribe una frase con el monto dentro.
@@ -26,7 +27,7 @@ describe('Mensaje de "Al confirmar"', () => {
       rutas: [],
     });
     const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(data as any);
+    await workbook.xlsx.load(bufferDeExcel(data));
     hojaDinero = workbook.getWorksheet('Créditos de dinero')!;
     hojaArticulo = workbook.getWorksheet('Créditos de artículo')!;
   });
@@ -52,7 +53,8 @@ describe('Mensaje de "Al confirmar"', () => {
   const formulaDe = (hoja: ExcelJS.Worksheet, empiezaPor: string) => {
     const letra = letraDe(hoja, empiezaPor);
     const columna = hoja.getColumn(letra).number;
-    const formula = (hoja.getCell(7, columna).value as any)?.formula;
+    const formula = (hoja.getCell(7, columna).value as { formula?: string })
+      ?.formula;
     if (!formula) throw new Error(`"${empiezaPor}" no tiene fórmula`);
     return String(formula);
   };
@@ -107,7 +109,7 @@ describe('Mensaje de "Al confirmar"', () => {
     for (const hoja of [hojaDinero, hojaArticulo]) {
       const conMascara: string[] = [];
       hoja.getRow(7).eachCell({ includeEmpty: false }, (celda) => {
-        const formula = (celda.value as any)?.formula;
+        const formula = (celda.value as { formula?: string })?.formula;
         if (formula && /TEXT\s*\([^)]*"[^"]*[#0][^"]*"/.test(String(formula))) {
           conMascara.push(String(formula));
         }

@@ -13,7 +13,7 @@ import {
 import { pesos } from '../common/dinero.util';
 import { mensajeDeError } from '../common/error.util';
 import { LedgerService } from '../accounting/ledger.service';
-import { dependenciaSinUsar, comoPrisma } from '../common/testing/dobles';
+import { comoPrisma, dependenciaSinUsar } from '../common/testing/dobles';
 
 /**
  * Que ningún peso se pierda ni se invente.

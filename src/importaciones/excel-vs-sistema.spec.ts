@@ -8,7 +8,7 @@ import {
   construirTablaCuotas,
   derivarPlazoMeses,
 } from './interes-credito';
-import { dependenciaSinUsar } from '../common/testing/dobles';
+import { bufferDeExcel, dependenciaSinUsar } from '../common/testing/dobles';
 
 /**
  * El Excel tiene que dar lo mismo que el sistema, y hay que comprobarlo con la
@@ -170,7 +170,7 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
       rutas: [],
     });
     const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(data as any);
+    await workbook.xlsx.load(bufferDeExcel(data));
     hoja = workbook.getWorksheet('Créditos de dinero')!;
 
     columnas = {};
@@ -191,7 +191,8 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
   const formulaDe = (empiezaPor: string) => {
     const letra = letraDe(empiezaPor);
     const columna = hoja.getColumn(letra).number;
-    const formula = (hoja.getCell(7, columna).value as any)?.formula;
+    const formula = (hoja.getCell(7, columna).value as { formula?: string })
+      ?.formula;
     if (!formula) throw new Error(`"${empiezaPor}" no tiene fórmula`);
     return String(formula);
   };

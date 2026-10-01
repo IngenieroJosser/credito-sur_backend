@@ -6,9 +6,9 @@ import {
   comoDependencia,
   comoPrisma,
   comoSocket,
-  type Doble,
   type DobleDePrisma,
   type MetodosDeModelo,
+  type Doble,
 } from '../common/testing/dobles';
 
 describe('NotificacionesGateway', () => {

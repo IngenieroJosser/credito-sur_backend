@@ -1,5 +1,13 @@
 import { MoraService } from './mora.service';
-import { comoPrisma, type DobleDePrisma } from '../common/testing/dobles';
+import {
+  comoDependencia,
+  comoPrisma,
+  type DobleDePrisma,
+} from '../common/testing/dobles';
+import type { NotificacionesService } from '../notificaciones/notificaciones.service';
+import type { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+import type { PushService } from '../push/push.service';
+import type { ArgsDePrismaEnMock } from '../common/testing/prisma-mock.types';
 
 const mockNotifications = {
   notifyApprovers: jest.fn().mockResolvedValue(undefined),
@@ -18,9 +26,9 @@ const mockPush = {
 function makeService(prisma: DobleDePrisma) {
   return new MoraService(
     comoPrisma(prisma),
-    mockNotifications as any,
-    mockGateway as any,
-    mockPush as any,
+    comoDependencia<NotificacionesService>(mockNotifications),
+    comoDependencia<NotificacionesGateway>(mockGateway),
+    comoDependencia<PushService>(mockPush),
   );
 }
 
@@ -181,7 +189,7 @@ describe('MoraService', () => {
         findMany: jest.fn().mockImplementation(async () => [cliente]),
         update: jest
           .fn()
-          .mockImplementation(async ({ data }: { data: any }) =>
+          .mockImplementation(async ({ data }: ArgsDePrismaEnMock) =>
             Object.assign(cliente, data),
           ),
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),

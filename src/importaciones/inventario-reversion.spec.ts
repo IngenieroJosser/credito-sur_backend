@@ -1,5 +1,8 @@
 import { BadRequestException } from '@nestjs/common';
 import { ImportacionesService } from './importaciones.service';
+import type { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+import type { LedgerService } from '../accounting/ledger.service';
+import { comoDependencia, comoPrisma } from '../common/testing/dobles';
 
 const snapshot = (stock = 4) => ({
   nombre: 'Samsung Galaxy A15',
@@ -77,9 +80,9 @@ function preparar(stockActual = 4) {
   };
   const gateway = { broadcastInventarioActualizado: jest.fn() };
   const service = new ImportacionesService(
-    prisma as any,
-    ledger as any,
-    gateway as any,
+    comoPrisma(prisma),
+    comoDependencia<LedgerService>(ledger),
+    comoDependencia<NotificacionesGateway>(gateway),
   );
 
   return { service, prisma, tx, ledger, gateway };

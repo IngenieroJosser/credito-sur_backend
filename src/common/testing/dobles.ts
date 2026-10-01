@@ -149,3 +149,15 @@ export const comoDependencia = <T>(doble: Doble<T>): T => doble as unknown as T;
  * prueba falla con "no es una función", que es la señal correcta: falta imitarlo.
  */
 export const dependenciaSinUsar = <T>(): T => ({}) as unknown as T;
+
+/**
+ * Entrega un Buffer de Node donde ExcelJS pide el suyo.
+ *
+ * `exceljs` declara su propio `interface Buffer extends ArrayBuffer` global, que NO es el
+ * Buffer de Node: por eso `workbook.xlsx.load(data)` pedia un `as any` en cada prueba de
+ * plantillas. El cast vive aqui, con el motivo escrito, y no repartido por seis archivos.
+ */
+export const bufferDeExcel = (
+  datos: Buffer,
+): Parameters<import('exceljs').Xlsx['load']>[0] =>
+  datos as unknown as Parameters<import('exceljs').Xlsx['load']>[0];

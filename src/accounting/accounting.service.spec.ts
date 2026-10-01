@@ -5,8 +5,14 @@ import {
   TipoTransaccion,
 } from '@prisma/client';
 import { AccountingService } from './accounting.service';
-import { comoPrisma, type DobleDePrisma } from '../common/testing/dobles';
+import {
+  comoDependencia,
+  comoPrisma,
+  type DobleDePrisma,
+} from '../common/testing/dobles';
 import type { ArgsDePrismaEnMock } from '../common/testing/prisma-mock.types';
+import type { NotificacionesService } from '../notificaciones/notificaciones.service';
+import type { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 
 /**
  * Exige que el cierre haya devuelto la alerta de sobrante antes de leerla.
@@ -190,8 +196,8 @@ function buildPrismaMock(overrides: DobleDePrisma = {}) {
 function makeService(prisma: DobleDePrisma) {
   return new AccountingService(
     comoPrisma(prisma),
-    mockNotifications as any,
-    mockGateway as any,
+    comoDependencia<NotificacionesService>(mockNotifications),
+    comoDependencia<NotificacionesGateway>(mockGateway),
     mockLedger as any,
   );
 }

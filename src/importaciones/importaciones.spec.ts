@@ -1,4 +1,5 @@
 import * as ExcelJS from 'exceljs';
+import type { CellValue } from 'exceljs';
 import * as JSZip from 'jszip';
 import { FrecuenciaPago, TipoAmortizacion } from '@prisma/client';
 import { LoansService } from '../loans/loans.service';
@@ -20,9 +21,9 @@ import {
 } from './interes-credito';
 import {
   comoPrisma,
+  dependenciaSinUsar,
   exigir,
   type DobleDePrisma,
-  dependenciaSinUsar,
 } from '../common/testing/dobles';
 
 const FILA_DATOS = 7;
@@ -236,7 +237,7 @@ const normalizarEncabezado = (texto: unknown) =>
 function escribirFila(
   hoja: ExcelJS.Worksheet,
   fila: number,
-  valores: Record<string, any>,
+  valores: Record<string, CellValue>,
 ) {
   const columnas = new Map<string, number>();
   hoja.getRow(6).eachCell({ includeEmpty: false }, (celda, numero) => {
@@ -269,7 +270,7 @@ const creditoMinimo = {
 };
 
 async function validarCredito(
-  valores: Record<string, any>,
+  valores: Record<string, CellValue>,
   datosBd: Parameters<typeof prismaMock>[0] = { clientes: [clienteEnBd] },
   hojaCredito = 'Créditos de dinero',
 ) {
@@ -296,7 +297,7 @@ const creditoArticuloMinimo = {
 };
 
 const validarCreditoArticulo = (
-  valores: Record<string, any>,
+  valores: Record<string, CellValue>,
   datosBd: Parameters<typeof prismaMock>[0] = {
     clientes: [clienteEnBd],
     productos: [
@@ -313,7 +314,7 @@ const validarCreditoArticulo = (
 ) => validarCredito(valores, datosBd, 'Créditos de artículo');
 
 async function validarArticulo(
-  valores: Record<string, unknown>,
+  valores: Record<string, CellValue>,
   datosBd?: Parameters<typeof prismaMock>[0],
 ) {
   const plantilla = await plantillaInventarioCacheada();
@@ -1005,7 +1006,7 @@ describe('Limpieza de datos al importar', () => {
 
 describe('Posibles clientes duplicados', () => {
   const escribirClientes = async (
-    filas: Array<Record<string, any>>,
+    filas: Array<Record<string, unknown>>,
     datosBd?: Parameters<typeof prismaMock>[0],
   ) => {
     const plantilla =
@@ -2324,7 +2325,7 @@ describe('La cuota inicial no puede comerse el precio', () => {
 describe('Cómo se descuenta un abono', () => {
   // Caso real que generó dudas: crédito quincenal a 4 cuotas, o sea 2 meses,
   // al 20% mensual. El interés son 200.000 y el total 700.000.
-  const credito = (extra: Record<string, any>) =>
+  const credito = (extra: Record<string, unknown>) =>
     validarCredito(
       {
         'CC cliente': '12345678',
