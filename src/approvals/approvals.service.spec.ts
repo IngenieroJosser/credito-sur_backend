@@ -3,11 +3,23 @@ import {
   EstadoAprobacion,
   EstadoCuota,
   EstadoPrestamo,
+  EstadoSincronizacion,
   MetodoPago,
+  Prisma,
   RolUsuario,
   TipoAprobacion,
 } from '@prisma/client';
+import type { Aprobacion } from '@prisma/client';
 import { ApprovalsService } from './approvals.service';
+import type { NotificacionesService } from '../notificaciones/notificaciones.service';
+import type { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+import type { LedgerService } from '../accounting/ledger.service';
+import {
+  comoDependencia,
+  comoPrisma,
+  type DobleDePrisma,
+  type MetodosDeModelo,
+} from '../common/testing/dobles';
 
 /**
  * Exige que la relacion venga cargada antes de leerla.
@@ -52,8 +64,46 @@ function diasDesdeHoy(dias: number) {
   return new Date(Date.now() + dias * 24 * 60 * 60 * 1000);
 }
 
-function buildPrismaMock() {
-  const tx = {
+/**
+ * La transaccion imitada. Cada modelo es `MetodosDeModelo` -no el literal inferido- para
+ * que una prueba pueda agregarle el metodo que quiera vigilar (`cuota.deleteMany`) sin un
+ * cast, y para que leerlo no salga como "posiblemente undefined".
+ */
+type TxDePruebas = {
+  $queryRaw: jest.Mock;
+  aprobacion: MetodosDeModelo;
+  asignacionRuta: MetodosDeModelo;
+  caja: MetodosDeModelo;
+  cuota: MetodosDeModelo;
+  efectoProvisional: MetodosDeModelo;
+  gasto: MetodosDeModelo;
+  journalEntry: MetodosDeModelo;
+  multimedia: MetodosDeModelo;
+  pago: MetodosDeModelo;
+  prestamo: MetodosDeModelo;
+  producto: MetodosDeModelo;
+  registroVisita: MetodosDeModelo;
+  ruta: MetodosDeModelo;
+  transaccion: MetodosDeModelo;
+  usuario: MetodosDeModelo;
+};
+
+type PrismaDeAprobaciones = {
+  aprobacion: MetodosDeModelo;
+  asignacionRuta: MetodosDeModelo;
+  cliente: MetodosDeModelo;
+  efectoProvisional: MetodosDeModelo;
+  notificacion: MetodosDeModelo;
+  pago: MetodosDeModelo;
+  prestamo: MetodosDeModelo;
+  producto: MetodosDeModelo;
+  usuario: MetodosDeModelo;
+  $transaction: jest.Mock;
+  _tx: TxDePruebas;
+};
+
+function buildPrismaMock(): PrismaDeAprobaciones {
+  const tx: TxDePruebas = {
     $queryRaw: jest.fn().mockResolvedValue([]),
     aprobacion: {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -213,12 +263,77 @@ function buildPrismaMock() {
   };
 }
 
-function makeService(prisma: any) {
-  return new ApprovalsService(
-    prisma,
-    mockNotifications as any,
-    mockGateway as any,
-    mockLedger as any,
+/**
+ * Una fila de `Aprobacion` completa, con lo que la prueba quiera cambiar encima.
+ *
+ * Hace falta porque los cuatro `approveX` reciben una `Aprobacion` de Prisma -quince
+ * columnas, dos de ellas `Decimal`- y las pruebas le pasaban objetos de tres o cuatro
+ * campos. Compilaba por el `as any` del llamador; sin el, el compilador dice que el
+ * fixture no se parece a la fila real. Los valores por defecto son los del esquema
+ * (schema.prisma:558-574), asi que una prueba solo escribe lo que de verdad ejercita.
+ */
+const aprobacion = (over: Partial<Aprobacion> = {}): Aprobacion => ({
+  id: 'aprobacion-1',
+  tipoAprobacion: TipoAprobacion.NUEVO_PRESTAMO,
+  idempotencyKey: null,
+  referenciaId: 'referencia-1',
+  tablaReferencia: 'prestamos',
+  solicitadoPorId: 'usuario-1',
+  datosSolicitud: {},
+  aprobadoPorId: null,
+  estado: EstadoAprobacion.PENDIENTE,
+  comentarios: null,
+  datosAprobados: null,
+  creadoEn: new Date('2026-01-01T12:00:00.000Z'),
+  actualizadoEn: new Date('2026-01-01T12:00:00.000Z'),
+  revisadoEn: null,
+  estadoSincronizacion: EstadoSincronizacion.PENDIENTE,
+  montoSolicitud: null,
+  ...over,
+});
+
+/**
+ * El asidero de prueba.
+ *
+ * Los cuatro `approveX` son `protected` en el servicio y estas pruebas los ejercitan uno
+ * por uno. `.bind(this)` hereda la firma REAL -no se escribe a mano-, asi que si al metodo
+ * le cambian un parametro, la prueba deja de compilar. Antes se llamaban por
+ * `(service as any).approveX(...)`, donde no se comprobaba nada.
+ */
+class AprobacionesConDelegacionVigilada extends ApprovalsService {
+  /**
+   * Registra la delegacion de `approveItem` sin ejecutar el metodo de verdad.
+   *
+   * Antes se hacia `jest.spyOn(service, 'approveNewLoan')`, que con el metodo `protected`
+   * ya no compila -y con `private` no compilaba tampoco: iba por un `as any`-. El
+   * `override` SI lo comprueba el compilador contra la firma de la clase base, asi que si
+   * al metodo le cambian los parametros, esto deja de compilar.
+   */
+  public readonly prestamoNuevoAprobado = jest.fn();
+
+  protected override async approveNewLoan(
+    approval: Aprobacion,
+    aprobadoPorId?: string,
+    editedData?: Record<string, unknown>,
+  ) {
+    this.prestamoNuevoAprobado(approval, aprobadoPorId, editedData);
+  }
+}
+
+class AprobacionesParaPrueba extends ApprovalsService {
+  public readonly aprobarPagoDeTransferencia =
+    this.approveTransferPayment.bind(this);
+  public readonly aprobarPrestamoNuevo = this.approveNewLoan.bind(this);
+  public readonly aprobarGasto = this.approveExpense.bind(this);
+  public readonly aprobarBaseDeCaja = this.approveCashBase.bind(this);
+}
+
+function makeService(prisma: DobleDePrisma) {
+  return new AprobacionesParaPrueba(
+    comoPrisma(prisma),
+    comoDependencia<NotificacionesService>(mockNotifications),
+    comoDependencia<NotificacionesGateway>(mockGateway),
+    comoDependencia<LedgerService>(mockLedger),
   );
 }
 
@@ -581,7 +696,7 @@ describe('ApprovalsService pending loan reconciliation', () => {
                 cliente: 'Mario Baraka Mosquera',
                 monto: 5000000,
               },
-              montoSolicitud: 5000000,
+              montoSolicitud: new Prisma.Decimal(5000000),
               creadoEn: new Date(),
               actualizadoEn: new Date(),
               aprobadoPorId: null,
@@ -635,19 +750,19 @@ describe('ApprovalsService financial ledger controls', () => {
     const prisma = buildPrismaMock();
     const service = makeService(prisma);
 
-    await (service as any).approveTransferPayment(
-      {
+    await service.aprobarPagoDeTransferencia(
+      aprobacion({
         id: 'approval-1',
         referenciaId: 'prestamo-1',
         solicitadoPorId: 'cobrador-1',
-        montoSolicitud: 100000,
+        montoSolicitud: new Prisma.Decimal(100000),
         datosSolicitud: {
           prestamoId: 'prestamo-1',
           cobradorId: 'cobrador-1',
           montoTotal: 100000,
           metodoPago: MetodoPago.TRANSFERENCIA,
         },
-      },
+      }),
       'admin-1',
     );
 
@@ -669,10 +784,12 @@ describe('ApprovalsService financial ledger controls', () => {
 
   it('rechaza aprobación de transferencia con datos insuficientes', async () => {
     await expect(
-      (makeService(buildPrismaMock()) as any).approveTransferPayment({
-        id: 'approval-1',
-        datosSolicitud: { montoTotal: 0 },
-      }),
+      makeService(buildPrismaMock()).aprobarPagoDeTransferencia(
+        aprobacion({
+          id: 'approval-1',
+          datosSolicitud: { montoTotal: 0 },
+        }),
+      ),
     ).rejects.toThrow(BadRequestException);
   });
 
@@ -721,19 +838,19 @@ describe('ApprovalsService financial ledger controls', () => {
       cliente: { id: 'cliente-1' },
     });
 
-    await (makeService(prisma) as any).approveTransferPayment(
-      {
+    await makeService(prisma).aprobarPagoDeTransferencia(
+      aprobacion({
         id: 'approval-1',
         referenciaId: 'prestamo-1',
         solicitadoPorId: 'cobrador-1',
-        montoSolicitud: 50000,
+        montoSolicitud: new Prisma.Decimal(50000),
         datosSolicitud: {
           prestamoId: 'prestamo-1',
           cobradorId: 'cobrador-1',
           montoTotal: 50000,
           metodoPago: MetodoPago.TRANSFERENCIA,
         },
-      },
+      }),
       'admin-1',
     );
 
@@ -751,19 +868,19 @@ describe('ApprovalsService financial ledger controls', () => {
   it('genera número de pago de transferencia sin depender de count + 1', async () => {
     const prisma = buildPrismaMock();
 
-    await (makeService(prisma) as any).approveTransferPayment(
-      {
+    await makeService(prisma).aprobarPagoDeTransferencia(
+      aprobacion({
         id: 'approval-1',
         referenciaId: 'prestamo-1',
         solicitadoPorId: 'cobrador-1',
-        montoSolicitud: 100000,
+        montoSolicitud: new Prisma.Decimal(100000),
         datosSolicitud: {
           prestamoId: 'prestamo-1',
           cobradorId: 'cobrador-1',
           montoTotal: 100000,
           metodoPago: MetodoPago.TRANSFERENCIA,
         },
-      },
+      }),
       'admin-1',
     );
 
@@ -780,20 +897,20 @@ describe('ApprovalsService financial ledger controls', () => {
   it('conserva idempotencyKey al convertir una transferencia aprobada en pago', async () => {
     const prisma = buildPrismaMock();
 
-    await (makeService(prisma) as any).approveTransferPayment(
-      {
+    await makeService(prisma).aprobarPagoDeTransferencia(
+      aprobacion({
         id: 'approval-1',
         idempotencyKey: 'offline-transfer-1',
         referenciaId: 'prestamo-1',
         solicitadoPorId: 'cobrador-1',
-        montoSolicitud: 100000,
+        montoSolicitud: new Prisma.Decimal(100000),
         datosSolicitud: {
           prestamoId: 'prestamo-1',
           cobradorId: 'cobrador-1',
           montoTotal: 100000,
           metodoPago: MetodoPago.TRANSFERENCIA,
         },
-      },
+      }),
       'admin-1',
     );
 
@@ -839,12 +956,12 @@ describe('ApprovalsService financial ledger controls', () => {
       cliente: { id: 'cliente-1' },
     });
 
-    await (makeService(prisma) as any).approveTransferPayment(
-      {
+    await makeService(prisma).aprobarPagoDeTransferencia(
+      aprobacion({
         id: 'approval-regularizada-1',
         referenciaId: 'prestamo-1',
         solicitadoPorId: 'cobrador-1',
-        montoSolicitud: 100000,
+        montoSolicitud: new Prisma.Decimal(100000),
         datosSolicitud: {
           prestamoId: 'prestamo-1',
           clienteId: 'cliente-1',
@@ -857,7 +974,7 @@ describe('ApprovalsService financial ledger controls', () => {
           origenGestion: 'CIERRE_PENDIENTE',
           notas: 'Pago regularizado por banco',
         },
-      },
+      }),
       'admin-1',
     );
 
@@ -906,19 +1023,19 @@ describe('ApprovalsService financial ledger controls', () => {
       ruta: { cobradorId: 'cobrador-real' },
     });
 
-    await (makeService(prisma) as any).approveTransferPayment(
-      {
+    await makeService(prisma).aprobarPagoDeTransferencia(
+      aprobacion({
         id: 'approval-1',
         referenciaId: 'prestamo-1',
         solicitadoPorId: 'admin-1',
-        montoSolicitud: 100000,
+        montoSolicitud: new Prisma.Decimal(100000),
         datosSolicitud: {
           prestamoId: 'prestamo-1',
           cobradorId: 'admin-1',
           montoTotal: 100000,
           metodoPago: MetodoPago.TRANSFERENCIA,
         },
-      },
+      }),
       'admin-1',
     );
 
@@ -942,8 +1059,8 @@ describe('ApprovalsService financial ledger controls', () => {
   it('aprueba gasto usando la caja y cobrador activos de la ruta aunque la solicitud esté vieja', async () => {
     const prisma = buildPrismaMock();
 
-    await (makeService(prisma) as any).approveExpense(
-      {
+    await makeService(prisma).aprobarGasto(
+      aprobacion({
         id: 'approval-gasto-1',
         solicitadoPorId: 'cobrador-viejo',
         datosSolicitud: {
@@ -954,7 +1071,7 @@ describe('ApprovalsService financial ledger controls', () => {
           monto: 25000,
           descripcion: 'Gasolina',
         },
-      },
+      }),
       'admin-1',
     );
 
@@ -1004,10 +1121,18 @@ describe('ApprovalsService financial ledger controls', () => {
         responsableId: 'supervisor-1',
       });
 
-    await (makeService(prisma) as any).approveCashBase(
-      {
+    await makeService(prisma).aprobarBaseDeCaja(
+      aprobacion({
         id: 'approval-base-1',
         solicitadoPorId: 'supervisor-1',
+        // `referenciaId` ES el id de la caja destino: asi la crea
+        // `accounting.service.ts:1099` (`referenciaId: cajaRuta.id`, `tablaReferencia:
+        // 'Caja'`). El fixture lo omitia, y como la columna es NOT NULL eso no puede pasar
+        // en la base: el servicio hace `approval.referenciaId || data.cajaId`, asi que la
+        // prueba estaba ejercitando el respaldo y NO la rama que corre en produccion.
+        referenciaId: 'caja-supervisor',
+        tablaReferencia: 'Caja',
+        tipoAprobacion: TipoAprobacion.SOLICITUD_BASE_EFECTIVO,
         datosSolicitud: {
           rutaId: 'ruta-1',
           cobradorId: 'cobrador-1',
@@ -1015,7 +1140,7 @@ describe('ApprovalsService financial ledger controls', () => {
           monto: 50000,
           descripcion: 'Base inicial',
         },
-      },
+      }),
       'admin-1',
     );
 
@@ -1102,10 +1227,12 @@ describe('ApprovalsService financial ledger controls', () => {
       estado: 'PENDIENTE_REVISION',
     });
 
-    const service = makeService(prisma) as any;
-    const approveNewLoanSpy = jest
-      .spyOn(service, 'approveNewLoan')
-      .mockResolvedValue(undefined);
+    const service = new AprobacionesConDelegacionVigilada(
+      comoPrisma(prisma),
+      comoDependencia<NotificacionesService>(mockNotifications),
+      comoDependencia<NotificacionesGateway>(mockGateway),
+      comoDependencia<LedgerService>(mockLedger),
+    );
 
     await service.approveItem(
       'approval-loan-1',
@@ -1113,7 +1240,7 @@ describe('ApprovalsService financial ledger controls', () => {
       'admin-1',
     );
 
-    expect(approveNewLoanSpy).not.toHaveBeenCalled();
+    expect(service.prestamoNuevoAprobado).not.toHaveBeenCalled();
     expect(prisma._tx.efectoProvisional.update).toHaveBeenCalledWith({
       where: { id: 'efecto-loan-1' },
       data: expect.objectContaining({
@@ -1144,17 +1271,17 @@ describe('ApprovalsService financial ledger controls', () => {
       cliente: { asignacionesRuta: [] },
     });
     prisma._tx.cuota.count.mockResolvedValue(1);
-    (prisma._tx.cuota as any).deleteMany = jest.fn();
-    (prisma._tx.cuota as any).createMany = jest.fn();
+    prisma._tx.cuota.deleteMany = jest.fn();
+    prisma._tx.cuota.createMany = jest.fn();
 
     await expect(
-      (makeService(prisma) as any).approveNewLoan(
-        {
+      makeService(prisma).aprobarPrestamoNuevo(
+        aprobacion({
           id: 'approval-loan-editada',
           referenciaId: 'prestamo-1',
           solicitadoPorId: 'supervisor-1',
           datosSolicitud: { monto: 500000 },
-        },
+        }),
         'admin-1',
         { monto: 600000, cantidadCuotas: 12 },
       ),
@@ -1162,8 +1289,8 @@ describe('ApprovalsService financial ledger controls', () => {
       'No se pueden regenerar las cuotas de un crédito activo con pagos registrados.',
     );
 
-    expect((prisma._tx.cuota as any).deleteMany).not.toHaveBeenCalled();
-    expect((prisma._tx.cuota as any).createMany).not.toHaveBeenCalled();
+    expect(prisma._tx.cuota.deleteMany).not.toHaveBeenCalled();
+    expect(prisma._tx.cuota.createMany).not.toHaveBeenCalled();
   });
 
   it('revierte un préstamo provisional al rechazar la aprobación', async () => {
@@ -1298,7 +1425,7 @@ describe('ApprovalsService financial ledger controls', () => {
         stockDescontado: false,
       },
     });
-    (prisma._tx.efectoProvisional as any).create = jest
+    prisma._tx.efectoProvisional.create = jest
       .fn()
       .mockResolvedValue({ id: 'efecto-loan-2' });
 
@@ -1329,7 +1456,7 @@ describe('ApprovalsService financial ledger controls', () => {
         eliminadoEn: null,
       }),
     });
-    expect((prisma._tx.efectoProvisional as any).create).toHaveBeenCalledWith({
+    expect(prisma._tx.efectoProvisional.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         aprobacionId: 'approval-loan-1',
         estado: 'PENDIENTE_REVISION',
@@ -1399,8 +1526,8 @@ describe('ApprovalsService financial ledger controls', () => {
       });
     prisma._tx.transaccion.findFirst = jest.fn().mockResolvedValue(null);
 
-    await (makeService(prisma) as any).approveNewLoan(
-      {
+    await makeService(prisma).aprobarPrestamoNuevo(
+      aprobacion({
         id: 'approval-articulo-1',
         referenciaId: 'prestamo-articulo-1',
         solicitadoPorId: 'admin-1',
@@ -1411,7 +1538,7 @@ describe('ApprovalsService financial ledger controls', () => {
           valorArticulo: 100000,
           costoArticulo: 65000,
         },
-      },
+      }),
       'admin-1',
     );
 
@@ -1465,8 +1592,8 @@ describe('ApprovalsService financial ledger controls', () => {
       saldoActual: 200000,
     });
 
-    await (makeService(prisma) as any).approveNewLoan(
-      {
+    await makeService(prisma).aprobarPrestamoNuevo(
+      aprobacion({
         id: 'approval-efectivo-1',
         referenciaId: 'prestamo-efectivo-1',
         solicitadoPorId: 'admin-1',
@@ -1474,7 +1601,7 @@ describe('ApprovalsService financial ledger controls', () => {
           tipo: 'EFECTIVO',
           monto: 120000,
         },
-      },
+      }),
       'admin-1',
     );
 
@@ -1533,8 +1660,8 @@ describe('ApprovalsService financial ledger controls', () => {
       saldoActual: 200000,
     });
 
-    await (makeService(prisma) as any).approveNewLoan(
-      {
+    await makeService(prisma).aprobarPrestamoNuevo(
+      aprobacion({
         id: 'approval-efectivo-ruta-1',
         referenciaId: 'prestamo-efectivo-ruta-1',
         solicitadoPorId: 'cobrador-1',
@@ -1542,7 +1669,7 @@ describe('ApprovalsService financial ledger controls', () => {
           tipo: 'EFECTIVO',
           monto: 120000,
         },
-      },
+      }),
       'admin-1',
     );
 
@@ -1608,8 +1735,8 @@ describe('ApprovalsService financial ledger controls', () => {
     );
 
     await expect(
-      (makeService(prisma) as any).approveNewLoan(
-        {
+      makeService(prisma).aprobarPrestamoNuevo(
+        aprobacion({
           id: 'approval-articulo-1',
           referenciaId: 'prestamo-articulo-1',
           solicitadoPorId: 'admin-1',
@@ -1620,7 +1747,7 @@ describe('ApprovalsService financial ledger controls', () => {
             valorArticulo: 100000,
             costoArticulo: 65000,
           },
-        },
+        }),
         'admin-1',
       ),
     ).rejects.toThrow('ledger failed');
@@ -1734,16 +1861,16 @@ describe('Aprobar un credito con cambios', () => {
     };
   }
 
-  const aprobacionDe = (
-    prestamoId: string,
-    datos: Record<string, unknown>,
-  ) => ({
-    id: 'aprobacion-1',
-    referenciaId: prestamoId,
-    solicitadoPorId: 'cobrador-1',
-    tipo: TipoAprobacion.NUEVO_PRESTAMO,
-    datosSolicitud: datos,
-  });
+  // `tipo` NO es columna de `Aprobacion`: la columna es `tipoAprobacion`
+  // (schema.prisma:560). Con el fixture sin tipar nadie lo veia, y el campo que el
+  // servicio lee llegaba vacio en estas tres pruebas.
+  const aprobacionDe = (prestamoId: string, datos: Record<string, unknown>) =>
+    aprobacion({
+      referenciaId: prestamoId,
+      solicitadoPorId: 'cobrador-1',
+      tipoAprobacion: TipoAprobacion.NUEVO_PRESTAMO,
+      datosSolicitud: datos as Prisma.JsonObject,
+    });
 
   it('INTERES_PLANO aplica la tasa una vez, no una por mes de plazo', async () => {
     // El caso: 1.000.000 al 10% mensual a 3 meses. En plano el interes son
@@ -1766,7 +1893,7 @@ describe('Aprobar un credito con cambios', () => {
     };
     const { prisma, cuotasCreadas, prestamoActualizado } = txEspia(prestamo);
 
-    await (makeService(prisma) as any).approveNewLoan(
+    await makeService(prisma).aprobarPrestamoNuevo(
       aprobacionDe('prestamo-1', { monto: 1_000_000, porcentaje: 10 }),
       'admin-1',
       // Editar cualquier cosa es lo que dispara la regeneracion.
@@ -1808,7 +1935,7 @@ describe('Aprobar un credito con cambios', () => {
     };
     const { prisma, prestamoActualizado } = txEspia(prestamo);
 
-    await (makeService(prisma) as any).approveNewLoan(
+    await makeService(prisma).aprobarPrestamoNuevo(
       aprobacionDe('prestamo-2', { monto: 1_000_000, porcentaje: 10 }),
       'admin-1',
       { monto: 1_000_000, porcentaje: 10, cantidadCuotas: 3 },
@@ -1846,7 +1973,7 @@ describe('Aprobar un credito con cambios', () => {
         { id: 'cuota-3' },
       ]);
 
-      await (makeService(prisma) as any).approveNewLoan(
+      await makeService(prisma).aprobarPrestamoNuevo(
         aprobacionDe('prestamo-3', { monto: 300_000, porcentaje: 10 }),
         'admin-1',
       );
@@ -1910,7 +2037,7 @@ describe('Aprobar un credito con cambios', () => {
         { id: 'cuota-1' },
       ]);
 
-      await (makeService(prisma) as any).approveNewLoan(
+      await makeService(prisma).aprobarPrestamoNuevo(
         aprobacionDe('prestamo-4', { monto: 300_000, porcentaje: 10 }),
         'admin-1',
       );

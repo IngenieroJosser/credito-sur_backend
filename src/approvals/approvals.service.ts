@@ -1851,7 +1851,13 @@ export class ApprovalsService {
     return { success: true, message: 'Aprobación procesada exitosamente' };
   }
 
-  private async approveTransferPayment(
+  // `protected` y no `private`: las pruebas ejercitan estos cuatro uno por uno en vez de
+  // pasar por `procesarAprobacion`, que ramifica sobre el tipo. Con `private` tenian que
+  // llamarlos por `(service as any).approveX(...)`, y asi la firma no se comprobaba en
+  // ningun sitio: cambiarle un parametro al metodo no rompia la prueba. `protected` no
+  // amplia la API publica -sigue sin poder llamarse desde fuera-, solo deja que la
+  // subclase de prueba lo exponga con su firma de verdad.
+  protected async approveTransferPayment(
     approval: Aprobacion,
     aprobadoPorId?: string,
   ) {
@@ -2941,7 +2947,7 @@ export class ApprovalsService {
     });
   }
 
-  private async approveNewLoan(
+  protected async approveNewLoan(
     approval: Aprobacion,
     aprobadoPorId?: string,
     editedData?: Record<string, unknown>,
@@ -3556,7 +3562,7 @@ export class ApprovalsService {
     this.notificacionesGateway.broadcastDashboardsActualizados({});
   }
 
-  private async approveExpense(approval: Aprobacion, aprobadoPorId?: string) {
+  protected async approveExpense(approval: Aprobacion, aprobadoPorId?: string) {
     const data =
       typeof approval.datosSolicitud === 'string'
         ? JSON.parse(approval.datosSolicitud)
@@ -3752,7 +3758,10 @@ export class ApprovalsService {
     });
   }
 
-  private async approveCashBase(approval: Aprobacion, aprobadoPorId?: string) {
+  protected async approveCashBase(
+    approval: Aprobacion,
+    aprobadoPorId?: string,
+  ) {
     const data =
       typeof approval.datosSolicitud === 'string'
         ? JSON.parse(approval.datosSolicitud)
