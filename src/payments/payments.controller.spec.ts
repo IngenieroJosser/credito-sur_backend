@@ -2,6 +2,7 @@ import { PaymentsController } from './payments.controller';
 import { MetodoPago, RolUsuario } from '@prisma/client';
 import type { PaymentsService } from './payments.service';
 import { comoDependencia } from '../common/testing/dobles';
+import type { CreatePaymentDto } from './dto/create-payment.dto';
 
 describe('PaymentsController', () => {
   it('preserva campos de cierre pendiente al normalizar el dto', async () => {
@@ -12,22 +13,28 @@ describe('PaymentsController', () => {
       comoDependencia<PaymentsService>(paymentsService),
     );
 
+    // El cuerpo entra como llega del cable: multipart manda TODO en texto, y el punto de
+    // la prueba es que el controlador lo normalice (recorta, convierte a numero y pone el
+    // enum en mayusculas). Por eso el literal se arma aparte y se entrega con un cast con
+    // nombre, en vez de un `as any` por campo que ademas tapaba los nombres.
+    const cuerpoComoLlegaDelCable = {
+      prestamoId: ' prestamo-1 ',
+      clienteId: ' cliente-1 ',
+      cobradorId: ' cobrador-1 ',
+      montoTotal: '10000',
+      metodoPago: 'efectivo',
+      tipoRegistro: 'pago',
+      cuotaId: ' cuota-16 ',
+      rutaId: ' ruta-3 ',
+      cuotaNumeroEsperada: '16',
+      montoCuotaEsperado: '10000',
+      fechaOperativaRuta: ' 2026-05-27 ',
+      origenGestion: 'cierre_pendiente',
+      idempotencyKey: ' cierre:1 ',
+    };
+
     await controller.create(
-      {
-        prestamoId: ' prestamo-1 ',
-        clienteId: ' cliente-1 ',
-        cobradorId: ' cobrador-1 ',
-        montoTotal: '10000' as any,
-        metodoPago: 'efectivo' as any,
-        tipoRegistro: 'pago' as any,
-        cuotaId: ' cuota-16 ',
-        rutaId: ' ruta-3 ',
-        cuotaNumeroEsperada: '16' as any,
-        montoCuotaEsperado: '10000' as any,
-        fechaOperativaRuta: ' 2026-05-27 ',
-        origenGestion: 'cierre_pendiente' as any,
-        idempotencyKey: ' cierre:1 ',
-      },
+      cuerpoComoLlegaDelCable as unknown as CreatePaymentDto,
       { user: { id: 'admin-1', rol: RolUsuario.ADMIN } },
     );
 

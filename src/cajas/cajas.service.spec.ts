@@ -21,11 +21,7 @@ import {
 } from '@prisma/client';
 import type { JournalLineDto } from '../accounting/ledger.service';
 import type { ArgsDePrismaEnMock } from '../common/testing/prisma-mock.types';
-import {
-  type CallbackDeTransaccion,
-  type DobleDePrisma,
-  type MetodosDeModelo,
-} from '../common/testing/dobles';
+import { type CallbackDeTransaccion } from '../common/testing/dobles';
 
 // Mocks de los servicios de soporte
 const mockLedgerService = {

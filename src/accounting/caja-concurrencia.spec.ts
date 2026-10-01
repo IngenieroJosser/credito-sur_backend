@@ -1,4 +1,8 @@
-import { LedgerService } from './ledger.service';
+import {
+  LedgerService,
+  ReferenceTypeContable,
+  type RegistrarAsientoDto,
+} from './ledger.service';
 import { comoPrisma } from '../common/testing/dobles';
 
 /**
@@ -48,8 +52,8 @@ const sqlDe = (llamada: unknown[]) => {
   return Array.isArray(partes) ? partes.join(' ') : String(partes);
 };
 
-const egreso = (cajaId: string, monto: number) => ({
-  referenceType: 'EGRESO' as any,
+const egreso = (cajaId: string, monto: number): RegistrarAsientoDto => ({
+  referenceType: ReferenceTypeContable.EGRESO,
   referenceId: 'ref-1',
   description: 'Retiro',
   createdBy: 'admin-1',
@@ -92,7 +96,7 @@ describe('El saldo de una caja se lee con la fila bloqueada', () => {
     const { service } = servicio([20000]);
 
     await expect(
-      service.registrarAsiento(egreso('caja-1', 100000) as any),
+      service.registrarAsiento(egreso('caja-1', 100000)),
       // El mensaje nombra la caja y dice cuánto falta, no el UUID ni cifras
       // pegadas: es lo que va a leer alguien que está en la caja.
     ).rejects.toThrow(

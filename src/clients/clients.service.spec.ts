@@ -167,7 +167,11 @@ describe('ClientsService', () => {
           nombres: 'Test',
           apellidos: 'Test',
           dni: '123',
-        } as any),
+          // `telefono` es obligatorio en `CreateClientDto` (create-client.dto.ts:102). El
+          // fixture lo omitia y el `as any` lo dejaba pasar: la prueba mandaba un cuerpo
+          // que la validacion del endpoint habria rechazado antes de llegar al servicio.
+          telefono: '3000000000',
+        }),
       ).rejects.toThrow('No existen usuarios en el sistema');
     });
 
@@ -212,7 +216,7 @@ describe('ClientsService', () => {
         service.updateClient('cliente-1', {
           nombres: 'Ana Maria',
           version: 2,
-        } as any),
+        }),
       ).rejects.toBeInstanceOf(ConflictException);
 
       expect(prismaService.cliente.update).not.toHaveBeenCalled();
@@ -263,7 +267,7 @@ describe('ClientsService', () => {
         service.getClientById('cliente-ajeno', {
           id: 'cobrador-propio',
           rol: RolUsuario.COBRADOR,
-        } as any),
+        }),
       ).rejects.toThrow('Cliente no encontrado');
 
       expect(prismaService.cliente.findFirst).toHaveBeenCalledWith(

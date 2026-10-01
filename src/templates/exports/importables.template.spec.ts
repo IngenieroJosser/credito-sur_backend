@@ -4,9 +4,10 @@ import {
   generarExcelClientesCreditosImportable,
   generarExcelInventarioImportable,
 } from './importables.template';
+import { comoPrisma, type DobleDePrisma } from '../../common/testing/dobles';
 
 const prismaVacio = () =>
-  ({
+  comoPrisma({
     cliente: { findMany: jest.fn().mockResolvedValue([]) },
     producto: { findMany: jest.fn().mockResolvedValue([]) },
     ruta: {
@@ -21,7 +22,7 @@ const prismaVacio = () =>
         .fn()
         .mockResolvedValue({ nombre: 'Caja de Oficina', saldoActual: 0 }),
     },
-  }) as any;
+  } satisfies DobleDePrisma);
 
 const articuloBase = {
   codigo: 'CEL-A15',

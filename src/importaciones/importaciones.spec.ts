@@ -21,7 +21,6 @@ import {
 } from './interes-credito';
 import {
   comoPrisma,
-  dependenciaSinUsar,
   exigir,
   type DobleDePrisma,
 } from '../common/testing/dobles';

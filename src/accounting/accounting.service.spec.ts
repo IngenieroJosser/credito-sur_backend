@@ -10,7 +10,6 @@ import {
   comoPrisma,
   type DobleDePrisma,
 } from '../common/testing/dobles';
-import type { ArgsDePrismaEnMock } from '../common/testing/prisma-mock.types';
 import type { NotificacionesService } from '../notificaciones/notificaciones.service';
 import type { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import type { LedgerService } from './ledger.service';

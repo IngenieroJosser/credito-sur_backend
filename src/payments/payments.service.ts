@@ -173,7 +173,9 @@ export class PaymentsService {
    * corre en UTC, asi que un pago de domingo por la noche en Colombia ya es
    * lunes en UTC y se clasificaria en el dia equivocado.
    */
-  private isDomingoBogota(date = new Date()) {
+  // `protected`: las pruebas lo ejercitan directo y con `private` iban por
+  // `(service as any).metodo(...)`, donde la firma no se comprobaba.
+  protected isDomingoBogota(date = new Date()) {
     const day = new Intl.DateTimeFormat('en-US', {
       timeZone: 'America/Bogota',
       weekday: 'short',

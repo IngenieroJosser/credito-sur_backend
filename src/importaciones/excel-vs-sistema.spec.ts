@@ -11,6 +11,16 @@ import {
 import { bufferDeExcel, dependenciaSinUsar } from '../common/testing/dobles';
 
 /**
+ * Asidero de prueba: expone los metodos `protected` que esta prueba ejercita con su firma
+ * real (`.bind(this)` la hereda), en vez de llamarlos por `(servicio as any).metodo(...)`.
+ */
+class PrestamosParaPrueba extends LoansService {
+  public readonly calcularInteresYCuotas =
+    this.calculateInterestAndCuotas.bind(this);
+  public readonly recuperarPlazo = this.recuperarPlazoExacto.bind(this);
+}
+
+/**
  * El Excel tiene que dar lo mismo que el sistema, y hay que comprobarlo con la
  * fórmula que el archivo trae de verdad.
  *
@@ -147,7 +157,7 @@ const CADENA = [
 ];
 
 describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () => {
-  const servicio = new LoansService(
+  const servicio = new PrestamosParaPrueba(
     dependenciaSinUsar(),
     dependenciaSinUsar(),
     dependenciaSinUsar(),
@@ -253,7 +263,7 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
       });
 
       const plazoMeses = derivarPlazoMeses(cuotas, frecuencia);
-      const delSistema = (servicio as any).calculateInterestAndCuotas(
+      const delSistema = servicio.calcularInteresYCuotas(
         metodo.enum,
         monto,
         tasa,

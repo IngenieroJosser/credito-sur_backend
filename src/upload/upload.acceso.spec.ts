@@ -1,6 +1,10 @@
 import { RolUsuario } from '@prisma/client';
 import { UploadController } from './upload.controller';
-import { comoPrisma, dependenciaSinUsar } from '../common/testing/dobles';
+import {
+  comoPrisma,
+  comoRespuesta,
+  dependenciaSinUsar,
+} from '../common/testing/dobles';
 
 /**
  * Control de acceso a los archivos servidos por nombre.
@@ -10,8 +14,22 @@ import { comoPrisma, dependenciaSinUsar } from '../common/testing/dobles';
  * clientes. Estas pruebas fijan las reglas que lo impiden.
  */
 describe('UploadController.serveFile: quién puede ver un archivo', () => {
+  /**
+   * El doble de la respuesta de Express: solo los tres metodos que `serveFile` usa, mas lo
+   * que la prueba despues lee. Se declara en vez de `res: any` para que un metodo nuevo en
+   * el controlador (un `redirect`, por ejemplo) salga como fallo de compilacion aqui.
+   */
+  type RespuestaImitada = {
+    code: number;
+    body: unknown;
+    enviado: string | null;
+    status(c: number): RespuestaImitada;
+    json(b: unknown): RespuestaImitada;
+    sendFile(nombre: string): void;
+  };
+
   const hacerRes = () => {
-    const res: any = {
+    const res: RespuestaImitada = {
       code: 0,
       body: null,
       enviado: null as string | null,
@@ -19,7 +37,7 @@ describe('UploadController.serveFile: quién puede ver un archivo', () => {
         this.code = c;
         return this;
       },
-      json(b: any) {
+      json(b: unknown) {
         this.body = b;
         return this;
       },
@@ -50,7 +68,7 @@ describe('UploadController.serveFile: quién puede ver un archivo', () => {
     await ctrl.serveFile(
       '../../.env',
       { user: { id: 'u1', rol: RolUsuario.ADMIN } },
-      res,
+      comoRespuesta(res),
     );
     expect(res.code).toBe(400);
     // Ni siquiera consulta la base: se corta antes.
@@ -63,7 +81,7 @@ describe('UploadController.serveFile: quién puede ver un archivo', () => {
     await ctrl.serveFile(
       'cualquiera.pdf',
       { user: { id: 'u1', rol: RolUsuario.ADMIN } },
-      res,
+      comoRespuesta(res),
     );
     expect(res.code).toBe(404);
     expect(res.enviado).toBeNull();
@@ -79,7 +97,7 @@ describe('UploadController.serveFile: quién puede ver un archivo', () => {
     await ctrl.serveFile(
       'logo.png',
       { user: { rol: RolUsuario.COBRADOR, id: 'u1' } },
-      res,
+      comoRespuesta(res),
     );
     expect(res.enviado).toBe('logo.png');
   });
@@ -94,7 +112,7 @@ describe('UploadController.serveFile: quién puede ver un archivo', () => {
     await ctrl.serveFile(
       'mi-foto.png',
       { user: { rol: RolUsuario.COBRADOR, id: 'u1' } },
-      res,
+      comoRespuesta(res),
     );
     expect(res.enviado).toBe('mi-foto.png');
   });
@@ -109,7 +127,7 @@ describe('UploadController.serveFile: quién puede ver un archivo', () => {
     await ctrl.serveFile(
       'cedula-c9.jpg',
       { user: { rol: RolUsuario.COBRADOR, id: 'u1' } },
-      res,
+      comoRespuesta(res),
     );
     expect(res.code).toBe(404);
     expect(res.enviado).toBeNull();
@@ -124,7 +142,7 @@ describe('UploadController.serveFile: quién puede ver un archivo', () => {
     await ctrl.serveFile(
       'cedula-c1.jpg',
       { user: { rol: RolUsuario.COBRADOR, id: 'u1' } },
-      res,
+      comoRespuesta(res),
     );
     expect(res.enviado).toBe('cedula-c1.jpg');
   });
@@ -142,7 +160,11 @@ describe('UploadController.serveFile: quién puede ver un archivo', () => {
         usuarioId: null,
       });
       const res = hacerRes();
-      await ctrl.serveFile('doc.pdf', { user: { rol, id: 'x' } }, res);
+      await ctrl.serveFile(
+        'doc.pdf',
+        { user: { rol, id: 'x' } },
+        comoRespuesta(res),
+      );
       expect({ rol, enviado: res.enviado }).toEqual({
         rol,
         enviado: 'doc.pdf',

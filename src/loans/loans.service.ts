@@ -1262,7 +1262,9 @@ export class LoansService implements OnModuleInit {
    * cuotas y la frecuencia, entonces vino de esa derivación y se recupera el
    * valor fraccionario. Si no coincide, el plazo se puso a mano y se respeta.
    */
-  private recuperarPlazoExacto(prestamo: {
+  // `protected`: las pruebas lo ejercitan directo y con `private` iban por
+  // `(service as any).metodo(...)`, donde la firma no se comprobaba.
+  protected recuperarPlazoExacto(prestamo: {
     /**
      * Llega como Decimal de Prisma o como number segun de donde venga la fila, asi
      * que `unknown` es lo honesto: abajo pasa por `Number(...)`. Antes decia

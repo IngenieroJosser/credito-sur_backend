@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import type { Response } from 'express';
 import type { Server, Socket } from 'socket.io';
 import type {
   PrismaService,
@@ -136,6 +137,15 @@ export const comoServidor = (doble: {
   emit?: jest.Mock;
   to?: jest.Mock;
 }): Server => doble as unknown as Server;
+
+/**
+ * Entrega el doble donde se espera una respuesta de Express.
+ *
+ * Un controlador que recibe `@Res() res: Response` usa dos o tres metodos; imitar la
+ * respuesta entera no se puede, asi que la prueba declara lo que usa y el cast vive aqui.
+ */
+export const comoRespuesta = <T>(doble: T): Response =>
+  doble as unknown as Response;
 
 /** Entrega el doble de una dependencia donde se espera la clase real. */
 export const comoDependencia = <T>(doble: Doble<T>): T => doble as unknown as T;

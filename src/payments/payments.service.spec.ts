@@ -31,6 +31,7 @@ import {
   Prisma,
   RolUsuario,
 } from '@prisma/client';
+import { dependenciaSinUsar } from '../common/testing/dobles';
 
 /**
  * Exige que `create` haya devuelto un pago REGISTRADO antes de leerlo.
@@ -280,16 +281,30 @@ describe('PaymentsService', () => {
   });
 
   describe('isDomingoBogota', () => {
+    /**
+     * `isDomingoBogota` es `protected`: la subclase lo expone con su firma real en vez de
+     * llamarlo por `(service as any)`, donde no se comprobaba nada.
+     */
+    class PagosParaPrueba extends PaymentsService {
+      public readonly esDomingoBogota = this.isDomingoBogota.bind(this);
+    }
+    const esDomingo = (fecha: Date) =>
+      new PagosParaPrueba(
+        dependenciaSinUsar(),
+        dependenciaSinUsar(),
+        dependenciaSinUsar(),
+        dependenciaSinUsar(),
+        dependenciaSinUsar(),
+        dependenciaSinUsar(),
+        dependenciaSinUsar(),
+      ).esDomingoBogota(fecha);
+
     it('detecta sábado antes de medianoche Bogotá aunque ya sea domingo UTC', () => {
-      expect(
-        (service as any).isDomingoBogota(new Date('2026-05-31T04:59:00.000Z')),
-      ).toBe(false);
+      expect(esDomingo(new Date('2026-05-31T04:59:00.000Z'))).toBe(false);
     });
 
     it('detecta domingo desde medianoche Bogotá', () => {
-      expect(
-        (service as any).isDomingoBogota(new Date('2026-05-31T05:00:00.000Z')),
-      ).toBe(true);
+      expect(esDomingo(new Date('2026-05-31T05:00:00.000Z'))).toBe(true);
     });
   });
 
@@ -1125,7 +1140,12 @@ describe('PaymentsService', () => {
           metodoPago: MetodoPago.TRANSFERENCIA,
           idempotencyKey: 'offline-transfer-1',
         },
-        { originalname: 'comprobante.jpg', mimetype: 'image/jpeg' } as any,
+        // Solo los dos campos que el servicio lee del archivo subido; `Express.Multer.File`
+        // declara diez mas que aqui no cambian nada.
+        {
+          originalname: 'comprobante.jpg',
+          mimetype: 'image/jpeg',
+        } as Express.Multer.File,
       );
 
       expect(resultado).toEqual(

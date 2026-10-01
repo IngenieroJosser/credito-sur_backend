@@ -16,6 +16,16 @@ import { LedgerService } from '../accounting/ledger.service';
 import { comoPrisma, dependenciaSinUsar } from '../common/testing/dobles';
 
 /**
+ * Asidero de prueba: expone los metodos `protected` que esta prueba ejercita con su firma
+ * real (`.bind(this)` la hereda), en vez de llamarlos por `(servicio as any).metodo(...)`.
+ */
+class PrestamosParaPrueba extends LoansService {
+  public readonly calcularInteresYCuotas =
+    this.calculateInterestAndCuotas.bind(this);
+  public readonly recuperarPlazo = this.recuperarPlazoExacto.bind(this);
+}
+
+/**
  * Que ningún peso se pierda ni se invente.
  *
  * No comprueba casos sueltos sino propiedades que tienen que cumplirse siempre,
@@ -197,7 +207,7 @@ describe('Ningún peso se pierde al repartir las cuotas', () => {
 });
 
 describe('La importación calcula el interés igual que el sistema', () => {
-  const servicio = new LoansService(
+  const servicio = new PrestamosParaPrueba(
     dependenciaSinUsar(),
     dependenciaSinUsar(),
     dependenciaSinUsar(),
@@ -217,7 +227,7 @@ describe('La importación calcula el interés igual que el sistema', () => {
 
       const { plazoMeses, interesTotal, tabla } = planDe(caso);
 
-      const delSistema = (servicio as any).calculateInterestAndCuotas(
+      const delSistema = servicio.calcularInteresYCuotas(
         caso.metodo,
         caso.monto,
         caso.tasa,
