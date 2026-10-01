@@ -18,6 +18,11 @@ import {
   derivarCantidadCuotas,
   derivarPlazoMeses,
 } from './interes-credito';
+import {
+  comoPrisma,
+  exigir,
+  type DobleDePrisma,
+} from '../common/testing/dobles';
 
 const FILA_DATOS = 7;
 
@@ -51,18 +56,26 @@ const plantillaClientesCacheada = () =>
     generarPlantillaClientesCreditos(datosPlantillaVacios),
   );
 
+/**
+ * Las filas que el doble devuelve en cada consulta.
+ *
+ * `Record<string, unknown>[]` y no `any[]`: los parsers leen de estas filas campos
+ * concretos (`dni`, `codigo`, `numeroPrestamo`...), pero cada prueba pone solo los que su
+ * caso necesita, asi que una fila completa seria mentira. Lo que se gana sobre `any` es que
+ * la clave de PRIMER nivel si se comprueba: `clientez: [...]` deja de pasar en silencio.
+ */
 const prismaMock = (datos?: {
-  clientes?: any[];
-  productos?: any[];
-  prestamos?: any[];
-  rutas?: any[];
+  clientes?: Record<string, unknown>[];
+  productos?: Record<string, unknown>[];
+  prestamos?: Record<string, unknown>[];
+  rutas?: Record<string, unknown>[];
   // Quién tiene pagos: antes se marcaba con `_count: { pagos: N }` en el propio
   // mock del préstamo; ahora el parser lo resuelve con una consulta aparte a
   // `pago` (ver clientes-creditos.parser.ts), así que aquí se simula esa tabla.
   pagos?: Array<{ prestamoId: string }>;
   cajaOficina?: { nombre: string; saldoActual: number } | null;
 }) =>
-  ({
+  comoPrisma({
     cliente: { findMany: jest.fn().mockResolvedValue(datos?.clientes ?? []) },
     producto: { findMany: jest.fn().mockResolvedValue(datos?.productos ?? []) },
     prestamo: { findMany: jest.fn().mockResolvedValue(datos?.prestamos ?? []) },
@@ -81,7 +94,7 @@ const prismaMock = (datos?: {
         },
       ),
     },
-  }) as any;
+  } satisfies DobleDePrisma);
 
 const datosPlantillaVacios = {
   clientes: [],
@@ -201,8 +214,12 @@ async function editarLibro(
   return Buffer.from(buffer);
 }
 
-const normalizarEncabezado = (texto: any) =>
-  String(texto ?? '')
+// Solo texto y numeros se convierten: una celda de ExcelJS puede traer un objeto (texto
+// enriquecido, formula), y `String(objeto)` daria "[object Object]", que no coincide con
+// ningun encabezado y lo hacia pasar por un nombre cualquiera. Lo dijo el linter al quitar
+// el `any`.
+const normalizarEncabezado = (texto: unknown) =>
+  (typeof texto === 'string' || typeof texto === 'number' ? String(texto) : '')
     .toUpperCase()
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
@@ -294,7 +311,10 @@ const validarCreditoArticulo = (
   },
 ) => validarCredito(valores, datosBd, 'Créditos de artículo');
 
-async function validarArticulo(valores: Record<string, any>, datosBd?: any) {
+async function validarArticulo(
+  valores: Record<string, unknown>,
+  datosBd?: Parameters<typeof prismaMock>[0],
+) {
   const plantilla = await plantillaInventarioCacheada();
   const archivo = await editarLibro(plantilla.data, (workbook) => {
     escribirFila(workbook.getWorksheet('Artículos')!, FILA_DATOS, valores);
@@ -923,7 +943,7 @@ describe('Equivalencia con la creación de créditos del sistema', () => {
     );
     expect(sim.interesTotal).toBe(real.interesTotal);
     expect(sim.cuotas).toHaveLength(real.cuotas.length);
-    sim.cuotas.forEach((c: any, i: number) => {
+    sim.cuotas.forEach((c: (typeof sim.cuotas)[number], i: number) => {
       expect(c.monto).toBe(real.cuotas[i].monto);
       expect(c.montoCapital).toBe(real.cuotas[i].montoCapital);
       expect(c.montoInteres).toBe(real.cuotas[i].montoInteres);
@@ -1640,7 +1660,13 @@ describe('El archivo que se descarga abre sin que Excel pida repararlo', () => {
     };
   };
 
-  const seSolapan = (a: any, b: any) =>
+  type Rectangulo = {
+    col1: number;
+    col2: number;
+    fila1: number;
+    fila2: number;
+  };
+  const seSolapan = (a: Rectangulo, b: Rectangulo) =>
     !(
       a.col2 < b.col1 ||
       b.col2 < a.col1 ||
@@ -1649,9 +1675,10 @@ describe('El archivo que se descarga abre sin que Excel pida repararlo', () => {
     );
 
   const solapes = (xml: string, patron: RegExp) => {
+    // El guarda, no `filter(Boolean)`: ese no le quita el `null` al tipo.
     const refs = [...xml.matchAll(patron)]
       .map((m) => aRango(m[1]))
-      .filter(Boolean);
+      .filter((rango): rango is Rectangulo => rango !== null);
     const encontrados: string[] = [];
     for (let i = 0; i < refs.length; i++) {
       for (let j = i + 1; j < refs.length; j++) {
@@ -2032,23 +2059,27 @@ describe('La vista previa muestra las mismas cifras que se van a guardar', () =>
       );
 
       expect(resultado.errores).toHaveLength(0);
-      const previa: any = resultado.creditos?.[0];
-      expect(previa).toBeDefined();
+      const previa = exigir(resultado.creditos?.[0], 'el primer credito');
+      // `monto` y `cantidadCuotas` son `number | null` en `CreditoImportado`: una fila con
+      // errores puede no traerlos. Aqui ya se afirmo que no hay errores, asi que se exigen
+      // en vez de leerlos por un `any`.
+      const montoPrevia = exigir(previa.monto, 'el monto del credito');
+      const cuotasPrevia = exigir(
+        previa.cantidadCuotas,
+        'la cantidad de cuotas del credito',
+      );
 
       // Lo mismo que hará la confirmación, con las funciones del sistema.
       const plan = construirPlanCuotas({
         tipoAmortizacion: previa.tipoAmortizacion,
-        monto: previa.monto,
+        monto: montoPrevia,
         interesTotal: previa.interesTotal,
-        cantidadCuotas: previa.cantidadCuotas,
-        fechasVencimiento: Array.from(
-          { length: previa.cantidadCuotas },
-          (_, i) => {
-            const fecha = new Date('2026-05-01T12:00:00.000Z');
-            fecha.setDate(fecha.getDate() + i);
-            return fecha;
-          },
-        ),
+        cantidadCuotas: cuotasPrevia,
+        fechasVencimiento: Array.from({ length: cuotasPrevia }, (_, i) => {
+          const fecha = new Date('2026-05-01T12:00:00.000Z');
+          fecha.setDate(fecha.getDate() + i);
+          return fecha;
+        }),
       });
       // Igual que la confirmación: lo abonado llega en una sola cifra y la
       // cascada la reparte entre las cuotas.
@@ -2113,7 +2144,7 @@ describe('Vista previa del movimiento de caja', () => {
       }),
     ).parseAndValidate(archivo, 'clientes.xlsx');
 
-    const impacto = (resultado as any).impactoCaja;
+    const impacto = exigir(resultado.impactoCaja, 'el impacto en caja');
     expect(impacto.hayMovimientos).toBe(true);
     // Solo los OPERATIVA mueven algo; el histórico no.
     expect(impacto.creditosOperativos).toBe(2);
@@ -2146,7 +2177,7 @@ describe('Vista previa del movimiento de caja', () => {
       'Créditos de dinero',
     );
 
-    const impacto = (resultado as any).impactoCaja;
+    const impacto = exigir(resultado.impactoCaja, 'el impacto en caja');
     expect(impacto.alcanzaElSaldo).toBe(false);
     expect(impacto.faltante).toBe(3_000_000);
   });
@@ -2183,7 +2214,7 @@ describe('La cuota inicial baja lo que se financia', () => {
     );
 
     expect(resultado.errores).toHaveLength(0);
-    const credito: any = resultado.creditos?.[0];
+    const credito = exigir(resultado.creditos?.[0], 'el primer credito');
     expect(credito.monto).toBe(830000); // 980.000 - 150.000
     expect(credito.cantidadCuotas).toBe(12); // 6 meses quincenales
     expect(credito.valorCuota).toBe(69166); // no 81.666
@@ -2311,7 +2342,7 @@ describe('Cómo se descuenta un abono', () => {
 
   it('lo abonado baja el saldo peso a peso', async () => {
     const resultado = await credito({ 'Total abonado': 150000 });
-    const c: any = resultado.creditos?.[0];
+    const c = exigir(resultado.creditos?.[0], 'el primer credito');
 
     expect(c.interesTotal).toBe(200000);
     expect(c.totalCredito).toBe(700000);
@@ -2326,7 +2357,7 @@ describe('Cómo se descuenta un abono', () => {
     // 150.000 bajaba el saldo 325.000 sin que nadie lo pidiera. Ahora esa
     // cifra solo sale si se escribe.
     const resultado = await credito({ 'Total abonado': 325000 });
-    const c: any = resultado.creditos?.[0];
+    const c = exigir(resultado.creditos?.[0], 'el primer credito');
 
     expect(c.totalAbonado).toBe(325000);
     expect(c.saldoPendiente).toBe(375000);
@@ -2403,7 +2434,7 @@ describe('Un archivo descargado antes, con las dos columnas de captura', () => {
     ).parseAndValidate(archivo, 'clientes.xlsx');
 
     expect(resultado.errores).toHaveLength(0);
-    const credito: any = resultado.creditos?.[0];
+    const credito = exigir(resultado.creditos?.[0], 'el primer credito');
     // 12 cuotas de 22.000 más los 10.000 sueltos.
     expect(credito.totalCredito).toBe(660000);
     expect(credito.totalAbonado).toBe(274000);
