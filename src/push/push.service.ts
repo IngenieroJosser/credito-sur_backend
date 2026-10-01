@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as webpush from 'web-push';
-import { RolUsuario } from '@prisma/client';
 import { estadoDeError } from '../common/error.util';
 import { formatBogotaOffsetIso } from '../utils/date-utils';
 import { SendPushNotificationDto } from './dto/send-push-notification.dto';
