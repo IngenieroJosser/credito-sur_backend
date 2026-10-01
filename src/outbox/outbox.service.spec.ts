@@ -1,6 +1,7 @@
 import { OutboxService } from './outbox.service';
 import { Logger } from '@nestjs/common';
-import { comoPrisma } from '../common/testing/dobles';
+import { comoDependencia, comoPrisma } from '../common/testing/dobles';
+import type { EventEmitter2 } from '@nestjs/event-emitter';
 
 describe('OutboxService', () => {
   beforeEach(() => {
@@ -26,7 +27,10 @@ describe('OutboxService', () => {
   it('publishes pending events and marks them processed', async () => {
     const prisma = makePrisma();
     const eventEmitter = makeEventEmitter();
-    const service = new OutboxService(comoPrisma(prisma), eventEmitter as any);
+    const service = new OutboxService(
+      comoPrisma(prisma),
+      comoDependencia<EventEmitter2>(eventEmitter),
+    );
     const createdAt = new Date('2026-05-16T10:00:00.000Z');
 
     prisma.outboxEvent.findMany.mockResolvedValue([
@@ -71,7 +75,10 @@ describe('OutboxService', () => {
   it('marks events failed when publishing throws', async () => {
     const prisma = makePrisma();
     const eventEmitter = makeEventEmitter();
-    const service = new OutboxService(comoPrisma(prisma), eventEmitter as any);
+    const service = new OutboxService(
+      comoPrisma(prisma),
+      comoDependencia<EventEmitter2>(eventEmitter),
+    );
 
     prisma.outboxEvent.findMany.mockResolvedValue([
       {

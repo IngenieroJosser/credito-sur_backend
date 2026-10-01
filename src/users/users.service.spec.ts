@@ -6,10 +6,16 @@ import {
 } from '@nestjs/common';
 import { EstadoUsuario, RolUsuario } from '@prisma/client';
 import { UsersService } from './users.service';
-import { comoPrisma } from '../common/testing/dobles';
+import {
+  comoDependencia,
+  comoPrisma,
+  type DobleDePrisma,
+} from '../common/testing/dobles';
+import type { AuditService } from '../audit/audit.service';
+import type { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 
 describe('UsersService operational detail', () => {
-  const buildService = (prismaOverrides: Record<string, any> = {}) => {
+  const buildService = (prismaOverrides: DobleDePrisma = {}) => {
     const prisma = {
       usuario: {
         findFirst: jest.fn(),
@@ -85,8 +91,8 @@ describe('UsersService operational detail', () => {
     const gateway = { broadcastUsuariosActualizados: jest.fn() };
     const service = new UsersService(
       comoPrisma(prisma),
-      auditService as any,
-      gateway as any,
+      comoDependencia<AuditService>(auditService),
+      comoDependencia<NotificacionesGateway>(gateway),
     );
 
     return { service, prisma, auditService, gateway };

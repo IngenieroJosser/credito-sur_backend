@@ -2,6 +2,7 @@ import { RolUsuario } from '@prisma/client';
 import { AccountingIntegrityCron } from './accounting-integrity.cron';
 import type { LedgerService } from '../accounting/ledger.service';
 import { comoDependencia } from '../common/testing/dobles';
+import type { NotificacionesService } from '../notificaciones/notificaciones.service';
 
 function armar(opciones: { balanceado: boolean; cajasDescuadradas?: number }) {
   const ledger = {
@@ -24,7 +25,7 @@ function armar(opciones: { balanceado: boolean; cajasDescuadradas?: number }) {
   return {
     cron: new AccountingIntegrityCron(
       comoDependencia<LedgerService>(ledger),
-      notificaciones as any,
+      comoDependencia<NotificacionesService>(notificaciones),
     ),
     notificaciones,
   };

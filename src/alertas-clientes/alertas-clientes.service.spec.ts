@@ -5,6 +5,11 @@ import {
 } from '@nestjs/common';
 import { RolUsuario } from '@prisma/client';
 import { AlertasClientesService } from './alertas-clientes.service';
+import {
+  comoDependencia,
+  comoPrisma,
+  type DobleDePrisma,
+} from '../common/testing/dobles';
 
 const makeActor = (rol: RolUsuario = RolUsuario.SUPERVISOR) => ({
   id: 'usuario-reportante-1',
@@ -153,11 +158,18 @@ const makePrisma = () => {
   };
 };
 
-const makeService = (prisma: any) =>
-  new AlertasClientesService(prisma, {
-    broadcastClientesActualizados: jest.fn(),
-    broadcastNotificacionesActualizadas: jest.fn(),
-  } as any);
+import type { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+
+const makeService = (prisma: DobleDePrisma) =>
+  new AlertasClientesService(
+    comoPrisma(prisma),
+    // Sin `broadcastNotificacionesActualizadas`: el gateway NO tiene ese metodo. La
+    // llamada se quito del servicio (ver la nota en alertas-clientes.service.ts:666) y el
+    // doble se quedo con el metodo fantasma; el compilador lo dijo al tipar el doble.
+    comoDependencia<NotificacionesGateway>({
+      broadcastClientesActualizados: jest.fn(),
+    }),
+  );
 
 describe('AlertasClientesService', () => {
   it('bloquea al cobrador para emitir alertas de cliente no ubicado', async () => {

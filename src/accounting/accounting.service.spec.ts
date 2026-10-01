@@ -13,6 +13,7 @@ import {
 import type { ArgsDePrismaEnMock } from '../common/testing/prisma-mock.types';
 import type { NotificacionesService } from '../notificaciones/notificaciones.service';
 import type { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+import type { LedgerService } from './ledger.service';
 
 /**
  * Exige que el cierre haya devuelto la alerta de sobrante antes de leerla.
@@ -198,7 +199,7 @@ function makeService(prisma: DobleDePrisma) {
     comoPrisma(prisma),
     comoDependencia<NotificacionesService>(mockNotifications),
     comoDependencia<NotificacionesGateway>(mockGateway),
-    mockLedger as any,
+    comoDependencia<LedgerService>(mockLedger),
   );
 }
 

@@ -30,7 +30,10 @@ describe('UploadController.serveFile: quién puede ver un archivo', () => {
     return res;
   };
 
-  const controlador = (media: any, clienteVisible: any = null) => {
+  const controlador = (
+    media: Record<string, unknown> | null,
+    clienteVisible: Record<string, unknown> | null = null,
+  ) => {
     const prisma = {
       multimedia: { findFirst: jest.fn().mockResolvedValue(media) },
       cliente: { findFirst: jest.fn().mockResolvedValue(clienteVisible) },

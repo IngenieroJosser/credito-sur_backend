@@ -18,7 +18,7 @@ describe('LoansService · recuperación del plazo exacto', () => {
     dependenciaSinUsar(),
   );
 
-  const recuperar = (prestamo: any) =>
+  const recuperar = (prestamo: Record<string, unknown>) =>
     (servicio as any).recuperarPlazoExacto(prestamo);
 
   it('recupera el plazo fraccionario de un crédito derivado de sus cuotas', () => {

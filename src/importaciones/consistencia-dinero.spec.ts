@@ -415,7 +415,7 @@ describe('El crédito de artículo cierra contra el precio', () => {
         if (inicial > precio) continue;
         for (const costo of COSTOS) {
           const financiado = precio - inicial;
-          const creado: any[] = [];
+          const creado: Record<string, unknown>[] = [];
           const tx = {
             journalEntry: {
               create: jest.fn().mockImplementation((argumento) => {
@@ -454,7 +454,9 @@ describe('El crédito de artículo cierra contra el precio', () => {
             continue;
           }
 
-          const lineas = (creado[0]?.data?.lines?.create ?? []) as Array<{
+          const datosDelAsiento = creado[0]?.data as
+            { lines?: { create?: unknown[] } } | undefined;
+          const lineas = (datosDelAsiento?.lines?.create ?? []) as Array<{
             debitAmount?: number;
             creditAmount?: number;
           }>;

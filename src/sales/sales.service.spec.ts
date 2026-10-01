@@ -1,14 +1,27 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { TipoTransaccion } from '@prisma/client';
 import { SalesService } from './sales.service';
+import {
+  comoDependencia,
+  comoPrisma,
+  type Doble,
+  type DobleDePrisma,
+} from '../common/testing/dobles';
+import type { LedgerService } from '../accounting/ledger.service';
 
-const makeService = (prisma: any, ledger: any = {}) =>
-  new SalesService(prisma, {
-    registrarVentaArticulo: jest
-      .fn()
-      .mockResolvedValue({ id: 'journal-venta-1' }),
-    ...ledger,
-  });
+const makeService = (
+  prisma: DobleDePrisma,
+  ledger: Doble<LedgerService> = {},
+) =>
+  new SalesService(
+    comoPrisma(prisma),
+    comoDependencia<LedgerService>({
+      registrarVentaArticulo: jest
+        .fn()
+        .mockResolvedValue({ id: 'journal-venta-1' }),
+      ...ledger,
+    }),
+  );
 
 describe('SalesService venta contado', () => {
   it('registra venta de contado sin crear préstamo, cuotas ni pago operativo', async () => {

@@ -43,7 +43,7 @@ function servicio(saldos: number[]) {
   return { service: new LedgerService(comoPrisma(prisma)), tx, $queryRaw };
 }
 
-const sqlDe = (llamada: any[]) => {
+const sqlDe = (llamada: unknown[]) => {
   const partes = llamada[0];
   return Array.isArray(partes) ? partes.join(' ') : String(partes);
 };

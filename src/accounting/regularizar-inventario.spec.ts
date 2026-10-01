@@ -1,5 +1,10 @@
 import { AccountingService } from './accounting.service';
-import { comoPrisma, dependenciaSinUsar } from '../common/testing/dobles';
+import {
+  comoDependencia,
+  comoPrisma,
+  dependenciaSinUsar,
+} from '../common/testing/dobles';
+import type { LedgerService } from './ledger.service';
 
 /**
  * La cuenta de inventario venía en negativo: registrar mercancía no tocaba el
@@ -31,7 +36,7 @@ function servicio(params: {
     comoPrisma(prisma),
     dependenciaSinUsar(),
     dependenciaSinUsar(),
-    { registrarAsiento } as any,
+    comoDependencia<LedgerService>({ registrarAsiento }),
   );
 
   return { service, registrarAsiento };

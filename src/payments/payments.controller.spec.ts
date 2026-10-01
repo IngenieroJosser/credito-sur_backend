@@ -1,12 +1,16 @@
 import { PaymentsController } from './payments.controller';
 import { MetodoPago, RolUsuario } from '@prisma/client';
+import type { PaymentsService } from './payments.service';
+import { comoDependencia } from '../common/testing/dobles';
 
 describe('PaymentsController', () => {
   it('preserva campos de cierre pendiente al normalizar el dto', async () => {
     const paymentsService = {
       create: jest.fn().mockResolvedValue({ ok: true }),
     };
-    const controller = new PaymentsController(paymentsService as any);
+    const controller = new PaymentsController(
+      comoDependencia<PaymentsService>(paymentsService),
+    );
 
     await controller.create(
       {

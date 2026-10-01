@@ -15,7 +15,7 @@ import { comoPrisma, comoTransaccion } from '../common/testing/dobles';
  * `cajaDelta` con el signo contrario.
  */
 
-function servicio(originales: any[]) {
+function servicio(originales: Record<string, unknown>[]) {
   const tx = {
     journalEntry: {
       create: jest.fn().mockResolvedValue({ id: 'reversa-1', lines: [] }),
