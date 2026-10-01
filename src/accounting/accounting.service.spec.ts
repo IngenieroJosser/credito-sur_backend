@@ -5,6 +5,8 @@ import {
   TipoTransaccion,
 } from '@prisma/client';
 import { AccountingService } from './accounting.service';
+import { comoPrisma, type DobleDePrisma } from '../common/testing/dobles';
+import type { ArgsDePrismaEnMock } from '../common/testing/prisma-mock.types';
 
 /**
  * Exige que el cierre haya devuelto la alerta de sobrante antes de leerla.
@@ -48,7 +50,7 @@ const mockLedger = {
     .mockResolvedValue({ id: 'journal-consolidacion' }),
 };
 
-function buildPrismaMock(overrides: Record<string, any> = {}) {
+function buildPrismaMock(overrides: DobleDePrisma = {}) {
   const tx = {
     $queryRaw: jest.fn().mockResolvedValue([]),
     caja: {
@@ -85,10 +87,11 @@ function buildPrismaMock(overrides: Record<string, any> = {}) {
       // El plan de cuentas de prueba trae las que exige el gasto provisional.
       findMany: jest
         .fn()
-        .mockImplementation(({ where }: any) =>
-          Promise.resolve(
-            (where?.code?.in ?? []).map((code: string) => ({ code })),
-          ),
+        .mockImplementation(
+          ({ where }: { where?: { code?: { in?: string[] } } }) =>
+            Promise.resolve(
+              (where?.code?.in ?? []).map((code: string) => ({ code })),
+            ),
         ),
       createMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
@@ -184,9 +187,9 @@ function buildPrismaMock(overrides: Record<string, any> = {}) {
   };
 }
 
-function makeService(prisma: any) {
+function makeService(prisma: DobleDePrisma) {
   return new AccountingService(
-    prisma,
+    comoPrisma(prisma),
     mockNotifications as any,
     mockGateway as any,
     mockLedger as any,

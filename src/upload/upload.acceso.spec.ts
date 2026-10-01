@@ -1,5 +1,6 @@
 import { RolUsuario } from '@prisma/client';
 import { UploadController } from './upload.controller';
+import { comoPrisma, dependenciaSinUsar } from '../common/testing/dobles';
 
 /**
  * Control de acceso a los archivos servidos por nombre.
@@ -30,11 +31,14 @@ describe('UploadController.serveFile: quién puede ver un archivo', () => {
   };
 
   const controlador = (media: any, clienteVisible: any = null) => {
-    const prisma: any = {
+    const prisma = {
       multimedia: { findFirst: jest.fn().mockResolvedValue(media) },
       cliente: { findFirst: jest.fn().mockResolvedValue(clienteVisible) },
     };
-    return { ctrl: new UploadController({} as any, prisma), prisma };
+    return {
+      ctrl: new UploadController(dependenciaSinUsar(), comoPrisma(prisma)),
+      prisma,
+    };
   };
 
   it('rechaza nombres con recorrido de directorios', async () => {

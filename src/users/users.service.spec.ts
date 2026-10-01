@@ -6,10 +6,11 @@ import {
 } from '@nestjs/common';
 import { EstadoUsuario, RolUsuario } from '@prisma/client';
 import { UsersService } from './users.service';
+import { comoPrisma } from '../common/testing/dobles';
 
 describe('UsersService operational detail', () => {
   const buildService = (prismaOverrides: Record<string, any> = {}) => {
-    const prisma: any = {
+    const prisma = {
       usuario: {
         findFirst: jest.fn(),
         findUnique: jest.fn(),
@@ -83,7 +84,7 @@ describe('UsersService operational detail', () => {
     const auditService = { create: jest.fn() };
     const gateway = { broadcastUsuariosActualizados: jest.fn() };
     const service = new UsersService(
-      prisma,
+      comoPrisma(prisma),
       auditService as any,
       gateway as any,
     );
@@ -342,7 +343,11 @@ describe('UsersService operational detail', () => {
         },
       }),
     );
-    expect(prisma.usuario.delete).toBeUndefined();
+    // El doble de `usuario` no tiene `delete`: si el servicio lo llamara, la prueba
+    // reventaria con "no es una funcion". Antes esto comprobaba el DOBLE y no el
+    // servicio -pasaba igual hiciera lo que hiciera-, y el compilador lo dijo en cuanto
+    // el doble dejo de ser `any`. Lo que de verdad fija el borrado logico son las
+    // aserciones de arriba sobre `update`.
   });
   /**
    * Este metodo NO existia. El controlador ya exponia

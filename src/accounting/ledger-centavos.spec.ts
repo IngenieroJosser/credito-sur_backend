@@ -1,4 +1,5 @@
 import { LedgerService } from './ledger.service';
+import { comoPrisma } from '../common/testing/dobles';
 
 /**
  * El peso colombiano no tiene centavos.
@@ -25,7 +26,7 @@ function servicio() {
     $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
     _tx: tx,
   };
-  return { service: new LedgerService(prisma as any), prisma };
+  return { service: new LedgerService(comoPrisma(prisma)), prisma };
 }
 
 const asiento = (debito: number, credito: number) => ({

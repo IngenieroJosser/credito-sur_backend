@@ -13,6 +13,7 @@ import {
 import { pesos } from '../common/dinero.util';
 import { mensajeDeError } from '../common/error.util';
 import { LedgerService } from '../accounting/ledger.service';
+import { dependenciaSinUsar, comoPrisma } from '../common/testing/dobles';
 
 /**
  * Que ningún peso se pierda ni se invente.
@@ -197,13 +198,13 @@ describe('Ningún peso se pierde al repartir las cuotas', () => {
 
 describe('La importación calcula el interés igual que el sistema', () => {
   const servicio = new LoansService(
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
   );
 
   it('coincide con LoansService en toda la malla', () => {
@@ -432,7 +433,7 @@ describe('El crédito de artículo cierra contra el precio', () => {
           const prisma = {
             $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
           };
-          const ledger = new LedgerService(prisma as any);
+          const ledger = new LedgerService(comoPrisma(prisma));
 
           const donde = `precio ${precio} · inicial ${inicial} · costo ${costo}`;
           try {

@@ -22,6 +22,7 @@ import {
   comoPrisma,
   exigir,
   type DobleDePrisma,
+  dependenciaSinUsar,
 } from '../common/testing/dobles';
 
 const FILA_DATOS = 7;
@@ -134,7 +135,7 @@ const comoLibroDeExcel = (data: Buffer): ArrayBuffer => {
 /**
  * Un `LoansService` con dependencias vacias, para probar solo sus calculos puros.
  *
- * Antes eran siete `{} as any` escritos a mano en dos sitios. La tupla se DERIVA del
+ * Antes eran siete `dependenciaSinUsar()` escritos a mano en dos sitios. La tupla se DERIVA del
  * propio constructor: si manana entra una dependencia mas, esto deja de compilar y hay
  * que venir a mirarlo, que es justo lo que los `as any` evitaban.
  */

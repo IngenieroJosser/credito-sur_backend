@@ -148,4 +148,4 @@ export const comoDependencia = <T>(doble: Doble<T>): T => doble as unknown as T;
  * parecer un `any` que alguien no acabó de tipar. Si el servicio llegara a llamarlo, la
  * prueba falla con "no es una función", que es la señal correcta: falta imitarlo.
  */
-export const dependenciaSinUsar = <T>(): T => ({}) as T;
+export const dependenciaSinUsar = <T>(): T => ({}) as unknown as T;

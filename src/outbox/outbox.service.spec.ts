@@ -1,5 +1,6 @@
 import { OutboxService } from './outbox.service';
 import { Logger } from '@nestjs/common';
+import { comoPrisma } from '../common/testing/dobles';
 
 describe('OutboxService', () => {
   beforeEach(() => {
@@ -25,7 +26,7 @@ describe('OutboxService', () => {
   it('publishes pending events and marks them processed', async () => {
     const prisma = makePrisma();
     const eventEmitter = makeEventEmitter();
-    const service = new OutboxService(prisma as any, eventEmitter as any);
+    const service = new OutboxService(comoPrisma(prisma), eventEmitter as any);
     const createdAt = new Date('2026-05-16T10:00:00.000Z');
 
     prisma.outboxEvent.findMany.mockResolvedValue([
@@ -70,7 +71,7 @@ describe('OutboxService', () => {
   it('marks events failed when publishing throws', async () => {
     const prisma = makePrisma();
     const eventEmitter = makeEventEmitter();
-    const service = new OutboxService(prisma as any, eventEmitter as any);
+    const service = new OutboxService(comoPrisma(prisma), eventEmitter as any);
 
     prisma.outboxEvent.findMany.mockResolvedValue([
       {

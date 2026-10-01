@@ -1,4 +1,5 @@
 import { LedgerService } from './ledger.service';
+import { comoPrisma } from '../common/testing/dobles';
 
 function makeService() {
   const tx = {
@@ -24,7 +25,7 @@ function makeService() {
     _tx: tx,
   };
 
-  return { service: new LedgerService(prisma as any), prisma };
+  return { service: new LedgerService(comoPrisma(prisma)), prisma };
 }
 
 describe('LedgerService article sales', () => {

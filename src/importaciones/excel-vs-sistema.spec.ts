@@ -8,6 +8,7 @@ import {
   construirTablaCuotas,
   derivarPlazoMeses,
 } from './interes-credito';
+import { dependenciaSinUsar } from '../common/testing/dobles';
 
 /**
  * El Excel tiene que dar lo mismo que el sistema, y hay que comprobarlo con la
@@ -147,13 +148,13 @@ const CADENA = [
 
 describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () => {
   const servicio = new LoansService(
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
   );
 
   let hoja: ExcelJS.Worksheet;

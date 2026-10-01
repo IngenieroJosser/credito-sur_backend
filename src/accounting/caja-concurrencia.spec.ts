@@ -1,4 +1,5 @@
 import { LedgerService } from './ledger.service';
+import { comoPrisma } from '../common/testing/dobles';
 
 /**
  * Dos personas moviendo la misma caja al mismo tiempo.
@@ -39,7 +40,7 @@ function servicio(saldos: number[]) {
     _tx: tx,
   };
 
-  return { service: new LedgerService(prisma as any), tx, $queryRaw };
+  return { service: new LedgerService(comoPrisma(prisma)), tx, $queryRaw };
 }
 
 const sqlDe = (llamada: any[]) => {

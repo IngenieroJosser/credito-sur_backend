@@ -1,4 +1,5 @@
 import { LoansService } from './loans.service';
+import { dependenciaSinUsar } from '../common/testing/dobles';
 
 /**
  * `plazoMeses` se guarda como entero, pero el interés se calcula con el plazo
@@ -8,13 +9,13 @@ import { LoansService } from './loans.service';
  */
 describe('LoansService · recuperación del plazo exacto', () => {
   const servicio = new LoansService(
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
   );
 
   const recuperar = (prestamo: any) =>

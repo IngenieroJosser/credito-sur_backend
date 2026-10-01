@@ -1,4 +1,5 @@
 import { MoraService } from './mora.service';
+import { comoPrisma, type DobleDePrisma } from '../common/testing/dobles';
 
 const mockNotifications = {
   notifyApprovers: jest.fn().mockResolvedValue(undefined),
@@ -14,9 +15,9 @@ const mockPush = {
   sendPushNotification: jest.fn().mockResolvedValue(undefined),
 };
 
-function makeService(prisma: any) {
+function makeService(prisma: DobleDePrisma) {
   return new MoraService(
-    prisma,
+    comoPrisma(prisma),
     mockNotifications as any,
     mockGateway as any,
     mockPush as any,

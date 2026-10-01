@@ -1,4 +1,5 @@
 import { LedgerService } from './ledger.service';
+import { comoPrisma, comoTransaccion } from '../common/testing/dobles';
 
 /**
  * Deshacer un asiento sin borrarlo.
@@ -36,7 +37,7 @@ function servicio(originales: any[]) {
     $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
   };
 
-  return { service: new LedgerService(prisma as any), tx };
+  return { service: new LedgerService(comoPrisma(prisma)), tx };
 }
 
 const desembolso = {
@@ -58,7 +59,7 @@ describe('Reversar asientos ya registrados', () => {
   it('cambia de lado los débitos y los créditos', async () => {
     const { service, tx } = servicio([desembolso]);
 
-    await service.reversarAsientos(tx as any, {
+    await service.reversarAsientos(comoTransaccion(tx), {
       referenceIds: ['prestamo-1'],
       referenceTypes: ['DESEMBOLSO'],
       createdBy: 'admin-1',
@@ -79,7 +80,7 @@ describe('Reversar asientos ya registrados', () => {
   it('devuelve a la caja lo que salió de ella', async () => {
     const { service, tx } = servicio([desembolso]);
 
-    await service.reversarAsientos(tx as any, {
+    await service.reversarAsientos(comoTransaccion(tx), {
       referenceIds: ['prestamo-1'],
       referenceTypes: ['DESEMBOLSO'],
       createdBy: 'admin-1',
@@ -94,7 +95,7 @@ describe('Reversar asientos ya registrados', () => {
   it('no borra el asiento original: escribe uno nuevo', async () => {
     const { service, tx } = servicio([desembolso]);
 
-    await service.reversarAsientos(tx as any, {
+    await service.reversarAsientos(comoTransaccion(tx), {
       referenceIds: ['prestamo-1'],
       referenceTypes: ['DESEMBOLSO'],
       createdBy: 'admin-1',
@@ -111,7 +112,7 @@ describe('Reversar asientos ya registrados', () => {
     const { service, tx } = servicio([desembolso]);
     tx.journalEntry.findFirst.mockResolvedValue({ id: 'reversa-ya-existe' });
 
-    const ids = await service.reversarAsientos(tx as any, {
+    const ids = await service.reversarAsientos(comoTransaccion(tx), {
       referenceIds: ['prestamo-1'],
       referenceTypes: ['DESEMBOLSO'],
       createdBy: 'admin-1',
@@ -125,7 +126,7 @@ describe('Reversar asientos ya registrados', () => {
   it('sin asientos que deshacer no escribe nada', async () => {
     const { service, tx } = servicio([]);
 
-    const ids = await service.reversarAsientos(tx as any, {
+    const ids = await service.reversarAsientos(comoTransaccion(tx), {
       referenceIds: ['prestamo-sin-asientos'],
       referenceTypes: ['DESEMBOLSO'],
       createdBy: 'admin-1',
@@ -153,7 +154,7 @@ describe('Reversar asientos ya registrados', () => {
     };
     const { service, tx } = servicio([venta]);
 
-    await service.reversarAsientos(tx as any, {
+    await service.reversarAsientos(comoTransaccion(tx), {
       referenceIds: ['prestamo-art'],
       referenceTypes: ['VENTA_ARTICULO'],
       createdBy: 'admin-1',

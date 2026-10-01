@@ -1,7 +1,7 @@
 import { DashboardService } from './dashboard.service';
-import { comoPrisma } from '../common/testing/dobles';
+import { comoPrisma, type DobleDePrisma } from '../common/testing/dobles';
 
-function buildPrismaMock(overrides: Record<string, any> = {}) {
+function buildPrismaMock(overrides: DobleDePrisma = {}) {
   return {
     aprobacion: {
       count: jest.fn().mockResolvedValue(0),
