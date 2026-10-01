@@ -9,6 +9,20 @@ import {
 import { TipoPrestamoDto } from './dto/create-loan.dto';
 import { ArgsDePrismaEnMock } from '../common/testing/prisma-mock.types';
 import { LoansService } from './loans.service';
+import type { NotificacionesService } from '../notificaciones/notificaciones.service';
+import type { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+import type { AuditService } from '../audit/audit.service';
+import type { PushService } from '../push/push.service';
+import type { ConfiguracionService } from '../configuracion/configuracion.service';
+import type { LedgerService } from '../accounting/ledger.service';
+import {
+  comoDependencia,
+  comoPrisma,
+  comoTransaccion,
+  exigir,
+  type DobleDePrisma,
+  type MetodosDeModelo,
+} from '../common/testing/dobles';
 
 const mockNotifications = {
   create: jest.fn().mockResolvedValue(undefined),
@@ -40,10 +54,51 @@ const mockLedger = {
     .mockResolvedValue({ id: 'journal-reverso-articulo' }),
 };
 
-function makeService(prisma: any) {
+/**
+ * El asidero de prueba.
+ *
+ * Los cuatro metodos de abajo son `protected` en el servicio y estas pruebas los ejercitan
+ * directo. `.bind(this)` hereda la firma REAL, asi que cambiarle un parametro a cualquiera
+ * rompe la compilacion de la prueba; antes se llamaban por `(service as any).metodo(...)`,
+ * donde no se comprobaba nada.
+ */
+class PrestamosParaPrueba extends LoansService {
+  public readonly resolverCajaDeOperacion =
+    this.resolveCajaOperacionPrestamo.bind(this);
+  public readonly calcularInteresPlanoParaPrueba =
+    this.calcularInteresPlano.bind(this);
+  public readonly calcularInteresYCuotas =
+    this.calculateInterestAndCuotas.bind(this);
+  /**
+   * Sustituye el efecto secundario de `createLoan`.
+   *
+   * Tiene que ser un `override` y no un alias con `bind`: `createLoan` llama a
+   * `this.runCreateLoanSideEffect`, asi que reasignar una copia no intercepta nada. Antes
+   * la prueba lo reasignaba en la instancia con `(service as any).runCreateLoanSideEffect
+   * = ...`, que si interceptaba pero sin comprobar la firma. El `override` la comprueba.
+   */
+  public efectoSecundarioFalso?: (
+    etiqueta: string,
+    accion: () => unknown,
+  ) => unknown;
+
+  protected override async runCreateLoanSideEffect(
+    label: string,
+    action: () => unknown,
+  ) {
+    if (this.efectoSecundarioFalso) {
+      await this.efectoSecundarioFalso(label, action);
+      return;
+    }
+    await super.runCreateLoanSideEffect(label, action);
+  }
+}
+
+function makeService(prisma: DobleDePrisma) {
   if (prisma) {
-    for (const key of Object.keys(prisma)) {
-      const model = prisma[key];
+    // `Object.values` en vez de indexar por `key`: indexar un tipo de claves conocidas con
+    // un `string` suelto no se puede comprobar, y aqui solo hay que recorrer los modelos.
+    for (const model of Object.values(prisma)) {
       if (model && typeof model === 'object') {
         if (model.findUnique && !model.findFirst) {
           model.findFirst = model.findUnique;
@@ -94,18 +149,37 @@ function makeService(prisma: any) {
       };
     }
   }
-  return new LoansService(
-    prisma,
-    mockNotifications as any,
-    mockAudit as any,
-    mockPush as any,
-    mockGateway as any,
-    mockConfig as any,
-    mockLedger as any,
+  return new PrestamosParaPrueba(
+    comoPrisma(prisma),
+    comoDependencia<NotificacionesService>(mockNotifications),
+    comoDependencia<AuditService>(mockAudit),
+    comoDependencia<PushService>(mockPush),
+    comoDependencia<NotificacionesGateway>(mockGateway),
+    comoDependencia<ConfiguracionService>(mockConfig),
+    comoDependencia<LedgerService>(mockLedger),
   );
 }
 
-function buildCreateLoanPrismaMock(rol: RolUsuario, overrides: any = {}) {
+/**
+ * Lo que cada prueba puede cambiarle al doble de `createLoan`.
+ *
+ * NO es un doble de Prisma: son las FILAS que devuelven cuatro consultas, mas un `prisma`
+ * para agregar modelos enteros. Se declara porque con `overrides: any` una clave mal
+ * escrita -`cajas` por `caja`- se ignoraba en silencio y la prueba seguia con el valor por
+ * defecto, pasando por el motivo equivocado.
+ */
+type AjustesDelDoble = {
+  prestamoCreado?: Record<string, unknown>;
+  cliente?: Record<string, unknown>;
+  usuario?: Record<string, unknown>;
+  caja?: Record<string, unknown>;
+  prisma?: DobleDePrisma;
+};
+
+function buildCreateLoanPrismaMock(
+  rol: RolUsuario,
+  overrides: AjustesDelDoble = {},
+) {
   const fechaInicio = new Date('2026-05-15T05:00:00.000Z');
   const prestamoCreado = {
     id: 'prestamo-fecha-1',
@@ -237,7 +311,7 @@ describe('LoansService accounting impact for approved loans', () => {
   });
 
   it('no crea un credito si el cliente no tiene ruta', async () => {
-    const prisma: any = buildCreateLoanPrismaMock(RolUsuario.ADMIN);
+    const prisma = buildCreateLoanPrismaMock(RolUsuario.ADMIN);
     prisma.cliente.findUnique = jest.fn().mockResolvedValue({
       id: 'cliente-1',
       nombres: 'Cliente',
@@ -269,7 +343,7 @@ describe('LoansService accounting impact for approved loans', () => {
   });
 
   it('crea el credito cuando la ruta viene en la peticion, aunque el cliente no la tenga', async () => {
-    const prisma: any = buildCreateLoanPrismaMock(RolUsuario.ADMIN);
+    const prisma = buildCreateLoanPrismaMock(RolUsuario.ADMIN);
     prisma.cliente.findUnique = jest.fn().mockResolvedValue({
       id: 'cliente-1',
       nombres: 'Cliente',
@@ -425,8 +499,8 @@ describe('LoansService accounting impact for approved loans', () => {
       },
     };
 
-    const service = makeService({}) as any;
-    const caja = await service.resolveCajaOperacionPrestamo(tx, {
+    const service = makeService({});
+    const caja = await service.resolverCajaDeOperacion(comoTransaccion(tx), {
       data: { rutaId: 'ruta-1' },
       creador: { id: 'admin-1', rol: RolUsuario.ADMIN },
       cliente: {
@@ -507,8 +581,8 @@ describe('LoansService accounting impact for approved loans', () => {
       },
     };
 
-    const service = makeService({}) as any;
-    const caja = await service.resolveCajaOperacionPrestamo(tx, {
+    const service = makeService({});
+    const caja = await service.resolverCajaDeOperacion(comoTransaccion(tx), {
       data: {},
       creador: { id: 'supervisor-1', rol: RolUsuario.SUPERVISOR },
       cliente: {
@@ -516,10 +590,12 @@ describe('LoansService accounting impact for approved loans', () => {
           {
             rutaId: 'ruta-supervisada-1',
             cobradorId: 'cobrador-1',
+            // Sin `supervisorId`: el metodo no lo lee -su firma pide los cuatro campos
+            // que si usa-, asi que ponerlo aqui sugeria una regla que no existe. Quien
+            // decide la caja es el cobrador de la ruta.
             ruta: {
               id: 'ruta-supervisada-1',
               cobradorId: 'cobrador-1',
-              supervisorId: 'supervisor-1',
             },
           },
         ],
@@ -1206,7 +1282,15 @@ describe('LoansService accounting impact for approved loans', () => {
       cuotas: [{ id: 'cuota-1' }],
     };
 
-    const tx: any = {
+    const tx: {
+      asignacionRuta: MetodosDeModelo;
+      prestamo: MetodosDeModelo;
+      ruta: MetodosDeModelo;
+      caja: MetodosDeModelo;
+      transaccion: MetodosDeModelo;
+      aprobacion: MetodosDeModelo;
+      efectoProvisional: MetodosDeModelo;
+    } = {
       asignacionRuta: {
         findFirst: jest.fn().mockResolvedValue(null),
         aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 0 } }),
@@ -1372,7 +1456,15 @@ describe('LoansService accounting impact for approved loans', () => {
       cuotas: [{ id: 'cuota-1' }],
     };
 
-    const tx: any = {
+    const tx: {
+      prestamo: MetodosDeModelo;
+      ruta: MetodosDeModelo;
+      caja: MetodosDeModelo;
+      transaccion: MetodosDeModelo;
+      asignacionRuta: MetodosDeModelo;
+      aprobacion: MetodosDeModelo;
+      efectoProvisional: MetodosDeModelo;
+    } = {
       prestamo: {
         update: jest.fn().mockResolvedValue({}),
         create: jest.fn().mockResolvedValue(prestamoCreado),
@@ -1594,8 +1686,8 @@ describe('LoansService accounting impact for approved loans', () => {
         }),
       },
     };
-    const service = makeService(prisma) as any;
-    service.runCreateLoanSideEffect = jest
+    const service = makeService(prisma);
+    service.efectoSecundarioFalso = jest
       .fn()
       .mockImplementation((label: string, action: () => Promise<unknown>) => {
         if (label === 'broadcast préstamos') {
@@ -1606,7 +1698,7 @@ describe('LoansService accounting impact for approved loans', () => {
 
     const result = await service.createLoan({
       clienteId: 'cliente-1',
-      tipoPrestamo: 'EFECTIVO',
+      tipoPrestamo: TipoPrestamoDto.EFECTIVO,
       monto: 5000000,
       tasaInteres: 10,
       tasaInteresMora: 2,
@@ -1712,7 +1804,9 @@ describe('LoansService accounting impact for approved loans', () => {
       },
     };
 
-    let result: any;
+    // El tipo se DERIVA del metodo. Va en `let` porque la prueba comprueba que, pese al
+    // fallo del efecto secundario, la respuesta llega.
+    let result: Awaited<ReturnType<LoansService['createLoan']>> | undefined;
     try {
       result = await makeService(prisma).createLoan({
         clienteId: 'cliente-1',
@@ -1770,7 +1864,8 @@ describe('LoansService accounting impact for approved loans', () => {
     await expect(
       makeService(prisma).updateLoan(
         'prestamo-1',
-        { monto: 120000, version: 3 } as any,
+        // Solo los dos campos que esta prueba ejercita: el DTO los declara opcionales.
+        { monto: 120000, version: 3 },
         'admin-1',
       ),
     ).rejects.toBeInstanceOf(ConflictException);
@@ -2229,7 +2324,8 @@ describe('LoansService reprogramacion concurrency controls', () => {
       },
     };
 
-    let result: any;
+    let result:
+      Awaited<ReturnType<LoansService['solicitarReprogramacion']>> | undefined;
     try {
       result = await makeService(prisma).solicitarReprogramacion({
         prestamoId: 'prestamo-1',
@@ -2258,15 +2354,15 @@ describe('LoansService reprogramacion concurrency controls', () => {
 
 describe('LoansService calcularInteresPlano', () => {
   it('calcula interes plano correctamente para 5M, 10%, 12 cuotas', () => {
-    const service = makeService(null);
-    const result = (service as any).calcularInteresPlano(5000000, 10, 12);
+    const service = makeService({});
+    const result = service.calcularInteresPlanoParaPrueba(5000000, 10, 12);
 
     expect(result.interesTotal).toBe(500000);
     expect(result.cuotaFija).toBe(458333);
     expect(result.tabla).toHaveLength(12);
 
     const totalCuotas = result.tabla.reduce(
-      (sum: number, c: any) => sum + c.monto,
+      (sum: number, c: (typeof result.tabla)[number]) => sum + c.monto,
       0,
     );
     expect(totalCuotas).toBe(5500000);
@@ -2292,7 +2388,7 @@ describe('LoansService calcularInteresPlano', () => {
 describe('LoansService interes: mismos valores que el frontend', () => {
   /** El interes plano no depende del numero de cuotas; se pasa 1 por pasar algo. */
   const plano = (capital: number, tasa: number) =>
-    (makeService(null) as any).calcularInteresPlano(capital, tasa, 1)
+    makeService({}).calcularInteresPlanoParaPrueba(capital, tasa, 1)
       .interesTotal;
 
   /**
@@ -2302,7 +2398,7 @@ describe('LoansService interes: mismos valores que el frontend', () => {
    * y el dia que cambiara el servicio esta seguiria en verde.
    */
   const simple = (capital: number, tasa: number, meses: number) =>
-    (makeService(null) as any).calculateInterestAndCuotas(
+    makeService({}).calcularInteresYCuotas(
       TipoAmortizacion.INTERES_SIMPLE,
       capital,
       tasa,
@@ -2467,35 +2563,68 @@ describe('LoansService role scoping', () => {
     // su estado siga en ACTIVO, y que entonces no se cuente además como activo
     // al día. Escribir aquí el objeto literal ataba la prueba a un `where`
     // concreto y la dejaba en rojo cada vez que la consulta se afinaba.
+    /**
+     * El `where` que se le pasa a `count`/`aggregate`, visto desde la prueba.
+     *
+     * No se usa `Prisma.PrestamoWhereInput` a proposito: la prueba inspecciona la forma
+     * del filtro (que haya un `OR`, que dentro mire `cuotas.some.estado`), y el tipo de
+     * Prisma, con todos sus operadores anidados, no deja leerlo sin castear en cada paso.
+     * Lo que importa comprobar aqui es que las claves existan.
+     */
+    type AlcanceDeMora = {
+      estado?: unknown;
+      saldoPendiente?: unknown;
+      OR?: AlcanceDeMora[];
+      NOT?: AlcanceDeMora;
+      cuotas?: { some?: { estado?: { in?: string[] } | string } };
+    };
+    type ArgsDeConteo = { where?: AlcanceDeMora; _sum?: unknown };
+
     const wheres = prisma.prestamo.count.mock.calls.map(
-      ([argumento]: any[]) => argumento.where,
+      ([argumento]: [ArgsDeConteo]) => argumento.where,
     );
 
-    const porVencidas = (alcance: any) => {
+    const porVencidas = (alcance?: AlcanceDeMora) => {
       const cuotas = alcance?.cuotas?.some;
       if (!cuotas) return false;
-      const estados = cuotas.estado?.in ?? [cuotas.estado];
+      // El estado puede venir como valor o como operador `{ in: [...] }`: las dos formas
+      // aparecen en las consultas, y distinguirlas es justo lo que el `any` no hacia.
+      const estados =
+        typeof cuotas.estado === 'object' && cuotas.estado?.in
+          ? cuotas.estado.in
+          : [cuotas.estado];
       const miraLaFecha = JSON.stringify(cuotas).includes('fechaVencimiento');
       return estados.includes('VENCIDA') && miraLaFecha;
     };
 
-    const whereMora = wheres.find((w) => Array.isArray(w?.OR));
-    expect(whereMora).toBeDefined();
-    expect(whereMora.OR).toContainEqual({ estado: 'EN_MORA' });
-    expect(whereMora.OR.some(porVencidas)).toBe(true);
+    // `exigir` en vez de `expect(...).toBeDefined()` seguido de leer el valor: el
+    // `toBeDefined` no le quita el `undefined` al tipo, y leerlo despues obligaba al `any`.
+    const whereMora = exigir(
+      wheres.find((w) => Array.isArray(w?.OR)),
+      'el filtro de mora',
+    );
+    const orMora = exigir(whereMora.OR, 'el OR del filtro de mora');
+    expect(orMora).toContainEqual({ estado: 'EN_MORA' });
+    expect(orMora.some((alcance) => porVencidas(alcance))).toBe(true);
     // Sin saldo no hay mora, por mucho que la cuota esté vencida.
     expect(whereMora.saldoPendiente).toEqual({ gt: 0 });
 
-    const whereActivos = wheres.find((w) => w?.estado === 'ACTIVO');
-    expect(whereActivos).toBeDefined();
+    const whereActivos = exigir(
+      wheres.find((w) => w?.estado === 'ACTIVO'),
+      'el filtro de activos',
+    );
     expect(porVencidas(whereActivos.NOT)).toBe(true);
 
     // La cartera en mora se suma con el mismo criterio que se cuenta.
     const [argumentoAgregado] = prisma.prestamo.aggregate.mock.calls.find(
-      ([argumento]: any[]) => Array.isArray(argumento?.where?.OR),
+      ([argumento]: [ArgsDeConteo]) => Array.isArray(argumento?.where?.OR),
+    ) as [ArgsDeConteo];
+    const orAgregado = exigir(
+      argumentoAgregado.where?.OR,
+      'el OR de la suma de cartera',
     );
-    expect(argumentoAgregado.where.OR).toContainEqual({ estado: 'EN_MORA' });
-    expect(argumentoAgregado.where.OR.some(porVencidas)).toBe(true);
+    expect(orAgregado).toContainEqual({ estado: 'EN_MORA' });
+    expect(orAgregado.some((alcance) => porVencidas(alcance))).toBe(true);
     expect(argumentoAgregado._sum).toEqual({ saldoPendiente: true });
   });
 
@@ -3029,7 +3158,7 @@ describe('La corrección de intereses del arranque', () => {
     })),
   });
 
-  const conPrestamo = (prestamo: any) => ({
+  const conPrestamo = (prestamo: Record<string, unknown>) => ({
     prestamo: {
       findMany: jest.fn().mockResolvedValue([prestamo]),
       update: jest.fn().mockResolvedValue({}),
@@ -3182,7 +3311,7 @@ describe('Reprogramaciones: jurisdicción por rol', () => {
       id: 'sup-1',
       rol: RolUsuario.SUPERVISOR,
     });
-    expect(res.map((r: any) => r.id)).toEqual(['ap-1']);
+    expect(res.map((r) => r.id)).toEqual(['ap-1']);
   });
 
   it('el admin ve todas las reprogramaciones', async () => {
@@ -3192,7 +3321,7 @@ describe('Reprogramaciones: jurisdicción por rol', () => {
       id: 'admin-1',
       rol: RolUsuario.ADMIN,
     });
-    expect(res.map((r: any) => r.id)).toEqual(['ap-1', 'ap-2']);
+    expect(res.map((r) => r.id)).toEqual(['ap-1', 'ap-2']);
     // sin restricción no hace falta consultar prestamos
     expect(prisma.prestamo.findMany).not.toHaveBeenCalled();
   });

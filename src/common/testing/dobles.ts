@@ -1,5 +1,8 @@
 import type { Prisma } from '@prisma/client';
-import type { PrismaService } from '../../prisma/prisma.service';
+import type {
+  PrismaService,
+  TransaccionPrisma,
+} from '../../prisma/prisma.service';
 
 /**
  * Dobles de prueba tipados.
@@ -62,9 +65,35 @@ export type Doble<T> = {
     : T[K];
 };
 
+/**
+ * Exige que el valor exista antes de leerlo, y si no dice QUE falta.
+ *
+ * Hace falta porque `expect(x).toBeDefined()` no le quita el `undefined` al tipo: la
+ * prueba seguia leyendo `x.campo` y eso era lo que forzaba un `any`. Asi la prueba falla
+ * con "se esperaba el filtro de mora" en vez de reventar leyendo una propiedad de
+ * undefined, y el resto del bloque ya trabaja con el valor estrecho.
+ *
+ * Estaba escrito a mano en `approvals.service.spec.ts`; ahora los dos lo importan de aqui.
+ */
+export const exigir = <T>(valor: T | null | undefined, que: string): T => {
+  if (valor === null || valor === undefined) {
+    throw new Error(`Se esperaba ${que} en el resultado`);
+  }
+  return valor;
+};
+
 /** Entrega el doble de Prisma donde se espera el servicio real. */
 export const comoPrisma = (doble: DobleDePrisma): PrismaService =>
   doble as unknown as PrismaService;
+
+/**
+ * Entrega el doble donde se espera una transaccion de Prisma (`tx`).
+ *
+ * Misma idea que `comoPrisma`: un `tx` imitado trae los dos o tres modelos que el metodo
+ * toca, nunca el cliente entero.
+ */
+export const comoTransaccion = (doble: DobleDePrisma): TransaccionPrisma =>
+  doble as unknown as TransaccionPrisma;
 
 /** Entrega el doble de una dependencia donde se espera la clase real. */
 export const comoDependencia = <T>(doble: Doble<T>): T => doble as unknown as T;

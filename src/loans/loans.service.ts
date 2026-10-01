@@ -278,7 +278,10 @@ export class LoansService implements OnModuleInit {
     return `sha256:${createHash('sha256').update(key).digest('hex')}`;
   }
 
-  private async runCreateLoanSideEffect(
+  // Los cuatro `protected` de esta clase lo son para las pruebas, que los ejercitan uno
+  // por uno: con `private` habia que llamarlos por `(service as any).metodo(...)` y la
+  // firma no se comprobaba en ningun sitio. `protected` no amplia la API publica.
+  protected async runCreateLoanSideEffect(
     label: string,
     // `unknown` cubre tanto una funcion sincrona como una que devuelve promesa: el
     // `await action()` de abajo funciona con las dos. Antes era
@@ -568,7 +571,7 @@ export class LoansService implements OnModuleInit {
     });
   }
 
-  private async resolveCajaOperacionPrestamo(
+  protected async resolveCajaOperacionPrestamo(
     tx: TransaccionPrisma,
     params: {
       /**
@@ -1176,7 +1179,7 @@ export class LoansService implements OnModuleInit {
     };
   }
 
-  private calcularInteresPlano(
+  protected calcularInteresPlano(
     capital: number,
     tasaTotal: number,
     numCuotas: number,
@@ -1353,7 +1356,7 @@ export class LoansService implements OnModuleInit {
    * `fechaInicio`: un credito puede desembolsarse hoy y empezar a cobrarse
    * despues.
    */
-  private calculateInterestAndCuotas(
+  protected calculateInterestAndCuotas(
     tipoAmortizacion: TipoAmortizacion,
     monto: number,
     tasaInteres: number,

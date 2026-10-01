@@ -17,24 +17,10 @@ import type { LedgerService } from '../accounting/ledger.service';
 import {
   comoDependencia,
   comoPrisma,
+  exigir,
   type DobleDePrisma,
   type MetodosDeModelo,
 } from '../common/testing/dobles';
-
-/**
- * Exige que la relacion venga cargada antes de leerla.
- *
- * `cliente` y `creditoSolicitud` son relaciones opcionales en el esquema, asi que
- * Prisma las tipa como nullable. La prueba las leia directo y compilaba porque el
- * cliente de Prisma estaba tipado como `any`. Si el servicio dejara de cargarlas,
- * asi la prueba dice cual falta en vez de reventar leyendo `.id` de null.
- */
-const exigir = <T>(valor: T | null | undefined, que: string): T => {
-  if (valor === null || valor === undefined) {
-    throw new Error(`Se esperaba ${que} en el resultado`);
-  }
-  return valor;
-};
 
 const mockNotifications = {
   create: jest.fn().mockResolvedValue(undefined),
