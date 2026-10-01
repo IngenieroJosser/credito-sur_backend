@@ -19,6 +19,13 @@ import {
   TipoDiferenciaArqueo,
   RutaJornadaEstado,
 } from '@prisma/client';
+import type { JournalLineDto } from '../accounting/ledger.service';
+import type { ArgsDePrismaEnMock } from '../common/testing/prisma-mock.types';
+import {
+  type CallbackDeTransaccion,
+  type DobleDePrisma,
+  type MetodosDeModelo,
+} from '../common/testing/dobles';
 
 // Mocks de los servicios de soporte
 const mockLedgerService = {
@@ -26,7 +33,7 @@ const mockLedgerService = {
 };
 
 // Helper para validar asiento balanceado
-function assertAsientoBalanceado(lines: any[]) {
+function assertAsientoBalanceado(lines: JournalLineDto[]) {
   const debitos = lines.reduce((sum, l) => sum + Number(l.debitAmount || 0), 0);
   const creditos = lines.reduce(
     (sum, l) => sum + Number(l.creditAmount || 0),
@@ -109,24 +116,30 @@ const ARQUEO_CREADO = {
 function buildMockPrisma(overrides: Record<string, unknown> = {}) {
   const txMock = {
     caja: {
-      findUnique: jest.fn().mockImplementation(({ where }: any) => {
-        if (where.id === CAJA_RUTA_ACTIVA.id) return CAJA_RUTA_ACTIVA;
-        if (where.id === CAJA_PRINCIPAL.id) return CAJA_PRINCIPAL;
-        return null;
-      }),
-      findUniqueOrThrow: jest.fn().mockImplementation(({ where }: any) => {
-        if (where.id === CAJA_RUTA_ACTIVA.id) return CAJA_RUTA_ACTIVA;
-        if (where.id === CAJA_PRINCIPAL.id)
-          return {
-            ...CAJA_PRINCIPAL,
-            saldoActual: CAJA_PRINCIPAL.saldoActual + 5000000,
-          };
-        return null;
-      }),
-      findFirst: jest.fn().mockImplementation(({ where }: any) => {
-        if (where.tipo === TipoCaja.PRINCIPAL) return CAJA_PRINCIPAL;
-        return null;
-      }),
+      findUnique: jest
+        .fn()
+        .mockImplementation(({ where }: ArgsDePrismaEnMock) => {
+          if (where?.id === CAJA_RUTA_ACTIVA.id) return CAJA_RUTA_ACTIVA;
+          if (where?.id === CAJA_PRINCIPAL.id) return CAJA_PRINCIPAL;
+          return null;
+        }),
+      findUniqueOrThrow: jest
+        .fn()
+        .mockImplementation(({ where }: ArgsDePrismaEnMock) => {
+          if (where?.id === CAJA_RUTA_ACTIVA.id) return CAJA_RUTA_ACTIVA;
+          if (where?.id === CAJA_PRINCIPAL.id)
+            return {
+              ...CAJA_PRINCIPAL,
+              saldoActual: CAJA_PRINCIPAL.saldoActual + 5000000,
+            };
+          return null;
+        }),
+      findFirst: jest
+        .fn()
+        .mockImplementation(({ where }: ArgsDePrismaEnMock) => {
+          if (where?.tipo === TipoCaja.PRINCIPAL) return CAJA_PRINCIPAL;
+          return null;
+        }),
       update: jest.fn().mockResolvedValue({}),
     },
     transaccion: {
@@ -156,15 +169,19 @@ function buildMockPrisma(overrides: Record<string, unknown> = {}) {
 
   return {
     caja: {
-      findUnique: jest.fn().mockImplementation(({ where }: any) => {
-        if (where.id === CAJA_RUTA_ACTIVA.id) return CAJA_RUTA_ACTIVA;
-        if (where.id === CAJA_PRINCIPAL.id) return CAJA_PRINCIPAL;
-        return null;
-      }),
-      findFirst: jest.fn().mockImplementation(({ where }: any) => {
-        if (where.tipo === TipoCaja.PRINCIPAL) return CAJA_PRINCIPAL;
-        return null;
-      }),
+      findUnique: jest
+        .fn()
+        .mockImplementation(({ where }: ArgsDePrismaEnMock) => {
+          if (where?.id === CAJA_RUTA_ACTIVA.id) return CAJA_RUTA_ACTIVA;
+          if (where?.id === CAJA_PRINCIPAL.id) return CAJA_PRINCIPAL;
+          return null;
+        }),
+      findFirst: jest
+        .fn()
+        .mockImplementation(({ where }: ArgsDePrismaEnMock) => {
+          if (where?.tipo === TipoCaja.PRINCIPAL) return CAJA_PRINCIPAL;
+          return null;
+        }),
     },
     transaccion: {
       findMany: jest.fn().mockResolvedValue([]),
@@ -183,21 +200,28 @@ function buildMockPrisma(overrides: Record<string, unknown> = {}) {
 
 describe('CajasService', () => {
   let service: CajasService;
-  let prisma: any;
-  let ledgerService: any;
+  // Los dos dobles, con los modelos y metodos que estas pruebas usan.
+  // Los tipos se DERIVAN de las fabricas de los dobles: escribirlos a mano se separaba de
+  // lo que el doble trae de verdad (`arqueoCaja`, no `arqueo`).
+  let prisma: ReturnType<typeof buildMockPrisma>;
+  let ledgerService: typeof mockLedgerService;
 
   beforeEach(async () => {
+    const dobleDePrisma = buildMockPrisma();
+    const dobleDeLedger = mockLedgerService;
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CajasService,
-        { provide: PrismaService, useValue: buildMockPrisma() },
-        { provide: LedgerService, useValue: mockLedgerService },
+        { provide: PrismaService, useValue: dobleDePrisma },
+        { provide: LedgerService, useValue: dobleDeLedger },
       ],
     }).compile();
 
     service = module.get<CajasService>(CajasService);
-    prisma = module.get<PrismaService>(PrismaService);
-    ledgerService = module.get<LedgerService>(LedgerService);
+    // Se leen los DOBLES, no lo que devuelve `module.get` con el tipo real: las
+    // aserciones miran `.mock.calls` y `_tx`, que solo existen en el doble.
+    prisma = dobleDePrisma;
+    ledgerService = dobleDeLedger;
   });
 
   afterEach(() => {
@@ -486,10 +510,12 @@ describe('CajasService', () => {
     });
 
     it('no permite caja principal no encontrada', async () => {
-      prisma.$transaction.mockImplementationOnce((cb: any) => {
-        prisma._tx.caja.findFirst.mockResolvedValueOnce(null);
-        return cb(prisma._tx);
-      });
+      prisma.$transaction.mockImplementationOnce(
+        (cb: CallbackDeTransaccion) => {
+          prisma._tx.caja.findFirst.mockResolvedValueOnce(null);
+          return cb(prisma._tx);
+        },
+      );
 
       await expect(
         service.confirmarArqueo(
@@ -506,10 +532,12 @@ describe('CajasService', () => {
     });
 
     it('no permite jornada inexistente', async () => {
-      prisma.$transaction.mockImplementationOnce((cb: any) => {
-        prisma._tx.rutaJornada.findFirst.mockResolvedValueOnce(null);
-        return cb(prisma._tx);
-      });
+      prisma.$transaction.mockImplementationOnce(
+        (cb: CallbackDeTransaccion) => {
+          prisma._tx.rutaJornada.findFirst.mockResolvedValueOnce(null);
+          return cb(prisma._tx);
+        },
+      );
 
       await expect(
         service.confirmarArqueo(
@@ -526,13 +554,15 @@ describe('CajasService', () => {
     });
 
     it('no permite jornada con estado CERRADA', async () => {
-      prisma.$transaction.mockImplementationOnce((cb: any) => {
-        prisma._tx.rutaJornada.findFirst.mockResolvedValueOnce({
-          ...RUTA_JORNADA_ABIERTA,
-          estado: RutaJornadaEstado.CERRADA,
-        });
-        return cb(prisma._tx);
-      });
+      prisma.$transaction.mockImplementationOnce(
+        (cb: CallbackDeTransaccion) => {
+          prisma._tx.rutaJornada.findFirst.mockResolvedValueOnce({
+            ...RUTA_JORNADA_ABIERTA,
+            estado: RutaJornadaEstado.CERRADA,
+          });
+          return cb(prisma._tx);
+        },
+      );
 
       await expect(
         service.confirmarArqueo(
@@ -549,10 +579,12 @@ describe('CajasService', () => {
     });
 
     it('no permite usuario receptor inexistente', async () => {
-      prisma.$transaction.mockImplementationOnce((cb: any) => {
-        prisma._tx.usuario.findUnique.mockResolvedValueOnce(null);
-        return cb(prisma._tx);
-      });
+      prisma.$transaction.mockImplementationOnce(
+        (cb: CallbackDeTransaccion) => {
+          prisma._tx.usuario.findUnique.mockResolvedValueOnce(null);
+          return cb(prisma._tx);
+        },
+      );
 
       await expect(
         service.confirmarArqueo(
@@ -569,13 +601,15 @@ describe('CajasService', () => {
     });
 
     it('no permite caja inactiva', async () => {
-      prisma.$transaction.mockImplementationOnce((cb: any) => {
-        prisma._tx.caja.findUnique.mockResolvedValueOnce({
-          ...CAJA_RUTA_ACTIVA,
-          activa: false,
-        });
-        return cb(prisma._tx);
-      });
+      prisma.$transaction.mockImplementationOnce(
+        (cb: CallbackDeTransaccion) => {
+          prisma._tx.caja.findUnique.mockResolvedValueOnce({
+            ...CAJA_RUTA_ACTIVA,
+            activa: false,
+          });
+          return cb(prisma._tx);
+        },
+      );
 
       await expect(
         service.confirmarArqueo(

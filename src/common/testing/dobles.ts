@@ -83,6 +83,14 @@ export const exigir = <T>(valor: T | null | undefined, que: string): T => {
   return valor;
 };
 
+/**
+ * El callback que recibe `$transaction`.
+ *
+ * Los dobles lo invocan con el propio `tx` imitado, asi que el parametro va como
+ * `DobleDePrisma` y no como la transaccion real.
+ */
+export type CallbackDeTransaccion = (tx: DobleDePrisma) => unknown;
+
 /** Entrega el doble de Prisma donde se espera el servicio real. */
 export const comoPrisma = (doble: DobleDePrisma): PrismaService =>
   doble as unknown as PrismaService;

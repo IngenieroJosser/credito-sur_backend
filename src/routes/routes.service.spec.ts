@@ -10,6 +10,16 @@ import {
   esFiltroDePrisma,
 } from '../common/testing/prisma-mock.types';
 import { RoutesService } from './routes.service';
+import type { AuditService } from '../audit/audit.service';
+import type { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+import type { NotificacionesService } from '../notificaciones/notificaciones.service';
+import {
+  comoDependencia,
+  comoPrisma,
+  dependenciaSinUsar,
+  type DobleDePrisma,
+  type MetodosDeModelo,
+} from '../common/testing/dobles';
 
 /**
  * Vista del servicio con los metodos PRIVADOS que estas pruebas espian.
@@ -29,10 +39,19 @@ type MetodosPrivadosEspiados = {
 const conPrivados = (servicio: RoutesService) =>
   servicio as unknown as MetodosPrivadosEspiados;
 
-const makeService = (prisma: any) => {
+/**
+ * El asidero de prueba: expone `getActivacionHoyRutasMap`, que es `protected` en el
+ * servicio, con su firma real (`.bind(this)` la hereda).
+ */
+class RutasParaPrueba extends RoutesService {
+  public readonly activacionDeHoy = this.getActivacionHoyRutasMap.bind(this);
+}
+
+const makeService = (prisma: DobleDePrisma) => {
   if (prisma) {
-    for (const key of Object.keys(prisma)) {
-      const model = prisma[key];
+    // `Object.values`: indexar un tipo de claves conocidas con un `string` suelto no se
+    // puede comprobar, y aqui solo hay que recorrer los modelos.
+    for (const model of Object.values(prisma)) {
       if (model && typeof model === 'object') {
         if (model.findUnique && !model.findFirst) {
           model.findFirst = model.findUnique;
@@ -42,18 +61,19 @@ const makeService = (prisma: any) => {
       }
     }
   }
-  return new RoutesService(
-    prisma,
-    {} as any,
-    {
+  return new RutasParaPrueba(
+    comoPrisma(prisma),
+    // La auditoria no se ejercita en ninguna de estas pruebas.
+    dependenciaSinUsar<AuditService>(),
+    comoDependencia<NotificacionesGateway>({
       broadcastRutasActualizadas: jest.fn(),
       broadcastDashboardsActualizados: jest.fn(),
       broadcastJornadasActualizadas: jest.fn(),
-    } as any,
-    {
+    }),
+    comoDependencia<NotificacionesService>({
       create: jest.fn().mockResolvedValue({}),
       notifyRolesDeduped: jest.fn().mockResolvedValue(undefined),
-    } as any,
+    }),
   );
 };
 
@@ -335,13 +355,16 @@ describe('RoutesService role scoping', () => {
     jest
       .spyOn(conPrivados(service), 'getCierresPendientesRutasMap')
       .mockResolvedValue(new Map());
+    // El fixture trae solo las dos cifras que esta prueba mira. El cast nombra el tipo de
+    // destino en vez de apagarlo con `any`: la respuesta real de `getDailyVisits` tiene
+    // treinta campos y rellenarlos aqui no diria nada.
     jest.spyOn(service, 'getDailyVisits').mockResolvedValue({
       resumen: {
         recaudoOperativo: 1_043_330,
         meta: 1_555_331,
       },
       visitas: [],
-    } as any);
+    } as unknown as Awaited<ReturnType<RoutesService['getDailyVisits']>>);
 
     const resultado = await service.findAll({ take: 10 });
     const ruta = resultado.data[0];
@@ -2050,7 +2073,11 @@ describe('RoutesService role scoping', () => {
 
     let siguienteId = 1;
 
-    const tx: any = {
+    const tx: {
+      prestamo: MetodosDeModelo;
+      asignacionRuta: MetodosDeModelo;
+      ruta: MetodosDeModelo;
+    } = {
       prestamo: {
         findMany: jest.fn(async ({ where, distinct }: ArgsDePrismaEnMock) => {
           let filas = prestamos.filter((p) => cumple(p, where));
@@ -2623,9 +2650,9 @@ describe('activacion del dia en el listado de rutas', () => {
   it('marca activada solo la ruta que tiene la transaccion de activacion de hoy', async () => {
     jest.useFakeTimers().setSystemTime(HOY_UTC);
     const prisma = prismaConCajas([{ cajaId: 'caja-1' }]);
-    const service = makeService(prisma) as any;
+    const service = makeService(prisma);
 
-    const { activadas, diaNoLaboral } = await service.getActivacionHoyRutasMap([
+    const { activadas, diaNoLaboral } = await service.activacionDeHoy([
       'ruta-1',
       'ruta-2',
     ]);
@@ -2639,9 +2666,9 @@ describe('activacion del dia en el listado de rutas', () => {
   it('busca las activaciones por referencia y dentro del dia, en una sola consulta', async () => {
     jest.useFakeTimers().setSystemTime(HOY_UTC);
     const prisma = prismaConCajas([]);
-    const service = makeService(prisma) as any;
+    const service = makeService(prisma);
 
-    await service.getActivacionHoyRutasMap(['ruta-1', 'ruta-2']);
+    await service.activacionDeHoy(['ruta-1', 'ruta-2']);
 
     expect(prisma.transaccion.findMany).toHaveBeenCalledTimes(1);
     const where = prisma.transaccion.findMany.mock.calls[0][0].where;
@@ -2655,9 +2682,9 @@ describe('activacion del dia en el listado de rutas', () => {
   it('en domingo no pregunta a la base: no hay jornada operativa', async () => {
     jest.useFakeTimers().setSystemTime(DOMINGO_UTC);
     const prisma = prismaConCajas([{ cajaId: 'caja-1' }]);
-    const service = makeService(prisma) as any;
+    const service = makeService(prisma);
 
-    const { activadas, diaNoLaboral } = await service.getActivacionHoyRutasMap([
+    const { activadas, diaNoLaboral } = await service.activacionDeHoy([
       'ruta-1',
     ]);
 
@@ -2671,9 +2698,9 @@ describe('activacion del dia en el listado de rutas', () => {
   it('sin rutas no consulta nada', async () => {
     jest.useFakeTimers().setSystemTime(HOY_UTC);
     const prisma = prismaConCajas([]);
-    const service = makeService(prisma) as any;
+    const service = makeService(prisma);
 
-    const { activadas } = await service.getActivacionHoyRutasMap([]);
+    const { activadas } = await service.activacionDeHoy([]);
 
     expect(activadas.size).toBe(0);
     expect(prisma.caja.findMany).not.toHaveBeenCalled();
@@ -2688,9 +2715,9 @@ describe('activacion del dia en el listado de rutas', () => {
       caja: { findMany: jest.fn().mockResolvedValue([]) },
       transaccion: { findMany: jest.fn().mockResolvedValue([]) },
     };
-    const service = makeService(prisma) as any;
+    const service = makeService(prisma);
 
-    const { activadas } = await service.getActivacionHoyRutasMap(['ruta-1']);
+    const { activadas } = await service.activacionDeHoy(['ruta-1']);
 
     expect(activadas.size).toBe(0);
     expect(prisma.transaccion.findMany).not.toHaveBeenCalled();

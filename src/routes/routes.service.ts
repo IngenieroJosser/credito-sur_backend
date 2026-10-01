@@ -6428,7 +6428,9 @@ export class RoutesService {
    * Domingo no hay jornada operativa, asi que no se pregunta: ese dia ninguna
    * ruta esta pendiente de activar.
    */
-  private async getActivacionHoyRutasMap(
+  // `protected`: cinco pruebas lo ejercitan directo y con `private` lo llamaban por
+  // `(service as any).getActivacionHoyRutasMap(...)`, sin comprobar la firma.
+  protected async getActivacionHoyRutasMap(
     rutaIds: string[],
   ): Promise<{ activadas: Set<string>; diaNoLaboral: boolean }> {
     if (!rutaIds.length || this.isDomingoBogota()) {

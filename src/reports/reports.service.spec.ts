@@ -1,4 +1,9 @@
 import { ReportsService } from './reports.service';
+import { ReportPeriod } from './dto/get-operational-report.dto';
+import type { NotificacionesService } from '../notificaciones/notificaciones.service';
+import type { RoutesService } from '../routes/routes.service';
+import type { ArgsDePrismaEnMock } from '../common/testing/prisma-mock.types';
+import { comoPrisma, dependenciaSinUsar } from '../common/testing/dobles';
 
 describe('ReportsService operational report', () => {
   it('no suma cuota inicial como recaudo ni meta operativa en reportes por periodo', async () => {
@@ -55,11 +60,15 @@ describe('ReportsService operational report', () => {
           }),
       },
     };
-    const service = new ReportsService(prisma as any, {} as any, {} as any);
+    const service = new ReportsService(
+      comoPrisma(prisma),
+      dependenciaSinUsar<NotificacionesService>(),
+      dependenciaSinUsar<RoutesService>(),
+    );
 
     const result = await service.getOperationalReport({
-      period: 'week',
-    } as any);
+      period: 'week' as ReportPeriod,
+    });
 
     expect(result.totalRecaudo).toBe(100000);
     expect(result.totalMeta).toBe(200000);
@@ -91,12 +100,16 @@ describe('ReportsService getRouteDetail: jurisdicción del supervisor', () => {
       },
       cliente: { count: jest.fn().mockResolvedValue(0) },
       cuota: { aggregate: jest.fn().mockResolvedValue({ _sum: {} }) },
-    } as any;
+    };
   }
 
   it('un supervisor NO puede ver una ruta que no supervisa (403)', async () => {
     const prisma = prismaConRuta('otro-supervisor');
-    const service = new ReportsService(prisma, {} as any, {} as any);
+    const service = new ReportsService(
+      comoPrisma(prisma),
+      dependenciaSinUsar<NotificacionesService>(),
+      dependenciaSinUsar<RoutesService>(),
+    );
     await expect(
       service.getRouteDetail(
         'ruta-x',
@@ -111,7 +124,11 @@ describe('ReportsService getRouteDetail: jurisdicción del supervisor', () => {
 
   it('el admin puede ver cualquier ruta', async () => {
     const prisma = prismaConRuta('otro-supervisor');
-    const service = new ReportsService(prisma, {} as any, {} as any);
+    const service = new ReportsService(
+      comoPrisma(prisma),
+      dependenciaSinUsar<NotificacionesService>(),
+      dependenciaSinUsar<RoutesService>(),
+    );
     // no debe lanzar por jurisdicción (puede fallar más adelante por mocks, se ignora)
     await service
       .getRouteDetail(
@@ -130,29 +147,46 @@ describe('ReportsService getRouteDetail: jurisdicción del supervisor', () => {
 describe('ReportsService: scope de rutas por rol en reportes de mora/vencidas', () => {
   // Captura el where con que se consulta, para verificar que lleva el filtro de ruta.
   function prismaEspia() {
-    const capturado: any = { estadisticas: [] };
+    // Lo que la prueba captura de las consultas: el `where` de mora y los de estadisticas.
+    // Lo que la prueba captura: el `where` de mora, del que lee el filtro de ruta.
+    type WhereCapturado = {
+      ruta?: { is?: { supervisorId?: string; cobradorId?: string } };
+      [clave: string]: unknown;
+    };
+    const capturado: {
+      moraWhere?: WhereCapturado;
+      estadisticas: WhereCapturado[];
+    } = { estadisticas: [] };
     return {
       capturado,
       prisma: {
         prestamo: {
-          findMany: jest.fn().mockImplementation(({ where }: any) => {
-            capturado.moraWhere = where;
-            return Promise.resolve([]);
-          }),
-          count: jest.fn().mockImplementation(({ where }: any) => {
-            capturado.estadisticas.push(where);
-            return Promise.resolve(0);
-          }),
+          findMany: jest
+            .fn()
+            .mockImplementation(({ where }: ArgsDePrismaEnMock) => {
+              capturado.moraWhere = where ?? {};
+              return Promise.resolve([]);
+            }),
+          count: jest
+            .fn()
+            .mockImplementation(({ where }: ArgsDePrismaEnMock) => {
+              capturado.estadisticas.push(where ?? {});
+              return Promise.resolve(0);
+            }),
           aggregate: jest.fn().mockResolvedValue({ _sum: {}, _count: {} }),
         },
         cuota: { aggregate: jest.fn().mockResolvedValue({ _sum: {} }) },
-      } as any,
+      },
     };
   }
 
   it('el supervisor filtra la mora por sus rutas (supervisorId)', async () => {
     const { prisma, capturado } = prismaEspia();
-    const service = new ReportsService(prisma, {} as any, {} as any);
+    const service = new ReportsService(
+      comoPrisma(prisma),
+      dependenciaSinUsar<NotificacionesService>(),
+      dependenciaSinUsar<RoutesService>(),
+    );
     await service.obtenerPrestamosEnMora({}, 1, 50, {
       id: 'sup-1',
       rol: 'SUPERVISOR',
@@ -162,7 +196,11 @@ describe('ReportsService: scope de rutas por rol en reportes de mora/vencidas', 
 
   it('el admin NO filtra por ruta (ve todo)', async () => {
     const { prisma, capturado } = prismaEspia();
-    const service = new ReportsService(prisma, {} as any, {} as any);
+    const service = new ReportsService(
+      comoPrisma(prisma),
+      dependenciaSinUsar<NotificacionesService>(),
+      dependenciaSinUsar<RoutesService>(),
+    );
     await service.obtenerPrestamosEnMora({}, 1, 50, {
       id: 'admin-1',
       rol: 'ADMIN',
@@ -172,7 +210,11 @@ describe('ReportsService: scope de rutas por rol en reportes de mora/vencidas', 
 
   it('las estadísticas de mora del supervisor van filtradas por su ruta', async () => {
     const { prisma, capturado } = prismaEspia();
-    const service = new ReportsService(prisma, {} as any, {} as any);
+    const service = new ReportsService(
+      comoPrisma(prisma),
+      dependenciaSinUsar<NotificacionesService>(),
+      dependenciaSinUsar<RoutesService>(),
+    );
     await service.obtenerEstadisticasMora({ id: 'sup-9', rol: 'SUPERVISOR' });
     // todos los count deben llevar el scope de ruta
     expect(capturado.estadisticas.length).toBeGreaterThan(0);
