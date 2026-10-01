@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import type { Server, Socket } from 'socket.io';
 import type {
   PrismaService,
   TransaccionPrisma,
@@ -94,6 +95,39 @@ export const comoPrisma = (doble: DobleDePrisma): PrismaService =>
  */
 export const comoTransaccion = (doble: DobleDePrisma): TransaccionPrisma =>
   doble as unknown as TransaccionPrisma;
+
+/**
+ * Entrega el doble donde se espera un socket conectado.
+ *
+ * Los manejadores del gateway reciben un `Socket` de socket.io y leen de el una o dos
+ * cosas (`data.user`, `id`, `emit`). Imitar el socket entero no se puede; lo que se declara
+ * es lo que el manejador lee.
+ */
+export const comoSocket = (doble: SocketImitado): Socket =>
+  doble as unknown as Socket;
+
+/**
+ * Lo que las pruebas le ponen a un socket imitado. `data` es donde el gateway deja el
+ * usuario autenticado tras el handshake.
+ */
+export type SocketImitado = {
+  id?: string;
+  data?: { user?: { id?: string; rol?: string } };
+  emit?: jest.Mock;
+  join?: jest.Mock;
+  disconnect?: jest.Mock;
+};
+
+/**
+ * Entrega el doble donde se espera el servidor de websockets.
+ *
+ * Las pruebas le ponen `emit` y un `to` que devuelve algo con `emit`: es todo lo que el
+ * gateway usa para difundir.
+ */
+export const comoServidor = (doble: {
+  emit?: jest.Mock;
+  to?: jest.Mock;
+}): Server => doble as unknown as Server;
 
 /** Entrega el doble de una dependencia donde se espera la clase real. */
 export const comoDependencia = <T>(doble: Doble<T>): T => doble as unknown as T;

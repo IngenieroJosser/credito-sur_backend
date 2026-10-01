@@ -1,4 +1,9 @@
 import { NotificacionesGateway } from './notificaciones.gateway';
+import type { JwtService } from '@nestjs/jwt';
+import type { NotificacionesService } from './notificaciones.service';
+import type { RoutesService } from '../routes/routes.service';
+import type { PrismaService } from '../prisma/prisma.service';
+import { comoServidor, dependenciaSinUsar } from '../common/testing/dobles';
 
 /**
  * Avisar es un efecto secundario y nunca puede tumbar la operación que ya movió
@@ -12,9 +17,17 @@ import { NotificacionesGateway } from './notificaciones.gateway';
  * aprobaciones no.
  */
 describe('El gateway sin servidor de websockets', () => {
+  // Las cuatro dependencias no se usan en estas pruebas: lo unico que se ejercita es que
+  // emitir sin servidor no reviente. `dependenciaSinUsar` lo dice con un nombre; si alguna
+  // llegara a usarse, la prueba falla con "no es una funcion", que es la señal correcta.
+  // El cuarto es JwtService: el gateway pasó a verificar el token del socket.
   const construir = () =>
-    // El cuarto es JwtService: el gateway pasó a verificar el token del socket.
-    new NotificacionesGateway({} as any, {} as any, {} as any, {} as any);
+    new NotificacionesGateway(
+      dependenciaSinUsar<NotificacionesService>(),
+      dependenciaSinUsar<PrismaService>(),
+      dependenciaSinUsar<JwtService>(),
+      dependenciaSinUsar<RoutesService>(),
+    );
 
   it('no revienta al emitir a todos', () => {
     const gateway = construir();
@@ -45,7 +58,9 @@ describe('El gateway sin servidor de websockets', () => {
     const gateway = construir();
     const emit = jest.fn();
     const to = jest.fn().mockReturnValue({ emit });
-    (gateway as any).server = { emit, to };
+    // `server` es publico en el gateway (`server!: Server`), asi que el `as any` no hacia
+    // falta para asignarlo; lo que hace falta es entregar el doble como `Server`.
+    gateway.server = comoServidor({ emit, to });
 
     gateway.broadcastAprobacionesActualizadas({ accion: 'APROBAR' });
     expect(emit).toHaveBeenCalledWith(

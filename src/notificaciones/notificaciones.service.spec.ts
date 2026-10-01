@@ -14,31 +14,38 @@ import {
   afterEach,
 } from '@jest/globals';
 
+/**
+ * Un metodo imitado que resuelve una promesa.
+ *
+ * Este archivo importa `jest` de `@jest/globals`, cuyas tipificaciones son mas estrictas
+ * que las globales: un `jest.fn()` sin firma infiere un retorno que NO admite
+ * `mockResolvedValue`, y de ahi salia un `as any` en cada linea del doble. Declarando la
+ * firma una vez, los dobles se escriben sin casts y las llamadas se siguen comprobando.
+ */
+const imitarAsync = () => jest.fn<(...args: unknown[]) => Promise<unknown>>();
+
 describe('NotificacionesService', () => {
   let service: NotificacionesService;
   let prismaService: PrismaService;
   let loggerErrorSpy: jest.SpiedFunction<typeof Logger.prototype.error>;
 
-  // Mock de PrismaService
   const mockPrismaService = {
     notificacion: {
-      create: jest.fn() as any,
+      create: imitarAsync(),
     },
     usuario: {
-      findMany: jest.fn() as any,
+      findMany: imitarAsync(),
     },
   };
 
-  // Mock de NotificacionesGateway
   const mockNotificacionesGateway = {
-    enviarNotificacionAUsuario: jest.fn() as any,
-    notificarActualizacion: jest.fn() as any,
-    enviarNotificacionATodos: jest.fn() as any,
+    enviarNotificacionAUsuario: imitarAsync(),
+    notificarActualizacion: imitarAsync(),
+    enviarNotificacionATodos: imitarAsync(),
   };
 
-  // Mock de PushService
   const mockPushService = {
-    sendPushNotification: (jest.fn() as any).mockResolvedValue(undefined),
+    sendPushNotification: imitarAsync().mockResolvedValue(undefined),
   };
 
   beforeEach(async () => {
@@ -220,6 +227,11 @@ describe('Las alertas por rol salen también por push', () => {
   // `createDeduped`, y ahí es fácil perder el push sin darse cuenta. La alerta
   // de integridad contable depende de esto para llegarle a alguien.
   it('la primera alerta del día dispara push a cada destinatario', async () => {
+    // El doble en una variable: `module.get(PushService)` devuelve el servicio con su tipo
+    // real, que no tiene `.mock`. Antes se leia con `(push.sendPushNotification as any)`.
+    const pushDeLaPrueba = {
+      sendPushNotification: imitarAsync().mockResolvedValue(undefined),
+    };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         NotificacionesService,
@@ -227,14 +239,17 @@ describe('Las alertas por rol salen también por push', () => {
           provide: PrismaService,
           useValue: {
             notificacion: {
-              create: (jest.fn() as any).mockImplementation(
-                ({ data }: any) => ({ id: 'n-1', ...data }),
+              create: imitarAsync().mockImplementation((args: unknown) =>
+                Promise.resolve({
+                  id: 'n-1',
+                  ...(args as { data?: Record<string, unknown> }).data,
+                }),
               ),
               // Nadie tiene todavía una alerta con esa clave.
-              findFirst: (jest.fn() as any).mockResolvedValue(null),
+              findFirst: imitarAsync().mockResolvedValue(null),
             },
             usuario: {
-              findMany: (jest.fn() as any).mockResolvedValue([
+              findMany: imitarAsync().mockResolvedValue([
                 { id: 'contador-1' },
                 { id: 'admin-1' },
               ]),
@@ -244,23 +259,18 @@ describe('Las alertas por rol salen también por push', () => {
         {
           provide: NotificacionesGateway,
           useValue: {
-            enviarNotificacionAUsuario: jest.fn(),
-            notificarActualizacion: jest.fn(),
+            enviarNotificacionAUsuario: imitarAsync(),
+            notificarActualizacion: imitarAsync(),
           },
         },
         {
           provide: PushService,
-          useValue: {
-            sendPushNotification: (jest.fn() as any).mockResolvedValue(
-              undefined,
-            ),
-          },
+          useValue: pushDeLaPrueba,
         },
       ],
     }).compile();
 
     const servicio = module.get<NotificacionesService>(NotificacionesService);
-    const push = module.get<PushService>(PushService);
 
     await servicio.notifyRolesDeduped({
       roles: [RolUsuario.CONTADOR, RolUsuario.ADMIN],
@@ -269,9 +279,9 @@ describe('Las alertas por rol salen también por push', () => {
       dedupeKey: 'integridad-contable:2026-08-26',
     });
 
-    expect(push.sendPushNotification).toHaveBeenCalledTimes(2);
-    const destinatarios = (push.sendPushNotification as any).mock.calls.map(
-      ([argumento]: any[]) => argumento.userId,
+    expect(pushDeLaPrueba.sendPushNotification).toHaveBeenCalledTimes(2);
+    const destinatarios = pushDeLaPrueba.sendPushNotification.mock.calls.map(
+      (args) => (args[0] as { userId?: string }).userId,
     );
     expect(destinatarios.sort()).toEqual(['admin-1', 'contador-1']);
   });
