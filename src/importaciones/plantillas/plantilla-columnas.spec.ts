@@ -270,13 +270,13 @@ describe('Plantilla de inventario', () => {
 
     expect(h).not.toContain('Precio sugerido (automático)');
     expect(h[5]).toBe('Costo unitario*');
-    expect(h[6]).toBe('Rentabilidad deseada');
+    expect(h[6]).toBe('Divisor del precio');
     expect(h[7]).toBe('Precio contado*');
 
-    // Hasta 300%: el tope de 99% era de la fórmula vieja, donde un 100% hacía
-    // dividir por cero. Multiplicando no hay frontera ahí.
+    // De 0,01 a 1: el divisor es la parte del precio que se va en costo, así que nunca
+    // pasa de 1; más de 1 sería vender por debajo del costo.
     expect(ws.getCell('F7').dataValidation).toEqual(
-      expect.objectContaining({ type: 'decimal', formulae: [0, 3] }),
+      expect.objectContaining({ type: 'decimal', formulae: [0.01, 1] }),
     );
   }, 60000);
 
@@ -343,7 +343,7 @@ describe('Plantilla de inventario', () => {
     const revision = (ws.getCell('T7').value as ExcelJS.CellFormulaValue)
       .formula;
 
-    expect(revision).toContain('escriba la rentabilidad deseada');
+    expect(revision).toContain('escriba el divisor');
     expect(revision).toContain('Hay plazos con meses pero sin precio');
     expect(revision).toContain('Hay plazos que dan pérdida');
   }, 60000);

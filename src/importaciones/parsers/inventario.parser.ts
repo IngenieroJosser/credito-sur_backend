@@ -138,9 +138,14 @@ export class InventarioParser {
     const colMarca = cols.indice('Marca');
     const colModelo = cols.indice('Modelo');
     const colCosto = cols.indice('Costo unitario', 'Costo');
-    // La rentabilidad no se guarda, pero ahora se lee: con ella se rellena el
-    // precio que llegue vacío porque alguien borró la fórmula de esa celda.
-    const colRentabilidad = cols.indice('Rentabilidad deseada', 'Rentabilidad');
+    // El divisor no se guarda, pero se lee: con él se rellena el precio que llegue vacío
+    // porque alguien borró la fórmula de esa celda. Se aceptan también los encabezados
+    // anteriores, para que las plantillas ya descargadas sigan sirviendo.
+    const colDivisor = cols.indice(
+      'Divisor del precio',
+      'Rentabilidad deseada',
+      'Rentabilidad',
+    );
     const colPrecioContado = cols.indice('Precio contado', 'Precio de contado');
     const colStock = cols.indice('Stock actual', 'Stock');
     const colStockMinimo = cols.indice('Stock mínimo');
@@ -222,31 +227,33 @@ export class InventarioParser {
       const costoCelda = leerNumero(celda(row, colCosto));
       const precioContadoCelda = leerNumero(celda(row, colPrecioContado));
       const costo = aPesos(costoCelda);
-      const rentabilidad = colRentabilidad
-        ? leerNumero(celda(row, colRentabilidad))
-        : null;
+      const divisor = colDivisor ? leerNumero(celda(row, colDivisor)) : null;
 
       /**
-       * El costo y la rentabilidad sirven para rehacer un precio borrado.
+       * El costo y el divisor sirven para rehacer un precio borrado.
        *
-       * En Excel una celda guarda o una fórmula o un valor, así que en cuanto
-       * alguien borra el contenido de una celda de precio la fórmula se va de esa
-       * fila y no vuelve. Antes eso hacía fallar la fila entera con un "el precio
-       * es requerido" aunque el costo y la rentabilidad estuvieran escritos al
-       * lado. Ahora se recalcula con la misma regla que usa la plantilla, y se
-       * avisa para que nadie se lleve una sorpresa.
+       * En Excel una celda guarda o una fórmula o un valor, así que en cuanto alguien
+       * borra el contenido de una celda de precio la fórmula se va de esa fila y no
+       * vuelve. Antes eso hacía fallar la fila entera con un "el precio es requerido"
+       * aunque el costo y el divisor estuvieran escritos al lado. Ahora se recalcula con
+       * la misma regla que usa la plantilla, y se avisa para que nadie se lleve una
+       * sorpresa.
+       *
+       * El divisor tiene que ser mayor que 0 y no pasar de 1: es la parte del precio que
+       * se va en costo. Un 0 dividiría por cero y más de 1 sería vender bajo el costo.
        */
       const puedeCalcularPrecios =
         costo !== null &&
         !Number.isNaN(costo) &&
         costo > 0 &&
-        rentabilidad !== null &&
-        !Number.isNaN(rentabilidad) &&
-        rentabilidad >= 0;
+        divisor !== null &&
+        !Number.isNaN(divisor) &&
+        divisor > 0 &&
+        divisor <= 1;
 
       const precioContado =
         precioContadoCelda === null && puedeCalcularPrecios
-          ? baseDeContado(costo as number, rentabilidad as number)
+          ? baseDeContado(costo as number, divisor as number)
           : aPesos(precioContadoCelda);
 
       const stock = leerNumero(celda(row, colStock));
@@ -294,7 +301,7 @@ export class InventarioParser {
       if (precioContadoCelda === null && precioContado !== null) {
         addAdver(
           'precio_contado',
-          `La casilla estaba vacía y el precio se calculó desde el costo y la rentabilidad: ${precioContado}. Pasa cuando se borra el contenido de la celda, porque con él se va la fórmula.`,
+          `La casilla estaba vacía y el precio se calculó desde el costo y el divisor: ${precioContado}. Pasa cuando se borra el contenido de la celda, porque con él se va la fórmula.`,
           precioContado,
         );
       }
@@ -361,15 +368,14 @@ export class InventarioParser {
       // ── Precio de contado (opción de 0 meses) ─────────────────────────────
       // Todo artículo debe poder venderse de contado, así que el precio es obligatorio.
       //
-      // La celda trae una fórmula (costo / (1 - rentabilidad)), así que puede
-      // llegar vacía por dos caminos distintos: porque no se escribió nada, o
-      // porque se escribió el costo y se dejó la rentabilidad en blanco y la
-      // fórmula devolvió "". Decir solo "es requerido" manda a escribir el
-      // precio a mano cuando muchas veces lo que falta es el porcentaje.
+      // La celda trae una fórmula (costo / divisor), así que puede llegar vacía por dos
+      // caminos distintos: porque no se escribió nada, o porque se escribió el costo y se
+      // dejó el divisor en blanco y la fórmula devolvió "". Decir solo "es requerido"
+      // manda a escribir el precio a mano cuando muchas veces lo que falta es el divisor.
       if (precioContado === null) {
         addError(
           'precio_contado',
-          'Es requerido: todo artículo debe poder venderse de contado. Escriba la rentabilidad deseada y el precio sale solo, o póngalo a mano',
+          'Es requerido: todo artículo debe poder venderse de contado. Escriba el divisor del precio (0,65 para ganar 35%) y el precio sale solo, o póngalo a mano',
           celda(row, colPrecioContado),
         );
       } else {
@@ -412,13 +418,13 @@ export class InventarioParser {
           Number.isInteger(meses) &&
           meses > 0;
         const precio = rehacer
-          ? precioDelPlazo(costo as number, rentabilidad as number, meses)
+          ? precioDelPlazo(costo as number, divisor as number, meses)
           : aPesos(precioCelda);
 
         if (rehacer && precio !== null) {
           addAdver(
             `opcion_${numeroOpcion}_precio`,
-            `La casilla estaba vacía y el precio a ${meses} mes(es) se calculó desde el costo y la rentabilidad: ${precio}. Para quitar la opción hay que borrar también los meses.`,
+            `La casilla estaba vacía y el precio a ${meses} mes(es) se calculó desde el costo y el divisor: ${precio}. Para quitar la opción hay que borrar también los meses.`,
             precio,
           );
         }

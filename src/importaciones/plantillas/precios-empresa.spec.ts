@@ -4,147 +4,131 @@ import {
   COLUMNAS_ARTICULOS,
   generarPlantillaInventario,
 } from './plantilla-inventario';
+import { baseDeContado, precioDelPlazo } from '../precios-articulo';
 
 /**
  * Las fórmulas de la plantilla contra filas reales de la empresa.
  *
- * Los números no son inventados: salen de la plantilla que la empresa usa hoy, y
- * por eso valen como prueba. La fórmula quedó descifrada con el segundo
- * artículo, que cierra los tres plazos al peso:
+ * Los números no son inventados: salen del archivo que cartera llenó a mano el 30 de
+ * septiembre de 2026 —`plantilla-inventario formulas manuales.xlsx`, 211 filas—, que es la
+ * hoja que usan a diario y dieron por correcta. Las cuentas son:
  *
- *     base    = costo × (1 + rentabilidad)     (rentabilidad SOBRE EL COSTO)
- *     plazo i = base × (1 + recargo de ese plazo)
+ *     contado = costo / divisor          (0,65 deja 35% de ganancia sobre la venta)
+ *     plazo i = contado × (1 + recargo de ese plazo)
  *
  * y la tabla de recargos del negocio es +30% a 3 meses, +47% a 5 y +60% a 8.
  *
- * Aquí se evalúan las cuentas en TypeScript en vez de pedirle a Excel que
- * calcule: lo que se fija es la cuenta que la celda declara. El último bloque
- * comprueba que la hoja declare esas mismas cuentas.
+ * ESTO ESTUVO AL REVÉS. Antes aquí se afirmaba `costo × (1 + rentabilidad)`, fijado con
+ * dos artículos sueltos que llegaron con el precio ya hecho, y se descartaba la división
+ * por dar «106.701 pesos de más». El archivo de cartera demostró lo contrario: de sus 209
+ * artículos con costo, NINGUNO multiplica y los 209 dividen. El televisor Samsung de
+ * costo 829.900 —el mismo con el que se había fijado la fórmula vieja— lo tienen en
+ * 1.185.571, que es justo el número que se había descartado.
+ *
+ * Aquí se evalúan las cuentas en TypeScript en vez de pedirle a Excel que calcule: lo que
+ * se fija es la cuenta que la celda declara. El último bloque comprueba que la hoja
+ * declare esas mismas cuentas.
  */
 
 type Articulo = {
   nombre: string;
   costo: number;
-  rentabilidad: number;
-  /** Lo que la empresa anota como precio de contado, redondeado o no. */
-  contadoAnotado: number;
-  plazos: Array<{ meses: number; recargo: number; precio: number }>;
+  divisor: number;
+  contado: number;
+  plazos: Array<{ meses: number; precio: number }>;
 };
 
 /**
- * El artículo que cerró la fórmula. Sus tres plazos salen exactos, y además es
- * el que destapó de qué base se calculan: su contado anotado es 805.900 pero la
- * base es 805.870.
+ * Un artículo por cada divisor que cartera usa, copiados de su archivo. Los tres cierran
+ * sus cuatro precios al peso.
  */
-const CONFIRMADO: Articulo = {
-  nombre: 'costo 619.900',
-  costo: 619900,
-  rentabilidad: 0.3,
-  contadoAnotado: 805900,
-  plazos: [
-    { meses: 3, recargo: 0.3, precio: 1047631 },
-    { meses: 5, recargo: 0.47, precio: 1184629 },
-    { meses: 8, recargo: 0.6, precio: 1289392 },
-  ],
-};
+const REALES: Articulo[] = [
+  {
+    nombre: 'VENTILADOR ALTEZZA 2 EN 1 PRO 18 (gana 35%)',
+    costo: 178123,
+    divisor: 0.65,
+    contado: 274035,
+    plazos: [
+      { meses: 3, precio: 356246 },
+      { meses: 5, precio: 402832 },
+      { meses: 8, precio: 438456 },
+    ],
+  },
+  {
+    nombre: 'PARLANTE JBL BOOMBOX 4 (gana 30%)',
+    costo: 1550000,
+    divisor: 0.7,
+    contado: 2214285,
+    plazos: [
+      { meses: 3, precio: 2878571 },
+      { meses: 5, precio: 3255000 },
+      { meses: 8, precio: 3542857 },
+    ],
+  },
+  {
+    nombre: 'BASE CAMA DE 1.20 TAPIZADA (gana 45%)',
+    costo: 170000,
+    divisor: 0.55,
+    contado: 309090,
+    plazos: [
+      { meses: 3, precio: 401818 },
+      { meses: 5, precio: 454363 },
+      { meses: 8, precio: 494545 },
+    ],
+  },
+];
 
-/**
- * El primer artículo que llegó. Su precio de 3 meses cierra, y los otros dos
- * llegaron con dígitos cambiados: a 5 meses la tabla da 1.585.939 y el dato
- * decía 1.585.393; a 8 meses da 1.726.192 y el dato decía 1.726.191. Se deja
- * aquí con los valores que la fórmula produce, porque el artículo confirmado
- * demostró que la fórmula es esta.
- */
-const PRIMERO: Articulo = {
-  nombre: 'costo 829.900',
-  costo: 829900,
-  rentabilidad: 0.3,
-  contadoAnotado: 1078870,
-  plazos: [
-    { meses: 3, recargo: 0.3, precio: 1402531 },
-    { meses: 5, recargo: 0.47, precio: 1585939 },
-    { meses: 8, recargo: 0.6, precio: 1726192 },
-  ],
-};
-
-/** Las dos cuentas de la plantilla, tal como las declaran sus celdas. */
-const baseDeContado = (costo: number, rentabilidad: number) =>
-  Math.round(costo * (1 + rentabilidad));
-const precioDelPlazo = (costo: number, rentabilidad: number, recargo: number) =>
-  Math.round(baseDeContado(costo, rentabilidad) * (1 + recargo));
+/** El televisor con el que se había fijado la fórmula vieja, y que la desmintió. */
+const TELEVISOR = { costo: 829900, divisor: 0.7, contadoDeCartera: 1185571 };
 
 describe('Las fórmulas dan los precios reales de la empresa', () => {
-  describe.each([CONFIRMADO, PRIMERO])('artículo $nombre', (art) => {
-    it('el precio de contado es el costo más la rentabilidad SOBRE EL COSTO', () => {
-      expect(baseDeContado(art.costo, art.rentabilidad)).toBe(
-        Math.round(art.costo * 1.3),
-      );
+  describe.each(REALES)('artículo $nombre', (art) => {
+    it('el precio de contado es el costo DIVIDIDO por el divisor', () => {
+      expect(baseDeContado(art.costo, art.divisor)).toBe(art.contado);
     });
 
-    it.each(art.plazos)(
-      'a $meses meses con recargo $recargo da $precio',
-      ({ recargo, precio }) => {
-        expect(precioDelPlazo(art.costo, art.rentabilidad, recargo)).toBe(
-          precio,
-        );
-      },
-    );
-  });
-
-  it('la base de los plazos es el costo, NO el precio de contado anotado', () => {
-    // Este es el hallazgo del artículo confirmado y lo que más fácil se rompe.
-    // Su contado anotado es 805.900 —la base 805.870 subida a la centena— y si
-    // los plazos salieran de ahí darían entre 39 y 48 pesos de más cada uno.
-    const art = CONFIRMADO;
-    expect(baseDeContado(art.costo, art.rentabilidad)).toBe(805870);
-    expect(art.contadoAnotado).toBe(805900);
-
-    const desdeElAnotado = art.plazos.map(
-      ({ recargo, precio }) =>
-        Math.round(art.contadoAnotado * (1 + recargo)) - precio,
-    );
-    expect(desdeElAnotado).toEqual([39, 44, 48]);
-  });
-
-  it('el redondeo del contado es a mano, no una regla de la plantilla', () => {
-    // Si la plantilla redondeara sola a la centena, el primer artículo quedaría
-    // en 1.078.900 y su contado anotado es 1.078.870. Los dos artículos no
-    // coinciden, así que ese redondeo lo hace la persona.
-    expect(baseDeContado(PRIMERO.costo, PRIMERO.rentabilidad)).toBe(
-      PRIMERO.contadoAnotado,
-    );
-    expect(Math.round(805870 / 100) * 100).toBe(CONFIRMADO.contadoAnotado);
+    it.each(art.plazos)('a $meses meses da $precio', ({ meses, precio }) => {
+      expect(precioDelPlazo(art.costo, art.divisor, meses)).toBe(precio);
+    });
   });
 
   describe('lo que se descartó, con los números que lo descartan', () => {
-    it('la convención sobre la VENTA daba 106.701 de más', () => {
-      const sobreLaVenta = Math.round(PRIMERO.costo / (1 - 0.3));
-      expect(sobreLaVenta).toBe(1185571);
-      expect(sobreLaVenta - PRIMERO.contadoAnotado).toBe(106701);
+    it('multiplicar por 1,30 da 106.701 MENOS de lo que cartera cobra', () => {
+      // El mismo número de antes, con el signo al revés: lo que se tomó por un exceso de
+      // la división era en realidad lo que falta al multiplicar.
+      const multiplicando = Math.round(TELEVISOR.costo * 1.3);
+      expect(multiplicando).toBe(1078870);
+      expect(TELEVISOR.contadoDeCartera - multiplicando).toBe(106701);
+      expect(baseDeContado(TELEVISOR.costo, TELEVISOR.divisor)).toBe(
+        TELEVISOR.contadoDeCartera,
+      );
+    });
+
+    it('ningún artículo de cartera sale de multiplicar por el divisor', () => {
+      for (const art of REALES) {
+        expect(Math.round(art.costo * art.divisor)).not.toBe(art.contado);
+      }
     });
 
     it('no existe una tasa mensual que produzca los tres precios', () => {
-      // Esta es la razón de que el recargo sea una columna y no un cálculo.
-      const base = baseDeContado(CONFIRMADO.costo, CONFIRMADO.rentabilidad);
-      const tasas = CONFIRMADO.plazos.map(
-        ({ meses, precio }) => (precio / base - 1) / meses,
+      // Esta es la razón de que el recargo sea una tabla por plazo y no un interés.
+      const art = REALES[0];
+      const tasas = art.plazos.map(
+        ({ meses, precio }) => (precio / art.contado - 1) / meses,
       );
 
-      expect(tasas[0]).toBeCloseTo(0.1, 4);
-      expect(tasas[1]).toBeCloseTo(0.094, 4);
-      expect(tasas[2]).toBeCloseTo(0.075, 4);
-
-      // Y lo que las descarta como interés: BAJAN al alargarse el plazo.
+      // BAJAN al alargarse el plazo, que es lo contrario de lo que hace un interés.
       expect(tasas[0]).toBeGreaterThan(tasas[1]);
       expect(tasas[1]).toBeGreaterThan(tasas[2]);
     });
 
-    it('usar la rentabilidad como tasa mensual se pasaba por cientos de miles', () => {
-      const base = baseDeContado(CONFIRMADO.costo, CONFIRMADO.rentabilidad);
-      const desfases = CONFIRMADO.plazos.map(
-        ({ meses, precio }) => Math.round(base * (1 + 0.3 * meses)) - precio,
-      );
-      expect(desfases).toEqual([483522, 830046, 1450566]);
+    it('truncar la base antes de aplicar el recargo desviaría los precios', () => {
+      // Por qué `precioDelPlazo` parte del costo sin truncar: comprobado contra los 209
+      // artículos, truncar primero dejaba 136 filas con un peso de diferencia.
+      const art = REALES[0];
+      const desdeLaBaseTruncada = Math.trunc(art.contado * 1.47);
+      expect(desdeLaBaseTruncada).not.toBe(art.plazos[1].precio);
+      expect(art.plazos[1].precio - desdeLaBaseTruncada).toBe(1);
     });
   });
 
@@ -161,15 +145,19 @@ describe('Las fórmulas dan los precios reales de la empresa', () => {
     const formulaDe = (columna: number) =>
       String((ws.getCell(7, columna).value as any)?.formula ?? '');
 
-    it('el precio de contado multiplica, no divide', () => {
+    it('el precio de contado divide por el divisor y no redondea', () => {
       const formula = formulaDe(COLUMNAS_ARTICULOS.precioContado);
-      expect(formula).toContain('ROUND($E7*(1+$F7),0)');
-      expect(formula).not.toContain('/(1-');
+      expect(formula).toContain('$E7/$F7');
+      // Sin ROUND: redondear aquí dejaba 136 de los 209 artículos de cartera con un peso
+      // de diferencia en algún plazo.
+      expect(formula).not.toContain('ROUND');
+      expect(formula).not.toContain('$E7*(1+');
     });
 
-    it('cada precio a plazo parte del costo y calcula el recargo de SUS meses', () => {
-      // Que no cuelgue de $G (la celda de contado, que se puede redondear a
-      // mano) y que cada opción interpole con sus propios meses.
+    it('cada precio a plazo parte del contado y calcula el recargo de SUS meses', () => {
+      // Cuelga de $G, la celda de contado, y no de la cuenta repetida: es lo que cartera
+      // escribe —sus fórmulas son `=G+(G*30%)`— y hace que negociar un precio de contado
+      // arrastre sus plazos en vez de dejarlos descolgados.
       for (const numero of [1, 2, 3]) {
         const opcion = columnasDeOpcion(numero);
         const m = `$${ws.getColumn(opcion.meses).letter}7`;
@@ -177,16 +165,10 @@ describe('Las fórmulas dan los precios reales de la empresa', () => {
 
         expect({ numero, formula }).toEqual({
           numero,
-          formula: expect.stringContaining(
-            `ROUND(ROUND($E7*(1+$F7),0)*(1+IF(${m}<=5,` +
-              `0.3+(${m}-3)*(0.47-0.3)/(5-3),` +
-              `0.47+(${m}-5)*(0.6-0.47)/(8-5))),0)`,
-          ),
+          formula: expect.stringContaining(`TRUNC($G7*(1+`),
         });
-        expect({
-          numero,
-          cuelgaDelContado: formula.includes('$G7*(1+'),
-        }).toEqual({ numero, cuelgaDelContado: false });
+        expect(formula).toContain(m);
+        expect(formula).not.toContain('$E7*(1+$F7)');
       }
     });
 
@@ -254,16 +236,17 @@ describe('Las fórmulas dan los precios reales de la empresa', () => {
       }
     });
 
-    it('la rentabilidad admite más del 99%, que era un tope de la fórmula vieja', () => {
-      // Con `costo / (1 - r)` un 100% dividía por cero, de ahí el 0,99. Al
-      // multiplicar ya no hay ninguna frontera ahí: remarcar al 120% es un
-      // precio, no un error de dedo.
-      const validacion = ws.getCell(
-        7,
-        COLUMNAS_ARTICULOS.rentabilidadObjetivo,
-      ).dataValidation;
-      expect(validacion).toEqual(
-        expect.objectContaining({ type: 'decimal', formulae: [0, 3] }),
+    it('el divisor va entre 0,01 y 1, y la casilla NO es de porcentaje', () => {
+      // El divisor es la parte del precio que se va en costo, así que nunca pasa de 1;
+      // más de 1 sería vender bajo el costo. Y el formato de número en vez de porcentaje
+      // es el arreglo del error que obligó a cartera a escribir los precios a mano:
+      // con formato de porcentaje, su "0,65" quedaba guardado como 0,0065.
+      const celda = ws.getCell(7, COLUMNAS_ARTICULOS.divisorDelPrecio);
+      expect(celda.dataValidation).toEqual(
+        expect.objectContaining({ type: 'decimal', formulae: [0.01, 1] }),
+      );
+      expect(String(ws.getColumn(COLUMNAS_ARTICULOS.divisorDelPrecio).numFmt)).not.toContain(
+        '%',
       );
     });
   });

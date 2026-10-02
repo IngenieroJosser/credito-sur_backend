@@ -12,7 +12,7 @@ import {
  * Borrar un precio de la plantilla ya no rompe la fila.
  *
  * El caso que lo motivó, tal como lo contó el usuario: borra el precio de
- * contado, vuelve a escribir el costo unitario y la rentabilidad, y en el precio
+ * contado, vuelve a escribir el costo unitario y el divisor, y en el precio
  * de contado no aparece nada. No es un fallo de la plantilla: en Excel una celda
  * guarda o una fórmula o un valor, así que al borrar el contenido se va la
  * fórmula de esa fila y no vuelve sola. No hay forma de evitarlo en la hoja.
@@ -20,7 +20,7 @@ import {
  * Lo que sí se puede es que deje de importar al importar: el archivo llega con la
  * casilla vacía y el importador la rellena con la misma regla que usa la
  * plantilla, avisando de que lo hizo. Antes la fila fallaba entera con un "el
- * precio es requerido" aunque el costo y la rentabilidad estuvieran al lado.
+ * precio es requerido" aunque el costo y el divisor estuvieran al lado.
  */
 
 const FILA_DATOS = 7;
@@ -70,8 +70,8 @@ const borrarCelda = (hoja: ExcelJS.Worksheet, encabezado: string) => {
   hoja.getCell(FILA_DATOS, columna).value = null;
 };
 
-const COSTO = 619900;
-const RENTABILIDAD = 0.3;
+const COSTO = 178123;
+const DIVISOR = 0.65;
 
 /** Genera la plantilla, la edita y la pasa por el parser. */
 const validar = async (
@@ -88,7 +88,7 @@ const validar = async (
     'Nombre del artículo': 'Nevera',
     Categoría: 'Electrodomésticos',
     'Costo unitario': COSTO,
-    'Rentabilidad deseada': RENTABILIDAD,
+    'Divisor del precio': DIVISOR,
     'Meses opción 1': 3,
   });
   editar(hoja);
@@ -111,7 +111,7 @@ describe('Un precio borrado se rehace al importar', () => {
     expect(resultado.articulos?.[0]).toEqual(
       expect.objectContaining({
         codigo: 'NEV-1',
-        precioContado: baseDeContado(COSTO, RENTABILIDAD),
+        precioContado: baseDeContado(COSTO, DIVISOR),
       }),
     );
   }, 60000);
@@ -140,15 +140,15 @@ describe('Un precio borrado se rehace al importar', () => {
     );
     expect(precios).toHaveLength(1);
     expect(Number(precios[0].precio)).toBe(
-      precioDelPlazo(COSTO, RENTABILIDAD, 3),
+      precioDelPlazo(COSTO, DIVISOR, 3),
     );
   }, 60000);
 
-  it('sin rentabilidad no se puede rehacer, y el precio sigue siendo requerido', async () => {
+  it('sin divisor no se puede rehacer, y el precio sigue siendo requerido', async () => {
     // El costo solo no alcanza: sin el porcentaje no hay de dónde sacar el
     // precio, así que la fila tiene que seguir avisando en vez de inventar uno.
     const resultado = await validar((hoja) => {
-      borrarCelda(hoja, 'Rentabilidad deseada');
+      borrarCelda(hoja, 'Divisor del precio');
       borrarCelda(hoja, 'Precio contado');
       borrarCelda(hoja, 'Precio total opción 1');
     });
@@ -187,9 +187,9 @@ describe('El aviso de la hoja dice el número, no cómo obtenerlo', () => {
 
   it('calcula el precio que falta para poder nombrarlo', async () => {
     const formula = await formulaRevision();
-    // Rehace la cuenta con el costo y la rentabilidad en vez de leer la celda de
+    // Rehace la cuenta con el costo y el divisor en vez de leer la celda de
     // precio, que en este caso está vacía, y la formatea para mostrarla.
-    expect(formula).toContain('TEXT(ROUND(');
+    expect(formula).toContain('TEXT(TRUNC(');
     expect(formula).toContain('Le corresponde ');
   }, 60000);
 
@@ -212,15 +212,15 @@ describe('La regla de precios es la misma en la plantilla y en el importador', (
 
   it('reproduce los precios reales de la empresa', () => {
     // Artículo medido: costo 619.900 al 30%, base 805.870.
-    expect(baseDeContado(619900, 0.3)).toBe(805870);
-    expect(precioDelPlazo(619900, 0.3, 3)).toBe(1047631);
-    expect(precioDelPlazo(619900, 0.3, 5)).toBe(1184629);
-    expect(precioDelPlazo(619900, 0.3, 8)).toBe(1289392);
+    expect(baseDeContado(178123, 0.65)).toBe(274035);
+    expect(precioDelPlazo(178123, 0.65, 3)).toBe(356246);
+    expect(precioDelPlazo(178123, 0.65, 5)).toBe(402832);
+    expect(precioDelPlazo(178123, 0.65, 8)).toBe(438456);
   });
 
   it('da precio con cualquier plazo, y siempre creciente', () => {
     const precios = [1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 24].map((m) =>
-      precioDelPlazo(619900, 0.3, m),
+      precioDelPlazo(178123, 0.65, m),
     );
     for (let i = 1; i < precios.length; i++) {
       expect(precios[i]).toBeGreaterThan(precios[i - 1]);
