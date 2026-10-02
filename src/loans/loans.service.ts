@@ -3259,6 +3259,55 @@ export class LoansService implements OnModuleInit {
     }
   }
 
+  /**
+   * Las cuotas de VARIOS prestamos, en una sola consulta.
+   *
+   * Existe por una medicion: abrir un tablero disparaba 104 peticiones a
+   * `GET /loans/:id/cuotas`, una por prestamo, porque la descarga offline las pide de a una
+   * (`syncManager.ts`, `CUOTAS_POR_LOTE`). Eso es el 82% de las peticiones de la pantalla, y
+   * con el limite de 300 por minuto POR IP bastaban dos tableros para agotarlo: con los
+   * siete roles entrando a la vez aparecian 429 y 408, y entrar tardaba 21 segundos.
+   *
+   * El alcance por cobrador se aplica igual que en `getLoanCuotas`: se filtra la LISTA de
+   * prestamos permitidos antes de leer las cuotas, asi un cobrador no puede pedir las de un
+   * credito que no es de su ruta metiendo su id en la lista.
+   *
+   * Devuelve un objeto `{ [prestamoId]: Cuota[] }` y no un arreglo plano: quien llama las
+   * reparte por prestamo, y hacerlo aqui evita que cada pantalla lo agrupe a su manera.
+   */
+  async getCuotasDeVariosPrestamos(
+    prestamoIds: string[],
+    actor?: { id?: string; rol?: RolUsuario } | null,
+  ) {
+    const ids = [...new Set(prestamoIds.filter((id) => !!id))];
+    if (ids.length === 0) return {};
+
+    const permitidos = await this.prisma.prestamo.findMany({
+      where: {
+        id: { in: ids },
+        eliminadoEn: null,
+        ...(this.isCollector(actor) ? this.collectorLoanScope(actor) : {}),
+      },
+      select: { id: true },
+    });
+
+    const idsPermitidos = permitidos.map((p) => p.id);
+    if (idsPermitidos.length === 0) return {};
+
+    const cuotas = await this.prisma.cuota.findMany({
+      where: { prestamoId: { in: idsPermitidos } },
+      orderBy: [{ prestamoId: 'asc' }, { numeroCuota: 'asc' }],
+    });
+
+    const porPrestamo: Record<string, typeof cuotas> = {};
+    // Se crea la entrada aunque el prestamo no tenga cuotas: quien llama distingue asi
+    // "no tiene cuotas" de "no te dejaron verlo", que son cosas distintas.
+    for (const id of idsPermitidos) porPrestamo[id] = [];
+    for (const cuota of cuotas) porPrestamo[cuota.prestamoId].push(cuota);
+
+    return porPrestamo;
+  }
+
   async getLoanCuotas(
     prestamoId: string,
     actor?: { id?: string; rol?: RolUsuario } | null,

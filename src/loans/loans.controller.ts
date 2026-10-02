@@ -193,6 +193,55 @@ export class LoansController {
   // orden de declaracion, asi que estando despues era `:id` quien se quedaba
   // con "reprogramaciones-pendientes" y el endpoint respondia "Prestamo no
   // encontrado". Estuvo inalcanzable desde que se escribio.
+  /**
+   * Las cuotas de VARIOS prestamos en una peticion.
+   *
+   * Va declarada ANTES de `@Get(':id')` por lo mismo que avisa el comentario de abajo: Nest
+   * empareja por orden, y puesta despues seria `:id` quien se quedaria con "cuotas".
+   *
+   * El motivo de que exista esta medido: el tablero pedia 104 veces `GET /loans/:id/cuotas`,
+   * una por prestamo, y eso solo agotaba el limite de peticiones del servidor.
+   */
+  @Get('cuotas')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COBRADOR,
+    RolUsuario.CONTADOR,
+    RolUsuario.PUNTO_DE_VENTA,
+  )
+  @ApiOperation({
+    summary: 'Cuotas de varios prestamos en una sola peticion',
+    description:
+      'Recibe los ids separados por coma (?ids=a,b,c) y devuelve { [prestamoId]: Cuota[] }.',
+  })
+  @ApiQuery({
+    name: 'ids',
+    required: true,
+    description: 'Ids separados por coma',
+  })
+  async getCuotasDeVarios(
+    @Query('ids') ids: string,
+    @Request() req: RequestConUsuario,
+  ) {
+    const lista = String(ids || '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+
+    // Un tope explicito: sin el, una URL larga podria pedir las cuotas de miles de creditos
+    // en una sola consulta. 300 cubre de sobra el caso real (la descarga offline baja 200).
+    if (lista.length > 300) {
+      throw new BadRequestException(
+        'Demasiados creditos en una sola peticion: maximo 300.',
+      );
+    }
+
+    return this.loansService.getCuotasDeVariosPrestamos(lista, req.user);
+  }
+
   @Get('reprogramaciones-pendientes')
   @Roles(
     RolUsuario.SUPER_ADMINISTRADOR,
