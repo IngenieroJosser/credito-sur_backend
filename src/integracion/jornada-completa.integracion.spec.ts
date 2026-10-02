@@ -451,7 +451,62 @@ describe('Una jornada completa contra la base de datos', () => {
       expect(cuotas).toHaveLength(CUOTAS);
     }, 60000);
 
-    it('11. al pagar todas, el préstamo queda saldado y sin cuotas pendientes', async () => {
+    it('11. si la reprogramación se RECHAZA, la cuota vuelve a su fecha', async () => {
+      // El otro lado del mismo mecanismo, y el que de verdad protege el cobro: si quien
+      // revisa dice que no, la cuota tiene que volver a donde estaba para que el cliente
+      // reaparezca en la ruta. Si el rechazo no revirtiera, pedir una reprogramación
+      // bastaría para aplazar sin permiso de nadie.
+      const cuota = await prisma.cuota.findFirstOrThrow({
+        where: { prestamoId, estado: { not: 'PAGADA' }, id: { not: cuotaAReprogramar } },
+        orderBy: { numeroCuota: 'desc' },
+      });
+      const fechaAntes = cuota.fechaVencimiento;
+
+      const otraFecha = new Date();
+      otraFecha.setDate(otraFecha.getDate() + 10);
+
+      const solicitud = (await loans.solicitarReprogramacion({
+        prestamoId,
+        cuotaId: cuota.id,
+        nuevaFecha: otraFecha.toISOString().slice(0, 10),
+        motivo: 'Se pedirá y se rechazará',
+        solicitadoPorId: usuarioId,
+      })) as { aprobacion: { id: string } };
+
+      // Primero se mueve, como en el caso aprobado.
+      const movida = await prisma.cuota.findUniqueOrThrow({ where: { id: cuota.id } });
+      expect(movida.fechaVencimiento).not.toEqual(fechaAntes);
+
+      await loans.rechazarReprogramacion(
+        solicitud.aprobacion.id,
+        usuarioId,
+        'No procede',
+      );
+
+      const [aprobacion, devuelta] = await Promise.all([
+        prisma.aprobacion.findUniqueOrThrow({
+          where: { id: solicitud.aprobacion.id },
+        }),
+        prisma.cuota.findUniqueOrThrow({ where: { id: cuota.id } }),
+      ]);
+
+      expect(aprobacion.estado).toBe('RECHAZADO');
+      // Lo que importa: la fecha volvió a la de antes, no a una intermedia.
+      expect(devuelta.fechaVencimiento).toEqual(fechaAntes);
+    }, 120000);
+
+    it('12. rechazar tampoco cambia lo que el cliente debe', async () => {
+      const [prestamo, cuotas] = await Promise.all([
+        prisma.prestamo.findUniqueOrThrow({ where: { id: prestamoId } }),
+        prisma.cuota.findMany({ where: { prestamoId } }),
+      ]);
+
+      const total = Number(prestamo.monto) + Number(prestamo.interesTotal);
+      expect(cuotas.reduce((t, c) => t + Number(c.monto), 0)).toBe(total);
+      expect(cuotas).toHaveLength(CUOTAS);
+    }, 60000);
+
+    it('13. al pagar todas, el préstamo queda saldado y sin cuotas pendientes', async () => {
       const pendientes = await prisma.cuota.findMany({
         where: { prestamoId, estado: { not: 'PAGADA' } },
         orderBy: { numeroCuota: 'asc' },
@@ -479,7 +534,7 @@ describe('Una jornada completa contra la base de datos', () => {
       expect(prestamo.estado).toBe('PAGADO');
     }, 180000);
 
-    it('12. lo cobrado coincide con el total del préstamo', async () => {
+    it('14. lo cobrado coincide con el total del préstamo', async () => {
       const [prestamo, pagos] = await Promise.all([
         prisma.prestamo.findUniqueOrThrow({ where: { id: prestamoId } }),
         prisma.pago.findMany({ where: { prestamoId } }),
