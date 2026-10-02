@@ -1,0 +1,3960 @@
+[
+ {
+  "costo": 178123,
+  "divisor": 0.65,
+  "contado": 274035,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 356246
+   },
+   {
+    "meses": 5,
+    "precio": 402832
+   },
+   {
+    "meses": 8,
+    "precio": 438456
+   }
+  ]
+ },
+ {
+  "costo": 87266,
+  "divisor": 0.65,
+  "contado": 134255,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 174532
+   },
+   {
+    "meses": 5,
+    "precio": 197355
+   },
+   {
+    "meses": 8,
+    "precio": 214808
+   }
+  ]
+ },
+ {
+  "costo": 503059,
+  "divisor": 0.65,
+  "contado": 773936,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1006117
+   },
+   {
+    "meses": 5,
+    "precio": 1137687
+   },
+   {
+    "meses": 8,
+    "precio": 1238299
+   }
+  ]
+ },
+ {
+  "costo": 605000,
+  "divisor": 0.65,
+  "contado": 930769,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1210000
+   },
+   {
+    "meses": 5,
+    "precio": 1368230
+   },
+   {
+    "meses": 8,
+    "precio": 1489230
+   }
+  ]
+ },
+ {
+  "costo": 1550000,
+  "divisor": 0.7,
+  "contado": 2214285,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 2878571
+   },
+   {
+    "meses": 5,
+    "precio": 3255000
+   },
+   {
+    "meses": 8,
+    "precio": 3542857
+   }
+  ]
+ },
+ {
+  "costo": 1160000,
+  "divisor": 0.7,
+  "contado": 1657142,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 2154285
+   },
+   {
+    "meses": 5,
+    "precio": 2436000
+   },
+   {
+    "meses": 8,
+    "precio": 2651428
+   }
+  ]
+ },
+ {
+  "costo": 170000,
+  "divisor": 0.55,
+  "contado": 309090,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 401818
+   },
+   {
+    "meses": 5,
+    "precio": 454363
+   },
+   {
+    "meses": 8,
+    "precio": 494545
+   }
+  ]
+ },
+ {
+  "costo": 85000,
+  "divisor": 0.65,
+  "contado": 130769,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 170000
+   },
+   {
+    "meses": 5,
+    "precio": 192230
+   },
+   {
+    "meses": 8,
+    "precio": 209230
+   }
+  ]
+ },
+ {
+  "costo": 447000,
+  "divisor": 0.55,
+  "contado": 812727,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1056545
+   },
+   {
+    "meses": 5,
+    "precio": 1194709
+   },
+   {
+    "meses": 8,
+    "precio": 1300363
+   }
+  ]
+ },
+ {
+  "costo": 64766,
+  "divisor": 0.7,
+  "contado": 92522,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 120279
+   },
+   {
+    "meses": 5,
+    "precio": 136008
+   },
+   {
+    "meses": 8,
+    "precio": 148036
+   }
+  ]
+ },
+ {
+  "costo": 30550,
+  "divisor": 0.7,
+  "contado": 43642,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 56735
+   },
+   {
+    "meses": 5,
+    "precio": 64155
+   },
+   {
+    "meses": 8,
+    "precio": 69828
+   }
+  ]
+ },
+ {
+  "costo": 256264,
+  "divisor": 0.65,
+  "contado": 394252,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 512528
+   },
+   {
+    "meses": 5,
+    "precio": 579550
+   },
+   {
+    "meses": 8,
+    "precio": 630803
+   }
+  ]
+ },
+ {
+  "costo": 168848,
+  "divisor": 0.65,
+  "contado": 259766,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 337696
+   },
+   {
+    "meses": 5,
+    "precio": 381856
+   },
+   {
+    "meses": 8,
+    "precio": 415625
+   }
+  ]
+ },
+ {
+  "costo": 127498,
+  "divisor": 0.65,
+  "contado": 196150,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 254996
+   },
+   {
+    "meses": 5,
+    "precio": 288341
+   },
+   {
+    "meses": 8,
+    "precio": 313841
+   }
+  ]
+ },
+ {
+  "costo": 150001,
+  "divisor": 0.65,
+  "contado": 230770,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 300002
+   },
+   {
+    "meses": 5,
+    "precio": 339233
+   },
+   {
+    "meses": 8,
+    "precio": 369233
+   }
+  ]
+ },
+ {
+  "costo": 114893,
+  "divisor": 0.7,
+  "contado": 164132,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 213372
+   },
+   {
+    "meses": 5,
+    "precio": 241275
+   },
+   {
+    "meses": 8,
+    "precio": 262612
+   }
+  ]
+ },
+ {
+  "costo": 200000,
+  "divisor": 0.55,
+  "contado": 363636,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 472727
+   },
+   {
+    "meses": 5,
+    "precio": 534545
+   },
+   {
+    "meses": 8,
+    "precio": 581818
+   }
+  ]
+ },
+ {
+  "costo": 1200000,
+  "divisor": 0.55,
+  "contado": 2181818,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 2836363
+   },
+   {
+    "meses": 5,
+    "precio": 3207272
+   },
+   {
+    "meses": 8,
+    "precio": 3490909
+   }
+  ]
+ },
+ {
+  "costo": 320000,
+  "divisor": 0.55,
+  "contado": 581818,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 756363
+   },
+   {
+    "meses": 5,
+    "precio": 855272
+   },
+   {
+    "meses": 8,
+    "precio": 930909
+   }
+  ]
+ },
+ {
+  "costo": 800000,
+  "divisor": 0.55,
+  "contado": 1454545,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1890909
+   },
+   {
+    "meses": 5,
+    "precio": 2138181
+   },
+   {
+    "meses": 8,
+    "precio": 2327272
+   }
+  ]
+ },
+ {
+  "costo": 220000,
+  "divisor": 0.55,
+  "contado": 399999,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 519999
+   },
+   {
+    "meses": 5,
+    "precio": 587999
+   },
+   {
+    "meses": 8,
+    "precio": 639999
+   }
+  ]
+ },
+ {
+  "costo": 1600000,
+  "divisor": 0.55,
+  "contado": 2909090,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 3781818
+   },
+   {
+    "meses": 5,
+    "precio": 4276363
+   },
+   {
+    "meses": 8,
+    "precio": 4654545
+   }
+  ]
+ },
+ {
+  "costo": 2200000,
+  "divisor": 0.55,
+  "contado": 3999999,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 5199999
+   },
+   {
+    "meses": 5,
+    "precio": 5879999
+   },
+   {
+    "meses": 8,
+    "precio": 6399999
+   }
+  ]
+ },
+ {
+  "costo": 1100000,
+  "divisor": 0.55,
+  "contado": 1999999,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 2599999
+   },
+   {
+    "meses": 5,
+    "precio": 2939999
+   },
+   {
+    "meses": 8,
+    "precio": 3199999
+   }
+  ]
+ },
+ {
+  "costo": 1399900,
+  "divisor": 0.7,
+  "contado": 1999857,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 2599814
+   },
+   {
+    "meses": 5,
+    "precio": 2939790
+   },
+   {
+    "meses": 8,
+    "precio": 3199771
+   }
+  ]
+ },
+ {
+  "costo": 286792,
+  "divisor": 0.7,
+  "contado": 409702,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 532613
+   },
+   {
+    "meses": 5,
+    "precio": 602263
+   },
+   {
+    "meses": 8,
+    "precio": 655524
+   }
+  ]
+ },
+ {
+  "costo": 2390060,
+  "divisor": 0.7,
+  "contado": 3414371,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 4438682
+   },
+   {
+    "meses": 5,
+    "precio": 5019126
+   },
+   {
+    "meses": 8,
+    "precio": 5462994
+   }
+  ]
+ },
+ {
+  "costo": 2299820,
+  "divisor": 0.7,
+  "contado": 3285457,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 4271094
+   },
+   {
+    "meses": 5,
+    "precio": 4829622
+   },
+   {
+    "meses": 8,
+    "precio": 5256731
+   }
+  ]
+ },
+ {
+  "costo": 340639,
+  "divisor": 0.65,
+  "contado": 524060,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 681278
+   },
+   {
+    "meses": 5,
+    "precio": 770368
+   },
+   {
+    "meses": 8,
+    "precio": 838496
+   }
+  ]
+ },
+ {
+  "costo": 494619,
+  "divisor": 0.7,
+  "contado": 706598,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 918578
+   },
+   {
+    "meses": 5,
+    "precio": 1038699
+   },
+   {
+    "meses": 8,
+    "precio": 1130557
+   }
+  ]
+ },
+ {
+  "costo": 127423,
+  "divisor": 0.65,
+  "contado": 196035,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 254845
+   },
+   {
+    "meses": 5,
+    "precio": 288172
+   },
+   {
+    "meses": 8,
+    "precio": 313656
+   }
+  ]
+ },
+ {
+  "costo": 1090000,
+  "divisor": 0.55,
+  "contado": 1981818,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 2576363
+   },
+   {
+    "meses": 5,
+    "precio": 2913272
+   },
+   {
+    "meses": 8,
+    "precio": 3170909
+   }
+  ]
+ },
+ {
+  "costo": 339000,
+  "divisor": 0.7,
+  "contado": 484285,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 629571
+   },
+   {
+    "meses": 5,
+    "precio": 711900
+   },
+   {
+    "meses": 8,
+    "precio": 774857
+   }
+  ]
+ },
+ {
+  "costo": 447800,
+  "divisor": 0.7,
+  "contado": 639714,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 831628
+   },
+   {
+    "meses": 5,
+    "precio": 940380
+   },
+   {
+    "meses": 8,
+    "precio": 1023542
+   }
+  ]
+ },
+ {
+  "costo": 270000,
+  "divisor": 0.55,
+  "contado": 490909,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 638181
+   },
+   {
+    "meses": 5,
+    "precio": 721636
+   },
+   {
+    "meses": 8,
+    "precio": 785454
+   }
+  ]
+ },
+ {
+  "costo": 2224937,
+  "divisor": 0.7,
+  "contado": 3178481,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 4132025
+   },
+   {
+    "meses": 5,
+    "precio": 4672367
+   },
+   {
+    "meses": 8,
+    "precio": 5085570
+   }
+  ]
+ },
+ {
+  "costo": 2067880,
+  "divisor": 0.7,
+  "contado": 2954114,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 3840348
+   },
+   {
+    "meses": 5,
+    "precio": 4342548
+   },
+   {
+    "meses": 8,
+    "precio": 4726582
+   }
+  ]
+ },
+ {
+  "costo": 1007778,
+  "divisor": 0.55,
+  "contado": 1832323,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 2382020
+   },
+   {
+    "meses": 5,
+    "precio": 2693515
+   },
+   {
+    "meses": 8,
+    "precio": 2931717
+   }
+  ]
+ },
+ {
+  "costo": 327778,
+  "divisor": 0.55,
+  "contado": 595960,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 774748
+   },
+   {
+    "meses": 5,
+    "precio": 876061
+   },
+   {
+    "meses": 8,
+    "precio": 953536
+   }
+  ]
+ },
+ {
+  "costo": 210000,
+  "divisor": 0.55,
+  "contado": 381818,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 496363
+   },
+   {
+    "meses": 5,
+    "precio": 561272
+   },
+   {
+    "meses": 8,
+    "precio": 610909
+   }
+  ]
+ },
+ {
+  "costo": 307778,
+  "divisor": 0.55,
+  "contado": 559596,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 727475
+   },
+   {
+    "meses": 5,
+    "precio": 822606
+   },
+   {
+    "meses": 8,
+    "precio": 895354
+   }
+  ]
+ },
+ {
+  "costo": 167778,
+  "divisor": 0.55,
+  "contado": 305050,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 396566
+   },
+   {
+    "meses": 5,
+    "precio": 448424
+   },
+   {
+    "meses": 8,
+    "precio": 488081
+   }
+  ]
+ },
+ {
+  "costo": 28070,
+  "divisor": 0.55,
+  "contado": 51036,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 66347
+   },
+   {
+    "meses": 5,
+    "precio": 75023
+   },
+   {
+    "meses": 8,
+    "precio": 81658
+   }
+  ]
+ },
+ {
+  "costo": 21070,
+  "divisor": 0.55,
+  "contado": 38309,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 49801
+   },
+   {
+    "meses": 5,
+    "precio": 56314
+   },
+   {
+    "meses": 8,
+    "precio": 61294
+   }
+  ]
+ },
+ {
+  "costo": 1470000,
+  "divisor": 0.7,
+  "contado": 2100000,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 2730000
+   },
+   {
+    "meses": 5,
+    "precio": 3087000
+   },
+   {
+    "meses": 8,
+    "precio": 3360000
+   }
+  ]
+ },
+ {
+  "costo": 1310000,
+  "divisor": 0.7,
+  "contado": 1871428,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 2432857
+   },
+   {
+    "meses": 5,
+    "precio": 2751000
+   },
+   {
+    "meses": 8,
+    "precio": 2994285
+   }
+  ]
+ },
+ {
+  "costo": 290000,
+  "divisor": 0.55,
+  "contado": 527272,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 685454
+   },
+   {
+    "meses": 5,
+    "precio": 775090
+   },
+   {
+    "meses": 8,
+    "precio": 843636
+   }
+  ]
+ },
+ {
+  "costo": 54899,
+  "divisor": 0.65,
+  "contado": 84460,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 109798
+   },
+   {
+    "meses": 5,
+    "precio": 124156
+   },
+   {
+    "meses": 8,
+    "precio": 135136
+   }
+  ]
+ },
+ {
+  "costo": 499923,
+  "divisor": 0.7,
+  "contado": 714175,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 928428
+   },
+   {
+    "meses": 5,
+    "precio": 1049838
+   },
+   {
+    "meses": 8,
+    "precio": 1142681
+   }
+  ]
+ },
+ {
+  "costo": 999875,
+  "divisor": 0.7,
+  "contado": 1428392,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1856910
+   },
+   {
+    "meses": 5,
+    "precio": 2099737
+   },
+   {
+    "meses": 8,
+    "precio": 2285428
+   }
+  ]
+ },
+ {
+  "costo": 118365,
+  "divisor": 0.65,
+  "contado": 182100,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 236730
+   },
+   {
+    "meses": 5,
+    "precio": 267687
+   },
+   {
+    "meses": 8,
+    "precio": 291360
+   }
+  ]
+ },
+ {
+  "costo": 597995,
+  "divisor": 0.7,
+  "contado": 854278,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1110562
+   },
+   {
+    "meses": 5,
+    "precio": 1255789
+   },
+   {
+    "meses": 8,
+    "precio": 1366845
+   }
+  ]
+ },
+ {
+  "costo": 899010,
+  "divisor": 0.7,
+  "contado": 1284300,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1669590
+   },
+   {
+    "meses": 5,
+    "precio": 1887921
+   },
+   {
+    "meses": 8,
+    "precio": 2054880
+   }
+  ]
+ },
+ {
+  "costo": 829900,
+  "divisor": 0.7,
+  "contado": 1185571,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1541242
+   },
+   {
+    "meses": 5,
+    "precio": 1742790
+   },
+   {
+    "meses": 8,
+    "precio": 1896914
+   }
+  ]
+ },
+ {
+  "costo": 2080000,
+  "divisor": 0.55,
+  "contado": 3781818,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 4916363
+   },
+   {
+    "meses": 5,
+    "precio": 5559272
+   },
+   {
+    "meses": 8,
+    "precio": 6050909
+   }
+  ]
+ },
+ {
+  "costo": 175000,
+  "divisor": 0.55,
+  "contado": 318181,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 413636
+   },
+   {
+    "meses": 5,
+    "precio": 467727
+   },
+   {
+    "meses": 8,
+    "precio": 509090
+   }
+  ]
+ },
+ {
+  "costo": 155000,
+  "divisor": 0.55,
+  "contado": 281818,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 366363
+   },
+   {
+    "meses": 5,
+    "precio": 414272
+   },
+   {
+    "meses": 8,
+    "precio": 450909
+   }
+  ]
+ },
+ {
+  "costo": 880000,
+  "divisor": 0.55,
+  "contado": 1599999,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 2079999
+   },
+   {
+    "meses": 5,
+    "precio": 2351999
+   },
+   {
+    "meses": 8,
+    "precio": 2559999
+   }
+  ]
+ },
+ {
+  "costo": 1450000,
+  "divisor": 0.55,
+  "contado": 2636363,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 3427272
+   },
+   {
+    "meses": 5,
+    "precio": 3875454
+   },
+   {
+    "meses": 8,
+    "precio": 4218181
+   }
+  ]
+ },
+ {
+  "costo": 750000,
+  "divisor": 0.55,
+  "contado": 1363636,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1772727
+   },
+   {
+    "meses": 5,
+    "precio": 2004545
+   },
+   {
+    "meses": 8,
+    "precio": 2181818
+   }
+  ]
+ },
+ {
+  "costo": 650000,
+  "divisor": 0.55,
+  "contado": 1181818,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1536363
+   },
+   {
+    "meses": 5,
+    "precio": 1737272
+   },
+   {
+    "meses": 8,
+    "precio": 1890909
+   }
+  ]
+ },
+ {
+  "costo": 2275000,
+  "divisor": 0.7,
+  "contado": 3250000,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 4225000
+   },
+   {
+    "meses": 5,
+    "precio": 4777500
+   },
+   {
+    "meses": 8,
+    "precio": 5200000
+   }
+  ]
+ },
+ {
+  "costo": 44000,
+  "divisor": 0.55,
+  "contado": 80000,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 104000
+   },
+   {
+    "meses": 5,
+    "precio": 117600
+   },
+   {
+    "meses": 8,
+    "precio": 128000
+   }
+  ]
+ },
+ {
+  "costo": 38000,
+  "divisor": 0.55,
+  "contado": 69090,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 89818
+   },
+   {
+    "meses": 5,
+    "precio": 101563
+   },
+   {
+    "meses": 8,
+    "precio": 110545
+   }
+  ]
+ },
+ {
+  "costo": 29500,
+  "divisor": 0.55,
+  "contado": 53636,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 69727
+   },
+   {
+    "meses": 5,
+    "precio": 78845
+   },
+   {
+    "meses": 8,
+    "precio": 85818
+   }
+  ]
+ },
+ {
+  "costo": 28200,
+  "divisor": 0.55,
+  "contado": 51272,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 66654
+   },
+   {
+    "meses": 5,
+    "precio": 75370
+   },
+   {
+    "meses": 8,
+    "precio": 82036
+   }
+  ]
+ },
+ {
+  "costo": 68800,
+  "divisor": 0.55,
+  "contado": 125090,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 162618
+   },
+   {
+    "meses": 5,
+    "precio": 183883
+   },
+   {
+    "meses": 8,
+    "precio": 200145
+   }
+  ]
+ },
+ {
+  "costo": 64000,
+  "divisor": 0.55,
+  "contado": 116363,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 151272
+   },
+   {
+    "meses": 5,
+    "precio": 171054
+   },
+   {
+    "meses": 8,
+    "precio": 186181
+   }
+  ]
+ },
+ {
+  "costo": 145000,
+  "divisor": 0.55,
+  "contado": 263636,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 342727
+   },
+   {
+    "meses": 5,
+    "precio": 387545
+   },
+   {
+    "meses": 8,
+    "precio": 421818
+   }
+  ]
+ },
+ {
+  "costo": 82783,
+  "divisor": 0.65,
+  "contado": 127358,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 165566
+   },
+   {
+    "meses": 5,
+    "precio": 187216
+   },
+   {
+    "meses": 8,
+    "precio": 203773
+   }
+  ]
+ },
+ {
+  "costo": 2330015,
+  "divisor": 0.7,
+  "contado": 3328592,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 4327170
+   },
+   {
+    "meses": 5,
+    "precio": 4893031
+   },
+   {
+    "meses": 8,
+    "precio": 5325748
+   }
+  ]
+ },
+ {
+  "costo": 1129913,
+  "divisor": 0.7,
+  "contado": 1614161,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 2098409
+   },
+   {
+    "meses": 5,
+    "precio": 2372817
+   },
+   {
+    "meses": 8,
+    "precio": 2582658
+   }
+  ]
+ },
+ {
+  "costo": 2159900,
+  "divisor": 0.7,
+  "contado": 3085571,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 4011242
+   },
+   {
+    "meses": 5,
+    "precio": 4535790
+   },
+   {
+    "meses": 8,
+    "precio": 4936914
+   }
+  ]
+ },
+ {
+  "costo": 36500,
+  "divisor": 0.65,
+  "contado": 56153,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 73000
+   },
+   {
+    "meses": 5,
+    "precio": 82546
+   },
+   {
+    "meses": 8,
+    "precio": 89846
+   }
+  ]
+ },
+ {
+  "costo": 1029861,
+  "divisor": 0.7,
+  "contado": 1471230,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1912599
+   },
+   {
+    "meses": 5,
+    "precio": 2162708
+   },
+   {
+    "meses": 8,
+    "precio": 2353968
+   }
+  ]
+ },
+ {
+  "costo": 83032,
+  "divisor": 0.65,
+  "contado": 127741,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 166064
+   },
+   {
+    "meses": 5,
+    "precio": 187780
+   },
+   {
+    "meses": 8,
+    "precio": 204386
+   }
+  ]
+ },
+ {
+  "costo": 139604,
+  "divisor": 0.65,
+  "contado": 214775,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 279208
+   },
+   {
+    "meses": 5,
+    "precio": 315719
+   },
+   {
+    "meses": 8,
+    "precio": 343640
+   }
+  ]
+ },
+ {
+  "costo": 43565,
+  "divisor": 0.55,
+  "contado": 79209,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 102971
+   },
+   {
+    "meses": 5,
+    "precio": 116437
+   },
+   {
+    "meses": 8,
+    "precio": 126734
+   }
+  ]
+ },
+ {
+  "costo": 1729920,
+  "divisor": 0.7,
+  "contado": 2471314,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 3212708
+   },
+   {
+    "meses": 5,
+    "precio": 3632832
+   },
+   {
+    "meses": 8,
+    "precio": 3954102
+   }
+  ]
+ },
+ {
+  "costo": 1319012,
+  "divisor": 0.7,
+  "contado": 1884302,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 2449593
+   },
+   {
+    "meses": 5,
+    "precio": 2769925
+   },
+   {
+    "meses": 8,
+    "precio": 3014884
+   }
+  ]
+ },
+ {
+  "costo": 1250043,
+  "divisor": 0.7,
+  "contado": 1785775,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 2321508
+   },
+   {
+    "meses": 5,
+    "precio": 2625090
+   },
+   {
+    "meses": 8,
+    "precio": 2857241
+   }
+  ]
+ },
+ {
+  "costo": 360000,
+  "divisor": 0.65,
+  "contado": 553846,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 720000
+   },
+   {
+    "meses": 5,
+    "precio": 814153
+   },
+   {
+    "meses": 8,
+    "precio": 886153
+   }
+  ]
+ },
+ {
+  "costo": 80404,
+  "divisor": 0.65,
+  "contado": 123698,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 160808
+   },
+   {
+    "meses": 5,
+    "precio": 181836
+   },
+   {
+    "meses": 8,
+    "precio": 197917
+   }
+  ]
+ },
+ {
+  "costo": 389079,
+  "divisor": 0.65,
+  "contado": 598583,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 778158
+   },
+   {
+    "meses": 5,
+    "precio": 879917
+   },
+   {
+    "meses": 8,
+    "precio": 957732
+   }
+  ]
+ },
+ {
+  "costo": 520000,
+  "divisor": 0.55,
+  "contado": 945454,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1229090
+   },
+   {
+    "meses": 5,
+    "precio": 1389818
+   },
+   {
+    "meses": 8,
+    "precio": 1512727
+   }
+  ]
+ },
+ {
+  "costo": 1349920,
+  "divisor": 0.7,
+  "contado": 1928457,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 2506994
+   },
+   {
+    "meses": 5,
+    "precio": 2834832
+   },
+   {
+    "meses": 8,
+    "precio": 3085531
+   }
+  ]
+ },
+ {
+  "costo": 24938.09,
+  "divisor": 0.7,
+  "contado": 35625,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 46313
+   },
+   {
+    "meses": 5,
+    "precio": 52369
+   },
+   {
+    "meses": 8,
+    "precio": 57001
+   }
+  ]
+ },
+ {
+  "costo": 999931,
+  "divisor": 0.7,
+  "contado": 1428472,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1857014
+   },
+   {
+    "meses": 5,
+    "precio": 2099855
+   },
+   {
+    "meses": 8,
+    "precio": 2285556
+   }
+  ]
+ },
+ {
+  "costo": 644917,
+  "divisor": 0.65,
+  "contado": 992180,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1289834
+   },
+   {
+    "meses": 5,
+    "precio": 1458504
+   },
+   {
+    "meses": 8,
+    "precio": 1587488
+   }
+  ]
+ },
+ {
+  "costo": 185000,
+  "divisor": 0.65,
+  "contado": 284615,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 370000
+   },
+   {
+    "meses": 5,
+    "precio": 418384
+   },
+   {
+    "meses": 8,
+    "precio": 455384
+   }
+  ]
+ },
+ {
+  "costo": 67000,
+  "divisor": 0.7,
+  "contado": 95714,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 124428
+   },
+   {
+    "meses": 5,
+    "precio": 140700
+   },
+   {
+    "meses": 8,
+    "precio": 153142
+   }
+  ]
+ },
+ {
+  "costo": 357963,
+  "divisor": 0.55,
+  "contado": 650841,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 846094
+   },
+   {
+    "meses": 5,
+    "precio": 956737
+   },
+   {
+    "meses": 8,
+    "precio": 1041346
+   }
+  ]
+ },
+ {
+  "costo": 318000,
+  "divisor": 0.55,
+  "contado": 578181,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 751636
+   },
+   {
+    "meses": 5,
+    "precio": 849927
+   },
+   {
+    "meses": 8,
+    "precio": 925090
+   }
+  ]
+ },
+ {
+  "costo": 240000,
+  "divisor": 0.65,
+  "contado": 369230,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 479999
+   },
+   {
+    "meses": 5,
+    "precio": 542769
+   },
+   {
+    "meses": 8,
+    "precio": 590769
+   }
+  ]
+ },
+ {
+  "costo": 138797,
+  "divisor": 0.65,
+  "contado": 213533,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 277594
+   },
+   {
+    "meses": 5,
+    "precio": 313894
+   },
+   {
+    "meses": 8,
+    "precio": 341654
+   }
+  ]
+ },
+ {
+  "costo": 157487,
+  "divisor": 0.65,
+  "contado": 242287,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 314974
+   },
+   {
+    "meses": 5,
+    "precio": 356162
+   },
+   {
+    "meses": 8,
+    "precio": 387660
+   }
+  ]
+ },
+ {
+  "costo": 1459998,
+  "divisor": 0.7,
+  "contado": 2085711,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 2711424
+   },
+   {
+    "meses": 5,
+    "precio": 3065995
+   },
+   {
+    "meses": 8,
+    "precio": 3337138
+   }
+  ]
+ },
+ {
+  "costo": 649000,
+  "divisor": 0.7,
+  "contado": 927142,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1205285
+   },
+   {
+    "meses": 5,
+    "precio": 1362900
+   },
+   {
+    "meses": 8,
+    "precio": 1483428
+   }
+  ]
+ },
+ {
+  "costo": 779881,
+  "divisor": 0.65,
+  "contado": 1199816,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1559762
+   },
+   {
+    "meses": 5,
+    "precio": 1763730
+   },
+   {
+    "meses": 8,
+    "precio": 1919707
+   }
+  ]
+ },
+ {
+  "costo": 620000,
+  "divisor": 0.7,
+  "contado": 885714,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1151428
+   },
+   {
+    "meses": 5,
+    "precio": 1302000
+   },
+   {
+    "meses": 8,
+    "precio": 1417142
+   }
+  ]
+ },
+ {
+  "costo": 376874,
+  "divisor": 0.65,
+  "contado": 579806,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 753748
+   },
+   {
+    "meses": 5,
+    "precio": 852315
+   },
+   {
+    "meses": 8,
+    "precio": 927689
+   }
+  ]
+ },
+ {
+  "costo": 68420,
+  "divisor": 0.65,
+  "contado": 105261,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 136840
+   },
+   {
+    "meses": 5,
+    "precio": 154734
+   },
+   {
+    "meses": 8,
+    "precio": 168418
+   }
+  ]
+ },
+ {
+  "costo": 459887,
+  "divisor": 0.7,
+  "contado": 656981,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 854075
+   },
+   {
+    "meses": 5,
+    "precio": 965762
+   },
+   {
+    "meses": 8,
+    "precio": 1051170
+   }
+  ]
+ },
+ {
+  "costo": 10000,
+  "divisor": 0.7,
+  "contado": 14285,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 18571
+   },
+   {
+    "meses": 5,
+    "precio": 21000
+   },
+   {
+    "meses": 8,
+    "precio": 22857
+   }
+  ]
+ },
+ {
+  "costo": 23000,
+  "divisor": 0.7,
+  "contado": 32857,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 42714
+   },
+   {
+    "meses": 5,
+    "precio": 48300
+   },
+   {
+    "meses": 8,
+    "precio": 52571
+   }
+  ]
+ },
+ {
+  "costo": 455738,
+  "divisor": 0.65,
+  "contado": 701135,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 911476
+   },
+   {
+    "meses": 5,
+    "precio": 1030669
+   },
+   {
+    "meses": 8,
+    "precio": 1121816
+   }
+  ]
+ },
+ {
+  "costo": 127351.42,
+  "divisor": 0.65,
+  "contado": 195925,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 254702
+   },
+   {
+    "meses": 5,
+    "precio": 288010
+   },
+   {
+    "meses": 8,
+    "precio": 313480
+   }
+  ]
+ },
+ {
+  "costo": 42447,
+  "divisor": 0.65,
+  "contado": 65303,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 84894
+   },
+   {
+    "meses": 5,
+    "precio": 95995
+   },
+   {
+    "meses": 8,
+    "precio": 104484
+   }
+  ]
+ },
+ {
+  "costo": 47065,
+  "divisor": 0.65,
+  "contado": 72407,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 94130
+   },
+   {
+    "meses": 5,
+    "precio": 106439
+   },
+   {
+    "meses": 8,
+    "precio": 115852
+   }
+  ]
+ },
+ {
+  "costo": 160000,
+  "divisor": 0.55,
+  "contado": 290909,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 378181
+   },
+   {
+    "meses": 5,
+    "precio": 427636
+   },
+   {
+    "meses": 8,
+    "precio": 465454
+   }
+  ]
+ },
+ {
+  "costo": 160000,
+  "divisor": 0.55,
+  "contado": 290909,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 378181
+   },
+   {
+    "meses": 5,
+    "precio": 427636
+   },
+   {
+    "meses": 8,
+    "precio": 465454
+   }
+  ]
+ },
+ {
+  "costo": 1699017,
+  "divisor": 0.7,
+  "contado": 2427167,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 3155317
+   },
+   {
+    "meses": 5,
+    "precio": 3567935
+   },
+   {
+    "meses": 8,
+    "precio": 3883467
+   }
+  ]
+ },
+ {
+  "costo": 1649971,
+  "divisor": 0.7,
+  "contado": 2357101,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 3064231
+   },
+   {
+    "meses": 5,
+    "precio": 3464939
+   },
+   {
+    "meses": 8,
+    "precio": 3771362
+   }
+  ]
+ },
+ {
+  "costo": 256771,
+  "divisor": 0.65,
+  "contado": 395032,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 513542
+   },
+   {
+    "meses": 5,
+    "precio": 580697
+   },
+   {
+    "meses": 8,
+    "precio": 632051
+   }
+  ]
+ },
+ {
+  "costo": 170000,
+  "divisor": 0.7,
+  "contado": 242857,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 315714
+   },
+   {
+    "meses": 5,
+    "precio": 357000
+   },
+   {
+    "meses": 8,
+    "precio": 388571
+   }
+  ]
+ },
+ {
+  "costo": 168222,
+  "divisor": 0.65,
+  "contado": 258803,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 336444
+   },
+   {
+    "meses": 5,
+    "precio": 380440
+   },
+   {
+    "meses": 8,
+    "precio": 414084
+   }
+  ]
+ },
+ {
+  "costo": 669933,
+  "divisor": 0.7,
+  "contado": 957047,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1244161
+   },
+   {
+    "meses": 5,
+    "precio": 1406859
+   },
+   {
+    "meses": 8,
+    "precio": 1531275
+   }
+  ]
+ },
+ {
+  "costo": 228190,
+  "divisor": 0.55,
+  "contado": 414890,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 539358
+   },
+   {
+    "meses": 5,
+    "precio": 609889
+   },
+   {
+    "meses": 8,
+    "precio": 663825
+   }
+  ]
+ },
+ {
+  "costo": 78126,
+  "divisor": 0.65,
+  "contado": 120193,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 156252
+   },
+   {
+    "meses": 5,
+    "precio": 176684
+   },
+   {
+    "meses": 8,
+    "precio": 192310
+   }
+  ]
+ },
+ {
+  "costo": 83441,
+  "divisor": 0.65,
+  "contado": 128370,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 166882
+   },
+   {
+    "meses": 5,
+    "precio": 188705
+   },
+   {
+    "meses": 8,
+    "precio": 205393
+   }
+  ]
+ },
+ {
+  "costo": 1209988,
+  "divisor": 0.7,
+  "contado": 1728554,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 2247120
+   },
+   {
+    "meses": 5,
+    "precio": 2540974
+   },
+   {
+    "meses": 8,
+    "precio": 2765686
+   }
+  ]
+ },
+ {
+  "costo": 1067943,
+  "divisor": 0.7,
+  "contado": 1525632,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1983322
+   },
+   {
+    "meses": 5,
+    "precio": 2242680
+   },
+   {
+    "meses": 8,
+    "precio": 2441012
+   }
+  ]
+ },
+ {
+  "costo": 1609963,
+  "divisor": 0.7,
+  "contado": 2299947,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 2989931
+   },
+   {
+    "meses": 5,
+    "precio": 3380922
+   },
+   {
+    "meses": 8,
+    "precio": 3679915
+   }
+  ]
+ },
+ {
+  "costo": 980000,
+  "divisor": 0.7,
+  "contado": 1400000,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1820000
+   },
+   {
+    "meses": 5,
+    "precio": 2058000
+   },
+   {
+    "meses": 8,
+    "precio": 2240000
+   }
+  ]
+ },
+ {
+  "costo": 919944,
+  "divisor": 0.7,
+  "contado": 1314205,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1708467
+   },
+   {
+    "meses": 5,
+    "precio": 1931882
+   },
+   {
+    "meses": 8,
+    "precio": 2102729
+   }
+  ]
+ },
+ {
+  "costo": 277581,
+  "divisor": 0.7,
+  "contado": 396544,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 515507
+   },
+   {
+    "meses": 5,
+    "precio": 582920
+   },
+   {
+    "meses": 8,
+    "precio": 634470
+   }
+  ]
+ },
+ {
+  "costo": 287173,
+  "divisor": 0.65,
+  "contado": 441804,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 574346
+   },
+   {
+    "meses": 5,
+    "precio": 649452
+   },
+   {
+    "meses": 8,
+    "precio": 706887
+   }
+  ]
+ },
+ {
+  "costo": 2199938,
+  "divisor": 0.7,
+  "contado": 3142768,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 4085599
+   },
+   {
+    "meses": 5,
+    "precio": 4619869
+   },
+   {
+    "meses": 8,
+    "precio": 5028429
+   }
+  ]
+ },
+ {
+  "costo": 2189042,
+  "divisor": 0.7,
+  "contado": 3127202,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 4065363
+   },
+   {
+    "meses": 5,
+    "precio": 4596988
+   },
+   {
+    "meses": 8,
+    "precio": 5003524
+   }
+  ]
+ },
+ {
+  "costo": 1019893,
+  "divisor": 0.7,
+  "contado": 1456990,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1894087
+   },
+   {
+    "meses": 5,
+    "precio": 2141775
+   },
+   {
+    "meses": 8,
+    "precio": 2331184
+   }
+  ]
+ },
+ {
+  "costo": 1357952,
+  "divisor": 0.7,
+  "contado": 1939931,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 2521910
+   },
+   {
+    "meses": 5,
+    "precio": 2851699
+   },
+   {
+    "meses": 8,
+    "precio": 3103890
+   }
+  ]
+ },
+ {
+  "costo": 83441,
+  "divisor": 0.65,
+  "contado": 128370,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 166882
+   },
+   {
+    "meses": 5,
+    "precio": 188705
+   },
+   {
+    "meses": 8,
+    "precio": 205393
+   }
+  ]
+ },
+ {
+  "costo": 40000,
+  "divisor": 0.7,
+  "contado": 57142,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 74285
+   },
+   {
+    "meses": 5,
+    "precio": 84000
+   },
+   {
+    "meses": 8,
+    "precio": 91428
+   }
+  ]
+ },
+ {
+  "costo": 200000,
+  "divisor": 0.7,
+  "contado": 285714,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 371428
+   },
+   {
+    "meses": 5,
+    "precio": 420000
+   },
+   {
+    "meses": 8,
+    "precio": 457142
+   }
+  ]
+ },
+ {
+  "costo": 42000,
+  "divisor": 0.7,
+  "contado": 60000,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 78000
+   },
+   {
+    "meses": 5,
+    "precio": 88200
+   },
+   {
+    "meses": 8,
+    "precio": 96000
+   }
+  ]
+ },
+ {
+  "costo": 65000,
+  "divisor": 0.7,
+  "contado": 92857,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 120714
+   },
+   {
+    "meses": 5,
+    "precio": 136500
+   },
+   {
+    "meses": 8,
+    "precio": 148571
+   }
+  ]
+ },
+ {
+  "costo": 100129,
+  "divisor": 0.65,
+  "contado": 154044,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 200258
+   },
+   {
+    "meses": 5,
+    "precio": 226445
+   },
+   {
+    "meses": 8,
+    "precio": 246471
+   }
+  ]
+ },
+ {
+  "costo": 389619,
+  "divisor": 0.55,
+  "contado": 708398,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 920917
+   },
+   {
+    "meses": 5,
+    "precio": 1041345
+   },
+   {
+    "meses": 8,
+    "precio": 1133437
+   }
+  ]
+ },
+ {
+  "costo": 181068,
+  "divisor": 0.65,
+  "contado": 278566,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 362135
+   },
+   {
+    "meses": 5,
+    "precio": 409492
+   },
+   {
+    "meses": 8,
+    "precio": 445705
+   }
+  ]
+ },
+ {
+  "costo": 151900,
+  "divisor": 0.65,
+  "contado": 233692,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 303800
+   },
+   {
+    "meses": 5,
+    "precio": 343527
+   },
+   {
+    "meses": 8,
+    "precio": 373907
+   }
+  ]
+ },
+ {
+  "costo": 72952,
+  "divisor": 0.65,
+  "contado": 112233,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 145904
+   },
+   {
+    "meses": 5,
+    "precio": 164983
+   },
+   {
+    "meses": 8,
+    "precio": 179574
+   }
+  ]
+ },
+ {
+  "costo": 465700,
+  "divisor": 0.7,
+  "contado": 665285,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 864871
+   },
+   {
+    "meses": 5,
+    "precio": 977970
+   },
+   {
+    "meses": 8,
+    "precio": 1064457
+   }
+  ]
+ },
+ {
+  "costo": 1789248.5,
+  "divisor": 0.7,
+  "contado": 2556069,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 3322890
+   },
+   {
+    "meses": 5,
+    "precio": 3757421
+   },
+   {
+    "meses": 8,
+    "precio": 4089710
+   }
+  ]
+ },
+ {
+  "costo": 701939,
+  "divisor": 0.55,
+  "contado": 1276252,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1659128
+   },
+   {
+    "meses": 5,
+    "precio": 1876091
+   },
+   {
+    "meses": 8,
+    "precio": 2042004
+   }
+  ]
+ },
+ {
+  "costo": 52847,
+  "divisor": 0.55,
+  "contado": 96085,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 124911
+   },
+   {
+    "meses": 5,
+    "precio": 141245
+   },
+   {
+    "meses": 8,
+    "precio": 153736
+   }
+  ]
+ },
+ {
+  "costo": 178512,
+  "divisor": 0.65,
+  "contado": 274633,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 357023
+   },
+   {
+    "meses": 5,
+    "precio": 403711
+   },
+   {
+    "meses": 8,
+    "precio": 439414
+   }
+  ]
+ },
+ {
+  "costo": 40468,
+  "divisor": 0.55,
+  "contado": 73578,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 95651
+   },
+   {
+    "meses": 5,
+    "precio": 108159
+   },
+   {
+    "meses": 8,
+    "precio": 117725
+   }
+  ]
+ },
+ {
+  "costo": 50000,
+  "divisor": 0.65,
+  "contado": 76923,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 100000
+   },
+   {
+    "meses": 5,
+    "precio": 113076
+   },
+   {
+    "meses": 8,
+    "precio": 123076
+   }
+  ]
+ },
+ {
+  "costo": 86487,
+  "divisor": 0.65,
+  "contado": 133056,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 172973
+   },
+   {
+    "meses": 5,
+    "precio": 195593
+   },
+   {
+    "meses": 8,
+    "precio": 212891
+   }
+  ]
+ },
+ {
+  "costo": 739950,
+  "divisor": 0.7,
+  "contado": 1057071,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1374192
+   },
+   {
+    "meses": 5,
+    "precio": 1553895
+   },
+   {
+    "meses": 8,
+    "precio": 1691314
+   }
+  ]
+ },
+ {
+  "costo": 304262,
+  "divisor": 0.55,
+  "contado": 553203,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 719164
+   },
+   {
+    "meses": 5,
+    "precio": 813209
+   },
+   {
+    "meses": 8,
+    "precio": 885125
+   }
+  ]
+ },
+ {
+  "costo": 1699750,
+  "divisor": 0.7,
+  "contado": 2428214,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 3156678
+   },
+   {
+    "meses": 5,
+    "precio": 3569475
+   },
+   {
+    "meses": 8,
+    "precio": 3885142
+   }
+  ]
+ },
+ {
+  "costo": 70975,
+  "divisor": 0.65,
+  "contado": 109192,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 141950
+   },
+   {
+    "meses": 5,
+    "precio": 160512
+   },
+   {
+    "meses": 8,
+    "precio": 174707
+   }
+  ]
+ },
+ {
+  "costo": 36997,
+  "divisor": 0.55,
+  "contado": 67267,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 87447
+   },
+   {
+    "meses": 5,
+    "precio": 98882
+   },
+   {
+    "meses": 8,
+    "precio": 107627
+   }
+  ]
+ },
+ {
+  "costo": 137900,
+  "divisor": 0.65,
+  "contado": 212153,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 275800
+   },
+   {
+    "meses": 5,
+    "precio": 311866
+   },
+   {
+    "meses": 8,
+    "precio": 339446
+   }
+  ]
+ },
+ {
+  "costo": 1200000,
+  "divisor": 0.55,
+  "contado": 2181818,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 2836363
+   },
+   {
+    "meses": 5,
+    "precio": 3207272
+   },
+   {
+    "meses": 8,
+    "precio": 3490909
+   }
+  ]
+ },
+ {
+  "costo": 380243,
+  "divisor": 0.65,
+  "contado": 584989,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 760486
+   },
+   {
+    "meses": 5,
+    "precio": 859934
+   },
+   {
+    "meses": 8,
+    "precio": 935982
+   }
+  ]
+ },
+ {
+  "costo": 791337,
+  "divisor": 0.55,
+  "contado": 1438794,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1870432
+   },
+   {
+    "meses": 5,
+    "precio": 2115027
+   },
+   {
+    "meses": 8,
+    "precio": 2302071
+   }
+  ]
+ },
+ {
+  "costo": 106857,
+  "divisor": 0.65,
+  "contado": 164395,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 213713
+   },
+   {
+    "meses": 5,
+    "precio": 241661
+   },
+   {
+    "meses": 8,
+    "precio": 263032
+   }
+  ]
+ },
+ {
+  "costo": 91679,
+  "divisor": 0.65,
+  "contado": 141044,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 183358
+   },
+   {
+    "meses": 5,
+    "precio": 207335
+   },
+   {
+    "meses": 8,
+    "precio": 225671
+   }
+  ]
+ },
+ {
+  "costo": 114900,
+  "divisor": 0.65,
+  "contado": 176769,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 229799
+   },
+   {
+    "meses": 5,
+    "precio": 259850
+   },
+   {
+    "meses": 8,
+    "precio": 282830
+   }
+  ]
+ },
+ {
+  "costo": 62232,
+  "divisor": 0.65,
+  "contado": 95741,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 124463
+   },
+   {
+    "meses": 5,
+    "precio": 140740
+   },
+   {
+    "meses": 8,
+    "precio": 153186
+   }
+  ]
+ },
+ {
+  "costo": 1089990,
+  "divisor": 0.7,
+  "contado": 1557128,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 2024267
+   },
+   {
+    "meses": 5,
+    "precio": 2288979
+   },
+   {
+    "meses": 8,
+    "precio": 2491405
+   }
+  ]
+ },
+ {
+  "costo": 1464940,
+  "divisor": 0.7,
+  "contado": 2092771,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 2720602
+   },
+   {
+    "meses": 5,
+    "precio": 3076374
+   },
+   {
+    "meses": 8,
+    "precio": 3348434
+   }
+  ]
+ },
+ {
+  "costo": 219685,
+  "divisor": 0.65,
+  "contado": 337976,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 439370
+   },
+   {
+    "meses": 5,
+    "precio": 496826
+   },
+   {
+    "meses": 8,
+    "precio": 540763
+   }
+  ]
+ },
+ {
+  "costo": 159970,
+  "divisor": 0.55,
+  "contado": 290854,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 378110
+   },
+   {
+    "meses": 5,
+    "precio": 427556
+   },
+   {
+    "meses": 8,
+    "precio": 465367
+   }
+  ]
+ },
+ {
+  "costo": 546448.3,
+  "divisor": 0.7,
+  "contado": 780640,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1014832
+   },
+   {
+    "meses": 5,
+    "precio": 1147541
+   },
+   {
+    "meses": 8,
+    "precio": 1249024
+   }
+  ]
+ },
+ {
+  "costo": 60000,
+  "divisor": 0.7,
+  "contado": 85714,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 111428
+   },
+   {
+    "meses": 5,
+    "precio": 126000
+   },
+   {
+    "meses": 8,
+    "precio": 137142
+   }
+  ]
+ },
+ {
+  "costo": 40900,
+  "divisor": 0.65,
+  "contado": 62923,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 81800
+   },
+   {
+    "meses": 5,
+    "precio": 92496
+   },
+   {
+    "meses": 8,
+    "precio": 100676
+   }
+  ]
+ },
+ {
+  "costo": 854977,
+  "divisor": 0.7,
+  "contado": 1221395,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1587814
+   },
+   {
+    "meses": 5,
+    "precio": 1795451
+   },
+   {
+    "meses": 8,
+    "precio": 1954233
+   }
+  ]
+ },
+ {
+  "costo": 248500,
+  "divisor": 0.65,
+  "contado": 382307,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 497000
+   },
+   {
+    "meses": 5,
+    "precio": 561992
+   },
+   {
+    "meses": 8,
+    "precio": 611692
+   }
+  ]
+ },
+ {
+  "costo": 99855.86,
+  "divisor": 0.65,
+  "contado": 153624,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 199711
+   },
+   {
+    "meses": 5,
+    "precio": 225827
+   },
+   {
+    "meses": 8,
+    "precio": 245799
+   }
+  ]
+ },
+ {
+  "costo": 1558979,
+  "divisor": 0.7,
+  "contado": 2227112,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 2895246
+   },
+   {
+    "meses": 5,
+    "precio": 3273855
+   },
+   {
+    "meses": 8,
+    "precio": 3563380
+   }
+  ]
+ },
+ {
+  "costo": 635000,
+  "divisor": 0.65,
+  "contado": 976923,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1270000
+   },
+   {
+    "meses": 5,
+    "precio": 1436076
+   },
+   {
+    "meses": 8,
+    "precio": 1563076
+   }
+  ]
+ },
+ {
+  "costo": 46772,
+  "divisor": 0.65,
+  "contado": 71956,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 93544
+   },
+   {
+    "meses": 5,
+    "precio": 105776
+   },
+   {
+    "meses": 8,
+    "precio": 115131
+   }
+  ]
+ },
+ {
+  "costo": 73938,
+  "divisor": 0.65,
+  "contado": 113750,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 147876
+   },
+   {
+    "meses": 5,
+    "precio": 167213
+   },
+   {
+    "meses": 8,
+    "precio": 182001
+   }
+  ]
+ },
+ {
+  "costo": 94010,
+  "divisor": 0.65,
+  "contado": 144630,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 188020
+   },
+   {
+    "meses": 5,
+    "precio": 212607
+   },
+   {
+    "meses": 8,
+    "precio": 231409
+   }
+  ]
+ },
+ {
+  "costo": 70175,
+  "divisor": 0.65,
+  "contado": 107961,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 140350
+   },
+   {
+    "meses": 5,
+    "precio": 158703
+   },
+   {
+    "meses": 8,
+    "precio": 172738
+   }
+  ]
+ },
+ {
+  "costo": 56000,
+  "divisor": 0.65,
+  "contado": 86153,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 112000
+   },
+   {
+    "meses": 5,
+    "precio": 126646
+   },
+   {
+    "meses": 8,
+    "precio": 137846
+   }
+  ]
+ },
+ {
+  "costo": 40726,
+  "divisor": 0.65,
+  "contado": 62655,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 81452
+   },
+   {
+    "meses": 5,
+    "precio": 92103
+   },
+   {
+    "meses": 8,
+    "precio": 100248
+   }
+  ]
+ },
+ {
+  "costo": 304262,
+  "divisor": 0.55,
+  "contado": 553203,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 719164
+   },
+   {
+    "meses": 5,
+    "precio": 813209
+   },
+   {
+    "meses": 8,
+    "precio": 885125
+   }
+  ]
+ },
+ {
+  "costo": 184286,
+  "divisor": 0.65,
+  "contado": 283516,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 368572
+   },
+   {
+    "meses": 5,
+    "precio": 416769
+   },
+   {
+    "meses": 8,
+    "precio": 453627
+   }
+  ]
+ },
+ {
+  "costo": 1900147,
+  "divisor": 0.7,
+  "contado": 2714495,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 3528844
+   },
+   {
+    "meses": 5,
+    "precio": 3990308
+   },
+   {
+    "meses": 8,
+    "precio": 4343193
+   }
+  ]
+ },
+ {
+  "costo": 99371.88,
+  "divisor": 0.65,
+  "contado": 152879,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 198743
+   },
+   {
+    "meses": 5,
+    "precio": 224733
+   },
+   {
+    "meses": 8,
+    "precio": 244607
+   }
+  ]
+ },
+ {
+  "costo": 123395,
+  "divisor": 0.55,
+  "contado": 224354,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 291660
+   },
+   {
+    "meses": 5,
+    "precio": 329801
+   },
+   {
+    "meses": 8,
+    "precio": 358967
+   }
+  ]
+ },
+ {
+  "costo": 235000,
+  "divisor": 0.7,
+  "contado": 335714,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 436428
+   },
+   {
+    "meses": 5,
+    "precio": 493500
+   },
+   {
+    "meses": 8,
+    "precio": 537142
+   }
+  ]
+ },
+ {
+  "costo": 173000,
+  "divisor": 0.65,
+  "contado": 266153,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 345999
+   },
+   {
+    "meses": 5,
+    "precio": 391246
+   },
+   {
+    "meses": 8,
+    "precio": 425846
+   }
+  ]
+ },
+ {
+  "costo": 114011,
+  "divisor": 0.65,
+  "contado": 175401,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 228022
+   },
+   {
+    "meses": 5,
+    "precio": 257840
+   },
+   {
+    "meses": 8,
+    "precio": 280642
+   }
+  ]
+ },
+ {
+  "costo": 130000,
+  "divisor": 0.55,
+  "contado": 236363,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 307272
+   },
+   {
+    "meses": 5,
+    "precio": 347454
+   },
+   {
+    "meses": 8,
+    "precio": 378181
+   }
+  ]
+ },
+ {
+  "costo": 481208,
+  "divisor": 0.7,
+  "contado": 687440,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 893672
+   },
+   {
+    "meses": 5,
+    "precio": 1010536
+   },
+   {
+    "meses": 8,
+    "precio": 1099904
+   }
+  ]
+ },
+ {
+  "costo": 250000,
+  "divisor": 0.55,
+  "contado": 454545,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 590909
+   },
+   {
+    "meses": 5,
+    "precio": 668181
+   },
+   {
+    "meses": 8,
+    "precio": 727272
+   }
+  ]
+ },
+ {
+  "costo": 1290000,
+  "divisor": 0.7,
+  "contado": 1842857,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 2395714
+   },
+   {
+    "meses": 5,
+    "precio": 2709000
+   },
+   {
+    "meses": 8,
+    "precio": 2948571
+   }
+  ]
+ },
+ {
+  "costo": 1018978,
+  "divisor": 0.7,
+  "contado": 1455682,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1892387
+   },
+   {
+    "meses": 5,
+    "precio": 2139853
+   },
+   {
+    "meses": 8,
+    "precio": 2329092
+   }
+  ]
+ },
+ {
+  "costo": 180000,
+  "divisor": 0.55,
+  "contado": 327272,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 425454
+   },
+   {
+    "meses": 5,
+    "precio": 481090
+   },
+   {
+    "meses": 8,
+    "precio": 523636
+   }
+  ]
+ },
+ {
+  "costo": 176395,
+  "divisor": 0.65,
+  "contado": 271376,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 352790
+   },
+   {
+    "meses": 5,
+    "precio": 398924
+   },
+   {
+    "meses": 8,
+    "precio": 434203
+   }
+  ]
+ },
+ {
+  "costo": 94389,
+  "divisor": 0.65,
+  "contado": 145213,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 188778
+   },
+   {
+    "meses": 5,
+    "precio": 213464
+   },
+   {
+    "meses": 8,
+    "precio": 232342
+   }
+  ]
+ },
+ {
+  "costo": 93162,
+  "divisor": 0.65,
+  "contado": 143326,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 186324
+   },
+   {
+    "meses": 5,
+    "precio": 210689
+   },
+   {
+    "meses": 8,
+    "precio": 229321
+   }
+  ]
+ },
+ {
+  "costo": 508978,
+  "divisor": 0.7,
+  "contado": 727111,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 945244
+   },
+   {
+    "meses": 5,
+    "precio": 1068853
+   },
+   {
+    "meses": 8,
+    "precio": 1163378
+   }
+  ]
+ },
+ {
+  "costo": 89789,
+  "divisor": 0.65,
+  "contado": 138136,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 179577
+   },
+   {
+    "meses": 5,
+    "precio": 203061
+   },
+   {
+    "meses": 8,
+    "precio": 221019
+   }
+  ]
+ },
+ {
+  "costo": 797042,
+  "divisor": 0.7,
+  "contado": 1138631,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1480220
+   },
+   {
+    "meses": 5,
+    "precio": 1673788
+   },
+   {
+    "meses": 8,
+    "precio": 1821810
+   }
+  ]
+ },
+ {
+  "costo": 1290900,
+  "divisor": 0.7,
+  "contado": 1844142,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 2397385
+   },
+   {
+    "meses": 5,
+    "precio": 2710890
+   },
+   {
+    "meses": 8,
+    "precio": 2950628
+   }
+  ]
+ },
+ {
+  "costo": 989902,
+  "divisor": 0.7,
+  "contado": 1414145,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1838389
+   },
+   {
+    "meses": 5,
+    "precio": 2078794
+   },
+   {
+    "meses": 8,
+    "precio": 2262633
+   }
+  ]
+ },
+ {
+  "costo": 484000,
+  "divisor": 0.7,
+  "contado": 691428,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 898857
+   },
+   {
+    "meses": 5,
+    "precio": 1016400
+   },
+   {
+    "meses": 8,
+    "precio": 1106285
+   }
+  ]
+ },
+ {
+  "costo": 464000,
+  "divisor": 0.7,
+  "contado": 662857,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 861714
+   },
+   {
+    "meses": 5,
+    "precio": 974400
+   },
+   {
+    "meses": 8,
+    "precio": 1060571
+   }
+  ]
+ },
+ {
+  "costo": 561000,
+  "divisor": 0.7,
+  "contado": 801428,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1041857
+   },
+   {
+    "meses": 5,
+    "precio": 1178100
+   },
+   {
+    "meses": 8,
+    "precio": 1282285
+   }
+  ]
+ },
+ {
+  "costo": 269900,
+  "divisor": 0.65,
+  "contado": 415230,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 539800
+   },
+   {
+    "meses": 5,
+    "precio": 610389
+   },
+   {
+    "meses": 8,
+    "precio": 664369
+   }
+  ]
+ },
+ {
+  "costo": 830000,
+  "divisor": 0.55,
+  "contado": 1509090,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 1961818
+   },
+   {
+    "meses": 5,
+    "precio": 2218363
+   },
+   {
+    "meses": 8,
+    "precio": 2414545
+   }
+  ]
+ },
+ {
+  "costo": 1380000,
+  "divisor": 0.55,
+  "contado": 2509090,
+  "plazos": [
+   {
+    "meses": 3,
+    "precio": 3261818
+   },
+   {
+    "meses": 5,
+    "precio": 3688363
+   },
+   {
+    "meses": 8,
+    "precio": 4014545
+   }
+  ]
+ },
+ {
+  "costo": 584500,
+  "divisor": 0.55,
+  "contado": 1062727,
+  "plazos": []
+ }
+]
