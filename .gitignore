@@ -69,3 +69,4 @@ src/**/*.js.map
 # error con `git add -A` y pesaban 1,2 MB de codigo de servicios duplicado.
 *.probe
 *.bak
+scripts/.tmp-*
