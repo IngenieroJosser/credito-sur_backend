@@ -26,6 +26,10 @@ import {
 } from './interes-credito';
 import { pesos } from '../common/dinero.util';
 import { randomUUID } from 'crypto';
+import {
+  esMarcadorDeCedula,
+  generarCedulaProvisional,
+} from './cedula-provisional';
 
 /**
  * El producto que las dos funciones de snapshot leen.
@@ -1660,19 +1664,37 @@ export class ImportacionesService {
     try {
       await this.prisma.$transaction(
         async (tx) => {
+          /**
+           * Traduccion `numero de amarre del archivo -> cedula guardada`.
+           *
+           * Hace falta porque en la plantilla la columna de cedula puede traer un numero
+           * corto (1, 2, 3…) que solo une las filas entre si, y el sistema le pone una
+           * cedula PROVISIONAL al crear el cliente. Los creditos del archivo apuntan al
+           * cliente por ese numero, asi que sin esta tabla quedarian colgados.
+           *
+           * Se llena tambien con las cedulas de verdad (se traducen a si mismas) para que
+           * la busqueda del credito sea una sola, sin ramas.
+           */
+          const cedulaPorAmarre = new Map<string, string>();
+          const cedulasProvisionalesUsadas = new Set<string>();
+
           for (const cli of clientes) {
             // Idempotencia por DNI o código
             // Se busca sin filtrar por eliminadoEn a proposito: si la cedula
             // ya existe pero el cliente estaba borrado, hay que darse cuenta.
+            // Con un numero de amarre NO se busca por `dni`: la cedula guardada es la
+            // provisional, no el "1" del archivo. Buscar por dni ahi encontraria a
+            // cualquier cliente que de verdad tenga la cedula 1.
+            const esAmarre = esMarcadorDeCedula(cli.cc);
             const existente = await tx.cliente.findFirst({
               where: {
                 OR: [
-                  { dni: cli.cc },
+                  ...(esAmarre ? [] : [{ dni: cli.cc }]),
                   { codigo: cli.codigoImp },
                   { idempotencyKey: cli.codigoImp },
                 ],
               },
-              select: { id: true, eliminadoEn: true },
+              select: { id: true, eliminadoEn: true, dni: true },
             });
 
             // Un cliente borrado que vuelve a aparecer en una importacion se
@@ -1731,15 +1753,25 @@ export class ImportacionesService {
             }
 
             if (existente) {
+              // Aunque no se cree nada, el credito de este archivo tiene que encontrarlo.
+              cedulaPorAmarre.set(cli.cc, existente.dni);
               clientesOmitidos++;
               continue;
             }
+
+            // La cedula que se guarda: la del archivo si es real, o una provisional
+            // (empieza por 99) si lo que vino es un numero de amarre.
+            const dniAGuardar = esAmarre
+              ? generarCedulaProvisional(cedulasProvisionalesUsadas)
+              : cli.cc;
+            if (esAmarre) cedulasProvisionalesUsadas.add(dniAGuardar);
+            cedulaPorAmarre.set(cli.cc, dniAGuardar);
 
             const clienteCreado = await tx.cliente.create({
               data: {
                 codigo: cli.codigoImp || cli.cc, // Fallback si no viene algo único
                 idempotencyKey: cli.codigoImp, // Usamos el código importación del excel
-                dni: cli.cc,
+                dni: dniAGuardar,
                 nombres: cli.nombres,
                 apellidos: cli.apellidos,
                 correo: cli.correo || null,
@@ -1921,9 +1953,13 @@ export class ImportacionesService {
               continue;
             }
 
-            // Buscar cliente
+            // Buscar cliente. `cedulaPorAmarre` traduce el numero del archivo a la cedula
+            // que de verdad quedo guardada: si el cliente se creo con cedula provisional,
+            // buscarlo por el "1" del archivo no lo encontraria.
+            const dniDelCliente =
+              cedulaPorAmarre.get(cred.ccCliente) ?? cred.ccCliente;
             const cliente = await tx.cliente.findUnique({
-              where: { dni: cred.ccCliente },
+              where: { dni: dniDelCliente },
               select: { id: true },
             });
 

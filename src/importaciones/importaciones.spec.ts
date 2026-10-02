@@ -1172,6 +1172,105 @@ describe('Acción ACTUALIZAR', () => {
     ]);
   });
 
+  /**
+   * La carga de cartera vieja: de los clientes que solo tuvieron crédito de DINERO la
+   * empresa no tiene la cédula, así que en la plantilla se escribe un número corto para
+   * amarrar las filas y el sistema le pone una cédula provisional al importar.
+   */
+  it('acepta un número de amarre corto en la cédula y lo avisa', async () => {
+    const plantilla =
+      await generarPlantillaClientesCreditos(datosPlantillaVacios);
+    const archivo = await editarLibro(plantilla.data, (workbook) => {
+      escribirFila(workbook.getWorksheet('Clientes')!, FILA_DATOS, {
+        'Ruta código': 'RT-01',
+        'CC cliente': '1',
+        Nombres: 'Sin',
+        Apellidos: 'Cédula',
+        Teléfono: '3001111111',
+      });
+    });
+
+    const resultado = await new ClientesCreditosParser(
+      prismaMock(),
+    ).parseAndValidate(archivo, 'clientes.xlsx');
+
+    expect(resultado.errores).toEqual([]);
+    expect(resultado.advertencias).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          campo: 'cc',
+          mensaje: expect.stringContaining('PROVISIONAL'),
+        }),
+      ]),
+    );
+  });
+
+  it('rechaza dos clientes con el mismo número de amarre', async () => {
+    // Si se repitiera, los créditos del archivo no sabrían de quién son.
+    const plantilla =
+      await generarPlantillaClientesCreditos(datosPlantillaVacios);
+    const archivo = await editarLibro(plantilla.data, (workbook) => {
+      const hoja = workbook.getWorksheet('Clientes')!;
+      escribirFila(hoja, FILA_DATOS, {
+        'Ruta código': 'RT-01',
+        'CC cliente': '1',
+        Nombres: 'Uno',
+        Apellidos: 'Primero',
+        Teléfono: '3001111111',
+      });
+      escribirFila(hoja, FILA_DATOS + 1, {
+        'Ruta código': 'RT-01',
+        'CC cliente': '1',
+        Nombres: 'Otro',
+        Apellidos: 'Distinto',
+        Teléfono: '3002222222',
+      });
+    });
+
+    const resultado = await new ClientesCreditosParser(
+      prismaMock(),
+    ).parseAndValidate(archivo, 'clientes.xlsx');
+
+    expect(resultado.errores).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          campo: 'cc',
+          mensaje: expect.stringContaining('número de amarre'),
+        }),
+      ]),
+    );
+  });
+
+  it('no deja ACTUALIZAR con un número de amarre', async () => {
+    // A un cliente con cédula provisional no se lo puede encontrar por el número del
+    // archivo: su cédula guardada es otra. Sin este corte se crearía un duplicado.
+    const plantilla =
+      await generarPlantillaClientesCreditos(datosPlantillaVacios);
+    const archivo = await editarLibro(plantilla.data, (workbook) => {
+      escribirFila(workbook.getWorksheet('Clientes')!, FILA_DATOS, {
+        Acción: 'ACTUALIZAR',
+        'Ruta código': 'RT-01',
+        'CC cliente': '2',
+        Nombres: 'Sin',
+        Apellidos: 'Cédula',
+        Teléfono: '3001111111',
+      });
+    });
+
+    const resultado = await new ClientesCreditosParser(
+      prismaMock(),
+    ).parseAndValidate(archivo, 'clientes.xlsx');
+
+    expect(resultado.errores).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          campo: 'cc',
+          mensaje: expect.stringContaining('cédula real'),
+        }),
+      ]),
+    );
+  });
+
   it('sugiere ACTUALIZAR cuando se intenta crear una cédula existente', async () => {
     const plantilla =
       await generarPlantillaClientesCreditos(datosPlantillaVacios);

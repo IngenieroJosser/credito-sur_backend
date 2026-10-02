@@ -1,4 +1,5 @@
 import * as ExcelJS from 'exceljs';
+import { esMarcadorDeCedula } from '../cedula-provisional';
 import {
   ResultadoValidacion,
   ErrorValidacion,
@@ -498,6 +499,43 @@ export class ClientesCreditosParser {
             'el que el sistema distingue a una persona de otra.',
           cc,
         );
+      } else if (esMarcadorDeCedula(cc)) {
+        // Un número corto (1, 2, 3…) NO es una cédula: es el número con el que la plantilla
+        // amarra las filas de un mismo cliente. Se acepta y el sistema le pondrá una cédula
+        // provisional al importar. Va como ADVERTENCIA y no como error porque la fila se
+        // puede cargar, pero quien importa tiene que saber que ese cliente queda con un
+        // número inventado y hay que corregirlo.
+        if (ccsClientes.has(cc)) {
+          // Dos clientes con el mismo numero de amarre dejarian sus creditos sin saber de
+          // quien son: el numero tiene que ser unico en el archivo, igual que una cedula.
+          addError(
+            'cc',
+            `El número de amarre "${cc}" ya aparece en otra fila. Use uno distinto por cliente (1, 2, 3…): es lo que une a cada cliente con sus créditos.`,
+            cc,
+          );
+        } else if (esActualizacion) {
+          // Con ACTUALIZAR hay que encontrar al cliente que ya existe, y a un cliente con
+          // cedula provisional no se lo puede encontrar por el numero del archivo: su
+          // cedula guardada es otra. Sin este corte se crearia un cliente duplicado.
+          addError(
+            'cc',
+            `Para ACTUALIZAR hace falta la cédula real del cliente. "${cc}" es un número de amarre y no identifica a nadie en el sistema.`,
+            cc,
+          );
+        } else {
+          advertencias.push({
+            hoja: SHEET_DISPLAY.clientes,
+            fila: rowNumber,
+            campo: 'cc',
+            mensaje:
+              `"${cc}" se tomará como número de amarre, no como cédula: al importar, el ` +
+              'sistema le asignará una cédula PROVISIONAL (empieza por 99). Corríjala en ' +
+              'cuanto tenga la cédula real; hasta entonces ese cliente no se puede buscar ' +
+              'por documento.',
+            valor: cc,
+          });
+        }
+        ccsClientes.add(cc);
       } else if (!/^\d{6,10}$/.test(cc)) {
         addError(
           'cc',

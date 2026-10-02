@@ -16,7 +16,7 @@
     "start:prod": "node scripts/ensure-prisma-client.js && node scripts/resolve-route-activation-migration.js && node scripts/migrate-deploy.js && node dist/main.js",
     "lint": "eslint \"{src,test}/**/*.ts\"",
     "test": "jest",
-    "seed": "ts-node -r tsconfig-paths-register src/prisma/seed.ts",
+    "seed": "ts-node -r tsconfig-paths/register src/prisma/seed.ts",
     "revert:payment": "node scripts/revert-payment.js",
     "postinstall": "node scripts/ensure-prisma-client.js"
   },
