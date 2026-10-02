@@ -72,6 +72,10 @@ describe('Una jornada completa contra la base de datos', () => {
   let rutaId = '';
   let cajaCreadaAqui = false;
   let prestamoId = '';
+  let reprogramacionId = '';
+  let cuotaAReprogramar = '';
+  let fechaOriginal: Date;
+  let nuevaFecha = '';
 
   beforeAll(async () => {
     if (!hayBase) return;
@@ -171,6 +175,9 @@ describe('Una jornada completa contra la base de datos', () => {
         });
       }
       await prisma.pago.deleteMany({ where: { prestamoId } });
+      // La aprobación apunta al préstamo por `referenciaId`, no por una clave foránea; sus
+      // efectos provisionales caen solos con ella (onDelete: Cascade).
+      await prisma.aprobacion.deleteMany({ where: { referenciaId: prestamoId } });
       await prisma.cuota.deleteMany({ where: { prestamoId } });
       await prisma.prestamo.deleteMany({ where: { id: prestamoId } });
     }
@@ -340,7 +347,111 @@ describe('Una jornada completa contra la base de datos', () => {
       expect(Number(pagos[0].montoTotal)).toBe(monto);
     }, 120000);
 
-    it('7. al pagar todas, el préstamo queda saldado y sin cuotas pendientes', async () => {
+    it('7. se pide reprogramar una cuota que aún no se ha cobrado', async () => {
+      // Lo que pasa en la calle: el cliente no tiene con qué el día que toca y pide otra
+      // fecha. Y aquí está el detalle que importa, medido y no supuesto: la cuota SE MUEVE
+      // YA, sin esperar a que nadie apruebe. Es un efecto provisional —la aprobación queda
+      // PENDIENTE y lo confirma después—, de modo que el cobrador deja de ver esa cuota
+      // vencida al instante. Quien lea esto esperando lo contrario se equivoca: lo que
+      // falta por aprobar no es el cambio, es su confirmación.
+      const cuota = await prisma.cuota.findFirstOrThrow({
+        where: { prestamoId, estado: { not: 'PAGADA' } },
+        orderBy: { numeroCuota: 'asc' },
+      });
+      cuotaAReprogramar = cuota.id;
+      fechaOriginal = cuota.fechaVencimiento;
+
+      // La nueva fecha se cuenta desde HOY y no desde el vencimiento: el sistema no
+      // admite pasar de 30 días desde hoy en un crédito mensual. Pedir "quince días más"
+      // sobre una cuota que vence dentro de dos meses lo rechaza, y con razón: sería
+      // aplazar a tres meses vista.
+      const nueva = new Date();
+      nueva.setDate(nueva.getDate() + 20);
+      nuevaFecha = nueva.toISOString().slice(0, 10);
+
+      const solicitud = await loans.solicitarReprogramacion({
+        prestamoId,
+        cuotaId: cuota.id,
+        nuevaFecha,
+        motivo: 'El cliente pidió quince días más',
+        solicitadoPorId: usuarioId,
+      });
+
+      reprogramacionId = (solicitud as { aprobacion: { id: string } }).aprobacion.id;
+      expect(reprogramacionId).toBeTruthy();
+
+      const aprobacion = await prisma.aprobacion.findUniqueOrThrow({
+        where: { id: reprogramacionId },
+      });
+      expect(aprobacion.estado).toBe('PENDIENTE');
+
+      const tras = await prisma.cuota.findUniqueOrThrow({ where: { id: cuota.id } });
+      expect(tras.fechaVencimiento).not.toEqual(fechaOriginal);
+      expect(tras.fechaVencimiento.toISOString().slice(0, 10)).toBe(nuevaFecha);
+
+      // Y queda el rastro de que está pendiente de confirmar.
+      const efectos = await prisma.efectoProvisional.findMany({
+        where: { aprobacionId: reprogramacionId },
+      });
+      expect(efectos).toHaveLength(1);
+      expect(efectos[0].estado).toBe('PENDIENTE_REVISION');
+    }, 120000);
+
+    it('8. aprobarla confirma el cambio y cierra la solicitud', async () => {
+      await loans.aprobarReprogramacion(reprogramacionId, usuarioId);
+
+      const [aprobacion, cuota, efectos] = await Promise.all([
+        prisma.aprobacion.findUniqueOrThrow({ where: { id: reprogramacionId } }),
+        prisma.cuota.findUniqueOrThrow({ where: { id: cuotaAReprogramar } }),
+        prisma.efectoProvisional.findMany({
+          where: { aprobacionId: reprogramacionId },
+        }),
+      ]);
+
+      expect(aprobacion.estado).toBe('APROBADO');
+      // El efecto deja de estar en revisión: el cambio ya es firme.
+      expect(efectos[0].estado).toBe('CONFIRMADO');
+      // Y la fecha sigue siendo la pedida: aprobar confirma, no vuelve a mover.
+      expect(cuota.fechaVencimiento.toISOString().slice(0, 10)).toBe(nuevaFecha);
+    }, 120000);
+
+    it('9. no deja aplazar más allá del tope del crédito mensual', async () => {
+      // La regla que protege la cartera: un crédito mensual no se puede correr más de 30
+      // días desde hoy. Sin este tope, reprogramar sería una forma de no cobrar nunca.
+      const cuota = await prisma.cuota.findFirstOrThrow({
+        where: { prestamoId, estado: { not: 'PAGADA' } },
+        orderBy: { numeroCuota: 'asc' },
+      });
+      const demasiadoLejos = new Date();
+      demasiadoLejos.setDate(demasiadoLejos.getDate() + 90);
+
+      await expect(
+        loans.solicitarReprogramacion({
+          prestamoId,
+          cuotaId: cuota.id,
+          nuevaFecha: demasiadoLejos.toISOString().slice(0, 10),
+          motivo: 'Intento de aplazar tres meses',
+          solicitadoPorId: usuarioId,
+        }),
+      ).rejects.toThrow(/30 días/);
+    }, 60000);
+
+    it('10. reprogramar no cambia lo que el cliente debe', async () => {
+      // Lo que más importa y lo más fácil de romper: correr una fecha no puede alterar
+      // el saldo ni la suma de las cuotas. Si al reprogramar se recalculara el interés
+      // sin querer, el cliente acabaría debiendo más por haber pedido un plazo.
+      const [prestamo, cuotas] = await Promise.all([
+        prisma.prestamo.findUniqueOrThrow({ where: { id: prestamoId } }),
+        prisma.cuota.findMany({ where: { prestamoId } }),
+      ]);
+
+      const total = Number(prestamo.monto) + Number(prestamo.interesTotal);
+      const sumaCuotas = cuotas.reduce((t, c) => t + Number(c.monto), 0);
+      expect(sumaCuotas).toBe(total);
+      expect(cuotas).toHaveLength(CUOTAS);
+    }, 60000);
+
+    it('11. al pagar todas, el préstamo queda saldado y sin cuotas pendientes', async () => {
       const pendientes = await prisma.cuota.findMany({
         where: { prestamoId, estado: { not: 'PAGADA' } },
         orderBy: { numeroCuota: 'asc' },
@@ -368,7 +479,7 @@ describe('Una jornada completa contra la base de datos', () => {
       expect(prestamo.estado).toBe('PAGADO');
     }, 180000);
 
-    it('8. lo cobrado coincide con el total del préstamo', async () => {
+    it('12. lo cobrado coincide con el total del préstamo', async () => {
       const [prestamo, pagos] = await Promise.all([
         prisma.prestamo.findUniqueOrThrow({ where: { id: prestamoId } }),
         prisma.pago.findMany({ where: { prestamoId } }),
