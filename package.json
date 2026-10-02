@@ -18,7 +18,9 @@
     "test": "jest",
     "seed": "ts-node -r tsconfig-paths-register src/prisma/seed.ts",
     "revert:payment": "node scripts/revert-payment.js",
-    "postinstall": "prisma generate --schema src/prisma/schema.prisma"
+    "postinstall": "prisma generate --schema src/prisma/schema.prisma",
+    "pretest:integracion": "node scripts/preparar-base-de-pruebas.mjs",
+    "test:integracion": "jest --testPathPattern integracion"
   },
   "dependencies": {
     "@bull-board/api": "^6.21.3",
