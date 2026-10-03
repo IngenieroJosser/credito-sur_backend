@@ -625,7 +625,10 @@ export class ClientesCreditosParser {
         'Código del artículo',
         'Producto código',
       );
-      const creMonto = colsCre.indice('Monto');
+      // En préstamos de dinero es el capital entregado. En créditos de artículo
+      // es el precio total antes de la inicial. Se conserva "Monto" como alias
+      // para poder leer plantillas descargadas antes de aclarar el encabezado.
+      const creMonto = colsCre.indice('Precio total', 'Monto');
       const creCuotaInicial = colsCre.indice('Cuota inicial');
       const creTasaInteres = colsCre.indice('Tasa interés');
       const creTasaMora = colsCre.indice('Tasa interés mora');
@@ -961,14 +964,17 @@ export class ClientesCreditosParser {
         // repetir el genérico del monto solo confunde.
         let inicialCubreElPrecio = false;
 
-        if (esArticulo && montoEfectivo === null && productoCodigo) {
-          // Igual que createLoan: lo que se financia es el precio del plazo
-          // menos la cuota inicial, no el precio completo.
-          const precioPlazo = preciosPorPlazo.get(
-            `${productoCodigo}|${plazoMeses ?? ''}`,
-          );
+        if (esArticulo) {
+          // El valor manual y el precio del catálogo significan lo mismo: el
+          // precio total de venta antes de la inicial. Así quien migra una
+          // cartera sin catálogo no tiene que adivinar si "Monto" era precio o
+          // saldo financiado. Lo financiado siempre es precio - inicial.
+          const precioCatalogo = productoCodigo
+            ? preciosPorPlazo.get(`${productoCodigo}|${plazoMeses ?? ''}`)
+            : undefined;
+          const precioTotal = montoEfectivo ?? precioCatalogo;
 
-          if (precioPlazo && precioPlazo > 0) {
+          if (precioTotal && precioTotal > 0) {
             const inicial = Math.max(0, cuotaInicial ?? 0);
 
             // Si la inicial se come el precio no queda nada que financiar, y
@@ -976,31 +982,31 @@ export class ClientesCreditosParser {
             // para que diga cuál es el problema: antes caía en la validación
             // genérica del monto y salía "Debe ser un número mayor a 0" sobre
             // una columna que el usuario ni siquiera había llenado.
-            if (inicial >= precioPlazo) {
+            if (inicial >= precioTotal) {
               inicialCubreElPrecio = true;
               addError(
                 'cuota_inicial',
-                inicial > precioPlazo
-                  ? `La cuota inicial (${inicial}) es mayor que el precio del artículo a ${plazoMeses} meses (${precioPlazo}). Revise la inicial o el plazo.`
+                inicial > precioTotal
+                  ? `La cuota inicial (${inicial}) es mayor que el precio total del artículo (${precioTotal}). Revise la inicial o el precio.`
                   : `La cuota inicial (${inicial}) cubre todo el precio del artículo, así que no queda nada que financiar. Si el cliente pagó completo, es una venta de contado, no un crédito.`,
                 celda(row, creCuotaInicial),
               );
             }
 
-            montoEfectivo = Math.max(0, precioPlazo - inicial);
+            montoEfectivo = Math.max(0, precioTotal - inicial);
             if (!inicialCubreElPrecio) {
               addAdver(
                 'monto',
                 inicial > 0
-                  ? `Se financia el precio del plazo (${precioPlazo}) menos la cuota inicial (${inicial}): ${montoEfectivo}.`
-                  : `Se tomó el precio del plazo del artículo: ${precioPlazo}.`,
+                  ? `Se financia el precio total (${precioTotal}) menos la cuota inicial (${inicial}): ${montoEfectivo}.`
+                  : `Se tomó el precio total del artículo: ${precioTotal}.`,
                 montoEfectivo,
               );
             }
-          } else if (productosEnBd.has(productoCodigo)) {
+          } else if (productoCodigo && productosEnBd.has(productoCodigo)) {
             addError(
               'monto',
-              'El artículo no tiene precio para ese plazo. Escriba el monto a mano o agregue el precio en el inventario.',
+              'El artículo no tiene precio para ese plazo. Escriba el precio total a mano o agregue el precio en el inventario.',
               celda(row, creMonto),
             );
           }

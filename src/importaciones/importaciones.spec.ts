@@ -1357,15 +1357,66 @@ describe('Cuota inicial en créditos de artículo', () => {
     );
   });
 
-  it('respeta el monto escrito a mano por encima del cálculo', async () => {
+  it('resta la inicial del precio total escrito a mano', async () => {
     const resultado = await validarCreditoArticulo({
       ...creditoArticuloMinimo,
-      Monto: 400000,
+      'Precio total': 2140000,
       'Cuota inicial': 190000,
+      'Total abonado': 1216000,
     });
 
     expect(resultado.errores).toHaveLength(0);
-    expect(resultado.creditos?.[0].monto).toBe(400000);
+    expect(resultado.creditos?.[0].monto).toBe(1950000);
+    expect(resultado.creditos?.[0].saldoPendiente).toBe(734000);
+  });
+
+  it('rechaza una inicial que cubre el precio total escrito a mano', async () => {
+    const resultado = await validarCreditoArticulo({
+      ...creditoArticuloMinimo,
+      'Precio total': 600000,
+      'Cuota inicial': 600000,
+    });
+
+    expect(resultado.errores).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ campo: 'cuota_inicial' }),
+      ]),
+    );
+  });
+
+  it('aplica la misma resta al encabezado antiguo Monto', async () => {
+    const plantilla = await plantillaClientesCacheada();
+    const archivo = await editarLibro(plantilla.data, (workbook) => {
+      const hoja = workbook.getWorksheet('Créditos de artículo')!;
+      hoja.getRow(6).eachCell({ includeEmpty: false }, (celda) => {
+        if (normalizarEncabezado(celda.value) === 'PRECIO TOTAL') {
+          celda.value = 'Monto';
+        }
+      });
+      escribirFila(hoja, FILA_DATOS, {
+        ...creditoArticuloMinimo,
+        Monto: 2140000,
+        'Cuota inicial': 600000,
+        'Total abonado': 1216000,
+      });
+    });
+
+    const resultado = await new ClientesCreditosParser(
+      prismaMock({
+        clientes: [clienteEnBd],
+        productos: [
+          {
+            codigo: 'CEL-A15',
+            nombre: 'Samsung Galaxy A15',
+            precios: [{ meses: 3, precio: 690000 }],
+          },
+        ],
+      }),
+    ).parseAndValidate(archivo, 'plantilla-anterior.xlsx');
+
+    expect(resultado.errores).toHaveLength(0);
+    expect(resultado.creditos?.[0].monto).toBe(1540000);
+    expect(resultado.creditos?.[0].saldoPendiente).toBe(324000);
   });
 });
 
@@ -2114,13 +2165,16 @@ describe('La cuota inicial baja lo que se financia', () => {
 
     let columnaTotal = 0;
     let columnaInicial = 0;
+    let columnaPrecioTotal = 0;
     hoja.getRow(6).eachCell({ includeEmpty: false }, (celda, n) => {
       const encabezado = normalizarEncabezado(celda.value);
       if (encabezado.startsWith('TOTAL EN CUOTAS')) columnaTotal = n;
       if (encabezado === 'CUOTA INICIAL') columnaInicial = n;
+      if (encabezado === 'PRECIO TOTAL') columnaPrecioTotal = n;
     });
     expect(columnaTotal).toBeGreaterThan(0);
     expect(columnaInicial).toBeGreaterThan(0);
+    expect(columnaPrecioTotal).toBeGreaterThan(0);
 
     const formula = String(
       (hoja.getCell(7, columnaTotal).value as any)?.formula || '',
@@ -2128,6 +2182,8 @@ describe('La cuota inicial baja lo que se financia', () => {
     // La columna de la cuota inicial tiene que aparecer restando.
     const letraInicial = hoja.getColumn(columnaInicial).letter;
     expect(formula).toContain(`-IF($${letraInicial}7=""`);
+    const letraPrecioTotal = hoja.getColumn(columnaPrecioTotal).letter;
+    expect(formula).toContain(`MAX(0,$${letraPrecioTotal}7-IF(`);
     // Y nunca puede quedar negativo.
     expect(formula).toContain('MAX(0,');
   });

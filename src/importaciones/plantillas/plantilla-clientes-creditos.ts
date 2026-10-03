@@ -337,7 +337,12 @@ const COLUMNAS_CREDITOS_ARTICULO: ColumnaPlantilla[] = [
     width: 17,
     numFmt: FORMATO_FECHA,
   },
-  { header: 'Monto', key: 'monto', width: 15, numFmt: FORMATO_MONEDA },
+  {
+    header: 'Precio total',
+    key: 'monto',
+    width: 17,
+    numFmt: FORMATO_MONEDA,
+  },
   { header: 'Notas', key: 'notas', width: 26 },
   // Automáticas, al final
   {
@@ -1104,9 +1109,10 @@ export async function generarPlantillaClientesCreditos(
     // que el sistema iba a crear. Con 980.000 a 12 quincenas y 150.000 de
     // inicial, eran 81.666 contra 69.166: 12.500 por cuota.
     //
-    // Si se escribe el monto a mano no se resta nada, porque en ese caso el
-    // monto ya es lo que se financia. Es el mismo criterio del parser.
-    `IF(${ref(ART.monto)}<>"",${ref(ART.monto)},` +
+    // El valor manual también es precio total, no saldo financiado. La regla
+    // queda única y visible: precio (manual o catálogo) menos cuota inicial.
+    `IF(${ref(ART.monto)}<>"",` +
+      `MAX(0,${ref(ART.monto)}-IF(${ref(ART.cuotaInicial)}="",0,${ref(ART.cuotaInicial)})),` +
       `IF(ISNUMBER(${ref(ART.precioPlazo)}),` +
       `MAX(0,${ref(ART.precioPlazo)}-IF(${ref(ART.cuotaInicial)}="",0,${ref(ART.cuotaInicial)})),` +
       `""))`,
@@ -1178,13 +1184,13 @@ export async function generarPlantillaClientesCreditos(
           condicion: `OR(${ref(ART.cuotaInicial)}="",${ref(ART.cuotaInicial)}=0)`,
           mensaje: '"⚠ Falta la cuota inicial"',
         },
-        // Si la inicial cubre el precio no queda nada que financiar, y un
-        // crédito sin monto no es un crédito. Va guardada por ISNUMBER: sin
-        // precio en el catalogo no evalua, asi que no ensucia la columna.
+        // Si la inicial cubre el precio no queda nada que financiar. Se revisa
+        // contra el precio manual cuando existe y, si no, contra el catálogo.
         {
           condicion:
-            `AND(ISNUMBER(${ref(ART.precioPlazo)}),` +
-            `IF(${ref(ART.cuotaInicial)}="",0,${ref(ART.cuotaInicial)})>=${ref(ART.precioPlazo)})`,
+            `AND(OR(ISNUMBER(${ref(ART.monto)}),ISNUMBER(${ref(ART.precioPlazo)})),` +
+            `IF(${ref(ART.cuotaInicial)}="",0,${ref(ART.cuotaInicial)})>=` +
+            `IF(ISNUMBER(${ref(ART.monto)}),${ref(ART.monto)},${ref(ART.precioPlazo)}))`,
           mensaje:
             '"⚠ La cuota inicial cubre el precio del artículo: no queda nada que financiar"',
         },
@@ -1308,8 +1314,12 @@ export async function generarPlantillaClientesCreditos(
       '150.000  → lo que el cliente entregó al llevarse el artículo. Obligatoria: se resta del precio y el resto es lo que se financia',
     ],
     [
-      'Aquí no se escribe',
-      'Ni monto ni tasa: salen del precio del plazo, que ya trae el financiamiento',
+      'Aquí normalmente no se escribe',
+      'Ni precio total ni tasa: salen del precio del plazo, que ya trae el financiamiento',
+    ],
+    [
+      'Precio total (opcional)',
+      'Úselo solo si el artículo no tiene precio para ese plazo. Es el precio antes de la inicial; el sistema resta la inicial automáticamente.',
     ],
     ['', ''],
 
