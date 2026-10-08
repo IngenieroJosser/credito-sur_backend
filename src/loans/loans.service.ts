@@ -5907,4 +5907,37 @@ export class LoansService implements OnModuleInit {
 
     return generarPDFCartera(filas, totales, fechaStr);
   }
+
+  async getCuotasDeVariosPrestamos(
+    prestamoIds: string[],
+    actor?: { id?: string; rol?: RolUsuario } | null,
+  ) {
+    const ids = [...new Set(prestamoIds.filter((id) => !!id))];
+    if (ids.length === 0) return {};
+
+    const permitidos = await this.prisma.prestamo.findMany({
+      where: {
+        id: { in: ids },
+        eliminadoEn: null,
+        ...(this.isCollector(actor) ? this.collectorLoanScope(actor) : {}),
+      },
+      select: { id: true },
+    });
+
+    const idsPermitidos = permitidos.map((p) => p.id);
+    if (idsPermitidos.length === 0) return {};
+
+    const cuotas = await this.prisma.cuota.findMany({
+      where: { prestamoId: { in: idsPermitidos } },
+      orderBy: [{ prestamoId: 'asc' }, { numeroCuota: 'asc' }],
+    });
+
+    const porPrestamo: Record<string, typeof cuotas> = {};
+    // Se crea la entrada aunque el prestamo no tenga cuotas: quien llama distingue asi
+    // "no tiene cuotas" de "no te dejaron verlo", que son cosas distintas.
+    for (const id of idsPermitidos) porPrestamo[id] = [];
+    for (const cuota of cuotas) porPrestamo[cuota.prestamoId].push(cuota);
+
+    return porPrestamo;
+  }
 }

@@ -222,6 +222,46 @@ export class LoansController {
     }
   }
 
+
+  @Get('cuotas')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COBRADOR,
+    RolUsuario.CONTADOR,
+    RolUsuario.PUNTO_DE_VENTA,
+  )
+  @ApiOperation({
+    summary: 'Cuotas de varios prestamos en una sola peticion',
+    description:
+      'Recibe los ids separados por coma (?ids=a,b,c) y devuelve { [prestamoId]: Cuota[] }.',
+  })
+  @ApiQuery({
+    name: 'ids',
+    required: true,
+    description: 'Ids separados por coma',
+  })
+  async getCuotasDeVarios(
+    @Query('ids') ids: string,
+    @Request() req: RequestConUsuario,
+  ) {
+    const lista = String(ids || '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+
+    // Un tope explicito: sin el, una URL larga podria pedir las cuotas de miles de creditos
+    // en una sola consulta. 300 cubre de sobra el caso real (la descarga offline baja 200).
+    if (lista.length > 300) {
+      throw new BadRequestException(
+        'Demasiados creditos en una sola peticion: maximo 300.',
+      );
+    }
+
+    return this.loansService.getCuotasDeVariosPrestamos(lista, req.user);
+  }
   @Get(':id')
   @Roles(
     RolUsuario.SUPER_ADMINISTRADOR,
