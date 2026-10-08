@@ -1833,7 +1833,21 @@ export class ClientsService {
         },
         prestamos: {
           where: { eliminadoEn: null },
-          select: { id: true, estado: true, saldoPendiente: true },
+          select: {
+            id: true,
+            estado: true,
+            saldoPendiente: true,
+            // La cuota vencida más antigua sin pagar: con ella sale cuántos días de mora
+            // lleva el cliente. Se trae AQUÍ, en la misma consulta, porque si no el
+            // listado del frontend tenía que pedir el detalle de cada cliente para
+            // calcularlo: ocho clientes, ocho peticiones; trescientos, trescientas.
+            cuotas: {
+              where: { estado: { not: 'PAGADA' } },
+              orderBy: { fechaVencimiento: 'asc' },
+              take: 1,
+              select: { fechaVencimiento: true },
+            },
+          },
         },
       },
       orderBy: { creadoEn: 'desc' },
@@ -1878,6 +1892,28 @@ export class ClientsService {
         .reduce((s, p) => s + Number(p.saldoPendiente ?? 0), 0);
       const rutaNombre = c.asignacionesRuta?.[0]?.ruta?.nombre ?? '';
 
+      // Días de mora: los que lleva vencida la cuota impaga más antigua de todos sus
+      // créditos. Se calcula aquí y no en el navegador porque el frontend, para saberlo,
+      // tenía que traerse el detalle completo de cada cliente con sus préstamos y sus
+      // cuotas: una petición por fila del listado.
+      const hoy = new Date();
+      hoy.setHours(0, 0, 0, 0);
+      const vencimientos = c.prestamos
+        .map((p) => p.cuotas?.[0]?.fechaVencimiento)
+        .filter((f): f is Date => !!f);
+      const masAntigua = vencimientos.length
+        ? new Date(Math.min(...vencimientos.map((f) => f.getTime())))
+        : null;
+      let diasMora = 0;
+      if (masAntigua) {
+        masAntigua.setHours(0, 0, 0, 0);
+        const dias = Math.floor(
+          (hoy.getTime() - masAntigua.getTime()) / 86_400_000,
+        );
+        // Una cuota que aún no vence no es mora: sin este tope saldrían días negativos.
+        diasMora = Math.max(0, dias);
+      }
+
       return {
         codigo: c.codigo,
         nombres: c.nombres,
@@ -1891,6 +1927,7 @@ export class ClientsService {
         prestamosActivos,
         montoTotal,
         montoMora,
+        diasMora,
         rutaNombre,
         creadoEn: c.creadoEn,
       };
