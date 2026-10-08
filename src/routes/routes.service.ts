@@ -3644,6 +3644,35 @@ export class RoutesService {
             direccion: cliente.direccion,
             nivelRiesgo: cliente.nivelRiesgo,
             prestamosActivos: prestamosOperativos.length,
+            // Los dias que lleva vencida la cuota impaga mas antigua de este cliente.
+            //
+            // Va AQUI, con la fila, y no se resuelve despues en el navegador. Antes la
+            // ruta se pintaba primero y el riesgo se calculaba a continuacion, asi que
+            // la lista aparecia un instante entera en verde y luego la mitad saltaba a
+            // CRITICO. Si el dato llega con la fila no hay estado intermedio que
+            // esconder: no hace falta un esqueleto ni un valor 'desconocido'.
+            //
+            // Las cuotas ya vienen en esta misma consulta, asi que no cuesta una
+            // peticion mas. Sirve para TODOS los roles que abren la ruta —cobrador,
+            // supervisor, coordinador y administracion— porque todos pasan por aqui.
+            diasMora: (() => {
+              const hoy = new Date();
+              hoy.setHours(0, 0, 0, 0);
+              let masAntigua: number | null = null;
+              for (const p of prestamosOperativos) {
+                for (const c of p.prestamo?.cuotas || []) {
+                  if (c.estado === 'PAGADA' || !c.fechaVencimiento) continue;
+                  const t = new Date(c.fechaVencimiento).setHours(0, 0, 0, 0);
+                  if (masAntigua === null || t < masAntigua) masAntigua = t;
+                }
+              }
+              if (masAntigua === null) return 0;
+              // Una cuota que aun no vence no es mora: sin el tope saldrian negativos.
+              return Math.max(
+                0,
+                Math.floor((hoy.getTime() - masAntigua) / 86_400_000),
+              );
+            })(),
           },
           prestamos: prestamosConCuotaObjetivo,
           cuotaObjetivo: clienteCuotaObjetivo,
