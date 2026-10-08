@@ -1,0 +1,182 @@
+import type { Prisma } from '@prisma/client';
+import type { Response } from 'express';
+import type { Server, Socket } from 'socket.io';
+import type { PrismaService } from '../../prisma/prisma.service';
+
+/**
+ * El cliente que Prisma entrega dentro de un `$transaction`: el mismo de siempre menos
+ * los metodos que no tienen sentido anidados.
+ *
+ * Se declara aqui porque esta rama todavia no lo exporta desde `prisma.service`. Cuando
+ * se fusione con la rama que si lo hace, esta definicion sobra y hay que quitarla.
+ */
+type TransaccionPrisma = Omit<
+  PrismaService,
+  '$connect' | '$disconnect' | '$on' | '$transaction' | '$extends'
+>;
+
+/**
+ * Dobles de prueba tipados.
+ *
+ * Existe porque las pruebas construían el servicio bajo prueba con `as any` en cada
+ * dependencia: `new RolesService(prisma as any)`, `new PushService(prisma as any)`,
+ * `new ReportsService(prisma, {} as any, {} as any)`. Eran 262 `any` repartidos en 37
+ * archivos, y cada uno apagaba la comprobación de ese argumento entero.
+ *
+ * Lo que se gana: el nombre del modelo y el de la dependencia SÍ se comprueban. Un
+ * `prisma.clientee.findFirst` o un `mockGateway` al que le falta el método que el
+ * servicio llama dejan de compilar, en vez de fallar a mitad de la prueba con
+ * "undefined is not a function" o —peor— de pasar porque nadie lo llamó.
+ *
+ * El `as` vive AQUÍ, en dos funciones de una línea, en vez de en cada archivo: un doble
+ * nunca va a ser la clase real, y eso no se puede expresar sin un cast. La diferencia es
+ * que ahora es un cast con nombre y en un solo sitio.
+ */
+
+/**
+ * Las claves de modelo que expone el cliente de Prisma (`cliente`, `prestamo`, …).
+ *
+ * Se derivan de `Prisma.ModelName`, que Prisma genera, así que la lista no se escribe a
+ * mano y no se queda vieja cuando se agrega un modelo al esquema.
+ */
+export type ClaveDeModelo = Uncapitalize<Prisma.ModelName>;
+
+/** Un método de un modelo, imitado. Lo que la prueba le ponga dentro es cosa suya. */
+export type MetodosDeModelo = Record<string, jest.Mock>;
+
+/**
+ * Un doble del cliente de Prisma: los modelos que la prueba necesita y nada más.
+ *
+ * `$transaction` y compañía van aparte porque no son modelos. `$transaction` se imita de
+ * dos formas según la prueba —ejecutando el callback con el propio doble, o devolviendo un
+ * valor fijo— y las dos caben en un `jest.Mock`.
+ */
+export type DobleDePrisma = Partial<Record<ClaveDeModelo, MetodosDeModelo>> & {
+  $transaction?: jest.Mock;
+  $queryRaw?: jest.Mock;
+  $queryRawUnsafe?: jest.Mock;
+  $executeRaw?: jest.Mock;
+  $executeRawUnsafe?: jest.Mock;
+  $connect?: jest.Mock;
+  $disconnect?: jest.Mock;
+  $on?: jest.Mock;
+  enableShutdownHooks?: jest.Mock;
+};
+
+/**
+ * Un doble de cualquier otra dependencia: solo los métodos que la prueba usa, con los
+ * nombres comprobados contra la clase real.
+ *
+ * Las propiedades que no son función se dejan tal cual, para poder fijar una bandera de
+ * configuración sin tener que imitarla como método.
+ */
+export type Doble<T> = {
+  [K in keyof T]?: T[K] extends (...args: never[]) => unknown
+    ? jest.Mock
+    : T[K];
+};
+
+/**
+ * Exige que el valor exista antes de leerlo, y si no dice QUE falta.
+ *
+ * Hace falta porque `expect(x).toBeDefined()` no le quita el `undefined` al tipo: la
+ * prueba seguia leyendo `x.campo` y eso era lo que forzaba un `any`. Asi la prueba falla
+ * con "se esperaba el filtro de mora" en vez de reventar leyendo una propiedad de
+ * undefined, y el resto del bloque ya trabaja con el valor estrecho.
+ *
+ * Estaba escrito a mano en `approvals.service.spec.ts`; ahora los dos lo importan de aqui.
+ */
+export const exigir = <T>(valor: T | null | undefined, que: string): T => {
+  if (valor === null || valor === undefined) {
+    throw new Error(`Se esperaba ${que} en el resultado`);
+  }
+  return valor;
+};
+
+/**
+ * El callback que recibe `$transaction`.
+ *
+ * Los dobles lo invocan con el propio `tx` imitado, asi que el parametro va como
+ * `DobleDePrisma` y no como la transaccion real.
+ */
+export type CallbackDeTransaccion = (tx: DobleDePrisma) => unknown;
+
+/** Entrega el doble de Prisma donde se espera el servicio real. */
+export const comoPrisma = (doble: DobleDePrisma): PrismaService =>
+  doble as unknown as PrismaService;
+
+/**
+ * Entrega el doble donde se espera una transaccion de Prisma (`tx`).
+ *
+ * Misma idea que `comoPrisma`: un `tx` imitado trae los dos o tres modelos que el metodo
+ * toca, nunca el cliente entero.
+ */
+export const comoTransaccion = (doble: DobleDePrisma): TransaccionPrisma =>
+  doble as unknown as TransaccionPrisma;
+
+/**
+ * Entrega el doble donde se espera un socket conectado.
+ *
+ * Los manejadores del gateway reciben un `Socket` de socket.io y leen de el una o dos
+ * cosas (`data.user`, `id`, `emit`). Imitar el socket entero no se puede; lo que se declara
+ * es lo que el manejador lee.
+ */
+export const comoSocket = (doble: SocketImitado): Socket =>
+  doble as unknown as Socket;
+
+/**
+ * Lo que las pruebas le ponen a un socket imitado. `data` es donde el gateway deja el
+ * usuario autenticado tras el handshake.
+ */
+export type SocketImitado = {
+  id?: string;
+  data?: { user?: { id?: string; rol?: string } };
+  emit?: jest.Mock;
+  join?: jest.Mock;
+  disconnect?: jest.Mock;
+};
+
+/**
+ * Entrega el doble donde se espera el servidor de websockets.
+ *
+ * Las pruebas le ponen `emit` y un `to` que devuelve algo con `emit`: es todo lo que el
+ * gateway usa para difundir.
+ */
+export const comoServidor = (doble: {
+  emit?: jest.Mock;
+  to?: jest.Mock;
+}): Server => doble as unknown as Server;
+
+/**
+ * Entrega el doble donde se espera una respuesta de Express.
+ *
+ * Un controlador que recibe `@Res() res: Response` usa dos o tres metodos; imitar la
+ * respuesta entera no se puede, asi que la prueba declara lo que usa y el cast vive aqui.
+ */
+export const comoRespuesta = <T>(doble: T): Response =>
+  doble as unknown as Response;
+
+/** Entrega el doble de una dependencia donde se espera la clase real. */
+export const comoDependencia = <T>(doble: Doble<T>): T => doble as unknown as T;
+
+/**
+ * Una dependencia que la prueba NO usa, pero que el constructor pide.
+ *
+ * Es el caso de `new ReportsService(prisma, {} as any, {} as any)`: dos servicios que esa
+ * prueba no ejercita. Decirlo con un nombre deja claro que es deliberado, en vez de
+ * parecer un `any` que alguien no acabó de tipar. Si el servicio llegara a llamarlo, la
+ * prueba falla con "no es una función", que es la señal correcta: falta imitarlo.
+ */
+export const dependenciaSinUsar = <T>(): T => ({}) as unknown as T;
+
+/**
+ * Entrega un Buffer de Node donde ExcelJS pide el suyo.
+ *
+ * `exceljs` declara su propio `interface Buffer extends ArrayBuffer` global, que NO es el
+ * Buffer de Node: por eso `workbook.xlsx.load(data)` pedia un `as any` en cada prueba de
+ * plantillas. El cast vive aqui, con el motivo escrito, y no repartido por seis archivos.
+ */
+export const bufferDeExcel = (
+  datos: Buffer,
+): Parameters<import('exceljs').Xlsx['load']>[0] =>
+  datos as unknown as Parameters<import('exceljs').Xlsx['load']>[0];
