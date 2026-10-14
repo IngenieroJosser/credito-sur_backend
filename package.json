@@ -16,6 +16,7 @@
     "start:prod": "prisma generate --schema src/prisma/schema.prisma && node scripts/resolve-route-activation-migration.js && node scripts/migrate-deploy.js && node dist/main.js",
     "lint": "eslint \"{src,test}/**/*.ts\"",
     "test": "jest",
+    "test:log": "node scripts/pruebas-con-log.mjs",
     "seed": "ts-node -r tsconfig-paths-register src/prisma/seed.ts",
     "revert:payment": "node scripts/revert-payment.js",
     "postinstall": "prisma generate --schema src/prisma/schema.prisma",
