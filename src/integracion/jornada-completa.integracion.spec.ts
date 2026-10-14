@@ -81,7 +81,15 @@ describe('Una jornada completa contra la base de datos', () => {
     if (!hayBase) return;
 
     prisma = new PrismaClient({
-      adapter: new PrismaPg({ connectionString: URL_PRUEBAS! }),
+      adapter: new PrismaPg({
+        connectionString: URL_PRUEBAS!,
+      // Pool pequeño a propósito. Postgres admite 100 conexiones y Jest lanza un
+      // worker por CPU; cada PrismaPg sin límite abre del orden de 33, así que dos
+      // suites de integración corriendo entre las otras sesenta rozaban el techo.
+      // De ahí venía que esta prueba fallara una de cada tantas corridas completas
+      // y pasara al repetirla sola.
+      max: 5,
+      }),
     });
     await prisma.$connect();
 
