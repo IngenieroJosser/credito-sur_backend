@@ -9,6 +9,7 @@ import {
 import { CreateClientDto } from './dto/create-client.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import { calcularDiasMoraCliente } from './dias-mora-cliente';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { ConfiguracionService } from '../configuracion/configuracion.service';
@@ -494,7 +495,24 @@ export class ClientsService {
             },
             prestamos: {
               where: { eliminadoEn: null },
-              select: { id: true, estado: true, saldoPendiente: true },
+              select: {
+                id: true,
+                estado: true,
+                saldoPendiente: true,
+                // `frecuenciaPago` y la cuota impaga mas antigua son lo que hace
+                // falta para los dias de mora. Es una subconsulta de UNA fila por
+                // credito; el export de clientes ya paga esta misma forma sobre la
+                // misma tabla. Antes el listado no mandaba `diasMora` en absoluto y
+                // el frontend lo resolvia con `?? 0`: TODOS los clientes salian en
+                // verde "Al dia".
+                frecuenciaPago: true,
+                cuotas: {
+                  where: { estado: { not: 'PAGADA' } },
+                  orderBy: { fechaVencimiento: 'asc' },
+                  take: 1,
+                  select: { fechaVencimiento: true },
+                },
+              },
             },
             pagos: {
               select: { fechaPago: true },
@@ -632,6 +650,9 @@ export class ClientsService {
             rutaNombre: rutaNombre,
             montoTotal,
             montoMora,
+            // `null` cuando no se puede saber, nunca 0: un cero se pinta en verde
+            // como "al dia" y taparia a un cliente con meses de atraso.
+            diasMora: calcularDiasMoraCliente(cliente.prestamos),
             prestamosActivos: prestamosActivos.length,
           };
         } catch (error) {
@@ -662,6 +683,9 @@ export class ClientsService {
             rutaNombre: '',
             montoTotal: 0,
             montoMora: 0,
+            // Aqui la transformacion fallo: no se sabe nada de este cliente, asi
+            // que tampoco se afirma que este al dia.
+            diasMora: null,
             prestamosActivos: 0,
           };
         }
@@ -695,6 +719,8 @@ export class ClientsService {
           rutaNombre: 'Sin ruta',
           montoTotal: 0,
           montoMora: 0,
+          // Una solicitud pendiente no tiene creditos todavia: el cero es cierto.
+          diasMora: 0,
           prestamosActivos: 0,
           creadoEn: aprob.creadoEn,
         };
@@ -1837,6 +1863,7 @@ export class ClientsService {
             id: true,
             estado: true,
             saldoPendiente: true,
+            frecuenciaPago: true,
             // La cuota vencida más antigua sin pagar: con ella sale cuántos días de mora
             // lleva el cliente. Se trae AQUÍ, en la misma consulta, porque si no el
             // listado del frontend tenía que pedir el detalle de cada cliente para
@@ -1892,27 +1919,16 @@ export class ClientsService {
         .reduce((s, p) => s + Number(p.saldoPendiente ?? 0), 0);
       const rutaNombre = c.asignacionesRuta?.[0]?.ruta?.nombre ?? '';
 
-      // Días de mora: los que lleva vencida la cuota impaga más antigua de todos sus
-      // créditos. Se calcula aquí y no en el navegador porque el frontend, para saberlo,
-      // tenía que traerse el detalle completo de cada cliente con sus préstamos y sus
-      // cuotas: una petición por fila del listado.
-      const hoy = new Date();
-      hoy.setHours(0, 0, 0, 0);
-      const vencimientos = c.prestamos
-        .map((p) => p.cuotas?.[0]?.fechaVencimiento)
-        .filter((f): f is Date => !!f);
-      const masAntigua = vencimientos.length
-        ? new Date(Math.min(...vencimientos.map((f) => f.getTime())))
-        : null;
-      let diasMora = 0;
-      if (masAntigua) {
-        masAntigua.setHours(0, 0, 0, 0);
-        const dias = Math.floor(
-          (hoy.getTime() - masAntigua.getTime()) / 86_400_000,
-        );
-        // Una cuota que aún no vence no es mora: sin este tope saldrían días negativos.
-        diasMora = Math.max(0, dias);
-      }
+      // Días de mora: el peor atraso entre sus créditos. El cálculo vive en
+      // `calcularDiasMoraCliente`, que delega en el del proceso de mora. Aquí
+      // estaba escrito a mano y daba otra cifra: contaba desde medianoche de la
+      // zona del servidor en vez del día de Bogotá, y no descontaba los domingos
+      // de los créditos diarios. El PDF venía inflando los días de atraso.
+      //
+      // El `?? 0` es para el PDF, que necesita un número en la celda. Es seguro
+      // aquí: esta consulta sí pide las cuotas de todos los créditos, así que el
+      // `null` de "no se sabe" no se alcanza.
+      const diasMora = calcularDiasMoraCliente(c.prestamos) ?? 0;
 
       return {
         codigo: c.codigo,
