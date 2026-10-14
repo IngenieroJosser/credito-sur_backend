@@ -1,6 +1,8 @@
 import {
   formatBogotaFecha,
   formatBogotaFechaHora,
+  formatBogotaFechaHoraPad2,
+  formatBogotaFechaPad2,
   getBogotaDayKey,
 } from './date-utils';
 
@@ -38,5 +40,59 @@ describe('fechas en hora de Bogota', () => {
     expect(formatBogotaFecha(nocheEnBogota.getTime())).toBe('5/6/2026');
     expect(formatBogotaFecha('no es una fecha')).toBe('');
     expect(formatBogotaFechaHora('no es una fecha')).toBe('');
+  });
+
+  /**
+   * Las versiones de dos digitos, que son las que usa el respaldo en Excel.
+   * Ese archivo tenia su propia copia escrita con `d.getDate()` y fechaba un dia
+   * despues todo lo registrado de noche. Lo que se fecha mal ahi son movimientos
+   * de dinero.
+   *
+   * Estas pruebas no dependen de la zona de la maquina: la cuenta va por `Intl`
+   * con `America/Bogota` fijo. Corridas con TZ=UTC dan lo mismo, y es justo lo
+   * que la version vieja no hacia.
+   */
+  describe('con dia y mes a dos digitos (exportaciones)', () => {
+    it('mantiene el dia real de una noche de Bogota', () => {
+      expect(formatBogotaFechaPad2(nocheEnBogota)).toBe('05/06/2026');
+      // El reloj del proceso decia el 6: asi salia antes en el respaldo.
+      expect(nocheEnBogota.toISOString().slice(0, 10)).toBe('2026-06-06');
+    });
+
+    it('rellena el dia y el mes de una cifra', () => {
+      // Es la unica diferencia con `formatBogotaFecha`, que daria '5/6/2026'.
+      expect(formatBogotaFechaPad2(medianocheBogota)).toBe('05/06/2026');
+      expect(formatBogotaFecha(medianocheBogota)).toBe('5/6/2026');
+    });
+
+    it('lleva la hora completa, con segundos', () => {
+      // Con segundos a proposito: dos pagos del mismo minuto hay que poder
+      // distinguirlos en la exportacion.
+      expect(formatBogotaFechaHoraPad2(nocheEnBogota)).toBe(
+        '05/06/2026 19:30:00',
+      );
+    });
+
+    it('usa el reloj de 24 horas, no am/pm', () => {
+      // 8 p. m. de Bogota. En formato de 12 horas se leeria '08', que en una
+      // columna de horas sin am/pm es indistinguible de las ocho de la manana.
+      const nocheTarde = new Date('2026-06-06T01:00:00.000Z');
+      expect(formatBogotaFechaHoraPad2(nocheTarde)).toBe('05/06/2026 20:00:00');
+    });
+
+    it('la medianoche de Bogota es 00, no 24', () => {
+      expect(formatBogotaFechaHoraPad2(medianocheBogota)).toBe(
+        '05/06/2026 00:00:00',
+      );
+    });
+
+    it('acepta cadenas y numeros, y devuelve vacio si la fecha no sirve', () => {
+      expect(formatBogotaFechaPad2('2026-06-06T00:30:00.000Z')).toBe(
+        '05/06/2026',
+      );
+      expect(formatBogotaFechaPad2(nocheEnBogota.getTime())).toBe('05/06/2026');
+      expect(formatBogotaFechaPad2('no es una fecha')).toBe('');
+      expect(formatBogotaFechaHoraPad2('no es una fecha')).toBe('');
+    });
   });
 });

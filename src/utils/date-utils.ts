@@ -112,6 +112,38 @@ export function formatBogotaDateTimeLocalInput(date: Date): string {
 }
 
 /**
+ * Igual que `formatBogotaFecha` pero con dia y mes a DOS DIGITOS:
+ * `13/10/2026`, y `01/10/2026` donde la otra daria `1/10/2026`.
+ *
+ * Existe para las exportaciones, donde una columna de fechas de ancho fijo se
+ * lee y se ordena mejor que una de ancho variable. El respaldo en Excel tenia
+ * su propia version de esto escrita a mano con `d.getDate()`, que es el reloj
+ * del proceso: en el servidor, que corre en UTC, fechaba un dia DESPUES todo lo
+ * registrado despues de las 7 p. m. de Bogota. No se notaba en una maquina en
+ * hora de Colombia.
+ */
+export function formatBogotaFechaPad2(value: Date | string | number): string {
+  const date = value instanceof Date ? value : new Date(value);
+  const p = getBogotaPartsIntl(date);
+  if (!p) return '';
+  return `${p.day}/${p.month}/${p.year}`;
+}
+
+/**
+ * `formatBogotaFechaPad2` con la hora completa: `13/10/2026 20:00:00`.
+ *
+ * Lleva los segundos a proposito: es el sello de un movimiento de dinero en una
+ * exportacion, y dos pagos del mismo minuto hay que poder distinguirlos.
+ */
+export function formatBogotaFechaHoraPad2(
+  value: Date | string | number,
+): string {
+  const date = value instanceof Date ? value : new Date(value);
+  const p = getBogotaPartsIntl(date);
+  if (!p) return '';
+  return `${p.day}/${p.month}/${p.year} ${p.hour}:${p.minute}:${p.second}`;
+}
+/**
  * Fecha en formato colombiano (d/m/aaaa) SIEMPRE en hora de Bogota.
  *
  * `toLocaleDateString('es-CO')` a secas usa el reloj del proceso, y en el
