@@ -44,7 +44,10 @@ function buildPrismaMock() {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       update: jest.fn().mockResolvedValue({}),
     },
-    pago: { create: jest.fn().mockResolvedValue({ id: 'pago-transfer-1' }) },
+    pago: {
+      create: jest.fn().mockResolvedValue({ id: 'pago-transfer-1' }),
+      findUnique: jest.fn().mockResolvedValue(null),
+    },
     cuota: {
       update: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -112,6 +115,7 @@ function buildPrismaMock() {
       }),
       update: jest.fn().mockResolvedValue({}),
     },
+    cliente: { update: jest.fn().mockResolvedValue({}) },
     caja: {
       findUnique: jest.fn().mockResolvedValue({
         id: 'caja-banco',
@@ -139,6 +143,7 @@ function buildPrismaMock() {
       findUnique: jest.fn().mockResolvedValue(null),
     },
     multimedia: {
+      findUnique: jest.fn().mockResolvedValue({ id: 'media-transfer-1' }),
       findFirst: jest.fn().mockResolvedValue(null),
       update: jest.fn().mockResolvedValue({}),
     },
@@ -155,10 +160,12 @@ function buildPrismaMock() {
   return {
     aprobacion: {
       findUnique: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       update: jest.fn().mockResolvedValue({}),
     },
     prestamo: {
+      findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn().mockResolvedValue({
         id: 'prestamo-1',
         clienteId: 'cliente-1',
@@ -182,7 +189,10 @@ function buildPrismaMock() {
       }),
       update: jest.fn().mockResolvedValue({}),
     },
-    pago: { count: jest.fn().mockResolvedValue(0) },
+    pago: {
+      count: jest.fn().mockResolvedValue(0),
+      findUnique: jest.fn().mockResolvedValue(null),
+    },
     asignacionRuta: { findFirst: jest.fn().mockResolvedValue(null) },
     cliente: { update: jest.fn().mockResolvedValue({}) },
     producto: { update: jest.fn().mockResolvedValue({}) },
@@ -210,6 +220,50 @@ function makeService(prisma: any) {
 describe('ApprovalsService pending loan reconciliation', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it('enriquece en lote el tipo de credito de transferencias antiguas pendientes', async () => {
+    const prisma = buildPrismaMock();
+    prisma.aprobacion.findMany = jest.fn().mockResolvedValue([
+      {
+        id: 'aprobacion-transferencia-1',
+        tipoAprobacion: TipoAprobacion.PAGO_TRANSFERENCIA,
+        referenciaId: 'prestamo-articulo-1',
+        estado: EstadoAprobacion.PENDIENTE,
+        datosSolicitud: {
+          montoTotal: 27500,
+          prestamoId: 'prestamo-articulo-1',
+        },
+        solicitadoPor: {
+          nombres: 'Cobrador',
+          apellidos: 'Principal',
+          rol: RolUsuario.COBRADOR,
+        },
+      },
+    ]);
+    prisma.prestamo.findMany = jest
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: 'prestamo-articulo-1',
+          numeroPrestamo: 'PRES-000043',
+          tipoPrestamo: 'ARTICULO',
+        },
+      ]);
+    const service = makeService(prisma);
+
+    const result = await service.getPendingApprovals();
+
+    expect(result.items.PAGO_TRANSFERENCIA[0].datosSolicitud).toMatchObject({
+      prestamoId: 'prestamo-articulo-1',
+      numeroPrestamo: 'PRES-000043',
+      tipoPrestamo: 'ARTICULO',
+    });
+    expect(prisma.prestamo.findMany).toHaveBeenLastCalledWith({
+      where: { id: { in: ['prestamo-articulo-1'] } },
+      select: { id: true, tipoPrestamo: true, numeroPrestamo: true },
+    });
   });
 
   it('arma contexto de evaluación para una reprogramación con créditos, pagos y alertas', async () => {
@@ -1322,6 +1376,71 @@ describe('ApprovalsService financial ledger controls', () => {
     });
   });
 
+  it('reaplica la fecha nueva al restaurar una prórroga rechazada', async () => {
+    const prisma = buildPrismaMock();
+    const nuevaFecha = '2026-11-08T23:59:59.000-05:00';
+    prisma.aprobacion.findUnique.mockResolvedValue({
+      id: 'approval-extension-1',
+      tipoAprobacion: TipoAprobacion.PRORROGA_PAGO,
+      solicitadoPorId: 'supervisor-1',
+      estado: EstadoAprobacion.RECHAZADO,
+      datosSolicitud: {
+        tipo: 'GESTION_VENCIDA',
+        decision: 'PRORROGAR',
+        prestamoId: 'prestamo-1',
+        nuevaFechaVencimiento: nuevaFecha,
+      },
+    });
+
+    await makeService(prisma).confirmSuperadminAction(
+      'approval-extension-1',
+      'REVERTIR',
+      'superadmin-1',
+    );
+
+    expect(prisma._tx.prestamo.update).toHaveBeenCalledWith({
+      where: { id: 'prestamo-1' },
+      data: { fechaFin: new Date(nuevaFecha) },
+    });
+    expect(mockGateway.broadcastPrestamosActualizados).toHaveBeenCalledWith({
+      accion: 'RESTAURAR_PRORROGA',
+      prestamoId: 'prestamo-1',
+    });
+  });
+
+  it.each([
+    {
+      tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
+      datosSolicitud: {},
+    },
+    {
+      tipoAprobacion: TipoAprobacion.GASTO,
+      datosSolicitud: { esProvisional: true },
+    },
+  ])(
+    'bloquea restaurar automáticamente un rechazo con efectos ya revertidos: $tipoAprobacion',
+    async ({ tipoAprobacion, datosSolicitud }) => {
+      const prisma = buildPrismaMock();
+      prisma.aprobacion.findUnique.mockResolvedValue({
+        id: 'approval-with-effects-1',
+        tipoAprobacion,
+        solicitadoPorId: 'cobrador-1',
+        estado: EstadoAprobacion.RECHAZADO,
+        datosSolicitud,
+      });
+
+      await expect(
+        makeService(prisma).confirmSuperadminAction(
+          'approval-with-effects-1',
+          'REVERTIR',
+          'superadmin-1',
+        ),
+      ).rejects.toThrow('no puede restaurarse automáticamente');
+
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    },
+  );
+
   it('no ejecuta un rechazo si otro usuario ya tomó la aprobación primero', async () => {
     const prisma = buildPrismaMock();
     prisma.aprobacion.findUnique.mockResolvedValue({
@@ -1333,7 +1452,7 @@ describe('ApprovalsService financial ledger controls', () => {
       estado: 'PENDIENTE',
       datosSolicitud: { descripcion: 'Transporte' },
     });
-    prisma.aprobacion.updateMany.mockResolvedValue({ count: 0 });
+    prisma._tx.aprobacion.updateMany.mockResolvedValue({ count: 0 });
 
     await expect(
       makeService(prisma).rejectItem(
@@ -1349,6 +1468,178 @@ describe('ApprovalsService financial ledger controls', () => {
     expect(
       mockGateway.broadcastAprobacionesActualizadas,
     ).not.toHaveBeenCalled();
+  });
+
+  it('rechaza el tipo incorrecto sin modificar la aprobación', async () => {
+    const prisma = buildPrismaMock();
+    prisma.aprobacion.findUnique.mockResolvedValue({
+      id: 'approval-transfer-1',
+      tipoAprobacion: 'PAGO_TRANSFERENCIA',
+      solicitadoPorId: 'cobrador-1',
+      estado: EstadoAprobacion.PENDIENTE,
+      datosSolicitud: {},
+    });
+
+    await expect(
+      makeService(prisma).rejectItem(
+        'approval-transfer-1',
+        TipoAprobacion.GASTO,
+        'admin-1',
+        'No corresponde',
+      ),
+    ).rejects.toThrow('El tipo enviado');
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma._tx.aprobacion.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('rechaza una transferencia sin crear movimientos financieros', async () => {
+    const prisma = buildPrismaMock();
+    prisma.aprobacion.findUnique.mockResolvedValue({
+      id: 'approval-transfer-1',
+      tipoAprobacion: 'PAGO_TRANSFERENCIA',
+      solicitadoPorId: 'cobrador-1',
+      estado: EstadoAprobacion.PENDIENTE,
+      datosSolicitud: { monto: 16666 },
+    });
+
+    await makeService(prisma).rejectItem(
+      'approval-transfer-1',
+      TipoAprobacion.PAGO_TRANSFERENCIA,
+      'admin-1',
+      'Comprobante no válido',
+    );
+
+    expect(prisma._tx.aprobacion.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: 'approval-transfer-1',
+          estado: EstadoAprobacion.PENDIENTE,
+        },
+      }),
+    );
+    expect(prisma._tx.pago.create).not.toHaveBeenCalled();
+    expect(prisma._tx.transaccion.create).not.toHaveBeenCalled();
+    expect(mockLedger.registrarAsiento).not.toHaveBeenCalled();
+  });
+
+  it('actualiza el cliente dentro de la misma transacción del rechazo', async () => {
+    const prisma = buildPrismaMock();
+    prisma.aprobacion.findUnique.mockResolvedValue({
+      id: 'approval-client-1',
+      tipoAprobacion: TipoAprobacion.NUEVO_CLIENTE,
+      referenciaId: 'cliente-1',
+      solicitadoPorId: 'cobrador-1',
+      estado: EstadoAprobacion.PENDIENTE,
+      datosSolicitud: {},
+    });
+
+    await makeService(prisma).rejectItem(
+      'approval-client-1',
+      TipoAprobacion.NUEVO_CLIENTE,
+      'admin-1',
+      'Datos incompletos',
+    );
+
+    expect(prisma._tx.cliente.update).toHaveBeenCalledWith({
+      where: { id: 'cliente-1' },
+      data: expect.objectContaining({
+        estadoAprobacion: EstadoAprobacion.RECHAZADO,
+        aprobadoPorId: 'admin-1',
+        eliminadoEn: expect.any(Date),
+      }),
+    });
+    expect(prisma.cliente.update).not.toHaveBeenCalled();
+  });
+
+  it('rechaza un gasto provisional con deuda sin volver a mover la caja', async () => {
+    const prisma = buildPrismaMock();
+    prisma.aprobacion.findUnique.mockResolvedValue({
+      id: 'approval-expense-1',
+      tipoAprobacion: TipoAprobacion.GASTO,
+      referenciaId: 'gasto-1',
+      solicitadoPorId: 'cobrador-1',
+      estado: EstadoAprobacion.PENDIENTE,
+      datosSolicitud: {
+        esProvisional: true,
+        monto: 25000,
+        descripcion: 'Transporte',
+      },
+    });
+
+    await makeService(prisma).rejectItem(
+      'approval-expense-1',
+      TipoAprobacion.GASTO,
+      'admin-1',
+      'No corresponde a la ruta',
+      'RECHAZADO_CON_DEUDA',
+    );
+
+    expect(prisma._tx.gasto.update).toHaveBeenCalledWith({
+      where: { id: 'gasto-1' },
+      data: expect.objectContaining({
+        estadoAprobacion: EstadoAprobacion.RECHAZADO,
+        resultadoRevisionGasto: 'RECHAZADO_CON_DEUDA',
+        esProvisional: false,
+      }),
+    });
+    expect(mockLedger.registrarAsiento).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceId: 'RECHAZADO_DEUDA:gasto-1',
+        lines: expect.arrayContaining([
+          expect.objectContaining({
+            accountCode: '1.4.1',
+            debitAmount: 25000,
+          }),
+          expect.objectContaining({
+            accountCode: '1.6.1',
+            creditAmount: 25000,
+          }),
+        ]),
+      }),
+      prisma._tx,
+    );
+    const llamadasAsiento = mockLedger.registrarAsiento.mock.calls;
+    const asiento = llamadasAsiento[llamadasAsiento.length - 1]?.[0];
+    expect(asiento.lines).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ cajaDelta: expect.any(Number) }),
+      ]),
+    );
+  });
+
+  it('restaura la fecha original al rechazar una prórroga operativa', async () => {
+    const prisma = buildPrismaMock();
+    const fechaOriginal = '2026-10-08T23:59:59.000-05:00';
+    prisma.aprobacion.findUnique.mockResolvedValue({
+      id: 'approval-extension-1',
+      tipoAprobacion: TipoAprobacion.PRORROGA_PAGO,
+      referenciaId: 'prestamo-1',
+      solicitadoPorId: 'supervisor-1',
+      estado: EstadoAprobacion.PENDIENTE,
+      datosSolicitud: {
+        tipo: 'GESTION_VENCIDA',
+        decision: 'PRORROGAR',
+        prestamoId: 'prestamo-1',
+        fechaVencimientoOriginal: fechaOriginal,
+      },
+    });
+
+    await makeService(prisma).rejectItem(
+      'approval-extension-1',
+      TipoAprobacion.PRORROGA_PAGO,
+      'admin-1',
+      'No autorizada',
+    );
+
+    expect(prisma._tx.prestamo.update).toHaveBeenCalledWith({
+      where: { id: 'prestamo-1' },
+      data: { fechaFin: new Date(fechaOriginal) },
+    });
+    expect(mockGateway.broadcastPrestamosActualizados).toHaveBeenCalledWith({
+      accion: 'REVERTIR_PRORROGA',
+      prestamoId: 'prestamo-1',
+    });
   });
 
   it('registra venta de artículo separando ingreso, costo, inventario y cuota inicial', async () => {

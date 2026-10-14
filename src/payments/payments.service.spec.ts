@@ -51,6 +51,7 @@ const mockNotificacionesGateway = {
   broadcastPrestamosActualizados: jest.fn(),
   broadcastRutasActualizadas: jest.fn(),
   broadcastDashboardsActualizados: jest.fn(),
+  broadcastAprobacionesActualizadas: jest.fn(),
 };
 
 const mockLedgerService = {
@@ -72,6 +73,8 @@ const mockMoraService = {
 const PRESTAMO_ACTIVO = {
   id: 'prestamo-1',
   numeroPrestamo: 'PRE-000001',
+  tipoPrestamo: 'EFECTIVO',
+  productoId: null,
   clienteId: 'cliente-1',
   estado: EstadoPrestamo.ACTIVO,
   monto: 1000000,
@@ -143,12 +146,30 @@ const CAJA_ACTIVA = { id: 'caja-1', nombre: 'Caja Ruta 1', saldoActual: 0 };
 const ASIGNACION_RUTA = {
   rutaId: 'ruta-1',
   cobradorId: 'cobrador-ruta',
-  ruta: { cobradorId: 'cobrador-ruta' },
+  ruta: {
+    cobradorId: 'cobrador-ruta',
+    nombre: 'Ruta Centro',
+    codigo: 'RT-CEN-01',
+  },
+};
+
+const mockCloudinaryService = {
+  subirArchivo: jest.fn().mockResolvedValue({
+    publicId: 'comprobantes/transferencia-1',
+    url: 'https://cdn.example.com/transferencia-1.jpg',
+    formato: 'jpg',
+    tamanoBytes: 1024,
+  }),
+  eliminarArchivo: jest.fn().mockResolvedValue(undefined),
 };
 const ASIGNACION_RUTA_CON_COBRADOR = {
   rutaId: 'ruta-1',
   cobradorId: 'cobrador-ruta',
-  ruta: { cobradorId: 'cobrador-ruta' },
+  ruta: {
+    cobradorId: 'cobrador-ruta',
+    nombre: 'Ruta Centro',
+    codigo: 'RT-CEN-01',
+  },
 };
 const ACTOR_ADMIN = {
   id: 'admin-1',
@@ -182,6 +203,10 @@ function buildMockPrisma(overrides: Record<string, unknown> = {}) {
       update: jest.fn().mockResolvedValue({}),
     },
     transaccion: { create: jest.fn().mockResolvedValue({}) },
+    aprobacion: {
+      create: jest.fn().mockResolvedValue({ id: 'approval-1' }),
+    },
+    multimedia: { create: jest.fn().mockResolvedValue({ id: 'media-1' }) },
     $queryRaw: jest.fn().mockResolvedValue([]),
   };
 
@@ -204,6 +229,9 @@ function buildMockPrisma(overrides: Record<string, unknown> = {}) {
     aprobacion: {
       findFirst: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockResolvedValue({ id: 'approval-1' }),
+    },
+    multimedia: {
+      findUnique: jest.fn().mockResolvedValue(null),
     },
     // $transaction ejecuta el callback con el txMock directamente
     $transaction: jest
@@ -230,7 +258,7 @@ describe('PaymentsService', () => {
         { provide: NotificacionesService, useValue: mockNotificacionesService },
         { provide: AuditService, useValue: mockAuditService },
         { provide: NotificacionesGateway, useValue: mockNotificacionesGateway },
-        { provide: CloudinaryService, useValue: { subirArchivo: jest.fn() } },
+        { provide: CloudinaryService, useValue: mockCloudinaryService },
         { provide: LedgerService, useValue: mockLedgerService },
         { provide: MoraService, useValue: mockMoraService },
       ],
@@ -863,6 +891,18 @@ describe('PaymentsService', () => {
           },
         }),
       );
+      expect(prisma.pago.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            prestamo: expect.objectContaining({
+              select: expect.objectContaining({
+                tipoPrestamo: true,
+                productoId: true,
+              }),
+            }),
+          }),
+        }),
+      );
     });
   });
 
@@ -1045,6 +1085,46 @@ describe('PaymentsService', () => {
   });
 
   describe('create — idempotencia', () => {
+    it('envia al revisor la ruta legible y el tipo de credito de una transferencia', async () => {
+      prisma.pago.findFirst.mockResolvedValue(null);
+      prisma.aprobacion.findFirst.mockResolvedValue(null);
+
+      const resultado = await service.create(
+        {
+          prestamoId: 'prestamo-1',
+          cobradorId: 'cobrador-1',
+          montoTotal: 110000,
+          metodoPago: MetodoPago.TRANSFERENCIA,
+          rutaId: 'ruta-1',
+          notas: 'Transferencia realizada por un familiar del cliente',
+          idempotencyKey: 'transferencia-nueva-1',
+        },
+        { originalname: 'comprobante.jpg', mimetype: 'image/jpeg' } as any,
+      );
+
+      expect(resultado).toEqual(
+        expect.objectContaining({
+          pendingVerification: true,
+          aprobacionId: 'approval-1',
+        }),
+      );
+      expect(prisma._txMock.aprobacion.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            datosSolicitud: expect.objectContaining({
+              rutaId: 'ruta-1',
+              rutaNombre: 'Ruta Centro',
+              rutaCodigo: 'RT-CEN-01',
+              numeroPrestamo: 'PRE-000001',
+              tipoPrestamo: PRESTAMO_ACTIVO.tipoPrestamo,
+              notas: 'Transferencia realizada por un familiar del cliente',
+            }),
+          }),
+        }),
+      );
+      expect(prisma._txMock.pago.create).not.toHaveBeenCalled();
+    });
+
     it('retorna el pago existente y no crea movimientos cuando se repite la misma idempotencyKey', async () => {
       prisma.pago.findFirst.mockResolvedValue(PAGO_EXISTENTE);
 

@@ -20,6 +20,11 @@ import {
 
 const FILA_DATOS = 7;
 
+// Estas pruebas abren libros XLSX completos de 1.000 filas. En la suite total,
+// una pausa de GC puede superar el timeout global aunque el mismo caso aislado
+// termine en pocos segundos. El margen se limita a este spec pesado.
+jest.setTimeout(180_000);
+
 /**
  * Generar una plantilla cuesta cerca de medio segundo, y casi todas las pruebas
  * necesitan la misma. Se genera una vez y se reutiliza: `editarLibro` parte del
@@ -55,16 +60,25 @@ const prismaMock = (datos?: {
   productos?: any[];
   prestamos?: any[];
   rutas?: any[];
-  // Quién tiene pagos: antes se marcaba con `_count: { pagos: N }` en el propio
-  // mock del préstamo; ahora el parser lo resuelve con una consulta aparte a
-  // `pago` (ver clientes-creditos.parser.ts), así que aquí se simula esa tabla.
+  // Permite indicar qué préstamos tienen pagos sin cargar la tabla completa.
   pagos?: Array<{ prestamoId: string }>;
   cajaOficina?: { nombre: string; saldoActual: number } | null;
 }) =>
   ({
     cliente: { findMany: jest.fn().mockResolvedValue(datos?.clientes ?? []) },
     producto: { findMany: jest.fn().mockResolvedValue(datos?.productos ?? []) },
-    prestamo: { findMany: jest.fn().mockResolvedValue(datos?.prestamos ?? []) },
+    prestamo: {
+      findMany: jest.fn().mockResolvedValue(
+        (datos?.prestamos ?? []).map((prestamo) => ({
+          ...prestamo,
+          _count: prestamo._count ?? {
+            pagos: (datos?.pagos ?? []).filter(
+              (pago) => pago.prestamoId === prestamo.id,
+            ).length,
+          },
+        })),
+      ),
+    },
     pago: { findMany: jest.fn().mockResolvedValue(datos?.pagos ?? []) },
     ruta: {
       findMany: jest
@@ -328,6 +342,31 @@ describe('Plantilla de inventario', () => {
       expect.objectContaining({ campo: 'precio_contado' }),
     ]);
   });
+
+  it('consulta en la BD únicamente los códigos presentes en el archivo', async () => {
+    const plantilla = await plantillaInventarioCacheada();
+    const archivo = await editarLibro(plantilla.data, (workbook) => {
+      escribirFila(workbook.getWorksheet('Artículos')!, FILA_DATOS, {
+        Código: 'NEV-200',
+        'Nombre del artículo': 'Nevera 200L',
+        Categoría: 'Electrodomésticos',
+        'Costo unitario': 900000,
+        'Precio contado': 1050000,
+      });
+    });
+    const db = prismaMock();
+
+    await new InventarioParser(db).parseAndValidate(archivo, 'inventario.xlsx');
+
+    expect(db.producto.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          eliminadoEn: null,
+          codigo: { in: ['NEV-200'], mode: 'insensitive' },
+        },
+      }),
+    );
+  });
 });
 
 describe('Plantilla de clientes y créditos', () => {
@@ -548,6 +587,59 @@ describe('Plantilla de clientes y créditos', () => {
       expect.objectContaining({ campo: 'monto' }),
     ]);
     expect(resultado.creditos?.[0].monto).toBe(500000);
+  });
+
+  it('acota las consultas de referencia a las llaves presentes en el archivo', async () => {
+    const plantilla = await plantillaClientesCacheada();
+    const archivo = await editarLibro(plantilla.data, (workbook) => {
+      escribirFila(workbook.getWorksheet('Clientes')!, FILA_DATOS, {
+        'Ruta código': 'RT-01',
+        'CC cliente': '12345678',
+        Nombres: 'Juan',
+        Apellidos: 'Pérez',
+        Teléfono: '3001234567',
+      });
+      escribirFila(workbook.getWorksheet('Créditos de dinero')!, FILA_DATOS, {
+        ...creditoMinimo,
+      });
+    });
+    const db = prismaMock();
+
+    await new ClientesCreditosParser(db).parseAndValidate(
+      archivo,
+      'clientes.xlsx',
+    );
+
+    expect(db.ruta.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { activa: true, codigo: { in: ['RT-01'] } },
+      }),
+    );
+    expect(db.cliente.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          eliminadoEn: null,
+          OR: expect.arrayContaining([
+            { dni: { in: ['12345678'] } },
+            {
+              nombres: { equals: 'Juan', mode: 'insensitive' },
+              apellidos: { equals: 'Pérez', mode: 'insensitive' },
+            },
+          ]),
+        }),
+      }),
+    );
+    expect(db.prestamo.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          eliminadoEn: null,
+          OR: expect.arrayContaining([
+            { numeroPrestamo: { in: ['IMP-001'] } },
+            { cliente: { dni: { in: ['12345678'] } } },
+          ]),
+        }),
+      }),
+    );
   });
 });
 

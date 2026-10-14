@@ -95,6 +95,10 @@ import { Prisma } from '@prisma/client';
 export class ImportacionesService {
   private clientesCreditosParser: ClientesCreditosParser;
   private inventarioParser: InventarioParser;
+  private readonly maxFilasImportacionSincrona = Math.max(
+    1,
+    Number(process.env.IMPORT_MAX_SYNC_ROWS || 1000),
+  );
 
   constructor(
     private readonly prisma: PrismaService,
@@ -103,6 +107,15 @@ export class ImportacionesService {
   ) {
     this.clientesCreditosParser = new ClientesCreditosParser(this.prisma);
     this.inventarioParser = new InventarioParser(this.prisma);
+  }
+
+  private validarTamanoImportacion(resultado: ResultadoValidacion) {
+    const total = Number(resultado?.resumen?.totalFilas || 0);
+    if (total <= this.maxFilasImportacionSincrona) return;
+
+    throw new BadRequestException(
+      `El archivo contiene ${total} filas. Para proteger la base de datos, cada confirmación admite hasta ${this.maxFilasImportacionSincrona} filas; divida el archivo en varios lotes.`,
+    );
   }
 
   /**
@@ -1149,6 +1162,7 @@ export class ImportacionesService {
         'El archivo no es un Excel válido o está dañado.',
       );
     }
+    this.validarTamanoImportacion(resultado);
 
     // 2. Bloquear si hay errores
     if (resultado.errores.length > 0) {
@@ -1228,11 +1242,20 @@ export class ImportacionesService {
         const idCategoria = (nombre: unknown) =>
           categoriasPorNombre.get(normalizarNombreCategoria(nombre)) ?? null;
 
+        const productosExistentes = await tx.producto.findMany({
+          where: { codigo: { in: articulos.map((art: any) => art.codigo) } },
+          include: { precios: true },
+        });
+        const productosPorCodigo = new Map<string, any>(
+          productosExistentes.map((producto: any) => [
+            producto.codigo,
+            producto,
+          ]),
+        );
+
         // Crear o verificar artículos (idempotencia por código)
         for (const art of articulos) {
-          const existe = await tx.producto.findUnique({
-            where: { codigo: art.codigo },
-          });
+          const existe = productosPorCodigo.get(art.codigo);
 
           if (art.esActualizacion) {
             if (!existe) {
@@ -1256,6 +1279,10 @@ export class ImportacionesService {
                 stockMinimo: art.stockMinimo ?? 0,
                 activo: art.activo !== 'NO',
               },
+            });
+            productosPorCodigo.set(art.codigo, {
+              ...despues,
+              precios: existe.precios || [],
             });
 
             // Solo la diferencia: el stock que ya estaba contabilizado no se
@@ -1321,6 +1348,7 @@ export class ImportacionesService {
               activo: art.activo !== 'NO',
             },
           });
+          productosPorCodigo.set(art.codigo, { ...creado, precios: [] });
 
           const asientoReferenceId = `IMP-INV-${randomUUID()}`;
           await this.asentarInventario(tx, {
@@ -1350,20 +1378,16 @@ export class ImportacionesService {
 
         // Crear precios (idempotencia por código + meses)
         for (const precio of precios) {
-          const producto = await tx.producto.findUnique({
-            where: { codigo: precio.codigoProducto },
-            select: { id: true },
-          });
+          const producto = productosPorCodigo.get(precio.codigoProducto);
 
           if (!producto) {
             preciosOmitidos++;
             continue;
           }
 
-          const existePrecio = await tx.precioProducto.findFirst({
-            where: { productoId: producto.id, meses: precio.meses },
-            select: { id: true, meses: true, precio: true, activo: true },
-          });
+          const existePrecio = (producto.precios || []).find(
+            (item: any) => Number(item.meses) === Number(precio.meses),
+          );
 
           if (existePrecio) {
             const seActualiza = articulosPorCodigo.get(precio.codigoProducto);
@@ -1375,6 +1399,9 @@ export class ImportacionesService {
                   activo: precio.activo !== 'NO',
                 },
               });
+              producto.precios = (producto.precios || []).map((item: any) =>
+                item.id === existePrecio.id ? precioActualizado : item,
+              );
               registrosInventario
                 .get(precio.codigoProducto)
                 ?.preciosActualizados.push({
@@ -1404,6 +1431,7 @@ export class ImportacionesService {
               activo: precio.activo !== 'NO',
             },
           });
+          producto.precios = [...(producto.precios || []), precioCreado];
           registrosInventario.get(precio.codigoProducto)?.preciosCreados.push({
             id: precioCreado.id,
             meses: Number(precioCreado.meses),
@@ -1444,7 +1472,7 @@ export class ImportacionesService {
         });
         loteId = lote.id;
       },
-      { maxWait: 60_000, timeout: 600_000 },
+      { maxWait: 15_000, timeout: 180_000 },
     );
 
     if (articulosActualizados > 0) {
@@ -1524,6 +1552,7 @@ export class ImportacionesService {
         'El archivo no es un Excel válido o está dañado.',
       );
     }
+    this.validarTamanoImportacion(resultado);
 
     // 2. Bloquear si hay errores
     if (resultado.errores.length > 0) {
@@ -1590,20 +1619,48 @@ export class ImportacionesService {
     try {
       await this.prisma.$transaction(
         async (tx) => {
+          const dnisClientes = [
+            ...new Set(clientes.map((cli: any) => cli.cc).filter(Boolean)),
+          ];
+          const codigosClientes = [
+            ...new Set(
+              clientes.map((cli: any) => cli.codigoImp).filter(Boolean),
+            ),
+          ];
+          const clientesExistentes = await tx.cliente.findMany({
+            where: {
+              OR: [
+                { dni: { in: dnisClientes } },
+                { codigo: { in: codigosClientes } },
+                { idempotencyKey: { in: codigosClientes } },
+              ],
+            },
+            select: {
+              id: true,
+              dni: true,
+              codigo: true,
+              idempotencyKey: true,
+              eliminadoEn: true,
+            },
+          });
+          const clientesPorClave = new Map<string, any>();
+          for (const cliente of clientesExistentes) {
+            for (const clave of [
+              cliente.dni,
+              cliente.codigo,
+              cliente.idempotencyKey,
+            ]) {
+              if (clave) clientesPorClave.set(String(clave), cliente);
+            }
+          }
+
           for (const cli of clientes) {
             // Idempotencia por DNI o código
             // Se busca sin filtrar por eliminadoEn a proposito: si la cedula
             // ya existe pero el cliente estaba borrado, hay que darse cuenta.
-            const existente = await tx.cliente.findFirst({
-              where: {
-                OR: [
-                  { dni: cli.cc },
-                  { codigo: cli.codigoImp },
-                  { idempotencyKey: cli.codigoImp },
-                ],
-              },
-              select: { id: true, eliminadoEn: true },
-            });
+            const existente =
+              clientesPorClave.get(String(cli.cc)) ||
+              clientesPorClave.get(String(cli.codigoImp));
 
             // Un cliente borrado que vuelve a aparecer en una importacion se
             // reactiva. Antes se contaba como "omitido" y se seguia de largo:
@@ -1688,6 +1745,9 @@ export class ImportacionesService {
                 // Por el momento lo agregamos simple si aplica.
               },
             });
+            for (const clave of [cli.cc, cli.codigoImp]) {
+              if (clave) clientesPorClave.set(String(clave), clienteCreado);
+            }
             clientesCreados++;
             idsClientesCreados.push(clienteCreado.id);
             clientesPorAsignar.push({
@@ -1701,27 +1761,55 @@ export class ImportacionesService {
           // las de otras rutas se recalculan al final, cuando ya se sabe qué
           // créditos quedaron en cada una.
           const clientesConRuta = new Map<string, string>();
+          const codigosRuta = [
+            ...new Set(
+              clientesPorAsignar
+                .map((item) => item.rutaCodigo)
+                .filter(Boolean),
+            ),
+          ];
+          const rutasImportacion = codigosRuta.length
+            ? await tx.ruta.findMany({
+                where: {
+                  codigo: { in: codigosRuta },
+                  eliminadoEn: null,
+                },
+                select: { id: true, codigo: true, cobradorId: true },
+              })
+            : [];
+          const rutasPorCodigo = new Map<string, any>(
+            rutasImportacion.map((ruta) => [ruta.codigo, ruta]),
+          );
+          const asignacionesExistentes = rutasImportacion.length
+            ? await tx.asignacionRuta.findMany({
+                where: {
+                  clienteId: {
+                    in: clientesPorAsignar.map((item) => item.clienteId),
+                  },
+                  rutaId: { in: rutasImportacion.map((ruta) => ruta.id) },
+                  fechaEspecifica: null,
+                },
+                select: { id: true, clienteId: true, rutaId: true },
+              })
+            : [];
+          const asignacionesPorClave = new Map<string, any>(
+            asignacionesExistentes.map((asignacion) => [
+              `${asignacion.clienteId}:${asignacion.rutaId}`,
+              asignacion,
+            ]),
+          );
 
           for (const asignacion of clientesPorAsignar) {
             if (!asignacion.rutaCodigo) continue;
 
-            const ruta = await tx.ruta.findFirst({
-              where: { codigo: asignacion.rutaCodigo, eliminadoEn: null },
-              select: { id: true, cobradorId: true },
-            });
+            const ruta = rutasPorCodigo.get(asignacion.rutaCodigo);
 
             if (!ruta) continue;
 
             clientesConRuta.set(asignacion.clienteId, ruta.id);
 
-            const yaAsignado = await tx.asignacionRuta.findFirst({
-              where: {
-                clienteId: asignacion.clienteId,
-                rutaId: ruta.id,
-                fechaEspecifica: null,
-              },
-              select: { id: true },
-            });
+            const claveAsignacion = `${asignacion.clienteId}:${ruta.id}`;
+            const yaAsignado = asignacionesPorClave.get(claveAsignacion);
 
             if (yaAsignado) {
               await tx.asignacionRuta.update({
@@ -1729,7 +1817,7 @@ export class ImportacionesService {
                 data: { activa: true, cobradorId: ruta.cobradorId },
               });
             } else {
-              await tx.asignacionRuta.create({
+              const creada = await tx.asignacionRuta.create({
                 data: {
                   rutaId: ruta.id,
                   clienteId: asignacion.clienteId,
@@ -1737,6 +1825,7 @@ export class ImportacionesService {
                   activa: true,
                 },
               });
+              asignacionesPorClave.set(claveAsignacion, creada);
             }
 
             clientesAsignadosARuta++;
@@ -1754,6 +1843,86 @@ export class ImportacionesService {
 
           // Procesar créditos
           const creditos: any[] = (resultado as any).creditos ?? [];
+          const numerosPrestamo = [
+            ...new Set(
+              creditos.map((cred) => cred.numeroPrestamo).filter(Boolean),
+            ),
+          ];
+          const codigosCredito = [
+            ...new Set(creditos.map((cred) => cred.codigoImp).filter(Boolean)),
+          ];
+          const dnisCredito = [
+            ...new Set(
+              creditos.map((cred) => cred.ccCliente).filter(Boolean),
+            ),
+          ];
+          const codigosProducto = [
+            ...new Set(
+              creditos.map((cred) => cred.productoCodigo).filter(Boolean),
+            ),
+          ];
+          const [prestamosExistentes, clientesCredito, productosCredito] =
+            await Promise.all([
+              tx.prestamo.findMany({
+                where: {
+                  OR: [
+                    {
+                      numeroPrestamo: {
+                        in: numerosPrestamo,
+                      },
+                    },
+                    {
+                      idempotencyKey: {
+                        in: codigosCredito,
+                      },
+                    },
+                  ],
+                },
+                select: {
+                  id: true,
+                  numeroPrestamo: true,
+                  idempotencyKey: true,
+                  cantidadCuotas: true,
+                },
+              }),
+              tx.cliente.findMany({
+                where: {
+                  dni: { in: dnisCredito },
+                },
+                select: { id: true, dni: true },
+              }),
+              tx.producto.findMany({
+                where: {
+                  codigo: {
+                    in: codigosProducto,
+                  },
+                },
+                select: {
+                  id: true,
+                  codigo: true,
+                  costo: true,
+                  precios: {
+                    where: { activo: true },
+                    select: { id: true, meses: true, precio: true },
+                  },
+                },
+              }),
+            ]);
+          const prestamosPorClave = new Map<string, any>();
+          for (const prestamo of prestamosExistentes) {
+            if (prestamo.numeroPrestamo) {
+              prestamosPorClave.set(prestamo.numeroPrestamo, prestamo);
+            }
+            if (prestamo.idempotencyKey) {
+              prestamosPorClave.set(prestamo.idempotencyKey, prestamo);
+            }
+          }
+          const clientesPorDni = new Map<string, any>(
+            clientesCredito.map((cliente) => [cliente.dni, cliente]),
+          );
+          const productosCreditoPorCodigo = new Map<string, any>(
+            productosCredito.map((producto) => [producto.codigo, producto]),
+          );
           const roundMoney = (value: number) => pesos(value);
           const hayCreditoOperativoEfectivo = creditos.some(
             (cred) =>
@@ -1826,15 +1995,9 @@ export class ImportacionesService {
             }
 
             // Idempotencia de préstamo
-            const prestamoExistente = await tx.prestamo.findFirst({
-              where: {
-                OR: [
-                  { numeroPrestamo: cred.numeroPrestamo },
-                  { idempotencyKey: cred.codigoImp },
-                ],
-              },
-              select: { id: true, cantidadCuotas: true },
-            });
+            const prestamoExistente =
+              prestamosPorClave.get(cred.numeroPrestamo) ||
+              prestamosPorClave.get(cred.codigoImp);
 
             if (!cred.esActualizacion && prestamoExistente) {
               creditosOmitidos++;
@@ -1842,10 +2005,7 @@ export class ImportacionesService {
             }
 
             // Buscar cliente
-            const cliente = await tx.cliente.findUnique({
-              where: { dni: cred.ccCliente },
-              select: { id: true },
-            });
+            const cliente = clientesPorDni.get(cred.ccCliente);
 
             if (!cliente) {
               // El cliente debería existir si pasó la validación, si no, omitimos por seguridad
@@ -1886,30 +2046,20 @@ export class ImportacionesService {
             let margenArticulo: number | undefined;
 
             if (cred.tipoPrestamo === 'ARTICULO') {
-              const producto = await tx.producto.findUnique({
-                where: { codigo: cred.productoCodigo },
-                select: {
-                  id: true,
-                  costo: true,
-                  precios: {
-                    where: {
-                      meses: plazoMesesPersistido(Number(cred.plazoMeses)),
-                      activo: true,
-                    },
-                    select: {
-                      id: true,
-                      precio: true,
-                    },
-                    take: 1,
-                  },
-                },
-              });
+              const producto = productosCreditoPorCodigo.get(
+                cred.productoCodigo,
+              );
 
               if (producto) {
+                const precioPlazo = producto.precios.find(
+                  (precio) =>
+                    precio.meses ===
+                    plazoMesesPersistido(Number(cred.plazoMeses)),
+                );
                 productoId = producto.id;
-                precioProductoId = producto.precios[0]?.id;
-                precioVentaArticulo = producto.precios[0]?.precio
-                  ? Number(producto.precios[0].precio)
+                precioProductoId = precioPlazo?.id;
+                precioVentaArticulo = precioPlazo?.precio
+                  ? Number(precioPlazo.precio)
                   : undefined;
                 costoArticulo = producto.costo
                   ? Number(producto.costo)
@@ -2078,25 +2228,25 @@ export class ImportacionesService {
                 },
               });
 
-              // Se reescriben las cuotas en su sitio; no hay pagos que las
-              // referencien, porque eso ya se rechazó al validar.
-              for (const cuota of planCuotas) {
-                await tx.cuota.updateMany({
-                  where: {
-                    prestamoId: prestamoExistente.id,
-                    numeroCuota: cuota.numeroCuota,
-                  },
-                  data: {
-                    fechaVencimiento: cuota.fechaVencimiento,
-                    monto: cuota.monto,
-                    montoCapital: cuota.montoCapital,
-                    montoInteres: cuota.montoInteres,
-                    estado: cuota.estado,
-                    montoPagado: cuota.montoPagado,
-                    fechaPago: cuota.fechaPago,
-                  },
-                });
-              }
+              // La validación ya garantiza que estas cuotas no tienen pagos.
+              // Reemplazarlas en bloque evita una consulta por cuota.
+              await tx.cuota.deleteMany({
+                where: { prestamoId: prestamoExistente.id },
+              });
+              await tx.cuota.createMany({
+                data: planCuotas.map((cuota) => ({
+                  prestamoId: prestamoExistente.id,
+                  numeroCuota: cuota.numeroCuota,
+                  fechaVencimiento: cuota.fechaVencimiento,
+                  monto: cuota.monto,
+                  montoCapital: cuota.montoCapital,
+                  montoInteres: cuota.montoInteres,
+                  montoInteresMora: 0,
+                  estado: cuota.estado,
+                  montoPagado: cuota.montoPagado,
+                  fechaPago: cuota.fechaPago,
+                })),
+              });
 
               creditosActualizados++;
               idsPrestamosActualizados.push(prestamoExistente.id);
@@ -2148,6 +2298,10 @@ export class ImportacionesService {
             });
 
             idsPrestamosCreados.push(prestamo.id);
+            prestamosPorClave.set(cred.numeroPrestamo, prestamo);
+            if (cred.codigoImp) {
+              prestamosPorClave.set(cred.codigoImp, prestamo);
+            }
 
             if (isOperativaEfectivo || isOperativaArticulo) {
               creditosOperativosCreados++;
@@ -2354,7 +2508,7 @@ export class ImportacionesService {
         },
         // Migrar una cartera completa no cabe en los 5 s que Prisma da por
         // defecto a una transacción interactiva.
-        { maxWait: 60_000, timeout: 600_000 },
+        { maxWait: 15_000, timeout: 180_000 },
       );
     } catch (error) {
       await this.prisma.importacionLote.create({

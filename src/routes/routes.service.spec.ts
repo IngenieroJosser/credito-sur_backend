@@ -7,6 +7,11 @@ import {
 import { RolUsuario } from '@prisma/client';
 import { RoutesService } from './routes.service';
 
+const ACTOR_ADMIN = {
+  id: 'admin-1',
+  rol: RolUsuario.ADMIN,
+};
+
 const makeService = (prisma: any) => {
   if (prisma) {
     for (const key of Object.keys(prisma)) {
@@ -120,6 +125,7 @@ describe('RoutesService role scoping', () => {
     const resultado = await makeService(prisma).getDailyVisits(
       'ruta-1',
       '2026-06-12',
+      ACTOR_ADMIN,
     );
 
     expect(resultado.resumen.meta).toBe(100_000);
@@ -242,7 +248,7 @@ describe('RoutesService role scoping', () => {
     });
   });
 
-  it('deja que el coordinador vea todas las rutas, sin filtrar por supervisor', async () => {
+  it('limita al coordinador a las rutas que tiene asignadas', async () => {
     const prisma = {
       ruta: {
         findMany: jest.fn().mockResolvedValue([]),
@@ -259,12 +265,11 @@ describe('RoutesService role scoping', () => {
       },
     );
 
-    // Decisión de producto: a diferencia de supervisor y cobrador, el
-    // coordinador tiene visibilidad total sobre las rutas.
     const argumentos = prisma.ruta.findMany.mock.calls[0][0];
-    expect(argumentos.where).toEqual({ eliminadoEn: null });
-    expect(argumentos.where).not.toHaveProperty('supervisorId');
-    expect(argumentos.where).not.toHaveProperty('cobradorId');
+    expect(argumentos.where).toEqual({
+      eliminadoEn: null,
+      coordinadorId: 'coordinador-propio',
+    });
   });
 
   it('usa el resumen operativo diario como fuente de verdad para el avance del listado', async () => {
@@ -313,7 +318,7 @@ describe('RoutesService role scoping', () => {
       visitas: [],
     } as any);
 
-    const resultado = await service.findAll({ take: 10 });
+    const resultado = await service.findAll({ take: 10, includeStats: true });
     const ruta = resultado.data[0];
 
     expect(ruta.cobranzaDelDia).toBe(1_043_330);
@@ -334,15 +339,16 @@ describe('RoutesService role scoping', () => {
         id: 'supervisor-propio',
         rol: RolUsuario.SUPERVISOR,
       } as any),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    ).rejects.toBeInstanceOf(ForbiddenException);
 
     expect(prisma.ruta.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({
+        where: {
           id: 'ruta-ajena',
           eliminadoEn: null,
           supervisorId: 'supervisor-propio',
-        }),
+        },
+        select: { id: true },
       }),
     );
   });
@@ -496,6 +502,7 @@ describe('RoutesService role scoping', () => {
     const resultado = await makeService(prisma).getDailyVisits(
       'ruta-1',
       '2026-06-03',
+      ACTOR_ADMIN,
     );
 
     expect(resultado.resumen.recaudoOperativo).toBe(425_335);
@@ -616,6 +623,7 @@ describe('RoutesService role scoping', () => {
     const resultado = await makeService(prisma).getDailyVisits(
       'ruta-1',
       '2026-06-05',
+      ACTOR_ADMIN,
     );
 
     expect(resultado.visitas[0]).toEqual(
@@ -709,6 +717,7 @@ describe('RoutesService role scoping', () => {
     const resultado = await makeService(prisma).getDailyVisits(
       'ruta-1',
       '2026-06-08',
+      ACTOR_ADMIN,
     );
 
     expect(resultado.resumen.recaudoOperativo).toBe(20_000);
@@ -829,6 +838,7 @@ describe('RoutesService role scoping', () => {
     const resultado = await makeService(prisma).getDailyVisits(
       'ruta-1',
       '2026-06-10',
+      ACTOR_ADMIN,
     );
 
     expect(resultado.resumen.visitados).toBe(1);
@@ -937,6 +947,7 @@ describe('RoutesService role scoping', () => {
     const resultado = await makeService(prisma).getDailyVisits(
       'ruta-1',
       '2026-06-12',
+      ACTOR_ADMIN,
     );
 
     expect(resultado.totalVisitas).toBe(1);
@@ -1056,6 +1067,7 @@ describe('RoutesService role scoping', () => {
     const resultado = await makeService(prisma).getDailyVisits(
       'ruta-1',
       '2026-06-12',
+      ACTOR_ADMIN,
     );
 
     expect(resultado.totalVisitas).toBe(2);
@@ -1198,7 +1210,7 @@ describe('RoutesService role scoping', () => {
       }),
     };
 
-    await makeService(prisma).activarRutaHoy('ruta-1', 'admin-1');
+    await makeService(prisma).activarRutaHoy('ruta-1', 'admin-1', ACTOR_ADMIN);
 
     expect(tx.$queryRaw).toHaveBeenCalled();
     expect(tx.transaccion.findFirst).toHaveBeenCalledWith(
@@ -1286,7 +1298,7 @@ describe('RoutesService role scoping', () => {
         .mockImplementation((callback: any) => callback(tx)),
     };
 
-    await makeService(prisma).activarRutaHoy('ruta-1', 'admin-1');
+    await makeService(prisma).activarRutaHoy('ruta-1', 'admin-1', ACTOR_ADMIN);
 
     expect(tx.transaccion.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1923,7 +1935,7 @@ describe('RoutesService role scoping', () => {
     };
 
     await expect(
-      makeService(prisma).activarRutaHoy('ruta-1', 'admin-1'),
+      makeService(prisma).activarRutaHoy('ruta-1', 'admin-1', ACTOR_ADMIN),
     ).rejects.toBeInstanceOf(BadRequestException);
 
     expect(prisma.ruta.findFirst).not.toHaveBeenCalled();
@@ -1948,7 +1960,7 @@ describe('RoutesService role scoping', () => {
     };
 
     await expect(
-      makeService(prisma).getRutaActivadaHoy('ruta-1'),
+      makeService(prisma).getRutaActivadaHoy('ruta-1', ACTOR_ADMIN),
     ).resolves.toEqual(
       expect.objectContaining({
         rutaId: 'ruta-1',
@@ -2120,7 +2132,7 @@ describe('RoutesService role scoping', () => {
       $transaction: jest.fn().mockImplementation((cb: any) => cb(falsa.tx)),
     };
 
-    await makeService(prisma).moveLoan('prestamo-2', 'ruta-b');
+    await makeService(prisma).moveLoan('prestamo-2', 'ruta-b', ACTOR_ADMIN);
 
     // El crédito movido cambia de ruta; el otro se queda donde estaba.
     expect(falsa.prestamos.find((p) => p.id === 'prestamo-2')?.rutaId).toBe(
@@ -2173,7 +2185,7 @@ describe('RoutesService role scoping', () => {
       $transaction: jest.fn().mockImplementation((cb: any) => cb(falsa.tx)),
     };
 
-    await makeService(prisma).moveLoan('prestamo-1', 'ruta-b');
+    await makeService(prisma).moveLoan('prestamo-1', 'ruta-b', ACTOR_ADMIN);
 
     expect(falsa.rutasActivasDe('cliente-1')).toEqual(['ruta-b']);
   });
@@ -2222,6 +2234,7 @@ describe('RoutesService role scoping', () => {
       'ruta-b',
       'cliente-1',
       'cobrador-equivocado',
+      ACTOR_ADMIN,
     );
 
     expect(falsa.prestamos.every((p) => p.rutaId === 'ruta-b')).toBe(true);
@@ -2255,6 +2268,7 @@ describe('RoutesService role scoping', () => {
       'ruta-b',
       'cliente-1',
       'cobrador-equivocado',
+      ACTOR_ADMIN,
     );
 
     const asignacion = falsa.asignaciones.find(
@@ -2316,7 +2330,7 @@ describe('RoutesService role scoping', () => {
     const servicio = makeService(prisma);
     (servicio as any).reorderAssignments = jest.fn();
 
-    await servicio.moveClient('cliente-1', 'ruta-a', 'ruta-b');
+    await servicio.moveClient('cliente-1', 'ruta-a', 'ruta-b', ACTOR_ADMIN);
 
     expect(falsa.prestamos.find((p) => p.id === 'prestamo-1')?.rutaId).toBe(
       'ruta-b',
@@ -2366,9 +2380,11 @@ describe('RoutesService role scoping', () => {
       $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
     };
 
-    await makeService(prisma).update('ruta-1', {
-      cobradorId: 'cobrador-nuevo',
-    });
+    await makeService(prisma).update(
+      'ruta-1',
+      { cobradorId: 'cobrador-nuevo' },
+      ACTOR_ADMIN,
+    );
 
     expect(tx.ruta.update).toHaveBeenCalled();
     expect(tx.asignacionRuta.updateMany).toHaveBeenCalledWith({

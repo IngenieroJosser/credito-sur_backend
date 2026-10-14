@@ -341,42 +341,61 @@ export class DashboardService {
         take: 10, // Traemos extra para filtrar
       });
 
-      // Enriquecer con datos de usuario y filtrar
+      const cobradorIds = topCollectorsRaw
+        .map((item) => item.cobradorId)
+        .filter((id): id is string => Boolean(id));
+      const [collectorUsersRaw, collectorQuotas] = await Promise.all([
+        this.prisma.usuario.findMany({
+          where: { id: { in: cobradorIds } },
+          select: { id: true, nombres: true, apellidos: true, rol: true },
+        }),
+        this.prisma.cuota.findMany({
+          where: {
+            fechaVencimiento: { gte: startDate, lte: endDate },
+            prestamo: {
+              ruta: { cobradorId: { in: cobradorIds } },
+            },
+          },
+          select: {
+            monto: true,
+            prestamo: {
+              select: {
+                ruta: { select: { cobradorId: true } },
+              },
+            },
+          },
+        }),
+      ]);
+      const collectorUsers = collectorUsersRaw as Array<{
+        id: string;
+        nombres: string;
+        apellidos: string;
+        rol: string;
+      }>;
+      const usersById = new Map(collectorUsers.map((user) => [user.id, user]));
+      const metaByCollector = new Map<string, number>();
+      for (const cuota of collectorQuotas) {
+        const collectorId = cuota.prestamo?.ruta?.cobradorId;
+        if (!collectorId) continue;
+        metaByCollector.set(
+          collectorId,
+          (metaByCollector.get(collectorId) || 0) + Number(cuota.monto || 0),
+        );
+      }
+
+      // Enriquecer desde los lotes anteriores: cantidad fija de consultas,
+      // independientemente del número de cobradores.
       const topCollectorsList: any[] = [];
       for (const item of topCollectorsRaw) {
         if (!item.cobradorId) continue;
-        const user = await this.prisma.usuario.findUnique({
-          where: { id: item.cobradorId },
-          select: { nombres: true, apellidos: true, rol: true },
-        });
+        const user = usersById.get(item.cobradorId);
 
         if (
           user &&
           ['COBRADOR', 'SUPERVISOR', 'COORDINADOR'].includes(user.rol)
         ) {
-          // Calcular eficiencia operativa real: pagos de cuotas / meta de cuotas.
-          // La cuota inicial es entrada de caja, no recaudo operativo de ruta.
-          const [metaCobroRes, pagosRes] = await Promise.all([
-            this.prisma.cuota.aggregate({
-              where: {
-                fechaVencimiento: { gte: startDate, lte: endDate },
-                prestamo: {
-                  ruta: { cobradorId: item.cobradorId },
-                },
-              },
-              _sum: { monto: true },
-            }),
-            this.prisma.pago.aggregate({
-              where: {
-                cobradorId: item.cobradorId,
-                fechaPago: { gte: startDate, lte: endDate },
-              },
-              _sum: { montoTotal: true },
-            }),
-          ]);
-
-          const montoMeta = Number(metaCobroRes._sum.monto || 0);
-          const collected = Number(pagosRes._sum.montoTotal || 0);
+          const montoMeta = metaByCollector.get(item.cobradorId) || 0;
+          const collected = Number(item._sum.montoTotal || 0);
 
           // Si no hay meta, asumimos 100% de eficiencia si recaudó algo
           const efficiency =
@@ -575,21 +594,24 @@ export class DashboardService {
     // La cuota inicial queda fuera de esta tendencia porque contabilidad la expone separada de cobranza.
 
     // 1) Cobros contables dentro del rango
-    const where = await this.getLedgerCobranzaWhere(startDate, endDate);
+    const { where, fechaPagoPorId } =
+      await this.getLedgerCobranzaContext(startDate, endDate);
     const ledgerCobros = await this.prisma.journalLine.findMany({
       where,
       select: {
         debitAmount: true,
-        journalEntry: { select: { createdAt: true } },
+        journalEntry: { select: { referenceId: true } },
       },
     });
 
     // Agrupar por día Bogotá
     const pagosPorDiaKey = new Map<string, number>();
     for (const line of ledgerCobros) {
-      const createdAt = line?.journalEntry?.createdAt;
-      if (!createdAt) continue;
-      const { startDate: dStart } = getBogotaStartEndOfDay(new Date(createdAt));
+      const fechaPago = fechaPagoPorId.get(
+        String(line?.journalEntry?.referenceId || ''),
+      );
+      if (!fechaPago) continue;
+      const { startDate: dStart } = getBogotaStartEndOfDay(fechaPago);
       const key = dStart.toISOString();
       pagosPorDiaKey.set(
         key,
@@ -834,16 +856,20 @@ export class DashboardService {
     return [];
   }
 
-  private async getLedgerCobranzaWhere(startDate: Date, endDate: Date) {
-    // Primero, los ids de todos los pagos regularizados
-    const regularizedPagoIds = await this.prisma.pago
-      .findMany({
-        where: { origenGestion: 'CIERRE_PENDIENTE' },
-        select: { id: true },
-      })
-      .then((pagos) => pagos.map((p) => p.id));
+  private async getLedgerCobranzaContext(startDate: Date, endDate: Date) {
+    // La fecha operativa del cobro vive en Pago.fechaPago. JournalEntry.createdAt
+    // se conserva como fecha de auditoria: en transferencias puede ser el dia
+    // posterior, cuando un administrador aprueba la solicitud.
+    const pagos = await this.prisma.pago.findMany({
+      where: {
+        fechaPago: { gte: startDate, lte: endDate },
+        NOT: { origenGestion: 'CIERRE_PENDIENTE' },
+      },
+      select: { id: true, fechaPago: true },
+    });
+    const pagoIds = pagos.map((p) => p.id);
 
-    return {
+    const where = {
       OR: [
         { accountCode: { startsWith: '1.1' } },
         { accountCode: { startsWith: '1.2' } },
@@ -852,11 +878,15 @@ export class DashboardService {
       journalEntry: {
         isOpening: false,
         referenceType: 'PAGO',
-        createdAt: { gte: startDate, lte: endDate },
-        NOT: {
-          referenceId: { in: regularizedPagoIds },
-        },
+        referenceId: { in: pagoIds },
       },
+    };
+
+    return {
+      where,
+      fechaPagoPorId: new Map<string, Date>(
+        pagos.map((p: any) => [String(p.id), new Date(p.fechaPago)]),
+      ),
     };
   }
 
@@ -864,7 +894,7 @@ export class DashboardService {
     startDate: Date,
     endDate: Date,
   ): Promise<number> {
-    const where = await this.getLedgerCobranzaWhere(startDate, endDate);
+    const { where } = await this.getLedgerCobranzaContext(startDate, endDate);
     const res = await this.prisma.journalLine.aggregate({
       where,
       _sum: { debitAmount: true },

@@ -118,16 +118,6 @@ export class InventarioParser {
       );
     }
 
-    // Catálogo existente: se usa para avisar de artículos repetidos y para permitir
-    // que la hoja de Precios (formato anterior) apunte a productos ya creados.
-    const productosBd = await this.prisma.producto.findMany({
-      where: { eliminadoEn: null },
-      select: { codigo: true, nombre: true },
-    });
-    const codigosBD = new Map<string, string>(
-      productosBd.map((p) => [normalizeCode(p.codigo), p.nombre]),
-    );
-
     // ── Hoja Artículos ──────────────────────────────────────────────────────
     const cols = construirMapaColumnas(hojaArticulos);
     const colAccion = cols.indice('Acción');
@@ -201,6 +191,44 @@ export class InventarioParser {
       colObservaciones,
       ...columnasOpciones.flatMap((o) => [o.meses, o.precio]),
     ].filter(Boolean);
+
+    // Solo se consultan los códigos presentes en el archivo. Descargar el
+    // catálogo completo hacía que validar unas pocas filas se volviera más
+    // lento a medida que crecía el inventario de producción.
+    const codigosReferenciados = new Set<string>();
+    hojaArticulos.eachRow((row, rowNumber) => {
+      if (rowNumber < FILA_INICIO_DATOS) return;
+      if (filaVaciaEnColumnas(row, columnasEntradaArticulos)) return;
+      const codigo = normalizeCode(celda(row, colCodigo));
+      if (codigo) codigosReferenciados.add(codigo);
+    });
+
+    if (hojaPrecios) {
+      const colsPrecios = construirMapaColumnas(hojaPrecios);
+      const colCodigoProducto = colsPrecios.indice(
+        'Código producto',
+        'Código del artículo',
+      );
+      hojaPrecios.eachRow((row, rowNumber) => {
+        if (rowNumber < FILA_INICIO_DATOS) return;
+        const codigo = normalizeCode(celda(row, colCodigoProducto));
+        if (codigo) codigosReferenciados.add(codigo);
+      });
+    }
+
+    const productosBd = await this.prisma.producto.findMany({
+      where: {
+        eliminadoEn: null,
+        codigo: {
+          in: [...codigosReferenciados],
+          mode: 'insensitive',
+        },
+      },
+      select: { codigo: true, nombre: true },
+    });
+    const codigosBD = new Map<string, string>(
+      productosBd.map((p) => [normalizeCode(p.codigo), p.nombre]),
+    );
 
     let totalArticulos = 0;
     let articulosConError = 0;

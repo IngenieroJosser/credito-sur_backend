@@ -4,10 +4,10 @@ import {
   BadRequestException,
   NotFoundException,
   ForbiddenException,
+  ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
-  Prisma,
   EstadoAprobacion,
   EstadoPrestamo,
   EstadoCuota,
@@ -1006,17 +1006,10 @@ export class ApprovalsService {
     });
 
     if (prestamoRechazado.productoId) {
-      try {
-        await tx.producto.update({
-          where: { id: prestamoRechazado.productoId },
-          data: { stock: { increment: 1 } },
-        });
-      } catch (e) {
-        this.logger.warn(
-          `No se pudo restablecer stock al rechazar el préstamo ${approval.referenciaId}:`,
-          e,
-        );
-      }
+      await tx.producto.update({
+        where: { id: prestamoRechazado.productoId },
+        data: { stock: { increment: 1 } },
+      });
     }
   }
 
@@ -1520,7 +1513,7 @@ export class ApprovalsService {
     notas?: string,
     editedData?: any,
   ) {
-    const approval = await this.prisma.aprobacion.findUnique({
+    let approval = await this.prisma.aprobacion.findUnique({
       where: { id },
     });
 
@@ -1540,6 +1533,33 @@ export class ApprovalsService {
         throw new ForbiddenException(
           'No puedes aprobar tu propia solicitud. Debe revisarla otra persona.',
         );
+      }
+    }
+
+    if (approval.estado === EstadoAprobacion.PROCESANDO) {
+      const staleBefore = new Date(Date.now() - 10 * 60 * 1000);
+      const recovered = await this.prisma.aprobacion.updateMany({
+        where: {
+          id,
+          estado: EstadoAprobacion.PROCESANDO,
+          actualizadoEn: { lt: staleBefore },
+        },
+        data: {
+          estado: EstadoAprobacion.PENDIENTE,
+          aprobadoPorId: null,
+          revisadoEn: null,
+        },
+      });
+
+      if (recovered.count !== 1) {
+        throw new ConflictException(
+          'Esta solicitud está siendo procesada por otro usuario.',
+        );
+      }
+
+      approval = await this.prisma.aprobacion.findUnique({ where: { id } });
+      if (!approval) {
+        throw new NotFoundException('Aprobación no encontrada');
       }
     }
 
@@ -1668,7 +1688,7 @@ export class ApprovalsService {
         estado: EstadoAprobacion.PENDIENTE,
       },
       data: {
-        estado: EstadoAprobacion.APROBADO,
+        estado: EstadoAprobacion.PROCESANDO,
         aprobadoPorId: aprobadoPorId || undefined,
         comentarios: notas || undefined,
         datosAprobados: editedData || undefined,
@@ -1708,9 +1728,29 @@ export class ApprovalsService {
         default:
           throw new BadRequestException('Tipo de aprobación no soportado');
       }
+
+      const finalized = await this.prisma.aprobacion.updateMany({
+        where: {
+          id,
+          estado: EstadoAprobacion.PROCESANDO,
+        },
+        data: {
+          estado: EstadoAprobacion.APROBADO,
+          revisadoEn: new Date(),
+        },
+      });
+
+      if (finalized.count !== 1) {
+        throw new ConflictException(
+          'La solicitud cambió de estado mientras se procesaba.',
+        );
+      }
     } catch (error) {
-      await this.prisma.aprobacion.update({
-        where: { id },
+      await this.prisma.aprobacion.updateMany({
+        where: {
+          id,
+          estado: EstadoAprobacion.PROCESANDO,
+        },
         data: {
           estado: EstadoAprobacion.PENDIENTE,
           aprobadoPorId: null,
@@ -1758,6 +1798,23 @@ export class ApprovalsService {
       (data?.idempotencyKey || approval.idempotencyKey || '')
         .toString()
         .trim() || undefined;
+
+    if (idempotencyKey) {
+      const pagoExistente = await this.prisma.pago.findUnique({
+        where: { idempotencyKey },
+        select: { id: true },
+      });
+      if (pagoExistente) {
+        await this.prisma.multimedia.updateMany({
+          where: {
+            aprobacionId: approval.id,
+            pagoId: null,
+          },
+          data: { pagoId: pagoExistente.id },
+        });
+        return;
+      }
+    }
 
     if (!prestamoId || !requestedCobradorId || !montoTotal || montoTotal <= 0) {
       throw new BadRequestException(
@@ -2014,29 +2071,43 @@ export class ApprovalsService {
         tx,
       );
 
-      // Vincular comprobante (si existe) al pago real
-      try {
-        const comprobante = await tx.multimedia.findFirst({
+      // El comprobante pertenece a esta aprobación, no simplemente al préstamo.
+      // El fallback conserva solicitudes creadas antes de incorporar aprobacionId.
+      const comprobante =
+        (await tx.multimedia.findUnique({
+          where: { aprobacionId: approval.id },
+          select: { id: true },
+        })) ||
+        (await tx.multimedia.findFirst({
           where: {
+            aprobacionId: null,
             prestamoId: prestamo.id,
             clienteId: prestamo.clienteId,
             entidad: 'APROBACION',
             tipoContenido: 'COMPROBANTE_TRANSFERENCIA' as any,
             estado: 'ACTIVO' as any,
             eliminadoEn: null,
+            creadoEn: {
+              gte: approval.creadoEn,
+            },
           },
-          orderBy: { creadoEn: 'desc' },
+          orderBy: { creadoEn: 'asc' },
           select: { id: true },
-        });
-        if (comprobante?.id) {
-          await tx.multimedia.update({
-            where: { id: comprobante.id },
-            data: { pagoId: pago.id },
-          });
-        }
-      } catch {
-        // ignore
+        }));
+
+      if (!comprobante?.id) {
+        throw new BadRequestException(
+          'No se encontró el comprobante asociado a esta transferencia. Vuelva a adjuntarlo antes de aprobar.',
+        );
       }
+
+      await tx.multimedia.update({
+        where: { id: comprobante.id },
+        data: {
+          aprobacionId: approval.id,
+          pagoId: pago.id,
+        },
+      });
     });
   }
 
@@ -2161,6 +2232,59 @@ export class ApprovalsService {
    * Obtener todas las aprobaciones pendientes agrupadas por tipo.
    * Incluye datos del solicitante y montos para el módulo de Revisiones.
    */
+  private async enrichTransferApprovalsWithLoanType(items: any[]) {
+    const parsed = items.map((item) => ({
+      item,
+      datos: this.parseJsonObject(item.datosSolicitud),
+    }));
+    const loanIds = [
+      ...new Set(
+        parsed
+          .filter(
+            ({ item, datos }) =>
+              item.tipoAprobacion === TipoAprobacion.PAGO_TRANSFERENCIA &&
+              !String(datos.tipoPrestamo || datos.tipo || '').trim(),
+          )
+          .map(({ item, datos }) =>
+            String(datos.prestamoId || item.referenciaId || '').trim(),
+          )
+          .filter(Boolean),
+      ),
+    ];
+
+    const loans = loanIds.length
+      ? await this.prisma.prestamo.findMany({
+          where: { id: { in: loanIds } },
+          select: { id: true, tipoPrestamo: true, numeroPrestamo: true },
+        })
+      : [];
+    const loansById = new Map<
+      string,
+      { id: string; tipoPrestamo: string; numeroPrestamo: string }
+    >(loans.map((loan) => [loan.id, loan]));
+
+    return parsed.map(({ item, datos }) => {
+      const prestamoId = String(
+        datos.prestamoId || item.referenciaId || '',
+      ).trim();
+      const loan = loansById.get(prestamoId);
+
+      return {
+        ...item,
+        datosSolicitud: loan
+          ? {
+              ...datos,
+              prestamoId: datos.prestamoId || loan.id,
+              numeroPrestamo:
+                datos.numeroPrestamo || loan.numeroPrestamo || undefined,
+              tipoPrestamo:
+                datos.tipoPrestamo || datos.tipo || loan.tipoPrestamo,
+            }
+          : datos,
+      };
+    });
+  }
+
   async getPendingApprovals(tipo?: TipoAprobacion) {
     await this.reconcilePendingLoansWithoutApproval();
 
@@ -2180,20 +2304,19 @@ export class ApprovalsService {
       orderBy: { creadoEn: 'desc' },
     });
 
+    const pendientesEnriquecidos =
+      await this.enrichTransferApprovalsWithLoanType(pendientes);
     const grouped: Record<string, any[]> = {};
     const conteo: Record<string, number> = {};
 
-    for (const item of pendientes) {
+    for (const item of pendientesEnriquecidos) {
       const key = item.tipoAprobacion;
       if (!grouped[key]) {
         grouped[key] = [];
         conteo[key] = 0;
       }
 
-      const datos =
-        typeof item.datosSolicitud === 'string'
-          ? JSON.parse(item.datosSolicitud)
-          : item.datosSolicitud;
+      const datos = item.datosSolicitud;
 
       grouped[key].push({
         ...item,
@@ -2279,6 +2402,18 @@ export class ApprovalsService {
       );
     }
 
+    const datosSolicitud = this.parseJsonObject(approval.datosSolicitud);
+    const restauracionConEfectosNoSoportada =
+      approval.tipoAprobacion === TipoAprobacion.REPROGRAMACION_CUOTA ||
+      (approval.tipoAprobacion === TipoAprobacion.GASTO &&
+        datosSolicitud.esProvisional === true);
+
+    if (accion === 'REVERTIR' && restauracionConEfectosNoSoportada) {
+      throw new BadRequestException(
+        'Esta solicitud ya produjo una reversión operativa o contable y no puede restaurarse automáticamente. Confirme el rechazo y cree una nueva solicitud si necesita procesarla otra vez.',
+      );
+    }
+
     if (accion === 'CONFIRMAR') {
       const claimed = await this.prisma.aprobacion.updateMany({
         where: {
@@ -2360,6 +2495,26 @@ export class ApprovalsService {
               eliminadoEn: null,
             },
           });
+        } else if (
+          approval.tipoAprobacion === TipoAprobacion.PRORROGA_PAGO &&
+          datosSolicitud.tipo === 'GESTION_VENCIDA' &&
+          datosSolicitud.decision === 'PRORROGAR' &&
+          datosSolicitud.prestamoId
+        ) {
+          const nuevaFecha = datosSolicitud.nuevaFechaVencimiento
+            ? new Date(datosSolicitud.nuevaFechaVencimiento)
+            : null;
+
+          if (!nuevaFecha || Number.isNaN(nuevaFecha.getTime())) {
+            throw new BadRequestException(
+              'No se puede restaurar la prórroga porque la nueva fecha no es válida',
+            );
+          }
+
+          await tx.prestamo.update({
+            where: { id: datosSolicitud.prestamoId },
+            data: { fechaFin: nuevaFecha },
+          });
         }
       });
 
@@ -2380,6 +2535,16 @@ export class ApprovalsService {
 
         this.notificacionesGateway.broadcastDashboardsActualizados({
           origen: 'RESTAURAR_PRESTAMO_PROVISIONAL',
+        });
+      } else if (
+        approval.tipoAprobacion === TipoAprobacion.PRORROGA_PAGO &&
+        datosSolicitud.tipo === 'GESTION_VENCIDA' &&
+        datosSolicitud.decision === 'PRORROGAR' &&
+        datosSolicitud.prestamoId
+      ) {
+        this.notificacionesGateway.broadcastPrestamosActualizados({
+          accion: 'RESTAURAR_PRORROGA',
+          prestamoId: datosSolicitud.prestamoId,
         });
       }
 
@@ -2417,6 +2582,12 @@ export class ApprovalsService {
 
     if (!approval) {
       throw new NotFoundException('Aprobación no encontrada');
+    }
+
+    if (_type !== approval.tipoAprobacion) {
+      throw new BadRequestException(
+        `El tipo enviado (${_type}) no corresponde a la solicitud (${approval.tipoAprobacion})`,
+      );
     }
 
     if (approval.estado !== EstadoAprobacion.PENDIENTE) {
@@ -2487,10 +2658,7 @@ export class ApprovalsService {
     }
 
     // Verificar si es un gasto provisional con resultado de revisión específico
-    const data =
-      typeof approval.datosSolicitud === 'string'
-        ? JSON.parse(approval.datosSolicitud)
-        : approval.datosSolicitud;
+    const data = this.parseJsonObject(approval.datosSolicitud);
     const esProvisional = data.esProvisional === true;
     const tieneResultadoRevision =
       resultadoRevision === 'RECHAZADO_CON_DEUDA' ||
@@ -2507,7 +2675,11 @@ export class ApprovalsService {
       );
     }
 
-    if (esProvisional && tieneResultadoRevision) {
+    if (
+      approval.tipoAprobacion === TipoAprobacion.GASTO &&
+      esProvisional &&
+      tieneResultadoRevision
+    ) {
       // ======== NUEVO FLUJO: RECHAZAR GASTO PROVISIONAL ========
       await this.prisma.$transaction(async (tx) => {
         const claimed = await tx.aprobacion.updateMany({
@@ -2615,72 +2787,104 @@ export class ApprovalsService {
       return { success: true, message: 'Gasto provisional rechazado' };
     }
 
-    const claimed = await this.prisma.aprobacion.updateMany({
-      where: {
-        id,
-        estado: EstadoAprobacion.PENDIENTE,
-      },
-      data: {
-        estado: EstadoAprobacion.RECHAZADO,
-        aprobadoPorId: rechazadoPorId || undefined,
-        comentarios: motivoRechazo || 'Rechazado sin motivo especificado',
-        revisadoEn: new Date(),
-      },
+    await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.aprobacion.updateMany({
+        where: {
+          id,
+          estado: EstadoAprobacion.PENDIENTE,
+        },
+        data: {
+          estado: EstadoAprobacion.RECHAZADO,
+          aprobadoPorId: rechazadoPorId || undefined,
+          comentarios: motivoRechazo || 'Rechazado sin motivo especificado',
+          revisadoEn: new Date(),
+        },
+      });
+
+      if (claimed.count !== 1) {
+        throw new BadRequestException(
+          'Esta solicitud ya fue tomada por otro usuario',
+        );
+      }
+
+      if (
+        approval.tipoAprobacion === TipoAprobacion.PRORROGA_PAGO &&
+        data.tipo === 'GESTION_VENCIDA' &&
+        data.prestamoId &&
+        data.decision === 'PRORROGAR'
+      ) {
+        const fechaOriginal = data.fechaVencimientoOriginal
+          ? new Date(data.fechaVencimientoOriginal)
+          : null;
+
+        if (!fechaOriginal || Number.isNaN(fechaOriginal.getTime())) {
+          throw new BadRequestException(
+            'No se puede revertir la prórroga porque la fecha original no es válida',
+          );
+        }
+
+        await tx.prestamo.update({
+          where: { id: data.prestamoId },
+          data: { fechaFin: fechaOriginal },
+        });
+      } else if (approval.tipoAprobacion === TipoAprobacion.NUEVO_PRESTAMO) {
+        await this.rejectLoanDirecto(
+          tx,
+          approval,
+          rechazadoPorId,
+          motivoRechazo,
+        );
+      } else if (approval.tipoAprobacion === TipoAprobacion.NUEVO_CLIENTE) {
+        if (!approval.referenciaId) {
+          throw new BadRequestException(
+            'La aprobación no tiene cliente asociado',
+          );
+        }
+
+        await tx.cliente.update({
+          where: { id: approval.referenciaId },
+          data: {
+            estadoAprobacion: EstadoAprobacion.RECHAZADO,
+            aprobadoPorId: rechazadoPorId || undefined,
+            eliminadoEn: new Date(),
+          },
+        });
+      }
     });
 
-    if (claimed.count !== 1) {
-      throw new BadRequestException(
-        'Esta solicitud ya fue tomada por otro usuario',
-      );
-    }
+    if (
+      approval.tipoAprobacion === TipoAprobacion.PRORROGA_PAGO &&
+      data.tipo === 'GESTION_VENCIDA' &&
+      data.prestamoId
+    ) {
+      const nombreCliente = data.clienteNombre || data.cliente || 'Cliente';
+      const numeroPrestamo = data.numeroPrestamo || '';
+      const decision = (data.decision as string) || 'PRORROGAR';
 
-    if (approval.tipoAprobacion === TipoAprobacion.PRORROGA_PAGO) {
+      if (decision === 'PRORROGAR') {
+        this.notificacionesGateway.broadcastPrestamosActualizados({
+          accion: 'REVERTIR_PRORROGA',
+          prestamoId: data.prestamoId,
+        });
+      }
+
       try {
-        const data =
-          typeof approval.datosSolicitud === 'string'
-            ? JSON.parse(approval.datosSolicitud)
-            : approval.datosSolicitud;
-
-        if (data?.tipo === 'GESTION_VENCIDA' && data?.prestamoId) {
-          const nombreCliente =
-            data?.clienteNombre || data?.cliente || 'Cliente';
-          const numeroPrestamo = data?.numeroPrestamo || '';
-          const decision = (data?.decision as string) || 'PRORROGAR';
-          const fechaOriginal = data?.fechaVencimientoOriginal
-            ? new Date(data.fechaVencimientoOriginal)
-            : null;
-
-          if (fechaOriginal && !isNaN(fechaOriginal.getTime())) {
-            try {
-              await this.prisma.prestamo.update({
-                where: { id: data.prestamoId },
-                data: { fechaFin: fechaOriginal },
-              });
-              this.notificacionesGateway.broadcastPrestamosActualizados({
-                accion: 'REVERTIR_PRORROGA',
-                prestamoId: data.prestamoId,
-              });
-            } catch {
-              // no interrumpir
-            }
-          }
-          await this.notifyCobradorGestionVencida({
-            prestamoId: data.prestamoId,
-            titulo: `Gestión de cuenta vencida rechazada — ${nombreCliente}${numeroPrestamo ? ` (${numeroPrestamo})` : ''}`,
-            mensaje: `La solicitud de ${decision === 'DEJAR_QUIETO' ? 'dejar quieto' : 'prórroga'} fue rechazada.${motivoRechazo ? ` Motivo: ${motivoRechazo}` : ''}`,
-            tipo: 'ADVERTENCIA',
-            metadata: {
-              tipo: 'GESTION_VENCIDA',
-              decision,
-              aprobado: false,
-              motivoRechazo: motivoRechazo || undefined,
-              rechazadoPorId,
-              aprobacionId: approval.id,
-            },
-          });
-        }
+        await this.notifyCobradorGestionVencida({
+          prestamoId: data.prestamoId,
+          titulo: `Gestión de cuenta vencida rechazada — ${nombreCliente}${numeroPrestamo ? ` (${numeroPrestamo})` : ''}`,
+          mensaje: `La solicitud de ${decision === 'DEJAR_QUIETO' ? 'dejar quieto' : 'prórroga'} fue rechazada.${motivoRechazo ? ` Motivo: ${motivoRechazo}` : ''}`,
+          tipo: 'ADVERTENCIA',
+          metadata: {
+            tipo: 'GESTION_VENCIDA',
+            decision,
+            aprobado: false,
+            motivoRechazo: motivoRechazo || undefined,
+            rechazadoPorId,
+            aprobacionId: approval.id,
+          },
+        });
       } catch {
-        // no interrumpir
+        // La notificación es accesoria; el rechazo ya quedó consistente.
       }
     }
 
@@ -2689,69 +2893,6 @@ export class ApprovalsService {
       aprobacionId: id,
       tipoAprobacion: approval.tipoAprobacion,
     });
-
-    // Operación específica por tipo de rechazo
-    if (
-      approval.tipoAprobacion === TipoAprobacion.NUEVO_PRESTAMO &&
-      approval.referenciaId
-    ) {
-      try {
-        const prestamoRechazado = await this.prisma.prestamo.update({
-          where: { id: approval.referenciaId },
-          data: {
-            estadoAprobacion: EstadoAprobacion.RECHAZADO,
-            aprobadoPorId: rechazadoPorId || undefined,
-            eliminadoEn: new Date(), // Oculta el préstamo del listado
-          },
-          include: {
-            producto: true,
-          },
-        });
-
-        // CORRECCIÓN: Restablecer stock si el préstamo incluye un artículo físico (stock !== undefined)
-        if (
-          prestamoRechazado.productoId &&
-          prestamoRechazado.producto?.stock !== undefined &&
-          prestamoRechazado.producto?.stock !== null
-        ) {
-          try {
-            await this.prisma.producto.update({
-              where: { id: prestamoRechazado.productoId },
-              data: { stock: { increment: 1 } },
-            });
-          } catch (e) {
-            this.logger.error(
-              `Error devolviendo stock al rechazar el préstamo ${approval.referenciaId}:`,
-              e,
-            );
-          }
-        }
-      } catch (error) {
-        this.logger.error(
-          `Error actualizando préstamo rechazado ${approval.referenciaId}:`,
-          error,
-        );
-      }
-    } else if (
-      approval.tipoAprobacion === TipoAprobacion.NUEVO_CLIENTE &&
-      approval.referenciaId
-    ) {
-      try {
-        await this.prisma.cliente.update({
-          where: { id: approval.referenciaId },
-          data: {
-            estadoAprobacion: EstadoAprobacion.RECHAZADO,
-            aprobadoPorId: rechazadoPorId || undefined,
-            eliminadoEn: new Date(), // Oculta el cliente del listado
-          },
-        });
-      } catch (error) {
-        this.logger.error(
-          `Error actualizando cliente rechazado ${approval.referenciaId}:`,
-          error,
-        );
-      }
-    }
 
     let nombreRevisor: string | undefined;
     if (rechazadoPorId) {

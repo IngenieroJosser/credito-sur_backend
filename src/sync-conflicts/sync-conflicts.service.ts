@@ -30,9 +30,9 @@ export class SyncConflictsService {
     let whereClause = {};
 
     if (user.rol === 'COORDINADOR') {
-      // Buscar todas las rutas que supervisa este usuario
+      // Buscar todas las rutas que coordina este usuario
       const rutas = await this.prisma.ruta.findMany({
-        where: { supervisorId: user.id },
+        where: { coordinadorId: user.id },
         select: { cobradorId: true },
       });
       const cobradorIds = rutas.map((r) => r.cobradorId);
@@ -75,7 +75,7 @@ export class SyncConflictsService {
 
     if (user.rol === 'COORDINADOR') {
       const rutas = await this.prisma.ruta.findMany({
-        where: { supervisorId: user.id },
+        where: { coordinadorId: user.id },
         select: { cobradorId: true },
       });
       const cobradorIds = rutas.map((r) => r.cobradorId);
@@ -98,12 +98,51 @@ export class SyncConflictsService {
     userId: string,
     _token: string,
   ) {
-    const conflict = await this.prisma.syncConflict.findUnique({
+    let conflict = await this.prisma.syncConflict.findUnique({
       where: { id },
     });
     if (!conflict) throw new BadRequestException('Conflicto no encontrado');
+
+    const staleBefore = new Date(Date.now() - 10 * 60 * 1000);
+    if (
+      conflict.estadoResolucion === 'PROCESANDO' &&
+      conflict.actualizadoEn < staleBefore
+    ) {
+      await this.prisma.syncConflict.updateMany({
+        where: {
+          id,
+          estadoResolucion: 'PROCESANDO',
+          actualizadoEn: { lt: staleBefore },
+        },
+        data: { estadoResolucion: 'PENDIENTE', resueltoPorId: null },
+      });
+      conflict = await this.prisma.syncConflict.findUnique({ where: { id } });
+      if (!conflict) throw new BadRequestException('Conflicto no encontrado');
+    }
+
     if (conflict.estadoResolucion !== 'PENDIENTE')
       throw new BadRequestException('El conflicto ya fue resuelto');
+
+    if (!['RESOLVER', 'DESCARTAR'].includes(accion)) {
+      throw new BadRequestException('Acción de resolución inválida');
+    }
+
+    const claimed = await this.prisma.syncConflict.updateMany({
+      where: {
+        id,
+        estadoResolucion: 'PENDIENTE',
+      },
+      data: {
+        estadoResolucion: 'PROCESANDO',
+        resueltoPorId: userId,
+      },
+    });
+
+    if (claimed.count !== 1) {
+      throw new BadRequestException(
+        'El conflicto ya fue tomado por otro usuario',
+      );
+    }
 
     let success = false;
     let extraError = null;
@@ -123,6 +162,13 @@ export class SyncConflictsService {
         : null;
 
       if (!creador || creador.estado !== 'ACTIVO') {
+        await this.prisma.syncConflict.updateMany({
+          where: { id, estadoResolucion: 'PROCESANDO' },
+          data: {
+            estadoResolucion: 'PENDIENTE',
+            resueltoPorId: null,
+          },
+        });
         throw new BadRequestException(
           'No se puede reprocesar: el usuario que originó el conflicto no existe o está inactivo.',
         );
@@ -176,18 +222,33 @@ export class SyncConflictsService {
     }
 
     if (accion === 'RESOLVER' && !success) {
+      await this.prisma.syncConflict.updateMany({
+        where: { id, estadoResolucion: 'PROCESANDO' },
+        data: {
+          estadoResolucion: 'PENDIENTE',
+          resueltoPorId: null,
+        },
+      });
       throw new BadRequestException(
         `No se pudo reprocesar automáticamente: ${extraError}`,
       );
     }
 
-    return this.prisma.syncConflict.update({
-      where: { id },
+    const finalized = await this.prisma.syncConflict.updateMany({
+      where: { id, estadoResolucion: 'PROCESANDO' },
       data: {
         estadoResolucion: accion === 'RESOLVER' ? 'RESUELTO' : 'DESCARTADO',
         resueltoPorId: userId,
       },
     });
+
+    if (finalized.count !== 1) {
+      throw new BadRequestException(
+        'No se pudo finalizar la resolución del conflicto',
+      );
+    }
+
+    return this.prisma.syncConflict.findUnique({ where: { id } });
   }
 
   async remove(id: string) {

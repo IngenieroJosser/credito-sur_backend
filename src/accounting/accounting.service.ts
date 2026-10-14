@@ -1364,19 +1364,29 @@ export class AccountingService {
       where.referenceType = tipo;
     }
     if (fechaInicio || fechaFin) {
-      where.createdAt = {};
+      const fechaPago: { gte?: Date; lte?: Date } = {};
       if (fechaInicio) {
         const inicioKey = fechaInicio.includes('T')
           ? fechaInicio.split('T')[0]
           : fechaInicio;
-        where.createdAt.gte =
-          getBogotaStartEndOfDayFromKey(inicioKey).startDate;
+        fechaPago.gte = getBogotaStartEndOfDayFromKey(inicioKey).startDate;
       }
       if (fechaFin) {
         const finKey = fechaFin.includes('T')
           ? fechaFin.split('T')[0]
           : fechaFin;
-        where.createdAt.lte = getBogotaStartEndOfDayFromKey(finKey).endDate;
+        fechaPago.lte = getBogotaStartEndOfDayFromKey(finKey).endDate;
+      }
+
+      if (String(tipo || '').toUpperCase() === 'PAGO') {
+        const pagosEnRango = await this.prisma.pago.findMany({
+          where: { fechaPago },
+          select: { id: true },
+        });
+        where.referenceId = { in: pagosEnRango.map((p) => p.id) };
+      } else {
+        // createdAt sigue siendo la fecha de auditoria para los demas asientos.
+        where.createdAt = fechaPago;
       }
     }
     if (cajaId) {
@@ -1421,30 +1431,31 @@ export class AccountingService {
       )
       .map((entry: any) => String(entry.referenceId || '').trim())
       .filter(Boolean);
-    const pagosRegularizados = pagoIds.length
+    const pagosRelacionados = pagoIds.length
       ? await this.prisma.pago.findMany({
           where: {
             id: { in: pagoIds },
-            origenGestion: 'CIERRE_PENDIENTE',
           },
           select: {
             id: true,
+            fechaPago: true,
             origenGestion: true,
             fechaOperativaRuta: true,
           },
         })
       : [];
-    const pagoRegularizadoPorId = new Map<
+    const pagoPorId = new Map<
       string,
       {
         id: string;
+        fechaPago: Date;
         origenGestion: string | null;
         fechaOperativaRuta: string | null;
       }
-    >(pagosRegularizados.map((p: any) => [p.id, p]));
+    >(pagosRelacionados.map((p: any) => [p.id, p]));
 
     const data = entries.map((entry: any) => {
-      const pagoRegularizado = pagoRegularizadoPorId.get(entry.referenceId);
+      const pagoRelacionado = pagoPorId.get(entry.referenceId);
       const totalDebito = entry.lines.reduce(
         (sum: number, line: any) => sum + Number(line.debitAmount || 0),
         0,
@@ -1503,7 +1514,9 @@ export class AccountingService {
 
       return {
         id: entry.id,
-        fecha: formatBogotaOffsetIso(entry.createdAt),
+        fecha: formatBogotaOffsetIso(
+          pagoRelacionado?.fechaPago || entry.createdAt,
+        ),
         tipo: entry.referenceType,
         referenciaId: entry.referenceId,
         descripcion: entry.description,
@@ -1525,8 +1538,8 @@ export class AccountingService {
           cuentaPrincipal?.account?.name ||
           cuentaPrincipal?.accountCode ||
           null,
-        origenGestion: pagoRegularizado?.origenGestion || null,
-        fechaOperativaRuta: pagoRegularizado?.fechaOperativaRuta || null,
+        origenGestion: pagoRelacionado?.origenGestion || null,
+        fechaOperativaRuta: pagoRelacionado?.fechaOperativaRuta || null,
         caja: lineasCaja[0]?.caja?.nombre || null,
         cajaId: lineasCaja[0]?.cajaId || null,
         cuadrado: Math.abs(totalDebito - totalCredito) < 0.01,
@@ -2781,36 +2794,33 @@ export class AccountingService {
     );
     const ledgerFinAnterior = new Date(inicioHoy.getTime() - 1);
 
-    // Obtener los ids de pagos regularizados para excluirlos de la cobranza
-    const regularizedPagoIds = await this.prisma.pago
-      .findMany({
-        where: {
-          origenGestion: 'CIERRE_PENDIENTE',
-        },
-        select: { id: true },
-      })
-      .then((pagos) => pagos.map((p) => p.id));
+    const pagosCobranza = await this.prisma.pago.findMany({
+      where: {
+        fechaPago: { gte: ledgerInicioAnterior, lte: finHoy },
+        NOT: { origenGestion: 'CIERRE_PENDIENTE' },
+      },
+      select: { id: true, fechaPago: true },
+    });
 
     // Helper for non-regularized cobranza
-    const ledgerCobranzaNoRegularizadaWhere = (start: Date, end: Date) => ({
-      OR: [
-        { accountCode: { startsWith: '1.1' } },
-        { accountCode: { startsWith: '1.2' } },
-      ],
-      debitAmount: { gt: 0 },
-      journalEntry: {
-        isOpening: false,
-        referenceType: 'PAGO',
-        createdAt: { gte: start, lte: end },
-        ...(regularizedPagoIds.length
-          ? {
-              NOT: {
-                referenceId: { in: regularizedPagoIds },
-              },
-            }
-          : {}),
-      },
-    });
+    const ledgerCobranzaNoRegularizadaWhere = (start: Date, end: Date) => {
+      const pagoIds = pagosCobranza
+        .filter((p) => p.fechaPago >= start && p.fechaPago <= end)
+        .map((p) => p.id);
+
+      return {
+        OR: [
+          { accountCode: { startsWith: '1.1' } },
+          { accountCode: { startsWith: '1.2' } },
+        ],
+        debitAmount: { gt: 0 },
+        journalEntry: {
+          isOpening: false,
+          referenceType: 'PAGO',
+          referenceId: { in: pagoIds },
+        },
+      };
+    };
 
     const ledgerPeriodWhere = (
       start: Date,

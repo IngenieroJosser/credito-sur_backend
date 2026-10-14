@@ -49,8 +49,8 @@ export class RoutesController {
   @ApiResponse({ status: 201, description: 'Ruta creada exitosamente' })
   @ApiResponse({ status: 400, description: 'Datos inválidos' })
   @ApiResponse({ status: 409, description: 'El código de ruta ya existe' })
-  create(@Body() createRouteDto: CreateRouteDto) {
-    return this.routesService.create(createRouteDto);
+  create(@Body() createRouteDto: CreateRouteDto, @Request() req) {
+    return this.routesService.create(createRouteDto, req.user);
   }
 
   @Get()
@@ -70,6 +70,7 @@ export class RoutesController {
   @ApiQuery({ name: 'activa', required: false, type: Boolean })
   @ApiQuery({ name: 'cobradorId', required: false, type: String })
   @ApiQuery({ name: 'supervisorId', required: false, type: String })
+  @ApiQuery({ name: 'includeStats', required: false, type: Boolean })
   @ApiResponse({
     status: 200,
     description: 'Lista de rutas obtenida exitosamente',
@@ -81,6 +82,7 @@ export class RoutesController {
     @Query('activa') activa?: string,
     @Query('cobradorId') cobradorId?: string,
     @Query('supervisorId') supervisorId?: string,
+    @Query('includeStats') includeStats?: string,
     @Request() req?,
   ) {
     const skip =
@@ -96,7 +98,29 @@ export class RoutesController {
         activa: activaBool,
         cobradorId,
         supervisorId,
+        includeStats: includeStats === 'true',
       },
+      req.user,
+    );
+  }
+
+  @Post('daily-visits/batch')
+  @Roles(
+    RolUsuario.COBRADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Obtener visitas diarias de varias rutas en lote' })
+  getDailyVisitsBatch(
+    @Body() body: { rutaIds?: string[]; fecha?: string },
+    @Request() req,
+  ) {
+    return this.routesService.getDailyVisitsBatch(
+      body?.rutaIds || [],
+      body?.fecha,
       req.user,
     );
   }
@@ -113,8 +137,8 @@ export class RoutesController {
     status: 200,
     description: 'Estadísticas obtenidas exitosamente',
   })
-  getStatistics() {
-    return this.routesService.getStatistics();
+  getStatistics(@Request() req) {
+    return this.routesService.getStatistics(req.user);
   }
 
   @Get('cobradores')
@@ -212,8 +236,9 @@ export class RoutesController {
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() updateRouteDto: UpdateRouteDto,
+    @Request() req,
   ) {
-    return this.routesService.update(id, updateRouteDto);
+    return this.routesService.update(id, updateRouteDto, req.user);
   }
 
   @Delete(':id')
@@ -231,8 +256,8 @@ export class RoutesController {
     status: 400,
     description: 'No se puede eliminar una ruta con clientes asignados',
   })
-  remove(@Param('id', ParseUUIDPipe) id: string) {
-    return this.routesService.remove(id);
+  remove(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
+    return this.routesService.remove(id, req.user);
   }
 
   @Patch(':id/toggle-active')
@@ -248,8 +273,8 @@ export class RoutesController {
     description: 'Estado de ruta cambiado exitosamente',
   })
   @ApiResponse({ status: 404, description: 'Ruta no encontrada' })
-  toggleActive(@Param('id', ParseUUIDPipe) id: string) {
-    return this.routesService.toggleActive(id);
+  toggleActive(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
+    return this.routesService.toggleActive(id, req.user);
   }
 
   @Get(':id/activacion-hoy')
@@ -277,7 +302,7 @@ export class RoutesController {
   @ApiOperation({ summary: 'Activar la ruta para el día de hoy (manual)' })
   @ApiResponse({ status: 200, description: 'Ruta activada hoy' })
   activarHoy(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
-    return this.routesService.activarRutaHoy(id, req.user?.id);
+    return this.routesService.activarRutaHoy(id, req.user?.id, req.user);
   }
 
   @Get(':id/cierre-pendiente')
@@ -334,8 +359,9 @@ export class RoutesController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body('clienteId', ParseUUIDPipe) clienteId: string,
     @Body('cobradorId', ParseUUIDPipe) cobradorId: string,
+    @Request() req,
   ) {
-    return this.routesService.assignClient(id, clienteId, cobradorId);
+    return this.routesService.assignClient(id, clienteId, cobradorId, req.user);
   }
 
   @Delete(':id/remove-client/:clienteId')
@@ -352,8 +378,9 @@ export class RoutesController {
   removeClient(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('clienteId', ParseUUIDPipe) clienteId: string,
+    @Request() req,
   ) {
-    return this.routesService.removeClient(id, clienteId);
+    return this.routesService.removeClient(id, clienteId, req.user);
   }
 
   @Post('move-client')
@@ -374,8 +401,14 @@ export class RoutesController {
     @Body('clienteId', ParseUUIDPipe) clienteId: string,
     @Body('fromRutaId', ParseUUIDPipe) fromRutaId: string,
     @Body('toRutaId', ParseUUIDPipe) toRutaId: string,
+    @Request() req,
   ) {
-    return this.routesService.moveClient(clienteId, fromRutaId, toRutaId);
+    return this.routesService.moveClient(
+      clienteId,
+      fromRutaId,
+      toRutaId,
+      req.user,
+    );
   }
 
   @Post('move-loan')
@@ -390,8 +423,9 @@ export class RoutesController {
   moveLoan(
     @Body('prestamoId', ParseUUIDPipe) prestamoId: string,
     @Body('toRutaId', ParseUUIDPipe) toRutaId: string,
+    @Request() req,
   ) {
-    return this.routesService.moveLoan(prestamoId, toRutaId);
+    return this.routesService.moveLoan(prestamoId, toRutaId, req.user);
   }
 
   @Get(':id/daily-visits')
