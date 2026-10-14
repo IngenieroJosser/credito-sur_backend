@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { getBogotaDayKey } from '../utils/date-utils';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { LedgerService } from './ledger.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
@@ -51,7 +52,9 @@ export class AccountingIntegrityCron {
           ],
           // Una por día: si el descuadre sigue ahí mañana vuelve a avisar,
           // pero no repite la misma alerta si el cron corre dos veces.
-          dedupeKey: `integridad-contable:${new Date().toISOString().slice(0, 10)}`,
+          // El dia de Bogota. En UTC la clave nombraba YA el dia siguiente: este
+          // cron corre a las 2 a. m. UTC, que son las 9 de la noche de Bogota.
+          dedupeKey: `integridad-contable:${getBogotaDayKey(new Date())}`,
           titulo: '🚨 Alerta de Integridad Contable',
           mensaje: `Se detectaron inconsistencias en el cierre nocturno: ${!global.balanced ? 'Balance global descuadrado. ' : ''}${cajasDescuadradas.length} cajas con diferencias vs libro mayor.`,
           tipo: 'SISTEMA',

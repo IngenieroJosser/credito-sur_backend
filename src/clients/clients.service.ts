@@ -6,6 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { getBogotaDayKey } from '../utils/date-utils';
 import { CreateClientDto } from './dto/create-client.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -610,8 +611,11 @@ export class ClientsService {
           // Obtener última visita (basado en último pago o última interacción)
           let ultimaVisita = 'Nunca';
           if (cliente.pagos && cliente.pagos.length > 0) {
-            const fecha = new Date(cliente.pagos[0].fechaPago);
-            ultimaVisita = fecha.toISOString().split('T')[0];
+            // `toISOString()` da el dia en UTC: un pago de las 8 de la noche de
+            // Bogota se mostraba como del dia siguiente en 'ultima visita'.
+            ultimaVisita = getBogotaDayKey(
+              new Date(cliente.pagos[0].fechaPago),
+            );
           }
 
           // Calcular deuda total y mora
@@ -1880,7 +1884,9 @@ export class ClientsService {
       orderBy: { creadoEn: 'desc' },
     });
 
-    const fecha = new Date().toISOString().split('T')[0];
+    // El dia de Bogota, no el de UTC: un export hecho de noche se sellaba con
+    // la fecha del dia siguiente.
+    const fecha = getBogotaDayKey(new Date());
 
     if (formato === 'excel') {
       return generarExcelClientesCreditosImportable(

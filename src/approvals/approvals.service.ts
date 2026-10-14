@@ -20,7 +20,10 @@ import {
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
-import { formatBogotaOffsetIso } from '../utils/date-utils';
+import {
+  formatBogotaFechaPad2,
+  formatBogotaOffsetIso,
+} from '../utils/date-utils';
 import { LedgerService } from '../accounting/ledger.service';
 import { randomUUID } from 'crypto';
 import { calcularAmortizacionFrancesa } from '../loans/utils/amortizacion.utils';
@@ -3898,7 +3901,7 @@ export class ApprovalsService {
       await this.notifyCobradorGestionVencida({
         prestamoId: data.prestamoId,
         titulo: `Prórroga aprobada — ${data.clienteNombre || 'Cliente'}`,
-        mensaje: `La solicitud de prórroga para el préstamo ${data.numeroPrestamo || ''} fue aprobada. Nueva fecha: ${nuevaFecha.toLocaleDateString()}`,
+        mensaje: `La solicitud de prórroga para el préstamo ${data.numeroPrestamo || ''} fue aprobada. Nueva fecha: ${formatBogotaFechaPad2(nuevaFecha)}`,
         tipo: 'EXITO',
         metadata: {
           tipo: 'GESTION_VENCIDA',

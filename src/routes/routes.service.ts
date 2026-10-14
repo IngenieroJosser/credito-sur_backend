@@ -20,6 +20,8 @@ import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway'
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 
 import {
+  formatBogotaFechaLarga,
+  formatBogotaFechaPad2,
   formatBogotaOffsetIso,
   getBogotaDayKey,
   getBogotaStartEndOfDay,
@@ -5309,8 +5311,9 @@ export class RoutesService {
 
           cuota: proxCuota ? Number(proxCuota.monto) : 0,
 
+          // Mismo caso: una cuota que vence hoy salia con la fecha de manana.
           fechaCuota: proxCuota
-            ? new Date(proxCuota.fechaVencimiento).toLocaleDateString('es-CO')
+            ? formatBogotaFechaPad2(proxCuota.fechaVencimiento)
             : '—',
 
           saldo: Number(p.saldoPendiente),
@@ -5328,11 +5331,9 @@ export class RoutesService {
       }
     }
 
-    const fechaExport = new Date().toLocaleDateString('es-CO', {
-      day: '2-digit',
-      month: 'long',
-      year: 'numeric',
-    });
+    // Sin zona esto daba la fecha del reloj del servidor (UTC): una
+    // exportacion hecha a las 8 de la noche salia sellada con el dia siguiente.
+    const fechaExport = formatBogotaFechaLarga(new Date());
 
     const cobradorNombre = `${ruta.cobrador.nombres} ${ruta.cobrador.apellidos}`;
 

@@ -38,11 +38,13 @@ import { etiquetaTipoAmortizacion } from '../importaciones/interes-credito';
 import { createHash, randomUUID } from 'crypto';
 import { ContratoData, generarContratoPDF } from '../templates/exports';
 import {
+  formatBogotaFechaLarga,
+  formatBogotaFechaPad2,
   formatBogotaOffsetIso,
   getBogotaDayKey,
-  getBogotaWeekday,
   getBogotaStartEndOfDay,
   getBogotaStartEndOfDayFromKey,
+  getBogotaWeekday,
 } from '../utils/date-utils';
 
 /** Cuotas por mes según la frecuencia; los mismos factores que usa createLoan. */
@@ -815,26 +817,13 @@ export class LoansService implements OnModuleInit {
     }
 
     const fechaParsed = prestamo.fechaInicio ?? prestamo.creadoEn;
-    const fmtFechaFormatoLargo = (d: Date) => {
-      const meses = [
-        'enero',
-        'febrero',
-        'marzo',
-        'abril',
-        'mayo',
-        'junio',
-        'julio',
-        'agosto',
-        'septiembre',
-        'octubre',
-        'noviembre',
-        'diciembre',
-      ];
-      return `${d.getDate()} de ${meses[d.getMonth()]} de ${d.getFullYear()}`;
-    };
+    // Las dos iban por el reloj DEL PROCESO (`d.getDate()` y un
+    // `toLocaleDateString` sin zona). El servidor corre en UTC, asi que un
+    // credito firmado despues de las 7 de la noche de Bogota quedaba fechado al
+    // dia siguiente EN EL CONTRATO que se imprime y se le entrega al cliente.
+    const fmtFechaFormatoLargo = (d: Date) => formatBogotaFechaLarga(d);
 
-    const fmtFecha = (d?: Date | null) =>
-      d ? new Date(d).toLocaleDateString('es-CO') : '';
+    const fmtFecha = (d?: Date | null) => (d ? formatBogotaFechaPad2(d) : '');
 
     const clienteNombre =
       `${prestamo.cliente?.nombres || ''} ${prestamo.cliente?.apellidos || ''}`.trim();

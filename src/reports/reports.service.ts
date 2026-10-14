@@ -131,13 +131,20 @@ export class ReportsService {
       utilidad: 0,
     }));
 
+    // `getMonth()` es el mes DEL PROCESO. El servidor corre en UTC, asi que un
+    // pago del 31 de octubre a las 8 de la noche de Bogota caia en noviembre:
+    // el reporte mensual desplazaba de mes todo lo cobrado de noche el ultimo
+    // dia. El mes se saca de la clave de dia de Bogota, que es `YYYY-MM-DD`.
+    const mesEnBogota = (fecha: Date): number =>
+      Number(getBogotaDayKey(fecha).slice(5, 7)) - 1;
+
     pagos.forEach((p) => {
-      const month = p.fechaPago.getMonth();
+      const month = mesEnBogota(p.fechaPago);
       months[month].ingresos += Number(p.montoTotal);
     });
 
     gastos.forEach((g) => {
-      const month = g.fechaGasto.getMonth();
+      const month = mesEnBogota(g.fechaGasto);
       months[month].egresos += Number(g.monto);
     });
 

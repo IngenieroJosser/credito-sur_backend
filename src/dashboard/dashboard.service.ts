@@ -9,10 +9,11 @@ import {
   TipoAprobacion,
 } from '@prisma/client';
 import {
+  TimeFilterPeriod as BogotaPeriod,
   calculateDateRange,
+  formatBogotaHora,
   getBogotaDayKey,
   getBogotaStartEndOfDay,
-  TimeFilterPeriod as BogotaPeriod,
 } from '../utils/date-utils';
 
 @Injectable()
@@ -908,10 +909,9 @@ export class DashboardService {
       type: this.mapApprovalType(approval.tipoAprobacion),
       description: this.getApprovalDescription(approval.tipoAprobacion),
       requestedBy: `${approval.solicitadoPor.nombres} ${approval.solicitadoPor.apellidos}`,
-      time: new Date(approval.creadoEn).toLocaleTimeString('es-ES', {
-        hour: '2-digit',
-        minute: '2-digit',
-      }),
+      // Sin zona esto seguia el reloj del proceso: en el servidor, que corre
+      // en UTC, una aprobacion de las 8:30 de la noche se mostraba 01:30.
+      time: formatBogotaHora(approval.creadoEn),
       details: this.getApprovalDetails(approval),
       status: 'pending' as const,
       priority: this.determinePriority(approval.tipoAprobacion),
@@ -1035,10 +1035,9 @@ export class DashboardService {
         approval.estado,
       ),
       amount: this.getRecentActivityAmount(approval),
-      time: new Date(approval.actualizadoEn).toLocaleTimeString('es-ES', {
-        hour: '2-digit',
-        minute: '2-digit',
-      }),
+      // Sin zona esto seguia el reloj del proceso: en el servidor, que corre
+      // en UTC, una aprobacion de las 8:30 de la noche se mostraba 01:30.
+      time: formatBogotaHora(approval.actualizadoEn),
       status:
         approval.estado === EstadoAprobacion.APROBADO ? 'approved' : 'alert',
     };

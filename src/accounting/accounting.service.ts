@@ -5107,7 +5107,9 @@ export class AccountingService {
 
     await this.ledgerService.registrarAsiento({
       referenceType: 'AJUSTE',
-      referenceId: `REGULARIZACION_INVENTARIO:${new Date().toISOString().slice(0, 10)}`,
+      // El dia contable es el de Bogota: un ajuste hecho a las 8 de la noche
+      // quedaba referenciado al dia siguiente, descuadrado del resto del libro.
+      referenceId: `REGULARIZACION_INVENTARIO:${getBogotaDayKey(new Date())}`,
       description:
         `Regularización de inventario: se reconoce la mercancía en bodega ` +
         `($${valorBodega}) frente al saldo del libro ($${saldoLibro})`,
