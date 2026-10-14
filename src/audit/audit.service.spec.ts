@@ -90,26 +90,41 @@ describe('AuditService', () => {
       expect(data.valoresNuevos).toEqual({});
     });
 
-    it('ACTUAL, NO DESEADO: `cambios` dice "calculated" sin calcular nada', async () => {
-      // El servicio tiene escrito «aquí podrías implementar una lógica para
-      // calcular diferencias» y en su lugar guarda el literal
-      // `{ diff: 'calculated' }`. O sea que la columna `cambios` afirma que se
-      // calculó un diff que nunca se hizo.
-      //
-      // No es inofensivo: quien lea la auditoría buscando QUÉ campo cambió no
-      // encuentra nada, y el registro aparenta tenerlo. Los valores anteriores y
-      // nuevos sí se guardan completos, así que el diff se puede derivar de
-      // ellos cuando se implemente.
+    it('`cambios` dice QUE campo cambio, con su antes y su despues', async () => {
+      // Aqui habia un `{ diff: "calculated" }` escrito a mano: la columna
+      // afirmaba haber calculado un diff que nunca se hizo, y quien abria la
+      // auditoria buscando que cambio no encontraba nada.
       await service.create({
         ...entrada,
-        datosAnteriores: { monto: 100 },
-        datosNuevos: { monto: 200 },
+        datosAnteriores: { monto: 100, estado: 'PENDIENTE' },
+        datosNuevos: { monto: 200, estado: 'PENDIENTE' },
       });
 
       const { data } = prisma.registroAuditoria.create.mock.calls[0][0];
-      expect(data.cambios).toEqual({ diff: 'calculated' });
-      expect(data.valoresAnteriores).toEqual({ monto: 100 });
-      expect(data.valoresNuevos).toEqual({ monto: 200 });
+      expect(data.cambios).toEqual({ monto: { antes: 100, despues: 200 } });
+      // `estado` no cambio, asi que no aparece: si salieran todos los campos el
+      // diff seria tan ilegible como comparar los dos objetos enteros.
+      expect(data.cambios).not.toHaveProperty('estado');
+    });
+
+    it('sin un lado de la comparacion, `cambios` queda vacio', async () => {
+      await service.create({ ...entrada, datosNuevos: { monto: 200 } });
+
+      const { data } = prisma.registroAuditoria.create.mock.calls[0][0];
+      expect(data.cambios).toEqual({});
+    });
+
+    it('un campo que aparece o desaparece cuenta como cambio', async () => {
+      await service.create({
+        ...entrada,
+        datosAnteriores: { monto: 100 },
+        datosNuevos: { monto: 100, notas: 'reprogramado' },
+      });
+
+      const { data } = prisma.registroAuditoria.create.mock.calls[0][0];
+      expect(data.cambios).toEqual({
+        notas: { antes: undefined, despues: 'reprogramado' },
+      });
     });
   });
 
@@ -139,25 +154,35 @@ describe('AuditService', () => {
       expect(res.totalPaginas).toBe(5);
     });
 
-    it('ACTUAL, NO DESEADO: no hay tope de tamaño de página', async () => {
-      // `backup.getHistory` acota su límite entre 1 y 100; esto no acota nada.
-      // Una petición con `?limite=999999` contra una tabla de auditoría grande
-      // se trae todo a memoria. Es el tipo de cosa que no se nota en desarrollo
-      // —donde la tabla tiene cien filas— y tumba el servidor en producción.
-      await service.findAllPaginated(1, 999999);
+    it('acota el tamaño de página a 100 aunque se pida un millón', async () => {
+      // Sin el tope, un `?limite=999999` contra una tabla de auditoría grande se
+      // traía todo a memoria: no se nota en desarrollo —cien filas— y tumba el
+      // servidor en producción.
+      const res = await service.findAllPaginated(1, 999999);
 
       expect(prisma.registroAuditoria.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ take: 999999 }),
+        expect.objectContaining({ take: 100 }),
       );
+      // La respuesta dice el límite REAL servido, no el que llegó.
+      expect(res.limite).toBe(100);
     });
 
-    it('ACTUAL, NO DESEADO: la página 0 pide un salto negativo', async () => {
-      // `skip = (0 - 1) * 50 = -50`. Prisma rechaza un `skip` negativo, así que
-      // esto sale como error 500 en vez de como una petición mal formada.
-      await service.findAllPaginated(0, 50);
+    it('la página 0 se sirve como la 1 en vez de reventar', async () => {
+      // Antes calculaba `skip = (0 - 1) * 50 = -50`, y Prisma rechaza un salto
+      // negativo: una petición mal formada salía como error 500 del servidor.
+      const res = await service.findAllPaginated(0, 50);
 
       expect(prisma.registroAuditoria.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ skip: -50 }),
+        expect.objectContaining({ skip: 0 }),
+      );
+      expect(res.pagina).toBe(1);
+    });
+
+    it('una página negativa tampoco produce un salto negativo', async () => {
+      await service.findAllPaginated(-3, 50);
+
+      expect(prisma.registroAuditoria.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ skip: 0 }),
       );
     });
   });
