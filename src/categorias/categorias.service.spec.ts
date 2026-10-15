@@ -1,3 +1,4 @@
+import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { CategoriasService } from './categorias.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -19,7 +20,7 @@ describe('CategoriasService', () => {
     categoria: {
       create: jest.Mock;
       findMany: jest.Mock;
-      findUnique: jest.Mock;
+      findFirst: jest.Mock;
       update: jest.Mock;
     };
   };
@@ -29,7 +30,11 @@ describe('CategoriasService', () => {
       categoria: {
         create: jest.fn().mockResolvedValue({ id: 'c-1' }),
         findMany: jest.fn().mockResolvedValue([]),
-        findUnique: jest.fn().mockResolvedValue(null),
+        // Por omisión la categoría EXISTE y está viva: lo contrario se declara
+        // en cada prueba que lo necesite.
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ id: 'c-1', nombre: 'Celulares' }),
         update: jest.fn().mockResolvedValue({ id: 'c-1' }),
       },
     };
@@ -92,32 +97,61 @@ describe('CategoriasService', () => {
     });
   });
 
-  describe('findOne y update', () => {
-    it('ACTUAL, NO DESEADO: `findOne` devuelve también una categoría borrada', async () => {
-      // `findAll` filtra `eliminadoEn: null` y `findOne` no. O sea que una
-      // categoría borrada desaparece del listado pero sigue siendo consultable
-      // por su id, y la pantalla que la lea así la pintará como si viviera.
-      //
-      // Queda escrito para que cerrarlo sea una decisión: hay sitios que
-      // legítimamente necesitan leer una categoría archivada —el detalle de un
-      // artículo viejo, un reporte histórico— y filtrar aquí sin mirarlos los
-      // rompería.
-      await service.findOne('c-borrada');
+  describe('findOne', () => {
+    it('pide la categoría filtrando las borradas', async () => {
+      // `findAll` descartaba las borradas y esto no, así que una categoría
+      // eliminada desaparecía del listado pero seguía siendo consultable por su
+      // id, y la pantalla que la leyera así la pintaba como si viviera.
+      await service.findOne('c-1');
 
-      expect(prisma.categoria.findUnique).toHaveBeenCalledWith({
-        where: { id: 'c-borrada' },
+      expect(prisma.categoria.findFirst).toHaveBeenCalledWith({
+        where: { id: 'c-1', eliminadoEn: null },
       });
     });
 
-    it('ACTUAL, NO DESEADO: `update` puede modificar una categoría ya borrada', async () => {
-      // Mismo hueco que arriba, del lado de la escritura: nada impide revivir
-      // campos de una categoría archivada sin pasar por una restauración
-      // explícita.
-      await service.update('c-borrada', { nombre: 'Otra cosa' });
+    it('avisa con 404 si no existe, en vez de devolver null', async () => {
+      // Un `null` salía del controlador como un 200 con cuerpo vacío, que quien
+      // llama lee como "la categoría existe y no tiene datos".
+      prisma.categoria.findFirst.mockResolvedValue(null);
 
-      const { where } = prisma.categoria.update.mock.calls[0][0];
-      expect(where).toEqual({ id: 'c-borrada' });
-      expect(where).not.toHaveProperty('eliminadoEn');
+      await expect(service.findOne('c-borrada')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+
+  describe('update', () => {
+    it('no modifica una categoría archivada', async () => {
+      // El hueco de `findOne` del lado de la escritura: nada impedía revivir
+      // campos de una categoría borrada sin restaurarla antes.
+      prisma.categoria.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.update('c-borrada', { nombre: 'Otra cosa' }),
+      ).rejects.toThrow(NotFoundException);
+      expect(prisma.categoria.update).not.toHaveBeenCalled();
+    });
+
+    it('actualiza la que sí está viva', async () => {
+      await service.update('c-1', { nombre: 'Celulares y tablets' });
+
+      expect(prisma.categoria.update).toHaveBeenCalledWith({
+        where: { id: 'c-1' },
+        data: { nombre: 'Celulares y tablets' },
+      });
+    });
+  });
+
+  describe('remove, de nuevo', () => {
+    it('borrar dos veces no reescribe la fecha del primer borrado', async () => {
+      // Perder cuándo se archivó de verdad es perder el dato que justifica la
+      // papelera.
+      prisma.categoria.findFirst.mockResolvedValue(null);
+
+      await expect(service.remove('c-ya-borrada')).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(prisma.categoria.update).not.toHaveBeenCalled();
     });
   });
 });

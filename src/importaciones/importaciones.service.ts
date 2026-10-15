@@ -24,6 +24,8 @@ import {
 } from './interes-credito';
 import { pesos } from '../common/dinero.util';
 import { randomUUID } from 'crypto';
+import { Prisma } from '@prisma/client';
+import { normalizarNombreCategoria } from './normalizar-categoria';
 
 type ProductoImportadoSnapshot = {
   nombre: string;
@@ -74,22 +76,6 @@ type CreadoPorImportacion = {
   precios?: number;
   inventario?: RegistroInventarioImportado[];
 };
-
-/**
- * Clave de comparacion de categorias: sin mayusculas, sin acentos y sin
- * espacios sobrantes, para no duplicar la misma categoria escrita distinto.
- */
-export function normalizarNombreCategoria(valor: unknown): string {
-  if (typeof valor !== 'string') return '';
-  return valor
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '') // marcas de acento
-    .trim()
-    .replace(/\s+/g, ' ')
-    .toLowerCase();
-}
-
-import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class ImportacionesService {

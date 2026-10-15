@@ -1,4 +1,4 @@
-import { normalizarNombreCategoria } from './importaciones.service';
+import { normalizarNombreCategoria } from './normalizar-categoria';
 
 /**
  * Al importar artículos, la categoría del archivo se da de alta en el catálogo
