@@ -1488,19 +1488,29 @@ export class AccountingService {
       if (referencia) where.referenceType = referencia;
     }
     if (fechaInicio || fechaFin) {
-      where.createdAt = {};
+      const fechaPago: { gte?: Date; lte?: Date } = {};
       if (fechaInicio) {
         const inicioKey = fechaInicio.includes('T')
           ? fechaInicio.split('T')[0]
           : fechaInicio;
-        where.createdAt.gte =
-          getBogotaStartEndOfDayFromKey(inicioKey).startDate;
+        fechaPago.gte = getBogotaStartEndOfDayFromKey(inicioKey).startDate;
       }
       if (fechaFin) {
         const finKey = fechaFin.includes('T')
           ? fechaFin.split('T')[0]
           : fechaFin;
-        where.createdAt.lte = getBogotaStartEndOfDayFromKey(finKey).endDate;
+        fechaPago.lte = getBogotaStartEndOfDayFromKey(finKey).endDate;
+      }
+
+      if (String(tipo || '').toUpperCase() === 'PAGO') {
+        const pagosEnRango = await this.prisma.pago.findMany({
+          where: { fechaPago },
+          select: { id: true },
+        });
+        where.referenceId = { in: pagosEnRango.map((p) => p.id) };
+      } else {
+        // createdAt sigue siendo la fecha de auditoria para los demas asientos.
+        where.createdAt = fechaPago;
       }
     }
     if (cajaId) {
@@ -1544,30 +1554,31 @@ export class AccountingService {
       )
       .map((entry) => String(entry.referenceId || '').trim())
       .filter(Boolean);
-    const pagosRegularizados = pagoIds.length
+    const pagosRelacionados = pagoIds.length
       ? await this.prisma.pago.findMany({
           where: {
             id: { in: pagoIds },
-            origenGestion: 'CIERRE_PENDIENTE',
           },
           select: {
             id: true,
+            fechaPago: true,
             origenGestion: true,
             fechaOperativaRuta: true,
           },
         })
       : [];
-    const pagoRegularizadoPorId = new Map<
+    const pagoPorId = new Map<
       string,
       {
         id: string;
+        fechaPago: Date;
         origenGestion: string | null;
         fechaOperativaRuta: string | null;
       }
-    >(pagosRegularizados.map((p) => [p.id, p]));
+    >(pagosRelacionados.map((p) => [p.id, p]));
 
     const data = entries.map((entry) => {
-      const pagoRegularizado = pagoRegularizadoPorId.get(entry.referenceId);
+      const pagoRelacionado = pagoPorId.get(entry.referenceId);
       const totalDebito = entry.lines.reduce(
         (sum: number, line) => sum + Number(line.debitAmount || 0),
         0,
@@ -1626,7 +1637,9 @@ export class AccountingService {
 
       return {
         id: entry.id,
-        fecha: formatBogotaOffsetIso(entry.createdAt),
+        fecha: formatBogotaOffsetIso(
+          pagoRelacionado?.fechaPago || entry.createdAt,
+        ),
         tipo: entry.referenceType,
         referenciaId: entry.referenceId,
         descripcion: entry.description,
@@ -1648,8 +1661,8 @@ export class AccountingService {
           cuentaPrincipal?.account?.name ||
           cuentaPrincipal?.accountCode ||
           null,
-        origenGestion: pagoRegularizado?.origenGestion || null,
-        fechaOperativaRuta: pagoRegularizado?.fechaOperativaRuta || null,
+        origenGestion: pagoRelacionado?.origenGestion || null,
+        fechaOperativaRuta: pagoRelacionado?.fechaOperativaRuta || null,
         caja: lineasCaja[0]?.caja?.nombre || null,
         cajaId: lineasCaja[0]?.cajaId || null,
         cuadrado: Math.abs(totalDebito - totalCredito) < 0.01,
@@ -2887,39 +2900,38 @@ export class AccountingService {
     );
     const ledgerFinAnterior = new Date(inicioHoy.getTime() - 1);
 
-    // Obtener los ids de pagos regularizados para excluirlos de la cobranza
-    const regularizedPagoIds = await this.prisma.pago
-      .findMany({
-        where: {
-          origenGestion: 'CIERRE_PENDIENTE',
-        },
-        select: { id: true },
-      })
-      .then((pagos) => pagos.map((p) => p.id));
+    const pagosCobranza = await this.prisma.pago.findMany({
+      where: {
+        fechaPago: { gte: ledgerInicioAnterior, lte: finHoy },
+        NOT: { origenGestion: 'CIERRE_PENDIENTE' },
+      },
+      select: { id: true, fechaPago: true },
+    });
 
     // Helper for non-regularized cobranza
+    // El retorno se anota a proposito: sin la anotacion el literal se infiere
+    // solo y Prisma no comprueba los campos ni los valores de enum.
     const ledgerCobranzaNoRegularizadaWhere = (
       start: Date,
       end: Date,
-    ): Prisma.JournalLineWhereInput => ({
-      OR: [
-        { accountCode: { startsWith: '1.1' } },
-        { accountCode: { startsWith: '1.2' } },
-      ],
-      debitAmount: { gt: 0 },
-      journalEntry: {
-        isOpening: false,
-        referenceType: 'PAGO',
-        createdAt: { gte: start, lte: end },
-        ...(regularizedPagoIds.length
-          ? {
-              NOT: {
-                referenceId: { in: regularizedPagoIds },
-              },
-            }
-          : {}),
-      },
-    });
+    ): Prisma.JournalLineWhereInput => {
+      const pagoIds = pagosCobranza
+        .filter((p) => p.fechaPago >= start && p.fechaPago <= end)
+        .map((p) => p.id);
+
+      return {
+        OR: [
+          { accountCode: { startsWith: '1.1' } },
+          { accountCode: { startsWith: '1.2' } },
+        ],
+        debitAmount: { gt: 0 },
+        journalEntry: {
+          isOpening: false,
+          referenceType: 'PAGO',
+          referenceId: { in: pagoIds },
+        },
+      };
+    };
 
     // El retorno se anota a proposito: sin la anotacion el literal se infiere
     // solo (`in: string[]`, por ejemplo) y Prisma no comprueba que los valores
@@ -5261,7 +5273,9 @@ export class AccountingService {
 
     await this.ledgerService.registrarAsiento({
       referenceType: 'AJUSTE',
-      referenceId: `REGULARIZACION_INVENTARIO:${new Date().toISOString().slice(0, 10)}`,
+      // El dia contable es el de Bogota: un ajuste hecho a las 8 de la noche
+      // quedaba referenciado al dia siguiente, descuadrado del resto del libro.
+      referenceId: `REGULARIZACION_INVENTARIO:${getBogotaDayKey(new Date())}`,
       description:
         `Regularización de inventario: se reconoce la mercancía en bodega ` +
         `($${valorBodega}) frente al saldo del libro ($${saldoLibro})`,

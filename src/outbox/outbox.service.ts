@@ -45,7 +45,7 @@ export class OutboxService {
       });
 
       for (const event of events) {
-        await this.processEvent(event);
+        await this.processEvent(event, staleBefore);
       }
     } finally {
       this.processing = false;
@@ -57,11 +57,15 @@ export class OutboxService {
     eventType: string;
     aggregateType: string;
     payload: unknown;
-  }) {
+  }, staleBefore: Date) {
     const claimed = await this.prisma.outboxEvent.updateMany({
       where: {
         id: event.id,
-        status: { in: ['PENDING', 'FAILED'] },
+        OR: [
+          { status: 'PENDING' },
+          { status: 'FAILED', attempts: { lt: this.maxAttempts } },
+          { status: 'PROCESSING', updatedAt: { lt: staleBefore } },
+        ],
       },
       data: {
         status: 'PROCESSING',

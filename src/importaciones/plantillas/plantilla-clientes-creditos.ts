@@ -132,17 +132,20 @@ const ART = {
   notas: 13,
   // Automáticas / calculadas, al final (ver nota en DIN sobre el número).
   cliente: 14,
-  articulo: 15,
-  revision: 16,
-  precioPlazo: 17,
-  cantidadCuotasAuto: 18,
-  totalPagar: 19,
-  valorCuota: 20,
-  cuotasPagadasAuto: 21,
-  saldoPendiente: 22,
-  movimiento: 23,
-  debeCuotaAuto: 24,
-  numeroCredito: 25,
+  // Aqui iba "Articulo encontrado". Era un VLOOKUP contra 'BD Artículos', que se
+  // llena desde la base de datos al descargar la plantilla: mientras el
+  // inventario no este importado decia "no existe" en todas las filas. El dato
+  // que si hace falta, el precio del plazo, ya avisa por su cuenta.
+  revision: 15,
+  precioPlazo: 16,
+  cantidadCuotasAuto: 17,
+  totalPagar: 18,
+  valorCuota: 19,
+  cuotasPagadasAuto: 20,
+  saldoPendiente: 21,
+  movimiento: 22,
+  debeCuotaAuto: 23,
+  numeroCredito: 24,
 };
 
 const COLUMNAS_CLIENTES: ColumnaPlantilla[] = [
@@ -334,18 +337,17 @@ const COLUMNAS_CREDITOS_ARTICULO: ColumnaPlantilla[] = [
     width: 17,
     numFmt: FORMATO_FECHA,
   },
-  { header: 'Monto', key: 'monto', width: 15, numFmt: FORMATO_MONEDA },
+  {
+    header: 'Precio total',
+    key: 'monto',
+    width: 17,
+    numFmt: FORMATO_MONEDA,
+  },
   { header: 'Notas', key: 'notas', width: 26 },
   // Automáticas, al final
   {
     header: 'Cliente encontrado (automático)',
     key: 'cliente_auto',
-    width: 28,
-    automatica: true,
-  },
-  {
-    header: 'Artículo encontrado (automático)',
-    key: 'articulo_auto',
     width: 28,
     automatica: true,
   },
@@ -1067,19 +1069,24 @@ export async function generarPlantillaClientesCreditos(
   wsArticulo.getColumn(ART.cc).numFmt = '@';
 
   formulaEnColumna(wsArticulo, ART.cliente, formulaCliente(ART.cc));
-  formulaEnColumna(
-    wsArticulo,
-    ART.articulo,
-    `IF(${ref(ART.productoCodigo)}="","",` +
-      `IFERROR(VLOOKUP(${ref(ART.productoCodigo)},'BD Artículos'!$B:$C,2,FALSE),"⚠ Artículo no existe"))`,
-  );
-
+  // El precio del plan, que es de donde sale el monto a financiar.
+  //
+  // Con el catalogo vacio esta columna no tiene nada que decir, asi que se queda
+  // en blanco en vez de poner un aviso por fila. 'BD Artículos' se llena desde la
+  // base de datos al generar el archivo: si el inventario todavia no se importo,
+  // la hoja trae solo su encabezado y COUNTA da 1. Marcar 1.000 filas con "sin
+  // precio" cuando NINGUNA puede tenerlo no informa de nada, y en ese caso el
+  // monto se escribe a mano en su columna.
+  //
+  // Cuando el catalogo SI trae articulos el aviso se mantiene, porque ahi si
+  // dice algo: ese articulo en concreto no tiene precio para ese plazo.
   formulaEnColumna(
     wsArticulo,
     ART.precioPlazo,
     `IF(OR(${ref(ART.productoCodigo)}="",${ref(ART.plazoMeses)}=""),"",` +
+      `IF(COUNTA('BD Artículos'!$B:$B)<=1,"",` +
       `IFERROR(VLOOKUP(${ref(ART.productoCodigo)}&"|"&${ref(ART.plazoMeses)},'BD Artículos'!$A:$E,5,FALSE),` +
-      `"⚠ Sin precio para ese plazo"))`,
+      `"⚠ Sin precio para ese plazo")))`,
   );
 
   // En artículo manda el plan: el plazo define cuántas cuotas salen.
@@ -1102,9 +1109,10 @@ export async function generarPlantillaClientesCreditos(
     // que el sistema iba a crear. Con 980.000 a 12 quincenas y 150.000 de
     // inicial, eran 81.666 contra 69.166: 12.500 por cuota.
     //
-    // Si se escribe el monto a mano no se resta nada, porque en ese caso el
-    // monto ya es lo que se financia. Es el mismo criterio del parser.
-    `IF(${ref(ART.monto)}<>"",${ref(ART.monto)},` +
+    // El valor manual también es precio total, no saldo financiado. La regla
+    // queda única y visible: precio (manual o catálogo) menos cuota inicial.
+    `IF(${ref(ART.monto)}<>"",` +
+      `MAX(0,${ref(ART.monto)}-IF(${ref(ART.cuotaInicial)}="",0,${ref(ART.cuotaInicial)})),` +
       `IF(ISNUMBER(${ref(ART.precioPlazo)}),` +
       `MAX(0,${ref(ART.precioPlazo)}-IF(${ref(ART.cuotaInicial)}="",0,${ref(ART.cuotaInicial)})),` +
       `""))`,
@@ -1154,6 +1162,13 @@ export async function generarPlantillaClientesCreditos(
     cadenaRevision(
       [
         { condicion: `${ref(ART.cc)}=""`, mensaje: '""' },
+        // De aqui salio una sola comprobacion, la del precio del plazo: ese mismo
+        // aviso ya lo escribe la celda `Precio del plazo`, asi que repetirlo
+        // llenaba la columna mientras el inventario no estuviera importado sin
+        // decir nada nuevo. Las que consultan el catalogo y se quedan no hacen
+        // ruido: la de la inicial esta guardada por ISNUMBER(precioPlazo), asi
+        // que sin precio no evalua, y la del stock dice la verdad, porque sin
+        // inventario la importacion de esa fila si se detendria.
         {
           condicion: `${ref(ART.productoCodigo)}=""`,
           mensaje: '"⚠ Falta el código del artículo"',
@@ -1162,10 +1177,6 @@ export async function generarPlantillaClientesCreditos(
           condicion: `${ref(ART.plazoMeses)}=""`,
           mensaje: '"⚠ Falta el plazo en meses"',
         },
-        {
-          condicion: `NOT(ISNUMBER(${ref(ART.precioPlazo)}))`,
-          mensaje: '"⚠ El artículo no tiene precio para ese plazo"',
-        },
         // En un crédito de artículo el cliente siempre entrega algo al
         // llevarse la mercancía, así que la inicial no puede quedar en blanco.
         // Vacía y cero significan lo mismo, y las dos se avisan.
@@ -1173,12 +1184,13 @@ export async function generarPlantillaClientesCreditos(
           condicion: `OR(${ref(ART.cuotaInicial)}="",${ref(ART.cuotaInicial)}=0)`,
           mensaje: '"⚠ Falta la cuota inicial"',
         },
-        // Si la inicial cubre el precio no queda nada que financiar, y un
-        // crédito sin monto no es un crédito.
+        // Si la inicial cubre el precio no queda nada que financiar. Se revisa
+        // contra el precio manual cuando existe y, si no, contra el catálogo.
         {
           condicion:
-            `AND(ISNUMBER(${ref(ART.precioPlazo)}),` +
-            `IF(${ref(ART.cuotaInicial)}="",0,${ref(ART.cuotaInicial)})>=${ref(ART.precioPlazo)})`,
+            `AND(OR(ISNUMBER(${ref(ART.monto)}),ISNUMBER(${ref(ART.precioPlazo)})),` +
+            `IF(${ref(ART.cuotaInicial)}="",0,${ref(ART.cuotaInicial)})>=` +
+            `IF(ISNUMBER(${ref(ART.monto)}),${ref(ART.monto)},${ref(ART.precioPlazo)}))`,
           mensaje:
             '"⚠ La cuota inicial cubre el precio del artículo: no queda nada que financiar"',
         },
@@ -1302,8 +1314,12 @@ export async function generarPlantillaClientesCreditos(
       '150.000  → lo que el cliente entregó al llevarse el artículo. Obligatoria: se resta del precio y el resto es lo que se financia',
     ],
     [
-      'Aquí no se escribe',
-      'Ni monto ni tasa: salen del precio del plazo, que ya trae el financiamiento',
+      'Aquí normalmente no se escribe',
+      'Ni precio total ni tasa: salen del precio del plazo, que ya trae el financiamiento',
+    ],
+    [
+      'Precio total (opcional)',
+      'Úselo solo si el artículo no tiene precio para ese plazo. Es el precio antes de la inicial; el sistema resta la inicial automáticamente.',
     ],
     ['', ''],
 

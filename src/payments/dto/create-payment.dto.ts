@@ -6,6 +6,7 @@ import {
   IsDateString,
   IsIn,
   IsInt,
+  MaxLength,
   Min,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
@@ -51,6 +52,8 @@ export class CreatePaymentDto {
 
   @IsString()
   @IsOptional()
+  @MaxLength(500, { message: 'notas no puede superar 500 caracteres' })
+  @Transform(({ value }) => value?.toString().trim())
   notas?: string;
 
   @IsString()

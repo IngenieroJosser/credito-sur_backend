@@ -1056,12 +1056,19 @@ export class PaymentsService {
         : null;
 
       if (aprobacionExistente) {
-        return {
-          pendingVerification: true,
-          aprobacionId: aprobacionExistente.id,
-          idempotentReplay: true,
-          message: 'Pago por transferencia ya estaba enviado a revisiones.',
-        };
+        const comprobanteExistente = await this.prisma.multimedia.findUnique({
+          where: { aprobacionId: aprobacionExistente.id },
+          select: { id: true },
+        });
+
+        if (comprobanteExistente) {
+          return {
+            pendingVerification: true,
+            aprobacionId: aprobacionExistente.id,
+            idempotentReplay: true,
+            message: 'Pago por transferencia ya estaba enviado a revisiones.',
+          };
+        }
       }
 
       // Validar que el cliente pertenezca a la ruta indicada
@@ -1076,6 +1083,12 @@ export class PaymentsService {
         },
         select: {
           rutaId: true,
+          ruta: {
+            select: {
+              nombre: true,
+              codigo: true,
+            },
+          },
         },
       });
 
@@ -1085,81 +1098,117 @@ export class PaymentsService {
         );
       }
 
-      const approval = await this.prisma.aprobacion.create({
-        data: {
-          tipoAprobacion: 'PAGO_TRANSFERENCIA',
-          idempotencyKey,
-          referenciaId: prestamoIdVal,
-          tablaReferencia: 'prestamos',
-          solicitadoPorId: cobradorIdVal,
-          estado: EstadoAprobacion.PENDIENTE,
-          montoSolicitud: montoTotal,
-          datosSolicitud: {
-            prestamoId: prestamoIdVal,
-            clienteId: prestamo.clienteId,
-            cobradorId: cobradorIdVal,
-            rutaId: rutaIdOperativa || paymentDto.rutaId || null,
-            montoTotal,
-            fechaPago: formatBogotaOffsetIso(fechaPagoBogota),
-            numeroReferencia: paymentDto.numeroReferencia || null,
-            notas: paymentDto.notas || null,
-            metodoPago: 'TRANSFERENCIA',
-            cuotaId: paymentDto.cuotaId || null,
-            fechaOperativaRuta: paymentDto.fechaOperativaRuta || null,
-            origenGestion: paymentDto.origenGestion || null,
-            idempotencyKey: idempotencyKey || null,
-          },
+      const sanitize = (v?: string) =>
+        (v || '')
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/(^-|-$)/g, '')
+          .slice(0, 60);
+
+      const dni = (prestamo.cliente.dni || '').replace(/\D/g, '');
+      const dniLast4 = dni ? dni.slice(-4) : '';
+      const nombres = sanitize(prestamo.cliente.nombres);
+      const apellidos = sanitize(prestamo.cliente.apellidos);
+      const clientLabel = [`cc-${dni}`, nombres, apellidos, dniLast4]
+        .filter(Boolean)
+        .join('-');
+      const solicitadoPorId = actor?.id || cobradorIdVal;
+
+      // La evidencia es obligatoria: si la subida falla, no existe solicitud
+      // pendiente que luego pueda aprobarse sin comprobante.
+      const cloudResult = await this.cloudinaryService.subirArchivo(
+        comprobante!,
+        {
+          folder: `clientes/${clientLabel}/comprobantes-transferencia`,
         },
-      });
+      );
 
-      // Subir comprobante y asociarlo a la aprobación.
+      if (!cloudResult?.publicId || !cloudResult?.url) {
+        throw new BadRequestException(
+          'No se pudo almacenar el comprobante de la transferencia.',
+        );
+      }
+
+      let approval: { id: string };
       try {
-        const sanitize = (v?: string) =>
-          (v || '')
-            .toLowerCase()
-            .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '')
-            .replace(/[^a-z0-9]+/g, '-')
-            .replace(/(^-|-$)/g, '')
-            .slice(0, 60);
+        approval = await this.prisma.$transaction(async (tx) => {
+          const aprobacion =
+            aprobacionExistente ||
+            (await tx.aprobacion.create({
+              data: {
+                tipoAprobacion: 'PAGO_TRANSFERENCIA' as any,
+                idempotencyKey,
+                referenciaId: prestamoIdVal,
+                tablaReferencia: 'prestamos',
+                solicitadoPorId,
+                estado: EstadoAprobacion.PENDIENTE,
+                montoSolicitud: montoTotal,
+                datosSolicitud: {
+                  prestamoId: prestamoIdVal,
+                  clienteId: prestamo.clienteId,
+                  cobradorId: cobradorIdVal,
+                  rutaId: rutaIdOperativa || paymentDto.rutaId || null,
+                  rutaNombre: asignacionRutaPago?.ruta?.nombre || null,
+                  rutaCodigo: asignacionRutaPago?.ruta?.codigo || null,
+                  numeroPrestamo: prestamo.numeroPrestamo,
+                  tipoPrestamo: prestamo.tipoPrestamo,
+                  montoTotal,
+                  fechaPago: formatBogotaOffsetIso(fechaPagoBogota),
+                  numeroReferencia: paymentDto.numeroReferencia || null,
+                  notas: paymentDto.notas || null,
+                  metodoPago: 'TRANSFERENCIA',
+                  cuotaId: paymentDto.cuotaId || null,
+                  fechaOperativaRuta: paymentDto.fechaOperativaRuta || null,
+                  origenGestion: paymentDto.origenGestion || null,
+                  idempotencyKey: idempotencyKey || null,
+                },
+              },
+              select: { id: true },
+            }));
 
-        const dni = (prestamo.cliente.dni || '').replace(/\D/g, '');
-        const dniLast4 = dni ? dni.slice(-4) : '';
-        const nombres = sanitize(prestamo.cliente.nombres);
-        const apellidos = sanitize(prestamo.cliente.apellidos);
-        const clientLabel = [`cc-${dni}`, nombres, apellidos, dniLast4]
-          .filter(Boolean)
-          .join('-');
+          await tx.multimedia.create({
+            data: {
+              aprobacionId: aprobacion.id,
+              prestamoId: prestamoIdVal,
+              clienteId: prestamo.clienteId,
+              entidad: 'APROBACION',
+              tipoContenido: 'COMPROBANTE_TRANSFERENCIA' as any,
+              tipoArchivo: comprobante!.mimetype,
+              formato: cloudResult.formato,
+              nombreOriginal: comprobante!.originalname,
+              nombreAlmacenamiento: cloudResult.publicId,
+              ruta: cloudResult.publicId,
+              url: cloudResult.url,
+              tamanoBytes: cloudResult.tamanoBytes,
+              esPublico: false,
+              esPrincipal: true,
+              subidoPorId: solicitadoPorId,
+            },
+          });
 
-        const cloudResult = await this.cloudinaryService.subirArchivo(
-          comprobante!,
-          {
-            folder: `clientes/${clientLabel}/comprobantes-transferencia`,
-          },
-        );
-
-        await this.prisma.multimedia.create({
-          data: {
-            prestamoId: prestamoIdVal,
-            clienteId: prestamo.clienteId,
-            entidad: 'APROBACION',
-            tipoContenido: 'COMPROBANTE_TRANSFERENCIA',
-            tipoArchivo: comprobante!.mimetype,
-            formato: cloudResult.formato,
-            nombreOriginal: comprobante!.originalname,
-            nombreAlmacenamiento: cloudResult.publicId,
-            ruta: cloudResult.publicId,
-            url: cloudResult.url,
-            tamanoBytes: cloudResult.tamanoBytes,
-            esPublico: false,
-            esPrincipal: true,
-            subidoPorId: cobradorIdVal,
-          },
+          return aprobacion;
         });
-      } catch (err) {
-        this.logger.error(
-          `Aprobación ${approval.id} creada, pero falló la subida del comprobante: ${(err as Error).message}`,
-        );
+      } catch (error) {
+        try {
+          await this.cloudinaryService.eliminarArchivo(cloudResult.publicId);
+        } catch (cleanupError) {
+          this.logger.error(
+            `No se pudo eliminar el comprobante huérfano ${cloudResult.publicId}: ${(cleanupError as Error).message}`,
+          );
+        }
+        throw error;
+      }
+
+      if (aprobacionExistente) {
+        return {
+          pendingVerification: true,
+          aprobacionId: approval.id,
+          idempotentReplay: true,
+          message:
+            'El comprobante fue asociado a la solicitud de transferencia existente.',
+        };
       }
 
       // Notificar aprobadores para verificación
@@ -1174,11 +1223,15 @@ export class PaymentsService {
           tipoAprobacion: 'PAGO_TRANSFERENCIA',
           prestamoId: prestamoIdVal,
           numeroPrestamo: prestamo.numeroPrestamo,
+          tipoPrestamo: prestamo.tipoPrestamo,
           cliente: `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`,
           clienteId: prestamo.clienteId,
           monto: montoTotal,
           metodoPago: 'TRANSFERENCIA',
           numeroReferencia: paymentDto.numeroReferencia || null,
+          rutaId: rutaIdOperativa,
+          rutaNombre: asignacionRutaPago?.ruta?.nombre || null,
+          rutaCodigo: asignacionRutaPago?.ruta?.codigo || null,
           tieneComprobante: true,
           pagoPendiente: true,
         },
@@ -1756,6 +1809,8 @@ export class PaymentsService {
           select: {
             id: true,
             numeroPrestamo: true,
+            tipoPrestamo: true,
+            productoId: true,
             monto: true,
             tasaInteres: true,
             saldoPendiente: true,
@@ -1955,6 +2010,7 @@ export class PaymentsService {
       prestamoId?: string;
     },
     format: 'excel' | 'pdf',
+    actor?: PaymentActor,
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
     // 1. Solo consulta de BD
     const where: Prisma.PagoWhereInput = {};
@@ -1963,6 +2019,12 @@ export class PaymentsService {
     }
     if (filters.rutaId) {
       where.rutaId = filters.rutaId;
+    }
+    const rol = String(actor?.rol || '').toUpperCase();
+    if (rol === RolUsuario.SUPERVISOR && actor?.id) {
+      where.ruta = { supervisorId: actor.id };
+    } else if (rol === RolUsuario.COORDINADOR && actor?.id) {
+      where.ruta = { coordinadorId: actor.id };
     }
     if (filters.startDate || filters.endDate) {
       const startKey = filters.startDate || filters.endDate;
@@ -1981,6 +2043,14 @@ export class PaymentsService {
         gte: startDate,
         lte: endDate,
       };
+    }
+
+    const total = await this.prisma.pago.count({ where });
+    const MAX_EXPORT_ROWS = 50_000;
+    if (total > MAX_EXPORT_ROWS) {
+      throw new BadRequestException(
+        `La exportación contiene ${total} pagos. Reduzca el rango de fechas a un máximo de ${MAX_EXPORT_ROWS} registros.`,
+      );
     }
 
     const pagos = await this.prisma.pago.findMany({
@@ -2007,7 +2077,6 @@ export class PaymentsService {
         },
       },
       orderBy: { fechaPago: 'desc' },
-      take: 10000,
     });
 
     // Obtener transacciones asociadas a los pagos para determinar origenCaja

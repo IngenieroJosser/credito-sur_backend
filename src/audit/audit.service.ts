@@ -8,6 +8,44 @@ import { PrismaService } from '../prisma/prisma.service';
 import { getBogotaDayKey } from '../utils/date-utils';
 import { Prisma } from '@prisma/client';
 
+/**
+ * Los campos que cambiaron entre dos versiones de un registro.
+ *
+ * Devuelve  solo con lo que de verdad cambio: si
+ * se guardaran todos los campos, el diff seria tan ilegible como comparar los
+ * dos objetos enteros a mano, que es justo lo que se quiere evitar.
+ *
+ * La comparacion es por valor serializado, no por identidad: dos objetos con el
+ * mismo contenido no cuentan como cambio. Es lo que hace falta aqui, donde los
+ * valores vienen de columnas Json y llegan como estructuras nuevas en cada
+ * lectura aunque el contenido sea identico.
+ */
+/** Un valor de columna Json que SI se puede comparar campo a campo. */
+const esObjetoPlano = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
+function calcularCambios(
+  anteriores?: unknown,
+  nuevos?: unknown,
+): Record<string, { antes: unknown; despues: unknown }> {
+  // Una columna Json puede traer un texto o un numero, no solo un objeto: sin
+  // esta comprobacion, `Object.keys` sobre una cadena devolveria sus indices.
+  if (!esObjetoPlano(anteriores) || !esObjetoPlano(nuevos)) return {};
+
+  const campos = new Set([...Object.keys(anteriores), ...Object.keys(nuevos)]);
+  const cambios: Record<string, { antes: unknown; despues: unknown }> = {};
+
+  for (const campo of campos) {
+    const antes = anteriores[campo];
+    const despues = nuevos[campo];
+    if (JSON.stringify(antes) !== JSON.stringify(despues)) {
+      cambios[campo] = { antes, despues };
+    }
+  }
+
+  return cambios;
+}
+
 @Injectable()
 export class AuditService {
   constructor(private readonly prisma: PrismaService) {}
@@ -36,15 +74,14 @@ export class AuditService {
       endpoint?: string;
     } & Record<string, unknown>;
   }) {
-    // Si no hay datos, intentar inferir cambios
-    // Declarado, no inferido: `let cambios = null` sin anotacion es un `any` EVOLUTIVO
-    // para TypeScript, y `noImplicitAny` no lo marca. O sea que quitar el `: any` de
-    // aqui no quitaba nada, solo lo escondia.
-    let cambios: { diff: string } | null = null;
-    if (data.datosAnteriores && data.datosNuevos) {
-      // Aquí podrías implementar una lógica para calcular diferencias
-      cambios = { diff: 'calculated' };
-    }
+    // Qué campos cambiaron, de verdad.
+    //
+    // Aquí había un `{ diff: 'calculated' }` escrito a mano junto a un comentario
+    // que decía «aquí podrías implementar una lógica para calcular diferencias».
+    // O sea que la columna afirmaba haber calculado un diff que nunca se hizo:
+    // quien abría la auditoría buscando QUÉ cambió no encontraba nada, y el
+    // registro aparentaba tenerlo.
+    const cambios = calcularCambios(data.datosAnteriores, data.datosNuevos);
 
     return this.prisma.registroAuditoria.create({
       data: {
@@ -76,11 +113,21 @@ export class AuditService {
 
   /** Versión paginada con total para el frontend */
   async findAllPaginated(pagina: number = 1, limite: number = 50) {
-    const skip = (pagina - 1) * limite;
+    // La página y el tamaño se acotan antes de tocar la base, con el mismo
+    // criterio que `backup.getHistory`.
+    //
+    // Sin el tope, un `?limite=999999` contra una tabla de auditoría grande se
+    // traía todo a memoria: no se nota en desarrollo —donde hay cien filas— y
+    // tumba el servidor en producción. Y una `pagina=0` calculaba `skip = -50`,
+    // que Prisma rechaza, así que una petición mal formada salía como error 500
+    // en vez de como lo que era.
+    const limiteSeguro = Math.max(1, Math.min(100, Number(limite) || 50));
+    const paginaSegura = Math.max(1, Math.floor(Number(pagina) || 1));
+    const skip = (paginaSegura - 1) * limiteSeguro;
     const [registros, total] = await Promise.all([
       this.prisma.registroAuditoria.findMany({
         orderBy: { creadoEn: 'desc' },
-        take: limite,
+        take: limiteSeguro,
         skip,
         include: {
           usuario: {
@@ -93,9 +140,11 @@ export class AuditService {
     return {
       registros,
       total,
-      pagina,
-      limite,
-      totalPaginas: Math.ceil(total / limite),
+      // Se devuelven los valores REALES usados, no los que llegaron: si alguien
+      // pidio la pagina 0 y se le sirvio la 1, la respuesta tiene que decir 1.
+      pagina: paginaSegura,
+      limite: limiteSeguro,
+      totalPaginas: Math.ceil(total / limiteSeguro),
     };
   }
 

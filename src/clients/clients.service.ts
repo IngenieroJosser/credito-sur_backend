@@ -9,6 +9,8 @@ import {
 import { CreateClientDto } from './dto/create-client.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import { getBogotaDayKey } from '../utils/date-utils';
+import { calcularDiasMoraCliente } from './dias-mora-cliente';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { ConfiguracionService } from '../configuracion/configuracion.service';
@@ -585,7 +587,23 @@ export class ClientsService {
             },
             prestamos: {
               where: { eliminadoEn: null },
-              select: { id: true, estado: true, saldoPendiente: true },
+              select: {
+                id: true,
+                estado: true,
+                saldoPendiente: true,
+                // `frecuenciaPago` y la cuota impaga mas antigua son lo que hace
+                // falta para los dias de mora. Es una subconsulta de UNA fila por
+                // credito. Antes el listado no mandaba `diasMora` en absoluto y el
+                // frontend lo resolvia con `?? 0`: TODOS los clientes salian en
+                // verde "Al dia".
+                frecuenciaPago: true,
+                cuotas: {
+                  where: { estado: { not: 'PAGADA' } },
+                  orderBy: { fechaVencimiento: 'asc' },
+                  take: 1,
+                  select: { fechaVencimiento: true },
+                },
+              },
             },
             pagos: {
               select: { fechaPago: true },
@@ -682,8 +700,11 @@ export class ClientsService {
           // Obtener última visita (basado en último pago o última interacción)
           let ultimaVisita = 'Nunca';
           if (cliente.pagos && cliente.pagos.length > 0) {
-            const fecha = new Date(cliente.pagos[0].fechaPago);
-            ultimaVisita = fecha.toISOString().split('T')[0];
+            // `toISOString()` da el dia en UTC: un pago de las 8 de la noche de
+            // Bogota se mostraba como del dia siguiente en 'ultima visita'.
+            ultimaVisita = getBogotaDayKey(
+              new Date(cliente.pagos[0].fechaPago),
+            );
           }
 
           // Calcular deuda total y mora
@@ -722,6 +743,9 @@ export class ClientsService {
             rutaNombre: rutaNombre,
             montoTotal,
             montoMora,
+            // `null` cuando no se puede saber, nunca 0: un cero se pinta en verde
+            // como "al dia" y taparia a un cliente con meses de atraso.
+            diasMora: calcularDiasMoraCliente(cliente.prestamos),
             prestamosActivos: prestamosActivos.length,
           };
         } catch (error) {
@@ -752,6 +776,9 @@ export class ClientsService {
             rutaNombre: '',
             montoTotal: 0,
             montoMora: 0,
+            // Aqui la transformacion fallo: no se sabe nada de este cliente, asi
+            // que tampoco se afirma que este al dia.
+            diasMora: null,
             prestamosActivos: 0,
           };
         }
@@ -1844,7 +1871,9 @@ export class ClientsService {
       orderBy: { creadoEn: 'desc' },
     });
 
-    const fecha = new Date().toISOString().split('T')[0];
+    // El dia de Bogota, no el de UTC: un export hecho de noche se sellaba con
+    // la fecha del dia siguiente.
+    const fecha = getBogotaDayKey(new Date());
 
     if (formato === 'excel') {
       return generarExcelClientesCreditosImportable(

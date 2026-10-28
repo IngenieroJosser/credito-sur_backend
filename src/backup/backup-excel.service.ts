@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as ExcelJS from 'exceljs';
+import {
+  formatBogotaFechaHoraPad2,
+  formatBogotaFechaPad2,
+} from '../utils/date-utils';
 import { dirname } from 'node:path';
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
@@ -30,21 +34,29 @@ type ExportResult = {
  */
 type ValorDeFecha = Date | string | number | null | undefined;
 
-const pad = (n: number) => String(n).padStart(2, '0');
 const nom = (
   u?: { nombres?: string | null; apellidos?: string | null } | null,
 ) => (u ? `${u.nombres || ''} ${u.apellidos || ''}`.trim() : '');
-const fmtDT = (v: ValorDeFecha): string => {
-  if (!v) return '';
+// Estas dos usaban `d.getDate()`, `d.getMonth()` y `d.getHours()`, que son el
+// reloj DEL PROCESO. El servidor corre en UTC, asi que todo lo registrado
+// despues de las 7 p. m. de Bogota quedaba fechado un dia DESPUES en el
+// respaldo: un pago del 13 a las 8 p. m. salia como del 14. En una maquina en
+// hora de Colombia no se ve, y lo que se fecha mal aqui son movimientos de
+// dinero. Es el mismo fallo que el comentario de `formatBogotaFecha` dice que
+// se corrigio "en los reportes y las exportaciones"; a este archivo no llego.
+//
+// Se conservan los dos bordes de antes: vacio si no hay valor, y el valor tal
+// cual si no se puede interpretar como fecha.
+const fmtDT = (v: ValorDeFecha): string => {  if (!v) return '';
   const d = v instanceof Date ? v : new Date(String(v));
   if (isNaN(d.getTime())) return String(v);
-  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  return formatBogotaFechaHoraPad2(d);
 };
 const fmtD = (v: ValorDeFecha): string => {
   if (!v) return '';
   const d = v instanceof Date ? v : new Date(String(v));
   if (isNaN(d.getTime())) return String(v);
-  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
+  return formatBogotaFechaPad2(d);
 };
 /** Formatea un valor de enum: cambia los guiones bajos por espacios. */
 const fmtE = (v: string | null | undefined) => (v ? v.replace(/_/g, ' ') : '');

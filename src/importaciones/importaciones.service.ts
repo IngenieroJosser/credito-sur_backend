@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { normalizarNombreCategoria } from './normalizar-categoria';
 import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
 import { objetoDeJson } from '../common/json.util';
 import { sincronizarAsignacionesCliente } from '../routes/sincronizar-asignaciones';
@@ -121,19 +122,6 @@ type CreadoPorImportacion = {
   inventario?: RegistroInventarioImportado[];
 };
 
-/**
- * Clave de comparacion de categorias: sin mayusculas, sin acentos y sin
- * espacios sobrantes, para no duplicar la misma categoria escrita distinto.
- */
-export function normalizarNombreCategoria(valor: unknown): string {
-  if (typeof valor !== 'string') return '';
-  return valor
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '') // marcas de acento
-    .trim()
-    .replace(/\s+/g, ' ')
-    .toLowerCase();
-}
 
 import { FrecuenciaPago } from '@prisma/client';
 /** Narrowing de la frecuencia que viene del Excel. El parser ya la valida contra este

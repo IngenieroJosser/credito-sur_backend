@@ -21,6 +21,8 @@ import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway'
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 
 import {
+  formatBogotaFechaLarga,
+  formatBogotaFechaPad2,
   formatBogotaOffsetIso,
   getBogotaDayKey,
   getBogotaStartEndOfDay,
@@ -217,30 +219,96 @@ export class RoutesService {
     );
   }
 
+  private async assertCanAccessRoute(rutaId: string, actor?: RouteActor) {
+    if (this.isRouteAdministrator(actor)) return;
+
+    const rol = String(actor?.rol || '').toUpperCase();
+    const ownership =
+      rol === RolUsuario.COBRADOR
+        ? { cobradorId: actor?.id }
+        : rol === RolUsuario.SUPERVISOR
+          ? { supervisorId: actor?.id }
+          : rol === RolUsuario.COORDINADOR
+            ? { coordinadorId: actor?.id }
+            : null;
+
+    if (!actor?.id || !ownership) {
+      throw new ForbiddenException('No tienes permiso para acceder a esta ruta.');
+    }
+
+    const ruta = await this.prisma.ruta.findFirst({
+      where: { id: rutaId, eliminadoEn: null, ...ownership },
+      select: { id: true },
+    });
+    if (!ruta) {
+      throw new ForbiddenException('No tienes permiso para acceder a esta ruta.');
+    }
+  }
+
+  private isRouteAdministrator(actor: RouteActor) {
+    const rol = String(actor?.rol || '').toUpperCase();
+    return (
+      rol === RolUsuario.ADMIN ||
+      rol === RolUsuario.SUPER_ADMINISTRADOR
+    );
+  }
+
   /**
-   * Un COBRADOR solo puede tocar la ruta que tiene asignada.
+   * Autoriza una mutacion sobre una ruta concreta.
    *
-   * Para los demas roles no hace nada: su acceso ya lo resuelven los guards de
-   * roles y permisos del controlador. Esta comprobacion existe porque el guard
-   * solo sabe que el usuario es cobrador, no si esa ruta en particular es suya;
-   * sin ella un cobrador podria consultar la cartera de otro cambiando el id en
-   * la URL.
+   * El guard de roles valida el rol general, pero no la pertenencia del recurso.
+   * Supervisores y coordinadores solo pueden administrar las rutas que les
+   * pertenecen; administradores conservan alcance global.
    */
-  private async assertCollectorOwnRoute(rutaId: string, actor?: RouteActor) {
-    if (!this.isCollector(actor)) return;
+  private async assertCanManageRoute(rutaId: string, actor?: RouteActor) {
+    if (this.isRouteAdministrator(actor)) return;
+
+    if (!actor?.id || !actor.rol) {
+      throw new ForbiddenException('No tienes permiso para administrar esta ruta.');
+    }
+
+    const rol = String(actor.rol).toUpperCase();
+    const ownership =
+      rol === RolUsuario.SUPERVISOR
+        ? { supervisorId: actor.id }
+        : rol === RolUsuario.COORDINADOR
+          ? { coordinadorId: actor.id }
+          : null;
+
+    if (!ownership) {
+      throw new ForbiddenException('No tienes permiso para administrar esta ruta.');
+    }
+
     const ruta = await this.prisma.ruta.findFirst({
       where: {
         id: rutaId,
         eliminadoEn: null,
-        cobradorId: actor?.id,
+        ...ownership,
       },
       select: { id: true },
     });
-    if (!ruta?.id) {
-      throw new ForbiddenException(
-        'No tienes permiso para acceder a esta ruta.',
-      );
+
+    if (!ruta) {
+      throw new ForbiddenException('No tienes permiso para administrar esta ruta.');
     }
+  }
+
+  private assertCanCreateOrReassignRoute(
+    dto: {
+      supervisorId?: string | null;
+      coordinadorId?: string | null;
+    },
+    actor?: RouteActor,
+  ) {
+    if (this.isRouteAdministrator(actor)) return;
+
+    const rol = String(actor?.rol || '').toUpperCase();
+    if (rol === RolUsuario.SUPERVISOR && actor?.id === dto.supervisorId) return;
+    if (rol === RolUsuario.COORDINADOR && actor?.id === dto.coordinadorId) return;
+
+    throw new ForbiddenException(
+      'No puedes crear o reasignar una ruta a nombre de otro responsable.',
+    );
   }
 
   /**
@@ -340,7 +408,7 @@ export class RoutesService {
   }
 
   async getRutaActivadaHoy(rutaId: string, actor?: RouteActor) {
-    await this.assertCollectorOwnRoute(rutaId, actor);
+    await this.assertCanAccessRoute(rutaId, actor);
 
     const ruta = await this.prisma.ruta.findFirst({
       where: { id: rutaId, eliminadoEn: null },
@@ -426,10 +494,12 @@ export class RoutesService {
    *  - Al activar se pasan a PENDIENTE_CIERRE las jornadas de dias anteriores que
    *    quedaron ABIERTAS: una ruta no puede tener abierto un dia que ya paso.
    */
-  async activarRutaHoy(rutaId: string, userId?: string) {
+  async activarRutaHoy(rutaId: string, userId?: string, actor?: RouteActor) {
     if (!userId) {
       throw new BadRequestException('Usuario inválido');
     }
+
+    await this.assertCanManageRoute(rutaId, actor);
 
     if (this.isDomingoBogota()) {
       throw new BadRequestException(
@@ -905,7 +975,8 @@ export class RoutesService {
     };
   }
 
-  async create(createRouteDto: CreateRouteDto) {
+  async create(createRouteDto: CreateRouteDto, actor?: RouteActor) {
+    this.assertCanCreateOrReassignRoute(createRouteDto, actor);
     try {
       // El código se guarda siempre con el mismo formato (RT-NOMBRE): es lo que
       // se escribe en la columna "Ruta código" de las importaciones, y cuando
@@ -1132,10 +1203,13 @@ export class RoutesService {
       cobradorId?: string;
 
       supervisorId?: string;
+
+      includeStats?: boolean;
     },
     actor?: RouteActor,
   ) {
-    const { skip, take, search, activa, supervisorId } = options || {};
+    const { skip, take, search, activa, supervisorId, includeStats = false } =
+      options || {};
     const rolActor = String(actor?.rol || '').toUpperCase();
 
     const where: Prisma.RutaWhereInput = {
@@ -1164,7 +1238,7 @@ export class RoutesService {
     } else if (rolActor === RolUsuario.SUPERVISOR) {
       where.supervisorId = actor?.id;
     } else if (rolActor === RolUsuario.COORDINADOR) {
-      // Coordinador ve todas las rutas, no filtra por supervisorId ni cobradorId
+      where.coordinadorId = actor?.id;
     } else {
       // ADMIN y SUPER_ADMINISTRADOR: visibilidad total, pero pueden aplicar filtros explícitos
       if (options?.cobradorId) {
@@ -1264,6 +1338,23 @@ export class RoutesService {
 
         this.prisma.ruta.count({ where }),
       ]);
+
+      if (!includeStats) {
+        return {
+          data: rutas.map((ruta) => ({
+            ...ruta,
+            clientesAsignados: ruta._count.asignaciones,
+            cobrador: `${ruta.cobrador.nombres} ${ruta.cobrador.apellidos}`,
+            estado: ruta.activa ? 'ACTIVA' : 'INACTIVA',
+            frecuenciaVisita: 'DIARIO',
+          })),
+          meta: {
+            total,
+            skip: skip || 0,
+            take: take || rutas.length,
+          },
+        };
+      }
 
       // Calcular estadísticas para cada ruta
 
@@ -1729,7 +1820,7 @@ export class RoutesService {
 
   async findOne(id: string, actor?: RouteActor) {
     try {
-      await this.assertCollectorOwnRoute(id, actor);
+      await this.assertCanAccessRoute(id, actor);
 
       const { startDate: hoyInicioUTC } = getBogotaStartEndOfDay(new Date());
 
@@ -2511,7 +2602,21 @@ export class RoutesService {
     }
   }
 
-  async update(id: string, updateRouteDto: UpdateRouteDto) {
+  async update(id: string, updateRouteDto: UpdateRouteDto, actor?: RouteActor) {
+    await this.assertCanManageRoute(id, actor);
+
+    if (
+      (updateRouteDto.supervisorId || updateRouteDto.coordinadorId) &&
+      !this.isRouteAdministrator(actor)
+    ) {
+      this.assertCanCreateOrReassignRoute(
+        {
+          supervisorId: updateRouteDto.supervisorId,
+          coordinadorId: updateRouteDto.coordinadorId,
+        },
+        actor,
+      );
+    }
     // Verificar si la ruta existe
 
     const existingRoute = await this.prisma.ruta.findFirst({
@@ -2721,7 +2826,8 @@ export class RoutesService {
     }
   }
 
-  async remove(id: string) {
+  async remove(id: string, actor?: RouteActor) {
+    await this.assertCanManageRoute(id, actor);
     // Verificar si la ruta existe
 
     const existingRoute = await this.prisma.ruta.findFirst({
@@ -2793,7 +2899,8 @@ export class RoutesService {
     }
   }
 
-  async toggleActive(id: string) {
+  async toggleActive(id: string, actor?: RouteActor) {
+    await this.assertCanManageRoute(id, actor);
     const existingRoute = await this.prisma.ruta.findFirst({
       where: {
         id,
@@ -2869,8 +2976,20 @@ export class RoutesService {
     }
   }
 
-  async getStatistics() {
+  async getStatistics(actor?: RouteActor) {
     try {
+      const rol = String(actor?.rol || '').toUpperCase();
+      const routeOwnership: Prisma.RutaWhereInput =
+        rol === RolUsuario.SUPERVISOR
+          ? { supervisorId: actor?.id }
+          : rol === RolUsuario.COORDINADOR
+            ? { coordinadorId: actor?.id }
+            : {};
+      const routeWhere: Prisma.RutaWhereInput = {
+        eliminadoEn: null,
+        ...routeOwnership,
+      };
+
       const [
         totalRutas,
 
@@ -2884,13 +3003,15 @@ export class RoutesService {
 
         metaHoy,
       ] = await Promise.all([
-        this.prisma.ruta.count({ where: { eliminadoEn: null } }),
+        this.prisma.ruta.count({ where: routeWhere }),
 
-        this.prisma.ruta.count({ where: { activa: true, eliminadoEn: null } }),
+        this.prisma.ruta.count({ where: { ...routeWhere, activa: true } }),
 
-        this.prisma.ruta.count({ where: { activa: false, eliminadoEn: null } }),
+        this.prisma.ruta.count({ where: { ...routeWhere, activa: false } }),
 
-        this.prisma.asignacionRuta.count({ where: { activa: true } }),
+        this.prisma.asignacionRuta.count({
+          where: { activa: true, ruta: routeWhere },
+        }),
 
         // Cobranza de hoy
 
@@ -2900,6 +3021,7 @@ export class RoutesService {
 
           const result = await this.prisma.pago.aggregate({
             where: {
+              ruta: routeOwnership,
               fechaPago: {
                 gte: hoyInicio,
                 lte: hoyFin,
@@ -2926,7 +3048,10 @@ export class RoutesService {
             by: ['prestamoId'],
             where: {
               fechaVencimiento: { lte: hoyUTC },
-              prestamo: { estado: { in: ['ACTIVO', 'EN_MORA', 'PAGADO'] } },
+              prestamo: {
+                estado: { in: ['ACTIVO', 'EN_MORA', 'PAGADO'] },
+                ruta: routeOwnership,
+              },
               estado: { in: ['PENDIENTE', 'PARCIAL', 'VENCIDA', 'PRORROGADA'] },
             },
             _sum: { monto: true },
@@ -2944,8 +3069,7 @@ export class RoutesService {
         by: ['supervisorId'],
 
         where: {
-          eliminadoEn: null,
-
+          ...routeWhere,
           supervisorId: { not: null },
         },
 
@@ -3122,7 +3246,14 @@ export class RoutesService {
     mensaje: string,
     error: unknown,
   ): never {
-    if (error instanceof NotFoundException) throw error;
+    if (
+      error instanceof NotFoundException ||
+      error instanceof BadRequestException ||
+      error instanceof ConflictException ||
+      error instanceof ForbiddenException
+    ) {
+      throw error;
+    }
 
     this.logger.error(
       `${operacion} falló`,
@@ -3139,7 +3270,13 @@ export class RoutesService {
     return sincronizarAsignacionesCliente(tx, clienteId);
   }
 
-  async assignClient(rutaId: string, clienteId: string, _cobradorId: string) {
+  async assignClient(
+    rutaId: string,
+    clienteId: string,
+    _cobradorId: string,
+    actor?: RouteActor,
+  ) {
+    await this.assertCanManageRoute(rutaId, actor);
     try {
       // Verificar si la ruta existe
 
@@ -3255,7 +3392,8 @@ export class RoutesService {
     }
   }
 
-  async removeClient(rutaId: string, clienteId: string) {
+  async removeClient(rutaId: string, clienteId: string, actor?: RouteActor) {
+    await this.assertCanManageRoute(rutaId, actor);
     try {
       // Verificar si la asignación existe
 
@@ -3322,7 +3460,16 @@ export class RoutesService {
     }
   }
 
-  async moveClient(clientId: string, fromRutaId: string, toRutaId: string) {
+  async moveClient(
+    clientId: string,
+    fromRutaId: string,
+    toRutaId: string,
+    actor?: RouteActor,
+  ) {
+    await Promise.all([
+      this.assertCanManageRoute(fromRutaId, actor),
+      this.assertCanManageRoute(toRutaId, actor),
+    ]);
     try {
       // Verificar ambas rutas
 
@@ -3429,7 +3576,8 @@ export class RoutesService {
 
    */
 
-  async moveLoan(prestamoId: string, toRutaId: string) {
+  async moveLoan(prestamoId: string, toRutaId: string, actor?: RouteActor) {
+    await this.assertCanManageRoute(toRutaId, actor);
     try {
       const prestamo = await this.prisma.prestamo.findUnique({
         where: { id: prestamoId },
@@ -3437,12 +3585,17 @@ export class RoutesService {
         select: {
           id: true,
           clienteId: true,
+          rutaId: true,
           frecuenciaPago: true,
           estado: true,
         },
       });
 
       if (!prestamo) throw new NotFoundException('Préstamo no encontrado');
+
+      if (prestamo.rutaId) {
+        await this.assertCanManageRoute(prestamo.rutaId, actor);
+      }
 
       const rutaDestino = await this.prisma.ruta.findFirst({
         where: { id: toRutaId, eliminadoEn: null },
@@ -3534,7 +3687,7 @@ export class RoutesService {
    */
 
   async getDailyVisits(rutaId: string, fecha?: string, actor?: RouteActor) {
-    await this.assertCollectorOwnRoute(rutaId, actor);
+    await this.assertCanAccessRoute(rutaId, actor);
 
     const fechaKey = this.parseFechaOperativaBogotaKey(fecha);
 
@@ -3563,18 +3716,29 @@ export class RoutesService {
       getBogotaStartEndOfDayFromKey(fechaKey);
     const pagosDeHoy = await this.prisma.pago.findMany({
       where: {
-        prestamo: { rutaId },
-        OR: [
+        AND: [
           {
-            fechaPago: { gte: fInicio, lte: fFin },
             OR: [
-              { origenGestion: null },
-              { origenGestion: { not: 'CIERRE_PENDIENTE' } },
+              { rutaId },
+              // Compatibilidad con pagos antiguos creados antes de persistir
+              // la ruta histórica en Pago.
+              { rutaId: null, prestamo: { rutaId } },
             ],
           },
           {
-            fechaOperativaRuta: fechaKey,
-            origenGestion: 'CIERRE_PENDIENTE',
+            OR: [
+              {
+                fechaPago: { gte: fInicio, lte: fFin },
+                OR: [
+                  { origenGestion: null },
+                  { origenGestion: { not: 'CIERRE_PENDIENTE' } },
+                ],
+              },
+              {
+                fechaOperativaRuta: fechaKey,
+                origenGestion: 'CIERRE_PENDIENTE',
+              },
+            ],
           },
         ],
       },
@@ -3838,6 +4002,53 @@ export class RoutesService {
             direccion: cliente.direccion,
             nivelRiesgo: cliente.nivelRiesgo,
             prestamosActivos: prestamosOperativos.length,
+            // Los dias que lleva vencida la cuota impaga mas antigua de este cliente.
+            //
+            // Va AQUI, con la fila, y no se resuelve despues en el navegador. Antes la
+            // ruta se pintaba primero y el riesgo se calculaba a continuacion, asi que
+            // la lista aparecia un instante entera en verde y luego la mitad saltaba a
+            // CRITICO. Si el dato llega con la fila no hay estado intermedio que
+            // esconder: no hace falta un esqueleto ni un valor 'desconocido'.
+            //
+            // Las cuotas ya vienen en esta misma consulta, asi que no cuesta una
+            // peticion mas. Sirve para TODOS los roles que abren la ruta —cobrador,
+            // supervisor, coordinador y administracion— porque todos pasan por aqui.
+            diasMora: (() => {
+              const fechaConsultaMs = Date.parse(
+                `${fechaKey}T12:00:00.000-05:00`,
+              );
+              let fechaVencidaMasAntigua: string | null = null;
+
+              for (const p of prestamosOperativos) {
+                for (const c of p.prestamo?.cuotas || []) {
+                  const fechaEfectiva = getCuotaFechaEfectivaKeyRuta(c);
+                  if (!fechaEfectiva || fechaEfectiva > fechaKey) continue;
+
+                  const estabaPagadaAlCorte =
+                    normalizeUpper(c.estado) === 'PAGADA' &&
+                    c.fechaPago &&
+                    getBogotaDayKey(c.fechaPago) <= fechaKey;
+
+                  if (estabaPagadaAlCorte) continue;
+                  if (
+                    fechaVencidaMasAntigua === null ||
+                    fechaEfectiva < fechaVencidaMasAntigua
+                  ) {
+                    fechaVencidaMasAntigua = fechaEfectiva;
+                  }
+                }
+              }
+
+              if (fechaVencidaMasAntigua === null) return 0;
+              const vencimientoMs = Date.parse(
+                `${fechaVencidaMasAntigua}T12:00:00.000-05:00`,
+              );
+
+              return Math.max(
+                0,
+                Math.floor((fechaConsultaMs - vencimientoMs) / 86_400_000),
+              );
+            })(),
           },
           prestamos: prestamosConCuotaObjetivo,
           cuotaObjetivo: clienteCuotaObjetivo,
@@ -4769,6 +4980,34 @@ export class RoutesService {
     };
   }
 
+  async getDailyVisitsBatch(
+    rutaIds: string[],
+    fecha?: string,
+    actor?: RouteActor,
+  ) {
+    const uniqueIds = [...new Set(rutaIds.filter(Boolean))];
+    if (uniqueIds.length > 100) {
+      throw new BadRequestException(
+        'Solo se pueden consultar hasta 100 rutas por lote.',
+      );
+    }
+
+    const result: Record<string, any> = {};
+    // Limita la presión sobre el pool de PostgreSQL sin volver al N+1 HTTP.
+    for (let index = 0; index < uniqueIds.length; index += 4) {
+      const chunk = uniqueIds.slice(index, index + 4);
+      const rows = await Promise.all(
+        chunk.map(async (rutaId) => ({
+          rutaId,
+          data: await this.getDailyVisits(rutaId, fecha, actor),
+        })),
+      );
+      for (const row of rows) result[row.rutaId] = row.data;
+    }
+
+    return result;
+  }
+
   /**
    * Meta del dia de una visita: lo que habia que cobrarle ANTES de cobrar.
    *
@@ -5046,7 +5285,7 @@ export class RoutesService {
     actor?: RouteActor,
   ) {
     try {
-      await this.assertCollectorOwnRoute(rutaId, actor);
+      await this.assertCanAccessRoute(rutaId, actor);
 
       // Verificar que la ruta existe
 
@@ -5084,7 +5323,10 @@ export class RoutesService {
         totalActualizados: reorderData.length,
       };
     } catch (error) {
-      if (error instanceof NotFoundException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException
+      ) {
         throw error;
       }
 
@@ -5109,7 +5351,7 @@ export class RoutesService {
     formato: 'excel' | 'pdf',
     actor?: RouteActor,
   ): Promise<Buffer> {
-    await this.assertCollectorOwnRoute(rutaId, actor);
+    await this.assertCanAccessRoute(rutaId, actor);
 
     // ── 1. Consultar ruta con todos los datos necesarios ──────────────────────
 
@@ -5341,8 +5583,9 @@ export class RoutesService {
 
           cuota: proxCuota ? Number(proxCuota.monto) : 0,
 
+          // Mismo caso: una cuota que vence hoy salia con la fecha de manana.
           fechaCuota: proxCuota
-            ? new Date(proxCuota.fechaVencimiento).toLocaleDateString('es-CO')
+            ? formatBogotaFechaPad2(proxCuota.fechaVencimiento)
             : '—',
 
           saldo: Number(p.saldoPendiente),
@@ -5360,11 +5603,9 @@ export class RoutesService {
       }
     }
 
-    const fechaExport = new Date().toLocaleDateString('es-CO', {
-      day: '2-digit',
-      month: 'long',
-      year: 'numeric',
-    });
+    // Sin zona esto daba la fecha del reloj del servidor (UTC): una
+    // exportacion hecha a las 8 de la noche salia sellada con el dia siguiente.
+    const fechaExport = formatBogotaFechaLarga(new Date());
 
     const cobradorNombre = `${ruta.cobrador.nombres} ${ruta.cobrador.apellidos}`;
 
@@ -5533,7 +5774,7 @@ export class RoutesService {
     fechaOperativa?: string,
     origenGestion?: string,
   ) {
-    await this.assertCollectorOwnRoute(rutaId, actor);
+    await this.assertCanAccessRoute(rutaId, actor);
 
     const fechaKey = this.parseFechaOperativaBogotaKey(fechaOperativa);
 
@@ -5626,6 +5867,7 @@ export class RoutesService {
     actor?: RouteActor,
   ) {
     this.assertPuedeRegularizarJornada(actor);
+    await this.assertCanManageRoute(rutaId, actor);
 
     // Validar que la ruta exista
     const ruta = await this.prisma.ruta.findFirst({
@@ -6011,7 +6253,7 @@ export class RoutesService {
    * - No existe un CIERRE_RUTA posterior a esa activación
    */
   async getCierrePendienteRutaPublic(rutaId: string, actor?: RouteActor) {
-    await this.assertCollectorOwnRoute(rutaId, actor);
+    await this.assertCanAccessRoute(rutaId, actor);
     return this.getCierrePendienteRuta(rutaId, actor?.id);
   }
 
@@ -6714,7 +6956,7 @@ export class RoutesService {
   }
 
   async getCierrePendienteDetalle(rutaId: string, actor?: RouteActor) {
-    await this.assertCollectorOwnRoute(rutaId, actor);
+    await this.assertCanAccessRoute(rutaId, actor);
 
     const jornadasPendientes = await this.getCierresPendientesRuta(
       rutaId,

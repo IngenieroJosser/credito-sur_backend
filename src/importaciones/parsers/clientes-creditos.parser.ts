@@ -9,7 +9,7 @@ import {
   CreditoImportado,
 } from '../dto/validacion-resultado.dto';
 import { PrismaService } from '../../prisma/prisma.service';
-import { FrecuenciaPago } from '@prisma/client';
+import { FrecuenciaPago, Prisma } from '@prisma/client';
 import { loadWorkbookFromBuffer } from './xlsx-workbook.loader';
 import {
   leerFecha,
@@ -175,19 +175,126 @@ export class ClientesCreditosParser {
       );
     }
 
+    // Primero se reúnen las llaves que realmente aparecen en el archivo. Las
+    // validaciones necesitan contrastarlas con la BD, pero no necesitan cargar
+    // la cartera completa cada vez que alguien sube diez filas.
+    const ccsReferenciadas = new Set<string>();
+    const codigosClienteReferenciados = new Set<string>();
+    const rutasReferenciadas = new Set<string>();
+    const nombresReferenciados = new Map<
+      string,
+      { nombres: string; apellidos: string }
+    >();
+    const productosReferenciados = new Set<string>();
+    const numerosPrestamoReferenciados = new Set<string>();
+    const codigosCreditoReferenciados = new Set<string>();
+
+    {
+      const cols = construirMapaColumnas(hojaClientes);
+      const colCc = cols.indice('CC cliente', 'CC');
+      const colCodigo = cols.indice('Código importación');
+      const colNombres = cols.indice('Nombres');
+      const colApellidos = cols.indice('Apellidos');
+      const colRuta = cols.indice('Ruta código');
+      const columnas = [colCc, colCodigo, colNombres, colApellidos, colRuta].filter(
+        Boolean,
+      );
+
+      hojaClientes.eachRow((row, rowNumber) => {
+        if (rowNumber < FILA_INICIO_DATOS) return;
+        if (filaVaciaEnColumnas(row, columnas)) return;
+
+        const cc = leerTexto(celda(row, colCc));
+        const codigo = leerTexto(celda(row, colCodigo));
+        const nombres = limpiarNombre(leerTexto(celda(row, colNombres)));
+        const apellidos = limpiarNombre(leerTexto(celda(row, colApellidos)));
+        const ruta = normalizarCodigoRuta(celda(row, colRuta));
+
+        if (cc) ccsReferenciadas.add(cc);
+        if (codigo) codigosClienteReferenciados.add(codigo);
+        if (ruta) rutasReferenciadas.add(ruta);
+
+        const clave = claveNombre(nombres, apellidos);
+        if (clave) nombresReferenciados.set(clave, { nombres, apellidos });
+      });
+    }
+
+    hojasCredito.forEach(({ hoja }) => {
+      const cols = construirMapaColumnas(hoja);
+      const colCc = cols.indice('CC cliente');
+      const colProducto = cols.indice(
+        'Código del artículo',
+        'Producto código',
+      );
+      const colNumero = cols.indice('Número de crédito', 'Número préstamo');
+      const colCodigo = cols.indice('Código importación');
+      const columnas = [colCc, colProducto, colNumero, colCodigo].filter(Boolean);
+
+      hoja.eachRow((row, rowNumber) => {
+        if (rowNumber < FILA_INICIO_DATOS) return;
+        if (filaVaciaEnColumnas(row, columnas)) return;
+
+        const cc = leerTexto(celda(row, colCc));
+        const producto = leerTextoMayus(celda(row, colProducto));
+        const numero = leerTexto(celda(row, colNumero));
+        const codigo = leerTexto(celda(row, colCodigo));
+
+        if (cc) ccsReferenciadas.add(cc);
+        if (producto) productosReferenciados.add(producto);
+        if (numero) numerosPrestamoReferenciados.add(numero);
+        if (codigo) codigosCreditoReferenciados.add(codigo);
+      });
+    });
+
+    const filtrosCliente: Prisma.ClienteWhereInput[] = [];
+    if (ccsReferenciadas.size > 0) {
+      filtrosCliente.push({ dni: { in: [...ccsReferenciadas] } });
+    }
+    if (codigosClienteReferenciados.size > 0) {
+      const codigos = [...codigosClienteReferenciados];
+      filtrosCliente.push(
+        { codigo: { in: codigos } },
+        { idempotencyKey: { in: codigos } },
+      );
+    }
+    nombresReferenciados.forEach(({ nombres, apellidos }) => {
+      filtrosCliente.push({
+        nombres: { equals: nombres, mode: 'insensitive' },
+        apellidos: { equals: apellidos, mode: 'insensitive' },
+      });
+    });
+
+    const filtrosPrestamo: Prisma.PrestamoWhereInput[] = [];
+    if (numerosPrestamoReferenciados.size > 0) {
+      filtrosPrestamo.push({
+        numeroPrestamo: { in: [...numerosPrestamoReferenciados] },
+      });
+    }
+    if (codigosCreditoReferenciados.size > 0) {
+      filtrosPrestamo.push({
+        idempotencyKey: { in: [...codigosCreditoReferenciados] },
+      });
+    }
+    if (ccsReferenciadas.size > 0) {
+      // Incluye los IMP-<cc>-N ya existentes para que la generación automática
+      // del número continúe sin colisiones.
+      filtrosPrestamo.push({
+        cliente: { dni: { in: [...ccsReferenciadas] } },
+      });
+    }
+
     // ── Datos de referencia en base de datos ───────────────────────────────
-    // Las 5 consultas van en paralelo. La de pagos reemplaza lo que antes era
-    // un `_count: { select: { pagos: true } }` dentro del findMany de préstamos:
-    // un COUNT correlacionado que Postgres ejecuta por CADA préstamo de la base.
-    // Con una cartera real (miles de créditos) eso es lo que dejaba la
-    // validación "pensando" mucho tiempo; en local, con pocos datos de prueba,
-    // no se notaba. Aquí se resuelve con una consulta aparte, indexada por
-    // prestamoId, que no depende de cuántos préstamos haya.
-    const [rutasBd, clientesBd, productosBd, prestamosBd, pagosPrestamoIds] =
+    // Las consultas principales van en paralelo y quedan acotadas a las llaves
+    // reunidas arriba. Antes cada validación descargaba todas las entidades de
+    // estas tablas y su tiempo crecía con toda la empresa, no con el archivo.
+    const [rutasBd, clientesBd, productosBd, prestamosBd, cajaOficina] =
       await Promise.all([
         this.prisma.ruta.findMany({
           select: { codigo: true },
-          where: { activa: true },
+          where: {
+            activa: true,
+            codigo: { in: [...rutasReferenciadas] },
+          },
         }),
         this.prisma.cliente.findMany({
           select: {
@@ -204,7 +311,10 @@ export class ClientesCreditosParser {
               take: 1,
             },
           },
-          where: { eliminadoEn: null },
+          where: {
+            eliminadoEn: null,
+            OR: filtrosCliente,
+          },
         }),
         this.prisma.producto.findMany({
           select: {
@@ -216,26 +326,31 @@ export class ClientesCreditosParser {
               select: { meses: true, precio: true },
             },
           },
-          where: { eliminadoEn: null },
+          where: {
+            eliminadoEn: null,
+            codigo: {
+              in: [...productosReferenciados],
+              mode: 'insensitive',
+            },
+          },
         }),
         this.prisma.prestamo.findMany({
           select: {
             id: true,
             numeroPrestamo: true,
             idempotencyKey: true,
+            _count: { select: { pagos: true } },
           },
-          where: { eliminadoEn: null },
+          where: {
+            eliminadoEn: null,
+            OR: filtrosPrestamo,
+          },
         }),
-        this.prisma.pago.findMany({
-          select: { prestamoId: true },
-          distinct: ['prestamoId'],
+        this.prisma.caja.findFirst({
+          where: { codigo: 'CAJA-OFICINA' },
+          select: { nombre: true, saldoActual: true },
         }),
       ]);
-
-    // Un crédito con pagos registrados no se puede reescribir por Excel.
-    const prestamoIdsConPagos = new Set(
-      pagosPrestamoIds.map((p) => p.prestamoId),
-    );
 
     // Los códigos se comparan normalizados (RT-NOMBRE), así que en el Excel
     // sirve escribir "Centro", "ruta centro" o "RT-CENTRO": las tres encuentran
@@ -298,7 +413,7 @@ export class ClientesCreditosParser {
     );
     const prestamosConPagos = new Set(
       prestamosBd
-        .filter((p) => prestamoIdsConPagos.has(p.id))
+        .filter((p) => p._count.pagos > 0)
         .map((p) => String(p.numeroPrestamo).trim()),
     );
     const codigosCreditoBd = new Set(
@@ -713,7 +828,10 @@ export class ClientesCreditosParser {
         'Código del artículo',
         'Producto código',
       );
-      const creMonto = colsCre.indice('Monto');
+      // En préstamos de dinero es el capital entregado. En créditos de artículo
+      // es el precio total antes de la inicial. Se conserva "Monto" como alias
+      // para poder leer plantillas descargadas antes de aclarar el encabezado.
+      const creMonto = colsCre.indice('Precio total', 'Monto');
       const creCuotaInicial = colsCre.indice('Cuota inicial');
       const creTasaInteres = colsCre.indice('Tasa interés');
       const creTasaMora = colsCre.indice('Tasa interés mora');
@@ -1059,14 +1177,17 @@ export class ClientesCreditosParser {
         // repetir el genérico del monto solo confunde.
         let inicialCubreElPrecio = false;
 
-        if (esArticulo && montoEfectivo === null && productoCodigo) {
-          // Igual que createLoan: lo que se financia es el precio del plazo
-          // menos la cuota inicial, no el precio completo.
-          const precioPlazo = preciosPorPlazo.get(
-            `${productoCodigo}|${plazoMeses ?? ''}`,
-          );
+        if (esArticulo) {
+          // El valor manual y el precio del catálogo significan lo mismo: el
+          // precio total de venta antes de la inicial. Así quien migra una
+          // cartera sin catálogo no tiene que adivinar si "Monto" era precio o
+          // saldo financiado. Lo financiado siempre es precio - inicial.
+          const precioCatalogo = productoCodigo
+            ? preciosPorPlazo.get(`${productoCodigo}|${plazoMeses ?? ''}`)
+            : undefined;
+          const precioTotal = montoEfectivo ?? precioCatalogo;
 
-          if (precioPlazo && precioPlazo > 0) {
+          if (precioTotal && precioTotal > 0) {
             const inicial = Math.max(0, cuotaInicial ?? 0);
 
             // Si la inicial se come el precio no queda nada que financiar, y
@@ -1074,31 +1195,31 @@ export class ClientesCreditosParser {
             // para que diga cuál es el problema: antes caía en la validación
             // genérica del monto y salía "Debe ser un número mayor a 0" sobre
             // una columna que el usuario ni siquiera había llenado.
-            if (inicial >= precioPlazo) {
+            if (inicial >= precioTotal) {
               inicialCubreElPrecio = true;
               addError(
                 'cuota_inicial',
-                inicial > precioPlazo
-                  ? `La cuota inicial (${inicial}) es mayor que el precio del artículo a ${plazoMeses} meses (${precioPlazo}). Revise la inicial o el plazo.`
+                inicial > precioTotal
+                  ? `La cuota inicial (${inicial}) es mayor que el precio total del artículo (${precioTotal}). Revise la inicial o el precio.`
                   : `La cuota inicial (${inicial}) cubre todo el precio del artículo, así que no queda nada que financiar. Si el cliente pagó completo, es una venta de contado, no un crédito.`,
                 leerValorCelda(celda(row, creCuotaInicial)),
               );
             }
 
-            montoEfectivo = Math.max(0, precioPlazo - inicial);
+            montoEfectivo = Math.max(0, precioTotal - inicial);
             if (!inicialCubreElPrecio) {
               addAdver(
                 'monto',
                 inicial > 0
-                  ? `Se financia el precio del plazo (${precioPlazo}) menos la cuota inicial (${inicial}): ${montoEfectivo}.`
-                  : `Se tomó el precio del plazo del artículo: ${precioPlazo}.`,
+                  ? `Se financia el precio total (${precioTotal}) menos la cuota inicial (${inicial}): ${montoEfectivo}.`
+                  : `Se tomó el precio total del artículo: ${precioTotal}.`,
                 montoEfectivo,
               );
             }
-          } else if (productosEnBd.has(productoCodigo)) {
+          } else if (productoCodigo && productosEnBd.has(productoCodigo)) {
             addError(
               'monto',
-              'El artículo no tiene precio para ese plazo. Escriba el monto a mano o agregue el precio en el inventario.',
+              'El artículo no tiene precio para ese plazo. Escriba el precio total a mano o agregue el precio en el inventario.',
               leerValorCelda(celda(row, creMonto)),
             );
           }
@@ -1581,7 +1702,10 @@ export class ClientesCreditosParser {
     // Vista previa del impacto en caja: lo que va a pasar al confirmar, con la
     // cifra y el motivo. Se calcula aquí, con el saldo real del momento, para
     // que el usuario lo vea antes de decidir.
-    const impactoCaja = await this.calcularImpactoCaja(creditosValidar);
+    const impactoCaja = this.calcularImpactoCaja(
+      creditosValidar,
+      cajaOficina,
+    );
 
     return {
       tipo: 'clientes-creditos',
@@ -1609,9 +1733,12 @@ export class ClientesCreditosParser {
    * se consulta al validar y no se guarda en la plantilla: cambia a cada rato,
    * y una cifra vieja dentro del archivo engañaría más de lo que ayuda.
    */
-  // `CreditoImportado` es lo que este metodo recibe de verdad: son los mismos creditos
-  // que se metieron en `creditosValidar`. Se reutiliza el tipo del DTO.
-  private async calcularImpactoCaja(creditos: CreditoImportado[]) {
+  // `CreditoImportado` es lo que este metodo recibe de verdad: son los mismos
+  // creditos que se metieron en `creditosValidar`. Se reutiliza el tipo del DTO.
+  private calcularImpactoCaja(
+    creditos: CreditoImportado[],
+    cajaOficina: { nombre: string; saldoActual: Prisma.Decimal } | null,
+  ) {
     const operativos = creditos.filter((c) => c.tipoCarga === 'OPERATIVA');
 
     const movimientos = operativos.map((credito) => {
@@ -1647,10 +1774,6 @@ export class ClientesCreditosParser {
     const totalSalida = movimientos.reduce((a, m) => a + m.salidaEfectivo, 0);
     const totalEntrada = movimientos.reduce((a, m) => a + m.entradaEfectivo, 0);
 
-    const cajaOficina = await this.prisma.caja.findFirst({
-      where: { codigo: 'CAJA-OFICINA' },
-      select: { nombre: true, saldoActual: true },
-    });
     const saldoCajaOficina = Number(cajaOficina?.saldoActual || 0);
 
     return {

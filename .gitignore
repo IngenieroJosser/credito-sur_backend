@@ -17,6 +17,8 @@ lerna-debug.log*
 
 # Tests
 /coverage
+# Salida completa de las corridas que fallan (scripts/pruebas-con-log.mjs).
+/pruebas-logs
 /.nyc_output
 
 # IDEs and editors

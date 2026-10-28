@@ -29,6 +29,7 @@ function buildPrismaMock(overrides: DobleDePrisma = {}) {
     },
     usuario: {
       findUnique: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
     },
     journalLine: {
       aggregate: jest.fn().mockResolvedValue({ _sum: { debitAmount: 123456 } }),
@@ -39,6 +40,54 @@ function buildPrismaMock(overrides: DobleDePrisma = {}) {
 }
 
 describe('DashboardService accounting-backed collections', () => {
+  it('ubica una transferencia en la tendencia segun fechaPago y no segun aprobacion', async () => {
+    const prisma = buildPrismaMock({
+      pago: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { montoTotal: 0 } }),
+        count: jest.fn().mockResolvedValue(0),
+        groupBy: jest.fn().mockResolvedValue([]),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'pago-transferencia-1',
+            fechaPago: new Date('2026-10-08T18:57:02.000Z'),
+          },
+        ]),
+      },
+      journalLine: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { debitAmount: 16666 } }),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            debitAmount: 16666,
+            journalEntry: {
+              referenceId: 'pago-transferencia-1',
+              // El asiento se creo al aprobar al dia siguiente.
+              createdAt: new Date('2026-10-09T14:00:00.000Z'),
+            },
+          },
+        ]),
+      },
+    });
+    const service = new DashboardService(prisma as any);
+
+    const result = await (service as any).processTrendData(
+      new Date('2026-10-08T05:00:00.000Z'),
+      new Date('2026-10-09T04:59:59.999Z'),
+      'day',
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0].value).toBe(16666);
+    expect(prisma.journalLine.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          journalEntry: expect.objectContaining({
+            referenceId: { in: ['pago-transferencia-1'] },
+          }),
+        }),
+      }),
+    );
+  });
+
   it('usa ledger PAGO como fuente del recaudo del dashboard', async () => {
     const prisma = buildPrismaMock();
 
@@ -128,10 +177,23 @@ describe('DashboardService accounting-backed collections', () => {
           apellidos: 'Ruta',
           rol: 'COBRADOR',
         }),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'cobrador-1',
+            nombres: 'Ana',
+            apellidos: 'Ruta',
+            rol: 'COBRADOR',
+          },
+        ]),
       },
       cuota: {
         aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 200000 } }),
-        findMany: jest.fn().mockResolvedValue([]),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            monto: 200000,
+            prestamo: { ruta: { cobradorId: 'cobrador-1' } },
+          },
+        ]),
       },
       transaccion: {
         aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 20000 } }),

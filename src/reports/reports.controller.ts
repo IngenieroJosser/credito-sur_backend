@@ -13,6 +13,7 @@ import {
   HttpCode,
   Res,
 } from '@nestjs/common';
+import { calculateDateRange } from '../utils/date-utils';
 import { ApiOperation, ApiResponse, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { ReportsService } from './reports.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -48,7 +49,7 @@ export class ReportsController {
   ) {
     const start = startDate
       ? new Date(startDate)
-      : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+      : calculateDateRange('month').startDate;
     const end = endDate ? new Date(endDate) : new Date();
     return this.reportsService.getFinancialSummary(start, end);
   }
@@ -68,7 +69,7 @@ export class ReportsController {
   ) {
     const start = startDate
       ? new Date(startDate)
-      : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+      : calculateDateRange('month').startDate;
     const end = endDate ? new Date(endDate) : new Date();
     return this.reportsService.getExpenseDistribution(start, end);
   }
@@ -348,7 +349,7 @@ export class ReportsController {
   ) {
     const start = startDate
       ? new Date(startDate)
-      : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+      : calculateDateRange('month').startDate;
     const end = endDate ? new Date(endDate) : new Date();
     const result = await this.reportsService.exportFinancialReport(
       start,

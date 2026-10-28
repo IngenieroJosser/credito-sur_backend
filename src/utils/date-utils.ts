@@ -112,6 +112,86 @@ export function formatBogotaDateTimeLocalInput(date: Date): string {
 }
 
 /**
+ * Solo la hora, en reloj de 24 horas y en Bogota: `20:30`.
+ *
+ * Para las columnas de 'hora' de los tableros. `toLocaleTimeString` a secas usa
+ * el reloj del proceso: en el servidor, que corre en UTC, una aprobacion de las
+ * 8:30 de la noche se mostraba como `01:30`.
+ *
+ * 24 horas y no am/pm a proposito: sin el sufijo, un `08:30` de la tarde es
+ * indistinguible de uno de la manana.
+ */
+export function formatBogotaHora(value: Date | string | number): string {
+  const date = value instanceof Date ? value : new Date(value);
+  const p = getBogotaPartsIntl(date);
+  if (!p) return '';
+  return `${p.hour}:${p.minute}`;
+}
+
+const MESES_ES = [
+  'enero',
+  'febrero',
+  'marzo',
+  'abril',
+  'mayo',
+  'junio',
+  'julio',
+  'agosto',
+  'septiembre',
+  'octubre',
+  'noviembre',
+  'diciembre',
+];
+
+/**
+ * Fecha con el mes escrito, en Bogota: `13 de octubre de 2026`.
+ *
+ * Es el formato de los documentos que se imprimen —el contrato de un credito de
+ * articulo, las cabeceras de las exportaciones—. Ahi estaba escrito a mano con
+ * `d.getDate()` y `d.getMonth()`, o sea el reloj del proceso, y en el servidor
+ * un credito firmado de noche quedaba fechado al dia siguiente.
+ */
+export function formatBogotaFechaLarga(value: Date | string | number): string {
+  const date = value instanceof Date ? value : new Date(value);
+  const p = getBogotaPartsIntl(date);
+  if (!p) return '';
+  const mes = MESES_ES[Number(p.month) - 1];
+  if (!mes) return '';
+  return `${Number(p.day)} de ${mes} de ${p.year}`;
+}
+/**
+ * Igual que `formatBogotaFecha` pero con dia y mes a DOS DIGITOS:
+ * `13/10/2026`, y `01/10/2026` donde la otra daria `1/10/2026`.
+ *
+ * Existe para las exportaciones, donde una columna de fechas de ancho fijo se
+ * lee y se ordena mejor que una de ancho variable. El respaldo en Excel tenia
+ * su propia version de esto escrita a mano con `d.getDate()`, que es el reloj
+ * del proceso: en el servidor, que corre en UTC, fechaba un dia DESPUES todo lo
+ * registrado despues de las 7 p. m. de Bogota. No se notaba en una maquina en
+ * hora de Colombia.
+ */
+export function formatBogotaFechaPad2(value: Date | string | number): string {
+  const date = value instanceof Date ? value : new Date(value);
+  const p = getBogotaPartsIntl(date);
+  if (!p) return '';
+  return `${p.day}/${p.month}/${p.year}`;
+}
+
+/**
+ * `formatBogotaFechaPad2` con la hora completa: `13/10/2026 20:00:00`.
+ *
+ * Lleva los segundos a proposito: es el sello de un movimiento de dinero en una
+ * exportacion, y dos pagos del mismo minuto hay que poder distinguirlos.
+ */
+export function formatBogotaFechaHoraPad2(
+  value: Date | string | number,
+): string {
+  const date = value instanceof Date ? value : new Date(value);
+  const p = getBogotaPartsIntl(date);
+  if (!p) return '';
+  return `${p.day}/${p.month}/${p.year} ${p.hour}:${p.minute}:${p.second}`;
+}
+/**
  * Fecha en formato colombiano (d/m/aaaa) SIEMPRE en hora de Bogota.
  *
  * `toLocaleDateString('es-CO')` a secas usa el reloj del proceso, y en el

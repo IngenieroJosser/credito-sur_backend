@@ -269,6 +269,12 @@ describe('AccountingService financial ledger controls', () => {
 
   it('calcula el resumen financiero desde JournalLine y excluye asientos de apertura', async () => {
     const prisma = buildPrismaMock();
+    prisma.pago.findMany.mockResolvedValue([
+      {
+        id: 'pago-fecha-efectiva',
+        fechaPago: new Date('2026-05-08T18:00:00.000Z'),
+      },
+    ]);
     prisma.journalLine.aggregate
       .mockResolvedValueOnce({ _sum: { debitAmount: 120000 } }) // ingresos caja hoy
       .mockResolvedValueOnce({ _sum: { creditAmount: 120000, debitAmount: 0 } }) // ingresos hoy 3.x
@@ -330,6 +336,13 @@ describe('AccountingService financial ledger controls', () => {
     expect(result.egresosHoy).toBe(35000);
     expect(result.gananciaNeta).toBe(80000);
     expect(result.capitalEnCalle).toBe(650000);
+    const consultasCobranza = prisma.journalLine.aggregate.mock.calls
+      .map(([args]: any[]) => args?.where)
+      .filter((where: any) => where?.journalEntry?.referenceType === 'PAGO');
+    expect(consultasCobranza[0].journalEntry.referenceId).toEqual({
+      in: ['pago-fecha-efectiva'],
+    });
+    expect(consultasCobranza[1].journalEntry.referenceId).toEqual({ in: [] });
     expect(prisma.prestamo.aggregate).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
@@ -1532,6 +1545,7 @@ describe('AccountingService financial ledger controls', () => {
         findMany: jest.fn().mockResolvedValue([
           {
             id: 'pago-regularizado-1',
+            fechaPago: new Date('2026-06-11T07:30:00.000Z'),
             origenGestion: 'CIERRE_PENDIENTE',
             fechaOperativaRuta: '2026-06-10',
           },
@@ -1548,10 +1562,10 @@ describe('AccountingService financial ledger controls', () => {
     expect(prisma.pago.findMany).toHaveBeenCalledWith({
       where: {
         id: { in: ['pago-regularizado-1'] },
-        origenGestion: 'CIERRE_PENDIENTE',
       },
       select: {
         id: true,
+        fechaPago: true,
         origenGestion: true,
         fechaOperativaRuta: true,
       },
@@ -1560,6 +1574,67 @@ describe('AccountingService financial ledger controls', () => {
       origenGestion: 'CIERRE_PENDIENTE',
       fechaOperativaRuta: '2026-06-10',
     });
+  });
+
+  it('filtra y fecha los asientos PAGO por la fecha efectiva del pago', async () => {
+    const fechaPago = new Date('2026-10-08T18:57:02.000Z');
+    const prisma = buildPrismaMock({
+      journalEntry: {
+        count: jest.fn().mockResolvedValue(1),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'journal-transferencia-1',
+            referenceType: 'PAGO',
+            referenceId: 'pago-transferencia-1',
+            description: 'Pago por transferencia aprobado',
+            createdAt: new Date('2026-10-09T14:00:00.000Z'),
+            createdBy: 'admin-1',
+            lines: [
+              {
+                debitAmount: 16666,
+                creditAmount: null,
+                accountCode: '1.2.1.T',
+                cajaId: 'caja-banco',
+                account: { name: 'Banco' },
+                caja: { nombre: 'Caja Banco' },
+              },
+              {
+                debitAmount: null,
+                creditAmount: 16666,
+                accountCode: '1.3.1',
+                cajaId: null,
+                account: { name: 'Cartera' },
+                caja: null,
+              },
+            ],
+          },
+        ]),
+      },
+      pago: {
+        findMany: jest.fn().mockImplementation(({ where }: any) => {
+          if (where?.fechaPago) return [{ id: 'pago-transferencia-1' }];
+          return [
+            {
+              id: 'pago-transferencia-1',
+              fechaPago,
+              origenGestion: null,
+              fechaOperativaRuta: null,
+            },
+          ];
+        }),
+      },
+    });
+
+    const result = await makeService(prisma).getMovimientosLedger({
+      tipo: 'PAGO',
+      fechaInicio: '2026-10-08',
+      fechaFin: '2026-10-08',
+    });
+
+    const where = prisma.journalEntry.findMany.mock.calls[0][0].where;
+    expect(where.createdAt).toBeUndefined();
+    expect(where.referenceId).toEqual({ in: ['pago-transferencia-1'] });
+    expect(result.data[0].fecha).toBe('2026-10-08T13:57:02.000-05:00');
   });
 
   it('exporta el reporte contable desde JournalEntry en lugar de Transaccion', async () => {

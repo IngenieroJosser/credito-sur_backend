@@ -575,6 +575,7 @@ model Aprobacion {
   aprobadoPor          Usuario?             @relation("AprobacionRevisadaPor", fields: [aprobadoPorId], references: [id])
   solicitadoPor        Usuario              @relation("AprobacionSolicitadaPor", fields: [solicitadoPorId], references: [id])
   efectosProvisionales EfectoProvisional[]
+  archivos             Multimedia[]       @relation("MultimediaAprobacion")
 
   @@index([tipoAprobacion])
   @@index([referenciaId, tablaReferencia])
@@ -831,6 +832,7 @@ model Multimedia {
   usuarioId            String?
   productoId           String?
   reciboId             String?
+  aprobacionId         String?                 @unique
   entidad              String?                 @db.VarChar(50)
   tipoContenido        TipoContenidoMultimedia
   tipoArchivo          String                  @db.VarChar(50)
@@ -861,6 +863,7 @@ model Multimedia {
   prestamo             Prestamo?               @relation("MultimediaPrestamo", fields: [prestamoId], references: [id], onDelete: Cascade)
   producto             Producto?               @relation("MultimediaProducto", fields: [productoId], references: [id], onDelete: Cascade)
   recibo               Recibo?                 @relation("MultimediaRecibo", fields: [reciboId], references: [id], onDelete: Cascade)
+  aprobacion           Aprobacion?             @relation("MultimediaAprobacion", fields: [aprobacionId], references: [id], onDelete: SetNull)
   subidoPor            Usuario                 @relation("MultimediaSubidoPor", fields: [subidoPorId], references: [id])
   usuario              Usuario?                @relation("MultimediaUsuario", fields: [usuarioId], references: [id], onDelete: Cascade)
 
@@ -988,6 +991,7 @@ enum MetodoPago {
 
 enum EstadoAprobacion {
   PENDIENTE
+  PROCESANDO
   APROBADO
   RECHAZADO
   CANCELADO

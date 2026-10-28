@@ -200,6 +200,7 @@ export class PaymentsController {
     @Query('endDate', new DefaultValuePipe('')) endDate: string,
     @Query('rutaId', new DefaultValuePipe('')) rutaId: string,
     @Query('prestamoId', new DefaultValuePipe('')) prestamoId: string,
+    @Request() req: RequestConUsuario,
     @Res() res: Response,
   ) {
     const result = await this.paymentsService.exportPayments(
@@ -210,6 +211,7 @@ export class PaymentsController {
         prestamoId: prestamoId || undefined,
       },
       format,
+      req?.user,
     );
     res.setHeader('Content-Type', result.contentType);
     res.setHeader(
