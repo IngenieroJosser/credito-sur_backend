@@ -4,10 +4,10 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { CreateSyncConflictDto } from './dto/create-sync-conflict.dto';
-import { UpdateSyncConflictDto } from './dto/update-sync-conflict.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
+import { mensajeDeError } from '../common/error.util';
 
 @Injectable()
 export class SyncConflictsService {
@@ -26,7 +26,10 @@ export class SyncConflictsService {
     });
   }
 
-  async findAll(user: any) {
+  // Solo se le leen el rol y el id, que es lo que decide el alcance de la consulta.
+  // Con `any` un `user.rool` mal escrito habria dejado el `whereClause` vacio, o sea
+  // habria mostrado los conflictos de todos.
+  async findAll(user: { id?: string; rol?: string }) {
     let whereClause = {};
 
     if (user.rol === 'COORDINADOR') {
@@ -58,7 +61,7 @@ export class SyncConflictsService {
     });
   }
 
-  async findOne(id: string, user: any) {
+  async findOne(id: string, user: { id?: string; rol?: string }) {
     const conflict = await this.prisma.syncConflict.findUnique({
       where: { id },
       include: {
@@ -92,12 +95,7 @@ export class SyncConflictsService {
     return conflict;
   }
 
-  async resolveConflict(
-    id: string,
-    accion: string,
-    userId: string,
-    _token: string,
-  ) {
+  async resolveConflict(id: string, accion: string, userId: string) {
     const conflict = await this.prisma.syncConflict.findUnique({
       where: { id },
     });
@@ -106,7 +104,11 @@ export class SyncConflictsService {
       throw new BadRequestException('El conflicto ya fue resuelto');
 
     let success = false;
-    let extraError = null;
+    // Tipado a mano: `= null` solo lo infiere como `null`, y hasta ahora se le
+    // asignaba el mensaje del error porque venia de un `any`. Solo se rellena
+    // en el catch de mas abajo, y la unica salida anticipada antes de ese try
+    // es un throw, asi que cuando `success` es falso esto ya es texto.
+    let extraError: string | null = null;
 
     if (accion === 'RESOLVER') {
       // Intentar reprocesar CON LA IDENTIDAD DEL CREADOR del conflicto, no la
@@ -168,8 +170,8 @@ export class SyncConflictsService {
         }
 
         success = true;
-      } catch (err: any) {
-        extraError = err.message || 'Fallo automatizado';
+      } catch (err) {
+        extraError = mensajeDeError(err, 'Fallo automatizado');
       }
     } else {
       success = true; // Descartado siempre es éxito en la operación lógica

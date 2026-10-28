@@ -1,10 +1,32 @@
 import { NotificacionesGateway } from './notificaciones.gateway';
+import type { JwtService } from '@nestjs/jwt';
+import type { NotificacionesService } from './notificaciones.service';
+import type { RoutesService } from '../routes/routes.service';
+import {
+  comoDependencia,
+  comoPrisma,
+  comoSocket,
+  type Doble,
+  type DobleDePrisma,
+  type MetodosDeModelo,
+} from '../common/testing/dobles';
 
 describe('NotificacionesGateway', () => {
+  /**
+   * El doble de Prisma de estas pruebas: los dos modelos que las aserciones leen van
+   * obligatorios, para poder leerlos sin guardas.
+   */
+  type PrismaDelGateway = DobleDePrisma & {
+    caja: MetodosDeModelo;
+    usuario: MetodosDeModelo;
+    transaccion: MetodosDeModelo;
+    rutaJornada: MetodosDeModelo;
+  };
+
   const buildGateway = (overrides?: {
-    prisma?: any;
-    routesService?: any;
-    notificacionesService?: any;
+    prisma?: PrismaDelGateway;
+    routesService?: Doble<RoutesService>;
+    notificacionesService?: Doble<NotificacionesService>;
   }) => {
     const notificacionesService = overrides?.notificacionesService || {
       notifyApprovers: jest.fn(),
@@ -51,10 +73,10 @@ describe('NotificacionesGateway', () => {
 
     return {
       gateway: new NotificacionesGateway(
-        notificacionesService,
-        prisma,
-        { verifyAsync: jest.fn() } as any,
-        routesService,
+        comoDependencia<NotificacionesService>(notificacionesService),
+        comoPrisma(prisma),
+        comoDependencia<JwtService>({ verifyAsync: jest.fn() }),
+        comoDependencia<RoutesService>(routesService),
       ),
       notificacionesService,
       prisma,
@@ -78,7 +100,7 @@ describe('NotificacionesGateway', () => {
         actorId: 'cobrador-1',
         actorRol: 'COBRADOR',
       },
-      { data: { user: { id: 'cobrador-1', rol: 'COBRADOR' } } } as any,
+      comoSocket({ data: { user: { id: 'cobrador-1', rol: 'COBRADOR' } } }),
     );
 
     expect(response).toEqual({

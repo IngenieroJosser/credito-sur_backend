@@ -8,6 +8,17 @@ import {
   construirTablaCuotas,
   derivarPlazoMeses,
 } from './interes-credito';
+import { bufferDeExcel, dependenciaSinUsar } from '../common/testing/dobles';
+
+/**
+ * Asidero de prueba: expone los metodos `protected` que esta prueba ejercita con su firma
+ * real (`.bind(this)` la hereda), en vez de llamarlos por `(servicio as any).metodo(...)`.
+ */
+class PrestamosParaPrueba extends LoansService {
+  public readonly calcularInteresYCuotas =
+    this.calculateInterestAndCuotas.bind(this);
+  public readonly recuperarPlazo = this.recuperarPlazoExacto.bind(this);
+}
 
 /**
  * El Excel tiene que dar lo mismo que el sistema, y hay que comprobarlo con la
@@ -146,14 +157,14 @@ const CADENA = [
 ];
 
 describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () => {
-  const servicio = new LoansService(
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
+  const servicio = new PrestamosParaPrueba(
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
   );
 
   let hoja: ExcelJS.Worksheet;
@@ -169,7 +180,7 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
       rutas: [],
     });
     const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(data as any);
+    await workbook.xlsx.load(bufferDeExcel(data));
     hoja = workbook.getWorksheet('Créditos de dinero')!;
 
     columnas = {};
@@ -190,7 +201,8 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
   const formulaDe = (empiezaPor: string) => {
     const letra = letraDe(empiezaPor);
     const columna = hoja.getColumn(letra).number;
-    const formula = (hoja.getCell(7, columna).value as any)?.formula;
+    const formula = (hoja.getCell(7, columna).value as { formula?: string })
+      ?.formula;
     if (!formula) throw new Error(`"${empiezaPor}" no tiene fórmula`);
     return String(formula);
   };
@@ -251,7 +263,7 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
       });
 
       const plazoMeses = derivarPlazoMeses(cuotas, frecuencia);
-      const delSistema = (servicio as any).calculateInterestAndCuotas(
+      const delSistema = servicio.calcularInteresYCuotas(
         metodo.enum,
         monto,
         tasa,

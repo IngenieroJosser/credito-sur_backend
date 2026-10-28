@@ -6,6 +6,7 @@ import {
   IsEnum,
   IsOptional,
   IsDateString,
+  IsBoolean,
   Min,
   Max,
 } from 'class-validator';
@@ -94,6 +95,28 @@ export class PrestamoMoraDto {
   @IsOptional()
   @IsDateString()
   fechaVencimiento?: string;
+
+  /**
+   * Prorroga activa: la extension de pago mas reciente del credito.
+   *
+   * Los tres los devuelve el servicio (reports.service.ts:540-542) y faltaban aqui, asi
+   * que el `as PrestamoMoraDto` del final los dejaba pasar sin declararlos: ni Swagger los
+   * documentaba ni el frontend podia leerlos sin un `any`.
+   */
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsDateString()
+  fechaProrroga?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsNumber()
+  diasProrroga?: number;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsBoolean()
+  tieneProrroga?: boolean;
 }
 
 export class PrestamosMoraFiltrosDto {

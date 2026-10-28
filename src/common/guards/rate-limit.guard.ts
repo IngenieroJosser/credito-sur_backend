@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import Redis from 'ioredis';
+import { mensajeDeError } from '../error.util';
 
 type RateLimitBucket = {
   count: number;
@@ -24,6 +25,15 @@ type Conteo = {
   count: number;
   resetAt: number;
 };
+
+/**
+ * La peticion vista por este guarda: el usuario puede o no estar, segun por donde entre.
+ *
+ * `RequestConUsuario` de `common/types` lo declara OBLIGATORIO, porque lo usan los
+ * controladores que ya pasaron por el guarda de sesion. Aqui no: este guarda corre tambien
+ * en las rutas publicas, y ahi `user` no existe.
+ */
+type RequestConUsuarioOpcional = Request & { user?: { id?: string } };
 
 @Injectable()
 export class RateLimitGuard implements CanActivate {
@@ -89,9 +99,9 @@ export class RateLimitGuard implements CanActivate {
       this.redis.on('end', () => {
         this.redisSano = false;
       });
-    } catch (e: any) {
+    } catch (e) {
       this.logger.warn(
-        `No se pudo crear el cliente Redis del rate-limit: ${e?.message}`,
+        `No se pudo crear el cliente Redis del rate-limit: ${mensajeDeError(e)}`,
       );
       this.redis = null;
     }
@@ -118,11 +128,11 @@ export class RateLimitGuard implements CanActivate {
         count: Number(count),
         resetAt: Date.now() + Math.max(0, Number(ttl)),
       };
-    } catch (e: any) {
+    } catch (e) {
       // Un fallo de Redis nunca debe tumbar la petición: se cae a memoria.
       this.redisSano = false;
       this.logger.warn(
-        `Fallo al contar en Redis, se usa memoria: ${e?.message}`,
+        `Fallo al contar en Redis, se usa memoria: ${mensajeDeError(e)}`,
       );
       return null;
     }
@@ -224,7 +234,22 @@ export class RateLimitGuard implements CanActivate {
     };
   }
 
+  /**
+   * Contra quien se cuenta el cupo: el USUARIO autenticado, y si no lo hay, la IP.
+   *
+   * Antes se contaba siempre por IP, y eso tiene una consecuencia medida: en la oficina
+   * todos salen por la misma IP, asi que los usuarios se agotaban el cupo ENTRE ELLOS. Con
+   * los siete roles trabajando a la vez aparecian cientos de respuestas 429 haciendo cada
+   * uno un uso normal.
+   *
+   * La IP se mantiene para lo que llega sin sesion -el login, sobre todo-, que es justo
+   * donde el limite protege de un ataque por fuerza bruta: ahi contar por usuario no
+   * serviria, porque el atacante aun no es nadie.
+   */
   private resolveClientKey(request: Request): string {
+    const usuarioId = (request as RequestConUsuarioOpcional).user?.id;
+    if (usuarioId) return `u:${usuarioId}`;
+
     return (
       request.ip ||
       request.socket?.remoteAddress ||

@@ -1,9 +1,12 @@
 import * as ExcelJS from 'exceljs';
+import { esMarcadorDeCedula } from '../cedula-provisional';
 import {
   ResultadoValidacion,
   ErrorValidacion,
   AdvertenciaValidacion,
   ResumenHoja,
+  ClienteImportado,
+  CreditoImportado,
 } from '../dto/validacion-resultado.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FrecuenciaPago } from '@prisma/client';
@@ -14,6 +17,8 @@ import {
   leerTexto,
   leerTextoMayus,
   leerTextoNormalizado,
+  leerValorCelda,
+  type ValorDeCelda,
 } from './cell-value.util';
 import {
   avisarFilasFueraDeRango,
@@ -93,8 +98,11 @@ export class ClientesCreditosParser {
 
     const errores: ErrorValidacion[] = [];
     const advertencias: AdvertenciaValidacion[] = [];
-    const clientesValidar: any[] = [];
-    const creditosValidar: any[] = [];
+    // `ClienteImportado` y `CreditoImportado` ya existen en el DTO y son lo que estos dos
+    // arreglos terminan siendo. Con `any[]` aqui, el tipo declarado en
+    // `ResultadoValidacion` no comprobaba nada de lo que se mete en ellos.
+    const clientesValidar: ClienteImportado[] = [];
+    const creditosValidar: CreditoImportado[] = [];
     const porHoja: Record<string, ResumenHoja> = {};
 
     let totalFilas = 0;
@@ -243,7 +251,7 @@ export class ClientesCreditosParser {
     const preciosPorPlazo = new Map<string, number>();
     productosBd.forEach((p) => {
       const codigo = String(p.codigo).trim().toUpperCase();
-      (p.precios ?? []).forEach((precio: any) => {
+      (p.precios ?? []).forEach((precio) => {
         preciosPorPlazo.set(
           `${codigo}|${Number(precio.meses)}`,
           Number(precio.precio) || 0,
@@ -392,7 +400,11 @@ export class ClientesCreditosParser {
         leerTexto(celda(row, cliObservaciones)),
       );
 
-      const addError = (campo: string, mensaje: string, valor: any) => {
+      const addError = (
+        campo: string,
+        mensaje: string,
+        valor: ValorDeCelda,
+      ) => {
         errores.push({
           hoja: SHEET_DISPLAY.clientes,
           fila: rowNumber,
@@ -447,7 +459,83 @@ export class ClientesCreditosParser {
       }
 
       if (!cc) {
-        addError('cc', 'Escriba la cédula del cliente', cc);
+        // La cédula NO se puede omitir, y no es una decisión de esta validación: la columna
+        // `dni` de `Cliente` es `String @unique` NOT NULL en el esquema (schema.prisma:178),
+        // así que un cliente sin ella no se puede insertar. Aceptarla vacía aquí solo movería
+        // el fallo al momento de guardar, y con el archivo a medio importar.
+        //
+        // Pasa de verdad y no es un descuido del que llena la plantilla: de los clientes que
+        // solo tuvieron crédito de DINERO, la empresa no tiene la cédula. Para esos, meter una
+        // inventada es peor que no meterlos, porque `dni` es la llave con la que el sistema
+        // reconoce a una persona: dos filas sin cédula real acabarían siendo dos clientes
+        // distintos para la misma persona, o peor, chocando con la cédula de otro.
+        //
+        // Resolverlo de verdad pide declarar `dni` opcional en el esquema. Eso sigue siendo
+        // una decisión de producto, pero el costo técnico está MEDIDO y es menor de lo que
+        // decía antes aquí ("196 lecturas", que contaba menciones, no lecturas que rompan):
+        //
+        //  - En Postgres una columna `@unique` nulable admite tantos NULL como haga falta,
+        //    así que la migración es `DROP NOT NULL`: no reescribe datos y se revierte.
+        //  - De las 135 lecturas de `dni` entre los dos repos, solo 19 (todas del backend)
+        //    no se defienden, y las 19 son interpolaciones en mensajes de log/error y una
+        //    celda de Excel: imprimirían "null", no se caen.
+        //  - Los `where: { dni }` (3 sitios) no cambian: buscar por un valor sigue igual.
+        //  - El frontend ya lo declara opcional en sus tipos, incluido `types/domain.Cliente`
+        //    (`dni?: string | null`).
+        //
+        // Lo que falta decidir, y por eso no se hace aquí: si un cliente sin cédula puede
+        // crearse solo por importación (dejando `CreateClientDto.dni` obligatorio para el
+        // formulario) o también a mano, y cómo se reconoce luego a esa persona. El
+        // importador ya tiene una segunda llave de identidad para eso: busca por `dni`,
+        // `codigo` e `idempotencyKey`, y los dos últimos salen del código de importación del
+        // archivo (importaciones.service.ts:1667-1675).
+        //
+        // Mientras eso no se decida, el mensaje al menos dice qué hacer en vez de repetir la
+        // orden que el usuario no puede cumplir.
+        addError(
+          'cc',
+          'Falta la cédula. Si no la tiene, deje la fila fuera del archivo por ahora y ' +
+            'repórtelo: un cliente sin cédula no se puede registrar, porque es el dato con ' +
+            'el que el sistema distingue a una persona de otra.',
+          cc,
+        );
+      } else if (esMarcadorDeCedula(cc)) {
+        // Un número corto (1, 2, 3…) NO es una cédula: es el número con el que la plantilla
+        // amarra las filas de un mismo cliente. Se acepta y el sistema le pondrá una cédula
+        // provisional al importar. Va como ADVERTENCIA y no como error porque la fila se
+        // puede cargar, pero quien importa tiene que saber que ese cliente queda con un
+        // número inventado y hay que corregirlo.
+        if (ccsClientes.has(cc)) {
+          // Dos clientes con el mismo numero de amarre dejarian sus creditos sin saber de
+          // quien son: el numero tiene que ser unico en el archivo, igual que una cedula.
+          addError(
+            'cc',
+            `El número de amarre "${cc}" ya aparece en otra fila. Use uno distinto por cliente (1, 2, 3…): es lo que une a cada cliente con sus créditos.`,
+            cc,
+          );
+        } else if (esActualizacion) {
+          // Con ACTUALIZAR hay que encontrar al cliente que ya existe, y a un cliente con
+          // cedula provisional no se lo puede encontrar por el numero del archivo: su
+          // cedula guardada es otra. Sin este corte se crearia un cliente duplicado.
+          addError(
+            'cc',
+            `Para ACTUALIZAR hace falta la cédula real del cliente. "${cc}" es un número de amarre y no identifica a nadie en el sistema.`,
+            cc,
+          );
+        } else {
+          advertencias.push({
+            hoja: SHEET_DISPLAY.clientes,
+            fila: rowNumber,
+            campo: 'cc',
+            mensaje:
+              `"${cc}" se tomará como número de amarre, no como cédula: al importar, el ` +
+              'sistema le asignará una cédula PROVISIONAL (empieza por 99). Corríjala en ' +
+              'cuanto tenga la cédula real; hasta entonces ese cliente no se puede buscar ' +
+              'por documento.',
+            valor: cc,
+          });
+        }
+        ccsClientes.add(cc);
       } else if (!/^\d{6,10}$/.test(cc)) {
         addError(
           'cc',
@@ -497,7 +585,7 @@ export class ClientesCreditosParser {
         addError(
           'nivel_riesgo',
           'Debe ser Mínimo, Leve, Precaución, Moderado o Crítico',
-          celda(row, cliNivelRiesgo),
+          leerValorCelda(celda(row, cliNivelRiesgo)),
         );
       }
 
@@ -507,7 +595,7 @@ export class ClientesCreditosParser {
         addError(
           'ruta_codigo',
           'Es requerida: el cliente debe quedar asignado a una ruta para poder cobrarle',
-          celda(row, cliRutaCodigo),
+          leerValorCelda(celda(row, cliRutaCodigo)),
         );
       } else if (!rutasEnBd.has(rutaCodigo)) {
         addError(
@@ -722,7 +810,9 @@ export class ClientesCreditosParser {
         const frecuenciaPago = leerTextoMayus(celda(row, creFrecuencia));
         const cantidadCuotasCelda = leerNumero(celda(row, creCantidadCuotas));
         const plazoMeses = leerNumero(celda(row, crePlazoMeses));
-        const tipoAmortizacionRaw = celda(row, creTipoAmortizacion);
+        const tipoAmortizacionRaw = leerValorCelda(
+          celda(row, creTipoAmortizacion),
+        );
         const fechaCredito = leerFecha(celda(row, creFechaCredito));
         const fechaPrimerCobro = leerFecha(celda(row, creFechaPrimerCobro));
         const tipoCarga = leerTextoMayus(celda(row, creTipoCarga));
@@ -773,7 +863,11 @@ export class ClientesCreditosParser {
         const abonoAdicional = aPesos(abonoAdicionalCelda);
         const totalAbonadoEscrito = aPesos(totalAbonadoCelda);
 
-        const addError = (campo: string, mensaje: string, valor: any) => {
+        const addError = (
+          campo: string,
+          mensaje: string,
+          valor: ValorDeCelda,
+        ) => {
           errores.push({
             hoja: nombre,
             fila: rowNumber,
@@ -784,7 +878,11 @@ export class ClientesCreditosParser {
           tieneError = true;
         };
 
-        const addAdver = (campo: string, mensaje: string, valor: any) => {
+        const addAdver = (
+          campo: string,
+          mensaje: string,
+          valor: ValorDeCelda,
+        ) => {
           advertencias.push({
             hoja: nombre,
             fila: rowNumber,
@@ -806,21 +904,21 @@ export class ClientesCreditosParser {
           addAdver(
             'monto',
             'El sistema maneja pesos enteros: los centavos se descartaron.',
-            celda(row, creMonto),
+            leerValorCelda(celda(row, creMonto)),
           );
         }
         if (cuotaInicialConCentavos) {
           addAdver(
             'cuota_inicial',
             'El sistema maneja pesos enteros: los centavos se descartaron.',
-            celda(row, creCuotaInicial),
+            leerValorCelda(celda(row, creCuotaInicial)),
           );
         }
         if (abonoConCentavos) {
           addAdver(
             'abono_adicional',
             'El sistema maneja pesos enteros: los centavos se descartaron.',
-            celda(row, creAbonoAdicional),
+            leerValorCelda(celda(row, creAbonoAdicional)),
           );
         }
 
@@ -983,7 +1081,7 @@ export class ClientesCreditosParser {
                 inicial > precioPlazo
                   ? `La cuota inicial (${inicial}) es mayor que el precio del artículo a ${plazoMeses} meses (${precioPlazo}). Revise la inicial o el plazo.`
                   : `La cuota inicial (${inicial}) cubre todo el precio del artículo, así que no queda nada que financiar. Si el cliente pagó completo, es una venta de contado, no un crédito.`,
-                celda(row, creCuotaInicial),
+                leerValorCelda(celda(row, creCuotaInicial)),
               );
             }
 
@@ -1001,7 +1099,7 @@ export class ClientesCreditosParser {
             addError(
               'monto',
               'El artículo no tiene precio para ese plazo. Escriba el monto a mano o agregue el precio en el inventario.',
-              celda(row, creMonto),
+              leerValorCelda(celda(row, creMonto)),
             );
           }
         }
@@ -1015,7 +1113,7 @@ export class ClientesCreditosParser {
           addError(
             'monto',
             'Escriba el monto del crédito: debe ser mayor a 0',
-            celda(row, creMonto),
+            leerValorCelda(celda(row, creMonto)),
           );
         }
         if (
@@ -1025,7 +1123,7 @@ export class ClientesCreditosParser {
           addError(
             'cuota_inicial',
             'Debe ser un número mayor o igual a 0',
-            celda(row, creCuotaInicial),
+            leerValorCelda(celda(row, creCuotaInicial)),
           );
         }
         // En un crédito de artículo la inicial es obligatoria: el cliente
@@ -1036,7 +1134,7 @@ export class ClientesCreditosParser {
           addError(
             'cuota_inicial',
             'Es obligatoria en un crédito de artículo: escriba cuánto entregó el cliente al llevarse el artículo.',
-            celda(row, creCuotaInicial),
+            leerValorCelda(celda(row, creCuotaInicial)),
           );
         }
         if (esArticulo) {
@@ -1061,7 +1159,7 @@ export class ClientesCreditosParser {
           addError(
             'tasa_interes',
             'Debe ser un número mayor o igual a 0',
-            celda(row, creTasaInteres),
+            leerValorCelda(celda(row, creTasaInteres)),
           );
         }
         if (
@@ -1071,11 +1169,15 @@ export class ClientesCreditosParser {
           addError(
             'tasa_interes_mora',
             'Debe ser un número mayor o igual a 0',
-            celda(row, creTasaMora),
+            leerValorCelda(celda(row, creTasaMora)),
           );
         }
 
-        if (!Object.values(FrecuenciaPago).includes(frecuenciaPago as any)) {
+        // `frecuenciaPago` es un `string` normalizado de la celda; `Object.values` de un
+        // enum de Prisma da su union, que no acepta buscar un string suelto.
+        if (
+          !(Object.values(FrecuenciaPago) as string[]).includes(frecuenciaPago)
+        ) {
           addError(
             'frecuencia_pago',
             'Debe ser DIARIO, SEMANAL, QUINCENAL o MENSUAL',
@@ -1135,7 +1237,7 @@ export class ClientesCreditosParser {
             esArticulo
               ? 'Es requerido en créditos de artículo: es el plazo del plan que se le vendió al cliente'
               : 'No se pudo calcular: indique la cantidad de cuotas y la frecuencia, o escriba el plazo en meses',
-            celda(row, crePlazoMeses),
+            leerValorCelda(celda(row, crePlazoMeses)),
           );
         }
 
@@ -1147,7 +1249,7 @@ export class ClientesCreditosParser {
           addError(
             'cantidad_cuotas',
             'Debe ser un número mayor a 0',
-            celda(row, creCantidadCuotas),
+            leerValorCelda(celda(row, creCantidadCuotas)),
           );
         } else if (!Number.isInteger(cantidadCuotas)) {
           addError(
@@ -1175,7 +1277,7 @@ export class ClientesCreditosParser {
           addError(
             'fecha_credito',
             'Requerido y formato válido YYYY-MM-DD',
-            celda(row, creFechaCredito),
+            leerValorCelda(celda(row, creFechaCredito)),
           );
         }
 
@@ -1193,7 +1295,7 @@ export class ClientesCreditosParser {
           addError(
             campo,
             'Fecha no válida. Escríbela como AAAA-MM-DD (o DD/MM/AAAA)',
-            celda(row, columna),
+            leerValorCelda(celda(row, columna)),
           );
         };
 
@@ -1216,7 +1318,7 @@ export class ClientesCreditosParser {
           addError(
             'fecha_primer_cobro',
             'No puede ser anterior a la fecha de crédito',
-            celda(row, creFechaPrimerCobro),
+            leerValorCelda(celda(row, creFechaPrimerCobro)),
           );
         }
 
@@ -1245,7 +1347,7 @@ export class ClientesCreditosParser {
           addError(
             'cuotas_pagadas',
             'Debe ser un número entero mayor o igual a 0',
-            celda(row, creCuotasPagadas),
+            leerValorCelda(celda(row, creCuotasPagadas)),
           );
         } else if (
           cuotasPagadasNum < 0 ||
@@ -1254,7 +1356,7 @@ export class ClientesCreditosParser {
           addError(
             'cuotas_pagadas',
             'Debe ser un número entero mayor o igual a 0',
-            celda(row, creCuotasPagadas),
+            leerValorCelda(celda(row, creCuotasPagadas)),
           );
         } else if (
           cantidadCuotas !== null &&
@@ -1275,7 +1377,7 @@ export class ClientesCreditosParser {
           addError(
             'abono_adicional',
             'Debe ser un número mayor o igual a 0',
-            celda(row, creAbonoAdicional),
+            leerValorCelda(celda(row, creAbonoAdicional)),
           );
         }
 
@@ -1286,7 +1388,7 @@ export class ClientesCreditosParser {
           addError(
             'total_abonado',
             'Escriba cuánto lleva pagado el cliente: un número mayor o igual a 0',
-            celda(row, creTotalAbonado),
+            leerValorCelda(celda(row, creTotalAbonado)),
           );
         }
 
@@ -1331,14 +1433,14 @@ export class ClientesCreditosParser {
           addError(
             'fecha_ultimo_pago',
             'No puede ser anterior a la fecha de crédito',
-            celda(row, creFechaUltimoPago),
+            leerValorCelda(celda(row, creFechaUltimoPago)),
           );
         }
         if (fechaUltimoPago && !tieneAvance) {
           addAdver(
             'fecha_ultimo_pago',
             'Se informó una fecha de último pago pero el crédito no tiene cuotas pagadas ni abonos: el dato se ignorará.',
-            celda(row, creFechaUltimoPago),
+            leerValorCelda(celda(row, creFechaUltimoPago)),
           );
         }
 
@@ -1369,8 +1471,14 @@ export class ClientesCreditosParser {
           return;
         }
 
+        // Esta guarda no se cumple nunca: unas lineas arriba, `if (!tipoAmortizacion)`
+        // llama a `addError`, que activa `tieneError`, y el `return` de arriba ya salio.
+        // Esta aqui porque TypeScript no puede seguir ese efecto y de otro modo hay que
+        // castear el `| null` en las dos llamadas de abajo.
+        if (!tipoAmortizacion) return;
+
         const interesTotal = calcularInteresTotal(
-          tipoAmortizacion as any,
+          tipoAmortizacion,
           montoEfectivo as number,
           tasaInteres as number,
           plazoMesesEfectivo as number,
@@ -1384,7 +1492,7 @@ export class ClientesCreditosParser {
         // la última cuota. La vista previa mostraba un saldo que después no
         // coincidía con el guardado, por unos pesos.
         const tablaCuotas = construirTablaCuotas(
-          tipoAmortizacion as any,
+          tipoAmortizacion,
           montoEfectivo as number,
           interesTotal,
           cantidadCuotas as number,
@@ -1501,7 +1609,9 @@ export class ClientesCreditosParser {
    * se consulta al validar y no se guarda en la plantilla: cambia a cada rato,
    * y una cifra vieja dentro del archivo engañaría más de lo que ayuda.
    */
-  private async calcularImpactoCaja(creditos: any[]) {
+  // `CreditoImportado` es lo que este metodo recibe de verdad: son los mismos creditos
+  // que se metieron en `creditosValidar`. Se reutiliza el tipo del DTO.
+  private async calcularImpactoCaja(creditos: CreditoImportado[]) {
     const operativos = creditos.filter((c) => c.tipoCarga === 'OPERATIVA');
 
     const movimientos = operativos.map((credito) => {

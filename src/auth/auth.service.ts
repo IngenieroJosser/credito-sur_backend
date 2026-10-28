@@ -3,7 +3,9 @@ import {
   UnauthorizedException,
   BadRequestException,
   NotFoundException,
+  ConflictException,
 } from '@nestjs/common';
+import { RolUsuario } from '@prisma/client';
 import { UsersService } from '../users/users.service';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
@@ -18,6 +20,7 @@ import {
 } from './dto/forgot-password.dto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { textoRecortado } from '../common/texto.util';
 
 @Injectable()
 export class AuthService {
@@ -42,10 +45,19 @@ export class AuthService {
       .toLowerCase();
   }
 
+  /**
+   * Normaliza el identificador con el que alguien intenta entrar.
+   *
+   * Solo se aceptan cadenas y numeros. Antes era `String(valor ?? '')` sobre un
+   * `unknown`: si llegaba un objeto en el cuerpo de la peticion —el DTO tipa
+   * `string`, pero el cuerpo lo manda el cliente— se convertia en el literal
+   * "[object Object]" y eso era lo que se buscaba en la base. No abria ninguna
+   * puerta (nunca coincide con un identificador real), pero tampoco es lo que el
+   * codigo dice que hace: lo correcto es tratarlo como identificador vacio, que ya
+   * corta el login en la linea siguiente.
+   */
   private normalizarIdentificadorLogin(valor: unknown) {
-    return String(valor ?? '')
-      .trim()
-      .toLowerCase();
+    return textoRecortado(valor).toLowerCase();
   }
 
   private nombreCompletoCoincide(
@@ -68,7 +80,7 @@ export class AuthService {
     apellidos?: string | null;
     correo?: string | null;
     nombreUsuario?: string | null;
-    rol: any;
+    rol: RolUsuario;
   }) {
     // Obtener permisos dinámicos del usuario
     const asignaciones = await this.prisma.asignacionRolUsuario.findMany({
@@ -113,12 +125,18 @@ export class AuthService {
       (p, i, arr) => arr.findIndex((x) => x.id === p.id) === i,
     );
 
-    const modulosMap = new Map<string, { nombre: string; permisos: any[] }>();
+    // El tipo de los permisos se DERIVA del arreglo que los llena, con
+    // `(typeof permisosUnicos)[number]`, en vez de `any[]`: el `sidebar` de mas abajo lee
+    // `esNavegable`, `modulo` y `orden` de estos objetos.
+    const modulosMap = new Map<
+      string,
+      { nombre: string; permisos: (typeof permisosUnicos)[number][] }
+    >();
     for (const p of permisosUnicos) {
       if (!p.esNavegable) continue;
       const grupo = modulosMap.get(p.modulo) || {
         nombre: p.modulo,
-        permisos: [] as any[],
+        permisos: [],
       };
       grupo.permisos.push(p);
       modulosMap.set(p.modulo, grupo);
@@ -172,7 +190,7 @@ export class AuthService {
           { correo: { equals: identificador, mode: 'insensitive' } },
           { nombreUsuario: identificador },
         ],
-      } as any,
+      },
     });
 
     const candidatos = usuarioPorIdentificador ? [usuarioPorIdentificador] : [];
@@ -268,7 +286,10 @@ export class AuthService {
     });
 
     if (superAdminExistente) {
-      throw new Error(
+      // ConflictException y no Error a secas: con un Error el filtro global
+      // responde 500 y "Ocurrió un error inesperado, reporte el código...",
+      // que no dice nada. Este mensaje esta escrito para que alguien lo lea.
+      throw new ConflictException(
         'Ya existe un superadministrador. Use el endpoint /auth/register con un token válido.',
       );
     }
@@ -320,6 +341,19 @@ export class AuthService {
   // RECUPERACION DE CONTRASENA — Flujo por correo electronico
   // ============================================================
 
+  /**
+   * Primer paso de la recuperacion por uno mismo: pedir un codigo al correo.
+   *
+   * LA POLITICA: este flujo es SOLO para el superadmin. Los demas usuarios recuperan su
+   * contrasena pidiendosela a un superadmin o a un administrador, que la resetea con
+   * `UsersService.resetearContrasena` (`POST /usuarios/:id/reset-password`). Ahi la regla
+   * complementaria es que un ADMIN puede resetear a un usuario normal, pero solo un
+   * SUPER_ADMINISTRADOR puede resetear a otro superadmin o al usuario principal.
+   *
+   * Las respuestas negativas son todas IGUALES a proposito —correo inexistente, cuenta
+   * inactiva, usuario que no es superadmin— para que este endpoint no sirva de paso para
+   * averiguar quien esta registrado. Hay pruebas que lo fijan.
+   */
   async solicitarRecuperacion(dto: ForgotPasswordDto) {
     // Buscar el usuario por correo
     const usuario = await this.prisma.usuario.findFirst({
@@ -355,7 +389,7 @@ export class AuthService {
       data: {
         resetPasswordToken: codigoHash,
         resetPasswordExpires: expiracion,
-      } as any,
+      },
     });
 
     // Enviar el correo con el código
@@ -410,12 +444,12 @@ export class AuthService {
       await this.prisma.usuario.update({
         where: { id: usuario.id },
         data: agotados
-          ? ({
+          ? {
               resetPasswordIntentos: 0,
               resetPasswordToken: null,
               resetPasswordExpires: null,
-            } as any)
-          : ({ resetPasswordIntentos: intentos } as any),
+            }
+          : { resetPasswordIntentos: intentos },
       });
       throw new BadRequestException(
         agotados
@@ -433,7 +467,7 @@ export class AuthService {
         resetPasswordToken: null,
         resetPasswordExpires: null,
         resetPasswordIntentos: 0,
-      } as any,
+      },
     });
 
     return {

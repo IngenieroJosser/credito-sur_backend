@@ -1,4 +1,15 @@
 import { LoansService } from './loans.service';
+import { dependenciaSinUsar } from '../common/testing/dobles';
+
+/**
+ * Asidero de prueba: expone los metodos `protected` que esta prueba ejercita con su firma
+ * real (`.bind(this)` la hereda), en vez de llamarlos por `(servicio as any).metodo(...)`.
+ */
+class PrestamosParaPrueba extends LoansService {
+  public readonly calcularInteresYCuotas =
+    this.calculateInterestAndCuotas.bind(this);
+  public readonly recuperarPlazo = this.recuperarPlazoExacto.bind(this);
+}
 
 /**
  * `plazoMeses` se guarda como entero, pero el interés se calcula con el plazo
@@ -7,18 +18,19 @@ import { LoansService } from './loans.service';
  * interés sin que nadie lo haya pedido.
  */
 describe('LoansService · recuperación del plazo exacto', () => {
-  const servicio = new LoansService(
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
+  const servicio = new PrestamosParaPrueba(
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
   );
 
-  const recuperar = (prestamo: any) =>
-    (servicio as any).recuperarPlazoExacto(prestamo);
+  // El tipo del parametro se DERIVA del metodo: son los tres campos que lee.
+  const recuperar = (prestamo: Parameters<typeof servicio.recuperarPlazo>[0]) =>
+    servicio.recuperarPlazo(prestamo);
 
   it('recupera el plazo fraccionario de un crédito derivado de sus cuotas', () => {
     // 45 cuotas diarias son 1,5 meses; en la base quedó guardado como 2.

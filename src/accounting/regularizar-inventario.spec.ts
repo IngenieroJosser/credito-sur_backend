@@ -1,4 +1,10 @@
 import { AccountingService } from './accounting.service';
+import {
+  comoDependencia,
+  comoPrisma,
+  dependenciaSinUsar,
+} from '../common/testing/dobles';
+import type { LedgerService } from './ledger.service';
 
 /**
  * La cuenta de inventario venía en negativo: registrar mercancía no tocaba el
@@ -17,7 +23,7 @@ function servicio(params: {
 }) {
   const registrarAsiento = jest.fn().mockResolvedValue({ id: 'j-1' });
 
-  const prisma: any = {
+  const prisma = {
     producto: { findMany: jest.fn().mockResolvedValue(params.productos) },
     journalLine: {
       aggregate: jest.fn().mockResolvedValue({
@@ -27,10 +33,10 @@ function servicio(params: {
   };
 
   const service = new AccountingService(
-    prisma,
-    {} as any,
-    {} as any,
-    { registrarAsiento } as any,
+    comoPrisma(prisma),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    comoDependencia<LedgerService>({ registrarAsiento }),
   );
 
   return { service, registrarAsiento };

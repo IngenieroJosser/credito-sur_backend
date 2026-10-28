@@ -334,7 +334,7 @@ export async function generarExcelPagos(
     ws.getRow(r).height = 20;
 
     const tipo = fila.esAbono ? 'ABONO' : 'CUOTA';
-    const vals: any[] = [
+    const vals = [
       fmtFecha(fila.fecha),
       fila.numeroPago,
       fila.numeroPrestamo,

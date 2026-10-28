@@ -1,14 +1,27 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { TipoTransaccion } from '@prisma/client';
 import { SalesService } from './sales.service';
+import {
+  comoDependencia,
+  comoPrisma,
+  type Doble,
+  type DobleDePrisma,
+} from '../common/testing/dobles';
+import type { LedgerService } from '../accounting/ledger.service';
 
-const makeService = (prisma: any, ledger: any = {}) =>
-  new SalesService(prisma, {
-    registrarVentaArticulo: jest
-      .fn()
-      .mockResolvedValue({ id: 'journal-venta-1' }),
-    ...ledger,
-  });
+const makeService = (
+  prisma: DobleDePrisma,
+  ledger: Doble<LedgerService> = {},
+) =>
+  new SalesService(
+    comoPrisma(prisma),
+    comoDependencia<LedgerService>({
+      registrarVentaArticulo: jest
+        .fn()
+        .mockResolvedValue({ id: 'journal-venta-1' }),
+      ...ledger,
+    }),
+  );
 
 describe('SalesService venta contado', () => {
   it('registra venta de contado sin crear préstamo, cuotas ni pago operativo', async () => {
@@ -60,9 +73,7 @@ describe('SalesService venta contado', () => {
       pago: {
         create: jest.fn(),
       },
-      $transaction: jest
-        .fn()
-        .mockImplementation((callback: any) => callback(tx)),
+      $transaction: jest.fn().mockImplementation((callback) => callback(tx)),
     };
     const ledger = {
       registrarVentaArticulo: jest.fn().mockResolvedValue({
@@ -222,9 +233,7 @@ describe('SalesService venta contado', () => {
       pago: {
         create: jest.fn(),
       },
-      $transaction: jest
-        .fn()
-        .mockImplementation((callback: any) => callback(tx)),
+      $transaction: jest.fn().mockImplementation((callback) => callback(tx)),
     };
 
     const ledger = {
@@ -241,7 +250,7 @@ describe('SalesService venta contado', () => {
       creadoPorId: 'vendedor-1',
       metodoPago: 'TRANSFERENCIA',
       notas: 'Transferencia Bancolombia',
-    } as any);
+    });
 
     expect(tx.caja.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -313,9 +322,7 @@ describe('SalesService venta contado', () => {
           stock: 3,
         }),
       },
-      $transaction: jest
-        .fn()
-        .mockImplementation((callback: any) => callback(tx)),
+      $transaction: jest.fn().mockImplementation((callback) => callback(tx)),
     };
 
     await expect(
@@ -326,7 +333,7 @@ describe('SalesService venta contado', () => {
         cajaId: 'caja-pv-1',
         creadoPorId: 'vendedor-1',
         metodoPago: 'TRANSFERENCIA',
-      } as any),
+      }),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
@@ -359,7 +366,7 @@ describe('SalesService venta contado', () => {
       creadoPorId: 'vendedor-1',
       metodoPago: 'EFECTIVO',
       idempotencyKey: 'venta-abc-123',
-    } as any);
+    });
 
     // No se ejecuta la transacción (no se descuenta stock ni se duplica dinero)
     expect(prisma.$transaction).not.toHaveBeenCalled();
@@ -393,9 +400,7 @@ describe('SalesService venta contado', () => {
           stock: 3,
         }),
       },
-      $transaction: jest
-        .fn()
-        .mockImplementation((callback: any) => callback(tx)),
+      $transaction: jest.fn().mockImplementation((callback) => callback(tx)),
     };
 
     await expect(
@@ -406,7 +411,7 @@ describe('SalesService venta contado', () => {
         cajaId: '',
         creadoPorId: 'vendedor-1',
         metodoPago: 'EFECTIVO',
-      } as any),
+      }),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 });

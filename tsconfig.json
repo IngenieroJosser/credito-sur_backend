@@ -19,15 +19,17 @@
     "incremental": true,
 
     "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+
     "strictNullChecks": true,
-    "forceConsistentCasingInFileNames": true
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "noImplicitThis": true,
+    "useUnknownInCatchVariables": true,
+    "noImplicitAny": true
   },
 
   "include": ["src/**/*.ts"],
 
-  "exclude": [
-    "node_modules",
-    "dist",
-    "test"
-  ]
+  "exclude": ["node_modules", "dist", "test"]
 }

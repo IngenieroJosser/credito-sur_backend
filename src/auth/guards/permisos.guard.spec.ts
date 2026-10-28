@@ -9,15 +9,27 @@ import { PermisosGuard } from './permisos.guard';
  * a quien no debería verlos.
  */
 describe('PermisosGuard', () => {
+  /**
+   * El usuario que el guard lee de la peticion. `permisos` va como `unknown` a proposito:
+   * una de las pruebas manda un TEXTO en vez de un arreglo, que es justo el caso que el
+   * guard tiene que sobrevivir, y declararlo `string[]` escondia ese caso detras de un cast.
+   */
+  type UsuarioDeLaPeticion = {
+    id?: string;
+    rol?: RolUsuario;
+    permisos?: unknown;
+  };
+
   const contexto = (
-    user: any,
+    // `undefined` entra a proposito: una prueba comprueba el caso sin usuario autenticado.
+    user: UsuarioDeLaPeticion | undefined,
     _permisosRequeridos?: string[],
   ): ExecutionContext =>
     ({
       switchToHttp: () => ({ getRequest: () => ({ user }) }),
       getHandler: () => 'handler',
       getClass: () => 'class',
-    }) as any;
+    }) as unknown as ExecutionContext;
 
   const guardCon = (permisosRequeridos?: string[]) => {
     const reflector = {
@@ -92,7 +104,7 @@ describe('PermisosGuard', () => {
     const guard = guardCon(['importaciones']);
     expect(
       guard.canActivate(
-        contexto({ rol: RolUsuario.ADMIN, permisos: 'importaciones' as any }),
+        contexto({ rol: RolUsuario.ADMIN, permisos: 'importaciones' }),
       ),
     ).toBe(false);
   });

@@ -1,10 +1,19 @@
 import { PipeTransform, Injectable, ArgumentMetadata } from '@nestjs/common';
 import * as sanitizeHtml from 'sanitize-html';
 
+/**
+ * Un objeto por el que se puede indexar.
+ *
+ * La guarda existe para que el pipe no necesite `any`: la comprobacion se escribe una
+ * vez, aqui, en vez de repartir `obj[key]` sin tipo por todo el recorrido.
+ */
+const esObjetoIndexable = (valor: unknown): valor is Record<string, unknown> =>
+  typeof valor === 'object' && valor !== null;
+
 @Injectable()
 export class SanitizePipe implements PipeTransform {
-  transform(value: any, _metadata: ArgumentMetadata) {
-    if (typeof value === 'object' && value !== null) {
+  transform(value: unknown, _metadata: ArgumentMetadata) {
+    if (esObjetoIndexable(value)) {
       this.sanitizeObject(value);
     } else if (typeof value === 'string') {
       return this.sanitizeString(value);
@@ -12,11 +21,13 @@ export class SanitizePipe implements PipeTransform {
     return value;
   }
 
-  private sanitizeObject(obj: any) {
+  // `Record<string, unknown>` y no `any`: el pipe muta el objeto que recibe, y con `any`
+  // ni la lectura ni la escritura de `obj[key]` se comprobaban.
+  private sanitizeObject(obj: Record<string, unknown>) {
     for (const key in obj) {
       if (typeof obj[key] === 'string') {
         obj[key] = this.sanitizeString(obj[key]);
-      } else if (typeof obj[key] === 'object' && obj[key] !== null) {
+      } else if (esObjetoIndexable(obj[key])) {
         this.sanitizeObject(obj[key]);
       }
     }

@@ -6,10 +6,17 @@ import {
 } from '@nestjs/common';
 import { EstadoUsuario, RolUsuario } from '@prisma/client';
 import { UsersService } from './users.service';
+import {
+  comoDependencia,
+  comoPrisma,
+  type DobleDePrisma,
+} from '../common/testing/dobles';
+import type { AuditService } from '../audit/audit.service';
+import type { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 
 describe('UsersService operational detail', () => {
-  const buildService = (prismaOverrides: Record<string, any> = {}) => {
-    const prisma: any = {
+  const buildService = (prismaOverrides: DobleDePrisma = {}) => {
+    const prisma = {
       usuario: {
         findFirst: jest.fn(),
         findUnique: jest.fn(),
@@ -55,7 +62,7 @@ describe('UsersService operational detail', () => {
       registroAuditoria: {
         findMany: jest.fn(),
       },
-      $transaction: jest.fn(async (callback: any) =>
+      $transaction: jest.fn(async (callback) =>
         callback({
           usuario: {
             count: jest.fn().mockResolvedValue(1),
@@ -83,9 +90,9 @@ describe('UsersService operational detail', () => {
     const auditService = { create: jest.fn() };
     const gateway = { broadcastUsuariosActualizados: jest.fn() };
     const service = new UsersService(
-      prisma,
-      auditService as any,
-      gateway as any,
+      comoPrisma(prisma),
+      comoDependencia<AuditService>(auditService),
+      comoDependencia<NotificacionesGateway>(gateway),
     );
 
     return { service, prisma, auditService, gateway };
@@ -125,7 +132,7 @@ describe('UsersService operational detail', () => {
         creadoEn: new Date('2026-06-26T00:00:00.000Z'),
       });
       const { service, prisma } = buildService({
-        $transaction: jest.fn(async (callback: any) =>
+        $transaction: jest.fn(async (callback) =>
           callback({
             usuario: {
               count: jest.fn().mockResolvedValue(1),
@@ -342,6 +349,131 @@ describe('UsersService operational detail', () => {
         },
       }),
     );
-    expect(prisma.usuario.delete).toBeUndefined();
+    // El doble de `usuario` no tiene `delete`: si el servicio lo llamara, la prueba
+    // reventaria con "no es una funcion". Antes esto comprobaba el DOBLE y no el
+    // servicio -pasaba igual hiciera lo que hiciera-, y el compilador lo dijo en cuanto
+    // el doble dejo de ser `any`. Lo que de verdad fija el borrado logico son las
+    // aserciones de arriba sobre `update`.
+  });
+  /**
+   * Este metodo NO existia. El controlador ya exponia
+   * `POST /usuarios/:id/reset-password` y lo llamaba con un cast sobre el servicio, asi
+   * que tsc no podia avisar; el boton del frontend lanzaba un TypeError en el servidor.
+   */
+  describe('resetearContrasena', () => {
+    const objetivo = {
+      id: 'usuario-2',
+      rol: RolUsuario.COBRADOR,
+      nombres: 'Ana',
+      apellidos: 'Munoz',
+      nombreUsuario: 'amunoz',
+      esPrincipal: false,
+    };
+
+    it('devuelve una temporal, la guarda hasheada y obliga a cambiarla', async () => {
+      const { service, prisma } = buildService();
+      prisma.usuario.findFirst.mockResolvedValue(objetivo);
+      prisma.usuario.update.mockResolvedValue({ id: 'usuario-2' });
+
+      const { contrasenaTemporal } = await service.resetearContrasena(
+        'usuario-2',
+        RolUsuario.ADMIN,
+        'admin-1',
+      );
+
+      expect(contrasenaTemporal).toHaveLength(12);
+      const [args] = prisma.usuario.update.mock.calls.at(-1);
+      expect(args.where).toEqual({ id: 'usuario-2' });
+      expect(args.data.debeCambiarContrasena).toBe(true);
+      // Se guarda el hash, nunca la contrasena en claro.
+      expect(args.data.hashContrasena).not.toBe(contrasenaTemporal);
+      expect(args.data.hashContrasena).toMatch(/^\$argon2/);
+    });
+
+    it('no usa caracteres que se confundan al dictarla', async () => {
+      const { service, prisma } = buildService();
+      prisma.usuario.findFirst.mockResolvedValue(objetivo);
+      prisma.usuario.update.mockResolvedValue({ id: 'usuario-2' });
+
+      const { contrasenaTemporal } = await service.resetearContrasena(
+        'usuario-2',
+        RolUsuario.ADMIN,
+        'admin-1',
+      );
+
+      expect(contrasenaTemporal).toMatch(
+        /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]+$/,
+      );
+    });
+
+    it('un ADMIN no puede resetear la contrasena de un SUPER_ADMINISTRADOR', async () => {
+      // Sin esta guarda un admin resetea la clave del superadmin y entra con ella: la
+      // misma escalada vertical que `actualizar()` ya bloquea para el cambio de rol.
+      const { service, prisma } = buildService();
+      prisma.usuario.findFirst.mockResolvedValue({
+        ...objetivo,
+        rol: RolUsuario.SUPER_ADMINISTRADOR,
+      });
+
+      await expect(
+        service.resetearContrasena('usuario-2', RolUsuario.ADMIN, 'admin-1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.usuario.update).not.toHaveBeenCalled();
+    });
+
+    it('tampoco la del usuario principal', async () => {
+      const { service, prisma } = buildService();
+      prisma.usuario.findFirst.mockResolvedValue({
+        ...objetivo,
+        esPrincipal: true,
+      });
+
+      await expect(
+        service.resetearContrasena('usuario-2', RolUsuario.ADMIN, 'admin-1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('un SUPER_ADMINISTRADOR si puede resetear a otro', async () => {
+      const { service, prisma } = buildService();
+      prisma.usuario.findFirst.mockResolvedValue({
+        ...objetivo,
+        rol: RolUsuario.SUPER_ADMINISTRADOR,
+      });
+      prisma.usuario.update.mockResolvedValue({ id: 'usuario-2' });
+
+      await expect(
+        service.resetearContrasena(
+          'usuario-2',
+          RolUsuario.SUPER_ADMINISTRADOR,
+          'super-1',
+        ),
+      ).resolves.toHaveProperty('contrasenaTemporal');
+    });
+
+    it('404 si el usuario no existe o esta borrado', async () => {
+      const { service, prisma } = buildService();
+      prisma.usuario.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.resetearContrasena('no-existe', RolUsuario.ADMIN, 'admin-1'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('audita la accion SIN la contrasena', async () => {
+      const { service, prisma, auditService } = buildService();
+      prisma.usuario.findFirst.mockResolvedValue(objetivo);
+      prisma.usuario.update.mockResolvedValue({ id: 'usuario-2' });
+
+      const { contrasenaTemporal } = await service.resetearContrasena(
+        'usuario-2',
+        RolUsuario.ADMIN,
+        'admin-1',
+      );
+
+      const [registro] = auditService.create.mock.calls.at(-1);
+      expect(registro.accion).toBe('RESETEAR_CONTRASENA');
+      expect(registro.entidadId).toBe('usuario-2');
+      expect(JSON.stringify(registro)).not.toContain(contrasenaTemporal);
+    });
   });
 });

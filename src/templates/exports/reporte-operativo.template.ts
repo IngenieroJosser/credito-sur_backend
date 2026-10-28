@@ -96,9 +96,15 @@ export async function generarExcelOperativo(
 
   // Encabezados
   const headerRow = ws.getRow(4);
-  ws.columns.forEach((col: any, i: number) => {
+  ws.columns.forEach((col, i: number) => {
     const cell = headerRow.getCell(i + 1);
-    cell.value = col.header;
+    // `header` en ExcelJS es `string | string[]`: admite encabezados de
+    // varias filas. Aqui siempre son cadenas, pero se trata el array de
+    // forma explicita para no escribir "[object Object]" el dia que alguien
+    // use esa forma. Antes el callback iba con `col: any` y no se veia.
+    cell.value = Array.isArray(col.header)
+      ? col.header.join(' ')
+      : (col.header ?? '');
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     cell.fill = {
       type: 'pattern',
@@ -135,13 +141,13 @@ export async function generarExcelOperativo(
     }
 
     colsMoneda.forEach((key) => {
-      const colIdx = ws.columns.findIndex((c: any) => c.key === key) + 1;
+      const colIdx = ws.columns.findIndex((c) => c.key === key) + 1;
       if (colIdx > 0) row.getCell(colIdx).numFmt = '#,##0';
     });
 
     // Color rojo si eficiencia < 70%
     const eficienciaIdx =
-      ws.columns.findIndex((c: any) => c.key === 'eficiencia') + 1;
+      ws.columns.findIndex((c) => c.key === 'eficiencia') + 1;
     if (eficienciaIdx > 0 && fila.eficiencia < 70) {
       row.getCell(eficienciaIdx).font = {
         color: { argb: 'FFDC2626' },
@@ -175,7 +181,7 @@ export async function generarExcelOperativo(
   });
   totalRow.getCell(1).alignment = { horizontal: 'right', vertical: 'middle' };
   colsMoneda.forEach((key) => {
-    const colIdx = ws.columns.findIndex((c: any) => c.key === key) + 1;
+    const colIdx = ws.columns.findIndex((c) => c.key === key) + 1;
     if (colIdx > 0) totalRow.getCell(colIdx).numFmt = '#,##0';
   });
 
@@ -191,9 +197,15 @@ export async function generarExcelOperativo(
   ];
 
   const h2 = ws2.getRow(1);
-  ws2.columns.forEach((col: any, i: number) => {
+  ws2.columns.forEach((col, i: number) => {
     const cell = h2.getCell(i + 1);
-    cell.value = col.header;
+    // `header` en ExcelJS es `string | string[]`: admite encabezados de
+    // varias filas. Aqui siempre son cadenas, pero se trata el array de
+    // forma explicita para no escribir "[object Object]" el dia que alguien
+    // use esa forma. Antes el callback iba con `col: any` y no se veia.
+    cell.value = Array.isArray(col.header)
+      ? col.header.join(' ')
+      : (col.header ?? '');
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     cell.fill = {
       type: 'pattern',

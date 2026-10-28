@@ -1,4 +1,9 @@
-import { LedgerService } from './ledger.service';
+import {
+  LedgerService,
+  ReferenceTypeContable,
+  type RegistrarAsientoDto,
+} from './ledger.service';
+import { comoPrisma } from '../common/testing/dobles';
 
 /**
  * Dos personas moviendo la misma caja al mismo tiempo.
@@ -35,20 +40,20 @@ function servicio(saldos: number[]) {
   };
 
   const prisma = {
-    $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
+    $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
     _tx: tx,
   };
 
-  return { service: new LedgerService(prisma as any), tx, $queryRaw };
+  return { service: new LedgerService(comoPrisma(prisma)), tx, $queryRaw };
 }
 
-const sqlDe = (llamada: any[]) => {
+const sqlDe = (llamada: unknown[]) => {
   const partes = llamada[0];
   return Array.isArray(partes) ? partes.join(' ') : String(partes);
 };
 
-const egreso = (cajaId: string, monto: number) => ({
-  referenceType: 'EGRESO' as any,
+const egreso = (cajaId: string, monto: number): RegistrarAsientoDto => ({
+  referenceType: ReferenceTypeContable.EGRESO,
   referenceId: 'ref-1',
   description: 'Retiro',
   createdBy: 'admin-1',
@@ -91,7 +96,7 @@ describe('El saldo de una caja se lee con la fila bloqueada', () => {
     const { service } = servicio([20000]);
 
     await expect(
-      service.registrarAsiento(egreso('caja-1', 100000) as any),
+      service.registrarAsiento(egreso('caja-1', 100000)),
       // El mensaje nombra la caja y dice cuánto falta, no el UUID ni cifras
       // pegadas: es lo que va a leer alguien que está en la caja.
     ).rejects.toThrow(
@@ -189,7 +194,7 @@ describe('Los movimientos de caja de un asiento se suman y se ordenan', () => {
       ],
     });
 
-    const orden = tx.caja.update.mock.calls.map((c: any) => c[0].where.id);
+    const orden = tx.caja.update.mock.calls.map((c) => c[0].where.id);
     expect(orden).toEqual(['caja-a', 'caja-z']);
   });
 });

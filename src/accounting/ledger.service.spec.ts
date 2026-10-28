@@ -1,4 +1,6 @@
 import { LedgerService } from './ledger.service';
+import { comoPrisma } from '../common/testing/dobles';
+import type { JournalLineDto } from './ledger.service';
 
 function makeService() {
   const tx = {
@@ -20,11 +22,11 @@ function makeService() {
   };
 
   const prisma = {
-    $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
+    $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
     _tx: tx,
   };
 
-  return { service: new LedgerService(prisma as any), prisma };
+  return { service: new LedgerService(comoPrisma(prisma)), prisma };
 }
 
 describe('LedgerService article sales', () => {
@@ -175,8 +177,12 @@ describe('LedgerService consolidacion', () => {
     const createCall = prisma._tx.journalEntry.create.mock.calls[0][0];
     const lines = createCall.data.lines.create;
 
-    const destinoLine = lines.find((l: any) => l.accountCode === '1.1.1');
-    const origenLine = lines.find((l: any) => l.accountCode === '1.2.1');
+    const destinoLine = lines.find(
+      (l: JournalLineDto) => l.accountCode === '1.1.1',
+    );
+    const origenLine = lines.find(
+      (l: JournalLineDto) => l.accountCode === '1.2.1',
+    );
 
     expect(destinoLine.debitAmount).toBe(50000);
     expect(destinoLine.cajaId).toBe('caja-oficina');
@@ -235,7 +241,9 @@ describe('LedgerService consolidacion', () => {
     const createCall = prisma._tx.journalEntry.create.mock.calls[0][0];
     const lines = createCall.data.lines.create;
 
-    const destinoLine = lines.find((l: any) => l.accountCode === '1.1.2');
+    const destinoLine = lines.find(
+      (l: JournalLineDto) => l.accountCode === '1.1.2',
+    );
 
     expect(destinoLine).toBeDefined();
     expect(destinoLine.debitAmount).toBe(50000);

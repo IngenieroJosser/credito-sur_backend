@@ -4,6 +4,7 @@ import {
   type DatosReferenciaPlantilla,
 } from './plantilla-clientes-creditos';
 import { generarPlantillaInventario } from './plantilla-inventario';
+import { bufferDeExcel } from '../../common/testing/dobles';
 
 /**
  * Pruebas de ESTRUCTURA de las plantillas, con varias combinaciones de datos.
@@ -125,7 +126,7 @@ const COMBINACIONES: Array<{
 
 const cargar = async (data: Buffer) => {
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(data as any);
+  await wb.xlsx.load(bufferDeExcel(data));
   return wb;
 };
 

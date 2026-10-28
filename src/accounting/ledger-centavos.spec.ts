@@ -1,4 +1,9 @@
-import { LedgerService } from './ledger.service';
+import {
+  LedgerService,
+  ReferenceTypeContable,
+  type RegistrarAsientoDto,
+} from './ledger.service';
+import { comoPrisma } from '../common/testing/dobles';
 
 /**
  * El peso colombiano no tiene centavos.
@@ -22,14 +27,14 @@ function servicio() {
     },
   };
   const prisma = {
-    $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
+    $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
     _tx: tx,
   };
-  return { service: new LedgerService(prisma as any), prisma };
+  return { service: new LedgerService(comoPrisma(prisma)), prisma };
 }
 
-const asiento = (debito: number, credito: number) => ({
-  referenceType: 'AJUSTE' as any,
+const asiento = (debito: number, credito: number): RegistrarAsientoDto => ({
+  referenceType: ReferenceTypeContable.AJUSTE,
   referenceId: 'ref-1',
   description: 'Prueba',
   createdBy: 'admin-1',
@@ -44,7 +49,7 @@ describe('El libro no admite centavos', () => {
     const { service, prisma } = servicio();
 
     await expect(
-      service.registrarAsiento(asiento(100.55, 100.55) as any),
+      service.registrarAsiento(asiento(100.55, 100.55)),
     ).rejects.toThrow(/100\.55 tiene centavos/);
 
     // Y no alcanza a escribir nada.
@@ -58,7 +63,7 @@ describe('El libro no admite centavos', () => {
     // pasar: el descuadre que causan aparece más tarde y en otra parte.
     await expect(
       service.registrarAsiento({
-        referenceType: 'AJUSTE' as any,
+        referenceType: ReferenceTypeContable.AJUSTE,
         referenceId: 'ref-2',
         description: 'Prueba',
         createdBy: 'admin-1',
@@ -67,7 +72,7 @@ describe('El libro no admite centavos', () => {
           { accountCode: '1.3.1', debitAmount: 49.5 },
           { accountCode: '3.3', creditAmount: 100 },
         ],
-      } as any),
+      }),
     ).rejects.toThrow(/centavos/);
   });
 

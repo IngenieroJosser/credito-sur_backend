@@ -15,6 +15,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolUsuario } from '@prisma/client';
+import { SendPushNotificationDto } from './dto/send-push-notification.dto';
 
 @ApiTags('Push Notifications')
 @Controller('push')
@@ -25,7 +26,13 @@ export class PushController {
   @Post('subscribe')
   @ApiOperation({ summary: 'Suscribir usuario a notificaciones push' })
   async subscribe(
-    @Body() body: { subscription: any },
+    @Body()
+    body: {
+      subscription: {
+        endpoint: string;
+        keys: { p256dh: string; auth: string };
+      };
+    },
     @Request() req: { user?: { id?: string } },
   ) {
     return this.pushService.subscribeUser(
@@ -85,7 +92,9 @@ export class PushController {
     RolUsuario.COORDINADOR,
   )
   @ApiOperation({ summary: 'Enviar notificación push' })
-  async send(@Body() data: any) {
+  // El DTO ya existia (`pushService.sendPushNotification` lo declara como parametro) y este
+  // controlador no lo usaba, asi que el ValidationPipe no validaba nada de este cuerpo.
+  async send(@Body() data: SendPushNotificationDto) {
     return this.pushService.sendPushNotification(data);
   }
 }

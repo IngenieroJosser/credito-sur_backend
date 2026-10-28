@@ -5,7 +5,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { EstadoAprobacion, RolUsuario } from '@prisma/client';
+import { EstadoAprobacion, RolUsuario, Prisma } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import {
   PrestamosMoraFiltrosDto,
@@ -18,11 +18,13 @@ import {
   TotalesVencidasDto,
   DecisionCastigoDto,
   CuentasVencidasFiltrosDto,
-  CuentaVencidaDto,
 } from './dto/cuentas-vencidas.dto';
 import { CuentasVencidasResponseDto } from './dto/responses-cuentas-vencidas.dto';
 import { TipoAprobacion, EstadoPrestamo } from '@prisma/client';
-import { GetOperationalReportDto } from './dto/get-operational-report.dto';
+import {
+  ReportPeriod,
+  GetOperationalReportDto,
+} from './dto/get-operational-report.dto';
 import {
   OperationalReportResponse,
   RoutePerformanceDetail,
@@ -195,7 +197,7 @@ export class ReportsService {
    */
   private filtroRutaScopePrestamo(
     actor?: { id?: string; rol?: RolUsuario } | null,
-  ): Record<string, any> {
+  ): Prisma.PrestamoWhereInput {
     const rol = String(actor?.rol || '').toUpperCase();
     if (!actor?.id) return {};
     if (rol === RolUsuario.SUPERVISOR) {
@@ -259,7 +261,7 @@ export class ReportsService {
       return `${y}-${m}-${day}`;
     };
 
-    const whereConditions: any = {
+    const whereConditions: Prisma.PrestamoWhereInput = {
       estado: { in: ['EN_MORA', 'ACTIVO'] },
       // El supervisor/cobrador solo ve la mora de sus rutas.
       ...this.filtroRutaScopePrestamo(actor),
@@ -321,10 +323,14 @@ export class ReportsService {
     }
 
     if (filtros.nivelRiesgo) {
-      whereConditions.cliente = {
+      // Se anota el objeto: `cliente` es un `XOR` de Prisma (filtro de relacion o filtro de
+      // campos), y sin la anotacion tsc elige la rama del filtro de relacion, donde
+      // `nivelRiesgo` no existe.
+      const filtroCliente: Prisma.ClienteWhereInput = {
         ...whereConditions.cliente,
         nivelRiesgo: filtros.nivelRiesgo,
       };
+      whereConditions.cliente = filtroCliente;
     }
 
     if (filtros.rutaId) {
@@ -407,7 +413,10 @@ export class ReportsService {
 
     // Enriquecer datos con información de ruta y cobrador
     const prestamosEnriquecidosRaw = await Promise.all(
-      prestamos.map(async (prestamo) => {
+      // El tipo de retorno se DECLARA, no se castea al final: asi un campo que el DTO no
+      // tenga -o que el DTO pida y no se mande- deja de compilar. El `as PrestamoMoraDto`
+      // que habia abajo dejaba pasar tres campos de prorroga sin declarar.
+      prestamos.map(async (prestamo): Promise<PrestamoMoraDto | null> => {
         // Obtener asignación de ruta activa del cliente
         const asignacion = await this.prisma.asignacionRuta.findFirst({
           where: {
@@ -424,7 +433,7 @@ export class ReportsService {
         });
 
         const cuotas = prestamo?.cuotas || [];
-        const cuotasVencidas = cuotas.filter((c: any) => {
+        const cuotasVencidas = cuotas.filter((c) => {
           const eff = c?.fechaVencimientoProrroga
             ? new Date(c.fechaVencimientoProrroga)
             : new Date(c.fechaVencimiento);
@@ -433,15 +442,18 @@ export class ReportsService {
           return !!key && key < hoyKeyBogota;
         });
 
+        // El tipo del acumulador se DERIVA del arreglo, con
+        // `(typeof cuotasVencidas)[number]`, en vez de repetirlo como `any` dos veces.
+        type CuotaVencida = (typeof cuotasVencidas)[number];
         const cuotaMasAntigua = cuotasVencidas.reduce(
-          (acc: any, c: any) => {
+          (acc, c) => {
             const eff = c?.fechaVencimientoProrroga
               ? new Date(c.fechaVencimientoProrroga)
               : new Date(c.fechaVencimiento);
             if (!acc) return { cuota: c, eff };
             return eff < acc.eff ? { cuota: c, eff } : acc;
           },
-          null as null | { cuota: any; eff: Date },
+          null as null | { cuota: CuotaVencida; eff: Date },
         );
 
         const cuotaMasAntiguaKey = cuotaMasAntigua?.eff
@@ -531,13 +543,16 @@ export class ReportsService {
           fechaProrroga,
           diasProrroga,
           tieneProrroga: !!extension,
-        } as PrestamoMoraDto;
+        };
       }),
     );
 
+    // El `filter(Boolean)` no le quita el `null` al tipo: hace falta el guarda. Antes
+    // habia un `as PrestamoMoraDto[]`, que ademas tapaba que al objeto de arriba le
+    // faltaban tres campos por declarar en el DTO (los de prorroga).
     const prestamosEnriquecidos = prestamosEnriquecidosRaw.filter(
-      Boolean,
-    ) as PrestamoMoraDto[];
+      (p): p is NonNullable<typeof p> => p !== null,
+    );
     const total = prestamosEnriquecidos.length;
 
     // Calcular totales
@@ -579,7 +594,7 @@ export class ReportsService {
     const fecha = getBogotaDayKey(new Date());
 
     // 2. Mapeo al tipo del template
-    const filas: MoraRow[] = prestamos.map((p: any) => ({
+    const filas: MoraRow[] = prestamos.map((p) => ({
       numeroPrestamo: p.numeroPrestamo || '',
       cliente: p.cliente?.nombre || '',
       documento: p.cliente?.documento || '',
@@ -679,7 +694,7 @@ export class ReportsService {
     const skip = (pagina - 1) * limite;
     const hoy = new Date();
 
-    const whereConditions: any = {
+    const whereConditions: Prisma.PrestamoWhereInput = {
       fechaFin: { lt: hoy },
       estado: { in: ['EN_MORA', 'INCUMPLIDO', 'PERDIDA'] },
       saldoPendiente: { gt: 0 },
@@ -707,10 +722,14 @@ export class ReportsService {
     }
 
     if (filtros.nivelRiesgo) {
-      whereConditions.cliente = {
+      // Se anota el objeto: `cliente` es un `XOR` de Prisma (filtro de relacion o filtro de
+      // campos), y sin la anotacion tsc elige la rama del filtro de relacion, donde
+      // `nivelRiesgo` no existe.
+      const filtroCliente: Prisma.ClienteWhereInput = {
         ...whereConditions.cliente,
         nivelRiesgo: filtros.nivelRiesgo,
       };
+      whereConditions.cliente = filtroCliente;
     }
 
     if (filtros.rutaId) {
@@ -766,7 +785,7 @@ export class ReportsService {
           nivelRiesgo: prestamo.cliente.nivelRiesgo,
           estado: prestamo.estado,
           interesesMora,
-        } as CuentaVencidaDto & { interesesMora: number };
+        };
       }),
     );
 
@@ -784,11 +803,11 @@ export class ReportsService {
             )
           : 0,
       totalInteresesMora: cuentasVencidas.reduce(
-        (s, c: any) => s + (c.interesesMora || 0),
+        (s, c) => s + (c.interesesMora || 0),
         0,
       ),
       totalMontoOriginal: cuentasVencidas.reduce(
-        (s, c: any) => s + (c.montoOriginal || 0),
+        (s, c) => s + (c.montoOriginal || 0),
         0,
       ),
     };
@@ -922,7 +941,7 @@ export class ReportsService {
     const cuentas = data.cuentas;
     const fecha = getBogotaDayKey(new Date());
 
-    const filas: VencidasRow[] = cuentas.map((c: any) => ({
+    const filas: VencidasRow[] = cuentas.map((c) => ({
       numeroPrestamo: c.numeroPrestamo || '',
       cliente:
         typeof c.cliente === 'string' ? c.cliente : c.cliente?.nombre || '',
@@ -963,7 +982,7 @@ export class ReportsService {
    */
   private filtroRutaDirectoPorActor(
     actor?: { id?: string; rol?: RolUsuario } | null,
-  ): Record<string, any> {
+  ): Prisma.RutaWhereInput {
     const rol = String(actor?.rol || '').toUpperCase();
     if (!actor?.id) return {};
     if (rol === RolUsuario.SUPERVISOR) return { supervisorId: actor.id };
@@ -987,23 +1006,25 @@ export class ReportsService {
     // Para el reporte diario, el objetivo debe ser la meta REAL del día por ruta,
     // igual a la vista del listado de rutas (metaDelDia/cobranzaDelDia/avanceDiario).
     // Esto evita discrepancias y hace que el objetivo tenga sentido operativo.
-    if (period === 'today') {
+    // Se compara contra el miembro del enum y no contra el literal: asi un valor
+    // mal escrito lo atrapa el compilador.
+    if (period === ReportPeriod.TODAY) {
       // El actor filtra las rutas: el supervisor/cobrador solo ve las suyas.
       const rutasListado = await this.routesService.findAll(
         { activa: true },
         actor,
       );
-      const rutas = (rutasListado as any)?.data || [];
+      const rutas = rutasListado?.data || [];
 
       const rutasFiltradas = routeId
-        ? rutas.filter((r: any) => r.id === routeId)
+        ? rutas.filter((r) => r.id === routeId)
         : rutas;
       const { startDate: hoyInicio, endDate: hoyFin } = getBogotaStartEndOfDay(
         new Date(),
       );
 
       const rendimientoRutas: RoutePerformanceDetail[] = await Promise.all(
-        rutasFiltradas.map(async (r: any) => {
+        rutasFiltradas.map(async (r) => {
           const nuevosPrestamosAgg = await this.prisma.prestamo.aggregate({
             where: {
               creadoEn: { gte: hoyInicio, lte: hoyFin },
@@ -1046,38 +1067,38 @@ export class ReportsService {
             nuevosPrestamos,
             nuevosClientes,
             montoNuevosPrestamos,
-          } as any;
+          };
         }),
       );
 
       const totalRecaudo = rendimientoRutas.reduce(
-        (sum, rr: any) => sum + Number(rr.recaudado || 0),
+        (sum, rr) => sum + Number(rr.recaudado || 0),
         0,
       );
       const totalMeta = rendimientoRutas.reduce(
-        (sum, rr: any) => sum + Number(rr.meta || 0),
+        (sum, rr) => sum + Number(rr.meta || 0),
         0,
       );
       const porcentajeGlobal =
         totalMeta > 0 ? Math.round((totalRecaudo / totalMeta) * 100) : 0;
 
       const totalPrestamosNuevos = rendimientoRutas.reduce(
-        (sum, rr: any) => sum + Number(rr.nuevosPrestamos || 0),
+        (sum, rr) => sum + Number(rr.nuevosPrestamos || 0),
         0,
       );
       const totalAfiliaciones = rendimientoRutas.reduce(
-        (sum, rr: any) => sum + Number(rr.nuevosClientes || 0),
+        (sum, rr) => sum + Number(rr.nuevosClientes || 0),
         0,
       );
       const totalMontoPrestamosNuevos = rendimientoRutas.reduce(
-        (sum, rr: any) => sum + Number(rr.montoNuevosPrestamos || 0),
+        (sum, rr) => sum + Number(rr.montoNuevosPrestamos || 0),
         0,
       );
       const efectividadPromedio =
         rendimientoRutas.length > 0
           ? Math.round(
               rendimientoRutas.reduce(
-                (sum, rr: any) => sum + Number(rr.eficiencia || 0),
+                (sum, rr) => sum + Number(rr.eficiencia || 0),
                 0,
               ) / rendimientoRutas.length,
             )
@@ -1221,7 +1242,7 @@ export class ReportsService {
         nuevosPrestamos: newLoans,
         nuevosClientes: newClients,
         montoNuevosPrestamos: newLoansAmount,
-      } as any;
+      };
     });
 
     const routePerformance = await Promise.all(routePerformancePromises);
@@ -1330,7 +1351,9 @@ export class ReportsService {
 
   async getRouteDetail(
     routeId: string,
-    filters: any,
+    // Lo que manda el controlador desde el query string, ni mas ni menos
+    // (reports.controller.ts:321). `period` se castea a `TimeFilterPeriod` mas abajo.
+    filters: { period?: string; startDate?: string; endDate?: string },
     actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     const route = await this.prisma.ruta.findUnique({
@@ -1497,12 +1520,12 @@ export class ReportsService {
   async exportOperationalReport(
     filters: GetOperationalReportDto,
     format: 'excel' | 'pdf',
-  ): Promise<any> {
+  ): Promise<{ data: Buffer; contentType: string; filename: string }> {
     const reportData = await this.getOperationalReport(filters);
     const fecha = getBogotaDayKey(new Date());
 
     const filas: OperativoRow[] = (reportData.rendimientoRutas || []).map(
-      (r: any) => ({
+      (r) => ({
         ruta: r.ruta || '',
         cobrador: r.cobrador || '',
         meta: Number(r.meta || 0),

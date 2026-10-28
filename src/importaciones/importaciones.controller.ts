@@ -82,7 +82,7 @@ export class ImportacionesController {
   @UseGuards(RolesGuard)
   @Roles(RolUsuario.SUPER_ADMINISTRADOR)
   async revertirLote(
-    @Request() req,
+    @Request() req: RequestConUsuario,
     @Param('id') id: string,
     @Body() body?: { prestamoIds?: string[] },
   ) {

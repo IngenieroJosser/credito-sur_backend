@@ -6,6 +6,7 @@ import {
 } from '../templates/exports/auditoria.template';
 import { PrismaService } from '../prisma/prisma.service';
 import { getBogotaDayKey } from '../utils/date-utils';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class AuditService {
@@ -16,12 +17,30 @@ export class AuditService {
     accion: string;
     entidad: string;
     entidadId: string;
-    datosAnteriores?: any;
-    datosNuevos?: any;
-    metadata?: any;
+    // Las tres son columnas `Json` de `registroAuditoria`: el tipo que Prisma acepta
+    // para escribirlas es `InputJsonValue`, no `any`.
+    // Las dos son columnas `Json`. `Record<string, unknown>` en la union porque varios
+    // llamadores pasan objetos armados a mano, no un `InputJsonValue` estricto.
+    datosAnteriores?: Prisma.InputJsonValue | Record<string, unknown>;
+    datosNuevos?: Prisma.InputJsonValue | Record<string, unknown>;
+    // HALLAZGO, y por eso el `& Record<string, unknown>`: de `metadata` este servicio
+    // guarda SOLO tres campos —`ip`, `userAgent` y `endpoint`, que van a `direccionIP`,
+    // `agenteUsuario` y `endpoint`—. Cualquier otra clave se descarta en silencio, y hay
+    // dos llamadores que mandan una: `metadata: { notas }` en loans.service.ts:4322 y
+    // `metadata: { motivo }` en payments.service.ts:2505. Esos dos datos NO quedan en el
+    // registro de auditoria. Se deja la firma abierta para no cambiar el comportamiento
+    // aqui; guardarlos es una decision de producto, no de tipos.
+    metadata?: {
+      ip?: string;
+      userAgent?: string;
+      endpoint?: string;
+    } & Record<string, unknown>;
   }) {
     // Si no hay datos, intentar inferir cambios
-    let cambios: any = null;
+    // Declarado, no inferido: `let cambios = null` sin anotacion es un `any` EVOLUTIVO
+    // para TypeScript, y `noImplicitAny` no lo marca. O sea que quitar el `: any` de
+    // aqui no quitaba nada, solo lo escondia.
+    let cambios: { diff: string } | null = null;
     if (data.datosAnteriores && data.datosNuevos) {
       // Aquí podrías implementar una lógica para calcular diferencias
       cambios = { diff: 'calculated' };
@@ -88,7 +107,7 @@ export class AuditService {
     endDate?: Date,
   ) {
     const skip = page > 1 ? (page - 1) * take : 0;
-    const where: any = { usuarioId };
+    const where: Prisma.RegistroAuditoriaWhereInput = { usuarioId };
     if (startDate || endDate) {
       where.creadoEn = {};
       if (startDate) where.creadoEn.gte = startDate;
@@ -124,7 +143,7 @@ export class AuditService {
     filters: { startDate?: string; endDate?: string },
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
     // 1. Solo consulta de BD
-    const where: any = {};
+    const where: Prisma.RegistroAuditoriaWhereInput = {};
     if (filters.startDate || filters.endDate) {
       where.creadoEn = {};
       if (filters.startDate) where.creadoEn.gte = new Date(filters.startDate);
@@ -143,7 +162,7 @@ export class AuditService {
     const fecha = getBogotaDayKey(new Date());
 
     // 2. Mapeo de datos al tipo del template
-    const filas: AuditoriaRow[] = logs.map((l: any) => ({
+    const filas: AuditoriaRow[] = logs.map((l) => ({
       fecha: l.creadoEn,
       usuario: l.usuario ? `${l.usuario.nombres} ${l.usuario.apellidos}` : '',
       accion: l.accion || '',

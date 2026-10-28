@@ -13,7 +13,9 @@ export class MirrorSyncService {
   async handleDatabaseWriteEvent(payload: {
     model: string;
     action: string;
-    data: any;
+    // La fila que se acaba de escribir, tal como la devolvio Prisma: aqui se reenvia
+    // entera al espejo, no se lee campo por campo.
+    data: Record<string, unknown>;
   }) {
     // Tablas operativas no esenciales que se excluyen de la sincronizacion remota
     const excludedModels = [

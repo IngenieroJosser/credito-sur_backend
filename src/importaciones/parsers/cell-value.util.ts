@@ -10,46 +10,74 @@
  * Todas las lecturas de celdas de los parsers deben pasar por aquí.
  */
 
-export function leerValorCelda(valor: any): any {
+/**
+ * Lo que puede salir de una celda despues de desenvolverla.
+ *
+ * Los siete lectores de este archivo declaraban `valor: any` y `leerValorCelda`
+ * devolvia `any`, o sea que ninguna de las formas que describe el comentario de arriba
+ * —formula, richText, hipervinculo, error— se comprobaba en ningun sitio. Con `unknown`
+ * a la entrada, cada `typeof`/`in` de aqui pasa a ser la comprobacion de verdad, y la
+ * salida dice las cuatro cosas que de verdad devuelve.
+ */
+export type ValorDeCelda = string | number | boolean | Date | null;
+
+/** Un trozo de texto enriquecido de ExcelJS: `text` es texto, no un objeto. */
+type ParteDeTextoEnriquecido = { text?: string | number | null };
+
+export function leerValorCelda(valor: unknown): ValorDeCelda {
   if (valor === null || valor === undefined) return null;
 
   if (typeof valor === 'object') {
+    const celda = valor as Record<string, unknown>;
+
     // Celda con fórmula: usamos el resultado calculado por Excel.
-    if ('result' in valor) return leerValorCelda(valor.result);
-    if ('formula' in valor || 'sharedFormula' in valor) return null;
+    if ('result' in celda) return leerValorCelda(celda.result);
+    if ('formula' in celda || 'sharedFormula' in celda) return null;
 
     // Celda con error de fórmula (#N/A, #DIV/0!, ...): se trata como vacía.
-    if ('error' in valor) return null;
+    if ('error' in celda) return null;
 
     // Texto enriquecido.
-    if (Array.isArray(valor.richText)) {
-      return valor.richText
-        .map((parte: any) => String(parte?.text ?? ''))
+    if (Array.isArray(celda.richText)) {
+      return (celda.richText as ParteDeTextoEnriquecido[])
+        .map((parte) => String(parte?.text ?? ''))
         .join('');
     }
 
     // Hipervínculo.
-    if ('text' in valor) return leerValorCelda(valor.text);
+    if ('text' in celda) return leerValorCelda(celda.text);
 
     if (valor instanceof Date) return valor;
+
+    // Cualquier otro objeto no es un valor de celda: antes salia por el `return valor`
+    // de abajo y terminaba en un `String(objeto)` = "[object Object]".
+    return null;
   }
 
-  return valor;
+  if (
+    typeof valor === 'string' ||
+    typeof valor === 'number' ||
+    typeof valor === 'boolean'
+  ) {
+    return valor;
+  }
+
+  return null;
 }
 
-export function leerTexto(valor: any): string {
+export function leerTexto(valor: unknown): string {
   const limpio = leerValorCelda(valor);
   if (limpio === null || limpio === undefined) return '';
   if (limpio instanceof Date) return limpio.toISOString().slice(0, 10);
   return String(limpio).trim();
 }
 
-export function leerTextoMayus(valor: any): string {
+export function leerTextoMayus(valor: unknown): string {
   return leerTexto(valor).toUpperCase();
 }
 
 /** Texto en mayúsculas y sin tildes, para comparar contra listas de valores. */
-export function leerTextoNormalizado(valor: any): string {
+export function leerTextoNormalizado(valor: unknown): string {
   return leerTextoMayus(valor)
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
@@ -59,7 +87,7 @@ export function leerTextoNormalizado(valor: any): string {
  * Convierte una celda a número. Devuelve `null` si está vacía y `NaN` si tiene
  * contenido que no es numérico, para poder distinguir "no informado" de "inválido".
  */
-export function leerNumero(valor: any): number | null {
+export function leerNumero(valor: unknown): number | null {
   const limpio = leerValorCelda(valor);
   if (limpio === null || limpio === undefined) return null;
   if (typeof limpio === 'number') return Number.isFinite(limpio) ? limpio : NaN;
@@ -94,7 +122,7 @@ export function leerNumero(valor: any): number | null {
  *  - Texto mal escrito como `02/09 2026` se ACEPTABA en vez de rechazarse.
  *  - Fechas válidas aquí como `31/12/2026` se rechazaban.
  */
-export function leerFecha(valor: any): Date | null {
+export function leerFecha(valor: unknown): Date | null {
   const limpio = leerValorCelda(valor);
   if (limpio === null || limpio === undefined || limpio === '') return null;
   if (limpio instanceof Date)

@@ -14,17 +14,30 @@ import {
   Length,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { NivelRiesgo } from '@prisma/client';
+import { NivelRiesgo, TipoContenidoMultimedia } from '@prisma/client';
+
+/**
+ * Los tipos de archivo que se aceptan al crear un cliente.
+ *
+ * La lista estaba solo dentro del `@IsEnum`, y el campo se tipaba como `string`:
+ * la validacion rechazaba lo que no fuera uno de estos cuatro, pero el tipo no lo
+ * decia, asi que el valor llegaba a Prisma como texto cualquiera. El `satisfies`
+ * comprueba ademas que los cuatro existan de verdad en el enum del esquema, que
+ * antes no lo comprobaba nadie.
+ */
+export const TIPOS_CONTENIDO_CLIENTE = [
+  'FOTO_PERFIL',
+  'DOCUMENTO_IDENTIDAD_FRENTE',
+  'DOCUMENTO_IDENTIDAD_REVERSO',
+  'COMPROBANTE_DOMICILIO',
+] as const satisfies readonly TipoContenidoMultimedia[];
+
+export type TipoContenidoCliente = (typeof TIPOS_CONTENIDO_CLIENTE)[number];
 
 export class CreateMultimediaDto {
-  @IsEnum([
-    'FOTO_PERFIL',
-    'DOCUMENTO_IDENTIDAD_FRENTE',
-    'DOCUMENTO_IDENTIDAD_REVERSO',
-    'COMPROBANTE_DOMICILIO',
-  ])
+  @IsEnum(TIPOS_CONTENIDO_CLIENTE)
   @IsNotEmpty()
-  tipoContenido: string;
+  tipoContenido: TipoContenidoCliente;
 
   @IsString()
   @IsNotEmpty()
@@ -49,6 +62,24 @@ export class CreateMultimediaDto {
   @IsNumber()
   @IsOptional()
   tamanoBytes?: number;
+
+  /**
+   * Extension del archivo. Es columna del modelo (schema.prisma:822) y el
+   * servicio la usa; faltaba declararla aqui.
+   */
+  formato?: string;
+
+  /**
+   * Quien subio el archivo. Columna del modelo (schema.prisma:836).
+   */
+  subidoPorId?: string;
+
+  /**
+   * El nombre que le pone Multer al fichero recien subido. NO es columna del
+   * modelo -la de verdad es `ruta`- pero llega cuando el archivo viene del
+   * formulario en vez de la base. Se lee en cadena: `url || path || ruta`.
+   */
+  path?: string;
 }
 
 export class CreateClientDto {

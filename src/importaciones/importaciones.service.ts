@@ -1,5 +1,7 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { Prisma } from '@prisma/client';
+import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
+import { objetoDeJson } from '../common/json.util';
 import { sincronizarAsignacionesCliente } from '../routes/sincronizar-asignaciones';
 import { ClientesCreditosParser } from './parsers/clientes-creditos.parser';
 import { InventarioParser } from './parsers/inventario.parser';
@@ -24,6 +26,50 @@ import {
 } from './interes-credito';
 import { pesos } from '../common/dinero.util';
 import { randomUUID } from 'crypto';
+import {
+  esMarcadorDeCedula,
+  generarCedulaProvisional,
+} from './cedula-provisional';
+
+/**
+ * El producto que las dos funciones de snapshot leen.
+ *
+ * Los doce campos los nombro una sonda `never` puesta en los dos parametros, que eran
+ * `any`. Son las mismas doce columnas que describe `ProductoImportadoSnapshot`, y es
+ * logico: una toma la foto y la otra la compara.
+ */
+type ProductoParaSnapshot = {
+  nombre?: string | null;
+  descripcion?: string | null;
+  categoria?: string | null;
+  categoriaId?: string | null;
+  marca?: string | null;
+  modelo?: string | null;
+  costo?: Prisma.Decimal | number | null;
+  stock?: number | null;
+  stockMinimo?: number | null;
+  activo?: boolean | null;
+  eliminadoEn?: Date | null;
+  ocultoArchivadosEn?: Date | null;
+};
+
+/**
+ * El lote de importacion, con lo que el detalle lee de el.
+ *
+ * Siete propiedades, nombradas por la misma sonda. `creadoPor` llega anidado porque la
+ * consulta lo incluye.
+ */
+type LoteParaDetalle = {
+  id: string;
+  // `tipo` y `estado` van obligatorios porque `evaluarSiSePuedeDeshacer` los exige asi,
+  // y son columnas no nulables del lote.
+  tipo: string;
+  estado: string;
+  nombreArchivo?: string | null;
+  creadoEn?: Date | null;
+  confirmadoEn?: Date | null;
+  creadoPor?: { nombres?: string | null; apellidos?: string | null } | null;
+};
 
 type ProductoImportadoSnapshot = {
   nombre: string;
@@ -89,7 +135,12 @@ export function normalizarNombreCategoria(valor: unknown): string {
     .toLowerCase();
 }
 
-import { Prisma } from '@prisma/client';
+import { FrecuenciaPago } from '@prisma/client';
+/** Narrowing de la frecuencia que viene del Excel. El parser ya la valida contra este
+ * mismo enum (`clientes-creditos.parser.ts:1080`); esto solo se lo dice a TypeScript. */
+function esFrecuenciaPago(valor: string): valor is FrecuenciaPago {
+  return (Object.values(FrecuenciaPago) as string[]).includes(valor);
+}
 
 @Injectable()
 export class ImportacionesService {
@@ -148,7 +199,7 @@ export class ImportacionesService {
    * propietario como contrapartida.
    */
   private async asentarInventario(
-    tx: Prisma.TransactionClient,
+    tx: TransaccionPrisma,
     params: {
       codigo: string;
       unidades: number;
@@ -189,7 +240,12 @@ export class ImportacionesService {
     );
   }
 
-  private getAccountCodeCaja(caja: any) {
+  private getAccountCodeCaja(
+    caja: {
+      codigo?: string | null;
+      tipo?: string | null;
+    } | null,
+  ) {
     if (caja?.codigo === 'CAJA-BANCO') return '1.1.2';
     if (String(caja?.tipo || '').toUpperCase() === 'RUTA') return '1.2.1';
     return '1.1.1';
@@ -277,12 +333,15 @@ export class ImportacionesService {
     });
 
     return lotes.map((lote) => {
-      const creado = (lote.resumen?.creado ?? {}) as CreadoPorImportacion;
+      const creado = (objetoDeJson(lote.resumen).creado ??
+        {}) as CreadoPorImportacion;
 
       // Si el lote nunca guardó "creado" (lotes de antes de que existiera este
       // registro), no se sabe cuántos clientes/créditos hizo: null, no 0, para
       // no mostrar "0 cliente(s) · 0 crédito(s)" en un CONFIRMADO que sí creó.
-      const tieneRegistroDeCreacion = Boolean(lote.resumen?.creado);
+      const tieneRegistroDeCreacion = Boolean(
+        objetoDeJson(lote.resumen).creado,
+      );
       const clientes = tieneRegistroDeCreacion
         ? (creado.clientes?.length ?? 0)
         : null;
@@ -335,7 +394,8 @@ export class ImportacionesService {
       throw new BadRequestException('La importación indicada no existe.');
     }
 
-    const creado = (lote.resumen?.creado ?? {}) as CreadoPorImportacion;
+    const creado = (objetoDeJson(lote.resumen).creado ??
+      {}) as CreadoPorImportacion;
 
     if (lote.tipo === 'INVENTARIO') {
       return this.detalleLoteInventario(lote, creado);
@@ -486,7 +546,7 @@ export class ImportacionesService {
   }
 
   private snapshotCoincide(
-    producto: any,
+    producto: ProductoParaSnapshot,
     esperado: ProductoImportadoSnapshot,
   ): boolean {
     const actual: ProductoImportadoSnapshot = {
@@ -518,10 +578,10 @@ export class ImportacionesService {
    * el lote completo y se explica exactamente cuál artículo lo impide.
    */
   private async revisarReversionInventario(
-    cliente: PrismaService | Prisma.TransactionClient,
+    cliente: PrismaService | TransaccionPrisma,
     registros: RegistroInventarioImportado[],
   ) {
-    const productos: any[] = await (cliente as any).producto.findMany({
+    const productos = await cliente.producto.findMany({
       where: { id: { in: registros.map((r) => r.productoId) } },
       include: {
         precios: {
@@ -565,9 +625,8 @@ export class ImportacionesService {
           }
         }
 
-        const preciosPorId = new Map<string, any>(
-          producto.precios.map((p: any) => [p.id, p]),
-        );
+        // Sin anotacion: el tipo del valor sale de `producto.precios`, que Prisma ya tipa.
+        const preciosPorId = new Map(producto.precios.map((p) => [p.id, p]));
         for (const precio of registro.preciosCreados) {
           const actual = preciosPorId.get(precio.id);
           if (!actual) {
@@ -620,7 +679,10 @@ export class ImportacionesService {
     });
   }
 
-  private async detalleLoteInventario(lote: any, creado: CreadoPorImportacion) {
+  private async detalleLoteInventario(
+    lote: LoteParaDetalle,
+    creado: CreadoPorImportacion,
+  ) {
     const registros = creado.inventario ?? [];
     const articulos = await this.revisarReversionInventario(
       this.prisma,
@@ -757,7 +819,8 @@ export class ImportacionesService {
       throw new BadRequestException('La importación indicada no existe.');
     }
 
-    const creado = (lote.resumen?.creado ?? {}) as CreadoPorImportacion;
+    const creado = (objetoDeJson(lote.resumen).creado ??
+      {}) as CreadoPorImportacion;
 
     const evaluacion = this.evaluarSiSePuedeDeshacer(lote, creado);
     if (!evaluacion.sePuede) {
@@ -937,7 +1000,7 @@ export class ImportacionesService {
           data: {
             estado: parcial ? 'CONFIRMADO' : 'CANCELADO',
             resumen: {
-              ...(lote.resumen ?? {}),
+              ...objetoDeJson(lote.resumen),
               creado: {
                 ...creado,
                 prestamos: quedanVivos,
@@ -981,7 +1044,8 @@ export class ImportacionesService {
 
   /** Deshace un lote de inventario solo si todo sigue como lo dejó el archivo. */
   private async revertirLoteInventario(
-    lote: any,
+    // Solo se le lee el id: lo dijo la sonda.
+    lote: { id: string },
     creado: CreadoPorImportacion,
     usuarioId: string,
   ) {
@@ -1131,7 +1195,7 @@ export class ImportacionesService {
     preciosOmitidos: number;
     preciosContadoCreados: number;
     mensajes: string[];
-    resumen: any;
+    resumen: ResultadoValidacion['resumen'];
   }> {
     if (!file || !file.buffer) {
       throw new BadRequestException('Archivo no proporcionado');
@@ -1162,8 +1226,8 @@ export class ImportacionesService {
           filasValidas: resultado.resumen.filasValidas,
           filasConError: resultado.resumen.filasConError,
           advertencias: resultado.resumen.advertencias,
-          resumen: resultado.resumen as any,
-          errores: resultado.errores as any,
+          resumen: resultado.resumen,
+          errores: resultado.errores,
           creadoPorId,
         },
       });
@@ -1176,8 +1240,8 @@ export class ImportacionesService {
       });
     }
 
-    const articulos: any[] = (resultado as any).articulos ?? [];
-    const precios: any[] = (resultado as any).precios ?? [];
+    const articulos = resultado.articulos ?? [];
+    const precios = resultado.precios ?? [];
 
     // 3. Ejecutar dentro de transacción
     let articulosCreados = 0;
@@ -1186,7 +1250,7 @@ export class ImportacionesService {
     let preciosActualizados = 0;
     // Códigos marcados como ACTUALIZAR: sus precios se corrigen, no se omiten.
     const articulosPorCodigo = new Map<string, boolean>(
-      articulos.map((art: any) => [art.codigo, Boolean(art.esActualizacion)]),
+      articulos.map((art) => [art.codigo, Boolean(art.esActualizacion)]),
     );
     let preciosCreados = 0;
     let preciosOmitidos = 0;
@@ -1195,7 +1259,9 @@ export class ImportacionesService {
     const registrosInventario = new Map<string, RegistroInventarioImportado>();
     let loteId = '';
 
-    const snapshotProducto = (producto: any): ProductoImportadoSnapshot => ({
+    const snapshotProducto = (
+      producto: ProductoParaSnapshot,
+    ): ProductoImportadoSnapshot => ({
       nombre: String(producto.nombre ?? ''),
       descripcion: producto.descripcion ?? null,
       categoria: String(producto.categoria ?? ''),
@@ -1223,13 +1289,19 @@ export class ImportacionesService {
         // igual que uno creado a mano, y no solo con el nombre suelto.
         const categoriasPorNombre = await this.resolverCategoriasArticulo(
           tx,
-          articulos.map((art: any) => art.categoria),
+          articulos.map((art) => art.categoria),
         );
         const idCategoria = (nombre: unknown) =>
           categoriasPorNombre.get(normalizarNombreCategoria(nombre)) ?? null;
 
         // Crear o verificar artículos (idempotencia por código)
         for (const art of articulos) {
+          // Esta guarda no se cumple nunca: el parser rechaza la fila cuando falta
+          // (`inventario.parser.ts:293` para el costo, `388` y `550` para el precio) y
+          // este metodo se niega a confirmar si `resultado.errores` trae algo. Esta aqui
+          // porque el tipo ahora dice la verdad —el valor puede ser null— y sin ella
+          // habria que castear al escribir en la base.
+          if (art.costo === null) continue;
           const existe = await tx.producto.findUnique({
             where: { codigo: art.codigo },
           });
@@ -1350,6 +1422,8 @@ export class ImportacionesService {
 
         // Crear precios (idempotencia por código + meses)
         for (const precio of precios) {
+          // Ver la nota del bucle de articulos: el parser ya rechazo la fila si faltan.
+          if (precio.meses === null || precio.precio === null) continue;
           const producto = await tx.producto.findUnique({
             where: { codigo: precio.codigoProducto },
             select: { id: true },
@@ -1437,7 +1511,7 @@ export class ImportacionesService {
                     registro.preciosCreados.length > 0,
                 ),
               },
-            } as any,
+            },
             creadoPorId,
             confirmadoEn: new Date(),
           },
@@ -1506,7 +1580,7 @@ export class ImportacionesService {
     asientosCreados: number;
     cuotasCreadas: number;
     mensajes: string[];
-    resumen: any;
+    resumen: ResultadoValidacion['resumen'];
   }> {
     if (!file || !file.buffer) {
       throw new BadRequestException('Archivo no proporcionado');
@@ -1536,8 +1610,8 @@ export class ImportacionesService {
           filasValidas: resultado.resumen.filasValidas,
           filasConError: resultado.resumen.filasConError,
           advertencias: resultado.resumen.advertencias,
-          resumen: resultado.resumen as any,
-          errores: resultado.errores as any,
+          resumen: resultado.resumen,
+          errores: resultado.errores,
           creadoPorId,
         },
       });
@@ -1550,7 +1624,7 @@ export class ImportacionesService {
       });
     }
 
-    const clientes: any[] = (resultado as any).clientes ?? [];
+    const clientes = resultado.clientes ?? [];
 
     // Mapeo de NivelRiesgo (operativo a Prisma)
     const mapNivelRiesgo = (nivel: string): 'VERDE' | 'AMARILLO' | 'ROJO' => {
@@ -1590,19 +1664,37 @@ export class ImportacionesService {
     try {
       await this.prisma.$transaction(
         async (tx) => {
+          /**
+           * Traduccion `numero de amarre del archivo -> cedula guardada`.
+           *
+           * Hace falta porque en la plantilla la columna de cedula puede traer un numero
+           * corto (1, 2, 3…) que solo une las filas entre si, y el sistema le pone una
+           * cedula PROVISIONAL al crear el cliente. Los creditos del archivo apuntan al
+           * cliente por ese numero, asi que sin esta tabla quedarian colgados.
+           *
+           * Se llena tambien con las cedulas de verdad (se traducen a si mismas) para que
+           * la busqueda del credito sea una sola, sin ramas.
+           */
+          const cedulaPorAmarre = new Map<string, string>();
+          const cedulasProvisionalesUsadas = new Set<string>();
+
           for (const cli of clientes) {
             // Idempotencia por DNI o código
             // Se busca sin filtrar por eliminadoEn a proposito: si la cedula
             // ya existe pero el cliente estaba borrado, hay que darse cuenta.
+            // Con un numero de amarre NO se busca por `dni`: la cedula guardada es la
+            // provisional, no el "1" del archivo. Buscar por dni ahi encontraria a
+            // cualquier cliente que de verdad tenga la cedula 1.
+            const esAmarre = esMarcadorDeCedula(cli.cc);
             const existente = await tx.cliente.findFirst({
               where: {
                 OR: [
-                  { dni: cli.cc },
+                  ...(esAmarre ? [] : [{ dni: cli.cc }]),
                   { codigo: cli.codigoImp },
                   { idempotencyKey: cli.codigoImp },
                 ],
               },
-              select: { id: true, eliminadoEn: true },
+              select: { id: true, eliminadoEn: true, dni: true },
             });
 
             // Un cliente borrado que vuelve a aparecer en una importacion se
@@ -1661,15 +1753,25 @@ export class ImportacionesService {
             }
 
             if (existente) {
+              // Aunque no se cree nada, el credito de este archivo tiene que encontrarlo.
+              cedulaPorAmarre.set(cli.cc, existente.dni);
               clientesOmitidos++;
               continue;
             }
+
+            // La cedula que se guarda: la del archivo si es real, o una provisional
+            // (empieza por 99) si lo que vino es un numero de amarre.
+            const dniAGuardar = esAmarre
+              ? generarCedulaProvisional(cedulasProvisionalesUsadas)
+              : cli.cc;
+            if (esAmarre) cedulasProvisionalesUsadas.add(dniAGuardar);
+            cedulaPorAmarre.set(cli.cc, dniAGuardar);
 
             const clienteCreado = await tx.cliente.create({
               data: {
                 codigo: cli.codigoImp || cli.cc, // Fallback si no viene algo único
                 idempotencyKey: cli.codigoImp, // Usamos el código importación del excel
-                dni: cli.cc,
+                dni: dniAGuardar,
                 nombres: cli.nombres,
                 apellidos: cli.apellidos,
                 correo: cli.correo || null,
@@ -1753,7 +1855,7 @@ export class ImportacionesService {
             : 0;
 
           // Procesar créditos
-          const creditos: any[] = (resultado as any).creditos ?? [];
+          const creditos = resultado.creditos ?? [];
           const roundMoney = (value: number) => pesos(value);
           const hayCreditoOperativoEfectivo = creditos.some(
             (cred) =>
@@ -1792,6 +1894,16 @@ export class ImportacionesService {
           // OPERATIVA + NO (credito ya operando que no debe mover caja) todavia
           // no esta implementado: esas filas se saltan y se avisan abajo.
           for (const cred of creditos) {
+            // Igual que en los bucles de inventario: el parser ya rechazo la fila si la
+            // fecha del credito falta o la frecuencia no es una de las cuatro, y este
+            // metodo se niega a confirmar cuando `resultado.errores` trae algo. La guarda
+            // no se cumple nunca; esta para que el tipo diga la verdad sin castear.
+            if (!cred.fechaCredito) continue;
+            if (!esFrecuenciaPago(cred.frecuenciaPago)) continue;
+            const fechaCredito = cred.fechaCredito;
+            const frecuenciaPago = cred.frecuenciaPago;
+            // La cuota inicial es opcional de verdad: sin ella es cero.
+            const cuotaInicial = cred.cuotaInicial ?? 0;
             const isHistorica =
               cred.tipoCarga === 'HISTORICA' && cred.descontarCaja === 'NO';
             const isOperativaEfectivo =
@@ -1817,7 +1929,7 @@ export class ImportacionesService {
               continue;
             }
 
-            if (isOperativaEfectivo && cred.cuotaInicial > 0) {
+            if (isOperativaEfectivo && cuotaInicial > 0) {
               creditosNoSoportados++;
               mensajes.push(
                 `Fila ${cred.fila}: La cuota inicial en créditos operativos de efectivo aún no está soportada.`,
@@ -1841,9 +1953,13 @@ export class ImportacionesService {
               continue;
             }
 
-            // Buscar cliente
+            // Buscar cliente. `cedulaPorAmarre` traduce el numero del archivo a la cedula
+            // que de verdad quedo guardada: si el cliente se creo con cedula provisional,
+            // buscarlo por el "1" del archivo no lo encontraria.
+            const dniDelCliente =
+              cedulaPorAmarre.get(cred.ccCliente) ?? cred.ccCliente;
             const cliente = await tx.cliente.findUnique({
-              where: { dni: cred.ccCliente },
+              where: { dni: dniDelCliente },
               select: { id: true },
             });
 
@@ -1970,7 +2086,7 @@ export class ImportacionesService {
             // Pre-calcular fechas de cuotas
             const fechasCuotas: Date[] = [];
             const fechaVencimiento = new Date(
-              cred.fechaPrimerCobro || cred.fechaCredito,
+              cred.fechaPrimerCobro || fechaCredito,
             );
 
             for (let i = 1; i <= cantidadCuotas; i++) {
@@ -2073,6 +2189,12 @@ export class ImportacionesService {
                   interesPagado: avance.interesPagado,
                   estado: estadoPrestamo,
                   garantia: cred.garantia || null,
+                  // Queda constancia de que este credito vino de una carga
+                  // historica. Sus cuotas pagadas no tienen Pago ni recibo
+                  // detras, a proposito, y sin esta marca eso parece un dato
+                  // perdido. `isHistorica` ya distingue HISTORICA+NO de una
+                  // carga operativa, que si desembolsa y si mueve caja.
+                  cargaHistoricaEn: isHistorica ? new Date() : null,
                   notas: cred.notas || null,
                   cuotaInicial: cred.cuotaInicial || 0,
                 },
@@ -2122,10 +2244,10 @@ export class ImportacionesService {
                 tasaInteres,
                 tasaInteresMora: cred.tasaInteresMora || 0,
                 plazoMeses: plazoMesesGuardado,
-                frecuenciaPago: cred.frecuenciaPago,
+                frecuenciaPago,
                 cantidadCuotas,
-                fechaInicio: cred.fechaCredito,
-                fechaPrimerCobro: cred.fechaPrimerCobro || cred.fechaCredito,
+                fechaInicio: fechaCredito,
+                fechaPrimerCobro: cred.fechaPrimerCobro || fechaCredito,
                 fechaFin,
                 estado: estadoPrestamo,
                 creadoPorId,
@@ -2143,6 +2265,12 @@ export class ImportacionesService {
                 cuotaInicial: cred.cuotaInicial || 0,
                 estadoSincronizacion: 'PENDIENTE',
                 garantia: cred.garantia || null,
+                // Queda constancia de que este credito vino de una carga
+                // historica. Sus cuotas pagadas no tienen Pago ni recibo
+                // detras, a proposito, y sin esta marca eso parece un dato
+                // perdido. `isHistorica` ya distingue HISTORICA+NO de una
+                // carga operativa, que si desembolsa y si mueve caja.
+                cargaHistoricaEn: isHistorica ? new Date() : null,
                 notas: cred.notas || null,
               },
             });
@@ -2324,7 +2452,7 @@ export class ImportacionesService {
                   prestamosActualizados: idsPrestamosActualizados,
                   conMovimientosContables: creditosOperativosCreados > 0,
                 },
-              } as any,
+              },
               creadoPorId,
               confirmadoEn: new Date(),
             },
@@ -2366,7 +2494,7 @@ export class ImportacionesService {
           filasValidas: resultado.resumen.filasValidas,
           filasConError: resultado.resumen.filasConError,
           advertencias: resultado.resumen.advertencias,
-          resumen: resultado.resumen as any,
+          resumen: resultado.resumen,
           errores: [
             {
               hoja: 'GLOBAL',
@@ -2378,7 +2506,7 @@ export class ImportacionesService {
                   : 'Error inesperado confirmando importación',
               valor: null,
             },
-          ] as any,
+          ],
           creadoPorId,
         },
       });
@@ -2428,7 +2556,7 @@ export class ImportacionesService {
    */
   private async resolverCategoriasArticulo(
     // Mismo tipado que el resto de ayudantes transaccionales del servicio.
-    tx: Prisma.TransactionClient,
+    tx: TransaccionPrisma,
     nombres: unknown[],
   ): Promise<Map<string, string>> {
     const porClave = new Map<string, string>();

@@ -23,6 +23,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolUsuario } from '@prisma/client';
+import { RequestConUsuario } from '../common/types';
 
 @Controller('inventory')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -64,7 +65,10 @@ export class InventoryController {
     RolUsuario.COORDINADOR,
     RolUsuario.PUNTO_DE_VENTA,
   )
-  create(@Request() req, @Body() createInventoryDto: CreateInventoryDto) {
+  create(
+    @Request() req: RequestConUsuario,
+    @Body() createInventoryDto: CreateInventoryDto,
+  ) {
     // El asiento de inventario necesita saber quien lo registro.
     return this.inventoryService.create(createInventoryDto, this.actor(req));
   }
@@ -129,7 +133,7 @@ export class InventoryController {
     RolUsuario.PUNTO_DE_VENTA,
   )
   update(
-    @Request() req,
+    @Request() req: RequestConUsuario,
     @Param('id') id: string,
     @Body() updateInventoryDto: UpdateInventoryDto,
   ) {
@@ -140,7 +144,10 @@ export class InventoryController {
     );
   }
 
-  private actor(req: any): string {
+  // `RequestConUsuario` ya existe en common/types y es el tipo que usan los demas
+  // controladores: se reutiliza. `any` aqui era peor que en otros sitios, porque de este
+  // valor sale el id que queda escrito en cada movimiento de inventario.
+  private actor(req: RequestConUsuario): string {
     if (!req?.user?.id) {
       throw new UnauthorizedException(
         'Usuario no autenticado o token invalido',

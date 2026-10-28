@@ -12,7 +12,7 @@ import { leerTexto } from './cell-value.util';
 export const FILA_ENCABEZADOS = 6;
 export const FILA_INICIO_DATOS = 7;
 
-export function normalizarEncabezado(valor: any): string {
+export function normalizarEncabezado(valor: unknown): string {
   return leerTexto(valor)
     .toUpperCase()
     .normalize('NFD')
@@ -63,8 +63,17 @@ export function construirMapaColumnas(
   };
 }
 
-/** Lee una celda por índice de columna; devuelve `undefined` si la columna no existe. */
-export function celda(row: ExcelJS.Row, indice: number): any {
+/**
+ * Lee una celda por índice de columna; devuelve `undefined` si la columna no existe.
+ *
+ * Devuelve `ExcelJS.CellValue`, que es la union de las diez formas que una celda puede
+ * tener, y no `any`: quien lo llame tiene que pasarlo por los lectores de
+ * `cell-value.util.ts`, que es justo la regla que ese archivo pide en su cabecera.
+ */
+export function celda(
+  row: ExcelJS.Row,
+  indice: number,
+): ExcelJS.CellValue | undefined {
   if (!indice) return undefined;
   return row.getCell(indice).value;
 }
@@ -84,7 +93,7 @@ export const ULTIMA_FILA_PREPARADA = FILA_INICIO_DATOS + 1000 - 1;
 export function avisarFilasFueraDeRango(
   filasLeidas: number[],
   hoja: string,
-): { fila: number; campo: string; mensaje: string; valor: any } | null {
+): { fila: number; campo: string; mensaje: string; valor: string } | null {
   const fueraDeRango = filasLeidas.filter((f) => f > ULTIMA_FILA_PREPARADA);
   if (fueraDeRango.length === 0) return null;
 

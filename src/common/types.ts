@@ -30,6 +30,15 @@ export type PrestamoWhereInput = Prisma.PrestamoWhereInput;
  * Reemplaza `updateData: any` y `data: any` en LoansService.updateLoan.
  */
 export interface UpdateLoanData {
+  /**
+   * Version para el bloqueo optimista. Es columna de `model Prestamo` y el chequeo de
+   * conflicto de `updateLoan` la compara, pero este tipo no la declaraba y por eso se
+   * leia con `as any`.
+   *
+   * Llega de verdad: el endpoint de actualizar recibe `@Body() updateData: any`, sin
+   * DTO, asi que el ValidationPipe no whitelistea nada de ese cuerpo.
+   */
+  version?: number;
   monto?: number;
   tasaInteres?: number;
   tasaInteresMora?: number;
@@ -56,7 +65,7 @@ export type PrestamoUpdateInput = Prisma.PrestamoUpdateInput;
 
 /**
  * Tipo del resultado de `prisma.prestamo.findMany()` con includes
- * usados en getAllLoans — evita `prestamo as any`.
+ * usados en getAllLoans — evita `prestamo`.
  */
 export type PrestamoConRelaciones = Prisma.PrestamoGetPayload<{
   include: {
@@ -105,6 +114,18 @@ export type PagoConRelacionesExport = Prisma.PagoGetPayload<{
     cliente: { select: { nombres: true; apellidos: true; dni: true } };
     prestamo: { select: { numeroPrestamo: true } };
     cobrador: { select: { nombres: true; apellidos: true; rol: true } };
+    /**
+     * El desglose del pago: una fila por cuota cubierta. `model Pago` NO tiene
+     * capital, interes ni mora; el export los leia de ahi con `as any` y por eso
+     * salian siempre en 0.
+     */
+    detalles: {
+      select: {
+        montoCapital: true;
+        montoInteres: true;
+        montoInteresMora: true;
+      };
+    };
   };
 }>;
 

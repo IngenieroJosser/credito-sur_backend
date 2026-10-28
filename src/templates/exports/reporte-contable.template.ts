@@ -17,6 +17,27 @@ import {
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
+/**
+ * El tipo de caja, el estado de aprobacion y el metodo de pago de una fila.
+ *
+ * Antes estaban escritos como `'COBRADOR' | 'EMPRESA' | 'PRINCIPAL' | string`. Ese
+ * `| string` se come los literales: la union entera equivale a `string`, asi que no
+ * se comprobaba nada y valia cualquier texto. Eran documentacion, no un tipo.
+ *
+ * Al estrecharlos, tsc destapo dos cosas que ese `| string` estaba tapando:
+ *
+ *  1. Hay CUATRO tipos de caja, no tres: `AccountingService` distingue tambien
+ *     SUPERVISOR (una caja de tipo RUTA sin `rutaId`). La plantilla nunca lo
+ *     documento.
+ *  2. Las filas de transaccion mandan cadena vacia en `tipoCaja` y en `metodoPago`
+ *     cuando el dato no aplica a esa fila.
+ */
+export type TipoDeCaja = 'COBRADOR' | 'SUPERVISOR' | 'EMPRESA' | 'PRINCIPAL';
+export type EstadoDeAprobacionFila = 'PENDIENTE' | 'APROBADO' | 'RECHAZADO';
+export type MetodoDePagoFila = 'EFECTIVO' | 'TRANSFERENCIA';
+/** Cadena vacia = el dato no aplica a esa fila. */
+export type SinDato = '';
+
 export interface CajaRow {
   nombre: string;
   codigo: string;
@@ -25,7 +46,7 @@ export interface CajaRow {
   ruta: string;
   saldo: number;
   // Separación por origen de caja (§4.5, §108 propuesta)
-  tipoCaja: 'COBRADOR' | 'EMPRESA' | 'PRINCIPAL' | string;
+  tipoCaja: TipoDeCaja;
   ingresosPeriodo?: number; // Ingresos recibidos en el período
   egresosPeriodo?: number; // Egresos aprobados en el período
   egresosPendientes?: number; // Gastos del cobrador pendientes de aprobación (§111)
@@ -40,10 +61,10 @@ export interface TransaccionRow {
   caja: string;
   usuario: string;
   // Campos adicionales de flujo
-  tipoCaja?: 'COBRADOR' | 'EMPRESA' | 'PRINCIPAL' | string;
-  estadoAprobacion?: 'PENDIENTE' | 'APROBADO' | 'RECHAZADO' | string; // §111 propuesta
+  tipoCaja?: TipoDeCaja | SinDato;
+  estadoAprobacion?: EstadoDeAprobacionFila | SinDato; // §111 propuesta
   aprobadoPor?: string; // Supervisor o coordinador que aprobó
-  metodoPago?: 'EFECTIVO' | 'TRANSFERENCIA' | string; // §116 propuesta
+  metodoPago?: MetodoDePagoFila | SinDato; // §116 propuesta
 }
 
 // ─── Generador Excel ──────────────────────────────────────────────────────────
@@ -100,9 +121,15 @@ export async function generarExcelContable(
   ws1.getRow(2).height = 22;
 
   const h1 = ws1.getRow(4);
-  ws1.columns.forEach((col: any, i: number) => {
+  ws1.columns.forEach((col, i: number) => {
     const cell = h1.getCell(i + 1);
-    cell.value = col.header;
+    // `header` en ExcelJS es `string | string[]`: admite encabezados de
+    // varias filas. Aqui siempre son cadenas, pero se trata el array de
+    // forma explicita para no escribir "[object Object]" el dia que alguien
+    // use esa forma. Antes el callback iba con `col: any` y no se veia.
+    cell.value = Array.isArray(col.header)
+      ? col.header.join(' ')
+      : (col.header ?? '');
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     cell.fill = {
       type: 'pattern',
@@ -221,9 +248,15 @@ export async function generarExcelContable(
   ws2.addRow([]);
 
   const h2 = ws2.getRow(3);
-  ws2.columns.forEach((col: any, i: number) => {
+  ws2.columns.forEach((col, i: number) => {
     const cell = h2.getCell(i + 1);
-    cell.value = col.header;
+    // `header` en ExcelJS es `string | string[]`: admite encabezados de
+    // varias filas. Aqui siempre son cadenas, pero se trata el array de
+    // forma explicita para no escribir "[object Object]" el dia que alguien
+    // use esa forma. Antes el callback iba con `col: any` y no se veia.
+    cell.value = Array.isArray(col.header)
+      ? col.header.join(' ')
+      : (col.header ?? '');
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     cell.fill = {
       type: 'pattern',

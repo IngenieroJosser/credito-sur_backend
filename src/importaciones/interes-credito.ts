@@ -1,3 +1,4 @@
+import { textoComparable } from '../common/texto.util';
 /**
  * Réplica exacta de la matemática de créditos del sistema, para que un crédito
  * importado quede con las mismas cifras que si se hubiera creado desde el modal.
@@ -51,11 +52,7 @@ export interface CuotaCalculada {
 }
 
 function normalizar(valor: unknown): string {
-  return String(valor ?? '')
-    .trim()
-    .toUpperCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '');
+  return textoComparable(valor);
 }
 
 /**

@@ -12,6 +12,7 @@ import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway'
 import { PushService } from '../push/push.service';
 import { CrearAlertaClienteDto } from './dto/crear-alerta-cliente.dto';
 import { ResolverAlertaClienteDto } from './dto/resolver-alerta-cliente.dto';
+import { textoRecortado } from '../common/texto.util';
 
 type ActorAlerta = { id?: string; rol?: RolUsuario };
 
@@ -41,6 +42,161 @@ const ROLES_NOTIFICADOS = [
  * La alerta guarda un SNAPSHOT del cliente al momento de reportarlo, no una
  * referencia viva: ver `buildSnapshot`.
  */
+/**
+ * El `include` del cliente que se fotografia al abrir una alerta, y el tipo que sale de el.
+ *
+ * Esta aparte y no escrito a mano dos veces: `Prisma.validator` deja que la consulta y el
+ * tipo salgan de la MISMA definicion, asi que no pueden separarse. Antes `buildSnapshot`
+ * recibia `cliente: any`, y de ahi colgaban otros ocho `any` (cada `.map((x) => ...)`
+ * sobre prestamos, cuotas, pagos, archivos y visitas): 197 hallazgos de lectura insegura.
+ */
+const clienteParaAlerta = Prisma.validator<Prisma.ClienteDefaultArgs>()({
+  include: {
+    asignacionesRuta: {
+      where: { activa: true },
+      take: 1,
+      include: {
+        ruta: {
+          select: {
+            id: true,
+            nombre: true,
+            codigo: true,
+            cobrador: {
+              select: { id: true, nombres: true, apellidos: true },
+            },
+          },
+        },
+      },
+    },
+    prestamos: {
+      where: {
+        estado: {
+          in: ['ACTIVO', 'EN_MORA', 'INCUMPLIDO', 'PENDIENTE_APROBACION'],
+        },
+      },
+      include: {
+        cuotas: {
+          orderBy: { numeroCuota: 'asc' },
+          take: 12,
+        },
+        pagos: {
+          orderBy: { fechaPago: 'desc' },
+          take: 5,
+        },
+      },
+    },
+    archivos: {
+      take: 10,
+      orderBy: { creadoEn: 'desc' },
+    },
+    registrosVisitas: {
+      take: 10,
+      orderBy: { creadoEn: 'desc' },
+      include: {
+        ruta: { select: { id: true, nombre: true } },
+        cobrador: { select: { id: true, nombres: true, apellidos: true } },
+      },
+    },
+  },
+});
+
+type ClienteParaAlerta = Prisma.ClienteGetPayload<typeof clienteParaAlerta>;
+
+/**
+ * Las metricas agregadas del snapshot. Estan aparte porque salen de un `reduce` y su
+ * acumulador tenia que declararse: con `(acc: any, credito: any)` el tipo del snapshot
+ * entero habria sido una afirmacion sin comprobar, ya que `any` se asigna a todo.
+ */
+export type MetricasAlertaCliente = {
+  saldoPendienteTotal: number;
+  saldoPendienteCarteraActiva: number;
+  saldoPendientePendienteRevision: number;
+  cuotasVencidas: number;
+  saldoVencidoTotal: number;
+  creditosActivos: number;
+  creditosPendientesRevision: number;
+  totalObligaciones: number;
+};
+
+/**
+ * La foto del cliente que se guarda en `AlertaCliente.snapshotCliente` (columna `Json`).
+ *
+ * Se guarda una FOTO y no una relacion a proposito: la alerta documenta como estaba el
+ * cliente cuando el cobrador no lo encontro, y eso no debe cambiar despues.
+ *
+ * El frontend tiene el espejo de este tipo en `services/alertas-clientes-service.ts`,
+ * donde antes era `snapshotCliente?: any`, y de ahi salian las quince lecturas sin tipo
+ * de `AlertaClienteDetalleModal`. Las claves son las mismas en los dos productores: este
+ * y el `fallbackAlerta` que arma `NotificacionDetalleModal` con la metadata de la
+ * notificacion cuando la alerta aun no ha cargado.
+ */
+export type SnapshotClienteAlerta = {
+  cliente: {
+    id: string;
+    codigo: string;
+    dni: string;
+    nombres: string;
+    apellidos: string;
+    telefono: string;
+    direccion: string | null;
+    nivelRiesgo: string;
+    enListaNegra: boolean;
+  };
+  referencias: Array<{
+    tipo: string;
+    nombre: string | null;
+    telefono: string | null;
+  }>;
+  ruta: {
+    id: string;
+    nombre: string;
+    codigo: string;
+    cobrador: { id: string; nombres: string; apellidos: string };
+  } | null;
+  creditos: Array<{
+    id: string;
+    numeroPrestamo: string;
+    estado: string;
+    estadoAprobacion: string;
+    esCarteraActiva: boolean;
+    saldoPendiente: number;
+    monto: number;
+    tipoPrestamo: string;
+    frecuenciaPago: string;
+    cuotasVencidas: number;
+    saldoVencido: number;
+    cuotas: Array<{
+      id: string;
+      numeroCuota: number;
+      estado: string;
+      monto: number;
+      montoPagado: number;
+      fechaVencimiento: Date;
+    }>;
+    pagosRecientes: Array<{
+      id: string;
+      montoTotal: number;
+      fechaPago: Date;
+      metodoPago: string;
+    }>;
+  }>;
+  metricas: MetricasAlertaCliente;
+  historialVisitas: Array<{
+    id: string;
+    fechaVisita: string;
+    estadoVisita: string;
+    notas: string | null;
+    ruta: { id: string; nombre: string };
+    cobrador: { id: string; nombres: string; apellidos: string };
+  }>;
+  evidencias: Array<{
+    id: string;
+    tipoContenido: string;
+    url: string | null;
+    descripcion: string | null;
+  }>;
+};
+
 @Injectable()
 export class AlertasClientesService {
   private readonly logger = new Logger(AlertasClientesService.name);
@@ -52,7 +208,14 @@ export class AlertasClientesService {
     private readonly pushService?: PushService,
   ) {}
 
-  private assertPuedeEmitir(actor: ActorAlerta) {
+  /**
+   * Firma de asercion: ademas de lanzar, le DICE al compilador que despues de esta llamada
+   * `actor.id` existe. Sin esto, cada uso de `actor.id` mas abajo parecia opcional aunque
+   * esta misma guarda ya lo garantiza, y habia que castear al escribir en la base.
+   */
+  private assertPuedeEmitir(
+    actor: ActorAlerta,
+  ): asserts actor is ActorAlerta & { id: string } {
     const rol = String(actor?.rol || '').toUpperCase();
     if (!actor?.id || !ROLES_EMISORES.has(rol)) {
       throw new ForbiddenException(
@@ -62,12 +225,13 @@ export class AlertasClientesService {
   }
 
   private validateText(value: unknown, field: string) {
-    if (!String(value || '').trim()) {
+    if (!textoRecortado(value)) {
       throw new BadRequestException(`${field} es obligatorio.`);
     }
   }
 
-  private toNumber(value: any) {
+  /** Acepta lo que sea porque los montos llegan como `Decimal`, texto o numero. */
+  private toNumber(value: unknown) {
     const n = Number(value || 0);
     return Number.isFinite(n) ? n : 0;
   }
@@ -83,9 +247,9 @@ export class AlertasClientesService {
    * Incluye la ruta asignada, los creditos con su estado y saldo, y los pagos,
    * que es lo que oficina necesita para decidir sin abrir el perfil.
    */
-  private buildSnapshot(cliente: any) {
+  private buildSnapshot(cliente: ClienteParaAlerta): SnapshotClienteAlerta {
     const asignacion = cliente.asignacionesRuta?.[0] || null;
-    const creditos = (cliente.prestamos || []).map((prestamo: any) => {
+    const creditos = (cliente.prestamos || []).map((prestamo) => {
       const cuotas = Array.isArray(prestamo.cuotas) ? prestamo.cuotas : [];
       const pagos = Array.isArray(prestamo.pagos) ? prestamo.pagos : [];
       const estadoPrestamo = String(prestamo.estado || '').toUpperCase();
@@ -96,7 +260,7 @@ export class AlertasClientesService {
         ['ACTIVO', 'EN_MORA', 'INCUMPLIDO'].includes(estadoPrestamo) &&
         !['PENDIENTE', 'RECHAZADO'].includes(estadoAprobacion);
       const cuotasVencidas = cuotas.filter(
-        (cuota: any) => String(cuota.estado || '').toUpperCase() === 'VENCIDA',
+        (cuota) => String(cuota.estado || '').toUpperCase() === 'VENCIDA',
       );
 
       return {
@@ -111,7 +275,7 @@ export class AlertasClientesService {
         frecuenciaPago: prestamo.frecuenciaPago,
         cuotasVencidas: cuotasVencidas.length,
         saldoVencido: cuotasVencidas.reduce(
-          (sum: number, cuota: any) =>
+          (sum: number, cuota) =>
             sum +
             Math.max(
               0,
@@ -119,7 +283,7 @@ export class AlertasClientesService {
             ),
           0,
         ),
-        cuotas: cuotas.map((cuota: any) => ({
+        cuotas: cuotas.map((cuota) => ({
           id: cuota.id,
           numeroCuota: cuota.numeroCuota,
           estado: cuota.estado,
@@ -127,7 +291,7 @@ export class AlertasClientesService {
           montoPagado: this.toNumber(cuota.montoPagado),
           fechaVencimiento: cuota.fechaVencimiento,
         })),
-        pagosRecientes: pagos.map((pago: any) => ({
+        pagosRecientes: pagos.map((pago) => ({
           id: pago.id,
           montoTotal: this.toNumber(pago.montoTotal),
           fechaPago: pago.fechaPago,
@@ -137,7 +301,7 @@ export class AlertasClientesService {
     });
 
     const metricas = creditos.reduce(
-      (acc: any, credito: any) => {
+      (acc: MetricasAlertaCliente, credito: (typeof creditos)[number]) => {
         if (!credito.esCarteraActiva) {
           return {
             ...acc,
@@ -196,7 +360,11 @@ export class AlertasClientesService {
               telefono: cliente.referencia2Telefono,
             }
           : null,
-      ].filter(Boolean),
+      ]
+        // `.filter(Boolean)` NO estrecha el tipo: dejaba `Array<Ref | null>` y el frontend
+        // acababa con cuatro `'ref' is possibly null` sobre referencias que aqui ya no
+        // pueden ser nulas. Con la guarda, el tipo dice lo que el filtro hace.
+        .filter((ref): ref is NonNullable<typeof ref> => ref !== null),
       ruta: asignacion?.ruta
         ? {
             id: asignacion.ruta.id,
@@ -207,17 +375,15 @@ export class AlertasClientesService {
         : null,
       creditos,
       metricas,
-      historialVisitas: (cliente.registrosVisitas || []).map(
-        (registro: any) => ({
-          id: registro.id,
-          fechaVisita: registro.fechaVisita,
-          estadoVisita: registro.estadoVisita,
-          notas: registro.notas,
-          ruta: registro.ruta,
-          cobrador: registro.cobrador,
-        }),
-      ),
-      evidencias: (cliente.archivos || []).map((archivo: any) => ({
+      historialVisitas: (cliente.registrosVisitas || []).map((registro) => ({
+        id: registro.id,
+        fechaVisita: registro.fechaVisita,
+        estadoVisita: registro.estadoVisita,
+        notas: registro.notas,
+        ruta: registro.ruta,
+        cobrador: registro.cobrador,
+      })),
+      evidencias: (cliente.archivos || []).map((archivo) => ({
         id: archivo.id,
         tipoContenido: archivo.tipoContenido,
         url: archivo.url,
@@ -227,55 +393,9 @@ export class AlertasClientesService {
   }
 
   private async getClienteParaSnapshot(clienteId: string) {
-    const cliente = await (this.prisma as any).cliente.findUnique({
+    const cliente = await this.prisma.cliente.findUnique({
       where: { id: clienteId },
-      include: {
-        asignacionesRuta: {
-          where: { activa: true },
-          take: 1,
-          include: {
-            ruta: {
-              select: {
-                id: true,
-                nombre: true,
-                codigo: true,
-                cobrador: {
-                  select: { id: true, nombres: true, apellidos: true },
-                },
-              },
-            },
-          },
-        },
-        prestamos: {
-          where: {
-            estado: {
-              in: ['ACTIVO', 'EN_MORA', 'INCUMPLIDO', 'PENDIENTE_APROBACION'],
-            },
-          },
-          include: {
-            cuotas: {
-              orderBy: { numeroCuota: 'asc' },
-              take: 12,
-            },
-            pagos: {
-              orderBy: { fechaPago: 'desc' },
-              take: 5,
-            },
-          },
-        },
-        archivos: {
-          take: 10,
-          orderBy: { creadoEn: 'desc' },
-        },
-        registrosVisitas: {
-          take: 10,
-          orderBy: { creadoEn: 'desc' },
-          include: {
-            ruta: { select: { id: true, nombre: true } },
-            cobrador: { select: { id: true, nombres: true, apellidos: true } },
-          },
-        },
-      },
+      ...clienteParaAlerta,
     });
 
     if (!cliente) throw new NotFoundException('Cliente no encontrado');
@@ -292,9 +412,7 @@ export class AlertasClientesService {
     this.validateText(dto.descripcion, 'descripcion');
     this.validateText(dto.observacionesReportante, 'observacionesReportante');
 
-    const alertaActivaExistente = await (
-      this.prisma as any
-    ).alertaCliente.findFirst({
+    const alertaActivaExistente = await this.prisma.alertaCliente.findFirst({
       where: {
         clienteId: dto.clienteId,
         estado: 'ACTIVA',
@@ -321,10 +439,10 @@ export class AlertasClientesService {
         ? dto.evidenciaIds
         : Array.isArray(snapshotCliente.evidencias)
           ? snapshotCliente.evidencias
-              .map((evidencia: any) => evidencia.id)
+              .map((evidencia) => evidencia.id)
               .filter(Boolean)
           : [];
-    const usuariosNotificar = await (this.prisma as any).usuario.findMany({
+    const usuariosNotificar = await this.prisma.usuario.findMany({
       where: {
         rol: { in: ROLES_NOTIFICADOS },
         estado: 'ACTIVO',
@@ -338,7 +456,7 @@ export class AlertasClientesService {
       ? `${asignacion.ruta.cobrador.nombres || ''} ${asignacion.ruta.cobrador.apellidos || ''}`.trim()
       : null;
 
-    const alerta = await (this.prisma as any).$transaction(async (tx: any) => {
+    const alerta = await this.prisma.$transaction(async (tx) => {
       const creada = await tx.alertaCliente.create({
         data: {
           clienteId: dto.clienteId,
@@ -359,7 +477,7 @@ export class AlertasClientesService {
 
       if (usuariosNotificar.length > 0) {
         await tx.notificacion.createMany({
-          data: usuariosNotificar.map((usuario: any) => ({
+          data: usuariosNotificar.map((usuario) => ({
             usuarioId: usuario.id,
             titulo: 'Alerta: cliente no ubicado',
             mensaje: `${cliente.nombres} ${cliente.apellidos} · Doc. ${cliente.dni || 'S/N'} · Ruta ${asignacion?.ruta?.nombre || 'S/R'}`,
@@ -427,7 +545,7 @@ export class AlertasClientesService {
     clienteId?: string;
     q?: string;
   }) {
-    const where: any = {};
+    const where: Prisma.AlertaClienteWhereInput = {};
     if (filters.estado) where.estado = filters.estado;
     if (filters.rutaId) where.rutaId = filters.rutaId;
     if (filters.cobradorId) where.cobradorId = filters.cobradorId;
@@ -445,7 +563,7 @@ export class AlertasClientesService {
       ];
     }
 
-    return (this.prisma as any).alertaCliente.findMany({
+    return this.prisma.alertaCliente.findMany({
       where,
       orderBy: { creadoEn: 'desc' },
       include: {
@@ -463,7 +581,7 @@ export class AlertasClientesService {
   }
 
   async obtenerDetalleAlerta(id: string) {
-    const alerta = await (this.prisma as any).alertaCliente.findUnique({
+    const alerta = await this.prisma.alertaCliente.findUnique({
       where: { id },
       include: {
         cliente: {
@@ -514,7 +632,7 @@ export class AlertasClientesService {
     this.assertPuedeEmitir(actor);
     this.validateText(dto.motivoResolucion, 'motivoResolucion');
 
-    const alerta = await (this.prisma as any).alertaCliente.findUnique({
+    const alerta = await this.prisma.alertaCliente.findUnique({
       where: { id },
     });
     if (!alerta) throw new NotFoundException('Alerta no encontrada');
@@ -522,17 +640,16 @@ export class AlertasClientesService {
       throw new BadRequestException('La alerta ya fue resuelta.');
     }
 
-    const actualizada = await (this.prisma as any).$transaction(
-      async (tx: any) =>
-        tx.alertaCliente.update({
-          where: { id },
-          data: {
-            estado: 'RESUELTA',
-            resueltoPorId: actor.id,
-            resueltoEn: new Date(),
-            motivoResolucion: dto.motivoResolucion.trim(),
-          },
-        }),
+    const actualizada = await this.prisma.$transaction(async (tx) =>
+      tx.alertaCliente.update({
+        where: { id },
+        data: {
+          estado: 'RESUELTA',
+          resueltoPorId: actor.id,
+          resueltoEn: new Date(),
+          motivoResolucion: dto.motivoResolucion.trim(),
+        },
+      }),
     );
 
     this.emitirCambios(id, alerta.clienteId);
@@ -546,13 +663,9 @@ export class AlertasClientesService {
         alertaId,
         clienteId,
       });
-      (this.notificacionesGateway as any).broadcastNotificacionesActualizadas?.(
-        {
-          accion: 'ALERTA_CLIENTE_NO_UBICADO',
-          alertaId,
-          clienteId,
-        },
-      );
+      // Aqui habia una segunda llamada, a `broadcastNotificacionesActualizadas`, que el
+      // gateway NO tiene. Iba con `?.()`, asi que no lanzaba: simplemente no hacia nada.
+      // El broadcast que si funciona es el de arriba.
     } catch (error) {
       this.logger.warn(
         `No se pudo emitir actualización realtime de alerta ${alertaId}: ${(error as Error)?.message || error}`,

@@ -4,10 +4,18 @@ import {
   ErrorValidacion,
   AdvertenciaValidacion,
   ResumenHoja,
+  ArticuloImportado,
+  PrecioImportado,
 } from '../dto/validacion-resultado.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { loadWorkbookFromBuffer } from './xlsx-workbook.loader';
-import { leerNumero, leerTexto, leerTextoMayus } from './cell-value.util';
+import {
+  leerNumero,
+  leerValorCelda,
+  leerTexto,
+  leerTextoMayus,
+  type ValorDeCelda,
+} from './cell-value.util';
 import { baseDeContado, precioDelPlazo } from '../precios-articulo';
 import {
   avisarFilasFueraDeRango,
@@ -49,7 +57,7 @@ function getWorksheetByAliases(
   return aliases.map((name) => workbook.getWorksheet(name)).find(Boolean);
 }
 
-function normalizeCode(value: any): string {
+function normalizeCode(value: unknown): string {
   return leerTextoMayus(value);
 }
 
@@ -79,8 +87,12 @@ export class InventarioParser {
 
     const errores: ErrorValidacion[] = [];
     const advertencias: AdvertenciaValidacion[] = [];
-    const articulosValidar: any[] = [];
-    const preciosValidar: any[] = [];
+    // `ArticuloImportado` y `PrecioImportado` ya existen en el DTO y son exactamente lo
+    // que estos dos arreglos terminan siendo (`ResultadoValidacion.articulos` y
+    // `.precios`). Se usan aqui en vez de `any[]`, que era el hueco por el que el tipo
+    // declarado alla no comprobaba nada de lo que se mete aca.
+    const articulosValidar: ArticuloImportado[] = [];
+    const preciosValidar: PrecioImportado[] = [];
     const porHoja: Record<string, ResumenHoja> = {};
 
     let totalFilas = 0;
@@ -253,7 +265,11 @@ export class InventarioParser {
       const stockMinimo = leerNumero(celda(row, colStockMinimo));
       const activo = leerTextoMayus(celda(row, colActivo));
 
-      const addError = (campo: string, mensaje: string, valor: any) => {
+      const addError = (
+        campo: string,
+        mensaje: string,
+        valor: ValorDeCelda,
+      ) => {
         errores.push({
           hoja: SHEET_DISPLAY.articulos,
           fila: rowNumber,
@@ -263,7 +279,11 @@ export class InventarioParser {
         });
         tieneError = true;
       };
-      const addAdver = (campo: string, mensaje: string, valor: any) => {
+      const addAdver = (
+        campo: string,
+        mensaje: string,
+        valor: ValorDeCelda,
+      ) => {
         advertencias.push({
           hoja: SHEET_DISPLAY.articulos,
           fila: rowNumber,
@@ -282,13 +302,13 @@ export class InventarioParser {
       }
 
       if (tieneCentavos(costoCelda)) {
-        addAdver('costo', AVISO_CENTAVOS, celda(row, colCosto));
+        addAdver('costo', AVISO_CENTAVOS, leerValorCelda(celda(row, colCosto)));
       }
       if (tieneCentavos(precioContadoCelda)) {
         addAdver(
           'precio_contado',
           AVISO_CENTAVOS,
-          celda(row, colPrecioContado),
+          leerValorCelda(celda(row, colPrecioContado)),
         );
       }
       if (precioContadoCelda === null && precioContado !== null) {
@@ -331,14 +351,14 @@ export class InventarioParser {
         addError(
           'costo',
           'Debe ser un número mayor o igual a 0',
-          celda(row, colCosto),
+          leerValorCelda(celda(row, colCosto)),
         );
       }
       if (stock !== null && (Number.isNaN(stock) || stock < 0)) {
         addError(
           'stock',
           'Debe ser un número mayor o igual a 0',
-          celda(row, colStock),
+          leerValorCelda(celda(row, colStock)),
         );
       }
       if (
@@ -348,7 +368,7 @@ export class InventarioParser {
         addError(
           'stock_minimo',
           'Debe ser un número mayor o igual a 0',
-          celda(row, colStockMinimo),
+          leerValorCelda(celda(row, colStockMinimo)),
         );
       }
       if (activo && activo !== 'SI' && activo !== 'NO') {
@@ -370,14 +390,14 @@ export class InventarioParser {
         addError(
           'precio_contado',
           'Es requerido: todo artículo debe poder venderse de contado. Escriba la rentabilidad deseada y el precio sale solo, o póngalo a mano',
-          celda(row, colPrecioContado),
+          leerValorCelda(celda(row, colPrecioContado)),
         );
       } else {
         if (Number.isNaN(precioContado) || precioContado <= 0) {
           addError(
             'precio_contado',
             'Debe ser un número mayor a 0',
-            celda(row, colPrecioContado),
+            leerValorCelda(celda(row, colPrecioContado)),
           );
         } else {
           preciosFila.push({ meses: MESES_CONTADO, precio: precioContado });
@@ -427,7 +447,7 @@ export class InventarioParser {
           addAdver(
             `opcion_${numeroOpcion}_precio`,
             AVISO_CENTAVOS,
-            celda(row, opcion.precio),
+            leerValorCelda(celda(row, opcion.precio)),
           );
         }
 
@@ -435,7 +455,7 @@ export class InventarioParser {
           addError(
             `opcion_${numeroOpcion}_meses`,
             `Opción ${numeroOpcion}: los meses deben ser un número mayor a 0`,
-            celda(row, opcion.meses),
+            leerValorCelda(celda(row, opcion.meses)),
           );
           return;
         }
@@ -453,7 +473,7 @@ export class InventarioParser {
           addError(
             `opcion_${numeroOpcion}_precio`,
             `Opción ${numeroOpcion}: el precio para ${meses} mes(es) debe ser un número mayor a 0`,
-            celda(row, opcion.precio),
+            leerValorCelda(celda(row, opcion.precio)),
           );
           return;
         }
@@ -580,7 +600,11 @@ export class InventarioParser {
           const precio = leerNumero(celda(row, colPrecio));
           const activo = leerTextoMayus(celda(row, colActivoPrecio));
 
-          const addError = (campo: string, mensaje: string, valor: any) => {
+          const addError = (
+            campo: string,
+            mensaje: string,
+            valor: ValorDeCelda,
+          ) => {
             errores.push({
               hoja: SHEET_DISPLAY.precios,
               fila: rowNumber,
@@ -608,14 +632,14 @@ export class InventarioParser {
             addError(
               'meses',
               'Debe ser un número mayor o igual a 0',
-              celda(row, colMeses),
+              leerValorCelda(celda(row, colMeses)),
             );
           }
           if (precio === null || Number.isNaN(precio) || precio <= 0) {
             addError(
               'precio',
               'Debe ser un número mayor a 0',
-              celda(row, colPrecio),
+              leerValorCelda(celda(row, colPrecio)),
             );
           }
 

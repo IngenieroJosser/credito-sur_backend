@@ -11,7 +11,19 @@ import {
   aplicarAvanceHistorico,
 } from './avance-historico';
 import { pesos } from '../common/dinero.util';
+import { mensajeDeError } from '../common/error.util';
 import { LedgerService } from '../accounting/ledger.service';
+import { comoPrisma, dependenciaSinUsar } from '../common/testing/dobles';
+
+/**
+ * Asidero de prueba: expone los metodos `protected` que esta prueba ejercita con su firma
+ * real (`.bind(this)` la hereda), en vez de llamarlos por `(servicio as any).metodo(...)`.
+ */
+class PrestamosParaPrueba extends LoansService {
+  public readonly calcularInteresYCuotas =
+    this.calculateInterestAndCuotas.bind(this);
+  public readonly recuperarPlazo = this.recuperarPlazoExacto.bind(this);
+}
 
 /**
  * Que ningún peso se pierda ni se invente.
@@ -195,14 +207,14 @@ describe('Ningún peso se pierde al repartir las cuotas', () => {
 });
 
 describe('La importación calcula el interés igual que el sistema', () => {
-  const servicio = new LoansService(
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
+  const servicio = new PrestamosParaPrueba(
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
+    dependenciaSinUsar(),
   );
 
   it('coincide con LoansService en toda la malla', () => {
@@ -215,7 +227,7 @@ describe('La importación calcula el interés igual que el sistema', () => {
 
       const { plazoMeses, interesTotal, tabla } = planDe(caso);
 
-      const delSistema = (servicio as any).calculateInterestAndCuotas(
+      const delSistema = servicio.calcularInteresYCuotas(
         caso.metodo,
         caso.monto,
         caso.tasa,
@@ -413,10 +425,10 @@ describe('El crédito de artículo cierra contra el precio', () => {
         if (inicial > precio) continue;
         for (const costo of COSTOS) {
           const financiado = precio - inicial;
-          const creado: any[] = [];
+          const creado: Record<string, unknown>[] = [];
           const tx = {
             journalEntry: {
-              create: jest.fn().mockImplementation((argumento: any) => {
+              create: jest.fn().mockImplementation((argumento) => {
                 creado.push(argumento);
                 return { id: 'journal-1', lines: [] };
               }),
@@ -429,9 +441,9 @@ describe('El crédito de artículo cierra contra el precio', () => {
             },
           };
           const prisma = {
-            $transaction: jest.fn().mockImplementation((cb: any) => cb(tx)),
+            $transaction: jest.fn().mockImplementation((cb) => cb(tx)),
           };
-          const ledger = new LedgerService(prisma as any);
+          const ledger = new LedgerService(comoPrisma(prisma));
 
           const donde = `precio ${precio} · inicial ${inicial} · costo ${costo}`;
           try {
@@ -445,14 +457,16 @@ describe('El crédito de artículo cierra contra el precio', () => {
               accountCodeCaja: inicial > 0 ? '1.1.1' : undefined,
               createdBy: 'admin-1',
             });
-          } catch (error: any) {
+          } catch (error) {
             fallos.push(
-              `${donde} — el asiento fue rechazado: ${error.message}`,
+              `${donde} — el asiento fue rechazado: ${mensajeDeError(error)}`,
             );
             continue;
           }
 
-          const lineas = (creado[0]?.data?.lines?.create ?? []) as Array<{
+          const datosDelAsiento = creado[0]?.data as
+            { lines?: { create?: unknown[] } } | undefined;
+          const lineas = (datosDelAsiento?.lines?.create ?? []) as Array<{
             debitAmount?: number;
             creditAmount?: number;
           }>;

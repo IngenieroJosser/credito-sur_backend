@@ -132,7 +132,8 @@ export class UsersController {
   cambiarContrasena(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ChangePasswordDto,
-    @Request() _req: any,
+    // No se usa (el guard ya valido), pero el decorador lo exige.
+    @Request() _req: unknown,
   ) {
     return this.usersService.changePassword(id, dto);
   }
@@ -143,7 +144,7 @@ export class UsersController {
     @Param('id', ParseUUIDPipe) id: string,
     @Request() req: RequestConUsuario,
   ) {
-    return (this.usersService as any).resetearContrasena(
+    return this.usersService.resetearContrasena(
       id,
       req.user?.rol,
       req.user?.id,
@@ -156,6 +157,6 @@ export class UsersController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body('permisos') permisos: string[],
   ) {
-    return (this.usersService as any).asignarPermisos(id, permisos);
+    return this.usersService.asignarPermisos(id, permisos);
   }
 }

@@ -11,6 +11,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { createHmac, timingSafeEqual } from 'crypto';
+import { mensajeDeError, pilaDeError } from '../common/error.util';
 
 @Controller('mirror-sync')
 export class MirrorSyncController {
@@ -67,7 +68,7 @@ export class MirrorSyncController {
     @Headers('x-mirror-sync-timestamp') timestampHeader: string,
     @Headers('x-mirror-sync-nonce') nonceHeader: string,
     @Headers('x-mirror-sync-signature') signatureHeader: string,
-    @Body() body: { payload: any },
+    @Body() body: { payload: Record<string, unknown> },
   ) {
     // 1. Verificación Estricta de Seguridad (Búnker con expiración)
     const expectedToken = this.configService.get<string>('MIRROR_SYNC_TOKEN');
@@ -142,7 +143,21 @@ export class MirrorSyncController {
     // Capitalizamos el primer caracter para mapearlo a la instancia interna de Prisma (ej: 'cliente' -> 'cliente')
     // Nota: Aunque los modelos de Prisma son camelCase en el PrismaClient.
     const prismaModelProp = model.charAt(0).toLowerCase() + model.slice(1);
-    const prismaModel = (this.prisma as any)[prismaModelProp];
+    type ModeloReplicable = {
+      findUnique: (args: { where: { id: string } }) => Promise<unknown>;
+      create: (args: { data: unknown }) => Promise<unknown>;
+      update: (args: {
+        where: { id: string };
+        data: unknown;
+      }) => Promise<unknown>;
+      delete: (args: { where: { id: string } }) => Promise<unknown>;
+    };
+
+    // El modelo llega por el cuerpo de la peticion, asi que no se sabe al
+    // compilar y hay que acceder por nombre. Se declara solo lo que se le llama.
+    const prismaModel = (
+      this.prisma as unknown as Record<string, ModeloReplicable | undefined>
+    )[prismaModelProp];
 
     if (!prismaModel) {
       this.logger.warn(
@@ -158,7 +173,9 @@ export class MirrorSyncController {
       }
 
       if (action === 'create' || action === 'update' || action === 'upsert') {
-        const id = payload.id;
+        // El id de una fila espejada es texto (uuid). Se comprueba en vez de pasarlo a
+        // `where` a ciegas, que es lo que permitia el `any` del payload.
+        const id = typeof payload.id === 'string' ? payload.id : undefined;
 
         if (id) {
           // Si el registro ya existe (por ejemplo si hubo un reconexionado o caída extraña), actualizamos
@@ -187,12 +204,13 @@ export class MirrorSyncController {
           this.logger.debug(`[Mirror VPS] Row anónimo replicado en: ${model}`);
         }
       } else if (action === 'delete') {
-        if (payload.id) {
+        const idABorrar = typeof payload.id === 'string' ? payload.id : '';
+        if (idABorrar) {
           await prismaModel
-            .delete({ where: { id: payload.id } })
+            .delete({ where: { id: idABorrar } })
             .catch(() => null); // Silencioso si ya no existía
           this.logger.debug(
-            `[Mirror VPS] Row eliminado de la réplica: ${model} - ${payload.id}`,
+            `[Mirror VPS] Row eliminado de la réplica: ${model} - ${idABorrar}`,
           );
         }
       } else if (action === 'deleteMany' || action === 'updateMany') {
@@ -203,10 +221,10 @@ export class MirrorSyncController {
       }
 
       return { status: 'success', synced: true };
-    } catch (e: any) {
+    } catch (e) {
       this.logger.error(
-        `Error crítico procesando réplica en VPS Espejo -> ${e.message}`,
-        e.stack,
+        `Error crítico procesando réplica en VPS Espejo -> ${mensajeDeError(e)}`,
+        pilaDeError(e),
       );
       throw new InternalServerErrorException('Fallo de persistencia en el VPS');
     }

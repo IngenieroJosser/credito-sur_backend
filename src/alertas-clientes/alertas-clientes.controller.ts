@@ -18,6 +18,7 @@ import { SWAGGER_JWT_AUTH } from '../auth/constants/swagger-auth.constants';
 import { AlertasClientesService } from './alertas-clientes.service';
 import { CrearAlertaClienteDto } from './dto/crear-alerta-cliente.dto';
 import { ResolverAlertaClienteDto } from './dto/resolver-alerta-cliente.dto';
+import { RequestConUsuario } from '../common/types';
 
 @ApiTags('alertas-clientes')
 @ApiBearerAuth(SWAGGER_JWT_AUTH)
@@ -34,7 +35,10 @@ export class AlertasClientesController {
     RolUsuario.SUPERVISOR,
   )
   @ApiOperation({ summary: 'Reportar cliente no ubicado' })
-  reportarClienteNoUbicado(@Body() dto: CrearAlertaClienteDto, @Request() req) {
+  reportarClienteNoUbicado(
+    @Body() dto: CrearAlertaClienteDto,
+    @Request() req: RequestConUsuario,
+  ) {
     return this.service.reportarClienteNoUbicado(dto, req.user);
   }
 
@@ -89,7 +93,7 @@ export class AlertasClientesController {
   resolver(
     @Param('id') id: string,
     @Body() dto: ResolverAlertaClienteDto,
-    @Request() req,
+    @Request() req: RequestConUsuario,
   ) {
     return this.service.resolverAlerta(id, dto, req.user);
   }

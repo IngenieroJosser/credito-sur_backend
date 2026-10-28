@@ -1,3 +1,4 @@
+import { ArchivoDeCliente } from './clients.service';
 import {
   Controller,
   Get,
@@ -203,7 +204,19 @@ export class ClientsController {
   )
   async approveClient(
     @Param('id') id: string,
-    @Body() body: { aprobadoPorId: string; datosAprobados?: any },
+    @Body()
+    body: {
+      aprobadoPorId: string;
+      datosAprobados?: {
+        dni?: string;
+        nombres?: string;
+        apellidos?: string;
+        telefono?: string;
+        correo?: string;
+        direccion?: string;
+        referencia?: string;
+      };
+    },
     @Request() req: RequestConUsuario,
   ) {
     return this.clientsService.approveClient(
@@ -249,7 +262,7 @@ export class ClientsController {
       referencia2Telefono?: string;
       nivelRiesgo?: string;
       puntaje?: number;
-      archivos?: any[];
+      archivos?: ArchivoDeCliente[];
       creadoPorId?: string;
       version?: number;
     },
@@ -289,19 +302,5 @@ export class ClientsController {
   @Roles(RolUsuario.COORDINADOR)
   async removeFromBlacklist(@Param('id') id: string) {
     return this.clientsService.removeFromBlacklist(id);
-  }
-
-  @Post(':id/assign-route')
-  @Roles(RolUsuario.COORDINADOR)
-  async assignToRoute(
-    @Param('id') clienteId: string,
-    @Body() body: { rutaId: string; cobradorId: string; diaSemana?: number },
-  ) {
-    return this.clientsService.assignToRoute(
-      clienteId,
-      body.rutaId,
-      body.cobradorId,
-      body.diaSemana,
-    );
   }
 }

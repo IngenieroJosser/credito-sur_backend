@@ -218,7 +218,7 @@ describe('AuthService', () => {
         service.login({
           identificador: 'usuario.inexistente',
           contrasena: 'correcta',
-        } as any),
+        }),
       ).rejects.toThrow(UnauthorizedException);
     });
   });
@@ -230,6 +230,30 @@ describe('AuthService', () => {
       prisma.usuario.findMany.mockResolvedValue([]);
       const result = await service.validarUsuario('noexiste', 'pass');
       expect(result).toBeNull();
+    });
+
+    it('un identificador que no es texto no llega a la base', async () => {
+      // El DTO tipa `string`, pero el cuerpo lo manda el cliente. Antes esto se
+      // convertia en el literal "[object Object]" y se buscaba asi en la base;
+      // ahora se trata como identificador vacio y el login corta antes.
+      prisma.usuario.findFirst.mockClear();
+      prisma.usuario.findMany.mockClear();
+
+      const result = await service.validarUsuario(
+        { correo: 'admin' } as unknown as string,
+        'pass',
+      );
+
+      expect(result).toBeNull();
+      expect(prisma.usuario.findFirst).not.toHaveBeenCalled();
+      expect(prisma.usuario.findMany).not.toHaveBeenCalled();
+    });
+
+    it('un identificador vacio o solo espacios tampoco llega a la base', async () => {
+      prisma.usuario.findFirst.mockClear();
+
+      expect(await service.validarUsuario('   ', 'pass')).toBeNull();
+      expect(prisma.usuario.findFirst).not.toHaveBeenCalled();
     });
 
     it('retorna null si argon2.verify lanza error inesperado', async () => {
@@ -295,6 +319,101 @@ describe('AuthService', () => {
       );
 
       expect(result).toBeNull();
+    });
+  });
+  // ── Recuperacion de contrasena ──────────────
+  /**
+   * La politica: la recuperacion por uno mismo es SOLO para el superadmin. Los demas
+   * usuarios la piden a un superadmin o a un administrador, que usa
+   * `UsersService.resetearContrasena`.
+   *
+   * Esa regla estaba implementada pero sin ninguna prueba que la protegiera. Si alguien
+   * quita la comprobacion del rol, cualquier cobrador podria pedir un codigo a su correo y
+   * cambiarse la contrasena solo; nada avisaria.
+   *
+   * Tambien se fija que las respuestas negativas sean INDISTINGUIBLES entre si: un correo
+   * que no existe, una cuenta inactiva y un usuario que no es superadmin tienen que
+   * devolver el mismo mensaje, o el endpoint sirve para averiguar quien esta registrado.
+   */
+  describe('solicitarRecuperacion', () => {
+    const MENSAJE_GENERICO =
+      'Si el correo existe y la cuenta está activa, recibirás un código en breve.';
+
+    it('un superadmin activo si recibe codigo', async () => {
+      await createModule(
+        buildMockPrisma({
+          ...USUARIO_ACTIVO,
+          rol: 'SUPER_ADMINISTRADOR',
+          estado: 'ACTIVO',
+        }),
+      );
+
+      await service.solicitarRecuperacion({ correo: 'super@credisur.com' });
+
+      const [args] = prisma.usuario.update.mock.calls.at(-1) as [
+        { data: Record<string, unknown> },
+      ];
+      expect(args.data.resetPasswordToken).toBeTruthy();
+      // El codigo se guarda hasheado, nunca en claro.
+      expect(String(args.data.resetPasswordToken)).toMatch(/^\$argon2/);
+    });
+
+    it('un COBRADOR no recibe codigo, y no se distingue de un correo inexistente', async () => {
+      await createModule(
+        buildMockPrisma({
+          ...USUARIO_ACTIVO,
+          rol: 'COBRADOR',
+          estado: 'ACTIVO',
+        }),
+      );
+
+      const res = await service.solicitarRecuperacion({
+        correo: 'cobrador@credisur.com',
+      });
+
+      expect(res.mensaje).toBe(MENSAJE_GENERICO);
+      expect(prisma.usuario.update).not.toHaveBeenCalled();
+    });
+
+    it('tampoco un ADMIN: el suyo lo resetea un superadmin', async () => {
+      await createModule(
+        buildMockPrisma({ ...USUARIO_ACTIVO, rol: 'ADMIN', estado: 'ACTIVO' }),
+      );
+
+      const res = await service.solicitarRecuperacion({
+        correo: 'admin@credisur.com',
+      });
+
+      expect(res.mensaje).toBe(MENSAJE_GENERICO);
+      expect(prisma.usuario.update).not.toHaveBeenCalled();
+    });
+
+    it('un superadmin INACTIVO tampoco', async () => {
+      await createModule(
+        buildMockPrisma({
+          ...USUARIO_ACTIVO,
+          rol: 'SUPER_ADMINISTRADOR',
+          estado: 'INACTIVO',
+        }),
+      );
+
+      const res = await service.solicitarRecuperacion({
+        correo: 'super@credisur.com',
+      });
+
+      expect(res.mensaje).toBe(MENSAJE_GENERICO);
+      expect(prisma.usuario.update).not.toHaveBeenCalled();
+    });
+
+    it('un correo que no existe devuelve el mismo mensaje', async () => {
+      await createModule(buildMockPrisma(null));
+
+      const res = await service.solicitarRecuperacion({
+        correo: 'nadie@credisur.com',
+      });
+
+      expect(res.mensaje).toBe(MENSAJE_GENERICO);
+      expect(prisma.usuario.update).not.toHaveBeenCalled();
     });
   });
 });

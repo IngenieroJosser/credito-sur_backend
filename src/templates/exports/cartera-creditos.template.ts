@@ -72,8 +72,13 @@ const NARANJA = 'FFF37920';
 const NARANJA_CLARO = 'FFFFEDD5';
 const GRIS_OSC = 'FF1E293B';
 
-const BORDER_HAIR = { style: 'hair', color: { argb: 'FFE2E8F0' } } as any;
-const BORDER_MEDIUM = { style: 'medium', color: { argb: 'FF94A3B8' } } as any;
+// `as const` en vez de `as any`: sin el, `style` se ensancha a `string` y ExcelJS pide
+// su union `BorderStyle`. Con el queda el literal y el tipo cuadra de verdad.
+const BORDER_HAIR = { style: 'hair', color: { argb: 'FFE2E8F0' } } as const;
+const BORDER_MEDIUM = {
+  style: 'medium',
+  color: { argb: 'FF94A3B8' },
+} as const;
 
 const _BASE_CELL_STYLE = {
   alignment: { vertical: 'middle' } as ExcelJS.Alignment,
@@ -182,7 +187,7 @@ export async function generarExcelCartera(
       width: 11,
       style: { numFmt: '#,##0', alignment: { horizontal: 'right' } },
     },
-  ] as any;
+  ];
 
   const _numCols = ws.columns.length;
   const lastColLetter = 'T';
@@ -365,7 +370,11 @@ export async function generarExcelCartera(
     // Fondo alterno
     if (idx % 2 === 0) {
       row.eachCell((cell) => {
-        if (!cell.fill || (cell.fill as any).fgColor?.argb === 'FFFFFFFF') {
+        // `Fill` de ExcelJS es una union y `fgColor` solo esta en `FillPattern`: se
+        // comprueba el tipo del relleno en vez de castear.
+        const fondo =
+          cell.fill?.type === 'pattern' ? cell.fill.fgColor?.argb : undefined;
+        if (!cell.fill || fondo === 'FFFFFFFF') {
           cell.fill = {
             type: 'pattern',
             pattern: 'solid',

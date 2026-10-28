@@ -1,8 +1,107 @@
 import { Injectable, Logger, forwardRef, Inject } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { RolUsuario } from '@prisma/client';
+import { Prisma, RolUsuario } from '@prisma/client';
+import { objetoDeJson } from '../common/json.util';
 import { NotificacionesGateway } from './notificaciones.gateway';
 import { PushService } from '../push/push.service';
+
+/**
+ * Lo que el armador de datos de notificacion lee de un prestamo.
+ *
+ * Es una forma estructural, no el tipo de Prisma: asi vale con cualquier consulta que
+ * traiga estos campos, sin pedir el `include` exacto. Los montos se aceptan como
+ * `Decimal | number` porque todos entran por `Number(...)` unas lineas mas abajo; no se
+ * convierten aqui para no mover el comportamiento.
+ */
+interface PrestamoParaNotificacion {
+  id: string;
+  numeroPrestamo: string;
+  clienteId: string;
+  cliente?: {
+    nombres?: string | null;
+    apellidos?: string | null;
+    dni?: string | null;
+    telefono?: string | null;
+  } | null;
+  producto?: { nombre?: string | null } | null;
+  tipoPrestamo?: string | null;
+  monto?: Prisma.Decimal | number | null;
+  cuotaInicial?: Prisma.Decimal | number | null;
+  interesTotal?: Prisma.Decimal | number | null;
+  tasaInteres?: Prisma.Decimal | number | null;
+  cantidadCuotas?: number | null;
+  plazoMeses?: number | null;
+  frecuenciaPago?: string | null;
+  fechaInicio?: Date | null;
+  fechaFin?: Date | null;
+  notas?: string | null;
+  garantia?: string | null;
+}
+
+/**
+ * Los campos que se leen de `datosSolicitud`, el JSON de la aprobacion. Van permisivos a
+ * proposito: vienen de un blob y se usan como respaldo de los del prestamo.
+ */
+interface DatosSolicitudParaNotificacion {
+  monto?: string | number | null;
+  cuotaInicial?: string | number | null;
+  cuotas?: string | number | null;
+  cantidadCuotas?: string | number | null;
+  plazoMeses?: string | number | null;
+  frecuenciaPago?: string | null;
+  articulo?: string | null;
+  notas?: string | null;
+  garantia?: string | null;
+}
+
+/**
+ * Lo que el enriquecedor de la UI lee de una notificacion. Los seis campos salieron de
+ * recolectar todos los accesos `notif.x` del metodo; los dos ultimos los destapo tsc al
+ * poner el tipo.
+ */
+interface MetadataNotificacion {
+  nivel?: string;
+  tipoEvento?: string;
+  pagoId?: string;
+  rutaId?: string;
+  fechaOperativaRuta?: string;
+  /** El resto del blob pasa de largo. */
+  [clave: string]: unknown;
+}
+
+interface NotificacionParaUi {
+  entidadId?: string | null;
+  titulo?: string | null;
+  mensaje?: string | null;
+  metadata?: Prisma.JsonValue;
+  detalles?: Prisma.JsonValue;
+  entidad?: string | null;
+}
+
+/**
+ * La aprobacion que se adjunta a una notificacion, derivada de su propia consulta.
+ *
+ * El `select` va en este objeto y la consulta lo usa con spread, asi que el tipo y la
+ * consulta no pueden separarse: quitar un campo del `select` rompe el codigo que lo lee.
+ * Antes el destino era `let aprobacionReal: any = null`.
+ */
+const SELECT_APROBACION_NOTIFICACION =
+  Prisma.validator<Prisma.AprobacionDefaultArgs>()({
+    select: {
+      estado: true,
+      tipoAprobacion: true,
+      datosSolicitud: true,
+      comentarios: true,
+      referenciaId: true,
+      tablaReferencia: true,
+      solicitadoPor: { select: { nombres: true, apellidos: true } },
+      aprobadoPor: { select: { nombres: true, apellidos: true } },
+    },
+  });
+
+type AprobacionParaNotificacion = Prisma.AprobacionGetPayload<
+  typeof SELECT_APROBACION_NOTIFICACION
+>;
 
 @Injectable()
 export class NotificacionesService {
@@ -15,7 +114,14 @@ export class NotificacionesService {
     private pushService: PushService,
   ) {}
 
-  private cleanNotificationText(txt: string): string {
+  /**
+   * Acepta la ausencia y la deja pasar tal cual: el titulo y el mensaje son opcionales, y
+   * antes esta funcion devolvia el valor nulo aunque su tipo dijera `string`. Se conserva
+   * ese comportamiento y se corrige el tipo, no al contrario.
+   */
+  private cleanNotificationText<T extends string | null | undefined>(
+    txt: T,
+  ): T | string {
     if (!txt) return txt;
     return txt
       .replace(/préstamo por artículo/gi, 'crédito por un artículo')
@@ -28,7 +134,10 @@ export class NotificacionesService {
       .replace(/préstamo en efectivo/gi, 'préstamo');
   }
 
-  private buildPrestamoDatosExtra(p: any, datos: any = {}) {
+  private buildPrestamoDatosExtra(
+    p: PrestamoParaNotificacion,
+    datos: DatosSolicitudParaNotificacion = {},
+  ) {
     const interesTotal = Number(p?.interesTotal || 0);
     const tasaInteres = Number(p?.tasaInteres || 0);
     const cuotaInicial = Number(p?.cuotaInicial || datos?.cuotaInicial || 0);
@@ -86,12 +195,14 @@ export class NotificacionesService {
     };
   }
 
-  private async enrichNotificationForUi(notif: any) {
+  private async enrichNotificationForUi(notif: NotificacionParaUi) {
     const rawMeta = notif.metadata;
     const meta =
       typeof rawMeta === 'string' ? JSON.parse(rawMeta) : rawMeta || {};
 
-    let enrichedNotif: any = {
+    // El tipo se DERIVA de lo que se le asigna, en vez de `any`: es la notificacion mas
+    // los campos que este metodo agrega al enriquecerla.
+    let enrichedNotif: NotificacionParaUi & Record<string, unknown> = {
       ...notif,
       titulo: this.cleanNotificationText(notif.titulo),
       mensaje: this.cleanNotificationText(notif.mensaje),
@@ -99,22 +210,16 @@ export class NotificacionesService {
 
     try {
       let datosExtra = {};
-      let aprobacionReal: any = null;
+      // Declarado, no inferido: `let x = null` sin anotacion es un `any` EVOLUTIVO que
+      // `noImplicitAny` no marca. El tipo se DERIVA del `select` de la consulta de abajo
+      // —que usa este mismo objeto— asi que los dos no pueden separarse.
+      let aprobacionReal: AprobacionParaNotificacion | null = null;
 
       // 1. Intentar buscar como Aprobación (solo si tiene entidadId)
       if (notif.entidadId) {
         const aprobacion = await this.prisma.aprobacion.findUnique({
           where: { id: notif.entidadId },
-          select: {
-            estado: true,
-            tipoAprobacion: true,
-            datosSolicitud: true,
-            comentarios: true,
-            referenciaId: true,
-            tablaReferencia: true,
-            solicitadoPor: { select: { nombres: true, apellidos: true } },
-            aprobadoPor: { select: { nombres: true, apellidos: true } },
-          },
+          ...SELECT_APROBACION_NOTIFICACION,
         });
 
         if (aprobacion) {
@@ -183,7 +288,7 @@ export class NotificacionesService {
             ...enrichedNotif,
             metadata: enrichedMetadata,
             detalles: {
-              ...(notif.detalles || {}),
+              ...objetoDeJson(notif.detalles),
               ...datos,
               ...datosExtra,
             },
@@ -285,7 +390,7 @@ export class NotificacionesService {
     tipo?: string;
     entidad?: string;
     entidadId?: string;
-    metadata?: any;
+    metadata?: Prisma.InputJsonValue;
   }) {
     try {
       const cleanTitulo = this.cleanNotificationText(data.titulo);
@@ -299,8 +404,14 @@ export class NotificacionesService {
       const incoming = (data.tipo || '').toUpperCase();
       const isSeverity = incoming in map;
       const tipoFinal = isSeverity ? 'SISTEMA' : data.tipo || 'SISTEMA';
-      const metadataFinal = {
-        ...(data.metadata || {}),
+      // `InputJsonValue` admite primitivos y arreglos, y de esos no se puede esparcir:
+      // se comprueba que sea un objeto antes. Antes el tipo era `any` y no se veia.
+      // `objetoDeJson` (de `common/json.util`) devuelve el objeto o `{}`: ni
+      // `InputJsonValue` ni `JsonValue` se pueden esparcir, porque admiten tambien
+      // primitivos y arreglos. Con `any` ese caso no se veia.
+      const metadataBase = objetoDeJson(data.metadata) as MetadataNotificacion;
+      const metadataFinal: MetadataNotificacion = {
+        ...metadataBase,
         nivel: isSeverity ? map[incoming] : undefined,
       };
       const notificacion = await this.prisma.notificacion.create({
@@ -362,7 +473,7 @@ export class NotificacionesService {
     tipo?: string;
     entidad?: string;
     entidadId?: string;
-    metadata?: any;
+    metadata?: Prisma.InputJsonValue;
     dedupeKey: string;
   }) {
     const dedupeKey = String(data.dedupeKey || '').trim();
@@ -375,7 +486,7 @@ export class NotificacionesService {
         metadata: {
           path: ['dedupeKey'],
           equals: dedupeKey,
-        } as any,
+        },
       },
       orderBy: { creadoEn: 'desc' },
     });
@@ -387,7 +498,7 @@ export class NotificacionesService {
           : existing.metadata || {};
 
       const incomingMeta = {
-        ...(data.metadata || {}),
+        ...objetoDeJson(data.metadata),
         dedupeKey,
       };
 
@@ -435,7 +546,7 @@ export class NotificacionesService {
     return this.create({
       ...data,
       metadata: {
-        ...(data.metadata || {}),
+        ...objetoDeJson(data.metadata),
         dedupeKey,
       },
     });
@@ -448,7 +559,7 @@ export class NotificacionesService {
     tipo?: string;
     entidad?: string;
     entidadId?: string;
-    metadata?: any;
+    metadata?: Prisma.InputJsonValue;
     dedupeKey: string;
   }) {
     try {
@@ -491,7 +602,7 @@ export class NotificacionesService {
     tipo?: string;
     entidad?: string;
     entidadId?: string;
-    metadata?: any;
+    metadata?: Prisma.InputJsonValue;
   }) {
     try {
       // 1. Buscar todos los coordinadores
@@ -526,7 +637,7 @@ export class NotificacionesService {
     tipo?: string;
     entidad?: string;
     entidadId?: string;
-    metadata?: any;
+    metadata?: Prisma.InputJsonValue;
   }) {
     try {
       const aprobadores = await this.prisma.usuario.findMany({
