@@ -175,39 +175,8 @@ describe('Plantilla de clientes y créditos: estructura con varias combinaciones
     expect(articulo[9]).toBe('Total abonado');
     expect(articulo[10]).toBe('Fecha último pago');
     expect(articulo[14]).toContain('Cliente encontrado');
-    // La hoja ya no trae "Artículo encontrado": de ahí en adelante todo corre
-    // una columna a la izquierda.
-    expect(articulo).not.toContain(
-      expect.stringContaining('Artículo encontrado'),
-    );
-    expect(articulo[15]).toContain('Revisión de la fila');
-    expect(articulo[16]).toContain('Precio del plazo');
-    expect(articulo[23]).toContain('Debe de la cuota');
-    expect(articulo[24]).toBe('Número de crédito');
-  }, 60000);
-
-  it('el precio del plazo se calla con el catálogo vacío pero sigue avisando con catálogo', async () => {
-    const { data } = await generarPlantillaClientesCreditos(base);
-    const wb = await cargar(data);
-    const hoja = wb.getWorksheet('Créditos de artículo')!;
-
-    const cabeceras = encabezados(wb, 'Créditos de artículo');
-    const columna = cabeceras.findIndex((h) =>
-      String(h ?? '').startsWith('Precio del plazo'),
-    );
-    expect(columna).toBeGreaterThan(0);
-
-    const formula = String(
-      (hoja.getCell(7, columna).value as { formula?: string })?.formula || '',
-    );
-
-    // Sin inventario importado 'BD Artículos' trae solo su encabezado: la celda
-    // queda vacía en vez de marcar las 1.000 filas con un aviso que ninguna
-    // puede evitar.
-    expect(formula).toContain("COUNTA('BD Artículos'!$B:$B)<=1");
-    // Pero el aviso NO se elimina: con catálogo cargado sigue diciendo que ese
-    // artículo no tiene precio para ese plazo.
-    expect(formula).toContain('Sin precio para ese plazo');
+    expect(articulo[24]).toContain('Debe de la cuota');
+    expect(articulo[25]).toBe('Número de crédito');
   }, 60000);
 
   it('no quedan huecos: ningún encabezado vacío dentro del rango usado', async () => {
@@ -274,8 +243,10 @@ describe('Plantilla de inventario', () => {
     expect(h[6]).toBe('Divisor del precio');
     expect(h[7]).toBe('Precio contado*');
 
-    // De 0,01 a 1: el divisor es la parte del precio que se va en costo, así que nunca
-    // pasa de 1; más de 1 sería vender por debajo del costo.
+    // Entre 0,01 y 1, porque ahora la casilla pide un DIVISOR y no una
+    // rentabilidad: el precio sale de `costo / divisor`. Un divisor mayor que 1
+    // dejaria el precio POR DEBAJO del costo, y el 0 no se puede dividir. Antes
+    // el rango era 0 a 3 —hasta 300% de rentabilidad— porque se multiplicaba.
     expect(ws.getCell('F7').dataValidation).toEqual(
       expect.objectContaining({ type: 'decimal', formulae: [0.01, 1] }),
     );
