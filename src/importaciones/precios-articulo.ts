@@ -100,24 +100,38 @@ export function expresionRecargoExcel(refMeses: string): string {
 }
 
 /**
- * El precio de contado: el costo más la rentabilidad, aplicada SOBRE EL COSTO.
+ * El precio de contado: el costo DIVIDIDO por el divisor con el que cartera fija la
+ * ganancia. Un divisor de 0,65 deja 35% de ganancia sobre la venta.
  *
- * Ejemplo real: costo 829.900 con 30% da 1.078.870, exacto. La convención
- * importa: `costo / (1 - rentabilidad)` es margen sobre la VENTA y con ese mismo
- * 30% daría 1.185.571, 106.701 pesos de más. Cuando en esta empresa se dice «30%
- * de rentabilidad» se quiere decir costo × 1,30.
+ * Esta cuenta estuvo al revés —`costo × (1 + rentabilidad)`— y se corrigió con el archivo
+ * que cartera llenó a mano el 30 de septiembre de 2026: 211 filas, todas con `=E/0,70`,
+ * `=E/0,65` o `=E/0,55`, y **ninguna** multiplicando. El televisor Samsung de costo
+ * 829.900, que es el mismo artículo con el que se había fijado la fórmula anterior, lo
+ * tienen en 1.185.571 y no en los 1.078.870 de multiplicar por 1,30.
+ *
+ * Es decir: lo que antes se descartó por «106.701 pesos de más» resultó ser el precio
+ * bueno. El dato viejo venía de dos artículos sueltos con el precio ya hecho; este viene
+ * de la hoja de 209 artículos que cartera usa a diario y dio por correcta.
+ *
+ * Se trunca y no se redondea, porque truncar es lo que hace el sistema con los pesos
+ * (`truncCop`): así el número que la hoja enseña es el que queda guardado.
  */
-export function baseDeContado(costo: number, rentabilidad: number): number {
-  return Math.round(costo * (1 + rentabilidad));
+export function baseDeContado(costo: number, divisor: number): number {
+  return Math.trunc(costo / divisor);
 }
 
-/** El precio de un plazo: la base de contado más el recargo de esos meses. */
+/**
+ * El precio de un plazo: la base de contado más el recargo de esos meses.
+ *
+ * La base se toma SIN truncar: comprobado contra los 209 artículos, truncando la base y
+ * multiplicando sobre ella salían 136 filas con un peso de diferencia en algún plazo;
+ * arrastrando los decimales coinciden 199. Las 10 restantes son ruido de coma flotante
+ * —220.000/0,55 da 399.999,99…— que la propia hoja calcula de forma inconsistente.
+ */
 export function precioDelPlazo(
   costo: number,
-  rentabilidad: number,
+  divisor: number,
   meses: number,
 ): number {
-  return Math.round(
-    baseDeContado(costo, rentabilidad) * (1 + recargoDelPlazo(meses)),
-  );
+  return Math.trunc((costo / divisor) * (1 + recargoDelPlazo(meses)));
 }
