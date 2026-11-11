@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import Redis from 'ioredis';
+import { verify } from 'jsonwebtoken';
 import { mensajeDeError } from '../error.util';
 
 type RateLimitBucket = {
@@ -247,7 +248,9 @@ export class RateLimitGuard implements CanActivate {
    * serviria, porque el atacante aun no es nadie.
    */
   private resolveClientKey(request: Request): string {
-    const usuarioId = (request as RequestConUsuarioOpcional).user?.id;
+    const usuarioId =
+      (request as RequestConUsuarioOpcional).user?.id ??
+      this.usuarioDelToken(request);
     if (usuarioId) return `u:${usuarioId}`;
 
     return (
@@ -256,6 +259,53 @@ export class RateLimitGuard implements CanActivate {
       this.resolveForwardedIp(request) ||
       'unknown'
     );
+  }
+
+  /**
+   * El id del usuario sacado del token, porque `request.user` aqui no existe.
+   *
+   * Esto es lo que hacia que el reparto por usuario descrito arriba NO surtiera
+   * efecto. Este guarda esta registrado como el unico `APP_GUARD` global, y
+   * Nest corre los globales ANTES de los de controlador; `JwtAuthGuard`, que es
+   * quien rellena `request.user`, lo aplican los 26 controladores uno a uno con
+   * `@UseGuards`. Asi que cuando se mira `request.user` aqui, siempre vale
+   * `undefined` y el cupo caia SIEMPRE a la IP.
+   *
+   * Medido con la cabecera `X-RateLimit-Remaining`: el administrador empezaba
+   * con 99.999, el cobrador hacia cinco peticiones, y el administrador pasaba a
+   * 99.993. Perdia cupo por peticiones que no habia hecho el. En la oficina,
+   * donde los siete salen por la misma IP, eso es un solo bolsillo de 300 por
+   * minuto para todos.
+   *
+   * El token se VERIFICA, no solo se lee. Con `decode` bastaria inventarse un
+   * `sub` cualquiera para estrenar cupo entero, y eso convertiria el limitador
+   * en un adorno. Verificar es una comprobacion HMAC: cuesta microsegundos y
+   * aqui se hace una vez por peticion.
+   *
+   * Si el token falta, caduco o no cuadra, se devuelve `undefined` y el cupo
+   * vuelve a contarse por IP, que es justo lo que protege al login de la fuerza
+   * bruta: ahi el atacante todavia no es nadie.
+   */
+  private usuarioDelToken(request: Request): string | undefined {
+    const cabecera = request.headers?.authorization;
+    if (typeof cabecera !== 'string' || !cabecera.startsWith('Bearer ')) {
+      return undefined;
+    }
+
+    const secreto = process.env.JWT_SECRET;
+    if (!secreto) return undefined;
+
+    try {
+      const contenido = verify(cabecera.slice(7).trim(), secreto);
+      if (typeof contenido === 'string') return undefined;
+      const sub = contenido.sub;
+      return typeof sub === 'string' && sub ? sub : undefined;
+    } catch {
+      // Token invalido o caducado: no es asunto de este guarda decirlo
+      // -`JwtAuthGuard` lo hara con su 401-. Aqui solo significa que no se sabe
+      // quien es, asi que se cuenta por IP.
+      return undefined;
+    }
   }
 
   private resolveForwardedIp(request: Request): string | undefined {
