@@ -593,24 +593,17 @@ export class ClientsService {
                 estado: true,
                 saldoPendiente: true,
                 // `frecuenciaPago` y la cuota impaga mas antigua son lo que hace
-                // falta para los dias de mora. Es una subconsulta de UNA fila por
-                // credito. Antes el listado no mandaba `diasMora` en absoluto y el
-                // frontend lo resolvia con `?? 0`: TODOS los clientes salian en
-                // verde "Al dia".
+                // falta para los dias de mora. Antes el listado no mandaba
+                // `diasMora` en absoluto y el frontend lo resolvia con `?? 0`:
+                // TODOS los clientes salian en verde "Al dia".
+                //
+                // La cuota NO se pide aqui anidada, y eso es lo que arreglo el
+                // listado: ver `cuotaMasVieja` mas abajo.
                 frecuenciaPago: true,
-                cuotas: {
-                  where: { estado: { not: 'PAGADA' } },
-                  orderBy: { fechaVencimiento: 'asc' },
-                  take: 1,
-                  select: { fechaVencimiento: true },
-                },
               },
             },
-            pagos: {
-              select: { fechaPago: true },
-              orderBy: { fechaPago: 'desc' },
-              take: 1,
-            },
+            // `pagos` tampoco: la fecha del ultimo pago llega por
+            // `ultimoPagoPorCliente`, por la misma razon.
           },
           orderBy: { creadoEn: 'desc' },
         }),
@@ -638,6 +631,102 @@ export class ClientsService {
         }),
       ]);
 
+      /**
+       * La cuota impaga más antigua de cada crédito, y el último pago de cada
+       * cliente: una fila por crédito y una por cliente.
+       *
+       * ── Qué se arregló y cuánto ─────────────────────────────────────────
+       *
+       * Estas dos cosas se pedían anidadas, con `take: 1` dentro del `include`.
+       * Leído así parece una fila por padre, pero Prisma no puede expresar un
+       * límite por padre en SQL: trae TODAS las filas que encajan y se queda
+       * con la primera de cada grupo en memoria.
+       *
+       * Medido con 5.024 clientes, 8.014 créditos, 64.064 cuotas impagas y
+       * 64.088 pagos: para devolver 5.024 clientes la consulta arrastraba unas
+       * 133.000 filas, y el listado tardaba 6,0 segundos y pesaba 2,9 MB.
+       *
+       * El experimento que lo señaló: marcando como pagadas las cuotas de
+       * volumen —con lo que salen del filtro— el mismo listado bajó a 1,87 s.
+       * O sea que las cuotas anidadas eran 4,1 de los 6,0 segundos, el 68%.
+       *
+       * Con `DISTINCT ON` cada consulta devuelve lo que de verdad se usa: 8.012
+       * cuotas en vez de 64.048, y 5.015 pagos en vez de 64.088.
+       *
+       * ── Por qué SQL a mano y no Prisma ──────────────────────────────────
+       *
+       * `DISTINCT ON` es de Postgres y Prisma no lo genera. La alternativa
+       * dentro de Prisma sería una consulta por crédito, que es peor: 8.014
+       * viajes a la base.
+       *
+       * Los ids van como parámetro (`= ANY($1)`) y no interpolados en el
+       * texto: son uuid que vienen de la propia base, pero una lista de ids
+       * pegada a mano en un SQL es la forma en que empieza una inyección.
+       */
+      const idsClientes = clientesRaw.map((c) => c.id);
+      const idsPrestamos = clientesRaw.flatMap((c) =>
+        c.prestamos.map((p) => p.id),
+      );
+
+      const [cuotaMasVieja, ultimoPagoPorCliente] = await Promise.all([
+        idsPrestamos.length
+          ? this.prisma.$queryRaw<
+              { prestamoId: string; fechaVencimiento: Date }[]
+            >`
+              SELECT DISTINCT ON (c."prestamoId")
+                     c."prestamoId" AS "prestamoId",
+                     c."fechaVencimiento" AS "fechaVencimiento"
+              FROM cuotas c
+              WHERE c."prestamoId" = ANY(${idsPrestamos})
+                AND c.estado <> 'PAGADA'
+              ORDER BY c."prestamoId", c."fechaVencimiento" ASC
+            `
+          : Promise.resolve([]),
+        idsClientes.length
+          ? this.prisma.$queryRaw<{ clienteId: string; fechaPago: Date }[]>`
+              SELECT DISTINCT ON (p."clienteId")
+                     p."clienteId" AS "clienteId",
+                     p."fechaPago" AS "fechaPago"
+              FROM "Pago" p
+              WHERE p."clienteId" = ANY(${idsClientes})
+              ORDER BY p."clienteId", p."fechaPago" DESC
+            `
+          : Promise.resolve([]),
+      ]);
+
+      const vencimientoPorPrestamo = new Map(
+        cuotaMasVieja.map((f) => [f.prestamoId, f.fechaVencimiento]),
+      );
+      const fechaUltimoPago = new Map(
+        ultimoPagoPorCliente.map((f) => [f.clienteId, f.fechaPago]),
+      );
+
+      /**
+       * Se vuelve a armar la forma que el resto del método ya esperaba.
+       *
+       * `cuotas` SIEMPRE es un arreglo, nunca `undefined`, y de eso depende una
+       * regla del sistema: `calcularDiasMoraCliente` devuelve `null` —«no se
+       * sabe»— justo cuando la relación no vino, y `null` se pinta como un
+       * hueco en vez de como «al día». Si aquí se dejara sin poner, los 5.024
+       * clientes saldrían con la mora en blanco.
+       *
+       * Un crédito sin cuota impaga lleva `[]`, que es un dato: no le queda
+       * ninguna por pagar.
+       */
+      const clientesConRelaciones = clientesRaw.map((cliente) => ({
+        ...cliente,
+        prestamos: cliente.prestamos.map((prestamo) => {
+          const vencimiento = vencimientoPorPrestamo.get(prestamo.id);
+          return {
+            ...prestamo,
+            cuotas: vencimiento ? [{ fechaVencimiento: vencimiento }] : [],
+          };
+        }),
+        pagos: fechaUltimoPago.has(cliente.id)
+          ? [{ fechaPago: fechaUltimoPago.get(cliente.id) as Date }]
+          : [],
+      }));
+
       // Ya no se incluyen las aprobaciones pendientes por separado: todos los
       // clientes se crean en la tabla principal con estado PENDIENTE. Antes quedaba
       // aqui un `const aprobacionesPendientes: unknown[] = []` y treinta lineas que lo
@@ -646,7 +735,9 @@ export class ClientsService {
       this.logger.log(`Found ${clientesRaw.length} active clients`);
 
       // Transformar clientes reales
-      const clientesTransformados = clientesRaw.map((cliente) => {
+      // `clientesConRelaciones` y no `clientesRaw`: es el mismo conjunto con
+      // la cuota y el último pago ya pegados. El resto del método no cambia.
+      const clientesTransformados = clientesConRelaciones.map((cliente) => {
         try {
           // Calcular score basado en múltiples factores
           let score = cliente.puntaje || 100;

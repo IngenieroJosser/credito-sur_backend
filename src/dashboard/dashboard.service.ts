@@ -712,6 +712,38 @@ export class DashboardService {
       // Limitar a máximo 30 días
       const maxDays = Math.min(daysDiff, 30);
 
+      /**
+       * Lo que de cada cuota NO depende del día, calculado una sola vez.
+       *
+       * El bucle de abajo recorre las cuotas una vez por cada día del período,
+       * y dentro llamaba a `getBogotaDayKey(new Date(c.fechaVencimiento))` en
+       * cada pasada. Con 30 días y 63.712 cuotas eso son 1,9 MILLONES de
+       * llamadas para calcular 63.712 valores distintos.
+       *
+       * Medido: `/dashboard` tardaba 10,2 segundos con 5.024 clientes y 8.014
+       * créditos, y de ahí solo 0,5 s eran base de datos —una única consulta de
+       * 63.712 filas—. El resto era esto.
+       *
+       * Y antes de cachear los formateadores de `Intl` en `date-utils` era
+       * peor: a 62 µs por llamada, 1,9 millones son casi dos minutos, que es
+       * por lo que el primer barrido con volumen ni recibió respuesta.
+       *
+       * La clave de día de un vencimiento no cambia según el día que se esté
+       * pintando, así que se calcula una vez y se reutiliza. El resto de la
+       * lógica del bucle se queda igual: lo que SÍ depende del día —si ya
+       * estaba pagada a esa fecha— sigue dentro.
+       */
+      const cuotasPreparadas = cuotasNoPagadasHastaFin
+        .filter((c) => c.prestamoId)
+        .map((c) => ({
+          prestamoId: String(c.prestamoId),
+          vtoKey: getBogotaDayKey(new Date(c.fechaVencimiento)),
+          estado: c.estado,
+          pagoTime: c.fechaPago ? new Date(c.fechaPago).getTime() : null,
+          monto: Number(c.monto || 0),
+          montoPagado: Number(c.montoPagado || 0),
+        }));
+
       for (let i = 0; i <= maxDays; i++) {
         const currentDate = new Date(startDate);
         currentDate.setDate(startDate.getDate() + i);
@@ -731,26 +763,23 @@ export class DashboardService {
         // Calcular meta operativa del día: una cuota objetivo por préstamo
         const cuotaObjetivoPorPrestamo = new Map<string, number>();
 
-        for (const c of cuotasNoPagadasHastaFin) {
-          if (!c.prestamoId) continue;
-          const vtoKey = getBogotaDayKey(new Date(c.fechaVencimiento));
-          if (vtoKey > hoyBogotaKey) continue; // Not yet due as of this day
+        for (const c of cuotasPreparadas) {
+          if (c.vtoKey > hoyBogotaKey) continue; // Not yet due as of this day
 
           // Was it paid on or before this day?
-          if (c.estado === EstadoCuota.PAGADA && c.fechaPago) {
-            const pagoTime = new Date(c.fechaPago).getTime();
-            if (pagoTime <= cutoffTime) {
+          if (c.estado === EstadoCuota.PAGADA && c.pagoTime !== null) {
+            if (c.pagoTime <= cutoffTime) {
               continue; // It was already paid by the end of this day
             }
           }
 
-          const pid = String(c.prestamoId);
+          const pid = c.prestamoId;
 
           // Solo tomar una cuota por préstamo (la primera válida para este día)
           if (cuotaObjetivoPorPrestamo.has(pid)) continue;
 
-          const montoFull = Number(c.monto || 0);
-          const montoPagado = Number(c.montoPagado || 0);
+          const montoFull = c.monto;
+          const montoPagado = c.montoPagado;
           const montoPendiente =
             c.estado === EstadoCuota.PARCIAL
               ? Math.max(0, montoFull - montoPagado)
