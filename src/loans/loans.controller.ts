@@ -34,6 +34,10 @@ import {
 import { LoansService } from './loans.service';
 import { mensajeDeError, pilaDeError } from '../common/error.util';
 import { porQueNoEsDinero } from '../common/dinero.util';
+import {
+  accionDecision,
+  etiquetaDecision,
+} from '../common/decisiones-cuenta-vencida';
 import { MoraService } from './mora.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -1121,11 +1125,11 @@ export class LoansController {
       ? `${prestamo.cliente.nombres} ${prestamo.cliente.apellidos}`.trim()
       : 'Cliente';
 
-    const LABEL_DECISION: Record<string, string> = {
-      PRORROGAR: 'Prórroga',
-      DEJAR_QUIETO: 'Dejar quieto',
-      CASTIGAR: 'Baja por pérdida',
-    };
+    // Los nombres salen de `common/decisiones-cuenta-vencida`: este mapa local
+    // decía «Prórroga», «Dejar quieto» y «Baja por pérdida», y las tres
+    // pantallas que muestran la misma gestión usaban otros nombres. Además no
+    // tenía `JURIDICO`, que sí existe en el DTO de reportes, así que el título
+    // del aviso salía como «undefined — Juan Pérez (PRES-000012)».
 
     let cuotaId: string | null = null;
     if (body.decision === 'PRORROGAR') {
@@ -1237,7 +1241,7 @@ export class LoansController {
         }
 
         return {
-          mensaje: `Decisión de ${LABEL_DECISION[body.decision]} aprobada y ejecutada automáticamente`,
+          mensaje: `Decisión de ${etiquetaDecision(body.decision)} aprobada y ejecutada automáticamente`,
           aprobacionId: aprobacion.id,
           decision: body.decision,
         };
@@ -1248,15 +1252,15 @@ export class LoansController {
 
     try {
       const msgPorDecision: Record<string, string> = {
-        PRORROGAR: `${nombreUsuario} solicitó una prórroga de ${dias} días para el préstamo ${prestamo.numeroPrestamo} del cliente ${nombreCliente}.`,
-        DEJAR_QUIETO: `${nombreUsuario} solicitó dejar quieto el préstamo ${prestamo.numeroPrestamo} del cliente ${nombreCliente}.`,
+        PRORROGAR: `${nombreUsuario} solicitó prorrogar el plan ${dias} días para el préstamo ${prestamo.numeroPrestamo} del cliente ${nombreCliente}.`,
+        DEJAR_QUIETO: `${nombreUsuario} solicitó dejar en seguimiento el préstamo ${prestamo.numeroPrestamo} del cliente ${nombreCliente}.`,
         CASTIGAR: `${nombreUsuario} solicitó dar de baja por pérdida el préstamo ${prestamo.numeroPrestamo} del cliente ${nombreCliente}.`,
       };
       await this.notificacionesService.notifyApprovers({
-        titulo: `${LABEL_DECISION[body.decision]} — ${nombreCliente} (${prestamo.numeroPrestamo})`,
+        titulo: `${etiquetaDecision(body.decision)} — ${nombreCliente} (${prestamo.numeroPrestamo})`,
         mensaje:
           msgPorDecision[body.decision] ||
-          `${nombreUsuario} solicitó ${LABEL_DECISION[body.decision].toLowerCase()} para el préstamo ${prestamo.numeroPrestamo}.`,
+          `${nombreUsuario} solicitó ${accionDecision(body.decision)} para el préstamo ${prestamo.numeroPrestamo}.`,
         tipo: body.decision === 'CASTIGAR' ? 'WARNING' : 'INFO',
         entidad: 'Aprobacion',
         entidadId: aprobacion.id,
@@ -1281,7 +1285,7 @@ export class LoansController {
     try {
       await this.notificacionesService.create({
         usuarioId,
-        titulo: `Solicitud de ${LABEL_DECISION[body.decision]} enviada`,
+        titulo: `Solicitud de ${etiquetaDecision(body.decision)} enviada`,
         mensaje:
           'Tu solicitud fue enviada con éxito y quedó pendiente de aprobación.',
         tipo: 'INFORMATIVO',
@@ -1308,7 +1312,7 @@ export class LoansController {
     });
 
     return {
-      mensaje: `Solicitud de ${LABEL_DECISION[body.decision]} enviada a revisión`,
+      mensaje: `Solicitud de ${etiquetaDecision(body.decision)} enviada a revisión`,
       aprobacionId: aprobacion.id,
       decision: body.decision,
     };

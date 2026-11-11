@@ -8,6 +8,7 @@ import {
 import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
 import { objetoDeJson, textosDeJson, textoDeJson } from '../common/json.util';
 import { textoDeValor } from '../common/texto.util';
+import { accionDecision } from '../common/decisiones-cuenta-vencida';
 import {
   Aprobacion,
   EfectoProvisional,
@@ -2788,7 +2789,11 @@ export class ApprovalsService {
           await this.notifyCobradorGestionVencida({
             prestamoId: data.prestamoId,
             titulo: `Gestión de cuenta vencida rechazada — ${nombreCliente}${numeroPrestamo ? ` (${numeroPrestamo})` : ''}`,
-            mensaje: `La solicitud de ${decision === 'DEJAR_QUIETO' ? 'dejar quieto' : 'prórroga'} fue rechazada.${motivoRechazo ? ` Motivo: ${motivoRechazo}` : ''}`,
+            // `accionDecision` en vez del ternario: decía «dejar quieto» o
+            // «prórroga», dos nombres que no coinciden con ninguno de los que
+            // muestran las pantallas, y cualquier decisión que no fuera
+            // DEJAR_QUIETO salía como «prórroga» aunque fuera un castigo.
+            mensaje: `La solicitud de ${accionDecision(decision)} fue rechazada.${motivoRechazo ? ` Motivo: ${motivoRechazo}` : ''}`,
             tipo: 'ADVERTENCIA',
             metadata: {
               tipo: 'GESTION_VENCIDA',
