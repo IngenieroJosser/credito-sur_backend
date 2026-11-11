@@ -364,6 +364,26 @@ export class UsersService {
   }
 
   async asignarPermisos(usuarioId: string, permisos: string[]) {
+    // Que falte la lista NO es lo mismo que mandarla vacía.
+    //
+    // Una lista vacía significa «quítale todos los permisos personalizados», y
+    // es una orden legítima: abajo se borran y no se crea ninguno. Que el campo
+    // no venga significa que no se sabe qué se quería, y eso no puede
+    // interpretarse como la orden de borrarlos todos.
+    //
+    // Hacía falta decirlo porque el endpoint recibe `@Body('permisos')` sin
+    // DTO, así que un cuerpo vacío llegaba como `undefined`: la consulta de
+    // abajo se defendía con `(permisos || [])`, pero el registro del final
+    // leía `permisos.length` a pelo y reventaba con `Cannot read properties of
+    // undefined`. Salía como 500 «Ocurrió un error inesperado», DESPUÉS del
+    // `deleteMany` —dentro de la transacción, así que se deshacía, pero el
+    // mensaje no decía nada—. Medido llamando a las 218 rutas con los 7 roles.
+    if (!Array.isArray(permisos)) {
+      throw new BadRequestException(
+        'Falta la lista de permisos. Para quitarle todos los permisos personalizados, envíe la lista vacía.',
+      );
+    }
+
     // 1. Validar usuario
     const usuario = await this.prisma.usuario.findUnique({
       where: { id: usuarioId },
@@ -415,7 +435,10 @@ export class UsersService {
         }
 
         this.logger.log(
-          `Permisos actualizados para usuario ${usuarioId}: ${permisosDb.length} asignados de ${permisos.length} solicitados.`,
+          // `requested.length` y no `permisos.length`: es la cifra honesta
+          // —lo pedido después de limpiar blancos— y además la que no revienta
+          // si algún día vuelve a entrar algo que no sea una lista.
+          `Permisos actualizados para usuario ${usuarioId}: ${permisosDb.length} asignados de ${requested.length} solicitados.`,
         );
 
         return {
@@ -549,6 +572,21 @@ export class UsersService {
       );
     }
 
+    // Dejar de ser superadministrador, o dejar de estar activo, también vacía
+    // la silla. La autoedición está permitida siempre unas líneas más arriba,
+    // así que sin esto el único superadministrador podía bajarse a cobrador o
+    // desactivarse él mismo —`rol` y `estado` llegan los dos en este cuerpo,
+    // porque `UpdateUserDto` extiende `PartialType(CreateUserDto)`— y quedarse
+    // fuera igual que borrándose.
+    const dejaDeSerSuper =
+      usuario.rol === RolUsuario.SUPER_ADMINISTRADOR &&
+      ((updateUserDto.rol && updateUserDto.rol !== RolUsuario.SUPER_ADMINISTRADOR) ||
+        (updateUserDto.estado && updateUserDto.estado !== EstadoUsuario.ACTIVO));
+
+    if (dejaDeSerSuper) {
+      await this.asegurarQueQuedaUnSuperadministrador(usuario);
+    }
+
     // Hashear contraseña si se proporciona
     let hashContrasena: string | undefined;
     if (updateUserDto.password) {
@@ -664,6 +702,69 @@ export class UsersService {
     return usuarioActualizado;
   }
 
+  /**
+   * Que el sistema no se quede sin ningún superadministrador con el que entrar.
+   *
+   * Esto no es una protección hipotética: pasó. Llamando a las rutas de
+   * usuarios con la sesión del propio superadministrador, `DELETE
+   * /usuarios/:id` sobre su propio id respondió 200, le puso
+   * `estado = ARCHIVADO` y `eliminadoEn`, y a partir de ahí NADIE podía entrar
+   * como superadministrador. La salida fue editar la base de datos a mano.
+   *
+   * Ya existían tres protecciones escritas para esto —en `eliminar`, en
+   * `archivar` y en el cambio de rol de `actualizar`—, y las tres preguntan por
+   * `usuario.esPrincipal`. El problema es que esa columna vale `false` por
+   * defecto (schema.prisma:18) y NINGÚN sitio del código la pone en `true`: no
+   * la semilla, no `auth/setup`, que crea el primer administrador, no el
+   * endpoint de crear usuarios. Comprobado buscando toda escritura de ese campo
+   * en `src/` y en `prisma/`: solo aparece dentro de `select`. Así que las tres
+   * protecciones no se disparan nunca y el concepto de «principal» está
+   * inerte.
+   *
+   * Esta guarda no pregunta por `esPrincipal`: cuenta. Mientras quede al menos
+   * un superadministrador activo y sin archivar, la operación pasa; si sería el
+   * último, se rechaza explicando qué hacer. Da igual quién la pida y da igual
+   * si es sobre sí mismo o sobre otro, que es lo que la hace difícil de
+   * esquivar sin darse cuenta.
+   *
+   * `elQueSeVa` es el usuario que dejaría de contar. Si no es un
+   * superadministrador activo, la cuenta no cambia y no hay nada que impedir:
+   * se sale sin consultar nada. Esa salida temprana no es un detalle de
+   * eficiencia —sin ella, archivar a un cobrador cualquiera se rechazaba
+   * cuando por lo que fuera no había superadministradores activos, que es una
+   * situación que esta guarda no tiene por qué resolver—. Lo cazó la prueba
+   * «no estorba a los demás roles».
+   */
+  private async asegurarQueQuedaUnSuperadministrador(elQueSeVa: {
+    id: string;
+    rol: RolUsuario;
+    estado: EstadoUsuario;
+    eliminadoEn: Date | null;
+  }) {
+    const cuentaHoy =
+      elQueSeVa.rol === RolUsuario.SUPER_ADMINISTRADOR &&
+      elQueSeVa.estado === EstadoUsuario.ACTIVO &&
+      elQueSeVa.eliminadoEn === null;
+
+    if (!cuentaHoy) return;
+
+    const superadministradoresActivos = await this.prisma.usuario.count({
+      where: {
+        rol: RolUsuario.SUPER_ADMINISTRADOR,
+        estado: EstadoUsuario.ACTIVO,
+        eliminadoEn: null,
+        // Todos MENOS el que se va: lo que se mide es lo que quedaría después.
+        id: { not: elQueSeVa.id },
+      },
+    });
+
+    if (superadministradoresActivos === 0) {
+      throw new ForbiddenException(
+        'Es el único Superadministrador activo que queda. Si se archiva, se elimina o se le cambia el rol, nadie podrá volver a entrar a administrar el sistema. Crea otro Superadministrador primero.',
+      );
+    }
+  }
+
   async eliminar(id: string, usuarioEliminadorId?: string) {
     const usuario = await this.prisma.usuario.findUnique({
       where: { id },
@@ -679,6 +780,8 @@ export class UsersService {
         'El Superadministrador principal no puede eliminarse ni ocultarse',
       );
     }
+
+    await this.asegurarQueQuedaUnSuperadministrador(usuario);
 
     const eliminado = await this.prisma.usuario.update({
       where: { id },
@@ -728,6 +831,8 @@ export class UsersService {
         'El Superadministrador principal no puede ser archivado',
       );
     }
+
+    await this.asegurarQueQuedaUnSuperadministrador(usuario);
 
     const archivado = await this.prisma.usuario.update({
       where: { id },

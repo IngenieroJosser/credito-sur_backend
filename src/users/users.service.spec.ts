@@ -476,4 +476,205 @@ describe('UsersService operational detail', () => {
       expect(JSON.stringify(registro)).not.toContain(contrasenaTemporal);
     });
   });
+
+  /**
+   * Que no se pueda dejar el sistema sin ningún superadministrador.
+   *
+   * Pasó de verdad: llamando a las rutas de usuarios con la sesión del propio
+   * superadministrador, `DELETE /usuarios/:id` sobre su propio id respondió
+   * 200, le puso `estado = ARCHIVADO` y a partir de ahí nadie podía entrar a
+   * administrar. Hubo que editar la base de datos a mano para recuperarlo.
+   *
+   * Había tres protecciones escritas para esto, y las tres preguntan por
+   * `usuario.esPrincipal`, una columna que vale `false` por defecto y que
+   * ningún sitio del código pone en `true` —ni la semilla, ni `auth/setup`, ni
+   * el endpoint de crear usuarios—. Así que no se disparaban nunca. Esta
+   * guarda no pregunta: cuenta los superadministradores activos que quedarían.
+   *
+   * Se cubren los cuatro caminos que vacían la silla, porque tapar uno solo
+   * deja los otros tres abiertos: borrar, archivar, bajarse de rol y
+   * desactivarse. Los dos últimos pasan por `actualizar`, donde la
+   * autoedición está permitida siempre.
+   */
+  describe('nunca se queda el sistema sin superadministrador', () => {
+    const SUPER = {
+      id: 'super-1',
+      rol: RolUsuario.SUPER_ADMINISTRADOR,
+      estado: EstadoUsuario.ACTIVO,
+      esPrincipal: false,
+      eliminadoEn: null,
+      nombreUsuario: 'super',
+      correo: 'super@test.com',
+    };
+
+    /** `count` es la cuenta de los que QUEDARÍAN, sin contar al que se va. */
+    const conSuperadministradoresRestantes = (cuantos: number) => ({
+      usuario: {
+        findUnique: jest.fn().mockResolvedValue(SUPER),
+        findFirst: jest.fn().mockResolvedValue(null),
+        count: jest.fn().mockResolvedValue(cuantos),
+        update: jest.fn().mockResolvedValue({ ...SUPER }),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    });
+
+    it('no deja ELIMINAR al último que queda', async () => {
+      const { service, prisma } = buildService(
+        conSuperadministradoresRestantes(0),
+      );
+
+      await expect(service.eliminar('super-1', 'super-1')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(prisma.usuario.update).not.toHaveBeenCalled();
+    });
+
+    it('no deja ARCHIVAR al último que queda', async () => {
+      const { service, prisma } = buildService(
+        conSuperadministradoresRestantes(0),
+      );
+
+      await expect(service.archivar('super-1', 'super-1')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(prisma.usuario.update).not.toHaveBeenCalled();
+    });
+
+    it('no deja que el último se BAJE de rol a sí mismo', async () => {
+      const { service, prisma } = buildService(
+        conSuperadministradoresRestantes(0),
+      );
+
+      await expect(
+        service.actualizar('super-1', { rol: RolUsuario.COBRADOR }, 'super-1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.usuario.update).not.toHaveBeenCalled();
+    });
+
+    it('no deja que el último se DESACTIVE a sí mismo', async () => {
+      const { service, prisma } = buildService(
+        conSuperadministradoresRestantes(0),
+      );
+
+      await expect(
+        service.actualizar(
+          'super-1',
+          { estado: EstadoUsuario.INACTIVO },
+          'super-1',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.usuario.update).not.toHaveBeenCalled();
+    });
+
+    it('el mensaje dice qué hacer, no solo que no se puede', async () => {
+      const { service } = buildService(conSuperadministradoresRestantes(0));
+
+      await expect(service.eliminar('super-1', 'super-1')).rejects.toThrow(
+        /Crea otro Superadministrador primero/,
+      );
+    });
+
+    it('si queda OTRO superadministrador activo, sí se puede', async () => {
+      const { service, prisma } = buildService(
+        conSuperadministradoresRestantes(1),
+      );
+
+      await expect(service.eliminar('super-1', 'super-2')).resolves.toBeDefined();
+      expect(prisma.usuario.update).toHaveBeenCalled();
+    });
+
+    it('no estorba a los demás roles: un cobrador se archiva sin contar nada', async () => {
+      const cobrador = {
+        ...SUPER,
+        id: 'cobrador-1',
+        rol: RolUsuario.COBRADOR,
+      };
+      const { service, prisma } = buildService({
+        usuario: {
+          findUnique: jest.fn().mockResolvedValue(cobrador),
+          findFirst: jest.fn().mockResolvedValue(null),
+          // Cero superadministradores restantes: si la guarda se aplicara a
+          // todo el mundo, esto fallaría. No debe aplicarse.
+          count: jest.fn().mockResolvedValue(0),
+          update: jest.fn().mockResolvedValue(cobrador),
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+      });
+
+      await expect(service.archivar('cobrador-1', 'super-1')).resolves.toBeDefined();
+      expect(prisma.usuario.update).toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * Que falte la lista de permisos no es la orden de borrarlos todos.
+   *
+   * La lista VACIA si lo es, y es legitima. Que el campo no venga significa que
+   * no se sabe que se queria, y eso no puede acabar en un borrado.
+   *
+   * Hacia falta decirlo porque el endpoint recibe `@Body('permisos')` sin DTO:
+   * un cuerpo vacio llegaba como `undefined`, la consulta se defendia con
+   * `(permisos || [])` pero el registro final leia `permisos.length` a pelo y
+   * reventaba con 500 DESPUES del `deleteMany`. Se encontro llamando a las 218
+   * rutas con los 7 roles.
+   */
+  describe('asignarPermisos distingue la lista vacia del hueco', () => {
+    const conUsuario = () => ({
+      usuario: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'u-1', rol: RolUsuario.COBRADOR }),
+        findFirst: jest.fn().mockResolvedValue(null),
+        count: jest.fn().mockResolvedValue(5),
+        update: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      permiso: { findMany: jest.fn().mockResolvedValue([]) },
+      asignacionPermisoUsuario: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 3 }),
+        createMany: jest.fn(),
+      },
+    });
+
+    /**
+     * El doble de `$transaction` que trae `buildService` entrega un `tx` con
+     * solo dos tablas, y `asignarPermisos` usa `tx.asignacionPermisoUsuario`.
+     * Se reemplaza para que el callback reciba las MISMAS funciones espia que
+     * se van a comprobar: si se le pasara otro doble, la prueba miraria un
+     * objeto y el codigo tocaria otro, y pasaria sin comprobar nada.
+     */
+    const conTransaccion = (prisma: ReturnType<typeof conUsuario>) => ({
+      ...prisma,
+      $transaction: jest.fn(async (cb: (tx: unknown) => unknown) => cb(prisma)),
+    });
+
+    it('rechaza que NO venga la lista, sin borrar nada', async () => {
+      const prisma = conUsuario();
+      const { service } = buildService(conTransaccion(prisma));
+
+      await expect(
+        service.asignarPermisos('u-1', undefined as unknown as string[]),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      // Lo que importa: no se llego a tocar la tabla de permisos.
+      expect(prisma.asignacionPermisoUsuario.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('el mensaje explica como SI quitarlos todos', async () => {
+      const { service } = buildService(conTransaccion(conUsuario()));
+
+      await expect(
+        service.asignarPermisos('u-1', undefined as unknown as string[]),
+      ).rejects.toThrow(/lista vac/i);
+    });
+
+    it('la lista VACIA si borra los personalizados: es una orden valida', async () => {
+      const prisma = conUsuario();
+      const { service } = buildService(conTransaccion(prisma));
+
+      const resultado = await service.asignarPermisos('u-1', []);
+
+      expect(prisma.asignacionPermisoUsuario.deleteMany).toHaveBeenCalled();
+      expect(prisma.asignacionPermisoUsuario.createMany).not.toHaveBeenCalled();
+      expect(resultado).toMatchObject({ asignados: 0 });
+    });
+  });
 });
