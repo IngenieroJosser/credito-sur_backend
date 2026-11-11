@@ -228,7 +228,21 @@ function buildMockPrisma(overrides: Record<string, unknown> = {}) {
     },
     pago: {
       count: jest.fn().mockResolvedValue(0),
-      findFirst: jest.fn().mockResolvedValue(PAGO_CREADO),
+      /**
+       * `null` por defecto: «no hay ningún pago previo que se parezca».
+       *
+       * Antes devolvía `PAGO_CREADO` para CUALQUIER consulta, y eso ya era una
+       * trampa —cuatro pruebas de aquí tenían que neutralizarlo a mano con
+       * `mockResolvedValueOnce(null)` para poder registrar un pago—. Al añadir
+       * la comprobación de pago repetido del servidor, esa misma consulta pasó
+       * a usarse para otra pregunta, y el doble contestaba «sí, ya existe» a
+       * las dos: doce pruebas de registro de pago empezaron a fallar diciendo
+       * que el pago estaba duplicado.
+       *
+       * Las dos pruebas que SÍ necesitan encontrar un pago —las de
+       * idempotencia— lo ponen ellas, que es donde se lee.
+       */
+      findFirst: jest.fn().mockResolvedValue(null),
       findMany: jest.fn().mockResolvedValue([]),
       findUnique: jest.fn().mockResolvedValue(PAGO_CREADO),
     },
@@ -911,6 +925,13 @@ describe('PaymentsService', () => {
 
   describe('findOne — alcance por rol', () => {
     it('limita el detalle de pago del cobrador a su propio id', async () => {
+      // Esta prueba SÍ necesita que la consulta encuentre un pago: lo que
+      // comprueba es con qué filtro se pidió, y sin pago `findOne` lanza
+      // «Pago no encontrado» antes de llegar a la comprobación. Se dice aquí,
+      // donde se usa, en vez de en el doble compartido: el valor por defecto
+      // allí es `null` porque la mayoría de las pruebas registra pagos nuevos.
+      prisma.pago.findFirst.mockResolvedValueOnce(PAGO_CREADO);
+
       await service.findOne('pago-1', {
         id: 'cobrador-propio',
         rol: RolUsuario.COBRADOR,
@@ -1357,6 +1378,188 @@ describe('PaymentsService', () => {
 
       expect(prisma._txMock.pago.create).toHaveBeenCalled();
       expect(prisma._txMock.cuota.update).toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * El servidor se defiende solo del cobro doble.
+   *
+   * Medido antes de esto: dos POST /payments simultaneos con el mismo cuerpo y
+   * SIN idempotencyKey respondian 201 y 201, y la deuda bajaba 100.000 por dos
+   * pagos de 50.000. Lo frenaba solo la pantalla —el modal bloquea el boton
+   * mientras envia—, asi que la proteccion entera dependia de que ninguna
+   * pantalla futura se olvidara. Y ya paso una vez en produccion: esta contado
+   * en el comentario de VistaCobrador.tsx:499.
+   */
+  /**
+   * El servidor se defiende solo del cobro doble.
+   *
+   * Medido antes de esto: dos POST /payments simultaneos con el mismo cuerpo y
+   * SIN idempotencyKey respondian 201 y 201, y la deuda bajaba 100.000 por dos
+   * pagos de 50.000. Lo frenaba solo la pantalla, asi que la proteccion entera
+   * dependia de que ninguna pantalla futura se olvidara. Y ya paso una vez en
+   * produccion: esta contado en el comentario de VistaCobrador.tsx:499.
+   *
+   * ── Por que una llave derivada y no una consulta ──────────────────────────
+   *
+   * El primer arreglo fue consultar antes de escribir: «hay ya un pago
+   * identico en el ultimo minuto?». Medido, NO funciona: los dos envios llegan
+   * a la vez, los dos consultan antes de que ninguno haya guardado, los dos
+   * encuentran nada y los dos entran. Ninguna comprobacion de leer-y-despues-
+   * escribir le gana a una carrera.
+   *
+   * Asi que al pago sin llave se le pone una DERIVADA de su contenido —credito,
+   * importe, cobrador y un cubo de tiempo—, y el indice unico de
+   * `Pago.idempotencyKey` hace el trabajo. Dos envios identicos producen la
+   * misma llave: uno entra y el otro recibe el que entro. Eso es atomico,
+   * porque no hay comprobacion que adelantar.
+   */
+  describe('create — el servidor para el pago repetido sin llave', () => {
+    const DTO = {
+      prestamoId: 'prestamo-1',
+      cobradorId: 'cobrador-1',
+      montoTotal: 110000,
+      metodoPago: MetodoPago.EFECTIVO,
+    };
+
+    it('le pone al pago una llave derivada de su contenido', async () => {
+      prisma.pago.findFirst.mockResolvedValue(null);
+
+      await service.create(DTO);
+
+      const guardado = prisma._txMock.pago.create.mock.calls[0][0];
+      // `auto:` la distingue de una llave que haya traido quien llama, que es
+      // lo que permite saber de donde salio al mirar la tabla.
+      expect(guardado.data.idempotencyKey).toMatch(/^auto:/);
+      expect(guardado.data.idempotencyKey).toContain('prestamo-1');
+      expect(guardado.data.idempotencyKey).toContain('110000');
+    });
+
+    it('dos pagos iguales seguidos producen la MISMA llave', async () => {
+      // Es la propiedad de la que depende todo: si la llave cambiara entre un
+      // envio y el siguiente, el indice unico no veria nada que frenar.
+      prisma.pago.findFirst.mockResolvedValue(null);
+
+      await service.create(DTO);
+      const primera = prisma._txMock.pago.create.mock.calls[0][0].data
+        .idempotencyKey as string;
+
+      jest.clearAllMocks();
+      prisma.pago.findFirst.mockResolvedValue(null);
+      prisma._txMock.pago.create.mockResolvedValue(PAGO_CREADO);
+
+      await service.create(DTO);
+      const segunda = prisma._txMock.pago.create.mock.calls[0][0].data
+        .idempotencyKey as string;
+
+      expect(segunda).toBe(primera);
+    });
+
+    it('dos pagos DISTINTOS producen llaves distintas', async () => {
+      // Lo contrario tambien importa: si dos pagos legitimos compartieran
+      // llave, el segundo se perderia en silencio. Se cambia el importe, que
+      // es lo minimo que distingue un pago de otro.
+      prisma.pago.findFirst.mockResolvedValue(null);
+
+      await service.create(DTO);
+      const unaLlave = prisma._txMock.pago.create.mock.calls[0][0].data
+        .idempotencyKey as string;
+
+      jest.clearAllMocks();
+      prisma.pago.findFirst.mockResolvedValue(null);
+      prisma._txMock.pago.create.mockResolvedValue(PAGO_CREADO);
+
+      await service.create({ ...DTO, montoTotal: 120000 });
+      const otraLlave = prisma._txMock.pago.create.mock.calls[0][0].data
+        .idempotencyKey as string;
+
+      expect(otraLlave).not.toBe(unaLlave);
+    });
+
+    it('si la llave derivada ya esta usada, devuelve el pago que entro', async () => {
+      // El doble clic en SERIE: el segundo envio llega cuando el primero ya
+      // guardo. No se crea un segundo pago y no se cobra dos veces.
+      prisma.pago.findFirst.mockResolvedValue(PAGO_EXISTENTE);
+
+      const resultado = await service.create(DTO);
+
+      expect(pagoRegistrado(resultado).idempotentReplay).toBe(true);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(prisma._txMock.pago.create).not.toHaveBeenCalled();
+    });
+
+    it('el choque del indice unico en paralelo sale como conflicto, no como 500', async () => {
+      // El doble clic en PARALELO: los dos pasan la consulta y los dos llegan
+      // a escribir. El indice unico deja entrar uno; el otro recibe un P2002,
+      // que tiene que llegar explicado y no como «error inesperado».
+      prisma.pago.findFirst.mockResolvedValue(null);
+      prisma.$transaction.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('llave repetida', {
+          code: 'P2002',
+          clientVersion: 'prueba',
+          meta: { target: ['idempotencyKey'] },
+        }),
+      );
+
+      await expect(service.create(DTO)).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+    });
+
+    it('con idempotencyKey propia NO se deriva ninguna: la llave ya decidio', async () => {
+      // La cola offline reusa la MISMA llave que intento en linea, asi que un
+      // reintento de red entra por aqui y queda cubierto. Derivar otra encima
+      // romperia esa garantia.
+      prisma.pago.findFirst.mockResolvedValue(null);
+
+      await service.create({ ...DTO, idempotencyKey: 'llave-propia-1' });
+
+      const guardado = prisma._txMock.pago.create.mock.calls[0][0];
+      expect(guardado.data.idempotencyKey).toBe('llave-propia-1');
+    });
+  });
+
+  describe('create — importes que no son pesos', () => {
+    const conMonto = (montoTotal: number) => ({
+      prestamoId: 'prestamo-1',
+      cobradorId: 'cobrador-1',
+      montoTotal,
+      metodoPago: MetodoPago.EFECTIVO,
+    });
+
+    const IMPOSIBLES: [string, number][] = [
+      ['con centavos', 1000.57],
+      ['con una fraccion minima', 1000.004],
+      ['negativo', -50000],
+      ['cero', 0],
+      ['mas grande de lo que cabe en la columna', 1e15],
+    ];
+
+    for (const [nombre, monto] of IMPOSIBLES) {
+      it(`rechaza un pago ${nombre} sin tocar el dinero`, async () => {
+        prisma.pago.findFirst.mockResolvedValue(null);
+
+        await expect(service.create(conMonto(monto))).rejects.toBeInstanceOf(
+          BadRequestException,
+        );
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      });
+    }
+
+    it('el motivo explica que el peso no tiene centavos', async () => {
+      prisma.pago.findFirst.mockResolvedValue(null);
+
+      // «Importe invalido» dejaria a la persona mirando el monto sin entender
+      // que sobra la coma.
+      await expect(service.create(conMonto(1000.57))).rejects.toThrow(
+        /centavos/i,
+      );
+    });
+
+    it('un importe entero sigue entrando', async () => {
+      prisma.pago.findFirst.mockResolvedValue(null);
+
+      await expect(service.create(conMonto(110000))).resolves.toBeDefined();
     });
   });
 });

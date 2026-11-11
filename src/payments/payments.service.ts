@@ -8,6 +8,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { CreatePaymentDto } from './dto/create-payment.dto';
+import { porQueNoEsDinero } from '../common/dinero.util';
 import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
 import {
   EstadoPrestamo,
@@ -485,6 +486,88 @@ export class PaymentsService {
   }
 
   /**
+   * Cuántos segundos se considera que un pago idéntico es el mismo pago.
+   *
+   * El tamaño de la ventana es el único ajuste delicado: corta de más y no tapa
+   * el reintento de una petición que se quedó esperando; larga de más y estorba
+   * a un segundo pago legítimo del mismo importe.
+   *
+   * 60 segundos porque es lo que cubre el caso real que se persigue: la
+   * petición sale, la respuesta se pierde, y la persona o el navegador la
+   * repiten. Dos pagos de verdad por el mismo importe y el mismo crédito
+   * separados por menos de un minuto no son algo que pase en una jornada de
+   * cobro; el doble envío sí.
+   *
+   * Se deja configurable para poder ajustarlo sin desplegar código.
+   */
+  private ventanaDePagoRepetidoEnMs(): number {
+    const segundos = Number(process.env.PAGO_REPETIDO_VENTANA_SEGUNDOS);
+    return Number.isFinite(segundos) && segundos >= 0
+      ? Math.floor(segundos) * 1000
+      : 60_000;
+  }
+
+  /**
+   * La llave que lleva un pago cuando quien lo manda no trae ninguna.
+   *
+   * ── Por qué una llave derivada y no una consulta ────────────────────────────
+   *
+   * El primer intento de parar el cobro doble fue consultar antes de escribir:
+   * «¿hay ya un pago idéntico en el último minuto?». Medido contra la base de
+   * pruebas, NO funciona: los dos envíos del doble clic llegan a la vez, los
+   * dos consultan antes de que ninguno haya guardado, los dos encuentran nada y
+   * los dos entran. La deuda bajó 14.000 por dos pagos de 7.000. Ninguna
+   * comprobación de leer-y-después-escribir puede ganarle a una carrera; hace
+   * falta que lo frene la base de datos.
+   *
+   * Y la base ya tiene con qué: `Pago.idempotencyKey` es UNIQUE
+   * (`Pago_idempotencyKey_key`). Así que en vez de consultar, al pago sin llave
+   * se le pone una derivada de su propio contenido. Dos envíos idénticos
+   * producen la MISMA llave, el índice único deja pasar uno solo, y el otro
+   * recibe el pago que ya existe. Eso es atómico: no hay ventana entre la
+   * comprobación y la escritura porque no hay comprobación.
+   *
+   * ── Qué entra en la llave ───────────────────────────────────────────────────
+   *
+   * El crédito, el importe, el cobrador y un cubo de tiempo. Los tres primeros
+   * son lo que hace que un pago sea «el mismo»; con menos se estorbaría a cosas
+   * que sí pasan —dos clientes pagando la misma cuota el mismo minuto, o dos
+   * cobradores en la misma ruta—.
+   *
+   * El cubo de tiempo es lo que impide que un pago legítimo del mismo importe
+   * quede bloqueado para siempre: pasada la ventana, el cubo cambia, la llave
+   * es otra y el pago entra. Es deliberadamente grueso: todo lo que cae en el
+   * mismo minuto de reloj comparte cubo.
+   */
+  private llaveDerivadaDelPago(dto: {
+    prestamoId?: string;
+    montoTotal: number;
+    cobradorId?: string;
+  }): string | undefined {
+    const ventanaMs = this.ventanaDePagoRepetidoEnMs();
+    // Ventana cero: se apaga la protección a propósito, por configuración.
+    if (ventanaMs <= 0) return undefined;
+    if (!dto.prestamoId) return undefined;
+
+    const cubo = Math.floor(Date.now() / ventanaMs);
+    const partes = [
+      'auto',
+      dto.prestamoId,
+      String(dto.montoTotal),
+      dto.cobradorId || 'sin-cobrador',
+      String(cubo),
+    ].join(':');
+
+    // La columna es VarChar(100). Si las partes se pasan de largo se recorta
+    // con un resumen, que conserva la propiedad que importa: igual entrada,
+    // igual llave. Sin esto, dos pagos distintos de un mismo crédito con ids
+    // largos podrían recortarse al mismo texto y fundirse.
+    if (partes.length <= 100) return partes;
+    const resumen = createHash('sha1').update(partes).digest('hex');
+    return `auto:${resumen}`;
+  }
+
+  /**
    * Reparte el dinero recibido entre las cuotas del prestamo.
    *
    * ── Orden de imputacion (cascada) ───────────────────────────────────────────
@@ -706,18 +789,55 @@ export class PaymentsService {
       cobradorId:
         this.isCollector(actor) && actor?.id ? actor.id : dto.cobradorId,
     };
-    const idempotencyKey = this.normalizeIdempotencyKey(
+    const llaveRecibida = this.normalizeIdempotencyKey(
       paymentDto.idempotencyKey,
     );
 
-    const pagoExistente = await this.findPagoByIdempotencyKey(idempotencyKey);
+    const pagoExistente = await this.findPagoByIdempotencyKey(llaveRecibida);
     if (pagoExistente) {
       return this.buildIdempotentPaymentReplay(pagoExistente);
+    }
+
+    // El importe, antes de nada: con la misma regla que el resto del dinero del
+    // sistema. Lo que esto cierra, medido: `montoTotal: 1000.57` entraba con
+    // 201 y la deuda bajaba 1.001, o sea que el sistema se inventaba 43
+    // centavos. En pesos colombianos no hay centavos, y la contabilidad ya los
+    // rechazaba por su lado: eran dos reglas distintas para el mismo peso.
+    const motivoDelMonto = porQueNoEsDinero(paymentDto.montoTotal);
+    if (motivoDelMonto) {
+      throw new BadRequestException(`El monto del pago ${motivoDelMonto}.`);
     }
 
     // 1. Validar que se proporcione el prestamoId
     if (!paymentDto.prestamoId) {
       throw new BadRequestException('El ID del préstamo es requerido');
+    }
+
+    // Sin llave de idempotencia, el servidor se defiende solo del cobro doble.
+    //
+    // Medido: dos POST /payments simultáneos con el mismo cuerpo y sin llave
+    // respondían 201 y 201, y la deuda bajaba 100.000 por dos pagos de 50.000.
+    // Hoy eso lo frena la PANTALLA —el modal bloquea el botón mientras envía, y
+    // hay guardas equivalentes en las cuatro pantallas que registran pagos—,
+    // pero el servidor no tenía ninguna, así que la protección entera dependía
+    // de que ninguna pantalla futura se olvidara. Y ya pasó una vez en
+    // producción: está contado en el comentario de `VistaCobrador.tsx:499`.
+    //
+    // A partir de aquí, TODO pago lleva llave: la que trajo quien lo manda, o
+    // una derivada de su contenido. De ahí en adelante no hay dos caminos.
+    const idempotencyKey =
+      llaveRecibida ?? this.llaveDerivadaDelPago(paymentDto);
+
+    // Con la llave derivada ya usada, el doble envío llegó: se devuelve el pago
+    // que sí entró, igual que con una llave propia. Esto atrapa el doble clic
+    // en serie —dos envíos con medio segundo de diferencia—; el que llega en
+    // paralelo lo atrapa el índice único al escribir, y se resuelve igual en el
+    // `catch` de abajo.
+    if (!llaveRecibida && idempotencyKey) {
+      const yaEntro = await this.findPagoByIdempotencyKey(idempotencyKey);
+      if (yaEntro) {
+        return this.buildIdempotentPaymentReplay(yaEntro);
+      }
     }
 
     if (paymentDto.origenGestion === 'CIERRE_PENDIENTE') {

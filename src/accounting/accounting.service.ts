@@ -12,6 +12,7 @@ import {
   mensajeDeError,
   pilaDeError,
 } from '../common/error.util';
+import { porQueNoEsDinero } from '../common/dinero.util';
 import {
   Caja,
   EstadoCuota,
@@ -2276,6 +2277,17 @@ export class AccountingService {
     accountCode?: string;
     idempotencyKey?: string;
   }) {
+    // El importe se comprueba antes de cualquier otra cosa: la dirección del
+    // movimiento la lleva `tipo`, no el signo de `monto`. Con un monto
+    // negativo, la única validación de cifra que había —`data.monto >
+    // saldoDisponible`, más abajo— se cumple sola, y el movimiento entraba al
+    // revés: un EGRESO de −3.000.000 SUBÍA el saldo de la caja en tres
+    // millones. Medido contra la base de pruebas, respondía 201.
+    const motivo = porQueNoEsDinero(data.monto);
+    if (motivo) {
+      throw new BadRequestException(`El monto de la transacción ${motivo}.`);
+    }
+
     const idempotencyKey = data.idempotencyKey?.toString().trim() || undefined;
     if (idempotencyKey) {
       const transaccionExistente = await this.prisma.transaccion.findFirst({
@@ -4622,7 +4634,7 @@ export class AccountingService {
         });
       }
       if (!cajaDestino)
-        throw new Error(
+        throw new BadRequestException(
           'No existe Caja Oficina/Caja Principal para registrar el ingreso',
         );
     }

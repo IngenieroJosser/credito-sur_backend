@@ -1304,6 +1304,83 @@ describe('AccountingService financial ledger controls', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
+  /**
+   * Un importe negativo invierte el movimiento sin decirlo.
+   *
+   * La dirección la lleva `tipo` —INGRESO o EGRESO—, nunca el signo de la
+   * cifra. Medido contra la base de pruebas antes del arreglo: un EGRESO de
+   * −3.000.000 sobre una caja con 49.900.000 respondía 201 y dejaba la caja en
+   * 52.900.000. Un egreso que CREA tres millones. Y un INGRESO negativo los
+   * quitaba.
+   *
+   * No lo veía nada: la única validación de cifra que había era
+   * `monto > saldoDisponible`, que un negativo cumple solo, y el libro de doble
+   * entrada cuadra igual de bien con el signo invertido porque las dos patas se
+   * invierten juntas.
+   *
+   * Lo que se exige es que no llegue a escribirse: ni transacción, ni asiento,
+   * ni saldo tocado.
+   */
+  describe('el signo de monto no puede invertir el movimiento', () => {
+    const IMPOSIBLES: [string, number][] = [
+      ['egreso negativo (creaba dinero)', -3000000],
+      ['ingreso negativo (lo borraba)', -3000000],
+      ['cero, que no mueve nada', 0],
+      ['más grande de lo que cabe en la columna', 1e15],
+    ];
+
+    for (const [nombre, monto] of IMPOSIBLES) {
+      it(`rechaza ${nombre} sin escribir nada`, async () => {
+        const prisma = buildPrismaMock();
+        const tipo = nombre.startsWith('ingreso')
+          ? TipoTransaccion.INGRESO
+          : TipoTransaccion.EGRESO;
+
+        await expect(
+          makeService(prisma).createTransaccion({
+            cajaId: 'caja-ruta-1',
+            tipo,
+            monto,
+            descripcion: 'movimiento imposible',
+            creadoPorId: 'admin-1',
+          }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+
+        // Nada abierto: se rechaza antes de tocar la base, no a mitad.
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+        expect(prisma.caja.findUnique).not.toHaveBeenCalled();
+      });
+    }
+
+    it('el motivo dice qué cifra llegó, para poder leerlo en pantalla', async () => {
+      const prisma = buildPrismaMock();
+
+      await expect(
+        makeService(prisma).createTransaccion({
+          cajaId: 'caja-ruta-1',
+          tipo: TipoTransaccion.EGRESO,
+          monto: -3000000,
+          descripcion: 'movimiento imposible',
+          creadoPorId: 'admin-1',
+        }),
+      ).rejects.toThrow('-3000000');
+    });
+
+    it('un importe normal sigue entrando', async () => {
+      const prisma = buildPrismaMock();
+
+      await makeService(prisma).createTransaccion({
+        cajaId: 'caja-ruta-1',
+        tipo: TipoTransaccion.INGRESO,
+        monto: 30000,
+        descripcion: 'Ingreso manual',
+        creadoPorId: 'admin-1',
+      });
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+    });
+  });
+
   it('genera números de transacción sin depender de count + 1', async () => {
     const prisma = buildPrismaMock();
 
