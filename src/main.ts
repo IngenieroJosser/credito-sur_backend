@@ -5,7 +5,11 @@ import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { BadRequestException, ValidationPipe, Logger } from '@nestjs/common';
+import {
+  mensajesEnEspanol,
+  type ErrorDeValidacion,
+} from './common/mensajes-de-validacion';
 import { ErroresClarosFilter } from './common/filters/errores-claros.filter';
 import helmet from 'helmet';
 import { SanitizePipe } from './common/pipes/sanitize.pipe';
@@ -142,6 +146,20 @@ async function bootstrap() {
         target: false,
         value: false,
       },
+      // Los mensajes de `class-validator` salen en inglés y con el nombre
+      // interno del campo: «correo must be an email», «cantidadCuotas must not
+      // be less than 1». Medido: de los 1.096 decoradores de validación del
+      // backend, solo 12 traían un `message` propio, así que el 99% de los
+      // errores de formulario llegaban así a la pantalla. Se traducen aquí, en
+      // un solo sitio, en vez de escribir mil mensajes a mano que además se
+      // olvidarían en el siguiente DTO. Un decorador con su `message` propio se
+      // respeta: no encaja con ninguna plantilla inglesa y pasa tal cual.
+      exceptionFactory: (errores) =>
+        new BadRequestException({
+          message: mensajesEnEspanol(errores as ErrorDeValidacion[]),
+          error: 'Bad Request',
+          statusCode: 400,
+        }),
     }),
     new SanitizePipe(),
   );

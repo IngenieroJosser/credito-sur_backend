@@ -18,6 +18,8 @@ import {
   UsePipes,
   ValidationPipe,
   BadRequestException,
+  NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { Response } from 'express';
 import {
@@ -31,6 +33,7 @@ import {
 } from '@nestjs/swagger';
 import { LoansService } from './loans.service';
 import { mensajeDeError, pilaDeError } from '../common/error.util';
+import { porQueNoEsDinero } from '../common/dinero.util';
 import { MoraService } from './mora.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -525,7 +528,7 @@ export class LoansController {
 
     // Validar que el usuario existe y está activo
     if (!usuarioId) {
-      throw new Error('Usuario no autenticado');
+      throw new UnauthorizedException('Usuario no autenticado');
     }
 
     // Asignar creador automáticamente desde el JWT
@@ -937,7 +940,25 @@ export class LoansController {
     @Request() req: RequestConUsuario,
   ) {
     const usuarioId: string = req.user?.id;
-    if (!usuarioId) throw new Error('Usuario no autenticado');
+    if (!usuarioId) throw new UnauthorizedException('Usuario no autenticado');
+
+    // El cuerpo se comprueba aquí porque este `@Body()` no tiene DTO: el tipo
+    // de arriba no valida nada en tiempo de ejecución. Sin esto, una mora sin
+    // monto reventaba en `body.montoInteres.toLocaleString()` con un
+    // `TypeError` y salía como 500 «Ocurrió un error inesperado» —medido en la
+    // matriz de rutas, para los cuatro roles que pueden asignar mora—. El
+    // importe pasa por la misma regla que el resto del dinero del sistema.
+    const motivoDelMonto = porQueNoEsDinero(body?.montoInteres);
+    if (motivoDelMonto) {
+      throw new BadRequestException(
+        `El monto del interés de mora ${motivoDelMonto}.`,
+      );
+    }
+    if (!Number.isInteger(body?.diasGracia) || body.diasGracia < 0) {
+      throw new BadRequestException(
+        `Los días de gracia deben ser un número entero de cero o más (llegó ${String(body?.diasGracia)}).`,
+      );
+    }
 
     // Cargar el préstamo con datos del cliente
     const prestamo = await this.prisma.prestamo.findUnique({
@@ -946,7 +967,7 @@ export class LoansController {
         cliente: { select: { nombres: true, apellidos: true, dni: true } },
       },
     });
-    if (!prestamo) throw new Error('Préstamo no encontrado');
+    if (!prestamo) throw new NotFoundException('Préstamo no encontrado');
 
     const usuario = await this.prisma.usuario.findUnique({
       where: { id: usuarioId },
@@ -1081,13 +1102,13 @@ export class LoansController {
     @Request() req: RequestConUsuario,
   ) {
     const usuarioId: string = req.user?.id;
-    if (!usuarioId) throw new Error('Usuario no autenticado');
+    if (!usuarioId) throw new UnauthorizedException('Usuario no autenticado');
 
     const prestamo = await this.prisma.prestamo.findUnique({
       where: { id: prestamoId },
       include: { cliente: true },
     });
-    if (!prestamo) throw new Error('Préstamo no encontrado');
+    if (!prestamo) throw new NotFoundException('Préstamo no encontrado');
 
     const usuario = await this.prisma.usuario.findUnique({
       where: { id: usuarioId },
@@ -1308,7 +1329,7 @@ export class LoansController {
     @Request() req: RequestConUsuario,
   ) {
     const usuarioId: string = req.user?.id;
-    if (!usuarioId) throw new Error('Usuario no autenticado');
+    if (!usuarioId) throw new UnauthorizedException('Usuario no autenticado');
 
     return this.loansService.solicitarReprogramacion({
       prestamoId,

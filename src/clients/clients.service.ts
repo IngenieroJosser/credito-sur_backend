@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -141,7 +142,7 @@ export class ClientsService {
     // Buscar un usuario para asignar como creador (TODO: Usar usuario autenticado)
     const creador = await this.prisma.usuario.findFirst();
     if (!creador) {
-      throw new Error(
+      throw new NotFoundException(
         'No existen usuarios en el sistema para asignar la creación',
       );
     }
@@ -1382,6 +1383,20 @@ export class ClientsService {
         clienteCodigo: codigo,
       };
     } catch (error) {
+      // Un error que YA trae su mensaje y su codigo sale tal cual.
+      //
+      // Sin esto, el `throw new InternalServerErrorException` del final de este
+      // mismo catch se tragaba las validaciones de arriba y las convertia en
+      // "Error interno del servidor". El caso que lo delato, medido contra la
+      // base de pruebas: registrar un cliente con un documento que ya existe
+      // lanza `ConflictException('Ya existe un cliente activo con ese numero de
+      // documento: 77777771')` en la linea 1003, y la persona recibia un 500
+      // generico. Es el error mas comun del dia a dia —el mismo cliente
+      // apuntado dos veces— y era justo el que no se explicaba.
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
       // Prisma errors (DB constraints, invalid relations, etc.)
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         this.logger.error(
@@ -1461,7 +1476,7 @@ export class ClientsService {
       }
 
       if (aprobacion.tipoAprobacion !== 'NUEVO_CLIENTE') {
-        throw new Error('Tipo de aprobación inválido');
+        throw new BadRequestException('Tipo de aprobación inválido');
       }
 
       // Parsear datos de solicitud
@@ -1539,7 +1554,7 @@ export class ClientsService {
       }
 
       if (aprobacion.tipoAprobacion !== 'NUEVO_CLIENTE') {
-        throw new Error('Tipo de aprobación inválido');
+        throw new BadRequestException('Tipo de aprobación inválido');
       }
 
       // Parsear datos de solicitud

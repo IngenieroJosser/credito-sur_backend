@@ -201,6 +201,43 @@ describe('ClientsService', () => {
       });
       expect(prismaService.cliente.create).not.toHaveBeenCalled();
     });
+
+    /**
+     * El documento repetido tiene que llegar explicado a la pantalla.
+     *
+     * Es el error mas comun del dia a dia: la misma persona apuntada dos
+     * veces, por dos sucursales o por la misma el martes y el jueves. El
+     * servicio ya lanzaba el mensaje correcto, pero el `catch` del final de
+     * `createClient` no distinguia una excepcion HTTP de un fallo inesperado y
+     * la reemplazaba por `InternalServerErrorException('Error interno del
+     * servidor')`. Medido contra la base de pruebas: la peticion salia con 500
+     * y el registrador no tenia forma de saber que el cliente ya existia.
+     *
+     * Lo que se afirma no es el texto del mensaje sino las dos cosas de las que
+     * depende que la pantalla pueda explicarlo: que sea un `ConflictException`
+     * (409, no 500) y que el documento venga dentro.
+     */
+    it('el documento repetido sale como conflicto explicado, no como 500', async () => {
+      (prismaService.cliente.findFirst as jest.Mock).mockResolvedValue({
+        id: 'cliente-ya-registrado',
+        dni: '1098765432',
+        // Activo: es lo que hace que no se pueda duplicar. Un cliente
+        // archivado si admite reintento, y ese camino es otro.
+        eliminadoEn: null,
+        estadoAprobacion: 'APROBADO',
+      });
+
+      const intento = service.createClient({
+        nombres: 'Yorleidy',
+        apellidos: 'Moya',
+        dni: '1098765432',
+        telefono: '3001234567',
+      });
+
+      await expect(intento).rejects.toBeInstanceOf(ConflictException);
+      await expect(intento).rejects.toThrow('1098765432');
+      expect(prismaService.cliente.create).not.toHaveBeenCalled();
+    });
   });
 
   describe('updateClient concurrency', () => {

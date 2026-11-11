@@ -825,7 +825,7 @@ export class ReportsService {
     });
 
     if (!prestamo) {
-      throw new Error('PrÃ©stamo no encontrado');
+      throw new NotFoundException('Préstamo no encontrado');
     }
 
     let cuotaId: string | null = null;

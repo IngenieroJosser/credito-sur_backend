@@ -4,6 +4,7 @@ import {
   ConflictException,
   BadRequestException,
   ForbiddenException,
+  HttpException,
   InternalServerErrorException,
   Inject,
   forwardRef,
@@ -5045,6 +5046,30 @@ export class RoutesService {
 
     actor?: RouteActor,
   ) {
+    // El orden se comprueba antes de todo: sin esto, un cuerpo sin `orden`
+    // llegaba a `reorderData.map(...)` con `undefined` y reventaba. El `catch`
+    // del final solo deja pasar `NotFoundException`, así que la persona recibía
+    // un 500 «Error al actualizar el orden de clientes» —medido en la matriz de
+    // rutas, con los cinco roles que pueden reordenar—. Una lista VACÍA sí es
+    // válida: una ruta sin clientes no tiene nada que ordenar.
+    if (!Array.isArray(reorderData)) {
+      throw new BadRequestException(
+        'Falta la lista de orden de los clientes (campo `orden`).',
+      );
+    }
+
+    const malFormado = reorderData.find(
+      (item) =>
+        !item ||
+        typeof item.clienteId !== 'string' ||
+        !Number.isFinite(Number(item.orden)),
+    );
+    if (malFormado) {
+      throw new BadRequestException(
+        'Cada entrada del orden necesita `clienteId` y `orden` numérico.',
+      );
+    }
+
     try {
       await this.assertCollectorOwnRoute(rutaId, actor);
 
@@ -5084,7 +5109,12 @@ export class RoutesService {
         totalActualizados: reorderData.length,
       };
     } catch (error) {
-      if (error instanceof NotFoundException) {
+      // Antes solo dejaba pasar `NotFoundException`, y dentro del `try` lo
+      // primero que corre es `assertCollectorOwnRoute`, que lanza un prohibido
+      // cuando un cobrador toca la ruta de otro. Ese «no es tu ruta» salía como
+      // 500 «Error al actualizar el orden de clientes», que manda a buscar un
+      // fallo del sistema donde lo que hubo fue un permiso.
+      if (error instanceof HttpException) {
         throw error;
       }
 

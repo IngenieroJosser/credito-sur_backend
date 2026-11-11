@@ -4,6 +4,7 @@ import {
   Body,
   Param,
   Headers,
+  HttpException,
   UnauthorizedException,
   Logger,
   InternalServerErrorException,
@@ -222,6 +223,14 @@ export class MirrorSyncController {
 
       return { status: 'success', synced: true };
     } catch (e) {
+      // El rechazo por payload inválido de arriba es un 401 con su motivo, no
+      // un fallo de persistencia. Sin esta línea salía como «Fallo de
+      // persistencia en el VPS», que manda a revisar la base de datos del
+      // espejo cuando el problema está en lo que se envió.
+      if (e instanceof HttpException) {
+        throw e;
+      }
+
       this.logger.error(
         `Error crítico procesando réplica en VPS Espejo -> ${mensajeDeError(e)}`,
         pilaDeError(e),

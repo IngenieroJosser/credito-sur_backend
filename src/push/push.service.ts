@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as webpush from 'web-push';
 import { estadoDeError } from '../common/error.util';
@@ -163,6 +163,29 @@ export class PushService {
     userId: string,
     subscription: { endpoint: string; keys: { p256dh: string; auth: string } },
   ) {
+    // La suscripción se comprueba antes de usarla. El tipo declarado arriba no
+    // comprueba nada en tiempo de ejecución —el controlador recibe un `@Body()`
+    // sin DTO—, así que un cuerpo sin `subscription` llegaba aquí como
+    // `undefined` y reventaba en `subscription.endpoint` con un
+    // `TypeError: Cannot read properties of undefined (reading 'endpoint')`.
+    // Medido en la matriz de rutas: 500 para los siete roles.
+    //
+    // Importa más de lo que parece: por aquí pasa el registro del dispositivo
+    // de cada persona, y un navegador puede entregar una suscripción a medias.
+    // Con el 500, quien se queda sin avisos no tiene forma de saber por qué.
+    if (
+      !subscription ||
+      typeof subscription.endpoint !== 'string' ||
+      !subscription.endpoint ||
+      !subscription.keys ||
+      typeof subscription.keys.p256dh !== 'string' ||
+      typeof subscription.keys.auth !== 'string'
+    ) {
+      throw new BadRequestException(
+        'La suscripción de avisos llegó incompleta: hacen falta `endpoint` y las claves `p256dh` y `auth`.',
+      );
+    }
+
     try {
       const saved = await this.prisma.pushSubscription.upsert({
         where: { endpoint: subscription.endpoint },

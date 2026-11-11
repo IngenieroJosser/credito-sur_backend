@@ -782,7 +782,11 @@ export class LoansService implements OnModuleInit {
     tx: TransaccionPrisma,
     params: {
       prestamo: PrestamoConImpactoProvisional;
-      data: CreateLoanDto;
+      // `creadoPorId` obligatorio por la misma razón que en `createLoan`, que
+      // es quien llama aquí: por el cable es opcional porque el controlador lo
+      // pone, y en este punto ya está. Abajo se escribe en tres transacciones
+      // contra una columna que no admite nulos.
+      data: CreateLoanDto & { creadoPorId: string };
       // `creador` y `cliente` no se LEEN aqui: solo se reenvian a
       // `resolveCajaOrigenPrestamo` y a `isOperatorWithBase`. Se declara lo que esos dos
       // piden y nada mas; lo comprobo la sonda `never`, que no saco ni una propiedad de
@@ -2223,7 +2227,63 @@ export class LoansService implements OnModuleInit {
         };
       });
 
-      return prestamo;
+      /**
+       * El detalle también responde con los nombres que usa el LISTADO.
+       *
+       * El mismo dinero se llamaba distinto según por dónde se pidiera, y eso
+       * ya había obligado a las pantallas a escribir
+       * `data.saldoPendiente || data.montoPendiente || 0`:
+       *
+       *     concepto           detalle          listado
+       *     ──────────────────────────────────────────────────
+       *     prestado           monto            montoPrestado
+       *     total a pagar      (no venía)       montoTotal
+       *     saldo pendiente    saldoPendiente   montoPendiente
+       *     ya pagado          totalPagado      montoPagado
+       *     cuotas             (la relación)    cuotasTotales / cuotasPagadas
+       *
+       * Leer el nombre del otro endpoint no da error: da `undefined`, y ese
+       * `|| 0` final lo convierte en «$ 0», que se lee como «no debe nada».
+       * Medido: de los dos nombres del saldo hay 106 y 32 usos en el frontend,
+       * y ocho pantallas usan los dos a la vez para cubrirse.
+       *
+       * Se AÑADEN en vez de renombrar: agregar campos no rompe a ningún
+       * consumidor, y renombrar `saldoPendiente` dejaría en blanco de golpe
+       * cada sitio que hoy funciona, incluida la copia que se guarda para
+       * trabajar sin conexión.
+       *
+       * Cada alias reproduce la cuenta del listado, no una parecida.
+       * `montoPendiente` NO es `saldoPendiente` a secas: el listado lo trunca y
+       * lo pone en cero cuando todas las cuotas están pagadas, para que un
+       * residuo de redondeo no deje una deuda fantasma. Copiar el saldo crudo
+       * habría creado dos cifras distintas con el mismo nombre, que es justo el
+       * problema que esto viene a cerrar.
+       */
+      const cuotasDelPrestamo = Array.isArray(prestamo.cuotas)
+        ? prestamo.cuotas
+        : [];
+      const cuotasTotales = cuotasDelPrestamo.length;
+      const cuotasPagadas = cuotasDelPrestamo.filter(
+        (c) => c.estado === EstadoCuota.PAGADA,
+      ).length;
+
+      const montoPrestado = Number(prestamo.monto) || 0;
+      const interesTotalNum = Number(prestamo.interesTotal) || 0;
+      const saldoPendienteNum = Number(prestamo.saldoPendiente) || 0;
+      const totalPagadoNum = Number(prestamo.totalPagado) || 0;
+
+      return {
+        ...prestamo,
+        montoPrestado,
+        montoTotal: montoPrestado + interesTotalNum,
+        montoPendiente:
+          cuotasTotales > 0 && cuotasPagadas === cuotasTotales
+            ? 0
+            : Math.trunc(saldoPendienteNum),
+        montoPagado: totalPagadoNum,
+        cuotasTotales,
+        cuotasPagadas,
+      };
     } catch (error) {
       this.logger.error(`Error getting loan ${id}:`, error);
       throw error;
@@ -2952,7 +3012,11 @@ export class LoansService implements OnModuleInit {
       }
 
       if (!prestamo.eliminadoEn) {
-        throw new Error('El préstamo no está eliminado');
+        // `Error` pelado, no: Nest no sabe qué código darle y lo sirve como 500
+        // «Ocurrió un error inesperado», con el motivo correcto perdido en el
+        // log. Al lado, dos líneas arriba, el préstamo que no existe ya usaba
+        // `NotFoundException`; este se quedó sin convertir.
+        throw new BadRequestException('El préstamo no está eliminado');
       }
 
       const prestamoRestaurado = await this.prisma.$transaction(async (tx) => {
@@ -3008,8 +3072,15 @@ export class LoansService implements OnModuleInit {
       }
 
       if (prestamo.estado !== EstadoPrestamo.PENDIENTE_APROBACION) {
-        throw new Error(
-          'El préstamo no está en estado pendiente de aprobación',
+        // Este es el caso de todos los días: dos personas aprueban el mismo
+        // crédito a la vez, o alguien vuelve atrás y le da otra vez al botón.
+        // Siendo un `Error` pelado salía como 500 «Ocurrió un error
+        // inesperado», así que la segunda persona no sabía que ya estaba
+        // aprobado y volvía a intentarlo. Medido en la matriz de rutas:
+        // después de que el superadministrador aprobara, ADMIN y COORDINADOR
+        // recibían 500 en esta misma ruta.
+        throw new BadRequestException(
+          `El préstamo no está pendiente de aprobación (está en ${prestamo.estado}).`,
         );
       }
 
@@ -3338,7 +3409,18 @@ export class LoansService implements OnModuleInit {
     }
   }
 
-  async createLoan(data: CreateLoanDto) {
+  /**
+   * `creadoPorId` llega obligatorio aquí, aunque en el DTO sea opcional.
+   *
+   * No es una contradicción, son dos contratos distintos: por el cable NO se
+   * pide —lo manda quien llame o no, da igual, porque el controlador lo
+   * sobrescribe con el id del JWT— y al entrar a este servicio ya está puesto.
+   * Escribirlo en el tipo es lo que mantiene honestas las tres escrituras de
+   * `data.creadoPorId` que hay más abajo contra una columna que no admite
+   * nulos: el compilador las señaló al relajar el DTO, y taparlo con un
+   * `?? ''` habría guardado un creador vacío.
+   */
+  async createLoan(data: CreateLoanDto & { creadoPorId: string }) {
     let prestamoCreado = null;
     let aprobacionCreada = null;
     let efectoProvisionalCreado = null;

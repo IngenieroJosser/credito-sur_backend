@@ -122,9 +122,20 @@ export class CreateLoanDto {
   @IsDateString()
   fechaInicio: string;
 
+  /**
+   * Quién crea el crédito. Lo pone el servidor, no quien llama.
+   *
+   * Es opcional a propósito, aunque el crédito no pueda existir sin creador: el
+   * controlador lo sobrescribe SIEMPRE con el id del JWT
+   * (`loans.controller.ts`, «Asignar creador automáticamente desde el JWT»).
+   * Siendo obligatorio, la API exigía un dato que después ignoraba: quien no lo
+   * mandaba recibía «Falta indicar creado por id», y quien mandaba el de otra
+   * persona veía cómo se corregía en silencio. Lo segundo está bien —no se
+   * puede suplantar al creador, comprobado— pero lo primero es una trampa.
+   */
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  creadoPorId: string;
+  creadoPorId?: string;
 
   @Transform(({ value }) =>
     value === null || value === undefined || value === ''

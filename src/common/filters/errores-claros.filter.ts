@@ -275,8 +275,12 @@ export class ErroresClarosFilter implements ExceptionFilter {
       if (Array.isArray(mensaje)) {
         const limpios = mensaje
           .map((m) => String(m ?? '').trim())
-          .filter(Boolean);
-        if (limpios.length > 0) return limpios.join('. ');
+          .filter(Boolean)
+          // Sin esto salían puntos dobles: los mensajes escritos a mano en los
+          // DTO ya acaban en punto —«La Cédula debe tener entre 6 y 10
+          // dígitos.»— y el separador añadía otro, dejando «dígitos.. La».
+          .map((m) => m.replace(/\.+$/, ''));
+        if (limpios.length > 0) return `${limpios.join('. ')}.`;
       }
       const error = (cuerpo as { error?: unknown }).error;
       if (typeof error === 'string') return error.trim();
