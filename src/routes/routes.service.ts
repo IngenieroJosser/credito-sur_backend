@@ -3527,6 +3527,63 @@ export class RoutesService {
   }
 
   /**
+   * Las visitas del día de VARIAS rutas, en una sola petición.
+   *
+   * El listado de rutas ya pedía esto desde `obtenerVisitasDelDiaEnLote`
+   * (`rutas-service.ts`), con `POST /routes/daily-visits/batch`. El endpoint no
+   * existía. Medido contra el backend en marcha:
+   *
+   *     POST /routes/daily-visits/batch -> 404
+   *     GET  /routes/:id/daily-visits   -> 401 (existe; lo frena el guard)
+   *
+   * Así que `fetchDailySummaries` se caía en esa línea, después de haberse
+   * descargado 5.000 pagos, y las tarjetas del listado mostraban las cifras del
+   * LISTADO (`ruta.metaDelDia`, `ruta.cobranzaDelDia`) mientras la pantalla de
+   * detalle mostraba las operativas: la misma ruta con dos metas según dónde se
+   * mirara.
+   *
+   * Una ruta que el actor no puede ver NO tumba el lote: `getDailyVisits` lanza
+   * por `assertCollectorOwnRoute` y esa ruta simplemente no aparece en el mapa.
+   * El frontend ya trata la ausencia ruta por ruta.
+   *
+   * La concurrencia va limitada porque cada ruta es varias consultas: de a seis,
+   * igual que el resto de los lotes de esta clase.
+   */
+  async getDailyVisitsBatch(
+    rutaIds: string[],
+    fecha?: string,
+    actor?: RouteActor,
+  ): Promise<Record<string, unknown>> {
+    const unicos = Array.from(
+      new Set((rutaIds || []).map((id) => String(id || '').trim())),
+    ).filter(Boolean);
+
+    const salida: Record<string, unknown> = {};
+    const TANDA = 6;
+
+    for (let i = 0; i < unicos.length; i += TANDA) {
+      const tanda = unicos.slice(i, i + TANDA);
+      const resultados = await Promise.all(
+        tanda.map(async (rutaId) => {
+          try {
+            return {
+              rutaId,
+              datos: await this.getDailyVisits(rutaId, fecha, actor),
+            };
+          } catch {
+            return { rutaId, datos: null };
+          }
+        }),
+      );
+      for (const { rutaId, datos } of resultados) {
+        if (datos) salida[rutaId] = datos;
+      }
+    }
+
+    return salida;
+  }
+
+  /**
 
    * Obtener visitas del día para una ruta
 
@@ -3613,6 +3670,82 @@ export class RoutesService {
       pagosPorCliente[p.clienteId] =
         (pagosPorCliente[p.clienteId] || 0) + Number(p.montoTotal || 0);
     });
+
+    /**
+     * Lo mismo pero por CRÉDITO, que es como lo necesita la pantalla.
+     *
+     * El agrupado de arriba es por cliente, y la pantalla del cobrador trabaja
+     * por obligación: un cliente puede tener dos créditos en la misma ruta y
+     * haber pagado solo uno.
+     *
+     * Por eso el frontend se descargaba el historial COMPLETO de pagos y
+     * rehacía esta cuenta en el navegador. Medido al entrar como cobrador con
+     * 64.088 pagos en la base: 5.918 KB en 52 peticiones, de las cuales 26 eran
+     * `/payments?page=N&limit=200` —`obtenerPagos({ limit: 5000 })` pide al
+     * servidor de 200 en 200—. En el teléfono del cobrador, con datos móviles,
+     * eso es el historial entero de la financiera cada vez que abre la app.
+     *
+     * Los pagos de hoy de esta ruta ya estaban cargados aquí (`pagosDeHoy`,
+     * con los filtros correctos, incluido el caso del cierre pendiente): esto
+     * solo los agrupa de otra forma. No añade ninguna consulta.
+     */
+    const recaudadoHoyPorPrestamo: Record<string, number> = {};
+    pagosDeHoy.forEach((p) => {
+      if (!p.prestamoId) return;
+      recaudadoHoyPorPrestamo[p.prestamoId] =
+        (recaudadoHoyPorPrestamo[p.prestamoId] || 0) +
+        Number(p.montoTotal || 0);
+    });
+
+    /**
+     * La fecha del último pago y el total pagado histórico de cada crédito de
+     * la ruta.
+     *
+     * Son los otros dos motivos por los que el frontend se bajaba todo el
+     * historial: con la fecha ORDENA la lista de visitas del cobrador y el
+     * total lo muestra como `recaudadoTotalClient`, así que no se pueden
+     * quitar.
+     *
+     * Un `GROUP BY` da las dos cosas en una consulta. Pedirlas con `take: 1`
+     * anidado en Prisma traería todos los pagos de todos los créditos para
+     * quedarse con uno de cada grupo, que es exactamente el problema que se
+     * está arreglando.
+     *
+     * El filtro `isPagoConfirmadoParaRecaudo` del frontend NO se replica aquí,
+     * y no es un olvido: lee `estadoAprobacion`, `tipoAprobacion`,
+     * `pendingVerification` y `pagoPendiente`, y ninguna de las cuatro es
+     * columna de `Pago` —sus columnas son id, numeroPago, clienteId,
+     * prestamoId, cobradorId, fechaPago, montoTotal, metodoPago,
+     * numeroReferencia, notas, creadoEn, actualizadoEn, estadoSincronizacion,
+     * ultimaSincronizacion, idempotencyKey, rutaId, fechaOperativaRuta,
+     * origenGestion, tipoRegistro—. Sobre los pagos que devuelve
+     * `GET /payments` ese filtro vale siempre `true`, así que esta suma da el
+     * mismo número. Donde sí distingue es sobre los pagos locales sin
+     * sincronizar, que llevan esos campos puestos por el frontend y no salen
+     * de aquí.
+     *
+     * La fecha se devuelve como número (milisegundos) porque es lo que la
+     * pantalla compara para ordenar.
+     */
+    const resumenPagosPorPrestamo = await this.prisma.$queryRaw<
+      { prestamoId: string; ultimoPago: Date; totalPagado: number }[]
+    >`
+      SELECT p."prestamoId" AS "prestamoId",
+             MAX(COALESCE(p."fechaPago", p."creadoEn")) AS "ultimoPago",
+             COALESCE(SUM(p."montoTotal"), 0)::float8 AS "totalPagado"
+      FROM "Pago" p
+      JOIN "Prestamo" c ON c.id = p."prestamoId"
+      WHERE c."rutaId" = ${rutaId}
+      GROUP BY p."prestamoId"
+    `;
+
+    const fechaUltimoPagoPorPrestamo: Record<string, number> = {};
+    const totalPagadoPorPrestamo: Record<string, number> = {};
+    for (const fila of resumenPagosPorPrestamo) {
+      const t = new Date(fila.ultimoPago).getTime();
+      if (!Number.isNaN(t)) fechaUltimoPagoPorPrestamo[fila.prestamoId] = t;
+      totalPagadoPorPrestamo[fila.prestamoId] = Number(fila.totalPagado || 0);
+    }
 
     // Obtener todos los clientes de la ruta con sus préstamos activos
     const asignaciones = await this.prisma.asignacionRuta.findMany({
@@ -3775,6 +3908,14 @@ export class RoutesService {
               frecuenciaPago: prestamo.frecuenciaPago,
               cantidadCuotas: prestamo.cantidadCuotas,
               estado: prestamo.estado,
+              // Lo cobrado hoy a ESTE crédito y la fecha de su último
+              // pago. Son los dos únicos datos por los que la pantalla del
+              // cobrador se descargaba el historial completo de pagos: el
+              // primero para el recaudo del día y el segundo para ordenar
+              // las visitas.
+              recaudadoHoy: recaudadoHoyPorPrestamo[prestamo.id] || 0,
+              fechaUltimoPago: fechaUltimoPagoPorPrestamo[prestamo.id] || 0,
+              recaudadoTotal: totalPagadoPorPrestamo[prestamo.id] || 0,
               estadoAprobacion: estadoRevision.estadoAprobacion,
               estadoEfectoProvisional: estadoRevision.estadoEfectoProvisional,
               esProvisional: estadoRevision.esProvisional,
@@ -4580,6 +4721,14 @@ export class RoutesService {
               frecuenciaPago: prestamo.frecuenciaPago,
               cantidadCuotas: prestamo.cantidadCuotas,
               estado: prestamo.estado,
+              // Lo cobrado hoy a ESTE crédito y la fecha de su último
+              // pago. Son los dos únicos datos por los que la pantalla del
+              // cobrador se descargaba el historial completo de pagos: el
+              // primero para el recaudo del día y el segundo para ordenar
+              // las visitas.
+              recaudadoHoy: recaudadoHoyPorPrestamo[prestamo.id] || 0,
+              fechaUltimoPago: fechaUltimoPagoPorPrestamo[prestamo.id] || 0,
+              recaudadoTotal: totalPagadoPorPrestamo[prestamo.id] || 0,
               estadoAprobacion: estadoRevision.estadoAprobacion,
               estadoEfectoProvisional: estadoRevision.estadoEfectoProvisional,
               esProvisional: estadoRevision.esProvisional,

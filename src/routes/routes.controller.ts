@@ -18,6 +18,7 @@ import { Response } from 'express';
 import { RoutesService } from './routes.service';
 import { CreateRouteDto } from './dto/create-route.dto';
 import { UpdateRouteDto } from './dto/update-route.dto';
+import { DailyVisitsBatchDto } from './dto/daily-visits-batch.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -405,6 +406,34 @@ export class RoutesController {
     @Body('toRutaId', ParseUUIDPipe) toRutaId: string,
   ) {
     return this.routesService.moveLoan(prestamoId, toRutaId);
+  }
+
+  @Post('daily-visits/batch')
+  @HttpCode(HttpStatus.OK)
+  @Roles(
+    RolUsuario.COBRADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COORDINADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.SUPER_ADMINISTRADOR,
+  )
+  @ApiOperation({
+    summary: 'Obtener las visitas del día de varias rutas en una sola petición',
+  })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Mapa de rutaId a sus visitas del día. Una ruta que el actor no puede ver no aparece.',
+  })
+  getDailyVisitsBatch(
+    @Body() dto: DailyVisitsBatchDto,
+    @Request() req?: RequestConUsuario,
+  ) {
+    return this.routesService.getDailyVisitsBatch(
+      dto.rutaIds,
+      dto.fecha,
+      req?.user,
+    );
   }
 
   @Get(':id/daily-visits')

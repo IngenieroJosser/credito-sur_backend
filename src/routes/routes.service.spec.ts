@@ -49,6 +49,22 @@ class RutasParaPrueba extends RoutesService {
 
 const makeService = (prisma: DobleDePrisma) => {
   if (prisma) {
+    /**
+     * `$queryRaw` por omisión: una lista vacía.
+     *
+     * `getDailyVisits` lo usa para traer, de una sola consulta, la fecha del
+     * último pago y el total pagado de cada crédito de la ruta (antes el
+     * frontend se bajaba el historial completo para calcularlos). Ninguna de
+     * estas pruebas ejercita esa consulta, y sin el doble las nueve que pasan
+     * por `getDailyVisits` revientan con «$queryRaw is not a function».
+     *
+     * Vacío significa «ningún crédito tiene pagos», que es el valor neutro: los
+     * dos campos caen a 0, igual que antes de que existieran. Una prueba que
+     * quiera el otro caso pone su propio `$queryRaw`.
+     */
+    if (!prisma.$queryRaw) {
+      prisma.$queryRaw = jest.fn().mockResolvedValue([]);
+    }
     // `Object.values`: indexar un tipo de claves conocidas con un `string` suelto no se
     // puede comprobar, y aqui solo hay que recorrer los modelos.
     for (const model of Object.values(prisma)) {
@@ -2722,5 +2738,107 @@ describe('activacion del dia en el listado de rutas', () => {
     expect(activadas.size).toBe(0);
     expect(prisma.transaccion.findMany).not.toHaveBeenCalled();
     jest.useRealTimers();
+  });
+});
+
+describe('getDailyVisitsBatch', () => {
+  /**
+   * El listado de rutas pedia `POST /routes/daily-visits/batch` desde
+   * `obtenerVisitasDelDiaEnLote`, y ese endpoint NO existia. Medido contra el
+   * backend en marcha antes de arreglarlo:
+   *
+   *     POST /routes/daily-visits/batch -> 404
+   *     GET  /routes/:id/daily-visits   -> 401 (existe; lo frena el guard)
+   *
+   * Asi que `fetchDailySummaries` se cortaba ahi y las tarjetas del listado se
+   * quedaban con las cifras del LISTADO mientras el detalle mostraba las
+   * operativas: la misma ruta con dos metas segun donde se mirara.
+   */
+  /**
+   * Lo que el doble devuelve por ruta: su jornada, o un error para simular la
+   * ruta que el actor no puede ver.
+   *
+   * Estaba como `unknown | Error`, que es `unknown` a secas —absorbe a `Error`—
+   * y por tanto no decia nada: el lint lo marco. Nombrar las dos formas si
+   * comprueba que una prueba no pase un tercer tipo por descuido.
+   */
+  type JornadaOFallo = { visitas: string[] } | Error;
+
+  const servicioConVisitas = (porRuta: Record<string, JornadaOFallo>) => {
+    const service = makeService({});
+    const espia = jest
+      .spyOn(conPrivados(service), 'getDailyVisits')
+      .mockImplementation((...args: unknown[]) => {
+        const rutaId = String(args[0]);
+        const valor = porRuta[rutaId];
+        if (valor instanceof Error) return Promise.reject(valor);
+        return Promise.resolve(valor);
+      });
+    return { service, espia };
+  };
+
+  it('devuelve un mapa de rutaId a sus visitas del dia', async () => {
+    const { service } = servicioConVisitas({
+      'ruta-1': { visitas: ['v1'] },
+      'ruta-2': { visitas: ['v2', 'v3'] },
+    });
+
+    const mapa = await service.getDailyVisitsBatch(
+      ['ruta-1', 'ruta-2'],
+      '2026-11-12',
+    );
+
+    expect(Object.keys(mapa).sort()).toEqual(['ruta-1', 'ruta-2']);
+    expect(mapa['ruta-2']).toEqual({ visitas: ['v2', 'v3'] });
+  });
+
+  it('pasa la fecha y el actor a cada ruta', async () => {
+    const { service, espia } = servicioConVisitas({
+      'ruta-1': { visitas: [] },
+    });
+    const actor = { id: 'u-1', rol: RolUsuario.COORDINADOR };
+
+    await service.getDailyVisitsBatch(['ruta-1'], '2026-11-12', actor);
+
+    expect(espia).toHaveBeenCalledWith('ruta-1', '2026-11-12', actor);
+  });
+
+  it('una ruta que el actor no puede ver no tumba el lote: solo no aparece', async () => {
+    // `getDailyVisits` lanza por `assertCollectorOwnRoute` cuando un cobrador
+    // pide una ruta ajena. Si eso propagara, un cobrador con varias rutas a la
+    // vista no veria NINGUNA.
+    const { service } = servicioConVisitas({
+      'ruta-propia': { visitas: ['v1'] },
+      'ruta-ajena': new ForbiddenException('No es tu ruta'),
+    });
+
+    const mapa = await service.getDailyVisitsBatch(
+      ['ruta-propia', 'ruta-ajena'],
+      '2026-11-12',
+    );
+
+    expect(Object.keys(mapa)).toEqual(['ruta-propia']);
+  });
+
+  it('no consulta dos veces la misma ruta repetida', async () => {
+    const { service, espia } = servicioConVisitas({
+      'ruta-1': { visitas: [] },
+    });
+
+    await service.getDailyVisitsBatch(
+      ['ruta-1', 'ruta-1', ' ruta-1 '],
+      '2026-11-12',
+    );
+
+    expect(espia).toHaveBeenCalledTimes(1);
+  });
+
+  it('con la lista vacia no consulta nada y devuelve un mapa vacio', async () => {
+    const { service, espia } = servicioConVisitas({});
+
+    const mapa = await service.getDailyVisitsBatch([], '2026-11-12');
+
+    expect(mapa).toEqual({});
+    expect(espia).not.toHaveBeenCalled();
   });
 });

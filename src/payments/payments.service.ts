@@ -1763,6 +1763,8 @@ export class PaymentsService {
       prestamoId?: string;
       clienteId?: string;
       rutaId?: string;
+      cobradorId?: string;
+      fechaOperativa?: string;
       page?: number;
       limit?: number;
     },
@@ -1772,6 +1774,8 @@ export class PaymentsService {
       prestamoId,
       clienteId,
       rutaId,
+      cobradorId,
+      fechaOperativa,
       page = 1,
       limit: limitRaw = 20,
     } = filters || {};
@@ -1782,6 +1786,66 @@ export class PaymentsService {
     if (prestamoId) where.prestamoId = prestamoId;
     if (clienteId) where.clienteId = clienteId;
     if (rutaId) where.rutaId = rutaId;
+
+    /**
+     * Los pagos de un cobrador.
+     *
+     * El historial de una ruta se queda solo con los pagos de su cobrador
+     * (`useRutaHistorial` filtra `p.cobradorId === cobradorIdActual` en sus dos
+     * usos), así que pedirlos acotados da el mismo resultado sin bajarse los de
+     * todos los demás. Más abajo, si el actor ES cobrador, su propio filtro
+     * sigue mandando: nadie puede usar este parámetro para ver pagos ajenos.
+     */
+    if (cobradorId) where.cobradorId = cobradorId;
+
+    /**
+     * Los pagos de UN día operativo (hora de Bogotá).
+     *
+     * Sin esto, las pantallas que necesitan el día pedían
+     * `obtenerPagos({ limit: 5000 })` y filtraban en el navegador: con 64.091
+     * pagos en la base de pruebas eso son 25 peticiones y megas de datos para
+     * quedarse con los de una jornada.
+     *
+     * Y NO sirve acotar esas pantallas por `rutaId`: esa columna se añadió en
+     * la migración `20260526190000_add_ruta_id_to_pago` SIN relleno, así que
+     * todo pago anterior la tiene en NULL para siempre —medido: 64.000 de
+     * 64.091—. El frontend lo sabe y tiene un camino de respaldo por crédito
+     * justo para esos pagos (`filterPagosDelDiaByRuta`); filtrar por `rutaId`
+     * los escondería antes de que ese respaldo pudiera verlos, y el recaudo de
+     * los días viejos saldría por debajo.
+     *
+     * La forma del filtro es la misma que usa `getDailyVisits` para su
+     * `pagosDeHoy`, para que "un día" signifique lo mismo en los dos lados:
+     * el pago normal cuenta por `fechaPago` y el de cierre pendiente por su
+     * `fechaOperativaRuta`.
+     *
+     * La rama `origenGestion: null` no es de adorno: en Prisma
+     * `{ not: 'CIERRE_PENDIENTE' }` se traduce a `<> 'CIERRE_PENDIENTE'`, que
+     * en SQL es NULL —no verdadero— para las filas donde la columna es NULL, y
+     * sin ella se perderían todos los pagos sin `origenGestion`.
+     */
+    if (fechaOperativa) {
+      const { startDate, endDate } =
+        getBogotaStartEndOfDayFromKey(fechaOperativa);
+      where.AND = [
+        {
+          OR: [
+            {
+              fechaPago: { gte: startDate, lte: endDate },
+              OR: [
+                { origenGestion: null },
+                { origenGestion: { not: 'CIERRE_PENDIENTE' } },
+              ],
+            },
+            {
+              fechaOperativaRuta: fechaOperativa,
+              origenGestion: 'CIERRE_PENDIENTE',
+            },
+          ],
+        },
+      ];
+    }
+
     if (this.isCollector(actor) && actor?.id) {
       where.cobradorId = actor.id;
     } else if (

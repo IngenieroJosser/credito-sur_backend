@@ -169,6 +169,8 @@ export class PaymentsController {
     @Query('prestamoId') prestamoId: string | undefined,
     @Query('clienteId') clienteId: string | undefined,
     @Query('rutaId') rutaId: string | undefined,
+    @Query('cobradorId') cobradorId: string | undefined,
+    @Query('fechaOperativa') fechaOperativa: string | undefined,
     @Query('page') page: string | undefined,
     @Query('limit') limit: string | undefined,
     @Request() req: RequestConUsuario,
@@ -178,6 +180,10 @@ export class PaymentsController {
         prestamoId,
         clienteId,
         rutaId,
+        cobradorId,
+        fechaOperativa: /^\d{4}-\d{2}-\d{2}$/.test(String(fechaOperativa || ''))
+          ? fechaOperativa
+          : undefined,
         page: page ? parseInt(page, 10) : undefined,
         limit: limit ? parseInt(limit, 10) : undefined,
       },

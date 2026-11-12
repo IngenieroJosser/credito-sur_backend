@@ -923,6 +923,76 @@ describe('PaymentsService', () => {
     });
   });
 
+  describe('findAll — acotar la consulta', () => {
+    /**
+     * Las pantallas de jornada pedían `limit: 5000` sin filtro y descartaban en
+     * el navegador: con 64.091 pagos en la base de pruebas son 25 peticiones
+     * —`obtenerPagos` pide de 200 en 200— y megas de datos en el teléfono del
+     * cobrador.
+     *
+     * Y NO sirve acotarlas por `rutaId`: esa columna se añadió en
+     * `20260526190000_add_ruta_id_to_pago` SIN relleno, así que todo pago
+     * anterior la tiene en NULL para siempre (medido: 64.000 de 64.091), y el
+     * frontend tiene un camino de respaldo por crédito justo para esos pagos.
+     */
+    const whereDeLaConsulta = () => prisma.pago.findMany.mock.calls[0][0].where;
+
+    it('un dia operativo cuenta el pago normal por fechaPago', async () => {
+      await service.findAll({ fechaOperativa: '2026-11-12', limit: 200 });
+
+      const rama = whereDeLaConsulta().AND[0].OR[0];
+      expect(rama.fechaPago.gte).toBeInstanceOf(Date);
+      expect(rama.fechaPago.lte).toBeInstanceOf(Date);
+    });
+
+    it('y el pago de cierre pendiente por su fechaOperativaRuta', async () => {
+      // Es la misma forma que usa `getDailyVisits` para su `pagosDeHoy`, para
+      // que «un día» signifique lo mismo en los dos lados.
+      await service.findAll({ fechaOperativa: '2026-11-12', limit: 200 });
+
+      const rama = whereDeLaConsulta().AND[0].OR[1];
+      expect(rama).toEqual({
+        fechaOperativaRuta: '2026-11-12',
+        origenGestion: 'CIERRE_PENDIENTE',
+      });
+    });
+
+    it('no pierde los pagos sin origenGestion', async () => {
+      // En Prisma `{ not: 'X' }` se traduce a `<> 'X'`, que en SQL es NULL —no
+      // verdadero— para las filas donde la columna es NULL. Sin la rama
+      // explícita `origenGestion: null` se perderían todos esos pagos.
+      await service.findAll({ fechaOperativa: '2026-11-12', limit: 200 });
+
+      const rama = whereDeLaConsulta().AND[0].OR[0];
+      expect(rama.OR).toEqual([
+        { origenGestion: null },
+        { origenGestion: { not: 'CIERRE_PENDIENTE' } },
+      ]);
+    });
+
+    it('una fecha ausente no agrega ningun filtro de fecha', async () => {
+      await service.findAll({ prestamoId: 'prestamo-1', limit: 200 });
+
+      expect(whereDeLaConsulta().AND).toBeUndefined();
+    });
+
+    it('acota por cobrador cuando se lo piden', async () => {
+      await service.findAll({ cobradorId: 'cobrador-de-la-ruta', limit: 200 });
+
+      expect(whereDeLaConsulta().cobradorId).toBe('cobrador-de-la-ruta');
+    });
+
+    it('un cobrador no puede usar el filtro para ver pagos ajenos', async () => {
+      // El filtro del actor va DESPUES y pisa el parametro.
+      await service.findAll(
+        { cobradorId: 'otro-cobrador', limit: 200 },
+        { id: 'cobrador-propio', rol: RolUsuario.COBRADOR },
+      );
+
+      expect(whereDeLaConsulta().cobradorId).toBe('cobrador-propio');
+    });
+  });
+
   describe('findOne — alcance por rol', () => {
     it('limita el detalle de pago del cobrador a su propio id', async () => {
       // Esta prueba SÍ necesita que la consulta encuentre un pago: lo que
