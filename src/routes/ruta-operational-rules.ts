@@ -60,6 +60,15 @@ export interface PrestamoOperativo {
   // campos que el compilador pidio al quitarlo. Los tres ultimos los agrega el servicio
   // al armar la jornada, no vienen de la base.
   montoMetaOperativaPendiente?: Prisma.Decimal | number | null;
+  /**
+   * Lo que falta por cobrar de este credito.
+   *
+   * Se anade por el mismo motivo que los de arriba: al quitar el
+   * `[extra: string]: any` quedaron declarados solo los campos que entonces se
+   * leian, y `debeQuitarseVisitaSaldadaSinGestion` necesita este. Va como
+   * `Decimal | number` porque llega de las dos formas, igual que los demas.
+   */
+  saldoPendiente?: Prisma.Decimal | number | null;
   cuotaObjetivo?: CuotaOperativa | null;
   proximaCuota?: CuotaOperativa | null;
   esProvisional?: boolean | null;
@@ -384,4 +393,63 @@ export const isObligacionOperativaRuta = (
     resolveCuotaObjetivoOperativa(prestamo, fechaOperativa);
 
   return isCuotaOperativaParaFechaRuta(cuota, fechaOperativa);
+};
+
+/**
+ * Si una visita hay que QUITAR de la ruta del día.
+ *
+ * ── Qué decide ──────────────────────────────────────────────────────────────
+ *
+ * Se quita cuando se dan las dos cosas a la vez: todos los créditos del
+ * cliente están pagados y sin saldo, y no hubo ninguna gestión real hoy. O
+ * sea, un cliente que ya no debe nada y al que nadie visitó.
+ *
+ * Si se quedara, sumaría a la meta de la ruta un cobro que no existe, y el
+ * cobrador vería un cliente al que no tiene nada que ir a cobrar.
+ *
+ * ── Las dos condiciones, por separado ───────────────────────────────────────
+ *
+ * **Saldado** es las dos cosas, no una: `estado === 'PAGADO'` en TODOS sus
+ * créditos y la suma de saldos pendientes en cero o menos. Con solo el estado
+ * no basta —un crédito marcado como pagado con saldo residual sigue
+ * debiendo—, y con solo el saldo tampoco —un saldo en cero mientras el estado
+ * sigue activo es un crédito a punto de cerrarse, no uno cerrado—.
+ *
+ * **Sin gestión** significa que el estado de gestión del cierre es
+ * `PENDIENTE`. Si hubo un pago, una visita ausente o una reprogramación, la
+ * visita SE QUEDA aunque esté saldada: el cobrador fue, y eso tiene que
+ * aparecer en la jornada.
+ *
+ * ── De dónde sale ───────────────────────────────────────────────────────────
+ *
+ * Estaba escrita dentro de `getDailyVisits`, un método de 1.326 líneas, así
+ * que solo se podía probar montando la jornada entera con Prisma simulado. Es
+ * una regla de dinero de siete líneas; aquí se prueba sola.
+ *
+ * El estado de gestión se pasa como argumento en vez de calcularse aquí
+ * porque lo resuelve el servicio con datos que esta regla no tiene —los
+ * registros de visita y las reprogramaciones de la jornada—.
+ */
+export const debeQuitarseVisitaSaldadaSinGestion = (
+  visita: { prestamos?: PrestamoOperativo[] | null } | null | undefined,
+  estadoGestion: string | null | undefined,
+): boolean => {
+  const prestamos = visita?.prestamos ?? [];
+
+  // Sin créditos no hay nada que decidir: no se quita. Una visita sin créditos
+  // es un dato incoherente, y quitarla en silencio lo esconderia.
+  if (prestamos.length === 0) return false;
+
+  const todosPagados = prestamos.every(
+    (p) => normalizeUpper(p?.estado) === 'PAGADO',
+  );
+  if (!todosPagados) return false;
+
+  const saldoTotal = prestamos.reduce(
+    (suma, p) => suma + Number(p?.saldoPendiente ?? 0),
+    0,
+  );
+  if (saldoTotal > 0) return false;
+
+  return normalizeUpper(estadoGestion) === 'PENDIENTE';
 };

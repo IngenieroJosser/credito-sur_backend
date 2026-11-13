@@ -40,6 +40,7 @@ import {
   normalizeUpper,
   type CuotaOperativa,
   type PrestamoOperativo,
+  debeQuitarseVisitaSaldadaSinGestion,
 } from './ruta-operational-rules';
 
 import {
@@ -4806,19 +4807,18 @@ export class RoutesService {
       }
     }
 
-    // Filtrar saldados sin gestión real para no inflar el total de la ruta ni ensuciar la data.
-    const visitasDelDiaFinales = visitasDelDia.filter((v) => {
-      const estadoGestion = this.resolveEstadoGestionCierrePendiente(v);
-
-      const todosPagados = v.prestamos.every((p) => p.estado === 'PAGADO');
-      const saldoTotal = v.prestamos.reduce(
-        (sum, p) => sum + Number(p.saldoPendiente || 0),
-        0,
-      );
-      const isSaldado = todosPagados && saldoTotal <= 0;
-
-      return !(isSaldado && estadoGestion === 'PENDIENTE');
-    });
+    // Quitar los saldados sin gestion real: si se quedaran, sumarian a la meta
+    // de la ruta un cobro que no existe. La regla esta en
+    // `ruta-operational-rules`, donde se puede probar sola; aqui solo se le
+    // pasa el estado de gestion, que lo resuelve el servicio con los registros
+    // de visita y las reprogramaciones de la jornada.
+    const visitasDelDiaFinales = visitasDelDia.filter(
+      (v) =>
+        !debeQuitarseVisitaSaldadaSinGestion(
+          v,
+          this.resolveEstadoGestionCierrePendiente(v),
+        ),
+    );
 
     const recaudoFinal = recaudoOperativo;
 
