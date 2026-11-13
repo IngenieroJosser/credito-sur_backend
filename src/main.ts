@@ -14,18 +14,7 @@ import { ErroresClarosFilter } from './common/filters/errores-claros.filter';
 import helmet from 'helmet';
 import { SanitizePipe } from './common/pipes/sanitize.pipe';
 import { validateEnv } from './common/env.validation';
-import { createBullBoard } from '@bull-board/api';
-import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
-import { ExpressAdapter } from '@bull-board/express';
-import { getQueueToken } from '@nestjs/bullmq';
-import type { Request, Response, NextFunction } from 'express';
-import { timingSafeEqual } from 'crypto';
 import { SWAGGER_JWT_AUTH } from './auth/constants/swagger-auth.constants';
-
-const shouldEnableMirrorSync =
-  process.env.MIRROR_SYNC_ENABLED === 'true' &&
-  Boolean(process.env.MIRROR_VPS_URL) &&
-  Boolean(process.env.MIRROR_SYNC_TOKEN);
 
 async function bootstrap() {
   // Validar variables de entorno ANTES de crear la app
@@ -41,70 +30,18 @@ async function bootstrap() {
   // Configurar prefijo global para la API
   app.setGlobalPrefix('api-credisur');
 
-  if (shouldEnableMirrorSync) {
-    const bullBoardBasePath = '/api-credisur/configuracion/colas';
-    const expressAdapter = new ExpressAdapter();
-    expressAdapter.setBasePath(bullBoardBasePath);
-
-    try {
-      const mirrorSyncQueue = app.get(getQueueToken('mirror-sync-queue'));
-
-      createBullBoard({
-        queues: [new BullMQAdapter(mirrorSyncQueue)],
-        serverAdapter: expressAdapter,
-      });
-
-      const httpServer = app.getHttpAdapter().getInstance();
-      httpServer.use(
-        bullBoardBasePath,
-        (req: Request, res: Response, next: NextFunction) => {
-          const user = process.env.BULLBOARD_USER;
-          const pass = process.env.BULLBOARD_PASS;
-
-          if (!user || !pass) {
-            return res.status(500).json({
-              message:
-                'Bull Board no configurado (BULLBOARD_USER/BULLBOARD_PASS)',
-            });
-          }
-
-          const header = req.headers.authorization || '';
-          if (!header.startsWith('Basic ')) {
-            res.setHeader('WWW-Authenticate', 'Basic realm="Bull Board"');
-            return res.status(401).send('Unauthorized');
-          }
-
-          const decoded = Buffer.from(
-            header.slice('Basic '.length),
-            'base64',
-          ).toString('utf8');
-          const idx = decoded.indexOf(':');
-          const incomingUser = idx >= 0 ? decoded.slice(0, idx) : '';
-          const incomingPass = idx >= 0 ? decoded.slice(idx + 1) : '';
-
-          // Comparacion en tiempo constante para no filtrar el usuario/clave
-          // por el tiempo de respuesta (este panel va como middleware crudo,
-          // fuera del rate-limit de Nest).
-          const iguales = (a: string, b: string) => {
-            const ba = Buffer.from(a);
-            const bb = Buffer.from(b);
-            return ba.length === bb.length && timingSafeEqual(ba, bb);
-          };
-          if (!iguales(incomingUser, user) || !iguales(incomingPass, pass)) {
-            res.setHeader('WWW-Authenticate', 'Basic realm="Bull Board"');
-            return res.status(401).send('Unauthorized');
-          }
-
-          return next();
-        },
-      );
-      httpServer.use(bullBoardBasePath, expressAdapter.getRouter());
-    } catch (e) {
-      logger.warn(
-        'Bull Board no se inicializó: No se encontró la cola mirror-sync-queue en el contexto. Revisa MIRROR_SYNC_ENABLED y configuración BullMQ.',
-      );
-    }
-  }
+  /*
+   * Aqui se montaba Bull Board, el panel de la cola de BullMQ, en
+   * /api-credisur/configuracion/colas, con su propia autenticacion basica
+   * (BULLBOARD_USER / BULLBOARD_PASS) como middleware crudo por delante del
+   * rate-limit de Nest.
+   *
+   * Se fue con la cola. La replica al espejo la lleva ahora el outbox, que es
+   * una tabla de Postgres: su estado se consulta en
+   * GET /api-credisur/configuracion/colas/status, que cuenta las filas y
+   * enseña las que fallaron con su motivo, y de paso deja de haber un panel
+   * con su propia contraseña fuera del sistema de permisos.
+   */
 
   // Aplicar mitigaciones de seguridad XSS y Headers HTTP con Helmet
   app.use(

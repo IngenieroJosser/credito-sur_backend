@@ -86,18 +86,31 @@ export function validateEnv(): void {
   const isProduction = nodeEnv === 'production';
 
   if (isProduction) {
+    /*
+     * Redis dejo de ser obligatorio.
+     *
+     * Aqui se exigian REDIS_HOST y REDIS_PASSWORD en produccion «para
+     * BullMQ/colas», asi que sin Redis el arranque fallaba: ese era el coste
+     * obligatorio. La cola de BullMQ se quito —la replica al espejo la lleva
+     * el outbox, que es una tabla de Postgres— y lo unico que queda usando
+     * Redis es el limitador de peticiones.
+     *
+     * Y ese ya sabe vivir sin el: `RateLimitGuard` crea el cliente solo si
+     * REDIS_HOST existe y, si no, cuenta en memoria. La diferencia es que el
+     * limite pasa a ser POR INSTANCIA en vez de compartido, que con un solo
+     * proceso de backend es lo mismo. Por eso baja a aviso: con varias
+     * instancias conviene tenerlo, y sin Redis el sistema arranca.
+     */
     const redisHost = process.env.REDIS_HOST;
     const redisPassword = process.env.REDIS_PASSWORD;
 
     if (!redisHost || redisHost.trim() === '') {
-      errors.push(
-        '❌ FALTA VARIABLE CRÍTICA: REDIS_HOST\n   → Host de Redis requerido en producción (BullMQ/colas)',
+      warnings.push(
+        'Sin REDIS_HOST: el limite de peticiones se cuenta en memoria y por instancia. Con un solo backend es equivalente.',
       );
-    }
-
-    if (!redisPassword || redisPassword.trim() === '') {
+    } else if (!redisPassword || redisPassword.trim() === '') {
       errors.push(
-        '❌ FALTA VARIABLE CRÍTICA: REDIS_PASSWORD\n   → Password/Token de Redis requerido en producción (BullMQ/colas)',
+        'REDIS_HOST esta puesto pero falta REDIS_PASSWORD. Un Redis sin clave expuesto a internet no es una opcion.',
       );
     }
 

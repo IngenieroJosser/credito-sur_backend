@@ -14,9 +14,23 @@ import { PrismaService } from '../prisma/prisma.service';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { mensajeDeError, pilaDeError } from '../common/error.util';
 
+/**
+ * El lado que RECIBE la replica, en el VPS espejo.
+ *
+ * Era `mirror-sync.controller.ts`, dentro del modulo que registraba la cola
+ * de BullMQ. Eso tenia un efecto raro: el modulo solo se montaba si
+ * MIRROR_SYNC_ENABLED estaba en `true` con la URL y el token del VPS, asi que
+ * para que el espejo pudiera RECIBIR habia que encenderle la replica a el
+ * tambien, que es lo contrario de lo que tiene que hacer. Ahora se monta
+ * siempre y lo que lo protege es su firma: HMAC con hora y nonce, y rechaza
+ * un nonce repetido o una hora vieja.
+ *
+ * La ruta se mantiene en `mirror-sync/...` a proposito: el que envia la tiene
+ * escrita y un espejo ya desplegado la esta sirviendo.
+ */
 @Controller('mirror-sync')
-export class MirrorSyncController {
-  private readonly logger = new Logger(MirrorSyncController.name);
+export class MirrorReceptorController {
+  private readonly logger = new Logger(MirrorReceptorController.name);
   private readonly usedNonces = new Map<string, number>();
   private readonly allowedModels = new Set([
     'Notificacion',

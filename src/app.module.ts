@@ -25,21 +25,27 @@ import { PushModule } from './push/push.module';
 import { ConfiguracionModule } from './configuracion/configuracion.module';
 import { CajasModule } from './cajas/cajas.module';
 import { SyncConflictsModule } from './sync-conflicts/sync-conflicts.module';
-import { MirrorSyncModule } from './mirror-sync/mirror-sync.module';
+import { MirrorModule } from './mirror/mirror.module';
 import { OutboxModule } from './outbox/outbox.module';
 import { AlertasClientesModule } from './alertas-clientes/alertas-clientes.module';
 import { ImportacionesModule } from './importaciones/importaciones.module';
-import { BullModule } from '@nestjs/bullmq';
 import { APP_GUARD } from '@nestjs/core';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { RateLimitGuard } from './common/guards/rate-limit.guard';
 import { HealthController } from './health.controller';
 import { ArchivadosModule } from './archivados/archivados.module';
 
-const shouldEnableMirrorSync =
-  process.env.MIRROR_SYNC_ENABLED === 'true' &&
-  Boolean(process.env.MIRROR_VPS_URL) &&
-  Boolean(process.env.MIRROR_SYNC_TOKEN);
+/*
+ * La replica al espejo ya no necesita Redis, asi que tampoco necesita un
+ * interruptor que decida si se monta el modulo.
+ *
+ * Aqui habia un `shouldEnableMirrorSync` que exigia MIRROR_SYNC_ENABLED, la
+ * URL del VPS y el token para montar `MirrorSyncModule`. Eso dejaba fuera
+ * tambien el CONTROLADOR que RECIBE: para que el espejo pudiera recibir habia
+ * que encenderle la replica a el tambien, que es lo contrario de lo que tiene
+ * que hacer. `MirrorModule` se monta siempre: el receptor se protege con su
+ * firma HMAC y el que envia se queda quieto si no hay a donde.
+ */
 
 @Module({
   imports: [
@@ -77,20 +83,7 @@ const shouldEnableMirrorSync =
     AlertasClientesModule,
     ImportacionesModule,
     EventEmitterModule.forRoot(),
-    ...(shouldEnableMirrorSync
-      ? [
-          BullModule.forRoot({
-            connection: {
-              host: process.env.REDIS_HOST || 'localhost',
-              port: parseInt(process.env.REDIS_PORT || '6379'),
-              username: process.env.REDIS_USERNAME || undefined,
-              password: process.env.REDIS_PASSWORD || undefined,
-              tls: process.env.REDIS_TLS === 'true' ? {} : undefined,
-            },
-          }),
-          MirrorSyncModule,
-        ]
-      : []),
+    MirrorModule,
   ],
   controllers: [HealthController],
   providers: [
