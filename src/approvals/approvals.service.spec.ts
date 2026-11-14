@@ -210,6 +210,14 @@ function buildPrismaMock(): PrismaDeAprobaciones {
       update: jest.fn().mockResolvedValue({}),
     },
     prestamo: {
+      /*
+       * El rechazo lee el nombre del articulo para poder decir que volvio al
+       * inventario: «Credito rechazado: ... volvio 1 Televisor al inventario».
+       * Antes el mensaje era siempre «Aprobacion rechazada» y no hacia falta.
+       */
+      findUnique: jest
+        .fn()
+        .mockResolvedValue({ producto: { nombre: 'Televisor' } }),
       findFirst: jest.fn().mockResolvedValue({
         id: 'prestamo-1',
         clienteId: 'cliente-1',
@@ -1340,11 +1348,25 @@ describe('ApprovalsService financial ledger controls', () => {
       },
     ]);
 
-    await makeService(prisma).rejectItem(
+    const resultado = await makeService(prisma).rejectItem(
       'approval-loan-1',
       TipoAprobacion.NUEVO_PRESTAMO,
       'admin-1',
       'No cumple política',
+    );
+
+    /*
+     * El mensaje cuenta lo que se deshizo. Antes decia «Aprobacion rechazada»
+     * y quien revisaba no tenia como saber si la plata habia vuelto a la caja.
+     * Aqui el efecto no descuento stock (`stockDescontado: false`), asi que no
+     * habla de inventario: solo del dinero y de la cuota anulada.
+     */
+    expect(resultado).toMatchObject({
+      success: true,
+      message: expect.stringContaining('Credito rechazado'),
+    });
+    expect((resultado as { message: string }).message).not.toContain(
+      'inventario',
     );
 
     expect(prisma._tx.prestamo.update).toHaveBeenCalledWith({

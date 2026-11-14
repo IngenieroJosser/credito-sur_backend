@@ -12,6 +12,7 @@ import {
   textoDeJson,
   unidadesDeJson,
 } from '../common/json.util';
+import { mensajeDeRechazoDeCredito } from './mensaje-de-rechazo';
 import { textoDeValor } from '../common/texto.util';
 import { accionDecision } from '../common/decisiones-cuenta-vencida';
 import {
@@ -2631,7 +2632,35 @@ export class ApprovalsService {
       });
       this.notificacionesGateway.broadcastDashboardsActualizados({});
 
-      return { success: true, message: 'Aprobación rechazada' };
+      /*
+       * El mensaje dice QUE se deshizo.
+       *
+       * Rechazar un credito nuevo no es un cambio de estado: revierte el
+       * desembolso, devuelve el articulo al inventario, anula las cuotas y
+       * oculta el prestamo. Antes todo eso se resumia en «Aprobacion
+       * rechazada» —y la pantalla ni leia ese texto—, asi que quien revisaba
+       * no tenia como saber si el televisor habia vuelto al stock.
+       *
+       * Cada parte sale del `rollbackData` del propio efecto, que es lo que
+       * acaba de revertirse. Lo que no este, no se dice.
+       */
+      const rollback = objetoDeJson(efectoProvisional.rollbackData);
+      const prestamoDelRechazo = await this.prisma.prestamo.findUnique({
+        where: { id: approval.referenciaId },
+        select: { producto: { select: { nombre: true } } },
+      });
+
+      return {
+        success: true,
+        message: mensajeDeRechazoDeCredito({
+          montoRevertido: Number(rollback.montoDesembolsado || 0),
+          unidadesDevueltas: rollback.stockDescontado
+            ? unidadesDeJson(rollback.cantidadProducto)
+            : 0,
+          articulo: prestamoDelRechazo?.producto?.nombre || null,
+          cuotasAnuladas: textosDeJson(rollback.cuotaIds).length,
+        }),
+      };
     }
 
     // Verificar si es un gasto provisional con resultado de revisión específico

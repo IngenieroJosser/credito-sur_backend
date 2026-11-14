@@ -3646,6 +3646,23 @@ export class RoutesService {
         fechaOperativaRuta: true,
         origenGestion: true,
         metodoPago: true,
+        /*
+         * Quien quedo acreditado con el pago.
+         *
+         * No siempre es el cobrador de la ruta: cuando un SUPERVISOR registra
+         * un pago, `payments.service` le pone SU id al `cobradorId` —lo hace
+         * en dos sitios, de forma explicita, pisando lo que mande el
+         * frontend—, porque el dinero entra a su caja.
+         *
+         * El recaudo de la ruta igual lo cuenta: esta consulta filtra por
+         * `prestamo.rutaId`, no por cobrador. Lo que faltaba era DECIRLO: el
+         * cobrador veia al cliente ya pagado, sin rastro de quien paso por
+         * ahi, y su informe por cobrador no cuadraba con el avance de su ruta.
+         */
+        cobradorId: true,
+        cobrador: {
+          select: { id: true, nombres: true, apellidos: true, rol: true },
+        },
         detalles: {
           select: {
             monto: true,
@@ -3696,6 +3713,28 @@ export class RoutesService {
       recaudadoHoyPorPrestamo[p.prestamoId] =
         (recaudadoHoyPorPrestamo[p.prestamoId] || 0) +
         Number(p.montoTotal || 0);
+    });
+
+    /**
+     * Quien cobro hoy cada credito.
+     *
+     * Se queda con el ULTIMO pago del dia: si hubo varios, el que cierra la
+     * visita es el que se cuenta en pantalla.
+     */
+    const cobradoPorPorPrestamo: Record<
+      string,
+      { id: string; nombre: string; rol: string }
+    > = {};
+    pagosDeHoy.forEach((p) => {
+      if (!p.prestamoId || !p.cobrador) return;
+      const nombre =
+        `${p.cobrador.nombres || ''} ${p.cobrador.apellidos || ''}`.trim();
+      if (!nombre) return;
+      cobradoPorPorPrestamo[p.prestamoId] = {
+        id: p.cobrador.id,
+        nombre,
+        rol: String(p.cobrador.rol || ''),
+      };
     });
 
     /**
@@ -3915,6 +3954,9 @@ export class RoutesService {
               // primero para el recaudo del día y el segundo para ordenar
               // las visitas.
               recaudadoHoy: recaudadoHoyPorPrestamo[prestamo.id] || 0,
+              // Quien lo cobro, para que la pantalla pueda decirlo cuando no
+              // es el cobrador de la ruta.
+              cobradoPor: cobradoPorPorPrestamo[prestamo.id] || null,
               fechaUltimoPago: fechaUltimoPagoPorPrestamo[prestamo.id] || 0,
               recaudadoTotal: totalPagadoPorPrestamo[prestamo.id] || 0,
               estadoAprobacion: estadoRevision.estadoAprobacion,
@@ -4728,6 +4770,9 @@ export class RoutesService {
               // primero para el recaudo del día y el segundo para ordenar
               // las visitas.
               recaudadoHoy: recaudadoHoyPorPrestamo[prestamo.id] || 0,
+              // Quien lo cobro, para que la pantalla pueda decirlo cuando no
+              // es el cobrador de la ruta.
+              cobradoPor: cobradoPorPorPrestamo[prestamo.id] || null,
               fechaUltimoPago: fechaUltimoPagoPorPrestamo[prestamo.id] || 0,
               recaudadoTotal: totalPagadoPorPrestamo[prestamo.id] || 0,
               estadoAprobacion: estadoRevision.estadoAprobacion,
