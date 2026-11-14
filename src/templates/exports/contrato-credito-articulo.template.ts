@@ -59,6 +59,15 @@ export interface ContratoData {
 
   // Artículo
   articulo: string; // nombre del producto
+  /**
+   * Cuantas unidades se financian.
+   *
+   * Hace falta desde que la cantidad se cobra de verdad: el contrato es el
+   * papel que firma el cliente diciendo que recibe. Con una venta de tres
+   * telefonos y una linea que dice «Televisor», el papel no describe la
+   * entrega. Se imprime solo cuando es mas de una.
+   */
+  cantidadArticulo?: number;
   marca?: string;
   modelo?: string;
 
@@ -103,6 +112,25 @@ const fmtCOP = (v: number): string => `$${(v || 0).toLocaleString('es-CO')}`;
 
 const LINE = '_'.repeat(38);
 const LINEL = '_'.repeat(54);
+
+/**
+ * La linea del articulo tal como se imprime en el contrato.
+ *
+ * Con una sola unidad se escribe el nombre a secas, que es como estaba. Con
+ * mas, delante va la cantidad: «3 x Televisor». El contrato es el papel que
+ * firma el cliente diciendo lo que recibe, asi que el numero tiene que estar
+ * ahi, no solo en el monto.
+ *
+ * Exportada para poder probarla sin generar un PDF.
+ */
+export function nombreDeArticuloConCantidad(data: {
+  articulo?: string;
+  cantidadArticulo?: number;
+}): string {
+  const nombre = data.articulo || LINEL;
+  const unidades = Math.max(1, Math.trunc(Number(data.cantidadArticulo) || 1));
+  return unidades > 1 ? `${unidades} x ${nombre}` : nombre;
+}
 
 function getLogoPath(): string | null {
   const pProd = path.join(process.cwd(), 'dist/assets/logo.png');
@@ -266,7 +294,7 @@ export async function generarContratoPDF(
     .font('Helvetica')
     .fontSize(10.5)
     .fillColor(C.NEGRO)
-    .text(data.articulo || LINEL, ML, y, { width: TW });
+    .text(nombreDeArticuloConCantidad(data), ML, y, { width: TW });
   y = doc.y + 8;
 
   if (data.marca || data.modelo) {

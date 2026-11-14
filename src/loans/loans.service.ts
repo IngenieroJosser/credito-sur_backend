@@ -1092,6 +1092,8 @@ export class LoansService implements OnModuleInit {
       referencia2: ref2 || undefined,
 
       articulo: prestamo.producto?.nombre || 'Artículo',
+      // La plantilla la imprime delante del nombre cuando es mas de una.
+      cantidadArticulo: unidadesDeJson(prestamo.cantidadProducto),
       marca: prestamo.producto?.marca
         ? String(prestamo.producto?.marca)
         : undefined,
