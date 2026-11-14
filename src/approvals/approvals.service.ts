@@ -6,7 +6,12 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
-import { objetoDeJson, textosDeJson, textoDeJson } from '../common/json.util';
+import {
+  objetoDeJson,
+  textosDeJson,
+  textoDeJson,
+  unidadesDeJson,
+} from '../common/json.util';
 import { textoDeValor } from '../common/texto.util';
 import { accionDecision } from '../common/decisiones-cuenta-vencida';
 import {
@@ -970,9 +975,14 @@ export class ApprovalsService {
     }
 
     if (rollbackData.stockDescontado && rollbackData.productoId) {
+      // Las unidades que de verdad salieron, no una. El monto del prestamo se
+      // cobra por `precio x cantidad`, asi que volver a aplicar el descuento
+      // con un 1 fijo dejaba stock de sobra en el sistema que no esta en bodega.
       await tx.producto.update({
         where: { id: textoDeJson(rollbackData.productoId) },
-        data: { stock: { decrement: 1 } },
+        data: {
+          stock: { decrement: unidadesDeJson(rollbackData.cantidadProducto) },
+        },
       });
     }
 
@@ -1102,9 +1112,15 @@ export class ApprovalsService {
 
     if (prestamoRechazado.productoId) {
       try {
+        // Se devuelven las unidades que se financiaron. Con un 1 fijo, un
+        // credito de tres telefonos rechazado dejaba dos fuera del inventario.
         await tx.producto.update({
           where: { id: prestamoRechazado.productoId },
-          data: { stock: { increment: 1 } },
+          data: {
+            stock: {
+              increment: unidadesDeJson(prestamoRechazado.cantidadProducto),
+            },
+          },
         });
       } catch (e) {
         this.logger.warn(
@@ -1261,9 +1277,19 @@ export class ApprovalsService {
     }
 
     if (rollbackData.stockDescontado && prestamoRechazado.productoId) {
+      // Las unidades que salieron. El prestamo las trae en su columna; el
+      // `rollbackData` es el respaldo para los efectos guardados antes de que
+      // la columna existiera.
       await tx.producto.update({
         where: { id: prestamoRechazado.productoId },
-        data: { stock: { increment: 1 } },
+        data: {
+          stock: {
+            increment: unidadesDeJson(
+              prestamoRechazado.cantidadProducto ??
+                rollbackData.cantidadProducto,
+            ),
+          },
+        },
       });
     }
 
@@ -2843,7 +2869,11 @@ export class ApprovalsService {
           try {
             await this.prisma.producto.update({
               where: { id: prestamoRechazado.productoId },
-              data: { stock: { increment: 1 } },
+              data: {
+                stock: {
+                  increment: unidadesDeJson(prestamoRechazado.cantidadProducto),
+                },
+              },
             });
           } catch (e) {
             this.logger.error(

@@ -2,6 +2,7 @@ import {
   IsString,
   IsNumber,
   IsOptional,
+  IsInt,
   IsEnum,
   IsDateString,
   Min,
@@ -21,6 +22,24 @@ export class CreateLoanLegacyDto {
   @IsString()
   @IsOptional()
   precioProductoId?: string;
+  /**
+   * Cuantas unidades del articulo se financian.
+   *
+   * Hacia falta en los dos lados: el formulario ya sumaba `precio x cantidad`
+   * y ensenaba ese total, pero sin este campo el backend recalculaba el monto
+   * con el precio del plan de UNA unidad y descontaba UNA del inventario. Una
+   * venta de tres telefonos se cobraba como una.
+   *
+   * Opcional y con minimo 1: quien no lo manda vende una unidad, que es lo
+   * que pasaba hasta ahora.
+   */
+  @Transform(({ value }) =>
+    value === undefined || value === null || value === '' ? 1 : Number(value),
+  )
+  @IsInt()
+  @Min(1)
+  @IsOptional()
+  cantidadProducto?: number;
 
   @IsString()
   tipoPrestamo: string; // 'EFECTIVO' o 'ARTICULO'

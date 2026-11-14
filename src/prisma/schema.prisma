@@ -286,6 +286,16 @@ model Prestamo {
   version              Int                  @default(1)
   clienteId            String
   productoId           String?
+  // Cuantas unidades del articulo se financiaron en este prestamo.
+  //
+  // El monto ya se cobraba por N unidades —el frontend suma `precio x
+  // cantidad`— pero del inventario salia UNA, porque el descuento estaba
+  // escrito `decrement: 1`. Sin este campo la reversion tampoco podia devolver
+  // lo que de verdad salio.
+  //
+  // El default 1 es el comportamiento de siempre, asi que las filas que ya
+  // existen quedan correctas sin rellenar nada.
+  cantidadProducto     Int                  @default(1)
   precioProductoId     String?
   tipoPrestamo         String               @db.VarChar(20)
   tipoAmortizacion     TipoAmortizacion     @default(INTERES_PLANO)

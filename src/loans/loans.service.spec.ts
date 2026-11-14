@@ -1885,10 +1885,58 @@ describe('LoansService accounting impact for approved loans', () => {
     expect(prisma.producto.updateMany).toHaveBeenCalledWith({
       where: {
         id: 'producto-1',
-        stock: { gt: 0 },
+        stock: { gte: 1 },
       },
       data: { stock: { decrement: 1 } },
     });
+  });
+
+  it('descuenta las unidades que se vendieron, no una', async () => {
+    /*
+     * El fallo que esto fija: el monto del prestamo se cobra por
+     * `precio x cantidad`, y el descuento estaba escrito `decrement: 1`. Una
+     * venta de tres telefonos sacaba uno del inventario.
+     *
+     * La condicion sigue dentro del `updateMany` —ahora `gte: 3`— porque leer
+     * el stock y despues restarlo deja pasar dos aprobaciones simultaneas.
+     */
+    const prisma = {
+      producto: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+    };
+
+    await makeService(prisma).descontarStockSiDisponible(
+      'producto-1',
+      undefined,
+      3,
+    );
+
+    expect(prisma.producto.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'producto-1',
+        stock: { gte: 3 },
+      },
+      data: { stock: { decrement: 3 } },
+    });
+  });
+
+  it('dice cuantas unidades faltan cuando no alcanza el stock', async () => {
+    // «Producto sin stock disponible» a secas hacia creer que no hay nada,
+    // cuando lo que pasa es que hay menos de las que se piden.
+    const prisma = {
+      producto: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+    };
+
+    await expect(
+      makeService(prisma).descontarStockSiDisponible(
+        'producto-1',
+        undefined,
+        3,
+      ),
+    ).rejects.toThrow('se necesitan 3 unidades');
   });
 
   it('rechaza el descuento de stock cuando otro proceso agotó el inventario', async () => {

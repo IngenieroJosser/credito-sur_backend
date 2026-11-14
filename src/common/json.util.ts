@@ -48,3 +48,32 @@ export function textoDeJson(valor: unknown): string | undefined {
   if (typeof valor === 'number' && Number.isFinite(valor)) return String(valor);
   return undefined;
 }
+
+/**
+ * Leer un CONTEO de unidades de inventario, venga de donde venga.
+ *
+ * Lo usan el descuento de stock de un prestamo de articulo y sus tres
+ * reversiones, que leen la cantidad unas veces de la columna `Int` del
+ * prestamo y otras del `rollbackData`, que es `Json`. El atajo de cada sitio,
+ * `Number(valor) || 1`, no sirve: `Number({})` es `NaN`, `Number(null)` es 0, y
+ * los dos acaban devolviendo una unidad cuando salieron tres —o sumando `NaN`,
+ * que deja el stock inservible—.
+ *
+ * Esta en un solo sitio a proposito: eran cuatro copias de
+ * `Math.max(1, Math.trunc(...))` decidiendo sobre inventario, y en este
+ * proyecto esa es justo la forma en que una cifra se separa de la otra.
+ *
+ * El minimo es 1 porque el campo nacio con `DEFAULT 1`: una fila anterior a la
+ * columna, o un `rollbackData` viejo que no la lleva, describen una venta de
+ * una unidad. Cero no es una respuesta posible aqui.
+ */
+export function unidadesDeJson(valor: unknown, porDefecto = 1): number {
+  const numero =
+    typeof valor === 'number'
+      ? valor
+      : typeof valor === 'string'
+        ? Number(valor)
+        : NaN;
+  if (!Number.isFinite(numero)) return porDefecto;
+  return Math.max(1, Math.trunc(numero));
+}

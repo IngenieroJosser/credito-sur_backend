@@ -29,7 +29,8 @@ import { CreateLoanDto, TipoPrestamoDto } from './dto/create-loan.dto';
 import { ConfiguracionService } from '../configuracion/configuracion.service';
 import { UpdateLoanData } from '../common/types';
 import { JournalLineDto, LedgerService } from '../accounting/ledger.service';
-import { objetoDeJson } from '../common/json.util';
+import { objetoDeJson, unidadesDeJson } from '../common/json.util';
+import { calcularPrecioDeArticulo } from './articulo-precio';
 import {
   generarPDFCartera,
   CarteraRow,
@@ -227,18 +228,44 @@ export class LoansService implements OnModuleInit {
     return Math.trunc(n * 100) / 100;
   }
 
-  async descontarStockSiDisponible(productoId: string, tx?: TransaccionPrisma) {
+  /**
+   * Saca del inventario las unidades que se financiaron.
+   *
+   * Antes descontaba UNA, fija, mientras el monto del prestamo se cobraba por
+   * `precio x cantidad`. Una venta de tres telefonos cobraba tres y descontaba
+   * uno; las otras dos solo quedaban escritas en el texto de las notas.
+   *
+   * La condicion `gte: cantidad` va dentro del `updateMany` a proposito: leer
+   * el stock y despues restarlo deja una ventana en la que dos aprobaciones
+   * simultaneas pasan las dos. Asi, o se descuenta entero o no se descuenta.
+   */
+  async descontarStockSiDisponible(
+    productoId: string,
+    tx?: TransaccionPrisma,
+    cantidad = 1,
+  ) {
     const prisma = tx || this.prisma;
+    const unidades = unidadesDeJson(cantidad);
+
     const result = await prisma.producto.updateMany({
       where: {
         id: productoId,
-        stock: { gt: 0 },
+        stock: { gte: unidades },
       },
-      data: { stock: { decrement: 1 } },
+      data: { stock: { decrement: unidades } },
     });
 
     if (result.count !== 1) {
-      throw new BadRequestException('Producto sin stock disponible');
+      /*
+       * El mensaje dice cuantas se pedian. Con «Producto sin stock
+       * disponible» a secas, quien aprueba un credito de tres unidades con dos
+       * en bodega leia que no hay nada y no sabia que faltaba una.
+       */
+      throw new BadRequestException(
+        unidades === 1
+          ? 'Producto sin stock disponible'
+          : `Stock insuficiente: se necesitan ${unidades} unidades de este producto`,
+      );
     }
   }
 
@@ -814,7 +841,11 @@ export class LoansService implements OnModuleInit {
         prestamo.producto?.stock !== undefined &&
         prestamo.producto?.stock !== null
       ) {
-        await this.descontarStockSiDisponible(prestamo.productoId, tx);
+        await this.descontarStockSiDisponible(
+          prestamo.productoId,
+          tx,
+          unidadesDeJson(prestamo.cantidadProducto),
+        );
         stockDescontado = true;
       }
 
@@ -3176,7 +3207,11 @@ export class LoansService implements OnModuleInit {
           prestamoActualizado.producto?.stock !== undefined &&
           prestamoActualizado.producto?.stock !== null
         ) {
-          await this.descontarStockSiDisponible(prestamoActualizado.productoId);
+          await this.descontarStockSiDisponible(
+            prestamoActualizado.productoId,
+            undefined,
+            unidadesDeJson(prestamoActualizado.cantidadProducto),
+          );
         }
       }
 
@@ -3598,12 +3633,25 @@ export class LoansService implements OnModuleInit {
       let montoFinanciar = data.monto;
       let precioArticuloTotal = data.monto; // Precio total del artículo (sin descontar cuota inicial)
 
+      let unidadesArticulo = 1;
       let precioVentaArticulo: number | null = null;
       let costoArticulo: number | null = null;
       let margenArticulo: number | null = null;
 
       // Para crédito por artículo
       if (data.tipoPrestamo === TipoPrestamoDto.ARTICULO) {
+        /*
+         * Cuantas unidades se venden.
+         *
+         * Hasta ahora no llegaba, y de ahi salia el fallo de dinero: el
+         * formulario sumaba `precio x cantidad` y lo ensenaba, pero aqui el
+         * monto se RECALCULA con `precioProducto.precio` —el precio de UNA
+         * unidad— y eso es lo que se guarda y lo que reparte las cuotas. Una
+         * venta de tres telefonos quedaba cobrada como una, y del inventario
+         * salia tambien una.
+         */
+        unidadesArticulo = unidadesDeJson(data.cantidadProducto);
+
         if (!data.productoId) {
           throw new BadRequestException(
             'Para crédito por artículo se requiere productoId',
@@ -3620,8 +3668,12 @@ export class LoansService implements OnModuleInit {
         }
 
         // Verificar stock - CORREGIDO: acceso seguro a la propiedad stock
-        if (producto.stock !== undefined && producto.stock < 1) {
-          throw new BadRequestException('Producto sin stock disponible');
+        if (producto.stock !== undefined && producto.stock < unidadesArticulo) {
+          throw new BadRequestException(
+            unidadesArticulo === 1
+              ? 'Producto sin stock disponible'
+              : `Stock insuficiente: hay ${producto.stock} y se necesitan ${unidadesArticulo}`,
+          );
         }
 
         if (!data.esContado && data.precioProductoId) {
@@ -3646,21 +3698,31 @@ export class LoansService implements OnModuleInit {
 
         // Calcular monto a financiar (precio total - cuota inicial)
         const cuotaInicial = data.cuotaInicial || 0;
-        const precioTotal =
-          data.esContado || !precioProducto
-            ? data.monto
-            : precioProducto.precio
-              ? Number(precioProducto.precio)
-              : 0;
+
+        /*
+         * El dinero de la venta sale de `calcularPrecioDeArticulo`, que vive
+         * aparte y tiene sus propias pruebas.
+         *
+         * Estaban aqui cinco lineas que decidian lo que se cobra, y traian el
+         * fallo de las unidades: el precio del plan es POR UNIDAD y se usaba
+         * tal cual, asi que una venta de tres telefonos se cobraba como una.
+         */
+        const precio = calcularPrecioDeArticulo({
+          unidades: unidadesArticulo,
+          precioPlan: precioProducto?.precio,
+          costoUnitario: producto?.costo,
+          monto: data.monto,
+          cuotaInicial,
+          esContado: data.esContado,
+          tienePlan: Boolean(precioProducto),
+        });
+
+        const precioTotal = precio.precioArticuloTotal;
         precioArticuloTotal = precioTotal; // Guardar precio total para datosSolicitud
-        montoFinanciar = Math.max(0, precioTotal - cuotaInicial);
-
-        // Persistir margen (Modelo A): se reconoce una sola vez al crear el crédito.
-
-        // No afecta caja: solo se guarda para poder calcular utilidad operativa real en reportes.
-        precioVentaArticulo = Number(precioTotal || 0);
-        costoArticulo = producto?.costo != null ? Number(producto.costo) : 0;
-        margenArticulo = Number(precioVentaArticulo) - Number(costoArticulo);
+        montoFinanciar = precio.montoFinanciar;
+        precioVentaArticulo = precio.precioVentaArticulo;
+        costoArticulo = precio.costoArticulo;
+        margenArticulo = precio.margenArticulo;
 
         if (Number(margenArticulo) < 0) {
           this.logger.warn(
@@ -3867,6 +3929,7 @@ export class LoansService implements OnModuleInit {
               idempotencyKey,
               clienteId: data.clienteId,
               productoId: data.productoId,
+              cantidadProducto: unidadesArticulo,
               precioProductoId: data.precioProductoId,
               tipoPrestamo: data.tipoPrestamo,
               tipoAmortizacion: tipoAmort,
@@ -4121,6 +4184,11 @@ export class LoansService implements OnModuleInit {
                         (cuota) => cuota.id,
                       ),
                       productoId: prestamoTx.productoId || null,
+                      // Cuantas unidades salieron, para que la reversion
+                      // devuelva eso y no una.
+                      cantidadProducto: unidadesDeJson(
+                        prestamoTx.cantidadProducto,
+                      ),
                       stockDescontado: !!impactoTx?.stockDescontado,
                       journalReferenceIds: impactoTx?.journalEntryIds || [],
                       journalEntryIds: impactoTx?.journalEntryIds || [],
