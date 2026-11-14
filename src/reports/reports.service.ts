@@ -1517,11 +1517,21 @@ export class ReportsService {
     };
   }
 
+  /**
+   * Exporta el reporte operativo.
+   *
+   * El `actor` no estaba y la llamada de abajo iba sin el, asi que el archivo
+   * se armaba con TODAS las rutas, viera el que lo pide las que viera. Hasta
+   * ahora no se notaba porque solo coordinador y admin podian exportar, y los
+   * dos ven todo; en cuanto entra el supervisor —que solo ve las suyas— la
+   * diferencia es que el Excel le daria las rutas de los demas.
+   */
   async exportOperationalReport(
     filters: GetOperationalReportDto,
     format: 'excel' | 'pdf',
+    actor?: { id?: string; rol?: RolUsuario } | null,
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
-    const reportData = await this.getOperationalReport(filters);
+    const reportData = await this.getOperationalReport(filters, actor);
     const fecha = getBogotaDayKey(new Date());
 
     const filas: OperativoRow[] = (reportData.rendimientoRutas || []).map(

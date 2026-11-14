@@ -236,10 +236,23 @@ export class ReportsController {
   }
 
   @Get('operational/coordinator')
+  /*
+   * El SUPERVISOR entra aqui, y faltaba.
+   *
+   * `credisur.md` le da «reportes operativos» entre sus responsabilidades,
+   * existe `app/supervisor/reportes/operativos` que llama a este endpoint, y
+   * el detalle por ruta de mas abajo SI lo admite. O sea que podia abrir el
+   * detalle de una ruta pero no el resumen que las lista: la pantalla recibia
+   * 403 y se quedaba en ceros.
+   *
+   * Es seguro: el servicio ya acota por actor —`filtroRutaDirectoPorActor`
+   * devuelve `{ supervisorId: actor.id }`— asi que solo ve sus rutas.
+   */
   @Roles(
     RolUsuario.COORDINADOR,
     RolUsuario.ADMIN,
     RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.SUPERVISOR,
   )
   @ApiOperation({
     summary: 'Obtener reporte operativo para coordinador',
@@ -267,10 +280,13 @@ export class ReportsController {
   }
 
   @Get('operational/export')
+  // Mismo motivo, y por eso la exportacion pasa ahora el actor: sin el, el
+  // archivo salia con todas las rutas.
   @Roles(
     RolUsuario.COORDINADOR,
     RolUsuario.ADMIN,
     RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.SUPERVISOR,
   )
   @ApiOperation({
     summary: 'Exportar reporte operativo',
@@ -281,10 +297,12 @@ export class ReportsController {
     @Query() filters: GetOperationalReportDto,
     @Query('format') format: 'excel' | 'pdf',
     @Res() res: Response,
+    @Req() req?: RequestConUsuario,
   ) {
     const result = await this.reportsService.exportOperationalReport(
       filters,
       format,
+      req?.user,
     );
 
     // Configurar headers para la descarga

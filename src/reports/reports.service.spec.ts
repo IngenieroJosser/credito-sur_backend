@@ -1,4 +1,5 @@
 import { ReportsService } from './reports.service';
+import { RolUsuario } from '@prisma/client';
 import { ReportPeriod } from './dto/get-operational-report.dto';
 import type { NotificacionesService } from '../notificaciones/notificaciones.service';
 import type { RoutesService } from '../routes/routes.service';
@@ -221,5 +222,75 @@ describe('ReportsService: scope de rutas por rol en reportes de mora/vencidas', 
     for (const w of capturado.estadisticas) {
       expect(w?.ruta?.is?.supervisorId).toBe('sup-9');
     }
+  });
+});
+
+/**
+ * La exportacion acota por quien la pide.
+ *
+ * `exportOperationalReport` llamaba a `getOperationalReport(filters)` sin el
+ * actor, asi que armaba el archivo con TODAS las rutas. No se notaba porque
+ * solo coordinador y admin podian exportar, y los dos ven todo. En cuanto
+ * entra el supervisor —que por `filtroRutaDirectoPorActor` solo ve las suyas—
+ * la diferencia es que el Excel le daria las rutas de los demas.
+ */
+/** Un reporte vacio, para no repetir sus once campos en cada prueba. */
+function reporteVacio() {
+  return {
+    rendimientoRutas: [],
+    totalRecaudo: 0,
+    totalMeta: 0,
+    porcentajeGlobal: 0,
+    totalPrestamosNuevos: 0,
+    totalAfiliaciones: 0,
+    efectividadPromedio: 0,
+    totalMontoPrestamosNuevos: 0,
+    periodo: 'today',
+    fechaInicio: new Date(),
+    fechaFin: new Date(),
+  };
+}
+
+describe('ReportsService exportOperationalReport: acota por actor', () => {
+  it('pasa el actor al reporte que exporta', async () => {
+    const service = new ReportsService(
+      comoPrisma({}),
+      dependenciaSinUsar<NotificacionesService>(),
+      dependenciaSinUsar<RoutesService>(),
+    );
+
+    const espia = jest
+      .spyOn(service, 'getOperationalReport')
+      .mockResolvedValue(reporteVacio());
+
+    const actor = { id: 'supervisor-1', rol: RolUsuario.SUPERVISOR };
+    await service.exportOperationalReport(
+      { period: 'today' as ReportPeriod },
+      'excel',
+      actor,
+    );
+
+    expect(espia).toHaveBeenCalledWith({ period: 'today' }, actor);
+  });
+
+  it('sin actor exporta como siempre, que es el caso del coordinador', async () => {
+    // El parametro es opcional a proposito: quien ve todas las rutas no
+    // necesita acotar, y las llamadas que ya existian no cambian.
+    const service = new ReportsService(
+      comoPrisma({}),
+      dependenciaSinUsar<NotificacionesService>(),
+      dependenciaSinUsar<RoutesService>(),
+    );
+
+    const espia = jest
+      .spyOn(service, 'getOperationalReport')
+      .mockResolvedValue(reporteVacio());
+
+    await service.exportOperationalReport(
+      { period: 'today' as ReportPeriod },
+      'excel',
+    );
+
+    expect(espia).toHaveBeenCalledWith({ period: 'today' }, undefined);
   });
 });
