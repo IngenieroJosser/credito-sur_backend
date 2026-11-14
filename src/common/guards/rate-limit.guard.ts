@@ -53,6 +53,19 @@ export class RateLimitGuard implements CanActivate {
   // Incrementa el contador y pone el vencimiento en una sola operación
   // atómica. Devuelve [conteo, ttlMs]. Sin esto, dos instancias que hacen
   // INCR + EXPIRE por separado pueden dejar una clave sin vencer.
+  /**
+   * Devuelve una unidad del cupo, SOLO si la clave sigue viva.
+   *
+   * Sin el `EXISTS`, un `DECR` sobre una clave ya vencida la crea de nuevo en
+   * -1 y sin vencimiento: el cupo quedaria roto hacia arriba para siempre.
+   */
+  private static readonly LUA_DECR = `
+    if redis.call('EXISTS', KEYS[1]) == 1 then
+      return redis.call('DECR', KEYS[1])
+    end
+    return 0
+  `;
+
   private static readonly LUA_INCR = `
     local c = redis.call('INCR', KEYS[1])
     if c == 1 then
@@ -154,6 +167,48 @@ export class RateLimitGuard implements CanActivate {
     return { count: bucket.count, resetAt: bucket.resetAt };
   }
 
+  /**
+   * Un ingreso que SALE BIEN no gasta cupo.
+   *
+   * ── Lo que pasaba, medido ─────────────────────────────────────────────
+   *
+   * El perfil `auth` permite 10 peticiones por minuto y se cuenta POR IP, y
+   * tiene que ser por IP: en el login el que llama todavia no es nadie, asi
+   * que contar por usuario no protegeria de un ataque por fuerza bruta.
+   *
+   * Pero en este sistema la oficina trabaja en LAN y todos salen por la misma
+   * IP. Con siete roles, entrar por la mañana ya gasta 7 de los 10; dos
+   * contraseñas mal tecleadas y la oficina entera se queda fuera hasta un
+   * minuto. Comprobado contra el servidor: a la peticion 11 responde 429 con
+   * `Retry-After`.
+   *
+   * ── Que cambia y que no ───────────────────────────────────────────────
+   *
+   * El cupo se devuelve cuando la respuesta sale bien (menos de 400). Los
+   * INTENTOS FALLIDOS siguen contando enteros, que es lo que protege de la
+   * fuerza bruta: quien adivina contraseñas falla, y ahi el limite no se
+   * mueve. Lo que deja de pasar es que la gente se bloquee entre ella
+   * trabajando bien.
+   */
+  private async devolverCupo(key: string): Promise<void> {
+    const redis = this.obtenerRedis();
+    if (redis && this.redisSano) {
+      try {
+        await redis.eval(RateLimitGuard.LUA_DECR, 1, key);
+        return;
+      } catch (e) {
+        this.redisSano = false;
+        this.logger.warn(
+          `Fallo al devolver cupo en Redis, se usa memoria: ${mensajeDeError(e)}`,
+        );
+      }
+    }
+
+    const bucket = this.buckets.get(key);
+    if (!bucket || bucket.resetAt <= Date.now()) return;
+    bucket.count = Math.max(0, bucket.count - 1);
+  }
+
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const http = context.switchToHttp();
     const request = http.getRequest<Request>();
@@ -181,6 +236,20 @@ export class RateLimitGuard implements CanActivate {
       'X-RateLimit-Reset',
       Math.ceil(conteo.resetAt / 1000),
     );
+
+    /*
+     * Solo en `auth`: es el unico perfil que se cuenta por IP, y por tanto el
+     * unico donde una persona puede dejar fuera a otra. Los demas ya se
+     * cuentan por usuario.
+     */
+    if (profile.name === 'auth' && conteo.count <= profile.max) {
+      response?.once?.('finish', () => {
+        const estado = Number(response?.statusCode || 0);
+        if (estado > 0 && estado < 400) {
+          void this.devolverCupo(key);
+        }
+      });
+    }
 
     if (conteo.count > profile.max) {
       response?.setHeader?.('Retry-After', retryAfterSeconds);
