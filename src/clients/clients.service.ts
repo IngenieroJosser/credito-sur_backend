@@ -160,7 +160,21 @@ export class ClientsService {
         ...clientData,
         codigo,
         creadoPorId: creador.id,
-        // TODO: Manejar asignación de ruta y observaciones si es necesario en otras tablas
+        /*
+         * `rutaId` y `observaciones` se descartan arriba, y NO es un pendiente
+         * —aqui decia «TODO: Manejar asignacion de ruta»—.
+         *
+         * En este sistema la ruta la lleva el CREDITO (`Prestamo.rutaId`) y
+         * `AsignacionRuta` se deriva de los creditos del cliente: lo hace
+         * `sincronizar-asignaciones.ts`, que ademas desactiva lo que no
+         * corresponda. Crear aqui una asignacion sin credito la dejaria viva
+         * hasta la primera sincronizacion y despues desapareceria sola.
+         *
+         * La consecuencia que si habia que atender: un cliente recien creado
+         * no sale en la lista del cobrador ni en la del supervisor, porque las
+         * dos filtran por asignacion activa. Ahora el aviso de la pantalla lo
+         * dice al crearlo, en vez de dejar pensar que no se guardo.
+         */
       },
     });
 
