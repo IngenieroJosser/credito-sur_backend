@@ -3919,8 +3919,12 @@ export class LoansService implements OnModuleInit {
       };
       const hoyKey = getBogotaDayKey(new Date());
       const { startDate: today } = getBogotaStartEndOfDayFromKey(hoyKey);
-      const startKey = getBogotaDayKey(new Date(fechaInicio));
-      const { startDate: startDate } = getBogotaStartEndOfDayFromKey(startKey);
+      /*
+       * `startDate` se calculaba aqui para una sola cosa: comparar si el
+       * credito empezaba hoy y, solo en ese caso, asignarlo a la ruta. Esa
+       * condicion era el fallo —ver la explicacion de mas abajo— y con ella se
+       * va su unico uso.
+       */
       let rutaIdAsignadaBroadcast: string | null = null;
 
       const { prestamo, aprobacion, efectoProvisional, impactoProvisional } =
@@ -3984,7 +3988,35 @@ export class LoansService implements OnModuleInit {
 
           let asignacionRutaTxId: string | null = null;
           let rutaIdDelCredito: string | null = null;
-          if (!data.esContado && startDate.getTime() === today.getTime()) {
+          /*
+           * El credito entra a la ruta aunque NO empiece hoy.
+           *
+           * ── El fallo que tenia esta linea ───────────────────────────────
+           *
+           * Decia `startDate.getTime() === today.getTime()`: la asignacion de
+           * ruta solo se creaba si el credito empezaba EXACTAMENTE hoy. Con
+           * cualquier otra fecha de inicio el cliente se quedaba sin
+           * asignacion, y `getDailyVisits` arma la jornada a partir de las
+           * asignaciones: el cobrador NO lo veia nunca, ni el dia que vencia
+           * su primera cuota.
+           *
+           * Comprobado contra el servidor: un credito diario creado con
+           * `fechaInicio` de ayer —primera cuota HOY, PENDIENTE, con su
+           * `rutaId` puesto— no salia en la jornada de su ruta, y en la base
+           * no tenia ninguna fila en `asignaciones_rutas`. El mismo credito
+           * creado con fecha de hoy si la tenia.
+           *
+           * Cuando pasa de verdad: el credito que se registra al dia
+           * siguiente porque en la calle no habia señal, y el que se deja
+           * fechado para el lunes. En los dos casos el cliente desaparece de
+           * la ruta sin que nadie lo decida.
+           *
+           * Quitar la condicion no adelanta ninguna visita: la asignacion solo
+           * dice «este cliente es de esta ruta». Que toque hoy o no lo decide
+           * la cuota, y eso se comprobo: un credito que empieza hoy tiene su
+           * primera cuota mañana y sigue sin salir en la jornada de hoy.
+           */
+          if (!data.esContado) {
             const rutaPreferida = cliente.asignacionesRuta?.find(
               (a) => a?.activa && a?.ruta?.activa && !a?.ruta?.eliminadoEn,
             );

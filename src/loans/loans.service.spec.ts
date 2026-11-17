@@ -271,6 +271,23 @@ function buildCreateLoanPrismaMock(
     pago: {
       create: jest.fn(),
     },
+    /*
+     * La asignacion a la ruta.
+     *
+     * No estaba en este doble, y no hacia falta: el codigo solo creaba la
+     * asignacion cuando el credito empezaba EXACTAMENTE hoy, asi que las
+     * pruebas de «fecha antigua» nunca llegaban aqui. Esa condicion era el
+     * fallo —un credito fechado ayer dejaba al cliente fuera de la ruta y el
+     * cobrador no lo veia nunca—, y al quitarla estas pruebas pasaron a
+     * ejercitar el camino que antes se saltaban.
+     */
+    asignacionRuta: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      aggregate: jest.fn().mockResolvedValue({ _max: { ordenVisita: 3 } }),
+      create: jest
+        .fn()
+        .mockResolvedValue({ id: 'asignacion-nueva', activa: true }),
+    },
     ...overrides.prisma,
   };
 }
@@ -305,6 +322,26 @@ describe('LoansService accounting impact for approved loans', () => {
           creadoPorId: 'admin-1',
         }),
       ).resolves.toEqual(expect.objectContaining({ id: 'prestamo-fecha-1' }));
+
+      /*
+       * Y entra a la RUTA, que es lo que faltaba.
+       *
+       * El credito empieza el 15 de mayo y se crea el 20 de junio. Antes, la
+       * asignacion solo se creaba si la fecha de inicio era exactamente hoy,
+       * asi que este cliente se quedaba sin asignacion y `getDailyVisits` —que
+       * arma la jornada desde las asignaciones— no lo enseñaba NUNCA, ni el
+       * dia que vencia su cuota.
+       *
+       * Comprobado contra el servidor antes de arreglarlo: credito diario
+       * fechado ayer, con su primera cuota venciendo hoy y PENDIENTE, sin
+       * ninguna fila en `asignaciones_rutas` y ausente de la jornada de su
+       * ruta.
+       */
+      expect(prisma.asignacionRuta.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ clienteId: 'cliente-1', activa: true }),
+        }),
+      );
     } finally {
       jest.useRealTimers();
     }
