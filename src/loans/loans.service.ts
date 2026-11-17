@@ -1647,7 +1647,21 @@ export class LoansService implements OnModuleInit {
       }
 
       // Filtro por ruta: la ruta es del credito.
-      if (ruta !== 'todas' && ruta !== '') {
+      if (ruta === 'sin-ruta') {
+        /*
+         * Los creditos huerfanos, que hasta ahora no se podian ni buscar.
+         *
+         * Un credito sin ruta no entra en la jornada de nadie: existe,
+         * devenga mora y nadie va a cobrarlo. Ya no se pueden crear asi —ni
+         * a mano ni importando—, pero los que quedaron de antes eran
+         * invisibles: ninguna pantalla los listaba. Con esto se encuentran y
+         * se les puede asignar ruta.
+         *
+         * Medido en la base de desarrollo cuando se añadio: 25 de 60 creditos
+         * vivos, repartidos en cinco clientes sin una sola ruta.
+         */
+        (where as Record<string, unknown>).rutaId = null;
+      } else if (ruta !== 'todas' && ruta !== '') {
         (where as Record<string, unknown>).rutaId = ruta;
       }
 
