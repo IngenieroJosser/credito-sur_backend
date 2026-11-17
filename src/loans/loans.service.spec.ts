@@ -339,12 +339,88 @@ describe('LoansService accounting impact for approved loans', () => {
        */
       expect(prisma.asignacionRuta.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ clienteId: 'cliente-1', activa: true }),
+          data: expect.objectContaining({
+            clienteId: 'cliente-1',
+            activa: true,
+          }),
         }),
       );
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  /**
+   * Ningun credito se guarda sin ruta, mire quien lo cree.
+   *
+   * ── Por que es una regla y no una preferencia ──────────────────────────
+   *
+   * La jornada del cobrador se arma desde la ruta. Un credito sin ruta no
+   * entra en la de nadie: existe, devenga mora y nadie va a cobrarlo.
+   *
+   * Medido en la base de desarrollo antes de poner la regla: 25 de 60
+   * creditos vivos sin `rutaId`, casi todos de articulo, y CINCO clientes con
+   * 8, 4, 4, 3 y 3 creditos cada uno sin una sola ruta, la mayoria ya EN_MORA.
+   *
+   * ── Por que no bastaba la validacion que ya habia ──────────────────────
+   *
+   * La de arriba mira la INTENCION —quien lo pide y que manda— y deja pasar
+   * al COBRADOR suponiendo que su ruta se resolvera despues:
+   *
+   *     if (!rutaIndicada && !clienteTieneRuta && !loCreaUnCobrador) throw
+   *
+   * Si esa ruta no aparece, el credito nacia huerfano igual. La regla nueva
+   * mira el RESULTADO, justo antes de guardar: si no hay ruta que poner, no
+   * se guarda.
+   */
+  it('un cobrador sin ruta tampoco puede dejar un credito huerfano', async () => {
+    const prisma = buildCreateLoanPrismaMock(RolUsuario.COBRADOR, {
+      // Ni el cliente tiene asignacion...
+      cliente: { asignacionesRuta: [] },
+      usuario: { id: 'cobrador-1' },
+    });
+    // ...ni el cobrador tiene una ruta propia que heredar.
+    prisma.ruta = { findFirst: jest.fn().mockResolvedValue(null) };
+
+    await expect(
+      makeService(prisma).createLoan({
+        clienteId: 'cliente-1',
+        tipoPrestamo: TipoPrestamoDto.EFECTIVO,
+        monto: 100000,
+        tasaInteres: 10,
+        tasaInteresMora: 2,
+        plazoMeses: 1,
+        cantidadCuotas: 4,
+        frecuenciaPago: FrecuenciaPago.SEMANAL,
+        fechaInicio: '2026-06-12',
+        creadoPorId: 'cobrador-1',
+      }),
+    ).rejects.toThrow(/ruta/i);
+  });
+
+  it('y el mensaje dice que hacer, no solo que no se pudo', async () => {
+    // Quien lo lee esta creando el credito con el cliente delante. Un «no se
+    // pudo» lo deja sin saber si es culpa suya, del cliente o del sistema.
+    const prisma = buildCreateLoanPrismaMock(RolUsuario.COBRADOR, {
+      cliente: { asignacionesRuta: [] },
+      usuario: { id: 'cobrador-1' },
+    });
+    prisma.ruta = { findFirst: jest.fn().mockResolvedValue(null) };
+
+    await expect(
+      makeService(prisma).createLoan({
+        clienteId: 'cliente-1',
+        tipoPrestamo: TipoPrestamoDto.EFECTIVO,
+        monto: 100000,
+        tasaInteres: 10,
+        tasaInteresMora: 2,
+        plazoMeses: 1,
+        cantidadCuotas: 4,
+        frecuenciaPago: FrecuenciaPago.SEMANAL,
+        fechaInicio: '2026-06-12',
+        creadoPorId: 'cobrador-1',
+      }),
+    ).rejects.toThrow(/Asigne el cliente a una ruta|indique la ruta/i);
   });
 
   it('no crea un credito si el cliente no tiene ruta', async () => {

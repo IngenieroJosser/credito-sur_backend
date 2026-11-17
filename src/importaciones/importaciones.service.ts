@@ -3,6 +3,8 @@ import { Prisma } from '@prisma/client';
 import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
 import { objetoDeJson } from '../common/json.util';
 import { sincronizarAsignacionesCliente } from '../routes/sincronizar-asignaciones';
+
+import { avisoDeClientesSinRuta } from './aviso-clientes-sin-ruta';
 import { ClientesCreditosParser } from './parsers/clientes-creditos.parser';
 import { InventarioParser } from './parsers/inventario.parser';
 import { ResultadoValidacion } from './dto/validacion-resultado.dto';
@@ -1568,6 +1570,7 @@ export class ImportacionesService {
     clientesActualizados: number;
     clientesOmitidos: number;
     clientesAsignadosARuta: number;
+    clientesSinRuta: number;
     creditosHistoricosCreados: number;
     creditosOperativosCreados: number;
     creditosOmitidos: number;
@@ -1657,6 +1660,9 @@ export class ImportacionesService {
     let cuotasCreadas = 0;
     const mensajes: string[] = [];
     let clientesAsignadosARuta = 0;
+    // Los que NO se pudieron asignar. Se devuelve aparte del mensaje para que
+    // la pantalla pueda enseñarlo como cifra y no solo como texto.
+    let clientesSinRutaImportados = 0;
 
     let loteId = '';
 
@@ -1803,16 +1809,43 @@ export class ImportacionesService {
           // las de otras rutas se recalculan al final, cuando ya se sabe qué
           // créditos quedaron en cada una.
           const clientesConRuta = new Map<string, string>();
+          /*
+           * Los que se quedan sin ruta, y por que.
+           *
+           * Aqui habia dos `continue` en silencio: la fila que no trae codigo
+           * de ruta y el codigo que no existe en el sistema. En los dos casos
+           * el cliente se queda sin asignacion y, mas abajo, sus creditos se
+           * crean SIN `rutaId` —porque solo se les pone la ruta a los que
+           * estan en `clientesConRuta`—.
+           *
+           * Un credito sin ruta no entra en la jornada de nadie: existe,
+           * devenga mora y nadie va a cobrarlo. Medido en la base de
+           * desarrollo: 25 de 60 creditos vivos sin ruta, y cinco clientes con
+           * 8, 4, 4, 3 y 3 creditos cada uno sin una sola, la mayoria ya
+           * EN_MORA.
+           *
+           * No se corta la importacion por esto —los datos del cliente sirven
+           * igual y cortar un lote entero por una fila es peor—, pero deja de
+           * ser invisible: va en el informe, con el motivo y con que hacer.
+           */
+          const clientesSinRutaPorFila: string[] = [];
+          const clientesConCodigoDeRutaDesconocido: string[] = [];
 
           for (const asignacion of clientesPorAsignar) {
-            if (!asignacion.rutaCodigo) continue;
+            if (!asignacion.rutaCodigo) {
+              clientesSinRutaPorFila.push(asignacion.clienteId);
+              continue;
+            }
 
             const ruta = await tx.ruta.findFirst({
               where: { codigo: asignacion.rutaCodigo, eliminadoEn: null },
               select: { id: true, cobradorId: true },
             });
 
-            if (!ruta) continue;
+            if (!ruta) {
+              clientesConCodigoDeRutaDesconocido.push(asignacion.rutaCodigo);
+              continue;
+            }
 
             clientesConRuta.set(asignacion.clienteId, ruta.id);
 
@@ -2432,6 +2465,25 @@ export class ImportacionesService {
             await sincronizarAsignacionesCliente(tx, clienteId);
           }
 
+          /*
+           * El aviso de los que quedaron sin ruta.
+           *
+           * Va con el motivo separado porque se arreglan de forma distinta: la
+           * fila sin codigo se corrige en el archivo; el codigo desconocido,
+           * creando la ruta o corrigiendo el codigo. Y con los codigos que
+           * fallaron, que es lo que se busca a mano cuando el informe solo
+           * dice «no se pudo».
+           */
+          const aviso = avisoDeClientesSinRuta(
+            clientesSinRutaPorFila,
+            clientesConCodigoDeRutaDesconocido,
+          );
+          if (aviso) mensajes.push(aviso);
+
+          clientesSinRutaImportados =
+            clientesSinRutaPorFila.length +
+            clientesConCodigoDeRutaDesconocido.length;
+
           // 4. Registrar lote confirmado dentro de la transacción
           const lote = await tx.importacionLote.create({
             data: {
@@ -2524,6 +2576,7 @@ export class ImportacionesService {
       clientesActualizados,
       clientesOmitidos,
       clientesAsignadosARuta,
+      clientesSinRuta: clientesSinRutaImportados,
       creditosHistoricosCreados,
       creditosOperativosCreados,
       creditosOmitidos,

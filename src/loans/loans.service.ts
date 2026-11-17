@@ -4119,12 +4119,35 @@ export class LoansService implements OnModuleInit {
               )?.rutaId ||
               null;
 
-            if (rutaFinal) {
-              await tx.prestamo.update({
-                where: { id: prestamoTx.id },
-                data: { rutaId: rutaFinal },
-              });
+            /*
+             * NINGUN credito se guarda sin ruta. Es una regla del negocio.
+             *
+             * Aqui simplemente no se ponia: si no habia ruta que heredar, el
+             * `if` no entraba y el credito quedaba con `rutaId` en NULL, sin
+             * que nada lo dijera. Y un credito sin ruta no entra en la jornada
+             * de nadie: no se cobra.
+             *
+             * Medido en la base de desarrollo antes de poner esto: 25 de 60
+             * creditos vivos sin ruta, casi todos de articulo, y CINCO
+             * clientes con 8, 4, 4, 3 y 3 creditos cada uno sin una sola ruta
+             * —la mayoria ya EN_MORA—.
+             *
+             * La validacion de mas arriba («El credito debe quedar asignado a
+             * una ruta») no alcanzaba: deja pasar al cobrador, y si su ruta
+             * tampoco se resolvia, el credito nacia huerfano igual. Esta es la
+             * ultima puerta, la que mira el resultado y no la intencion.
+             */
+            if (!rutaFinal) {
+              throw new BadRequestException(
+                'El credito no puede quedar sin ruta. Asigne el cliente a una ' +
+                  'ruta activa, o indique la ruta al crear el credito.',
+              );
             }
+
+            await tx.prestamo.update({
+              where: { id: prestamoTx.id },
+              data: { rutaId: rutaFinal },
+            });
           }
 
           const aprobacionTx = await tx.aprobacion.create({
