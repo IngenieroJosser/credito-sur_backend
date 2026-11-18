@@ -3007,6 +3007,63 @@ export class RoutesService {
         orderBy: { nombres: 'asc' },
       });
 
+      /*
+       * Cuantas rutas lleva cada uno y cuantos clientes tiene en total.
+       *
+       * Este endpoint no los mandaba, y la pantalla de ASIGNACION de rutas del
+       * coordinador —la que decide a quien se le carga trabajo— los rellenaba
+       * con `rutasAsignadas: 0`, `clientesTotales: 0` y `capacidadMaxima: 120`
+       * escritos a mano. O sea que pintaba a TODOS los cobradores al 0% de
+       * capacidad, libres, y el reparto se hacia sobre una cifra inventada. Un
+       * cero se lee «no tiene nada», no «no se sabe».
+       *
+       * Dos consultas, no una por cobrador. Y los clientes se cuentan en un
+       * `Set`, no sumando asignaciones: el indice unico parcial es
+       * `(rutaId, clienteId) WHERE activa`, asi que un mismo cliente puede
+       * estar activo en dos rutas distintas del mismo cobrador y sumarlas lo
+       * contaria dos veces. Es la misma correccion que ya lleva
+       * `clientesAsignados` en el listado de rutas.
+       */
+      const ids = cobradores.map((c) => c.id);
+
+      const rutasDeCobradores = ids.length
+        ? await this.prisma.ruta.findMany({
+            where: { cobradorId: { in: ids }, eliminadoEn: null },
+            select: { id: true, cobradorId: true },
+          })
+        : [];
+
+      const cobradorPorRuta = new Map(
+        rutasDeCobradores.map((r) => [r.id, r.cobradorId]),
+      );
+
+      const rutasPorCobrador = new Map<string, number>();
+      rutasDeCobradores.forEach((r) => {
+        rutasPorCobrador.set(
+          r.cobradorId,
+          (rutasPorCobrador.get(r.cobradorId) || 0) + 1,
+        );
+      });
+
+      const asignaciones = cobradorPorRuta.size
+        ? await this.prisma.asignacionRuta.findMany({
+            where: {
+              activa: true,
+              rutaId: { in: [...cobradorPorRuta.keys()] },
+            },
+            select: { rutaId: true, clienteId: true },
+          })
+        : [];
+
+      const clientesPorCobrador = new Map<string, Set<string>>();
+      asignaciones.forEach((a) => {
+        const cobradorId = cobradorPorRuta.get(a.rutaId);
+        if (!cobradorId) return;
+        const actual = clientesPorCobrador.get(cobradorId) || new Set<string>();
+        actual.add(a.clienteId);
+        clientesPorCobrador.set(cobradorId, actual);
+      });
+
       return cobradores.map((c) => ({
         id: c.id,
 
@@ -3015,6 +3072,10 @@ export class RoutesService {
         correo: c.correo,
 
         telefono: c.telefono,
+
+        rutasAsignadas: rutasPorCobrador.get(c.id) || 0,
+
+        clientesTotales: clientesPorCobrador.get(c.id)?.size || 0,
       }));
     } catch (error) {
       throw new InternalServerErrorException('Error al obtener cobradores');
