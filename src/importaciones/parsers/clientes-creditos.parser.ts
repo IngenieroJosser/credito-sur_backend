@@ -1054,9 +1054,14 @@ export class ClientesCreditosParser {
 
         if (tipoPrestamo === 'ARTICULO') {
           if (!productoCodigo) {
+            // Mismo caso que la ruta: con el inventario vacio el desplegable de
+            // esa columna no se pone, asi que decirle «es requerido» le señala
+            // una celda cuando lo que falta es el paso anterior.
             addError(
               'producto_codigo',
-              'Es requerido para créditos de ARTICULO',
+              productosEnBd.size === 0
+                ? 'Todavia no hay ningun articulo en el inventario: importe primero el inventario y vuelva a descargar la plantilla'
+                : 'Es requerido para créditos de ARTICULO',
               productoCodigo,
             );
           } else if (!productosEnBd.has(productoCodigo)) {

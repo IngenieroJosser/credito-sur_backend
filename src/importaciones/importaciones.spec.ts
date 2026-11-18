@@ -1517,6 +1517,26 @@ describe('Diferencias entre crédito de artículo y préstamo en efectivo', () =
     expect(resultado.creditos?.[0].plazoMeses).toBe(1.5);
   });
 
+  it('y con el inventario vacio dice que hay que importarlo primero', async () => {
+    // El primer dia, mismo caso que la ruta: el desplegable de esa columna
+    // solo se pone si hay articulos, asi que «es requerido» le senala una
+    // celda cuando lo que falta es el paso anterior.
+    const { 'Código del artículo': _sinCodigo, ...resto } = creditoArticuloMinimo;
+    const resultado = await validarCreditoArticulo(resto, {
+      clientes: [clienteEnBd],
+      productos: [],
+    });
+
+    expect(resultado.errores).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          campo: 'producto_codigo',
+          mensaje: expect.stringContaining('importe primero el inventario'),
+        }),
+      ]),
+    );
+  });
+
   it('exige el código del artículo en su hoja', async () => {
     const { 'Código del artículo': _cod, ...resto } = creditoArticuloMinimo;
     const resultado = await validarCreditoArticulo(resto);
