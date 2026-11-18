@@ -1906,6 +1906,40 @@ export class LoansService implements OnModuleInit {
         return `${y}-${m}-${day}`;
       };
 
+      /*
+       * La fecha del ultimo pago de cada credito de esta pagina.
+       *
+       * Una sola consulta agrupada sobre los ids que ya se trajeron, no una por
+       * fila: es el mismo patron que usa `routes.service` para lo mismo, y el
+       * indice por `prestamoId` esta.
+       *
+       * Existe porque el frontend lo estaba resolviendo de la peor forma
+       * posible: `SeguimientoPuntoVenta` pedia `obtenerPagos({ limit: 5000 })`
+       * sin filtro de fecha para quedarse con la fecha del ultimo pago y con lo
+       * pagado hoy. El servicio del frontend pagina de 200 en 200, asi que ese
+       * limite se traduce en tantas peticiones HTTP como haga falta: una con los
+       * 85 pagos que hay hoy en la base de desarrollo, veinticinco cuando haya
+       * 5.000. Y ahi cortaba.
+       */
+      const idsDeLaPagina = prestamos.map((p) => p.id);
+      const ultimoPagoPorPrestamo = new Map<string, Date>();
+
+      if (idsDeLaPagina.length > 0) {
+        const ultimos = await this.prisma.pago.groupBy({
+          by: ['prestamoId'],
+          // `Pago` no tiene borrado logico, y `fechaPago` es obligatoria y
+          // con indice, asi que `_max` basta: no hace falta el COALESCE con
+          // `creadoEn` que si necesita la consulta cruda de `routes.service`.
+          where: { prestamoId: { in: idsDeLaPagina } },
+          _max: { fechaPago: true },
+        });
+        ultimos.forEach((u) => {
+          if (u._max.fechaPago) {
+            ultimoPagoPorPrestamo.set(u.prestamoId, u._max.fechaPago);
+          }
+        });
+      }
+
       const prestamosTransformados = prestamos.map((prestamo) => {
         try {
           // Calcular campos adicionales
@@ -2053,6 +2087,14 @@ export class LoansService implements OnModuleInit {
             riesgo: prestamo.cliente.nivelRiesgo || NivelRiesgo.VERDE,
             ruta: rutaAsignada,
             rutaNombre,
+            /**
+             * Cuando se le pago por ultima vez, o `null` si nunca.
+             *
+             * `null` y no una fecha inventada ni una cadena vacia: «nunca ha
+             * pagado» y «no se sabe» no son lo mismo, y la pantalla tiene que
+             * poder distinguirlos.
+             */
+            ultimoPago: ultimoPagoPorPrestamo.get(prestamo.id) || null,
             vendedor: prestamo.creadoPor?.nombres || 'Sin asignar',
             vendedorRol: prestamo.creadoPor?.rol || '',
             creadoPorRol: prestamo.creadoPor?.rol || '',
