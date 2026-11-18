@@ -482,6 +482,66 @@ describe('Plantilla de clientes y créditos', () => {
     expect(resultado.clientes).toHaveLength(0);
   });
 
+  /*
+   * El primer dia: no hay ninguna ruta creada todavia.
+   *
+   * «Ruta codigo» es obligatoria y su desplegable solo se pone si ya hay
+   * rutas, asi que quien estrena el sistema llena quinientas filas a mano y
+   * recibe quinientos «Es requerida», que describe la celda y no la causa: lo
+   * que falta no esta en el archivo, esta en el sistema.
+   */
+  it('cuando el sistema no tiene NINGUNA ruta, el error dice que hay que crearlas', async () => {
+    const plantilla =
+      await generarPlantillaClientesCreditos(datosPlantillaVacios);
+
+    const archivo = await editarLibro(plantilla.data, (workbook) => {
+      escribirFila(workbook.getWorksheet('Clientes')!, FILA_DATOS, {
+        'CC cliente': '12345678',
+        Nombres: 'Juan',
+        Apellidos: 'Pérez',
+        Teléfono: '3001234567',
+      });
+    });
+
+    const resultado = await new ClientesCreditosParser(
+      prismaMock({ rutas: [] }),
+    ).parseAndValidate(archivo, 'clientes.xlsx');
+
+    expect(resultado.errores).toEqual([
+      expect.objectContaining({
+        campo: 'ruta_codigo',
+        mensaje: expect.stringContaining('no hay ninguna ruta creada'),
+      }),
+    ]);
+  });
+
+  it('pero si ya hay rutas, el error sigue hablando de la celda', async () => {
+    const plantilla =
+      await generarPlantillaClientesCreditos(datosPlantillaVacios);
+
+    const archivo = await editarLibro(plantilla.data, (workbook) => {
+      escribirFila(workbook.getWorksheet('Clientes')!, FILA_DATOS, {
+        'CC cliente': '12345678',
+        Nombres: 'Juan',
+        Apellidos: 'Pérez',
+        Teléfono: '3001234567',
+      });
+    });
+
+    // `prismaMock()` sin datos devuelve una ruta RT-01: el sistema ya esta en
+    // marcha, y entonces lo que falta de verdad es la celda.
+    const resultado = await new ClientesCreditosParser(
+      prismaMock(),
+    ).parseAndValidate(archivo, 'clientes.xlsx');
+
+    expect(resultado.errores).toEqual([
+      expect.objectContaining({
+        campo: 'ruta_codigo',
+        mensaje: expect.stringContaining('Es requerida'),
+      }),
+    ]);
+  });
+
   it('crea el cliente sin exigir acción ni código de importación', async () => {
     const plantilla =
       await generarPlantillaClientesCreditos(datosPlantillaVacios);

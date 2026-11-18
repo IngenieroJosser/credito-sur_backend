@@ -589,18 +589,32 @@ export class ClientesCreditosParser {
         );
       }
 
-      // La ruta es obligatoria: un cliente sin ruta no entra en ninguna
-      // jornada de cobro, y sus creditos quedan sin ruta tambien.
+      /*
+       * La ruta es obligatoria: un cliente sin ruta no entra en ninguna
+       * jornada de cobro, y sus creditos quedan sin ruta tambien.
+       *
+       * El mensaje distingue el sistema SIN NINGUNA RUTA del codigo mal
+       * escrito, y no es un adorno: es el primer paso de quien estrena el
+       * sistema. Baja la plantilla cuando todavia no ha creado rutas —asi que
+       * el desplegable de esa columna viene vacio, porque
+       * `plantilla-clientes-creditos` solo lo pone si hay alguna—, llena
+       * quinientas filas y recibe quinientos «es requerida» sin que nada le
+       * diga que lo que falta no esta en el archivo.
+       */
       if (!rutaCodigo) {
         addError(
           'ruta_codigo',
-          'Es requerida: el cliente debe quedar asignado a una ruta para poder cobrarle',
+          rutasEnBd.size === 0
+            ? 'Todavia no hay ninguna ruta creada en el sistema: crealas primero en Rutas y vuelve a descargar la plantilla, que trae el desplegable con sus codigos'
+            : 'Es requerida: el cliente debe quedar asignado a una ruta para poder cobrarle',
           leerValorCelda(celda(row, cliRutaCodigo)),
         );
       } else if (!rutasEnBd.has(rutaCodigo)) {
         addError(
           'ruta_codigo',
-          'La ruta no existe en la base de datos',
+          rutasEnBd.size === 0
+            ? 'Todavia no hay ninguna ruta creada en el sistema: crealas primero en Rutas'
+            : 'La ruta no existe en la base de datos',
           rutaCodigo,
         );
       }

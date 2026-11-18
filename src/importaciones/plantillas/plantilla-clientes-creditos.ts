@@ -1245,6 +1245,28 @@ export async function generarPlantillaClientesCreditos(
   wsEjemplos.getCell('A1').value = 'GUÍA DE EJEMPLOS';
   wsEjemplos.getCell('A1').font = { bold: true, size: 14 };
 
+  /*
+   * El aviso de que falta el paso anterior.
+   *
+   * «Ruta código» es obligatoria, y su desplegable solo se pone si ya hay
+   * rutas creadas. Quien estrena el sistema baja esta plantilla ANTES de crear
+   * ninguna: la columna no le ofrece nada, llena quinientas filas y recibe
+   * quinientos errores. El archivo se lo dice antes de que empiece.
+   */
+  if (datos.rutas.length === 0) {
+    wsEjemplos.getCell('A2').value =
+      'ANTES DE LLENAR ESTO: cree sus rutas en el sistema';
+    wsEjemplos.getCell('A2').font = { bold: true, size: 12, color: { argb: 'FFB91C1C' } };
+    wsEjemplos.getCell('B2').value =
+      'Todavía no hay ninguna ruta creada, y la columna «Ruta código*» de la hoja ' +
+      'Clientes es obligatoria: sin ruta nadie sale a cobrarle, así que la ' +
+      'importación rechazará todas las filas. Cree las rutas con sus cobradores y ' +
+      'vuelva a descargar esta plantilla: la columna traerá el desplegable con sus ' +
+      'códigos y la hoja «BD Clientes» las mostrará.';
+    wsEjemplos.getCell('B2').alignment = { wrapText: true, vertical: 'top' };
+    wsEjemplos.getRow(2).height = 72;
+  }
+
   // Cada ejemplo nombra las columnas tal como salen en la hoja. Antes esta
   // guía hablaba de columnas que ya no existen —código de importación, nivel
   // de riesgo, tipo de crédito, plazo— y mandaba a llenar cosas que no están.
