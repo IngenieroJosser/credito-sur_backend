@@ -1717,6 +1717,28 @@ export class LoansService implements OnModuleInit {
         this.prisma.prestamo.findMany({
           where,
           include: {
+            /*
+             * La ruta DEL CREDITO, que es la que manda.
+             *
+             * La columna «Ruta» de esta fila se armaba con la asignacion del
+             * CLIENTE, y las dos cosas no son lo mismo: en este sistema la ruta
+             * la lleva el credito (`Prestamo.rutaId`) y `AsignacionRuta` es el
+             * orden de visita derivado de los creditos
+             * (`sincronizar-asignaciones.ts`).
+             *
+             * Cuando no coinciden, la fila mentia justo en el caso que importa:
+             * un credito SIN ruta cuyo cliente si esta en una. Medido contra la
+             * base de desarrollo el 2026-11-18: el filtro «Sin ruta» devolvia
+             * 26 creditos y la columna solo delataba 24; los otros dos —mas un
+             * tercero— eran de un cliente asignado a «Ruta Centro - Norte», asi
+             * que se mostraban dentro de esa ruta aunque ninguna jornada los
+             * incluye. Y ese texto se pinta tambien en Cuentas en mora, donde
+             * 24 de esos huerfanos estan EN_MORA: los que mas falta hace ver
+             * eran los que quedaban tapados.
+             */
+            ruta: {
+              select: { id: true, nombre: true, codigo: true },
+            },
             cliente: {
               select: {
                 id: true,
@@ -1729,20 +1751,13 @@ export class LoansService implements OnModuleInit {
                 // porque la copia local no la tenia de donde sacar.
                 direccion: true,
                 nivelRiesgo: true,
-                // Incluir asignaciones de ruta dentro del mismo select del cliente
-                asignacionesRuta: {
-                  where: { activa: true },
-                  select: {
-                    ruta: {
-                      select: {
-                        id: true,
-                        nombre: true,
-                        codigo: true,
-                      },
-                    },
-                  },
-                  take: 1,
-                },
+                /*
+                 * Aqui venian las `asignacionesRuta` del cliente, que eran lo
+                 * que alimentaba la columna «Ruta». Ya no las lee nadie en este
+                 * mapeo —la ruta sale del credito— y eran un join con `take: 1`
+                 * por cada fila del listado, asi que se quitan en vez de
+                 * quedarse como dato muerto en una consulta de lista.
+                 */
               },
             },
             producto: {
@@ -1951,20 +1966,20 @@ export class LoansService implements OnModuleInit {
             }
           }
 
-          // Obtener ruta del cliente (si existe) - CORREGIDO
+          /*
+           * La ruta de ESTE credito, no la de su cliente. Ver la nota del
+           * `include`: con la asignacion del cliente, un credito sin ruta
+           * aparecia dentro de la ruta de su dueño y nadie lo echaba de menos.
+           *
+           * Sin ruta se dice «Sin asignar», que es verdad y ademas es lo que
+           * busca quien va a arreglarlo.
+           */
           let rutaAsignada = 'Sin asignar';
           let rutaNombre = 'Sin asignar';
 
-          if (
-            prestamo.cliente &&
-            prestamo.cliente.asignacionesRuta &&
-            prestamo.cliente.asignacionesRuta.length > 0
-          ) {
-            const asignacion = prestamo.cliente.asignacionesRuta[0];
-            if (asignacion.ruta) {
-              rutaAsignada = asignacion.ruta.codigo || asignacion.ruta.id;
-              rutaNombre = asignacion.ruta.nombre || 'Ruta asignada';
-            }
+          if (prestamo.ruta) {
+            rutaAsignada = prestamo.ruta.codigo || prestamo.ruta.id;
+            rutaNombre = prestamo.ruta.nombre || 'Ruta asignada';
           }
 
           return {
