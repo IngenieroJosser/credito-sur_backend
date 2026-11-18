@@ -423,6 +423,59 @@ describe('LoansService accounting impact for approved loans', () => {
     ).rejects.toThrow(/Asigne el cliente a una ruta|indique la ruta/i);
   });
 
+  /**
+   * Un credito a financiar de CERO no es un credito.
+   *
+   * Sin monto no hay cuotas, y sin cuotas no hay nada que cobrar: queda
+   * ACTIVO para el sistema —suma a la cartera viva— y no existe para el
+   * cobrador, porque la visita se arma desde la cuota.
+   *
+   * Medido en la base de desarrollo: CUATRO creditos de articulo por $0,00,
+   * ACTIVOS y sin una sola cuota.
+   */
+  it('no crea un credito que quedaria en cero', async () => {
+    const prisma = buildCreateLoanPrismaMock(RolUsuario.ADMIN);
+
+    await expect(
+      makeService(prisma).createLoan({
+        clienteId: 'cliente-1',
+        tipoPrestamo: TipoPrestamoDto.EFECTIVO,
+        monto: 0,
+        tasaInteres: 10,
+        tasaInteresMora: 2,
+        plazoMeses: 1,
+        cantidadCuotas: 4,
+        frecuenciaPago: FrecuenciaPago.SEMANAL,
+        fechaInicio: '2026-06-12',
+        creadoPorId: 'usuario-1',
+      }),
+    ).rejects.toThrow(/quedaria en cero|nada que cobrar/i);
+  });
+
+  it('y el mensaje ofrece la salida: registrarlo como venta de contado', async () => {
+    /*
+     * El caso real no es un cero tecleado: es una cuota inicial que cubre el
+     * precio entero. Quien lo hace no se equivoco de cifra, se equivoco de
+     * operacion, y el mensaje tiene que decirle cual es la buena.
+     */
+    const prisma = buildCreateLoanPrismaMock(RolUsuario.ADMIN);
+
+    await expect(
+      makeService(prisma).createLoan({
+        clienteId: 'cliente-1',
+        tipoPrestamo: TipoPrestamoDto.EFECTIVO,
+        monto: 0,
+        tasaInteres: 10,
+        tasaInteresMora: 2,
+        plazoMeses: 1,
+        cantidadCuotas: 4,
+        frecuenciaPago: FrecuenciaPago.SEMANAL,
+        fechaInicio: '2026-06-12',
+        creadoPorId: 'usuario-1',
+      }),
+    ).rejects.toThrow(/venta de contado/i);
+  });
+
   it('no crea un credito si el cliente no tiene ruta', async () => {
     const prisma = buildCreateLoanPrismaMock(RolUsuario.ADMIN);
     prisma.cliente.findUnique = jest.fn().mockResolvedValue({

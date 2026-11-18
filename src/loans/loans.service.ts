@@ -3883,6 +3883,29 @@ export class LoansService implements OnModuleInit {
         `[CUOTAS CALCULATION] Cantidad final de cuotas a crear: ${cantidadCuotas}`,
       );
 
+      /*
+       * Un credito a financiar de CERO no es un credito.
+       *
+       * Sin monto no hay cuotas, y sin cuotas no hay nada que cobrar: el
+       * credito queda ACTIVO para el sistema —suma a la cartera viva— y no
+       * existe para el cobrador, porque la visita se arma desde la cuota.
+       *
+       * Medido en la base de desarrollo: CUATRO creditos de articulo por
+       * $0,00, ACTIVOS, sin una sola cuota. Se llega aqui por dos caminos que
+       * hoy nadie frena: una cuota inicial igual al precio total (la
+       * validacion solo rechaza que sea MAYOR) y un plan de precio en cero.
+       *
+       * El contado queda fuera a proposito: ahi no se financia nada y el
+       * monto es el de la venta.
+       */
+      if (!data.esContado && !(montoFinanciar > 0)) {
+        throw new BadRequestException(
+          'El credito quedaria en cero y no habria nada que cobrar. Si el ' +
+            'cliente paga todo de entrada, registrelo como venta de contado; ' +
+            'si no, revise el precio del plan y la cuota inicial.',
+        );
+      }
+
       const tipoAmort = data.tipoAmortizacion || TipoAmortizacion.INTERES_PLANO;
       const tasaInteres = data.tasaInteres || 0;
 
