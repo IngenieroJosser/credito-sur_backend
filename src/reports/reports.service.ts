@@ -368,18 +368,43 @@ export class ReportsService {
       whereConditions.clienteId = { in: clienteIds };
     }
 
-    // Obtener total bruto de registros (antes del filtro en memoria)
-    const _totalRaw = await this.prisma.prestamo.count({
-      where: whereConditions,
-    });
-
-    // Obtener préstamos con relaciones
+    /*
+     * Se traen TODOS los candidatos y la pagina se corta al final, despues del
+     * filtro en memoria.
+     *
+     * Antes la consulta paginaba con `skip`/`take: limite` y el filtro de
+     * `tieneMoraReal` se aplicaba DESPUES, sobre esas 50 filas. De ahi salian
+     * tres cosas torcidas:
+     *
+     *  - `total` era el numero de supervivientes de la pagina, no del conjunto,
+     *    asi que el paginador decia que habia una sola pagina;
+     *  - los `totales` —deuda en riesgo y casos criticos— sumaban solo esas 50
+     *    filas: con la cartera real del cliente, la pantalla habria mostrado
+     *    MENOS dinero del que hay, sin avisar de nada;
+     *  - y las paginas salian de tamaños distintos, porque las filas se
+     *    descartaban despues de cortar.
+     *
+     * El contador que si mira el conjunto completo ya estaba escrito —un
+     * `count` guardado en `_totalRaw`, con el guion bajo de «no se usa»— y se
+     * tiraba a la basura.
+     *
+     * No se nota con pocos datos: hoy, en la base de desarrollo, son 41 filas
+     * contra un limite de 50. Se nota el dia de la importacion.
+     */
     const prestamos = await this.prisma.prestamo.findMany({
       where: whereConditions,
-      skip,
-      take: limite,
       include: {
         cliente: true,
+        /*
+         * La ruta DEL CREDITO, con su cobrador.
+         *
+         * Antes estas dos columnas salian de un
+         * `asignacionRuta.findFirst({ clienteId })` dentro del `map` —una
+         * consulta por fila— y describian la ruta del CLIENTE. Para un credito
+         * sin ruta eso significa mostrarlo en la ruta de su dueño y, peor, con
+         * el nombre de un cobrador que no lo tiene en su jornada.
+         */
+        ruta: { include: { cobrador: true } },
         cuotas: {
           where: {
             estado: { in: ['PENDIENTE', 'PARCIAL', 'VENCIDA'] },
@@ -418,20 +443,6 @@ export class ReportsService {
       // que habia abajo dejaba pasar tres campos de prorroga sin declarar.
       prestamos.map(async (prestamo): Promise<PrestamoMoraDto | null> => {
         // Obtener asignación de ruta activa del cliente
-        const asignacion = await this.prisma.asignacionRuta.findFirst({
-          where: {
-            clienteId: prestamo.clienteId,
-            activa: true,
-          },
-          include: {
-            ruta: {
-              include: {
-                cobrador: true,
-              },
-            },
-          },
-        });
-
         const cuotas = prestamo?.cuotas || [];
         const cuotasVencidas = cuotas.filter((c) => {
           const eff = c?.fechaVencimientoProrroga
@@ -529,9 +540,9 @@ export class ReportsService {
           montoTotalDeuda: prestamo.saldoPendiente.toNumber(),
           montoOriginal: prestamo.monto.toNumber(),
           cuotasVencidas: cuotasVencidas.length,
-          ruta: asignacion?.ruta?.nombre || 'Sin asignar',
-          cobrador: asignacion?.ruta?.cobrador
-            ? `${asignacion.ruta.cobrador.nombres} ${asignacion.ruta.cobrador.apellidos}`
+          ruta: prestamo.ruta?.nombre || 'Sin asignar',
+          cobrador: prestamo.ruta?.cobrador
+            ? `${prestamo.ruta.cobrador.nombres} ${prestamo.ruta.cobrador.apellidos}`
             : 'Sin asignar',
           nivelRiesgo: prestamo.cliente.nivelRiesgo,
           estado: prestamo.estado,
@@ -575,8 +586,13 @@ export class ReportsService {
       totalRegistros: total,
     };
 
+    // La pagina se corta aqui: `total` y `totales` ya miran el conjunto
+    // completo, que es lo que hace que el paginador y las cifras de dinero
+    // digan la verdad con mas de una pagina de morosos.
+    const paginaDePrestamos = prestamosEnriquecidos.slice(skip, skip + limite);
+
     return {
-      prestamos: prestamosEnriquecidos,
+      prestamos: paginaDePrestamos,
       totales,
       total,
       pagina,
@@ -744,24 +760,39 @@ export class ReportsService {
 
     const total = await this.prisma.prestamo.count({ where: whereConditions });
 
+    /*
+     * Sin `skip`/`take`: la pagina se corta al final.
+     *
+     * `totalRegistros` ya miraba el conjunto completo —es el `count` de
+     * arriba—, pero el DINERO (`totalVencido`, `totalInteresesMora`,
+     * `totalMontoOriginal`) y el promedio de dias se sumaban sobre las filas de
+     * la pagina. O sea que la pantalla decia «41 cuentas» y debajo una deuda
+     * que solo cubria las primeras 50: el numero de cuentas y el dinero no
+     * hablaban del mismo conjunto, y el dinero salia por debajo sin avisar.
+     */
     const prestamos = await this.prisma.prestamo.findMany({
       where: whereConditions,
-      skip,
-      take: limite,
       include: {
         cliente: true,
         cuotas: { where: { estado: 'VENCIDA' } },
+        /*
+         * La ruta DEL CREDITO. Antes esto era un
+         * `asignacionRuta.findFirst({ clienteId })` dentro del `map`, o sea una
+         * consulta POR FILA, y encima leia la ruta del CLIENTE: un credito sin
+         * ruta se mostraba en la ruta de su dueño, igual que pasaba en el
+         * listado de creditos. Aqui importa el doble, porque esta es la
+         * pantalla de perseguir lo vencido.
+         *
+         * El `include` traia tambien el cobrador de esa ruta y no lo leia
+         * nadie.
+         */
+        ruta: { select: { nombre: true } },
       },
       orderBy: [{ fechaFin: 'asc' }, { saldoPendiente: 'desc' }],
     });
 
     const cuentasVencidas = await Promise.all(
       prestamos.map(async (prestamo) => {
-        const asignacion = await this.prisma.asignacionRuta.findFirst({
-          where: { clienteId: prestamo.clienteId, activa: true },
-          include: { ruta: { include: { cobrador: true } } },
-        });
-
         const diasVencidos = differenceInDays(hoy, prestamo.fechaFin);
         const interesesMora = prestamo.cuotas.reduce(
           (sum, cuota) => sum + cuota.montoInteresMora.toNumber(),
@@ -781,7 +812,7 @@ export class ReportsService {
           diasVencidos,
           saldoPendiente: prestamo.saldoPendiente.toNumber(),
           montoOriginal: prestamo.monto.toNumber(),
-          ruta: asignacion?.ruta?.nombre || 'Sin asignar',
+          ruta: prestamo.ruta?.nombre || 'Sin asignar',
           nivelRiesgo: prestamo.cliente.nivelRiesgo,
           estado: prestamo.estado,
           interesesMora,
@@ -812,7 +843,15 @@ export class ReportsService {
       ),
     };
 
-    return { cuentas: cuentasVencidas, totales, total, pagina, limite };
+    // La pagina se corta aqui, con los totales ya calculados sobre el conjunto
+    // completo: asi el numero de cuentas y el dinero hablan de lo mismo.
+    return {
+      cuentas: cuentasVencidas.slice(skip, skip + limite),
+      totales,
+      total,
+      pagina,
+      limite,
+    };
   }
 
   async procesarDecisionCastigo(
