@@ -59,6 +59,7 @@ import {
 } from '../templates/exports';
 import { normalizarCodigoRuta } from './codigo-ruta';
 import { objetoDeJson, textoDeJson } from '../common/json.util';
+import { ORIGEN_OFICINA } from '../payments/origen-de-gestion';
 
 type RouteActor =
   | {
@@ -3726,7 +3727,32 @@ export class RoutesService {
       { id: string; nombre: string; rol: string }
     > = {};
     pagosDeHoy.forEach((p) => {
-      if (!p.prestamoId || !p.cobrador) return;
+      if (!p.prestamoId) return;
+
+      /*
+       * El pago que recibio la oficina.
+       *
+       * Su `cobradorId` es el cobrador de la RUTA —se fuerza asi para que el
+       * recaudo y la meta lo cuenten, que el cliente pago su cuota— de modo
+       * que por ese campo no se distingue de un cobro en la calle, y la
+       * tarjeta se quedaba muda: el cobrador veia al cliente pagado sin saber
+       * que el dinero esta en CAJA-OFICINA y no lo tiene que pedir.
+       *
+       * `OFICINA` no es el id de ningun usuario: es un centinela para que
+       * `cobradoPorOtro` —que compara contra `visita.cobradorId`— se active.
+       * El id real de quien registro queda en la `Transaccion`
+       * (`creadoPorId`), que es donde se audita.
+       */
+      if (String(p.origenGestion || '').toUpperCase() === ORIGEN_OFICINA) {
+        cobradoPorPorPrestamo[p.prestamoId] = {
+          id: ORIGEN_OFICINA,
+          nombre: 'la oficina',
+          rol: ORIGEN_OFICINA,
+        };
+        return;
+      }
+
+      if (!p.cobrador) return;
       const nombre =
         `${p.cobrador.nombres || ''} ${p.cobrador.apellidos || ''}`.trim();
       if (!nombre) return;

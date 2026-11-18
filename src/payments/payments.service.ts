@@ -38,6 +38,7 @@ import {
   getBogotaStartEndOfDayFromKey,
 } from '../utils/date-utils';
 import { LedgerService } from '../accounting/ledger.service';
+import { resolverOrigenDeGestion } from './origen-de-gestion';
 import { MoraService } from '../loans/mora.service';
 import { createHash, randomUUID } from 'crypto';
 
@@ -1226,7 +1227,10 @@ export class PaymentsService {
             metodoPago: 'TRANSFERENCIA',
             cuotaId: paymentDto.cuotaId || null,
             fechaOperativaRuta: paymentDto.fechaOperativaRuta || null,
-            origenGestion: paymentDto.origenGestion || null,
+            origenGestion: resolverOrigenDeGestion(
+              paymentDto.origenGestion,
+              actor?.rol,
+            ),
             idempotencyKey: idempotencyKey || null,
           },
         },
@@ -1441,7 +1445,10 @@ export class PaymentsService {
             numeroReferencia: paymentDto.numeroReferencia,
             notas: paymentDto.notas,
             fechaOperativaRuta: paymentDto.fechaOperativaRuta,
-            origenGestion: paymentDto.origenGestion,
+            origenGestion: resolverOrigenDeGestion(
+              paymentDto.origenGestion,
+              actor?.rol,
+            ),
             detalles: {
               create: detallesPagoActuales,
             },

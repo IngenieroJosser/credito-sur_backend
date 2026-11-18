@@ -59,9 +59,15 @@ export class PaymentsController {
    * La lista sale de medir quien lo usa de verdad en las pantallas:
    * `VistaCobrador` (cobrador), `SupervisorCobroView` y el detalle de cliente
    * del supervisor, y las dos pantallas de pagos del admin mas su vista de
-   * ruta. El coordinador NO lo llama —su pantalla solo lee pagos— pero entra
-   * igual porque la operacion diaria de las rutas es suya (`credisur.md`) y
-   * su vista de ruta es gemela de la del admin.
+   * ruta.
+   *
+   * El COORDINADOR si lo llama, y es un caso del negocio, no una gemela del
+   * admin: muchos clientes no esperan al cobrador y van a pagar a la sede,
+   * donde los recibe el coordinador. Su efectivo entra a CAJA-OFICINA
+   * (`resolveCajaIngresoPago`) y el pago nace marcado con
+   * `origenGestion: 'OFICINA'` (`origen-de-gestion.ts`), para que en la ruta se
+   * vea que ese dinero lo tiene la oficina y el cobrador no lo pida ni lo
+   * entregue al cierre.
    */
   @Roles(
     RolUsuario.SUPER_ADMINISTRADOR,
