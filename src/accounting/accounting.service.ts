@@ -593,6 +593,40 @@ export class AccountingService {
     const { startDate: _fechaInicio, endDate: _fechaFin } =
       getBogotaStartEndOfDay(new Date());
 
+    /*
+     * Las rutas de cada supervisor, en UNA consulta.
+     *
+     * Antes se pedian dentro del `map`: una consulta por cada caja de
+     * supervisor, cada vez que alguien abre Gestion Contable. Son pocas cajas,
+     * pero el patron es el que ya costo 8,6 segundos en la pantalla del punto
+     * de venta, y aqui no cuesta nada evitarlo.
+     */
+    const responsablesDeCajaDeSupervisor = cajas
+      .filter((c) => c.tipo === 'RUTA' && !c.rutaId && c.responsableId)
+      .map((c) => c.responsableId);
+
+    const rutasPorSupervisor = new Map<
+      string,
+      { id: string; nombre: string; codigo: string }[]
+    >();
+
+    if (responsablesDeCajaDeSupervisor.length > 0) {
+      const rutasDeSupervisores = await this.prisma.ruta.findMany({
+        where: {
+          supervisorId: { in: responsablesDeCajaDeSupervisor },
+          eliminadoEn: null,
+        },
+        select: { id: true, nombre: true, codigo: true, supervisorId: true },
+      });
+
+      rutasDeSupervisores.forEach((r) => {
+        if (!r.supervisorId) return;
+        const lista = rutasPorSupervisor.get(r.supervisorId) || [];
+        lista.push({ id: r.id, nombre: r.nombre, codigo: r.codigo });
+        rutasPorSupervisor.set(r.supervisorId, lista);
+      });
+    }
+
     const cajasConSaldo = await Promise.all(
       cajas.map(async (caja) => {
         let saldoCalculado = Number(caja.saldoActual);
@@ -606,24 +640,10 @@ export class AccountingService {
 
         // Si es caja de supervisor (rutaId null), obtener rutas supervisadas
         // La forma del `select` de abajo: tres campos, no el modelo entero.
-        let rutasSupervisadas: {
-          id: string;
-          nombre: string;
-          codigo: string;
-        }[] = [];
-        if (caja.tipo === 'RUTA' && !caja.rutaId && caja.responsableId) {
-          rutasSupervisadas = await this.prisma.ruta.findMany({
-            where: {
-              supervisorId: caja.responsableId,
-              eliminadoEn: null,
-            },
-            select: {
-              id: true,
-              nombre: true,
-              codigo: true,
-            },
-          });
-        }
+        const rutasSupervisadas =
+          caja.tipo === 'RUTA' && !caja.rutaId && caja.responsableId
+            ? rutasPorSupervisor.get(caja.responsableId) || []
+            : [];
 
         return {
           id: caja.id,
