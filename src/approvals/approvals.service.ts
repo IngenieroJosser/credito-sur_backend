@@ -3162,7 +3162,25 @@ export class ApprovalsService {
       // Idempotente para evitar duplicación por reintentos.
       const cuotaInicialVal = Number(cuotaInicial || 0);
       if (isArticulo && !fueActivo) {
-        const rutaId = prestamo.cliente?.asignacionesRuta?.[0]?.rutaId;
+        /*
+         * La caja de la que sale el dinero es la de la ruta DEL CREDITO.
+         *
+         * Antes se elegia con `cliente.asignacionesRuta[0]`, la asignacion del
+         * CLIENTE, y ese `[0]` es una cualquiera: el indice unico parcial es
+         * `(rutaId, clienteId) WHERE activa`, asi que un cliente con creditos
+         * en dos rutas tiene dos asignaciones activas. El desembolso podia
+         * salir de la caja de una ruta que no es la de este credito.
+         *
+         * Lo dice el propio backend en `resolveCajaIngresoPago`: «Equivocar la
+         * caja aqui no se nota en el momento: aparece al cierre de ruta, como
+         * un descuadre que nadie sabe de donde salio».
+         *
+         * La asignacion del cliente se queda SOLO como respaldo, para las filas
+         * viejas que todavia no tienen ruta (desde `9b056ad` ningun credito
+         * nuevo puede quedarse sin ella).
+         */
+        const rutaId =
+          prestamo.rutaId || prestamo.cliente?.asignacionesRuta?.[0]?.rutaId;
         const cajaRuta = rutaId
           ? await tx.caja.findFirst({
               where: { rutaId, tipo: 'RUTA', activa: true },
@@ -3501,7 +3519,10 @@ export class ApprovalsService {
           where: { id: approval.solicitadoPorId },
           select: { rol: true },
         });
-        const rutaAsignadaId = prestamo?.cliente?.asignacionesRuta?.[0]?.rutaId;
+        // La ruta DEL CREDITO, igual que en el credito de articulo: ver la nota
+        // de arriba. La asignacion del cliente solo como respaldo.
+        const rutaAsignadaId =
+          prestamo?.rutaId || prestamo?.cliente?.asignacionesRuta?.[0]?.rutaId;
         const cajaRuta =
           solicitante?.rol === RolUsuario.COBRADOR && rutaAsignadaId
             ? await tx.caja.findFirst({
