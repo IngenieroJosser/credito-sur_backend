@@ -85,3 +85,47 @@ describe('la ruta que muestra un credito es la suya', () => {
     expect(cuerpo).toMatch(/let rutaNombre = 'Sin asignar'/);
   });
 });
+
+/**
+ * Un credito sin aprobar no esta en mora.
+ *
+ * La fila deducia EN_MORA de las cuotas vencidas pisando CUALQUIER estado, y el
+ * plan de cuotas se arma al pedir el credito: una solicitud que lleva unos dias
+ * sin aprobar ya tiene cuotas con fecha pasada aunque no se haya desembolsado
+ * un peso. No hay deuda con la que atrasarse.
+ *
+ * Medido con el backend en marcha, en UNA sola respuesta de `GET /loans`: la
+ * cabecera decia 41 atrasados, 12 activos y 63 creditos; la tabla de abajo 45,
+ * 16 y 67. Los cuatro de diferencia estaban en PENDIENTE_APROBACION —tres de un
+ * mismo cliente y uno con 866.645 de saldo— y se pintaban en mora en la
+ * pantalla de creditos, mientras el panel y la pantalla de mora decian 41.
+ * Despues del arreglo las filas dan 41 EN_MORA y los cuatro muestran su estado.
+ *
+ * La regla ya estaba escrita 130 lineas mas arriba, en `whereStats`, que excluye
+ * BORRADOR y PENDIENTE_APROBACION de las estadisticas de esta misma respuesta.
+ */
+describe('la mora se deduce solo de un credito ya vivo', () => {
+  const cuerpo = (() => {
+    const inicio = FUENTE.indexOf('async getAllLoans(');
+    const resto = FUENTE.slice(inicio + 10);
+    const siguiente = resto.search(/\n {2}(?:private |protected )?async \w+\(/);
+    return siguiente > 0 ? resto.slice(0, siguiente) : resto;
+  })();
+
+  it('solo ACTIVO y EN_MORA entran en la deduccion', () => {
+    expect(cuerpo).toMatch(/const esCobrable =/);
+    expect(cuerpo).toMatch(/prestamo\.estado === EstadoPrestamo\.ACTIVO/);
+    expect(cuerpo).toMatch(/prestamo\.estado === EstadoPrestamo\.EN_MORA/);
+  });
+
+  it('y lo que no es cobrable conserva su estado', () => {
+    expect(cuerpo).toMatch(/!esCobrable[\s\S]{0,120}prestamo\.estado \|\| EstadoPrestamo\.BORRADOR/);
+  });
+
+  it('ninguna cuota vencida ya no basta para pintar EN_MORA', () => {
+    // La forma vieja: el ternario empezaba por las cuotas y pisaba el estado.
+    expect(cuerpo).not.toMatch(
+      /const estado =\s*cuotasVencidas > 0\s*\? EstadoPrestamo\.EN_MORA/,
+    );
+  });
+});

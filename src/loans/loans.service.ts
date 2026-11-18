@@ -1835,6 +1835,18 @@ export class LoansService implements OnModuleInit {
           },
         },
       };
+      /*
+       * «Atrasados» cuenta por cuota vencida O por la columna, y «activos»
+       * exige la columna en ACTIVO. Se probo cambiarlo para que las dos
+       * miraran solo las cuotas, como hacen las filas de abajo, y la medicion
+       * dijo que NO cambia ninguna cifra: en esta base no hay ningun credito
+       * con la columna en EN_MORA y ninguna cuota vencida. Ademas
+       * `loans.service.spec.ts` afirma a proposito que la columna tambien
+       * cuenta. Se queda como esta.
+       *
+       * Lo que si estaba torcido eran las FILAS, y es lo que se arreglo: ver la
+       * nota de `esCobrable` mas abajo.
+       */
       const moraStatsWhere: Prisma.PrestamoWhereInput = {
         ...whereStats,
         saldoPendiente: { gt: 0 },
@@ -1943,12 +1955,42 @@ export class LoansService implements OnModuleInit {
             0,
           );
 
-          const estado =
-            cuotasVencidas > 0
+          /*
+           * La mora se deduce de las cuotas, pero SOLO para un credito que ya
+           * esta vivo.
+           *
+           * Antes la primera condicion pisaba cualquier estado: bastaba una
+           * cuota con fecha pasada para pintar EN_MORA un credito en
+           * PENDIENTE_APROBACION o en BORRADOR. Y eso pasa de verdad, porque el
+           * plan de cuotas se arma al pedirlo: si la solicitud lleva unos dias
+           * sin aprobar, sus primeras cuotas ya tienen fecha vencida aunque no
+           * se haya desembolsado un peso. No hay deuda con la que atrasarse.
+           *
+           * Medido contra la base de desarrollo el 2026-11-18, en UNA sola
+           * respuesta de `GET /loans`: la cabecera decia 41 atrasados, 12
+           * activos y 63 creditos, y la tabla de abajo 45, 16 y 67. Los cuatro
+           * de diferencia estaban en PENDIENTE_APROBACION —tres de un mismo
+           * cliente y uno con 866.645 de saldo— y aparecian en mora en la
+           * pantalla de creditos, mientras el panel y la pantalla de mora
+           * decian 41.
+           *
+           * La regla correcta ya estaba escrita 130 lineas mas arriba, en
+           * `whereStats`, que excluye BORRADOR y PENDIENTE_APROBACION de las
+           * estadisticas de esta misma respuesta. Lo que faltaba era aplicarla
+           * tambien a las filas.
+           *
+           * El credito sin aprobar sigue saliendo en la lista: lo que cambia es
+           * que ahora dice el estado que tiene.
+           */
+          const esCobrable =
+            prestamo.estado === EstadoPrestamo.ACTIVO ||
+            prestamo.estado === EstadoPrestamo.EN_MORA;
+
+          const estado = !esCobrable
+            ? prestamo.estado || EstadoPrestamo.BORRADOR
+            : cuotasVencidas > 0
               ? EstadoPrestamo.EN_MORA
-              : prestamo.estado === EstadoPrestamo.EN_MORA
-                ? EstadoPrestamo.ACTIVO
-                : prestamo.estado || EstadoPrestamo.BORRADOR;
+              : EstadoPrestamo.ACTIVO;
 
           // Determinar tipo de producto
           let tipoProducto = 'efectivo';
