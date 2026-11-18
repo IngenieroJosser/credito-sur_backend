@@ -44,6 +44,32 @@ export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
 
   @Post()
+  /*
+   * Quien puede registrar un pago.
+   *
+   * No lo decia NADIE: este metodo no tenia `@Roles` y la clase tampoco, y
+   * `RolesGuard` sin metadatos deja pasar —`if (!rolesRequeridos) return
+   * true`—. O sea que cualquier usuario con sesion podia registrar un pago
+   * sobre cualquier credito: tambien el CONTADOR y el PUNTO_DE_VENTA, que no
+   * cobran (`credisur.md`: costos y reportes el uno, ventas el otro).
+   *
+   * Y registrar un pago no es leer: baja la deuda de un cliente y mete
+   * efectivo en una caja.
+   *
+   * La lista sale de medir quien lo usa de verdad en las pantallas:
+   * `VistaCobrador` (cobrador), `SupervisorCobroView` y el detalle de cliente
+   * del supervisor, y las dos pantallas de pagos del admin mas su vista de
+   * ruta. El coordinador NO lo llama —su pantalla solo lee pagos— pero entra
+   * igual porque la operacion diaria de las rutas es suya (`credisur.md`) y
+   * su vista de ruta es gemela de la del admin.
+   */
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.COBRADOR,
+  )
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Registrar un pago',
