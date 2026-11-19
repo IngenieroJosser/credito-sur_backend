@@ -5097,23 +5097,35 @@ export class AccountingService {
       const totalDespues = [...nuevos.values()].reduce((a, b) => a + b, 0);
 
       if (!dryRun) {
-        for (const c of cuotas) {
-          const monto = nuevos.get(c.id)!;
-          if (monto === Number(c.monto) && Number(c.montoCapital) % 1 === 0)
-            continue;
+        // Las cuotas de un crédito se reescriben todas o ninguna.
+        //
+        // El reparto pone el resto en la ÚLTIMA cuota pendiente para que la
+        // suma siga siendo el total. Como escrituras sueltas, un fallo antes de
+        // esa última dejaba el crédito descuadrado justo por ese resto —lo
+        // contrario de lo que viene a hacer— y la siguiente corrida recalcula
+        // `objetivo` desde el estado ya tocado, así que ese peso no vuelve.
+        await this.prisma.$transaction(
+          async (tx) => {
+            for (const c of cuotas) {
+              const monto = nuevos.get(c.id)!;
+              if (monto === Number(c.monto) && Number(c.montoCapital) % 1 === 0)
+                continue;
 
-          const capital = Math.round(Number(c.montoCapital));
-          await this.prisma.cuota.update({
-            where: { id: c.id },
-            data: {
-              monto,
-              montoCapital: Math.min(capital, monto),
-              // El interés absorbe el ajuste para que capital + interés
-              // siga siendo la cuota.
-              montoInteres: monto - Math.min(capital, monto),
-            },
-          });
-        }
+              const capital = Math.round(Number(c.montoCapital));
+              await tx.cuota.update({
+                where: { id: c.id },
+                data: {
+                  monto,
+                  montoCapital: Math.min(capital, monto),
+                  // El interés absorbe el ajuste para que capital + interés
+                  // siga siendo la cuota.
+                  montoInteres: monto - Math.min(capital, monto),
+                },
+              });
+            }
+          },
+          { maxWait: 15_000, timeout: 60_000 },
+        );
       }
 
       cambiosCuotas.push({
@@ -5158,21 +5170,30 @@ export class AccountingService {
       }
 
       if (!dryRun) {
-        for (const l of lineas) {
-          await this.prisma.journalLine.update({
-            where: { id: l.id },
-            data: {
-              debitAmount:
-                l.debitAmount === null
-                  ? null
-                  : Math.round(Number(l.debitAmount)),
-              creditAmount:
-                l.creditAmount === null
-                  ? null
-                  : Math.round(Number(l.creditAmount)),
-            },
-          });
-        }
+        // Las líneas de un asiento se redondean todas o ninguna: redondear solo
+        // algunas deja el asiento sin cuadrar, que es lo que el `continue` de
+        // arriba se niega a hacer a propósito («es peor un asiento torcido que
+        // unos centavos»). Sueltas, un fallo a mitad producía exactamente eso.
+        await this.prisma.$transaction(
+          async (tx) => {
+            for (const l of lineas) {
+              await tx.journalLine.update({
+                where: { id: l.id },
+                data: {
+                  debitAmount:
+                    l.debitAmount === null
+                      ? null
+                      : Math.round(Number(l.debitAmount)),
+                  creditAmount:
+                    l.creditAmount === null
+                      ? null
+                      : Math.round(Number(l.creditAmount)),
+                },
+              });
+            }
+          },
+          { maxWait: 15_000, timeout: 60_000 },
+        );
       }
       lineasArregladas += lineas.length;
     }

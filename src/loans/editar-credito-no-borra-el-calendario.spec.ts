@@ -117,3 +117,134 @@ describe('aprobar un credito reagenda de forma atomica', () => {
     expect(sueltos.length).toBe(1);
   });
 });
+
+/** El cuerpo de un metodo del servicio, sin invadir el siguiente. */
+const cuerpoDe = (nombre: string, minimo: number) => {
+  const inicio = FUENTE.indexOf(`async ${nombre}(`);
+  expect(inicio).toBeGreaterThan(0);
+  const resto = FUENTE.slice(inicio + 10);
+  const siguiente = resto.search(/\n {2}(?:private |protected )?async \w+\(/);
+  const cuerpo = siguiente > 0 ? resto.slice(0, siguiente) : resto;
+  // Piso medido: si el recorte sale corto, la centinela mira casi nada.
+  expect(cuerpo.length).toBeGreaterThan(minimo);
+  return cuerpo;
+};
+
+/**
+ * Archivar o rechazar un credito cierra tambien su solicitud.
+ *
+ * `deleteLoan` y `rejectLoan` hacen dos escrituras: el prestamo y la
+ * `aprobacion` PENDIENTE que lo espera en revisiones. Estaban sueltas, y si
+ * fallaba la segunda el credito quedaba archivado o rechazado con su solicitud
+ * todavia PENDIENTE.
+ *
+ * Eso no es cosmetico: `confirmarPrestamoProvisional`
+ * (`approvals.service.ts`) actualiza el prestamo por id, sin comprobar
+ * `eliminadoEn` ni `estadoAprobacion`. Aprobar esa solicitud huerfana devuelve
+ * el credito a ACTIVO y desembolsa.
+ *
+ * Medido contra la base de desarrollo el 2026-11-19: 39 aprobaciones
+ * PENDIENTE, 4 de ellas de NUEVO_PRESTAMO, y CERO sobre un prestamo borrado o
+ * rechazado, con 65 prestamos archivados y 65 rechazados en la tabla. O sea: el
+ * camino feliz cierra bien y lo que queda abierto es la ventana de fallo
+ * parcial. El limite de la medicion: solo mira el estado de HOY, no si alguna
+ * vez ocurrio y se corrigio a mano.
+ *
+ * `archiveLoan` —el otro camino de archivado— ya hacia estas dos escrituras
+ * dentro de una transaccion. Era el mismo par, decidido de dos maneras.
+ */
+describe('archivar y rechazar cierran la solicitud en el mismo acto', () => {
+  it('deleteLoan hace las dos escrituras en una transaccion', () => {
+    const cuerpo = cuerpoDe('deleteLoan', 1200);
+    expect(cuerpo).toMatch(/await this\.prisma\.\$transaction\(/);
+    expect(cuerpo).toMatch(/tx\.prestamo\.update\(/);
+    expect(cuerpo).toMatch(/tx\.aprobacion\.updateMany\(/);
+    expect(cuerpo).not.toMatch(/this\.prisma\.prestamo\.update\(/);
+    expect(cuerpo).not.toMatch(/this\.prisma\.aprobacion\.updateMany\(/);
+  });
+
+  it('rejectLoan hace las dos escrituras en una transaccion', () => {
+    const cuerpo = cuerpoDe('rejectLoan', 1200);
+    expect(cuerpo).toMatch(/await this\.prisma\.\$transaction\(/);
+    expect(cuerpo).toMatch(/tx\.prestamo\.update\(/);
+    expect(cuerpo).toMatch(/tx\.aprobacion\.updateMany\(/);
+    expect(cuerpo).not.toMatch(/this\.prisma\.prestamo\.update\(/);
+    expect(cuerpo).not.toMatch(/this\.prisma\.aprobacion\.updateMany\(/);
+  });
+
+  it('y las dos siguen anulando solo las aprobaciones PENDIENTE', () => {
+    // Si el filtro desapareciera, archivar un credito reescribiria tambien las
+    // aprobaciones ya resueltas y se perderia el rastro de quien las aprobo.
+    for (const nombre of ['deleteLoan', 'rejectLoan']) {
+      expect(cuerpoDe(nombre, 1200)).toMatch(
+        /estado: EstadoAprobacion\.PENDIENTE/,
+      );
+    }
+  });
+});
+
+/**
+ * La correccion masiva de intereses ajusta el credito y sus cuotas a la vez.
+ *
+ * `fixInterestCalculations` —`POST /loans/fix-interest-calculations`, solo
+ * SUPER_ADMINISTRADOR, y tambien al arranque si `AUTOFIX_INTERESES=1`, que no
+ * esta puesto en ningun `.env` del repo— subia `interesTotal` y
+ * `saldoPendiente` del prestamo y luego repartia la diferencia cuota por cuota,
+ * todo suelto.
+ *
+ * Un fallo a mitad del reparto dejaba la suma de las cuotas por debajo de la
+ * deuda. Y no se arreglaba solo: la condicion de entrada compara el interes
+ * correcto con `interesTotal`, que ya estaria corregido, asi que ese credito no
+ * vuelve a entrar nunca.
+ */
+describe('la correccion de intereses no deja un credito a medio ajustar', () => {
+  it('el update del prestamo y el reparto por cuotas van juntos', () => {
+    const cuerpo = cuerpoDe('fixInterestCalculations', 2000);
+    expect(cuerpo).toMatch(/await this\.prisma\.\$transaction\(/);
+    expect(cuerpo).toMatch(/tx\.prestamo\.update\(/);
+    expect(cuerpo).toMatch(/tx\.cuota\.update\(/);
+  });
+
+  it('ya no queda ninguna de las dos suelta', () => {
+    const cuerpo = cuerpoDe('fixInterestCalculations', 2000);
+    expect(cuerpo).not.toMatch(/this\.prisma\.prestamo\.update\(/);
+    expect(cuerpo).not.toMatch(/this\.prisma\.cuota\.update\(/);
+  });
+
+  it('el residuo sigue yendo a la ultima cuota', () => {
+    // Repartir en pesos enteros deja un resto; si dejara de sumarse a la
+    // ultima, el ajuste perderia pesos y la suma no cerraria.
+    const cuerpo = cuerpoDe('fixInterestCalculations', 2000);
+    expect(cuerpo).toMatch(/ajustePorCuota \+ residuo/);
+  });
+});
+
+/**
+ * La mora automatica NO lleva transaccion, a proposito.
+ *
+ * Es el septimo metodo de la misma lista, y aqui la medicion dice que no hace
+ * falta: sus escrituras son filas sueltas e independientes —una cuota a
+ * VENCIDA, un prestamo a EN_MORA, otro de vuelta a ACTIVO—, cada paso se
+ * recalcula desde su propia consulta y repetir la corrida converge al mismo
+ * estado. No hay ninguna invariante que una dos escrituras, asi que una
+ * transaccion no cambiaria ningun resultado y solo mantendria un bloqueo largo
+ * sobre miles de filas.
+ *
+ * Esta prueba existe para que la decision quede escrita y nadie la "arregle"
+ * sin volver a medir. Si alguna vez dos escrituras de mora dependen una de
+ * otra, hay que cambiarla.
+ */
+describe('la mora automatica se queda sin transaccion', () => {
+  const MORA = fs.readFileSync(path.join(__dirname, 'mora.service.ts'), 'utf8');
+
+  it('cada paso sigue siendo una escritura independiente', () => {
+    expect(MORA).toMatch(/await this\.prisma\.cuota\.updateMany\(/);
+    expect(MORA).toMatch(/await this\.prisma\.prestamo\.update\(/);
+  });
+
+  it('y cada fallo se anota sin tumbar la corrida', () => {
+    // Es lo que hace segura la ausencia de transaccion: un prestamo que falla
+    // se apunta en `errores` y los demas siguen.
+    expect(MORA).toMatch(/resultado\.errores\.push\(/);
+  });
+});

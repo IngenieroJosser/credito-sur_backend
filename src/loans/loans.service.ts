@@ -2518,28 +2518,37 @@ export class LoansService implements OnModuleInit {
         throw new NotFoundException('Préstamo no encontrado');
       }
 
-      // Actualizar estado en lugar de eliminar físicamente
-      const prestamoEliminado = await this.prisma.prestamo.update({
-        where: { id },
-        data: {
-          estado: EstadoPrestamo.PERDIDA,
-          eliminadoEn: new Date(),
-          estadoSincronizacion: 'PENDIENTE',
-        },
-      });
+      // Las dos escrituras van juntas: archivar el credito y cerrar su
+      // aprobacion pendiente son el mismo hecho. Si la segunda fallaba, el
+      // credito quedaba archivado y su solicitud seguia PENDIENTE en
+      // revisiones; `confirmarPrestamoProvisional` no comprueba `eliminadoEn`,
+      // asi que aprobarla lo revivia como ACTIVO y desembolsaba. `archiveLoan`
+      // —el otro camino de archivado— ya hace estas dos en transaccion.
+      const prestamoEliminado = await this.prisma.$transaction(async (tx) => {
+        const archivado = await tx.prestamo.update({
+          where: { id },
+          data: {
+            estado: EstadoPrestamo.PERDIDA,
+            eliminadoEn: new Date(),
+            estadoSincronizacion: 'PENDIENTE',
+          },
+        });
 
-      // Eliminar o anular aprobaciones pendientes para este préstamo
-      // Esto asegura que desaparezca del módulo de revisiones
-      await this.prisma.aprobacion.updateMany({
-        where: {
-          referenciaId: id,
-          estado: EstadoAprobacion.PENDIENTE,
-        },
-        data: {
-          estado: EstadoAprobacion.RECHAZADO,
-          comentarios: 'Crédito archivado antes de aprobación',
-          revisadoEn: new Date(),
-        },
+        // Anular las aprobaciones pendientes de este préstamo, para que
+        // desaparezca del módulo de revisiones.
+        await tx.aprobacion.updateMany({
+          where: {
+            referenciaId: id,
+            estado: EstadoAprobacion.PENDIENTE,
+          },
+          data: {
+            estado: EstadoAprobacion.RECHAZADO,
+            comentarios: 'Crédito archivado antes de aprobación',
+            revisadoEn: new Date(),
+          },
+        });
+
+        return archivado;
       });
 
       // Auditoría
@@ -3464,32 +3473,40 @@ export class LoansService implements OnModuleInit {
         throw new NotFoundException('Préstamo no encontrado');
       }
 
-      const prestamoRechazado = await this.prisma.prestamo.update({
-        where: { id },
-        data: {
-          estadoAprobacion: EstadoAprobacion.RECHAZADO,
-          aprobadoPorId: rechazadoPorId,
-          estadoSincronizacion: 'PENDIENTE',
-        },
-        include: {
-          cliente: true,
-          producto: true,
-        },
-      });
+      // Rechazar el credito y cerrar su solicitud son el mismo hecho: si la
+      // segunda escritura fallaba, el credito quedaba RECHAZADO con su
+      // aprobacion todavia PENDIENTE en revisiones, y aprobarla lo ponia ACTIVO
+      // —`confirmarPrestamoProvisional` no mira el `estadoAprobacion`—.
+      const prestamoRechazado = await this.prisma.$transaction(async (tx) => {
+        const rechazado = await tx.prestamo.update({
+          where: { id },
+          data: {
+            estadoAprobacion: EstadoAprobacion.RECHAZADO,
+            aprobadoPorId: rechazadoPorId,
+            estadoSincronizacion: 'PENDIENTE',
+          },
+          include: {
+            cliente: true,
+            producto: true,
+          },
+        });
 
-      // Actualizar la aprobación
-      await this.prisma.aprobacion.updateMany({
-        where: {
-          referenciaId: id,
-          tipoAprobacion: TipoAprobacion.NUEVO_PRESTAMO,
-          estado: EstadoAprobacion.PENDIENTE,
-        },
-        data: {
-          estado: EstadoAprobacion.RECHAZADO,
-          aprobadoPorId: rechazadoPorId,
-          revisadoEn: new Date(),
-          comentarios: motivo,
-        },
+        // Actualizar la aprobación
+        await tx.aprobacion.updateMany({
+          where: {
+            referenciaId: id,
+            tipoAprobacion: TipoAprobacion.NUEVO_PRESTAMO,
+            estado: EstadoAprobacion.PENDIENTE,
+          },
+          data: {
+            estado: EstadoAprobacion.RECHAZADO,
+            aprobadoPorId: rechazadoPorId,
+            revisadoEn: new Date(),
+            comentarios: motivo,
+          },
+        });
+
+        return rechazado;
       });
 
       // Notificar al Coordinador (ALERTA)
@@ -5006,15 +5023,6 @@ export class LoansService implements OnModuleInit {
           const nuevoMontoTotal = Number(loan.monto) + interesCorrecto;
           const nuevoSaldoPendiente = nuevoMontoTotal - pagado;
 
-          // Actualizar préstamo
-          await this.prisma.prestamo.update({
-            where: { id: loan.id },
-            data: {
-              interesTotal: interesCorrecto,
-              saldoPendiente: nuevoSaldoPendiente,
-            },
-          });
-
           // Ajustar cuotas NO pagadas totalmente (PENDIENTE, PARCIAL, VENCIDA)
           const cuotasAjustables = loan.cuotas.filter(
             (c) =>
@@ -5023,31 +5031,57 @@ export class LoansService implements OnModuleInit {
               c.estado === 'VENCIDA',
           );
 
-          if (cuotasAjustables.length > 0) {
-            // En pesos enteros, y el residuo a la última cuota: repartir con
-            // decimales dejaba centavos que no existen, y truncar cada parte
-            // por separado perdía pesos del ajuste.
-            const ajustePorCuota = Math.floor(
-              diferenciaInteres / cuotasAjustables.length,
-            );
-            const residuo =
-              diferenciaInteres - ajustePorCuota * cuotasAjustables.length;
-
-            for (let i = 0; i < cuotasAjustables.length; i++) {
-              const esUltima = i === cuotasAjustables.length - 1;
-              const ajuste = esUltima
-                ? ajustePorCuota + residuo
-                : ajustePorCuota;
-              if (ajuste === 0) continue;
-              await this.prisma.cuota.update({
-                where: { id: cuotasAjustables[i].id },
+          // El crédito y sus cuotas se ajustan juntos, o no se ajusta nada.
+          //
+          // Eran escrituras sueltas: el préstamo primero y luego una cuota por
+          // iteración. Si fallaba a mitad del reparto, el crédito se quedaba con
+          // el interés nuevo y solo algunas cuotas con su parte, así que la suma
+          // de las cuotas dejaba de ser la deuda. Y no se arreglaba en la
+          // siguiente corrida: la condición de entrada compara `interesCorrecto`
+          // con `interesTotal`, que ya estaría corregido, de modo que el crédito
+          // no vuelve a entrar nunca y la diferencia queda para siempre.
+          //
+          // El `catch` de fuera sigue valiendo para que un crédito malo no pare
+          // la tanda; ahora ese crédito queda intacto en vez de a medias.
+          await this.prisma.$transaction(
+            async (tx) => {
+              // Actualizar préstamo
+              await tx.prestamo.update({
+                where: { id: loan.id },
                 data: {
-                  montoInteres: { increment: ajuste },
-                  monto: { increment: ajuste },
+                  interesTotal: interesCorrecto,
+                  saldoPendiente: nuevoSaldoPendiente,
                 },
               });
-            }
-          }
+
+              if (cuotasAjustables.length > 0) {
+                // En pesos enteros, y el residuo a la última cuota: repartir con
+                // decimales dejaba centavos que no existen, y truncar cada parte
+                // por separado perdía pesos del ajuste.
+                const ajustePorCuota = Math.floor(
+                  diferenciaInteres / cuotasAjustables.length,
+                );
+                const residuo =
+                  diferenciaInteres - ajustePorCuota * cuotasAjustables.length;
+
+                for (let i = 0; i < cuotasAjustables.length; i++) {
+                  const esUltima = i === cuotasAjustables.length - 1;
+                  const ajuste = esUltima
+                    ? ajustePorCuota + residuo
+                    : ajustePorCuota;
+                  if (ajuste === 0) continue;
+                  await tx.cuota.update({
+                    where: { id: cuotasAjustables[i].id },
+                    data: {
+                      montoInteres: { increment: ajuste },
+                      monto: { increment: ajuste },
+                    },
+                  });
+                }
+              }
+            },
+            { maxWait: 15_000, timeout: 60_000 },
+          );
 
           results.corrected++;
           results.details.push(
