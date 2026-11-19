@@ -357,6 +357,19 @@ export class AccountingService {
   ) {
     const rol = String(actor?.rol || '').toUpperCase();
 
+    // El alcance se aplica EN LA CONSULTA, no despues: asi la ruta ajena ni
+    // siquiera aparece.
+    //
+    // El supervisor ya lo tenia; el cobrador no, y se midio ejecutando el
+    // codigo con un doble que respeta el `where`: con rol COBRADOR salia
+    // `{ id, eliminadoEn }` a secas, la ruta de otro se encontraba y la
+    // solicitud se creaba. Como `registrarGasto` usa este mismo ayudante, lo
+    // mismo valia para cargar un gasto a la caja de otro cobrador: esa caja
+    // queda corta y el descuadre aparece en el cierre de quien no hizo nada.
+    //
+    // El COORDINADOR y los roles de oficina siguen sin filtro a proposito:
+    // atienden cualquier ruta, y es una regla del negocio -el cliente que paga
+    // en la sede, el coordinador que pide la base del dia-.
     const ruta = await this.prisma.ruta.findFirst({
       where: {
         id: rutaId,
@@ -364,6 +377,7 @@ export class AccountingService {
         ...(rol === 'SUPERVISOR' && actor?.id
           ? { supervisorId: actor.id }
           : {}),
+        ...(rol === 'COBRADOR' && actor?.id ? { cobradorId: actor.id } : {}),
       },
       select: {
         id: true,
@@ -379,6 +393,12 @@ export class AccountingService {
     if (rol === 'SUPERVISOR' && actor?.id && ruta.supervisorId !== actor.id) {
       throw new ForbiddenException(
         'No tienes permiso para realizar operaciones en esta ruta supervisada.',
+      );
+    }
+
+    if (rol === 'COBRADOR' && actor?.id && ruta.cobradorId !== actor.id) {
+      throw new ForbiddenException(
+        'No tienes permiso para realizar operaciones en esta ruta.',
       );
     }
 
