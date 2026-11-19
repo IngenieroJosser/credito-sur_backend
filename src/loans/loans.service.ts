@@ -2876,6 +2876,10 @@ export class LoansService implements OnModuleInit {
           : (data.fechaInicio as Date);
       const newInteresTotal = (newMonto * newTasa * newPlazo) / 100;
 
+      // Lo que la transaccion de mas abajo tendra que hacer con el calendario.
+      let rehacerCalendario = false;
+      let cuotasARehacer: Prisma.CuotaCreateManyInput[] = [];
+
       // Regenerate cuotas if cantidadCuotas, monto, tasaInteres, frecuenciaPago, tipoAmortizacion, plazoMeses or fechaInicio changed
       const shouldRegenerateCuotas =
         data.cantidadCuotas !== undefined ||
@@ -2902,10 +2906,19 @@ export class LoansService implements OnModuleInit {
             : prestamo.tipoAmortizacion || TipoAmortizacion.INTERES_PLANO
         ) as TipoAmortizacion;
 
-        // Eliminar las cuotas existentes
-        await this.prisma.cuota.deleteMany({
-          where: { prestamoId: id },
-        });
+        /*
+         * El calendario se rehace DENTRO de una transaccion, mas abajo.
+         *
+         * Aqui estaba el `deleteMany` suelto, y entre el y el `createMany` solo
+         * hay calculo: si algo fallaba en medio —o entre el create y el update
+         * del prestamo—, el credito se quedaba con CERO cuotas y el borrado ya
+         * estaba confirmado. Un credito sin cuotas no tiene meta, no entra en
+         * ninguna jornada y no hay nada que cobrarle: desaparece de la
+         * operacion sin que nadie se entere.
+         *
+         * Se llega desde `EditarPrestamoModal` -> `PATCH /loans/:id`.
+         */
+        rehacerCalendario = true;
 
         // Generate new cuotas using helper
         const { cuotas: planCuotas, interesTotal: planInteresTotal } =
@@ -2941,10 +2954,7 @@ export class LoansService implements OnModuleInit {
           prestamoId: id,
         }));
 
-        // Crear las cuotas nuevas
-        await this.prisma.cuota.createMany({
-          data: cuotasData,
-        });
+        cuotasARehacer = cuotasData;
 
         data.cantidadCuotas = cantidadCuotas;
         data.interesTotal = planInteresTotal;
@@ -2965,15 +2975,33 @@ export class LoansService implements OnModuleInit {
         }
       }
 
-      const prestamoActualizado = await this.prisma.prestamo.update({
-        where: { id },
-        data,
-        include: {
-          cliente: true,
-          producto: true,
-          cuotas: true,
+      /*
+       * Borrar el calendario viejo, escribir el nuevo y actualizar el prestamo
+       * es UNA sola operacion: o pasan las tres o no pasa ninguna.
+       */
+      const prestamoActualizado = await this.prisma.$transaction(
+        async (tx) => {
+          if (rehacerCalendario) {
+            await tx.cuota.deleteMany({ where: { prestamoId: id } });
+            if (cuotasARehacer.length > 0) {
+              await tx.cuota.createMany({ data: cuotasARehacer });
+            }
+          }
+
+          return tx.prestamo.update({
+            where: { id },
+            data,
+            include: {
+              cliente: true,
+              producto: true,
+              cuotas: true,
+            },
+          });
         },
-      });
+        // Un credito de 45 cuotas no cabe en los 5 s que Prisma da por defecto
+        // cuando la base esta cargada.
+        { maxWait: 15_000, timeout: 60_000 },
+      );
 
       // Actualizar archivos del préstamo si vienen en el payload
       if (archivos !== undefined) {
