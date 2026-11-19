@@ -3653,9 +3653,6 @@ export class RoutesService {
 
     const fechaKey = this.parseFechaOperativaBogotaKey(fecha);
 
-    const { startDate: _fechaConsulta } =
-      getBogotaStartEndOfDayFromKey(fechaKey);
-
     const jornada = await this.prisma.rutaJornada?.findUnique?.({
       where: {
         rutaId_fechaOperativa: {
