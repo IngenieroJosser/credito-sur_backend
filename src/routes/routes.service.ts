@@ -48,7 +48,6 @@ import {
   EstadoPrestamo,
   EstadoAprobacion,
   RolUsuario,
-  TipoAprobacion,
 } from '@prisma/client';
 
 import {
@@ -57,6 +56,8 @@ import {
   RutaCobradorRow,
   RutaCobradorMeta,
 } from '../templates/exports';
+import { cargarVisitas, type DatosVisitas } from './datos-visitas';
+import { leerRecaudoContable, moraDelListado } from './estadisticas-listado';
 import { normalizarCodigoRuta } from './codigo-ruta';
 import {
   describirPendiente,
@@ -239,7 +240,7 @@ export class RoutesService {
       where: {
         id: rutaId,
         eliminadoEn: null,
-        cobradorId: actor?.id,
+        cobradorId: actor?.id || '__NO_ACTOR_ID__',
       },
       select: { id: true },
     });
@@ -1197,9 +1198,9 @@ export class RoutesService {
 
     // Filtrado por rol del actor
     if (rolActor === RolUsuario.COBRADOR) {
-      where.cobradorId = actor?.id;
+      where.cobradorId = actor?.id || '__NO_ACTOR_ID__';
     } else if (rolActor === RolUsuario.SUPERVISOR) {
-      where.supervisorId = actor?.id;
+      where.supervisorId = actor?.id || '__NO_ACTOR_ID__';
     } else if (rolActor === RolUsuario.COORDINADOR) {
       // Coordinador ve todas las rutas, no filtra por supervisorId ni cobradorId
     } else {
@@ -1315,443 +1316,73 @@ export class RoutesService {
         await this.getActivacionHoyRutasMap(rutaIds);
 
       const rutasConClientes = rutas
-        .filter((ruta) => ruta.asignaciones.length > 0)
-        .map((ruta) => ruta.id);
-      const visitasHoy = rutasConClientes.length
-        ? await this.prisma.registroVisita.findMany({
-            where: {
-              rutaId: { in: rutasConClientes },
-              fechaVisita: getBogotaDayKey(new Date()),
-            },
-            select: { rutaId: true, clienteId: true, estadoVisita: true },
-          })
-        : [];
-      // Un cliente puede estar en varias rutas: su ausencia pertenece a una sola.
-      const visitasPorRuta = new Map<string, typeof visitasHoy>();
-      for (const visita of visitasHoy) {
-        const grupo = visitasPorRuta.get(visita.rutaId);
-        if (grupo) grupo.push(visita);
-        else visitasPorRuta.set(visita.rutaId, [visita]);
-      }
-
-      const rutasConEstadisticas = await Promise.all(
-        rutas.map(async (ruta) => {
-          // Obtener IDs de clientes asignados de forma robusta
-          // `ruta.findMany` ya incluyo las asignaciones activas. Volver a pedirlas
-          // aqui agregaba una consulta por ruta y podia desalinear el conteo si una
-          // asignacion cambiaba entre ambas lecturas.
-          const asignaciones = ruta.asignaciones;
-          const clientesIds = Array.from(
-            new Set(asignaciones.map((asignacion) => asignacion.clienteId)),
-          );
-
-          const estadisticas = {
-            clientesAsignados: clientesIds.length,
-
-            cobranzaDelDia: 0,
-
-            metaDelDia: 0,
-
-            clientesNuevos: 0,
-
-            // Estos dos los asigna el codigo de mas abajo y se devuelven en la
-            // respuesta; declararlos aqui evita el `as any` en cada asignacion y en
-            // cada lectura, y deja escrito que forman parte de la forma.
-            recaudoRegularizadoHoy: 0,
-
-            recaudoContableHoy: 0,
-          };
-
-          let nivelRiesgo = 'PELIGRO_MINIMO';
-
-          let porcentajeMora = 0;
-
-          let avanceDiario = 0;
-
-          if (clientesIds.length === 0) {
-            const cierreInfo = cierresPendientesMap.get(ruta.id) || {
-              cierrePendienteAnterior: null,
-              cierresPendientes: [],
-              totalCierresPendientes: 0,
-              tieneCierrePendiente: false,
-            };
-            return {
-              ...ruta,
-              ...estadisticas,
-              nivelRiesgo,
-              porcentajeMora,
-              avanceDiario,
-              cobrador: `${ruta.cobrador.nombres} ${ruta.cobrador.apellidos}`,
-              estado: ruta.activa ? 'ACTIVA' : 'INACTIVA',
-              /** Si la ruta abrio jornada hoy. `estado` sigue diciendo solo si esta habilitada. */
-              activadaHoy: rutasActivadasHoy.has(ruta.id),
-              diaNoLaboral,
-              frecuenciaVisita: 'DIARIO',
-              cierrePendienteAnterior: cierreInfo.cierrePendienteAnterior,
-              cierresPendientes: cierreInfo.cierresPendientes,
-              totalCierresPendientes: cierreInfo.totalCierresPendientes,
-              tieneCierrePendiente: cierreInfo.tieneCierrePendiente,
-            };
-          }
-
-          if (clientesIds.length > 0) {
-            // Obtener registros de visita del día para excluir clientes ausentes de la meta
-            const registrosVisitas = visitasPorRuta.get(ruta.id) ?? [];
-
-            // Obtener pagos operativos de hoy para excluir ausentes que realmente pagaron hoy.
-            // Las regularizaciones de jornadas pasadas no deben anular una ausencia operativa.
-            const { startDate: inicioHoy, endDate: finHoy } =
-              getBogotaStartEndOfDay(new Date());
-            const pagosOperativosClientesHoy = await this.prisma.pago.findMany({
-              where: {
-                clienteId: { in: clientesIds },
-                fechaPago: {
-                  gte: inicioHoy,
-                  lte: finHoy,
-                },
-                OR: [
-                  { origenGestion: null },
-                  { origenGestion: { not: 'CIERRE_PENDIENTE' } },
-                ],
-              },
-              select: {
-                clienteId: true,
-              },
-            });
-            const clientesConPagoOperativoHoy = new Set(
-              pagosOperativosClientesHoy.map((p) => p.clienteId),
-            );
-
-            const clientesSinMetaPorGestion = new Set(
-              registrosVisitas
-                .filter((r) => {
-                  const estado = String(r.estadoVisita || '').toLowerCase();
-                  return (
-                    estado === 'ausente' ||
-                    estado === 'reprogramado' ||
-                    estado === 'reprogramada' ||
-                    estado === 'reprogramacion' ||
-                    estado === 'reprogramación'
-                  );
-                })
-                .filter((r) => !clientesConPagoOperativoHoy.has(r.clienteId))
-                .map((r) => r.clienteId),
-            );
-
-            // Para la META: solo préstamos activos/en mora, excluyendo clientes ausentes
-            const prestamosParaMeta = await this.prisma.prestamo.findMany({
-              where: {
-                clienteId: {
-                  in: clientesIds.filter(
-                    (id) => !clientesSinMetaPorGestion.has(id),
-                  ),
-                },
-                estado: { in: ['ACTIVO', 'EN_MORA'] }, // ✅ sin PAGADO
-                eliminadoEn: null,
-              },
-              select: {
-                id: true,
-                saldoPendiente: true,
-                monto: true,
-                cantidadCuotas: true,
-                frecuenciaPago: true,
-                clienteId: true,
-              },
-            });
-
-            // Si todos los clientes están ausentes, la meta es 0
-            if (
-              clientesSinMetaPorGestion.size === clientesIds.length ||
-              prestamosParaMeta.length === 0
-            ) {
-              estadisticas.metaDelDia = 0;
-            }
-
-            // Para el RECAUDO: incluir PAGADO para capturar pagos de hoy
-            const prestamosActivos = await this.prisma.prestamo.findMany({
-              where: {
-                clienteId: { in: clientesIds },
-                estado: { in: ['ACTIVO', 'EN_MORA', 'PAGADO'] },
-                eliminadoEn: null,
-              },
-              select: { id: true, frecuenciaPago: true },
-            });
-
-            const pIds = prestamosActivos.map((p) => p.id); // para query de pagos (recaudo)
-            const pIdsParaMeta = prestamosParaMeta.map((p) => p.id); // para query de cuotas (meta)
-
-            // Rango del día actual en Bogotá (límites UTC ajustados a -05:00).
-            // Una sola llamada: startDate/endDate ya representan los límites del día bogotano en UTC.
-            const { startDate: dInicioBogota, endDate: dFinBogota } =
-              getBogotaStartEndOfDay(new Date());
-
-            if (pIds.length > 0) {
-              // Desestructurado a proposito: `Promise.all` sobre un arreglo literal da
-              // una TUPLA, asi que cada nombre queda con su tipo. Leyendolo por indice
-              // (`resAgregados[0]`) el tipo es la union de los tres y habia que castear.
-              const [pagosRutaRaw, cuotasCriterio, cuotasInicialesHoy] =
-                await Promise.all([
-                  this.prisma.pago.findMany({
-                    where: {
-                      prestamo: {
-                        cliente: {
-                          asignacionesRuta: {
-                            some: { rutaId: ruta.id, activa: true },
-                          },
-                        },
-                      },
-                      fechaPago: { gte: dInicioBogota, lte: dFinBogota },
-                    },
-                    select: { montoTotal: true, origenGestion: true },
-                  }),
-
-                  this.prisma.cuota.findMany({
-                    where: {
-                      prestamoId: { in: pIdsParaMeta },
-                    },
-                    select: {
-                      prestamoId: true,
-                      fechaVencimiento: true,
-                      fechaPago: true,
-                      estado: true,
-                      monto: true,
-                      montoPagado: true,
-                    },
-                    orderBy: [
-                      { prestamoId: 'asc' },
-                      { fechaVencimiento: 'asc' },
-                    ],
-                  }),
-
-                  // NUEVO: Considerar ingresos por cuota inicial en la meta del día
-                  this.prisma.transaccion.aggregate({
-                    where: {
-                      caja: { rutaId: ruta.id, activa: true },
-                      tipoReferencia: 'CUOTA_INICIAL',
-                      tipo: 'INGRESO',
-                      fechaTransaccion: { gte: dInicioBogota, lte: dFinBogota },
-                    },
-                    _sum: { monto: true },
-                  }),
-                ]);
-
-              const montoMetaInicial = Number(
-                cuotasInicialesHoy?._sum?.monto || 0,
-              );
-
-              const pagosOperativosHoy = pagosRutaRaw.filter(
-                (p) =>
-                  String(p?.origenGestion || '').toUpperCase() !==
-                  'CIERRE_PENDIENTE',
-              );
-              const pagosRegularizadosHoy = pagosRutaRaw.filter(
-                (p) =>
-                  String(p?.origenGestion || '').toUpperCase() ===
-                  'CIERRE_PENDIENTE',
-              );
-
-              const cobranzaReal = pagosOperativosHoy.reduce(
-                (sum, p) => sum + Number(p.montoTotal || 0),
-                0,
-              );
-              const recaudoRegularizadoHoy = pagosRegularizadosHoy.reduce(
-                (sum, p) => sum + Number(p.montoTotal || 0),
-                0,
-              );
-              estadisticas.cobranzaDelDia = cobranzaReal + montoMetaInicial;
-              estadisticas.recaudoRegularizadoHoy = recaudoRegularizadoHoy;
-              estadisticas.recaudoContableHoy =
-                cobranzaReal + recaudoRegularizadoHoy + montoMetaInicial;
-
-              // Calcular meta nominal consistente con getDailyVisits + computeRutaHoyUiStatsFromVisitas:
-              // - DIARIO: suma acumulada de todas las cuotas vencidas (<= inicio del día)
-              // - DEMÁS: primera cuota NO pagada con vencimiento <= inicio del día
-              let metaNominal = 0;
-
-              const hoyBogotaKey = getBogotaDayKey(new Date());
-
-              const primeraCuotaPorPrestamo = new Map<string, number>();
-              for (const c of cuotasCriterio) {
-                if (!c?.prestamoId) continue;
-                const pid = String(c.prestamoId);
-                if (primeraCuotaPorPrestamo.has(pid)) continue;
-                if (c.estado === 'PAGADA') continue;
-                const vtoKey = getBogotaDayKey(new Date(c.fechaVencimiento));
-                if (vtoKey > hoyBogotaKey) continue;
-                const montoFull = Number(c.monto || 0);
-                const montoPagado = Number(c.montoPagado || 0);
-                const montoPendiente = Math.max(0, montoFull - montoPagado);
-                if (montoPendiente <= 0) continue;
-                primeraCuotaPorPrestamo.set(pid, montoPendiente);
-              }
-
-              // Calcular meta nominal: misma lógica que computeMontoNominalHastaHoyFromCuotas.
-              // Usa TODAS las cuotas del préstamo (sin pre-filtrar por fecha) y filtra en memoria:
-              // - Excluir PAGADA (isCuotaNoPagada)
-              // - Solo cuotas con vtoKey <= hoyBogotaKey (comparación de strings de fecha)
-              const acumuladoPorPrestamo = new Map<string, number>();
-              for (const c of cuotasCriterio) {
-                if (!c?.prestamoId) continue;
-                if (c.estado === 'PAGADA') continue;
-                const vtoKey = getBogotaDayKey(new Date(c.fechaVencimiento));
-                if (vtoKey > hoyBogotaKey) continue;
-                const pid = String(c.prestamoId);
-                const montoFull = Number(c.monto || 0);
-                const montoPagado = Number(c.montoPagado || 0);
-                const montoPendiente = Math.max(0, montoFull - montoPagado);
-                if (montoPendiente <= 0) continue;
-                acumuladoPorPrestamo.set(
-                  pid,
-                  (acumuladoPorPrestamo.get(pid) || 0) + montoPendiente,
-                );
-              }
-
-              for (const p of prestamosParaMeta) {
-                const pid = String(p.id);
-                const freq = String(p.frecuenciaPago || '').toUpperCase();
-                if (freq === 'DIARIO' || freq === 'DIA') {
-                  metaNominal += Number(acumuladoPorPrestamo.get(pid) || 0);
-                  continue;
-                }
-                metaNominal += Number(primeraCuotaPorPrestamo.get(pid) || 0);
-              }
-
-              estadisticas.metaDelDia =
-                metaNominal + estadisticas.cobranzaDelDia;
-
-              if (process.env.NODE_ENV !== 'production') {
-                console.log(`[META DEBUG] Ruta: ${ruta.nombre}`, {
-                  metaNominal,
-                  acumuladoPorPrestamo: [...acumuladoPorPrestamo.entries()].map(
-                    ([k, v]) => ({ prestamoId: k, monto: v }),
-                  ),
-                  primeraCuotaPorPrestamo: [
-                    ...primeraCuotaPorPrestamo.entries(),
-                  ].map(([k, v]) => ({ prestamoId: k, monto: v })),
-                  metaDelDia: estadisticas.metaDelDia,
-                  cobranzaDelDia: estadisticas.cobranzaDelDia,
-                  recaudoRegularizadoHoy,
-                });
-              }
-
-              // Calcular AVANCE DIARIO
-
-              if (estadisticas.metaDelDia > 0) {
-                avanceDiario =
-                  (estadisticas.cobranzaDelDia / estadisticas.metaDelDia) * 100;
-              }
-
-              const montoVencido = cuotasCriterio
-                .filter(
-                  (c) =>
-                    c.estado !== 'PAGADA' &&
-                    new Date(c.fechaVencimiento) < dInicioBogota,
-                )
-                .reduce((sum, c) => sum + Number(c.monto), 0);
-
-              const deudaTotal = prestamosParaMeta.reduce(
-                (acc, curr) => acc + Number(curr.saldoPendiente || 0),
-                0,
-              );
-              porcentajeMora =
-                deudaTotal > 0 ? (montoVencido / deudaTotal) * 100 : 0;
-
-              if (porcentajeMora > 30) nivelRiesgo = 'ALTO_RIESGO';
-              else if (porcentajeMora > 15) nivelRiesgo = 'RIESGO_MODERADO';
-              else if (porcentajeMora > 10) nivelRiesgo = 'PRECAUCION';
-              else if (porcentajeMora > 5) nivelRiesgo = 'LEVE_RETRASO';
-            }
-
-            // Clientes nuevos (últimos 7 días)
-
-            const sieteDiasAtras = new Date(
-              Date.now() - 7 * 24 * 60 * 60 * 1000,
-            );
-
-            estadisticas.clientesNuevos = new Set(
-              asignaciones
-                .filter(
-                  (asignacion) =>
-                    new Date(asignacion.creadoEn) >= sieteDiasAtras,
-                )
-                .map((asignacion) => asignacion.clienteId),
-            ).size;
-          }
-
-          if (estadisticas.clientesAsignados === 0) {
-            estadisticas.metaDelDia = 0;
-            estadisticas.cobranzaDelDia = 0;
-          }
-
-          if (estadisticas.clientesAsignados > 0) {
-            const hoyKey = getBogotaDayKey(new Date());
-            const detalleOperativoHoy = await this.getDailyVisits(
-              ruta.id,
-              hoyKey,
-              actor,
-            );
-            const resumenHoy = detalleOperativoHoy?.resumen || {};
-            const recaudoOperativoHoy = Number(
-              resumenHoy.recaudoOperativo ?? resumenHoy.recaudo ?? 0,
-            );
-            const metaOperativaHoy = Number(resumenHoy.meta ?? 0);
-
-            estadisticas.cobranzaDelDia = recaudoOperativoHoy;
-            estadisticas.metaDelDia = metaOperativaHoy;
-            avanceDiario =
-              metaOperativaHoy > 0
-                ? (recaudoOperativoHoy / metaOperativaHoy) * 100
-                : recaudoOperativoHoy > 0
-                  ? 100
-                  : 0;
-          }
-
-          // Obtener información de cierre pendiente desde el mapa batch
-          const cierreInfo = cierresPendientesMap.get(ruta.id) || {
-            cierrePendienteAnterior: null,
-            cierresPendientes: [],
-            totalCierresPendientes: 0,
-            tieneCierrePendiente: false,
-          };
-
-          return {
-            ...ruta,
-
-            ...estadisticas,
-
-            clientesAsignados: estadisticas.clientesAsignados,
-
-            clientesNuevos: estadisticas.clientesNuevos,
-
-            cobranzaDelDia: estadisticas.cobranzaDelDia,
-            recaudoRegularizadoHoy: estadisticas.recaudoRegularizadoHoy || 0,
-            recaudoContableHoy:
-              estadisticas.recaudoContableHoy || estadisticas.cobranzaDelDia,
-
-            metaDelDia: estadisticas.metaDelDia,
-
-            nivelRiesgo,
-
-            porcentajeMora: parseFloat(porcentajeMora.toFixed(2)),
-
-            avanceDiario: parseFloat(avanceDiario.toFixed(2)),
-
-            cobrador: `${ruta.cobrador.nombres} ${ruta.cobrador.apellidos}`,
-
-            estado: ruta.activa ? 'ACTIVA' : 'INACTIVA',
-            /** Si la ruta abrio jornada hoy. `estado` sigue diciendo solo si esta habilitada. */
-            activadaHoy: rutasActivadasHoy.has(ruta.id),
-            diaNoLaboral,
-
-            frecuenciaVisita: 'DIARIO',
-
-            cierrePendienteAnterior: cierreInfo.cierrePendienteAnterior,
-            cierresPendientes: cierreInfo.cierresPendientes,
-            totalCierresPendientes: cierreInfo.totalCierresPendientes,
-            tieneCierrePendiente: cierreInfo.tieneCierrePendiente,
-          };
-        }),
+        .filter((r) => r.asignaciones.length > 0)
+        .map((r) => r.id);
+      const ahora = new Date();
+      const fecha = getBogotaDayKey(ahora);
+      const { startDate, endDate } = getBogotaStartEndOfDayFromKey(fecha);
+      const detalles = await this.proyectarRutas(
+        rutasConClientes,
+        fecha,
+        (id, datos) => {
+          const { resumen } = this.proyectarVisitas(id, fecha, datos);
+          return { resumen, mora: moraDelListado(datos, startDate) };
+        },
       );
+      const movimientos = await leerRecaudoContable(
+        this.prisma,
+        rutasConClientes,
+        startDate,
+        endDate,
+      );
+      const desde = new Date(ahora.getTime() - 7 * 86_400_000);
+      const rutasConEstadisticas = rutas.map((ruta) => {
+        const detalle = detalles.get(ruta.id);
+        if (ruta.asignaciones.length && !detalle)
+          throw new Error('Falta el resumen operativo de una ruta del listado');
+        const mora = detalle?.mora ?? 0;
+        const cobranza = detalle?.resumen.recaudoOperativo ?? 0;
+        const meta = detalle?.resumen.meta ?? 0;
+        const avance =
+          meta > 0 ? (cobranza / meta) * 100 : cobranza > 0 ? 100 : 0;
+        const movimiento = movimientos.get(ruta.id);
+        const cierre = cierresPendientesMap.get(ruta.id);
+        return {
+          ...ruta,
+          clientesAsignados: new Set(ruta.asignaciones.map((a) => a.clienteId))
+            .size,
+          cobranzaDelDia: cobranza,
+          metaDelDia: meta,
+          clientesNuevos: new Set(
+            ruta.asignaciones
+              .filter((a) => new Date(a.creadoEn) >= desde)
+              .map((a) => a.clienteId),
+          ).size,
+          recaudoRegularizadoHoy: movimiento?.regularizado ?? 0,
+          recaudoContableHoy: movimiento?.contable ?? 0,
+          nivelRiesgo:
+            mora > 30
+              ? 'ALTO_RIESGO'
+              : mora > 15
+                ? 'RIESGO_MODERADO'
+                : mora > 10
+                  ? 'PRECAUCION'
+                  : mora > 5
+                    ? 'LEVE_RETRASO'
+                    : 'PELIGRO_MINIMO',
+          porcentajeMora: Number(mora.toFixed(2)),
+          avanceDiario: Number(avance.toFixed(2)),
+          cobrador: `${ruta.cobrador.nombres} ${ruta.cobrador.apellidos}`,
+          estado: ruta.activa ? 'ACTIVA' : 'INACTIVA',
+          activadaHoy: rutasActivadasHoy.has(ruta.id),
+          diaNoLaboral,
+          frecuenciaVisita: 'DIARIO',
+          cierrePendienteAnterior: cierre?.cierrePendienteAnterior ?? null,
+          cierresPendientes: cierre?.cierresPendientes ?? [],
+          totalCierresPendientes: cierre?.totalCierresPendientes ?? 0,
+          tieneCierrePendiente: cierre?.tieneCierrePendiente ?? false,
+        };
+      });
 
       return {
         data: rutasConEstadisticas,
@@ -3644,157 +3275,70 @@ export class RoutesService {
     }
   }
 
-  /**
-   * Las visitas del día de VARIAS rutas, en una sola petición.
-   *
-   * El listado de rutas ya pedía esto desde `obtenerVisitasDelDiaEnLote`
-   * (`rutas-service.ts`), con `POST /routes/daily-visits/batch`. El endpoint no
-   * existía. Medido contra el backend en marcha:
-   *
-   *     POST /routes/daily-visits/batch -> 404
-   *     GET  /routes/:id/daily-visits   -> 401 (existe; lo frena el guard)
-   *
-   * Así que `fetchDailySummaries` se caía en esa línea, después de haberse
-   * descargado 5.000 pagos, y las tarjetas del listado mostraban las cifras del
-   * LISTADO (`ruta.metaDelDia`, `ruta.cobranzaDelDia`) mientras la pantalla de
-   * detalle mostraba las operativas: la misma ruta con dos metas según dónde se
-   * mirara.
-   *
-   * Una ruta que el actor no puede ver NO tumba el lote: `getDailyVisits` lanza
-   * por `assertCollectorOwnRoute` y esa ruta simplemente no aparece en el mapa.
-   * El frontend ya trata la ausencia ruta por ruta.
-   *
-   * La concurrencia va limitada porque cada ruta es varias consultas: de a seis,
-   * igual que el resto de los lotes de esta clase.
-   */
   async getDailyVisitsBatch(
     rutaIds: string[],
     fecha?: string,
     actor?: RouteActor,
   ): Promise<Record<string, unknown>> {
-    const unicos = Array.from(
-      new Set((rutaIds || []).map((id) => String(id || '').trim())),
-    ).filter(Boolean);
-
-    const salida: Record<string, unknown> = {};
-    const TANDA = 6;
-
-    for (let i = 0; i < unicos.length; i += TANDA) {
-      const tanda = unicos.slice(i, i + TANDA);
-      const resultados = await Promise.all(
-        tanda.map(async (rutaId) => {
-          try {
-            return {
-              rutaId,
-              datos: await this.getDailyVisits(rutaId, fecha, actor),
-            };
-          } catch {
-            return { rutaId, datos: null };
-          }
-        }),
-      );
-      for (const { rutaId, datos } of resultados) {
-        if (datos) salida[rutaId] = datos;
-      }
-    }
-
-    return salida;
+    const ids = [...new Set(rutaIds.map((id) => id.trim()).filter(Boolean))];
+    if (!ids.length) return {};
+    const alcance = this.isCollector(actor)
+      ? { cobradorId: actor?.id || '__NO_ACTOR_ID__' }
+      : this.isAssignedRouteSupervisor(actor)
+        ? { supervisorId: actor?.id || '__NO_ACTOR_ID__' }
+        : {};
+    const visibles = await this.prisma.ruta.findMany({
+      where: { id: { in: ids }, eliminadoEn: null, ...alcance },
+      select: { id: true },
+    });
+    const dia = this.parseFechaOperativaBogotaKey(fecha);
+    return Object.fromEntries(
+      await this.proyectarRutas(
+        visibles.map((r) => r.id),
+        dia,
+        (id, datos) => this.proyectarVisitas(id, dia, datos),
+      ),
+    );
   }
 
-  /**
-
-   * Obtener visitas del día para una ruta
-
-   * Calcula qué clientes deben aparecer hoy según frecuencia de pago y estado de cuotas
-
-   */
+  private async proyectarRutas<T>(
+    ids: string[],
+    fechaKey: string,
+    proyectar: (id: string, datos: DatosVisitas) => T,
+  ) {
+    const resultado = new Map<string, T>();
+    for (let inicio = 0; inicio < ids.length; inicio += 50) {
+      const pagina = ids.slice(inicio, inicio + 50);
+      const obtener = await cargarVisitas(this.prisma, pagina, fechaKey);
+      for (const id of pagina) resultado.set(id, proyectar(id, obtener(id)));
+    }
+    return resultado;
+  }
 
   async getDailyVisits(rutaId: string, fecha?: string, actor?: RouteActor) {
     await this.assertCollectorOwnRoute(rutaId, actor);
-
+    await this.assertSupervisorOwnRoute(rutaId, actor);
     const fechaKey = this.parseFechaOperativaBogotaKey(fecha);
+    const obtener = await cargarVisitas(this.prisma, [rutaId], fechaKey);
+    return this.proyectarVisitas(rutaId, fechaKey, obtener(rutaId));
+  }
 
-    const jornada = await this.prisma.rutaJornada?.findUnique?.({
-      where: {
-        rutaId_fechaOperativa: {
-          rutaId,
-          fechaOperativa: fechaKey,
-        },
-      },
-      select: {
-        id: true,
-        estado: true,
-        cerradaEn: true,
-        regularizadaEn: true,
-      },
-    });
-
-    // Calcular recaudo real de esa fecha para esa ruta
-    // Obtener TODOS los pagos vinculados a préstamos de esta ruta en la fecha,
-    // incluyendo clientes no programados hoy (sintéticos) Y pagos regularizados de esta jornada
+  private proyectarVisitas(
+    rutaId: string,
+    fechaKey: string,
+    datos: DatosVisitas,
+  ) {
+    const {
+      jornada,
+      pagosDeHoy,
+      resumenPagosPorPrestamo,
+      asignaciones,
+      registrosVisitas,
+      reprogramacionesJornada,
+      gastosFinal,
+    } = datos;
     const { startDate: fInicio, endDate: fFin } =
       getBogotaStartEndOfDayFromKey(fechaKey);
-    const pagosDeHoy = await this.prisma.pago.findMany({
-      where: {
-        prestamo: { rutaId },
-        OR: [
-          {
-            fechaPago: { gte: fInicio, lte: fFin },
-            OR: [
-              { origenGestion: null },
-              { origenGestion: { not: 'CIERRE_PENDIENTE' } },
-            ],
-          },
-          {
-            fechaOperativaRuta: fechaKey,
-            origenGestion: 'CIERRE_PENDIENTE',
-          },
-        ],
-      },
-      select: {
-        id: true,
-        clienteId: true,
-        prestamoId: true,
-        montoTotal: true,
-        fechaPago: true,
-        fechaOperativaRuta: true,
-        origenGestion: true,
-        metodoPago: true,
-        /*
-         * Quien quedo acreditado con el pago.
-         *
-         * No siempre es el cobrador de la ruta: cuando un SUPERVISOR registra
-         * un pago, `payments.service` le pone SU id al `cobradorId` —lo hace
-         * en dos sitios, de forma explicita, pisando lo que mande el
-         * frontend—, porque el dinero entra a su caja.
-         *
-         * El recaudo de la ruta igual lo cuenta: esta consulta filtra por
-         * `prestamo.rutaId`, no por cobrador. Lo que faltaba era DECIRLO: el
-         * cobrador veia al cliente ya pagado, sin rastro de quien paso por
-         * ahi, y su informe por cobrador no cuadraba con el avance de su ruta.
-         */
-        cobradorId: true,
-        cobrador: {
-          select: { id: true, nombres: true, apellidos: true, rol: true },
-        },
-        detalles: {
-          select: {
-            monto: true,
-            cuota: {
-              select: {
-                id: true,
-                numeroCuota: true,
-                estado: true,
-                fechaVencimiento: true,
-                fechaVencimientoProrroga: true,
-                monto: true,
-                montoPagado: true,
-              },
-            },
-          },
-        },
-      },
-    });
 
     // Mapear pagos por cliente para asignar a visitas
     const pagosPorCliente: Record<string, number> = {};
@@ -3876,48 +3420,6 @@ export class RoutesService {
       };
     });
 
-    /**
-     * La fecha del último pago y el total pagado histórico de cada crédito de
-     * la ruta.
-     *
-     * Son los otros dos motivos por los que el frontend se bajaba todo el
-     * historial: con la fecha ORDENA la lista de visitas del cobrador y el
-     * total lo muestra como `recaudadoTotalClient`, así que no se pueden
-     * quitar.
-     *
-     * Un `GROUP BY` da las dos cosas en una consulta. Pedirlas con `take: 1`
-     * anidado en Prisma traería todos los pagos de todos los créditos para
-     * quedarse con uno de cada grupo, que es exactamente el problema que se
-     * está arreglando.
-     *
-     * El filtro `isPagoConfirmadoParaRecaudo` del frontend NO se replica aquí,
-     * y no es un olvido: lee `estadoAprobacion`, `tipoAprobacion`,
-     * `pendingVerification` y `pagoPendiente`, y ninguna de las cuatro es
-     * columna de `Pago` —sus columnas son id, numeroPago, clienteId,
-     * prestamoId, cobradorId, fechaPago, montoTotal, metodoPago,
-     * numeroReferencia, notas, creadoEn, actualizadoEn, estadoSincronizacion,
-     * ultimaSincronizacion, idempotencyKey, rutaId, fechaOperativaRuta,
-     * origenGestion, tipoRegistro—. Sobre los pagos que devuelve
-     * `GET /payments` ese filtro vale siempre `true`, así que esta suma da el
-     * mismo número. Donde sí distingue es sobre los pagos locales sin
-     * sincronizar, que llevan esos campos puestos por el frontend y no salen
-     * de aquí.
-     *
-     * La fecha se devuelve como número (milisegundos) porque es lo que la
-     * pantalla compara para ordenar.
-     */
-    const resumenPagosPorPrestamo = await this.prisma.$queryRaw<
-      { prestamoId: string; ultimoPago: Date; totalPagado: number }[]
-    >`
-      SELECT p."prestamoId" AS "prestamoId",
-             MAX(COALESCE(p."fechaPago", p."creadoEn")) AS "ultimoPago",
-             COALESCE(SUM(p."montoTotal"), 0)::float8 AS "totalPagado"
-      FROM "Pago" p
-      JOIN "Prestamo" c ON c.id = p."prestamoId"
-      WHERE c."rutaId" = ${rutaId}
-      GROUP BY p."prestamoId"
-    `;
-
     const fechaUltimoPagoPorPrestamo: Record<string, number> = {};
     const totalPagadoPorPrestamo: Record<string, number> = {};
     for (const fila of resumenPagosPorPrestamo) {
@@ -3925,42 +3427,6 @@ export class RoutesService {
       if (!Number.isNaN(t)) fechaUltimoPagoPorPrestamo[fila.prestamoId] = t;
       totalPagadoPorPrestamo[fila.prestamoId] = Number(fila.totalPagado || 0);
     }
-
-    // Obtener todos los clientes de la ruta con sus préstamos activos
-    const asignaciones = await this.prisma.asignacionRuta.findMany({
-      where: {
-        rutaId,
-
-        activa: true,
-      },
-
-      include: {
-        cliente: {
-          include: {
-            prestamos: {
-              where: {
-                // Solo los creditos de ESTA ruta: el cliente puede tener
-                // otros en otra ruta y no son de esta jornada.
-                rutaId,
-                estado: {
-                  in: ['ACTIVO', 'EN_MORA', 'PAGADO', 'PENDIENTE_APROBACION'],
-                },
-                eliminadoEn: null,
-                estadoAprobacion: { not: EstadoAprobacion.RECHAZADO },
-              },
-
-              include: {
-                cuotas: {
-                  orderBy: { fechaVencimiento: 'asc' },
-                },
-              },
-            },
-          },
-        },
-      },
-
-      orderBy: { ordenVisita: 'asc' },
-    });
 
     const visitasDelDia: VisitaDelDia[] = [];
 
@@ -4175,13 +3641,6 @@ export class RoutesService {
       }
     }
 
-    // Obtener los registros de visita (ej: ausentes) de hoy
-    const registrosVisitas = await this.prisma.registroVisita.findMany({
-      where: {
-        rutaId,
-        fechaVisita: fechaKey,
-      },
-    });
     const visitasMap = new Map(registrosVisitas.map((r) => [r.clienteId, r]));
     // El tipo del valor se DERIVA de la consulta que lo llena, igual que `visitasMap`
     // de la linea de arriba, que ya lo inferia por construirse con datos.
@@ -4201,39 +3660,6 @@ export class RoutesService {
         asignaciones.map((a) => a?.cliente?.id || a?.clienteId).filter(Boolean),
       ),
     ];
-    const reprogramacionesJornada =
-      clientesRutaIds.length > 0 && this.prisma.aprobacion?.findMany
-        ? await this.prisma.aprobacion.findMany({
-            where: {
-              tipoAprobacion: TipoAprobacion.REPROGRAMACION_CUOTA,
-              estado: {
-                in: [EstadoAprobacion.PENDIENTE, EstadoAprobacion.APROBADO],
-              },
-              OR: [
-                {
-                  datosSolicitud: {
-                    path: ['fechaOperativaRuta'],
-                    equals: fechaKey,
-                  },
-                },
-                {
-                  datosSolicitud: {
-                    path: ['fechaGestionOriginal'],
-                    equals: fechaKey,
-                  },
-                },
-              ],
-            },
-            orderBy: { creadoEn: 'desc' },
-            select: {
-              id: true,
-              referenciaId: true,
-              estado: true,
-              datosSolicitud: true,
-              creadoEn: true,
-            },
-          })
-        : [];
     const resolvePrestamoIdFromReprogramacion = (
       aprobacion: {
         datosSolicitud?: Prisma.JsonValue;
@@ -4787,56 +4213,12 @@ export class RoutesService {
     ];
 
     if (clientesIdsPagoSintetico.length > 0) {
-      const clientesPagoSintetico = await this.prisma.cliente.findMany({
-        where: {
-          id: { in: clientesIdsPagoSintetico },
-        },
-        select: {
-          id: true,
-          codigo: true,
-          dni: true,
-          nombres: true,
-          apellidos: true,
-          telefono: true,
-          direccion: true,
-          nivelRiesgo: true,
-          prestamos: {
-            where: {
-              eliminadoEn: null,
-            },
-            select: {
-              id: true,
-              numeroPrestamo: true,
-              monto: true,
-              saldoPendiente: true,
-              frecuenciaPago: true,
-              cantidadCuotas: true,
-              estado: true,
-            },
-          },
-        },
-      });
-
-      for (const cliente of clientesPagoSintetico) {
-        // Las visitas sinteticas no traen cuotas: hay que consultarlas aparte
-        const clienteFull = await this.prisma.cliente.findUnique({
-          where: { id: cliente.id },
-          include: {
-            prestamos: {
-              where: {
-                eliminadoEn: null,
-              },
-              include: {
-                cuotas: {
-                  orderBy: { fechaVencimiento: 'asc' },
-                },
-              },
-            },
-          },
-        });
-        const prestamosConPrestamoOperativo = (
-          clienteFull?.prestamos || []
-        ).filter((p) => isPrestamoOperativoRuta(p));
+      for (const clienteId of clientesIdsPagoSintetico) {
+        const cliente = datos.clienteRegularizado(clienteId);
+        if (!cliente) continue;
+        const prestamosConPrestamoOperativo = cliente.prestamos.filter((p) =>
+          isPrestamoOperativoRuta(p),
+        );
         const prestamosOperativos = prestamosConPrestamoOperativo
           .map((p) => {
             const cuotaObjetivoBase = resolveCuotaObjetivoOperativa(
@@ -4998,16 +4380,6 @@ export class RoutesService {
 
     const recaudoFinal = recaudoOperativo;
 
-    // Buscar gastos de la ruta en ese día
-    const gastosRuta = await this.prisma.gasto.aggregate({
-      where: {
-        caja: { rutaId },
-        fechaGasto: { gte: fInicio, lte: fFin },
-      },
-      _sum: { monto: true },
-    });
-
-    const gastosFinal = Number(gastosRuta._sum.monto || 0);
     const netoEfectivoRuta = Math.max(0, recaudoEfectivo - gastosFinal);
 
     const obligacionesOperativas =

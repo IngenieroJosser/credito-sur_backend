@@ -102,9 +102,9 @@ describe('debeQuitarseVisitaSaldadaSinGestion', () => {
   it('no decide nada sobre una visita sin creditos', () => {
     // Una visita sin creditos es un dato incoherente. Quitarla en silencio lo
     // esconderia; se queda y se ve.
-    expect(debeQuitarseVisitaSaldadaSinGestion({ prestamos: [] }, 'PENDIENTE')).toBe(
-      false,
-    );
+    expect(
+      debeQuitarseVisitaSaldadaSinGestion({ prestamos: [] }, 'PENDIENTE'),
+    ).toBe(false);
     expect(debeQuitarseVisitaSaldadaSinGestion({}, 'PENDIENTE')).toBe(false);
     expect(debeQuitarseVisitaSaldadaSinGestion(null, 'PENDIENTE')).toBe(false);
   });
@@ -134,7 +134,10 @@ describe('debeQuitarseVisitaSaldadaSinGestion', () => {
       saldoPendiente: { toString: () => '0' } as unknown as number,
     };
     expect(
-      debeQuitarseVisitaSaldadaSinGestion({ prestamos: [comoDecimal] }, 'PENDIENTE'),
+      debeQuitarseVisitaSaldadaSinGestion(
+        { prestamos: [comoDecimal] },
+        'PENDIENTE',
+      ),
     ).toBe(true);
 
     const conSaldo = {
@@ -142,7 +145,10 @@ describe('debeQuitarseVisitaSaldadaSinGestion', () => {
       saldoPendiente: { toString: () => '1200' } as unknown as number,
     };
     expect(
-      debeQuitarseVisitaSaldadaSinGestion({ prestamos: [conSaldo] }, 'PENDIENTE'),
+      debeQuitarseVisitaSaldadaSinGestion(
+        { prestamos: [conSaldo] },
+        'PENDIENTE',
+      ),
     ).toBe(false);
   });
 });

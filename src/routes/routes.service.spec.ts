@@ -31,6 +31,13 @@ import {
  */
 type MetodosPrivadosEspiados = {
   getDailyVisits: (...args: unknown[]) => Promise<unknown>;
+  /*
+   * La proyeccion de la jornada de UNA ruta a partir de los datos ya cargados.
+   * Es el relevo de `getDailyVisits` como fuente del avance del listado: el
+   * listado ya no llama al metodo publico por ruta, proyecta desde la carga por
+   * pagina. Se espia aqui por lo mismo que se espiaba aquel.
+   */
+  proyectarVisitas: (...args: unknown[]) => unknown;
   getCierresPendientesRuta: (...args: unknown[]) => Promise<unknown>;
   getCierresPendientesRutasMap: (...args: unknown[]) => Promise<unknown>;
   notificacionesService: { notifyRolesDeduped: jest.Mock };
@@ -64,6 +71,173 @@ const makeService = (prisma: DobleDePrisma) => {
      */
     if (!prisma.$queryRaw) {
       prisma.$queryRaw = jest.fn().mockResolvedValue([]);
+    }
+
+    /**
+     * Valores neutros para los modelos que consulta la carga por lotes.
+     *
+     * El listado y la jornada se reescribieron para leer por PAGINA en vez de
+     * por ruta (`datos-visitas.ts`, `estadisticas-listado.ts`): una consulta
+     * por modelo con `rutaId: { in: ids }`. Eso cambia QUE modelos se tocan, no
+     * las cifras, y las pruebas de aqui montan su doble a mano, modelo por
+     * modelo. Sin estos valores por omision revientan con «Cannot read
+     * properties of undefined (reading 'findMany')», que no dice nada de lo que
+     * la prueba vigila.
+     *
+     * Solo se rellena lo que la prueba NO definio, y con el valor neutro de
+     * cada cosa: lista vacia significa «no hay jornada / no hay solicitud / no
+     * hay cliente regularizado», que es como se comportaba antes.
+     *
+     * `ruta.findMany` es el unico que no puede ser una lista fija: en
+     * `getDailyVisitsBatch` filtra las rutas que el actor puede ver, y devolver
+     * `[]` significaria «no ve ninguna». El neutro de verdad es «todas las
+     * pedidas son visibles», que es lo que hacia el codigo anterior al no
+     * filtrar. Una prueba de alcance por rol pone su propio doble y manda.
+     */
+    /**
+     * De que ruta es cada fila, que antes era implicito.
+     *
+     * El codigo viejo consultaba POR ruta: todo lo que devolvia una consulta
+     * era de esa ruta, y el doble no tenia que decirlo. La carga por lotes pide
+     * una vez con `rutaId: { in: ids }` y luego AGRUPA por `rutaId` (los pagos,
+     * por `prestamo.rutaId`), asi que necesita ese campo en cada fila. Sin el,
+     * `agrupar` revienta con «Cannot read properties of undefined».
+     *
+     * Esto no inventa datos: rellena la ruta que la propia consulta pidio,
+     * que es exactamente la que el codigo anterior daba por sabida. Si una
+     * prueba pone su `rutaId` a mano, se respeta.
+     */
+    const rutaDelWhere = (args: unknown): string | undefined => {
+      const where = (
+        args as {
+          where?: {
+            rutaId?: { in?: unknown } | string;
+            prestamo?: { rutaId?: { in?: unknown } | string };
+          };
+        }
+      )?.where;
+      for (const candidato of [where?.rutaId, where?.prestamo?.rutaId]) {
+        if (typeof candidato === 'string') return candidato;
+        const dentro = (candidato as { in?: unknown })?.in;
+        /*
+         * Solo cuando la consulta pide UNA ruta.
+         *
+         * Con dos o mas en el mismo `in` no hay forma de saber de cual es cada
+         * fila, y rellenar con la primera las mete todas en esa ruta: justo el
+         * cruce entre rutas que la prueba del cliente compartido vigila. Ahi la
+         * prueba tiene que decir el `rutaId` de cada fila.
+         */
+        if (
+          Array.isArray(dentro) &&
+          dentro.length === 1 &&
+          typeof dentro[0] === 'string'
+        )
+          return dentro[0];
+      }
+      return undefined;
+    };
+
+    const conRuta = (
+      modelo: 'rutaJornada' | 'asignacionRuta' | 'registroVisita' | 'pago',
+    ) => {
+      const doble = prisma[modelo];
+      const original = doble?.findMany;
+      if (!doble || typeof original !== 'function') return;
+      doble.findMany = jest.fn(async (args: unknown) => {
+        const filas = await original(args);
+        const ruta = rutaDelWhere(args);
+        if (!ruta || !Array.isArray(filas)) return filas;
+        return filas.map((fila: Record<string, unknown>) => {
+          if (!fila || typeof fila !== 'object') return fila;
+          const copia: Record<string, unknown> = { ...fila };
+          if (copia.rutaId === undefined) copia.rutaId = ruta;
+          if (modelo === 'pago' && copia.prestamo === undefined)
+            copia.prestamo = { rutaId: ruta };
+          /*
+           * Y la ruta de cada credito del cliente.
+           *
+           * `datos-visitas.ts` vuelve a filtrar en memoria los creditos de la
+           * asignacion con `p.rutaId === rutaId`. En produccion eso sobra pero
+           * es correcto: el `include` de Prisma trae todos los escalares, asi
+           * que `rutaId` viene. Los datos de prueba no lo traen porque antes
+           * nadie lo leia, y sin el ese filtro los descarta TODOS y la visita
+           * sale vacia.
+           *
+           * La consulta ya pide `rutaId: { in: ids }` sobre los creditos: todo
+           * el que vuelve es de esa ruta. Rellenarlo no inventa nada.
+           */
+          if (modelo === 'asignacionRuta') {
+            /*
+             * Y el cliente, si la fila no lo trae.
+             *
+             * `AsignacionRuta.clienteId` no es opcional y la consulta siempre
+             * hace `include: { cliente: ... }`, asi que una fila sin cliente no
+             * puede venir de la base. Algunos datos de prueba lo omiten porque
+             * el codigo viejo no bajaba por ahi; el nuevo si
+             * (`datos-visitas.ts` lee `a.cliente.prestamos`).
+             */
+            if (copia.cliente === undefined && copia.clienteId !== undefined) {
+              copia.cliente = { id: copia.clienteId, prestamos: [] };
+            }
+            const cliente = copia.cliente as
+              { prestamos?: Array<Record<string, unknown>> } | undefined;
+            if (cliente && Array.isArray(cliente.prestamos)) {
+              copia.cliente = {
+                ...cliente,
+                prestamos: cliente.prestamos.map((credito) =>
+                  credito && credito.rutaId === undefined
+                    ? { ...credito, rutaId: ruta }
+                    : credito,
+                ),
+              };
+            }
+          }
+          return copia;
+        });
+      });
+    };
+
+    const idsPedidos = (args: unknown): string[] => {
+      const where = (args as { where?: { id?: { in?: unknown } } })?.where;
+      const dentro = where?.id?.in;
+      return Array.isArray(dentro) ? (dentro as string[]) : [];
+    };
+
+    for (const modelo of [
+      'rutaJornada',
+      'aprobacion',
+      'cliente',
+      'registroVisita',
+      'pago',
+      'asignacionRuta',
+      'transaccion',
+    ] as const) {
+      if (!prisma[modelo]) {
+        prisma[modelo] = { findMany: jest.fn().mockResolvedValue([]) };
+      } else if (!prisma[modelo].findMany) {
+        prisma[modelo].findMany = jest.fn().mockResolvedValue([]);
+      }
+    }
+
+    for (const modelo of [
+      'rutaJornada',
+      'asignacionRuta',
+      'registroVisita',
+      'pago',
+    ] as const) {
+      conRuta(modelo);
+    }
+
+    if (!prisma.ruta) {
+      prisma.ruta = {
+        findMany: jest.fn((args: unknown) =>
+          Promise.resolve(idsPedidos(args).map((id) => ({ id }))),
+        ),
+      };
+    } else if (!prisma.ruta.findMany) {
+      prisma.ruta.findMany = jest.fn((args: unknown) =>
+        Promise.resolve(idsPedidos(args).map((id) => ({ id }))),
+      );
     }
     // `Object.values`: indexar un tipo de claves conocidas con un `string` suelto no se
     // puede comprobar, y aqui solo hay que recorrer los modelos.
@@ -382,16 +556,22 @@ describe('RoutesService role scoping', () => {
     jest
       .spyOn(conPrivados(service), 'getCierresPendientesRutasMap')
       .mockResolvedValue(new Map());
-    // El fixture trae solo las dos cifras que esta prueba mira. El cast nombra el tipo de
-    // destino en vez de apagarlo con `any`: la respuesta real de `getDailyVisits` tiene
-    // treinta campos y rellenarlos aqui no diria nada.
-    jest.spyOn(service, 'getDailyVisits').mockResolvedValue({
-      resumen: {
-        recaudoOperativo: 1_043_330,
-        meta: 1_555_331,
-      },
+    /*
+     * Se espia la PROYECCION, no `getDailyVisits`.
+     *
+     * Antes el listado llamaba a `getDailyVisits` una vez por ruta y esta
+     * prueba doblaba ese metodo. El refactor lo quito: ahora proyecta desde la
+     * carga por pagina. Doblar la proyeccion mantiene exactamente lo que la
+     * prueba vigila —que el avance del listado SALGA del resumen operativo y no
+     * de un recuento propio— contra el mecanismo que hay.
+     *
+     * El fixture trae solo las dos cifras que esta prueba mira: la respuesta
+     * real tiene treinta campos y rellenarlos aqui no diria nada.
+     */
+    jest.spyOn(conPrivados(service), 'proyectarVisitas').mockReturnValue({
+      resumen: { recaudoOperativo: 1_043_330, meta: 1_555_331 },
       visitas: [],
-    } as unknown as Awaited<ReturnType<RoutesService['getDailyVisits']>>);
+    });
 
     const resultado = await service.findAll({ take: 10 });
     const ruta = resultado.data[0];
@@ -399,7 +579,19 @@ describe('RoutesService role scoping', () => {
     expect(ruta.cobranzaDelDia).toBe(1_043_330);
     expect(ruta.metaDelDia).toBe(1_555_331);
     expect(ruta.avanceDiario).toBe(67.08);
-    expect(prisma.asignacionRuta.findMany).not.toHaveBeenCalled();
+    /*
+     * Y no recuenta por su cuenta.
+     *
+     * La forma vieja de recontar era pedir los creditos de la ruta por lista de
+     * clientes (`prestamo.findMany` con `where.clienteId.in`) y rehacer la meta
+     * ahi. Esa era la contradiccion: dos cifras para la misma ruta segun donde
+     * se mirara. Lo que se prohibe es ESO, no consultar asignaciones: el
+     * listado ahora las carga por pagina a proposito.
+     */
+    const recuentosPropios = prisma.prestamo.findMany.mock.calls.filter(
+      ([consulta]) => consulta?.where?.clienteId?.in !== undefined,
+    );
+    expect(recuentosPropios).toEqual([]);
     expect(prisma.asignacionRuta.count).not.toHaveBeenCalled();
   });
 
@@ -418,7 +610,17 @@ describe('RoutesService role scoping', () => {
       registroVisita: {
         findMany: jest.fn().mockResolvedValue([
           {
-            rutaId: 'norte',
+            /*
+             * La ausencia es de «sur», la SEGUNDA ruta, a proposito.
+             *
+             * Con el registro en «norte» esta prueba pasaba en verde incluso
+             * con el agrupado roto: comprobado metiendo el defecto
+             * `agrupar(registros, () => ids[0])`, que mete todo en la primera
+             * ruta. Como «norte» ES la primera, el resultado coincidia con el
+             * correcto y la prueba no veia nada. Poniendolo en la segunda,
+             * cualquier fallo de «todo a la primera» se cae.
+             */
+            rutaId: 'sur',
             clienteId: 'compartido',
             estadoVisita: 'ausente',
           },
@@ -432,9 +634,12 @@ describe('RoutesService role scoping', () => {
     jest
       .spyOn(conPrivados(service), 'getCierresPendientesRutasMap')
       .mockResolvedValue(new Map());
-    jest
-      .spyOn(conPrivados(service), 'getDailyVisits')
-      .mockResolvedValue({ resumen: {} });
+    // Se deja pasar la proyeccion de verdad y solo se CAPTURA con que datos la
+    // llaman: lo que se vigila es el reparto por ruta, no lo que proyecta.
+    const espiaProyeccion = jest.spyOn(
+      conPrivados(service),
+      'proyectarVisitas',
+    );
     await service.findAll({ take: 2 });
     expect(prisma.registroVisita.findMany).toHaveBeenCalledTimes(1);
     expect(prisma.registroVisita.findMany).toHaveBeenCalledWith(
@@ -445,12 +650,34 @@ describe('RoutesService role scoping', () => {
         },
       }),
     );
-    const filtrosMeta = prisma.prestamo.findMany.mock.calls
-      .map(([consulta]) => consulta.where)
-      .filter((where) => !where.estado.in.includes('PAGADO'));
-    expect(filtrosMeta.map((where) => where.clienteId.in)).toEqual(
-      expect.arrayContaining([[], ['compartido']]),
+    /*
+     * Y la ausencia se queda en SU ruta.
+     *
+     * Antes esto se veia en los filtros de `prestamo.findMany`: el listado
+     * recontaba la meta por ruta con una lista de clientes, y para «norte» esa
+     * lista salia vacia —el ausente excluido— y para «sur» traia al compartido.
+     * El refactor quito ese recuento: ahora una sola consulta trae los
+     * registros de las dos rutas y el codigo los AGRUPA por `rutaId`.
+     *
+     * Ahi es donde un lote puede cruzar las rutas, asi que la prueba mira justo
+     * esa costura: que a la proyeccion de «norte» le lleguen los registros de
+     * «norte» y a la de «sur» ninguno. Si el agrupado se equivocara, el
+     * compartido saldria ausente en las dos y nadie iria a cobrarle en «sur».
+     */
+    const registrosPorRuta = new Map<string, unknown[]>(
+      espiaProyeccion.mock.calls.map(([rutaId, , datos]) => [
+        String(rutaId),
+        (datos as { registrosVisitas?: unknown[] })?.registrosVisitas ?? [],
+      ]),
     );
+
+    expect(registrosPorRuta.get('sur')).toEqual([
+      expect.objectContaining({
+        clienteId: 'compartido',
+        estadoVisita: 'ausente',
+      }),
+    ]);
+    expect(registrosPorRuta.get('norte')).toEqual([]);
   });
 
   it('limits route detail for supervisors to assigned routes only', async () => {
@@ -2818,33 +3045,32 @@ describe('getDailyVisitsBatch', () => {
    * operativas: la misma ruta con dos metas segun donde se mirara.
    */
   /**
-   * Lo que el doble devuelve por ruta: su jornada, o un error para simular la
-   * ruta que el actor no puede ver.
+   * ── Por que estas cuatro pruebas se reescribieron (2026-11-19) ────────────
    *
-   * Estaba como `unknown | Error`, que es `unknown` a secas —absorbe a `Error`—
-   * y por tanto no decia nada: el lint lo marco. Nombrar las dos formas si
-   * comprueba que una prueba no pase un tercer tipo por descuido.
+   * Espiaban `getDailyVisits` y afirmaban que el lote lo llamaba UNA VEZ POR
+   * RUTA, con su fecha y su actor. El refactor del listado elimina esa llamada
+   * a proposito: ahora `getDailyVisitsBatch` resuelve que rutas ve el actor en
+   * UNA consulta y proyecta la jornada desde una carga por pagina
+   * (`proyectarRutas` -> `cargarVisitas`). Afirmar la llamada por ruta era
+   * afirmar justo lo que se vino a quitar.
+   *
+   * La intencion de cada una se conserva y se afirma contra el mecanismo nuevo.
+   * Lo que NO se conserva es el espia: con el puesto, estas pruebas pasaban en
+   * verde sin tocar el codigo que de verdad arma la jornada.
    */
-  type JornadaOFallo = { visitas: string[] } | Error;
-
-  const servicioConVisitas = (porRuta: Record<string, JornadaOFallo>) => {
-    const service = makeService({});
-    const espia = jest
-      .spyOn(conPrivados(service), 'getDailyVisits')
-      .mockImplementation((...args: unknown[]) => {
-        const rutaId = String(args[0]);
-        const valor = porRuta[rutaId];
-        if (valor instanceof Error) return Promise.reject(valor);
-        return Promise.resolve(valor);
-      });
-    return { service, espia };
+  const servicioParaLote = (
+    visibles: string[],
+    extra: Record<string, unknown> = {},
+  ) => {
+    const rutaFindMany = jest
+      .fn()
+      .mockResolvedValue(visibles.map((id) => ({ id })));
+    const prisma = { ruta: { findMany: rutaFindMany }, ...extra };
+    return { service: makeService(prisma), rutaFindMany, prisma };
   };
 
-  it('devuelve un mapa de rutaId a sus visitas del dia', async () => {
-    const { service } = servicioConVisitas({
-      'ruta-1': { visitas: ['v1'] },
-      'ruta-2': { visitas: ['v2', 'v3'] },
-    });
+  it('devuelve un mapa de rutaId a la jornada de cada ruta', async () => {
+    const { service } = servicioParaLote(['ruta-1', 'ruta-2']);
 
     const mapa = await service.getDailyVisitsBatch(
       ['ruta-1', 'ruta-2'],
@@ -2852,56 +3078,91 @@ describe('getDailyVisitsBatch', () => {
     );
 
     expect(Object.keys(mapa).sort()).toEqual(['ruta-1', 'ruta-2']);
-    expect(mapa['ruta-2']).toEqual({ visitas: ['v2', 'v3'] });
+    // Cada entrada es la proyeccion de ESA ruta, no un objeto cualquiera: si el
+    // lote devolviera la misma para todas, esto no lo cazaria, y por eso la
+    // prueba de la ausencia compartida vigila que no se cruce.
+    for (const rutaId of ['ruta-1', 'ruta-2']) {
+      expect(mapa[rutaId]).toHaveProperty('visitas');
+      expect(mapa[rutaId]).toHaveProperty('resumen');
+    }
   });
 
-  it('pasa la fecha y el actor a cada ruta', async () => {
-    const { service, espia } = servicioConVisitas({
-      'ruta-1': { visitas: [] },
+  it('aplica el alcance del actor en la consulta, no despues', async () => {
+    // Antes esto se comprobaba viendo que el actor se PASABA a cada ruta, y
+    // dentro cada `getDailyVisits` lo volvia a comprobar. Ahora el alcance va
+    // en el `where`: la ruta ajena no llega ni a aparecer.
+    const { service, rutaFindMany } = servicioParaLote(['ruta-1']);
+
+    await service.getDailyVisitsBatch(['ruta-1'], '2026-11-12', {
+      id: 'cob-1',
+      rol: RolUsuario.COBRADOR,
     });
-    const actor = { id: 'u-1', rol: RolUsuario.COORDINADOR };
 
-    await service.getDailyVisitsBatch(['ruta-1'], '2026-11-12', actor);
+    expect(rutaFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: { in: ['ruta-1'] },
+          eliminadoEn: null,
+          cobradorId: 'cob-1',
+        }),
+      }),
+    );
+  });
 
-    expect(espia).toHaveBeenCalledWith('ruta-1', '2026-11-12', actor);
+  it('y usa la fecha que le dan, no la de hoy', async () => {
+    const registroVisita = { findMany: jest.fn().mockResolvedValue([]) };
+    const { service } = servicioParaLote(['ruta-1'], { registroVisita });
+
+    await service.getDailyVisitsBatch(['ruta-1'], '2026-11-12');
+
+    expect(registroVisita.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ fechaVisita: '2026-11-12' }),
+      }),
+    );
   });
 
   it('una ruta que el actor no puede ver no tumba el lote: solo no aparece', async () => {
-    // `getDailyVisits` lanza por `assertCollectorOwnRoute` cuando un cobrador
-    // pide una ruta ajena. Si eso propagara, un cobrador con varias rutas a la
-    // vista no veria NINGUNA.
-    const { service } = servicioConVisitas({
-      'ruta-propia': { visitas: ['v1'] },
-      'ruta-ajena': new ForbiddenException('No es tu ruta'),
-    });
+    /*
+     * La intencion es la misma y el mecanismo nuevo la cumple MEJOR: antes
+     * `getDailyVisits` lanzaba `ForbiddenException` por la ruta ajena y el lote
+     * tenia que atrapar el fallo una por una —si eso propagaba, un cobrador con
+     * varias rutas no veia NINGUNA—. Ahora el alcance va en la consulta: la
+     * ruta ajena no vuelve, asi que no hay nada que atrapar.
+     */
+    const { service } = servicioParaLote(['ruta-propia']);
 
     const mapa = await service.getDailyVisitsBatch(
       ['ruta-propia', 'ruta-ajena'],
       '2026-11-12',
+      { id: 'cob-1', rol: RolUsuario.COBRADOR },
     );
 
     expect(Object.keys(mapa)).toEqual(['ruta-propia']);
   });
 
-  it('no consulta dos veces la misma ruta repetida', async () => {
-    const { service, espia } = servicioConVisitas({
-      'ruta-1': { visitas: [] },
-    });
+  it('no consulta dos veces la misma ruta repetida, ni con espacios', async () => {
+    const { service, rutaFindMany } = servicioParaLote(['ruta-1']);
 
-    await service.getDailyVisitsBatch(
+    const mapa = await service.getDailyVisitsBatch(
       ['ruta-1', 'ruta-1', ' ruta-1 '],
       '2026-11-12',
     );
 
-    expect(espia).toHaveBeenCalledTimes(1);
+    // Una sola consulta y un solo id dentro: el recorte y el deduplicado pasan
+    // antes de preguntar.
+    expect(rutaFindMany).toHaveBeenCalledTimes(1);
+    expect(rutaFindMany.mock.calls[0][0].where.id).toEqual({ in: ['ruta-1'] });
+    expect(Object.keys(mapa)).toEqual(['ruta-1']);
   });
 
   it('con la lista vacia no consulta nada y devuelve un mapa vacio', async () => {
-    const { service, espia } = servicioConVisitas({});
+    const { service, rutaFindMany } = servicioParaLote([]);
 
     const mapa = await service.getDailyVisitsBatch([], '2026-11-12');
 
     expect(mapa).toEqual({});
-    expect(espia).not.toHaveBeenCalled();
+    // Sin rutas no se pregunta: un `in: []` traeria todas las del sistema.
+    expect(rutaFindMany).not.toHaveBeenCalled();
   });
 });
