@@ -339,7 +339,18 @@ describe('RoutesService role scoping', () => {
               apellidos: 'Prueba',
             },
             supervisor: null,
-            asignaciones: [],
+            asignaciones: [
+              {
+                clienteId: 'cliente-1',
+                creadoEn: new Date(),
+                cliente: {
+                  id: 'cliente-1',
+                  nombres: 'Cliente',
+                  apellidos: 'Prueba',
+                  dni: '123',
+                },
+              },
+            ],
             _count: { asignaciones: 1, gastos: 0 },
           },
         ]),
@@ -388,6 +399,8 @@ describe('RoutesService role scoping', () => {
     expect(ruta.cobranzaDelDia).toBe(1_043_330);
     expect(ruta.metaDelDia).toBe(1_555_331);
     expect(ruta.avanceDiario).toBe(67.08);
+    expect(prisma.asignacionRuta.findMany).not.toHaveBeenCalled();
+    expect(prisma.asignacionRuta.count).not.toHaveBeenCalled();
   });
 
   it('limits route detail for supervisors to assigned routes only', async () => {

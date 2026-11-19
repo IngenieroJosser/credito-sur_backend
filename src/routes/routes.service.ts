@@ -1285,17 +1285,16 @@ export class RoutesService {
       const rutasConEstadisticas = await Promise.all(
         rutas.map(async (ruta) => {
           // Obtener IDs de clientes asignados de forma robusta
-
-          const asignaciones = await this.prisma.asignacionRuta.findMany({
-            where: { rutaId: ruta.id, activa: true },
-
-            select: { clienteId: true },
-          });
-
-          const clientesIds = asignaciones.map((a) => a.clienteId);
+          // `ruta.findMany` ya incluyo las asignaciones activas. Volver a pedirlas
+          // aqui agregaba una consulta por ruta y podia desalinear el conteo si una
+          // asignacion cambiaba entre ambas lecturas.
+          const asignaciones = ruta.asignaciones;
+          const clientesIds = Array.from(
+            new Set(asignaciones.map((asignacion) => asignacion.clienteId)),
+          );
 
           const estadisticas = {
-            clientesAsignados: asignaciones.length,
+            clientesAsignados: clientesIds.length,
 
             cobranzaDelDia: 0,
 
@@ -1623,16 +1622,14 @@ export class RoutesService {
               Date.now() - 7 * 24 * 60 * 60 * 1000,
             );
 
-            estadisticas.clientesNuevos =
-              await this.prisma.asignacionRuta.count({
-                where: {
-                  rutaId: ruta.id,
-
-                  creadoEn: { gte: sieteDiasAtras },
-
-                  activa: true,
-                },
-              });
+            estadisticas.clientesNuevos = new Set(
+              asignaciones
+                .filter(
+                  (asignacion) =>
+                    new Date(asignacion.creadoEn) >= sieteDiasAtras,
+                )
+                .map((asignacion) => asignacion.clienteId),
+            ).size;
           }
 
           if (estadisticas.clientesAsignados === 0) {
