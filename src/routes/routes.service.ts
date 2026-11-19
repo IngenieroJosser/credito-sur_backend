@@ -1475,6 +1475,22 @@ export class RoutesService {
                 include: {
                   prestamos: {
                     where: {
+                      /*
+                       * Solo los creditos DE ESTA RUTA.
+                       *
+                       * De aqui sale `prestamosActivos`, y de ahi la meta, la
+                       * deuda y el `porcentajeMora` del detalle: es la cartera
+                       * de la ruta, no la lista de creditos de cada cliente.
+                       * Sin este filtro contaba los creditos del cliente en
+                       * otras rutas y los que no tienen ninguna.
+                       *
+                       * El listado ya lo acota asi, y sin esto la MISMA ruta
+                       * daba dos moras: medido, 67,91 en la lista y 71,41 en el
+                       * detalle. Lo encontro `/code-review` sobre el commit del
+                       * refactor; la invariante es la de §3 y su centinela
+                       * `ruta-del-credito-no-del-cliente.spec.ts`.
+                       */
+                      rutaId: id,
                       OR: [
                         { estado: EstadoPrestamo.ACTIVO },
 
@@ -1682,11 +1698,16 @@ export class RoutesService {
             await Promise.all([
               this.prisma.pago.findMany({
                 where: {
-                  prestamo: {
-                    cliente: {
-                      asignacionesRuta: { some: { rutaId: id, activa: true } },
-                    },
-                  },
+                  /*
+                   * Los pagos de los creditos DE ESTA RUTA.
+                   *
+                   * Iba por la asignacion del CLIENTE, asi que un pago hecho
+                   * sobre un credito del mismo cliente en OTRA ruta entraba en
+                   * la cobranza de esta. El listado ya lo acota por
+                   * `Prestamo.rutaId` (`estadisticas-listado.ts`), y la ruta la
+                   * lleva el credito, no el cliente.
+                   */
+                  prestamo: { rutaId: id },
                   fechaPago: { gte: dInicioBogota, lte: dFinBogota },
                 },
                 select: { montoTotal: true, origenGestion: true },
@@ -3301,6 +3322,19 @@ export class RoutesService {
     );
   }
 
+  /**
+   * Proyecta la jornada de varias rutas, de 50 en 50.
+   *
+   * Una ruta que falla NO tumba las demas. El `getDailyVisitsBatch` anterior
+   * tenia un `try/catch` por ruta con el motivo escrito —«una ruta que el actor
+   * no puede ver no tumba el lote»— y el refactor lo perdio: el caso del
+   * permiso ahora se resuelve en el `where`, pero cualquier OTRO fallo de una
+   * sola ruta rechazaba la peticion entera, y el listado pide todas sus rutas
+   * de una vez. Una ruta con datos raros dejaba TODAS las tarjetas en blanco.
+   *
+   * Lo que falla se anota en el log y esa ruta no aparece, que es lo que hacia
+   * antes. Lo encontro `/code-review` sobre el commit del refactor.
+   */
   private async proyectarRutas<T>(
     ids: string[],
     fechaKey: string,
@@ -3310,7 +3344,17 @@ export class RoutesService {
     for (let inicio = 0; inicio < ids.length; inicio += 50) {
       const pagina = ids.slice(inicio, inicio + 50);
       const obtener = await cargarVisitas(this.prisma, pagina, fechaKey);
-      for (const id of pagina) resultado.set(id, proyectar(id, obtener(id)));
+      for (const id of pagina) {
+        try {
+          resultado.set(id, proyectar(id, obtener(id)));
+        } catch (error) {
+          this.logger.warn(
+            `No se pudo proyectar la jornada de la ruta ${id}: ${
+              error instanceof Error ? error.message : 'desconocido'
+            }`,
+          );
+        }
+      }
     }
     return resultado;
   }
