@@ -217,8 +217,9 @@ export class RoutesController {
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() updateRouteDto: UpdateRouteDto,
+    @Request() req: RequestConUsuario,
   ) {
-    return this.routesService.update(id, updateRouteDto);
+    return this.routesService.update(id, updateRouteDto, req.user);
   }
 
   @Delete(':id')
@@ -236,8 +237,11 @@ export class RoutesController {
     status: 400,
     description: 'No se puede eliminar una ruta con clientes asignados',
   })
-  remove(@Param('id', ParseUUIDPipe) id: string) {
-    return this.routesService.remove(id);
+  remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Request() req: RequestConUsuario,
+  ) {
+    return this.routesService.remove(id, req.user);
   }
 
   @Patch(':id/toggle-active')
@@ -253,8 +257,11 @@ export class RoutesController {
     description: 'Estado de ruta cambiado exitosamente',
   })
   @ApiResponse({ status: 404, description: 'Ruta no encontrada' })
-  toggleActive(@Param('id', ParseUUIDPipe) id: string) {
-    return this.routesService.toggleActive(id);
+  toggleActive(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Request() req: RequestConUsuario,
+  ) {
+    return this.routesService.toggleActive(id, req.user);
   }
 
   @Get(':id/activacion-hoy')
@@ -348,8 +355,9 @@ export class RoutesController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body('clienteId', ParseUUIDPipe) clienteId: string,
     @Body('cobradorId', ParseUUIDPipe) cobradorId: string,
+    @Request() req: RequestConUsuario,
   ) {
-    return this.routesService.assignClient(id, clienteId, cobradorId);
+    return this.routesService.assignClient(id, clienteId, cobradorId, req.user);
   }
 
   @Delete(':id/remove-client/:clienteId')
@@ -366,8 +374,9 @@ export class RoutesController {
   removeClient(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('clienteId', ParseUUIDPipe) clienteId: string,
+    @Request() req: RequestConUsuario,
   ) {
-    return this.routesService.removeClient(id, clienteId);
+    return this.routesService.removeClient(id, clienteId, req.user);
   }
 
   @Post('move-client')

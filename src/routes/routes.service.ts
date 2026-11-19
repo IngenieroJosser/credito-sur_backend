@@ -247,6 +247,36 @@ export class RoutesService {
   }
 
   /**
+   * Un SUPERVISOR solo puede tocar las rutas que supervisa.
+   *
+   * `findOne` ya lo hacia —acota la consulta con `supervisorId: actor.id`—,
+   * pero editar, archivar, activar y mover clientes no recibian siquiera el
+   * actor: con el id en la URL, un supervisor operaba sobre la ruta de otro.
+   * Editar no es cosmetico: `update` admite `cobradorId`, o sea que podia
+   * cambiar quien cobra una ruta ajena, y el dinero entra a la caja de quien
+   * cobra.
+   *
+   * Para los demas roles no hace nada: el coordinador y la oficina atienden
+   * cualquier ruta a proposito.
+   */
+  private async assertSupervisorOwnRoute(rutaId: string, actor?: RouteActor) {
+    if (!this.isAssignedRouteSupervisor(actor)) return;
+    const ruta = await this.prisma.ruta.findFirst({
+      where: {
+        id: rutaId,
+        eliminadoEn: null,
+        supervisorId: actor?.id || '__NO_ACTOR_ID__',
+      },
+      select: { id: true },
+    });
+    if (!ruta?.id) {
+      throw new ForbiddenException(
+        'No tienes permiso para realizar operaciones en esta ruta supervisada.',
+      );
+    }
+  }
+
+  /**
    * Normaliza la fecha operativa a clave `YYYY-MM-DD` de Bogota. Misma regla que
    * `PaymentsService.parseFechaOperativaPagoKey`: una clave ya formada se respeta
    * tal cual, sin reinterpretarle zona horaria.
@@ -2508,7 +2538,9 @@ export class RoutesService {
     }
   }
 
-  async update(id: string, updateRouteDto: UpdateRouteDto) {
+  async update(id: string, updateRouteDto: UpdateRouteDto, actor?: RouteActor) {
+    await this.assertSupervisorOwnRoute(id, actor);
+
     // Verificar si la ruta existe
 
     const existingRoute = await this.prisma.ruta.findFirst({
@@ -2718,7 +2750,9 @@ export class RoutesService {
     }
   }
 
-  async remove(id: string) {
+  async remove(id: string, actor?: RouteActor) {
+    await this.assertSupervisorOwnRoute(id, actor);
+
     // Verificar si la ruta existe
 
     const existingRoute = await this.prisma.ruta.findFirst({
@@ -2790,7 +2824,9 @@ export class RoutesService {
     }
   }
 
-  async toggleActive(id: string) {
+  async toggleActive(id: string, actor?: RouteActor) {
+    await this.assertSupervisorOwnRoute(id, actor);
+
     const existingRoute = await this.prisma.ruta.findFirst({
       where: {
         id,
@@ -3197,7 +3233,14 @@ export class RoutesService {
     return sincronizarAsignacionesCliente(tx, clienteId);
   }
 
-  async assignClient(rutaId: string, clienteId: string, _cobradorId: string) {
+  async assignClient(
+    rutaId: string,
+    clienteId: string,
+    _cobradorId: string,
+    actor?: RouteActor,
+  ) {
+    await this.assertSupervisorOwnRoute(rutaId, actor);
+
     try {
       // Verificar si la ruta existe
 
@@ -3313,7 +3356,9 @@ export class RoutesService {
     }
   }
 
-  async removeClient(rutaId: string, clienteId: string) {
+  async removeClient(rutaId: string, clienteId: string, actor?: RouteActor) {
+    await this.assertSupervisorOwnRoute(rutaId, actor);
+
     try {
       // Verificar si la asignación existe
 
