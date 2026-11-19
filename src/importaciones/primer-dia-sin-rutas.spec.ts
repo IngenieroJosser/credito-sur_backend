@@ -53,8 +53,8 @@ describe('la plantilla avisa cuando todavia no hay rutas', () => {
   it('lo dice en la hoja de ejemplos, antes de que llene nada', async () => {
     const hoja = await leerHojaEjemplos(sinRutas);
 
-    const titulo = String(hoja.getCell('A2').value || '');
-    const explicacion = String(hoja.getCell('B2').value || '');
+    const titulo = String(hoja.getCell('A2').text ?? '');
+    const explicacion = String(hoja.getCell('B2').text ?? '');
 
     expect(titulo).toMatch(/ANTES DE LLENAR/i);
     expect(explicacion).toMatch(/ruta/i);
@@ -65,7 +65,7 @@ describe('la plantilla avisa cuando todavia no hay rutas', () => {
   it('y no estorba cuando ya hay rutas', async () => {
     const hoja = await leerHojaEjemplos(conRutas);
 
-    expect(String(hoja.getCell('A2').value || '')).not.toMatch(
+    expect(String(hoja.getCell('A2').text ?? '')).not.toMatch(
       /ANTES DE LLENAR/i,
     );
   });
@@ -75,7 +75,7 @@ describe('la plantilla avisa cuando todavia no hay rutas', () => {
 
     // Piso: si la guia se moviera a la fila 2, el aviso la borraria y esta
     // prueba lo veria.
-    expect(String(hoja.getCell('A3').value || '')).toMatch(/HOJA "Clientes"/);
+    expect(String(hoja.getCell('A3').text ?? '')).toMatch(/HOJA "Clientes"/);
   });
 
   it('la plantilla se genera igual sin rutas: no es un error, es el primer dia', async () => {

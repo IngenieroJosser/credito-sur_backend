@@ -69,9 +69,7 @@ describe('de donde viene un pago', () => {
       'utf8',
     );
 
-    const declaracion = fuente.match(
-      /const rolesOficina = \[([^\]]*)\]/,
-    )?.[1];
+    const declaracion = fuente.match(/const rolesOficina = \[([^\]]*)\]/)?.[1];
 
     // Piso: si la declaracion cambia de forma y el match falla, esto avisa en
     // vez de pasar en verde sin haber comparado nada.
@@ -100,7 +98,9 @@ describe('de donde viene un pago', () => {
     );
     expect(copiaDirecta).toBeNull();
 
-    const conLaRegla = fuente.match(/origenGestion: resolverOrigenDeGestion\(/g);
+    const conLaRegla = fuente.match(
+      /origenGestion: resolverOrigenDeGestion\(/g,
+    );
     expect(conLaRegla?.length).toBe(2);
   });
 });

@@ -69,7 +69,9 @@ describe('la ruta que muestra un credito es la suya', () => {
   it('y la consulta trae esa ruta', () => {
     const cuerpo = cuerpoDeGetAllLoans();
 
-    expect(cuerpo).toMatch(/ruta: \{\s*select: \{ id: true, nombre: true, codigo: true \}/);
+    expect(cuerpo).toMatch(
+      /ruta: \{\s*select: \{ id: true, nombre: true, codigo: true \}/,
+    );
   });
 
   it('no vuelve a leer la asignacion del cliente para esto', () => {
@@ -119,7 +121,9 @@ describe('la mora se deduce solo de un credito ya vivo', () => {
   });
 
   it('y lo que no es cobrable conserva su estado', () => {
-    expect(cuerpo).toMatch(/!esCobrable[\s\S]{0,120}prestamo\.estado \|\| EstadoPrestamo\.BORRADOR/);
+    expect(cuerpo).toMatch(
+      /!esCobrable[\s\S]{0,120}prestamo\.estado \|\| EstadoPrestamo\.BORRADOR/,
+    );
   });
 
   it('ninguna cuota vencida ya no basta para pintar EN_MORA', () => {

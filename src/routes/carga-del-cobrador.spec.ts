@@ -36,7 +36,7 @@ const armar = (doble: Partial<DobleDePrisma>) =>
     comoPrisma({
       usuario: { findMany: jest.fn().mockResolvedValue([cobradorBase]) },
       ...doble,
-    } as DobleDePrisma),
+    }),
     // Este metodo solo lee de la base: los otros tres colaboradores no se
     // ejercitan, y un doble vacio lo deja dicho.
     dependenciaSinUsar<AuditService>(),
@@ -48,12 +48,10 @@ describe('la carga real de cada cobrador', () => {
   it('cuenta sus rutas y sus clientes', async () => {
     const servicio = armar({
       ruta: {
-        findMany: jest
-          .fn()
-          .mockResolvedValue([
-            { id: 'r1', cobradorId: 'cob-1' },
-            { id: 'r2', cobradorId: 'cob-1' },
-          ]),
+        findMany: jest.fn().mockResolvedValue([
+          { id: 'r1', cobradorId: 'cob-1' },
+          { id: 'r2', cobradorId: 'cob-1' },
+        ]),
       },
       asignacionRuta: {
         findMany: jest.fn().mockResolvedValue([
@@ -80,12 +78,10 @@ describe('la carga real de cada cobrador', () => {
      */
     const servicio = armar({
       ruta: {
-        findMany: jest
-          .fn()
-          .mockResolvedValue([
-            { id: 'r1', cobradorId: 'cob-1' },
-            { id: 'r2', cobradorId: 'cob-1' },
-          ]),
+        findMany: jest.fn().mockResolvedValue([
+          { id: 'r1', cobradorId: 'cob-1' },
+          { id: 'r2', cobradorId: 'cob-1' },
+        ]),
       },
       asignacionRuta: {
         findMany: jest.fn().mockResolvedValue([
@@ -121,7 +117,9 @@ describe('la carga real de cada cobrador', () => {
     const asignaciones = jest.fn().mockResolvedValue([]);
     const servicio = armar({
       ruta: {
-        findMany: jest.fn().mockResolvedValue([{ id: 'r1', cobradorId: 'cob-1' }]),
+        findMany: jest
+          .fn()
+          .mockResolvedValue([{ id: 'r1', cobradorId: 'cob-1' }]),
       },
       asignacionRuta: { findMany: asignaciones },
     });

@@ -3295,34 +3295,51 @@ export class LoansService implements OnModuleInit {
 
           const frecuencia = prestamoConCuotas.frecuenciaPago;
 
-          for (let i = 0; i < cuotasPendientes.length; i++) {
-            const nuevaFechaVenc = calcularFechaVencimiento(
-              nuevaFechaBase,
-              i + 1,
-              frecuencia,
-            );
-            await this.prisma.cuota.update({
-              where: { id: cuotasPendientes[i].id },
-              data: {
-                fechaVencimiento: nuevaFechaVenc,
-                estado: EstadoCuota.PENDIENTE,
-              },
-            });
-          }
-
-          // Actualizar fechaInicio y fechaFin del préstamo
+          /*
+           * Reagendar el calendario es UNA operacion, no cuarenta y cinco.
+           *
+           * Esto era un bucle de `cuota.update` sueltos seguido del update del
+           * prestamo: si fallaba en la cuota 15 de 30, el credito quedaba con
+           * medio calendario en las fechas nuevas y medio en las viejas, y el
+           * prestamo sin su `fechaInicio` movida. Y como el estado seguia en
+           * PENDIENTE_APROBACION, el siguiente intento volvia a mover las que
+           * ya se habian movido.
+           *
+           * El bucle se queda —cada cuota lleva su propia fecha, asi que no hay
+           * un `updateMany` que valga— pero ahora dentro de la transaccion.
+           */
           const nuevaFechaFin = calcularFechaVencimiento(
             nuevaFechaBase,
             cuotasPendientes.length,
             frecuencia,
           );
-          await this.prisma.prestamo.update({
-            where: { id },
-            data: {
-              fechaInicio: nuevaFechaBase,
-              fechaFin: nuevaFechaFin,
+
+          await this.prisma.$transaction(
+            async (tx) => {
+              for (let i = 0; i < cuotasPendientes.length; i++) {
+                await tx.cuota.update({
+                  where: { id: cuotasPendientes[i].id },
+                  data: {
+                    fechaVencimiento: calcularFechaVencimiento(
+                      nuevaFechaBase,
+                      i + 1,
+                      frecuencia,
+                    ),
+                    estado: EstadoCuota.PENDIENTE,
+                  },
+                });
+              }
+
+              await tx.prestamo.update({
+                where: { id },
+                data: {
+                  fechaInicio: nuevaFechaBase,
+                  fechaFin: nuevaFechaFin,
+                },
+              });
             },
-          });
+            { maxWait: 15_000, timeout: 60_000 },
+          );
         }
       }
 
