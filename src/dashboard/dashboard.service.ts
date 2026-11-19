@@ -131,18 +131,6 @@ export class DashboardService {
       // no depende de cuándo se creó. Un préstamo creado hace 6 meses puede estar en mora hoy.
       // Importante: evitar falsos positivos por fechas guardadas en UTC (cuotas que vencen HOY).
 
-      // Base solicitada (suma de aprobaciones pendientes de tipo SOLICITUD_BASE_EFECTIVO)
-      const _requestedBaseResult = await this.prisma.aprobacion.aggregate({
-        where: {
-          estado: EstadoAprobacion.PENDIENTE,
-          tipoAprobacion: TipoAprobacion.SOLICITUD_BASE_EFECTIVO,
-          creadoEn: { gte: startDate, lte: endDate },
-        },
-        _sum: {
-          montoSolicitud: true,
-        },
-      });
-
       // Calcular capital prestado del período (suma de montos de préstamos aprobados/efectivos)
       const capitalPrestado = await this.prisma.prestamo.aggregate({
         where: {

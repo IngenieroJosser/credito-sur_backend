@@ -1778,7 +1778,7 @@ export class ClientsService {
       const { archivos, version: _version, ...clientData } = data;
 
       // Actualizar datos básicos del cliente
-      const _clienteActualizado = await this.prisma.cliente.update({
+      await this.prisma.cliente.update({
         where: { id },
         data: {
           ...clientData,

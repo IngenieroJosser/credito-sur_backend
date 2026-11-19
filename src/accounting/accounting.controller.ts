@@ -624,12 +624,12 @@ export class AccountingController {
     if (!req.user || !req.user.id)
       throw new UnauthorizedException('Usuario no autenticado');
     // Asegurar que el monto se parsee correctamente
-    const _montoClean =
+    const montoClean =
       typeof body.monto === 'number' ? body.monto : Number(body.monto) || 0;
 
     return this.accountingService.registrarAbonoDeuda(
       cobradorId,
-      body.monto,
+      montoClean,
       body.nota,
       req.user.id,
       body.cajaIdDestino,

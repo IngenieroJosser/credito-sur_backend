@@ -279,14 +279,10 @@ describe('AccountingService financial ledger controls', () => {
       .mockResolvedValueOnce({ _sum: { debitAmount: 35000, creditAmount: 0 } }) // gastos hoy 4.x
       .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } }) // costos hoy 5.x
       .mockResolvedValueOnce({
-        _sum: { debitAmount: 900000, creditAmount: 250000 },
-      }) // cartera
-      .mockResolvedValueOnce({
         _sum: { debitAmount: 50000, creditAmount: 10000 },
       }) // deuda cobrador
       .mockResolvedValueOnce({ _sum: { debitAmount: 180000 } }) // cobranza hoy PAGO -> caja
       .mockResolvedValueOnce({ _sum: { debitAmount: 80000 } }) // cobranza ayer
-      .mockResolvedValueOnce({ _sum: { debitAmount: 80000 } }) // ingresos caja ayer
       .mockResolvedValueOnce({ _sum: { creditAmount: 80000, debitAmount: 0 } }) // ingresos periodo anterior
       .mockResolvedValueOnce({ _sum: { debitAmount: 20000, creditAmount: 0 } }) // gastos periodo anterior
       .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } }); // costos periodo anterior

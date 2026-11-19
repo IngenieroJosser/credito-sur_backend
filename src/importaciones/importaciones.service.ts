@@ -2383,7 +2383,7 @@ export class ImportacionesService {
             // Si es operativo, registrar transacción de desembolso
             if (isOperativaEfectivo && cajaOficina) {
               const montoDesembolso = Number(cred.monto);
-              const _transaccion = await tx.transaccion.create({
+              await tx.transaccion.create({
                 data: {
                   numeroTransaccion: `IMP-DES-${prestamo.id.slice(0, 24)}`,
                   idempotencyKey: `IMP-DESEMBOLSO-${prestamo.id}`,

@@ -631,12 +631,6 @@ export class LoansService implements OnModuleInit {
     const esCobrador = rolCreador === RolUsuario.COBRADOR;
     const esSupervisor = rolCreador === RolUsuario.SUPERVISOR;
     const esOperadorConBase = esCobrador || esSupervisor;
-    const _rolesAdminConCajaRutaExplicita = [
-      RolUsuario.ADMIN,
-      RolUsuario.SUPER_ADMINISTRADOR,
-      RolUsuario.COORDINADOR,
-    ].map(String);
-
     const findCajaOficina = async () =>
       (await tx.caja.findFirst({
         where: { activa: true, codigo: 'CAJA-OFICINA' },
@@ -735,7 +729,13 @@ export class LoansService implements OnModuleInit {
         select: selectCajaOperacion,
       });
       if (caja?.id) {
-        const _esCajaRuta = String(caja.tipo || '').toUpperCase() === 'RUTA';
+        const esCajaRuta = String(caja.tipo || '').toUpperCase() === 'RUTA';
+
+        if (!esCajaRuta) {
+          throw new BadRequestException(
+            'La caja indicada no es una caja/base de ruta válida para este operador.',
+          );
+        }
 
         // COBRADOR/SUPERVISOR solo pueden usar su caja/base asignada
         if (caja.responsableId !== params.creador?.id) {
@@ -3576,9 +3576,6 @@ export class LoansService implements OnModuleInit {
     let efectoProvisionalCreado = null;
     let asignacionRutaCreadaId: string | null = null;
     let esAutoAprobadoFinal = false;
-    // Se asigna y no se lee; queda como registro de lo que produjo la transaccion.
-    let _impactoProvisionalPrestamo: unknown = null;
-
     try {
       this.logger.log(
         `Creating loan for client ${data.clienteId}, type: ${data.tipoPrestamo}. Data: ${JSON.stringify(data)}`,
@@ -3729,19 +3726,6 @@ export class LoansService implements OnModuleInit {
           'Se ha detectado un crédito idéntico creado hace menos de 2 minutos. Para evitar registros duplicados por problemas de conexión, la solicitud fue bloqueada.',
         );
       }
-
-      // Determinar si requiere aprobación (ADMIN y SUPER_ADMINISTRADOR no requieren)
-      const rolesAutoAprobacion: RolUsuario[] = [
-        RolUsuario.ADMIN,
-        RolUsuario.SUPER_ADMINISTRADOR,
-      ];
-      const requiereAprobacion = !rolesAutoAprobacion.includes(creador.rol);
-      const _estadoInicial = requiereAprobacion
-        ? EstadoPrestamo.PENDIENTE_APROBACION
-        : EstadoPrestamo.ACTIVO;
-      const _estadoAprobacionInicial = requiereAprobacion
-        ? EstadoAprobacion.PENDIENTE
-        : EstadoAprobacion.APROBADO;
 
       let producto = null;
       let precioProducto = null;
@@ -4063,7 +4047,7 @@ export class LoansService implements OnModuleInit {
        */
       let rutaIdAsignadaBroadcast: string | null = null;
 
-      const { prestamo, aprobacion, efectoProvisional, impactoProvisional } =
+      const { prestamo, aprobacion, efectoProvisional } =
         await this.prisma.$transaction(async (tx) => {
           const prestamoTx = await tx.prestamo.create({
             data: {
@@ -4434,15 +4418,12 @@ export class LoansService implements OnModuleInit {
             prestamo: prestamoTx,
             aprobacion: aprobacionTx,
             efectoProvisional: efectoTx,
-            impactoProvisional: impactoTx,
           };
         });
 
       prestamoCreado = prestamo;
       aprobacionCreada = aprobacion;
       efectoProvisionalCreado = efectoProvisional;
-      _impactoProvisionalPrestamo = impactoProvisional;
-
       if (asignacionRutaCreadaId && rutaIdAsignadaBroadcast) {
         await this.runCreateLoanSideEffect(
           'broadcast asignación de ruta',

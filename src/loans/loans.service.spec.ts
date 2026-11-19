@@ -782,6 +782,36 @@ describe('LoansService accounting impact for approved loans', () => {
     );
   });
 
+  it('rechaza una caja explicita que no sea caja de ruta para un cobrador', async () => {
+    const tx = {
+      ruta: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      caja: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'caja-principal-1',
+          codigo: 'CAJA-OFICINA',
+          tipo: 'PRINCIPAL',
+          nombre: 'Caja de Oficina',
+          saldoActual: 1000000,
+          rutaId: null,
+          responsableId: 'cobrador-1',
+        }),
+      },
+    };
+
+    await expect(
+      makeService({}).resolverCajaDeOperacion(comoTransaccion(tx), {
+        data: { cajaId: 'caja-principal-1' },
+        creador: { id: 'cobrador-1', rol: RolUsuario.COBRADOR },
+        cliente: { asignacionesRuta: [] },
+        requiereCajaRuta: true,
+      }),
+    ).rejects.toThrow(
+      'La caja indicada no es una caja/base de ruta válida para este operador.',
+    );
+  });
+
   it('registra desembolso contable desde caja de oficina para préstamo en efectivo autoaprobado', async () => {
     const prisma = {
       usuario: {

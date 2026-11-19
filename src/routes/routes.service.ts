@@ -1439,8 +1439,6 @@ export class RoutesService {
             // Una sola llamada: startDate/endDate ya representan los límites del día bogotano en UTC.
             const { startDate: dInicioBogota, endDate: dFinBogota } =
               getBogotaStartEndOfDay(new Date());
-            const dInicioUTC = dInicioBogota;
-            const _dFinUTC = dFinBogota;
 
             if (pIds.length > 0) {
               // Desestructurado a proposito: `Promise.all` sobre un arreglo literal da
@@ -1602,7 +1600,7 @@ export class RoutesService {
                 .filter(
                   (c) =>
                     c.estado !== 'PAGADA' &&
-                    new Date(c.fechaVencimiento) < dInicioUTC,
+                    new Date(c.fechaVencimiento) < dInicioBogota,
                 )
                 .reduce((sum, c) => sum + Number(c.monto), 0);
 
@@ -2002,7 +2000,6 @@ export class RoutesService {
         // Una sola llamada: getBogotaStartEndOfDay devuelve límites del día bogotano en UTC.
         const { startDate: dInicioBogota, endDate: dFinBogota } =
           getBogotaStartEndOfDay(new Date());
-        const _dInicioUTC = dInicioBogota;
         const dFinUTC = dFinBogota;
 
         if (pIds.length > 0) {
@@ -2311,8 +2308,8 @@ export class RoutesService {
 
           // BUG-02 FIX: calcular monto acumulado sin mutar el objeto Prisma.
           // El monto/estado se inyecta directamente al construir proximaCuota más abajo.
-          let _montoAcumuladoHoy = 0;
-          let _esMoraAtrasada = false;
+          let montoAcumuladoHoy = 0;
+          let esMoraAtrasada = false;
           if (p.cuotas && p.cuotas.length > 0) {
             for (const c of p.cuotas) {
               const cuotaKey = getBogotaDayKey(new Date(c.fechaVencimiento));
@@ -2321,8 +2318,8 @@ export class RoutesService {
                 cuotaKey <= hoyKey2 &&
                 c.estado !== 'PAGADA'
               ) {
-                _montoAcumuladoHoy += Number(c.monto);
-                if (cuotaKey < hoyKey2) _esMoraAtrasada = true;
+                montoAcumuladoHoy += Number(c.monto);
+                if (cuotaKey < hoyKey2) esMoraAtrasada = true;
               }
             }
           }
@@ -2383,11 +2380,11 @@ export class RoutesService {
                 id: prox.id,
                 numeroCuota: prox.numeroCuota,
                 monto:
-                  _montoAcumuladoHoy > 0
-                    ? _montoAcumuladoHoy
+                  montoAcumuladoHoy > 0
+                    ? montoAcumuladoHoy
                     : Number(prox.monto),
                 estado:
-                  _esMoraAtrasada && _montoAcumuladoHoy > 0
+                  esMoraAtrasada && montoAcumuladoHoy > 0
                     ? 'VENCIDA'
                     : prox.estado,
                 fechaVencimiento: prox.fechaVencimiento,
@@ -4149,13 +4146,6 @@ export class RoutesService {
         asignaciones.map((a) => a?.cliente?.id || a?.clienteId).filter(Boolean),
       ),
     ];
-    const _clientesVisitaIds = [
-      ...new Set(
-        visitasDelDia
-          .map((v) => v?.cliente?.id || v?.clienteId)
-          .filter(Boolean),
-      ),
-    ];
     const reprogramacionesJornada =
       clientesRutaIds.length > 0 && this.prisma.aprobacion?.findMany
         ? await this.prisma.aprobacion.findMany({
@@ -4533,7 +4523,6 @@ export class RoutesService {
     );
 
     visitasDelDia.forEach((v) => {
-      const _cid = String(v?.cliente?.id || v?.clienteId || '');
       // Van en un objeto y no como dos `let`, por dos razones.
       //
       // Una: `let x = null` sin anotacion es un `any` EVOLUTIVO para TypeScript y
