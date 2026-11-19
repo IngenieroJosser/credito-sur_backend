@@ -403,6 +403,56 @@ describe('RoutesService role scoping', () => {
     expect(prisma.asignacionRuta.count).not.toHaveBeenCalled();
   });
 
+  it('consulta las visitas una vez y mantiene la ausencia en su propia ruta', async () => {
+    const rutas = ['norte', 'sur'].map((id) => ({
+      id,
+      activa: true,
+      cobrador: { nombres: 'Ana', apellidos: 'Test' },
+      asignaciones: [{ clienteId: 'compartido', creadoEn: new Date() }],
+    }));
+    const prisma = {
+      ruta: {
+        findMany: jest.fn().mockResolvedValue(rutas),
+        count: jest.fn().mockResolvedValue(2),
+      },
+      registroVisita: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            rutaId: 'norte',
+            clienteId: 'compartido',
+            estadoVisita: 'ausente',
+          },
+        ]),
+      },
+      pago: { findMany: jest.fn().mockResolvedValue([]) },
+      prestamo: { findMany: jest.fn().mockResolvedValue([]) },
+      caja: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const service = makeService(prisma);
+    jest
+      .spyOn(conPrivados(service), 'getCierresPendientesRutasMap')
+      .mockResolvedValue(new Map());
+    jest
+      .spyOn(conPrivados(service), 'getDailyVisits')
+      .mockResolvedValue({ resumen: {} });
+    await service.findAll({ take: 2 });
+    expect(prisma.registroVisita.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.registroVisita.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          rutaId: { in: ['norte', 'sur'] },
+          fechaVisita: expect.any(String),
+        },
+      }),
+    );
+    const filtrosMeta = prisma.prestamo.findMany.mock.calls
+      .map(([consulta]) => consulta.where)
+      .filter((where) => !where.estado.in.includes('PAGADO'));
+    expect(filtrosMeta.map((where) => where.clienteId.in)).toEqual(
+      expect.arrayContaining([[], ['compartido']]),
+    );
+  });
+
   it('limits route detail for supervisors to assigned routes only', async () => {
     const prisma = {
       ruta: {

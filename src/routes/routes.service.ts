@@ -1312,6 +1312,26 @@ export class RoutesService {
       const { activadas: rutasActivadasHoy, diaNoLaboral } =
         await this.getActivacionHoyRutasMap(rutaIds);
 
+      const rutasConClientes = rutas
+        .filter((ruta) => ruta.asignaciones.length > 0)
+        .map((ruta) => ruta.id);
+      const visitasHoy = rutasConClientes.length
+        ? await this.prisma.registroVisita.findMany({
+            where: {
+              rutaId: { in: rutasConClientes },
+              fechaVisita: getBogotaDayKey(new Date()),
+            },
+            select: { rutaId: true, clienteId: true, estadoVisita: true },
+          })
+        : [];
+      // Un cliente puede estar en varias rutas: su ausencia pertenece a una sola.
+      const visitasPorRuta = new Map<string, typeof visitasHoy>();
+      for (const visita of visitasHoy) {
+        const grupo = visitasPorRuta.get(visita.rutaId);
+        if (grupo) grupo.push(visita);
+        else visitasPorRuta.set(visita.rutaId, [visita]);
+      }
+
       const rutasConEstadisticas = await Promise.all(
         rutas.map(async (ruta) => {
           // Obtener IDs de clientes asignados de forma robusta
@@ -1374,13 +1394,7 @@ export class RoutesService {
 
           if (clientesIds.length > 0) {
             // Obtener registros de visita del día para excluir clientes ausentes de la meta
-            const hoyKey2 = getBogotaDayKey(new Date());
-            const registrosVisitas = await this.prisma.registroVisita.findMany({
-              where: {
-                rutaId: ruta.id,
-                fechaVisita: hoyKey2,
-              },
-            });
+            const registrosVisitas = visitasPorRuta.get(ruta.id) ?? [];
 
             // Obtener pagos operativos de hoy para excluir ausentes que realmente pagaron hoy.
             // Las regularizaciones de jornadas pasadas no deben anular una ausencia operativa.
