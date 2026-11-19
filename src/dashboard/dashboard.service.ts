@@ -119,12 +119,23 @@ export class DashboardService {
         return `${y}-${m}-${day}`;
       };
 
-      // 1. Obtener métricas principales filtradas por período
+      // 1. Métricas principales.
+      //
+      // Las aprobaciones pendientes van SIN filtro de período, por la misma
+      // razón que la mora de aquí abajo: una solicitud pendiente es un estado
+      // ACTUAL, no un suceso del período. La que entró el mes pasado sigue
+      // esperando hoy.
+      //
+      // Medido el 2026-11-19 contra la base de desarrollo: con el período por
+      // defecto («mes») esto daba 1, y la pantalla de aprobaciones mostraba 39
+      // —20 clientes nuevos, 9 solicitudes de base, 4 créditos, 4 gastos, una
+      // reprogramación y un pago por transferencia—. Y este número no se pinta
+      // como una estadística del mes: es la INSIGNIA de aviso de una tarjeta de
+      // acceso rápido, en el panel del admin y en el del coordinador, donde un
+      // «1» se lee «tienes una cosa esperando». Con «hoy» seleccionado habría
+      // dicho 0 teniendo 39.
       const pendingApprovals = await this.prisma.aprobacion.count({
-        where: {
-          estado: EstadoAprobacion.PENDIENTE,
-          creadoEn: { gte: startDate, lte: endDate },
-        },
+        where: { estado: EstadoAprobacion.PENDIENTE },
       });
 
       // Cuentas en mora: sin filtro de período porque la mora es un estado ACTUAL del préstamo,
@@ -191,12 +202,11 @@ export class DashboardService {
 
       const loanCompletion = await this.getLoanCompletionMetrics(actor);
 
-      // 2. Obtener aprobaciones pendientes (filtradas por período)
+      // 2. Las cinco pendientes más recientes, sin filtro de período por lo
+      // mismo: la lista tiene que enseñar lo que de verdad está esperando, o
+      // contradice a su propia insignia.
       const pendingApprovalsList = await this.prisma.aprobacion.findMany({
-        where: {
-          estado: EstadoAprobacion.PENDIENTE,
-          creadoEn: { gte: startDate, lte: endDate },
-        },
+        where: { estado: EstadoAprobacion.PENDIENTE },
         ...aprobacionDelTablero,
         orderBy: { creadoEn: 'desc' },
         take: 5,

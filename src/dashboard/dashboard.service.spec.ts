@@ -150,3 +150,84 @@ describe('DashboardService accounting-backed collections', () => {
     });
   });
 });
+
+/**
+ * La insignia de aprobaciones pendientes no se filtra por período.
+ *
+ * ── El defecto ─────────────────────────────────────────────────────────────
+ *
+ * El contador y la lista de pendientes del panel llevaban
+ * `creadoEn: { gte: startDate, lte: endDate }`, el período que el usuario elige
+ * arriba (por defecto «mes»). Pero una solicitud pendiente es un estado
+ * ACTUAL, no un suceso del período: la que entró el mes pasado sigue esperando
+ * hoy. El propio archivo ya lo tenía escrito dos líneas más abajo, para la
+ * mora: «sin filtro de período porque la mora es un estado ACTUAL del préstamo,
+ * no depende de cuándo se creó».
+ *
+ * ── Medido contra la base de desarrollo (2026-11-19) ───────────────────────
+ *
+ * Con el período por defecto el panel decía **1** y la pantalla de aprobaciones
+ * mostraba **39**: 20 clientes nuevos, 9 solicitudes de base, 4 créditos, 4
+ * gastos, una reprogramación y un pago por transferencia. Con «hoy»
+ * seleccionado habría dicho 0.
+ *
+ * Y no es una cifra de estadística: se pinta como la INSIGNIA de una tarjeta de
+ * acceso rápido (`app/admin/page.tsx` y `app/coordinador/page.tsx`), donde un
+ * «1» se lee «tienes una cosa esperando». Nueve de esas 39 son solicitudes de
+ * efectivo.
+ */
+describe('las aprobaciones pendientes del panel son un estado, no un período', () => {
+  const sinPeriodo = (llamada: { where?: Record<string, unknown> }) =>
+    !Object.prototype.hasOwnProperty.call(llamada?.where ?? {}, 'creadoEn');
+
+  it('el contador pregunta por todas las pendientes', async () => {
+    const prisma = buildPrismaMock();
+
+    await new DashboardService(comoPrisma(prisma)).getDashboardData('month');
+
+    const porPendientes = prisma.aprobacion.count.mock.calls
+      .map((c) => c[0])
+      .filter(
+        (a: { where?: Record<string, unknown> }) =>
+          a?.where?.estado === 'PENDIENTE',
+      );
+
+    // Piso: si el servicio dejara de contar aprobaciones, esto avisaría en vez
+    // de pasar en verde sin haber comprobado nada.
+    expect(porPendientes.length).toBeGreaterThan(0);
+    expect(porPendientes.every(sinPeriodo)).toBe(true);
+  });
+
+  it('y la lista que las enseña, también', async () => {
+    const prisma = buildPrismaMock();
+
+    await new DashboardService(comoPrisma(prisma)).getDashboardData('today');
+
+    const listados = prisma.aprobacion.findMany.mock.calls
+      .map((c) => c[0])
+      .filter(
+        (a: { where?: Record<string, unknown> }) =>
+          a?.where?.estado === 'PENDIENTE',
+      );
+
+    expect(listados.length).toBeGreaterThan(0);
+    expect(listados.every(sinPeriodo)).toBe(true);
+  });
+
+  it('el período sigue mandando donde sí es un período', async () => {
+    // El capital prestado y el recaudo SÍ son del período elegido. Si el
+    // arreglo se hubiera pasado de ancho, el panel dejaría de responder al
+    // filtro de arriba.
+    const prisma = buildPrismaMock();
+
+    await new DashboardService(comoPrisma(prisma)).getDashboardData('week');
+
+    const conPeriodo = prisma.prestamo.aggregate.mock.calls
+      .map((c) => c[0])
+      .filter((a: { where?: Record<string, unknown> }) =>
+        Object.prototype.hasOwnProperty.call(a?.where ?? {}, 'creadoEn'),
+      );
+
+    expect(conPeriodo.length).toBeGreaterThan(0);
+  });
+});
