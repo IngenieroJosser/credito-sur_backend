@@ -4,7 +4,11 @@ import { ReportPeriod } from './dto/get-operational-report.dto';
 import type { NotificacionesService } from '../notificaciones/notificaciones.service';
 import type { RoutesService } from '../routes/routes.service';
 import type { ArgsDePrismaEnMock } from '../common/testing/prisma-mock.types';
-import { comoPrisma, dependenciaSinUsar } from '../common/testing/dobles';
+import {
+  comoDependencia,
+  comoPrisma,
+  dependenciaSinUsar,
+} from '../common/testing/dobles';
 
 describe('ReportsService operational report', () => {
   it('no suma cuota inicial como recaudo ni meta operativa en reportes por periodo', async () => {
@@ -19,46 +23,35 @@ describe('ReportsService operational report', () => {
               nombres: 'Ana',
               apellidos: 'Ruta',
             },
-            asignaciones: [
-              {
-                cliente: {
-                  id: 'cliente-1',
-                },
-              },
-            ],
           },
         ]),
       },
       pago: {
-        aggregate: jest
-          .fn()
-          .mockResolvedValueOnce({ _sum: { montoTotal: 100000 } })
-          .mockResolvedValueOnce({ _sum: { montoTotal: 100000 } }),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            montoTotal: 100000,
+            prestamo: { rutaId: 'ruta-1' },
+          },
+        ]),
       },
       prestamo: {
-        aggregate: jest
+        findMany: jest
           .fn()
-          .mockResolvedValueOnce({
-            _sum: { monto: 500000, cuotaInicial: 20000 },
-            _count: { id: 1 },
-          })
-          .mockResolvedValueOnce({
-            _sum: { monto: 500000, cuotaInicial: 20000 },
-            _count: { id: 1 },
-          }),
+          .mockResolvedValue([
+            { id: 'prestamo-1', rutaId: 'ruta-1', monto: 500000 },
+          ]),
       },
       cliente: {
-        count: jest.fn().mockResolvedValueOnce(0).mockResolvedValueOnce(0),
+        findMany: jest.fn().mockResolvedValue([]),
       },
       cuota: {
-        aggregate: jest
-          .fn()
-          .mockResolvedValueOnce({
-            _sum: { monto: 200000, montoInteresMora: 0 },
-          })
-          .mockResolvedValueOnce({
-            _sum: { monto: 200000, montoInteresMora: 0 },
-          }),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            monto: 200000,
+            montoInteresMora: 0,
+            prestamo: { rutaId: 'ruta-1' },
+          },
+        ]),
       },
     };
     const service = new ReportsService(
@@ -79,6 +72,150 @@ describe('ReportsService operational report', () => {
       eficiencia: 50,
       montoNuevosPrestamos: 500000,
     });
+    expect(prisma.pago.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.prestamo.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.cliente.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.cuota.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('mantiene consultas constantes y totales acotados a las rutas visibles', async () => {
+    const prisma = {
+      ruta: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'ruta-1',
+            nombre: 'Ruta 1',
+            cobrador: { id: 'cob-1', nombres: 'Ana', apellidos: 'Uno' },
+          },
+          {
+            id: 'ruta-2',
+            nombre: 'Ruta 2',
+            cobrador: { id: 'cob-2', nombres: 'Beto', apellidos: 'Dos' },
+          },
+        ]),
+      },
+      pago: {
+        findMany: jest.fn().mockResolvedValue([
+          { montoTotal: 100000, prestamo: { rutaId: 'ruta-1' } },
+          { montoTotal: 50000, prestamo: { rutaId: 'ruta-2' } },
+        ]),
+      },
+      prestamo: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 'p-1', rutaId: 'ruta-1', monto: 300000 },
+          { id: 'p-2', rutaId: 'ruta-2', monto: 200000 },
+        ]),
+      },
+      cliente: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'cliente-1',
+            asignacionesRuta: [{ rutaId: 'ruta-1' }],
+          },
+          {
+            id: 'cliente-2',
+            asignacionesRuta: [{ rutaId: 'ruta-2' }],
+          },
+        ]),
+      },
+      cuota: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            monto: 200000,
+            montoInteresMora: 0,
+            prestamo: { rutaId: 'ruta-1' },
+          },
+          {
+            monto: 100000,
+            montoInteresMora: 0,
+            prestamo: { rutaId: 'ruta-2' },
+          },
+        ]),
+      },
+    };
+    const service = new ReportsService(
+      comoPrisma(prisma),
+      dependenciaSinUsar<NotificacionesService>(),
+      dependenciaSinUsar<RoutesService>(),
+    );
+
+    const result = await service.getOperationalReport({
+      period: 'week' as ReportPeriod,
+    });
+
+    expect(result).toMatchObject({
+      totalRecaudo: 150000,
+      totalMeta: 300000,
+      totalPrestamosNuevos: 2,
+      totalAfiliaciones: 2,
+      totalMontoPrestamosNuevos: 500000,
+    });
+    expect(prisma.pago.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.prestamo.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.cliente.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.cuota.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('carga las novedades de todas las rutas de hoy en un solo lote', async () => {
+    const prisma = {
+      prestamo: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 'p-1', rutaId: 'ruta-1', monto: 300000 },
+          { id: 'p-2', rutaId: 'ruta-2', monto: 200000 },
+        ]),
+      },
+      cliente: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'cliente-1',
+            asignacionesRuta: [{ rutaId: 'ruta-1' }],
+          },
+        ]),
+      },
+    };
+    const routesService = {
+      findAll: jest.fn().mockResolvedValue({
+        data: [
+          {
+            id: 'ruta-1',
+            nombre: 'Ruta 1',
+            cobrador: 'Ana Uno',
+            cobradorId: 'cob-1',
+            metaDelDia: 200000,
+            cobranzaDelDia: 100000,
+            avanceDiario: 50,
+          },
+          {
+            id: 'ruta-2',
+            nombre: 'Ruta 2',
+            cobrador: 'Beto Dos',
+            cobradorId: 'cob-2',
+            metaDelDia: 100000,
+            cobranzaDelDia: 50000,
+            avanceDiario: 50,
+          },
+        ],
+      }),
+    };
+    const service = new ReportsService(
+      comoPrisma(prisma),
+      dependenciaSinUsar<NotificacionesService>(),
+      comoDependencia<RoutesService>(routesService),
+    );
+
+    const result = await service.getOperationalReport({
+      period: ReportPeriod.TODAY,
+    });
+
+    expect(result).toMatchObject({
+      totalRecaudo: 150000,
+      totalMeta: 300000,
+      totalPrestamosNuevos: 2,
+      totalAfiliaciones: 1,
+      totalMontoPrestamosNuevos: 500000,
+    });
+    expect(prisma.prestamo.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.cliente.findMany).toHaveBeenCalledTimes(1);
   });
 });
 

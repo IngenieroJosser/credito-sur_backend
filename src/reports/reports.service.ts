@@ -1036,6 +1036,80 @@ export class ReportsService {
     return {};
   }
 
+  private async cargarNovedadesPorRuta(
+    rutaIds: string[],
+    startDate: Date,
+    endDate: Date,
+  ) {
+    const prestamosPorRuta = new Map<
+      string,
+      { cantidad: number; monto: number }
+    >();
+    const clientesPorRuta = new Map<string, Set<string>>();
+
+    if (rutaIds.length === 0) {
+      return { prestamosPorRuta, clientesPorRuta, clientesUnicos: 0 };
+    }
+
+    const [prestamos, clientes] = await Promise.all([
+      this.prisma.prestamo.findMany({
+        where: {
+          rutaId: { in: rutaIds },
+          creadoEn: { gte: startDate, lte: endDate },
+          eliminadoEn: null,
+          estado: {
+            in: [
+              EstadoPrestamo.ACTIVO,
+              EstadoPrestamo.EN_MORA,
+              EstadoPrestamo.PAGADO,
+            ],
+          },
+        },
+        select: { id: true, rutaId: true, monto: true },
+      }),
+      this.prisma.cliente.findMany({
+        where: {
+          creadoEn: { gte: startDate, lte: endDate },
+          asignacionesRuta: {
+            some: { rutaId: { in: rutaIds }, activa: true },
+          },
+        },
+        select: {
+          id: true,
+          asignacionesRuta: {
+            where: { rutaId: { in: rutaIds }, activa: true },
+            select: { rutaId: true },
+          },
+        },
+      }),
+    ]);
+
+    for (const prestamo of prestamos) {
+      if (!prestamo.rutaId) continue;
+      const actual = prestamosPorRuta.get(prestamo.rutaId) || {
+        cantidad: 0,
+        monto: 0,
+      };
+      actual.cantidad += 1;
+      actual.monto += Number(prestamo.monto || 0);
+      prestamosPorRuta.set(prestamo.rutaId, actual);
+    }
+
+    for (const cliente of clientes) {
+      for (const asignacion of cliente.asignacionesRuta) {
+        const ids = clientesPorRuta.get(asignacion.rutaId) || new Set<string>();
+        ids.add(cliente.id);
+        clientesPorRuta.set(asignacion.rutaId, ids);
+      }
+    }
+
+    return {
+      prestamosPorRuta,
+      clientesPorRuta,
+      clientesUnicos: new Set(clientes.map((cliente) => cliente.id)).size,
+    };
+  }
+
   async getOperationalReport(
     filters: GetOperationalReportDto,
     actor?: { id?: string; rol?: RolUsuario } | null,
@@ -1062,39 +1136,15 @@ export class ReportsService {
         new Date(),
       );
 
-      const rendimientoRutas: RoutePerformanceDetail[] = await Promise.all(
-        rutasFiltradas.map(async (r) => {
-          const nuevosPrestamosAgg = await this.prisma.prestamo.aggregate({
-            where: {
-              creadoEn: { gte: hoyInicio, lte: hoyFin },
-              eliminadoEn: null,
-              estado: {
-                in: [
-                  EstadoPrestamo.ACTIVO,
-                  EstadoPrestamo.EN_MORA,
-                  EstadoPrestamo.PAGADO,
-                ],
-              },
-              // Por rutaId del credito: si el cliente esta en dos rutas,
-              // un filtro por sus asignaciones contaria el credito en ambas.
-              rutaId: r.id,
-            },
-            _sum: { monto: true },
-            _count: { id: true },
-          });
+      const novedades = await this.cargarNovedadesPorRuta(
+        rutasFiltradas.map((ruta) => ruta.id),
+        hoyInicio,
+        hoyFin,
+      );
 
-          const nuevosPrestamos = nuevosPrestamosAgg._count.id || 0;
-          const montoNuevosPrestamos = Number(
-            nuevosPrestamosAgg._sum.monto || 0,
-          );
-
-          const nuevosClientes = await this.prisma.cliente.count({
-            where: {
-              creadoEn: { gte: hoyInicio, lte: hoyFin },
-              asignacionesRuta: { some: { rutaId: r.id, activa: true } },
-            },
-          });
-
+      const rendimientoRutas: RoutePerformanceDetail[] = rutasFiltradas.map(
+        (r) => {
+          const prestamosNuevos = novedades.prestamosPorRuta.get(r.id);
           return {
             id: r.id,
             ruta: r.nombre,
@@ -1103,11 +1153,11 @@ export class ReportsService {
             meta: Number(r.metaDelDia || 0),
             recaudado: Number(r.cobranzaDelDia || 0),
             eficiencia: Number(r.avanceDiario || 0),
-            nuevosPrestamos,
-            nuevosClientes,
-            montoNuevosPrestamos,
+            nuevosPrestamos: prestamosNuevos?.cantidad || 0,
+            nuevosClientes: novedades.clientesPorRuta.get(r.id)?.size || 0,
+            montoNuevosPrestamos: prestamosNuevos?.monto || 0,
           };
-        }),
+        },
       );
 
       const totalRecaudo = rendimientoRutas.reduce(
@@ -1175,65 +1225,28 @@ export class ReportsService {
             apellidos: true,
           },
         },
-        asignaciones: {
-          include: {
-            cliente: true,
-          },
-        },
       },
     });
 
-    const routePerformancePromises = routes.map(async (route) => {
-      const clientIds = route.asignaciones.map((a) => a.cliente.id);
-
-      const routePayments = await this.prisma.pago.aggregate({
+    const routeIds = routes.map((route) => route.id);
+    const [pagos, cuotas, novedades] = await Promise.all([
+      this.prisma.pago.findMany({
         where: {
-          clienteId: { in: clientIds },
+          prestamo: { rutaId: { in: routeIds } },
           fechaPago: {
             gte: dateRange.startDate,
             lte: dateRange.endDate,
           },
         },
-        _sum: { montoTotal: true },
-      });
-
-      const collected = Number(routePayments._sum.montoTotal || 0);
-
-      const routeNewLoansStats = await this.prisma.prestamo.aggregate({
-        where: {
-          clienteId: { in: clientIds },
-          creadoEn: {
-            gte: dateRange.startDate,
-            lte: dateRange.endDate,
-          },
-          estado: { in: ['ACTIVO', 'EN_MORA', 'PAGADO'] },
+        select: {
+          montoTotal: true,
+          prestamo: { select: { rutaId: true } },
         },
-        _sum: {
-          monto: true,
-          cuotaInicial: true,
-        },
-        _count: { id: true },
-      });
-
-      const newLoans = routeNewLoansStats._count.id || 0;
-      const newLoansAmount = Number(routeNewLoansStats._sum.monto || 0);
-
-      const newClients = await this.prisma.cliente.count({
-        where: {
-          asignacionesRuta: {
-            some: { rutaId: route.id, activa: true },
-          },
-          creadoEn: {
-            gte: dateRange.startDate,
-            lte: dateRange.endDate,
-          },
-        },
-      });
-
-      const routeDuePayments = await this.prisma.cuota.aggregate({
+      }),
+      this.prisma.cuota.findMany({
         where: {
           prestamo: {
-            clienteId: { in: clientIds },
+            rutaId: { in: routeIds },
             estado: { in: ['ACTIVO', 'EN_MORA'] },
           },
           OR: [
@@ -1257,15 +1270,42 @@ export class ReportsService {
             },
           ],
         },
-        _sum: {
+        select: {
           monto: true,
           montoInteresMora: true,
+          prestamo: { select: { rutaId: true } },
         },
-      });
+      }),
+      this.cargarNovedadesPorRuta(
+        routeIds,
+        dateRange.startDate,
+        dateRange.endDate,
+      ),
+    ]);
 
-      const target =
-        Number(routeDuePayments._sum.monto || 0) +
-        Number(routeDuePayments._sum.montoInteresMora || 0);
+    const recaudoPorRuta = new Map<string, number>();
+    for (const pago of pagos) {
+      const rutaIdPago = pago.prestamo.rutaId;
+      if (!rutaIdPago) continue;
+      recaudoPorRuta.set(
+        rutaIdPago,
+        (recaudoPorRuta.get(rutaIdPago) || 0) + Number(pago.montoTotal || 0),
+      );
+    }
+
+    const metaPorRuta = new Map<string, number>();
+    for (const cuota of cuotas) {
+      const rutaIdCuota = cuota.prestamo.rutaId;
+      if (!rutaIdCuota) continue;
+      const monto =
+        Number(cuota.monto || 0) + Number(cuota.montoInteresMora || 0);
+      metaPorRuta.set(rutaIdCuota, (metaPorRuta.get(rutaIdCuota) || 0) + monto);
+    }
+
+    const routePerformance: RoutePerformanceDetail[] = routes.map((route) => {
+      const collected = recaudoPorRuta.get(route.id) || 0;
+      const target = metaPorRuta.get(route.id) || 0;
+      const prestamosNuevos = novedades.prestamosPorRuta.get(route.id);
 
       const efficiency =
         target > 0 ? Math.round((collected / target) * 100) : 0;
@@ -1278,92 +1318,33 @@ export class ReportsService {
         meta: target,
         recaudado: collected,
         eficiencia: efficiency,
-        nuevosPrestamos: newLoans,
-        nuevosClientes: newClients,
-        montoNuevosPrestamos: newLoansAmount,
+        nuevosPrestamos: prestamosNuevos?.cantidad || 0,
+        nuevosClientes: novedades.clientesPorRuta.get(route.id)?.size || 0,
+        montoNuevosPrestamos: prestamosNuevos?.monto || 0,
       };
     });
 
-    const routePerformance = await Promise.all(routePerformancePromises);
-
-    const globalPayments = await this.prisma.pago.aggregate({
-      where: {
-        fechaPago: {
-          gte: dateRange.startDate,
-          lte: dateRange.endDate,
-        },
-      },
-      _sum: { montoTotal: true },
-    });
-
-    const globalNewLoansStats = await this.prisma.prestamo.aggregate({
-      where: {
-        creadoEn: {
-          gte: dateRange.startDate,
-          lte: dateRange.endDate,
-        },
-        estado: { in: ['ACTIVO', 'EN_MORA', 'PAGADO'] },
-      },
-      _sum: {
-        monto: true,
-        cuotaInicial: true,
-      },
-      _count: { id: true },
-    });
-
-    const totalRecaudo = Number(globalPayments._sum.montoTotal || 0);
-    const totalMontoPrestamosNuevos = Number(
-      globalNewLoansStats._sum.monto || 0,
+    const totalRecaudo = routePerformance.reduce(
+      (sum, route) => sum + route.recaudado,
+      0,
     );
-    const totalPrestamosNuevos = globalNewLoansStats._count.id || 0;
-
-    const globalDuePayments = await this.prisma.cuota.aggregate({
-      where: {
-        prestamo: {
-          estado: { in: ['ACTIVO', 'EN_MORA'] },
-        },
-        OR: [
-          {
-            fechaVencimiento: {
-              gte: dateRange.startDate,
-              lte: dateRange.endDate,
-            },
-          },
-          {
-            estado: { in: ['PENDIENTE', 'PARCIAL', 'VENCIDA'] },
-            fechaVencimiento: { lt: dateRange.startDate },
-          },
-          {
-            estado: 'PAGADA',
-            fechaVencimiento: { lt: dateRange.startDate },
-            fechaPago: {
-              gte: dateRange.startDate,
-              lte: dateRange.endDate,
-            },
-          },
-        ],
-      },
-      _sum: {
-        monto: true,
-        montoInteresMora: true,
-      },
-    });
-
-    const totalMeta =
-      Number(globalDuePayments._sum.monto || 0) +
-      Number(globalDuePayments._sum.montoInteresMora || 0);
+    const totalMeta = routePerformance.reduce(
+      (sum, route) => sum + route.meta,
+      0,
+    );
+    const totalMontoPrestamosNuevos = routePerformance.reduce(
+      (sum, route) => sum + route.montoNuevosPrestamos,
+      0,
+    );
+    const totalPrestamosNuevos = routePerformance.reduce(
+      (sum, route) => sum + route.nuevosPrestamos,
+      0,
+    );
 
     const porcentajeGlobal =
       totalMeta > 0 ? Math.round((totalRecaudo / totalMeta) * 100) : 0;
 
-    const totalAfiliaciones = await this.prisma.cliente.count({
-      where: {
-        creadoEn: {
-          gte: dateRange.startDate,
-          lte: dateRange.endDate,
-        },
-      },
-    });
+    const totalAfiliaciones = novedades.clientesUnicos;
 
     const efectividadPromedio =
       routePerformance.length > 0
