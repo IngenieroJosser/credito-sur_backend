@@ -1080,13 +1080,44 @@ export class AccountingService {
     }
   }
 
+  /**
+   * Pedir la base de efectivo del dia.
+   *
+   * Lleva clave de idempotencia por la misma razon que el gasto: la cola
+   * offline reintenta lo que no recibio respuesta, y si la peticion si llego al
+   * servidor el reintento crea una SEGUNDA solicitud. Aprobar las dos no es un
+   * duplicado cosmetico: cada aprobacion saca el monto de CAJA-OFICINA y lo
+   * ingresa a la caja de ruta con su asiento de partida doble, asi que la base
+   * se entrega dos veces y el descuadre aparece al cierre.
+   *
+   * La clave se estampa al ENCOLAR (`lib/offline/syncService.ts`), no en cada
+   * reintento: por eso el segundo intento es el mismo que el primero.
+   */
   async solicitarBase(data: {
     descripcion: string;
     monto: number;
     rutaId: string;
     cobradorId: string;
     solicitadoPorId: string;
+    idempotencyKey?: string;
   }) {
+    const idempotencyKey = data.idempotencyKey?.toString().trim() || undefined;
+
+    if (idempotencyKey) {
+      const aprobacionExistente = await this.prisma.aprobacion.findFirst({
+        where: { idempotencyKey },
+        select: { id: true },
+      });
+      if (aprobacionExistente) {
+        return {
+          success: true,
+          approvalId: aprobacionExistente.id,
+          idempotentReplay: true,
+          message: 'Solicitud de base ya enviada previamente',
+        };
+      }
+    }
+
     // Buscar el solicitante para obtener su rol y nombre
     const solicitante = await this.prisma.usuario.findUnique({
       where: { id: data.solicitadoPorId },
@@ -1117,6 +1148,7 @@ export class AccountingService {
     const aprobacion = await this.prisma.aprobacion.create({
       data: {
         tipoAprobacion: TipoAprobacion.SOLICITUD_BASE_EFECTIVO,
+        idempotencyKey,
         referenciaId: cajaRuta.id,
         tablaReferencia: 'Caja',
         solicitadoPorId: data.solicitadoPorId,

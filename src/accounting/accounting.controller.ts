@@ -506,6 +506,9 @@ export class AccountingController {
       monto: number;
       rutaId: string;
       cobradorId: string;
+      // La manda la cola offline al reintentar. Sin declararla aqui el campo
+      // no llegaria al servicio y el reintento crearia una segunda solicitud.
+      idempotencyKey?: string;
     },
   ) {
     if (!req.user || !req.user.id) {
@@ -517,6 +520,7 @@ export class AccountingController {
       rutaId: body.rutaId,
       cobradorId: body.cobradorId,
       solicitadoPorId: req.user.id,
+      idempotencyKey: body.idempotencyKey,
     });
   }
 
