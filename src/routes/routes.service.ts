@@ -58,6 +58,10 @@ import {
   RutaCobradorMeta,
 } from '../templates/exports';
 import { normalizarCodigoRuta } from './codigo-ruta';
+import {
+  describirPendiente,
+  leerCierresDelListado,
+} from './cierres-del-listado';
 import { objetoDeJson, textoDeJson } from '../common/json.util';
 import { ORIGEN_OFICINA } from '../payments/origen-de-gestion';
 
@@ -1301,10 +1305,8 @@ export class RoutesService {
       // Calcular estadísticas para cada ruta
 
       const rutaIds = rutas.map((r) => r.id);
-      const cierresPendientesMap = await this.getCierresPendientesRutasMap(
-        rutaIds,
-        actor?.id,
-      );
+      const cierresPendientesMap =
+        await this.getCierresPendientesRutasMap(rutas);
       // Activacion del dia. Va en un campo aparte y NO en `estado`: `estado` dice
       // si la ruta esta habilitada, y hay pantallas que cuentan
       // `estado === 'ACTIVA'` como KPI. Meterle un tercer valor bajaria ese
@@ -6690,34 +6692,16 @@ export class RoutesService {
       },
     });
 
-    const pendientesDesdeJornadas = jornadasPendientes.map((jornada) => {
-      const fechaOperativa = jornada.fechaOperativa;
-
-      const start = new Date(`${fechaOperativa}T12:00:00-05:00`);
-      const end = new Date(`${hoyKey}T12:00:00-05:00`);
-
-      const diasPendiente = Math.max(
-        Math.floor((end.getTime() - start.getTime()) / 86_400_000),
-        0,
-      );
-
-      return {
-        rutaId,
-        rutaNombre: ruta.nombre,
-        cajaId: cajaRuta.id,
-        cobradorId: ruta.cobrador?.id || null,
-        cobradorNombre: ruta.cobrador
-          ? `${ruta.cobrador.nombres} ${ruta.cobrador.apellidos}`.trim()
-          : null,
-        activacionId: jornada.activacionTransaccionId,
-        fechaOperativa,
-        fechaActivacion: formatBogotaOffsetIso(jornada.activadaEn),
-        diasPendiente,
-        pendienteCierre: true,
-        requiereRegularizacion: true,
-        message: `La ruta tiene una jornada pendiente de cierre del ${fechaOperativa}.`,
-      };
-    });
+    const pendientesDesdeJornadas = jornadasPendientes.map((jornada) =>
+      describirPendiente(
+        ruta,
+        cajaRuta.id,
+        jornada.fechaOperativa,
+        jornada.activadaEn,
+        jornada.activacionTransaccionId,
+        hoyKey,
+      ),
+    );
 
     const pendientesDesdeTransacciones = activacionesSinJornada
       .map((activacion) => {
@@ -6729,33 +6713,17 @@ export class RoutesService {
         if (fechasJornadaExistente.has(fechaOperativa)) return false;
         return !fechasCerradasPorTransaccion.has(fechaOperativa);
       })
-      .map(({ activacion, fechaOperativa }) => {
-        const start = new Date(`${fechaOperativa}T12:00:00-05:00`);
-        const end = new Date(`${hoyKey}T12:00:00-05:00`);
-
-        const diasPendiente = Math.max(
-          Math.floor((end.getTime() - start.getTime()) / 86_400_000),
-          0,
-        );
-
-        return {
-          rutaId,
-          rutaNombre: ruta.nombre,
-          cajaId: cajaRuta.id,
-          cobradorId: ruta.cobrador?.id || null,
-          cobradorNombre: ruta.cobrador
-            ? `${ruta.cobrador.nombres} ${ruta.cobrador.apellidos}`.trim()
-            : null,
-          activacionId: activacion.id,
+      .map(({ activacion, fechaOperativa }) =>
+        describirPendiente(
+          ruta,
+          cajaRuta.id,
           fechaOperativa,
-          fechaActivacion: formatBogotaOffsetIso(activacion.fechaTransaccion),
-          diasPendiente,
-          pendienteCierre: true,
-          requiereRegularizacion: true,
-          origenDeteccion: 'TRANSACCION_ACTIVACION_LEGACY',
-          message: `La ruta tiene una jornada pendiente de cierre del ${fechaOperativa}.`,
-        };
-      });
+          activacion.fechaTransaccion,
+          activacion.id,
+          hoyKey,
+          true,
+        ),
+      );
 
     return [...pendientesDesdeJornadas, ...pendientesDesdeTransacciones].sort(
       (a, b) => a.fechaOperativa.localeCompare(b.fechaOperativa),
@@ -6828,49 +6796,10 @@ export class RoutesService {
     return { activadas, diaNoLaboral: false };
   }
 
-  private async getCierresPendientesRutasMap(
-    rutaIds: string[],
-    creadoPorId?: string,
+  private getCierresPendientesRutasMap(
+    rutas: Parameters<typeof leerCierresDelListado>[1],
   ) {
-    // El resumen de cierres pendientes de una ruta, escrito una vez y usado en los tres
-    // sitios de esta funcion, que antes eran tres `any` distintos.
-    type ResumenDeCierres = {
-      cierrePendienteAnterior:
-        | Awaited<ReturnType<RoutesService['getCierresPendientesRuta']>>[number]
-        | null;
-      cierresPendientes: Awaited<
-        ReturnType<RoutesService['getCierresPendientesRuta']>
-      >;
-      totalCierresPendientes: number;
-      tieneCierrePendiente: boolean;
-    };
-
-    if (!rutaIds.length) return new Map<string, ResumenDeCierres>();
-
-    const cierresPendientes = await Promise.all(
-      rutaIds.map(async (rutaId) => {
-        const pendientes = await this.getCierresPendientesRuta(
-          rutaId,
-          creadoPorId,
-        );
-        return [
-          rutaId,
-          {
-            cierrePendienteAnterior: pendientes[0] || null,
-            cierresPendientes: pendientes,
-            totalCierresPendientes: pendientes.length,
-            tieneCierrePendiente: pendientes.length > 0,
-          },
-        ] as [string, ResumenDeCierres];
-      }),
-    );
-
-    const result = new Map<string, ResumenDeCierres>();
-    for (const item of cierresPendientes) {
-      result.set(item[0], item[1]);
-    }
-
-    return result;
+    return leerCierresDelListado(this.prisma, rutas, getBogotaDayKey());
   }
 
   private resolveEstadoGestionCierrePendiente(
