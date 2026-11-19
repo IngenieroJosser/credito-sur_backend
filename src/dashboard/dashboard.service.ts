@@ -202,6 +202,26 @@ export class DashboardService {
 
       const loanCompletion = await this.getLoanCompletionMetrics(actor);
 
+      // El efectivo que están pidiendo las rutas, con su PROPIA consulta.
+      //
+      // Se sumaba recorriendo `pendingApprovalsList`, que lleva `take: 5`
+      // porque es la lista que se PINTA. O sea que esta cifra de dinero era «lo
+      // que suman las solicitudes de base que estén entre las cinco
+      // aprobaciones más recientes»: un techo silencioso sobre un número que se
+      // lee como el total.
+      //
+      // Medido el 2026-11-19: el panel decía 0 y había 9 solicitudes de base
+      // pendientes por 450.000. Se comprobó antes de cambiarlo que la columna
+      // `montoSolicitud` coincide con el `monto` del JSON en las 9, que es el
+      // valor que se pintaba.
+      const baseSolicitadaPendiente = await this.prisma.aprobacion.aggregate({
+        where: {
+          estado: EstadoAprobacion.PENDIENTE,
+          tipoAprobacion: TipoAprobacion.SOLICITUD_BASE_EFECTIVO,
+        },
+        _sum: { montoSolicitud: true },
+      });
+
       // 2. Las cinco pendientes más recientes, sin filtro de período por lo
       // mismo: la lista tiene que enseñar lo que de verdad está esperando, o
       // contradice a su propia insignia.
@@ -451,7 +471,9 @@ export class DashboardService {
         metrics: {
           pendingApprovals,
           delinquentAccounts,
-          requestedBase: this.calculateRequestedBase(pendingApprovalsList),
+          requestedBase: Number(
+            baseSolicitadaPendiente._sum?.montoSolicitud || 0,
+          ),
           efficiency: parseFloat(efficiency.toFixed(1)),
           capitalPrestado: Number(capitalPrestado._sum?.monto || 0),
           recaudo: recaudoTotal,
@@ -552,27 +574,6 @@ export class DashboardService {
       total,
       porcentaje,
     };
-  }
-
-  private calculateRequestedBase(approvals: AprobacionDelTablero[]): number {
-    let total = 0;
-    approvals.forEach((approval) => {
-      if (
-        approval.tipoAprobacion === 'SOLICITUD_BASE_EFECTIVO' &&
-        approval.datosSolicitud
-      ) {
-        try {
-          const data =
-            typeof approval.datosSolicitud === 'string'
-              ? JSON.parse(approval.datosSolicitud)
-              : approval.datosSolicitud;
-          total += data.monto || 0;
-        } catch (error) {
-          // Error parsing datosSolicitud, continuar con siguiente
-        }
-      }
-    });
-    return total;
   }
 
   async getTrendData(timeFilter: string): Promise<PuntoTendencia[]> {

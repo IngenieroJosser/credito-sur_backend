@@ -231,3 +231,84 @@ describe('las aprobaciones pendientes del panel son un estado, no un período', 
     expect(conPeriodo.length).toBeGreaterThan(0);
   });
 });
+
+/**
+ * El efectivo que piden las rutas se suma entero, no solo lo que se ve.
+ *
+ * `requestedBase` se calculaba recorriendo `pendingApprovalsList`, que lleva
+ * `take: 5` porque es la lista que el panel PINTA. O sea que la cifra era «lo
+ * que suman las solicitudes de base que estén entre las cinco aprobaciones más
+ * recientes», y se lee como el total. Es el techo silencioso de §P1, esta vez
+ * sobre dinero.
+ *
+ * Medido el 2026-11-19 contra la base de desarrollo: el panel decía **0** y
+ * había **9 solicitudes de base pendientes por 450.000**. Antes de cambiarlo se
+ * comprobó que la columna `montoSolicitud` coincide con el `monto` del JSON en
+ * las 9 filas, que es el valor que se venía pintando.
+ */
+describe('la base solicitada del panel es la de todas las solicitudes', () => {
+  it('sale de una consulta propia, no de la lista de cinco', async () => {
+    const prisma = buildPrismaMock({
+      aprobacion: {
+        count: jest.fn().mockResolvedValue(0),
+        aggregate: jest
+          .fn()
+          .mockResolvedValue({ _sum: { montoSolicitud: 450000 } }),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    });
+
+    const r = (await new DashboardService(comoPrisma(prisma)).getDashboardData(
+      'month',
+    )) as { metrics: { requestedBase: number } };
+
+    // La lista de pendientes va vacía a propósito: si la cifra saliera de ahí,
+    // esto daría 0.
+    expect(r.metrics.requestedBase).toBe(450000);
+  });
+
+  it('y pregunta solo por las solicitudes de base pendientes', async () => {
+    const aggregate = jest
+      .fn()
+      .mockResolvedValue({ _sum: { montoSolicitud: 0 } });
+    const prisma = buildPrismaMock({
+      aprobacion: {
+        count: jest.fn().mockResolvedValue(0),
+        aggregate,
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    });
+
+    await new DashboardService(comoPrisma(prisma)).getDashboardData('month');
+
+    expect(aggregate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          estado: 'PENDIENTE',
+          tipoAprobacion: 'SOLICITUD_BASE_EFECTIVO',
+        }),
+        _sum: { montoSolicitud: true },
+      }),
+    );
+  });
+
+  it('sin solicitudes pendientes da 0, no undefined', async () => {
+    // `$ 0` aquí significa «nadie ha pedido base», que es cierto. Lo que no
+    // puede salir es `undefined` pintado como texto.
+    const prisma = buildPrismaMock({
+      aprobacion: {
+        count: jest.fn().mockResolvedValue(0),
+        aggregate: jest
+          .fn()
+          .mockResolvedValue({ _sum: { montoSolicitud: null } }),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    });
+
+    const r = (await new DashboardService(comoPrisma(prisma)).getDashboardData(
+      'month',
+    )) as { metrics: { requestedBase: number } };
+
+    expect(r.metrics.requestedBase).toBe(0);
+  });
+});
