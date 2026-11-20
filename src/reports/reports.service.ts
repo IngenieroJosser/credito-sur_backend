@@ -111,9 +111,27 @@ export class ReportsService {
     const pagos = await this.prisma.pago.findMany({
       where: {
         fechaPago: { gte: startOfYear, lte: endOfYear },
-        NOT: {
-          origenGestion: 'CIERRE_PENDIENTE',
-        },
+        /*
+         * Excluir los de cierre pendiente SIN perder los de siempre.
+         *
+         * Esto era `NOT: { origenGestion: 'CIERRE_PENDIENTE' }`, y en SQL
+         * `NOT (columna = 'X')` vale UNKNOWN cuando la columna es NULL, asi que
+         * la fila NO pasa. `origenGestion` es nulo en el cobro normal de la
+         * calle —medido: 84 de 85 pagos—, de modo que ese `NOT` dejaba fuera
+         * CASI TODOS los pagos.
+         *
+         * Lo que veia el dueno: el grafico de evolucion mensual del reporte
+         * financiero mostraba ingresos 0 en los DOCE meses y solo egresos, o
+         * sea un negocio que pierde dinero todos los meses, habiendo 7.883.331
+         * de cobranza en la base.
+         *
+         * Los otros siete sitios del backend que filtran por `origenGestion` ya
+         * usaban esta forma; este se quedo atras.
+         */
+        OR: [
+          { origenGestion: null },
+          { origenGestion: { not: 'CIERRE_PENDIENTE' } },
+        ],
       },
       select: { fechaPago: true, montoTotal: true },
     });
