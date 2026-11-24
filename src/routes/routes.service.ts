@@ -1361,8 +1361,10 @@ export class RoutesService {
          * (`RutasPageView.tsx`), que se sigue calculando aqui con el `Set` de
          * siempre. Quien necesita la lista es el DETALLE, y la pide a `findOne`.
          */
-        const { asignaciones: asignacionesParaCalcular, ...rutaSinAsignaciones } =
-          ruta;
+        const {
+          asignaciones: asignacionesParaCalcular,
+          ...rutaSinAsignaciones
+        } = ruta;
         return {
           ...rutaSinAsignaciones,
           clientesAsignados: new Set(
