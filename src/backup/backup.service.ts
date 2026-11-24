@@ -35,6 +35,63 @@ export class BackupService {
     return process.env.PG_DUMP_PATH || 'pg_dump';
   }
 
+  /**
+   * Lo que se sabe de `pg_dump` en ESTA maquina, averiguado una sola vez.
+   *
+   * Se cachea por proceso a proposito: el binario no puede aparecer ni
+   * desaparecer sin un despliegue nuevo, y un despliegue arranca otro proceso.
+   */
+  private pgDump: {
+    disponible: boolean;
+    version: string | null;
+    error: string | null;
+  } | null = null;
+
+  /**
+   * ¿Esta `pg_dump` donde el servicio lo busca?
+   *
+   * ── Por que esto vive en la API ────────────────────────────────────────────
+   *
+   * Porque es la unica forma de averiguarlo. La consola (shell) de Render es de
+   * pago, asi que nadie puede entrar a escribir `pg_dump --version`; y la otra
+   * via era generar un respaldo entero -escribiendo un Excel y una fila en
+   * `BackupRun`- solo para leer el mensaje de error. Esto lo contesta sin
+   * escribir nada: ejecuta `--version`, que no toca la base de datos.
+   *
+   * Lo consulta `GET /backup/status`, que es lo que pide la pantalla de
+   * respaldos al abrirse. Asi el dueño lo ve sin pedirle nada a nadie.
+   */
+  private async comprobarPgDump() {
+    if (this.pgDump) return this.pgDump;
+
+    try {
+      const { stdout } = await execFileAsync(
+        this.getPgDumpPath(),
+        ['--version'],
+        // Un tope corto: la pantalla espera esta respuesta. Si el binario no
+        // esta, `execFile` falla con ENOENT en el acto; el tope es para el caso
+        // raro de un ejecutable que se quede colgado.
+        { timeout: 10_000 },
+      );
+      this.pgDump = {
+        disponible: true,
+        version: String(stdout).trim() || null,
+        error: null,
+      };
+    } catch (err) {
+      this.pgDump = {
+        disponible: false,
+        version: null,
+        error:
+          codigoDeError(err) === 'ENOENT'
+            ? `No se encontró pg_dump en «${this.getPgDumpPath()}». El respaldo seguirá generando el Excel, pero NO el volcado SQL con el que se restaura la base. Se configura con la variable PG_DUMP_PATH.`
+            : mensajeDeError(err, 'No se pudo ejecutar pg_dump'),
+      };
+    }
+
+    return this.pgDump;
+  }
+
   private buildBackupFilePath(runId: string): string {
     const iso = formatBogotaOffsetIso(new Date()).replace(/[:.]/g, '-');
     return join(this.getBackupDir(), `backup_${iso}_${runId}.dump`);
@@ -50,15 +107,27 @@ export class BackupService {
   }
 
   async getStatus() {
-    const last = await this.prisma.backupRun.findFirst({
-      orderBy: { startedAt: 'desc' },
-    });
+    const [last, pgDump] = await Promise.all([
+      this.prisma.backupRun.findFirst({
+        orderBy: { startedAt: 'desc' },
+      }),
+      this.comprobarPgDump(),
+    ]);
 
     return {
       config: {
         enabled: !!process.env.DATABASE_URL,
         backupDir: this.getBackupDir(),
         pgDumpPath: this.getPgDumpPath(),
+        /*
+         * Si el volcado SQL se puede generar en ESTA maquina, comprobado de
+         * verdad y no deducido de la variable de entorno. Sin esto la pantalla
+         * solo podia decir «la ruta configurada es pg_dump», que no es lo
+         * mismo que «pg_dump esta ahi».
+         */
+        pgDumpDisponible: pgDump.disponible,
+        pgDumpVersion: pgDump.version,
+        pgDumpError: pgDump.error,
       },
       lastRun: last,
     };
