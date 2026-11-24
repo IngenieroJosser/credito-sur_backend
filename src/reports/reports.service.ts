@@ -34,6 +34,7 @@ import {
   calculateDateRange,
   getBogotaDayKey,
   getBogotaStartEndOfDay,
+  getBogotaStartEndOfDayFromKey,
 } from '../utils/date-utils';
 import { RoutesService } from '../routes/routes.service';
 import {
@@ -105,8 +106,13 @@ export class ReportsService {
   }
 
   async getMonthlyEvolution(year: number) {
-    const startOfYear = new Date(year, 0, 1);
-    const endOfYear = new Date(year, 11, 31, 23, 59, 59);
+    // El rango y la agrupación deben usar el mismo calendario, también en servidores UTC.
+    const { startDate: startOfYear } = getBogotaStartEndOfDayFromKey(
+      `${year}-01-01`,
+    );
+    const { endDate: endOfYear } = getBogotaStartEndOfDayFromKey(
+      `${year}-12-31`,
+    );
 
     const pagos = await this.prisma.pago.findMany({
       where: {
@@ -145,19 +151,29 @@ export class ReportsService {
     });
 
     const months = Array.from({ length: 12 }, (_, i) => ({
-      mes: new Date(year, i).toLocaleString('es-ES', { month: 'short' }),
+      mes: new Date(Date.UTC(year, i, 15, 17, 0, 0)).toLocaleString('es-ES', {
+        month: 'short',
+        timeZone: 'America/Bogota',
+      }),
       ingresos: 0,
       egresos: 0,
       utilidad: 0,
     }));
 
+    // El mes de cada fila, tambien en Bogota: `getBogotaDayKey` da
+    // `YYYY-MM-DD` ya convertido, y de ahi sale el indice del mes.
+    const mesBogota = (fecha: Date) =>
+      Number(getBogotaDayKey(fecha).slice(5, 7)) - 1;
+
     pagos.forEach((p) => {
-      const month = p.fechaPago.getMonth();
+      const month = mesBogota(p.fechaPago);
+      if (month < 0 || month > 11) return;
       months[month].ingresos += Number(p.montoTotal);
     });
 
     gastos.forEach((g) => {
-      const month = g.fechaGasto.getMonth();
+      const month = mesBogota(g.fechaGasto);
+      if (month < 0 || month > 11) return;
       months[month].egresos += Number(g.monto);
     });
 
@@ -1611,7 +1627,7 @@ export class ReportsService {
   ): Promise<{ data: Buffer; contentType: string; filename: string }> {
     const [summary, monthly, expenses] = await Promise.all([
       this.getFinancialSummary(startDate, endDate),
-      this.getMonthlyEvolution(startDate.getFullYear()),
+      this.getMonthlyEvolution(Number(getBogotaDayKey(startDate).slice(0, 4))),
       this.getExpenseDistribution(startDate, endDate),
     ]);
     const fecha = getBogotaDayKey(new Date());

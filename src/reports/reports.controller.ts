@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Post,
@@ -33,6 +34,30 @@ import { GetOperationalReportDto } from './dto/get-operational-report.dto';
 import { Response } from 'express';
 
 import { RequestConUsuario } from '../common/types';
+import {
+  calculateDateRange,
+  getBogotaDayKey,
+  getBogotaStartEndOfDayFromKey,
+} from '../utils/date-utils';
+
+function rangoFinanciero(desde?: string, hasta?: string) {
+  const limite = (valor: string, fin: boolean) => {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(valor)) {
+      const rango = getBogotaStartEndOfDayFromKey(valor);
+      if (getBogotaDayKey(rango.startDate) !== valor)
+        throw new BadRequestException('Fecha inválida');
+      return fin ? rango.endDate : rango.startDate;
+    }
+    const instante = new Date(valor);
+    if (!Number.isFinite(instante.getTime()))
+      throw new BadRequestException('Fecha inválida');
+    return instante;
+  };
+  return {
+    start: desde ? limite(desde, false) : calculateDateRange('month').startDate,
+    end: hasta ? limite(hasta, true) : new Date(),
+  };
+}
 
 @ApiTags('reports')
 @Controller('reports')
@@ -46,17 +71,17 @@ export class ReportsController {
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
-    const start = startDate
-      ? new Date(startDate)
-      : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-    const end = endDate ? new Date(endDate) : new Date();
+    const { start, end } = rangoFinanciero(startDate, endDate);
     return this.reportsService.getFinancialSummary(start, end);
   }
 
   @Get('financial/monthly')
   @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN, RolUsuario.CONTADOR)
   getMonthlyEvolution(@Query('year') year?: string) {
-    const y = year ? parseInt(year) : new Date().getFullYear();
+    if (year !== undefined && !/^[1-9]\d{3}$/.test(year)) {
+      throw new BadRequestException('El año debe tener cuatro dígitos');
+    }
+    const y = Number(year ?? getBogotaDayKey().slice(0, 4));
     return this.reportsService.getMonthlyEvolution(y);
   }
 
@@ -66,10 +91,7 @@ export class ReportsController {
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
-    const start = startDate
-      ? new Date(startDate)
-      : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-    const end = endDate ? new Date(endDate) : new Date();
+    const { start, end } = rangoFinanciero(startDate, endDate);
     return this.reportsService.getExpenseDistribution(start, end);
   }
 
@@ -364,10 +386,7 @@ export class ReportsController {
     @Query('endDate', new DefaultValuePipe('')) endDate: string,
     @Res() res: Response,
   ) {
-    const start = startDate
-      ? new Date(startDate)
-      : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-    const end = endDate ? new Date(endDate) : new Date();
+    const { start, end } = rangoFinanciero(startDate, endDate);
     const result = await this.reportsService.exportFinancialReport(
       start,
       end,
