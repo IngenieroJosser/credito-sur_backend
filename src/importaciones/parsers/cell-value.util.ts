@@ -122,16 +122,52 @@ export function leerNumero(valor: unknown): number | null {
  *  - Texto mal escrito como `02/09 2026` se ACEPTABA en vez de rechazarse.
  *  - Fechas válidas aquí como `31/12/2026` se rechazaban.
  */
+/**
+ * Un dia del calendario, anclado a MEDIODIA DE BOGOTA (17:00 UTC).
+ *
+ * Es la convencion del resto del sistema —`new Date(`${clave}T12:00:00-05:00`)`
+ * en `loans.service.ts` y `mora.service.ts`— y la importacion se habia quedado
+ * fuera: construia las fechas a medianoche UTC.
+ *
+ * Por que importa, medido sobre la base de desarrollo: de 1.629 cuotas, 1.541
+ * vencen a las 17:00 UTC (mediodia de Bogota, correcto) y 88 a las 00:00, que en
+ * Bogota son las 19:00 del DIA ANTERIOR. Cuatro de los siete creditos con esas
+ * 88 vinieron de la importacion.
+ *
+ * Y la consecuencia se comprobo fila por fila: las 88 se leen VENCIDAS el dia en
+ * que toca pagarlas, porque la comparacion de mora es contra el inicio del dia
+ * de Bogota (05:00 UTC) y medianoche UTC es anterior. Las de las 17:00 no. O sea
+ * que cada cuota importada entraba en mora un dia antes: mueve la mora, la meta
+ * del dia y el semaforo del cliente, y manda al cobrador a perseguir a alguien
+ * que no esta atrasado.
+ *
+ * A mediodia el dia UTC y el de Bogota coinciden, asi que todo lo que ya leia
+ * estas fechas con `getUTCDate()` o `toISOString().slice(0,10)` sigue viendo el
+ * mismo dia. Es la direccion segura del arreglo.
+ */
+const HORA_MEDIODIA_BOGOTA_EN_UTC = 17;
+
+const aMediodiaBogota = (anio: number, mes: number, dia: number): Date =>
+  new Date(Date.UTC(anio, mes, dia, HORA_MEDIODIA_BOGOTA_EN_UTC, 0, 0, 0));
+
+/** Reancla a mediodia de Bogota una fecha que ya trae su dia de calendario. */
+const normalizarAMediodia = (fecha: Date): Date =>
+  aMediodiaBogota(
+    fecha.getUTCFullYear(),
+    fecha.getUTCMonth(),
+    fecha.getUTCDate(),
+  );
+
 export function leerFecha(valor: unknown): Date | null {
   const limpio = leerValorCelda(valor);
   if (limpio === null || limpio === undefined || limpio === '') return null;
   if (limpio instanceof Date)
-    return Number.isNaN(limpio.getTime()) ? null : limpio;
+    return Number.isNaN(limpio.getTime()) ? null : normalizarAMediodia(limpio);
 
   if (typeof limpio === 'number') {
     // Serial de Excel (días desde 1899-12-30).
     const fecha = new Date(Math.round((limpio - 25569) * 86400 * 1000));
-    return Number.isNaN(fecha.getTime()) ? null : fecha;
+    return Number.isNaN(fecha.getTime()) ? null : normalizarAMediodia(fecha);
   }
 
   const texto = String(limpio).trim();
@@ -142,7 +178,7 @@ export function leerFecha(valor: unknown): Date | null {
     if (anio < 1900 || anio > 2999) return null;
     if (mes < 1 || mes > 12) return null;
     if (dia < 1 || dia > 31) return null;
-    const fecha = new Date(Date.UTC(anio, mes - 1, dia));
+    const fecha = aMediodiaBogota(anio, mes - 1, dia);
     if (Number.isNaN(fecha.getTime())) return null;
     if (
       fecha.getUTCFullYear() !== anio ||

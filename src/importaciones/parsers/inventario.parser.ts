@@ -293,7 +293,7 @@ export class InventarioParser {
 
       const precioContado =
         precioContadoCelda === null && puedeCalcularPrecios
-          ? baseDeContado(costo as number, divisor as number)
+          ? baseDeContado(costo, divisor)
           : aPesos(precioContadoCelda);
 
       const stock = leerNumero(celda(row, colStock));
@@ -424,7 +424,8 @@ export class InventarioParser {
         addError(
           'precio_contado',
           'Es requerido: todo artículo debe poder venderse de contado. Escriba el divisor del precio (0,65 para ganar 35%) y el precio sale solo, o póngalo a mano',
-          leerValorCelda(celda(row, colPrecioContado)),        );
+          leerValorCelda(celda(row, colPrecioContado)),
+        );
       } else {
         if (Number.isNaN(precioContado) || precioContado <= 0) {
           addError(
@@ -465,7 +466,7 @@ export class InventarioParser {
           Number.isInteger(meses) &&
           meses > 0;
         const precio = rehacer
-          ? precioDelPlazo(costo as number, divisor as number, meses)
+          ? precioDelPlazo(costo, divisor, meses)
           : aPesos(precioCelda);
 
         if (rehacer && precio !== null) {

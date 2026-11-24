@@ -42,3 +42,90 @@ describe('leerFecha: fechas de la plantilla de importación', () => {
     expect(leerFecha(undefined)).toBeNull();
   });
 });
+
+/**
+ * La fecha importada tiene que ser el MISMO día en Bogotá, no el anterior.
+ *
+ * ── El defecto ─────────────────────────────────────────────────────────────
+ *
+ * `leerFecha` construía las fechas a **medianoche UTC**
+ * (`new Date(Date.UTC(anio, mes - 1, dia))`), y en Bogotá eso son las 19:00 del
+ * día ANTERIOR. La app no lo hace así: su convención es mediodía de Bogotá
+ * (`T12:00:00-05:00`), en `loans.service.ts` y `mora.service.ts`.
+ *
+ * ── Lo que producía, medido ────────────────────────────────────────────────
+ *
+ * De 1.629 cuotas de la base de desarrollo, 1.541 vencen a las 17:00 UTC
+ * (mediodía de Bogotá) y **88 a las 00:00**; cuatro de los siete créditos con
+ * esas 88 vinieron de la importación. Y comprobado fila por fila: **las 88 se
+ * leen vencidas el día en que toca pagarlas** —la comparación de mora es contra
+ * el inicio del día de Bogotá, las 05:00 UTC, y medianoche UTC es anterior—,
+ * mientras las de las 17:00 no.
+ *
+ * O sea que cada cuota importada entraba en mora un día antes: mueve la mora, la
+ * meta del día y el semáforo del cliente, y manda al cobrador a cobrarle a
+ * alguien que no está atrasado. Con la cartera real del cliente serían todas.
+ */
+describe('leerFecha ancla el día en Bogotá, no en UTC', () => {
+  /** El inicio del día de Bogotá, que es contra lo que se compara la mora. */
+  const inicioDelDiaBogota = (clave: string) =>
+    new Date(`${clave}T00:00:00-05:00`);
+
+  const claveBogota = (d: Date) =>
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Bogota',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(d);
+
+  it.each([
+    ['ISO', '2026-08-07'],
+    ['día primero con barras', '07/08/2026'],
+    ['día primero con guiones', '07-08-2026'],
+  ])('%s: el día en Bogotá es el que dice el Excel', (_caso, texto) => {
+    const leida = leerFecha(texto);
+
+    expect(leida).not.toBeNull();
+    expect(claveBogota(leida as Date)).toBe('2026-08-07');
+  });
+
+  it('y NO se lee vencida el día en que toca pagarla', () => {
+    // Es la comprobación que de verdad importa: con medianoche UTC esto era
+    // `true` y la cuota nacía en mora.
+    const vence = leerFecha('2026-08-07') as Date;
+
+    expect(vence.getTime()).toBeGreaterThan(
+      inicioDelDiaBogota('2026-08-07').getTime(),
+    );
+  });
+
+  it('un Date que ya viene de Excel también se reancla', () => {
+    // La librería de xlsx entrega `Date` a medianoche; si no se reanclara, la
+    // celda con formato de fecha seguiría trayendo el defecto.
+    const deExcel = new Date(Date.UTC(2026, 7, 7));
+
+    const leida = leerFecha(deExcel) as Date;
+
+    expect(claveBogota(leida)).toBe('2026-08-07');
+    expect(leida.getTime()).toBeGreaterThan(
+      inicioDelDiaBogota('2026-08-07').getTime(),
+    );
+  });
+
+  it('el serial de Excel, igual', () => {
+    // 46241 = 2026-08-07 en el calendario de Excel (días desde 1899-12-30).
+    const leida = leerFecha(46241) as Date;
+
+    expect(leida).not.toBeNull();
+    expect(claveBogota(leida)).toBe('2026-08-07');
+  });
+
+  it('y el día UTC sigue siendo el mismo: nada de lo que ya lo leía se mueve', () => {
+    // A mediodía de Bogotá (17:00 UTC) el día UTC coincide, así que todo lo que
+    // hacía `toISOString().slice(0, 10)` sobre estas fechas sigue viendo lo
+    // mismo. Es lo que hace seguro el arreglo.
+    expect(iso(leerFecha('2026-08-07'))).toBe('2026-08-07');
+    expect(iso(leerFecha('31/12/2026'))).toBe('2026-12-31');
+  });
+});
