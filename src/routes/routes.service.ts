@@ -1347,14 +1347,31 @@ export class RoutesService {
           meta > 0 ? (cobranza / meta) * 100 : cobranza > 0 ? 100 : 0;
         const movimiento = movimientos.get(ruta.id);
         const cierre = cierresPendientesMap.get(ruta.id);
+        /*
+         * Las asignaciones se usan para CALCULAR, no se mandan.
+         *
+         * El `...ruta` las esparcia enteras: la lista de clientes de CADA ruta
+         * viajaba en el listado. Medido contra una base de carga de 2.000
+         * clientes y 20 rutas: 33.764 bytes por ruta, 635 KB en total, 1,47 s
+         * —contra 13 KB y 0,29 s en desarrollo—. Crece con los clientes, asi
+         * que con 10.000 serian megas, y es la pantalla que el coordinador
+         * tiene abierta todo el dia.
+         *
+         * El listado solo necesita el numero: lo lee de `clientesAsignados`
+         * (`RutasPageView.tsx`), que se sigue calculando aqui con el `Set` de
+         * siempre. Quien necesita la lista es el DETALLE, y la pide a `findOne`.
+         */
+        const { asignaciones: asignacionesParaCalcular, ...rutaSinAsignaciones } =
+          ruta;
         return {
-          ...ruta,
-          clientesAsignados: new Set(ruta.asignaciones.map((a) => a.clienteId))
-            .size,
+          ...rutaSinAsignaciones,
+          clientesAsignados: new Set(
+            asignacionesParaCalcular.map((a) => a.clienteId),
+          ).size,
           cobranzaDelDia: cobranza,
           metaDelDia: meta,
           clientesNuevos: new Set(
-            ruta.asignaciones
+            asignacionesParaCalcular
               .filter((a) => new Date(a.creadoEn) >= desde)
               .map((a) => a.clienteId),
           ).size,

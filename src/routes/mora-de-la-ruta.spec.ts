@@ -264,3 +264,70 @@ describe('el detalle de la ruta acota su cartera igual que el listado', () => {
     );
   });
 });
+
+/**
+ * El listado de rutas no manda la lista de clientes de cada ruta.
+ *
+ * ── Lo que pasaba ──────────────────────────────────────────────────────────
+ *
+ * La fila se armaba con `{ ...ruta, ... }`, y eso esparcía `asignaciones`
+ * entera: los clientes de CADA ruta viajaban en el listado.
+ *
+ * ── Medido contra una base de carga ────────────────────────────────────────
+ *
+ * Se creó una base aparte (`credito_sur_carga`) con 20 rutas, 2.000 clientes,
+ * 3.000 créditos, 90.000 cuotas y 30.000 pagos, y se midió el mismo endpoint:
+ *
+ *     desarrollo (1.629 cuotas):   13 KB   0,29 s
+ *     carga      (90.000 cuotas): 635 KB   1,47 s   <- 33.764 bytes por ruta
+ *     con el recorte:              15 KB   1,34 s
+ *
+ * O sea **un 97,6 % menos**, y la comparación campo por campo dio **0 campos
+ * con valor distinto**: los 28.000 que desaparecen son todos de `asignaciones`.
+ * Y crece con los clientes: con 10.000 serían megas, en la pantalla que el
+ * coordinador tiene abierta todo el día.
+ *
+ * El listado solo necesita el número, y lo lee de `clientesAsignados`
+ * (`RutasPageView.tsx`); la lista la pide el DETALLE a `findOne`. Lo comprobado
+ * uno por uno: todos los consumidores de `ruta.asignaciones` son pantallas de
+ * detalle.
+ *
+ * *El tiempo no es el mismo problema:* sigue en 1,34 s porque la consulta
+ * todavía carga las asignaciones para contarlas. Eso queda anotado aparte.
+ */
+describe('el listado de rutas no arrastra los clientes de cada ruta', () => {
+  const SERVICIO = fs.readFileSync(
+    path.join(__dirname, 'routes.service.ts'),
+    'utf8',
+  );
+
+  const CUERPO = (() => {
+    const inicio = SERVICIO.indexOf('async findAll(');
+    expect(inicio).toBeGreaterThan(0);
+    const resto = SERVICIO.slice(inicio + 10);
+    const siguiente = resto.search(/\n {2}(?:private |protected )?async \w+\(/);
+    const cuerpo = siguiente > 0 ? resto.slice(0, siguiente) : resto;
+    // Piso medido: si el recorte sale corto, la centinela mira casi nada.
+    expect(cuerpo.length).toBeGreaterThan(5000);
+    return cuerpo;
+  })();
+
+  it('la fila se arma SIN las asignaciones', () => {
+    // Lo que no puede volver es el `...ruta` a secas.
+    expect(CUERPO).toMatch(/\.\.\.rutaSinAsignaciones/);
+    expect(CUERPO).not.toMatch(/return \{\s*\.\.\.ruta,/);
+  });
+
+  it('pero sigue contándolas para `clientesAsignados`', () => {
+    // El número es lo único que el listado necesita: si esto se fuera, la
+    // pantalla mostraría 0 clientes en cada ruta, que es un cero que miente.
+    expect(CUERPO).toMatch(/clientesAsignados: new Set\(/);
+    expect(CUERPO).toMatch(/asignacionesParaCalcular/);
+  });
+
+  it('y para los clientes nuevos de la semana', () => {
+    expect(CUERPO).toMatch(
+      /clientesNuevos: new Set\(\s*asignacionesParaCalcular/,
+    );
+  });
+});
