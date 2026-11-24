@@ -14,6 +14,25 @@ function agrupar<T>(filas: T[], clave: (fila: T) => string | null) {
   return mapa;
 }
 
+/**
+ * Las columnas de cuota que necesita la proyeccion del LISTADO.
+ *
+ * No es una lista escrita de memoria: el tipo de retorno de `cargarVisitas`
+ * pasa a ser la UNION de las dos formas, asi que `proyectarVisitas` y
+ * `moraDelListado` solo compilan si se conforman con estas. Si alguien añade
+ * una lectura de otra columna, `tsc` lo dice antes de que llegue a produccion.
+ */
+const CUOTA_PARA_EL_RESUMEN = {
+  id: true,
+  prestamoId: true,
+  numeroCuota: true,
+  fechaVencimiento: true,
+  fechaVencimientoProrroga: true,
+  monto: true,
+  montoPagado: true,
+  estado: true,
+} as const;
+
 export async function cargarVisitas(
   // `Prisma.TransactionClient` es el cliente SIN extender, y el de este
   // proyecto lleva la extension que intercepta las escrituras: con ese tipo,
@@ -22,6 +41,59 @@ export async function cargarVisitas(
   db: TransaccionPrisma,
   ids: string[],
   fechaKey: string,
+  /**
+   * Que columnas de cada cuota traer.
+   *
+   * ── Por que existe esta opcion ────────────────────────────────────────────
+   *
+   * El `include` de `cuotas` no llevaba ni `select` ni `where`: traia las 15
+   * columnas de TODAS las cuotas de cada credito. Medido con la base de carga
+   * (20 rutas, 2.000 clientes, 3.000 creditos, 90.000 cuotas), esta consulta
+   * es el **97% del tiempo de `cargarVisitas`**, y `cargarVisitas` es el **97%
+   * de `GET /routes`**:
+   *
+   *     SONDA proyectarRutas  consultas=4462ms  proyectar=206ms  rutas=20
+   *
+   *     1 rutaJornada                   2 ms      5 registroVisita     6 ms
+   *     2 pago.findMany                30 ms      6 gastos             2 ms
+   *     3 historial (raw)              26 ms      7 aprobaciones       3 ms
+   *     4 asignaciones+...+cuotas    2860 ms   <-- aqui
+   *
+   * Y no es la base de datos: `explain (analyze, buffers)` lee las 90.000
+   * cuotas en **73 ms** sin tocar disco. El resto es Prisma materializando
+   * 90.000 objetos, que es CPU.
+   *
+   * Medido por **tiempo de CPU del proceso** y no de reloj —con reloj la misma
+   * configuracion daba de 1.369 a 4.312 ms en esta maquina y no se podia
+   * decidir nada—:
+   *
+   *     15 columnas, todas las filas    CPU mediana 3.187 ms  (2.391-3.969)
+   *     8 columnas,  todas las filas    CPU mediana 2.172 ms  (1.921-2.625)
+   *
+   * Los rangos no se solapan: **un 32% menos de CPU**, y crece con la cartera.
+   *
+   * ── Por que NO se recorta siempre ─────────────────────────────────────────
+   *
+   * Porque `getDailyVisits` manda estas cuotas **al navegador del cobrador y a
+   * su copia offline**, y el tipo `CuotaOperativa` del frontend declara
+   * **once** de las quince columnas —`montoCapital`, `montoInteres` y
+   * `montoInteresMora` entre ellas, con un comentario que dice que son columnas
+   * del modelo del backend—. Recortarlas ahi dejaria campos en `undefined` que
+   * un `?? 0` absorberia sin que nada fallara.
+   *
+   * El LISTADO, en cambio, no manda ninguna cuota: de toda la proyeccion solo
+   * usa `resumen` y la mora. Por eso el recorte va aqui y no alla.
+   *
+   * ── Lo que NO se hizo, y por que ──────────────────────────────────────────
+   *
+   * Tambien se midio excluir las cuotas PAGADA (CPU mediana 1.687 ms, un 47%
+   * menos). **No se aplica**: `proximaCuota` se resuelve con
+   * `cuotasSorted.find(noPagada) || cuotasSorted[0]`, asi que un credito con
+   * todas las cuotas pagadas pasaria de tener cuota a no tenerla, y eso mueve
+   * `total` y `efectividad` del resumen. Es un cambio de comportamiento en una
+   * pantalla de dinero, no una optimizacion.
+   */
+  opciones?: { cuotasSoloParaElResumen?: boolean },
 ) {
   const { startDate: fInicio, endDate: fFin } =
     getBogotaStartEndOfDayFromKey(fechaKey);
@@ -128,9 +200,12 @@ export async function cargarVisitas(
                 },
 
                 include: {
-                  cuotas: {
-                    orderBy: { fechaVencimiento: 'asc' },
-                  },
+                  cuotas: opciones?.cuotasSoloParaElResumen
+                    ? {
+                        orderBy: { fechaVencimiento: 'asc' },
+                        select: CUOTA_PARA_EL_RESUMEN,
+                      }
+                    : { orderBy: { fechaVencimiento: 'asc' } },
                 },
               },
             },

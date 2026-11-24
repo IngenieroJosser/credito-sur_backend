@@ -34,6 +34,16 @@ function buildPrismaMock(overrides: DobleDePrisma = {}) {
       aggregate: jest.fn().mockResolvedValue({ _sum: { debitAmount: 123456 } }),
       findMany: jest.fn().mockResolvedValue([]),
     },
+    /*
+     * El conteo de cuentas en mora se hace con SQL a mano.
+     *
+     * Antes era un `findMany` de hasta 500 creditos que se filtraba en memoria,
+     * asi que el doble no necesitaba `$queryRaw` y el numero no podia pasar de
+     * 500 ni en produccion. Al pasarlo a un `count(*)` estas ocho pruebas
+     * cayeron todas con «this.prisma.$queryRaw is not a function», que es
+     * exactamente la señal de que ejercitan el codigo de verdad y no lo leen.
+     */
+    $queryRaw: jest.fn().mockResolvedValue([{ total: 0 }]),
     ...overrides,
   };
 }

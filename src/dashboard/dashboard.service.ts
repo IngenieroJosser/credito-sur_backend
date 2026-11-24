@@ -298,77 +298,71 @@ export class DashboardService {
         .filter((loan): loan is PrestamoEnMora => loan !== null)
         .slice(0, 10);
 
-      // Conteo total de cuentas en mora: usar una consulta amplia + validación en memoria.
-      // Nota: mantenemos un límite razonable para no degradar el dashboard.
-      const delinquentAccountsCountRaw = await this.prisma.prestamo.findMany({
-        where: {
-          eliminadoEn: null,
-          estado: { in: [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA] },
-          OR: [
-            { estado: EstadoPrestamo.EN_MORA },
-            {
-              cuotas: {
-                some: {
-                  estado: {
-                    in: [
-                      EstadoCuota.PENDIENTE,
-                      EstadoCuota.PARCIAL,
-                      EstadoCuota.VENCIDA,
-                    ],
-                  },
-                  fechaVencimiento: { lt: hoyInicioBogota },
-                },
-              },
-            },
-          ],
-        },
-        select: {
-          id: true,
-          cuotas: {
-            where: {
-              estado: {
-                in: [
-                  EstadoCuota.PENDIENTE,
-                  EstadoCuota.PARCIAL,
-                  EstadoCuota.VENCIDA,
-                ],
-              },
-            },
-            select: {
-              estado: true,
-              fechaVencimiento: true,
-              fechaVencimientoProrroga: true,
-            },
-            take: 50,
-          },
-        },
-        take: 500,
-      });
-
-      const delinquentAccounts = delinquentAccountsCountRaw.reduce(
-        (acc: number, loan) => {
-          const cuotas = Array.isArray(loan?.cuotas) ? loan.cuotas : [];
-          const tieneVencidaReal = cuotas.some((c) => {
-            if (!c) return false;
-            const st = String(c?.estado || '').toUpperCase();
-            if (
-              st === 'PAGADA' ||
-              st === 'PAGADO' ||
-              st === 'ANULADA' ||
-              st === 'ANULADO'
+      /**
+       * Cuantas cuentas estan en mora. Se CUENTA en la base, no en memoria.
+       *
+       * ── Lo que decia antes, y era mentira ─────────────────────────────────
+       *
+       * Esto era un `findMany` de hasta **500** creditos —`take: 500`, con el
+       * comentario «mantenemos un limite razonable para no degradar el
+       * dashboard»— y cada uno con hasta **50** de sus cuotas (`take: 50`, sin
+       * `orderBy`), que luego se filtraban en memoria contando los creditos con
+       * alguna cuota vencida de verdad.
+       *
+       * O sea que el numero **no podia pasar de 500**. Medido contra la base de
+       * carga, donde hay 3.000 creditos con cuota vencida impaga:
+       *
+       *     el tablero decia:  500
+       *     la base dice:    3.000
+       *
+       * Y 500 es una cifra lo bastante creible para que nadie la dude. Es la
+       * peor clase de fallo: no falla, miente. El segundo tope era igual de
+       * silencioso: con `take: 50` y sin orden, un credito con muchas cuotas
+       * impagas podia no traer la vencida y salir del conteo.
+       *
+       * ── La regla, replicada tal cual ──────────────────────────────────────
+       *
+       * Un credito cuenta si no esta borrado, esta ACTIVO o EN_MORA, pasa el
+       * mismo pre-filtro de antes (estar EN_MORA, o tener una cuota impaga con
+       * `fechaVencimiento` anterior a hoy) y ademas tiene al menos una cuota
+       * impaga cuya fecha EFECTIVA —la prorroga si la hay, si no el
+       * vencimiento— es anterior a hoy. Ese segundo `EXISTS` es el que antes se
+       * hacia en memoria, y es el que respeta las prorrogas.
+       *
+       * El limite se compara contra la medianoche UTC de la clave de hoy porque
+       * eso es exactamente lo que hacia `utcDateKey(eff) < hoyKeyBogota`:
+       * comparar la fecha UTC de la cuota con la clave del dia de Bogota. Es un
+       * desajuste que ya estaba —mezcla una fecha UTC con un dia de Bogota— y
+       * **no se cambia aqui**: esto arregla el recorte, no la regla. Queda
+       * anotado como cosa aparte.
+       */
+      const limiteDeMoraUtc = new Date(`${hoyKeyBogota}T00:00:00.000Z`);
+      const [{ total: delinquentAccounts }] = await this.prisma.$queryRaw<
+        { total: number }[]
+      >`
+        SELECT count(*)::int AS total
+        FROM "Prestamo" p
+        WHERE p."eliminadoEn" IS NULL
+          AND p.estado IN ('ACTIVO', 'EN_MORA')
+          AND (
+            p.estado = 'EN_MORA'
+            OR EXISTS (
+              SELECT 1 FROM cuotas q
+              WHERE q."prestamoId" = p.id
+                AND q.estado IN ('PENDIENTE', 'PARCIAL', 'VENCIDA')
+                AND q."fechaVencimiento" < ${hoyInicioBogota}
             )
-              return false;
-            const eff = c?.fechaVencimientoProrroga
-              ? new Date(c.fechaVencimientoProrroga)
-              : new Date(c.fechaVencimiento);
-            if (!eff || isNaN(eff.getTime())) return false;
-            const key = utcDateKey(eff);
-            return !!key && key < hoyKeyBogota;
-          });
-          return tieneVencidaReal ? acc + 1 : acc;
-        },
-        0,
-      );
+          )
+          AND EXISTS (
+            SELECT 1 FROM cuotas q2
+            WHERE q2."prestamoId" = p.id
+              AND q2.estado IN ('PENDIENTE', 'PARCIAL', 'VENCIDA')
+              AND COALESCE(
+                    q2."fechaVencimientoProrroga",
+                    q2."fechaVencimiento"
+                  ) < ${limiteDeMoraUtc}
+          )
+      `;
 
       // 4. Obtener actividad reciente (últimas aprobaciones procesadas) - filtradas por período
       const recentActivityList = await this.prisma.aprobacion.findMany({
