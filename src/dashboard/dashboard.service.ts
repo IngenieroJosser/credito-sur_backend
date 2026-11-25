@@ -337,10 +337,41 @@ export class DashboardService {
        * anotado como cosa aparte.
        */
       const limiteDeMoraUtc = new Date(`${hoyKeyBogota}T00:00:00.000Z`);
-      const [{ total: delinquentAccounts }] = await this.prisma.$queryRaw<
-        { total: number }[]
-      >`
-        SELECT count(*)::int AS total
+      /**
+       * La cartera pendiente ENTERA, que es contra lo que se mide la mora.
+       *
+       * La pantalla dividia el monto en mora entre `capitalPrestado`, que esta
+       * filtrado POR PERIODO, mientras que la mora es un estado ACTUAL.
+       * Medido con la base de carga: con «hoy» el capital del periodo es 0 -y
+       * salia un «> 0% del capital» que no dice nada- y con mes o año salia
+       * **115,5%**, que como porcentaje del capital no significa nada.
+       *
+       * La cartera pendiente no depende del periodo, y la mora es un
+       * subconjunto suyo, asi que el porcentaje nunca pasa de 100. Es el
+       * indicador estandar: «% de cartera en mora».
+       */
+      const carteraPendienteRes = await this.prisma.prestamo.aggregate({
+        where: {
+          eliminadoEn: null,
+          estado: { in: [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA] },
+        },
+        _sum: { saldoPendiente: true },
+      });
+      const carteraPendiente = Number(
+        carteraPendienteRes._sum.saldoPendiente ?? 0,
+      );
+
+      const [{ total: delinquentAccounts, monto: delinquentAmount }] =
+        await this.prisma.$queryRaw<{ total: number; monto: number }[]>`
+        SELECT count(*)::int AS total,
+               -- El MONTO con la misma regla que el conteo.
+               --
+               -- La pantalla lo sacaba sumando la lista de detalle,
+               -- que esta recortada a DIEZ filas. Con mas de diez
+               -- cuentas en mora el importe era la suma de diez mientras el
+               -- contador decia el total: dos cifras de la misma tarjeta que
+               -- no se corresponden.
+               COALESCE(SUM(p."saldoPendiente"), 0)::float8 AS monto
         FROM "Prestamo" p
         WHERE p."eliminadoEn" IS NULL
           AND p.estado IN ('ACTIVO', 'EN_MORA')
@@ -465,6 +496,8 @@ export class DashboardService {
         metrics: {
           pendingApprovals,
           delinquentAccounts,
+          delinquentAmount: Number(delinquentAmount ?? 0),
+          carteraPendiente,
           requestedBase: Number(
             baseSolicitadaPendiente._sum?.montoSolicitud || 0,
           ),
