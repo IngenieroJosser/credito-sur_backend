@@ -178,6 +178,28 @@ export class AccountingController {
     );
   }
 
+  /**
+   * Saldo previo y total registrado de una caja en un rango.
+   *
+   * Lo calculaba el navegador bajandose hasta 5.000 asientos del libro. Dos
+   * cifras no necesitan traer miles de filas, y con mas asientos que el tope
+   * el saldo previo salia corto sin avisar.
+   */
+  @Get('cajas/:id/saldo-en-rango')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.CONTADOR,
+    RolUsuario.COORDINADOR,
+  )
+  getSaldoDeCajaEnRango(
+    @Param('id') id: string,
+    @Query('inicio') inicio?: string,
+    @Query('fin') fin?: string,
+  ) {
+    return this.accountingService.getSaldoDeCajaEnRango(id, inicio, fin);
+  }
+
   @Get('cajas/:id/desglose-pagos')
   @Roles(
     RolUsuario.SUPER_ADMINISTRADOR,

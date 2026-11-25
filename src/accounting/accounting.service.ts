@@ -2836,6 +2836,92 @@ export class AccountingService {
   }
 
   // =====================
+  // SALDO DE UNA CAJA EN UN RANGO
+  // =====================
+
+  /**
+   * El saldo previo y el total registrado de una caja en un rango de fechas.
+   *
+   * ── Por qué existe ─────────────────────────────────────────────────────
+   *
+   * La pantalla contable calculaba estas dos cifras **en el navegador**: se
+   * bajaba hasta 5.000 asientos del libro (`getMovimientosLedger({ limit:
+   * 5000 })`) y los sumaba. Dos problemas:
+   *
+   *  1. Si la caja tiene más de 5.000 asientos, el saldo previo sale **corto y
+   *     sin decirlo**. Medido en desarrollo: la caja más activa va por 301, así
+   *     que el tope está lejos, pero el libro es append-only y solo crece.
+   *  2. Bajar miles de asientos con sus líneas para obtener dos números.
+   *
+   * ── La cuenta es la MISMA ──────────────────────────────────────────────
+   *
+   * Lo que hacía el navegador, línea por línea:
+   *
+   *     delta(asiento) = Σ (debitAmount − creditAmount) de las líneas de ESTA caja
+   *     saldoPrevio    = Σ delta de los asientos con día < inicio
+   *     totalRegistrado= Σ delta de los asientos dentro de [inicio, fin]
+   *
+   * y el «día» es el día de **Bogotá** de `createdAt`, porque el listado
+   * entrega `fecha: formatBogotaOffsetIso(entry.createdAt)` y la pantalla se
+   * queda con su parte `YYYY-MM-DD`. Aquí se replica igual: `createdAt` es un
+   * `timestamp without time zone` que guarda UTC, así que se convierte a
+   * Bogotá antes de sacar la fecha.
+   *
+   * Sumar las líneas directamente da lo mismo que sumar por asiento y luego
+   * sumar los asientos: la suma es asociativa y el filtro por día es el mismo
+   * para todas las líneas de un asiento.
+   *
+   * Sin `inicio` no hay saldo previo —no hay «antes del rango»—, que es lo que
+   * hacía el `if (!inicioKey) return acc` del navegador.
+   */
+  async getSaldoDeCajaEnRango(cajaId: string, inicio?: string, fin?: string) {
+    const desde = (inicio || '').trim();
+    const hasta = (fin || '').trim();
+
+    const filas = await this.prisma.$queryRaw<
+      { saldoPrevio: number; totalRegistrado: number }[]
+    >`
+      SELECT
+        COALESCE(SUM(
+          CASE WHEN ${desde} <> '' AND dia < ${desde} THEN delta ELSE 0 END
+        ), 0)::float8 AS "saldoPrevio",
+        COALESCE(SUM(
+          CASE WHEN (${desde} = '' OR dia >= ${desde})
+                AND (${hasta} = '' OR dia <= ${hasta})
+               THEN delta ELSE 0 END
+        ), 0)::float8 AS "totalRegistrado"
+      FROM (
+        SELECT
+          to_char(
+            (a."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date,
+            'YYYY-MM-DD'
+          ) AS dia,
+          -- COALESCE en las dos, igual que el Number(x || 0) del navegador:
+          -- una de las dos columnas es NULL en la mayoria de las lineas, y en
+          -- SQL la resta con un NULL da NULL, no el otro operando. Sin esto el
+          -- delta del dia entero salia nulo y la suma daba cero. Lo encontro
+          -- la comparacion contra la cuenta que hace hoy la pantalla.
+          -- (Sin acentos graves: este SQL vive dentro de una plantilla.)
+          SUM(
+            COALESCE(l."debitAmount", 0) - COALESCE(l."creditAmount", 0)
+          ) AS delta
+        FROM asientos_lineas l
+        JOIN asientos_contables a ON a.id = l."journalEntryId"
+        WHERE l."cajaId" = ${cajaId}
+        GROUP BY 1
+      ) t
+    `;
+
+    const fila = filas[0];
+    return {
+      saldoPrevio: Number(fila?.saldoPrevio ?? 0),
+      totalRegistrado: Number(fila?.totalRegistrado ?? 0),
+      inicio: desde || null,
+      fin: hasta || null,
+    };
+  }
+
+  // =====================
   // DESGLOSE CAJA (Efectivo vs Transferencia)
   // =====================
 
