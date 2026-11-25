@@ -667,47 +667,119 @@ export class DashboardService {
     const { startDate: _endDayStartUTC, endDate: endDayEndUTC } =
       getBogotaStartEndOfDay(endDate);
 
-    const cuotasNoPagadasHastaFin = await this.prisma.cuota.findMany({
-      where: {
-        prestamo: {
-          estado: {
-            in: [
-              EstadoPrestamo.ACTIVO,
-              EstadoPrestamo.EN_MORA,
-              EstadoPrestamo.PAGADO,
-            ],
-          },
-          eliminadoEn: null,
-        },
-        fechaVencimiento: { lte: endDayEndUTC },
-        OR: [
-          {
-            estado: {
-              in: [
-                EstadoCuota.PENDIENTE,
-                EstadoCuota.PARCIAL,
-                EstadoCuota.VENCIDA,
-                EstadoCuota.PRORROGADA,
-              ],
-            },
-          },
-          {
-            estado: EstadoCuota.PAGADA,
-            fechaPago: { gte: startDate },
-          },
-        ],
-      },
-      select: {
-        prestamoId: true,
-        fechaVencimiento: true,
-        monto: true,
-        montoPagado: true,
-        estado: true,
-        fechaPago: true,
-        prestamo: { select: { frecuenciaPago: true } },
-      },
-      orderBy: [{ prestamoId: 'asc' }, { fechaVencimiento: 'asc' }],
-    });
+    /**
+     * Las cuotas que pueden ser el objetivo de algun dia del periodo.
+     *
+     * ── Lo que cargaba, y lo que cuesta ──────────────────────────────────
+     *
+     * Esto traia TODAS las cuotas impagas de la historia hasta el fin del
+     * rango. Medido con una sonda dentro de `getDashboardData`, sobre la base
+     * de carga (2.000 clientes, 3.000 creditos, 90.000 cuotas):
+     *
+     *     SONDA /dashboard  trendData=1516ms  ... SUMA=1630ms
+     *
+     * O sea que de todo el tablero, **la grafica de tendencia era el 90%**; las
+     * otras catorce consultas juntas sumaban unos 100 ms. (De paso: por eso no
+     * se paralelizaron las catorce, que era el plan inicial. No habria cambiado
+     * nada.)
+     *
+     * ── Por que basta con muchas menos ───────────────────────────────────
+     *
+     * El bucle de abajo, para cada dia, recorre estas cuotas en orden y se
+     * queda con **la primera de cada credito** que a esa fecha estuviera
+     * vencida y sin pagar. De las treinta cuotas impagas que puede tener un
+     * credito, **solo la mas antigua puede salir elegida nunca**: en cuanto
+     * entra, `if (cuotaObjetivoPorPrestamo.has(pid)) continue` descarta el
+     * resto.
+     *
+     * La excepcion es la cuota PARCIAL ya cubierta: si su pendiente es 0 se
+     * salta y pasa el turno a la siguiente. Por eso el `DISTINCT ON` pide la
+     * mas antigua **que tenga pendiente**, no la mas antigua a secas.
+     *
+     * Y las PAGADA del rango se siguen trayendo enteras: una de ellas puede ser
+     * mas antigua que la impaga y, para un dia anterior a su pago, es la que
+     * corresponde. Son pocas.
+     *
+     * Medido con la base de carga: de **60.000 filas a 3.000**.
+     *
+     * ── Lo que ya no se pide ─────────────────────────────────────────────
+     *
+     * `prestamo: { select: { frecuenciaPago: true } }` se seleccionaba y **no
+     * se usaba en ningun sitio** de esta funcion: obligaba a una union por
+     * cada fila para nada.
+     */
+    const cuotasObjetivoCandidatas = await this.prisma.$queryRaw<
+      {
+        prestamoId: string;
+        fechaVencimiento: Date;
+        monto: unknown;
+        montoPagado: unknown;
+        estado: EstadoCuota;
+        fechaPago: Date | null;
+      }[]
+    >`
+      (
+        SELECT DISTINCT ON (q."prestamoId")
+               q."prestamoId"        AS "prestamoId",
+               q."fechaVencimiento"  AS "fechaVencimiento",
+               q."monto"             AS "monto",
+               q."montoPagado"       AS "montoPagado",
+               q."estado"            AS "estado",
+               q."fechaPago"         AS "fechaPago"
+        FROM cuotas q
+        JOIN "Prestamo" p ON p.id = q."prestamoId"
+        WHERE p."eliminadoEn" IS NULL
+          AND p.estado IN ('ACTIVO', 'EN_MORA', 'PAGADO')
+          AND q."fechaVencimiento" <= ${endDayEndUTC}
+          AND q.estado IN ('PENDIENTE', 'PARCIAL', 'VENCIDA', 'PRORROGADA')
+          AND (q.estado <> 'PARCIAL' OR (q."monto" - q."montoPagado") > 0)
+        ORDER BY q."prestamoId", q."fechaVencimiento" ASC
+      )
+      UNION ALL
+      (
+        SELECT q."prestamoId", q."fechaVencimiento", q."monto",
+               q."montoPagado", q."estado", q."fechaPago"
+        FROM cuotas q
+        JOIN "Prestamo" p ON p.id = q."prestamoId"
+        WHERE p."eliminadoEn" IS NULL
+          AND p.estado IN ('ACTIVO', 'EN_MORA', 'PAGADO')
+          AND q."fechaVencimiento" <= ${endDayEndUTC}
+          AND q.estado = 'PAGADA'
+          AND q."fechaPago" >= ${startDate}
+      )
+      ORDER BY 1, 2 ASC
+    `;
+
+    /*
+     * El mismo nombre de antes para no tocar las dos ramas que lo recorren, y
+     * los numeros ya convertidos: `$queryRaw` devuelve los `Decimal` como
+     * string y el bucle hacia `Number(...)` igualmente.
+     */
+    const cuotasNoPagadasHastaFin = cuotasObjetivoCandidatas.map((c) => ({
+      prestamoId: c.prestamoId,
+      fechaVencimiento: c.fechaVencimiento,
+      monto: Number(c.monto ?? 0),
+      montoPagado: Number(c.montoPagado ?? 0),
+      estado: c.estado,
+      fechaPago: c.fechaPago,
+    }));
+
+    /**
+     * Las claves de dia, calculadas UNA vez y compartidas por las dos ramas.
+     *
+     * Estaba dentro de la rama diaria, asi que la mensual -la de «Año»- no lo
+     * usaba y recalculaba por cuota y por dia.
+     */
+    const cuotasPreparadas = cuotasNoPagadasHastaFin
+      .filter((c) => c.prestamoId)
+      .map((c) => ({
+        prestamoId: String(c.prestamoId),
+        vtoKey: getBogotaDayKey(new Date(c.fechaVencimiento)),
+        estado: c.estado,
+        pagoTime: c.fechaPago ? new Date(c.fechaPago).getTime() : null,
+        monto: Number(c.monto || 0),
+        montoPagado: Number(c.montoPagado || 0),
+      }));
 
     if (groupBy === 'day') {
       // Agrupar por día
@@ -740,16 +812,6 @@ export class DashboardService {
        * lógica del bucle se queda igual: lo que SÍ depende del día —si ya
        * estaba pagada a esa fecha— sigue dentro.
        */
-      const cuotasPreparadas = cuotasNoPagadasHastaFin
-        .filter((c) => c.prestamoId)
-        .map((c) => ({
-          prestamoId: String(c.prestamoId),
-          vtoKey: getBogotaDayKey(new Date(c.fechaVencimiento)),
-          estado: c.estado,
-          pagoTime: c.fechaPago ? new Date(c.fechaPago).getTime() : null,
-          monto: Number(c.monto || 0),
-          montoPagado: Number(c.montoPagado || 0),
-        }));
 
       for (let i = 0; i <= maxDays; i++) {
         const currentDate = new Date(startDate);
@@ -844,27 +906,32 @@ export class DashboardService {
         // Calcular meta operativa del día: una cuota objetivo por préstamo
         const cuotaObjetivoPorPrestamo = new Map<string, number>();
 
-        for (const c of cuotasNoPagadasHastaFin) {
-          if (!c.prestamoId) continue;
-          const vtoKey = getBogotaDayKey(new Date(c.fechaVencimiento));
-          if (vtoKey > hoyBogotaKey) continue;
+        /*
+         * Con las claves YA calculadas, igual que la rama diaria.
+         *
+         * Aquí se llamaba a `getBogotaDayKey(new Date(c.fechaVencimiento))`
+         * por cada cuota y por cada día del rango. Con «Año» son hasta 366
+         * días: incluso con las cuotas reducidas a una por crédito eso serían
+         * ~1,1 millones de llamadas a `Intl` para calcular 3.000 valores
+         * distintos. El arreglo existía desde antes pero solo se había
+         * aplicado a la rama de días.
+         */
+        for (const c of cuotasPreparadas) {
+          if (c.vtoKey > hoyBogotaKey) continue;
 
-          if (c.estado === EstadoCuota.PAGADA && c.fechaPago) {
-            const pagoTime = new Date(c.fechaPago).getTime();
-            if (pagoTime <= cutoffTime) continue;
+          if (c.estado === EstadoCuota.PAGADA && c.pagoTime !== null) {
+            if (c.pagoTime <= cutoffTime) continue;
           }
 
-          const pid = String(c.prestamoId);
+          const pid = c.prestamoId;
 
           // Solo tomar una cuota por préstamo (la primera válida para este día)
           if (cuotaObjetivoPorPrestamo.has(pid)) continue;
 
-          const montoFull = Number(c.monto || 0);
-          const montoPagado = Number(c.montoPagado || 0);
           const montoPendiente =
             c.estado === EstadoCuota.PARCIAL
-              ? Math.max(0, montoFull - montoPagado)
-              : montoFull;
+              ? Math.max(0, c.monto - c.montoPagado)
+              : c.monto;
 
           if (montoPendiente <= 0) continue;
 
