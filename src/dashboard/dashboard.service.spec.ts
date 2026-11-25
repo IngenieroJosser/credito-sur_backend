@@ -153,6 +153,14 @@ describe('DashboardService accounting-backed collections', () => {
       comoPrisma(prisma),
     ).getDashboardData('today');
 
+    expect(prisma.pago.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        take: 5,
+        where: expect.objectContaining({
+          cobrador: { rol: { in: ['COBRADOR', 'SUPERVISOR', 'COORDINADOR'] } },
+        }),
+      }),
+    );
     expect(result.topCollectors[0]).toMatchObject({
       name: 'Ana Ruta',
       collected: 100000,

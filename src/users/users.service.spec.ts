@@ -221,14 +221,29 @@ describe('UsersService operational detail', () => {
     prisma.gasto.aggregate.mockResolvedValue({ _sum: { monto: 20000 } });
     prisma.caja.aggregate.mockResolvedValue({ _sum: { saldoActual: 500000 } });
     prisma.prestamo.count.mockResolvedValue(2);
-    prisma.pago.findMany.mockResolvedValue([
+    prisma.pago.findMany.mockResolvedValueOnce([
       {
+        id: 'pago-1',
         fechaPago: new Date('2026-06-04T15:00:00.000Z'),
         montoTotal: 425335,
         cliente: { nombres: 'Cliente', apellidos: 'Uno' },
       },
     ]);
-    prisma.registroAuditoria.findMany.mockResolvedValue([]);
+    prisma.pago.findMany.mockResolvedValueOnce([]);
+    prisma.registroAuditoria.findMany.mockResolvedValue([
+      {
+        creadoEn: new Date('2026-06-04T15:00:01Z'),
+        accion: 'REGISTRAR_PAGO',
+        entidad: 'Pago',
+        entidadId: 'pago-1',
+      },
+      {
+        creadoEn: new Date('2026-06-04T16:00:00Z'),
+        accion: 'REVERSAR_PAGO',
+        entidad: 'Pago',
+        entidadId: 'pago-1',
+      },
+    ]);
 
     const detalle = await service.obtenerDetalleOperativo('cobrador-1');
 
@@ -239,9 +254,51 @@ describe('UsersService operational detail', () => {
     expect(detalle.metricas.rutasActivas).toBe(1);
     expect(detalle.metricas.enMora).toBe(2);
     expect(detalle.metricas.gastosHoy).toBe(20000);
-    expect(detalle.metricas.actividadReciente[0].action).toBe(
-      'Pago registrado',
+    expect(detalle.metricas.actividadReciente[0].time).toBe(
+      '2026-06-04T16:00:00.000Z',
     );
+    expect(
+      detalle.metricas.actividadReciente.map((evento) => evento.action),
+    ).toEqual(['Reversó un pago', 'Registró un pago']);
+  });
+
+  it.each([
+    [RolUsuario.COORDINADOR, 'coordinadorId'],
+    [RolUsuario.SUPERVISOR, 'supervisorId'],
+  ])('limita las rutas del %s a sus asignaciones', async (rol, campo) => {
+    const { service, prisma } = buildService();
+    prisma.usuario.findUnique.mockResolvedValue({ id: 'u', rol });
+    prisma.ruta.findMany.mockResolvedValue([]);
+    prisma.ruta.count.mockResolvedValue(0);
+    prisma.registroAuditoria.findMany.mockResolvedValue([]);
+    const detalle = await service.obtenerDetalleOperativo('u');
+    expect(detalle.metricas.rutasTotal).toBe(0);
+    expect(prisma.ruta.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { [campo]: 'u', eliminadoEn: null },
+      }),
+    );
+  });
+
+  it('separa los créditos de artículo y sus iniciales en punto de venta', async () => {
+    const { service, prisma } = buildService();
+    prisma.usuario.findUnique.mockResolvedValue({
+      id: 'pv',
+      rol: RolUsuario.PUNTO_DE_VENTA,
+    });
+    prisma.prestamo.aggregate.mockResolvedValue({
+      _count: { id: 3 },
+      _sum: { monto: 180000, cuotaInicial: 20000 },
+    });
+    prisma.cliente.count.mockResolvedValue(2);
+    prisma.registroAuditoria.findMany.mockResolvedValue([]);
+    const { metricas } = await service.obtenerDetalleOperativo('pv');
+    expect(metricas).toMatchObject({
+      ingresosDia: 180000,
+      recaudoDia: 20000,
+      puntoVenta: { creditosCreados: 3, clientesCreados: 2 },
+    });
+    expect(prisma.prestamo.aggregate).toHaveBeenCalledTimes(1);
   });
 
   it('throws when user does not exist', async () => {
@@ -523,9 +580,9 @@ describe('UsersService operational detail', () => {
         conSuperadministradoresRestantes(0),
       );
 
-      await expect(service.eliminar('super-1', 'super-1')).rejects.toBeInstanceOf(
-        ForbiddenException,
-      );
+      await expect(
+        service.eliminar('super-1', 'super-1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.usuario.update).not.toHaveBeenCalled();
     });
 
@@ -534,9 +591,9 @@ describe('UsersService operational detail', () => {
         conSuperadministradoresRestantes(0),
       );
 
-      await expect(service.archivar('super-1', 'super-1')).rejects.toBeInstanceOf(
-        ForbiddenException,
-      );
+      await expect(
+        service.archivar('super-1', 'super-1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.usuario.update).not.toHaveBeenCalled();
     });
 
@@ -579,7 +636,9 @@ describe('UsersService operational detail', () => {
         conSuperadministradoresRestantes(1),
       );
 
-      await expect(service.eliminar('super-1', 'super-2')).resolves.toBeDefined();
+      await expect(
+        service.eliminar('super-1', 'super-2'),
+      ).resolves.toBeDefined();
       expect(prisma.usuario.update).toHaveBeenCalled();
     });
 
@@ -601,7 +660,9 @@ describe('UsersService operational detail', () => {
         },
       });
 
-      await expect(service.archivar('cobrador-1', 'super-1')).resolves.toBeDefined();
+      await expect(
+        service.archivar('cobrador-1', 'super-1'),
+      ).resolves.toBeDefined();
       expect(prisma.usuario.update).toHaveBeenCalled();
     });
   });
@@ -621,7 +682,9 @@ describe('UsersService operational detail', () => {
   describe('asignarPermisos distingue la lista vacia del hueco', () => {
     const conUsuario = () => ({
       usuario: {
-        findUnique: jest.fn().mockResolvedValue({ id: 'u-1', rol: RolUsuario.COBRADOR }),
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ id: 'u-1', rol: RolUsuario.COBRADOR }),
         findFirst: jest.fn().mockResolvedValue(null),
         count: jest.fn().mockResolvedValue(5),
         update: jest.fn(),

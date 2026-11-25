@@ -66,35 +66,34 @@ type PuntoTendencia = {
  * cargar esa relacion, el nombre del cobrador saldria en blanco y nadie se
  * enteraria hasta verlo en pantalla.
  */
-const prestamoEnMora = Prisma.validator<Prisma.PrestamoDefaultArgs>()({
-  include: {
-    cliente: {
-      select: {
-        nombres: true,
-        apellidos: true,
-        asignacionesRuta: {
-          where: { activa: true },
-          include: {
-            ruta: { select: { nombre: true } },
-            cobrador: { select: { nombres: true, apellidos: true } },
+const prestamoEnMora = (cuotaVencida: Prisma.CuotaWhereInput) =>
+  Prisma.validator<Prisma.PrestamoDefaultArgs>()({
+    include: {
+      cliente: {
+        select: {
+          nombres: true,
+          apellidos: true,
+          asignacionesRuta: {
+            where: { activa: true },
+            include: {
+              ruta: { select: { nombre: true } },
+              cobrador: { select: { nombres: true, apellidos: true } },
+            },
+            take: 1,
           },
-          take: 1,
         },
       },
-    },
-    cuotas: {
-      where: {
-        estado: {
-          in: [EstadoCuota.PENDIENTE, EstadoCuota.PARCIAL, EstadoCuota.VENCIDA],
-        },
+      cuotas: {
+        where: cuotaVencida,
+        orderBy: { fechaVencimiento: 'asc' },
+        take: 1,
       },
-      orderBy: { fechaVencimiento: 'asc' },
-      take: 50,
     },
-  },
-});
+  });
 
-type PrestamoEnMora = Prisma.PrestamoGetPayload<typeof prestamoEnMora>;
+type PrestamoEnMora = Prisma.PrestamoGetPayload<
+  ReturnType<typeof prestamoEnMora>
+>;
 
 @Injectable()
 export class DashboardService {
@@ -111,13 +110,6 @@ export class DashboardService {
         this.calculateDateRangeFromFilter(timeFilter);
       const { startDate: hoyInicioBogota } = getBogotaStartEndOfDay(new Date());
       const hoyKeyBogota = getBogotaDayKey(new Date());
-
-      const utcDateKey = (d: Date): string => {
-        const y = d.getUTCFullYear();
-        const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-        const day = String(d.getUTCDate()).padStart(2, '0');
-        return `${y}-${m}-${day}`;
-      };
 
       // 1. Métricas principales.
       //
@@ -232,11 +224,24 @@ export class DashboardService {
         take: 5,
       });
 
-      // Cuentas en mora para el listado detallado: sin filtro de período.
-      // Importante: NO dependemos solo de `prestamo.estado = EN_MORA` porque el job
-      // automático puede no haber corrido aún. También detectamos mora por cuotas
-      // no pagadas vencidas (PENDIENTE/PARCIAL/VENCIDA) comparando por llave de fecha Bogotá.
-      const delinquentAccountsListRaw = await this.prisma.prestamo.findMany({
+      const limiteDeMoraUtc = new Date(`${hoyKeyBogota}T00:00:00.000Z`);
+      const abiertos = [
+        EstadoCuota.PENDIENTE,
+        EstadoCuota.PARCIAL,
+        EstadoCuota.VENCIDA,
+      ];
+      const vencida: Prisma.CuotaWhereInput = {
+        estado: { in: abiertos },
+        OR: [
+          { fechaVencimientoProrroga: { lt: limiteDeMoraUtc } },
+          {
+            fechaVencimientoProrroga: null,
+            fechaVencimiento: { lt: limiteDeMoraUtc },
+          },
+        ],
+      };
+      // Filtrar antes de limitar; una prórroga futura no ocupa un puesto de la muestra.
+      const delinquentAccountsList = await this.prisma.prestamo.findMany({
         where: {
           eliminadoEn: null,
           estado: { in: [EstadoPrestamo.ACTIVO, EstadoPrestamo.EN_MORA] },
@@ -245,58 +250,18 @@ export class DashboardService {
             {
               cuotas: {
                 some: {
-                  estado: {
-                    in: [
-                      EstadoCuota.PENDIENTE,
-                      EstadoCuota.PARCIAL,
-                      EstadoCuota.VENCIDA,
-                    ],
-                  },
-                  // Filtro preliminar por fecha (evita traer demasiadas filas). Luego se valida en memoria
-                  // con la fecha efectiva (prórroga si existe) y la llave Bogotá.
+                  estado: { in: abiertos },
                   fechaVencimiento: { lt: hoyInicioBogota },
                 },
               },
             },
           ],
+          cuotas: { some: vencida },
         },
-        ...prestamoEnMora,
-        take: 50,
+        ...prestamoEnMora(vencida),
+        orderBy: { id: 'asc' },
+        take: 10,
       });
-
-      const delinquentAccountsList = delinquentAccountsListRaw
-        .map((loan) => {
-          const cuotas = Array.isArray(loan?.cuotas) ? loan.cuotas : [];
-          const cuotasVencidasReal = cuotas.filter((c) => {
-            if (!c) return false;
-            const st = String(c?.estado || '').toUpperCase();
-            if (
-              st === 'PAGADA' ||
-              st === 'PAGADO' ||
-              st === 'ANULADA' ||
-              st === 'ANULADO'
-            )
-              return false;
-            const eff = c?.fechaVencimientoProrroga
-              ? new Date(c.fechaVencimientoProrroga)
-              : new Date(c.fechaVencimiento);
-            if (!eff || isNaN(eff.getTime())) return false;
-            const key = utcDateKey(eff);
-            return !!key && key < hoyKeyBogota;
-          });
-
-          // Si el préstamo está EN_MORA pero no hay cuotas realmente vencidas, lo excluimos
-          // para evitar falsos positivos históricos (mismo criterio del reporte).
-          if (cuotasVencidasReal.length === 0) return null;
-          return { ...loan, cuotas: cuotasVencidasReal };
-        })
-        // `.filter(Boolean)` NO estrecha el tipo: para TypeScript el arreglo seguia
-        // siendo `PrestamoEnMora | null` y ese null llegaba a
-        // `mapDelinquentAccount`. En ejecucion nunca llega, porque el filtro si lo
-        // quita; lo que faltaba era decirselo al compilador, y con `loan: any` no
-        // habia forma de verlo.
-        .filter((loan): loan is PrestamoEnMora => loan !== null)
-        .slice(0, 10);
 
       /**
        * Cuantas cuentas estan en mora. Se CUENTA en la base, no en memoria.
@@ -336,7 +301,6 @@ export class DashboardService {
        * **no se cambia aqui**: esto arregla el recorte, no la regla. Queda
        * anotado como cosa aparte.
        */
-      const limiteDeMoraUtc = new Date(`${hoyKeyBogota}T00:00:00.000Z`);
       /**
        * La cartera pendiente ENTERA, que es contra lo que se mide la mora.
        *
@@ -414,18 +378,13 @@ export class DashboardService {
       // 6. Top 5 Cobradores (filtrado por período) - Filtrado por Rol
       const topCollectorsRaw = await this.prisma.pago.groupBy({
         by: ['cobradorId'],
-        _sum: {
-          montoTotal: true,
-        },
+        _sum: { montoTotal: true },
         where: {
           fechaPago: { gte: startDate, lte: endDate },
+          cobrador: { rol: { in: ['COBRADOR', 'SUPERVISOR', 'COORDINADOR'] } },
         },
-        orderBy: {
-          _sum: {
-            montoTotal: 'desc',
-          },
-        },
-        take: 10, // Traemos extra para filtrar
+        orderBy: [{ _sum: { montoTotal: 'desc' } }, { cobradorId: 'asc' }],
+        take: 5,
       });
 
       // Enriquecer con datos de usuario y filtrar
@@ -446,33 +405,18 @@ export class DashboardService {
           select: { nombres: true, apellidos: true, rol: true },
         });
 
-        if (
-          user &&
-          ['COBRADOR', 'SUPERVISOR', 'COORDINADOR'].includes(user.rol)
-        ) {
+        if (user) {
           // Calcular eficiencia operativa real: pagos de cuotas / meta de cuotas.
           // La cuota inicial es entrada de caja, no recaudo operativo de ruta.
-          const [metaCobroRes, pagosRes] = await Promise.all([
-            this.prisma.cuota.aggregate({
-              where: {
-                fechaVencimiento: { gte: startDate, lte: endDate },
-                prestamo: {
-                  ruta: { cobradorId: item.cobradorId },
-                },
-              },
-              _sum: { monto: true },
-            }),
-            this.prisma.pago.aggregate({
-              where: {
-                cobradorId: item.cobradorId,
-                fechaPago: { gte: startDate, lte: endDate },
-              },
-              _sum: { montoTotal: true },
-            }),
-          ]);
-
-          const montoMeta = Number(metaCobroRes._sum.monto || 0);
-          const collected = Number(pagosRes._sum.montoTotal || 0);
+          const metaCobroRes = await this.prisma.cuota.aggregate({
+            where: {
+              fechaVencimiento: { gte: startDate, lte: endDate },
+              prestamo: { ruta: { cobradorId: item.cobradorId } },
+            },
+            _sum: { monto: true },
+          });
+          const montoMeta = Number(metaCobroRes._sum.monto ?? 0);
+          const collected = Number(item._sum.montoTotal ?? 0);
 
           // Si no hay meta, asumimos 100% de eficiencia si recaudó algo
           const efficiency =
@@ -489,7 +433,6 @@ export class DashboardService {
             trend: efficiency >= 90 ? 'up' : 'down',
           });
         }
-        if (topCollectorsList.length >= 5) break;
       }
 
       const result = {

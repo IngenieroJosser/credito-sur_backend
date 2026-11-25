@@ -96,6 +96,44 @@ describe('las cuentas en mora del panel no tienen tope', () => {
     },
   );
 
+  it('devuelve el saldo completo aunque el detalle solo muestre diez créditos', async () => {
+    const prisma = doble(12);
+    prisma.$queryRaw.mockResolvedValue([{ total: 12, monto: 1550 }]);
+    prisma.prestamo.findMany.mockResolvedValueOnce(
+      Array.from({ length: 10 }, (_, i) => ({
+        id: String(i),
+        cliente: {
+          nombres: 'Cliente',
+          apellidos: String(i),
+          asignacionesRuta: [],
+        },
+        saldoPendiente: 100,
+        cuotas: [{ fechaVencimiento: new Date('2025-01-01T00:00:00Z') }],
+      })),
+    );
+    const r = await new DashboardService(comoPrisma(prisma)).getDashboardData(
+      'today',
+    );
+    expect(r.delinquentAccounts).toHaveLength(10);
+    expect(r.delinquentAccounts.reduce((s, c) => s + c.amountDue, 0)).toBe(
+      1000,
+    );
+    expect(r.metrics).toMatchObject({
+      delinquentAccounts: 12,
+      delinquentAmount: 1550,
+    });
+    const consulta = prisma.prestamo.findMany.mock.calls[0][0];
+    expect(consulta.take).toBe(10);
+    expect(consulta.where.cuotas.some.OR).toEqual([
+      { fechaVencimientoProrroga: { lt: expect.any(Date) } },
+      {
+        fechaVencimientoProrroga: null,
+        fechaVencimiento: { lt: expect.any(Date) },
+      },
+    ]);
+    expect(consulta.include.cuotas.where).toEqual(consulta.where.cuotas.some);
+  });
+
   it('la cifra sale de un conteo en la base, no de contar filas traidas', async () => {
     const prisma = doble(3000);
     await new DashboardService(comoPrisma(prisma)).getDashboardData('today');
@@ -110,6 +148,7 @@ describe('las cuentas en mora del panel no tienen tope', () => {
 
     const sql = String(queryRaw.mock.calls[0]?.[0] ?? '');
     expect(sql).toMatch(/count\(\*\)/i);
+    expect(sql).toMatch(/sum\(p\."saldoPendiente"\)/i);
     // La prorroga es lo que antes se resolvia en memoria y es facil de perder
     // al reescribir la consulta.
     expect(sql).toMatch(/fechaVencimientoProrroga/);

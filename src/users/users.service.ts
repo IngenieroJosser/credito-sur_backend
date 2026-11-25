@@ -23,8 +23,16 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { getBogotaStartEndOfDay } from '../utils/date-utils';
 import { textoRecortado } from '../common/texto.util';
+import {
+  frasePorAccion,
+  normalizarEntidad,
+  resolverNombres,
+  tipoPorAccion,
+  type ClienteDeConsulta,
+} from './actividad-legible';
 
 type UsuarioDetalleMetricas = {
+  puntoVenta?: { creditosCreados: number; clientesCreados: number };
   dineroCaja: number;
   recaudoDia: number;
   metaDiaria: number;
@@ -35,6 +43,7 @@ type UsuarioDetalleMetricas = {
   enMora: number;
   gastosHoy: number;
   actividadReciente: Array<{
+    pagoRegistradoId?: string;
     time: string;
     action: string;
     detail: string;
@@ -580,8 +589,10 @@ export class UsersService {
     // fuera igual que borrándose.
     const dejaDeSerSuper =
       usuario.rol === RolUsuario.SUPER_ADMINISTRADOR &&
-      ((updateUserDto.rol && updateUserDto.rol !== RolUsuario.SUPER_ADMINISTRADOR) ||
-        (updateUserDto.estado && updateUserDto.estado !== EstadoUsuario.ACTIVO));
+      ((updateUserDto.rol &&
+        updateUserDto.rol !== RolUsuario.SUPER_ADMINISTRADOR) ||
+        (updateUserDto.estado &&
+          updateUserDto.estado !== EstadoUsuario.ACTIVO));
 
     if (dejaDeSerSuper) {
       await this.asegurarQueQuedaUnSuperadministrador(usuario);
@@ -936,7 +947,10 @@ export class UsersService {
         await this.buildMetricasRutas({ supervisorId: usuario.id }),
       );
     } else if (usuario.rol === RolUsuario.COORDINADOR) {
-      Object.assign(metricas, await this.buildMetricasRutas({}));
+      Object.assign(
+        metricas,
+        await this.buildMetricasRutas({ coordinadorId: usuario.id }),
+      );
     } else if (usuario.rol === RolUsuario.CONTADOR) {
       Object.assign(metricas, await this.buildMetricasContables());
     } else if (usuario.rol === RolUsuario.PUNTO_DE_VENTA) {
@@ -962,12 +976,20 @@ export class UsersService {
     }
 
     const actividadAuditoria = await this.getActividadReciente(usuario.id);
-    if (actividadAuditoria.length > 0) {
-      metricas.actividadReciente = [
-        ...metricas.actividadReciente,
-        ...actividadAuditoria,
-      ].slice(0, 20);
-    }
+    const pagosVistos = new Set<string>();
+    metricas.actividadReciente = [
+      ...actividadAuditoria,
+      ...metricas.actividadReciente,
+    ]
+      .sort((a, b) => Date.parse(b.time) - Date.parse(a.time))
+      .filter(({ pagoRegistradoId }) => {
+        if (!pagoRegistradoId) return true;
+        if (pagosVistos.has(pagoRegistradoId)) return false;
+        pagosVistos.add(pagoRegistradoId);
+        return true;
+      })
+      .slice(0, 20)
+      .map(({ pagoRegistradoId: _idInterno, ...actividad }) => actividad);
 
     return {
       usuarioId: usuario.id,
@@ -1078,9 +1100,10 @@ export class UsersService {
             rutaId: { in: rutaIds },
             fechaPago: { gte: startDate, lte: endDate },
           },
-          take: 8,
-          orderBy: { fechaPago: 'desc' },
+          take: 20,
+          orderBy: [{ fechaPago: 'desc' }, { id: 'desc' }],
           select: {
+            id: true,
             fechaPago: true,
             montoTotal: true,
             cliente: { select: { nombres: true, apellidos: true } },
@@ -1112,6 +1135,7 @@ export class UsersService {
       rutasTotal: rutas.length,
       rutasInactivas: 0,
       actividadReciente: pagosRecientes.map((p) => ({
+        pagoRegistradoId: p.id,
         time: p.fechaPago.toISOString(),
         action: 'Pago registrado',
         detail: `Cliente: ${`${p.cliente.nombres} ${p.cliente.apellidos}`.trim()}`,
@@ -1123,11 +1147,12 @@ export class UsersService {
 
   private async buildMetricasRutas(filters: {
     supervisorId?: string;
+    coordinadorId?: string;
   }): Promise<Partial<UsuarioDetalleMetricas>> {
     const { startDate, endDate } = this.getHoyRange();
     const routeWhere: Prisma.RutaWhereInput = {
       eliminadoEn: null,
-      ...(filters.supervisorId ? { supervisorId: filters.supervisorId } : {}),
+      ...filters,
     };
     const [rutas, rutasActivas, rutasInactivas] = await Promise.all([
       this.prisma.ruta.findMany({
@@ -1287,7 +1312,7 @@ export class UsersService {
     usuarioId: string,
   ): Promise<Partial<UsuarioDetalleMetricas>> {
     const { startDate, endDate } = this.getHoyRange();
-    const [creditosAgg, clientesCreados, cuotaInicialAgg] = await Promise.all([
+    const [creditosAgg, clientesCreados] = await Promise.all([
       this.prisma.prestamo.aggregate({
         where: {
           creadoPorId: usuarioId,
@@ -1296,7 +1321,7 @@ export class UsersService {
           OR: [{ productoId: { not: null } }, { tipoPrestamo: 'ARTICULO' }],
         },
         _count: { id: true },
-        _sum: { monto: true },
+        _sum: { monto: true, cuotaInicial: true },
       }),
       this.prisma.cliente.count({
         where: {
@@ -1304,22 +1329,14 @@ export class UsersService {
           creadoEn: { gte: startDate, lte: endDate },
         },
       }),
-      this.prisma.prestamo.aggregate({
-        where: {
-          creadoPorId: usuarioId,
-          creadoEn: { gte: startDate, lte: endDate },
-          eliminadoEn: null,
-          OR: [{ productoId: { not: null } }, { tipoPrestamo: 'ARTICULO' }],
-        },
-        _sum: { cuotaInicial: true },
-      }),
     ]);
 
     const ingresosDia = this.toNumber(creditosAgg._sum.monto);
 
     return {
       ingresosDia,
-      recaudoDia: this.toNumber(cuotaInicialAgg._sum.cuotaInicial),
+      puntoVenta: { creditosCreados: creditosAgg._count.id, clientesCreados },
+      recaudoDia: this.toNumber(creditosAgg._sum.cuotaInicial),
       metaDiaria: ingresosDia,
       porcentajeMeta: ingresosDia > 0 ? 100 : 0,
       progreso: ingresosDia > 0 ? 100 : 0,
@@ -1334,8 +1351,8 @@ export class UsersService {
   ): Promise<UsuarioDetalleMetricas['actividadReciente']> {
     const audit = await this.prisma.registroAuditoria.findMany({
       where: { usuarioId },
-      take: 12,
-      orderBy: { creadoEn: 'desc' },
+      take: 20,
+      orderBy: [{ creadoEn: 'desc' }, { id: 'desc' }],
       select: {
         creadoEn: true,
         accion: true,
@@ -1344,12 +1361,44 @@ export class UsersService {
       },
     });
 
-    return audit.map((item) => ({
-      time: item.creadoEn.toISOString(),
-      action: item.accion,
-      detail: `${item.entidad || ''} ${item.entidadId || ''}`.trim(),
-      type: 'neutral' as const,
-    }));
+    /*
+     * Los identificadores se resuelven a nombres ANTES de devolver nada.
+     *
+     * Lo que salia en pantalla era esto, tal cual esta en la tabla:
+     *
+     *     ACTUALIZAR_USUARIO   Usuario fe3e3d3f-00ff-44f9-9f68-fdc40305cffc
+     *     CREAR_PRESTAMO       Prestamo b86ee359-c87c-4b7f-8c50-44c620bb5e2e
+     *
+     * El nombre del enum en mayusculas y un UUID: ni que paso, ni sobre quien.
+     * Ahora la accion se traduce a una frase y el id al nombre de lo que sea
+     * -el numero del credito y su cliente, el del pago y su importe-. Lo que
+     * no se puede resolver se queda SIN detalle: un UUID no es informacion.
+     *
+     * La resolucion va en bloque, una consulta por tipo de entidad y no una
+     * por fila.
+     */
+    const nombres = await resolverNombres(
+      this.prisma as unknown as ClienteDeConsulta,
+      audit,
+    );
+
+    return audit.map((item) => {
+      const entidad = normalizarEntidad(item.entidad);
+      const resuelto = item.entidadId
+        ? nombres.get(`${entidad}:${item.entidadId}`)
+        : undefined;
+      return {
+        pagoRegistradoId:
+          entidad === 'PAGO' && ['PAGO', 'REGISTRAR_PAGO'].includes(item.accion)
+            ? (item.entidadId ?? undefined)
+            : undefined,
+        time: item.creadoEn.toISOString(),
+        action: frasePorAccion(item.accion),
+        detail: resuelto?.texto ?? '',
+        amount: resuelto?.importe,
+        type: tipoPorAccion(item.accion),
+      };
+    });
   }
 
   async toggleEstado(
