@@ -489,32 +489,31 @@ export class DashboardService {
 
       return result;
     } catch (error) {
+      /*
+       * El tablero FALLA si no puede calcular. No devuelve ceros.
+       *
+       * Antes aqui habia «retornar datos de fallback en caso de error»: un
+       * objeto con `delinquentAccounts: 0`, `capitalPrestado: 0`, `recaudo: 0`
+       * y la grafica vacia. O sea que ante cualquier fallo de consulta el dueño
+       * veia un negocio **sin cartera, sin cobranza y sin mora**, y la pantalla
+       * no tenia forma de distinguirlo de un dia tranquilo.
+       *
+       * Es la regla del proyecto: «un cero en dinero no es un hueco». Un `$ 0`
+       * se lee «no debe nada» y un contador en cero se lee «no hay nada
+       * pendiente». Ya costo un incidente con la grafica de evolucion mensual,
+       * que pintaba doce meses de ingresos en cero habiendo 7.883.331 de
+       * cobranza.
+       *
+       * El error sube al `ErroresClarosFilter` global, que traduce los de base
+       * de datos y da un codigo de referencia para los desconocidos. Y las dos
+       * pantallas que consumen esto -`/admin` y `/coordinador`- ahora muestran
+       * el fallo en vez de quedarse en blanco.
+       */
       this.logger.error(
         'Error obteniendo datos del dashboard',
         error instanceof Error ? error.stack : error,
       );
-      // Retornar datos de fallback en caso de error
-      return {
-        metrics: {
-          pendingApprovals: 0,
-          delinquentAccounts: 0,
-          requestedBase: 0,
-          efficiency: 0,
-          capitalPrestado: 0,
-          recaudo: 0,
-          loanCompletion: {
-            pagados: 0,
-            activos: 0,
-            total: 0,
-            porcentaje: 0,
-          },
-        },
-        trend: [],
-        pendingApprovals: [],
-        delinquentAccounts: [],
-        recentActivity: [],
-        topCollectors: [],
-      };
+      throw error;
     }
   }
 
@@ -603,8 +602,23 @@ export class DashboardService {
 
       return processedData;
     } catch (error) {
-      // En caso de error, devolver datos de muestra
-      return [];
+      /*
+       * La grafica de tendencia tampoco se inventa.
+       *
+       * Antes: `// En caso de error, devolver datos de muestra` y un `[]`. Una
+       * grafica vacia se lee «no hubo cobranza en el periodo», que es justo el
+       * defecto §P21 que ya costo un incidente: el dueño vio ingresos cero en
+       * los doce meses del año habiendo 7.883.331 cobrados.
+       *
+       * Se deja subir. Si esta consulta falla, la base esta en problemas y el
+       * resto del tablero tampoco es de fiar: mas vale decirlo que pintar una
+       * grafica plana que parece un dato.
+       */
+      this.logger.error(
+        'Error calculando la tendencia del tablero',
+        error instanceof Error ? error.stack : error,
+      );
+      throw error;
     }
   }
 

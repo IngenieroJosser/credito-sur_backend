@@ -2161,30 +2161,19 @@ export class LoansService implements OnModuleInit {
         },
       };
     } catch (error) {
+      /*
+       * El listado de creditos FALLA si no puede leerse. No devuelve ceros.
+       *
+       * Antes: `prestamos: []` con `estadisticas` en cero -total, activos,
+       * atrasados, morosos, montoPrestado, moraTotal, todo a 0-. Ante un fallo
+       * de consulta la pantalla mostraba una cartera **vacia y sin mora**, que
+       * es la peor cosa que puede decir de mentira un sistema de creditos.
+       *
+       * Es la regla del proyecto: «un cero en dinero no es un hueco». El error
+       * sube al `ErroresClarosFilter` global, que lo traduce.
+       */
       this.logger.error('Error in getAllLoans:', error);
-      // Devolver respuesta segura en caso de error
-      return {
-        prestamos: [],
-        estadisticas: {
-          total: 0,
-          activos: 0,
-          atrasados: 0,
-          morosos: 0,
-          pagados: 0,
-          cancelados: 0,
-          montoTotal: 0,
-          montoPrestado: 0,
-          interesTotal: 0,
-          montoPendiente: 0,
-          moraTotal: 0,
-        },
-        paginacion: {
-          total: 0,
-          pagina: filters.page || 1,
-          limite: filters.limit || 8,
-          totalPaginas: 0,
-        },
-      };
+      throw error;
     }
   }
 

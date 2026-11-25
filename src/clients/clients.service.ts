@@ -924,16 +924,20 @@ export class ClientsService {
         },
       };
     } catch (error) {
+      /*
+       * El listado de clientes FALLA si no puede leerse. No devuelve ceros.
+       *
+       * Antes aqui habia «respuesta segura»: `clientes: []` y unas estadisticas
+       * con `total: 0`, `enRiesgo: 0` y `scorePromedio: 0`. O sea que ante
+       * cualquier fallo de consulta la pantalla decia **que la financiera no
+       * tiene clientes**, con sus tarjetas en cero, y no habia forma de
+       * distinguirlo de una base recien instalada.
+       *
+       * Es la regla del proyecto: «un cero en dinero no es un hueco». El error
+       * sube al `ErroresClarosFilter` global, que lo traduce.
+       */
       this.logger.error('Error in getAllClients:', error);
-      return {
-        clientes: [],
-        estadisticas: {
-          total: 0,
-          buenComportamiento: 0,
-          enRiesgo: 0,
-          scorePromedio: 0,
-        },
-      };
+      throw error;
     }
   }
 
