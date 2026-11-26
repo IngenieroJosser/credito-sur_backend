@@ -56,6 +56,12 @@ function mesesDeInteresSimple(plazo: number): number {
   return Math.max(1, plazo);
 }
 
+function interesSimpleEnPesos(monto: number, tasa: number, plazo: number): number {
+  // La tasa se guarda con dos decimales. Multiplicar antes de dividir evita
+  // perder un peso por redondeo binario (por ejemplo, con 29%).
+  return Math.trunc((monto * Math.round(tasa * 100) * mesesDeInteresSimple(plazo)) / 10000);
+}
+
 const CAMPOS_HISTORIAL_CUOTA = {
   estado: true,
   montoPagado: true,
@@ -1375,6 +1381,30 @@ export class LoansService implements OnModuleInit {
     return Math.max(1, Math.round(exacto)) === guardado ? exacto : guardado;
   }
 
+  private plazoRegistradoParaEdicion(prestamo: Prestamo): number {
+    const estimado = this.recuperarPlazoExacto(prestamo);
+    if (prestamo.tipoAmortizacion !== TipoAmortizacion.INTERES_SIMPLE) return estimado;
+
+    const guardado = Number(prestamo.plazoMeses);
+    const monto = Number(prestamo.monto);
+    const tasa = Number(prestamo.tasaInteres);
+    const interes = Number(prestamo.interesTotal);
+    if (!(monto > 0 && tasa > 0 && interes > 0)) return estimado;
+
+    const coincide = (plazo: number) => interesSimpleEnPesos(monto, tasa, plazo) === interes;
+    // El entero puede ser el plazo elegido o un redondeo. El interés ya
+    // pactado permite distinguirlos sin recalcular el contrato al abrirlo.
+    if (coincide(guardado)) return guardado;
+    if (coincide(estimado)) return estimado;
+
+    // Si se cambiaron las cuotas, el plazo derivado puede no ser el que se
+    // usó. Solo se recupera un decimal si reproduce el interés al peso.
+    const interesPorMes = (monto * Math.round(tasa * 100)) / 10000;
+    const deducido = Math.round((interes / interesPorMes) * 100) / 100;
+    if (deducido >= 1 && Math.round(deducido) === guardado && coincide(deducido)) return deducido;
+    return estimado;
+  }
+
   private calculateLoanEndDate(fechaInicio: Date, plazoMeses: number): Date {
     const startKey = getBogotaDayKey(fechaInicio);
     if (!startKey) return fechaInicio;
@@ -1520,12 +1550,7 @@ export class LoansService implements OnModuleInit {
       }
       case TipoAmortizacion.INTERES_SIMPLE:
       default: {
-        const mesesInteres = mesesDeInteresSimple(plazoMeses);
-        // Interés truncado, coherente con el reparto de cuotas (floor). La tasa
-        // va en centésimas (base entera) para no arrastrar el error de coma
-        // flotante de dividir /100 antes de truncar.
-        const tasaCent = Math.round(tasaInteres * 100);
-        interesTotal = Math.trunc((monto * tasaCent * mesesInteres) / 10000);
+        interesTotal = interesSimpleEnPesos(monto, tasaInteres, plazoMeses);
 
         const baseCapital = Math.floor(monto / cantidadCuotas);
         const baseInteres = Math.floor(interesTotal / cantidadCuotas);
@@ -2467,7 +2492,7 @@ export class LoansService implements OnModuleInit {
         cuotasVencidas,
         estadoEfectivo: estadoEfectivoCredito(prestamo.estado, cuotasVencidas),
         plazoInteresMeses: prestamo.tipoAmortizacion === TipoAmortizacion.INTERES_SIMPLE
-          ? mesesDeInteresSimple(this.recuperarPlazoExacto(prestamo))
+          ? mesesDeInteresSimple(this.plazoRegistradoParaEdicion(prestamo))
           : null,
         motivoBloqueoPlan: motivoBloqueoPlan(prestamo, cuotasDelPrestamo),
         montoPrestado,
@@ -2858,7 +2883,7 @@ export class LoansService implements OnModuleInit {
     const esArticulo = prestamo.tipoPrestamo === 'ARTICULO';
     const tasa = esArticulo ? 0 : (cambios.tasaInteres ?? Number(prestamo.tasaInteres));
     const cantidad = cambios.cantidadCuotas ?? prestamo.cantidadCuotas;
-    const plazo = cambios.plazoMeses ?? this.recuperarPlazoExacto(prestamo);
+    const plazo = cambios.plazoMeses ?? this.plazoRegistradoParaEdicion(prestamo);
     if (monto <= 0 || !Number.isInteger(cantidad) || cantidad < 1 || cantidad > 1000 || plazo <= 0) {
       throw new BadRequestException('Ingresa un capital y un plazo positivos, con entre 1 y 1.000 cuotas.');
     }

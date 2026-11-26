@@ -2097,6 +2097,59 @@ describe('LoansService accounting impact for approved loans', () => {
       expect(prisma.prestamo.update.mock.calls[0][0].data).not.toHaveProperty('estado');
     });
 
+    it('al elegir dos meses explícitos los conserva al guardar, reabrir y volver a editar', async () => {
+      const { prisma, service } = fixture();
+      const cambios = { plazoMeses: 2, version: 4 };
+      const antes = await service.getLoanById(credito.id);
+      expect(antes).toMatchObject({ plazoMeses: 2, plazoInteresMeses: 1.5, interesTotal: 270000 });
+
+      const plan = await service.simularEdicion(credito.id, cambios);
+      expect(plan).toMatchObject({
+        plazoInteresMeses: 2, interesTotal: 360000, cuotaProyectada: 210000,
+      });
+      await service.updateLoan(credito.id, cambios, 'admin-1');
+      const guardado = prisma.prestamo.update.mock.calls[0][0].data;
+      expect(guardado).toMatchObject({ plazoMeses: 2, interesTotal: 360000, saldoPendiente: 1260000 });
+      prisma.prestamo.findFirst.mockResolvedValue({ ...credito, ...guardado, version: 5 });
+
+      const reabierto = await service.getLoanById(credito.id);
+      expect(reabierto).toMatchObject({ plazoMeses: 2, plazoInteresMeses: 2, interesTotal: 360000 });
+      await expect(service.simularEdicion(credito.id, { tasaInteres: 18, version: 5 }))
+        .resolves.toMatchObject({ plazoInteresMeses: 2, interesTotal: 324000 });
+    });
+
+    it('cambiar la cantidad de cuotas no cambia por sí solo el plazo del interés pactado', async () => {
+      const { prisma, service } = fixture();
+      const cambios = { cantidadCuotas: 5 };
+      await service.updateLoan(credito.id, cambios, 'admin-1');
+      const guardado = prisma.prestamo.update.mock.calls[0][0].data;
+      expect(guardado).toMatchObject({ cantidadCuotas: 5, interesTotal: 270000 });
+      prisma.prestamo.findFirst.mockResolvedValue({ ...credito, ...guardado, version: 5 });
+      await expect(service.simularEdicion(credito.id, { tasaInteres: 18, version: 5 }))
+        .resolves.toMatchObject({ plazoInteresMeses: 1.5, interesTotal: 243000 });
+    });
+
+    it.each([1.5, 2])('en Amortización la tasa se aplica una sola vez con plazo %s', async (plazoMeses) => {
+      const { prisma, service } = fixture();
+      const cambios = { tipoAmortizacion: TipoAmortizacion.INTERES_PLANO, plazoMeses };
+      const plan = await service.simularEdicion(credito.id, cambios);
+      expect(plan).toMatchObject({ interesTotal: 180000, cuotaProyectada: 180000, plazoInteresMeses: null });
+      await service.updateLoan(credito.id, cambios, 'admin-1');
+      expect(prisma.prestamo.update.mock.calls[0][0].data).toMatchObject({
+        interesTotal: 180000, tipoAmortizacion: TipoAmortizacion.INTERES_PLANO,
+      });
+    });
+
+    it('el crédito de artículo se edita sin generar interés de préstamo', async () => {
+      const { prisma, service } = fixture();
+      prisma.prestamo.findFirst.mockResolvedValue({ ...credito, tipoPrestamo: 'ARTICULO' });
+      const cambios = { monto: 600000, cantidadCuotas: 3 };
+      const plan = await service.simularEdicion(credito.id, cambios);
+      expect(plan).toMatchObject({ interesTotal: 0, totalFinal: 600000, cuotaProyectada: 200000 });
+      await service.updateLoan(credito.id, cambios, 'admin-1');
+      expect(prisma.prestamo.update.mock.calls[0][0].data).toMatchObject({ monto: 600000, interesTotal: 0 });
+    });
+
     it.each([EstadoPrestamo.ACTIVO, EstadoPrestamo.PENDIENTE_APROBACION])(
       'no cambia EN_MORA a %s desde el editor',
       async (estado) => {
