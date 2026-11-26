@@ -289,6 +289,14 @@ export class PaymentsController {
   }
 
   @Get(':id')
+  @Roles(
+    RolUsuario.SUPER_ADMINISTRADOR,
+    RolUsuario.ADMIN,
+    RolUsuario.COORDINADOR,
+    RolUsuario.SUPERVISOR,
+    RolUsuario.CONTADOR,
+    RolUsuario.COBRADOR,
+  )
   findOne(@Param('id') id: string, @Request() req: RequestConUsuario) {
     return this.paymentsService.findOne(id, req?.user);
   }

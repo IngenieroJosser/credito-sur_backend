@@ -15,6 +15,7 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
@@ -189,10 +190,10 @@ export class ClientsController {
     @Body() body: CreateClientDto,
     @Request() req: RequestConUsuario,
   ) {
-    this.logger.log(`Creando cliente con datos: ${JSON.stringify(body)}`);
+    if (!req.user?.id) throw new UnauthorizedException('Usuario autenticado requerido');
     return this.clientsService.createClient({
       ...body,
-      creadoPorId: req.user?.id,
+      creadoPorId: req.user.id,
     });
   }
 

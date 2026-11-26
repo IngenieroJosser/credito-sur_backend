@@ -250,10 +250,13 @@ export class LoansService implements OnModuleInit {
     return getBogotaDayKey(new Date());
   }
 
-  private collectorLoanScope(
+  private alcanceLecturaCreditos(
     actor?: { id?: string; rol?: RolUsuario } | null,
   ): Prisma.PrestamoWhereInput {
     const rol = String(actor?.rol || '').toUpperCase();
+    if (rol === RolUsuario.PUNTO_DE_VENTA) {
+      return actor?.id ? { tipoPrestamo: 'ARTICULO', creadoPorId: actor.id } : { id: { in: [] } };
+    }
     if (!actor?.id) return {};
 
     // La ruta la lleva el credito, no el cliente: un cliente puede tener
@@ -1026,9 +1029,9 @@ export class LoansService implements OnModuleInit {
     };
   }
 
-  async generarContrato(prestamoId: string) {
+  async generarContrato(prestamoId: string, actor?: { id?: string; rol?: RolUsuario }) {
     const prestamo = await this.prisma.prestamo.findUnique({
-      where: { id: prestamoId },
+      where: { id: prestamoId, eliminadoEn: null, AND: [this.alcanceLecturaCreditos(actor)] },
       include: {
         cliente: true,
         producto: true,
@@ -1711,7 +1714,7 @@ export class LoansService implements OnModuleInit {
       // Construir filtros de forma segura
       const where: Prisma.PrestamoWhereInput = {
         eliminadoEn: null, // Solo préstamos no eliminados
-        ...this.collectorLoanScope(actor),
+        ...this.alcanceLecturaCreditos(actor),
       };
 
       /*
@@ -1729,16 +1732,7 @@ export class LoansService implements OnModuleInit {
         (where as Record<string, unknown>).actualizadoEn = { gt: desdeFecha };
       }
 
-      // Punto de venta solo maneja créditos de artículo: sin esto veía el
-      // libro de créditos completo (todos los de dinero incluidos).
-      if (
-        String(actor?.rol || '').toUpperCase() === RolUsuario.PUNTO_DE_VENTA
-      ) {
-        where.tipoPrestamo = 'ARTICULO';
-      }
-
-      // Filtro por tipo de préstamo
-      if (tipo !== 'todos' && tipo !== '') {
+      if (actor?.rol !== RolUsuario.PUNTO_DE_VENTA && tipo !== 'todos' && tipo !== '') {
         where.tipoPrestamo = tipo;
       }
 
@@ -1927,7 +1921,7 @@ export class LoansService implements OnModuleInit {
       // Calcular estadísticas globales (sin filtros de eliminados)
       const whereStats = {
         eliminadoEn: null,
-        ...this.collectorLoanScope(actor),
+        ...this.alcanceLecturaCreditos(actor),
         estado: {
           notIn: [EstadoPrestamo.BORRADOR, EstadoPrestamo.PENDIENTE_APROBACION],
         },
@@ -2263,7 +2257,7 @@ export class LoansService implements OnModuleInit {
         where: {
           id,
           eliminadoEn: null, // Solo si no está eliminado
-          ...this.collectorLoanScope(actor),
+          ...this.alcanceLecturaCreditos(actor),
         },
         include: {
           // Origen del registro: si vino de una carga masiva, la pantalla lo
@@ -3538,7 +3532,7 @@ export class LoansService implements OnModuleInit {
       where: {
         id: { in: ids },
         eliminadoEn: null,
-        ...(this.isCollector(actor) ? this.collectorLoanScope(actor) : {}),
+        ...this.alcanceLecturaCreditos(actor),
       },
       select: { id: true },
     });
@@ -3565,12 +3559,13 @@ export class LoansService implements OnModuleInit {
     actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
     try {
-      if (this.isCollector(actor)) {
+      const alcance = this.alcanceLecturaCreditos(actor);
+      if (Object.keys(alcance).length > 0) {
         const prestamo = await this.prisma.prestamo.findFirst({
           where: {
             id: prestamoId,
             eliminadoEn: null,
-            ...this.collectorLoanScope(actor),
+            ...alcance,
           },
           select: { id: true },
         });
@@ -3609,14 +3604,14 @@ export class LoansService implements OnModuleInit {
     let esAutoAprobadoFinal = false;
     try {
       this.logger.log(
-        `Creating loan for client ${data.clienteId}, type: ${data.tipoPrestamo}. Data: ${JSON.stringify(data)}`,
+        `Creating loan for client ${data.clienteId}, type: ${data.tipoPrestamo}`,
       );
       const idempotencyKey =
         data.idempotencyKey?.toString().trim() || undefined;
 
       if (idempotencyKey) {
         const prestamoExistente = await this.prisma.prestamo.findFirst({
-          where: { idempotencyKey },
+          where: { idempotencyKey, creadoPorId: data.creadoPorId, tipoPrestamo: data.tipoPrestamo },
           select: { id: true, numeroPrestamo: true },
         });
 
@@ -3665,6 +3660,9 @@ export class LoansService implements OnModuleInit {
 
       if (!creador) {
         throw new NotFoundException('Usuario creador no encontrado');
+      }
+      if (creador.rol === RolUsuario.PUNTO_DE_VENTA && data.tipoPrestamo !== TipoPrestamoDto.ARTICULO) {
+        throw new ForbiddenException('Punto de Venta solo puede crear créditos de artículo.');
       }
 
       // Un credito se cobra en una ruta: sin ruta no entra a ninguna jornada,
@@ -5481,14 +5479,14 @@ export class LoansService implements OnModuleInit {
    *
    * El supervisor solo manda en las rutas que supervisa y el cobrador en las
    * suyas; admin, coordinador y superadmin ven todo. Se reutiliza el mismo
-   * criterio de `collectorLoanScope` para no tener dos definiciones de "mi
+   * criterio de `alcanceLecturaCreditos` para no tener dos definiciones de "mi
    * ruta" que se puedan desincronizar.
    */
   private async prestamosBajoJurisdiccion(
     prestamoIds: string[],
     actor?: { id?: string; rol?: RolUsuario } | null,
   ): Promise<Set<string> | null> {
-    const scope = this.collectorLoanScope(actor);
+    const scope = this.alcanceLecturaCreditos(actor);
     // Sin restricción (admin/coordinador/super): jurisdicción total.
     if (!scope || Object.keys(scope).length === 0) return null;
     if (prestamoIds.length === 0) return new Set();

@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { MetodoPago, TipoTransaccion } from '@prisma/client';
+import { MetodoPago, Prisma, RolUsuario, TipoTransaccion } from '@prisma/client';
 import { LedgerService } from '../accounting/ledger.service';
 import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
 import { codigoDeError } from '../common/error.util';
@@ -154,9 +154,14 @@ export class SalesService {
     // Idempotencia: si esta venta ya se registró (mismo idempotencyKey, p. ej.
     // un reintento tras sincronizar offline), devolvemos la existente SIN volver
     // a descontar stock ni duplicar el movimiento de dinero.
+    const alcanceVenta = {
+      creadoPorId: dto.creadoPorId,
+      tipo: TipoTransaccion.INGRESO,
+      tipoReferencia: 'VENTA_CONTADO',
+    };
     if (dto.idempotencyKey) {
       const existente = await this.prisma.transaccion.findUnique({
-        where: { idempotencyKey: dto.idempotencyKey },
+        where: { idempotencyKey: dto.idempotencyKey, ...alcanceVenta },
         select: {
           id: true,
           numeroTransaccion: true,
@@ -244,7 +249,7 @@ export class SalesService {
       // Devolvemos la venta ya registrada en vez de duplicar o fallar.
       if (codigoDeError(error) === 'P2002' && dto.idempotencyKey) {
         const existente = await this.prisma.transaccion.findUnique({
-          where: { idempotencyKey: dto.idempotencyKey },
+          where: { idempotencyKey: dto.idempotencyKey, ...alcanceVenta },
           select: {
             id: true,
             numeroTransaccion: true,
@@ -283,36 +288,54 @@ export class SalesService {
     };
   }
 
-  async listarVentasContado() {
-    const ventas = await this.prisma.transaccion.findMany({
-      where: {
-        tipoReferencia: 'VENTA_CONTADO',
-      },
-      include: {
-        caja: {
-          select: {
-            id: true,
-            nombre: true,
-            codigo: true,
-            tipo: true,
-          },
+  async listarVentasContado(opciones: {
+    actor: { id: string; rol: RolUsuario };
+    pagina?: number;
+    limite?: number;
+    vendedorId?: string;
+    soloPuntoVenta?: boolean;
+  }) {
+    const { actor } = opciones;
+    const paginada = opciones.pagina !== undefined || opciones.limite !== undefined;
+    const solicitada = opciones.pagina ?? 1;
+    const solicitadas = opciones.limite ?? 50;
+    const pagina = Number.isSafeInteger(solicitada) ? Math.max(1, Math.min(solicitada, 100_000)) : 1;
+    const limite = Number.isSafeInteger(solicitadas) ? Math.max(1, Math.min(solicitadas, 100)) : 50;
+    const where: Prisma.TransaccionWhereInput = {
+      tipoReferencia: 'VENTA_CONTADO',
+      tipo: 'INGRESO',
+      creadoPorId: actor.rol === RolUsuario.PUNTO_DE_VENTA ? actor.id : opciones.vendedorId,
+      ...(opciones.soloPuntoVenta && actor.rol !== RolUsuario.PUNTO_DE_VENTA
+        ? { creadoPor: { rol: RolUsuario.PUNTO_DE_VENTA } }
+        : {}),
+    };
+    const [ventas, total] = await Promise.all([
+      this.prisma.transaccion.findMany({
+        where,
+        select: {
+          id: true,
+          referenciaId: true,
+          numeroTransaccion: true,
+          monto: true,
+          fechaTransaccion: true,
+          descripcion: true,
+          notas: true,
+          tipoReferencia: true,
+          creadoPorId: true,
+          clienteId: true,
+          caja: { select: { nombre: true, codigo: true } },
+          creadoPor: { select: { nombres: true, apellidos: true } },
+          cliente: { select: { nombres: true, apellidos: true, dni: true, telefono: true } },
         },
-        creadoPor: {
-          select: {
-            id: true,
-            nombres: true,
-            apellidos: true,
-          },
-        },
-      },
-      orderBy: {
-        fechaTransaccion: 'desc',
-      },
-      take: 50,
-    });
+        orderBy: [{ fechaTransaccion: 'desc' }, { id: 'desc' }],
+        skip: (pagina - 1) * limite,
+        take: limite,
+      }),
+      paginada ? this.prisma.transaccion.count({ where }) : Promise.resolve(0),
+    ]);
 
-    return ventas.map((v) => ({
-      id: v.referenciaId,
+    const datos = ventas.map((v) => ({
+      id: v.referenciaId ?? v.id,
       transaccionId: v.id,
       numeroTransaccion: v.numeroTransaccion,
       monto: Number(v.monto),
@@ -320,11 +343,18 @@ export class SalesService {
       descripcion: v.descripcion,
       notas: v.notas,
       tipoReferencia: v.tipoReferencia,
-      caja: v.caja?.nombre || null,
-      vendedor: v.creadoPor
-        ? `${v.creadoPor.nombres} ${v.creadoPor.apellidos}`.trim()
-        : null,
+      caja: v.caja?.nombre ?? null,
+      metodoPago: v.caja?.codigo === this.CAJA_BANCO_CODIGO ? 'TRANSFERENCIA'
+        : v.caja?.codigo === this.CAJA_OFICINA_CODIGO ? 'EFECTIVO' : null,
+      vendedorId: v.creadoPorId,
+      vendedor: v.creadoPor ? `${v.creadoPor.nombres} ${v.creadoPor.apellidos}`.trim() : null,
+      clienteId: v.clienteId,
+      cliente: v.cliente ? `${v.cliente.nombres} ${v.cliente.apellidos}`.trim() : null,
+      clienteDni: v.cliente?.dni ?? null,
+      clienteTelefono: v.cliente?.telefono ?? null,
       tipo: 'CONTADO',
     }));
+    // El listado anterior sin parámetros conserva su contrato de array.
+    return paginada ? { ventas: datos, paginacion: { pagina, limite, total, totalPaginas: Math.ceil(total / limite) } } : datos;
   }
 }

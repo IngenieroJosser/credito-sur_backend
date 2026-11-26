@@ -2847,6 +2847,34 @@ describe('LoansService role scoping', () => {
     jest.clearAllMocks();
   });
 
+  it('mantiene el alcance del vendedor aunque el listado solicite efectivo', async () => {
+    const prisma = {
+      prestamo: {
+        findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(0),
+        aggregate: jest.fn().mockResolvedValue({ _sum: { monto: 0, saldoPendiente: 0 } }),
+      },
+    };
+    await makeService(prisma).getAllLoans({ tipo: 'EFECTIVO' }, {
+      id: 'vendedor-1',
+      rol: RolUsuario.PUNTO_DE_VENTA,
+    });
+    const where = expect.objectContaining({ tipoPrestamo: 'ARTICULO', creadoPorId: 'vendedor-1' });
+    expect(prisma.prestamo.findMany).toHaveBeenCalledWith(expect.objectContaining({ where }));
+    expect(prisma.prestamo.count).toHaveBeenCalledWith({ where });
+  });
+
+  it('busca el contrato de un vendedor dentro de sus propios créditos de artículo', async () => {
+    const prisma = { prestamo: { findUnique: jest.fn().mockResolvedValue(null) } };
+    await expect(makeService(prisma).generarContrato('credito-ajeno', {
+      id: 'vendedor-1',
+      rol: RolUsuario.PUNTO_DE_VENTA,
+    })).rejects.toMatchObject({ status: 404 });
+    expect(prisma.prestamo.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'credito-ajeno', eliminadoEn: null, AND: [{ tipoPrestamo: 'ARTICULO', creadoPorId: 'vendedor-1' }] },
+    }));
+  });
+
   it('forces loan list queries from collectors to loans assigned to their routes', async () => {
     const prisma = {
       asignacionRuta: {

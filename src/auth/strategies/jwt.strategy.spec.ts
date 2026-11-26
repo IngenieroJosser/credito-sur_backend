@@ -1,4 +1,7 @@
 import { UnauthorizedException } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import type { Request } from 'express';
+import { comoDependencia } from '../../common/testing/dobles';
 import { JwtStrategy } from './jwt.strategy';
 import type { PrismaService } from '../../prisma/prisma.service';
 
@@ -52,6 +55,21 @@ const payloadDeLogin = {
   rol: 'COBRADOR' as never,
   permisos: ['RUTAS_VIEW'],
 };
+
+describe('JwtStrategy autentica la sesión', () => {
+  it('rechaza un token firmado hace más de ocho horas aunque todavía no tenga exp vencido', async () => {
+    const { estrategia, prisma } = hacerEstrategia(filaDeUsuario);
+    const jwt = new JwtService({ secret: process.env.JWT_SECRET });
+    const ahora = Math.floor(Date.now() / 1000);
+    const token = jwt.sign({ ...payloadDeLogin, iat: ahora - 9 * 3600, exp: ahora + 3600 });
+    const resultado = await new Promise<unknown>((resolve, reject) => {
+      Object.assign(estrategia, { fail: resolve, success: reject, error: reject });
+      estrategia.authenticate(comoDependencia<Request>({ headers: { authorization: `Bearer ${token}` } }));
+    });
+    expect(resultado).toMatchObject({ name: 'TokenExpiredError' });
+    expect(prisma.usuario.findUnique).not.toHaveBeenCalled();
+  });
+});
 
 describe('JwtStrategy.validate', () => {
   it('devuelve el correo de la base, que el token no lleva', async () => {

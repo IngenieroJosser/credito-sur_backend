@@ -1,5 +1,5 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { TipoTransaccion } from '@prisma/client';
+import { RolUsuario, TipoTransaccion } from '@prisma/client';
 import { SalesService } from './sales.service';
 import {
   comoDependencia,
@@ -22,6 +22,55 @@ const makeService = (
       ...ledger,
     }),
   );
+
+describe('SalesService listado de contado', () => {
+  it('pagina sobre las ventas del vendedor autenticado y conserva el cliente', async () => {
+    const prisma = {
+      transaccion: {
+        count: jest.fn().mockResolvedValue(51),
+        findMany: jest.fn().mockResolvedValue([{
+          id: 'trx-1',
+          monto: 750000,
+          caja: { codigo: 'CAJA-BANCO', nombre: 'Caja Banco' },
+          clienteId: 'cliente-1',
+          cliente: { nombres: 'Ana', apellidos: 'Prueba', dni: '1000' },
+          creadoPorId: 'pdv-propio',
+        }]),
+      },
+    };
+    const resultado = await makeService(prisma).listarVentasContado({
+      actor: { id: 'pdv-propio', rol: RolUsuario.PUNTO_DE_VENTA },
+      vendedorId: 'pdv-ajeno',
+      pagina: 3,
+      limite: 25,
+    });
+    const where = { creadoPorId: 'pdv-propio', tipoReferencia: 'VENTA_CONTADO', tipo: 'INGRESO' };
+    expect(prisma.transaccion.findMany).toHaveBeenCalledWith(expect.objectContaining({ where, skip: 50, take: 25 }));
+    expect(prisma.transaccion.count).toHaveBeenCalledWith({ where });
+    expect(resultado).toMatchObject({
+      ventas: [{ cliente: 'Ana Prueba', vendedorId: 'pdv-propio', metodoPago: 'TRANSFERENCIA', monto: 750000 }],
+      paginacion: { pagina: 3, limite: 25, total: 51, totalPaginas: 3 },
+    });
+  });
+
+  it('permite que un administrador filtre el listado por vendedor de Punto de Venta', async () => {
+    const prisma = { transaccion: { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]) } };
+    await makeService(prisma).listarVentasContado({
+      actor: { id: 'admin', rol: RolUsuario.ADMIN },
+      soloPuntoVenta: true,
+      vendedorId: 'pdv-1',
+      pagina: 1,
+    });
+    expect(prisma.transaccion.count).toHaveBeenCalledWith({
+      where: {
+        tipoReferencia: 'VENTA_CONTADO',
+        tipo: 'INGRESO',
+        creadoPorId: 'pdv-1',
+        creadoPor: { rol: RolUsuario.PUNTO_DE_VENTA },
+      },
+    });
+  });
+});
 
 describe('SalesService venta contado', () => {
   it('registra venta de contado sin crear préstamo, cuotas ni pago operativo', async () => {
@@ -371,7 +420,14 @@ describe('SalesService venta contado', () => {
     // No se ejecuta la transacción (no se descuenta stock ni se duplica dinero)
     expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(prisma.transaccion.findUnique).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { idempotencyKey: 'venta-abc-123' } }),
+      expect.objectContaining({
+        where: {
+          idempotencyKey: 'venta-abc-123',
+          creadoPorId: 'vendedor-1',
+          tipo: TipoTransaccion.INGRESO,
+          tipoReferencia: 'VENTA_CONTADO',
+        },
+      }),
     );
     expect(resultado).toMatchObject({
       success: true,

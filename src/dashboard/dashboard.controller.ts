@@ -18,7 +18,6 @@ export class DashboardController {
     RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
     RolUsuario.SUPERVISOR,
-    RolUsuario.PUNTO_DE_VENTA,
   )
   async getDashboardData(
     @Query('timeFilter') timeFilter: string,
@@ -33,7 +32,6 @@ export class DashboardController {
     RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
     RolUsuario.SUPERVISOR,
-    RolUsuario.PUNTO_DE_VENTA,
   )
   async getTrendData(@Query('timeFilter') timeFilter: string) {
     return this.dashboardService.getTrendData(timeFilter);

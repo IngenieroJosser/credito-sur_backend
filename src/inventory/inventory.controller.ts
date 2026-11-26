@@ -37,7 +37,6 @@ export class InventoryController {
     RolUsuario.COORDINADOR,
     RolUsuario.SUPERVISOR,
     RolUsuario.COBRADOR,
-    RolUsuario.PUNTO_DE_VENTA,
     RolUsuario.CONTADOR,
   )
   getInventoryStats() {
@@ -51,7 +50,6 @@ export class InventoryController {
     RolUsuario.COORDINADOR,
     RolUsuario.SUPERVISOR,
     RolUsuario.COBRADOR,
-    RolUsuario.PUNTO_DE_VENTA,
     RolUsuario.CONTADOR,
   )
   findArchived() {
@@ -63,7 +61,6 @@ export class InventoryController {
     RolUsuario.SUPER_ADMINISTRADOR,
     RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
-    RolUsuario.PUNTO_DE_VENTA,
   )
   create(
     @Request() req: RequestConUsuario,
@@ -80,7 +77,6 @@ export class InventoryController {
     RolUsuario.COORDINADOR,
     RolUsuario.SUPERVISOR,
     RolUsuario.COBRADOR,
-    RolUsuario.PUNTO_DE_VENTA,
     RolUsuario.CONTADOR,
   )
   @HttpCode(HttpStatus.OK)
@@ -130,7 +126,6 @@ export class InventoryController {
     RolUsuario.SUPER_ADMINISTRADOR,
     RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
-    RolUsuario.PUNTO_DE_VENTA,
   )
   update(
     @Request() req: RequestConUsuario,
@@ -161,7 +156,6 @@ export class InventoryController {
     RolUsuario.SUPER_ADMINISTRADOR,
     RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
-    RolUsuario.PUNTO_DE_VENTA,
   )
   restore(@Param('id') id: string) {
     return this.inventoryService.restore(id);
@@ -172,7 +166,6 @@ export class InventoryController {
     RolUsuario.SUPER_ADMINISTRADOR,
     RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
-    RolUsuario.PUNTO_DE_VENTA,
   )
   hideArchived(@Param('id') id: string) {
     return this.inventoryService.hideArchived(id);
@@ -183,7 +176,6 @@ export class InventoryController {
     RolUsuario.SUPER_ADMINISTRADOR,
     RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
-    RolUsuario.PUNTO_DE_VENTA,
   )
   remove(@Param('id') id: string) {
     return this.inventoryService.remove(id);

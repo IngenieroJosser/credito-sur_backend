@@ -262,6 +262,29 @@ describe('UsersService operational detail', () => {
     expect(detalle.aCargo.rutasTotal).toBe(2);
   });
 
+  it('atribuye el conteo y el importe de las ventas de contado al vendedor', async () => {
+    const { service, prisma } = buildService();
+    prepararPersona(prisma, RolUsuario.PUNTO_DE_VENTA);
+    prisma.transaccion.aggregate
+      .mockResolvedValueOnce({ _count: 4, _sum: { monto: 800_000 } })
+      .mockResolvedValueOnce({ _count: 2, _sum: { monto: 700_000 } });
+
+    const detalle = await service.obtenerDetalleOperativo('p-1');
+
+    expect(prisma.transaccion.aggregate).toHaveBeenCalledWith({
+      where: {
+        creadoPorId: 'p-1',
+        tipoReferencia: 'VENTA_CONTADO',
+        tipo: 'INGRESO',
+        fechaTransaccion: { gte: expect.any(Date) },
+      },
+      _count: true,
+      _sum: { monto: true },
+    });
+    expect(detalle.hizo.ventasContado).toEqual({ cantidad: 2, monto: 700_000 });
+    expect(detalle.cifras).toContain('ventasContado');
+  });
+
   it('NINGUNA consulta de la ficha mira sin filtrar por la persona', async () => {
     const { service, prisma } = buildService();
     prepararPersona(prisma, RolUsuario.ADMIN);

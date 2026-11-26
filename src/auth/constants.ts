@@ -1,3 +1,5 @@
+export const JWT_SESSION_TTL = '8h';
+
 export const jwtConstants = {
   // Getter, no valor: si se lee al importar el modulo, el .env todavia no
   // esta cargado y el secreto queda undefined.

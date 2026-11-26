@@ -1828,6 +1828,7 @@ export class PaymentsService {
   async findOne(id: string, actor?: PaymentActor) {
     const where: Prisma.PagoWhereInput = { id };
     if (this.isCollector(actor) && actor?.id) where.cobradorId = actor.id;
+    if (actor?.rol === RolUsuario.SUPERVISOR && actor.id) where.ruta = { supervisorId: actor.id };
 
     const pago = await this.prisma.pago.findFirst({
       where,

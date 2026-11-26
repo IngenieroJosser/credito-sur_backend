@@ -96,6 +96,7 @@ export type LoQueHizo = {
   dias: number;
   pagosRegistrados: Cuenta;
   creditosCreados: Cuenta;
+  ventasContado: Cuenta;
   creditosAprobados: Cuenta;
   clientesCreados: Cuenta;
   gastosRegistrados: Cuenta;
@@ -140,7 +141,7 @@ export const PROPIO_DEL_ROL: Record<string, ClaveDeCifra[]> = {
   ],
   SUPERVISOR: ['pagosRegistrados', 'gastosRegistrados', 'arqueosDeCaja'],
   COORDINADOR: ['pagosRegistrados', 'creditosCreados', 'clientesCreados'],
-  PUNTO_DE_VENTA: ['creditosCreados', 'clientesCreados'],
+  PUNTO_DE_VENTA: ['ventasContado', 'creditosCreados', 'clientesCreados'],
   CONTADOR: ['movimientosDeCaja', 'gastosRegistrados', 'arqueosDeCaja'],
   ADMIN: ['creditosAprobados', 'creditosCreados', 'clientesCreados'],
   SUPER_ADMINISTRADOR: ['creditosAprobados', 'movimientosDeCaja'],
@@ -149,7 +150,7 @@ export const PROPIO_DEL_ROL: Record<string, ClaveDeCifra[]> = {
 /**
  * Contar lo que hizo una persona desde una fecha.
  *
- * Nueve consultas en paralelo, todas filtradas por su identificador. No hay
+ * Consultas en paralelo, todas filtradas por su identificador. No hay
  * ninguna que mire el sistema entero: si una cifra no se puede atribuir a
  * alguien, no pinta nada en su ficha.
  */
@@ -166,6 +167,7 @@ export async function loQueHizoLaPersona(
     clientes,
     gastos,
     movimientos,
+    ventas,
     arqueos,
     visitas,
     acciones,
@@ -210,6 +212,16 @@ export async function loQueHizoLaPersona(
       _count: true,
       _sum: { monto: true },
     }),
+    db.transaccion.aggregate({
+      where: {
+        creadoPorId: usuarioId,
+        tipoReferencia: 'VENTA_CONTADO',
+        tipo: 'INGRESO',
+        fechaTransaccion: { gte: desde },
+      },
+      _count: true,
+      _sum: { monto: true },
+    }),
     db.arqueoCaja.count({
       where: { creadoPorId: usuarioId, creadoEn: { gte: desde } },
     }),
@@ -231,6 +243,10 @@ export async function loQueHizoLaPersona(
     creditosCreados: {
       cantidad: creados._count,
       monto: aNumero(creados._sum.monto),
+    },
+    ventasContado: {
+      cantidad: ventas._count,
+      monto: aNumero(ventas._sum.monto),
     },
     creditosAprobados: {
       cantidad: aprobados._count,
@@ -295,6 +311,7 @@ export function cifrasQueImportan(
   const candidatas: ClaveDeCifra[] = [
     'pagosRegistrados',
     'creditosCreados',
+    'ventasContado',
     'creditosAprobados',
     'clientesCreados',
     'gastosRegistrados',

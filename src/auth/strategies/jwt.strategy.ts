@@ -1,7 +1,7 @@
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PassportStrategy } from '@nestjs/passport';
 import { Injectable, UnauthorizedException } from '@nestjs/common';
-import { jwtConstants } from '../constants';
+import { jwtConstants, JWT_SESSION_TTL } from '../constants';
 import type { RolUsuario } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -49,6 +49,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         ExtractJwt.fromAuthHeaderAsBearerToken(),
       ]),
       ignoreExpiration: false,
+      jsonWebTokenOptions: { maxAge: JWT_SESSION_TTL },
       secretOrKey: jwtConstants.secret,
     });
   }

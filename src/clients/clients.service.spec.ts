@@ -124,6 +124,7 @@ describe('ClientsService', () => {
       const mockClientData = {
         nombres: 'Juan',
         apellidos: 'Perez',
+        creadoPorId: 'user-admin',
         dni: '12345678',
         telefono: '3001234567',
         direccion: 'Calle Falsa 123',
@@ -172,7 +173,7 @@ describe('ClientsService', () => {
           // que la validacion del endpoint habria rechazado antes de llegar al servicio.
           telefono: '3000000000',
         }),
-      ).rejects.toThrow('No existen usuarios en el sistema');
+      ).rejects.toThrow('Usuario autenticado requerido');
     });
 
     it('returns the existing approval when the same idempotencyKey is retried', async () => {
@@ -192,6 +193,7 @@ describe('ClientsService', () => {
         dni: '12345678',
         telefono: '3001234567',
         idempotencyKey: 'offline-cliente-1',
+        creadoPorId: 'user-admin',
       });
 
       expect(result).toMatchObject({
@@ -232,6 +234,7 @@ describe('ClientsService', () => {
         apellidos: 'Moya',
         dni: '1098765432',
         telefono: '3001234567',
+        creadoPorId: 'user-admin',
       });
 
       await expect(intento).rejects.toBeInstanceOf(ConflictException);

@@ -70,3 +70,16 @@ src/**/*.js.map
 *.probe
 *.bak
 scripts/.tmp-*
+
+# Artefactos privados de operación
+.env.*
+!.env.example
+temp_token.json
+tok.txt
+*.xlsx
+*.xlsm
+mora.json
+ACTUALIZAR-INVENTARIO.py
+ACTUALIZAR-INVENTARIO.bat
+capturas-ux/
+.claude/

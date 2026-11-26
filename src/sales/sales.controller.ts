@@ -5,6 +5,7 @@ import {
   HttpCode,
   HttpStatus,
   Post,
+  Query,
   Request,
   UseGuards,
 } from '@nestjs/common';
@@ -55,7 +56,19 @@ export class SalesController {
     RolUsuario.CONTADOR,
     RolUsuario.PUNTO_DE_VENTA,
   )
-  listarVentasContado() {
-    return this.salesService.listarVentasContado();
+  listarVentasContado(
+    @Request() req: RequestConUsuario,
+    @Query('page') pagina?: string,
+    @Query('limit') limite?: string,
+    @Query('vendedorId') vendedorId?: string,
+    @Query('soloPuntoVenta') soloPuntoVenta?: string,
+  ) {
+    return this.salesService.listarVentasContado({
+      actor: req.user,
+      pagina: pagina === undefined ? undefined : Number(pagina),
+      limite: limite === undefined ? undefined : Number(limite),
+      vendedorId: typeof vendedorId === 'string' ? vendedorId.trim() || undefined : undefined,
+      soloPuntoVenta: soloPuntoVenta === 'true',
+    });
   }
 }

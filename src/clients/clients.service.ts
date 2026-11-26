@@ -6,6 +6,7 @@ import {
   InternalServerErrorException,
   Logger,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { CreateClientDto } from './dto/create-client.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
@@ -122,6 +123,7 @@ export class ClientsService {
   ) {}
 
   async create(createClientDto: CreateClientDto) {
+    if (!createClientDto.creadoPorId) throw new UnauthorizedException('Usuario autenticado requerido');
     // Validar si ya existe un cliente con ese documento
     const clienteExistente = await this.prisma.cliente.findFirst({
       where: { dni: createClientDto.dni },
@@ -143,13 +145,6 @@ export class ClientsService {
     const count = await this.prisma.cliente.count();
     const codigo = `C-${(count + 1).toString().padStart(4, '0')}`;
 
-    // Buscar un usuario para asignar como creador (TODO: Usar usuario autenticado)
-    const creador = await this.prisma.usuario.findFirst();
-    if (!creador) {
-      throw new NotFoundException(
-        'No existen usuarios en el sistema para asignar la creación',
-      );
-    }
 
     // Extraer campos que no están en el modelo Cliente o necesitan mapeo
     const {
@@ -163,7 +158,7 @@ export class ClientsService {
       data: {
         ...clientData,
         codigo,
-        creadoPorId: creador.id,
+        creadoPorId: createClientDto.creadoPorId,
         /*
          * `rutaId` y `observaciones` se descartan arriba, y NO es un pendiente
          * —aqui decia «TODO: Manejar asignacion de ruta»—.
@@ -1180,7 +1175,8 @@ export class ClientsService {
   }
 
   async createClient(data: CreateClientDto) {
-    this.logger.log(`[DEBUG] createClient llamado para documento: ${data.dni}`);
+    const solicitadoPorId = data.creadoPorId;
+    if (!solicitadoPorId) throw new UnauthorizedException('Usuario autenticado requerido');
     try {
       const idempotencyKey =
         data.idempotencyKey?.toString().trim() || undefined;
@@ -1221,17 +1217,6 @@ export class ClientsService {
 
         // Si fue rechazado (y quedó archivado), permitimos reintento: restaurar + nueva aprobación
         if (clienteExistente.estadoAprobacion === 'RECHAZADO') {
-          // Buscar un usuario para asignar como solicitante si no viene uno
-          let solicitadoPorId = data.creadoPorId;
-          if (!solicitadoPorId) {
-            const creador = await this.prisma.usuario.findFirst();
-            if (!creador) {
-              throw new NotFoundException(
-                'No existen usuarios en el sistema para asignar la creación',
-              );
-            }
-            solicitadoPorId = creador.id;
-          }
 
           const solicitante = await this.prisma.usuario.findUnique({
             where: { id: solicitadoPorId },
@@ -1399,17 +1384,6 @@ export class ClientsService {
         );
       }
 
-      // Buscar un usuario para asignar como creador si no viene uno (TODO: Usar usuario autenticado)
-      let solicitadoPorId = data.creadoPorId;
-      if (!solicitadoPorId) {
-        const creador = await this.prisma.usuario.findFirst();
-        if (!creador) {
-          throw new NotFoundException(
-            'No existen usuarios en el sistema para asignar la creación',
-          );
-        }
-        solicitadoPorId = creador.id;
-      }
 
       const solicitante = await this.prisma.usuario.findUnique({
         where: { id: solicitadoPorId },

@@ -6,7 +6,7 @@ import { NotificacionesGateway } from './notificaciones.gateway';
 import { PushModule } from '../push/push.module';
 import { RoutesModule } from '../routes/routes.module';
 import { JwtModule } from '@nestjs/jwt';
-import { jwtConstants } from '../auth/constants';
+import { jwtConstants, JWT_SESSION_TTL } from '../auth/constants';
 
 @Global() // Hacemos el módulo global para no tener que importarlo en todos lados
 @Module({
@@ -16,7 +16,10 @@ import { jwtConstants } from '../auth/constants';
     forwardRef(() => RoutesModule),
     // El gateway verifica el token del socket, por eso necesita JwtService.
     JwtModule.registerAsync({
-      useFactory: () => ({ secret: jwtConstants.secret }),
+      useFactory: () => ({
+        secret: jwtConstants.secret,
+        verifyOptions: { maxAge: JWT_SESSION_TTL },
+      }),
     }),
   ],
   controllers: [NotificacionesController],

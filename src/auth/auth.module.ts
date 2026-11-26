@@ -4,7 +4,7 @@ import { AuthController } from './auth.controller';
 import { UsersModule } from '../users/users.module';
 import { PassportModule } from '@nestjs/passport';
 import { JwtModule } from '@nestjs/jwt';
-import { jwtConstants } from './constants';
+import { jwtConstants, JWT_SESSION_TTL } from './constants';
 import { JwtStrategy } from './strategies/jwt.strategy';
 
 @Module({
@@ -16,7 +16,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     JwtModule.registerAsync({
       useFactory: () => ({
         secret: jwtConstants.secret,
-        signOptions: { expiresIn: '8h' },
+        signOptions: { expiresIn: JWT_SESSION_TTL },
       }),
     }),
   ],

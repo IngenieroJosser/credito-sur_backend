@@ -18,6 +18,7 @@ import {
   UsePipes,
   ValidationPipe,
   BadRequestException,
+  ForbiddenException,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -298,15 +299,15 @@ export class LoansController {
     );
   }
   @Get(':id/contrato')
-  // @Roles(
-  //  RolUsuario.SUPER_ADMINISTRADOR,
-  //  RolUsuario.ADMIN,
-  //  RolUsuario.COORDINADOR,
-  //  RolUsuario.SUPERVISOR,
-  //  RolUsuario.PUNTO_DE_VENTA,
-  //  RolUsuario.COBRADOR,
-  //  RolUsuario.CONTADOR,
-  // )
+  @Roles(
+   RolUsuario.SUPER_ADMINISTRADOR,
+   RolUsuario.ADMIN,
+   RolUsuario.COORDINADOR,
+   RolUsuario.SUPERVISOR,
+   RolUsuario.PUNTO_DE_VENTA,
+   RolUsuario.COBRADOR,
+   RolUsuario.CONTADOR,
+  )
   @ApiOperation({ summary: 'Exportar contrato de crédito de artículo en PDF' })
   @ApiQuery({ name: 'format', enum: ['pdf'], required: false })
   @HttpCode(HttpStatus.OK)
@@ -314,13 +315,14 @@ export class LoansController {
     @Res() res: Response,
     @Param('id') id: string,
     @Query('format', new DefaultValuePipe('pdf')) format: 'pdf',
+    @Request() req: RequestConUsuario,
   ) {
     if (format !== 'pdf') {
       throw new BadRequestException('Formato no soportado');
     }
 
     try {
-      const result = await this.loansService.generarContrato(id);
+      const result = await this.loansService.generarContrato(id, req.user);
       res.setHeader('Content-Type', result.contentType);
       res.setHeader(
         'Content-Disposition',
@@ -559,6 +561,10 @@ export class LoansController {
     // Validar que el usuario existe y está activo
     if (!usuarioId) {
       throw new UnauthorizedException('Usuario no autenticado');
+    }
+
+    if (req.user.rol === RolUsuario.PUNTO_DE_VENTA && createLoanDto.tipoPrestamo !== 'ARTICULO') {
+      throw new ForbiddenException('Punto de Venta solo puede crear créditos de artículo.');
     }
 
     // Asignar creador automáticamente desde el JWT

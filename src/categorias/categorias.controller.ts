@@ -31,7 +31,6 @@ export class CategoriasController {
     RolUsuario.SUPER_ADMINISTRADOR,
     RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
-    RolUsuario.PUNTO_DE_VENTA,
   )
   @ApiOperation({ summary: 'Crear una nueva categoría' })
   create(@Body() createCategoriaDto: CreateCategoriaDto) {
@@ -73,7 +72,6 @@ export class CategoriasController {
     RolUsuario.SUPER_ADMINISTRADOR,
     RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
-    RolUsuario.PUNTO_DE_VENTA,
   )
   @ApiOperation({ summary: 'Actualizar una categoría' })
   update(
@@ -88,7 +86,6 @@ export class CategoriasController {
     RolUsuario.SUPER_ADMINISTRADOR,
     RolUsuario.ADMIN,
     RolUsuario.COORDINADOR,
-    RolUsuario.PUNTO_DE_VENTA,
   )
   @ApiOperation({ summary: 'Eliminar (soft delete) una categoría' })
   remove(@Param('id') id: string) {
