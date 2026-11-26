@@ -1,3 +1,4 @@
+import { formatCurrency } from '../utils/date-utils';
 import {
   Injectable,
   NotFoundException,
@@ -968,7 +969,7 @@ export class PaymentsService {
 
     if (montoTotal > Number(prestamo.saldoPendiente)) {
       throw new BadRequestException(
-        `El monto del pago ($${montoTotal}) no puede ser mayor al saldo pendiente del préstamo ($${prestamo.saldoPendiente})`,
+        `El monto del pago (${formatCurrency(montoTotal)}) no puede ser mayor al saldo pendiente del préstamo (${formatCurrency(Number(prestamo.saldoPendiente))})`,
       );
     }
 
@@ -1231,7 +1232,7 @@ export class PaymentsService {
 
         if (montoTotal > Number(prestamoActual.saldoPendiente)) {
           throw new BadRequestException(
-            `El monto del pago ($${montoTotal}) no puede ser mayor al saldo pendiente del préstamo ($${prestamoActual.saldoPendiente})`,
+            `El monto del pago (${formatCurrency(montoTotal)}) no puede ser mayor al saldo pendiente del préstamo (${formatCurrency(Number(prestamoActual.saldoPendiente))})`,
           );
         }
 

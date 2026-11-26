@@ -1,3 +1,4 @@
+import { formatCurrency } from '../utils/date-utils';
 import {
   Injectable,
   BadRequestException,
@@ -315,7 +316,8 @@ export class LedgerService {
         // El detalle se conserva porque es lo que permite encontrar el fallo,
         // pero primero se dice qué pasó y qué hacer.
         'La operación no se registró porque las cuentas no cuadran ' +
-          `(débitos $${totalDebitos} contra créditos $${totalCreditos}). ` +
+          // `Decimal` de Prisma: se pasa a número antes de formatear.
+          `(débitos ${formatCurrency(Number(totalDebitos))} contra créditos ${formatCurrency(Number(totalCreditos))}). ` +
           'Es un fallo del sistema, no de los datos que usted escribió: repórtelo.',
       );
     }
@@ -443,7 +445,7 @@ export class LedgerService {
       {
         referenceType: 'PAGO',
         referenceId: params.pagoId,
-        description: `Pago recibido — capital: $${params.montoCapital} | interés: $${params.montoInteres} | mora: $${params.montoMora}`,
+        description: `Pago recibido — capital: ${formatCurrency(params.montoCapital)} | interés: ${formatCurrency(params.montoInteres)} | mora: ${formatCurrency(params.montoMora)}`,
         createdBy: params.createdBy,
         lines,
       },
@@ -464,7 +466,7 @@ export class LedgerService {
       {
         referenceType: 'DESEMBOLSO',
         referenceId: params.prestamoId,
-        description: `Desembolso de préstamo por $${params.monto}`,
+        description: `Desembolso de préstamo por ${formatCurrency(params.monto)}`,
         createdBy: params.createdBy,
         lines: [
           {
@@ -583,7 +585,7 @@ export class LedgerService {
       {
         referenceType: 'VENTA_ARTICULO',
         referenceId: params.prestamoId,
-        description: `Venta de artículo — precio: $${precioVenta} | costo: $${costoArticulo}`,
+        description: `Venta de artículo — precio: ${formatCurrency(precioVenta)} | costo: ${formatCurrency(costoArticulo)}`,
         createdBy: params.createdBy,
         lines,
       },
@@ -605,7 +607,7 @@ export class LedgerService {
       {
         referenceType: 'CONSOLIDACION',
         referenceId: params.referenceId,
-        description: `Consolidación de $${params.monto} de ruta a oficina`,
+        description: `Consolidación de ${formatCurrency(params.monto)} de ruta a oficina`,
         createdBy: params.createdBy,
         lines: [
           {
@@ -665,7 +667,7 @@ export class LedgerService {
       {
         referenceType: 'ARQUEO',
         referenceId: params.arqueoId,
-        description: `Descuadre de arqueo — ${diferencia > 0 ? 'sobrante' : 'faltante'} de $${abs}`,
+        description: `Descuadre de arqueo — ${diferencia > 0 ? 'sobrante' : 'faltante'} de ${formatCurrency(abs)}`,
         createdBy: params.createdBy,
         lines,
       },
@@ -686,7 +688,7 @@ export class LedgerService {
       {
         referenceType: 'ABONO_DEUDA',
         referenceId: params.cobradorId,
-        description: `Abono a deuda de cobrador — monto: $${params.monto}`,
+        description: `Abono a deuda de cobrador — monto: ${formatCurrency(params.monto)}`,
         createdBy: params.createdBy,
         lines: [
           {

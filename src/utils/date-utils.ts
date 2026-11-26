@@ -292,10 +292,31 @@ export function calculateDateRange(
   return { startDate, endDate, days };
 }
 
+/**
+ * Un importe en pesos colombianos, para el texto que acaba en pantalla.
+ *
+ * ── Dos cosas que estaban mal ───────────────────────────────────────────────
+ *
+ * Esta funcion formateaba en `es-PY` con moneda `PYG`: guaranies paraguayos,
+ * en una financiera colombiana. No se habia notado porque no la llamaba
+ * NADIE —barrido sobre `src/`: cero usos fuera de este archivo—, asi que era
+ * codigo muerto esperando a que alguien lo usara y metiera la moneda de otro
+ * pais en un asiento contable.
+ *
+ * Y lo que si se veia: las descripciones de los asientos de inventario se
+ * armaban pegando el numero crudo detras del simbolo, sin separadores. En el
+ * panel contable, al pasar el raton por un movimiento, salia «5 und a
+ * $597995», que hay que contar con el dedo para leer.
+ *
+ * Lo que NO hace esto: reescribir las descripciones ya guardadas. Son el
+ * texto de un asiento contable, y corregir registros pasados es peor que un
+ * numero mal separado.
+ */
 export function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat('es-PY', {
+  return new Intl.NumberFormat('es-CO', {
     style: 'currency',
-    currency: 'PYG',
+    currency: 'COP',
     minimumFractionDigits: 0,
-  }).format(amount);
+    maximumFractionDigits: 0,
+  }).format(Number.isFinite(amount) ? amount : 0);
 }

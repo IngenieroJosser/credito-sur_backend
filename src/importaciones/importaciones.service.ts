@@ -1,3 +1,4 @@
+import { formatCurrency } from '../utils/date-utils';
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService, TransaccionPrisma } from '../prisma/prisma.service';
@@ -225,7 +226,7 @@ export class ImportacionesService {
         referenceId,
         description:
           `${entra ? 'Entrada' : 'Salida'} de inventario por importación — ` +
-          `${codigo}: ${Math.abs(unidades)} und a $${costoUnitario}`,
+          `${codigo}: ${Math.abs(unidades)} und a ${formatCurrency(costoUnitario)}`,
         createdBy: usuarioId,
         lines: [
           {

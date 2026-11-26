@@ -1,3 +1,4 @@
+import { formatCurrency } from '../utils/date-utils';
 import { Prisma } from '@prisma/client';
 import {
   Injectable,
@@ -320,7 +321,7 @@ export class CajasService {
       // Si hay diferencia, requiere observación
       if (diferencia !== 0 && !observaciones?.trim()) {
         throw new BadRequestException(
-          `El arqueo presenta ${tipoDiferencia === TipoDiferenciaArqueo.FALTANTE ? 'faltante' : 'sobrante'} de $${Math.abs(diferencia)}. Debe proporcionar una observación.`,
+          `El arqueo presenta ${tipoDiferencia === TipoDiferenciaArqueo.FALTANTE ? 'faltante' : 'sobrante'} de ${formatCurrency(Math.abs(diferencia))}. Debe proporcionar una observación.`,
         );
       }
 

@@ -15,7 +15,7 @@ import {
 import { generarExcelInventarioImportable } from '../templates/exports/importables.template';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { LedgerService } from '../accounting/ledger.service';
-import { getBogotaDayKey } from '../utils/date-utils';
+import { formatCurrency, getBogotaDayKey } from '../utils/date-utils';
 
 @Injectable()
 export class InventoryService {
@@ -65,7 +65,7 @@ export class InventoryService {
         referenceId: productoId,
         description:
           `${entra ? 'Entrada' : 'Salida'} de inventario — ${codigo}: ` +
-          `${Math.abs(unidades)} und a $${costoUnitario}`,
+          `${Math.abs(unidades)} und a ${formatCurrency(costoUnitario)}`,
         createdBy: usuarioId,
         lines: [
           {

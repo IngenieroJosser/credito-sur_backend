@@ -1,3 +1,4 @@
+import { formatCurrency } from '../utils/date-utils';
 import {
   Injectable,
   Logger,
@@ -5440,7 +5441,7 @@ export class AccountingService {
       referenceId: `REGULARIZACION_INVENTARIO:${new Date().toISOString().slice(0, 10)}`,
       description:
         `Regularización de inventario: se reconoce la mercancía en bodega ` +
-        `($${valorBodega}) frente al saldo del libro ($${saldoLibro})`,
+        `(${formatCurrency(valorBodega)}) frente al saldo del libro (${formatCurrency(saldoLibro)})`,
       createdBy: userId,
       lines: [
         {
