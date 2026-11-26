@@ -59,8 +59,18 @@ describe('UsersService operational detail', () => {
       journalLine: {
         aggregate: jest.fn(),
       },
+      transaccion: {
+        aggregate: jest.fn(),
+      },
+      arqueoCaja: {
+        count: jest.fn(),
+      },
+      registroVisita: {
+        count: jest.fn(),
+      },
       registroAuditoria: {
         findMany: jest.fn(),
+        count: jest.fn(),
       },
       $transaction: jest.fn(async (callback) =>
         callback({
@@ -170,135 +180,132 @@ describe('UsersService operational detail', () => {
     });
   });
 
-  it('returns accounting metrics for contador users', async () => {
-    const { service, prisma } = buildService();
+  /*
+   * ── La ficha habla de la persona, no del sistema ────────────────────────
+   *
+   * Lo que habia aqui antes afirmaba justo el defecto: para un contador
+   * esperaba `dineroCaja: 900000` salido de `caja.aggregate` SIN filtro de
+   * usuario, o sea el dinero de toda la empresa en la ficha de una persona.
+   * Y para un administrador, `usuariosActivos: 7`, que es un dato del
+   * sistema. Las pruebas no estaban mal escritas: codificaban fielmente un
+   * comportamiento que no servia, y por eso no avisaron.
+   *
+   * Lo que se exige ahora es lo contrario, y se comprueba de la unica forma
+   * que no se puede falsear: mirando el `where` de CADA consulta.
+   */
+  const prepararPersona = (
+    prisma: ReturnType<typeof buildService>['prisma'],
+    rol: RolUsuario,
+  ) => {
     prisma.usuario.findUnique.mockResolvedValue({
-      id: 'contador-1',
-      rol: RolUsuario.CONTADOR,
-      nombres: 'Contador',
-      apellidos: 'Prueba',
+      id: 'p-1',
+      rol,
+      nombres: 'Una',
+      apellidos: 'Persona',
     });
-    prisma.journalLine.aggregate
-      .mockResolvedValueOnce({
-        _sum: { creditAmount: 250000, debitAmount: 10000 },
-      })
-      .mockResolvedValueOnce({
-        _sum: { debitAmount: 45000, creditAmount: 5000 },
-      });
-    prisma.gasto.groupBy.mockResolvedValue([
-      { tipoGasto: 'TRANSPORTE', _sum: { monto: 20000 } },
-    ]);
-    prisma.caja.aggregate.mockResolvedValue({ _sum: { saldoActual: 900000 } });
-    prisma.registroAuditoria.findMany.mockResolvedValue([]);
-
-    const detalle = await service.obtenerDetalleOperativo('contador-1');
-
-    expect(detalle.rol).toBe(RolUsuario.CONTADOR);
-    expect(detalle.metricas.ingresosDia).toBe(240000);
-    expect(detalle.metricas.egresosDia).toBe(40000);
-    expect(detalle.metricas.balanceDia).toBe(200000);
-    expect(detalle.metricas.dineroCaja).toBe(900000);
-    expect(detalle.metricas.gastosCategorias).toEqual([
-      { categoria: 'TRANSPORTE', monto: 20000 },
-    ]);
-  });
-
-  it('returns route scoped metrics for cobrador users', async () => {
-    const { service, prisma } = buildService();
-    prisma.usuario.findUnique.mockResolvedValue({
-      id: 'cobrador-1',
-      rol: RolUsuario.COBRADOR,
-      nombres: 'Cobrador',
-      apellidos: 'Prueba',
-    });
-    prisma.ruta.findMany.mockResolvedValue([
-      { id: 'ruta-1', nombre: 'Ruta Norte', zona: 'Norte' },
-    ]);
-    prisma.pago.aggregate.mockResolvedValue({ _sum: { montoTotal: 425335 } });
-    prisma.cuota.aggregate.mockResolvedValue({
-      _sum: { monto: 990333, montoInteresMora: 0 },
-    });
-    prisma.gasto.aggregate.mockResolvedValue({ _sum: { monto: 20000 } });
-    prisma.caja.aggregate.mockResolvedValue({ _sum: { saldoActual: 500000 } });
-    prisma.prestamo.count.mockResolvedValue(2);
-    prisma.pago.findMany.mockResolvedValueOnce([
-      {
-        id: 'pago-1',
-        fechaPago: new Date('2026-06-04T15:00:00.000Z'),
-        montoTotal: 425335,
-        cliente: { nombres: 'Cliente', apellidos: 'Uno' },
-      },
-    ]);
-    prisma.pago.findMany.mockResolvedValueOnce([]);
-    prisma.registroAuditoria.findMany.mockResolvedValue([
-      {
-        creadoEn: new Date('2026-06-04T15:00:01Z'),
-        accion: 'REGISTRAR_PAGO',
-        entidad: 'Pago',
-        entidadId: 'pago-1',
-      },
-      {
-        creadoEn: new Date('2026-06-04T16:00:00Z'),
-        accion: 'REVERSAR_PAGO',
-        entidad: 'Pago',
-        entidadId: 'pago-1',
-      },
-    ]);
-
-    const detalle = await service.obtenerDetalleOperativo('cobrador-1');
-
-    expect(detalle.rol).toBe(RolUsuario.COBRADOR);
-    expect(detalle.metricas.rutaNombre).toBe('Ruta Norte');
-    expect(detalle.metricas.recaudoDia).toBe(425335);
-    expect(detalle.metricas.metaDiaria).toBe(990333);
-    expect(detalle.metricas.rutasActivas).toBe(1);
-    expect(detalle.metricas.enMora).toBe(2);
-    expect(detalle.metricas.gastosHoy).toBe(20000);
-    expect(detalle.metricas.actividadReciente[0].time).toBe(
-      '2026-06-04T16:00:00.000Z',
-    );
-    expect(
-      detalle.metricas.actividadReciente.map((evento) => evento.action),
-    ).toEqual(['Reversó un pago', 'Registró un pago']);
-  });
-
-  it.each([
-    [RolUsuario.COORDINADOR, 'coordinadorId'],
-    [RolUsuario.SUPERVISOR, 'supervisorId'],
-  ])('limita las rutas del %s a sus asignaciones', async (rol, campo) => {
-    const { service, prisma } = buildService();
-    prisma.usuario.findUnique.mockResolvedValue({ id: 'u', rol });
-    prisma.ruta.findMany.mockResolvedValue([]);
-    prisma.ruta.count.mockResolvedValue(0);
-    prisma.registroAuditoria.findMany.mockResolvedValue([]);
-    const detalle = await service.obtenerDetalleOperativo('u');
-    expect(detalle.metricas.rutasTotal).toBe(0);
-    expect(prisma.ruta.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { [campo]: 'u', eliminadoEn: null },
-      }),
-    );
-  });
-
-  it('separa los créditos de artículo y sus iniciales en punto de venta', async () => {
-    const { service, prisma } = buildService();
-    prisma.usuario.findUnique.mockResolvedValue({
-      id: 'pv',
-      rol: RolUsuario.PUNTO_DE_VENTA,
+    prisma.pago.aggregate.mockResolvedValue({
+      _count: 4,
+      _sum: { montoTotal: 400000 },
     });
     prisma.prestamo.aggregate.mockResolvedValue({
-      _count: { id: 3 },
-      _sum: { monto: 180000, cuotaInicial: 20000 },
+      _count: 2,
+      _sum: { monto: 2000000 },
     });
-    prisma.cliente.count.mockResolvedValue(2);
+    prisma.cliente.count.mockResolvedValue(1);
+    prisma.gasto.aggregate.mockResolvedValue({
+      _count: 0,
+      _sum: { monto: null },
+    });
+    prisma.transaccion.aggregate.mockResolvedValue({
+      _count: 0,
+      _sum: { monto: null },
+    });
+    prisma.arqueoCaja.count.mockResolvedValue(0);
+    prisma.registroVisita.count.mockResolvedValue(9);
+    prisma.ruta.count.mockResolvedValue(2);
+    prisma.registroAuditoria.count.mockResolvedValue(31);
     prisma.registroAuditoria.findMany.mockResolvedValue([]);
-    const { metricas } = await service.obtenerDetalleOperativo('pv');
-    expect(metricas).toMatchObject({
-      ingresosDia: 180000,
-      recaudoDia: 20000,
-      puntoVenta: { creditosCreados: 3, clientesCreados: 2 },
+  };
+
+  /** Todos los `where` que la ficha le pasa a Prisma, aplanados. */
+  const dondesUsados = (prisma: ReturnType<typeof buildService>['prisma']) => {
+    const llamadas: unknown[] = [];
+    for (const modelo of [
+      prisma.pago.aggregate,
+      prisma.prestamo.aggregate,
+      prisma.cliente.count,
+      prisma.gasto.aggregate,
+      prisma.transaccion.aggregate,
+      prisma.arqueoCaja.count,
+      prisma.registroVisita.count,
+      prisma.ruta.count,
+      prisma.registroAuditoria.count,
+    ]) {
+      for (const [args] of (modelo as jest.Mock).mock.calls) {
+        llamadas.push((args as { where?: unknown })?.where);
+      }
+    }
+    return llamadas;
+  };
+
+  it('cuenta lo que hizo la persona, no lo que paso en el sistema', async () => {
+    const { service, prisma } = buildService();
+    prepararPersona(prisma, RolUsuario.COBRADOR);
+
+    const detalle = await service.obtenerDetalleOperativo('p-1');
+
+    expect(detalle.hizo.pagosRegistrados).toEqual({
+      cantidad: 4,
+      monto: 400000,
     });
-    expect(prisma.prestamo.aggregate).toHaveBeenCalledTimes(1);
+    expect(detalle.hizo.visitasRegistradas.cantidad).toBe(9);
+    expect(detalle.aCargo.rutasTotal).toBe(2);
+  });
+
+  it('NINGUNA consulta de la ficha mira sin filtrar por la persona', async () => {
+    const { service, prisma } = buildService();
+    prepararPersona(prisma, RolUsuario.ADMIN);
+
+    await service.obtenerDetalleOperativo('p-1');
+
+    const dondes = dondesUsados(prisma);
+
+    /*
+     * Piso medido: son nueve contadores mas las dos consultas de rutas. Sin
+     * este minimo, un fallo que dejara la lista vacia haria pasar la
+     * comprobacion de abajo sin haber mirado un solo `where`.
+     */
+    expect(dondes.length).toBeGreaterThanOrEqual(10);
+
+    const sinFiltro = dondes.filter(
+      (donde) => !JSON.stringify(donde ?? {}).includes('p-1'),
+    );
+
+    expect(sinFiltro).toEqual([]);
+  });
+
+  it('un rol sin cifras propias no las enseña en cero', async () => {
+    const { service, prisma } = buildService();
+    prepararPersona(prisma, RolUsuario.CONTADOR);
+    // Este contador no registro ni un gasto ni un movimiento.
+    prisma.pago.aggregate.mockResolvedValue({
+      _count: 0,
+      _sum: { montoTotal: null },
+    });
+    prisma.registroVisita.count.mockResolvedValue(0);
+
+    const detalle = await service.obtenerDetalleOperativo('p-1');
+
+    /*
+     * El contador no sale a cobrar ni a visitar, asi que esas dos no se
+     * pintan. Un «0 pagos registrados» en su ficha se lee como que no
+     * cobro, cuando la verdad es que no es cosa suya.
+     */
+    expect(detalle.cifras).not.toContain('pagosRegistrados');
+    expect(detalle.cifras).not.toContain('visitasRegistradas');
+    // Las suyas si, aunque esten en cero: ahi el cero informa.
+    expect(detalle.cifras).toContain('movimientosDeCaja');
+    expect(detalle.cifras).toContain('arqueosDeCaja');
   });
 
   it('throws when user does not exist', async () => {
@@ -310,29 +317,13 @@ describe('UsersService operational detail', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it('returns real active users count for admin users', async () => {
-    const { service, prisma } = buildService();
-    prisma.usuario.findUnique.mockResolvedValue({
-      id: 'admin-1',
-      rol: RolUsuario.ADMIN,
-      nombres: 'Admin',
-      apellidos: 'Prueba',
-    });
-    prisma.ruta.findMany.mockResolvedValue([]);
-    prisma.ruta.count.mockResolvedValue(0);
-    prisma.journalLine.aggregate
-      .mockResolvedValueOnce({ _sum: { creditAmount: 0, debitAmount: 0 } })
-      .mockResolvedValueOnce({ _sum: { debitAmount: 0, creditAmount: 0 } });
-    prisma.caja.aggregate.mockResolvedValue({ _sum: { saldoActual: 0 } });
-    prisma.gasto.groupBy.mockResolvedValue([]);
-    prisma.usuario.count.mockResolvedValue(7);
-    prisma.registroAuditoria.findMany.mockResolvedValue([]);
-
-    const detalle = await service.obtenerDetalleOperativo('admin-1');
-
-    expect(detalle.metricas.usuariosActivos).toBe(7);
-    expect(detalle.metricas.rutasTotal).toBe(0);
-  });
+  /*
+   * Aqui estaba «returns real active users count for admin users», que
+   * esperaba `usuariosActivos: 7` en la ficha de un administrador. Siete
+   * usuarios activos es un dato del SISTEMA; no dice nada de esa persona.
+   * Lo que se mide ahora de un administrador es lo que aprueba y lo que
+   * crea, y lo cubren las tres pruebas de arriba.
+   */
 
   it('archives users without setting eliminadoEn', async () => {
     const { service, prisma, auditService, gateway } = buildService();

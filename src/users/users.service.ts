@@ -30,6 +30,12 @@ import {
   tipoPorAccion,
   type ClienteDeConsulta,
 } from './actividad-legible';
+import {
+  cifrasQueImportan,
+  type ClienteDeConteo,
+  loQueHizoLaPersona,
+  loQueTieneACargo,
+} from './lo-que-hizo-la-persona';
 
 type UsuarioDetalleMetricas = {
   puntoVenta?: { creditosCreados: number; clientesCreados: number };
@@ -74,6 +80,15 @@ const USUARIO_PUBLIC_SELECT = {
   ultimoIngreso: true,
   eliminadoEn: true,
 } as const;
+
+/**
+ * Cuantos dias mira hacia atras la ficha de un usuario.
+ *
+ * Treinta: suficiente para ver el ritmo de alguien sin que un cobrador que
+ * libro ayer aparezca como que no hace nada, y corto para que la cifra siga
+ * siendo «lo que esta haciendo» y no «lo que hizo en su vida».
+ */
+const DIAS_DE_LA_VENTANA = 30;
 
 @Injectable()
 export class UsersService {
@@ -937,64 +952,44 @@ export class UsersService {
       throw new NotFoundException(`Usuario con ID ${id} no encontrado`);
     }
 
-    const metricas = this.buildMetricasBase();
+    /*
+     * La ficha habla de ESTA persona, no del sistema.
+     *
+     * Aqui habia un reparto por rol en el que admin, superadmin y contador
+     * acababan llamando a `buildMetricasContables()` y `buildMetricasRutas({})`
+     * SIN filtro de usuario: el dinero en caja de toda la empresa, las rutas
+     * activas del sistema y el balance del dia. La pantalla lo tapaba con un
+     * letrero —«Cifras de todo el sistema, no de esta persona»—, que es
+     * admitir que la ficha no servia para lo que se abre.
+     *
+     * Ahora se cuenta lo que esa persona hizo, usando los campos que el
+     * esquema ya guarda para saber quien hizo cada cosa.
+     */
+    const desde = new Date(
+      Date.now() - DIAS_DE_LA_VENTANA * 24 * 60 * 60 * 1000,
+    );
 
-    if (usuario.rol === RolUsuario.COBRADOR) {
-      Object.assign(metricas, await this.buildMetricasCobrador(usuario.id));
-    } else if (usuario.rol === RolUsuario.SUPERVISOR) {
-      Object.assign(
-        metricas,
-        await this.buildMetricasRutas({ supervisorId: usuario.id }),
-      );
-    } else if (usuario.rol === RolUsuario.COORDINADOR) {
-      Object.assign(
-        metricas,
-        await this.buildMetricasRutas({ coordinadorId: usuario.id }),
-      );
-    } else if (usuario.rol === RolUsuario.CONTADOR) {
-      Object.assign(metricas, await this.buildMetricasContables());
-    } else if (usuario.rol === RolUsuario.PUNTO_DE_VENTA) {
-      Object.assign(metricas, await this.buildMetricasPuntoVenta(usuario.id));
-    } else if (
-      usuario.rol === RolUsuario.ADMIN ||
-      usuario.rol === RolUsuario.SUPER_ADMINISTRADOR
-    ) {
-      const [rutas, contable, usuariosActivos] = await Promise.all([
-        this.buildMetricasRutas({}),
-        this.buildMetricasContables(),
-        this.prisma.usuario.count({
-          where: { estado: EstadoUsuario.ACTIVO, eliminadoEn: null },
-        }),
-      ]);
-      Object.assign(metricas, rutas, {
-        dineroCaja: contable.dineroCaja,
-        ingresosDia: contable.ingresosDia,
-        egresosDia: contable.egresosDia,
-        balanceDia: contable.balanceDia,
-        usuariosActivos,
-      });
-    }
-
-    const actividadAuditoria = await this.getActividadReciente(usuario.id);
-    const pagosVistos = new Set<string>();
-    metricas.actividadReciente = [
-      ...actividadAuditoria,
-      ...metricas.actividadReciente,
-    ]
-      .sort((a, b) => Date.parse(b.time) - Date.parse(a.time))
-      .filter(({ pagoRegistradoId }) => {
-        if (!pagoRegistradoId) return true;
-        if (pagosVistos.has(pagoRegistradoId)) return false;
-        pagosVistos.add(pagoRegistradoId);
-        return true;
-      })
-      .slice(0, 20)
-      .map(({ pagoRegistradoId: _idInterno, ...actividad }) => actividad);
+    const [hizo, aCargo, actividadReciente] = await Promise.all([
+      loQueHizoLaPersona(
+        this.prisma as unknown as ClienteDeConteo,
+        usuario.id,
+        desde,
+        DIAS_DE_LA_VENTANA,
+      ),
+      loQueTieneACargo(this.prisma as unknown as ClienteDeConteo, usuario.id),
+      this.getActividadReciente(usuario.id),
+    ]);
 
     return {
       usuarioId: usuario.id,
       rol: usuario.rol,
-      metricas,
+      hizo,
+      aCargo,
+      /** Cuales de esas cifras merecen salir, para no llenar la ficha de ceros. */
+      cifras: cifrasQueImportan(hizo, usuario.rol),
+      actividadReciente: actividadReciente.map(
+        ({ pagoRegistradoId: _idInterno, ...actividad }) => actividad,
+      ),
     };
   }
 
