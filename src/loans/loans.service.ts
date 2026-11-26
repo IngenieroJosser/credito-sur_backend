@@ -20,6 +20,7 @@ import {
   TipoTransaccion,
   TipoAmortizacion,
   Prisma,
+  type Prestamo,
 } from '@prisma/client';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
@@ -50,6 +51,57 @@ import {
   getBogotaStartEndOfDay,
   getBogotaStartEndOfDayFromKey,
 } from '../utils/date-utils';
+
+function mesesDeInteresSimple(plazo: number): number {
+  return Math.max(1, plazo);
+}
+
+const CAMPOS_HISTORIAL_CUOTA = {
+  estado: true,
+  montoPagado: true,
+  montoInteresMora: true,
+  extensionId: true,
+  fechaVencimientoProrroga: true,
+} satisfies Prisma.CuotaSelect;
+
+const ESTADOS_CUOTA_POR_COBRAR: EstadoCuota[] = [
+  EstadoCuota.PENDIENTE,
+  EstadoCuota.PARCIAL,
+  EstadoCuota.VENCIDA,
+];
+
+function cuotaVencidaEn(cuota: {
+  estado: EstadoCuota;
+  fechaVencimiento: Date;
+  fechaVencimientoProrroga: Date | null;
+}, hoyBogota: string): boolean {
+  if (!ESTADOS_CUOTA_POR_COBRAR.includes(cuota.estado)) return false;
+  const vencimiento = new Date(cuota.fechaVencimientoProrroga ?? cuota.fechaVencimiento);
+  return Number.isFinite(vencimiento.getTime()) && vencimiento.toISOString().slice(0, 10) < hoyBogota;
+}
+
+function estadoEfectivoCredito(estado: EstadoPrestamo, cuotasVencidas: number): EstadoPrestamo {
+  return estado === EstadoPrestamo.ACTIVO || estado === EstadoPrestamo.EN_MORA
+    ? (cuotasVencidas > 0 ? EstadoPrestamo.EN_MORA : EstadoPrestamo.ACTIVO)
+    : estado;
+}
+
+function motivoBloqueoPlan(
+  prestamo: Pick<Prestamo, 'estado' | 'totalPagado'>,
+  cuotas: Prisma.CuotaGetPayload<{ select: typeof CAMPOS_HISTORIAL_CUOTA }>[],
+): string | null {
+  if (prestamo.estado === EstadoPrestamo.PAGADO || prestamo.estado === EstadoPrestamo.PERDIDA) {
+    return 'El crédito está cerrado. Solo se pueden editar las observaciones.';
+  }
+  if (Number(prestamo.totalPagado) > 0 || cuotas.some((c) =>
+    Number(c.montoPagado) > 0 || Number(c.montoInteresMora) > 0 ||
+    c.estado === EstadoCuota.PAGADA || c.estado === EstadoCuota.PARCIAL ||
+    c.extensionId || c.fechaVencimientoProrroga,
+  )) {
+    return 'El crédito ya tiene pagos, cargos de mora o prórrogas. Solo se pueden editar las observaciones.';
+  }
+  return null;
+}
 
 /** Cuotas por mes según la frecuencia; los mismos factores que usa createLoan. */
 const CUOTAS_POR_MES_LOANS: Record<string, number> = {
@@ -1468,7 +1520,7 @@ export class LoansService implements OnModuleInit {
       }
       case TipoAmortizacion.INTERES_SIMPLE:
       default: {
-        const mesesInteres = Math.max(1, plazoMeses);
+        const mesesInteres = mesesDeInteresSimple(plazoMeses);
         // Interés truncado, coherente con el reparto de cuotas (floor). La tasa
         // va en centésimas (base entera) para no arrastrar el error de coma
         // flotante de dividir /100 antes de truncar.
@@ -1942,12 +1994,6 @@ export class LoansService implements OnModuleInit {
 
       // Transformar datos para el frontend de forma segura
       const hoyKeyBogota = getBogotaDayKey(new Date());
-      const utcDateKey = (d: Date): string => {
-        const y = d.getUTCFullYear();
-        const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-        const day = String(d.getUTCDate()).padStart(2, '0');
-        return `${y}-${m}-${day}`;
-      };
 
       /*
        * La fecha del ultimo pago de cada credito de esta pagina.
@@ -1992,24 +2038,7 @@ export class LoansService implements OnModuleInit {
           ).length;
           const cuotasTotales = cuotas.length;
 
-          const cuotasVencidasReal = cuotas.filter((c) => {
-            // El arreglo se anota `EstadoCuota[]`: un literal de tres miembros infiere solo
-            // esos tres, y entonces `.includes` rechaza cualquier otro estado del enum.
-            const ESTADOS_QUE_CUENTAN: EstadoCuota[] = [
-              EstadoCuota.PENDIENTE,
-              EstadoCuota.PARCIAL,
-              EstadoCuota.VENCIDA,
-            ];
-            if (!ESTADOS_QUE_CUENTAN.includes(c.estado)) {
-              return false;
-            }
-            const eff = c?.fechaVencimientoProrroga
-              ? new Date(c.fechaVencimientoProrroga)
-              : new Date(c.fechaVencimiento);
-            if (!eff || isNaN(eff.getTime())) return false;
-            const key = utcDateKey(eff);
-            return !!key && key < hoyKeyBogota;
-          });
+          const cuotasVencidasReal = cuotas.filter((c) => cuotaVencidaEn(c, hoyKeyBogota));
 
           const cuotasVencidas = cuotasVencidasReal.length;
 
@@ -2032,42 +2061,7 @@ export class LoansService implements OnModuleInit {
             0,
           );
 
-          /*
-           * La mora se deduce de las cuotas, pero SOLO para un credito que ya
-           * esta vivo.
-           *
-           * Antes la primera condicion pisaba cualquier estado: bastaba una
-           * cuota con fecha pasada para pintar EN_MORA un credito en
-           * PENDIENTE_APROBACION o en BORRADOR. Y eso pasa de verdad, porque el
-           * plan de cuotas se arma al pedirlo: si la solicitud lleva unos dias
-           * sin aprobar, sus primeras cuotas ya tienen fecha vencida aunque no
-           * se haya desembolsado un peso. No hay deuda con la que atrasarse.
-           *
-           * Medido contra la base de desarrollo el 2026-11-18, en UNA sola
-           * respuesta de `GET /loans`: la cabecera decia 41 atrasados, 12
-           * activos y 63 creditos, y la tabla de abajo 45, 16 y 67. Los cuatro
-           * de diferencia estaban en PENDIENTE_APROBACION —tres de un mismo
-           * cliente y uno con 866.645 de saldo— y aparecian en mora en la
-           * pantalla de creditos, mientras el panel y la pantalla de mora
-           * decian 41.
-           *
-           * La regla correcta ya estaba escrita 130 lineas mas arriba, en
-           * `whereStats`, que excluye BORRADOR y PENDIENTE_APROBACION de las
-           * estadisticas de esta misma respuesta. Lo que faltaba era aplicarla
-           * tambien a las filas.
-           *
-           * El credito sin aprobar sigue saliendo en la lista: lo que cambia es
-           * que ahora dice el estado que tiene.
-           */
-          const esCobrable =
-            prestamo.estado === EstadoPrestamo.ACTIVO ||
-            prestamo.estado === EstadoPrestamo.EN_MORA;
-
-          const estado = !esCobrable
-            ? prestamo.estado || EstadoPrestamo.BORRADOR
-            : cuotasVencidas > 0
-              ? EstadoPrestamo.EN_MORA
-              : EstadoPrestamo.ACTIVO;
+          const estado = estadoEfectivoCredito(prestamo.estado, cuotasVencidas);
 
           // Determinar tipo de producto
           let tipoProducto = 'efectivo';
@@ -2465,8 +2459,17 @@ export class LoansService implements OnModuleInit {
       const saldoPendienteNum = Number(prestamo.saldoPendiente) || 0;
       const totalPagadoNum = Number(prestamo.totalPagado) || 0;
 
+      const hoy = getBogotaDayKey(new Date());
+      const cuotasVencidas = cuotasDelPrestamo.filter((c) => cuotaVencidaEn(c, hoy)).length;
+
       return {
         ...prestamo,
+        cuotasVencidas,
+        estadoEfectivo: estadoEfectivoCredito(prestamo.estado, cuotasVencidas),
+        plazoInteresMeses: prestamo.tipoAmortizacion === TipoAmortizacion.INTERES_SIMPLE
+          ? mesesDeInteresSimple(this.recuperarPlazoExacto(prestamo))
+          : null,
+        motivoBloqueoPlan: motivoBloqueoPlan(prestamo, cuotasDelPrestamo),
         montoPrestado,
         montoTotal: montoPrestado + interesTotalNum,
         montoPendiente:
@@ -2850,24 +2853,78 @@ export class LoansService implements OnModuleInit {
     }
   }
 
+  private calcularPlanDeEdicion(prestamo: Prestamo, cambios: UpdateLoanData) {
+    const monto = cambios.monto ?? Number(prestamo.monto);
+    const esArticulo = prestamo.tipoPrestamo === 'ARTICULO';
+    const tasa = esArticulo ? 0 : (cambios.tasaInteres ?? Number(prestamo.tasaInteres));
+    const cantidad = cambios.cantidadCuotas ?? prestamo.cantidadCuotas;
+    const plazo = cambios.plazoMeses ?? this.recuperarPlazoExacto(prestamo);
+    if (monto <= 0 || !Number.isInteger(cantidad) || cantidad < 1 || cantidad > 1000 || plazo <= 0) {
+      throw new BadRequestException('Ingresa un capital y un plazo positivos, con entre 1 y 1.000 cuotas.');
+    }
+
+    const tipo = esArticulo ? TipoAmortizacion.INTERES_SIMPLE
+      : ((cambios.tipoAmortizacion ?? prestamo.tipoAmortizacion) as TipoAmortizacion);
+    const plan = this.calculateInterestAndCuotas(
+      tipo,
+      monto,
+      tasa,
+      cantidad,
+      plazo,
+      (cambios.frecuenciaPago ?? prestamo.frecuenciaPago) as FrecuenciaPago,
+      typeof cambios.fechaInicio === 'string' ? this.parseBogotaDayKey(cambios.fechaInicio)
+        : (cambios.fechaInicio ?? prestamo.fechaInicio),
+      prestamo.fechaPrimerCobro ?? undefined,
+      false,
+    );
+    return {
+      monto,
+      cantidad,
+      plazoInteresMeses: tipo === TipoAmortizacion.INTERES_SIMPLE ? mesesDeInteresSimple(plazo) : null,
+      interesTotal: plan.interesTotal,
+      cuotas: plan.cuotas,
+    };
+  }
+
+  async simularEdicion(id: string, cambios: UpdateLoanData) {
+    const prestamo = await this.prisma.prestamo.findFirst({
+      where: { id, eliminadoEn: null },
+      include: { cuotas: { select: CAMPOS_HISTORIAL_CUOTA } },
+    });
+    if (!prestamo) throw new NotFoundException('Préstamo no encontrado');
+    this.validarVersionEdicion(prestamo, cambios);
+    const bloqueo = motivoBloqueoPlan(prestamo, prestamo.cuotas);
+    if (bloqueo) throw new BadRequestException(bloqueo);
+
+    const { monto, plazoInteresMeses, interesTotal, cuotas } = this.calcularPlanDeEdicion(prestamo, cambios);
+    return {
+      interesTotal,
+      totalFinal: monto + interesTotal,
+      cuotaProyectada: cuotas[0]?.monto ?? null,
+      plazoInteresMeses,
+      cuotas,
+    };
+  }
+
+  private validarVersionEdicion(prestamo: Pick<Prestamo, 'version'>, cambios: UpdateLoanData) {
+    if (cambios.version != null && cambios.version !== prestamo.version) {
+      throw new ConflictException(
+        'El préstamo fue actualizado por otro usuario. Recarga la información antes de guardar.',
+      );
+    }
+  }
+
   async updateLoan(id: string, updateData: UpdateLoanData, userId: string) {
     try {
       const prestamo = await this.prisma.prestamo.findFirst({
         where: { id, eliminadoEn: null },
+        include: { cuotas: { select: CAMPOS_HISTORIAL_CUOTA } },
       });
 
       if (!prestamo) {
         throw new NotFoundException('Préstamo no encontrado');
       }
-
-      if (
-        updateData?.version != null &&
-        Number(updateData.version) !== Number(prestamo.version || 1)
-      ) {
-        throw new ConflictException(
-          'El préstamo fue actualizado por otro usuario. Recarga la información antes de guardar.',
-        );
-      }
+      this.validarVersionEdicion(prestamo, updateData);
 
       const datosAnteriores = {
         monto: prestamo.monto,
@@ -2889,16 +2946,15 @@ export class LoansService implements OnModuleInit {
       if (updateData.tasaInteres !== undefined)
         data.tasaInteres = updateData.tasaInteres;
       if (updateData.plazoMeses !== undefined)
-        data.plazoMeses = updateData.plazoMeses;
+        data.plazoMeses = Math.max(1, Math.round(updateData.plazoMeses));
       if (updateData.cantidadCuotas !== undefined)
         data.cantidadCuotas = updateData.cantidadCuotas;
       if (updateData.frecuenciaPago !== undefined)
         data.frecuenciaPago = updateData.frecuenciaPago;
-      if (updateData.estado !== undefined) {
-        const estadosValidos = Object.values(EstadoPrestamo);
-        if (estadosValidos.includes(updateData.estado)) {
-          data.estado = updateData.estado;
-        }
+      if (updateData.estado !== undefined && updateData.estado !== prestamo.estado) {
+        throw new BadRequestException(
+          'El estado del crédito se actualiza desde Revisiones, los pagos y el vencimiento de las cuotas.',
+        );
       }
       if (updateData.notas !== undefined) data.notas = updateData.notas;
       if (updateData.garantia !== undefined)
@@ -2910,125 +2966,28 @@ export class LoansService implements OnModuleInit {
       if (updateData.tipoAmortizacion !== undefined)
         data.tipoAmortizacion = updateData.tipoAmortizacion;
       if (updateData.fechaInicio !== undefined)
-        data.fechaInicio = new Date(updateData.fechaInicio);
+        data.fechaInicio = typeof updateData.fechaInicio === 'string'
+          ? this.parseBogotaDayKey(updateData.fechaInicio) : updateData.fechaInicio;
 
-      const newMonto =
-        data.monto === undefined ? Number(prestamo.monto) : Number(data.monto);
-      const newTasa =
-        data.tasaInteres === undefined
-          ? Number(prestamo.tasaInteres)
-          : Number(data.tasaInteres);
-      // `plazoMeses` se guarda redondeado porque la columna es entera, pero el
-      // interés se calculó con el plazo exacto (45 cuotas diarias = 1,5 meses).
-      // Al recalcular hay que recuperar ese exacto, o editar cualquier campo del
-      // crédito le cambiaría el interés sin que nadie lo pidiera.
-      const newPlazo =
-        data.plazoMeses !== undefined
-          ? Number(data.plazoMeses)
-          : this.recuperarPlazoExacto(prestamo);
-      const newFechaInicio =
-        data.fechaInicio === undefined
-          ? prestamo.fechaInicio
-          : (data.fechaInicio as Date);
-      const newInteresTotal = (newMonto * newTasa * newPlazo) / 100;
-
-      // Lo que la transaccion de mas abajo tendra que hacer con el calendario.
       let rehacerCalendario = false;
       let cuotasARehacer: Prisma.CuotaCreateManyInput[] = [];
+      const cambiaPlan = data.cantidadCuotas !== undefined || data.monto !== undefined ||
+        data.tasaInteres !== undefined || data.frecuenciaPago !== undefined ||
+        data.tipoAmortizacion !== undefined || data.plazoMeses !== undefined || data.fechaInicio !== undefined;
 
-      // Regenerate cuotas if cantidadCuotas, monto, tasaInteres, frecuenciaPago, tipoAmortizacion, plazoMeses or fechaInicio changed
-      const shouldRegenerateCuotas =
-        data.cantidadCuotas !== undefined ||
-        data.monto !== undefined ||
-        data.tasaInteres !== undefined ||
-        data.frecuenciaPago !== undefined ||
-        data.tipoAmortizacion !== undefined ||
-        data.plazoMeses !== undefined ||
-        data.fechaInicio !== undefined;
+      if (cambiaPlan || data.cuotaInicial !== undefined || data.tasaInteresMora !== undefined) {
+        const bloqueo = motivoBloqueoPlan(prestamo, prestamo.cuotas);
+        if (bloqueo) throw new BadRequestException(bloqueo);
+      }
 
-      if (shouldRegenerateCuotas) {
-        const cantidadCuotas =
-          data.cantidadCuotas !== undefined
-            ? Number(data.cantidadCuotas)
-            : (prestamo.cantidadCuotas ?? 0);
-        const frecuenciaPago = (
-          data.frecuenciaPago !== undefined
-            ? data.frecuenciaPago
-            : prestamo.frecuenciaPago
-        ) as FrecuenciaPago;
-        const tipoAmortizacion = (
-          data.tipoAmortizacion !== undefined
-            ? data.tipoAmortizacion
-            : prestamo.tipoAmortizacion || TipoAmortizacion.INTERES_PLANO
-        ) as TipoAmortizacion;
-
-        /*
-         * El calendario se rehace DENTRO de una transaccion, mas abajo.
-         *
-         * Aqui estaba el `deleteMany` suelto, y entre el y el `createMany` solo
-         * hay calculo: si algo fallaba en medio —o entre el create y el update
-         * del prestamo—, el credito se quedaba con CERO cuotas y el borrado ya
-         * estaba confirmado. Un credito sin cuotas no tiene meta, no entra en
-         * ninguna jornada y no hay nada que cobrarle: desaparece de la
-         * operacion sin que nadie se entere.
-         *
-         * Se llega desde `EditarPrestamoModal` -> `PATCH /loans/:id`.
-         */
+      if (cambiaPlan) {
         rehacerCalendario = true;
-
-        // Generate new cuotas using helper
-        const { cuotas: planCuotas, interesTotal: planInteresTotal } =
-          this.calculateInterestAndCuotas(
-            tipoAmortizacion,
-            newMonto,
-            newTasa,
-            cantidadCuotas,
-            newPlazo,
-            frecuenciaPago,
-            newFechaInicio,
-            // La columna es nullable y el parámetro opcional. Dentro solo se
-            // comprueba por verdad, asi que null y undefined dan lo mismo.
-            prestamo.fechaPrimerCobro ?? undefined,
-            false, // esContado
-          );
-
-        // Homogeneizar vencimiento del préstamo con el cronograma real
-        if (planCuotas.length > 0) {
-          data.fechaFin = new Date(
-            planCuotas[planCuotas.length - 1].fechaVencimiento,
-          );
-        }
-
-        const cuotasData = planCuotas.map((c) => ({
-          numeroCuota: c.numeroCuota,
-          fechaVencimiento: c.fechaVencimiento,
-          monto: c.monto,
-          montoCapital: c.montoCapital,
-          montoInteres: c.montoInteres,
-          estado: c.estado,
-          montoPagado: c.montoPagado,
-          prestamoId: id,
-        }));
-
-        cuotasARehacer = cuotasData;
-
-        data.cantidadCuotas = cantidadCuotas;
-        data.interesTotal = planInteresTotal;
-        data.saldoPendiente =
-          newMonto + planInteresTotal - Number(prestamo.totalPagado || 0);
-      } else {
-        const shouldRecalculateFinancing =
-          data.monto !== undefined ||
-          data.tasaInteres !== undefined ||
-          data.plazoMeses !== undefined ||
-          data.fechaInicio !== undefined;
-
-        if (shouldRecalculateFinancing) {
-          const roundedInteres = Math.round(newInteresTotal);
-          data.interesTotal = roundedInteres;
-          data.saldoPendiente =
-            newMonto + roundedInteres - Number(prestamo.totalPagado || 0);
-        }
+        const plan = this.calcularPlanDeEdicion(prestamo, updateData);
+        cuotasARehacer = plan.cuotas.map((cuota) => ({ ...cuota, prestamoId: id }));
+        data.fechaFin = plan.cuotas.at(-1)?.fechaVencimiento;
+        data.cantidadCuotas = plan.cantidad;
+        data.interesTotal = plan.interesTotal;
+        data.saldoPendiente = plan.monto + plan.interesTotal - Number(prestamo.totalPagado || 0);
       }
 
       /*
@@ -3038,14 +2997,26 @@ export class LoansService implements OnModuleInit {
       const prestamoActualizado = await this.prisma.$transaction(
         async (tx) => {
           if (rehacerCalendario) {
-            await tx.cuota.deleteMany({ where: { prestamoId: id } });
+            const borradas = await tx.cuota.deleteMany({
+              where: {
+                prestamoId: id,
+                estado: { notIn: [EstadoCuota.PAGADA, EstadoCuota.PARCIAL] },
+                montoPagado: 0,
+                montoInteresMora: 0,
+                extensionId: null,
+                fechaVencimientoProrroga: null,
+              },
+            });
+            if (borradas.count !== prestamo.cuotas.length) {
+              throw new ConflictException('El plan cambió. Recarga el crédito antes de guardar.');
+            }
             if (cuotasARehacer.length > 0) {
               await tx.cuota.createMany({ data: cuotasARehacer });
             }
           }
 
           return tx.prestamo.update({
-            where: { id },
+            where: { id, version: prestamo.version, eliminadoEn: null },
             data,
             include: {
               cliente: true,
@@ -3135,83 +3106,6 @@ export class LoansService implements OnModuleInit {
         }
       }
 
-      try {
-        const estadoAnterior = prestamo.estado;
-        const estadoNuevo = prestamoActualizado.estado;
-        const cambioEstado =
-          data.estado !== undefined && estadoAnterior !== estadoNuevo;
-        if (cambioEstado) {
-          const clienteNombre =
-            `${prestamoActualizado.cliente?.nombres || ''} ${prestamoActualizado.cliente?.apellidos || ''}`.trim();
-          const tituloBase = `Crédito ${prestamoActualizado.numeroPrestamo || ''} actualizado`;
-          const msgBase = `El crédito ${prestamoActualizado.numeroPrestamo || ''} del cliente ${clienteNombre || ''} cambió de ${estadoAnterior} a ${estadoNuevo}.`;
-
-          let actorNombre = '';
-          try {
-            const usuario = await this.prisma.usuario.findUnique({
-              where: { id: userId },
-              select: { nombres: true, apellidos: true },
-            });
-            if (usuario) {
-              actorNombre =
-                `${usuario.nombres || ''} ${usuario.apellidos || ''}`.trim();
-            }
-          } catch (error) {
-            // No se corta la operacion principal por esto, pero se deja
-            // registrado: en silencio nadie se entera de que fallo.
-            this.logger.warn('No se pudo resolver el nombre del actor', error);
-          }
-
-          const metadataBase = {
-            estadoAnterior,
-            estadoNuevo,
-            solicitadoPor: actorNombre || undefined,
-            solicitadoPorId: userId,
-            cliente: clienteNombre || undefined,
-            numeroPrestamo: prestamoActualizado.numeroPrestamo || undefined,
-          };
-
-          await this.notificacionesService.create({
-            usuarioId: userId,
-            titulo: tituloBase,
-            mensaje: msgBase,
-            tipo: 'PRESTAMO',
-            entidad: 'Prestamo',
-            entidadId: prestamoActualizado.id,
-            metadata: metadataBase,
-          });
-
-          if (estadoNuevo === EstadoPrestamo.PENDIENTE_APROBACION) {
-            await this.notificacionesService.notifyApprovers({
-              titulo: `Crédito marcado como PENDIENTE`,
-              mensaje: msgBase,
-              tipo: 'PRESTAMO',
-              entidad: 'Prestamo',
-              entidadId: prestamoActualizado.id,
-              metadata: metadataBase,
-            });
-          }
-
-          if (estadoNuevo === EstadoPrestamo.ACTIVO) {
-            if (prestamo.creadoPorId && prestamo.creadoPorId !== userId) {
-              await this.notificacionesService.create({
-                usuarioId: prestamo.creadoPorId,
-                titulo: `Crédito activado`,
-                mensaje: msgBase,
-                tipo: 'PRESTAMO',
-                entidad: 'Prestamo',
-                entidadId: prestamoActualizado.id,
-                metadata: metadataBase,
-              });
-            }
-          }
-        }
-      } catch (e) {
-        this.logger.error(
-          'Error enviando notificaciones de cambio de estado:',
-          e,
-        );
-      }
 
       // Auditoría
       await this.auditService.create({
@@ -3226,6 +3120,9 @@ export class LoansService implements OnModuleInit {
       this.logger.log(`Loan ${id} updated by user ${userId}`);
       return prestamoActualizado;
     } catch (error) {
+      if (codigoDeError(error) === 'P2025') {
+        throw new ConflictException('El crédito cambió. Recarga la información antes de guardar.');
+      }
       this.logger.error(`Error updating loan ${id}:`, error);
       throw error;
     }

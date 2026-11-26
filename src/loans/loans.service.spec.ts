@@ -2,6 +2,8 @@ import { BadRequestException, ConflictException } from '@nestjs/common';
 import {
   EstadoAprobacion,
   FrecuenciaPago,
+  EstadoPrestamo,
+  EstadoCuota,
   RolUsuario,
   TipoAmortizacion,
   TipoTransaccion,
@@ -2034,6 +2036,96 @@ describe('LoansService accounting impact for approved loans', () => {
       select: { id: true },
     });
     expect(prisma.asignacionRuta.create).not.toHaveBeenCalled();
+  });
+
+  describe('edición del crédito', () => {
+    const credito = {
+      id: 'prestamo-1',
+      version: 4,
+      monto: 900000,
+      interesTotal: 270000,
+      totalPagado: 0,
+      tasaInteres: 20,
+      cantidadCuotas: 6,
+      plazoMeses: 2,
+      frecuenciaPago: FrecuenciaPago.SEMANAL,
+      tipoPrestamo: 'EFECTIVO',
+      tipoAmortizacion: TipoAmortizacion.INTERES_SIMPLE,
+      estado: EstadoPrestamo.EN_MORA,
+      fechaInicio: new Date('2026-08-01T05:00:00Z'),
+      fechaPrimerCobro: new Date('2026-08-08T05:00:00Z'),
+      cuotas: [],
+    };
+
+    function fixture(cuotas: object[] = []) {
+      const prisma = {
+        prestamo: {
+          findFirst: jest.fn().mockResolvedValue({ ...credito, cuotas }),
+          update: jest.fn().mockResolvedValue(credito),
+        },
+        cuota: {
+          deleteMany: jest.fn().mockResolvedValue({ count: cuotas.length }),
+          createMany: jest.fn().mockResolvedValue({ count: 6 }),
+        },
+      };
+      return { prisma, service: makeService(prisma) };
+    }
+
+    it('respeta el plazo exacto y el primer cobro, y guarda la misma proyección', async () => {
+      const { prisma, service } = fixture();
+      const cambios = { tasaInteres: 18, version: 4 };
+      const plan = await service.simularEdicion(credito.id, cambios);
+
+      expect(plan).toMatchObject({
+        interesTotal: 243000,
+        totalFinal: 1143000,
+        cuotaProyectada: 190500,
+        plazoInteresMeses: 1.5,
+      });
+      expect(plan.cuotas[0].fechaVencimiento.toISOString().slice(0, 10)).toBe('2026-08-08');
+      expect(prisma.prestamo.update).not.toHaveBeenCalled();
+
+      await service.updateLoan(credito.id, cambios, 'admin-1');
+
+      expect(prisma.cuota.createMany).toHaveBeenCalledWith({
+        data: plan.cuotas.map((cuota) => ({ ...cuota, prestamoId: credito.id })),
+      });
+      expect(prisma.prestamo.update).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: credito.id, version: 4, eliminadoEn: null },
+        data: expect.objectContaining({ interesTotal: 243000, saldoPendiente: 1143000 }),
+      }));
+      expect(prisma.prestamo.update.mock.calls[0][0].data).not.toHaveProperty('estado');
+    });
+
+    it.each([EstadoPrestamo.ACTIVO, EstadoPrestamo.PENDIENTE_APROBACION])(
+      'no cambia EN_MORA a %s desde el editor',
+      async (estado) => {
+        const { prisma, service } = fixture();
+        await expect(service.updateLoan(credito.id, { estado }, 'admin-1')).rejects.toBeInstanceOf(BadRequestException);
+        expect(prisma.prestamo.update).not.toHaveBeenCalled();
+        expect(prisma.cuota.deleteMany).not.toHaveBeenCalled();
+      },
+    );
+
+    it('permite observaciones sin reemplazar cuotas que ya tienen cobros', async () => {
+      const { prisma, service } = fixture([{ estado: EstadoCuota.PARCIAL, montoPagado: 12000 }]);
+      const cambios = { tasaInteres: 18, version: 4 };
+      await expect(service.simularEdicion(credito.id, cambios)).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.updateLoan(credito.id, cambios, 'admin-1')).rejects.toBeInstanceOf(BadRequestException);
+      await service.updateLoan(credito.id, { notas: 'Nota revisada', version: 4 }, 'admin-1');
+      expect(prisma.cuota.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.prestamo.update.mock.calls[0][0].data).toEqual({
+        notas: 'Nota revisada', estadoSincronizacion: 'PENDIENTE', version: { increment: 1 },
+      });
+    });
+
+    it('rechaza guardar si cambió una cuota después de leer el calendario', async () => {
+      const { prisma, service } = fixture([{ estado: EstadoCuota.PENDIENTE }]);
+      prisma.cuota.deleteMany.mockResolvedValueOnce({ count: 0 });
+      await expect(service.updateLoan(credito.id, { tasaInteres: 18 }, 'admin-1')).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.cuota.createMany).not.toHaveBeenCalled();
+      expect(prisma.prestamo.update).not.toHaveBeenCalled();
+    });
   });
 
   it('rechaza edición de préstamo si la versión enviada está vieja', async () => {

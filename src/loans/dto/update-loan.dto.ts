@@ -144,8 +144,8 @@ export class UpdateLoanDto {
   frecuenciaPago?: FrecuenciaPago;
 
   /**
-   * El servicio ya comprueba que sea un miembro del enum antes de escribirlo
-   * (`estadosValidos.includes(...)`); aqui se rechaza de entrada, con un mensaje claro.
+   * Compatibilidad con clientes anteriores. El servicio rechaza cambiar el
+   * estado desde la edición; Revisiones y el cobro tienen sus propios flujos.
    */
   @ApiProperty({ required: false, enum: EstadoPrestamo })
   @IsEnum(EstadoPrestamo)

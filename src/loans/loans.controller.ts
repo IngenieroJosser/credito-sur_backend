@@ -722,6 +722,14 @@ export class LoansController {
     return this.loansService.deleteLoan(id, userId);
   }
 
+  @Post(':id/simular-edicion')
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.COORDINADOR, RolUsuario.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Previsualizar cambios en las cuotas de un crédito existente' })
+  async simularEdicion(@Param('id') id: string, @Body() cambios: UpdateLoanDto) {
+    return this.loansService.simularEdicion(id, cambios);
+  }
+
   @Patch(':id')
   @Roles(
     RolUsuario.SUPER_ADMINISTRADOR,
