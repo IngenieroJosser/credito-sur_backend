@@ -39,7 +39,7 @@ import {
   getBogotaStartEndOfDayFromKey,
 } from '../utils/date-utils';
 import { LedgerService } from '../accounting/ledger.service';
-import { resolverOrigenDeGestion } from './origen-de-gestion';
+import { esRolDeOficina, resolverOrigenDeGestion } from './origen-de-gestion';
 import { MoraService } from '../loans/mora.service';
 import { createHash, randomUUID } from 'crypto';
 
@@ -918,6 +918,13 @@ export class PaymentsService {
       );
     }
 
+    const esCobroEnOficina =
+      esRolDeOficina(rolActor) &&
+      paymentDto.metodoPago === MetodoPago.EFECTIVO &&
+      paymentDto.origenGestion !== 'CIERRE_PENDIENTE';
+    const rutaDelCredito = esCobroEnOficina ? prestamo.rutaId : null;
+    const rutaParaAsignacion = rutaDelCredito || paymentDto.rutaId;
+
     if (rolActor === RolUsuario.SUPERVISOR && actor?.id) {
       cobradorIdVal = actor.id;
     } else if (!this.isCollector(actor)) {
@@ -925,7 +932,7 @@ export class PaymentsService {
         where: {
           clienteId: prestamo.clienteId,
           activa: true,
-          ...(paymentDto.rutaId ? { rutaId: paymentDto.rutaId } : {}),
+          ...(rutaParaAsignacion ? { rutaId: rutaParaAsignacion } : {}),
         },
         select: {
           cobradorId: true,
@@ -1236,6 +1243,12 @@ export class PaymentsService {
           );
         }
 
+        if (esCobroEnOficina && prestamoActual.rutaId !== prestamo.rutaId) {
+          throw new ConflictException(
+            'La ruta del crédito cambió. Vuelva a consultar el crédito antes de registrar el pago.',
+          );
+        }
+
         this.validatePagoIntentAgainstCurrentCuota(paymentDto, prestamoActual);
 
         const {
@@ -1271,7 +1284,7 @@ export class PaymentsService {
             : {
                 clienteId,
                 activa: true,
-                ...(paymentDto.rutaId ? { rutaId: paymentDto.rutaId } : {}),
+                ...(rutaParaAsignacion ? { rutaId: rutaParaAsignacion } : {}),
                 ...(rolActor === RolUsuario.SUPERVISOR && actor?.id
                   ? { ruta: { supervisorId: actor.id, eliminadoEn: null } }
                   : {}),

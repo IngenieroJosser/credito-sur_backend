@@ -1133,6 +1133,35 @@ describe('PaymentsService', () => {
       );
     });
 
+    it('imputa el efectivo de oficina a la ruta del crédito elegido', async () => {
+      const prestamo = { ...PRESTAMO_ACTIVO, rutaId: 'ruta-1' };
+      prisma.prestamo.findFirst.mockResolvedValue(prestamo);
+      prisma._txMock.prestamo.findFirst.mockResolvedValue(prestamo);
+      await service.create(
+        {
+          prestamoId: 'prestamo-1',
+          clienteId: 'cliente-1',
+          rutaId: 'otra-ruta-del-cliente',
+          montoTotal: 110000,
+          metodoPago: MetodoPago.EFECTIVO,
+        },
+        undefined,
+        { id: 'coord-1', rol: RolUsuario.COORDINADOR },
+      );
+
+      for (const buscar of [prisma.asignacionRuta.findFirst, prisma._txMock.asignacionRuta.findFirst]) {
+        expect(buscar).toHaveBeenCalledWith(expect.objectContaining({
+          where: expect.objectContaining({ rutaId: 'ruta-1', clienteId: 'cliente-1', activa: true }),
+        }));
+      }
+      expect(prisma._txMock.caja.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ codigo: 'CAJA-OFICINA' }),
+      }));
+      expect(prisma._txMock.pago.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ origenGestion: 'OFICINA', rutaId: 'ruta-1' }),
+      }));
+    });
+
     it('ignora el cobradorId del body y atribuye el pago al supervisor que salió a cobrar', async () => {
       await service.create(
         {
