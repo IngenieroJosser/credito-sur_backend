@@ -136,6 +136,28 @@ export class LoansController {
     description: 'Límite por página (máximo 100)',
     example: 8,
   })
+  /**
+   * `clienteId` filtra por el cliente DE VERDAD, no por texto.
+   *
+   * La pantalla de cobrar en la oficina pedia los creditos de alguien
+   * mandando su UUID en `search`, y `search` compara contra el numero de
+   * prestamo, el nombre, el apellido, la cedula y el producto: nunca contra
+   * el id. Asi que no encontraba nada NUNCA y la oficina leia «No hay un
+   * credito al que abonar» delante de un cliente con cuatro creditos en mora.
+   */
+  @ApiQuery({
+    name: 'clienteId',
+    required: false,
+    type: String,
+    description: 'Solo los creditos de ese cliente',
+  })
+  @ApiQuery({
+    name: 'desde',
+    required: false,
+    type: String,
+    description:
+      'Solo lo que cambio despues de esta fecha ISO. Incluye los borrados, para que la copia sin conexion los quite.',
+  })
   async getAllLoans(
     @Query('estado', new DefaultValuePipe('todos')) estado: string,
     @Query('ruta', new DefaultValuePipe('todas')) ruta: string,
@@ -144,6 +166,8 @@ export class LoansController {
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(8), ParseIntPipe) limit: number,
     @Request() req: RequestConUsuario,
+    @Query('clienteId') clienteId?: string,
+    @Query('desde') desde?: string,
   ) {
     // Validar límite máximo
     const safeLimit = Math.min(limit, 100); // Máximo 100 por página
@@ -156,6 +180,8 @@ export class LoansController {
         tipo,
         page,
         limit: safeLimit,
+        clienteId,
+        desde,
       },
       req.user,
     );

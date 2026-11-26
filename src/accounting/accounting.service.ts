@@ -732,6 +732,15 @@ export class AccountingService {
       saldoMinimo: Number(caja.saldoMinimo) || 0,
       saldoMaximo: Number(caja.saldoMaximo) || 0,
       estado: caja.activa ? 'ABIERTA' : 'CERRADA',
+      /*
+       * Cuando se ABRIO la caja, que no es lo mismo que cuando se toco por
+       * ultima vez.
+       *
+       * No se mandaba, asi que el detalle ponia bajo «Fecha Apertura» el
+       * valor de `ultimaActualizacion`: una caja abierta en agosto y usada
+       * esta mañana decia que se abrio esta mañana.
+       */
+      creadaEn: formatBogotaOffsetIso(caja.creadoEn),
       ultimaActualizacion: formatBogotaOffsetIso(caja.actualizadoEn),
       transacciones: caja.transacciones,
     };

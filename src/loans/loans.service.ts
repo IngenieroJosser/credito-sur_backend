@@ -1597,6 +1597,18 @@ export class LoansService implements OnModuleInit {
       tipo?: string;
       page?: number;
       limit?: number;
+      /** Solo los creditos de este cliente. Es un id, no texto a buscar. */
+      clienteId?: string;
+      /**
+       * Solo lo que cambio DESPUES de esta fecha (ISO).
+       *
+       * Es la sincronizacion incremental: la copia sin conexion guarda la
+       * hora de su ultima bajada y, en la siguiente, pide solo lo que se
+       * movio. Con `desde` se incluyen ademas los BORRADOS -las filas con
+       * `eliminadoEn`- porque si no, lo que se borro en el servidor se
+       * quedaria vivo para siempre en el telefono.
+       */
+      desde?: string;
     },
     actor?: { id?: string; rol?: RolUsuario } | null,
   ) {
@@ -1610,6 +1622,8 @@ export class LoansService implements OnModuleInit {
         tipo = 'todos',
         page = 1,
         limit: limitRaw = 8,
+        clienteId,
+        desde,
       } = filters;
       // Tope al tamaño de página: sin esto, ?limit=9999999 pedía millones de
       // filas (denegación de servicio y volcado masivo).
@@ -1622,6 +1636,21 @@ export class LoansService implements OnModuleInit {
         eliminadoEn: null, // Solo préstamos no eliminados
         ...this.collectorLoanScope(actor),
       };
+
+      /*
+       * Sincronizacion incremental.
+       *
+       * Con `desde` se devuelve solo lo que cambio despues de esa hora, y se
+       * LEVANTA el filtro de borrados: un credito que se elimino en el
+       * servidor tiene que llegar al telefono para que lo quite de su copia.
+       * Sin esto, la bajada sin conexion traia la cartera entera cada vez y
+       * lo borrado seguia vivo en el aparato.
+       */
+      const desdeFecha = desde ? new Date(desde) : null;
+      if (desdeFecha && !Number.isNaN(desdeFecha.getTime())) {
+        delete (where as Record<string, unknown>).eliminadoEn;
+        (where as Record<string, unknown>).actualizadoEn = { gt: desdeFecha };
+      }
 
       // Punto de venta solo maneja créditos de artículo: sin esto veía el
       // libro de créditos completo (todos los de dinero incluidos).
@@ -1663,6 +1692,20 @@ export class LoansService implements OnModuleInit {
         (where as Record<string, unknown>).rutaId = null;
       } else if (ruta !== 'todas' && ruta !== '') {
         (where as Record<string, unknown>).rutaId = ruta;
+      }
+
+      /*
+       * Filtro por cliente, por id.
+       *
+       * Antes no existia, y la pantalla de cobrar en la oficina intentaba
+       * suplirlo mandando el UUID del cliente por `search`. `search` compara
+       * contra el numero de prestamo, el nombre, el apellido, la cedula y el
+       * nombre del producto; un UUID no coincide con ninguno, asi que la
+       * respuesta venia vacia SIEMPRE y la oficina leia «No hay un credito al
+       * que abonar» con el cliente delante.
+       */
+      if (clienteId && clienteId.trim() !== '') {
+        where.clienteId = clienteId.trim();
       }
 
       // Filtro por búsqueda
@@ -2062,6 +2105,21 @@ export class LoansService implements OnModuleInit {
             id: prestamo.id || '',
             numeroPrestamo: prestamo.numeroPrestamo || 'N/A',
             clienteId: prestamo.clienteId || '',
+            /*
+             * Si esta borrado, y cuando se toco por ultima vez.
+             *
+             * Los necesita la copia sin conexion: con `desde` la respuesta
+             * incluye los borrados, y el telefono tiene que poder
+             * distinguirlos para quitarlos de su copia en vez de guardarlos
+             * como si siguieran vivos. `actualizadoEn` es la marca con la que
+             * pedira la proxima tanda.
+             */
+            eliminadoEn: prestamo.eliminadoEn
+              ? prestamo.eliminadoEn.toISOString()
+              : null,
+            actualizadoEn: prestamo.actualizadoEn
+              ? prestamo.actualizadoEn.toISOString()
+              : null,
             cliente:
               `${prestamo.cliente?.nombres || ''} ${prestamo.cliente?.apellidos || ''}`.trim(),
             clienteDni: prestamo.cliente.dni || '',
