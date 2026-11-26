@@ -15,7 +15,11 @@ import { calcularDiasMoraCliente } from './dias-mora-cliente';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
 import { ConfiguracionService } from '../configuracion/configuracion.service';
-import { NivelRiesgo, RolUsuario } from '@prisma/client';
+import {
+  EstadoAprobacion,
+  NivelRiesgo,
+  RolUsuario,
+} from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { Prisma } from '@prisma/client';
 import { generarPDFClientes } from '../templates/exports/clientes.template';
@@ -417,15 +421,70 @@ export class ClientsService {
     const cliente = await this.prisma.cliente.findUnique({ where: { id } });
     if (!cliente) throw new NotFoundException('Cliente no encontrado');
 
-    const clienteEliminado = await this.prisma.cliente.update({
-      where: { id },
-      data: { eliminadoEn: new Date() },
-    });
+    // El cliente y sus créditos se archivan juntos, en la misma transacción.
+    // Antes solo se marcaba el cliente: sus créditos seguían ACTIVOS y aparecían
+    // en cartera, mora y cuentas vencidas como deudas de un cliente que ya no
+    // existe en el sistema.
+    //
+    // El cliente y sus créditos comparten la MISMA marca de tiempo de archivado.
+    // De ahí sale luego la restauración: solo vuelven los créditos que se
+    // archivaron con el cliente, no los que se archivaron por separado antes.
+    const momentoArchivado = new Date();
+
+    const { clienteEliminado, idsCreditos } = await this.prisma.$transaction(
+      async (tx) => {
+        const creditosDelCliente = await tx.prestamo.findMany({
+          where: { clienteId: id, eliminadoEn: null },
+          select: { id: true },
+        });
+        const ids = creditosDelCliente.map((p) => p.id);
+
+        const clienteActualizado = await tx.cliente.update({
+          where: { id },
+          data: { eliminadoEn: momentoArchivado },
+        });
+
+        if (ids.length > 0) {
+          await tx.prestamo.updateMany({
+            where: { id: { in: ids } },
+            data: {
+              // No se toca `estado`: un crédito que estaba en mora SIGUE en mora.
+              // Marcarlo aquí como PERDIDA perdía ese dato y, al restaurar el
+              // cliente, el crédito volvía como ACTIVO escondiendo la mora.
+              // Para quedar excluido basta `eliminadoEn`.
+              eliminadoEn: momentoArchivado,
+              estadoSincronizacion: 'PENDIENTE',
+            },
+          });
+
+          // Cerrar las aprobaciones pendientes de esos créditos: si quedaran
+          // PENDIENTES, aprobarlas reviviría un crédito archivado.
+          await tx.aprobacion.updateMany({
+            where: {
+              referenciaId: { in: ids },
+              estado: EstadoAprobacion.PENDIENTE,
+            },
+            data: {
+              estado: EstadoAprobacion.RECHAZADO,
+              comentarios: 'Crédito archivado junto con su cliente',
+              revisadoEn: new Date(),
+            },
+          });
+        }
+
+        return { clienteEliminado: clienteActualizado, idsCreditos: ids };
+      },
+    );
 
     this.notificacionesGateway.broadcastClientesActualizados({
       accion: 'ELIMINAR',
       clienteId: id,
     });
+    if (idsCreditos.length > 0) {
+      this.notificacionesGateway.broadcastPrestamosActualizados({
+        accion: 'ELIMINAR',
+      });
+    }
 
     // Registrar en auditoría
     await this.auditService.create({
@@ -438,7 +497,10 @@ export class ClientsService {
         apellidos: cliente.apellidos,
         dni: cliente.dni,
       },
-      datosNuevos: { eliminadoEn: clienteEliminado.eliminadoEn },
+      datosNuevos: {
+        eliminadoEn: clienteEliminado.eliminadoEn,
+        creditosArchivados: idsCreditos.length,
+      },
     });
 
     return clienteEliminado;
@@ -448,15 +510,54 @@ export class ClientsService {
     const cliente = await this.prisma.cliente.findUnique({ where: { id } });
     if (!cliente) throw new NotFoundException('Cliente no encontrado');
 
-    const clienteRestaurado = await this.prisma.cliente.update({
-      where: { id },
-      data: { eliminadoEn: null },
-    });
+    // La marca de tiempo de archivado identifica a los créditos que se
+    // archivaron junto con el cliente (ver `remove`). Sin ella no hay nada que
+    // restaurar.
+    const marcaArchivado = cliente.eliminadoEn;
+    if (!marcaArchivado) {
+      throw new BadRequestException('El cliente no está archivado');
+    }
+
+    // Restauración espejo del archivado: al volver el cliente también vuelven
+    // los créditos que se archivaron con él, para que no quede un cliente activo
+    // sin su deuda. Cada crédito recupera el estado que ya tenía —`remove` no se
+    // lo pisa—, así un crédito en mora vuelve a mora y no a ACTIVO.
+    const { clienteRestaurado, idsCreditos } = await this.prisma.$transaction(
+      async (tx) => {
+        const creditosArchivados = await tx.prestamo.findMany({
+          where: { clienteId: id, eliminadoEn: marcaArchivado },
+          select: { id: true },
+        });
+        const ids = creditosArchivados.map((p) => p.id);
+
+        const clienteActualizado = await tx.cliente.update({
+          where: { id },
+          data: { eliminadoEn: null },
+        });
+
+        if (ids.length > 0) {
+          await tx.prestamo.updateMany({
+            where: { id: { in: ids } },
+            data: {
+              eliminadoEn: null,
+              estadoSincronizacion: 'PENDIENTE',
+            },
+          });
+        }
+
+        return { clienteRestaurado: clienteActualizado, idsCreditos: ids };
+      },
+    );
 
     this.notificacionesGateway.broadcastClientesActualizados({
       accion: 'RESTAURAR',
       clienteId: id,
     });
+    if (idsCreditos.length > 0) {
+      this.notificacionesGateway.broadcastPrestamosActualizados({
+        accion: 'RESTAURAR',
+      });
+    }
 
     // Registrar en auditoría
     await this.auditService.create({
@@ -465,7 +566,10 @@ export class ClientsService {
       entidad: 'Cliente',
       entidadId: id,
       datosAnteriores: { eliminadoEn: cliente.eliminadoEn },
-      datosNuevos: { eliminadoEn: null },
+      datosNuevos: {
+        eliminadoEn: null,
+        creditosRestaurados: idsCreditos.length,
+      },
     });
 
     return clienteRestaurado;

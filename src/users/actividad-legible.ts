@@ -50,6 +50,7 @@ export const FRASES: Record<string, string> = {
   ARCHIVAR_PRESTAMO: 'Archivó un crédito',
   RESTAURAR_PRESTAMO: 'Restauró un crédito',
   ELIMINAR_PRESTAMO: 'Eliminó un crédito',
+  ELIMINAR_DEFINITIVO_PRESTAMO: 'Eliminó definitivamente un crédito',
 
   // Dinero
   REGISTRAR_PAGO: 'Registró un pago',
@@ -64,6 +65,7 @@ export const FRASES: Record<string, string> = {
   ARCHIVAR_CLIENTE: 'Archivó un cliente',
   RESTAURAR_CLIENTE: 'Restauró un cliente',
   ELIMINAR_CLIENTE: 'Eliminó un cliente',
+  ELIMINAR_DEFINITIVO_CLIENTE: 'Eliminó definitivamente un cliente',
   ALERTA_CLIENTE_NO_UBICADO: 'Reportó un cliente no ubicado',
   VISITA_REGISTRADA: 'Registró una visita',
 
@@ -90,6 +92,7 @@ export const FRASES: Record<string, string> = {
 
   // Inventario
   INVENTARIO_ACTUALIZADO: 'Actualizó el inventario',
+  ELIMINAR_DEFINITIVO_PRODUCTO: 'Eliminó definitivamente un producto',
 
   // Genéricas (el módulo que las escribe ya dice la entidad)
   CREAR: 'Creó un registro',

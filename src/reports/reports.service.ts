@@ -297,6 +297,12 @@ export class ReportsService {
 
     const whereConditions: Prisma.PrestamoWhereInput = {
       estado: { in: ['EN_MORA', 'ACTIVO'] },
+      // Mismo caso que en cuentas vencidas: sin esto, un credito archivado
+      // reaparecia en el reporte de mora.
+      eliminadoEn: null,
+      // Respaldo defensivo: si un cliente fue archivado antes del fix en cascada,
+      // sus creditos no deben aparecer en mora.
+      cliente: { eliminadoEn: null },
       // El supervisor/cobrador solo ve la mora de sus rutas.
       ...this.filtroRutaScopePrestamo(actor),
     };
@@ -748,6 +754,12 @@ export class ReportsService {
       fechaFin: { lt: hoy },
       estado: { in: ['EN_MORA', 'INCUMPLIDO', 'PERDIDA'] },
       saldoPendiente: { gt: 0 },
+      // Un credito archivado/eliminado (deleteLoan y archiveLoan dejan eliminadoEn)
+      // seguia saliendo aqui porque faltaba este filtro: la pantalla mostraba
+      // deudas que el usuario ya habia borrado.
+      eliminadoEn: null,
+      // Respaldo defensivo para creditos huerfanos de clientes archivados antes del fix.
+      cliente: { eliminadoEn: null },
       // El supervisor/cobrador solo ve las vencidas de sus rutas.
       ...this.filtroRutaScopePrestamo(actor),
     };
