@@ -8,6 +8,7 @@ import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { esEntornoHistoricoAislado } from '../common/entorno-historico-aislado';
 
 /**
  * Lectores del `args` y del `result` del hook de Prisma.
@@ -40,6 +41,7 @@ const leerId = (valor: unknown): unknown => {
 };
 
 function crearClienteExtendido(eventEmitter: EventEmitter2) {
+  const replicaHabilitada = !esEntornoHistoricoAislado();
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
   });
@@ -88,7 +90,8 @@ function crearClienteExtendido(eventEmitter: EventEmitter2) {
             'deleteMany',
           ];
 
-          if (watchActions.includes(operation) && model) {
+          // La base de aceptación conserva sus datos, pero no los encola ni emite avisos de operación.
+          if (replicaHabilitada && watchActions.includes(operation) && model) {
             if (model !== 'OutboxEvent') {
               // Solo sirve un id suelto. En deleteMany/updateMany el
               // `where.id` suele ser un objeto ({ in: [...] }, { not: x })

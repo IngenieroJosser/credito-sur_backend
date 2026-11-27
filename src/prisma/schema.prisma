@@ -64,6 +64,8 @@ model Usuario {
   arqueosCreados          ArqueoCaja[]               @relation("ArqueoCajaCreadoPor")
   arqueosRecibidos        ArqueoCaja[]               @relation("ArqueoCajaRecibidoPor")
   importacionesCreadas    ImportacionLote[]
+  expedientesHistoricos   ExpedienteHistorico[]
+  revisionesHistoricas    RevisionExpedienteHistorico[]
 
   syncConflictsCreados     SyncConflict[]   @relation("SyncConflictCreadoPor")
   syncConflictsResueltos   SyncConflict[]   @relation("SyncConflictResueltoPor")
@@ -175,7 +177,7 @@ model Cliente {
   codigo                    String               @unique @db.VarChar(20)
   idempotencyKey            String?              @unique @db.VarChar(100)
   version                   Int                  @default(1)
-  dni                       String               @unique @db.VarChar(20)
+  dni                       String?              @unique @db.VarChar(20)
   nombres                   String               @db.VarChar(100)
   apellidos                 String               @db.VarChar(100)
   correo                    String?              @db.VarChar(255)
@@ -343,6 +345,9 @@ model Prestamo {
   /// cuotas en PAGADA sin ningun recibo detras pensara que se perdieron datos.
   /// Null = credito nacido en el sistema.
   cargaHistoricaEn DateTime?
+  soloPruebaHistorica Boolean @default(false)
+  articuloHistoricoId String?
+  articuloHistorico ArticuloHistorico? @relation(fields: [articuloHistoricoId], references: [id])
   // Ruta a la que pertenece ESTE credito. Antes la ruta se deducia del
   // cliente, asi que todos sus creditos caian forzosamente en la misma.
   rutaId           String?
@@ -364,6 +369,7 @@ model Prestamo {
   loteImportacion   ImportacionLote? @relation(fields: [loteImportacionId], references: [id])
 
   @@index([numeroPrestamo])
+  @@index([articuloHistoricoId])
   @@index([rutaId])
   @@index([clienteId])
   @@index([estado])
@@ -1356,12 +1362,112 @@ model ImportacionLote {
   creadoPor Usuario    @relation(fields: [creadoPorId], references: [id])
   clientes  Cliente[]
   prestamos Prestamo[]
+  cargaHistorica CargaExpedienteHistorico? @relation("CargaCarteraHistorica")
+  cargaInventarioHistorica CargaExpedienteHistorico? @relation("CargaInventarioHistorica")
 
   @@index([tipo])
   @@index([estado])
   @@index([creadoPorId])
   @@index([creadoEn])
   @@map("importaciones_lotes")
+}
+
+
+model ExpedienteHistorico {
+  id               String   @id @default(uuid())
+  huellaCartera    String   @db.Char(64)
+  huellaInventario String   @db.Char(64)
+  preparador       String   @db.VarChar(30)
+  esquema          Int
+  reglas           String   @db.VarChar(50)
+  estado           EstadoExpedienteHistorico @default(EN_REVISION)
+  revision         Int      @default(1)
+  creadoPorId      String
+  creadoEn         DateTime @default(now())
+  actualizadoEn    DateTime @updatedAt
+
+  creadoPor Usuario @relation(fields: [creadoPorId], references: [id])
+  revisiones RevisionExpedienteHistorico[]
+  referencias ReferenciaExpedienteHistorico[]
+  articulos ArticuloHistorico[]
+  cargas CargaExpedienteHistorico[]
+
+  @@unique([huellaCartera, huellaInventario, preparador, esquema, reglas], map: "expedientes_historicos_fuentes_version_key")
+  @@index([actualizadoEn])
+  @@map("expedientes_historicos")
+}
+
+enum EstadoExpedienteHistorico {
+  EN_REVISION
+  IMPORTADO
+  REVERTIDO
+}
+
+model RevisionExpedienteHistorico {
+  expedienteId String
+  numero       Int
+  huella       String   @db.Char(64)
+  resultado    Json
+  usuarioId    String
+  creadaEn     DateTime @default(now())
+
+  expediente ExpedienteHistorico @relation(fields: [expedienteId], references: [id])
+  usuario Usuario @relation(fields: [usuarioId], references: [id])
+
+  @@id([expedienteId, numero])
+  @@index([usuarioId])
+  @@map("revisiones_expedientes_historicos")
+}
+
+model ArticuloHistorico {
+  id           String @id @default(uuid())
+  expedienteId String
+  referencia   String @db.VarChar(80)
+  codigoOrigen String? @db.VarChar(80)
+  descripcion  String? @db.VarChar(255)
+  evidencia    Json
+  creadoEn     DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  expediente ExpedienteHistorico @relation(fields: [expedienteId], references: [id])
+  prestamos Prestamo[]
+
+  @@unique([expedienteId, referencia])
+  @@map("articulos_historicos")
+}
+
+model ReferenciaExpedienteHistorico {
+  expedienteId String
+  referencia   String @db.VarChar(80)
+  entidad      String @db.VarChar(30)
+  entidadId    String
+  evidencia    Json
+
+  expediente ExpedienteHistorico @relation(fields: [expedienteId], references: [id])
+
+  @@id([expedienteId, referencia])
+  @@index([entidad, entidadId], map: "referencias_expedientes_entidad_id_idx")
+  @@map("referencias_expedientes_historicos")
+}
+
+model CargaExpedienteHistorico {
+  id           String @id @default(uuid())
+  expedienteId String
+  revision     Int
+  huella       String @db.Char(64)
+  loteId       String @unique
+  loteInventarioId String? @unique
+  resultado    Json
+  creadaEn     DateTime @default(now())
+  revertidaEn  DateTime?
+  revertidaPorId String?
+
+  expediente ExpedienteHistorico @relation(fields: [expedienteId], references: [id])
+  lote ImportacionLote @relation("CargaCarteraHistorica", fields: [loteId], references: [id])
+  loteInventario ImportacionLote? @relation("CargaInventarioHistorica", fields: [loteInventarioId], references: [id], onDelete: Restrict)
+
+  @@unique([expedienteId, huella])
+  @@map("cargas_expedientes_historicos")
 }
 
 enum TipoImportacion {

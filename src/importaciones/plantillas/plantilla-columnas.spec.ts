@@ -1,4 +1,5 @@
 import * as ExcelJS from 'exceljs';
+import * as JSZip from 'jszip';
 import {
   generarPlantillaClientesCreditos,
   type DatosReferenciaPlantilla,
@@ -160,6 +161,33 @@ describe('Plantilla de clientes y créditos: estructura con varias combinaciones
     60000,
   );
 
+  it('la plantilla integral combina captura y referencias de artículos sin romper las listas existentes', async () => {
+    const { data, filename } = await generarPlantillaClientesCreditos(base, { integral: true });
+    expect(filename).toBe('plantilla-integral-credisur.xlsx');
+    const wb = await cargar(data);
+    const articulos = wb.getWorksheet('Artículos')!;
+    const creditos = wb.getWorksheet('Créditos de artículo')!;
+    const valores = wb.getWorksheet('Valores')!;
+    expect(valores.getCell('H2').value).toBe('ART1');
+    expect(valores.getCell('H3').formula).toContain("'Artículos'!$B7");
+    expect(valores.getCell('B1').value).toBe('Nivel Riesgo');
+    expect(valores.getCell('J2').value).toBe('SI');
+    expect(creditos.getCell('C7').dataValidation.formulae?.[0]).toBe('Valores!$H$2:$H$1002');
+    expect(creditos.getCell('O7').formula).toContain("'Artículos'!");
+    expect(creditos.getCell('Q7').formula).toContain("'BD Artículos'!");
+    expect(articulos.getCell('B7').protection.locked).toBe(false);
+    expect(articulos.getCell('G7').protection).toMatchObject({ locked: true, hidden: true });
+    expect(articulos.getCell('AC7').protection.locked).toBe(false);
+    expect(creditos.getCell('B7').dataValidation.formulae[0]).toContain('Valores!$K$2');
+    expect(articulos.getCell('T7').formula).toBeTruthy();
+    // Excel no serializa el bloqueo explícito cuando es el valor predeterminado.
+    expect(articulos.getCell('T7').protection?.locked).not.toBe(false);
+    const zip = await JSZip.loadAsync(data);
+    expect(await zip.file(`xl/worksheets/sheet${articulos.id}.xml`)?.async('string')).toContain('<sheetProtection');
+    expect(await zip.file('xl/styles.xml')?.async('string')).toMatch(/<protection[^>]*hidden="1"/);
+    expect(wb.getWorksheet('Rutas')?.getCell('A2').value).toBe('R1');
+  }, 60000);
+
   it('el número de crédito queda al final en AMBAS hojas de crédito', async () => {
     const { data } = await generarPlantillaClientesCreditos(base);
     const wb = await cargar(data);
@@ -204,7 +232,8 @@ describe('Plantilla de clientes y créditos: estructura con varias combinaciones
     const { data } = await generarPlantillaClientesCreditos(base);
     const wb = await cargar(data);
     const h = encabezados(wb, 'Clientes');
-    expect(h[2]).toBe('CC cliente*');
+    expect(h[2]).toBe('CC cliente');
+    expect(h[16]).toBe('Referencia de importación');
     expect(h[14]).toContain('Revisión de cédula');
   }, 60000);
 });
@@ -279,10 +308,7 @@ describe('Plantilla de inventario', () => {
     }
   }, 60000);
 
-  it('los cuatro precios vienen resueltos pero SIN candado', async () => {
-    // Son un punto de partida, no un veredicto: el precio que el negocio cobra
-    // se escribe encima. Si quedaran bloqueados como las columnas de utilidad,
-    // la plantilla pasaría de ayudar a estorbar.
+  it('protege y oculta los resultados sin bloquear los precios manuales', async () => {
     const { data } = await generarPlantillaInventario();
     const wb = await cargar(data);
     const ws = wb.getWorksheet('Artículos')!;
@@ -292,10 +318,13 @@ describe('Plantilla de inventario', () => {
     for (const celda of ['G7', 'I7', 'K7', 'M7', 'G1006']) {
       expect({
         celda,
-        bloqueada: ws.getCell(celda).protection?.locked,
-      }).toEqual({ celda, bloqueada: false });
+        proteccion: ws.getCell(celda).protection,
+      }).toEqual({ celda, proteccion: { locked: true, hidden: true } });
     }
-    // Las de utilidad sí van bloqueadas: ahí no hay nada que decidir.
+    for (const celda of ['AC7', 'AD7', 'AE7', 'AF7']) {
+      expect(ws.getCell(celda).protection.locked).toBe(false);
+    }
+    // Las de utilidad también están protegidas.
     expect(ws.getCell('U7').protection?.locked).not.toBe(false);
   }, 60000);
 

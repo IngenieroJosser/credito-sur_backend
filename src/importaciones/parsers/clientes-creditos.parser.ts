@@ -1,5 +1,6 @@
 import * as ExcelJS from 'exceljs';
-import { esMarcadorDeCedula } from '../cedula-provisional';
+import { createHash } from 'node:crypto';
+import { claveClienteParaImportar, esMarcadorDeCedula, esReferenciaClienteRegistrado, esReferenciaHistoricaCliente } from '../cedula-provisional';
 import {
   ResultadoValidacion,
   ErrorValidacion,
@@ -11,6 +12,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { FrecuenciaPago } from '@prisma/client';
 import { loadWorkbookFromBuffer } from './xlsx-workbook.loader';
+import { esCodigoArticuloHistorico, leerModoHistorico } from './control-historico-xlsx';
 import {
   leerFecha,
   leerNumero,
@@ -22,6 +24,7 @@ import {
 } from './cell-value.util';
 import {
   avisarFilasFueraDeRango,
+  limiteOficial,
   celda,
   construirMapaColumnas,
   filaVaciaEnColumnas,
@@ -95,6 +98,8 @@ export class ClientesCreditosParser {
     fileName: string,
   ): Promise<ResultadoValidacion> {
     const workbook = await loadWorkbookFromBuffer(buffer);
+    const capacidad = limiteOficial(workbook);
+    const modoHistorico = leerModoHistorico(workbook);
 
     const errores: ErrorValidacion[] = [];
     const advertencias: AdvertenciaValidacion[] = [];
@@ -247,6 +252,17 @@ export class ClientesCreditosParser {
       productosBd.map((p) => [String(p.codigo).trim().toUpperCase(), p.nombre]),
     );
 
+    // En estos libros integrales el catálogo se valida por separado en el mismo expediente.
+    const catalogoDelLibro = new Set<string>();
+    const hojaInventario = modoHistorico && workbook.getWorksheet('Artículos');
+    if (hojaInventario) {
+      const columnaCodigo = construirMapaColumnas(hojaInventario).indice('Código');
+      hojaInventario.eachRow((r, n) => {
+        const codigo = leerTextoMayus(celda(r, columnaCodigo));
+        if (n >= FILA_INICIO_DATOS && codigo) catalogoDelLibro.add(codigo);
+      });
+    }
+
     // Precio de cada artículo por plazo, para deducir el monto del crédito.
     const preciosPorPlazo = new Map<string, number>();
     productosBd.forEach((p) => {
@@ -263,7 +279,7 @@ export class ClientesCreditosParser {
     // cliente duplicado (o, peor, quedaría silenciosamente omitido al confirmar).
     const clientesPorCcBd = new Map(
       clientesBd.map((c) => [
-        String(c.dni).trim(),
+        claveClienteParaImportar(c),
         `${c.nombres} ${c.apellidos}`.trim(),
       ]),
     );
@@ -272,7 +288,7 @@ export class ClientesCreditosParser {
     const ccsSinRutaBd = new Set(
       clientesBd
         .filter((c) => (c.asignacionesRuta ?? []).length === 0)
-        .map((c) => String(c.dni).trim()),
+        .map(claveClienteParaImportar),
     );
 
     // Nombres ya registrados: dos personas con el mismo nombre y cédulas
@@ -282,7 +298,7 @@ export class ClientesCreditosParser {
       const clave = claveNombre(c.nombres, c.apellidos);
       if (!clave) return;
       const cedulas = nombresBd.get(clave) ?? [];
-      cedulas.push(String(c.dni).trim());
+      cedulas.push(claveClienteParaImportar(c));
       nombresBd.set(clave, cedulas);
     });
 
@@ -326,6 +342,8 @@ export class ClientesCreditosParser {
     const cliNivelRiesgo = colsCli.indice('Nivel riesgo');
     const cliRutaCodigo = colsCli.indice('Ruta código');
     const cliObservaciones = colsCli.indice('Observaciones');
+    const cliTipoCliente = colsCli.indice('Tipo de cliente');
+    const cliRefImportacion = colsCli.indice('Referencia de importación');
 
     if (!cliCc || !cliNombres || !cliApellidos) {
       return salidaVacia(
@@ -350,6 +368,8 @@ export class ClientesCreditosParser {
       cliNivelRiesgo,
       cliRutaCodigo,
       cliObservaciones,
+      cliTipoCliente,
+      cliRefImportacion,
     ].filter(Boolean);
 
     let totalClientes = 0;
@@ -357,6 +377,19 @@ export class ClientesCreditosParser {
     const filasClientes: number[] = [];
     const codigosClientes = new Set<string>();
     const ccsClientes = new Set<string>();
+    const clientesHistoricos = new Set<string>();
+    const codigoClientePorAmarre = new Map<string, string>();
+    const historicosSinRuta = new Set<string>();
+    const amarresOcupados = new Set<string>();
+    if (cliTipoCliente) {
+      hojaClientes.eachRow((row, fila) => {
+        if (fila < FILA_INICIO_DATOS) return;
+        const cc = leerTexto(celda(row, cliCc));
+        if (esMarcadorDeCedula(cc)) amarresOcupados.add(cc);
+      });
+    }
+    let siguienteAmarre = 1;
+    const huellaAmarre = createHash('sha256').update(buffer).digest('hex').slice(0, 10);
 
     hojaClientes.eachRow((row, rowNumber) => {
       if (rowNumber < FILA_INICIO_DATOS) return;
@@ -365,6 +398,11 @@ export class ClientesCreditosParser {
       totalFilas++;
       totalClientes++;
       filasClientes.push(rowNumber);
+      if (capacidad !== null && rowNumber > capacidad) {
+        filasConError++;
+        clientesConError++;
+        return;
+      }
       let tieneError = false;
 
       // Acción vacía equivale a CREAR.
@@ -372,7 +410,25 @@ export class ClientesCreditosParser {
       const esActualizacion = accion === 'ACTUALIZAR';
 
       let codigoImp = leerTexto(celda(row, cliCodigo));
-      const cc = leerTexto(celda(row, cliCc));
+      let cc = leerTexto(celda(row, cliCc));
+      const tipoCliente = leerTextoNormalizado(celda(row, cliTipoCliente));
+      const historico = tipoCliente === 'HISTORICO';
+      const referenciaImportacion = leerTextoMayus(celda(row, cliRefImportacion));
+      const referenciaTecnica = esReferenciaHistoricaCliente(referenciaImportacion);
+      if (historico && !cc && referenciaTecnica) cc = referenciaImportacion;
+      const esAmarre = esMarcadorDeCedula(cc) || esReferenciaHistoricaCliente(cc);
+      if (historico && !cc && !esActualizacion && !referenciaImportacion) {
+        while (amarresOcupados.has(String(siguienteAmarre))) siguienteAmarre++;
+        if (siguienteAmarre <= 99999) {
+          cc = String(siguienteAmarre++);
+          amarresOcupados.add(cc);
+          advertencias.push({
+            hoja: SHEET_DISPLAY.clientes, fila: rowNumber, campo: 'cc',
+            mensaje: 'Se asignó un amarre técnico para este cliente histórico; no corresponde a una cédula.',
+            valor: cc,
+          });
+        }
+      }
       const nivelRiesgo = leerTextoNormalizado(celda(row, cliNivelRiesgo));
       const rutaCodigo = normalizarCodigoRuta(celda(row, cliRutaCodigo));
 
@@ -423,10 +479,20 @@ export class ClientesCreditosParser {
         );
       }
 
-      // El código de importación deja de ser obligatorio: si no viene, se deriva
-      // de la cédula, que ya es única por cliente.
+      if (tipoCliente && tipoCliente !== 'HISTORICO' && tipoCliente !== 'OPERATIVO') {
+        addError('tipo_cliente', 'Debe ser HISTORICO u OPERATIVO.', tipoCliente);
+      }
+      if (historico && esActualizacion) {
+        addError('tipo_cliente', 'La captura histórica incompleta solo aplica a clientes nuevos; actualice los existentes desde su ficha.', tipoCliente);
+      }
+
+      if (referenciaImportacion && (!historico || !referenciaTecnica)) {
+        addError('referencia_importacion', 'Use una referencia histórica válida y única (por ejemplo HIST-LIBRO-001), solo para clientes históricos.', referenciaImportacion);
+      }
       if (!codigoImp && cc) {
-        codigoImp = `CLI-${cc}`;
+        codigoImp = historico && esReferenciaHistoricaCliente(cc)
+          ? 'H-' + createHash('sha256').update(cc.toUpperCase()).digest('hex').slice(0, 18)
+          : historico && esMarcadorDeCedula(cc) ? `H-${huellaAmarre}-${cc}` : `CLI-${cc}`;
       }
 
       if (!codigoImp) {
@@ -499,7 +565,7 @@ export class ClientesCreditosParser {
             'el que el sistema distingue a una persona de otra.',
           cc,
         );
-      } else if (esMarcadorDeCedula(cc)) {
+      } else if (esAmarre || esMarcadorDeCedula(cc)) {
         // Un número corto (1, 2, 3…) NO es una cédula: es el número con el que la plantilla
         // amarra las filas de un mismo cliente. Se acepta y el sistema le pondrá una cédula
         // provisional al importar. Va como ADVERTENCIA y no como error porque la fila se
@@ -513,6 +579,8 @@ export class ClientesCreditosParser {
             `El número de amarre "${cc}" ya aparece en otra fila. Use uno distinto por cliente (1, 2, 3…): es lo que une a cada cliente con sus créditos.`,
             cc,
           );
+        } else if (!historico && esReferenciaHistoricaCliente(cc)) {
+          addError('cc', 'Una referencia técnica solo identifica clientes históricos.', cc);
         } else if (esActualizacion) {
           // Con ACTUALIZAR hay que encontrar al cliente que ya existe, y a un cliente con
           // cedula provisional no se lo puede encontrar por el numero del archivo: su
@@ -528,10 +596,7 @@ export class ClientesCreditosParser {
             fila: rowNumber,
             campo: 'cc',
             mensaje:
-              `"${cc}" se tomará como número de amarre, no como cédula: al importar, el ` +
-              'sistema le asignará una cédula PROVISIONAL (empieza por 99). Corríjala en ' +
-              'cuanto tenga la cédula real; hasta entonces ese cliente no se puede buscar ' +
-              'por documento.',
+              `"${cc}" es una referencia de importación, no una cédula. El cliente quedará sin documento hasta que se registre el real desde su ficha.`,
             valor: cc,
           });
         }
@@ -572,9 +637,9 @@ export class ClientesCreditosParser {
 
       if (!nombres)
         addError('nombres', 'Escriba los nombres del cliente', nombres);
-      if (!apellidos)
+      if (!historico && !apellidos)
         addError('apellidos', 'Escriba los apellidos del cliente', apellidos);
-      if (!telefono)
+      if (!historico && !telefono)
         addError(
           'telefono',
           'Escriba el teléfono de contacto del cliente',
@@ -601,7 +666,13 @@ export class ClientesCreditosParser {
        * quinientas filas y recibe quinientos «es requerida» sin que nada le
        * diga que lo que falta no esta en el archivo.
        */
-      if (!rutaCodigo) {
+      if (!rutaCodigo && historico) {
+        advertencias.push({
+          hoja: SHEET_DISPLAY.clientes, fila: rowNumber, campo: 'ruta_codigo',
+          mensaje: 'Cliente histórico sin ruta; no se confirmarán créditos asociados hasta asignarle una ruta válida.',
+          valor: null,
+        });
+      } else if (!rutaCodigo) {
         addError(
           'ruta_codigo',
           rutasEnBd.size === 0
@@ -623,6 +694,11 @@ export class ClientesCreditosParser {
         filasConError++;
         clientesConError++;
       } else {
+        if (esAmarre || esMarcadorDeCedula(cc)) codigoClientePorAmarre.set(cc, codigoImp);
+        if (historico) {
+          clientesHistoricos.add(cc);
+          if (!rutaCodigo) historicosSinRuta.add(cc);
+        }
         clientesValidar.push({
           accion,
           esActualizacion,
@@ -691,10 +767,10 @@ export class ClientesCreditosParser {
 
     const avisoClientes = avisarFilasFueraDeRango(
       filasClientes,
-      SHEET_DISPLAY.clientes,
+      SHEET_DISPLAY.clientes, workbook,
     );
     if (avisoClientes) {
-      advertencias.push({ hoja: SHEET_DISPLAY.clientes, ...avisoClientes });
+      (capacidad !== null ? errores : advertencias).push({ hoja: SHEET_DISPLAY.clientes, ...avisoClientes });
     }
 
     porHoja[SHEET_DISPLAY.clientes] = {
@@ -714,11 +790,12 @@ export class ClientesCreditosParser {
       const colsCre = construirMapaColumnas(hoja);
       const creAccion = colsCre.indice('Acción');
       const creCodigo = colsCre.indice('Código importación');
-      const creNumeroPrestamo = colsCre.indice(
+      const creNumeroManual = colsCre.indice('Número de crédito manual');
+      const creNumeroPrestamo = creNumeroManual || colsCre.indice(
         'Número de crédito',
         'Número préstamo',
       );
-      const creCc = colsCre.indice('CC cliente');
+      const creCc = colsCre.indice('Cliente / Referencia', 'CC cliente');
       const creTipoPrestamo = colsCre.indice(
         'Tipo de crédito',
         'Tipo préstamo',
@@ -727,12 +804,16 @@ export class ClientesCreditosParser {
         'Código del artículo',
         'Producto código',
       );
-      const creMonto = colsCre.indice('Monto');
+      const creMontoFinanciado = colsCre.indice('Total financiado');
+      const creMonto = creMontoFinanciado || colsCre.indice('Monto');
+      const crePrecioPactado = colsCre.indice('Precio total pactado');
+      const creSaldoInformado = colsCre.indice('Saldo informado por cartera');
       const creCuotaInicial = colsCre.indice('Cuota inicial');
       const creTasaInteres = colsCre.indice('Tasa interés');
       const creTasaMora = colsCre.indice('Tasa interés mora');
       const creFrecuencia = colsCre.indice('Frecuencia pago');
-      const creCantidadCuotas = colsCre.indice('Cantidad cuotas');
+      const creCantidadCuotas = colsCre.indice('Cuotas pactadas', 'Cantidad cuotas');
+      const creValorCuotaPactado = colsCre.indice('Valor de cuota pactado');
       const crePlazoMeses = colsCre.indice('Plazo meses');
       const creTipoAmortizacion = colsCre.indice(
         'Tipo de interés',
@@ -778,11 +859,14 @@ export class ClientesCreditosParser {
         creTipoPrestamo,
         creProductoCodigo,
         creMonto,
+        crePrecioPactado,
+        creSaldoInformado,
         creCuotaInicial,
         creTasaInteres,
         creTasaMora,
         creFrecuencia,
         creCantidadCuotas,
+        creValorCuotaPactado,
         crePlazoMeses,
         creTipoAmortizacion,
         creFechaCredito,
@@ -808,21 +892,30 @@ export class ClientesCreditosParser {
         totalFilas++;
         totalCreditos++;
         filasCreditos.push(rowNumber);
+        if (capacidad !== null && rowNumber > capacidad) {
+          filasConError++;
+          creditosConError++;
+          return;
+        }
         let tieneError = false;
 
         const accion = leerTextoMayus(celda(row, creAccion)) || 'CREAR';
         const esActualizacion = accion === 'ACTUALIZAR';
-        const ccCliente = leerTexto(celda(row, creCc));
+        const documentoOReferencia = leerTexto(celda(row, creCc));
+        const ccCliente = esReferenciaHistoricaCliente(documentoOReferencia) ? documentoOReferencia.toUpperCase() : documentoOReferencia;
         const tipoPrestamo =
           tipoFijo ?? leerTextoMayus(celda(row, creTipoPrestamo));
         const esArticulo = tipoPrestamo === 'ARTICULO';
         const productoCodigo = leerTextoMayus(celda(row, creProductoCodigo));
         const montoCelda = leerNumero(celda(row, creMonto));
         const cuotaInicialCelda = leerNumero(celda(row, creCuotaInicial));
+        const precioPactado = leerNumero(celda(row, crePrecioPactado));
+        const saldoInformado = leerNumero(celda(row, creSaldoInformado));
         const tasaInteres = leerNumero(celda(row, creTasaInteres));
         const tasaInteresMora = leerNumero(celda(row, creTasaMora));
         const frecuenciaPago = leerTextoMayus(celda(row, creFrecuencia));
         const cantidadCuotasCelda = leerNumero(celda(row, creCantidadCuotas));
+        const valorCuotaPactado = leerNumero(celda(row, creValorCuotaPactado));
         const plazoMeses = leerNumero(celda(row, crePlazoMeses));
         const tipoAmortizacionRaw = leerValorCelda(
           celda(row, creTipoAmortizacion),
@@ -830,6 +923,7 @@ export class ClientesCreditosParser {
         const fechaCredito = leerFecha(celda(row, creFechaCredito));
         const fechaPrimerCobro = leerFecha(celda(row, creFechaPrimerCobro));
         const tipoCarga = leerTextoMayus(celda(row, creTipoCarga));
+        const esHistorica = tipoCarga === 'HISTORICA';
         const descontarCajaCelda = leerTextoMayus(celda(row, creDescontarCaja));
         const garantia = leerTexto(celda(row, creGarantia));
         const notas = leerTexto(celda(row, creNotas));
@@ -855,11 +949,15 @@ export class ClientesCreditosParser {
 
         // Número de préstamo: si no lo traen, se arma con la cédula y un
         // consecutivo dentro del archivo. Igual se valida contra los ya existentes.
-        let numeroPrestamo = leerTexto(celda(row, creNumeroPrestamo));
-        if (!numeroPrestamo && ccCliente) {
+        const celdaNumeroPrestamo = celda(row, creNumeroPrestamo);
+        let numeroPrestamo = leerTexto(celdaNumeroPrestamo);
+        const codigoAmarre = codigoClientePorAmarre.get(ccCliente);
+        const numeroAutomatico = celdaNumeroPrestamo != null && typeof celdaNumeroPrestamo === 'object' &&
+          ('formula' in celdaNumeroPrestamo || 'sharedFormula' in celdaNumeroPrestamo);
+        if (ccCliente && (!numeroPrestamo || (codigoAmarre && numeroAutomatico))) {
           const consecutivo = (creditosPorCliente.get(ccCliente) ?? 0) + 1;
           creditosPorCliente.set(ccCliente, consecutivo);
-          numeroPrestamo = `IMP-${ccCliente}-${consecutivo}`;
+          numeroPrestamo = `IMP-${codigoAmarre ?? ccCliente}-${consecutivo}`;
         }
 
         // El código de importación identifica la fila; el número de préstamo sirve.
@@ -1021,7 +1119,9 @@ export class ClientesCreditosParser {
             'Escriba la cédula del cliente dueño del crédito',
             ccCliente,
           );
-        } else if (!/^\d{6,10}$/.test(ccCliente)) {
+        } else if (!/^\d{6,10}$/.test(ccCliente) &&
+          !(esHistorica && (esMarcadorDeCedula(ccCliente) || esReferenciaHistoricaCliente(ccCliente)) && ccsClientes.has(ccCliente)) &&
+          !(esHistorica && esReferenciaClienteRegistrado(ccCliente) && clientesPorCcBd.has(ccCliente))) {
           addError(
             'cc_cliente',
             'Debe ser solo dígitos, entre 6 y 10 caracteres',
@@ -1036,6 +1136,10 @@ export class ClientesCreditosParser {
             'El cliente no existe en la hoja Clientes ni en la base de datos',
             ccCliente,
           );
+        } else if (tipoCarga === 'OPERATIVA' && clientesHistoricos.has(ccCliente)) {
+          addError('cc_cliente', 'Verifique primero la ficha del cliente histórico antes de originar un crédito operativo.', ccCliente);
+        } else if (historicosSinRuta.has(ccCliente)) {
+          addError('cc_cliente', 'Asigne una ruta al cliente histórico antes de confirmar este crédito.', ccCliente);
         } else if (!ccsClientes.has(ccCliente) && ccsSinRutaBd.has(ccCliente)) {
           addError(
             'cc_cliente',
@@ -1064,7 +1168,8 @@ export class ClientesCreditosParser {
                 : 'Es requerido para créditos de ARTICULO',
               productoCodigo,
             );
-          } else if (!productosEnBd.has(productoCodigo)) {
+          } else if (!productosEnBd.has(productoCodigo) &&
+            !(modoHistorico && esHistorica && (catalogoDelLibro.has(productoCodigo) || esCodigoArticuloHistorico(productoCodigo)))) {
             addError(
               'producto_codigo',
               'El producto no existe en la base de datos (importe primero el inventario)',
@@ -1078,7 +1183,32 @@ export class ClientesCreditosParser {
         // repetir el genérico del monto solo confunde.
         let inicialCubreElPrecio = false;
 
-        if (esArticulo && montoEfectivo === null && productoCodigo) {
+        if (esHistorica && esArticulo) {
+          if (precioPactado !== null && (!Number.isSafeInteger(precioPactado) || precioPactado <= 0)) {
+            addError('precio_total_pactado', 'Indique el precio pactado en pesos enteros, mayor a cero.', precioPactado);
+          } else if (precioPactado !== null && cuotaInicial !== null && cuotaInicial >= 0) {
+            const financiado = precioPactado - cuotaInicial;
+            if (financiado <= 0) {
+              inicialCubreElPrecio = true;
+              addError('cuota_inicial', 'La inicial cubre o supera el precio pactado: no queda capital por financiar.', cuotaInicial);
+            } else if (creMontoFinanciado && monto !== null && monto !== financiado) {
+              addError('monto', 'El total financiado debe coincidir con el precio total pactado menos la cuota inicial.', monto);
+            } else if (!creMontoFinanciado && monto !== null && monto !== financiado && monto !== precioPactado) {
+              addError('monto', 'El monto de la plantilla anterior no coincide con el precio pactado ni con el total financiado.', monto);
+            } else {
+              montoEfectivo = financiado;
+              if (!creMontoFinanciado || monto === null) {
+                addAdver('monto', 'Total financiado deducido del precio pactado menos la inicial, sin usar el precio del catálogo.', financiado);
+              }
+            }
+          } else if (monto === null) {
+            addError('precio_total_pactado', 'Un crédito histórico necesita el total financiado o el precio pactado y la inicial. No se usa el precio actual del catálogo.', null);
+          } else if (!creMontoFinanciado && cuotaInicial !== 0) {
+            addError('monto', 'Confirme si el Monto de la plantilla anterior era precio total o valor financiado. Indique el Precio total pactado o use la columna Total financiado de la plantilla nueva.', monto);
+          }
+        }
+
+        if (esArticulo && !esHistorica && montoEfectivo === null && productoCodigo) {
           // Igual que createLoan: lo que se financia es el precio del plazo
           // menos la cuota inicial, no el precio completo.
           const precioPlazo = preciosPorPlazo.get(
@@ -1125,6 +1255,7 @@ export class ClientesCreditosParser {
 
         if (
           !inicialCubreElPrecio &&
+          !(esArticulo && esHistorica && montoEfectivo === null) &&
           (montoEfectivo === null ||
             Number.isNaN(montoEfectivo) ||
             montoEfectivo <= 0)
@@ -1145,14 +1276,12 @@ export class ClientesCreditosParser {
             leerValorCelda(celda(row, creCuotaInicial)),
           );
         }
-        // En un crédito de artículo la inicial es obligatoria: el cliente
-        // entrega algo al llevarse la mercancía. Dejarla vacía y escribir cero
-        // significan lo mismo, así que las dos se rechazan. Los casos raros
-        // —NaN o negativa— ya los cubre la validación de arriba.
-        if (esArticulo && (cuotaInicial === null || cuotaInicial === 0)) {
+        if (esArticulo && (cuotaInicial === null || (!esHistorica && cuotaInicial === 0))) {
           addError(
             'cuota_inicial',
-            'Es obligatoria en un crédito de artículo: escriba cuánto entregó el cliente al llevarse el artículo.',
+            esHistorica
+              ? 'La inicial histórica no está informada. Escriba 0 solo si se verificó que el crédito no tuvo inicial.'
+              : 'Es obligatoria en un crédito de artículo: escriba cuánto entregó el cliente al llevarse el artículo.',
             leerValorCelda(celda(row, creCuotaInicial)),
           );
         }
@@ -1210,7 +1339,7 @@ export class ClientesCreditosParser {
         // antiguos que solo están documentados en meses.
         let cantidadCuotas = cantidadCuotasCelda;
         if (
-          (cantidadCuotas === null || esArticulo) &&
+          (cantidadCuotas === null || (esArticulo && !esHistorica)) &&
           plazoMeses !== null &&
           !Number.isNaN(plazoMeses)
         ) {
@@ -1463,12 +1592,25 @@ export class ClientesCreditosParser {
           );
         }
 
-        if (tipoCarga === 'HISTORICA' && descontarCaja === 'SI') {
-          addAdver(
+        if (esHistorica && descontarCaja === 'SI') {
+          addError(
             'descontar_dinero_de_caja',
-            'Se recomienda NO descontar caja en importaciones históricas',
+            'Un crédito histórico no puede generar un desembolso nuevo. Use NO.',
             descontarCaja,
           );
+        }
+
+        const tieneAvanceLegado = (cuotasPagadas !== null && Number.isFinite(cuotasPagadas)) ||
+          (abonoAdicional !== null && Number.isFinite(abonoAdicional));
+        if (esHistorica && !declaroTotalAbonado && !tieneAvanceLegado) {
+          addError('total_abonado', 'El avance histórico es desconocido. Escriba el total abonado; use 0 solo si se verificó que no hubo abonos.', null);
+        }
+
+        if (saldoInformado !== null && (!Number.isSafeInteger(saldoInformado) || saldoInformado < 0)) {
+          addError('saldo_informado', 'Indique el saldo registrado por cartera en pesos enteros, mayor o igual a 0.', leerValorCelda(celda(row, creSaldoInformado)));
+        }
+        if (!esHistorica && saldoInformado !== null) {
+          addError('saldo_informado', 'El saldo informado por cartera solo aplica a créditos históricos.', saldoInformado);
         }
         // Aqui iba una advertencia por credito diciendo que moveria caja. Se
         // quito: la vista de impacto que se muestra antes de confirmar ya lo
@@ -1517,6 +1659,13 @@ export class ClientesCreditosParser {
           cantidadCuotas as number,
         );
         const valorCuota = tablaCuotas[0]?.monto ?? 0;
+        if (valorCuotaPactado !== null && (!esArticulo || !esHistorica ||
+          !Number.isSafeInteger(valorCuotaPactado) || valorCuotaPactado <= 0 || valorCuotaPactado !== valorCuota)) {
+          addError('valor_cuota_pactado', `El valor pactado debe corresponder a la primera cuota de un crédito de artículo histórico. Valor calculado: ${valorCuota}. Revise antes de confirmar.`, valorCuotaPactado);
+          filasConError++;
+          creditosConError++;
+          return;
+        }
 
         // Con la columna nueva, lo abonado es lo que se escribió y punto. Con
         // un archivo viejo hay que reconstruirlo: las cuotas completas valen lo
@@ -1536,9 +1685,17 @@ export class ClientesCreditosParser {
             hoja: nombre,
             fila: rowNumber,
             campo: 'total_abonado',
-            mensaje: `Lo abonado (${totalAbonado}) supera el total del crédito (${totalCredito}). Revise el total abonado.`,
-            valor: abonoAdicionalNum,
+            mensaje: `Lo abonado (${totalAbonado}) supera el total del crédito (${totalCredito}). Concilie la obligación original y sus abonos antes de confirmar.`,
+            valor: totalAbonado,
           });
+          filasConError++;
+          creditosConError++;
+          return;
+        }
+
+        const saldoPendiente = pesos(totalCredito - totalAbonado);
+        if (esHistorica && saldoInformado !== null && saldoInformado !== saldoPendiente) {
+          addError('saldo_informado', `El saldo informado (${saldoInformado}) no coincide con el calculado (${saldoPendiente}). Diferencia: ${saldoPendiente - saldoInformado}. Concilie antes de confirmar.`, saldoInformado);
           filasConError++;
           creditosConError++;
           return;
@@ -1577,7 +1734,8 @@ export class ClientesCreditosParser {
           totalCredito,
           valorCuota,
           totalAbonado,
-          saldoPendiente: pesos(totalCredito - totalAbonado),
+          saldoPendiente,
+          saldoInformado: saldoInformado ?? undefined,
           fila: rowNumber,
           // De qué hoja salió: en las dos hojas de crédito la primera fila es
           // la 7, así que decir "fila 7" a secas no distingue una de la otra.
@@ -1585,9 +1743,9 @@ export class ClientesCreditosParser {
         });
       });
 
-      const avisoCreditos = avisarFilasFueraDeRango(filasCreditos, nombre);
+      const avisoCreditos = avisarFilasFueraDeRango(filasCreditos, nombre, workbook);
       if (avisoCreditos) {
-        advertencias.push({ hoja: nombre, ...avisoCreditos });
+        (capacidad !== null ? errores : advertencias).push({ hoja: nombre, ...avisoCreditos });
       }
 
       porHoja[nombre] = {
@@ -1605,6 +1763,7 @@ export class ClientesCreditosParser {
     return {
       tipo: 'clientes-creditos',
       archivo: fileName,
+      modoHistorico,
       impactoCaja,
       resumen: {
         totalFilas,

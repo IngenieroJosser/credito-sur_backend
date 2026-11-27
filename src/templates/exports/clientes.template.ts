@@ -25,7 +25,7 @@ export interface ClienteExportRow {
   codigo: string;
   nombres: string;
   apellidos: string;
-  dni: string;
+  dni: string | null;
   telefono: string;
   correo: string | null;
   direccion: string | null;

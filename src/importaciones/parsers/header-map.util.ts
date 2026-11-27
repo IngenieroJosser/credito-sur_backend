@@ -82,7 +82,13 @@ export function celda(
  * Última fila que la plantilla preparó con fórmulas y validaciones.
  * Debe coincidir con `FILAS_PREPARADAS` de las plantillas.
  */
-export const ULTIMA_FILA_PREPARADA = FILA_INICIO_DATOS + 1000 - 1;
+export const FILAS_PREPARADAS = 1000;
+export const ULTIMA_FILA_PREPARADA = FILA_INICIO_DATOS + FILAS_PREPARADAS - 1;
+export const MARCA_CAPACIDAD = '_CrediSur';
+
+export function declararCapacidad(workbook: ExcelJS.Workbook, cantidad = FILAS_PREPARADAS) {
+  workbook.addWorksheet(MARCA_CAPACIDAD, { state: 'veryHidden' }).getCell('A1').value = cantidad;
+}
 
 /**
  * Avisa de filas escritas más allá del rango que la plantilla preparó.
@@ -90,20 +96,31 @@ export const ULTIMA_FILA_PREPARADA = FILA_INICIO_DATOS + 1000 - 1;
  * Esas filas se importan igual, pero llegaron sin las fórmulas de verificación
  * ni las listas desplegables, así que nadie las revisó antes de subirlas.
  */
+export function limiteOficial(workbook: ExcelJS.Workbook): number | null {
+  const control = workbook.getWorksheet(MARCA_CAPACIDAD);
+  if (!control) return null;
+  const cantidad = control.getCell('A1').value;
+  return typeof cantidad === 'number' && Number.isSafeInteger(cantidad) && cantidad > 0
+    ? FILA_INICIO_DATOS + cantidad - 1 : ULTIMA_FILA_PREPARADA;
+}
+
 export function avisarFilasFueraDeRango(
   filasLeidas: number[],
   hoja: string,
+  workbook?: ExcelJS.Workbook,
 ): { fila: number; campo: string; mensaje: string; valor: string } | null {
-  const fueraDeRango = filasLeidas.filter((f) => f > ULTIMA_FILA_PREPARADA);
+  const oficial = workbook ? limiteOficial(workbook) : null;
+  const limite = oficial ?? ULTIMA_FILA_PREPARADA;
+  const fueraDeRango = filasLeidas.filter((f) => f > limite);
   if (fueraDeRango.length === 0) return null;
 
   return {
     fila: fueraDeRango[0],
     campo: 'GLOBAL',
     mensaje:
-      `Hay ${fueraDeRango.length} fila(s) más allá de la fila ${ULTIMA_FILA_PREPARADA}, que es hasta donde llega la plantilla. ` +
-      `Se importan igual, pero no tuvieron fórmulas de verificación ni listas desplegables: revíselas con cuidado. ` +
-      `Si son muchas, conviene partir el archivo en varios.`,
+      `Hay ${fueraDeRango.length} fila(s) más allá de la fila ${limite}, que es hasta donde llega la plantilla. ` +
+      (oficial ? `Divida el archivo en lotes antes de importarlo.` :
+        `Esta plantilla anterior permite esas filas, pero no tuvieron fórmulas ni listas desplegables.`),
     valor: hoja,
   };
 }

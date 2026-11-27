@@ -1,5 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { EstadoPrestamo } from '@prisma/client';
+import { estadoEfectivoCredito } from './loans.service';
 
 /**
  * La columna «Ruta» de un credito dice la ruta DEL CREDITO.
@@ -114,16 +116,17 @@ describe('la mora se deduce solo de un credito ya vivo', () => {
     return siguiente > 0 ? resto.slice(0, siguiente) : resto;
   })();
 
-  it('solo ACTIVO y EN_MORA entran en la deduccion', () => {
-    expect(cuerpo).toMatch(/const esCobrable =/);
-    expect(cuerpo).toMatch(/prestamo\.estado === EstadoPrestamo\.ACTIVO/);
-    expect(cuerpo).toMatch(/prestamo\.estado === EstadoPrestamo\.EN_MORA/);
+  it('deriva la mora solo para los estados cobrables', () => {
+    expect(cuerpo).toMatch(/estadoEfectivoCredito\(prestamo\.estado, cuotasVencidas\)/);
+    expect(estadoEfectivoCredito(EstadoPrestamo.ACTIVO, 2)).toBe(EstadoPrestamo.EN_MORA);
+    expect(estadoEfectivoCredito(EstadoPrestamo.EN_MORA, 0)).toBe(EstadoPrestamo.ACTIVO);
   });
 
-  it('y lo que no es cobrable conserva su estado', () => {
-    expect(cuerpo).toMatch(
-      /!esCobrable[\s\S]{0,120}prestamo\.estado \|\| EstadoPrestamo\.BORRADOR/,
-    );
+  it('conserva el estado de los borradores históricos y otros créditos no cobrables', () => {
+    for (const estado of Object.values(EstadoPrestamo)) {
+      if (estado === EstadoPrestamo.ACTIVO || estado === EstadoPrestamo.EN_MORA) continue;
+      expect(estadoEfectivoCredito(estado, 2)).toBe(estado);
+    }
   });
 
   it('ninguna cuota vencida ya no basta para pintar EN_MORA', () => {

@@ -1,5 +1,6 @@
 import type { TipoAmortizacionImportacion } from '../interes-credito';
 import type { ValorDeCelda } from '../parsers/cell-value.util';
+import type { ModoHistoricoControlado } from '../parsers/control-historico-xlsx';
 
 export interface ErrorValidacion {
   hoja: string;
@@ -71,6 +72,7 @@ export interface ResultadoValidacion {
     porHoja: Record<string, ResumenHoja>;
   };
   impactoCaja?: ImpactoCaja;
+  modoHistorico?: ModoHistoricoControlado;
   clientes?: ClienteImportado[];
   creditos?: CreditoImportado[];
   articulos?: ArticuloImportado[];
@@ -152,6 +154,7 @@ export interface CreditoImportado {
   valorCuota: number;
   totalAbonado: number;
   saldoPendiente: number;
+  saldoInformado?: number;
   fila: number;
   /** De que hoja salio: las dos hojas de credito empiezan en la fila 7. */
   hoja: string;

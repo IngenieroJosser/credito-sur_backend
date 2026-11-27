@@ -21,9 +21,10 @@ export class ClienteInfoDto {
   @IsString()
   nombre: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String, nullable: true })
+  @IsOptional()
   @IsString()
-  documento: string;
+  documento: string | null;
 
   @ApiProperty()
   @IsString()

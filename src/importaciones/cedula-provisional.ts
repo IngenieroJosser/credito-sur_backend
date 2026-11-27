@@ -44,6 +44,18 @@ export function esMarcadorDeCedula(valor: string): boolean {
 }
 
 /** Si una cédula ya guardada es provisional: la generó el sistema, no es de nadie. */
+export function esReferenciaHistoricaCliente(valor: string): boolean {
+  return /^(?:HIST-[A-Z0-9-]{1,50}|CLIENTE-[A-F0-9]{12}-\d+)$/i.test(valor.trim());
+}
+
+export function claveClienteParaImportar(cliente: { dni: string | null; codigo: string }): string {
+  return cliente.dni?.trim() || 'REF-' + cliente.codigo;
+}
+
+export function esReferenciaClienteRegistrado(valor: string): boolean {
+  return /^REF-[A-Za-z0-9_-]{1,20}$/.test(valor);
+}
+
 export function esCedulaProvisional(dni: string): boolean {
   const limpio = String(dni ?? '').trim();
   return (

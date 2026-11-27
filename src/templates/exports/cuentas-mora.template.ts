@@ -36,7 +36,7 @@ const COLOR = {
 export interface MoraRow {
   numeroPrestamo: string;
   cliente: string;
-  documento: string;
+  documento: string | null;
   diasMora: number;
   montoMora: number;
   montoTotalDeuda: number;

@@ -101,6 +101,21 @@ const validar = async (
 };
 
 describe('Un precio borrado se rehace al importar', () => {
+  it('no toma el resultado guardado de una fórmula ni extrapola un plazo sin respaldo', async () => {
+    const resultado = await validar((hoja) => {
+      escribirFila(hoja, { 'Meses opción 1': 4, 'Precio total opción 1': { formula: '200+999', result: 1199 } });
+    });
+    expect(resultado.errores).toEqual([expect.objectContaining({ campo: 'opcion_1_precio' })]);
+    expect(resultado.articulos).toHaveLength(0);
+  });
+
+  it('respeta el precio autorizado de entrada aunque el plazo no tenga una fórmula', async () => {
+    const resultado = await validar((hoja) => {
+      escribirFila(hoja, { 'Meses opción 1': 4, 'Precio manual opción 1': 420000 });
+    });
+    expect(resultado.errores).toEqual([]);
+    expect(resultado.precios).toContainEqual(expect.objectContaining({ meses: 4, precio: 420000 }));
+  });
   it('con el precio de contado borrado, la fila entra y el precio se calcula', async () => {
     const resultado = await validar((hoja) => {
       borrarCelda(hoja, 'Precio contado');
@@ -190,7 +205,8 @@ describe('El aviso de la hoja dice el número, no cómo obtenerlo', () => {
     // Rehace la cuenta con el costo y el divisor en vez de leer la celda de
     // precio, que en este caso está vacía, y la formatea para mostrarla.
     expect(formula).toContain('TEXT(TRUNC(');
-    expect(formula).toContain('Le corresponde ');
+    expect(formula).toContain('La base calculada es ');
+    expect(formula).toContain('Precio contado manual');
   }, 60000);
 
   it('ya no manda a hacer lo que no funciona', async () => {

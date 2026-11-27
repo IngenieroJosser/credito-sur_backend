@@ -11,7 +11,8 @@ export const FILA_INICIO_DATOS = 7;
  * validaciones. El parser lo detecta y avisa, pero conviene que el tope sea
  * holgado: una migración de cartera normal cabe de sobra en 1.000 filas.
  */
-export const FILAS_PREPARADAS = 1000;
+import { FILAS_PREPARADAS } from '../parsers/header-map.util';
+export { FILAS_PREPARADAS } from '../parsers/header-map.util';
 
 export const COLOR_TITULO = 'FF004F7B';
 export const COLOR_ENCABEZADO = 'FF4F81BD';
@@ -142,7 +143,9 @@ export function declararColumnas(
   columnas.forEach((columna, indice) => {
     const numeroColumna = indice + 1;
     const columnaExcel = ws.getColumn(numeroColumna);
-    columnaExcel.protection = { locked: Boolean(columna.automatica) };
+    columnaExcel.protection = columna.automatica
+      ? { locked: true, hidden: true }
+      : { locked: false };
 
     // Las sugeridas se sombrean igual pero quedan abiertas: el sombreado dice
     // "ya viene resuelta", no "no la toque".
@@ -153,6 +156,7 @@ export function declararColumnas(
       fila++
     ) {
       const celda = ws.getCell(fila, numeroColumna);
+      if (columna.automatica) celda.protection = { locked: true, hidden: true };
       celda.fill = {
         type: 'pattern',
         pattern: 'solid',

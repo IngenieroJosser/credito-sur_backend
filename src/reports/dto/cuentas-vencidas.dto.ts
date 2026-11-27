@@ -22,7 +22,7 @@ export class CuentaVencidaDto {
   @ApiProperty()
   cliente: {
     nombre: string;
-    documento: string;
+    documento: string | null;
     telefono?: string;
     direccion?: string;
   };

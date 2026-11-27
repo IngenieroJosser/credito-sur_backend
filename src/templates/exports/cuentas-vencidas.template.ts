@@ -24,7 +24,7 @@ import {
 export interface VencidasRow {
   numeroPrestamo: string;
   cliente: string;
-  documento: string;
+  documento: string | null;
   diasVencidos: number;
   saldoPendiente: number;
   montoOriginal: number;

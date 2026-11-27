@@ -86,7 +86,7 @@ function cuotaVencidaEn(cuota: {
   return Number.isFinite(vencimiento.getTime()) && vencimiento.toISOString().slice(0, 10) < hoyBogota;
 }
 
-function estadoEfectivoCredito(estado: EstadoPrestamo, cuotasVencidas: number): EstadoPrestamo {
+export function estadoEfectivoCredito(estado: EstadoPrestamo, cuotasVencidas: number): EstadoPrestamo {
   return estado === EstadoPrestamo.ACTIVO || estado === EstadoPrestamo.EN_MORA
     ? (cuotasVencidas > 0 ? EstadoPrestamo.EN_MORA : EstadoPrestamo.ACTIVO)
     : estado;
@@ -1881,6 +1881,7 @@ export class LoansService implements OnModuleInit {
                 categoria: true,
               },
             },
+            articuloHistorico: { select: { descripcion: true, codigoOrigen: true } },
             precioProducto: {
               select: {
                 id: true,
@@ -2083,7 +2084,8 @@ export class LoansService implements OnModuleInit {
           const estado = estadoEfectivoCredito(prestamo.estado, cuotasVencidas);
 
           // Determinar tipo de producto
-          let tipoProducto = 'efectivo';
+          const esArticulo = prestamo.tipoPrestamo === 'ARTICULO';
+          let tipoProducto = esArticulo ? 'articulo' : 'efectivo';
           if (prestamo.producto) {
             const categoria = (prestamo.producto.categoria || '').toLowerCase();
             if (
@@ -2138,7 +2140,10 @@ export class LoansService implements OnModuleInit {
             clienteDni: prestamo.cliente.dni || '',
             clienteTelefono: prestamo.cliente.telefono || '',
             clienteDireccion: prestamo.cliente.direccion || '',
-            producto: prestamo.producto?.nombre || 'Préstamo en efectivo',
+            producto: prestamo.producto?.nombre || (esArticulo
+              ? prestamo.articuloHistorico?.descripcion || prestamo.articuloHistorico?.codigoOrigen ||
+                (prestamo.articuloHistorico ? 'Artículo histórico sin catálogo' : 'Artículo sin identificar')
+              : 'Préstamo en efectivo'),
             tipoProducto,
             tipoPrestamo: prestamo.tipoPrestamo,
             montoTotal,
@@ -2285,6 +2290,7 @@ export class LoansService implements OnModuleInit {
             },
           },
           producto: true,
+          articuloHistorico: { select: { referencia: true, codigoOrigen: true, descripcion: true } },
           precioProducto: true,
           cuotas: {
             orderBy: { numeroCuota: 'asc' },
@@ -2527,6 +2533,7 @@ export class LoansService implements OnModuleInit {
             },
           },
           producto: true,
+          articuloHistorico: { select: { referencia: true, codigoOrigen: true, descripcion: true } },
           precioProducto: true,
           cuotas: {
             orderBy: { numeroCuota: 'asc' },
@@ -2942,6 +2949,9 @@ export class LoansService implements OnModuleInit {
 
       if (!prestamo) {
         throw new NotFoundException('Préstamo no encontrado');
+      }
+      if (prestamo.soloPruebaHistorica) {
+        throw new BadRequestException('Revise los créditos de prueba desde el expediente histórico.');
       }
       this.validarVersionEdicion(prestamo, updateData);
 
@@ -5880,7 +5890,7 @@ export class LoansService implements OnModuleInit {
 
         const asignacion = cliente.asignacionesRuta?.[0];
         clientesMap.set(cliente.id, {
-          codigo: cliente.codigo || cliente.dni,
+          codigo: cliente.codigo,
           dni: cliente.dni,
           nombres: cliente.nombres,
           apellidos: cliente.apellidos,

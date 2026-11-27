@@ -26,6 +26,7 @@ import { Prisma } from '@prisma/client';
 import { generarPDFClientes } from '../templates/exports/clientes.template';
 import { generarExcelClientesCreditosImportable } from '../templates/exports/importables.template';
 import { unoDeLosPermitidos } from '../common/texto.util';
+import { esReferenciaClienteRegistrado } from '../importaciones/cedula-provisional';
 
 /**
  * Un archivo que la pantalla manda al guardar un cliente.
@@ -666,7 +667,7 @@ export class ClientsService {
           },
           {
             codigo: {
-              contains: searchTerm,
+              contains: esReferenciaClienteRegistrado(searchTerm.toUpperCase()) ? searchTerm.slice(4) : searchTerm,
               mode: 'insensitive',
             },
           },

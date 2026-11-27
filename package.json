@@ -17,6 +17,7 @@
     "lint": "eslint \"{src,test}/**/*.ts\"",
     "test": "jest",
     "seed": "ts-node -r tsconfig-paths/register src/prisma/seed.ts",
+    "preparar:historicos": "node scripts/preparar-historicos.js",
     "revert:payment": "node scripts/revert-payment.js",
     "postinstall": "node scripts/ensure-prisma-client.js"
   },

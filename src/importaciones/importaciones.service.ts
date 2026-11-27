@@ -29,10 +29,7 @@ import {
 } from './interes-credito';
 import { pesos } from '../common/dinero.util';
 import { randomUUID } from 'crypto';
-import {
-  esMarcadorDeCedula,
-  generarCedulaProvisional,
-} from './cedula-provisional';
+import { claveClienteParaImportar, esMarcadorDeCedula, esReferenciaClienteRegistrado, esReferenciaHistoricaCliente } from './cedula-provisional';
 
 /**
  * El producto que las dos funciones de snapshot leen.
@@ -145,6 +142,13 @@ function esFrecuenciaPago(valor: string): valor is FrecuenciaPago {
   return (Object.values(FrecuenciaPago) as string[]).includes(valor);
 }
 
+export interface ContextoPersistenciaHistorica {
+  tx: TransaccionPrisma;
+  expedienteId: string;
+  documentos: ReadonlyMap<string, string | null>;
+  articulos: ReadonlyMap<string, { productoId?: string; articuloHistoricoId?: string }>;
+}
+
 @Injectable()
 export class ImportacionesService {
   private clientesCreditosParser: ClientesCreditosParser;
@@ -209,9 +213,10 @@ export class ImportacionesService {
       costoUnitario: number;
       usuarioId: string;
       referenceId: string;
+      apertura?: boolean;
     },
   ) {
-    const { codigo, unidades, costoUnitario, usuarioId, referenceId } = params;
+    const { codigo, unidades, costoUnitario, usuarioId, referenceId, apertura = false } = params;
     // El libro solo admite pesos enteros: se redondea aquí, no allá.
     const valor = Math.round(Math.abs(unidades) * Number(costoUnitario || 0));
     if (valor <= 0 || !usuarioId) return;
@@ -220,12 +225,13 @@ export class ImportacionesService {
 
     await this.ledgerService.registrarAsiento(
       {
-        referenceType: 'AJUSTE',
+        referenceType: apertura ? 'APERTURA' : 'AJUSTE',
+        isOpening: apertura,
         // Una referencia por movimiento permite revertir solo este lote. Usar
         // productoId mezclaría todos los ajustes históricos del artículo.
         referenceId,
         description:
-          `${entra ? 'Entrada' : 'Salida'} de inventario por importación — ` +
+          `${apertura ? 'Existencias de apertura' : entra ? 'Entrada de inventario por importación' : 'Salida de inventario por importación'} — ` +
           `${codigo}: ${Math.abs(unidades)} und a ${formatCurrency(costoUnitario)}`,
         createdBy: usuarioId,
         lines: [
@@ -266,11 +272,11 @@ export class ImportacionesService {
    * cédulas repetidas y autocomplete nombres y precios mientras se diligencia,
    * sin tener que subir el archivo para enterarse.
    */
-  async generarPlantillaClientesCreditos() {
+  async generarPlantillaClientesCreditos(integral = false) {
     const [clientes, productos, prestamos, rutas] = await Promise.all([
       this.prisma.cliente.findMany({
         where: { eliminadoEn: null },
-        select: { dni: true, nombres: true, apellidos: true },
+        select: { codigo: true, dni: true, nombres: true, apellidos: true },
         orderBy: { creadoEn: 'desc' },
       }),
       this.prisma.producto.findMany({
@@ -302,7 +308,7 @@ export class ImportacionesService {
 
     const datos: DatosReferenciaPlantilla = {
       clientes: clientes.map((c) => ({
-        dni: String(c.dni),
+        dni: claveClienteParaImportar(c),
         nombre: `${c.nombres} ${c.apellidos}`.trim(),
       })),
       articulos: productos.flatMap((p) =>
@@ -320,7 +326,7 @@ export class ImportacionesService {
       rutas: rutas.map((r) => r.codigo),
     };
 
-    return generarPlantillaClientesCreditos(datos);
+    return generarPlantillaClientesCreditos(datos, { integral });
   }
 
   // --- Lotes e historial ---
@@ -570,7 +576,9 @@ export class ImportacionesService {
         ? new Date(producto.ocultoArchivadosEn).toISOString()
         : null,
     };
-    return JSON.stringify(actual) === JSON.stringify(esperado);
+    // PostgreSQL jsonb no conserva el orden de las claves.
+    return (Object.keys(actual) as (keyof ProductoImportadoSnapshot)[])
+      .every(campo => actual[campo] === esperado[campo]);
   }
 
   /**
@@ -799,6 +807,7 @@ export class ImportacionesService {
   async revertirLote(
     loteId: string,
     opciones: { prestamoIds?: string[]; usuarioId: string },
+    txHistorico?: TransaccionPrisma,
   ): Promise<{
     loteId: string;
     parcial: boolean;
@@ -814,7 +823,8 @@ export class ImportacionesService {
     preciosRestaurados?: number;
     mensajes: string[];
   }> {
-    const lote = await this.prisma.importacionLote.findUnique({
+    const db = txHistorico ?? this.prisma;
+    const lote = await db.importacionLote.findUnique({
       where: { id: loteId },
     });
 
@@ -825,6 +835,9 @@ export class ImportacionesService {
     const creado = (objetoDeJson(lote.resumen).creado ??
       {}) as CreadoPorImportacion;
 
+    if (objetoDeJson(lote.resumen).expedienteHistoricoId && !txHistorico) {
+      throw new BadRequestException('La carga histórica se revierte desde su expediente.');
+    }
     const evaluacion = this.evaluarSiSePuedeDeshacer(lote, creado);
     if (!evaluacion.sePuede) {
       throw new BadRequestException(
@@ -838,7 +851,7 @@ export class ImportacionesService {
           'Una importación de inventario se deshace completa; no recibe créditos seleccionados.',
         );
       }
-      return this.revertirLoteInventario(lote, creado, opciones.usuarioId);
+      return this.revertirLoteInventario(lote, creado, opciones.usuarioId, txHistorico);
     }
 
     const prestamosDelLote = creado.prestamos ?? [];
@@ -867,7 +880,7 @@ export class ImportacionesService {
     }
 
     // Un crédito que ya recibió pagos deja de ser "lo que importamos".
-    const prestamosConPagos = await this.prisma.pago.findMany({
+    const prestamosConPagos = await db.pago.findMany({
       where: { prestamoId: { in: idsPrestamos } },
       select: { prestamoId: true },
       distinct: ['prestamoId'],
@@ -886,8 +899,7 @@ export class ImportacionesService {
     let transaccionesReversadas = 0;
     let stockDevuelto = 0;
 
-    await this.prisma.$transaction(
-      async (tx) => {
+    const ejecutarReversion = async (tx: TransaccionPrisma) => {
         // 1. La plata vuelve antes de borrar nada.
         //
         // Se escribe la reversa de cada asiento de desembolso o de venta de
@@ -936,11 +948,21 @@ export class ImportacionesService {
           transaccionesReversadas++;
         }
 
-        // 3. El artículo que salió con el crédito vuelve a la bodega.
-        const creditosDeArticulo = await tx.prestamo.findMany({
-          where: { id: { in: idsPrestamos }, productoId: { not: null } },
-          select: { id: true, productoId: true },
+        // Tener producto no demuestra que el lote descontó existencias.
+        // La venta registrada también cubre lotes anteriores a cargaHistoricaEn.
+        const ventas = await tx.journalEntry.findMany({
+          where: { referenceType: 'VENTA_ARTICULO', referenceId: { in: idsPrestamos } },
+          select: { referenceId: true },
+          distinct: ['referenceId'],
         });
+        const creditosDeArticulo = ventas.length > 0 ? await tx.prestamo.findMany({
+          where: {
+            id: { in: ventas.map((venta) => venta.referenceId) },
+            productoId: { not: null },
+            cargaHistoricaEn: null,
+          },
+          select: { productoId: true },
+        }) : [];
 
         for (const credito of creditosDeArticulo) {
           if (!credito.productoId) continue;
@@ -1012,9 +1034,9 @@ export class ImportacionesService {
             },
           },
         });
-      },
-      { maxWait: 60_000, timeout: 600_000 },
-    );
+    };
+    if (txHistorico) await ejecutarReversion(txHistorico);
+    else await this.prisma.$transaction(ejecutarReversion, { maxWait: 60_000, timeout: 600_000 });
 
     mensajes.unshift(
       parcial
@@ -1051,6 +1073,7 @@ export class ImportacionesService {
     lote: { id: string },
     creado: CreadoPorImportacion,
     usuarioId: string,
+    txExterior?: TransaccionPrisma,
   ) {
     const registros = creado.inventario ?? [];
     let articulosEliminados = 0;
@@ -1059,8 +1082,7 @@ export class ImportacionesService {
     let preciosRestaurados = 0;
     let asientosReversados = 0;
 
-    await this.prisma.$transaction(
-      async (tx) => {
+    const ejecutar = async (tx: TransaccionPrisma) => {
         // Se vuelve a comprobar dentro de la misma transacción: la vista previa
         // puede llevar abierta varios minutos y el inventario pudo cambiar.
         const revision = await this.revisarReversionInventario(tx, registros);
@@ -1078,7 +1100,7 @@ export class ImportacionesService {
         const referencias = registros.flatMap((r) => r.asientoReferenceIds);
         const reversas = await this.ledgerService.reversarAsientos(tx, {
           referenceIds: referencias,
-          referenceTypes: ['AJUSTE'],
+          referenceTypes: txExterior ? ['APERTURA'] : ['AJUSTE'],
           createdBy: usuarioId,
           motivo: `Importación de inventario deshecha (lote ${lote.id})`,
         });
@@ -1117,11 +1139,12 @@ export class ImportacionesService {
           where: { id: lote.id },
           data: { estado: 'CANCELADO' },
         });
-      },
-      { maxWait: 60_000, timeout: 600_000 },
-    );
-
-    this.avisarCambioPorImportacion('INVENTARIO');
+    };
+    if (txExterior) await ejecutar(txExterior);
+    else {
+      await this.prisma.$transaction(ejecutar, { maxWait: 60_000, timeout: 600_000 });
+      this.avisarCambioPorImportacion('INVENTARIO');
+    }
 
     return {
       loteId: lote.id,
@@ -1217,6 +1240,9 @@ export class ImportacionesService {
       );
     }
 
+    if (resultado.modoHistorico) {
+      throw new BadRequestException('Este inventario histórico debe confirmarse desde su expediente aislado.');
+    }
     // 2. Bloquear si hay errores
     if (resultado.errores.length > 0) {
       // Registrar lote fallido para trazabilidad
@@ -1243,8 +1269,22 @@ export class ImportacionesService {
       });
     }
 
+    return this.persistirInventarioValidado(resultado, creadoPorId);
+  }
+
+  async persistirInventarioValidado(
+    resultado: ResultadoValidacion,
+    creadoPorId: string,
+    apertura?: { tx: TransaccionPrisma; expedienteId: string; fechaCorte: string | null },
+  ) {
+    if (resultado.tipo !== 'inventario' || resultado.errores.length) {
+      throw new BadRequestException('El inventario contiene filas que no pasaron la validación.');
+    }
     const articulos = resultado.articulos ?? [];
     const precios = resultado.precios ?? [];
+    if (apertura && articulos.some(a => a.esActualizacion || a.yaExiste || a.costo === null)) {
+      throw new BadRequestException('La apertura es para productos nuevos con costo conocido; no modifica el catálogo actual.');
+    }
 
     // 3. Ejecutar dentro de transacción
     let articulosCreados = 0;
@@ -1285,8 +1325,7 @@ export class ImportacionesService {
 
     // Catálogo, precios, stock, asiento y lote se confirman juntos. Si falla
     // cualquiera, la transacción deja todo como estaba.
-    await this.prisma.$transaction(
-      async (tx) => {
+    const ejecutar = async (tx: TransaccionPrisma) => {
         // El archivo trae la categoría escrita a mano. Se resuelve una sola vez
         // contra el catálogo para que el artículo importado quede enlazado
         // igual que uno creado a mano, y no solo con el nombre suelto.
@@ -1399,6 +1438,7 @@ export class ImportacionesService {
 
           const asientoReferenceId = `IMP-INV-${randomUUID()}`;
           await this.asentarInventario(tx, {
+            apertura: !!apertura,
             codigo: art.codigo,
             unidades: Number(art.stock ?? 0),
             costoUnitario: Number(art.costo || 0),
@@ -1498,13 +1538,18 @@ export class ImportacionesService {
           data: {
             tipo: 'INVENTARIO',
             estado: 'CONFIRMADO',
-            nombreArchivo: file.originalname,
+            nombreArchivo: resultado.archivo,
             totalFilas: resultado.resumen.totalFilas,
             filasValidas: resultado.resumen.filasValidas,
             filasConError: resultado.resumen.filasConError,
             advertencias: resultado.resumen.advertencias,
             resumen: {
               ...resultado.resumen,
+              ...(apertura ? {
+                expedienteHistoricoId: apertura.expedienteId,
+                existenciasDeApertura: true,
+                fechaCorte: apertura.fechaCorte,
+              } : {}),
               creado: {
                 articulos: articulosCreados,
                 precios: preciosCreados,
@@ -1520,9 +1565,9 @@ export class ImportacionesService {
           },
         });
         loteId = lote.id;
-      },
-      { maxWait: 60_000, timeout: 600_000 },
-    );
+    };
+    if (apertura) await ejecutar(apertura.tx);
+    else await this.prisma.$transaction(ejecutar, { maxWait: 60_000, timeout: 600_000 });
 
     if (articulosActualizados > 0) {
       mensajes.push(
@@ -1545,7 +1590,7 @@ export class ImportacionesService {
       );
     }
 
-    this.avisarCambioPorImportacion('INVENTARIO');
+    if (!apertura) this.avisarCambioPorImportacion('INVENTARIO');
 
     return {
       loteId,
@@ -1603,6 +1648,9 @@ export class ImportacionesService {
       );
     }
 
+    if (resultado.modoHistorico) {
+      throw new BadRequestException('Esta cartera histórica debe confirmarse desde su expediente aislado. No autoriza cobranza.');
+    }
     // 2. Bloquear si hay errores
     if (resultado.errores.length > 0) {
       const lote = await this.prisma.importacionLote.create({
@@ -1628,6 +1676,18 @@ export class ImportacionesService {
       });
     }
 
+    return this.persistirCarteraValidada(resultado, creadoPorId);
+  }
+
+  async persistirCarteraValidada(
+    resultado: ResultadoValidacion,
+    creadoPorId: string,
+    historico?: ContextoPersistenciaHistorica,
+  ) {
+    if (resultado.errores.length > 0 || (historico && (
+      resultado.clientes?.some(cli => cli.esActualizacion || !historico.documentos.has(cli.cc)) ||
+      resultado.creditos?.some(cred => cred.esActualizacion || cred.tipoCarga !== 'HISTORICA' || cred.descontarCaja !== 'NO')
+    ))) throw new BadRequestException('La cartera contiene filas no admitidas para esta confirmación.');
     const clientes = resultado.clientes ?? [];
 
     // Mapeo de NivelRiesgo (operativo a Prisma)
@@ -1667,10 +1727,7 @@ export class ImportacionesService {
 
     let loteId = '';
 
-    // 3. Ejecutar dentro de transacción con try-catch para rollback y lote FALLIDO
-    try {
-      await this.prisma.$transaction(
-        async (tx) => {
+    const ejecutar = async (tx: TransaccionPrisma) => {
           /**
            * Traduccion `numero de amarre del archivo -> cedula guardada`.
            *
@@ -1682,8 +1739,7 @@ export class ImportacionesService {
            * Se llena tambien con las cedulas de verdad (se traducen a si mismas) para que
            * la busqueda del credito sea una sola, sin ramas.
            */
-          const cedulaPorAmarre = new Map<string, string>();
-          const cedulasProvisionalesUsadas = new Set<string>();
+          const clientePorAmarre = new Map<string, string>();
 
           for (const cli of clientes) {
             // Idempotencia por DNI o código
@@ -1692,11 +1748,13 @@ export class ImportacionesService {
             // Con un numero de amarre NO se busca por `dni`: la cedula guardada es la
             // provisional, no el "1" del archivo. Buscar por dni ahi encontraria a
             // cualquier cliente que de verdad tenga la cedula 1.
-            const esAmarre = esMarcadorDeCedula(cli.cc);
+            const esAmarre = esMarcadorDeCedula(cli.cc) || esReferenciaHistoricaCliente(cli.cc);
+            const documentoHistorico = historico?.documentos.get(cli.cc);
+            const dniOriginal = historico ? documentoHistorico : esAmarre ? null : cli.cc;
             const existente = await tx.cliente.findFirst({
               where: {
                 OR: [
-                  ...(esAmarre ? [] : [{ dni: cli.cc }]),
+                  ...(dniOriginal ? [{ dni: dniOriginal }] : []),
                   { codigo: cli.codigoImp },
                   { idempotencyKey: cli.codigoImp },
                 ],
@@ -1710,6 +1768,9 @@ export class ImportacionesService {
             // asi que salian en mora pero su perfil daba 404 y no aparecia en el
             // listado. Si se esta importando con creditos vivos, el cliente esta
             // vivo.
+            if (historico && existente) {
+              throw new BadRequestException(`Ya existe un cliente para la referencia de la fila ${cli.fila}; vincúlelo antes de continuar.`);
+            }
             if (existente?.eliminadoEn) {
               await tx.cliente.update({
                 where: { id: existente.id },
@@ -1761,18 +1822,12 @@ export class ImportacionesService {
 
             if (existente) {
               // Aunque no se cree nada, el credito de este archivo tiene que encontrarlo.
-              cedulaPorAmarre.set(cli.cc, existente.dni);
+              clientePorAmarre.set(cli.cc, existente.id);
               clientesOmitidos++;
               continue;
             }
 
-            // La cedula que se guarda: la del archivo si es real, o una provisional
-            // (empieza por 99) si lo que vino es un numero de amarre.
-            const dniAGuardar = esAmarre
-              ? generarCedulaProvisional(cedulasProvisionalesUsadas)
-              : cli.cc;
-            if (esAmarre) cedulasProvisionalesUsadas.add(dniAGuardar);
-            cedulaPorAmarre.set(cli.cc, dniAGuardar);
+            const dniAGuardar = dniOriginal ?? null;
 
             const clienteCreado = await tx.cliente.create({
               data: {
@@ -1797,6 +1852,7 @@ export class ImportacionesService {
                 // Por el momento lo agregamos simple si aplica.
               },
             });
+            clientePorAmarre.set(cli.cc, clienteCreado.id);
             clientesCreados++;
             idsClientesCreados.push(clienteCreado.id);
             clientesPorAsignar.push({
@@ -1990,10 +2046,12 @@ export class ImportacionesService {
             // Buscar cliente. `cedulaPorAmarre` traduce el numero del archivo a la cedula
             // que de verdad quedo guardada: si el cliente se creo con cedula provisional,
             // buscarlo por el "1" del archivo no lo encontraria.
-            const dniDelCliente =
-              cedulaPorAmarre.get(cred.ccCliente) ?? cred.ccCliente;
+            const clienteId = clientePorAmarre.get(cred.ccCliente);
+            if (historico && !clienteId) throw new BadRequestException(`La referencia de cliente para la fila ${cred.fila} no se resolvió.`);
             const cliente = await tx.cliente.findUnique({
-              where: { dni: dniDelCliente },
+              where: clienteId ? { id: clienteId } : esReferenciaClienteRegistrado(cred.ccCliente)
+                ? { codigo: cred.ccCliente.slice(4), AND: { dni: null }, eliminadoEn: null }
+                : { dni: cred.ccCliente },
               select: { id: true },
             });
 
@@ -2035,7 +2093,13 @@ export class ImportacionesService {
             let costoArticulo: number | undefined;
             let margenArticulo: number | undefined;
 
-            if (cred.tipoPrestamo === 'ARTICULO') {
+            const articuloResuelto = historico?.articulos.get(cred.numeroPrestamo);
+            const articuloHistoricoId = articuloResuelto?.articuloHistoricoId;
+            productoId = articuloResuelto?.productoId;
+            if (historico && cred.tipoPrestamo === 'ARTICULO' && !articuloResuelto) {
+              throw new BadRequestException(`Falta resolver el artículo histórico de la fila ${cred.fila}.`);
+            }
+            if (cred.tipoPrestamo === 'ARTICULO' && !historico) {
               const producto = await tx.producto.findUnique({
                 where: { codigo: cred.productoCodigo },
                 select: {
@@ -2057,22 +2121,12 @@ export class ImportacionesService {
 
               if (producto) {
                 productoId = producto.id;
-                precioProductoId = producto.precios[0]?.id;
-                precioVentaArticulo = producto.precios[0]?.precio
-                  ? Number(producto.precios[0].precio)
-                  : undefined;
-                costoArticulo = producto.costo
-                  ? Number(producto.costo)
-                  : undefined;
-                if (
-                  precioVentaArticulo !== undefined &&
-                  costoArticulo !== undefined
-                ) {
-                  margenArticulo = precioVentaArticulo - costoArticulo;
+                // El catálogo de hoy no acredita el costo ni el plan de una venta anterior.
+                if (!isHistorica) {
+                  precioProductoId = producto.precios[0]?.id;
+                  costoArticulo = producto.costo == null ? undefined : Number(producto.costo);
                 }
               }
-              // Nota V2.2: Para históricos, no bloqueamos si no hay precioProducto (precioProductoId/margen pueden quedar null).
-              // El crédito se crea porque el monto real ya viene dado en el Excel.
             }
 
             // Cálculos financieros
@@ -2267,6 +2321,7 @@ export class ImportacionesService {
                 idempotencyKey: cred.codigoImp,
                 clienteId: cliente.id,
                 productoId,
+                articuloHistoricoId,
                 precioProductoId,
                 precioVentaArticulo,
                 costoArticulo,
@@ -2283,10 +2338,11 @@ export class ImportacionesService {
                 fechaInicio: fechaCredito,
                 fechaPrimerCobro: cred.fechaPrimerCobro || fechaCredito,
                 fechaFin,
-                estado: estadoPrestamo,
+                estado: historico ? 'BORRADOR' : estadoPrestamo,
+                soloPruebaHistorica: !!historico,
                 creadoPorId,
-                aprobadoPorId: creadoPorId,
-                estadoAprobacion: 'APROBADO',
+                aprobadoPorId: historico ? null : creadoPorId,
+                estadoAprobacion: historico ? 'PENDIENTE' : 'APROBADO',
                 interesTotal,
                 saldoPendiente,
                 totalPagado: avance.totalPagado,
@@ -2462,8 +2518,12 @@ export class ImportacionesService {
             }
           }
 
-          for (const clienteId of clientesConRuta.keys()) {
-            await sincronizarAsignacionesCliente(tx, clienteId);
+          // El expediente crea clientes nuevos: su ruta declarada también
+          // se conserva cuando no tienen ningún crédito en esta selección.
+          if (!historico) {
+            for (const clienteId of clientesConRuta.keys()) {
+              await sincronizarAsignacionesCliente(tx, clienteId);
+            }
           }
 
           /*
@@ -2490,7 +2550,7 @@ export class ImportacionesService {
             data: {
               tipo: 'CLIENTES_CREDITOS',
               estado: 'CONFIRMADO',
-              nombreArchivo: file.originalname,
+              nombreArchivo: resultado.archivo,
               totalFilas: resultado.resumen.totalFilas,
               filasValidas: resultado.resumen.filasValidas,
               filasConError: resultado.resumen.filasConError,
@@ -2505,6 +2565,7 @@ export class ImportacionesService {
                   prestamosActualizados: idsPrestamosActualizados,
                   conMovimientosContables: creditosOperativosCreados > 0,
                 },
+                ...(historico ? { expedienteHistoricoId: historico.expedienteId } : {}),
               },
               creadoPorId,
               confirmadoEn: new Date(),
@@ -2532,17 +2593,17 @@ export class ImportacionesService {
               data: { loteImportacionId: lote.id },
             });
           }
-        },
-        // Migrar una cartera completa no cabe en los 5 s que Prisma da por
-        // defecto a una transacción interactiva.
-        { maxWait: 60_000, timeout: 600_000 },
-      );
+    };
+    try {
+      if (historico) await ejecutar(historico.tx);
+      else await this.prisma.$transaction(ejecutar, { maxWait: 60_000, timeout: 600_000 });
     } catch (error) {
+      if (historico) throw error;
       await this.prisma.importacionLote.create({
         data: {
           tipo: 'CLIENTES_CREDITOS',
           estado: 'FALLIDO',
-          nombreArchivo: file.originalname,
+          nombreArchivo: resultado.archivo,
           totalFilas: resultado.resumen.totalFilas,
           filasValidas: resultado.resumen.filasValidas,
           filasConError: resultado.resumen.filasConError,
@@ -2569,7 +2630,7 @@ export class ImportacionesService {
 
     mensajes.push('Clientes y créditos confirmados correctamente.');
 
-    this.avisarCambioPorImportacion('CLIENTES_CREDITOS');
+    if (!historico) this.avisarCambioPorImportacion('CLIENTES_CREDITOS');
 
     return {
       loteId,

@@ -6,10 +6,10 @@ import {
 } from './importables.template';
 import { comoPrisma, type DobleDePrisma } from '../../common/testing/dobles';
 
-const prismaVacio = () =>
+const prismaVacio = (productos: { codigo: string; nombre: string; precios: { meses: number; precio: number }[] }[] = []) =>
   comoPrisma({
     cliente: { findMany: jest.fn().mockResolvedValue([]) },
-    producto: { findMany: jest.fn().mockResolvedValue([]) },
+    producto: { findMany: jest.fn().mockResolvedValue(productos) },
     ruta: {
       findMany: jest.fn().mockResolvedValue([{ codigo: 'R-CENTRO' }]),
     },
@@ -53,6 +53,7 @@ const creditoBase = {
   fechaPrimerCobro: '2026-07-13',
   tipoCarga: 'HISTORICA',
   descontarCaja: 'NO',
+  totalAbonado: 0,
 };
 
 const clienteBase = {
@@ -171,6 +172,26 @@ describe('Plantillas importables de exportacion', () => {
       'Créditos de dinero',
       'Créditos de artículo',
     ]);
+  });
+
+  it('conserva abonos y cuotas pactadas al reimportar un crédito de artículo', async () => {
+    const archivo = await generarExcelClientesCreditosImportable([clienteBase], [{
+      ...creditoBase,
+      tipoPrestamo: 'ARTICULO',
+      productoCodigo: 'CEL-A15',
+      monto: 720000,
+      cuotaInicial: 0,
+      frecuenciaPago: 'QUINCENAL',
+      cantidadCuotas: 7,
+      plazoMeses: 3,
+      totalAbonado: 120000,
+    }], '2026-07-12');
+    const db = prismaVacio([{ codigo: 'CEL-A15', nombre: 'Celular de prueba', precios: [] }]);
+    const resultado = await new ClientesCreditosParser(db).parseAndValidate(archivo.data, archivo.filename);
+    expect(resultado.errores).toHaveLength(0);
+    expect(resultado.creditos?.[0]).toMatchObject({
+      monto: 720000, cuotaInicial: 0, cantidadCuotas: 7, totalAbonado: 120000, saldoPendiente: 600000,
+    });
   });
 
   it('conserva el avance de cobro de un credito al exportarlo y volverlo a leer', async () => {

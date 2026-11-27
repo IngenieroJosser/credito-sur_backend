@@ -245,7 +245,9 @@ function escribirFila(
   });
 
   Object.entries(valores).forEach(([encabezado, valor]) => {
-    const columna = columnas.get(normalizarEncabezado(encabezado));
+    const clave = normalizarEncabezado(encabezado);
+    const columna = columnas.get(clave) ?? (clave === normalizarEncabezado('CC cliente')
+      ? columnas.get(normalizarEncabezado('Cliente / Referencia')) : undefined);
     if (!columna) {
       throw new Error(
         `La hoja "${hoja.name}" no tiene la columna "${encabezado}"`,
@@ -257,7 +259,7 @@ function escribirFila(
 
 /** Datos mínimos de un crédito válido; cada prueba sobreescribe lo que necesita. */
 const creditoMinimo = {
-  'Número de crédito': 'IMP-001',
+  'Número de crédito manual': 'IMP-001',
   'CC cliente': '12345678',
   Monto: 500000,
   'Tasa interés': 10,
@@ -266,6 +268,7 @@ const creditoMinimo = {
   'Tipo de interés': 'Interés simple',
   'Fecha crédito': '2026-05-01',
   'Tipo carga': 'HISTORICA',
+  'Total abonado': 0,
 };
 
 async function validarCredito(
@@ -285,7 +288,7 @@ async function validarCredito(
 
 /** Datos mínimos de un crédito de artículo; la hoja ya fija el tipo. */
 const creditoArticuloMinimo = {
-  'Número de crédito': 'IMP-ART-1',
+  'Número de crédito manual': 'IMP-ART-1',
   'CC cliente': '12345678',
   'Código del artículo': 'CEL-A15',
   'Plazo meses': 3,
@@ -293,6 +296,8 @@ const creditoArticuloMinimo = {
   'Fecha crédito': '2026-05-01',
   'Tipo carga': 'HISTORICA',
   'Cuota inicial': 190000,
+  'Total financiado': 500000,
+  'Total abonado': 0,
 };
 
 const validarCreditoArticulo = (
@@ -344,16 +349,16 @@ describe('Plantilla de inventario', () => {
       'Nombre del artículo': 'Nevera 200L',
       Categoría: 'Electrodomésticos',
       'Costo unitario': 900000,
-      'Precio contado': 1050000,
+      'Precio contado manual': 1050000,
       'Stock actual': 5,
       'Stock mínimo': 1,
       Activo: 'SI',
       'Meses opción 1': 1,
-      'Precio total opción 1': 1150000,
+      'Precio manual opción 1': 1150000,
       'Meses opción 2': 3,
-      'Precio total opción 2': 1290000,
+      'Precio manual opción 2': 1290000,
       'Meses opción 3': 6,
-      'Precio total opción 3': 1450000,
+      'Precio manual opción 3': 1450000,
     });
 
     expect(resultado.errores).toHaveLength(0);
@@ -372,9 +377,9 @@ describe('Plantilla de inventario', () => {
       'Nombre del artículo': 'Nevera 200L',
       Categoría: 'Electrodomésticos',
       'Costo unitario': 900000,
-      'Precio contado': 1050000,
+      'Precio contado manual': 1050000,
       'Meses opción 1': 1,
-      'Precio total opción 1': 1150000,
+      'Precio manual opción 1': 1150000,
     });
 
     expect(resultado.errores).toHaveLength(0);
@@ -390,11 +395,11 @@ describe('Plantilla de inventario', () => {
       'Nombre del artículo': 'Nevera 200L',
       Categoría: 'Electrodomésticos',
       'Costo unitario': 900000,
-      'Precio contado': 1050000,
+      'Precio contado manual': 1050000,
       'Meses opción 1': 3,
-      'Precio total opción 1': 1290000,
+      'Precio manual opción 1': 1290000,
       'Meses opción 2': 3,
-      'Precio total opción 2': 1300000,
+      'Precio manual opción 2': 1300000,
     });
 
     expect(resultado.errores).toEqual([
@@ -409,9 +414,9 @@ describe('Plantilla de inventario', () => {
         'Nombre del artículo': 'Nevera 200L',
         Categoría: 'Electrodomésticos',
         'Costo unitario': 900000,
-        'Precio contado': 1050000,
+        'Precio contado manual': 1050000,
         'Meses opción 1': 1,
-        'Precio total opción 1': 1150000,
+        'Precio manual opción 1': 1150000,
       },
       { productos: [{ codigo: 'NEV-200', nombre: 'Nevera 200L' }] },
     );
@@ -428,9 +433,9 @@ describe('Plantilla de inventario', () => {
       'Nombre del artículo': 'Nevera 200L',
       Categoría: 'Electrodomésticos',
       'Costo unitario': 900000,
-      'Precio contado': 800000,
+      'Precio contado manual': 800000,
       'Meses opción 1': 1,
-      'Precio total opción 1': 1150000,
+      'Precio manual opción 1': 1150000,
     });
 
     expect(resultado.errores).toHaveLength(0);
@@ -577,7 +582,7 @@ describe('Plantilla de clientes y créditos', () => {
   });
 
   it('genera el número de préstamo y el código cuando se dejan vacíos', async () => {
-    const { 'Número de crédito': _numero, ...resto } = creditoMinimo;
+    const { 'Número de crédito manual': _numero, ...resto } = creditoMinimo;
     const resultado = await validarCredito(resto);
 
     expect(resultado.errores).toHaveLength(0);
@@ -1259,7 +1264,7 @@ describe('Acción ACTUALIZAR', () => {
       expect.arrayContaining([
         expect.objectContaining({
           campo: 'cc',
-          mensaje: expect.stringContaining('PROVISIONAL'),
+          mensaje: expect.stringContaining('quedará sin documento'),
         }),
       ]),
     );
@@ -1414,9 +1419,9 @@ describe('Acción ACTUALIZAR', () => {
         'Nombre del artículo': 'Nevera 200L Nueva',
         Categoría: 'Electrodomésticos',
         'Costo unitario': 950000,
-        'Precio contado': 1100000,
+        'Precio contado manual': 1100000,
         'Meses opción 1': 1,
-        'Precio total opción 1': 1200000,
+        'Precio manual opción 1': 1200000,
       },
       { productos: [{ codigo: 'NEV-200', nombre: 'Nevera 200L' }] },
     );
@@ -1436,7 +1441,7 @@ describe('Acción ACTUALIZAR', () => {
       'Nombre del artículo': 'Fantasma',
       Categoría: 'Electrodomésticos',
       'Costo unitario': 100000,
-      'Precio contado': 120000,
+      'Precio contado manual': 120000,
     });
 
     expect(resultado.errores).toEqual([
@@ -1451,7 +1456,7 @@ describe('Acción ACTUALIZAR', () => {
       'Nombre del artículo': 'Nevera 200L',
       Categoría: 'Electrodomésticos',
       'Costo unitario': 900000,
-      'Precio contado': 1050000,
+      'Precio contado manual': 1050000,
     });
 
     expect(resultado.errores).toEqual([
@@ -1551,7 +1556,7 @@ describe('Diferencias entre crédito de artículo y préstamo en efectivo', () =
 });
 
 describe('Filas más allá del rango preparado', () => {
-  it('avisa cuando se pegan filas donde la plantilla ya no tiene fórmulas', async () => {
+  it('bloquea las filas de una plantilla nueva que quedan fuera del rango', async () => {
     const plantilla = await plantillaClientesCacheada();
     const filaFueraDeRango = FILA_DATOS + 1000; // la plantilla llega hasta 1006
 
@@ -1577,17 +1582,10 @@ describe('Filas más allá del rango preparado', () => {
       prismaMock(),
     ).parseAndValidate(archivo, 'clientes.xlsx');
 
-    // Las dos filas se importan; solo se avisa de la que quedó sin fórmulas.
-    expect(resultado.errores).toHaveLength(0);
-    expect(resultado.clientes).toHaveLength(2);
-    expect(resultado.advertencias).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          campo: 'GLOBAL',
-          mensaje: expect.stringContaining('más allá de la fila'),
-        }),
-      ]),
-    );
+    expect(resultado.errores).toEqual([expect.objectContaining({
+      campo: 'GLOBAL', fila: filaFueraDeRango, mensaje: expect.stringContaining('más allá de la fila'),
+    })]);
+    expect(resultado.resumen).toMatchObject({ filasValidas: 1, filasConError: 1 });
   });
 
   it('no avisa cuando todas las filas están dentro del rango', async () => {
@@ -1601,10 +1599,8 @@ describe('Filas más allá del rango preparado', () => {
 
 describe('Cuota inicial en créditos de artículo', () => {
   it('financia el precio del plazo menos la cuota inicial, como el sistema', async () => {
-    const resultado = await validarCreditoArticulo({
-      ...creditoArticuloMinimo,
-      'Cuota inicial': 190000,
-    });
+    const { 'Total financiado': _sinMonto, ...resto } = creditoArticuloMinimo;
+    const resultado = await validarCreditoArticulo({ ...resto, 'Tipo carga': 'OPERATIVA' });
 
     expect(resultado.errores).toHaveLength(0);
     // Precio del plazo de 3 meses: 690.000 · inicial 190.000 → se financian 500.000
@@ -1622,15 +1618,16 @@ describe('Cuota inicial en créditos de artículo', () => {
       expect.arrayContaining([
         expect.objectContaining({
           campo: 'cuota_inicial',
-          mensaje: expect.stringContaining('obligatoria'),
+          mensaje: expect.stringContaining('no está informada'),
         }),
       ]),
     );
   });
 
-  it('escribir cero es lo mismo que dejarla vacía', async () => {
+  it('la carga operativa sigue exigiendo una inicial positiva', async () => {
     const resultado = await validarCreditoArticulo({
       ...creditoArticuloMinimo,
+      'Tipo carga': 'OPERATIVA',
       'Cuota inicial': 0,
     });
 
@@ -1644,12 +1641,108 @@ describe('Cuota inicial en créditos de artículo', () => {
   it('respeta el monto escrito a mano por encima del cálculo', async () => {
     const resultado = await validarCreditoArticulo({
       ...creditoArticuloMinimo,
-      Monto: 400000,
+      'Total financiado': 400000,
       'Cuota inicial': 190000,
     });
 
     expect(resultado.errores).toHaveLength(0);
     expect(resultado.creditos?.[0].monto).toBe(400000);
+  });
+});
+
+describe('Clientes históricos incompletos', () => {
+  const clienteHistorico = {
+    'Tipo de cliente': 'HISTORICO',
+    Nombres: 'Persona de prueba',
+    'Ruta código': 'RT-01',
+  };
+
+  it('genera un amarre estable sin dos clientes con el mismo identificador técnico', async () => {
+    const plantilla = await plantillaClientesCacheada();
+    const archivo = await editarLibro(plantilla.data, (wb) => {
+      const hoja = wb.getWorksheet('Clientes')!;
+      escribirFila(hoja, FILA_DATOS, clienteHistorico);
+      escribirFila(hoja, FILA_DATOS + 1, { ...clienteHistorico, 'CC cliente': '1', Nombres: 'Otra persona ficticia' });
+    });
+    const parser = new ClientesCreditosParser(prismaMock());
+    const a = await parser.parseAndValidate(archivo, 'cartera.xlsx');
+    const b = await parser.parseAndValidate(archivo, 'cartera.xlsx');
+
+    expect(a.errores).toHaveLength(0);
+    expect(a.clientes).toEqual(b.clientes);
+    expect(a.clientes?.map((cliente) => cliente.cc)).toEqual(['2', '1']);
+    expect(a.clientes?.[0]).toMatchObject({ apellidos: '', telefono: '' });
+    expect(a.clientes?.[0].codigoImp).toMatch(/^H-[a-f0-9]{10}-2$/);
+  });
+
+  it('enlaza por amarre solo en un crédito histórico y deja bloqueado al operativo', async () => {
+    const plantilla = await plantillaClientesCacheada();
+    const archivo = await editarLibro(plantilla.data, (wb) => {
+      escribirFila(wb.getWorksheet('Clientes')!, FILA_DATOS, { ...clienteHistorico, 'CC cliente': '1' });
+      const hoja = wb.getWorksheet('Créditos de dinero')!;
+      const { 'Número de crédito manual': _numero, ...resto } = creditoMinimo;
+      escribirFila(hoja, FILA_DATOS, { ...resto, 'CC cliente': '1' });
+      escribirFila(hoja, FILA_DATOS + 1, { ...resto, 'Tipo carga': 'OPERATIVA', 'CC cliente': '1' });
+    });
+    const resultado = await new ClientesCreditosParser(prismaMock()).parseAndValidate(archivo, 'cartera.xlsx');
+
+    expect(resultado.creditos).toHaveLength(1);
+    expect(resultado.creditos?.[0]).toMatchObject({ ccCliente: '1', numeroPrestamo: expect.stringMatching(/^IMP-H-[a-f0-9]{10}-1-1$/) });
+    expect(resultado.errores).toEqual([expect.objectContaining({ fila: FILA_DATOS + 1, campo: 'cc_cliente' })]);
+  });
+});
+
+describe('Conciliación de cartera histórica', () => {
+  it('no convierte un abono desconocido en cero', async () => {
+    const { 'Total abonado': _sinAbono, ...resto } = creditoMinimo;
+    const resultado = await validarCredito(resto);
+    expect(resultado.creditos).toHaveLength(0);
+    expect(resultado.errores).toEqual([expect.objectContaining({ campo: 'total_abonado', valor: null })]);
+  });
+
+  it('no financia un histórico con el precio de catálogo aunque exista un plan', async () => {
+    const { 'Total financiado': _sinMonto, ...resto } = creditoArticuloMinimo;
+    const resultado = await validarCreditoArticulo(resto);
+    expect(resultado.creditos).toHaveLength(0);
+    expect(resultado.errores).toEqual([expect.objectContaining({ campo: 'precio_total_pactado' })]);
+  });
+
+  it('deduce lo financiado del precio pactado, conserva los ceros y no prevé movimientos', async () => {
+    const { 'Total financiado': _sinMonto, ...resto } = creditoArticuloMinimo;
+    const resultado = await validarCreditoArticulo({
+      ...resto, 'Cuota inicial': 0, 'Precio total pactado': 450000, 'Saldo informado por cartera': 450000,
+    });
+    expect(resultado.errores).toHaveLength(0);
+    expect(resultado.creditos?.[0]).toMatchObject({
+      monto: 450000, cuotaInicial: 0, totalAbonado: 0, saldoPendiente: 450000, saldoInformado: 450000,
+    });
+    expect(resultado.impactoCaja?.movimientos).toHaveLength(0);
+  });
+
+  it('bloquea un saldo incompatible, sin ajustar los abonos', async () => {
+    const resultado = await validarCredito({
+      ...creditoMinimo, 'Total abonado': 50000, 'Saldo informado por cartera': 499999,
+    });
+    expect(resultado.creditos).toHaveLength(0);
+    expect(resultado.errores).toEqual([expect.objectContaining({
+      campo: 'saldo_informado', valor: 499999, mensaje: expect.stringContaining('Diferencia: 1.'),
+    })]);
+  });
+
+  it('no interpreta el monto ambiguo de una plantilla anterior como valor financiado', async () => {
+    const plantilla = await plantillaClientesCacheada();
+    const archivo = await editarLibro(plantilla.data, (workbook) => {
+      const hoja = workbook.getWorksheet('Créditos de artículo')!;
+      hoja.getRow(6).eachCell((celda) => {
+        if (celda.value === 'Total financiado') celda.value = 'Monto';
+      });
+      const { 'Total financiado': monto, ...resto } = creditoArticuloMinimo;
+      escribirFila(hoja, FILA_DATOS, { ...resto, Monto: monto });
+    });
+    const db = prismaMock({ clientes: [clienteEnBd], productos: [{ codigo: 'CEL-A15', nombre: 'Artículo', precios: [] }] });
+    const resultado = await new ClientesCreditosParser(db).parseAndValidate(archivo, 'anterior.xlsx');
+    expect(resultado.creditos).toHaveLength(0);
+    expect(resultado.errores).toEqual([expect.objectContaining({ campo: 'monto', mensaje: expect.stringContaining('plantilla anterior') })]);
   });
 });
 
@@ -1980,8 +2073,10 @@ describe('Plantillas descargadas antes del cambio de nombres', () => {
     const archivo = await editarLibro(plantilla.data, (workbook) => {
       const hoja = workbook.getWorksheet('Artículos')!;
       hoja.getRow(6).eachCell({ includeEmpty: false }, (celda) => {
-        const viejo = anteriores[normalizarEncabezado(celda.value)];
-        if (viejo) celda.value = viejo;
+        const actual = normalizarEncabezado(celda.value);
+        const viejo = anteriores[actual];
+        if (actual.includes('MANUAL')) celda.value = null;
+        else if (viejo) celda.value = viejo;
       });
       escribirFila(hoja, FILA_DATOS, {
         Código: 'NEV-200',
@@ -2029,6 +2124,8 @@ describe('Plantillas descargadas antes del cambio de nombres', () => {
         'Fecha crédito': '2026-05-01',
         'Tipo carga': 'HISTORICA',
         'Cuota inicial': 190000,
+        'Total financiado': 500000,
+        'Total abonado': 0,
       });
     });
 
@@ -2079,7 +2176,8 @@ describe('Las columnas automáticas no se pueden escribir', () => {
       const bloqueada = filasAProbar.some(
         (fila) => hoja.getCell(fila, columna).protection?.locked !== false,
       );
-      if (/AUTOMATICO/.test(encabezado)) {
+      if (hoja.getCell(7, columna).formula) {
+        expect(hoja.getCell(7, columna).protection.hidden).toBe(true);
         if (!bloqueada) automaticas.push(encabezado);
       } else if (bloqueada) {
         captura.push(encabezado);
@@ -2296,6 +2394,7 @@ describe('Vista previa del movimiento de caja', () => {
         'Cantidad cuotas': 30,
         'Fecha crédito': '2026-06-01',
         'Tipo carga': 'HISTORICA',
+        'Total abonado': 0,
       });
       const articulo = workbook.getWorksheet('Créditos de artículo')!;
       escribirFila(articulo, FILA_DATOS, {
@@ -2562,6 +2661,7 @@ describe('El nombre anterior del tipo de interés sigue sirviendo', () => {
         'Cantidad cuotas': 30,
         'Fecha crédito': '2026-05-01',
         'Tipo carga': 'HISTORICA',
+        'Total abonado': 0,
         'Tipo amortización': 'Amortización',
       });
     });

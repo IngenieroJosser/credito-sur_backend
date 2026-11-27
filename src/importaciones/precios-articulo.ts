@@ -120,6 +120,18 @@ export function baseDeContado(costo: number, divisor: number): number {
   return Math.trunc(costo / divisor);
 }
 
+export function precioDelPlazoRespaldado(base: number, meses: number): number | null {
+  const plazo = PLAZOS.find((opcion) => opcion.meses === meses);
+  return plazo ? Math.trunc(base * (1 + plazo.recargo)) : null;
+}
+
+export function formulaPrecioDelPlazoRespaldado(base: string, meses: string): string {
+  return PLAZOS.reduceRight(
+    (formula, plazo) => `IF(${meses}=${plazo.meses},TRUNC(${base}*(1+${plazo.recargo})),${formula})`,
+    '""',
+  );
+}
+
 /**
  * El precio de un plazo: la base de contado más el recargo de esos meses.
  *

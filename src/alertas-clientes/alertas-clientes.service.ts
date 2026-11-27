@@ -134,7 +134,7 @@ export type SnapshotClienteAlerta = {
   cliente: {
     id: string;
     codigo: string;
-    dni: string;
+    dni: string | null;
     nombres: string;
     apellidos: string;
     telefono: string;

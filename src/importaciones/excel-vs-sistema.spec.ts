@@ -227,6 +227,7 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
     poner('Cantidad cuotas', caso.cuotas);
     poner('Tipo de interés', caso.metodo);
     poner('Total abonado', caso.totalAbonado);
+    poner('Tipo carga', 'HISTORICA');
 
     for (const columna of CADENA) {
       celdas[`${letraDe(columna)}7`] = evaluarFormula(
@@ -371,6 +372,18 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
     expect(r.saldoPendiente).toBe(550_000);
   });
 
+  it('deja vacío el saldo histórico sin abonos informados, pero admite un cero explícito', () => {
+    const celdas = {
+      [`${letraDe('Tipo carga')}7`]: 'HISTORICA',
+      [`${letraDe('Total en cuotas')}7`]: 250000,
+      [`${letraDe('Total abonado')}7`]: '',
+    };
+    expect(evaluarFormula(formulaDe('Saldo pendiente'), celdas)).toBe('');
+    expect(evaluarFormula(formulaDe('Saldo pendiente'), {
+      ...celdas, [`${letraDe('Total abonado')}7`]: 0,
+    })).toBe(250000);
+  });
+
   it('una fila vacía no muestra ninguna cifra', () => {
     // Mil filas preparadas: si las fórmulas calcularan sobre celdas en blanco,
     // la hoja se vería llena de ceros y de errores.
@@ -382,6 +395,7 @@ describe('El Excel da lo mismo que el sistema, con sus fórmulas de verdad', () 
       'Cantidad cuotas',
       'Tipo de interés',
       'Total abonado',
+      'Tipo carga',
     ]) {
       celdas[`${letraDe(encabezado)}7`] = '';
     }

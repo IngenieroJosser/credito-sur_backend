@@ -1,7 +1,8 @@
 import { BadRequestException } from '@nestjs/common';
 import * as ExcelJS from 'exceljs';
+import { declararCapacidad } from '../parsers/header-map.util';
 import { MAX_OPCIONES_PLAZO } from '../parsers/inventario.parser';
-import { expresionRecargoExcel } from '../precios-articulo';
+import { formulaPrecioDelPlazoRespaldado } from '../precios-articulo';
 import {
   activarFiltro,
   colLetra,
@@ -84,20 +85,11 @@ export function columnasDeOpcion(numeroOpcion: number) {
   };
 }
 
-/**
- * Ya no hay columna de "precio sugerido" aparte: la sugerencia vive dentro de
- * "Precio contado", que trae la fórmula puesta y se puede escribir encima.
- * Tenerla en una columna gris al final obligaba a mirarla y copiarla a mano, y
- * nadie copia bien un número de seis cifras mil veces.
- */
 const COL_UTILIDAD_CONTADO_VALOR = PRIMERA_COLUMNA_CALCULADA;
 const COL_UTILIDAD_CONTADO_PCT = PRIMERA_COLUMNA_CALCULADA + 1;
-
-const ULTIMA_COLUMNA =
-  PRIMERA_COLUMNA_CALCULADA +
-  2 +
-  MAX_OPCIONES_PLAZO * COLUMNAS_CALCULADAS_POR_OPCION -
-  1;
+const PRECIO_CONTADO_MANUAL = PRIMERA_COLUMNA_CALCULADA + 2 +
+  MAX_OPCIONES_PLAZO * COLUMNAS_CALCULADAS_POR_OPCION;
+const ULTIMA_COLUMNA = PRECIO_CONTADO_MANUAL + MAX_OPCIONES_PLAZO;
 
 function construirColumnas(): ColumnaPlantilla[] {
   // Obligatorios primero: es lo que hay que llenar sí o sí.
@@ -126,15 +118,11 @@ function construirColumnas(): ColumnaPlantilla[] {
       numFmt: '0.00',
     },
     {
-      // Llega con la fórmula puesta pero es una columna de captura como las
-      // demás, y por eso va SIN sombrear. Estaba marcada `sugerida`, que la
-      // pintaba gris igual que las automáticas, y el gris se lee como candado:
-      // la hoja dice que las columnas grises se calculan solas. La celda nunca
-      // estuvo bloqueada, pero parecerlo basta para que nadie la toque.
       header: 'Precio contado*',
       key: 'precio_contado',
       width: 16,
       numFmt: FORMATO_MONEDA,
+      automatica: true,
     },
   ];
 
@@ -143,12 +131,11 @@ function construirColumnas(): ColumnaPlantilla[] {
     columnas.push(
       { header: `Meses opción ${i}`, key: `meses_${i}`, width: 13 },
       {
-        // Sale de los meses escritos y la tabla de recargos, y es de captura como
-        // el de contado: sin sombrear, para que no parezca bloqueada.
         header: `Precio total opción ${i}`,
         key: `precio_${i}`,
         width: 16,
         numFmt: FORMATO_MONEDA,
+        automatica: true,
       },
     );
   }
@@ -208,107 +195,38 @@ function construirColumnas(): ColumnaPlantilla[] {
     );
   }
 
+  columnas.push({ header: 'Precio contado manual', key: 'contado_manual', width: 19, numFmt: FORMATO_MONEDA });
+  for (let i = 1; i <= MAX_OPCIONES_PLAZO; i++) {
+    columnas.push({ header: `Precio manual opción ${i}`, key: `precio_manual_${i}`, width: 19, numFmt: FORMATO_MONEDA });
+  }
   return columnas;
 }
 
 const ref = (columna: number) => `$${colLetra(columna)}{f}`;
 
-/**
- * El precio de contado: el costo DIVIDIDO por el divisor que fija la ganancia.
- *
- * Esta cuenta estuvo al revés y se corrigió con el archivo que cartera llenó a mano el 30
- * de septiembre: 211 filas, todas con `=E/0,70`, `=E/0,65` o `=E/0,55`. Ni una sola
- * multiplica. El televisor Samsung de costo $829.900 —el mismo artículo con el que se
- * había fijado la fórmula anterior— lo tienen en $1.185.571, no en los $1.078.870 que
- * salen de multiplicar por 1,30.
- *
- * O sea que lo que antes se descartó por «106.701 pesos de más» resultó ser el precio
- * bueno. El dato viejo venían de dos artículos sueltos con el precio ya hecho; este viene
- * de la hoja de 209 artículos que cartera usa y dio por correcta.
- *
- * Por qué el DIVISOR y no el margen, pudiendo escribirse `costo / (1 - margen)`: porque
- * 0,65 es el número que ellas tienen en la cabeza y escriben. Pedirles 35% obliga a
- * traducir, y ahí fue donde se equivocaron la vez anterior —anotaron 0,65 en una columna
- * con formato de porcentaje y quedó 0,65%, cien veces menos—.
- *
- * Va DENTRO de la columna de precio de contado y no en una columna aparte: es el valor que
- * se importa, y tenerlo separado obligaba a copiarlo a mano. La celda queda abierta, así
- * que quien negocie otro precio escribe encima y la fórmula de esa fila desaparece.
- *
- * Sin redondear, a propósito: comprobado contra los 209 artículos, redondeando aquí y
- * multiplicando sobre el precio redondeado salían 136 filas con un peso de diferencia en
- * algún plazo; arrastrando los decimales coinciden 199. El importador trunca a pesos
- * enteros y el formato de moneda esconde los decimales.
- */
 function formulaPrecioContado(ws: ExcelJS.Worksheet, filas: number) {
   const costo = ref(COL.costo);
   const divisor = ref(COL.divisorDelPrecio);
+  const manual = ref(PRECIO_CONTADO_MANUAL);
   formulaEnColumna(
     ws,
     COL.precioContado,
-    `IF(OR(${costo}="",${divisor}="",${divisor}<=0,${divisor}>1),"",${costo}/${divisor})`,
+    `IF(${manual}<>"",${manual},IF(OR(NOT(ISNUMBER(${costo})),${costo}<1,NOT(ISNUMBER(${divisor})),${divisor}<=0,${divisor}>1),"",TRUNC(${costo})/${divisor}))`,
     filas,
   );
 }
 
-/**
- * El precio de cada plazo: la base de contado más el recargo de esa opción.
- *
- * Reproduce al peso los precios que la empresa usa. Con un costo de 619.900 y
- * 30% de rentabilidad, la base es 805.870 y los recargos de la tabla —+30% a 3
- * meses, +47% a 5, +60% a 8— dan 1.047.631, 1.184.629 y 1.289.392: los tres
- * exactos.
- *
- * OJO CON LA BASE, que es el detalle que más cuesta ver. La cuenta parte de
- * `costo × (1 + rentabilidad)` y NO de lo que haya escrito en la celda de precio
- * de contado. Esa celda se redondea a mano: para ese mismo artículo la empresa
- * anota 805.900, la base subida a la centena. Si los plazos salieran de 805.900
- * darían +39, +44 y +48 de más. El redondeo es del precio que se muestra, no de
- * la base con la que se calcula.
- *
- * (Y el redondeo es a mano, no una regla: el otro artículo medido anota su
- * contado sin redondear, 1.078.870. Si la plantilla redondeara sola a la
- * centena, ese quedaría en 1.078.900 y estaría mal.)
- *
- * Lo que eso cuesta, asumido a propósito: si se deja la rentabilidad vacía y se
- * escribe el precio de contado a mano, los precios a plazo no se calculan y hay
- * que escribirlos. Es preferible a que se muevan solos cuando alguien redondea
- * un precio.
- *
- * El recargo no se escribe: lo calcula la propia fórmula a partir de los meses,
- * interpolando la tabla `PLAZOS` (ver `expresionRecargo`). Antes era una columna
- * de captura por opción; se quitó porque el operador no tiene por qué escribir
- * tres veces un porcentaje que es el mismo en todos los artículos.
- *
- * El precio sale con CUALQUIER número de meses, que es el requisito. Un intento
- * anterior consultaba la tabla con BUSCARV y dejaba la celda vacía en todo plazo
- * que no fuera 3, 5 u 8; los meses se escriben libres, así que eso pasaba a
- * menudo.
- *
- * El precio queda abierto: la tabla lo deja resuelto y quien negocie otro número
- * escribe encima y la fórmula de esa celda desaparece.
- */
 function formulasPrecioCredito(ws: ExcelJS.Worksheet, filas: number) {
-  // La base es la celda de precio de contado, no la cuenta repetida. Es lo que cartera
-  // escribe —sus fórmulas son `=G+(G*30%)`, colgadas de G— y tiene la ventaja de que
-  // negociar un precio de contado arrastra sus plazos en vez de dejarlos descolgados.
-  //
-  // Antes la base era `costo × (1 + rentabilidad)` y NO la celda, porque el contado se
-  // anotaba redondeado a mano y los plazos habrían salido de un número ya movido. Eso
-  // dejó de aplicar: ahora el contado sale de la fórmula, sin redondear.
   const base = ref(COL.precioContado);
-
   for (let i = 1; i <= MAX_OPCIONES_PLAZO; i++) {
     const columnas = columnasDeOpcion(i);
     const meses = ref(columnas.meses);
-    const recargo = expresionRecargoExcel(meses);
-    // TRUNC y no ROUND: truncar es lo que hace el sistema con los pesos (`truncCop`), así
-    // que el número que se ve en la hoja es exactamente el que queda guardado.
+    const manual = ref(PRECIO_CONTADO_MANUAL + i);
     formulaEnColumna(
       ws,
       columnas.precio,
-      `IF(OR(${base}="",${meses}=""),"",` +
-        `IFERROR(TRUNC(${base}*(1+${recargo})),""))`,
+      `IF(${meses}="","",IF(${manual}<>"",${manual},` +
+        `IF(${base}="","",IFERROR(${formulaPrecioDelPlazoRespaldado(base, meses)},""))))`,
       filas,
     );
   }
@@ -405,13 +323,11 @@ function formulaRevision(ws: ExcelJS.Worksheet, filas: number) {
       `IF(${costo}="","⚠ Falta el costo",` +
       `IF(${ref(COL.precioContado)}="",` +
       `IF(${hayDivisor},` +
-      `"⚠ Falta el precio de contado. Le corresponde "&${base}&": escríbalo en su casilla, o déjelo vacío y el sistema lo calcula al importar",` +
+      `"⚠ Revise el precio de contado. La base calculada es "&${base}&"; cualquier ajuste va en Precio contado manual",` +
       `"⚠ Falta el precio de contado: escriba el divisor (0,65) o el precio a mano"),` +
       `IF(${ref(COL.precioContado)}<${costo},"⚠ El precio de contado está por debajo del costo",` +
       `IF(AND(COUNT(${meses})>0,COUNT(${precios})<COUNT(${meses})),` +
-      `IF(${hayDivisor},` +
-      `"⚠ Hay plazos con meses pero sin precio: escríbalo, o déjelo vacío y el sistema lo calcula al importar",` +
-      `"⚠ Hay plazos con meses pero sin precio: escriba el precio, o el divisor (0,65)"),` +
+      `"⚠ Hay plazos con meses pero sin precio: registre el precio manual. Solo 3, 5 y 8 meses se calculan automáticamente",` +
       `IF(COUNT(${utilidades})=0,"ℹ Sin opciones de crédito: solo venta de contado",` +
       `IF(MIN(${utilidades})<0,"⚠ Hay plazos que dan pérdida","OK")))))))`,
     filas,
@@ -490,20 +406,22 @@ export function agregarValoresInventario(
   workbook: ExcelJS.Workbook,
   wsArticulos: ExcelJS.Worksheet,
   filas: number,
+  valoresCompartidos?: ExcelJS.Worksheet,
 ) {
-  const ws = workbook.addWorksheet('Valores', { state: 'veryHidden' });
+  const ws = valoresCompartidos ?? workbook.addWorksheet('Valores', { state: 'veryHidden' });
+  const activo = valoresCompartidos ? 'J' : 'B';
   ws.getCell('A1').value = 'Acción';
   ws.getCell('A2').value = 'CREAR';
   ws.getCell('A3').value = 'ACTUALIZAR';
 
-  ws.getCell('B1').value = 'Activo';
-  ws.getCell('B2').value = 'SI';
-  ws.getCell('B3').value = 'NO';
+  ws.getCell(activo + '1').value = 'Activo';
+  ws.getCell(activo + '2').value = 'SI';
+  ws.getCell(activo + '3').value = 'NO';
 
   ws.getRow(1).font = { bold: true };
 
   listaDesplegable(wsArticulos, COL.accion, 'Valores!$A$2:$A$3', true, filas);
-  listaDesplegable(wsArticulos, COL.activo, 'Valores!$B$2:$B$3', true, filas);
+  listaDesplegable(wsArticulos, COL.activo, `Valores!$${activo}$2:$${activo}$3`, true, filas);
 
   const columnaDivisor = colLetra(COL.divisorDelPrecio);
   // `dataValidations` existe en ExcelJS en ejecucion pero no esta en sus tipos (por eso
@@ -514,7 +432,7 @@ export function agregarValoresInventario(
       dataValidations: { add: (rango: string, regla: unknown) => void };
     }
   ).dataValidations.add(
-    `${columnaDivisor}7:${columnaDivisor}${filas}`,
+    `${columnaDivisor}7:${columnaDivisor}${filas + 6}`,
     {
       type: 'decimal',
       operator: 'between',
@@ -579,7 +497,7 @@ export function escribirFilaArticulo(
       fila.getCell(COL.divisorDelPrecio).value =
         articulo.costo / articulo.precioContado;
     }
-    fila.getCell(COL.precioContado).value = articulo.precioContado;
+    fila.getCell(PRECIO_CONTADO_MANUAL).value = articulo.precioContado;
   }
   fila.getCell(COL.stock).value = articulo.stock;
   fila.getCell(COL.stockMinimo).value = articulo.stockMinimo;
@@ -588,7 +506,7 @@ export function escribirFilaArticulo(
   articulo.opciones.forEach((opcion, indice) => {
     const columnas = columnasDeOpcion(indice + 1);
     fila.getCell(columnas.meses).value = opcion.meses;
-    fila.getCell(columnas.precio).value = opcion.precio;
+    fila.getCell(PRECIO_CONTADO_MANUAL + indice + 1).value = opcion.precio;
   });
 }
 
@@ -601,6 +519,7 @@ export async function generarPlantillaInventario(): Promise<{
   filename: string;
 }> {
   const workbook = new ExcelJS.Workbook();
+  declararCapacidad(workbook);
   workbook.creator = 'Créditos del Sur';
   forzarRecalculo(workbook);
 
@@ -623,7 +542,7 @@ export async function generarPlantillaInventario(): Promise<{
     'Activo: se asume SI si se deja vacío.',
     '',
     '# Opciones de crédito',
-    `Cada artículo admite hasta ${MAX_OPCIONES_PLAZO} opciones de plazo, y el negocio financia hasta 3 meses. Escriba los meses y el precio total de ese plazo (por ejemplo: 3 meses / $690.000).`,
+    `Cada artículo admite hasta ${MAX_OPCIONES_PLAZO} opciones. Escriba los meses y, si tiene un precio acordado, el importe en la columna de precio manual de la opción.`,
     'Use solo las opciones que necesite; las que deje vacías se ignoran. No repita el mismo número de meses en un artículo.',
     '',
     '# El precio de contado se calcula solo',
@@ -633,23 +552,13 @@ export async function generarPlantillaInventario(): Promise<{
     'Escriba el número tal cual: 0,65. SIN el signo de porcentaje: "0,65%" es cien veces menos y el precio saldría casi igual al costo.',
     '',
     '# Los precios a plazo salen de elegir el plazo',
-    'Cada opción tiene dos casillas: los meses y el Precio total. Elija los meses en el desplegable y el precio aparece solo; no hay que escribir ningún porcentaje.',
-    'La plantilla lleva por dentro el recargo de cada plazo: +30% a 3 meses, +47% a 5 meses y +60% a 8 meses, sobre el precio de contado. Con un costo de $829.900 y divisor 0,70 el contado es $1.185.571 y los plazos salen en $1.541.242, $1.742.789 y $1.896.914.',
-    'Ese recargo va por PLAZO y no es una tasa mensual: esos mismos precios equivalen a 10%, 9,4% y 7,5% por mes, o sea que el porcentaje por mes BAJA cuando el plazo se alarga. Por eso es una tabla por plazo y no un interés.',
+    'La hoja muestra el resultado automático solo para 3, 5 y 8 meses: recargos del 30%, 47% y 60% sobre el contado, respectivamente.',
+    'El recargo se aplica una vez al plazo completo: no es una tasa mensual. Para los demás plazos se exige un precio manual, sin interpolar ni extrapolar.',
+    'Ejemplo: $178.123 divididos entre 0,65 dan $274.035,38 de base. A 3 meses se agrega el 30% y se trunca a $356.246.',
     '',
-    '# Si redondea el precio de contado, los plazos NO se mueven',
-    'Los precios a plazo salen del Precio contado: si usted negocia otro precio de contado y lo escribe encima, los tres precios a plazo se recalculan solos sobre el precio nuevo.',
-    '',
-    '# Los cuatro precios son un punto de partida, no el precio final',
-    'Vienen calculados pero son casillas normales, como el costo o el nombre: si el precio de ese artículo es otro, escríbalo encima y la fórmula de esa celda se reemplaza por su número. Es más fácil corregir un número que inventarlo desde una celda vacía.',
-    'Lo que se importa es lo que quede escrito.',
-    '',
-    '# Si BORRA un precio, la fórmula de esa fila no vuelve',
-    'Es así en cualquier hoja de cálculo: una celda guarda o una fórmula o un número, y al borrar el contenido se borra también la fórmula. Volver a escribir el costo y la rentabilidad no la trae de vuelta, porque ya no está ahí.',
-    'La columna "Revisión de la fila", al final, le dice mientras tanto qué precio le corresponde a ese artículo: puede leerlo ahí y escribirlo. Esa columna está bloqueada, así que su fórmula no se borra.',
-    'Para recuperar la fórmula, copie la celda de una fila que todavía la tenga y péguela encima. O deshaga con Ctrl+Z si acaba de borrarla.',
-    'De todos modos no es grave: si el archivo se sube con esa casilla vacía y la fila tiene costo y divisor, el sistema calcula el precio con la misma cuenta y avisa de que lo hizo. La fila entra igual.',
-    'Para quitar una opción de crédito hay que borrar SUS DOS casillas, los meses y el precio. Si se borra solo el precio, el sistema lo vuelve a calcular.',
+    '# Cambiar un precio',
+    'Escriba el valor acordado en Precio contado manual o Precio manual opción N. La fórmula queda protegida y muestra el precio acordado. Si se borra la captura, vuelve a calcularse cuando hay una regla respaldada.',
+    'Para quitar un plazo, borre los meses y el precio manual de esa opción.',
     '',
     '# Utilidad automática (columnas grises)',
     'Al final de la hoja Excel calcula, para el contado y para cada plazo, la utilidad en pesos: precio de venta menos costo.',
@@ -665,7 +574,7 @@ export async function generarPlantillaInventario(): Promise<{
   ]);
 
   const ws = await construirHojaArticulos(workbook, {
-    subtitulo: `Una fila por artículo: con el costo y el divisor sale el precio de contado, y eligiendo los meses salen los precios a crédito (hasta ${MAX_OPCIONES_PLAZO} opciones). Todos se pueden cambiar.`,
+    subtitulo: 'Una fila por artículo. Los precios automáticos están protegidos; los valores pactados se capturan en las columnas de precio manual.',
     instruccion:
       '📝 Escriba los datos desde la fila 7 hacia abajo. Las columnas grises las calcula Excel y están bloqueadas; los precios vienen calculados pero se pueden cambiar.',
     filas: FILAS_PREPARADAS,

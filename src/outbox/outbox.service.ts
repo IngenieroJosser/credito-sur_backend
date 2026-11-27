@@ -3,6 +3,7 @@ import { Cron } from '@nestjs/schedule';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { MirrorEnvioService } from '../mirror/mirror-envio.service';
+import { esEntornoHistoricoAislado } from '../common/entorno-historico-aislado';
 
 type OutboxPayload = {
   model?: string;
@@ -59,12 +60,13 @@ export class OutboxService {
 
   @Cron('*/30 * * * * *')
   async handleOutboxTick() {
+    if (esEntornoHistoricoAislado()) return;
     await this.processPending();
     await this.pruneProcessed();
   }
 
   async processPending(limit = 100) {
-    if (this.processing) return;
+    if (this.processing || esEntornoHistoricoAislado()) return;
     this.processing = true;
 
     try {

@@ -31,7 +31,7 @@ export interface InventarioImportablePrecio {
 
 export interface ClienteImportableRow {
   codigo: string;
-  dni: string;
+  dni: string | null;
   nombres: string;
   apellidos: string;
   telefono: string;
@@ -374,7 +374,7 @@ export async function generarExcelClientesCreditosImportable(
         fecha_primer_cobro: dateKey(c.fechaPrimerCobro),
         tipo_carga: c.tipoCarga || 'HISTORICA',
         notas: text(c.notas),
-        total_abonado: money(c.totalAbonado),
+        total_abonado: c.totalAbonado ?? null,
         fecha_ultimo_pago: dateKey(c.fechaUltimoPago),
       });
     });
@@ -388,13 +388,13 @@ export async function generarExcelClientesCreditosImportable(
     { header: 'Frecuencia pago*', key: 'frecuencia_pago', width: 18 },
     { header: 'Fecha crédito*', key: 'fecha_credito', width: 15 },
     { header: 'Tipo carga*', key: 'tipo_carga', width: 15 },
-    { header: 'Monto', key: 'monto', width: 15 },
+    { header: 'Total financiado', key: 'monto', width: 17 },
     { header: 'Cuota inicial', key: 'cuota_inicial', width: 15 },
+    { header: 'Cantidad cuotas', key: 'cantidad_cuotas', width: 16 },
     { header: 'Tasa interés mora', key: 'tasa_interes_mora', width: 18 },
     { header: 'Fecha primer cobro', key: 'fecha_primer_cobro', width: 20 },
     { header: 'Notas', key: 'notas', width: 30 },
-    { header: 'Cuotas pagadas', key: 'cuotas_pagadas', width: 15 },
-    { header: 'Abono adicional', key: 'abono_adicional', width: 16 },
+    { header: 'Total abonado', key: 'total_abonado', width: 16 },
     { header: 'Fecha último pago', key: 'fecha_ultimo_pago', width: 18 },
   ];
   setColumnsAtRowSix(wsCreditosArticulo, columnasCreditosArticulo);
@@ -415,12 +415,13 @@ export async function generarExcelClientesCreditosImportable(
       frecuencia_pago: text(c.frecuenciaPago).toUpperCase(),
       fecha_credito: dateKey(c.fechaCredito),
       tipo_carga: c.tipoCarga || 'HISTORICA',
-      monto: money(c.monto),
-      cuota_inicial: money(c.cuotaInicial),
+      monto: c.monto ?? null,
+      cuota_inicial: c.cuotaInicial ?? null,
+      cantidad_cuotas: c.cantidadCuotas ?? null,
       tasa_interes_mora: money(c.tasaInteresMora),
       fecha_primer_cobro: dateKey(c.fechaPrimerCobro),
       notas: text(c.notas),
-      total_abonado: money(c.totalAbonado),
+      total_abonado: c.totalAbonado ?? null,
       fecha_ultimo_pago: dateKey(c.fechaUltimoPago),
     });
   });

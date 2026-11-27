@@ -147,7 +147,7 @@ describe('Las fórmulas dan los precios reales de la empresa', () => {
 
     it('el precio de contado divide por el divisor y no redondea', () => {
       const formula = formulaDe(COLUMNAS_ARTICULOS.precioContado);
-      expect(formula).toContain('$E7/$F7');
+      expect(formula).toContain('TRUNC($E7)/$F7');
       // Sin ROUND: redondear aquí dejaba 136 de los 209 artículos de cartera con un peso
       // de diferencia en algún plazo.
       expect(formula).not.toContain('ROUND');
@@ -172,15 +172,12 @@ describe('Las fórmulas dan los precios reales de la empresa', () => {
       }
     });
 
-    it('el precio sale con CUALQUIER plazo, no solo con los tres de la tabla', () => {
-      // Este es el requisito: los meses se escriben libres y el precio tiene que
-      // salir igual. Un intento anterior consultaba la tabla con BUSCARV y dejaba
-      // la celda vacía en todo plazo que no fuera 3, 5 u 8.
+    it('solo calcula automáticamente los plazos de referencia y no extrapola', () => {
       for (const numero of [1, 2, 3]) {
         const formula = formulaDe(columnasDeOpcion(numero).precio);
         expect(formula).not.toContain('VLOOKUP');
-        // La recta por tramos: un IF que parte en el plazo del medio.
-        expect(formula).toContain('<=5');
+        for (const meses of [3, 5, 8]) expect(formula).toContain(`=${meses},TRUNC(`);
+        expect(formula).not.toContain('<=5');
       }
     });
 

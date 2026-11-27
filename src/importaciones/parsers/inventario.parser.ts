@@ -9,6 +9,7 @@ import {
 } from '../dto/validacion-resultado.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { loadWorkbookFromBuffer } from './xlsx-workbook.loader';
+import { leerModoHistorico } from './control-historico-xlsx';
 import {
   leerNumero,
   leerValorCelda,
@@ -16,9 +17,10 @@ import {
   leerTextoMayus,
   type ValorDeCelda,
 } from './cell-value.util';
-import { baseDeContado, precioDelPlazo } from '../precios-articulo';
+import { baseDeContado, precioDelPlazoRespaldado } from '../precios-articulo';
 import {
   avisarFilasFueraDeRango,
+  limiteOficial,
   celda,
   construirMapaColumnas,
   filaVaciaEnColumnas,
@@ -77,13 +79,16 @@ const AVISO_CENTAVOS =
   'El sistema maneja pesos enteros: los centavos se descartaron.';
 
 export class InventarioParser {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: Pick<PrismaService, 'producto'>) {}
 
   async parseAndValidate(
     buffer: Buffer,
     fileName: string,
+    conservarCosto = false,
   ): Promise<ResultadoValidacion> {
     const workbook = await loadWorkbookFromBuffer(buffer);
+    const capacidad = limiteOficial(workbook);
+    const modoHistorico = leerModoHistorico(workbook);
 
     const errores: ErrorValidacion[] = [];
     const advertencias: AdvertenciaValidacion[] = [];
@@ -148,7 +153,8 @@ export class InventarioParser {
       'Rentabilidad deseada',
       'Rentabilidad',
     );
-    const colPrecioContado = cols.indice('Precio contado', 'Precio de contado');
+    const colContadoManual = cols.indice('Precio contado manual');
+    const colPrecioContado = colContadoManual || cols.indice('Precio contado', 'Precio de contado');
     const colStock = cols.indice('Stock actual', 'Stock');
     const colStockMinimo = cols.indice('Stock mínimo');
     const colActivo = cols.indice('Activo');
@@ -171,7 +177,7 @@ export class InventarioParser {
       if (colMesesOpcion && colPrecioOpcion) {
         columnasOpciones.push({
           meses: colMesesOpcion,
-          precio: colPrecioOpcion,
+          precio: cols.indice(`Precio manual opción ${i}`) || colPrecioOpcion,
         });
       }
     }
@@ -196,6 +202,7 @@ export class InventarioParser {
       colMarca,
       colModelo,
       colCosto,
+      colDivisor,
       colPrecioContado,
       colStock,
       colStockMinimo,
@@ -254,6 +261,11 @@ export class InventarioParser {
       totalFilas++;
       totalArticulos++;
       filasLeidas.push(rowNumber);
+      if (capacidad !== null && rowNumber > capacidad) {
+        filasConError++;
+        articulosConError++;
+        return;
+      }
       let tieneError = false;
 
       const accion = leerTextoMayus(celda(row, colAccion)) || 'CREAR';
@@ -266,7 +278,7 @@ export class InventarioParser {
       const modelo = leerTexto(celda(row, colModelo));
       const costoCelda = leerNumero(celda(row, colCosto));
       const precioContadoCelda = leerNumero(celda(row, colPrecioContado));
-      const costo = aPesos(costoCelda);
+      const costo = conservarCosto ? costoCelda : aPesos(costoCelda);
       const divisor = colDivisor ? leerNumero(celda(row, colDivisor)) : null;
 
       /**
@@ -295,6 +307,10 @@ export class InventarioParser {
         precioContadoCelda === null && puedeCalcularPrecios
           ? baseDeContado(costo, divisor)
           : aPesos(precioContadoCelda);
+
+      const basePlazo = colContadoManual && precioContadoCelda !== null
+        ? precioContadoCelda
+        : puedeCalcularPrecios ? costo / divisor : precioContado;
 
       const stock = leerNumero(celda(row, colStock));
       const stockMinimo = leerNumero(celda(row, colStockMinimo));
@@ -336,7 +352,7 @@ export class InventarioParser {
         );
       }
 
-      if (tieneCentavos(costoCelda)) {
+      if (!conservarCosto && tieneCentavos(costoCelda)) {
         addAdver('costo', AVISO_CENTAVOS, leerValorCelda(celda(row, colCosto)));
       }
       if (tieneCentavos(precioContadoCelda)) {
@@ -460,19 +476,21 @@ export class InventarioParser {
         // de rechazar la fila. Para quitar una opción se borran las dos casillas.
         const rehacer =
           precioCelda === null &&
-          puedeCalcularPrecios &&
+          basePlazo !== null &&
+          Number.isFinite(basePlazo) &&
+          basePlazo > 0 &&
           meses !== null &&
           !Number.isNaN(meses) &&
           Number.isInteger(meses) &&
           meses > 0;
         const precio = rehacer
-          ? precioDelPlazo(costo, divisor, meses)
+          ? precioDelPlazoRespaldado(basePlazo, meses)
           : aPesos(precioCelda);
 
         if (rehacer && precio !== null) {
           addAdver(
             `opcion_${numeroOpcion}_precio`,
-            `La casilla estaba vacía y el precio a ${meses} mes(es) se calculó desde el costo y el divisor: ${precio}. Para quitar la opción hay que borrar también los meses.`,
+            `El precio a ${meses} mes(es) se calculó sobre la base de contado: ${precio}. Para quitar la opción borre los meses y el precio manual.`,
             precio,
           );
         }
@@ -506,7 +524,7 @@ export class InventarioParser {
         if (precio === null || Number.isNaN(precio) || precio <= 0) {
           addError(
             `opcion_${numeroOpcion}_precio`,
-            `Opción ${numeroOpcion}: el precio para ${meses} mes(es) debe ser un número mayor a 0`,
+            `Opción ${numeroOpcion}: indique un precio mayor a 0 para ${meses} mes(es). Solo se calcula automáticamente para 3, 5 y 8 meses con una base válida.`,
             leerValorCelda(celda(row, opcion.precio)),
           );
           return;
@@ -586,10 +604,10 @@ export class InventarioParser {
 
     const avisoRango = avisarFilasFueraDeRango(
       filasLeidas,
-      SHEET_DISPLAY.articulos,
+      SHEET_DISPLAY.articulos, workbook,
     );
     if (avisoRango) {
-      advertencias.push({ hoja: SHEET_DISPLAY.articulos, ...avisoRango });
+      (capacidad !== null ? errores : advertencias).push({ hoja: SHEET_DISPLAY.articulos, ...avisoRango });
     }
 
     porHoja[SHEET_DISPLAY.articulos] = {
@@ -725,6 +743,7 @@ export class InventarioParser {
     return {
       tipo: 'inventario',
       archivo: fileName,
+      modoHistorico,
       resumen: {
         totalFilas,
         filasValidas: totalFilas - filasConError,
