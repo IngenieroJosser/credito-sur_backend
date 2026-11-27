@@ -129,7 +129,7 @@ interface VisitaDelDia {
   cliente: {
     id: string;
     codigo: string | null;
-    dni: string;
+    dni: string | null;
     nombres: string;
     apellidos: string;
     telefono: string | null;
@@ -1341,8 +1341,10 @@ export class RoutesService {
       const desde = new Date(ahora.getTime() - 7 * 86_400_000);
       const rutasConEstadisticas = rutas.map((ruta) => {
         const detalle = detalles.get(ruta.id);
-        if (ruta.asignaciones.length && !detalle)
-          throw new Error('Falta el resumen operativo de una ruta del listado');
+        if (ruta.asignaciones.length && !detalle) {
+          this.logger.error(`La proyección del listado no devolvió la ruta ${ruta.id}`);
+          throw new InternalServerErrorException('No se pudo calcular el resumen operativo de todas las rutas.');
+        }
         const mora = detalle?.mora ?? 0;
         const cobranza = detalle?.resumen.recaudoOperativo ?? 0;
         const meta = detalle?.resumen.meta ?? 0;
@@ -1418,9 +1420,9 @@ export class RoutesService {
         },
       };
     } catch (error) {
-      throw new InternalServerErrorException(
-        `Error al obtener las rutas: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      );
+      if (error instanceof HttpException) throw error;
+      this.logger.error('Error al consultar el listado de rutas', error);
+      throw new InternalServerErrorException('No se pudieron obtener las rutas. Intente nuevamente.');
     }
   }
 
@@ -5086,7 +5088,7 @@ export class RoutesService {
 
           cliente: `${c.nombres} ${c.apellidos}`,
 
-          cc: c.dni,
+          cc: c.dni ?? '',
 
           telefono: c.telefono || '—',
 
@@ -5141,7 +5143,7 @@ export class RoutesService {
 
           cliente: `${c.nombres} ${c.apellidos}`,
 
-          cc: c.dni,
+          cc: c.dni ?? '',
 
           telefono: c.telefono || '—',
 

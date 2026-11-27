@@ -1512,35 +1512,25 @@ export class ReportsService {
             apellidos: true,
           },
         },
-        detalles: {
-          include: {
-            cuota: true,
-          },
-        },
       },
       orderBy: {
         fechaPago: 'desc',
       },
     });
 
-    const totalCollected = payments.reduce(
-      (sum, p) => sum + Number(p.montoTotal),
-      0,
-    );
+    const porDia = new Map<string, { dia: string; cantidad: number; total: number }>();
+    let totalCollected = 0;
+    for (const pago of payments) {
+      const importe = Number(pago.montoTotal);
+      const dia = getBogotaDayKey(pago.fechaPago);
+      const resumen = porDia.get(dia) ?? { dia, cantidad: 0, total: 0 };
+      resumen.cantidad += 1;
+      resumen.total += importe;
+      porDia.set(dia, resumen);
+      totalCollected += importe;
+    }
     const paymentCount = payments.length;
-
-    const paymentsByDay = await this.prisma.$queryRaw`
-      SELECT 
-        DATE("fechaPago") as dia,
-        COUNT(*) as cantidad,
-        SUM("montoTotal") as total
-      FROM "pagos"
-      WHERE "clienteId" IN (${clientIds.join(',')})
-        AND "fechaPago" >= ${dateRange.startDate}
-        AND "fechaPago" <= ${dateRange.endDate}
-      GROUP BY DATE("fechaPago")
-      ORDER BY dia
-    `;
+    const paymentsByDay = [...porDia.values()].sort((a, b) => a.dia.localeCompare(b.dia));
 
     return {
       ruta: {

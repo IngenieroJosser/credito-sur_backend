@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
 import { RolUsuario } from '@prisma/client';
@@ -38,6 +39,7 @@ type MetodosPrivadosEspiados = {
    * pagina. Se espia aqui por lo mismo que se espiaba aquel.
    */
   proyectarVisitas: (...args: unknown[]) => unknown;
+  proyectarRutas: (...args: unknown[]) => Promise<unknown>;
   getCierresPendientesRuta: (...args: unknown[]) => Promise<unknown>;
   getCierresPendientesRutasMap: (...args: unknown[]) => Promise<unknown>;
   notificacionesService: { notifyRolesDeduped: jest.Mock };
@@ -593,6 +595,24 @@ describe('RoutesService role scoping', () => {
     );
     expect(recuentosPropios).toEqual([]);
     expect(prisma.asignacionRuta.count).not.toHaveBeenCalled();
+  });
+
+  it('rechaza un resumen incompleto en vez de presentar una ruta con cifras cero', async () => {
+    const prisma = {
+      ruta: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 'norte', asignaciones: [{ clienteId: 'c1' }] },
+        ]),
+        count: jest.fn().mockResolvedValue(1),
+      },
+      caja: { findMany: jest.fn().mockResolvedValue([]) },
+      transaccion: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const service = makeService(prisma);
+    jest.spyOn(conPrivados(service), 'getCierresPendientesRutasMap').mockResolvedValue(new Map());
+    jest.spyOn(conPrivados(service), 'proyectarRutas').mockResolvedValue(new Map());
+    await expect(service.findAll({ take: 10 })).rejects.toThrow(InternalServerErrorException);
+    await expect(service.findAll({ take: 10 })).rejects.toThrow('No se pudo calcular el resumen operativo');
   });
 
   it('consulta las visitas una vez y mantiene la ausencia en su propia ruta', async () => {

@@ -232,7 +232,7 @@ describe('ReportsService getRouteDetail: jurisdicción del supervisor', () => {
         }),
       },
       asignacionRuta: { findMany: jest.fn().mockResolvedValue([]) },
-      pago: { aggregate: jest.fn().mockResolvedValue({ _sum: {} }) },
+      pago: { findMany: jest.fn().mockResolvedValue([]) },
       prestamo: {
         aggregate: jest.fn().mockResolvedValue({ _sum: {}, _count: {} }),
       },
@@ -267,18 +267,39 @@ describe('ReportsService getRouteDetail: jurisdicción del supervisor', () => {
       dependenciaSinUsar<NotificacionesService>(),
       dependenciaSinUsar<RoutesService>(),
     );
-    // no debe lanzar por jurisdicción (puede fallar más adelante por mocks, se ignora)
-    await service
-      .getRouteDetail(
+    await expect(service.getRouteDetail(
         'ruta-x',
         { period: 'week' },
         {
           id: 'admin-1',
           rol: 'ADMIN',
         },
-      )
-      .catch(() => undefined);
+      )).resolves.toMatchObject({
+      estadisticas: { totalClientes: 0, totalPagos: 0, totalRecaudado: 0, pagosPorDia: [] },
+    });
     expect(prisma.ruta.findUnique).toHaveBeenCalled();
+  });
+
+  it('agrupa los mismos pagos por día de Bogotá y no necesita otra consulta SQL', async () => {
+    const prisma = prismaConRuta('otro-supervisor');
+    prisma.asignacionRuta.findMany.mockResolvedValue([
+      { cliente: { id: 'a', prestamos: [] } }, { cliente: { id: 'b', prestamos: [] } },
+    ]);
+    const cliente = { nombres: 'Prueba', apellidos: 'Ruta' };
+    prisma.pago.findMany.mockResolvedValue([
+      { id: 'p2', cliente, montoTotal: 12000, fechaPago: new Date('2026-11-27T05:00:00Z') },
+      { id: 'p1', cliente, montoTotal: 5000, fechaPago: new Date('2026-11-27T04:59:59Z') },
+    ]);
+    const service = new ReportsService(comoPrisma(prisma),
+      dependenciaSinUsar<NotificacionesService>(), dependenciaSinUsar<RoutesService>());
+    const resultado = await service.getRouteDetail('ruta-x', { period: 'week' }, { rol: 'ADMIN' });
+    expect(resultado.estadisticas).toMatchObject({
+      totalClientes: 2, totalPagos: 2, totalRecaudado: 17000, pagosPorDia: [
+        { dia: '2026-11-26', cantidad: 1, total: 5000 },
+        { dia: '2026-11-27', cantidad: 1, total: 12000 },
+      ],
+    });
+    expect(prisma.pago.findMany).toHaveBeenCalledTimes(1);
   });
 });
 
