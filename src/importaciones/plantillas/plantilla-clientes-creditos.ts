@@ -34,7 +34,7 @@ import {
 } from './plantilla-inventario';
 
 /** Tope de filas que se vuelcan en las hojas de referencia de base de datos. */
-const MAX_FILAS_REFERENCIA = 8000;
+export const MAX_FILAS_REFERENCIA = 8000;
 
 const ULTIMA_FILA_DATOS = FILA_INICIO_DATOS + FILAS_PREPARADAS - 1;
 
@@ -1120,10 +1120,14 @@ export async function generarPlantillaClientesCreditos(
   // ── Hoja Créditos de artículo ─────────────────────────────────────────────
   const wsArticulo = workbook.addWorksheet('Créditos de artículo');
   declararColumnas(wsArticulo, COLUMNAS_CREDITOS_ARTICULO);
-  // Fuera de la vista: el saldo informado, el número manual y las columnas
-  // derivadas de la cuota pactada (cuota aplicada y diferencia). Se ocultan, no
-  // se borran: el importador y la conciliación interna las siguen leyendo.
+  // Fuera de la vista: los campos pactados históricos, el saldo informado, el
+  // número manual y las columnas derivadas de la cuota pactada (cuota aplicada
+  // y diferencia). Se ocultan, no se borran: el importador y la conciliación
+  // interna las siguen leyendo si llegan desde un archivo histórico.
+  wsArticulo.getColumn(ART.precioPactado).hidden = true;
   wsArticulo.getColumn(ART.saldoInformado).hidden = true;
+  wsArticulo.getColumn(ART.cuotasPactadas).hidden = true;
+  wsArticulo.getColumn(ART.valorCuotaPactado).hidden = true;
   wsArticulo.getColumn(ART.numeroManual).hidden = true;
   wsArticulo.getColumn(ART.cuotaAplicada).hidden = true;
   wsArticulo.getColumn(ART.diferenciaCuota).hidden = true;
@@ -1546,6 +1550,9 @@ export async function generarPlantillaClientesCreditos(
     }
   });
 
-  const buffer = await workbook.xlsx.writeBuffer();
+  // Nivel 1 de compresión DEFLATE: reduce notablemente el tiempo de CPU al generar el .xlsx
+  const buffer = await workbook.xlsx.writeBuffer({
+    zip: { compression: 'DEFLATE', compressionOptions: { level: 1 } },
+  });
   return comoBuffer(buffer, opciones.integral ? 'plantilla-integral-credisur.xlsx' : 'plantilla-clientes-creditos.xlsx');
 }

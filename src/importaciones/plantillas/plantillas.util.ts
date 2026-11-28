@@ -99,6 +99,24 @@ export function escribirCabecera(
   celdaInstruccion.font = { bold: true, color: { argb: COLOR_TITULO } };
 }
 
+const RELLENO_CELDA_AUTOMATICA: ExcelJS.Fill = {
+  type: 'pattern',
+  pattern: 'solid',
+  fgColor: { argb: RELLENO_AUTOMATICO },
+};
+const FUENTE_CELDA_AUTOMATICA: Partial<ExcelJS.Font> = {
+  color: { argb: 'FF444444' },
+};
+const PROTECCION_AUTOMATICA: Partial<ExcelJS.Protection> = {
+  locked: true,
+  hidden: true,
+};
+const PROTECCION_SUGERIDA: Partial<ExcelJS.Protection> = {
+  locked: false,
+  hidden: true,
+};
+const PROTECCION_BLOQUEADA: Partial<ExcelJS.Protection> = { locked: true };
+
 /**
  * Declara las columnas y coloca los encabezados en la fila 6.
  * Las columnas marcadas como automáticas quedan sombreadas para dejar claro
@@ -158,21 +176,22 @@ export function declararColumnas(
       : { locked: false, ...(columna.sugerida ? { hidden: true } : {}) };
 
     // Las sugeridas se sombrean igual pero quedan abiertas: el sombreado dice
-    // "ya viene resuelta", no "no la toque".
+    // "ya viene resuelta", no "no la toque". Las ocultas no necesitan estilo visual.
     if (!columna.automatica && !columna.sugerida) return;
+    const proteccion = columna.automatica
+      ? PROTECCION_AUTOMATICA
+      : PROTECCION_SUGERIDA;
     for (
       let fila = FILA_INICIO_DATOS;
       fila < FILA_INICIO_DATOS + filas;
       fila++
     ) {
       const celda = ws.getCell(fila, numeroColumna);
-      celda.protection = { locked: Boolean(columna.automatica), hidden: true };
-      celda.fill = {
-        type: 'pattern',
-        pattern: 'solid',
-        fgColor: { argb: RELLENO_AUTOMATICO },
-      };
-      celda.font = { color: { argb: 'FF444444' } };
+      celda.protection = proteccion;
+      if (!columna.oculta) {
+        celda.fill = RELLENO_CELDA_AUTOMATICA;
+        celda.font = FUENTE_CELDA_AUTOMATICA;
+      }
     }
   });
 
@@ -180,7 +199,7 @@ export function declararColumnas(
   // localizan por su nombre, así que pisar la fila 6 rompe la importación.
   for (let fila = 1; fila <= FILA_ENCABEZADOS; fila++) {
     for (let col = 1; col <= columnas.length; col++) {
-      ws.getCell(fila, col).protection = { locked: true };
+      ws.getCell(fila, col).protection = PROTECCION_BLOQUEADA;
     }
   }
 }

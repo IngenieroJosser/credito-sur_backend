@@ -18,6 +18,7 @@ import { generarPlantillaInventario } from './plantillas/plantilla-inventario';
 import {
   generarPlantillaClientesCreditos,
   DatosReferenciaPlantilla,
+  MAX_FILAS_REFERENCIA,
 } from './plantillas/plantilla-clientes-creditos';
 import {
   aplicarAvanceHistorico,
@@ -269,6 +270,66 @@ export class ImportacionesService {
     return generarPlantillaInventario();
   }
 
+  private plantillaCache = new Map<
+    string,
+    {
+      huella: string;
+      resultado: { data: Buffer; contentType: string; filename: string };
+    }
+  >();
+  private plantillaEnVuelo = new Map<
+    string,
+    Promise<{ data: Buffer; contentType: string; filename: string }>
+  >();
+
+  private async obtenerHuellaReferenciaPlantilla(): Promise<string | null> {
+    if (
+      typeof this.prisma.cliente?.aggregate !== 'function' ||
+      typeof this.prisma.producto?.aggregate !== 'function' ||
+      typeof this.prisma.precioProducto?.aggregate !== 'function' ||
+      typeof this.prisma.prestamo?.aggregate !== 'function' ||
+      typeof this.prisma.ruta?.aggregate !== 'function'
+    ) {
+      return null;
+    }
+
+    const [clientes, productos, precios, prestamos, rutas] = await Promise.all([
+      this.prisma.cliente.aggregate({
+        where: { eliminadoEn: null },
+        _count: { _all: true },
+        _max: { actualizadoEn: true },
+      }),
+      this.prisma.producto.aggregate({
+        where: { eliminadoEn: null, activo: true },
+        _count: { _all: true },
+        _max: { actualizadoEn: true },
+      }),
+      this.prisma.precioProducto.aggregate({
+        where: { activo: true },
+        _count: { _all: true },
+        _max: { actualizadoEn: true },
+      }),
+      this.prisma.prestamo.aggregate({
+        where: { eliminadoEn: null },
+        _count: { _all: true },
+        _max: { actualizadoEn: true },
+      }),
+      this.prisma.ruta.aggregate({
+        where: { activa: true, eliminadoEn: null },
+        _count: { _all: true },
+        _max: { actualizadoEn: true },
+      }),
+    ]);
+
+    return [
+      `${clientes._count._all}:${clientes._max.actualizadoEn?.getTime() ?? 0}`,
+      `${productos._count._all}:${productos._max.actualizadoEn?.getTime() ?? 0}`,
+      `${precios._count._all}:${precios._max.actualizadoEn?.getTime() ?? 0}`,
+      `${prestamos._count._all}:${prestamos._max.actualizadoEn?.getTime() ?? 0}`,
+      `${rutas._count._all}:${rutas._max.actualizadoEn?.getTime() ?? 0}`,
+    ].join('|');
+  }
+
   /**
    * La plantilla de clientes y créditos se genera con datos vivos del sistema
    * (clientes, artículos, préstamos y rutas). Eso permite que el Excel avise de
@@ -276,11 +337,42 @@ export class ImportacionesService {
    * sin tener que subir el archivo para enterarse.
    */
   async generarPlantillaClientesCreditos(integral = false) {
+    const claveCache = integral ? 'integral' : 'clientes-creditos';
+    const huella = await this.obtenerHuellaReferenciaPlantilla();
+    if (huella) {
+      const enCache = this.plantillaCache.get(claveCache);
+      if (enCache && enCache.huella === huella) {
+        return enCache.resultado;
+      }
+    }
+
+    const enVuelo = this.plantillaEnVuelo.get(claveCache);
+    if (enVuelo) {
+      return enVuelo;
+    }
+
+    const promesa = this.construirPlantillaClientesCreditos(integral)
+      .then((resultado) => {
+        if (huella) {
+          this.plantillaCache.set(claveCache, { huella, resultado });
+        }
+        return resultado;
+      })
+      .finally(() => {
+        this.plantillaEnVuelo.delete(claveCache);
+      });
+
+    this.plantillaEnVuelo.set(claveCache, promesa);
+    return promesa;
+  }
+
+  private async construirPlantillaClientesCreditos(integral: boolean) {
     const [clientes, productos, prestamos, rutas] = await Promise.all([
       this.prisma.cliente.findMany({
         where: { eliminadoEn: null },
         select: { codigo: true, dni: true, nombres: true, apellidos: true },
         orderBy: { creadoEn: 'desc' },
+        take: MAX_FILAS_REFERENCIA,
       }),
       this.prisma.producto.findMany({
         where: { eliminadoEn: null, activo: true },
@@ -301,6 +393,7 @@ export class ImportacionesService {
         where: { eliminadoEn: null },
         select: { numeroPrestamo: true },
         orderBy: { creadoEn: 'desc' },
+        take: MAX_FILAS_REFERENCIA,
       }),
       this.prisma.ruta.findMany({
         where: { activa: true, eliminadoEn: null },

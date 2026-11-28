@@ -626,6 +626,8 @@ export async function generarPlantillaInventario(): Promise<{
     wsInicio.getCell(`B${fila}`).alignment = { wrapText: true, vertical: 'top' };
   });
 
-  const buffer = await workbook.xlsx.writeBuffer();
+  const buffer = await workbook.xlsx.writeBuffer({
+    zip: { compression: 'DEFLATE', compressionOptions: { level: 1 } },
+  });
   return comoBuffer(buffer, 'plantilla-inventario.xlsx');
 }
