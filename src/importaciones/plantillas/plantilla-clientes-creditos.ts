@@ -813,12 +813,18 @@ export async function generarPlantillaClientesCreditos(
   workbook.creator = 'Créditos del Sur';
   forzarRecalculo(workbook);
 
-  hojaInicio(workbook, opciones.integral ? 'PLANTILLA INTEGRAL DE MIGRACIÓN' : 'MÓDULO DE IMPORTACIÓN DE CLIENTES Y CRÉDITOS', [
-    ...(opciones.integral ? [
-      'Verifique el catálogo y las obligaciones antes de cargar. Este archivo reúne la captura, pero la confirmación se hace por módulo: primero inventario y luego clientes y créditos.',
-      'Los códigos de artículo nuevos se pueden seleccionar desde la hoja Artículos. Los catálogos de la base son una copia al descargar; el sistema los comprueba al validar.',
-      '',
-    ] : []),
+  const wsInicio = hojaInicio(workbook, opciones.integral ? 'PLANTILLA DE IMPORTACIÓN CREDISUR' : 'MÓDULO DE IMPORTACIÓN DE CLIENTES Y CRÉDITOS', opciones.integral ? [
+    '# Diligencie desde la fila 7',
+    'Artículos: registre el costo, el precio de contado, las existencias y los plazos que ofrece.',
+    'Clientes: registre cédula, nombre, teléfono y ruta. No repita clientes que ya están en el sistema.',
+    'Créditos de dinero: seleccione el cliente y registre el monto, la tasa, la frecuencia y el número de cuotas.',
+    'Créditos de artículo: seleccione el cliente y el artículo; indique el plazo y la inicial pactada.',
+    '',
+    '# Antes de confirmar',
+    'Verifique el resultado de la validación del Excel en el Centro de Importación. La validación no mueve dinero ni mercancía.',
+    'Use OPERATIVA para créditos nuevos. La cartera histórica recuperada se revisa aparte y no queda habilitada para cobranza.',
+    'Las notas son para observaciones del negocio. El número de crédito se genera automáticamente.',
+  ] : [
     '# Cómo diligenciar esta plantilla',
     '1. Registre los clientes NUEVOS en la hoja "Clientes".',
     '2. Registre sus créditos en la hoja que corresponda al tipo:',
@@ -936,6 +942,11 @@ export async function generarPlantillaClientesCreditos(
     : undefined;
   const wsClientes = workbook.addWorksheet('Clientes');
   declararColumnas(wsClientes, COLUMNAS_CLIENTES);
+  // Fuera de la vista: el tipo de cliente y la referencia técnica de importación.
+  // Se ocultan, no se borran: la fórmula de revisión y la lista de clientes de
+  // «Créditos» siguen leyéndolos. Cartera solo ve la cédula o el código provisional.
+  wsClientes.getColumn(CLI.tipoCliente).hidden = true;
+  wsClientes.getColumn(CLI.referenciaImportacion).hidden = true;
   escribirCabecera(
     wsClientes,
     'Gestión de Clientes',
@@ -970,6 +981,11 @@ export async function generarPlantillaClientesCreditos(
   // ── Hoja Créditos de dinero ───────────────────────────────────────────────
   const wsDinero = workbook.addWorksheet('Créditos de dinero');
   declararColumnas(wsDinero, COLUMNAS_CREDITOS_DINERO);
+  // Fuera de la vista: el saldo informado por cartera y el número manual. Se
+  // ocultan, no se borran: el número visible se genera solo y el saldo de
+  // cartera sigue disponible para la conciliación interna.
+  wsDinero.getColumn(DIN.saldoInformado).hidden = true;
+  wsDinero.getColumn(DIN.numeroManual).hidden = true;
   escribirCabecera(
     wsDinero,
     'Créditos de dinero (préstamo en efectivo)',
@@ -1104,6 +1120,13 @@ export async function generarPlantillaClientesCreditos(
   // ── Hoja Créditos de artículo ─────────────────────────────────────────────
   const wsArticulo = workbook.addWorksheet('Créditos de artículo');
   declararColumnas(wsArticulo, COLUMNAS_CREDITOS_ARTICULO);
+  // Fuera de la vista: el saldo informado, el número manual y las columnas
+  // derivadas de la cuota pactada (cuota aplicada y diferencia). Se ocultan, no
+  // se borran: el importador y la conciliación interna las siguen leyendo.
+  wsArticulo.getColumn(ART.saldoInformado).hidden = true;
+  wsArticulo.getColumn(ART.numeroManual).hidden = true;
+  wsArticulo.getColumn(ART.cuotaAplicada).hidden = true;
+  wsArticulo.getColumn(ART.diferenciaCuota).hidden = true;
   escribirCabecera(
     wsArticulo,
     'Créditos de artículo',
@@ -1347,11 +1370,16 @@ export async function generarPlantillaClientesCreditos(
         formula: `IF(${codigo}="","",${codigo})`,
       };
     }
-    const rutas = workbook.addWorksheet('Rutas');
+    // Fuera de la vista: la lista de rutas y las reglas comerciales son de
+    // apoyo. Se ocultan (no se borran) para que el libro de operación muestre
+    // solo las cinco hojas de captura.
+    const rutas = workbook.addWorksheet('Rutas', { state: 'veryHidden' });
     rutas.columns = [{ header: 'Código de ruta', width: 26 }];
     rutas.addRows(datos.rutas.map((ruta) => [ruta]));
     congelarEncabezados(rutas);
-    const reglas = workbook.addWorksheet('Reglas comerciales');
+    const reglas = workbook.addWorksheet('Reglas comerciales', {
+      state: 'veryHidden',
+    });
     reglas.columns = [{ header: 'Concepto', width: 27 }, { header: 'Regla', width: 95 }];
     reglas.addRows([
       ['Precio de contado', 'Costo dividido por el divisor comercial autorizado. Ejemplo: $178.123 / 0,65 = $274.035,38 antes del redondeo.'],
@@ -1392,12 +1420,12 @@ export async function generarPlantillaClientesCreditos(
     );
   }
 
-  // ── Hoja Ejemplos ─────────────────────────────────────────────────────────
-  const wsEjemplos = workbook.addWorksheet('Ejemplos');
-  wsEjemplos.getColumn(1).width = 34;
-  wsEjemplos.getColumn(2).width = 70;
-  wsEjemplos.getCell('A1').value = 'GUÍA DE EJEMPLOS';
-  wsEjemplos.getCell('A1').font = { bold: true, size: 14 };
+  // ── Guía de ejemplos y avisos, dentro de Inicio ───────────────────────────
+  // El libro de operación solo muestra cinco hojas (Inicio, Artículos, Clientes,
+  // Créditos de dinero y Créditos de artículo). La guía y el aviso de rutas van
+  // en Inicio, debajo de las instrucciones, para no sumar una pestaña más.
+  wsInicio.getColumn(2).width = 90;
+  const filaAviso = wsInicio.rowCount + 2;
 
   /*
    * El aviso de que falta el paso anterior.
@@ -1408,23 +1436,29 @@ export async function generarPlantillaClientesCreditos(
    * quinientos errores. El archivo se lo dice antes de que empiece.
    */
   if (datos.rutas.length === 0) {
-    wsEjemplos.getCell('A2').value =
+    wsInicio.getCell(`A${filaAviso}`).value =
       'ANTES DE LLENAR ESTO: cree sus rutas en el sistema';
-    wsEjemplos.getCell('A2').font = { bold: true, size: 12, color: { argb: 'FFB91C1C' } };
-    wsEjemplos.getCell('B2').value =
+    wsInicio.getCell(`A${filaAviso}`).font = { bold: true, size: 12, color: { argb: 'FFB91C1C' } };
+    wsInicio.getCell(`B${filaAviso}`).value =
       'Todavía no hay ninguna ruta creada. Los clientes operativos necesitan una ruta. ' +
       'En revisión histórica, deje en blanco la ruta si no hay evidencia. ' +
       'Para operar, cree las rutas con sus cobradores y ' +
       'vuelva a descargar esta plantilla: la columna traerá el desplegable con sus ' +
-      'códigos y la hoja «BD Clientes» las mostrará.';
-    wsEjemplos.getCell('B2').alignment = { wrapText: true, vertical: 'top' };
-    wsEjemplos.getRow(2).height = 72;
+      'códigos.';
+    wsInicio.getCell(`B${filaAviso}`).alignment = { wrapText: true, vertical: 'top' };
+    wsInicio.getRow(filaAviso).height = 72;
   }
 
   // Cada ejemplo nombra las columnas tal como salen en la hoja. Antes esta
   // guía hablaba de columnas que ya no existen —código de importación, nivel
   // de riesgo, tipo de crédito, plazo— y mandaba a llenar cosas que no están.
-  const bloques: Array<[string, string]> = [
+  const bloques: Array<[string, string]> = opciones.integral ? [
+    ['Ejemplos', ''],
+    ['Artículo', 'Costo $ 210.000 con margen sobre venta del 30%: contado sugerido $ 300.000. Puede escribir el precio pactado.'],
+    ['Cliente', 'Ingrese la cédula sin puntos. En el libro histórico, seleccione la referencia numérica si no hay cédula.'],
+    ['Crédito de dinero', 'Capital $ 500.000, 10%, 30 cuotas diarias. El plazo se calcula con las cuotas y la frecuencia.'],
+    ['Crédito de artículo', 'Precio pactado $ 500.000, inicial $ 100.000: se financian $ 400.000.'],
+  ] : [
     ['HOJA "Clientes" — un cliente operativo nuevo', ''],
     ['CC cliente', '12345678'],
     ['Nombres* / Apellidos*', 'Juan Carlos / Pérez Gómez'],
@@ -1435,7 +1469,7 @@ export async function generarPlantillaClientesCreditos(
     ],
     ['El resto', 'Opcional: correo, dirección, referencias'],
     ['HOJA "Clientes" — revisión histórica', 'Si no conoce el documento, teléfono, apellidos o ruta, no los invente.'],
-    ['Cliente / Referencia', 'Use el documento o seleccione la referencia provisional del cliente. No es una cédula.'],
+    ['Cliente / Referencia', 'Escriba la cédula si la tiene; si no, el código provisional del cliente. No es una cédula.'],
     ['', ''],
 
     ['HOJA "Créditos de dinero" — crédito nuevo que se entrega hoy', ''],
@@ -1451,7 +1485,7 @@ export async function generarPlantillaClientesCreditos(
     ['', ''],
 
     ['HOJA "Créditos de dinero" — crédito que ya venía cobrándose', ''],
-    ['Cliente / Referencia*', '12345678 o una referencia provisional existente'],
+    ['Cliente / Referencia*', '12345678 o el código provisional del cliente'],
     ['Abono desconocido', 'Deje la celda vacía. Escriba 0 solo si está confirmado que no hubo abonos.'],
     ['Monto* / Tasa interés*', '600.000 / 10'],
     ['Frecuencia pago* / Cantidad cuotas*', 'DIARIO / 30'],
@@ -1497,15 +1531,19 @@ export async function generarPlantillaClientesCreditos(
     ['¿Y el número de crédito?', ''],
     [
       'Puede dejarlo vacío',
-      'El sistema lo genera. Escríbalo solo para conservar su numeración anterior, o para ACTUALIZAR un crédito ya cargado.',
+      'El sistema lo genera solo. La columna «Número de crédito» ya viene con el que le va a quedar.',
     ],
   ];
 
   bloques.forEach(([campo, valor], indice) => {
-    const fila = indice + 3;
-    wsEjemplos.getCell(`A${fila}`).value = campo;
-    wsEjemplos.getCell(`A${fila}`).font = { bold: !valor };
-    wsEjemplos.getCell(`B${fila}`).value = valor;
+    const fila = filaAviso + indice + 1;
+    wsInicio.getCell(`A${fila}`).value = campo;
+    wsInicio.getCell(`A${fila}`).font = { bold: !valor };
+    wsInicio.getCell(`B${fila}`).value = valor;
+    if (opciones.integral) {
+      wsInicio.getCell(`B${fila}`).alignment = { wrapText: true, vertical: 'middle' };
+      if (valor) wsInicio.getRow(fila).height = 28;
+    }
   });
 
   const buffer = await workbook.xlsx.writeBuffer();

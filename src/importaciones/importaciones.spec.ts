@@ -2178,7 +2178,10 @@ describe('Las columnas automáticas no se pueden escribir', () => {
       );
       if (hoja.getCell(7, columna).formula) {
         expect(hoja.getCell(7, columna).protection.hidden).toBe(true);
-        if (!bloqueada) automaticas.push(encabezado);
+        const sugerenciaEditable = hoja.name === 'Artículos' &&
+          /^(PRECIO CONTADO|PRECIO TOTAL OPCION [1-3])$/.test(encabezado);
+        if (sugerenciaEditable) expect(bloqueada).toBe(false);
+        else if (!bloqueada) automaticas.push(encabezado);
       } else if (bloqueada) {
         captura.push(encabezado);
       }

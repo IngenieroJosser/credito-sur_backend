@@ -108,6 +108,24 @@ export function leerNumero(valor: unknown): number | null {
 }
 
 /**
+ * Número de una celda SIN aceptar el resultado guardado de una fórmula.
+ *
+ * Las casillas de precio son la captura de verdad: manda lo que la trabajadora
+ * escribe a mano. Por eso no se puede tomar el `result` que Excel deja pegado a
+ * una fórmula —con un `=200+999` pegado se colaría un precio que nadie decidió—
+ * ni el de la fórmula de sugerencia que trae la plantilla. Una celda con fórmula
+ * se trata como vacía y el precio se rehace con la regla respaldada, que es lo
+ * que el importador ya sabe hacer.
+ */
+export function leerNumeroCapturado(valor: unknown): number | null {
+  if (valor !== null && typeof valor === 'object') {
+    const celda = valor as Record<string, unknown>;
+    if ('formula' in celda || 'sharedFormula' in celda) return null;
+  }
+  return leerNumero(valor);
+}
+
+/**
  * Fecha de una celda. Acepta SOLO formatos inequívocos:
  *  - Date nativo (celda con formato de fecha en Excel) y serial de Excel.
  *  - Texto ISO `YYYY-MM-DD` (el formato que declara la plantilla).

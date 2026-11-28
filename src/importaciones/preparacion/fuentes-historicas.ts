@@ -217,6 +217,29 @@ export async function leerFuentes(
     }
     return leidas;
   });
+  if (leerModoHistorico(libroCartera)) {
+    // La clave de captura es numérica; la referencia histórica sigue siendo
+    // interna. Una clave repetida nunca decide por sí sola el titular.
+    const cuentas = new Map<string, number>();
+    for (const fila of filas) {
+      const clave = leerTexto(fila.campos.documento);
+      if (fila.tipo === 'CLIENTE' && /^\d{1,5}$/.test(clave)) cuentas.set(clave, (cuentas.get(clave) ?? 0) + 1);
+    }
+    const porClave = new Map<string, string>();
+    for (const fila of filas) {
+      if (fila.tipo !== 'CLIENTE') continue;
+      const clave = leerTexto(fila.campos.documento);
+      const ref = leerTexto(fila.campos.cliente_tecnico);
+      if (cuentas.get(clave) !== 1 || !/^HIST-[A-Z0-9-]{1,50}$/i.test(ref)) continue;
+      porClave.set(clave, ref);
+      fila.campos.documento = ref;
+    }
+    for (const fila of filas) {
+      if (fila.tipo !== 'DINERO' && fila.tipo !== 'CREDITO_ARTICULO') continue;
+      const ref = porClave.get(leerTexto(fila.campos.documento));
+      if (ref) fila.campos.documento = ref;
+    }
+  }
   const modoIntegral = libros.cartera === libros.inventario ? leerModoHistorico(libroCartera) : undefined;
   return { fuentes, filas, ...(modoIntegral && { modoIntegral }) };
 }

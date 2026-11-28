@@ -188,7 +188,7 @@ describe('De la plantilla al importador, con precios de cartera', () => {
         'Nombre del artículo': `Artículo ${i}`,
         Categoría: 'General',
         'Costo unitario': art.costo,
-        'Divisor del precio': art.divisor,
+        'Rentabilidad deseada': 1 - art.divisor,
         'Meses opción 1': art.plazos[0].meses,
         'Meses opción 2': art.plazos[1].meses,
         'Meses opción 3': art.plazos[2].meses,
@@ -230,12 +230,13 @@ describe('De la plantilla al importador, con precios de cartera', () => {
   /**
    * Las plantillas ya descargadas siguen sirviendo.
    *
-   * La columna se llamaba "Rentabilidad deseada" y pasó a "Divisor del precio". Quien
-   * tenga el archivo viejo a medio llenar no debería tener que empezar de nuevo, y el
-   * importador acepta los dos encabezados. Esta prueba es la que avisa si alguien quita
-   * ese alias.
+   * La columna se llamó «Divisor del precio» y recuperó su nombre de negocio,
+   * «Rentabilidad deseada». Quien tenga a medio llenar un archivo descargado con
+   * el nombre intermedio no debería tener que empezar de nuevo, y el importador
+   * acepta los dos encabezados. Esta prueba es la que avisa si alguien quita ese
+   * alias.
    */
-  it('acepta el encabezado anterior, "Rentabilidad deseada"', async () => {
+  it('acepta el encabezado anterior, "Divisor del precio"', async () => {
     const art = ARTICULOS[0];
 
     const resultado = await importar(
@@ -246,14 +247,16 @@ describe('De la plantilla al importador, con precios de cartera', () => {
           'Nombre del artículo': 'Artículo de plantilla vieja',
           Categoría: 'General',
           'Costo unitario': art.costo,
-          'Rentabilidad deseada': art.divisor,
+          'Divisor del precio': art.divisor,
         },
       ],
       (hoja) => {
         const fila = hoja.getRow(6);
         fila.eachCell({ includeEmpty: false }, (celda) => {
-          if (String(celda.value ?? '').startsWith('Divisor del precio')) {
-            celda.value = 'Rentabilidad deseada';
+          if (String(celda.value ?? '').startsWith('Rentabilidad deseada')) {
+            celda.value = 'Divisor del precio';
+          } else if (celda.value === 'Divisor del precio') {
+            celda.value = null;
           }
         });
       },

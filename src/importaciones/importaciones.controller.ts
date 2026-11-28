@@ -39,6 +39,7 @@ import { ExpedienteHistoricoService } from './preparacion/expediente-historico.s
 import { CargaExpedienteHistoricoService, type ConfirmacionPruebaHistorica } from './preparacion/carga-expediente-historico.service';
 import { presentarRevisionHistorica } from './preparacion/presentar-revision-historica';
 import { esEntornoHistoricoAislado } from '../common/entorno-historico-aislado';
+import { leerModoHistorico } from './parsers/control-historico-xlsx';
 
 @ApiTags('Importaciones')
 @ApiBearerAuth(SWAGGER_JWT_AUTH)
@@ -140,6 +141,39 @@ export class ImportacionesController {
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(data);
+  }
+
+  @Post('integral/validar')
+  @HttpCode(200)
+  @UseGuards(RolesGuard)
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(FileInterceptor('integral', { limits: { fileSize: 8 * 1024 * 1024, fields: 0 } }))
+  async validarIntegral(
+    @UploadedFile() file: Express.Multer.File,
+    @Res() res: Response,
+    @Req() req: RequestConUsuario,
+  ) {
+    this.assertXlsxFile(file);
+    const workbook = await this.importacionesService.leerLibroIntegral(file);
+    if (leerModoHistorico(workbook)) {
+      return this.prepararCarteraHistorica({ integral: [file] }, res, req, 'revisar');
+    }
+    const { stock, cartera, ...vistaIntegral } = await this.importacionesService.validarIntegralOperativa(workbook, file);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ operativa: vistaIntegral });
+  }
+
+  @Post('integral/confirmar')
+  @HttpCode(200)
+  @UseGuards(RolesGuard)
+  @Roles(RolUsuario.SUPER_ADMINISTRADOR, RolUsuario.ADMIN)
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(FileInterceptor('integral', { limits: { fileSize: 8 * 1024 * 1024, fields: 0 } }))
+  async confirmarIntegral(@UploadedFile() file: Express.Multer.File, @Req() req: RequestConUsuario) {
+    this.assertXlsxFile(file);
+    if (!req.user?.id) throw new UnauthorizedException();
+    return this.importacionesService.confirmarIntegralOperativa(file, req.user.id);
   }
 
   @Post('historicos/preparar')

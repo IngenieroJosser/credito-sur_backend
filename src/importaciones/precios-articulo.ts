@@ -32,6 +32,23 @@ export const PLAZOS: ReadonlyArray<{ meses: number; recargo: number }> = [
   { meses: 8, recargo: 0.6 },
 ];
 
+const MARGENES: ReadonlyArray<readonly [string, number]> = [
+  ['Electromenores', 0.35],
+  ['Electrodomésticos', 0.30],
+  ['Electrodomesticos', 0.30],
+  ['Muebles y comedores', 0.45],
+];
+
+export function margenSobreVenta(categoria: string): number | null {
+  return MARGENES.find(([nombre]) => nombre.toLowerCase() === categoria.trim().toLowerCase())?.[1] ?? null;
+}
+
+export function formulaMargenSobreVenta(categoria: string): string {
+  return MARGENES.reduceRight(
+    (formula, [nombre, margen]) => `IF(TRIM(${categoria})="${nombre}",${margen},${formula})`, '""',
+  );
+}
+
 /**
  * El recargo que le toca a un plazo cualquiera.
  *

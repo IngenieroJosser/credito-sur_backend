@@ -8,6 +8,9 @@ import { sincronizarAsignacionesCliente } from '../routes/sincronizar-asignacion
 import { avisoDeClientesSinRuta } from './aviso-clientes-sin-ruta';
 import { ClientesCreditosParser } from './parsers/clientes-creditos.parser';
 import { InventarioParser } from './parsers/inventario.parser';
+import { leerModoHistorico } from './parsers/control-historico-xlsx';
+import { loadWorkbookFromBuffer } from './parsers/xlsx-workbook.loader';
+import type { Workbook } from 'exceljs';
 import { ResultadoValidacion } from './dto/validacion-resultado.dto';
 import { LedgerService } from '../accounting/ledger.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
@@ -1205,6 +1208,81 @@ export class ImportacionesService {
     }
   }
 
+  async leerLibroIntegral(file: Express.Multer.File) {
+    try {
+      return await loadWorkbookFromBuffer(file.buffer);
+    } catch {
+      throw new BadRequestException('El archivo no es un Excel válido o está dañado.');
+    }
+  }
+
+  async validarIntegralOperativa(workbook: Workbook, file: Express.Multer.File, tx?: TransaccionPrisma) {
+    if (leerModoHistorico(workbook)) {
+      throw new BadRequestException('El libro histórico solo puede confirmarse en su expediente de prueba.');
+    }
+    const inventarioParser = tx ? new InventarioParser(tx) : this.inventarioParser;
+    const carteraParser = tx ? new ClientesCreditosParser(tx) : this.clientesCreditosParser;
+    const stock = await inventarioParser.validarLibro(workbook, file.originalname);
+    const cartera = await carteraParser.validarLibro(workbook, file.buffer, file.originalname, stock);
+    const errores = [...stock.errores, ...cartera.errores];
+    const advertencias = [...stock.advertencias, ...cartera.advertencias];
+    const creditos = cartera.creditos ?? [];
+    for (const credito of creditos) {
+      if (credito.tipoCarga !== 'OPERATIVA') {
+        errores.push({
+          hoja: credito.hoja, fila: credito.fila, campo: 'tipo_carga',
+          mensaje: 'El crédito histórico requiere un expediente. No se activará desde esta plantilla.',
+          valor: credito.tipoCarga,
+        });
+      }
+    }
+    const totalFilas = stock.resumen.totalFilas + cartera.resumen.totalFilas;
+    if (totalFilas === 0 && errores.length === 0) {
+      errores.push({ hoja: 'Archivo', fila: 0, campo: 'archivo', mensaje: 'El archivo no tiene filas para importar.', valor: null });
+    }
+    const impacto = cartera.impactoCaja;
+    if (impacto?.totalSalida && !impacto.alcanzaElSaldo) {
+      errores.push({ hoja: 'Créditos de dinero', fila: 0, campo: 'caja',
+        mensaje: impacto.cajaOficinaEncontrada ? 'La Caja de Oficina no tiene saldo suficiente.' : 'No existe la Caja de Oficina.',
+        valor: null });
+    }
+    const filas = cartera.resumen.porHoja;
+    return {
+      stock, cartera, confirmable: errores.length === 0,
+      conteos: {
+        inventario: stock.resumen.totalFilas,
+        clientes: filas.Clientes?.totalFilas ?? 0,
+        dinero: filas['Créditos de dinero']?.totalFilas ?? 0,
+        articulos: filas['Créditos de artículo']?.totalFilas ?? 0,
+      },
+      totalErrores: errores.length, errores: errores.slice(0, 20),
+      totalAdvertencias: advertencias.length, advertencias: advertencias.slice(0, 20),
+      impactoCaja: impacto,
+      filasPorResolver: 0, cuadre: true,
+    };
+  }
+
+  async confirmarIntegralOperativa(file: Express.Multer.File, usuarioId: string) {
+    const workbook = await this.leerLibroIntegral(file);
+    const resultado = await this.prisma.conEventosTrasConfirmar(() => this.prisma.$transaction(async (tx) => {
+      const { stock, cartera, confirmable, errores } = await this.validarIntegralOperativa(workbook, file, tx);
+      if (!confirmable) throw new BadRequestException({ message: errores[0].mensaje, errores });
+      const inventario = stock.resumen.totalFilas > 0
+        ? await this.persistirInventarioValidado(stock, usuarioId, undefined, tx)
+        : null;
+      const creditos = cartera.resumen.totalFilas > 0
+        ? await this.persistirCarteraValidada(cartera, usuarioId, undefined, tx)
+        : null;
+      if (creditos && (creditos.creditosNoSoportados || creditos.creditosOmitidos)) {
+        throw new BadRequestException('No se importó el archivo: hay créditos no admitidos, duplicados o que cambiaron después de validar.');
+      }
+      return { inventario, creditos };
+    }, { maxWait: 60_000, timeout: 600_000, isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));
+    if (resultado.inventario) this.avisarCambioPorImportacion('INVENTARIO');
+    if (resultado.creditos) this.avisarCambioPorImportacion('CLIENTES_CREDITOS');
+    return resultado;
+  }
+
   // --- Confirmación ---
 
   async confirmarInventario(
@@ -1276,6 +1354,7 @@ export class ImportacionesService {
     resultado: ResultadoValidacion,
     creadoPorId: string,
     apertura?: { tx: TransaccionPrisma; expedienteId: string; fechaCorte: string | null },
+    txIntegral?: TransaccionPrisma,
   ) {
     if (resultado.tipo !== 'inventario' || resultado.errores.length) {
       throw new BadRequestException('El inventario contiene filas que no pasaron la validación.');
@@ -1567,6 +1646,7 @@ export class ImportacionesService {
         loteId = lote.id;
     };
     if (apertura) await ejecutar(apertura.tx);
+    else if (txIntegral) await ejecutar(txIntegral);
     else await this.prisma.$transaction(ejecutar, { maxWait: 60_000, timeout: 600_000 });
 
     if (articulosActualizados > 0) {
@@ -1590,7 +1670,7 @@ export class ImportacionesService {
       );
     }
 
-    if (!apertura) this.avisarCambioPorImportacion('INVENTARIO');
+    if (!apertura && !txIntegral) this.avisarCambioPorImportacion('INVENTARIO');
 
     return {
       loteId,
@@ -1683,6 +1763,7 @@ export class ImportacionesService {
     resultado: ResultadoValidacion,
     creadoPorId: string,
     historico?: ContextoPersistenciaHistorica,
+    txIntegral?: TransaccionPrisma,
   ) {
     if (resultado.errores.length > 0 || (historico && (
       resultado.clientes?.some(cli => cli.esActualizacion || !historico.documentos.has(cli.cc)) ||
@@ -2596,9 +2677,10 @@ export class ImportacionesService {
     };
     try {
       if (historico) await ejecutar(historico.tx);
+      else if (txIntegral) await ejecutar(txIntegral);
       else await this.prisma.$transaction(ejecutar, { maxWait: 60_000, timeout: 600_000 });
     } catch (error) {
-      if (historico) throw error;
+      if (historico || txIntegral) throw error;
       await this.prisma.importacionLote.create({
         data: {
           tipo: 'CLIENTES_CREDITOS',
@@ -2630,7 +2712,7 @@ export class ImportacionesService {
 
     mensajes.push('Clientes y créditos confirmados correctamente.');
 
-    if (!historico) this.avisarCambioPorImportacion('CLIENTES_CREDITOS');
+    if (!historico && !txIntegral) this.avisarCambioPorImportacion('CLIENTES_CREDITOS');
 
     return {
       loteId,

@@ -1,6 +1,8 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   BadRequestException,
   Injectable,
+  Logger,
   OnModuleInit,
   OnModuleDestroy,
 } from '@nestjs/common';
@@ -40,7 +42,7 @@ const leerId = (valor: unknown): unknown => {
   return (valor as { id?: unknown }).id;
 };
 
-function crearClienteExtendido(eventEmitter: EventEmitter2) {
+function crearClienteExtendido(eventEmitter: EventEmitter2, colaTrasConfirmar: AsyncLocalStorage<Array<() => void>>) {
   const replicaHabilitada = !esEntornoHistoricoAislado();
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
@@ -92,6 +94,7 @@ function crearClienteExtendido(eventEmitter: EventEmitter2) {
 
           // La base de aceptación conserva sus datos, pero no los encola ni emite avisos de operación.
           if (replicaHabilitada && watchActions.includes(operation) && model) {
+            const notificar = () => {
             if (model !== 'OutboxEvent') {
               // Solo sirve un id suelto. En deleteMany/updateMany el
               // `where.id` suele ser un objeto ({ in: [...] }, { not: x })
@@ -158,6 +161,10 @@ function crearClienteExtendido(eventEmitter: EventEmitter2) {
                 eventEmitter.emit('aprobacion.updated', { data: result });
               }
             }
+            };
+            const pendientes = colaTrasConfirmar.getStore();
+            if (pendientes) pendientes.push(notificar);
+            else notificar();
           }
 
           return result;
@@ -201,8 +208,10 @@ export type TransaccionPrisma = Omit<
 @Injectable()
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export class PrismaService implements OnModuleInit, OnModuleDestroy {
+  private readonly colaTrasConfirmar = new AsyncLocalStorage<Array<() => void>>();
+
   constructor(private eventEmitter: EventEmitter2) {
-    const prisma = crearClienteExtendido(eventEmitter);
+    const prisma = crearClienteExtendido(eventEmitter, this.colaTrasConfirmar);
 
     // Devolvemos un Proxy para que NestJS pueda inyectar PrismaService
     // y redirija cualquier llamada (this.prisma.user.findMany) al cliente extendido.
@@ -213,6 +222,20 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         return (prisma as Record<string, unknown>)[prop as string];
       },
     });
+  }
+
+  // Evita que una reversión de la transacción publique cambios que no se guardaron.
+  async conEventosTrasConfirmar<T>(transaccion: () => Promise<T>): Promise<T> {
+    const pendientes: Array<() => void> = [];
+    const resultado = await this.colaTrasConfirmar.run(pendientes, transaccion);
+    for (const publicar of pendientes) {
+      try {
+        publicar();
+      } catch {
+        Logger.error('No se pudo publicar un evento después de confirmar la transacción.', PrismaService.name);
+      }
+    }
+    return resultado;
   }
 
   async onModuleInit() {

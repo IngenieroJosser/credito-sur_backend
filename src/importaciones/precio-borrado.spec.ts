@@ -88,7 +88,7 @@ const validar = async (
     'Nombre del artículo': 'Nevera',
     Categoría: 'Electrodomésticos',
     'Costo unitario': COSTO,
-    'Divisor del precio': DIVISOR,
+    'Rentabilidad deseada': 1 - DIVISOR,
     'Meses opción 1': 3,
   });
   editar(hoja);
@@ -101,6 +101,30 @@ const validar = async (
 };
 
 describe('Un precio borrado se rehace al importar', () => {
+  it('prefiere el precio escrito en la casilla visible al importe historico oculto', async () => {
+    const resultado = await validar((hoja) => {
+      escribirFila(hoja, {
+        'Precio contado': 320000,
+        'Precio contado manual': 270000,
+        'Precio total opción 1': 440000,
+        'Precio manual opción 1': 420000,
+      });
+    });
+    expect(resultado.errores).toEqual([]);
+    expect(resultado.precios).toEqual(expect.arrayContaining([
+      expect.objectContaining({ meses: 0, precio: 320000 }),
+      expect.objectContaining({ meses: 3, precio: 440000 }),
+    ]));
+  });
+
+  it('aplica el margen comercial de la categoria si no se captura uno', async () => {
+    const resultado = await validar((hoja) => borrarCelda(hoja, 'Rentabilidad deseada'));
+    expect(resultado.errores).toEqual([]);
+    expect(resultado.articulos?.[0]).toEqual(
+      expect.objectContaining({ precioContado: baseDeContado(COSTO, 0.7) }),
+    );
+  });
+
   it('no toma el resultado guardado de una fórmula ni extrapola un plazo sin respaldo', async () => {
     const resultado = await validar((hoja) => {
       escribirFila(hoja, { 'Meses opción 1': 4, 'Precio total opción 1': { formula: '200+999', result: 1199 } });
@@ -159,11 +183,12 @@ describe('Un precio borrado se rehace al importar', () => {
     );
   }, 60000);
 
-  it('sin divisor no se puede rehacer, y el precio sigue siendo requerido', async () => {
+  it('sin porcentaje ni regla de categoria, el precio sigue siendo requerido', async () => {
     // El costo solo no alcanza: sin el porcentaje no hay de dónde sacar el
     // precio, así que la fila tiene que seguir avisando en vez de inventar uno.
     const resultado = await validar((hoja) => {
-      borrarCelda(hoja, 'Divisor del precio');
+      escribirFila(hoja, { 'Categoría': 'General' });
+      borrarCelda(hoja, 'Rentabilidad deseada');
       borrarCelda(hoja, 'Precio contado');
       borrarCelda(hoja, 'Precio total opción 1');
     });
@@ -205,8 +230,11 @@ describe('El aviso de la hoja dice el número, no cómo obtenerlo', () => {
     // Rehace la cuenta con el costo y el divisor en vez de leer la celda de
     // precio, que en este caso está vacía, y la formatea para mostrarla.
     expect(formula).toContain('TEXT(TRUNC(');
-    expect(formula).toContain('La base calculada es ');
-    expect(formula).toContain('Precio contado manual');
+    expect(formula).toContain('la base calculada es ');
+    // Manda a la casilla VISIBLE del precio, no a la columna oculta que guarda
+    // el precio pactado conservado.
+    expect(formula).toContain('en la casilla Precio contado');
+    expect(formula).not.toContain('Precio contado manual');
   }, 60000);
 
   it('ya no manda a hacer lo que no funciona', async () => {

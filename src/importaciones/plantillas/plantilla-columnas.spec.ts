@@ -176,7 +176,7 @@ describe('Plantilla de clientes y créditos: estructura con varias combinaciones
     expect(creditos.getCell('O7').formula).toContain("'Artículos'!");
     expect(creditos.getCell('Q7').formula).toContain("'BD Artículos'!");
     expect(articulos.getCell('B7').protection.locked).toBe(false);
-    expect(articulos.getCell('G7').protection).toMatchObject({ locked: true, hidden: true });
+    expect(articulos.getCell('G7').protection).toMatchObject({ locked: false, hidden: true });
     expect(articulos.getCell('AC7').protection.locked).toBe(false);
     expect(creditos.getCell('B7').dataValidation.formulae[0]).toContain('Valores!$K$2');
     expect(articulos.getCell('T7').formula).toBeTruthy();
@@ -269,16 +269,15 @@ describe('Plantilla de inventario', () => {
 
     expect(h).not.toContain('Precio sugerido (automático)');
     expect(h[5]).toBe('Costo unitario*');
-    expect(h[6]).toBe('Divisor del precio');
+    expect(h[6]).toBe('Rentabilidad deseada');
     expect(h[7]).toBe('Precio contado*');
 
-    // Entre 0,01 y 1, porque ahora la casilla pide un DIVISOR y no una
-    // rentabilidad: el precio sale de `costo / divisor`. Un divisor mayor que 1
-    // dejaria el precio POR DEBAJO del costo, y el 0 no se puede dividir. Antes
-    // el rango era 0 a 3 —hasta 300% de rentabilidad— porque se multiplicaba.
     expect(ws.getCell('F7').dataValidation).toEqual(
-      expect.objectContaining({ type: 'decimal', formulae: [0.01, 1] }),
+      expect.objectContaining({ type: 'decimal', formulae: [0, 0.9999] }),
     );
+    expect(ws.getColumn('F').numFmt).toBe('0%');
+    expect(ws.getColumn('AG').hidden).toBe(true);
+    expect(ws.getCell('AG7').formula).toContain('1-$F7');
   }, 60000);
 
   it('cada opción de plazo tiene sus dos casillas en orden', async () => {
@@ -308,31 +307,63 @@ describe('Plantilla de inventario', () => {
     }
   }, 60000);
 
-  it('protege y oculta los resultados sin bloquear los precios manuales', async () => {
+  it('deja un solo precio visible por precio y protege los cálculos', async () => {
     const { data } = await generarPlantillaInventario();
     const wb = await cargar(data);
     const ws = wb.getWorksheet('Artículos')!;
+    const h = encabezados(wb, 'Artículos');
+    // `encabezados` indexa por número de columna, así que el índice es la columna.
+    const columna = (nombre: string) => {
+      const col = h.indexOf(nombre);
+      expect(col).toBeGreaterThan(0);
+      return col;
+    };
 
-    // Contado (G), los tres precios a plazo (I, K, M) y una fila más allá de
-    // las mil preparadas.
-    for (const celda of ['G7', 'I7', 'K7', 'M7', 'G1006']) {
-      expect({
-        celda,
-        proteccion: ws.getCell(celda).protection,
-      }).toEqual({ celda, proteccion: { locked: true, hidden: true } });
+    // Un único campo VISIBLE por precio. Trae la fórmula de sugerencia pero
+    // queda abierto: si hay un precio pactado, se escribe encima.
+    for (const nombre of [
+      'Precio contado*',
+      'Precio total opción 1',
+      'Precio total opción 2',
+      'Precio total opción 3',
+    ]) {
+      expect(ws.getCell(7, columna(nombre)).protection?.locked).toBe(false);
     }
-    for (const celda of ['AC7', 'AD7', 'AE7', 'AF7']) {
-      expect(ws.getCell(celda).protection.locked).toBe(false);
+
+    // El precio pactado conservado vive en columnas ocultas y sigue vivo: no se
+    // borra (ocultar no es borrar) y queda abierto para poder ajustarlo.
+    for (const nombre of [
+      'Precio contado manual',
+      'Precio manual opción 1',
+      'Precio manual opción 2',
+      'Precio manual opción 3',
+    ]) {
+      const col = columna(nombre);
+      expect(ws.getColumn(col).hidden).toBe(true);
+      expect(ws.getCell(7, col).protection?.locked).toBe(false);
     }
-    // Las de utilidad también están protegidas.
-    expect(ws.getCell('U7').protection?.locked).not.toBe(false);
+
+    // Los cálculos llevan la fórmula protegida y oculta, incluida una fila más
+    // allá de las mil preparadas (el permiso va sobre la columna completa).
+    for (const nombre of [
+      'Revisión de la fila (automático)',
+      'Utilidad contado $ (automático)',
+      'Utilidad contado % sobre costo (automático)',
+    ]) {
+      const col = columna(nombre);
+      expect(ws.getCell(7, col).protection).toEqual({ locked: true, hidden: true });
+      expect(ws.getCell(1006, col).protection).toEqual({
+        locked: true,
+        hidden: true,
+      });
+    }
   }, 60000);
 
   it('la revisión distingue qué falta cuando una celda queda vacía', async () => {
     // Con las fórmulas puestas, una celda vacía ya no significa una sola cosa.
     // Sin costo o sin rentabilidad el precio de contado devuelve "", y decir
     // solo "falta el precio" manda a escribirlo a mano cuando lo que falta es
-    // el porcentaje. Y sin rentabilidad los precios a plazo también quedan en
+    // la rentabilidad deseada. Y sin rentabilidad los precios a plazo también quedan en
     // "" aunque los meses estén elegidos, y la revisión decía "sin opciones de
     // crédito", lo contrario de lo que quiso hacer quien eligió el plazo.
     const { data } = await generarPlantillaInventario();
@@ -344,7 +375,7 @@ describe('Plantilla de inventario', () => {
     const revision = (ws.getCell('T7').value as ExcelJS.CellFormulaValue)
       .formula;
 
-    expect(revision).toContain('escriba el divisor');
+    expect(revision).toContain('Indique la rentabilidad en porcentaje');
     expect(revision).toContain('Hay plazos con meses pero sin precio');
     expect(revision).toContain('Hay plazos que dan pérdida');
   }, 60000);

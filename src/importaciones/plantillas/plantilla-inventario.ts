@@ -2,7 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import * as ExcelJS from 'exceljs';
 import { declararCapacidad } from '../parsers/header-map.util';
 import { MAX_OPCIONES_PLAZO } from '../parsers/inventario.parser';
-import { formulaPrecioDelPlazoRespaldado } from '../precios-articulo';
+import { formulaMargenSobreVenta, formulaPrecioDelPlazoRespaldado } from '../precios-articulo';
 import {
   activarFiltro,
   colLetra,
@@ -89,7 +89,7 @@ const COL_UTILIDAD_CONTADO_VALOR = PRIMERA_COLUMNA_CALCULADA;
 const COL_UTILIDAD_CONTADO_PCT = PRIMERA_COLUMNA_CALCULADA + 1;
 const PRECIO_CONTADO_MANUAL = PRIMERA_COLUMNA_CALCULADA + 2 +
   MAX_OPCIONES_PLAZO * COLUMNAS_CALCULADAS_POR_OPCION;
-const ULTIMA_COLUMNA = PRECIO_CONTADO_MANUAL + MAX_OPCIONES_PLAZO;
+const ULTIMA_COLUMNA = PRECIO_CONTADO_MANUAL + MAX_OPCIONES_PLAZO + 1;
 
 function construirColumnas(): ColumnaPlantilla[] {
   // Obligatorios primero: es lo que hay que llenar sí o sí.
@@ -105,24 +105,21 @@ function construirColumnas(): ColumnaPlantilla[] {
       numFmt: FORMATO_MONEDA,
     },
     {
-      // El encabezado va CORTO y sin paréntesis: el importador busca la columna por su
-      // nombre exacto (`construirMapaColumnas`), así que meter la explicación aquí dejaba
-      // la columna sin encontrar y el precio sin poder recalcularse, en silencio. La
-      // explicación vive en la hoja de instrucciones y en el aviso de la casilla.
-      header: 'Divisor del precio',
-      key: 'divisor_del_precio',
+      header: 'Rentabilidad deseada',
+      key: 'margen_sobre_venta',
       width: 22,
-      // Numero normal y NO porcentaje, y ese formato es el arreglo de un error real: con
-      // formato de porcentaje, escribir "0,65" quedaba guardado como 0,65% —cien veces
-      // menos— y el precio salia casi igual al costo. Como numero, 0,65 es 0,65.
-      numFmt: '0.00',
+      numFmt: '0%',
     },
     {
       header: 'Precio contado*',
       key: 'precio_contado',
       width: 16,
       numFmt: FORMATO_MONEDA,
-      automatica: true,
+      // Un ÚNICO campo visible por precio. Trae el valor resuelto por la fórmula
+      // (costo / rentabilidad) pero queda abierto: si hay un precio pactado, se
+      // escribe encima. El precio pactado conservado vive en una columna oculta
+      // y manda sobre el cálculo, así que no hacen falta dos columnas visibles.
+      sugerida: true,
     },
   ];
 
@@ -135,7 +132,7 @@ function construirColumnas(): ColumnaPlantilla[] {
         key: `precio_${i}`,
         width: 16,
         numFmt: FORMATO_MONEDA,
-        automatica: true,
+        sugerida: true,
       },
     );
   }
@@ -195,10 +192,14 @@ function construirColumnas(): ColumnaPlantilla[] {
     );
   }
 
-  columnas.push({ header: 'Precio contado manual', key: 'contado_manual', width: 19, numFmt: FORMATO_MONEDA });
+  // Precios pactados conservados: van en columnas ocultas y mandan sobre el
+  // cálculo. Son la fórmula de respaldo que completa el precio cuando existe un
+  // valor acordado, sin ofrecer un segundo campo visible del mismo precio.
+  columnas.push({ header: 'Precio contado manual', key: 'contado_manual', width: 19, numFmt: FORMATO_MONEDA, oculta: true });
   for (let i = 1; i <= MAX_OPCIONES_PLAZO; i++) {
-    columnas.push({ header: `Precio manual opción ${i}`, key: `precio_manual_${i}`, width: 19, numFmt: FORMATO_MONEDA });
+    columnas.push({ header: `Precio manual opción ${i}`, key: `precio_manual_${i}`, width: 19, numFmt: FORMATO_MONEDA, oculta: true });
   }
+  columnas.push({ header: 'Divisor del precio', key: 'divisor_tecnico', width: 16, oculta: true, automatica: true });
   return columnas;
 }
 
@@ -206,7 +207,7 @@ const ref = (columna: number) => `$${colLetra(columna)}{f}`;
 
 function formulaPrecioContado(ws: ExcelJS.Worksheet, filas: number) {
   const costo = ref(COL.costo);
-  const divisor = ref(COL.divisorDelPrecio);
+  const divisor = ref(ULTIMA_COLUMNA);
   const manual = ref(PRECIO_CONTADO_MANUAL);
   formulaEnColumna(
     ws,
@@ -312,7 +313,7 @@ function formulaRevision(ws: ExcelJS.Worksheet, filas: number) {
   // el precio que falta. Se reconstruye la cuenta aquí en vez de leer la celda
   // de precio de contado, porque en el caso que importa esa celda está vacía.
   const costo = ref(COL.costo);
-  const divisor = ref(COL.divisorDelPrecio);
+  const divisor = ref(ULTIMA_COLUMNA);
   const hayDivisor = `AND(${divisor}<>"",${divisor}>0,${divisor}<=1)`;
   const base = `TEXT(TRUNC(${costo}/${divisor}),"#,##0")`;
 
@@ -323,8 +324,8 @@ function formulaRevision(ws: ExcelJS.Worksheet, filas: number) {
       `IF(${costo}="","⚠ Falta el costo",` +
       `IF(${ref(COL.precioContado)}="",` +
       `IF(${hayDivisor},` +
-      `"⚠ Revise el precio de contado. La base calculada es "&${base}&"; cualquier ajuste va en Precio contado manual",` +
-      `"⚠ Falta el precio de contado: escriba el divisor (0,65) o el precio a mano"),` +
+      `"⚠ Revise el precio de contado: la base calculada es "&${base}&". Escriba ese valor, o el pactado, en la casilla Precio contado",` +
+      `"⚠ Indique la rentabilidad en porcentaje o escriba el precio de contado"),` +
       `IF(${ref(COL.precioContado)}<${costo},"⚠ El precio de contado está por debajo del costo",` +
       `IF(AND(COUNT(${meses})>0,COUNT(${precios})<COUNT(${meses})),` +
       `"⚠ Hay plazos con meses pero sin precio: registre el precio manual. Solo 3, 5 y 8 meses se calculan automáticamente",` +
@@ -362,7 +363,7 @@ export async function construirHojaArticulos(
     ws,
     COL.divisorDelPrecio,
     COL.divisorDelPrecio,
-    'GANANCIA',
+    'RENTABILIDAD',
   );
   etiquetarGrupo(ws, COL.precioContado, COL.precioContado, 'SALE SOLO');
   etiquetarGrupo(ws, COL.stock, COL.activo, 'DATOS OPCIONALES');
@@ -374,6 +375,11 @@ export async function construirHojaArticulos(
     'UTILIDAD DE CONTADO',
   );
 
+  const margen = ref(COL.divisorDelPrecio);
+  const sugerido = formulaMargenSobreVenta(ref(COL.categoria));
+  formulaEnColumna(ws, ULTIMA_COLUMNA,
+    `IF(${margen}<>"",IF(AND(ISNUMBER(${margen}),${margen}>=0,${margen}<1),1-${margen},""),IF(ISNUMBER(${sugerido}),1-(${sugerido}),""))`,
+    filas);
   formulaPrecioContado(ws, filas);
   formulasPrecioCredito(ws, filas);
   formulasUtilidadContado(ws, filas);
@@ -437,13 +443,11 @@ export function agregarValoresInventario(
       type: 'decimal',
       operator: 'between',
       allowBlank: true,
-      // Entre 0,01 y 1: el divisor es la parte del precio que se va en costo, así que
-      // nunca pasa de 1. Más de 1 sería vender por debajo del costo.
-      formulae: [0.01, 1],
+      formulae: [0, 0.9999],
       showErrorMessage: true,
-      errorTitle: 'Divisor no válido',
+      errorTitle: 'Rentabilidad no válida',
       error:
-        'Escriba el divisor con el que fija el precio: 0,70 para ganar 30%, 0,65 para ganar 35%, 0,55 para ganar 45%. Tiene que estar entre 0,01 y 1, y SIN el signo de porcentaje.',
+        'Escriba un porcentaje menor a 100%, por ejemplo 35%. Es el margen sobre el precio de venta.',
     },
   );
 
@@ -490,12 +494,9 @@ export function escribirFilaArticulo(
   fila.getCell(COL.modelo).value = articulo.modelo || '';
   fila.getCell(COL.costo).value = articulo.costo;
   if (articulo.precioContado !== null && articulo.precioContado !== undefined) {
-    if (articulo.precioContado > 0) {
-      // El divisor con el que se fijó ese precio, deshaciendo la cuenta: si salió de
-      // `costo / divisor`, el divisor es `costo / precio`. Así quien abre un archivo
-      // exportado ve el mismo número que escribiría al cargarlo.
+    if (articulo.precioContado > 0 && articulo.costo > 0 && articulo.costo <= articulo.precioContado) {
       fila.getCell(COL.divisorDelPrecio).value =
-        articulo.costo / articulo.precioContado;
+        1 - articulo.costo / articulo.precioContado;
     }
     fila.getCell(PRECIO_CONTADO_MANUAL).value = articulo.precioContado;
   }
@@ -523,7 +524,7 @@ export async function generarPlantillaInventario(): Promise<{
   workbook.creator = 'Créditos del Sur';
   forzarRecalculo(workbook);
 
-  hojaInicio(workbook, 'MÓDULO DE IMPORTACIÓN DE INVENTARIO', [
+  const wsInicio = hojaInicio(workbook, 'MÓDULO DE IMPORTACIÓN DE INVENTARIO', [
     '# Cómo diligenciar esta plantilla',
     'Todo el inventario se registra en una sola hoja: "Artículos". Cada fila es un artículo completo.',
     'Escriba los datos desde la fila 7 hacia abajo.',
@@ -542,14 +543,13 @@ export async function generarPlantillaInventario(): Promise<{
     'Activo: se asume SI si se deja vacío.',
     '',
     '# Opciones de crédito',
-    `Cada artículo admite hasta ${MAX_OPCIONES_PLAZO} opciones. Escriba los meses y, si tiene un precio acordado, el importe en la columna de precio manual de la opción.`,
+    `Cada artículo admite hasta ${MAX_OPCIONES_PLAZO} opciones. Escriba los meses y, si tiene un precio acordado, el importe encima del precio que aparece solo en esa opción.`,
     'Use solo las opciones que necesite; las que deje vacías se ignoran. No repita el mismo número de meses en un artículo.',
     '',
     '# El precio de contado se calcula solo',
-    'Escriba el costo unitario y el divisor del precio, y el Precio contado aparece solo.',
-    'La cuenta es costo / divisor: un costo de $829.900 con divisor 0,70 da $1.185.571.',
-    'Los divisores que se usan hoy son 0,70 (gana 30%), 0,65 (gana 35%) y 0,55 (gana 45%), según el artículo.',
-    'Escriba el número tal cual: 0,65. SIN el signo de porcentaje: "0,65%" es cien veces menos y el precio saldría casi igual al costo.',
+    'Escriba el costo unitario y la rentabilidad deseada, y el Precio contado aparece solo.',
+    'Indique un porcentaje como 30%. Si lo deja vacío, se usa el margen de la categoría cuando está definido.',
+    'Precio = costo dividido por (1 menos el margen). Con costo de $829.900 y margen del 30%, el precio de contado es $1.185.571.',
     '',
     '# Los precios a plazo salen de elegir el plazo',
     'La hoja muestra el resultado automático solo para 3, 5 y 8 meses: recargos del 30%, 47% y 60% sobre el contado, respectivamente.',
@@ -557,13 +557,13 @@ export async function generarPlantillaInventario(): Promise<{
     'Ejemplo: $178.123 divididos entre 0,65 dan $274.035,38 de base. A 3 meses se agrega el 30% y se trunca a $356.246.',
     '',
     '# Cambiar un precio',
-    'Escriba el valor acordado en Precio contado manual o Precio manual opción N. La fórmula queda protegida y muestra el precio acordado. Si se borra la captura, vuelve a calcularse cuando hay una regla respaldada.',
-    'Para quitar un plazo, borre los meses y el precio manual de esa opción.',
+    'Escriba el valor acordado encima del precio que aparece solo: en Precio contado o en el precio de la opción. La casilla queda abierta y conserva lo escrito.',
+    'Si borra lo escrito, el precio vuelve a calcularse con el costo y la rentabilidad cuando hay una regla respaldada.',
+    'Para quitar un plazo, borre los meses y el precio de esa opción.',
     '',
     '# Utilidad automática (columnas grises)',
     'Al final de la hoja Excel calcula, para el contado y para cada plazo, la utilidad en pesos: precio de venta menos costo.',
-    'Ojo con la diferencia: este porcentaje es sobre el COSTO, mientras que el divisor fija la ganancia sobre la VENTA. Un artículo de 829.900 vendido en 1.185.571 deja 355.671, que es 35,7% de la venta (divisor 0,70) pero 42,9% de lo que costó.',
-    'No lo confunda con el margen sobre la venta, que es el que sale en los informes del sistema y con esos mismos números da 23,1%. La utilidad en pesos es la misma; lo que cambia es contra qué se divide. El del costo siempre da un número más alto.',
+    'La utilidad porcentual se calcula sobre el costo. La rentabilidad deseada se calcula sobre el precio de venta.',
     'No hay que diligenciarlas y el sistema no las lee al importar. Si una sale en rojo, ese precio está por debajo del costo.',
     'La columna "Revisión de la fila" resume en una sola celda lo que le falta o le sobra a ese artículo. Si dice OK, la fila está lista para subir.',
     '',
@@ -574,73 +574,56 @@ export async function generarPlantillaInventario(): Promise<{
   ]);
 
   const ws = await construirHojaArticulos(workbook, {
-    subtitulo: 'Una fila por artículo. Los precios automáticos están protegidos; los valores pactados se capturan en las columnas de precio manual.',
+    subtitulo: 'Una fila por artículo. El precio sale solo del costo y la rentabilidad; si hay un precio pactado, escríbalo encima.',
     instruccion:
-      '📝 Escriba los datos desde la fila 7 hacia abajo. Las columnas grises las calcula Excel y están bloqueadas; los precios vienen calculados pero se pueden cambiar.',
+      '📝 Escriba los datos desde la fila 7 hacia abajo. Las columnas grises las calcula Excel; el precio viene calculado pero se puede cambiar escribiendo encima.',
     filas: FILAS_PREPARADAS,
   });
 
   agregarValoresInventario(workbook, ws, FILAS_PREPARADAS);
 
-  // ── Hoja Ejemplos ─────────────────────────────────────────────────────────
-  const wsEjemplos = workbook.addWorksheet('Ejemplos');
-  wsEjemplos.getColumn(1).width = 30;
-  wsEjemplos.getColumn(2).width = 70;
-  wsEjemplos.getCell('A1').value = 'EJEMPLO DE UN ARTÍCULO COMPLETO';
-  wsEjemplos.getCell('A1').font = { bold: true, size: 14 };
-
-  const ejemplo: Array<[string, string]> = [
+  // ── Ejemplo breve, dentro de Inicio ───────────────────────────────────────
+  // El libro de operación solo muestra Inicio y Artículos: el ejemplo va al
+  // final de Inicio y no suma una pestaña. Y va con la CUENTA REAL
+  // (costo / rentabilidad), no con el atajo de «multiplicar por 1,30», que es
+  // el margen sobre el COSTO: 0,70 deja un margen del 30% sobre la VENTA, que
+  // no es lo mismo. Antes este ejemplo enseñaba justo esa confusión.
+  const ejemplos: Array<[string, string]> = [
+    ['EJEMPLO DE UN ARTÍCULO COMPLETO', ''],
     ['Código*', 'CEL-A15'],
     ['Nombre del artículo*', 'Samsung Galaxy A15'],
     ['Categoría*', 'Celulares'],
     ['Costo unitario*', '619.900'],
     [
       'Rentabilidad deseada',
-      '30%  → sobre el costo: 619.900 × 1,30. Sale el precio de contado',
+      '30% de margen sobre la venta: el precio de contado es $885.571.',
+    ],
+    [
+      'Ojo con la equivalencia',
+      'Escriba 30% en Rentabilidad deseada, no un divisor.',
     ],
     ['Marca / Modelo', 'Samsung / A15  (opcional)'],
-    [
-      'Precio contado',
-      '805.870 automático  → utilidad: $185.970 (30% sobre el costo)',
-    ],
+    ['Precio contado', '$885.571, calculado sobre el costo y el margen de venta'],
     [
       'Si lo quiere redondeado',
-      'Escriba 805.900 encima. Los tres precios a plazo NO se mueven: salen del costo y la rentabilidad, no de esta casilla.',
+      'Escriba el valor encima del que sale solo. Los plazos de 3, 5 y 8 meses se recalculan sobre ese precio.',
     ],
     ['Stock / Stock mínimo', '10 / 2  (si se dejan vacíos quedan en 0)'],
     ['Activo', 'Se asume SI si se deja vacío'],
-    ['Opción 1', 'Elija 3 meses  →  1.047.631 automático (recargo 30%)'],
-    ['Opción 2', 'Elija 5 meses  →  1.184.629 automático (recargo 47%)'],
-    ['Opción 3', 'Elija 8 meses  →  1.289.392 automático (recargo 60%)'],
-    [
-      'Por qué el recargo va por plazo',
-      'Porque no es un interés mensual. Esos tres precios equivalen a 10%, 9,4% y 7,5% por mes: el porcentaje por mes BAJA cuando el plazo se alarga, que es lo contrario de lo que hace un interés. Ninguna tasa única da los tres. Son una tabla comercial, un recargo decidido para cada plazo, y la plantilla la lleva por dentro.',
-    ],
-    [
-      'Si el precio es otro',
-      'Escríbalo encima del automático. La fórmula de esa celda se reemplaza por el número, y lo que se importa es lo que quede escrito.',
-    ],
+    ['Opción 1', 'Escriba 3 meses  →  precio a plazo automático (recargo 30%)'],
+    ['Opción 2', 'Escriba 5 meses  →  precio a plazo automático (recargo 47%)'],
+    ['Opción 3', 'Escriba 8 meses  →  precio a plazo automático (recargo 60%)'],
     ['Opciones sin usar', 'Se dejan vacías si el artículo no maneja ese plazo'],
-    ['', ''],
-    ['CÓMO LEER LA UTILIDAD', ''],
-    ['Contado (805.870)', 'Utilidad $185.970 · 30% sobre el costo'],
-    ['Opción 1 (3 meses, 1.047.631)', 'Utilidad $427.731 · 69% sobre el costo'],
-    [
-      'Opción 3 (8 meses, 1.289.392)',
-      'Utilidad $669.492 · 108% sobre el costo',
-    ],
-    [
-      'Conclusión',
-      'El plazo más largo deja más utilidad en total, pero se demora más en volver. Compare esa ganancia contra el tiempo que la plata queda afuera: el de 8 meses deja 241.761 más que el de 3, y tarda cinco meses más.',
-    ],
   ];
 
-  ejemplo.forEach(([campo, valor], indice) => {
-    const fila = indice + 3;
-    wsEjemplos.getCell(`A${fila}`).value = campo;
-    wsEjemplos.getCell(`A${fila}`).font = { bold: true };
-    wsEjemplos.getCell(`B${fila}`).value = valor;
-    wsEjemplos.getCell(`B${fila}`).alignment = { wrapText: true };
+  wsInicio.getColumn(2).width = 90;
+  const filaEjemplo = wsInicio.rowCount + 2;
+  ejemplos.forEach(([campo, valor], indice) => {
+    const fila = filaEjemplo + indice;
+    wsInicio.getCell(`A${fila}`).value = campo;
+    wsInicio.getCell(`A${fila}`).font = { bold: !valor };
+    wsInicio.getCell(`B${fila}`).value = valor;
+    wsInicio.getCell(`B${fila}`).alignment = { wrapText: true, vertical: 'top' };
   });
 
   const buffer = await workbook.xlsx.writeBuffer();

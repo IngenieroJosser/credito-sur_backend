@@ -91,13 +91,18 @@ const aPesos = (valor: number | null): number | null =>
   valor === null || !Number.isFinite(valor) ? valor : Math.trunc(valor);
 
 export class ClientesCreditosParser {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: Pick<PrismaService, 'ruta' | 'cliente' | 'producto' | 'prestamo' | 'pago' | 'caja'>) {}
 
   async parseAndValidate(
     buffer: Buffer,
     fileName: string,
   ): Promise<ResultadoValidacion> {
-    const workbook = await loadWorkbookFromBuffer(buffer);
+    return this.validarLibro(await loadWorkbookFromBuffer(buffer), buffer, fileName);
+  }
+
+  async validarLibro(
+    workbook: ExcelJS.Workbook, buffer: Buffer, fileName: string, inventarioDelLibro?: ResultadoValidacion,
+  ): Promise<ResultadoValidacion> {
     const capacidad = limiteOficial(workbook);
     const modoHistorico = leerModoHistorico(workbook);
 
@@ -215,10 +220,12 @@ export class ClientesCreditosParser {
           select: {
             codigo: true,
             nombre: true,
+            stock: true,
+            activo: true,
             // Precios por plazo: en los créditos de artículo el monto sale de aquí.
             precios: {
-              where: { activo: true },
-              select: { meses: true, precio: true },
+              where: inventarioDelLibro ? undefined : { activo: true },
+              select: { meses: true, precio: true, activo: true },
             },
           },
           where: { eliminadoEn: null },
@@ -265,15 +272,33 @@ export class ClientesCreditosParser {
 
     // Precio de cada artículo por plazo, para deducir el monto del crédito.
     const preciosPorPlazo = new Map<string, number>();
+    const plazosExistentes = new Set<string>();
+    const stockPorCodigo = new Map<string, number>();
     productosBd.forEach((p) => {
       const codigo = String(p.codigo).trim().toUpperCase();
+      if (inventarioDelLibro) stockPorCodigo.set(codigo, p.activo ? p.stock : 0);
       (p.precios ?? []).forEach((precio) => {
-        preciosPorPlazo.set(
-          `${codigo}|${Number(precio.meses)}`,
-          Number(precio.precio) || 0,
-        );
+        const llave = `${codigo}|${Number(precio.meses)}`;
+        plazosExistentes.add(llave);
+        if (precio.activo !== false) preciosPorPlazo.set(llave, Number(precio.precio) || 0);
       });
     });
+    const actualizables = new Set<string>();
+    for (const articulo of inventarioDelLibro?.articulos ?? []) {
+      if (!articulo.yaExiste || articulo.esActualizacion) {
+        productosEnBd.set(articulo.codigo, articulo.nombre);
+        stockPorCodigo.set(articulo.codigo, articulo.activo === 'NO' ? 0 : articulo.stock);
+      }
+      if (articulo.esActualizacion) actualizables.add(articulo.codigo);
+    }
+    for (const precio of inventarioDelLibro?.precios ?? []) {
+      if (precio.meses === null || precio.precio === null) continue;
+      const llave = `${precio.codigoProducto}|${precio.meses}`;
+      if (actualizables.has(precio.codigoProducto) || !plazosExistentes.has(llave)) {
+        if (precio.activo === 'NO') preciosPorPlazo.delete(llave);
+        else preciosPorPlazo.set(llave, precio.precio);
+      }
+    }
 
     // Cédulas ya registradas: importar de nuevo una cédula existente crearía un
     // cliente duplicado (o, peor, quedaría silenciosamente omitido al confirmar).
@@ -481,6 +506,9 @@ export class ClientesCreditosParser {
 
       if (tipoCliente && tipoCliente !== 'HISTORICO' && tipoCliente !== 'OPERATIVO') {
         addError('tipo_cliente', 'Debe ser HISTORICO u OPERATIVO.', tipoCliente);
+      }
+      if (inventarioDelLibro && historico) {
+        addError('cc', 'Los clientes históricos deben cargarse desde su expediente.', cc);
       }
       if (historico && esActualizacion) {
         addError('tipo_cliente', 'La captura histórica incompleta solo aplica a clientes nuevos; actualice los existentes desde su ficha.', tipoCliente);
@@ -1759,6 +1787,18 @@ export class ClientesCreditosParser {
     // cifra y el motivo. Se calcula aquí, con el saldo real del momento, para
     // que el usuario lo vea antes de decidir.
     const impactoCaja = await this.calcularImpactoCaja(creditosValidar);
+    if (inventarioDelLibro) {
+      for (const credito of creditosValidar) {
+        if (credito.tipoPrestamo !== 'ARTICULO' || credito.tipoCarga !== 'OPERATIVA' || credito.esActualizacion) continue;
+        const disponible = stockPorCodigo.get(credito.productoCodigo) ?? 0;
+        if (disponible > 0) {
+          stockPorCodigo.set(credito.productoCodigo, disponible - 1);
+        } else {
+          errores.push({ hoja: credito.hoja, fila: credito.fila, campo: 'stock',
+            mensaje: 'No hay existencias suficientes para entregar este artículo.', valor: credito.productoCodigo });
+        }
+      }
+    }
 
     return {
       tipo: 'clientes-creditos',

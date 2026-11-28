@@ -147,7 +147,7 @@ describe('Las fórmulas dan los precios reales de la empresa', () => {
 
     it('el precio de contado divide por el divisor y no redondea', () => {
       const formula = formulaDe(COLUMNAS_ARTICULOS.precioContado);
-      expect(formula).toContain('TRUNC($E7)/$F7');
+      expect(formula).toContain('TRUNC($E7)/$AG7');
       // Sin ROUND: redondear aquí dejaba 136 de los 209 artículos de cartera con un peso
       // de diferencia en algún plazo.
       expect(formula).not.toContain('ROUND');
@@ -233,16 +233,12 @@ describe('Las fórmulas dan los precios reales de la empresa', () => {
       }
     });
 
-    it('el divisor va entre 0,01 y 1, y la casilla NO es de porcentaje', () => {
-      // El divisor es la parte del precio que se va en costo, así que nunca pasa de 1;
-      // más de 1 sería vender bajo el costo. Y el formato de número en vez de porcentaje
-      // es el arreglo del error que obligó a cartera a escribir los precios a mano:
-      // con formato de porcentaje, su "0,65" quedaba guardado como 0,0065.
+    it('la rentabilidad visible se captura como porcentaje menor al 100%', () => {
       const celda = ws.getCell(7, COLUMNAS_ARTICULOS.divisorDelPrecio);
       expect(celda.dataValidation).toEqual(
-        expect.objectContaining({ type: 'decimal', formulae: [0.01, 1] }),
+        expect.objectContaining({ type: 'decimal', formulae: [0, 0.9999] }),
       );
-      expect(String(ws.getColumn(COLUMNAS_ARTICULOS.divisorDelPrecio).numFmt)).not.toContain(
+      expect(String(ws.getColumn(COLUMNAS_ARTICULOS.divisorDelPrecio).numFmt)).toContain(
         '%',
       );
     });

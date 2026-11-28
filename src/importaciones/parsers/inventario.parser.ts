@@ -12,12 +12,13 @@ import { loadWorkbookFromBuffer } from './xlsx-workbook.loader';
 import { leerModoHistorico } from './control-historico-xlsx';
 import {
   leerNumero,
+  leerNumeroCapturado,
   leerValorCelda,
   leerTexto,
   leerTextoMayus,
   type ValorDeCelda,
 } from './cell-value.util';
-import { baseDeContado, precioDelPlazoRespaldado } from '../precios-articulo';
+import { baseDeContado, margenSobreVenta, precioDelPlazoRespaldado } from '../precios-articulo';
 import {
   avisarFilasFueraDeRango,
   limiteOficial,
@@ -86,7 +87,10 @@ export class InventarioParser {
     fileName: string,
     conservarCosto = false,
   ): Promise<ResultadoValidacion> {
-    const workbook = await loadWorkbookFromBuffer(buffer);
+    return this.validarLibro(await loadWorkbookFromBuffer(buffer), fileName, conservarCosto);
+  }
+
+  async validarLibro(workbook: ExcelJS.Workbook, fileName: string, conservarCosto = false): Promise<ResultadoValidacion> {
     const capacidad = limiteOficial(workbook);
     const modoHistorico = leerModoHistorico(workbook);
 
@@ -148,13 +152,19 @@ export class InventarioParser {
     // El divisor no se guarda, pero se lee: con él se rellena el precio que llegue vacío
     // porque alguien borró la fórmula de esa celda. Se aceptan también los encabezados
     // anteriores, para que las plantillas ya descargadas sigan sirviendo.
-    const colDivisor = cols.indice(
-      'Divisor del precio',
-      'Rentabilidad deseada',
-      'Rentabilidad',
-    );
+    const colDivisorInterno = cols.indice('Divisor del precio');
+    const colRentabilidad = cols.indice('Rentabilidad deseada');
+    // Los libros anteriores usaban «Rentabilidad deseada» para el divisor.
+    const colMargen = colDivisorInterno && colRentabilidad ? colRentabilidad : 0;
+    const colDivisor = colMargen ? 0 : colDivisorInterno || colRentabilidad || cols.indice('Rentabilidad');
+    // Un único campo visible por precio. La hoja muestra la casilla que trae la
+    // fórmula de sugerencia (costo / rentabilidad), abierta para poder pisarla, y
+    // guarda en una columna oculta el precio pactado que se conservó en la carga
+    // histórica (ocultar no es borrar). El orden de lectura respeta las dos cosas:
+    // manda lo que se escribió a mano en la casilla visible; si no, el precio
+    // conservado; si no, se rehace con el costo y la rentabilidad.
+    const colPrecioContado = cols.indice('Precio contado', 'Precio de contado');
     const colContadoManual = cols.indice('Precio contado manual');
-    const colPrecioContado = colContadoManual || cols.indice('Precio contado', 'Precio de contado');
     const colStock = cols.indice('Stock actual', 'Stock');
     const colStockMinimo = cols.indice('Stock mínimo');
     const colActivo = cols.indice('Activo');
@@ -166,7 +176,11 @@ export class InventarioParser {
       );
     }
 
-    const columnasOpciones: Array<{ meses: number; precio: number }> = [];
+    const columnasOpciones: Array<{
+      meses: number;
+      precio: number;
+      precioManual: number;
+    }> = [];
     for (let i = 1; i <= MAX_OPCIONES_PLAZO; i++) {
       const colMesesOpcion = cols.indice(`Meses opción ${i}`, `Meses op ${i}`);
       const colPrecioOpcion = cols.indice(
@@ -177,7 +191,9 @@ export class InventarioParser {
       if (colMesesOpcion && colPrecioOpcion) {
         columnasOpciones.push({
           meses: colMesesOpcion,
-          precio: cols.indice(`Precio manual opción ${i}`) || colPrecioOpcion,
+          precio: colPrecioOpcion,
+          // Respaldo conservado del mismo precio; también oculto.
+          precioManual: cols.indice(`Precio manual opción ${i}`),
         });
       }
     }
@@ -203,12 +219,14 @@ export class InventarioParser {
       colModelo,
       colCosto,
       colDivisor,
+      colMargen,
       colPrecioContado,
+      colContadoManual,
       colStock,
       colStockMinimo,
       colActivo,
       colObservaciones,
-      ...columnasOpciones.flatMap((o) => [o.meses, o.precio]),
+      ...columnasOpciones.flatMap((o) => [o.meses, o.precio, o.precioManual]),
     ].filter(Boolean);
 
     // Solo se consultan los códigos presentes en el archivo. Descargar el
@@ -277,9 +295,27 @@ export class InventarioParser {
       const marca = leerTexto(celda(row, colMarca));
       const modelo = leerTexto(celda(row, colModelo));
       const costoCelda = leerNumero(celda(row, colCosto));
-      const precioContadoCelda = leerNumero(celda(row, colPrecioContado));
+      // La casilla visible manda, pero solo si trae un valor capturado a mano:
+      // el `result` de su fórmula de sugerencia no cuenta (ver `leerNumeroCapturado`).
+      // Si está vacía o sin tocar, se usa el precio pactado conservado de la
+      // columna oculta, y si tampoco hay, se rehace más abajo con costo / rentabilidad.
+      const precioContadoVisible = colMargen
+        ? leerNumeroCapturado(celda(row, colPrecioContado))
+        : colContadoManual ? null : leerNumero(celda(row, colPrecioContado));
+      const precioContadoCelda =
+        precioContadoVisible ?? leerNumero(celda(row, colContadoManual));
+      // Columna de la que salió el valor, para nombrar bien lo que se avisa.
+      const colPrecioContadoCelda =
+        precioContadoVisible !== null
+          ? colPrecioContado
+          : colContadoManual || colPrecioContado;
       const costo = conservarCosto ? costoCelda : aPesos(costoCelda);
-      const divisor = colDivisor ? leerNumero(celda(row, colDivisor)) : null;
+      const margenCrudo = celda(row, colMargen);
+      const margenCapturado = leerNumeroCapturado(margenCrudo);
+      const margen = margenCapturado ?? margenSobreVenta(categoria);
+      const divisor = colMargen
+        ? margen !== null && margen >= 0 && margen < 1 ? 1 - margen : null
+        : colDivisor ? leerNumero(celda(row, colDivisor)) : null;
 
       /**
        * El costo y el divisor sirven para rehacer un precio borrado.
@@ -308,9 +344,15 @@ export class InventarioParser {
           ? baseDeContado(costo, divisor)
           : aPesos(precioContadoCelda);
 
-      const basePlazo = colContadoManual && precioContadoCelda !== null
-        ? precioContadoCelda
-        : puedeCalcularPrecios ? costo / divisor : precioContado;
+      // La base de los plazos es el precio de contado ya resuelto (escrito a
+      // mano o conservado); si no hay ninguno, la cuenta costo / rentabilidad sin
+      // redondear, que es la misma que usa la fórmula de la hoja.
+      const basePlazo =
+        precioContadoCelda !== null
+          ? precioContadoCelda
+          : puedeCalcularPrecios
+            ? costo / divisor
+            : precioContado;
 
       const stock = leerNumero(celda(row, colStock));
       const stockMinimo = leerNumero(celda(row, colStockMinimo));
@@ -343,6 +385,10 @@ export class InventarioParser {
           valor,
         });
       };
+      if (colMargen && leerTexto(margenCrudo) &&
+          (margenCapturado === null || margenCapturado < 0 || margenCapturado >= 1)) {
+        addError('margen', 'Escriba un porcentaje válido, por ejemplo 35%.', leerValorCelda(margenCrudo));
+      }
 
       if (accion !== 'CREAR' && accion !== 'ACTUALIZAR') {
         addError(
@@ -359,7 +405,7 @@ export class InventarioParser {
         addAdver(
           'precio_contado',
           AVISO_CENTAVOS,
-          leerValorCelda(celda(row, colPrecioContado)),
+          leerValorCelda(celda(row, colPrecioContadoCelda)),
         );
       }
       if (precioContadoCelda === null && precioContado !== null) {
@@ -439,15 +485,15 @@ export class InventarioParser {
       if (precioContado === null) {
         addError(
           'precio_contado',
-          'Es requerido: todo artículo debe poder venderse de contado. Escriba el divisor del precio (0,65 para ganar 35%) y el precio sale solo, o póngalo a mano',
-          leerValorCelda(celda(row, colPrecioContado)),
+          'Indique el precio de contado o una rentabilidad válida para calcularlo.',
+          leerValorCelda(celda(row, colPrecioContadoCelda)),
         );
       } else {
         if (Number.isNaN(precioContado) || precioContado <= 0) {
           addError(
             'precio_contado',
             'Debe ser un número mayor a 0',
-            leerValorCelda(celda(row, colPrecioContado)),
+            leerValorCelda(celda(row, colPrecioContadoCelda)),
           );
         } else {
           preciosFila.push({ meses: MESES_CONTADO, precio: precioContado });
@@ -467,7 +513,15 @@ export class InventarioParser {
       columnasOpciones.forEach((opcion, indice) => {
         const numeroOpcion = indice + 1;
         const meses = leerNumero(celda(row, opcion.meses));
-        const precioCelda = leerNumero(celda(row, opcion.precio));
+        // Misma regla que el contado: manda lo capturado a mano en la casilla
+        // visible; el `result` de su fórmula no cuenta; si no hay, el precio
+        // pactado conservado de la columna oculta; si no, se rehace.
+        const precioVisible = colMargen
+          ? leerNumeroCapturado(celda(row, opcion.precio))
+          : opcion.precioManual ? null : leerNumero(celda(row, opcion.precio));
+        const precioCelda = precioVisible ?? leerNumero(celda(row, opcion.precioManual));
+        const colPrecioCelda =
+          precioVisible !== null ? opcion.precio : opcion.precioManual || opcion.precio;
 
         if (meses === null && precioCelda === null) return;
 
@@ -499,7 +553,7 @@ export class InventarioParser {
           addAdver(
             `opcion_${numeroOpcion}_precio`,
             AVISO_CENTAVOS,
-            leerValorCelda(celda(row, opcion.precio)),
+            leerValorCelda(celda(row, colPrecioCelda)),
           );
         }
 
@@ -525,7 +579,7 @@ export class InventarioParser {
           addError(
             `opcion_${numeroOpcion}_precio`,
             `Opción ${numeroOpcion}: indique un precio mayor a 0 para ${meses} mes(es). Solo se calcula automáticamente para 3, 5 y 8 meses con una base válida.`,
-            leerValorCelda(celda(row, opcion.precio)),
+            leerValorCelda(celda(row, colPrecioCelda)),
           );
           return;
         }

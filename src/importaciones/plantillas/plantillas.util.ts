@@ -47,6 +47,13 @@ export interface ColumnaPlantilla {
    * abierta porque hay casos en los que hay que corregirla a mano.
    */
   sugerida?: boolean;
+  /**
+   * Columna de apoyo que no se muestra en la vista de operación pero sigue
+   * viva: mantiene su encabezado, sus valores y su fórmula. Se usa para no
+   * ofrecer dos campos visibles del mismo dato (p. ej. un precio pactado
+   * conservado frente al precio que sale solo). Ocultar no es borrar.
+   */
+  oculta?: boolean;
   numFmt?: string;
 }
 
@@ -143,9 +150,12 @@ export function declararColumnas(
   columnas.forEach((columna, indice) => {
     const numeroColumna = indice + 1;
     const columnaExcel = ws.getColumn(numeroColumna);
+    // Las de apoyo se ocultan de la vista, no se borran: el encabezado, los
+    // valores y las fórmulas siguen ahí para que el importador las encuentre.
+    if (columna.oculta) columnaExcel.hidden = true;
     columnaExcel.protection = columna.automatica
       ? { locked: true, hidden: true }
-      : { locked: false };
+      : { locked: false, ...(columna.sugerida ? { hidden: true } : {}) };
 
     // Las sugeridas se sombrean igual pero quedan abiertas: el sombreado dice
     // "ya viene resuelta", no "no la toque".
@@ -156,7 +166,7 @@ export function declararColumnas(
       fila++
     ) {
       const celda = ws.getCell(fila, numeroColumna);
-      if (columna.automatica) celda.protection = { locked: true, hidden: true };
+      celda.protection = { locked: Boolean(columna.automatica), hidden: true };
       celda.fill = {
         type: 'pattern',
         pattern: 'solid',
